@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { QrCode, Smartphone, Trash2 } from 'lucide-react';
+import { Check, Copy, QrCode, Smartphone, Trash2 } from 'lucide-react';
 import QRCode from 'qrcode';
 import { MOBILE_CAPABILITY_VERBS, type AppConfig, type MobileCapabilityVerb, type MobilePairedDevice } from '../../../../shared/types';
 import { CompactToggleList, INPUT_CLASS, SectionHeader, SettingRow, SettingToggleRow, useScopedUpdate } from '../shared';
@@ -43,6 +43,7 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
 
   const [qrUri, setQrUri] = useState<string | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [linkCopied, setLinkCopied] = useState(false);
   const [deviceNameDraft, setDeviceNameDraft] = useState('');
   const [revokeTarget, setRevokeTarget] = useState<{ deviceId: string; displayName: string } | null>(null);
 
@@ -85,10 +86,23 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
     };
   }, [qrUri]);
 
+  useEffect(() => {
+    if (!linkCopied) return;
+    const timer = setTimeout(() => setLinkCopied(false), 2000);
+    return () => clearTimeout(timer);
+  }, [linkCopied]);
+
   const handleStartPairing = async () => {
     clearPairingEnded();
+    setLinkCopied(false);
     const result = await startPairing();
     setQrUri(result.qrUri);
+  };
+
+  const handleCopyLink = async () => {
+    if (!qrUri) return;
+    await navigator.clipboard.writeText(qrUri);
+    setLinkCopied(true);
   };
 
   const handleCancelPairing = async () => {
@@ -181,17 +195,31 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
           </div>
         ) : (
           <div className="space-y-3 rounded-md border border-edge bg-surface-hover/40 p-4">
-            <p className="text-sm text-fg-secondary">Scan this code with the Kangentic mobile app.</p>
+            <p className="text-sm text-fg-secondary">
+              Scan this code with the Kangentic mobile app, or copy the pairing link and paste it
+              into the app&apos;s &quot;paste pairing link&quot; field (for devices without a
+              camera on this screen, like an emulator).
+            </p>
             {qrDataUrl && (
               <img src={qrDataUrl} alt="Pairing QR code" className="rounded-md border border-edge" width={220} height={220} />
             )}
-            <button
-              type="button"
-              className="rounded-md border border-edge px-3 py-1.5 text-sm text-fg-secondary hover:bg-surface-hover transition-colors"
-              onClick={() => void handleCancelPairing()}
-            >
-              Cancel
-            </button>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 rounded-md border border-edge px-3 py-1.5 text-sm text-fg-secondary hover:bg-surface-hover transition-colors"
+                onClick={() => void handleCopyLink()}
+              >
+                {linkCopied ? <Check size={14} /> : <Copy size={14} />}
+                {linkCopied ? 'Copied' : 'Copy pairing link'}
+              </button>
+              <button
+                type="button"
+                className="rounded-md border border-edge px-3 py-1.5 text-sm text-fg-secondary hover:bg-surface-hover transition-colors"
+                onClick={() => void handleCancelPairing()}
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         )}
 

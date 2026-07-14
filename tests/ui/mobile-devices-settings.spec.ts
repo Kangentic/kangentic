@@ -190,6 +190,37 @@ test.describe('Mobile Devices settings tab', () => {
     await closeSettings();
   });
 
+  test('"Copy pairing link" writes the pairing URI to the clipboard and shows Copied feedback', async () => {
+    await openMobileTab();
+
+    await page.getByRole('button', { name: 'Pair a device' }).click();
+    await expect(page.getByAltText('Pairing QR code')).toBeVisible();
+
+    // Capture instead of hitting the real clipboard: headless clipboard
+    // permissions vary by platform, and the captured value is the assertion
+    // that matters (the exact URI the phone would paste).
+    await page.evaluate(() => {
+      const captured: string[] = [];
+      (window as unknown as { __copiedPairingLinks: string[] }).__copiedPairingLinks = captured;
+      navigator.clipboard.writeText = (text: string) => {
+        captured.push(text);
+        return Promise.resolve();
+      };
+    });
+
+    await page.getByRole('button', { name: 'Copy pairing link' }).click();
+    await expect(page.getByRole('button', { name: 'Copied' })).toBeVisible();
+    const copied = await page.evaluate(
+      () => (window as unknown as { __copiedPairingLinks: string[] }).__copiedPairingLinks,
+    );
+    expect(copied).toEqual(['kangentic-pair://mock']);
+
+    // The feedback label reverts so the link can be copied again.
+    await expect(page.getByRole('button', { name: 'Copy pairing link' })).toBeVisible({ timeout: 5000 });
+
+    await closeSettings();
+  });
+
   test('cancelling an in-progress pairing clears the QR and returns to the start button', async () => {
     await openMobileTab();
 
