@@ -11,61 +11,93 @@
 import { describe, it, expect } from 'vitest';
 import {
   ALL_TIME_DAILY_MAX_DAYS,
+  COST_GROUP_MS,
   LIVE_WINDOW_MS,
   MAX_SERIES_POINTS,
   TURN_GROUP_MS,
-  allocateGroupCost,
   bucketStartFor,
   buildAgentBreakdown,
   buildBucketStarts,
   buildEffortBreakdown,
   buildModelBreakdown,
-  buildSessionTokenTotals,
   computeKpis,
   foldCostSeries,
   foldTokenSeries,
+  mergeUsageTotals,
   nextBucketStart,
   resolveAllTimeBucketKinds,
   resolveBucketing,
 } from '../../src/main/usage-stats/bucketing';
 import { resolvePreviousWindow } from '../../src/main/usage-stats/bucketing';
 import { computePeriodCutoff } from '../../src/shared/period-cutoff';
-import type { UsageHistoryRow } from '../../src/main/db/repositories/usage-history-repository';
+import type {
+  UsageCostGroupRow,
+  UsageRollupRow,
+  UsageWindowTotals,
+} from '../../src/main/db/repositories/usage-history-repository';
 import type { GroupedTurnUsageRow } from '../../src/main/retrieval/conversation/conversation-usage-store';
 
 function makeGroup(overrides: Partial<GroupedTurnUsageRow> = {}): GroupedTurnUsageRow {
   return {
     bucketStartMs: 0,
-    sessionId: 'session-1',
-    model: 'model-x',
     inputTokens: 100,
     outputTokens: 50,
     cacheCreationTokens: 10,
     cacheReadTokens: 500,
     turnCount: 1,
+    allocatedCostUsd: 0,
     ...overrides,
   };
 }
 
-function makeRow(overrides: Partial<UsageHistoryRow> = {}): UsageHistoryRow {
+function makeTotals(overrides: Partial<UsageWindowTotals> = {}): UsageWindowTotals {
   return {
-    sessionRecordId: 'session-1',
-    sessionStartedAt: '2026-06-17T10:00:00.000Z',
+    sessionCount: 1,
     totalCostUsd: 1,
     totalInputTokens: 1000,
     totalOutputTokens: 400,
-    totalDurationMs: 60_000,
     toolCallCount: 5,
-    modelId: 'model-x',
-    modelDisplayName: 'Model X',
     linesAdded: 10,
     linesRemoved: 2,
     filesChanged: 3,
     compactionCount: 0,
-    agent: 'claude',
-    effort: null,
+    totalDurationMs: 60_000,
+    costKnownCount: 1,
+    minSessionStartedAt: '2026-06-17T10:00:00.000Z',
+    maxSessionStartedAt: '2026-06-17T10:00:00.000Z',
     ...overrides,
   };
+}
+
+function makeRollup(overrides: Partial<UsageRollupRow> = {}): UsageRollupRow {
+  return {
+    modelId: 'model-x',
+    modelDisplayName: 'Model X',
+    agent: 'claude',
+    effort: null,
+    inputTokens: 1000,
+    outputTokens: 400,
+    costUsd: 1,
+    sessionCount: 1,
+    ...overrides,
+  };
+}
+
+function makeCostGroup(overrides: Partial<UsageCostGroupRow> = {}): UsageCostGroupRow {
+  return {
+    bucketStartMs: Math.floor(Date.parse('2026-06-17T10:00:00.000Z') / COST_GROUP_MS) * COST_GROUP_MS,
+    modelId: 'model-x',
+    costUsd: 1,
+    inputTokens: 1000,
+    outputTokens: 400,
+    sessionCount: 1,
+    ...overrides,
+  };
+}
+
+/** The 15-minute UTC cost-group bucket containing a local-time instant. */
+function costGroupBucketOf(localDate: Date): number {
+  return Math.floor(localDate.getTime() / COST_GROUP_MS) * COST_GROUP_MS;
 }
 
 describe('resolveBucketing', () => {
@@ -225,24 +257,33 @@ describe('buildBucketStarts', () => {
   });
 });
 
-describe('cost allocation', () => {
-  it('splits a session cost across its groups proportionally by fresh tokens', () => {
-    const groups = [
-      makeGroup({ bucketStartMs: 0, inputTokens: 20, outputTokens: 10 }),   // 30 tokens
-      makeGroup({ bucketStartMs: TURN_GROUP_MS, inputTokens: 50, outputTokens: 20 }), // 70 tokens
-    ];
-    const costs = new Map([['session-1', 10]]);
-    const totals = buildSessionTokenTotals(groups);
-    expect(totals.get('session-1')).toBe(100);
-    expect(allocateGroupCost(groups[0], costs, totals)).toBeCloseTo(3);
-    expect(allocateGroupCost(groups[1], costs, totals)).toBeCloseTo(7);
+describe('mergeUsageTotals', () => {
+  it('sums counters across projects and keeps the extreme min/max timestamps', () => {
+    const merged = mergeUsageTotals([
+      makeTotals({ sessionCount: 2, totalCostUsd: 1.5, minSessionStartedAt: '2026-06-01T00:00:00.000Z', maxSessionStartedAt: '2026-06-10T00:00:00.000Z' }),
+      makeTotals({ sessionCount: 3, totalCostUsd: 2.5, costKnownCount: 0, minSessionStartedAt: '2026-05-20T00:00:00.000Z', maxSessionStartedAt: '2026-06-05T00:00:00.000Z' }),
+    ]);
+    expect(merged.sessionCount).toBe(5);
+    expect(merged.totalCostUsd).toBeCloseTo(4);
+    expect(merged.costKnownCount).toBe(1);
+    expect(merged.minSessionStartedAt).toBe('2026-05-20T00:00:00.000Z');
+    expect(merged.maxSessionStartedAt).toBe('2026-06-10T00:00:00.000Z');
   });
 
-  it('allocates zero for unknown sessions, zero-cost sessions, and null session ids', () => {
-    const groups = [makeGroup({ sessionId: null }), makeGroup({ sessionId: 'other' })];
-    const totals = buildSessionTokenTotals(groups);
-    expect(allocateGroupCost(groups[0], new Map(), totals)).toBe(0);
-    expect(allocateGroupCost(groups[1], new Map([['other', 0]]), totals)).toBe(0);
+  it('treats a project with no rows (null min/max) as neutral', () => {
+    const merged = mergeUsageTotals([
+      makeTotals({ sessionCount: 0, minSessionStartedAt: null, maxSessionStartedAt: null }),
+      makeTotals({ minSessionStartedAt: '2026-06-01T00:00:00.000Z', maxSessionStartedAt: '2026-06-02T00:00:00.000Z' }),
+    ]);
+    expect(merged.minSessionStartedAt).toBe('2026-06-01T00:00:00.000Z');
+    expect(merged.maxSessionStartedAt).toBe('2026-06-02T00:00:00.000Z');
+  });
+
+  it('merges an empty list to all-zero totals with null timestamps', () => {
+    const merged = mergeUsageTotals([]);
+    expect(merged.sessionCount).toBe(0);
+    expect(merged.totalCostUsd).toBe(0);
+    expect(merged.minSessionStartedAt).toBeNull();
   });
 });
 
@@ -255,11 +296,22 @@ describe('foldTokenSeries', () => {
       makeGroup({ bucketStartMs: hourStart + 2 * TURN_GROUP_MS, inputTokens: 20, outputTokens: 5 }),
       makeGroup({ bucketStartMs: new Date(2026, 5, 17, 12, 30).getTime(), inputTokens: 7, outputTokens: 3 }),
     ];
-    const series = foldTokenSeries(groups, new Map(), starts, 'hour');
+    const series = foldTokenSeries(groups, starts, 'hour');
     expect(series).toHaveLength(3);
     expect(series[0]).toMatchObject({ bucketStartMs: starts[0], inputTokens: 30, outputTokens: 10, turnCount: 2 });
     expect(series[1]).toMatchObject({ bucketStartMs: starts[1], inputTokens: 0, outputTokens: 0, turnCount: 0 });
     expect(series[2]).toMatchObject({ bucketStartMs: starts[2], inputTokens: 7, outputTokens: 3 });
+  });
+
+  it('sums the SQL-allocated cost shares into each chart bucket', () => {
+    const hourStart = new Date(2026, 5, 17, 10).getTime();
+    const starts = [hourStart];
+    const groups = [
+      makeGroup({ bucketStartMs: hourStart + TURN_GROUP_MS, allocatedCostUsd: 0.75 }),
+      makeGroup({ bucketStartMs: hourStart + 2 * TURN_GROUP_MS, allocatedCostUsd: 0.25 }),
+    ];
+    const series = foldTokenSeries(groups, starts, 'hour');
+    expect(series[0].allocatedCostUsd).toBeCloseTo(1);
   });
 
   it('drops groups older than the (clamped) first bucket', () => {
@@ -269,22 +321,21 @@ describe('foldTokenSeries', () => {
       makeGroup({ bucketStartMs: new Date(2026, 5, 10, 12).getTime(), inputTokens: 999 }),
       makeGroup({ bucketStartMs: dayStart + TURN_GROUP_MS, inputTokens: 5 }),
     ];
-    const series = foldTokenSeries(groups, new Map(), starts, 'day');
+    const series = foldTokenSeries(groups, starts, 'day');
     expect(series[0].inputTokens).toBe(5);
   });
 });
 
 describe('foldCostSeries', () => {
-  it('buckets session rows by the LOCAL day the session started', () => {
+  it('buckets 15-minute cost groups by the LOCAL day the sessions started', () => {
     const day1 = new Date(2026, 5, 17, 9, 30);
     const day2 = new Date(2026, 5, 18, 22, 0);
     const starts = [new Date(2026, 5, 17).getTime(), new Date(2026, 5, 18).getTime()];
-    const rows = [
-      makeRow({ sessionRecordId: 'a', sessionStartedAt: day1.toISOString(), totalCostUsd: 2 }),
-      makeRow({ sessionRecordId: 'b', sessionStartedAt: day1.toISOString(), totalCostUsd: 3 }),
-      makeRow({ sessionRecordId: 'c', sessionStartedAt: day2.toISOString(), totalCostUsd: 5 }),
+    const costGroups = [
+      makeCostGroup({ bucketStartMs: costGroupBucketOf(day1), costUsd: 5, sessionCount: 2 }),
+      makeCostGroup({ bucketStartMs: costGroupBucketOf(day2), costUsd: 5, sessionCount: 1 }),
     ];
-    const series = foldCostSeries(rows, starts, 'day');
+    const series = foldCostSeries(costGroups, starts, 'day');
     expect(series[0]).toMatchObject({ costUsd: 5, sessionCount: 2 });
     expect(series[1]).toMatchObject({ costUsd: 5, sessionCount: 1 });
   });
@@ -292,13 +343,13 @@ describe('foldCostSeries', () => {
   it('carries per-model splits (normalized base ids) that sum to the bucket totals', () => {
     const day = new Date(2026, 5, 17, 9, 30);
     const starts = [new Date(2026, 5, 17).getTime()];
-    const rows = [
-      makeRow({ sessionRecordId: 'a', sessionStartedAt: day.toISOString(), totalCostUsd: 2, totalInputTokens: 100, modelId: 'claude-opus-4-8' }),
+    const costGroups = [
+      makeCostGroup({ bucketStartMs: costGroupBucketOf(day), costUsd: 2, inputTokens: 100, modelId: 'claude-opus-4-8' }),
       // Dated pin of the same base model merges into one slice.
-      makeRow({ sessionRecordId: 'b', sessionStartedAt: day.toISOString(), totalCostUsd: 3, totalInputTokens: 50, modelId: 'claude-opus-4-8-20250514' }),
-      makeRow({ sessionRecordId: 'c', sessionStartedAt: day.toISOString(), totalCostUsd: 1, totalInputTokens: 25, modelId: null }),
+      makeCostGroup({ bucketStartMs: costGroupBucketOf(day), costUsd: 3, inputTokens: 50, modelId: 'claude-opus-4-8-20250514' }),
+      makeCostGroup({ bucketStartMs: costGroupBucketOf(day), costUsd: 1, inputTokens: 25, modelId: null }),
     ];
-    const [point] = foldCostSeries(rows, starts, 'day');
+    const [point] = foldCostSeries(costGroups, starts, 'day');
     expect(point.byModel).toHaveLength(2);
     const opus = point.byModel.find((slice) => slice.modelId === 'claude-opus-4-8');
     const unknown = point.byModel.find((slice) => slice.modelId === null);
@@ -310,18 +361,20 @@ describe('foldCostSeries', () => {
 });
 
 describe('computeKpis', () => {
-  it('sums usage_history fields and derives turn-side cache/burn fields', () => {
-    const rows = [
-      makeRow({ sessionRecordId: 'a', totalCostUsd: 2, totalInputTokens: 100, totalOutputTokens: 50 }),
-      makeRow({ sessionRecordId: 'b', totalCostUsd: 0, totalInputTokens: 10, totalOutputTokens: 5, agent: null }),
-    ];
+  it('carries the window totals and derives turn-side cache/burn fields', () => {
+    const totals = makeTotals({
+      sessionCount: 2,
+      totalCostUsd: 2,
+      totalInputTokens: 110,
+      totalOutputTokens: 55,
+      costKnownCount: 1,
+    });
     const groups = [
-      makeGroup({ sessionId: 'a', inputTokens: 600, outputTokens: 200, cacheReadTokens: 1000, cacheCreationTokens: 50 }),
-      makeGroup({ sessionId: 'a', inputTokens: 100, outputTokens: 100, cacheReadTokens: 500, cacheCreationTokens: 25 }),
+      makeGroup({ inputTokens: 600, outputTokens: 200, cacheReadTokens: 1000, cacheCreationTokens: 50, allocatedCostUsd: 1.6 }),
+      makeGroup({ bucketStartMs: TURN_GROUP_MS, inputTokens: 100, outputTokens: 100, cacheReadTokens: 500, cacheCreationTokens: 25, allocatedCostUsd: 0.4 }),
     ];
-    const costs = new Map([['a', 2], ['b', 0]]);
     const twoHoursMs = 2 * 3_600_000;
-    const kpis = computeKpis(rows, groups, costs, twoHoursMs);
+    const kpis = computeKpis(totals, groups, twoHoursMs);
 
     expect(kpis.totalCostUsd).toBe(2);
     expect(kpis.costKnown).toBe(true);
@@ -338,14 +391,13 @@ describe('computeKpis', () => {
   });
 
   it('reports null burn rates with no turn data, and null $/hr when no cost was reported', () => {
-    const noTurns = computeKpis([makeRow()], [], new Map(), 3_600_000);
+    const noTurns = computeKpis(makeTotals(), [], 3_600_000);
     expect(noTurns.burnRateTokensPerHour).toBeNull();
     expect(noTurns.burnRateUsdPerHour).toBeNull();
 
     const noCost = computeKpis(
-      [makeRow({ totalCostUsd: 0 })],
+      makeTotals({ totalCostUsd: 0, costKnownCount: 0 }),
       [makeGroup()],
-      new Map([['session-1', 0]]),
       3_600_000,
     );
     expect(noCost.costKnown).toBe(false);
@@ -354,7 +406,11 @@ describe('computeKpis', () => {
   });
 
   it('floors the elapsed window at one minute so tiny ranges cannot explode the rate', () => {
-    const kpis = computeKpis([], [makeGroup({ inputTokens: 60, outputTokens: 0 })], new Map(), 1);
+    const kpis = computeKpis(
+      makeTotals({ sessionCount: 0, costKnownCount: 0 }),
+      [makeGroup({ inputTokens: 60, outputTokens: 0 })],
+      1,
+    );
     // 60 tokens over the 1-minute floor = 3600 tokens/hr, not 216M.
     expect(kpis.burnRateTokensPerHour).toBeCloseTo(3600);
   });
@@ -362,39 +418,57 @@ describe('computeKpis', () => {
 
 describe('breakdowns', () => {
   it('merges dated model pins and [1m] variants onto the base model id', () => {
-    const rows = [
-      makeRow({ sessionRecordId: 'a', modelId: 'claude-opus-4-8', totalInputTokens: 100 }),
-      makeRow({ sessionRecordId: 'b', modelId: 'claude-opus-4-8-20250514', totalInputTokens: 50 }),
-      makeRow({ sessionRecordId: 'c', modelId: 'claude-opus-4-8[1m]', totalInputTokens: 25 }),
-      makeRow({ sessionRecordId: 'd', modelId: null, totalInputTokens: 5 }),
+    const rollup = [
+      makeRollup({ modelId: 'claude-opus-4-8', inputTokens: 100 }),
+      makeRollup({ modelId: 'claude-opus-4-8-20250514', inputTokens: 50 }),
+      makeRollup({ modelId: 'claude-opus-4-8[1m]', inputTokens: 25 }),
+      makeRollup({ modelId: null, modelDisplayName: null, inputTokens: 5 }),
     ];
-    const breakdown = buildModelBreakdown(rows);
+    const breakdown = buildModelBreakdown(rollup);
     expect(breakdown).toHaveLength(2);
     expect(breakdown[0].modelId).toBe('claude-opus-4-8');
     expect(breakdown[0].sessionCount).toBe(3);
     expect(breakdown[1].modelId).toBeNull();
   });
 
-  it('groups agents with null bucketed separately, sorted by tokens descending', () => {
-    const rows = [
-      makeRow({ sessionRecordId: 'a', agent: 'codex', totalInputTokens: 10 }),
-      makeRow({ sessionRecordId: 'b', agent: 'claude', totalInputTokens: 500 }),
-      makeRow({ sessionRecordId: 'c', agent: 'claude', totalInputTokens: 100 }),
-      makeRow({ sessionRecordId: 'd', agent: null, totalInputTokens: 1 }),
+  it('keeps the display name from the FIRST rollup row per base id (earliest-session order)', () => {
+    const rollup = [
+      makeRollup({ modelId: 'claude-opus-4-8', modelDisplayName: 'Opus 4.8', inputTokens: 10 }),
+      makeRollup({ modelId: 'claude-opus-4-8-20250514', modelDisplayName: 'Opus 4.8 (pinned)', inputTokens: 999 }),
     ];
-    const breakdown = buildAgentBreakdown(rows);
+    const breakdown = buildModelBreakdown(rollup);
+    expect(breakdown).toHaveLength(1);
+    expect(breakdown[0].modelDisplayName).toBe('Opus 4.8');
+  });
+
+  it('sums pre-grouped session counts instead of counting rows', () => {
+    const rollup = [
+      makeRollup({ modelId: 'claude-opus-4-8', sessionCount: 4 }),
+      makeRollup({ modelId: 'claude-opus-4-8', effort: 'high', sessionCount: 3 }),
+    ];
+    expect(buildModelBreakdown(rollup)[0].sessionCount).toBe(7);
+  });
+
+  it('groups agents with null bucketed separately, sorted by tokens descending', () => {
+    const rollup = [
+      makeRollup({ agent: 'codex', inputTokens: 10 }),
+      makeRollup({ agent: 'claude', inputTokens: 500 }),
+      makeRollup({ agent: 'claude', effort: 'high', inputTokens: 100 }),
+      makeRollup({ agent: null, inputTokens: 1 }),
+    ];
+    const breakdown = buildAgentBreakdown(rollup);
     expect(breakdown.map((entry) => entry.agent)).toEqual(['claude', 'codex', null]);
     expect(breakdown[0].sessionCount).toBe(2);
   });
 
   it('groups efforts with null (agent default) as its own bucket, sorted by tokens descending', () => {
-    const rows = [
-      makeRow({ sessionRecordId: 'a', effort: 'high', totalInputTokens: 300, totalCostUsd: 3 }),
-      makeRow({ sessionRecordId: 'b', effort: 'high', totalInputTokens: 200, totalCostUsd: 2 }),
-      makeRow({ sessionRecordId: 'c', effort: 'low', totalInputTokens: 50 }),
-      makeRow({ sessionRecordId: 'd', effort: null, totalInputTokens: 5000 }),
+    const rollup = [
+      makeRollup({ effort: 'high', inputTokens: 300, costUsd: 3 }),
+      makeRollup({ effort: 'high', agent: 'codex', inputTokens: 200, costUsd: 2 }),
+      makeRollup({ effort: 'low', inputTokens: 50 }),
+      makeRollup({ effort: null, inputTokens: 5000 }),
     ];
-    const breakdown = buildEffortBreakdown(rows);
+    const breakdown = buildEffortBreakdown(rollup);
     expect(breakdown.map((entry) => entry.effort)).toEqual([null, 'high', 'low']);
     expect(breakdown[1].sessionCount).toBe(2);
     expect(breakdown[1].costUsd).toBe(5);

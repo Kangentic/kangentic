@@ -5,6 +5,7 @@ import { useConfigStore } from '../../stores/config-store';
 import { useDictationStore } from '../../stores/dictation-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useUsageDashboardStore } from '../../stores/usage-dashboard-store';
+import { warmStatsDashboard } from '../stats/LazyStatsDashboard';
 import { usePopOut } from '../../pop-out/usePopOut';
 import { selectCurrentProjectTransientSessionIds } from '../../stores/session-store/transient-session-slice';
 import { isWorktreePath } from '../../../shared/git-utils';
@@ -143,6 +144,13 @@ export function TitleBar({
   const statsOpen = useUsageDashboardStore((state) => state.statsOpen);
   const toggleStats = useUsageDashboardStore((state) => state.toggle);
   const prefetchStats = useUsageDashboardStore((state) => state.prefetch);
+  // Hover intent warms BOTH halves of a stats open: the payload cache (store
+  // prefetch, 5s-throttled) and the lazy recharts chunk (once-guarded), so a
+  // click that follows the hover opens with data and no skeleton.
+  const handleStatsHover = () => {
+    prefetchStats();
+    warmStatsDashboard();
+  };
   // When the stats dashboard is detached into its own window, this button
   // focuses that window instead of toggling the (suppressed) in-app overlay.
   const statsPopOut = usePopOut('stats', {});
@@ -290,7 +298,7 @@ export function TitleBar({
         )}
         <button
           onClick={() => (statsPopOut.isOpen ? statsPopOut.focus() : toggleStats())}
-          onMouseEnter={prefetchStats}
+          onMouseEnter={handleStatsHover}
           className={`p-1.5 hover:bg-surface-hover rounded transition-colors ${
             statsOpen || statsPopOut.isOpen ? 'text-fg bg-surface-hover' : 'text-fg-muted hover:text-fg'
           }`}

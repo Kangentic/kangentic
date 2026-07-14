@@ -13,6 +13,98 @@ const projectDir = path.resolve(__dirname, '..');
 // must be physically present in the binary the test launches.
 const keepDevtools = process.env.KANGENTIC_BUILD_DEV === '1';
 
+/**
+ * Fails the build unless the two heavy lazy-only vendors (recharts behind
+ * LazyStatsDashboard, monaco behind the lazy ChangesPanel) stayed OUT of the
+ * renderer entry's static import closure. Rolldown's chunking has silently
+ * defeated both boundaries before (a manualChunks group absorbed react's CJS
+ * interop and became a static import of the entry, parsing the whole vendor
+ * at every cold start), so this is the build-time backstop. Invariants:
+ *   1. A `recharts-*.js` chunk EXISTS in assets/ (proves the manualChunks
+ *      name in vite.config.mts did not silently rot on a future upgrade).
+ *   2. Walking the Vite manifest's static `imports` closure from the entry
+ *      never reaches that chunk.
+ *   3. No chunk in that static closure CONTAINS monaco (marker-string scan;
+ *      monaco has no named chunk by design - see vite.config.mts), and some
+ *      lazy chunk does (proving the markers still detect monaco at all).
+ * Falls back to asserting index.html carries no reference to the recharts
+ * chunk if the manifest is ever unavailable.
+ */
+function assertVendorChunksLazy(rendererOutDir) {
+  const assetsDir = path.join(rendererOutDir, 'assets');
+  const assetFiles = fs.readdirSync(assetsDir);
+  const rechartsChunk = assetFiles.find((name) => name.startsWith('recharts-') && name.endsWith('.js'));
+  if (!rechartsChunk) {
+    throw new Error(
+      '[build] No recharts-*.js chunk in the renderer output. Either recharts became statically '
+      + 'bundled into another chunk (check the manualChunks entry in vite.config.mts) or the '
+      + 'dependency layout changed; the lazy-stats bundle assertion cannot run.',
+    );
+  }
+
+  const manifestPath = path.join(rendererOutDir, '.vite', 'manifest.json');
+  if (!fs.existsSync(manifestPath)) {
+    console.warn('[build] No Vite manifest found; falling back to the index.html reference check');
+    const indexHtml = fs.readFileSync(path.join(rendererOutDir, 'index.html'), 'utf8');
+    if (indexHtml.includes(rechartsChunk)) {
+      throw new Error(`[build] index.html references ${rechartsChunk} - recharts leaked into the startup path`);
+    }
+    return;
+  }
+
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  const entryKeys = Object.keys(manifest).filter((key) => manifest[key].isEntry);
+  if (entryKeys.length === 0) {
+    throw new Error('[build] Vite manifest has no entry chunk; cannot verify the lazy vendor splits');
+  }
+  const staticallyReachable = new Set();
+  const queue = [...entryKeys];
+  while (queue.length > 0) {
+    const key = queue.pop();
+    if (staticallyReachable.has(key) || !manifest[key]) continue;
+    staticallyReachable.add(key);
+    for (const dependency of manifest[key].imports ?? []) queue.push(dependency);
+  }
+  const staticFiles = new Set([...staticallyReachable].map((key) => manifest[key].file));
+
+  const rechartsFile = `assets/${rechartsChunk}`;
+  if (staticFiles.has(rechartsFile)) {
+    throw new Error(
+      `[build] ${rechartsChunk} is in the entry's STATIC import closure. Something imports recharts `
+      + '(or a stats module that pulls it) statically from the startup path - route it through the '
+      + 'LazyStatsDashboard boundary instead.',
+    );
+  }
+
+  // Monaco: marker-string scan. These literals appear in monaco's editor
+  // sources and nowhere in first-party code; web workers are separate
+  // entries loaded inside worker contexts, not part of the startup path.
+  const MONACO_MARKERS = ['editorViewZones', 'monaco-editor'];
+  const chunkFiles = assetFiles.filter((name) => name.endsWith('.js') && !name.includes('worker'));
+  let monacoSeenSomewhere = false;
+  for (const chunkFile of chunkFiles) {
+    const source = fs.readFileSync(path.join(assetsDir, chunkFile), 'utf8');
+    const containsMonaco = MONACO_MARKERS.some((marker) => source.includes(marker));
+    if (!containsMonaco) continue;
+    monacoSeenSomewhere = true;
+    if (staticFiles.has(`assets/${chunkFile}`)) {
+      throw new Error(
+        `[build] ${chunkFile} is in the entry's STATIC import closure but contains monaco. `
+        + 'Monaco must only be reachable through the lazy ChangesPanel boundary - do NOT give it a '
+        + 'manualChunks group (see vite.config.mts), and check for a new static import of '
+        + 'monaco-editor or @monaco-editor/react from the startup path.',
+      );
+    }
+  }
+  if (!monacoSeenSomewhere) {
+    throw new Error(
+      '[build] No chunk contains the monaco marker strings - the lazy-monaco assertion has gone '
+      + 'blind (markers rotted on a monaco upgrade?). Update MONACO_MARKERS in scripts/build.js.',
+    );
+  }
+  console.log(`[build] Verified ${rechartsChunk} and all monaco chunks are reachable only via dynamic import`);
+}
+
 const esbuildCommon = {
   bundle: true,
   platform: 'node',
@@ -54,15 +146,21 @@ async function build() {
     `[build] Building renderer with Vite (main-process devtools ${keepDevtools ? 'INCLUDED' : 'tree-shaken'})...`,
   );
   const { build: viteBuild } = await import('vite');
+  const rendererOutDir = path.join(projectDir, '.vite/build/renderer/main_window');
   await viteBuild({
     configFile: path.join(projectDir, 'vite.config.mts'),
     base: './',
     build: {
-      outDir: path.join(projectDir, '.vite/build/renderer/main_window'),
+      outDir: rendererOutDir,
       emptyOutDir: true,
+      // Emit .vite/manifest.json (a few KB, ships harmlessly inside the
+      // build dir) so assertRechartsIsLazy can walk the entry's static
+      // import closure.
+      manifest: true,
     },
   });
   console.log('[build] Renderer built');
+  assertVendorChunksLazy(rendererOutDir);
 
   console.log('[build] Building main + preload with esbuild...');
   await Promise.all([
@@ -112,7 +210,16 @@ async function build() {
   console.log('[build] Done! Output in .vite/build/');
 }
 
-build().catch((err) => {
-  console.error('[build] Failed:', err);
-  process.exit(1);
-});
+// Only run the build when this script is invoked directly (`node
+// scripts/build.js`, which is what `npm run build` does) - never as a side
+// effect of `require`ing the module. This lets tests/unit/*.test.ts pull in
+// `assertVendorChunksLazy` for direct unit coverage without kicking off a
+// real multi-minute tsc + Vite + esbuild build as an import side effect.
+if (require.main === module) {
+  build().catch((err) => {
+    console.error('[build] Failed:', err);
+    process.exit(1);
+  });
+}
+
+module.exports = { assertVendorChunksLazy };

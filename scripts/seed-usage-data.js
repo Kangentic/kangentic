@@ -20,7 +20,11 @@
  *   node scripts/seed-usage-data.js --list                   show registered projects
  *
  * Options: --days N (default 14), --config-dir <path> (default per-OS kangentic dir),
- *          --seed N (PRNG seed, default 42 - reruns are deterministic).
+ *          --seed N (PRNG seed, default 42 - reruns are deterministic),
+ *          --sessions-per-day N (weekday average; weekends dip to ~40%.
+ *          Default keeps the organic 2-5/day mix. Use a large value to build
+ *          perf-test volumes, e.g. --days 120 --sessions-per-day 30 for
+ *          ~3,600 usage_history rows per project).
  *
  * A dense trailing-2h block tiles several short sessions across the full live
  * window so the Live range's per-bucket and cumulative charts have data across
@@ -49,7 +53,7 @@ function defaultConfigDir() {
 }
 
 function parseArgs(argv) {
-  const args = { days: 14, seed: 42, configDir: defaultConfigDir() };
+  const args = { days: 14, seed: 42, sessionsPerDay: null, configDir: defaultConfigDir() };
   for (let index = 2; index < argv.length; index++) {
     const arg = argv[index];
     if (arg === '--project') args.project = argv[++index];
@@ -58,6 +62,7 @@ function parseArgs(argv) {
     else if (arg === '--list') args.list = true;
     else if (arg === '--days') args.days = Number(argv[++index]);
     else if (arg === '--seed') args.seed = Number(argv[++index]);
+    else if (arg === '--sessions-per-day') args.sessionsPerDay = Number(argv[++index]);
     else if (arg === '--config-dir') args.configDir = argv[++index];
     else {
       console.error(`Unknown argument: ${arg}`);
@@ -120,7 +125,7 @@ function listProjects(configDir) {
   }
 }
 
-function seedProject(configDir, project, days, random) {
+function seedProject(configDir, project, days, sessionsPerDay, random) {
   const dbPath = path.join(configDir, 'projects', `${project.id}.db`);
   if (!fs.existsSync(dbPath)) {
     console.warn(`  skip ${project.name}: no project DB (open it in the app first)`);
@@ -214,9 +219,14 @@ function seedProject(configDir, project, days, random) {
       for (let dayOffset = days - 1; dayOffset >= 0; dayOffset--) {
         const day = new Date();
         day.setDate(day.getDate() - dayOffset);
-        // Weekend-ish dip + general variation.
+        // Weekend-ish dip + general variation. --sessions-per-day overrides
+        // the weekday base (weekends dip to ~40% of it) for perf-test volume;
+        // the formula shape is identical either way, so an unset flag leaves
+        // the PRNG stream (and every previously-seeded value) unchanged.
         const isWeekend = day.getDay() === 0 || day.getDay() === 6;
-        const sessionsToday = Math.max(1, Math.round((isWeekend ? 2 : 5) * (0.5 + random())));
+        const weekdayBase = sessionsPerDay ?? 5;
+        const weekendBase = sessionsPerDay === null ? 2 : Math.max(1, Math.round(sessionsPerDay * 0.4));
+        const sessionsToday = Math.max(1, Math.round((isWeekend ? weekendBase : weekdayBase) * (0.5 + random())));
 
         for (let sessionIndex = 0; sessionIndex < sessionsToday; sessionIndex++) {
           const profile = pickProfile(random);
@@ -300,7 +310,7 @@ function main() {
   console.log(`${args.clean ? 'Cleaning' : 'Seeding'} usage data (config dir: ${args.configDir})`);
   for (const project of targets) {
     if (args.clean) cleanProject(args.configDir, project);
-    else seedProject(args.configDir, project, args.days, random);
+    else seedProject(args.configDir, project, args.days, args.sessionsPerDay, random);
   }
   if (!args.clean) {
     console.log('Done. Open the dashboard (title-bar chart icon / Mod+Shift+U); switch ranges or wait ~30s for the poll to pick the rows up.');

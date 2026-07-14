@@ -86,40 +86,47 @@ function makeUsageDb(): { db: Database.Database; table: Map<string, FakeUsageRow
         return rows.filter((row) => wanted.has(row.turn_uuid));
       }
       if (sql.includes('GROUP BY bucketStartMs')) {
-        // The grouped burn-rate read: params are (groupMs, groupMs[, sinceMs]).
-        // Mirrors the real SQL: NULL ts excluded, integer-division bucketing,
-        // grouped by (bucket, session, model), ordered by bucket ascending.
-        const groupMs = Number(args[0]);
-        expect(args[1]).toBe(args[0]);
-        const sinceMs = sql.includes('ts >= ?') ? Number(args[2]) : null;
-        const grouped = new Map<string, {
+        // The grouped burn-rate read, bucket-only output. Mirrors the real
+        // SQL's bind order: turn window (session_tokens CTE), cost window,
+        // groupMs twice (bucket expression), turn window again (outer scan).
+        // This mock has no usage_history table, so allocatedCostUsd is
+        // always 0 here; the allocation join is pinned against a REAL
+        // database in conversation-usage-cost-allocation.test.ts.
+        const hasSince = sql.includes('ts >= ?');
+        const hasUntil = sql.includes('ts < ?');
+        const windowLength = (hasSince ? 1 : 0) + (hasUntil ? 1 : 0);
+        const costLength = (sql.includes('session_started_at >= ?') ? 1 : 0)
+          + (sql.includes('session_started_at < ?') ? 1 : 0);
+        const groupMs = Number(args[windowLength + costLength]);
+        expect(args[windowLength + costLength + 1]).toBe(args[windowLength + costLength]);
+        const sinceMs = hasSince ? Number(args[0]) : null;
+        const untilMs = hasUntil ? Number(args[hasSince ? 1 : 0]) : null;
+        const grouped = new Map<number, {
           bucketStartMs: number;
-          sessionId: string | null;
-          model: string | null;
           inputTokens: number;
           outputTokens: number;
           cacheCreationTokens: number;
           cacheReadTokens: number;
           turnCount: number;
+          allocatedCostUsd: number;
         }>();
         for (const row of rows) {
           if (row.ts === null) continue;
           if (sinceMs !== null && row.ts < sinceMs) continue;
+          if (untilMs !== null && row.ts >= untilMs) continue;
           const bucketStartMs = Math.floor(row.ts / groupMs) * groupMs;
-          const key = `${bucketStartMs}|${row.session_id ?? ''}|${row.model ?? ''}`;
-          let entry = grouped.get(key);
+          let entry = grouped.get(bucketStartMs);
           if (!entry) {
             entry = {
               bucketStartMs,
-              sessionId: row.session_id,
-              model: row.model,
               inputTokens: 0,
               outputTokens: 0,
               cacheCreationTokens: 0,
               cacheReadTokens: 0,
               turnCount: 0,
+              allocatedCostUsd: 0,
             };
-            grouped.set(key, entry);
+            grouped.set(bucketStartMs, entry);
           }
           entry.inputTokens += row.input_tokens;
           entry.outputTokens += row.output_tokens;
@@ -384,7 +391,7 @@ describe('ConversationIndexer.indexSession populates the usage ledger', () => {
 describe('ConversationUsageStore.getGroupedUsageSince', () => {
   const FIVE_MIN = 5 * 60_000;
 
-  it('groups turns into fixed UTC buckets per (bucket, session, model), oldest first', () => {
+  it('groups turns into fixed UTC buckets (bucket-only output), oldest first', () => {
     const { db } = makeUsageDb();
     const store = new ConversationUsageStore(db);
     // Two turns inside the same 5-min bucket, one in the next bucket.
@@ -401,8 +408,6 @@ describe('ConversationUsageStore.getGroupedUsageSince', () => {
     const groups = store.getGroupedUsageSince(null, FIVE_MIN);
     expect(groups).toHaveLength(2);
     expect(groups[0].bucketStartMs).toBe(FIVE_MIN * 100);
-    expect(groups[0].sessionId).toBe('session-1');
-    expect(groups[0].model).toBe('model-x');
     expect(groups[0].inputTokens).toBe(40);
     expect(groups[0].outputTokens).toBe(60);
     expect(groups[0].turnCount).toBe(2);
@@ -444,7 +449,7 @@ describe('ConversationUsageStore.getGroupedUsageSince', () => {
     expect(groups[0].bucketStartMs).toBe(FIVE_MIN * 20);
   });
 
-  it('separates groups by session and model within one bucket', () => {
+  it('merges turns from different sessions and models into one bucket row', () => {
     const { db } = makeUsageDb();
     const store = new ConversationUsageStore(db);
     store.recordTurns(owner, [
@@ -455,10 +460,12 @@ describe('ConversationUsageStore.getGroupedUsageSince', () => {
       { turnUuid: 'a3', ts: FIVE_MIN * 10 + 300, model: 'model-x', usage: usage() },
     ], now);
 
+    // Bucket-only output: one row for the shared bucket, three turns summed.
+    // (Per-session cost allocation happens INSIDE the SQL; pinned against a
+    // real database in conversation-usage-cost-allocation.test.ts.)
     const groups = store.getGroupedUsageSince(null, FIVE_MIN);
-    expect(groups).toHaveLength(3);
-    expect(new Set(groups.map((group) => `${group.sessionId}|${group.model}`))).toEqual(
-      new Set(['session-1|model-x', 'session-1|model-y', 'session-2|model-x']),
-    );
+    expect(groups).toHaveLength(1);
+    expect(groups[0].turnCount).toBe(3);
+    expect(groups[0].inputTokens).toBe(30);
   });
 });

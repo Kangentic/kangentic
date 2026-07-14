@@ -534,125 +534,126 @@ export class SessionRepository {
   /**
    * Get summaries for all tasks that have metric data, keyed by task_id.
    * Aggregates per-PTY metrics across all session records per task.
+   *
+   * The aggregation runs entirely in SQL (generalizing getSummaryForTask with
+   * GROUP BY task_id) so the synchronous main-process JS work is O(tasks), not
+   * O(historical session rows). Semantics mirror getSummaryForTask exactly:
+   * SUM cost / duration / compactions / tool calls / lines across every run,
+   * MAX files_changed, MIN/MAX timeline; tokens take the latest row per session
+   * lineage (COALESCE(agent_session_id, id)) summed across lineages, because a
+   * flat SUM would double-count a session resumed across restarts; scalars
+   * (model / exit code / tool breakdown) come from the latest record.
    */
   listAllSummaries(): Record<string, SessionSummary> {
     const rows = this.db.prepare(
-      `SELECT
-         s.task_id,
+      `WITH costed AS (
+         SELECT id, task_id, agent_session_id, total_cost_usd, total_input_tokens,
+                total_output_tokens, model_display_name, total_duration_ms, exit_code,
+                started_at, exited_at, suspended_at, tool_call_count, lines_added,
+                lines_removed, files_changed, tool_breakdown, compaction_count
+         FROM sessions
+         WHERE total_cost_usd IS NOT NULL
+       ),
+       agg AS (
+         SELECT task_id,
+                COALESCE(SUM(total_cost_usd), 0) AS total_cost_usd,
+                COALESCE(SUM(total_duration_ms), 0) AS total_duration_ms,
+                COALESCE(SUM(tool_call_count), 0) AS total_tool_calls,
+                COALESCE(SUM(compaction_count), 0) AS total_compactions,
+                COALESCE(SUM(lines_added), 0) AS total_lines_added,
+                COALESCE(SUM(lines_removed), 0) AS total_lines_removed,
+                MAX(COALESCE(files_changed, 0)) AS max_files_changed,
+                MIN(started_at) AS earliest_started_at,
+                MAX(COALESCE(exited_at, suspended_at)) AS latest_ended_at
+         FROM costed
+         GROUP BY task_id
+       ),
+       lineage_tokens AS (
+         SELECT task_id,
+                COALESCE(SUM(input_tokens), 0) AS total_input_tokens,
+                COALESCE(SUM(output_tokens), 0) AS total_output_tokens
+         FROM (
+           SELECT task_id,
+                  total_input_tokens AS input_tokens,
+                  total_output_tokens AS output_tokens,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY task_id, COALESCE(agent_session_id, id)
+                    ORDER BY started_at DESC
+                  ) AS rn
+           FROM costed
+         )
+         WHERE rn = 1
+         GROUP BY task_id
+       ),
+       latest AS (
+         SELECT task_id, agent_session_id, id AS record_id, model_display_name,
+                exit_code, tool_breakdown,
+                ROW_NUMBER() OVER (PARTITION BY task_id ORDER BY started_at DESC) AS rn
+         FROM costed
+       )
+       SELECT
+         agg.task_id,
          t.created_at AS task_created_at,
-         s.agent_session_id,
-         s.id AS record_id,
-         s.total_cost_usd,
-         s.total_input_tokens,
-         s.total_output_tokens,
-         s.model_display_name,
-         s.total_duration_ms,
-         s.exit_code,
-         s.started_at,
-         s.exited_at,
-         s.suspended_at,
-         s.tool_call_count,
-         s.lines_added,
-         s.lines_removed,
-         s.files_changed,
-         s.tool_breakdown,
-         s.compaction_count,
-         ROW_NUMBER() OVER (PARTITION BY s.task_id ORDER BY s.started_at DESC) AS row_num
-       FROM sessions s
-       JOIN tasks t ON t.id = s.task_id
-       WHERE s.total_cost_usd IS NOT NULL`
+         agg.total_cost_usd,
+         agg.total_duration_ms,
+         agg.total_tool_calls,
+         agg.total_compactions,
+         agg.total_lines_added,
+         agg.total_lines_removed,
+         agg.max_files_changed,
+         agg.earliest_started_at,
+         agg.latest_ended_at,
+         lineage_tokens.total_input_tokens,
+         lineage_tokens.total_output_tokens,
+         latest.agent_session_id,
+         latest.record_id,
+         latest.model_display_name,
+         latest.exit_code,
+         latest.tool_breakdown
+       FROM agg
+       JOIN lineage_tokens ON lineage_tokens.task_id = agg.task_id
+       JOIN latest ON latest.task_id = agg.task_id AND latest.rn = 1
+       JOIN tasks t ON t.id = agg.task_id`
     ).all() as Array<{
       task_id: string;
       task_created_at: string;
+      total_cost_usd: number;
+      total_duration_ms: number;
+      total_tool_calls: number;
+      total_compactions: number;
+      total_lines_added: number;
+      total_lines_removed: number;
+      max_files_changed: number;
+      earliest_started_at: string;
+      latest_ended_at: string | null;
+      total_input_tokens: number;
+      total_output_tokens: number;
       agent_session_id: string | null;
       record_id: string;
-      total_cost_usd: number | null;
-      total_input_tokens: number | null;
-      total_output_tokens: number | null;
       model_display_name: string | null;
-      total_duration_ms: number | null;
       exit_code: number | null;
-      started_at: string;
-      exited_at: string | null;
-      suspended_at: string | null;
-      tool_call_count: number | null;
-      lines_added: number | null;
-      lines_removed: number | null;
-      files_changed: number | null;
       tool_breakdown: string | null;
-      compaction_count: number | null;
-      row_num: number;
     }>;
 
-    // Group by task_id: latest record provides cumulative metrics, all records contribute to aggregates
-    const taskGroups = new Map<string, Array<typeof rows[number]>>();
-    for (const row of rows) {
-      const group = taskGroups.get(row.task_id);
-      if (group) {
-        group.push(row);
-      } else {
-        taskGroups.set(row.task_id, [row]);
-      }
-    }
-
     const result: Record<string, SessionSummary> = {};
-    for (const [taskId, group] of taskGroups) {
-      const latest = group.find((row) => row.row_num === 1)!;
-      // Lifetime aggregation - mirrors getSummaryForTask: SUM cost / duration /
-      // compactions / tool calls / lines across every run, MAX files_changed,
-      // and tokens are the latest row per session lineage SUMmed across lineages
-      // (a flat SUM would double-count a session resumed across restarts).
-      let totalCostUsd = 0;
-      let totalDurationMs = 0;
-      let totalCompactions = 0;
-      let totalToolCalls = 0;
-      let totalLinesAdded = 0;
-      let totalLinesRemoved = 0;
-      let maxFilesChanged = 0;
-      let totalInputTokens = 0;
-      let totalOutputTokens = 0;
-      let earliestStartedAt = latest.started_at;
-      let latestEndedAt: string | null = null;
-      // Rows are ordered started_at DESC within the task, so the FIRST row seen
-      // for a lineage is its latest - the one carrying the transcript cumulative.
-      const seenLineages = new Set<string>();
-
-      for (const row of group) {
-        totalCostUsd += row.total_cost_usd ?? 0;
-        totalDurationMs += row.total_duration_ms ?? 0;
-        totalCompactions += row.compaction_count ?? 0;
-        totalToolCalls += row.tool_call_count ?? 0;
-        totalLinesAdded += row.lines_added ?? 0;
-        totalLinesRemoved += row.lines_removed ?? 0;
-        maxFilesChanged = Math.max(maxFilesChanged, row.files_changed ?? 0);
-        if (row.started_at < earliestStartedAt) earliestStartedAt = row.started_at;
-        const endedAt = row.exited_at ?? row.suspended_at;
-        if (endedAt && (!latestEndedAt || endedAt > latestEndedAt)) latestEndedAt = endedAt;
-        const lineageKey = row.agent_session_id ?? row.record_id;
-        if (!seenLineages.has(lineageKey)) {
-          seenLineages.add(lineageKey);
-          totalInputTokens += row.total_input_tokens ?? 0;
-          totalOutputTokens += row.total_output_tokens ?? 0;
-        }
-      }
-
-      result[taskId] = {
-        sessionId: latest.agent_session_id ?? latest.record_id,
-        totalCostUsd,
-        totalInputTokens,
-        totalOutputTokens,
-        modelDisplayName: latest.model_display_name ?? '',
-        durationMs: totalDurationMs,
-        toolCallCount: totalToolCalls,
-        compactionCount: totalCompactions,
-        linesAdded: totalLinesAdded,
-        linesRemoved: totalLinesRemoved,
-        filesChanged: maxFilesChanged,
-        taskCreatedAt: latest.task_created_at,
-        startedAt: earliestStartedAt,
-        exitedAt: latestEndedAt,
-        exitCode: latest.exit_code,
-        toolBreakdown: parseToolBreakdown(latest.tool_breakdown),
+    for (const row of rows) {
+      result[row.task_id] = {
+        sessionId: row.agent_session_id ?? row.record_id,
+        totalCostUsd: row.total_cost_usd,
+        totalInputTokens: row.total_input_tokens,
+        totalOutputTokens: row.total_output_tokens,
+        modelDisplayName: row.model_display_name ?? '',
+        durationMs: row.total_duration_ms,
+        toolCallCount: row.total_tool_calls,
+        compactionCount: row.total_compactions,
+        linesAdded: row.total_lines_added,
+        linesRemoved: row.total_lines_removed,
+        filesChanged: row.max_files_changed,
+        taskCreatedAt: row.task_created_at,
+        startedAt: row.earliest_started_at,
+        exitedAt: row.latest_ended_at,
+        exitCode: row.exit_code,
+        toolBreakdown: parseToolBreakdown(row.tool_breakdown),
       };
     }
     return result;

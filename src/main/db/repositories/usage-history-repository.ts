@@ -1,23 +1,63 @@
 import type Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
 
-/** One usage_history row as consumed by the usage-stats service. */
-export interface UsageHistoryRow {
-  sessionRecordId: string;
-  sessionStartedAt: string;
+/**
+ * One-row window aggregate of usage_history (SUM/COUNT/MIN/MAX pushed into
+ * SQL so the synchronous main-process JS work is O(1) per project instead of
+ * O(historical rows)). Feeds the dashboard KPI totals, previous-period
+ * deltas, and per-project summaries.
+ */
+export interface UsageWindowTotals {
+  sessionCount: number;
   totalCostUsd: number;
   totalInputTokens: number;
   totalOutputTokens: number;
-  totalDurationMs: number | null;
   toolCallCount: number;
-  modelId: string | null;
-  modelDisplayName: string | null;
   linesAdded: number;
   linesRemoved: number;
   filesChanged: number;
   compactionCount: number;
+  totalDurationMs: number;
+  /** Rows with total_cost_usd > 0 (drives the costKnown KPI flag). */
+  costKnownCount: number;
+  minSessionStartedAt: string | null;
+  maxSessionStartedAt: string | null;
+}
+
+/**
+ * One (model_id, model_display_name, agent, effort) rollup row - O(distinct
+ * dimension combos) rows per window. Feeds the by-model / by-agent /
+ * by-effort breakdowns and the per-project topAgent, which regroup these in
+ * JS (model rows merge further on the parsed BASE model id, a string-shape
+ * normalization SQL cannot express).
+ */
+export interface UsageRollupRow {
+  modelId: string | null;
+  modelDisplayName: string | null;
   agent: string | null;
   effort: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  sessionCount: number;
+}
+
+/**
+ * usage_history grouped to fixed UTC buckets of the service-chosen width
+ * (15 minutes) per model - the cost-series input. Like the turn-group query,
+ * fine UTC buckets nest exactly into local hour/day/week chart buckets
+ * (every real-world UTC offset is a multiple of 15 minutes), so folding
+ * groups in JS lands each session in the same chart bucket as folding raw
+ * rows did.
+ */
+export interface UsageCostGroupRow {
+  /** UTC-aligned group start (epoch ms), a multiple of the groupMs passed in. */
+  bucketStartMs: number;
+  modelId: string | null;
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  sessionCount: number;
 }
 
 export interface RecordSessionUsageInput {
@@ -155,37 +195,13 @@ export class UsageHistoryRepository {
   }
 
   /**
-   * List all history rows whose session started on or after `since` (null =
-   * all time) and, when `until` is given, strictly before it (the dashboard's
-   * day drill-down needs a bounded window). Oldest first. One query feeds the
-   * usage dashboard's KPI totals, cost-per-day series, and by-model /
-   * by-agent breakdowns; row counts are per-finalized-session (hundreds to
-   * low thousands), so aggregating in JS is cheap and keeps the bucketing
-   * logic in pure, unit-testable functions. Filters on `session_started_at`
-   * (when the work happened, not when the metrics were flushed) so "Today"
-   * means "session started today" even for sessions that finalize across
-   * midnight.
+   * Builds the shared `[since, until)` window clause. All read queries filter
+   * on `session_started_at` (when the work happened, not when the metrics
+   * were flushed) so "Today" means "session started today" even for sessions
+   * that finalize across midnight; null `since` = all time. Served by
+   * idx_usage_history_session_started_at.
    */
-  listRowsAfter(since: string | null, until: string | null = null): UsageHistoryRow[] {
-    const select = `
-      SELECT
-        session_record_id AS sessionRecordId,
-        session_started_at AS sessionStartedAt,
-        total_cost_usd AS totalCostUsd,
-        total_input_tokens AS totalInputTokens,
-        total_output_tokens AS totalOutputTokens,
-        total_duration_ms AS totalDurationMs,
-        tool_call_count AS toolCallCount,
-        model_id AS modelId,
-        model_display_name AS modelDisplayName,
-        lines_added AS linesAdded,
-        lines_removed AS linesRemoved,
-        files_changed AS filesChanged,
-        compaction_count AS compactionCount,
-        agent,
-        effort
-      FROM usage_history
-    `;
+  private buildWindowClause(since: string | null, until: string | null): { clauses: string[]; params: string[] } {
     const clauses: string[] = [];
     const params: string[] = [];
     if (since !== null) {
@@ -196,9 +212,109 @@ export class UsageHistoryRepository {
       clauses.push('session_started_at < ?');
       params.push(until);
     }
+    return { clauses, params };
+  }
+
+  /**
+   * One-row SUM/COUNT/MIN/MAX aggregate over the window. The flat SUMs over
+   * lines_added / lines_removed / files_changed are safe because the
+   * `setTaskGitStats` canonical-record invariant guarantees at most one row
+   * per task lineage carries non-zero churn. min/maxSessionStartedAt replace
+   * the JS scans for the All Time range start and per-project lastActiveMs.
+   */
+  getUsageTotals(since: string | null, until: string | null = null): UsageWindowTotals {
+    const { clauses, params } = this.buildWindowClause(since, until);
     const where = clauses.length > 0 ? ` WHERE ${clauses.join(' AND ')}` : '';
-    return this.db.prepare(`${select}${where} ORDER BY session_started_at ASC`)
-      .all(...params) as UsageHistoryRow[];
+    return this.db.prepare(`
+      SELECT
+        COUNT(*) AS sessionCount,
+        COALESCE(SUM(total_cost_usd), 0) AS totalCostUsd,
+        COALESCE(SUM(total_input_tokens), 0) AS totalInputTokens,
+        COALESCE(SUM(total_output_tokens), 0) AS totalOutputTokens,
+        COALESCE(SUM(tool_call_count), 0) AS toolCallCount,
+        COALESCE(SUM(lines_added), 0) AS linesAdded,
+        COALESCE(SUM(lines_removed), 0) AS linesRemoved,
+        COALESCE(SUM(files_changed), 0) AS filesChanged,
+        COALESCE(SUM(compaction_count), 0) AS compactionCount,
+        COALESCE(SUM(total_duration_ms), 0) AS totalDurationMs,
+        COALESCE(SUM(CASE WHEN total_cost_usd > 0 THEN 1 ELSE 0 END), 0) AS costKnownCount,
+        MIN(session_started_at) AS minSessionStartedAt,
+        MAX(session_started_at) AS maxSessionStartedAt
+      FROM usage_history${where}
+    `).get(...params) as UsageWindowTotals;
+  }
+
+  /**
+   * GROUP BY (model_id, model_display_name, agent, effort) rollup over the
+   * window. Ordered by each combo's earliest session so JS regrouping (base
+   * model id merge, agent/effort maps) encounters combos in the same order
+   * the old row-by-row fold encountered rows - which pins first-encounter
+   * behavior like the model display-name pick and stable-sort tie order.
+   */
+  listUsageRollup(since: string | null, until: string | null = null): UsageRollupRow[] {
+    const { clauses, params } = this.buildWindowClause(since, until);
+    const where = clauses.length > 0 ? ` WHERE ${clauses.join(' AND ')}` : '';
+    return this.db.prepare(`
+      SELECT
+        model_id AS modelId,
+        model_display_name AS modelDisplayName,
+        agent,
+        effort,
+        COALESCE(SUM(total_input_tokens), 0) AS inputTokens,
+        COALESCE(SUM(total_output_tokens), 0) AS outputTokens,
+        COALESCE(SUM(total_cost_usd), 0) AS costUsd,
+        COUNT(*) AS sessionCount
+      FROM usage_history${where}
+      GROUP BY model_id, model_display_name, agent, effort
+      ORDER BY MIN(session_started_at) ASC
+    `).all(...params) as UsageRollupRow[];
+  }
+
+  /**
+   * Window rows grouped to fixed UTC buckets of `groupMs` per model (the
+   * usage-stats service passes 15 minutes; see UsageCostGroupRow for the
+   * nesting rationale). Rows whose session_started_at SQLite cannot parse are
+   * excluded, mirroring the old fold's Date.parse NaN skip. Ordered by bucket
+   * then each group's earliest session, so the JS fold builds each chart
+   * point's per-model slices in the same first-encounter order as the old
+   * row-by-row fold.
+   */
+  listUsageCostGroups(since: string | null, until: string | null, groupMs: number): UsageCostGroupRow[] {
+    const { clauses, params } = this.buildWindowClause(since, until);
+    clauses.unshift(`CAST(strftime('%s', session_started_at) AS INTEGER) IS NOT NULL`);
+    return this.db.prepare(`
+      SELECT
+        CAST(CAST(strftime('%s', session_started_at) AS INTEGER) * 1000 / ? AS INTEGER) * ? AS bucketStartMs,
+        model_id AS modelId,
+        COALESCE(SUM(total_cost_usd), 0) AS costUsd,
+        COALESCE(SUM(total_input_tokens), 0) AS inputTokens,
+        COALESCE(SUM(total_output_tokens), 0) AS outputTokens,
+        COUNT(*) AS sessionCount
+      FROM usage_history
+      WHERE ${clauses.join(' AND ')}
+      GROUP BY bucketStartMs, model_id
+      ORDER BY bucketStartMs ASC, MIN(session_started_at) ASC
+    `).all(groupMs, groupMs, ...params) as UsageCostGroupRow[];
+  }
+
+  /**
+   * How many of `sessionRecordIds` already have a ledger row inside the
+   * window - the live-session dedup: a running session already snapshotted by
+   * the periodic metrics timer must not be counted twice on top of the
+   * ledger-derived session count. Live lists are tiny (one id per running
+   * session), so the IN list never approaches SQLite's parameter limit.
+   */
+  countSessionsRepresented(since: string | null, until: string | null, sessionRecordIds: string[]): number {
+    if (sessionRecordIds.length === 0) return 0;
+    const { clauses, params } = this.buildWindowClause(since, until);
+    const placeholders = sessionRecordIds.map(() => '?').join(', ');
+    clauses.unshift(`session_record_id IN (${placeholders})`);
+    const row = this.db.prepare(`
+      SELECT COUNT(*) AS representedCount
+      FROM usage_history
+      WHERE ${clauses.join(' AND ')}
+    `).get(...sessionRecordIds, ...params) as { representedCount: number };
+    return row.representedCount;
   }
 
 }

@@ -31,6 +31,7 @@ import { useDictation } from '../../hooks/useDictation';
 import { DictationSurface } from '../dictation/DictationSurface';
 import { useKeybinding } from '../../hooks/useKeybinding';
 import { StatsPage } from '../stats/StatsPage';
+import { warmStatsDashboardOnIdle } from '../stats/LazyStatsDashboard';
 import { useUsageDashboardStore } from '../../stores/usage-dashboard-store';
 import { usePopOut } from '../../pop-out/usePopOut';
 
@@ -89,6 +90,15 @@ export function AppLayout() {
   useViewToggle();
   useFocusedSessionsSync();
   useDictation();
+
+  // Idle-warm the lazy stats chunk (recharts) once per session, off the
+  // startup path: the first stats open then resolves from the module cache
+  // with no skeleton, without recharts parse/eval competing with the initial
+  // board load and session sync. AppLayout mounts only in the main window;
+  // StrictMode's double-invoke is harmless (module-scope once-guard).
+  useEffect(() => {
+    warmStatsDashboardOnIdle();
+  }, []);
 
   // Strict mutual exclusivity: the usage stats overlay and its pop-out window
   // never coexist. When the pop-out opens, close the in-app overlay so reopening

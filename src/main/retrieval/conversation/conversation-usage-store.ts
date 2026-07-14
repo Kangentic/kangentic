@@ -22,21 +22,32 @@ export interface TurnUsageOwner {
 }
 
 /**
- * One (5-minute-bucket, session, model) group of turn usage, as consumed by the
- * usage-stats service. Session-level grouping is deliberate: the service
- * allocates each session's reported cost across its turn buckets proportionally
- * by token share, so it needs per-session token subtotals per bucket.
+ * One fixed-UTC-bucket group of turn usage, as consumed by the usage-stats
+ * service. Grouped by bucket ONLY: per-session cost allocation happens
+ * inside the SQL (see getGroupedUsageSince), so the output is O(active
+ * buckets in the window), never O(sessions x buckets) - the shape that let
+ * a year of history stall the main thread.
  */
 export interface GroupedTurnUsageRow {
   /** UTC-aligned group start (epoch ms), a multiple of the groupMs passed in. */
   bucketStartMs: number;
-  sessionId: string | null;
-  model: string | null;
   inputTokens: number;
   outputTokens: number;
   cacheCreationTokens: number;
   cacheReadTokens: number;
   turnCount: number;
+  /**
+   * Dollars of session usage_history cost allocated to this bucket: each
+   * turn contributes its owning session's cost proportional to the turn's
+   * share of that session's fresh (input + output) tokens across the whole
+   * queried window (summing a session's buckets reassembles its full cost).
+   * A turn allocates $0 when its session has no in-cost-window ledger row,
+   * reported $0, has no fresh tokens, or the turn has no session.
+   * API-equivalent and approximate by design (cache reads are weighted the
+   * same as nothing; the point is a plausible $-over-time shape, not
+   * billing).
+   */
+  allocatedCostUsd: number;
 }
 
 interface TurnUsageRow {
@@ -169,42 +180,89 @@ export class ConversationUsageStore {
   }
 
   /**
-   * Project-wide turn usage grouped into fixed UTC buckets of `groupMs`
-   * (the usage dashboard passes 5 minutes: coarse enough to bound row counts,
-   * fine enough that groups nest cleanly into local hour/day chart buckets for
-   * every real-world UTC offset). Grouped by bucket + session + model so the
-   * usage-stats service can fold buckets to local boundaries and allocate
-   * session costs in JS. Turns with a NULL `ts` are excluded (they cannot be
-   * placed on a time axis; their tokens still count in the usage_history KPIs).
-   * Uses idx_turn_usage_ts. Pass null `sinceMs` for all time; pass `untilMs`
-   * to bound the window (the dashboard's day drill-down).
+   * Project-wide turn usage grouped into fixed UTC buckets of `groupMs`,
+   * bucket-only output. The usage-stats service passes 5 minutes for the
+   * Live period (whose chart buckets sit on the 5-minute grid) and 15
+   * minutes otherwise - the coarsest grid that still nests into local
+   * hour/day/week chart boundaries for every real-world UTC offset. Turns
+   * with a NULL `ts` are excluded (they cannot be placed on a time axis;
+   * their tokens still count in the usage_history KPIs). Uses
+   * idx_turn_usage_ts. Pass null `sinceMs` for all time; pass `untilMs` to
+   * bound the window (the dashboard's day drill-down).
+   *
+   * Cost allocation happens per turn INSIDE the query (each turn contributes
+   * its session's ledger cost weighted by the turn's share of the session's
+   * windowed fresh tokens), summed per bucket - algebraically identical to
+   * the old per-session-group allocation, without materializing the
+   * O(sessions x buckets) intermediate for the JS side.
+   * `costSince`/`costUntil` must be the same session_started_at window the
+   * service applies to its usage_history aggregates - a turn whose session
+   * has no ledger row INSIDE that window allocates $0, exactly like the old
+   * JS map built from the windowed row read.
    */
-  getGroupedUsageSince(sinceMs: number | null, groupMs: number, untilMs: number | null = null): GroupedTurnUsageRow[] {
-    const select = `
+  getGroupedUsageSince(
+    sinceMs: number | null,
+    groupMs: number,
+    untilMs: number | null = null,
+    costSince: string | null = null,
+    costUntil: string | null = null,
+  ): GroupedTurnUsageRow[] {
+    const turnClauses = ['ts IS NOT NULL'];
+    const turnWindowParams: number[] = [];
+    if (sinceMs !== null) {
+      turnClauses.push('ts >= ?');
+      turnWindowParams.push(sinceMs);
+    }
+    if (untilMs !== null) {
+      turnClauses.push('ts < ?');
+      turnWindowParams.push(untilMs);
+    }
+    const turnWhere = turnClauses.join(' AND ');
+    const costClauses: string[] = [];
+    const costParams: string[] = [];
+    if (costSince !== null) {
+      costClauses.push('session_started_at >= ?');
+      costParams.push(costSince);
+    }
+    if (costUntil !== null) {
+      costClauses.push('session_started_at < ?');
+      costParams.push(costUntil);
+    }
+    const costWhere = costClauses.length > 0 ? ` WHERE ${costClauses.join(' AND ')}` : '';
+    // Bind order matches clause order: session_tokens window, cost window,
+    // the two groupMs uses in the SELECT, then the outer turn window.
+    return this.db.prepare(`
+      WITH session_tokens AS (
+        SELECT session_id AS sessionId, SUM(input_tokens + output_tokens) AS totalTokens
+        FROM conversation_turn_usage
+        WHERE ${turnWhere}
+        GROUP BY session_id
+      ),
+      session_cost AS (
+        SELECT session_record_id AS sessionId, total_cost_usd AS costUsd
+        FROM usage_history${costWhere}
+      )
       SELECT
         CAST(ts / ? AS INTEGER) * ? AS bucketStartMs,
-        session_id AS sessionId,
-        model,
         SUM(input_tokens) AS inputTokens,
         SUM(output_tokens) AS outputTokens,
         SUM(cache_creation_input_tokens) AS cacheCreationTokens,
         SUM(cache_read_input_tokens) AS cacheReadTokens,
-        COUNT(*) AS turnCount
+        COUNT(*) AS turnCount,
+        SUM(CASE
+          WHEN session_cost.costUsd IS NOT NULL
+           AND session_cost.costUsd != 0
+           AND session_tokens.totalTokens > 0
+          THEN session_cost.costUsd * ((input_tokens + output_tokens) * 1.0 / session_tokens.totalTokens)
+          ELSE 0
+        END) AS allocatedCostUsd
       FROM conversation_turn_usage
-    `;
-    const tail = 'GROUP BY bucketStartMs, session_id, model ORDER BY bucketStartMs ASC';
-    const clauses = ['ts IS NOT NULL'];
-    const params: number[] = [groupMs, groupMs];
-    if (sinceMs !== null) {
-      clauses.push('ts >= ?');
-      params.push(sinceMs);
-    }
-    if (untilMs !== null) {
-      clauses.push('ts < ?');
-      params.push(untilMs);
-    }
-    return this.db.prepare(`${select} WHERE ${clauses.join(' AND ')} ${tail}`)
-      .all(...params) as GroupedTurnUsageRow[];
+      LEFT JOIN session_tokens ON session_tokens.sessionId = conversation_turn_usage.session_id
+      LEFT JOIN session_cost ON session_cost.sessionId = conversation_turn_usage.session_id
+      WHERE ${turnWhere}
+      GROUP BY bucketStartMs
+      ORDER BY bucketStartMs ASC
+    `).all(...turnWindowParams, ...costParams, groupMs, groupMs, ...turnWindowParams) as GroupedTurnUsageRow[];
   }
 
   /** Usage for a specific set of turns - the join a conversation view uses to hang

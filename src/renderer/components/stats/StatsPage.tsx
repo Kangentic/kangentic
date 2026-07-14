@@ -4,7 +4,7 @@ import { useOverlayPhase } from '../../hooks/useOverlayPhase';
 import { useConfigStore } from '../../stores/config-store';
 import { useUsageDashboardStore } from '../../stores/usage-dashboard-store';
 import { DetachableSurfaceHeader } from '../../pop-out/DetachableSurfaceHeader';
-import { StatsDashboardBody } from './StatsDashboardBody';
+import { LazyStatsDashboard } from './LazyStatsDashboard';
 
 /**
  * The usage statistics dashboard: a full-surface overlay between the title
@@ -74,7 +74,10 @@ export function StatsPage() {
           <h1 className="text-sm font-semibold text-fg">Usage</h1>
         </DetachableSurfaceHeader>
 
-        <StatsDashboardBody />
+        {/* Lazy: StatsDashboardBody's import graph pulls recharts; the shell
+            (this overlay + header) paints immediately either way, and the
+            idle/hover warms make the skeleton a cold-open-only sight. */}
+        <LazyStatsDashboard />
       </div>
     </div>
   );

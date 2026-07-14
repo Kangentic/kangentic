@@ -9,7 +9,11 @@ import type {
 } from '../../shared/types';
 import { computePeriodCutoff } from '../../shared/period-cutoff';
 import { humanizeModelId, parseModelId } from '../../shared/model-id';
-import type { UsageHistoryRow } from '../db/repositories/usage-history-repository';
+import type {
+  UsageCostGroupRow,
+  UsageRollupRow,
+  UsageWindowTotals,
+} from '../db/repositories/usage-history-repository';
 import type { GroupedTurnUsageRow } from '../retrieval/conversation/conversation-usage-store';
 
 /**
@@ -18,17 +22,26 @@ import type { GroupedTurnUsageRow } from '../retrieval/conversation/conversation
  * under vitest, so everything interesting lives here where the unit tests can
  * exercise it with plain arrays.
  *
- * Two-stage bucketing: SQL groups turns into fixed 5-minute UTC buckets
- * (bounded row counts; 5-minute UTC groups nest cleanly into local hour/day
- * boundaries because every real-world UTC offset is a multiple of 15 minutes
- * and DST shifts are multiples of 30), then these functions fold the groups
- * into chart buckets aligned to LOCAL calendar boundaries via `Date` component
- * arithmetic - automatically DST-correct and consistent with
- * `computePeriodCutoff`'s local-midnight semantics.
+ * Two-stage bucketing: SQL groups both ledgers into fixed fine-grained UTC
+ * buckets (bounded row counts; the fine UTC groups nest cleanly into local
+ * hour/day boundaries because every real-world UTC offset is a multiple of
+ * 15 minutes and DST shifts are multiples of 30), then these functions fold
+ * the groups into chart buckets aligned to LOCAL calendar boundaries via
+ * `Date` component arithmetic - automatically DST-correct and consistent with
+ * `computePeriodCutoff`'s local-midnight semantics. KPI totals and the
+ * breakdowns likewise arrive pre-aggregated from SQL (one totals row and an
+ * O(dimension-combos) rollup per project), so the JS here is O(buckets), not
+ * O(historical rows).
  */
 
-/** SQL-side turn grouping width: 5 minutes. */
+/** SQL-side turn grouping width for the Live period: 5 minutes (Live's
+ *  chart buckets sit directly on this grid). */
 export const TURN_GROUP_MS = 5 * 60_000;
+/** SQL-side grouping width for everything else - the usage_history cost
+ *  series and the non-Live turn series: 15 minutes, the coarsest grid that
+ *  still nests into every real-world local hour/day/week chart boundary
+ *  (all UTC offsets are multiples of 15 minutes). */
+export const COST_GROUP_MS = 15 * 60_000;
 /** Trailing window for the 'live' period: 120 minutes. */
 export const LIVE_WINDOW_MS = 120 * 60_000;
 /** Hard cap on chart series length; longer ranges keep only the newest buckets. */
@@ -231,42 +244,14 @@ export function buildBucketStarts(rangeStartMs: number, rangeEndMs: number, kind
   return starts.length > MAX_SERIES_POINTS ? starts.slice(-MAX_SERIES_POINTS) : starts;
 }
 
-/** Total fresh (input + output) tokens per session across the given groups. */
-export function buildSessionTokenTotals(groups: GroupedTurnUsageRow[]): Map<string, number> {
-  const totals = new Map<string, number>();
-  for (const group of groups) {
-    if (group.sessionId === null) continue;
-    totals.set(group.sessionId, (totals.get(group.sessionId) ?? 0) + group.inputTokens + group.outputTokens);
-  }
-  return totals;
-}
-
 /**
- * Dollars of a session's reported cost allocated to one turn group,
- * proportional to the group's share of the session's fresh tokens.
- * API-equivalent and approximate by design (cache reads are weighted the same
- * as nothing; the point is a plausible $-over-time shape, not billing).
- */
-export function allocateGroupCost(
-  group: GroupedTurnUsageRow,
-  sessionCostUsd: ReadonlyMap<string, number>,
-  sessionTokenTotals: ReadonlyMap<string, number>,
-): number {
-  if (group.sessionId === null) return 0;
-  const cost = sessionCostUsd.get(group.sessionId);
-  const totalTokens = sessionTokenTotals.get(group.sessionId);
-  if (!cost || !totalTokens) return 0;
-  return cost * ((group.inputTokens + group.outputTokens) / totalTokens);
-}
-
-/**
- * Fold 5-minute turn groups into a dense token series aligned to `starts`
- * (from {@link buildBucketStarts}). Groups falling before the (possibly
- * clamped) first bucket are dropped.
+ * Fold fine-grained UTC turn groups into a dense token series aligned to
+ * `starts` (from {@link buildBucketStarts}). Groups falling before the
+ * (possibly clamped) first bucket are dropped. Each group's cost share
+ * arrives pre-allocated from SQL (`allocatedCostUsd`).
  */
 export function foldTokenSeries(
   groups: GroupedTurnUsageRow[],
-  sessionCostUsd: ReadonlyMap<string, number>,
   starts: number[],
   kind: ChartBucketKind,
 ): TokenSeriesPoint[] {
@@ -280,7 +265,6 @@ export function foldTokenSeries(
     allocatedCostUsd: 0,
     turnCount: 0,
   }));
-  const sessionTokenTotals = buildSessionTokenTotals(groups);
   for (const group of groups) {
     const index = indexByStart.get(bucketStartFor(group.bucketStartMs, kind));
     if (index === undefined) continue;
@@ -289,23 +273,26 @@ export function foldTokenSeries(
     point.outputTokens += group.outputTokens;
     point.cacheCreationTokens += group.cacheCreationTokens;
     point.cacheReadTokens += group.cacheReadTokens;
-    point.allocatedCostUsd += allocateGroupCost(group, sessionCostUsd, sessionTokenTotals);
+    point.allocatedCostUsd += group.allocatedCostUsd;
     point.turnCount += group.turnCount;
   }
   return points;
 }
 
 /**
- * Fold finalized-session usage rows into a dense cost series aligned to
- * `starts`, bucketed by the local day (or local week for 'all') the session
- * STARTED. Per-session attribution at daily granularity is deliberate: exact
- * sub-day cost timing is unknowable from the ledger, and daily bars do not
- * need it. Each bucket also carries per-model splits (normalized base model
- * ids, same normalization as {@link buildModelBreakdown}) for the stacked
- * by-model daily bars; the splits sum to the bucket totals.
+ * Fold 15-minute usage_history cost groups into a dense cost series aligned
+ * to `starts`, bucketed by the local day (or local week for 'all') the
+ * sessions STARTED. Per-session attribution at daily granularity is
+ * deliberate: exact sub-day cost timing is unknowable from the ledger, and
+ * daily bars do not need it. Each bucket also carries per-model splits
+ * (normalized base model ids, same normalization as
+ * {@link buildModelBreakdown}) for the stacked by-model daily bars; the
+ * splits sum to the bucket totals. Slice order within a point follows group
+ * order (the SQL orders groups by bucket then earliest session), preserving
+ * the old row-by-row first-encounter order.
  */
 export function foldCostSeries(
-  usageRows: UsageHistoryRow[],
+  costGroups: UsageCostGroupRow[],
   starts: number[],
   kind: ChartBucketKind,
 ): CostSeriesPoint[] {
@@ -319,18 +306,16 @@ export function foldCostSeries(
     byModel: [],
   }));
   const modelSlicesByPoint = new Map<number, Map<string, CostSeriesPoint['byModel'][number]>>();
-  for (const row of usageRows) {
-    const startedMs = Date.parse(row.sessionStartedAt);
-    if (Number.isNaN(startedMs)) continue;
-    const index = indexByStart.get(bucketStartFor(startedMs, kind));
+  for (const group of costGroups) {
+    const index = indexByStart.get(bucketStartFor(group.bucketStartMs, kind));
     if (index === undefined) continue;
     const point = points[index];
-    point.costUsd += row.totalCostUsd;
-    point.inputTokens += row.totalInputTokens;
-    point.outputTokens += row.totalOutputTokens;
-    point.sessionCount += 1;
+    point.costUsd += group.costUsd;
+    point.inputTokens += group.inputTokens;
+    point.outputTokens += group.outputTokens;
+    point.sessionCount += group.sessionCount;
 
-    const baseId = row.modelId === null ? null : parseModelId(row.modelId).baseId;
+    const baseId = group.modelId === null ? null : parseModelId(group.modelId).baseId;
     let slices = modelSlicesByPoint.get(index);
     if (!slices) {
       slices = new Map();
@@ -343,61 +328,82 @@ export function foldCostSeries(
       slices.set(sliceKey, slice);
       point.byModel.push(slice);
     }
-    slice.costUsd += row.totalCostUsd;
-    slice.inputTokens += row.totalInputTokens;
-    slice.outputTokens += row.totalOutputTokens;
+    slice.costUsd += group.costUsd;
+    slice.inputTokens += group.inputTokens;
+    slice.outputTokens += group.outputTokens;
   }
   return points;
 }
 
+/** Per-project window totals merged across the project loop (integer adds
+ *  plus float cost adds - one add per project, not per row). */
+export function mergeUsageTotals(totalsList: UsageWindowTotals[]): UsageWindowTotals {
+  const merged: UsageWindowTotals = {
+    sessionCount: 0,
+    totalCostUsd: 0,
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    toolCallCount: 0,
+    linesAdded: 0,
+    linesRemoved: 0,
+    filesChanged: 0,
+    compactionCount: 0,
+    totalDurationMs: 0,
+    costKnownCount: 0,
+    minSessionStartedAt: null,
+    maxSessionStartedAt: null,
+  };
+  for (const totals of totalsList) {
+    merged.sessionCount += totals.sessionCount;
+    merged.totalCostUsd += totals.totalCostUsd;
+    merged.totalInputTokens += totals.totalInputTokens;
+    merged.totalOutputTokens += totals.totalOutputTokens;
+    merged.toolCallCount += totals.toolCallCount;
+    merged.linesAdded += totals.linesAdded;
+    merged.linesRemoved += totals.linesRemoved;
+    merged.filesChanged += totals.filesChanged;
+    merged.compactionCount += totals.compactionCount;
+    merged.totalDurationMs += totals.totalDurationMs;
+    merged.costKnownCount += totals.costKnownCount;
+    // UTC ISO strings compare lexicographically in chronological order.
+    if (totals.minSessionStartedAt !== null
+      && (merged.minSessionStartedAt === null || totals.minSessionStartedAt < merged.minSessionStartedAt)) {
+      merged.minSessionStartedAt = totals.minSessionStartedAt;
+    }
+    if (totals.maxSessionStartedAt !== null
+      && (merged.maxSessionStartedAt === null || totals.maxSessionStartedAt > merged.maxSessionStartedAt)) {
+      merged.maxSessionStartedAt = totals.maxSessionStartedAt;
+    }
+  }
+  return merged;
+}
+
 /**
  * KPI totals over the selected range. The cost/token/session/tool/line fields
- * sum `usage_history` rows (snapshot-token semantics, footer parity); the
- * cache and burn-rate fields derive from the turn groups. See the
+ * come from the SQL-aggregated `usage_history` window totals (snapshot-token
+ * semantics, footer parity); the cache and burn-rate fields derive from the
+ * turn groups, whose cost shares arrive pre-allocated from SQL. See the
  * `UsageKpis` JSDoc in shared/types.ts for why the two token measurements
  * never reconcile.
  */
 export function computeKpis(
-  usageRows: UsageHistoryRow[],
+  totals: UsageWindowTotals,
   groups: GroupedTurnUsageRow[],
-  sessionCostUsd: ReadonlyMap<string, number>,
   elapsedMs: number,
 ): UsageKpis {
-  let totalCostUsd = 0;
-  let totalInputTokens = 0;
-  let totalOutputTokens = 0;
-  let toolCallCount = 0;
-  let linesAdded = 0;
-  let linesRemoved = 0;
-  let filesChanged = 0;
-  let compactionCount = 0;
-  let totalDurationMs = 0;
-  let costKnown = false;
-  for (const row of usageRows) {
-    totalCostUsd += row.totalCostUsd;
-    totalInputTokens += row.totalInputTokens;
-    totalOutputTokens += row.totalOutputTokens;
-    toolCallCount += row.toolCallCount;
-    linesAdded += row.linesAdded;
-    linesRemoved += row.linesRemoved;
-    filesChanged += row.filesChanged;
-    compactionCount += row.compactionCount;
-    totalDurationMs += row.totalDurationMs ?? 0;
-    if (row.totalCostUsd > 0) costKnown = true;
-  }
+  const costKnown = totals.costKnownCount > 0;
 
   let cacheCreationTokens = 0;
   let cacheReadTokens = 0;
   let turnInputTokens = 0;
   let turnOutputTokens = 0;
   let allocatedCostUsd = 0;
-  const sessionTokenTotals = buildSessionTokenTotals(groups);
   for (const group of groups) {
     cacheCreationTokens += group.cacheCreationTokens;
     cacheReadTokens += group.cacheReadTokens;
     turnInputTokens += group.inputTokens;
     turnOutputTokens += group.outputTokens;
-    allocatedCostUsd += allocateGroupCost(group, sessionCostUsd, sessionTokenTotals);
+    allocatedCostUsd += group.allocatedCostUsd;
   }
   const turnTokens = turnInputTokens + turnOutputTokens;
 
@@ -408,18 +414,18 @@ export function computeKpis(
   const burnRateUsdPerHour = groups.length > 0 && costKnown ? allocatedCostUsd / elapsedHours : null;
 
   return {
-    totalCostUsd,
+    totalCostUsd: totals.totalCostUsd,
     costKnown,
-    totalInputTokens,
-    totalOutputTokens,
-    totalTokens: totalInputTokens + totalOutputTokens,
-    sessionCount: usageRows.length,
-    toolCallCount,
-    linesAdded,
-    linesRemoved,
-    filesChanged,
-    compactionCount,
-    totalDurationMs,
+    totalInputTokens: totals.totalInputTokens,
+    totalOutputTokens: totals.totalOutputTokens,
+    totalTokens: totals.totalInputTokens + totals.totalOutputTokens,
+    sessionCount: totals.sessionCount,
+    toolCallCount: totals.toolCallCount,
+    linesAdded: totals.linesAdded,
+    linesRemoved: totals.linesRemoved,
+    filesChanged: totals.filesChanged,
+    compactionCount: totals.compactionCount,
+    totalDurationMs: totals.totalDurationMs,
     turnInputTokens,
     turnOutputTokens,
     cacheCreationTokens,
@@ -430,15 +436,19 @@ export function computeKpis(
 }
 
 /**
- * Per-model rollup, grouped on the parsed BASE model id so dated pins and
- * `[1m]` variants of one model merge into a single row (pure string-shape
- * normalization from shared/model-id.ts - no agent branching). Sorted by
- * total tokens descending; null-model rows group together at their natural
- * rank (the renderer labels them "(unknown)").
+ * Per-model breakdown from the SQL dimension rollup, regrouped on the parsed
+ * BASE model id so dated pins and `[1m]` variants of one model merge into a
+ * single row (pure string-shape normalization from shared/model-id.ts - no
+ * agent branching; this is why the merge cannot live in the SQL GROUP BY).
+ * Sorted by total tokens descending; null-model rows group together at their
+ * natural rank (the renderer labels them "(unknown)"). Rollup rows arrive
+ * ordered by earliest session, so the first row seen for a base id carries
+ * the same display name the old row-by-row fold picked, and stable-sort ties
+ * keep first-encounter order.
  */
-export function buildModelBreakdown(usageRows: UsageHistoryRow[]): ModelUsageBreakdown[] {
+export function buildModelBreakdown(rollupRows: UsageRollupRow[]): ModelUsageBreakdown[] {
   const byBaseId = new Map<string, ModelUsageBreakdown>();
-  for (const row of usageRows) {
+  for (const row of rollupRows) {
     const baseId = row.modelId === null ? null : parseModelId(row.modelId).baseId;
     const key = baseId ?? '';
     let entry = byBaseId.get(key);
@@ -455,51 +465,53 @@ export function buildModelBreakdown(usageRows: UsageHistoryRow[]): ModelUsageBre
       };
       byBaseId.set(key, entry);
     }
-    entry.inputTokens += row.totalInputTokens;
-    entry.outputTokens += row.totalOutputTokens;
-    entry.costUsd += row.totalCostUsd;
-    entry.sessionCount += 1;
+    entry.inputTokens += row.inputTokens;
+    entry.outputTokens += row.outputTokens;
+    entry.costUsd += row.costUsd;
+    entry.sessionCount += row.sessionCount;
   }
   return [...byBaseId.values()].sort(
     (first, second) => (second.inputTokens + second.outputTokens) - (first.inputTokens + first.outputTokens),
   );
 }
 
-/** Per-agent rollup, sorted by total tokens descending. */
-export function buildAgentBreakdown(usageRows: UsageHistoryRow[]): AgentUsageBreakdown[] {
+/** Per-agent breakdown from the SQL dimension rollup, sorted by total tokens
+ *  descending. */
+export function buildAgentBreakdown(rollupRows: UsageRollupRow[]): AgentUsageBreakdown[] {
   const byAgent = new Map<string, AgentUsageBreakdown>();
-  for (const row of usageRows) {
+  for (const row of rollupRows) {
     const key = row.agent ?? '';
     let entry = byAgent.get(key);
     if (!entry) {
       entry = { agent: row.agent, inputTokens: 0, outputTokens: 0, costUsd: 0, sessionCount: 0 };
       byAgent.set(key, entry);
     }
-    entry.inputTokens += row.totalInputTokens;
-    entry.outputTokens += row.totalOutputTokens;
-    entry.costUsd += row.totalCostUsd;
-    entry.sessionCount += 1;
+    entry.inputTokens += row.inputTokens;
+    entry.outputTokens += row.outputTokens;
+    entry.costUsd += row.costUsd;
+    entry.sessionCount += row.sessionCount;
   }
   return [...byAgent.values()].sort(
     (first, second) => (second.inputTokens + second.outputTokens) - (first.inputTokens + first.outputTokens),
   );
 }
 
-/** Per-effort rollup, sorted by total tokens descending. Null effort (agent
- *  default, no flag) is a real bucket, kept distinct from named levels. */
-export function buildEffortBreakdown(usageRows: UsageHistoryRow[]): EffortUsageBreakdown[] {
+/** Per-effort breakdown from the SQL dimension rollup, sorted by total tokens
+ *  descending. Null effort (agent default, no flag) is a real bucket, kept
+ *  distinct from named levels. */
+export function buildEffortBreakdown(rollupRows: UsageRollupRow[]): EffortUsageBreakdown[] {
   const byEffort = new Map<string, EffortUsageBreakdown>();
-  for (const row of usageRows) {
+  for (const row of rollupRows) {
     const key = row.effort ?? '';
     let entry = byEffort.get(key);
     if (!entry) {
       entry = { effort: row.effort, inputTokens: 0, outputTokens: 0, costUsd: 0, sessionCount: 0 };
       byEffort.set(key, entry);
     }
-    entry.inputTokens += row.totalInputTokens;
-    entry.outputTokens += row.totalOutputTokens;
-    entry.costUsd += row.totalCostUsd;
-    entry.sessionCount += 1;
+    entry.inputTokens += row.inputTokens;
+    entry.outputTokens += row.outputTokens;
+    entry.costUsd += row.costUsd;
+    entry.sessionCount += row.sessionCount;
   }
   return [...byEffort.values()].sort(
     (first, second) => (second.inputTokens + second.outputTokens) - (first.inputTokens + first.outputTokens),

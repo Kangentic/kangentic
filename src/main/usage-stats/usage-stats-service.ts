@@ -11,9 +11,15 @@ import type {
 import { PATHS } from '../config/paths';
 import { getProjectDb } from '../db/database';
 import { ProjectRepository } from '../db/repositories/project-repository';
-import { UsageHistoryRepository, type UsageHistoryRow } from '../db/repositories/usage-history-repository';
+import {
+  UsageHistoryRepository,
+  type UsageCostGroupRow,
+  type UsageRollupRow,
+  type UsageWindowTotals,
+} from '../db/repositories/usage-history-repository';
 import { ConversationUsageStore, type GroupedTurnUsageRow } from '../retrieval/conversation/conversation-usage-store';
 import {
+  COST_GROUP_MS,
   NOMINAL_BUCKET_MS,
   TURN_GROUP_MS,
   buildAgentBreakdown,
@@ -24,6 +30,7 @@ import {
   computeKpis,
   foldCostSeries,
   foldTokenSeries,
+  mergeUsageTotals,
   resolveAllTimeBucketKinds,
   resolveBucketing,
   resolvePreviousWindow,
@@ -38,12 +45,15 @@ import {
  * functions of ./bucketing.ts.
  *
  * App-wide scope loops every registered project SEQUENTIALLY (better-sqlite3
- * is synchronous) and concatenates raw rows/groups before a single global
- * fold, which keeps series merging trivially correct. Missing project DB
- * files are skipped WITHOUT opening them - `getProjectDb` would otherwise
- * CREATE and migrate a database for a never-opened project - and a project
- * whose read throws is reported in `skippedProjects` instead of failing the
- * whole payload.
+ * is synchronous) and merges per-project SQL AGGREGATES (one totals row, an
+ * O(dimension-combos) rollup, and fine-grained UTC bucket groups per
+ * project) before the global fold - the JS on the main thread is O(buckets),
+ * never O(historical rows), so a long-lived install cannot stall the event
+ * loop that owns the PTYs. Projects are separate SQLite files, so the N-way
+ * merge itself must stay in JS. Missing project DB files are skipped WITHOUT
+ * opening them - `getProjectDb` would otherwise CREATE and migrate a
+ * database for a never-opened project - and a project whose read throws is
+ * reported in `skippedProjects` instead of failing the whole payload.
  *
  * The optional `liveSessions` param (populated by the IPC handler from the
  * live `SessionManager`, empty for the MCP command handler) fixes the
@@ -63,15 +73,35 @@ import {
  * 2. The originally-reported gap was specifically the SESSIONS KPI/Live view
  *    undercounting live agents - cost/tokens were never reported wrong.
  *
- * De-duped by `sessionRecordId` against the ledger rows already read for the
- * same window, so a session already snapshotted into `usage_history` by the
- * periodic metrics timer is not counted twice.
+ * De-duped by `sessionRecordId` against the same window's ledger (a COUNT
+ * query over the live ids), so a session already snapshotted into
+ * `usage_history` by the periodic metrics timer is not counted twice.
  */
 
-/** Per-project read surface; the DI seam the unit tests fake. */
+/** Per-project read surface; the DI seam the unit tests fake. Every method
+ *  returns a SQL-side aggregate - the service never sees raw ledger rows. */
 export interface ProjectUsageReader {
-  listUsageRows(sinceIso: string | null, untilIso: string | null): UsageHistoryRow[];
-  listTurnGroups(sinceMs: number | null, groupMs: number, untilMs: number | null): GroupedTurnUsageRow[];
+  /** One-row window aggregate of usage_history. */
+  getUsageTotals(sinceIso: string | null, untilIso: string | null): UsageWindowTotals;
+  /** GROUP BY (model, display name, agent, effort) rollup of usage_history. */
+  listUsageRollup(sinceIso: string | null, untilIso: string | null): UsageRollupRow[];
+  /** usage_history grouped to fixed UTC buckets of `groupMs` per model. */
+  listUsageCostGroups(sinceIso: string | null, untilIso: string | null, groupMs: number): UsageCostGroupRow[];
+  /**
+   * Turn groups with SQL-side proportional cost allocation. `costSinceIso`/
+   * `costUntilIso` MUST be the same usage_history window passed to the other
+   * reads, so a turn group whose session has no in-window ledger row
+   * allocates $0.
+   */
+  listTurnGroups(
+    sinceMs: number | null,
+    groupMs: number,
+    untilMs: number | null,
+    costSinceIso: string | null,
+    costUntilIso: string | null,
+  ): GroupedTurnUsageRow[];
+  /** COUNT of the given live session record ids already in the window's ledger. */
+  countSessionsRepresented(sinceIso: string | null, untilIso: string | null, sessionRecordIds: string[]): number;
 }
 
 export interface UsageStatsDeps {
@@ -91,52 +121,22 @@ export interface UsageStatsService {
   ): UsageDashboardStats;
 }
 
-/** Count of `liveRows` not already represented among `ledgerRows` (by
- *  `sessionRecordId`) - the number to ADD to a ledger-derived session count
- *  so a running session is counted exactly once. */
-function countUnrepresentedLiveSessions(ledgerRows: UsageHistoryRow[], liveRows: LiveSessionRow[]): number {
-  if (liveRows.length === 0) return 0;
-  const ledgerIds = new Set(ledgerRows.map((row) => row.sessionRecordId));
-  let count = 0;
-  for (const live of liveRows) {
-    if (!ledgerIds.has(live.sessionRecordId)) count += 1;
-  }
-  return count;
-}
-
 export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService {
   const now = deps.now ?? (() => Date.now());
 
   function summarizeProject(
     project: { id: string; name: string },
-    rows: UsageHistoryRow[],
+    totals: UsageWindowTotals,
+    rollupRows: UsageRollupRow[],
     liveSessionCount: number,
   ): ProjectUsageSummary {
-    let inputTokens = 0;
-    let outputTokens = 0;
-    let costUsd = 0;
-    let toolCallCount = 0;
-    let linesAdded = 0;
-    let linesRemoved = 0;
-    let filesChanged = 0;
-    let totalDurationMs = 0;
-    let lastActiveMs: number | null = null;
+    // topAgent: the agent with the most fresh tokens. Rollup rows arrive
+    // ordered by earliest session, and the strict > keeps the first-inserted
+    // agent on a tie - the same tie-break the old row-by-row fold had.
     const tokensByAgent = new Map<string, number>();
-    for (const row of rows) {
-      inputTokens += row.totalInputTokens;
-      outputTokens += row.totalOutputTokens;
-      costUsd += row.totalCostUsd;
-      toolCallCount += row.toolCallCount;
-      linesAdded += row.linesAdded;
-      linesRemoved += row.linesRemoved;
-      filesChanged += row.filesChanged;
-      totalDurationMs += row.totalDurationMs ?? 0;
-      const startedMs = Date.parse(row.sessionStartedAt);
-      if (!Number.isNaN(startedMs) && (lastActiveMs === null || startedMs > lastActiveMs)) {
-        lastActiveMs = startedMs;
-      }
+    for (const row of rollupRows) {
       if (row.agent !== null) {
-        tokensByAgent.set(row.agent, (tokensByAgent.get(row.agent) ?? 0) + row.totalInputTokens + row.totalOutputTokens);
+        tokensByAgent.set(row.agent, (tokensByAgent.get(row.agent) ?? 0) + row.inputTokens + row.outputTokens);
       }
     }
     let topAgent: string | null = null;
@@ -147,19 +147,20 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
         topAgentTokens = tokens;
       }
     }
+    const lastActiveParsed = totals.maxSessionStartedAt === null ? Number.NaN : Date.parse(totals.maxSessionStartedAt);
     return {
       projectId: project.id,
       projectName: project.name,
-      inputTokens,
-      outputTokens,
-      costUsd,
-      sessionCount: rows.length + liveSessionCount,
-      toolCallCount,
-      linesAdded,
-      linesRemoved,
-      filesChanged,
-      totalDurationMs,
-      lastActiveMs,
+      inputTokens: totals.totalInputTokens,
+      outputTokens: totals.totalOutputTokens,
+      costUsd: totals.totalCostUsd,
+      sessionCount: totals.sessionCount + liveSessionCount,
+      toolCallCount: totals.toolCallCount,
+      linesAdded: totals.linesAdded,
+      linesRemoved: totals.linesRemoved,
+      filesChanged: totals.filesChanged,
+      totalDurationMs: totals.totalDurationMs,
+      lastActiveMs: Number.isNaN(lastActiveParsed) ? null : lastActiveParsed,
       topAgent,
     };
   }
@@ -223,9 +224,19 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
       previousWindow = resolvePreviousWindow(period, sinceMs, drill !== null);
     }
 
-    const combinedUsageRows: UsageHistoryRow[] = [];
+    // Turn-series SQL grid: Live's fiveMinutes chart buckets need the
+    // 5-minute grid; every other chart kind (halfHour and coarser, including
+    // the drill / custom-window overrides applied above) nests on the
+    // 15-minute grid, which cuts the group-row count 3x on wide ranges.
+    const turnGroupMs = bucketing.tokenBucketKind === 'fiveMinutes' && !drill && !customWindow
+      ? TURN_GROUP_MS
+      : COST_GROUP_MS;
+
+    const totalsList: UsageWindowTotals[] = [];
+    const combinedRollup: UsageRollupRow[] = [];
+    const combinedCostGroups: UsageCostGroupRow[] = [];
     const combinedGroups: GroupedTurnUsageRow[] = [];
-    const previousUsageRows: UsageHistoryRow[] = [];
+    const previousTotalsList: UsageWindowTotals[] = [];
     const previousGroups: GroupedTurnUsageRow[] = [];
     const perProject: ProjectUsageSummary[] = [];
     const skippedProjects: Array<{ projectId: string; projectName: string }> = [];
@@ -238,23 +249,41 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
       if (!deps.projectDbExists(project.id)) continue;
       try {
         const reader = deps.openReader(project.id);
-        const rows = reader.listUsageRows(sinceIso, untilIso);
-        const groups = reader.listTurnGroups(sinceMs, TURN_GROUP_MS, untilMs);
-        combinedUsageRows.push(...rows);
+        const totals = reader.getUsageTotals(sinceIso, untilIso);
+        const rollup = reader.listUsageRollup(sinceIso, untilIso);
+        const costGroups = reader.listUsageCostGroups(sinceIso, untilIso, COST_GROUP_MS);
+        const groups = reader.listTurnGroups(sinceMs, turnGroupMs, untilMs, sinceIso, untilIso);
+        totalsList.push(totals);
+        combinedRollup.push(...rollup);
+        combinedCostGroups.push(...costGroups);
         combinedGroups.push(...groups);
         if (previousWindow) {
-          previousUsageRows.push(...reader.listUsageRows(previousWindow.sinceIso, previousWindow.untilIso));
-          previousGroups.push(...reader.listTurnGroups(previousWindow.sinceMs, TURN_GROUP_MS, previousWindow.untilMs));
+          // The previous window feeds previousKpis only (no breakdowns or
+          // series), so totals + turn groups suffice.
+          previousTotalsList.push(reader.getUsageTotals(previousWindow.sinceIso, previousWindow.untilIso));
+          previousGroups.push(...reader.listTurnGroups(
+            previousWindow.sinceMs, turnGroupMs, previousWindow.untilMs,
+            previousWindow.sinceIso, previousWindow.untilIso,
+          ));
         }
         const liveForProject = liveSessions.filter((live) => live.projectId === project.id);
-        const projectLiveCount = countUnrepresentedLiveSessions(rows, liveForProject);
+        // Live-session dedup: a running session already snapshotted into the
+        // window's ledger by the periodic metrics timer must not be counted
+        // twice on top of the ledger-derived session count.
+        const projectLiveCount = liveForProject.length === 0
+          ? 0
+          : liveForProject.length - reader.countSessionsRepresented(
+              sinceIso, untilIso, liveForProject.map((live) => live.sessionRecordId),
+            );
         liveSessionCountTotal += projectLiveCount;
-        if (scope.kind === 'all') perProject.push(summarizeProject(project, rows, projectLiveCount));
+        if (scope.kind === 'all') perProject.push(summarizeProject(project, totals, rollup, projectLiveCount));
       } catch (error) {
         console.warn(`[usage-stats] Skipping unreadable project DB ${project.id}:`, error);
         skippedProjects.push({ projectId: project.id, projectName: project.name });
       }
     }
+
+    const mergedTotals = mergeUsageTotals(totalsList);
 
     // Range: drill/window-bounded when overridden; cutoff-anchored for
     // bounded periods; earliest observed data for 'all' (now when empty,
@@ -279,8 +308,8 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
     } else {
       let earliest = Number.POSITIVE_INFINITY;
       for (const group of combinedGroups) earliest = Math.min(earliest, group.bucketStartMs);
-      for (const row of combinedUsageRows) {
-        const startedMs = Date.parse(row.sessionStartedAt);
+      if (mergedTotals.minSessionStartedAt !== null) {
+        const startedMs = Date.parse(mergedTotals.minSessionStartedAt);
         if (!Number.isNaN(startedMs)) earliest = Math.min(earliest, startedMs);
       }
       rangeStartMs = Number.isFinite(earliest) ? earliest : nowMs;
@@ -295,11 +324,8 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
     // Live's session-ledger series is meaningless inside a 2h trailing window,
     // but a drill or custom window bounds its own range - keep those.
     const costStarts = period === 'live' && !drill && !customWindow ? [] : buildBucketStarts(rangeStartMs, rangeEndMs, costBucketKind);
-    const sessionCostUsd = new Map<string, number>(
-      combinedUsageRows.map((row) => [row.sessionRecordId, row.totalCostUsd]),
-    );
 
-    const kpis = computeKpis(combinedUsageRows, combinedGroups, sessionCostUsd, rangeEndMs - rangeStartMs);
+    const kpis = computeKpis(mergedTotals, combinedGroups, rangeEndMs - rangeStartMs);
     // See the file-level JSDoc: live sessions are added to sessionCount only,
     // never to cost/tokens (those get instant client-side live layering from
     // KpiTiles' own sessionUsage overlay, which this would otherwise double).
@@ -316,17 +342,16 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
       kpis,
       previousKpis: previousWindow
         ? computeKpis(
-            previousUsageRows,
+            mergeUsageTotals(previousTotalsList),
             previousGroups,
-            new Map<string, number>(previousUsageRows.map((row) => [row.sessionRecordId, row.totalCostUsd])),
             previousWindow.untilMs - previousWindow.sinceMs,
           )
         : null,
-      tokenSeries: foldTokenSeries(combinedGroups, sessionCostUsd, tokenStarts, tokenBucketKind),
-      costSeries: foldCostSeries(combinedUsageRows, costStarts, costBucketKind),
-      byModel: buildModelBreakdown(combinedUsageRows),
-      byAgent: buildAgentBreakdown(combinedUsageRows),
-      byEffort: buildEffortBreakdown(combinedUsageRows),
+      tokenSeries: foldTokenSeries(combinedGroups, tokenStarts, tokenBucketKind),
+      costSeries: foldCostSeries(combinedCostGroups, costStarts, costBucketKind),
+      byModel: buildModelBreakdown(combinedRollup),
+      byAgent: buildAgentBreakdown(combinedRollup),
+      byEffort: buildEffortBreakdown(combinedRollup),
     };
     if (scope.kind === 'all') {
       stats.perProject = perProject;
@@ -345,8 +370,13 @@ export const usageStatsService = createUsageStatsService({
     const usageHistory = new UsageHistoryRepository(db);
     const turnUsage = new ConversationUsageStore(db);
     return {
-      listUsageRows: (sinceIso, untilIso) => usageHistory.listRowsAfter(sinceIso, untilIso),
-      listTurnGroups: (sinceMs, groupMs, untilMs) => turnUsage.getGroupedUsageSince(sinceMs, groupMs, untilMs),
+      getUsageTotals: (sinceIso, untilIso) => usageHistory.getUsageTotals(sinceIso, untilIso),
+      listUsageRollup: (sinceIso, untilIso) => usageHistory.listUsageRollup(sinceIso, untilIso),
+      listUsageCostGroups: (sinceIso, untilIso, groupMs) => usageHistory.listUsageCostGroups(sinceIso, untilIso, groupMs),
+      listTurnGroups: (sinceMs, groupMs, untilMs, costSinceIso, costUntilIso) =>
+        turnUsage.getGroupedUsageSince(sinceMs, groupMs, untilMs, costSinceIso, costUntilIso),
+      countSessionsRepresented: (sinceIso, untilIso, sessionRecordIds) =>
+        usageHistory.countSessionsRepresented(sinceIso, untilIso, sessionRecordIds),
     };
   },
   listProjects: () => new ProjectRepository().list().map((project) => ({ id: project.id, name: project.name })),

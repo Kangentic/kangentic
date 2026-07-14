@@ -523,149 +523,143 @@ describe('SessionRepository.updateTranscriptToolCounts', () => {
 
 // ---------------------------------------------------------------------------
 // Hole 3: listAllSummaries lifetime rollup
-// Verifies the JS-level aggregation logic for a task that has two rows sharing
-// the same agent_session_id (a `--resume` pair) plus a row with a distinct one.
-// Token dedup must use the latest-row-per-lineage strategy, NOT a flat SUM.
-// All other fields (cost/duration/compactions/tool calls/lines/files_changed)
-// must aggregate across ALL rows, not just the latest.
+// The aggregation itself now runs in SQL (one CTE query, generalizing
+// getSummaryForTask with GROUP BY task_id) and is pinned against a REAL
+// database - including the lineage token dedup, MAX files_changed, and the
+// parity with getSummaryForTask - in session-repository-summaries.test.ts.
+// What the mock level can still meaningfully pin is (a) the SQL carrying the
+// load-bearing aggregation clauses and (b) the aggregate-row -> SessionSummary
+// mapping.
 // ---------------------------------------------------------------------------
 
-/** Row shape as returned by the single .all() query inside listAllSummaries. */
-type ListAllSummariesRow = {
+/** Row shape as returned by the single aggregated .all() query inside
+ *  listAllSummaries (one row per task). */
+type ListAllSummariesAggregateRow = {
   task_id: string;
   task_created_at: string;
+  total_cost_usd: number;
+  total_duration_ms: number;
+  total_tool_calls: number;
+  total_compactions: number;
+  total_lines_added: number;
+  total_lines_removed: number;
+  max_files_changed: number;
+  earliest_started_at: string;
+  latest_ended_at: string | null;
+  total_input_tokens: number;
+  total_output_tokens: number;
   agent_session_id: string | null;
   record_id: string;
-  total_cost_usd: number | null;
-  total_input_tokens: number | null;
-  total_output_tokens: number | null;
   model_display_name: string | null;
-  total_duration_ms: number | null;
   exit_code: number | null;
-  started_at: string;
-  exited_at: string | null;
-  suspended_at: string | null;
-  tool_call_count: number | null;
-  lines_added: number | null;
-  lines_removed: number | null;
-  files_changed: number | null;
   tool_breakdown: string | null;
-  compaction_count: number | null;
-  row_num: number;
 };
 
-function createListAllSummariesMockDb(rows: ListAllSummariesRow[]): Database.Database {
-  return {
-    prepare: vi.fn((_sql: string) => ({
-      run: vi.fn(() => ({ changes: 0 })),
-      get: vi.fn(),
-      all: vi.fn(() => rows),
-    })),
+function createListAllSummariesMockDb(rows: ListAllSummariesAggregateRow[]): {
+  db: Database.Database;
+  capturedSql: string[];
+} {
+  const capturedSql: string[] = [];
+  const db = {
+    prepare: vi.fn((sql: string) => {
+      capturedSql.push(sql);
+      return {
+        run: vi.fn(() => ({ changes: 0 })),
+        get: vi.fn(),
+        all: vi.fn(() => rows),
+      };
+    }),
   } as unknown as Database.Database;
+  return { db, capturedSql };
 }
 
-describe('listAllSummaries lifetime rollup', () => {
-  it('deduplicates tokens by latest-row-per-lineage while summing cost/duration/compactions across all rows and taking MAX files_changed', () => {
-    // Three rows for task-1, ordered started_at DESC (as the SQL ORDER BY clause does):
-    //   Row A (row_num=1, latest of lineage agt-1): tokens 50 000 / 8 000 -> count
-    //   Row B (row_num=2, earlier of lineage agt-1): tokens 20 000 / 3 000 -> skip (same lineage)
-    //   Row C (row_num=3, distinct lineage agt-2): tokens 10 000 / 1 500 -> count
-    const rowA: ListAllSummariesRow = {
-      task_id: 'task-1',
-      task_created_at: '2026-04-01T09:00:00Z',
-      agent_session_id: 'agt-1',
-      record_id: 'rec-1',
-      total_cost_usd: 0.30,
-      total_input_tokens: 50_000,
-      total_output_tokens: 8_000,
-      model_display_name: 'Claude Opus 4',
-      total_duration_ms: 2_000,
-      exit_code: 0,
-      started_at: '2026-04-03T12:00:00Z',
-      exited_at: '2026-04-03T13:00:00Z',
-      suspended_at: null,
-      tool_call_count: 5,
-      lines_added: 50,
-      lines_removed: 10,
-      files_changed: 3,
-      tool_breakdown: null,
-      compaction_count: 2,
-      row_num: 1,
-    };
-    const rowB: ListAllSummariesRow = {
-      task_id: 'task-1',
-      task_created_at: '2026-04-01T09:00:00Z',
-      agent_session_id: 'agt-1', // same lineage as rowA
-      record_id: 'rec-2',
-      total_cost_usd: 0.10,
-      total_input_tokens: 20_000, // must NOT add to token total (same lineage, not latest)
-      total_output_tokens: 3_000,
-      model_display_name: 'Claude Opus 4',
-      total_duration_ms: 1_000,
-      exit_code: 0,
-      started_at: '2026-04-01T10:00:00Z',
-      exited_at: '2026-04-01T11:00:00Z',
-      suspended_at: null,
-      tool_call_count: 3,
-      lines_added: 20,
-      lines_removed: 5,
-      files_changed: 7, // MAX across all rows
-      tool_breakdown: null,
-      compaction_count: 1,
-      row_num: 2,
-    };
-    const rowC: ListAllSummariesRow = {
-      task_id: 'task-1',
-      task_created_at: '2026-04-01T09:00:00Z',
-      agent_session_id: 'agt-2', // distinct lineage
-      record_id: 'rec-3',
-      total_cost_usd: 0.05,
-      total_input_tokens: 10_000,
-      total_output_tokens: 1_500,
-      model_display_name: 'Claude Opus 4',
-      total_duration_ms: 500,
-      exit_code: 0,
-      started_at: '2026-03-30T08:00:00Z',
-      exited_at: '2026-03-30T09:00:00Z',
-      suspended_at: null,
-      tool_call_count: 2,
-      lines_added: 10,
-      lines_removed: 2,
-      files_changed: 1,
-      tool_breakdown: null,
-      compaction_count: 0,
-      row_num: 3,
-    };
+describe('listAllSummaries lifetime rollup (SQL-aggregated)', () => {
+  const aggregateRow: ListAllSummariesAggregateRow = {
+    task_id: 'task-1',
+    task_created_at: '2026-04-01T09:00:00Z',
+    total_cost_usd: 0.45,
+    total_duration_ms: 3_500,
+    total_tool_calls: 10,
+    total_compactions: 3,
+    total_lines_added: 80,
+    total_lines_removed: 17,
+    max_files_changed: 7,
+    earliest_started_at: '2026-03-30T08:00:00Z',
+    latest_ended_at: '2026-04-03T13:00:00Z',
+    total_input_tokens: 60_000,
+    total_output_tokens: 9_500,
+    agent_session_id: 'agt-1',
+    record_id: 'rec-1',
+    model_display_name: 'Claude Opus 4',
+    exit_code: 0,
+    tool_breakdown: JSON.stringify([
+      { toolName: 'Bash', callCount: 2, totalDurationMs: 500, interruptedCount: 0 },
+    ]),
+  };
 
-    const db = createListAllSummariesMockDb([rowA, rowB, rowC]);
+  it('maps the one-row-per-task aggregate onto SessionSummary keyed by task id', () => {
+    const { db } = createListAllSummariesMockDb([aggregateRow]);
     const repo = new SessionRepository(db);
     const summaries = repo.listAllSummaries();
 
-    expect(Object.keys(summaries)).toHaveLength(1);
-    const summary = summaries['task-1'];
-    expect(summary).toBeDefined();
+    expect(Object.keys(summaries)).toEqual(['task-1']);
+    expect(summaries['task-1']).toEqual({
+      sessionId: 'agt-1',
+      totalCostUsd: 0.45,
+      totalInputTokens: 60_000,
+      totalOutputTokens: 9_500,
+      modelDisplayName: 'Claude Opus 4',
+      durationMs: 3_500,
+      toolCallCount: 10,
+      compactionCount: 3,
+      linesAdded: 80,
+      linesRemoved: 17,
+      filesChanged: 7,
+      taskCreatedAt: '2026-04-01T09:00:00Z',
+      startedAt: '2026-03-30T08:00:00Z',
+      exitedAt: '2026-04-03T13:00:00Z',
+      exitCode: 0,
+      toolBreakdown: [{ toolName: 'Bash', callCount: 2, totalDurationMs: 500, interruptedCount: 0 }],
+    });
+  });
 
-    // Tokens: only the LATEST row per lineage is counted.
-    // agt-1: rowA wins (row_num=1, started_at later) -> 50 000 / 8 000
-    // agt-2: rowC (only row) -> 10 000 / 1 500
-    // WRONG flat SUM would be 50 000 + 20 000 + 10 000 = 80 000 / 12 500
-    expect(summary.totalInputTokens).toBe(60_000);
-    expect(summary.totalOutputTokens).toBe(9_500);
+  it('falls back to the record id as sessionId and tolerates NULL scalars', () => {
+    const { db } = createListAllSummariesMockDb([{
+      ...aggregateRow,
+      agent_session_id: null,
+      model_display_name: null,
+      exit_code: null,
+      latest_ended_at: null,
+      tool_breakdown: null,
+    }]);
+    const repo = new SessionRepository(db);
+    const summary = repo.listAllSummaries()['task-1'];
 
-    // Cost / duration / compactions / tool calls / lines: SUM across ALL rows
-    expect(summary.totalCostUsd).toBeCloseTo(0.45, 10);
-    expect(summary.durationMs).toBe(3_500);
-    expect(summary.compactionCount).toBe(3);
-    expect(summary.toolCallCount).toBe(10);
-    expect(summary.linesAdded).toBe(80);
-    expect(summary.linesRemoved).toBe(17);
+    expect(summary.sessionId).toBe('rec-1');
+    expect(summary.modelDisplayName).toBe('');
+    expect(summary.exitCode).toBeNull();
+    expect(summary.exitedAt).toBeNull();
+    expect(summary.toolBreakdown).toEqual([]);
+  });
 
-    // files_changed is MAX, not SUM
-    expect(summary.filesChanged).toBe(7);
+  it('issues ONE query whose SQL carries the load-bearing aggregation clauses', () => {
+    const { db, capturedSql } = createListAllSummariesMockDb([]);
+    const repo = new SessionRepository(db);
+    repo.listAllSummaries();
 
-    // Timeline spans the full task life
-    expect(summary.startedAt).toBe('2026-03-30T08:00:00Z');
-    expect(summary.exitedAt).toBe('2026-04-03T13:00:00Z');
+    expect(capturedSql).toHaveLength(1);
+    const sql = capturedSql[0];
+    // Costed rows only, grouped per task.
+    expect(sql).toMatch(/WHERE\s+total_cost_usd\s+IS\s+NOT\s+NULL/i);
+    expect(sql).toMatch(/GROUP\s+BY\s+task_id/i);
+    // Token dedup: latest row per session lineage, NOT a flat SUM (a flat SUM
+    // would double-count a session resumed across restarts).
+    expect(sql).toMatch(/PARTITION\s+BY\s+task_id\s*,\s*COALESCE\s*\(\s*agent_session_id\s*,\s*id\s*\)/i);
+    // files_changed is MAX (branch-cumulative), the rest are SUMs.
+    expect(sql).toMatch(/MAX\s*\(\s*COALESCE\s*\(\s*files_changed\s*,\s*0\s*\)\s*\)/i);
+    // Timeline spans the whole task life; suspended stands in for exited.
+    expect(sql).toMatch(/MIN\s*\(\s*started_at\s*\)/i);
+    expect(sql).toMatch(/MAX\s*\(\s*COALESCE\s*\(\s*exited_at\s*,\s*suspended_at\s*\)\s*\)/i);
   });
 });
 

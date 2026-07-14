@@ -66,13 +66,37 @@ export default defineConfig(({ mode }) => ({
     include: rendererOptimizeDeps,
   },
   build: {
-    // Electron loads from disk, so large chunks are not a performance concern.
-    // Split xterm into its own chunk to keep the main bundle smaller.
+    // Electron loads from disk, so large DOWNLOAD sizes are not a concern -
+    // but parse/eval at cold start is. Named vendor chunks serve two goals:
+    // keep the always-loaded xterm out of the main bundle, and give
+    // scripts/build.js's assertVendorChunksLazy a stable name to verify
+    // recharts stays out of the entry's static import closure (it is only
+    // reachable through the lazy StatsDashboardBody boundary; the name match
+    // cannot hit first-party sources - the chart wrappers live at
+    // stats/charts/Kng*.tsx).
+    //
+    // The react group is LOAD-BEARING, not an optimization: rolldown's
+    // manualChunks grouping absorbs shared dependencies (react's CJS interop,
+    // Vite's preload helper) into a named group that references them -
+    // react-dom's CJS module landed in the recharts chunk, which made the
+    // ENTRY statically import it and silently defeated the lazy boundary
+    // (the whole chunk parses at startup). Claiming react/react-dom/scheduler
+    // into their own chunk (which the entry statically needs anyway) severs
+    // that eager edge.
+    //
+    // monaco-editor deliberately has NO manualChunks entry: a named monaco
+    // group absorbed those same shared modules and became a STATIC import of
+    // the entry, parsing all ~4MB of monaco at every cold start and silently
+    // defeating the lazy ChangesPanel boundary. Natural chunking puts monaco
+    // in lazy chunks (editor api + per-language) reached only through the
+    // ChangesPanel dynamic import. assertVendorChunksLazy fails the build if
+    // monaco (or recharts) ever re-enters the entry's static closure.
     rolldownOptions: {
       output: {
         manualChunks(id: string) {
+          if (/node_modules[\\/](react|react-dom|scheduler)[\\/]/.test(id)) return 'react-vendor';
           if (id.includes('@xterm/xterm') || id.includes('@xterm/addon-webgl')) return 'xterm';
-          if (id.includes('monaco-editor')) return 'monaco';
+          if (id.includes('recharts')) return 'recharts';
         },
       },
     },

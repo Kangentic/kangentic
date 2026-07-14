@@ -2,23 +2,56 @@
  * The usage-stats service orchestration (src/main/usage-stats/
  * usage-stats-service.ts) through its DI seam: which cutoffs reach the
  * readers, the app-wide project loop's guards, and the composite payload
- * shape. The math itself is covered by usage-stats-bucketing.test.ts; the
- * critical contract HERE is the missing-DB-file guard - `getProjectDb`
- * CREATES a database for a missing file, so the loop must never touch a
- * project whose DB file does not exist.
+ * shape. The math itself is covered by usage-stats-bucketing.test.ts and the
+ * real-DB aggregate suites; the critical contract HERE is the
+ * missing-DB-file guard - `getProjectDb` CREATES a database for a missing
+ * file, so the loop must never touch a project whose DB file does not exist.
+ *
+ * The fake reader is a tiny reference implementation: it derives the
+ * SQL-shaped aggregates (window totals, dimension rollup, cost groups, cost
+ * allocation) from plain row fixtures, applying the same [since, until)
+ * session_started_at window the real queries apply. The real SQL is pinned
+ * separately by usage-history-aggregates.test.ts and
+ * conversation-usage-cost-allocation.test.ts.
  */
 import { describe, it, expect, vi } from 'vitest';
 import { createUsageStatsService, type ProjectUsageReader } from '../../src/main/usage-stats/usage-stats-service';
-import { LIVE_WINDOW_MS, TURN_GROUP_MS } from '../../src/main/usage-stats/bucketing';
+import { COST_GROUP_MS, LIVE_WINDOW_MS, TURN_GROUP_MS } from '../../src/main/usage-stats/bucketing';
 import { computePeriodCutoff } from '../../src/shared/period-cutoff';
-import type { UsageHistoryRow } from '../../src/main/db/repositories/usage-history-repository';
+import type {
+  UsageCostGroupRow,
+  UsageRollupRow,
+  UsageWindowTotals,
+} from '../../src/main/db/repositories/usage-history-repository';
 import type { GroupedTurnUsageRow } from '../../src/main/retrieval/conversation/conversation-usage-store';
 import type { LiveSessionRow } from '../../src/shared/types';
 
-function makeRow(overrides: Partial<UsageHistoryRow> = {}): UsageHistoryRow {
+/** Plain fixture row mirroring one usage_history row. */
+interface FixtureRow {
+  sessionRecordId: string;
+  sessionStartedAt: string;
+  totalCostUsd: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalDurationMs: number | null;
+  toolCallCount: number;
+  modelId: string | null;
+  modelDisplayName: string | null;
+  linesAdded: number;
+  linesRemoved: number;
+  filesChanged: number;
+  compactionCount: number;
+  agent: string | null;
+  effort: string | null;
+}
+
+function makeRow(overrides: Partial<FixtureRow> = {}): FixtureRow {
   return {
     sessionRecordId: 'session-1',
-    sessionStartedAt: new Date(Date.now() - 3_600_000).toISOString(),
+    // "Now", not now-minus-an-hour: the fake reader applies real window
+    // filtering, and a fixed offset would fall outside the 'today' window
+    // when the suite runs within that offset of local midnight.
+    sessionStartedAt: new Date().toISOString(),
     totalCostUsd: 1,
     totalInputTokens: 100,
     totalOutputTokens: 40,
@@ -54,11 +87,22 @@ function makeLiveSession(overrides: Partial<LiveSessionRow> = {}): LiveSessionRo
   };
 }
 
-function makeGroup(overrides: Partial<GroupedTurnUsageRow> = {}): GroupedTurnUsageRow {
+/** Per-session turn fixture: the fake reader allocates cost from the
+ *  project's rows and folds to bucket-only output, like the real SQL does. */
+interface FixtureGroup {
+  bucketStartMs: number;
+  sessionId: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  turnCount: number;
+}
+
+function makeGroup(overrides: Partial<FixtureGroup> = {}): FixtureGroup {
   return {
     bucketStartMs: Math.floor((Date.now() - 30 * 60_000) / TURN_GROUP_MS) * TURN_GROUP_MS,
     sessionId: 'session-1',
-    model: 'model-x',
     inputTokens: 50,
     outputTokens: 25,
     cacheCreationTokens: 0,
@@ -68,36 +112,190 @@ function makeGroup(overrides: Partial<GroupedTurnUsageRow> = {}): GroupedTurnUsa
   };
 }
 
+function inWindow(row: FixtureRow, sinceIso: string | null, untilIso: string | null): boolean {
+  if (sinceIso !== null && row.sessionStartedAt < sinceIso) return false;
+  if (untilIso !== null && row.sessionStartedAt >= untilIso) return false;
+  return true;
+}
+
+function computeTotals(rows: FixtureRow[]): UsageWindowTotals {
+  const totals: UsageWindowTotals = {
+    sessionCount: rows.length,
+    totalCostUsd: 0,
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    toolCallCount: 0,
+    linesAdded: 0,
+    linesRemoved: 0,
+    filesChanged: 0,
+    compactionCount: 0,
+    totalDurationMs: 0,
+    costKnownCount: 0,
+    minSessionStartedAt: null,
+    maxSessionStartedAt: null,
+  };
+  for (const row of rows) {
+    totals.totalCostUsd += row.totalCostUsd;
+    totals.totalInputTokens += row.totalInputTokens;
+    totals.totalOutputTokens += row.totalOutputTokens;
+    totals.toolCallCount += row.toolCallCount;
+    totals.linesAdded += row.linesAdded;
+    totals.linesRemoved += row.linesRemoved;
+    totals.filesChanged += row.filesChanged;
+    totals.compactionCount += row.compactionCount;
+    totals.totalDurationMs += row.totalDurationMs ?? 0;
+    if (row.totalCostUsd > 0) totals.costKnownCount += 1;
+    if (totals.minSessionStartedAt === null || row.sessionStartedAt < totals.minSessionStartedAt) {
+      totals.minSessionStartedAt = row.sessionStartedAt;
+    }
+    if (totals.maxSessionStartedAt === null || row.sessionStartedAt > totals.maxSessionStartedAt) {
+      totals.maxSessionStartedAt = row.sessionStartedAt;
+    }
+  }
+  return totals;
+}
+
+function computeRollup(rows: FixtureRow[]): UsageRollupRow[] {
+  const sorted = [...rows].sort((first, second) => first.sessionStartedAt.localeCompare(second.sessionStartedAt));
+  const byCombo = new Map<string, UsageRollupRow>();
+  for (const row of sorted) {
+    const key = JSON.stringify([row.modelId, row.modelDisplayName, row.agent, row.effort]);
+    let entry = byCombo.get(key);
+    if (!entry) {
+      entry = {
+        modelId: row.modelId,
+        modelDisplayName: row.modelDisplayName,
+        agent: row.agent,
+        effort: row.effort,
+        inputTokens: 0,
+        outputTokens: 0,
+        costUsd: 0,
+        sessionCount: 0,
+      };
+      byCombo.set(key, entry);
+    }
+    entry.inputTokens += row.totalInputTokens;
+    entry.outputTokens += row.totalOutputTokens;
+    entry.costUsd += row.totalCostUsd;
+    entry.sessionCount += 1;
+  }
+  return [...byCombo.values()];
+}
+
+function computeCostGroups(rows: FixtureRow[]): UsageCostGroupRow[] {
+  const sorted = [...rows].sort((first, second) => first.sessionStartedAt.localeCompare(second.sessionStartedAt));
+  const byBucketAndModel = new Map<string, UsageCostGroupRow>();
+  for (const row of sorted) {
+    const startedMs = Date.parse(row.sessionStartedAt);
+    if (Number.isNaN(startedMs)) continue;
+    const bucketStartMs = Math.floor(startedMs / COST_GROUP_MS) * COST_GROUP_MS;
+    const key = `${bucketStartMs}::${row.modelId ?? ''}`;
+    let entry = byBucketAndModel.get(key);
+    if (!entry) {
+      entry = { bucketStartMs, modelId: row.modelId, costUsd: 0, inputTokens: 0, outputTokens: 0, sessionCount: 0 };
+      byBucketAndModel.set(key, entry);
+    }
+    entry.costUsd += row.totalCostUsd;
+    entry.inputTokens += row.totalInputTokens;
+    entry.outputTokens += row.totalOutputTokens;
+    entry.sessionCount += 1;
+  }
+  return [...byBucketAndModel.values()].sort((first, second) => first.bucketStartMs - second.bucketStartMs);
+}
+
+function allocateGroups(
+  groups: FixtureGroup[],
+  costRows: FixtureRow[],
+): GroupedTurnUsageRow[] {
+  const costBySession = new Map(costRows.map((row) => [row.sessionRecordId, row.totalCostUsd]));
+  const tokensBySession = new Map<string, number>();
+  for (const group of groups) {
+    if (group.sessionId === null) continue;
+    tokensBySession.set(group.sessionId, (tokensBySession.get(group.sessionId) ?? 0) + group.inputTokens + group.outputTokens);
+  }
+  const byBucket = new Map<number, GroupedTurnUsageRow>();
+  for (const group of groups) {
+    const cost = group.sessionId === null ? undefined : costBySession.get(group.sessionId);
+    const totalTokens = group.sessionId === null ? undefined : tokensBySession.get(group.sessionId);
+    const allocatedCostUsd = !cost || !totalTokens ? 0 : cost * ((group.inputTokens + group.outputTokens) / totalTokens);
+    let bucket = byBucket.get(group.bucketStartMs);
+    if (!bucket) {
+      bucket = {
+        bucketStartMs: group.bucketStartMs,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 0,
+        turnCount: 0,
+        allocatedCostUsd: 0,
+      };
+      byBucket.set(group.bucketStartMs, bucket);
+    }
+    bucket.inputTokens += group.inputTokens;
+    bucket.outputTokens += group.outputTokens;
+    bucket.cacheCreationTokens += group.cacheCreationTokens;
+    bucket.cacheReadTokens += group.cacheReadTokens;
+    bucket.turnCount += group.turnCount;
+    bucket.allocatedCostUsd += allocatedCostUsd;
+  }
+  return [...byBucket.values()].sort((first, second) => first.bucketStartMs - second.bucketStartMs);
+}
+
 interface FakeProject {
   id: string;
   name: string;
   exists?: boolean;
-  rows?: UsageHistoryRow[];
-  groups?: GroupedTurnUsageRow[];
+  rows?: FixtureRow[];
+  groups?: FixtureGroup[];
   throws?: boolean;
 }
 
+interface ReaderCall {
+  projectId: string;
+  method: 'getUsageTotals' | 'listUsageRollup' | 'listUsageCostGroups' | 'listTurnGroups' | 'countSessionsRepresented';
+  sinceIso?: string | null;
+  untilIso?: string | null;
+  sinceMs?: number | null;
+  untilMs?: number | null;
+  groupMs?: number;
+  costSinceIso?: string | null;
+  costUntilIso?: string | null;
+  sessionRecordIds?: string[];
+}
+
 function makeService(projects: FakeProject[], nowMs = Date.now()) {
-  const readerCalls: Array<{
-    projectId: string;
-    sinceIso: string | null;
-    untilIso: string | null;
-    sinceMs: number | null;
-    untilMs: number | null;
-    groupMs: number;
-  }> = [];
+  const readerCalls: ReaderCall[] = [];
   const openReader = vi.fn((projectId: string): ProjectUsageReader => {
     const project = projects.find((candidate) => candidate.id === projectId);
     if (!project) throw new Error(`unknown project ${projectId}`);
     if (project.throws) throw new Error('corrupt database');
+    const allRows = project.rows ?? [];
+    const allGroups = project.groups ?? [];
     return {
-      listUsageRows: (sinceIso, untilIso) => {
-        readerCalls.push({ projectId, sinceIso, untilIso, sinceMs: null, untilMs: null, groupMs: 0 });
-        return project.rows ?? [];
+      getUsageTotals: (sinceIso, untilIso) => {
+        readerCalls.push({ projectId, method: 'getUsageTotals', sinceIso, untilIso });
+        return computeTotals(allRows.filter((row) => inWindow(row, sinceIso, untilIso)));
       },
-      listTurnGroups: (sinceMs, groupMs, untilMs) => {
-        readerCalls.push({ projectId, sinceIso: null, untilIso: null, sinceMs, untilMs, groupMs });
-        return project.groups ?? [];
+      listUsageRollup: (sinceIso, untilIso) => {
+        readerCalls.push({ projectId, method: 'listUsageRollup', sinceIso, untilIso });
+        return computeRollup(allRows.filter((row) => inWindow(row, sinceIso, untilIso)));
+      },
+      listUsageCostGroups: (sinceIso, untilIso, groupMs) => {
+        readerCalls.push({ projectId, method: 'listUsageCostGroups', sinceIso, untilIso, groupMs });
+        return computeCostGroups(allRows.filter((row) => inWindow(row, sinceIso, untilIso)));
+      },
+      listTurnGroups: (sinceMs, groupMs, untilMs, costSinceIso, costUntilIso) => {
+        readerCalls.push({ projectId, method: 'listTurnGroups', sinceMs, untilMs, groupMs, costSinceIso, costUntilIso });
+        const windowed = allGroups.filter((group) =>
+          (sinceMs === null || group.bucketStartMs >= sinceMs) && (untilMs === null || group.bucketStartMs < untilMs));
+        return allocateGroups(windowed, allRows.filter((row) => inWindow(row, costSinceIso, costUntilIso)));
+      },
+      countSessionsRepresented: (sinceIso, untilIso, sessionRecordIds) => {
+        readerCalls.push({ projectId, method: 'countSessionsRepresented', sinceIso, untilIso, sessionRecordIds });
+        const windowedIds = new Set(
+          allRows.filter((row) => inWindow(row, sinceIso, untilIso)).map((row) => row.sessionRecordId),
+        );
+        return sessionRecordIds.filter((recordId) => windowedIds.has(recordId)).length;
       },
     };
   });
@@ -111,15 +309,43 @@ function makeService(projects: FakeProject[], nowMs = Date.now()) {
 }
 
 describe('usage-stats service: cutoffs and payload shape', () => {
-  it('passes the ISO cutoff to usage rows and the epoch-ms cutoff to turn groups', () => {
+  it('passes the ISO cutoff to usage aggregates and the epoch-ms cutoff to turn groups', () => {
     const { service, readerCalls } = makeService([{ id: 'p1', name: 'One' }]);
     service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
 
-    const rowCall = readerCalls.find((call) => call.sinceIso !== null || call.groupMs === 0);
-    const groupCall = readerCalls.find((call) => call.groupMs > 0);
-    expect(rowCall?.sinceIso).toBe(computePeriodCutoff('today'));
+    const totalsCall = readerCalls.find((call) => call.method === 'getUsageTotals');
+    const groupCall = readerCalls.find((call) => call.method === 'listTurnGroups');
+    expect(totalsCall?.sinceIso).toBe(computePeriodCutoff('today'));
     expect(groupCall?.sinceMs).toBe(Date.parse(computePeriodCutoff('today')!));
+    // Non-Live periods group turns on the coarser 15-minute grid (nests into
+    // every halfHour-and-up chart bucket; 3x fewer group rows on wide ranges).
+    expect(groupCall?.groupMs).toBe(COST_GROUP_MS);
+  });
+
+  it('groups turns on the 5-minute grid ONLY for Live (its chart buckets sit on that grid)', () => {
+    const { service, readerCalls } = makeService([{ id: 'p1', name: 'One' }]);
+    service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'live');
+
+    const groupCall = readerCalls.find((call) => call.method === 'listTurnGroups');
     expect(groupCall?.groupMs).toBe(TURN_GROUP_MS);
+  });
+
+  it('passes the SAME usage window to the turn-group cost allocation (a session outside it allocates $0)', () => {
+    const { service, readerCalls } = makeService([{ id: 'p1', name: 'One' }]);
+    service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
+
+    const totalsCall = readerCalls.find((call) => call.method === 'getUsageTotals');
+    const groupCall = readerCalls.find((call) => call.method === 'listTurnGroups');
+    expect(groupCall?.costSinceIso).toBe(totalsCall?.sinceIso);
+    expect(groupCall?.costUntilIso).toBe(totalsCall?.untilIso ?? null);
+  });
+
+  it('requests cost groups on the 15-minute grid', () => {
+    const { service, readerCalls } = makeService([{ id: 'p1', name: 'One' }]);
+    service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
+
+    const costGroupCall = readerCalls.find((call) => call.method === 'listUsageCostGroups');
+    expect(costGroupCall?.groupMs).toBe(COST_GROUP_MS);
   });
 
   it('live scopes both reads to the trailing window and returns an empty cost series', () => {
@@ -127,7 +353,7 @@ describe('usage-stats service: cutoffs and payload shape', () => {
     const { service, readerCalls } = makeService([{ id: 'p1', name: 'One' }], nowMs);
     const stats = service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'live');
 
-    const groupCall = readerCalls.find((call) => call.groupMs > 0);
+    const groupCall = readerCalls.find((call) => call.method === 'listTurnGroups');
     expect(groupCall?.sinceMs).toBe(Math.floor((nowMs - LIVE_WINDOW_MS) / TURN_GROUP_MS) * TURN_GROUP_MS);
     expect(stats.costSeries).toEqual([]);
     expect(stats.rangeEndMs).toBe(nowMs);
@@ -183,7 +409,7 @@ describe('usage-stats service: app-wide rollup', () => {
     }
   });
 
-  it('concatenates every project before one global fold: KPIs sum, breakdowns merge', () => {
+  it('merges every project before one global fold: KPIs sum, breakdowns merge', () => {
     const { service } = makeService([
       {
         id: 'p1',
@@ -264,11 +490,11 @@ describe('usage-stats service: app-wide rollup', () => {
       { dayStartMs: dayStartMs + 5 * 3_600_000 },
     );
 
-    const rowCall = readerCalls.find((call) => call.groupMs === 0);
-    const groupCall = readerCalls.find((call) => call.groupMs > 0);
+    const totalsCall = readerCalls.find((call) => call.method === 'getUsageTotals');
+    const groupCall = readerCalls.find((call) => call.method === 'listTurnGroups');
     // Without the upper bound a past day's read would include every later session.
-    expect(rowCall?.sinceIso).toBe(new Date(dayStartMs).toISOString());
-    expect(rowCall?.untilIso).toBe(new Date(dayEndMs).toISOString());
+    expect(totalsCall?.sinceIso).toBe(new Date(dayStartMs).toISOString());
+    expect(totalsCall?.untilIso).toBe(new Date(dayEndMs).toISOString());
     expect(groupCall?.sinceMs).toBe(dayStartMs);
     expect(groupCall?.untilMs).toBe(dayEndMs);
 
@@ -280,9 +506,23 @@ describe('usage-stats service: app-wide rollup', () => {
     // A drill compares against the PRECEDING local day.
     expect(stats.previousKpis).not.toBeNull();
     const previousDayCall = readerCalls.find(
-      (call) => call.groupMs === 0 && call.sinceIso === new Date(new Date(dayStartMs).setDate(new Date(dayStartMs).getDate() - 1)).toISOString(),
+      (call) => call.method === 'getUsageTotals' && call.sinceIso === new Date(new Date(dayStartMs).setDate(new Date(dayStartMs).getDate() - 1)).toISOString(),
     );
     expect(previousDayCall?.untilIso).toBe(new Date(dayStartMs).toISOString());
+  });
+
+  it('the previous window reads totals + turn groups ONLY (previousKpis has no breakdowns or series)', () => {
+    const { service, readerCalls } = makeService([{ id: 'p1', name: 'One', rows: [makeRow()] }]);
+    service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
+
+    const currentSinceIso = computePeriodCutoff('today');
+    const previousCalls = readerCalls.filter((call) => call.sinceIso !== undefined && call.sinceIso !== currentSinceIso);
+    expect(previousCalls.length).toBeGreaterThan(0);
+    expect(previousCalls.every((call) => call.method === 'getUsageTotals')).toBe(true);
+    const previousGroupCalls = readerCalls.filter(
+      (call) => call.method === 'listTurnGroups' && call.costSinceIso !== currentSinceIso,
+    );
+    expect(previousGroupCalls).toHaveLength(1);
   });
 
   it('a custom month window bounds both reads, buckets daily, and compares against the preceding same-length window', () => {
@@ -296,8 +536,8 @@ describe('usage-stats service: app-wide rollup', () => {
     const stats = service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'month', null, { sinceMs, untilMs });
 
     // Current-window reads carry the window's bounds.
-    const rowCall = readerCalls.find((call) => call.groupMs === 0 && call.sinceIso === new Date(sinceMs).toISOString());
-    expect(rowCall?.untilIso).toBe(new Date(untilMs).toISOString());
+    const totalsCall = readerCalls.find((call) => call.method === 'getUsageTotals' && call.sinceIso === new Date(sinceMs).toISOString());
+    expect(totalsCall?.untilIso).toBe(new Date(untilMs).toISOString());
     // The range clamps to the (fully past) window at daily granularity
     // (61-day span stays under the weekly-widening threshold).
     expect(stats.rangeStartMs).toBe(sinceMs);
@@ -306,10 +546,10 @@ describe('usage-stats service: app-wide rollup', () => {
     expect(stats.costBucketSizeMs).toBe(24 * 3_600_000);
     // Deltas compare against the same-length window immediately preceding.
     const spanMs = untilMs - sinceMs;
-    const previousRowCall = readerCalls.find(
-      (call) => call.groupMs === 0 && call.sinceIso === new Date(sinceMs - spanMs).toISOString(),
+    const previousTotalsCall = readerCalls.find(
+      (call) => call.method === 'getUsageTotals' && call.sinceIso === new Date(sinceMs - spanMs).toISOString(),
     );
-    expect(previousRowCall?.untilIso).toBe(new Date(sinceMs).toISOString());
+    expect(previousTotalsCall?.untilIso).toBe(new Date(sinceMs).toISOString());
     expect(stats.previousKpis).not.toBeNull();
   });
 
@@ -372,6 +612,32 @@ describe('usage-stats service: live session count overlay', () => {
     );
 
     expect(stats.kpis.sessionCount).toBe(1);
+  });
+
+  it('dedups against the ledger via the windowed COUNT, not an unbounded one', () => {
+    const { service, readerCalls } = makeService([
+      { id: 'p1', name: 'One', rows: [makeRow({ sessionRecordId: 'shared-id' })] },
+    ]);
+    service.getDashboardStats(
+      { kind: 'project', projectId: 'p1' },
+      'today',
+      null,
+      null,
+      [makeLiveSession({ sessionRecordId: 'shared-id', projectId: 'p1' })],
+    );
+
+    const dedupCall = readerCalls.find((call) => call.method === 'countSessionsRepresented');
+    expect(dedupCall?.sessionRecordIds).toEqual(['shared-id']);
+    expect(dedupCall?.sinceIso).toBe(computePeriodCutoff('today'));
+  });
+
+  it('skips the dedup query entirely when a project has no live sessions', () => {
+    const { service, readerCalls } = makeService([
+      { id: 'p1', name: 'One', rows: [makeRow()] },
+    ]);
+    service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
+
+    expect(readerCalls.some((call) => call.method === 'countSessionsRepresented')).toBe(false);
   });
 
   it('scopes live sessions to the matching project in an app-wide rollup, and rolls up into the headline count', () => {

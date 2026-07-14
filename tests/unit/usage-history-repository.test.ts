@@ -291,38 +291,77 @@ describe('UsageHistoryRepository.setTaskGitStats', () => {
   });
 });
 
-describe('UsageHistoryRepository.listRowsAfter', () => {
-  it('issues a WHERE-less SELECT when since is null (All Time), oldest first', () => {
-    const { db, statements } = createMockDb();
+describe('UsageHistoryRepository aggregate reads (window clause shape)', () => {
+  // Real query RESULTS are pinned by the real-DB suite
+  // (usage-history-aggregates.test.ts); these mock-level checks pin only the
+  // window contract every read shares: bucketing filters on
+  // `session_started_at` (when the work happened), never `recorded_at` (when
+  // the metrics were flushed). If the filter ever flips, "Today" would mean
+  // "captured today", which is wrong for sessions finalizing across midnight.
+
+  it('getUsageTotals aggregates the whole table when since is null (All Time)', () => {
+    const { db, statements } = createMockDb({});
     const repository = new UsageHistoryRepository(db);
 
-    const result = repository.listRowsAfter(null);
+    repository.getUsageTotals(null);
 
     expect(statements).toHaveLength(1);
     expect(statements[0].sql).not.toMatch(/WHERE/i);
     expect(statements[0].sql).toMatch(/FROM\s+usage_history/i);
-    expect(statements[0].sql).toMatch(/ORDER\s+BY\s+session_started_at\s+ASC/i);
-    expect(result).toEqual([]);
+    expect(statements[0].sql).toMatch(/SUM\s*\(\s*total_cost_usd\s*\)/i);
   });
 
-  it('filters on session_started_at when since is provided (not recorded_at)', () => {
+  it('getUsageTotals filters the [since, until) window on session_started_at (not recorded_at)', () => {
+    const { db, statements } = createMockDb({});
+    const repository = new UsageHistoryRepository(db);
+
+    repository.getUsageTotals('2026-04-01T00:00:00Z', '2026-04-02T00:00:00Z');
+
+    expect(statements[0].sql).toMatch(/WHERE\s+session_started_at\s*>=\s*\?\s+AND\s+session_started_at\s*<\s*\?/i);
+    expect(statements[0].sql).not.toMatch(/recorded_at\s*>=/i);
+    expect(statements[0].getParams[0]).toEqual(['2026-04-01T00:00:00Z', '2026-04-02T00:00:00Z']);
+  });
+
+  it('listUsageRollup groups by the four breakdown dimensions, ordered by earliest session', () => {
     const { db, statements } = createMockDb();
     const repository = new UsageHistoryRepository(db);
 
-    repository.listRowsAfter('2026-04-01T00:00:00Z');
+    repository.listUsageRollup('2026-04-01T00:00:00Z');
 
-    expect(statements[0].sql).toMatch(/WHERE\s+session_started_at\s*>=\s*\?/i);
-    expect(statements[0].sql).not.toMatch(/recorded_at\s*>=/i);
+    expect(statements[0].sql).toMatch(/GROUP\s+BY\s+model_id\s*,\s*model_display_name\s*,\s*agent\s*,\s*effort/i);
+    expect(statements[0].sql).toMatch(/ORDER\s+BY\s+MIN\s*\(\s*session_started_at\s*\)\s+ASC/i);
+    expect(statements[0].sql).toMatch(/session_started_at\s*>=\s*\?/i);
     expect(statements[0].allParams[0]).toEqual(['2026-04-01T00:00:00Z']);
   });
 
-  it('selects the agent and effort columns (the by-agent / by-effort breakdown sources)', () => {
+  it('listUsageCostGroups binds the group width for the bucket expression before the window params', () => {
     const { db, statements } = createMockDb();
     const repository = new UsageHistoryRepository(db);
 
-    repository.listRowsAfter(null);
+    repository.listUsageCostGroups('2026-04-01T00:00:00Z', '2026-04-02T00:00:00Z', 900_000);
 
-    expect(statements[0].sql).toMatch(/\bagent\b/);
-    expect(statements[0].sql).toMatch(/\beffort\b/);
+    expect(statements[0].sql).toMatch(/GROUP\s+BY\s+bucketStartMs\s*,\s*model_id/i);
+    expect(statements[0].sql).toMatch(/strftime\('%s',\s*session_started_at\)/i);
+    expect(statements[0].allParams[0]).toEqual([900_000, 900_000, '2026-04-01T00:00:00Z', '2026-04-02T00:00:00Z']);
+  });
+
+  it('countSessionsRepresented returns 0 without touching the DB for an empty id list', () => {
+    const { db, statements } = createMockDb();
+    const repository = new UsageHistoryRepository(db);
+
+    expect(repository.countSessionsRepresented('2026-04-01T00:00:00Z', null, [])).toBe(0);
+    expect(statements).toHaveLength(0);
+  });
+
+  it('countSessionsRepresented binds the ids then the window bounds', () => {
+    const { db, statements } = createMockDb({ representedCount: 2 });
+    const repository = new UsageHistoryRepository(db);
+
+    const count = repository.countSessionsRepresented('2026-04-01T00:00:00Z', '2026-04-02T00:00:00Z', ['live-1', 'live-2']);
+
+    expect(count).toBe(2);
+    expect(statements[0].sql).toMatch(/session_record_id\s+IN\s*\(\?,\s*\?\)/i);
+    expect(statements[0].sql).toMatch(/session_started_at\s*>=\s*\?\s+AND\s+session_started_at\s*<\s*\?/i);
+    expect(statements[0].getParams[0]).toEqual(['live-1', 'live-2', '2026-04-01T00:00:00Z', '2026-04-02T00:00:00Z']);
   });
 });

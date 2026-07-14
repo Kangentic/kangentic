@@ -5,5 +5,6 @@
   "@xterm/xterm", "@xterm/addon-webgl", "@xterm/addon-serialize",
   "lucide-react", "react-colorful",
   "zustand", "zustand/react/shallow",
-  "monaco-editor", "monaco-editor/esm/vs/base/common/errors"
+  "monaco-editor", "monaco-editor/esm/vs/base/common/errors",
+  "recharts"
 ]
