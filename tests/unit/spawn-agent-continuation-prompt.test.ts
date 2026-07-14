@@ -132,7 +132,10 @@ function makeDeps(args: { resumeRecord: SessionRecord | undefined }) {
     resumeSuspendedSession: vi.fn(async () => {}),
   };
   const scheduleKeystrokes = vi.fn();
-  const context = { terminalSubmitScheduler: { scheduleKeystrokes } };
+  const context = {
+    terminalSubmitScheduler: { scheduleKeystrokes },
+    configManager: { getEffectiveConfig: vi.fn(() => ({ agent: { permissionMode: 'acceptEdits' } })) },
+  };
 
   return { tasks, sessionRepo, engine, scheduleKeystrokes, context };
 }

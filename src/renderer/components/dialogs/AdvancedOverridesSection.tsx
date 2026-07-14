@@ -33,14 +33,28 @@ interface AdvancedOverridesSectionProps {
  * (`TaskDetailEditForm`).
  *
  * Resolution + locking contract:
- *   - The inherit option (empty string) defers to the destination column's
- *     overrides and the project default at spawn time. Its label IS the
- *     concrete value that resolves to today (e.g. "Opus 4.8", no "Use
- *     default (...)" framing - the value is self-evident) - leaving it as-is
- *     stores no override, so a later project-default change still applies.
- *   - A concrete pick wins over the column for the task's lifetime;
- *     column moves cannot change it (see `resolveTargetAgent` and the
- *     cross-agent guards in `task-move.ts`).
+ *   - The inherit state (empty string) shows the concrete value it resolves
+ *     to today as a MUTED placeholder (the bare value, no "Inherit (...)"
+ *     framing, no clear-X) - the muted weight alone signals "inherited, not
+ *     pinned". A concrete pick renders at full weight with a clear-X.
+ *     Leaving a field on inherit stores no override, so a later
+ *     column/project-default change still applies - until first spawn (see
+ *     below). Applies to all four fields (Agent/Model/Effort/Permission).
+ *   - A concrete pick wins over the column for the task's lifetime; column
+ *     moves cannot change it (see `resolveTargetAgent` and the cross-agent
+ *     guards in `task-move.ts`). If the task has ANY of the four fields set
+ *     when it spawns for the very first time ever, the other
+ *     (still-inherited) fields are frozen too, to exactly the values this
+ *     dialog displayed - resolved against the lane the task was configured
+ *     in, never the destination column
+ *     (`freezeAdvancedOverridesOnFirstSpawn` in `agent-spawn.ts`). So a
+ *     value that already matched its inherited default gets locked, not
+ *     silently left dynamic, and the whole Advanced tab is the task's
+ *     contract from then on. One exception: a column that forces
+ *     `permission_mode: 'plan'` always wins over the task's (picked or
+ *     frozen) permission while the task is in that column - plan mode is a
+ *     genuine safety guarantee, not just an ordinary column default (see
+ *     `transition-engine.ts` / `prepare-spawn.ts`).
  *
  * Behaviour notes:
  *   - The Agent picker is hidden when only one agent is `found` (nothing
@@ -92,10 +106,10 @@ export function AdvancedOverridesSection({
   const showAdvancedSection = showAgentPicker || showModelPicker || showEffortPicker || showPermissionPicker;
 
   // Resolved values below the task tier - what each field would actually
-  // spawn with if left on the inherit option. Surfaced directly as that
-  // option's label (no "Use default (...)" framing) so the picker just
-  // shows the real value that will be used - self-evident, no extra text
-  // needed to explain it.
+  // spawn with if left on the inherit state. Shown as the BARE value in the
+  // muted placeholder weight (see placeholderVariant below): the muted
+  // rendering plus the absent clear-X is what distinguishes "inherited" from
+  // a concrete pick, with no "Inherit (...)" text framing.
   const fallbackAgentDisplayName = availableAgents.find((entry) => entry.name === fallbackAgent)?.displayName ?? fallbackAgent;
   const fallbackModel = destinationSwimlane?.model_override ?? currentProject?.default_model ?? null;
   const fallbackModelLabel = fallbackModel ? modelRowLabel(fallbackModel, modelDisplayNames) : null;
@@ -135,6 +149,7 @@ export function AdvancedOverridesSection({
               onChange={handleAgentChange}
               options={availableAgents.map((entry) => ({ value: entry.name, label: entry.displayName ?? entry.name }))}
               placeholder={agentInheritLabel}
+              placeholderVariant="muted"
               testId="task-agent-override"
             />
           </div>
@@ -149,7 +164,7 @@ export function AdvancedOverridesSection({
                   onChange={setModelOverride}
                   availableModels={advancedModelOptions}
                   placeholder={modelInheritLabel}
-                  placeholderVariant={fallbackModelLabel ? 'resolved' : 'muted'}
+                  placeholderVariant="muted"
                   testId="task-model-override"
                   onOpen={() => useConfigStore.getState().rescanModels()}
                   contextWindows={modelContextWindows}
@@ -165,7 +180,7 @@ export function AdvancedOverridesSection({
                   onChange={setEffortOverride}
                   options={advancedEffortOptions.map((level) => ({ value: level, label: level }))}
                   placeholder={effortInheritLabel}
-                  placeholderVariant={fallbackEffort ? 'resolved' : 'muted'}
+                  placeholderVariant="muted"
                   testId="task-effort-override"
                 />
               </div>
@@ -180,6 +195,7 @@ export function AdvancedOverridesSection({
               onChange={setPermissionOverride}
               options={permissionOptions.map((entry) => ({ value: entry.mode, label: entry.label }))}
               placeholder={permissionInheritLabel}
+              placeholderVariant="muted"
               testId="task-permission-override"
             />
           </div>

@@ -55,7 +55,9 @@ export type PrepareResult =
  *   2. Detect the agent CLI binary (skipped or errored → skip signal).
  *   3. Ensure the CLI trusts the working directory so no trust prompt
  *      blocks the spawn.
- *   4. Resolve the effective permission mode (lane → global).
+ *   4. Resolve the effective permission mode (task → lane → global, EXCEPT a
+ *      lane forcing 'plan' always wins - a genuine safety guarantee, not
+ *      just a default).
  *   5. Generate a session record UUID (used as the PTY session ID and
  *      the on-disk session directory name).
  *   6. Generate the agent CLI session UUID - only for adapters that
@@ -99,7 +101,16 @@ export async function prepareAgentSpawn(input: {
 
   await adapter.ensureTrust(cwd);
 
-  const permissionMode = task.permission_mode ?? swimlane?.permission_mode ?? config.agent.permissionMode;
+  // Plan mode is the one column-level permission setting that is a genuine
+  // safety guarantee (never let a task's Auto-Classifier/Accept-Edits pin
+  // bypass a deliberate read-only phase), so a column explicitly configured
+  // to force 'plan' always wins, regardless of any task-level override.
+  // Every OTHER permission_mode is an ordinary column default - same
+  // precedence as model/effort: task override wins when set, the column's
+  // setting is only a fallback for a task that leaves permission_mode null.
+  const permissionMode = swimlane?.permission_mode === 'plan'
+    ? 'plan'
+    : task.permission_mode ?? swimlane?.permission_mode ?? config.agent.permissionMode;
 
   let agentSessionId: string | null;
   const canResume = input.resume !== null;

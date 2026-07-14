@@ -193,6 +193,7 @@ function makeDeps(args: {
     terminalSubmitScheduler: { scheduleKeystrokes },
     mainWindow: { isDestroyed: vi.fn(() => false), webContents: { send: vi.fn() } },
     projectRepo: { getById: vi.fn(() => null) },
+    configManager: { getEffectiveConfig: vi.fn(() => ({ agent: { permissionMode: 'acceptEdits' } })) },
   };
 
   return { tasks, sessionRepo, engine, scheduleKeystrokes, context };

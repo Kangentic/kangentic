@@ -192,8 +192,14 @@ export class TransitionEngine {
     }
     console.log(`[spawnAgent] ${agentName} CLI found at ${detection.path} (v${detection.version})`);
 
-    // Resolution order: task override → swimlane override → global setting
-    const permissionMode = task.permission_mode ?? permissionOverride ?? appConfig.permissionMode;
+    // Resolution order: task override → swimlane override → global setting,
+    // EXCEPT a swimlane forcing 'plan' always wins regardless of the task
+    // override - plan mode is a genuine safety guarantee (never let a
+    // task's Auto-Classifier/Accept-Edits pin bypass a deliberate read-only
+    // phase), not just an ordinary column default like every other mode.
+    const permissionMode = permissionOverride === 'plan'
+      ? 'plan'
+      : task.permission_mode ?? permissionOverride ?? appConfig.permissionMode;
     const cwd = task.worktree_path || appConfig.projectPath || process.cwd();
 
     // Pre-populate trust so the agent doesn't block on the trust dialog.

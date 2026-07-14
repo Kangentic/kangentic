@@ -379,7 +379,7 @@ describe('prepareAgentSpawn - model/effort override passthrough', () => {
 });
 
 describe('prepareAgentSpawn - permission_mode resolution', () => {
-  it('resolves permissionMode from task.permission_mode, winning over a differing swimlane.permission_mode', async () => {
+  it('resolves permissionMode from task.permission_mode, winning over a differing NON-plan swimlane.permission_mode', async () => {
     const { adapter, capturedCommandOptions } = makeCaptureAdapter();
     agentRegistryGetMock.mockReturnValue(adapter);
 
@@ -400,6 +400,52 @@ describe('prepareAgentSpawn - permission_mode resolution', () => {
     expect(result.data.permissionMode).toBe('plan');
     expect(capturedCommandOptions).toHaveLength(1);
     expect(capturedCommandOptions[0].permissionMode).toBe('plan');
+  });
+
+  it('a swimlane forcing plan mode ALWAYS wins, regardless of a differing task.permission_mode', async () => {
+    const { adapter, capturedCommandOptions } = makeCaptureAdapter();
+    agentRegistryGetMock.mockReturnValue(adapter);
+
+    const taskWithPermissionOverride = makeTask({ permission_mode: 'auto' } as Partial<Task>);
+    const laneForcingPlan = makeSwimlane({ permission_mode: 'plan' } as Partial<Swimlane>);
+    const configWithDifferentDefault = makeAppConfig({
+      agent: { cliPaths: {}, permissionMode: 'default', maxConcurrentSessions: 5, queueOverflow: 'queue', autoResumeSessionsOnRestart: true },
+    });
+
+    const result = await prepareAgentSpawn(makeSpawnInput({
+      task: taskWithPermissionOverride,
+      swimlane: laneForcingPlan,
+      effectiveConfig: configWithDifferentDefault,
+    }));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('Expected ok:true');
+    expect(result.data.permissionMode).toBe('plan');
+    expect(capturedCommandOptions).toHaveLength(1);
+    expect(capturedCommandOptions[0].permissionMode).toBe('plan');
+  });
+
+  it('falls through to task.permission_mode when the swimlane has no permission_mode set', async () => {
+    const { adapter, capturedCommandOptions } = makeCaptureAdapter();
+    agentRegistryGetMock.mockReturnValue(adapter);
+
+    const taskWithPermissionOverride = makeTask({ permission_mode: 'auto' } as Partial<Task>);
+    const laneWithNoOverride = makeSwimlane({ permission_mode: null } as Partial<Swimlane>);
+    const configWithDifferentDefault = makeAppConfig({
+      agent: { cliPaths: {}, permissionMode: 'default', maxConcurrentSessions: 5, queueOverflow: 'queue', autoResumeSessionsOnRestart: true },
+    });
+
+    const result = await prepareAgentSpawn(makeSpawnInput({
+      task: taskWithPermissionOverride,
+      swimlane: laneWithNoOverride,
+      effectiveConfig: configWithDifferentDefault,
+    }));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('Expected ok:true');
+    expect(result.data.permissionMode).toBe('auto');
+    expect(capturedCommandOptions).toHaveLength(1);
+    expect(capturedCommandOptions[0].permissionMode).toBe('auto');
   });
 });
 

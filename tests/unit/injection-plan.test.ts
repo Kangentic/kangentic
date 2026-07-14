@@ -528,6 +528,27 @@ describe('prepareInjectionPlan -- per-task override wins over column override', 
     expect(plan).toBeNull();
   });
 
+  it('does not emit /effort when a pinned effort differs from applied, column, and project defaults', () => {
+    let capturedSpec: SettingsChangeSpec | null = null;
+    const adapter = fakeAdapter({
+      getInjectionSequence: (spec) => {
+        capturedSpec = spec;
+        return spec.effortChanged ? [`/effort ${spec.effort}`] : [];
+      },
+    });
+    const plan = prepareInjectionPlan({
+      adapter,
+      // Source (applied), destination column, and project default are all
+      // different from the pin - none of them may leak into the delta.
+      sessionRepo: sessionRepoWith({ applied_effort: 'low' }),
+      task: { id: 't1', agent: 'fake', model_override: null, effort_override: 'xhigh' },
+      toLane: lane({ effort_override: 'high' }),
+      project: { default_model: null, default_effort: 'medium' },
+    });
+    expect(capturedSpec).toMatchObject({ effort: 'xhigh', effortChanged: false });
+    expect(plan).toBeNull();
+  });
+
   it('restarts for a model change while a pinned effort fires no slash (mixed override)', () => {
     let capturedSpec: SettingsChangeSpec | null = null;
     const adapter = fakeAdapter({

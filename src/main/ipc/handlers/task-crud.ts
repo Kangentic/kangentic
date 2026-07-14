@@ -15,6 +15,7 @@ import {
   createTransitionEngine,
   cleanupTaskResources,
   resolveSpawnOverrides,
+  freezeAdvancedOverridesOnFirstSpawn,
 } from '../helpers';
 import { resolveProjectContext } from '../helpers/project-repos';
 import { guardActiveNonWorktreeSessions } from './task-move';
@@ -132,6 +133,20 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
         const sessionRepo = new SessionRepository(db);
         const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachments, projectId, projectPath);
         const project = context.projectRepo.getById(projectId);
+
+        // A task created directly in a spawn column spawns via
+        // executeTransition below without going through spawnAgent, so this
+        // path needs its own freeze call. The New Task dialog displayed
+        // inherit values against the creation column itself, so the creation
+        // column IS the settings lane here.
+        freezeAdvancedOverridesOnFirstSpawn({
+          task,
+          hasSessionRecord: false,
+          settingsLane: toLane,
+          project,
+          globalPermissionMode: () => context.configManager.getEffectiveConfig(projectPath).agent.permissionMode,
+          tasks,
+        });
 
         const overrides = resolveSpawnOverrides(task, toLane, project);
         try {

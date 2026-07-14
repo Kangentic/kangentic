@@ -124,6 +124,7 @@ vi.mock('../../src/main/ipc/helpers', () => ({
     model: task?.model_override ?? lane?.model_override,
     effort: task?.effort_override ?? lane?.effort_override,
   })),
+  freezeAdvancedOverridesOnFirstSpawn: vi.fn(),
 }));
 
 vi.mock('../../src/main/agent/shared', () => ({
@@ -295,7 +296,7 @@ function createMockContext(overrides: Partial<MockContext> = {}): MockContext {
       getActivityCache: vi.fn(() => ({})),
     },
     configManager: {
-      getEffectiveConfig: vi.fn(() => ({ git: { defaultBaseBranch: 'main' } })),
+      getEffectiveConfig: vi.fn(() => ({ git: { defaultBaseBranch: 'main' }, agent: { permissionMode: 'acceptEdits' } })),
     },
     boardConfigManager: {
       getDefaultBaseBranch: vi.fn(() => null),

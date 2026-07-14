@@ -208,13 +208,13 @@ export interface Task {
   use_worktree: number | null;
   labels: string[];
   priority: number;
-  /** Per-task model override set via the ContextBar popover. Takes precedence over the swimlane's `model_override`; null inherits the swimlane (or agent default). */
+  /** Per-task model override set via the ContextBar popover or frozen at first spawn (see `freezeAdvancedOverridesOnFirstSpawn`). Takes precedence over the swimlane's `model_override`; null inherits the swimlane (or agent default). */
   model_override: string | null;
-  /** Per-task effort override set via the ContextBar popover. Takes precedence over the swimlane's `effort_override`; null inherits the swimlane (or agent default). */
+  /** Per-task effort override set via the ContextBar popover or frozen at first spawn (see `freezeAdvancedOverridesOnFirstSpawn`). Takes precedence over the swimlane's `effort_override`; null inherits the swimlane (or agent default). */
   effort_override: string | null;
-  /** Per-task agent override set at task creation. When non-null, wins over the swimlane's `agent_override` and the project default for the task's entire lifetime - column moves cannot change the agent. Set only via the New Task dialog's Advanced section; the ContextBar popover does not edit this. */
+  /** Per-task agent override set at task creation. When non-null, wins over the swimlane's `agent_override` and the project default for the task's entire lifetime - column moves cannot change the agent. Set via the New Task dialog's Advanced section or frozen at first spawn (`freezeAdvancedOverridesOnFirstSpawn`); the ContextBar popover does not edit this. */
   agent_override: string | null;
-  /** Per-task permission mode override. Takes precedence over the swimlane's `permission_mode` and the project's default permission mode; null inherits. Set via the New Task dialog's Advanced section or the task-detail edit form (pre-spawn or suspended only - same lock as `agent_override`). */
+  /** Per-task permission mode override. Takes precedence over the swimlane's `permission_mode` and the project's default permission mode, same as `model_override`/`effort_override` - EXCEPT when the destination swimlane forces `permission_mode: 'plan'`, which always wins regardless of this field: plan mode is a genuine safety guarantee (never let a task's Auto-Classifier/Accept-Edits pin bypass a deliberate read-only phase), not just an ordinary column default like every other permission mode. Null inherits. Set via the New Task dialog's Advanced section / the task-detail edit form, or frozen at first spawn alongside agent/model/effort (`freezeAdvancedOverridesOnFirstSpawn`) so a task with ANY Advanced override runs under the permission the dialog displayed, not the destination column's. */
   permission_mode: PermissionMode | null;
   /** Per-task initial command, injected once the agent spawns for this task. MCP-only (set via `kangentic_create_task`'s `autoCommand` param); not surfaced in the UI. Takes precedence over the swimlane's `auto_command` for this task only; null inherits the swimlane. */
   auto_command: string | null;

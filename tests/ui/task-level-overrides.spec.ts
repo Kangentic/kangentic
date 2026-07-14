@@ -87,10 +87,10 @@ test.describe('NewTaskDialog Advanced section', () => {
 
     // Model: free-text combobox seeded by `useKnownModels` (capabilities.models
     // union discoveredModelsByAgent cache). Empty value shows the resolved
-    // fallback directly, no "Use ... default" framing (column override ->
-    // project default -> agent default; this fixture has neither of the
-    // first two set, so plain "Agent default"); focusing the input reveals
-    // the suggestion list.
+    // fallback (column override -> project default -> agent default; this
+    // fixture has neither of the first two set, so plain "Agent default" -
+    // a concrete fallback would show that bare value, muted, instead);
+    // focusing the input reveals the suggestion list.
     const modelRow = page.locator('div:has(> input[data-testid="task-model-override"])');
     const modelInput = page.locator('input[data-testid="task-model-override"]');
     await expect(modelInput).toBeVisible();
@@ -105,6 +105,35 @@ test.describe('NewTaskDialog Advanced section', () => {
     await closeDialog();
   });
 
+  test('Permission picker shows a bare, muted inherit placeholder with no clear button until a value is picked', async () => {
+    await openNewTaskDialog();
+
+    await page.locator('[data-testid="task-advanced-toggle"]').click();
+
+    const permissionRow = page.locator('div:has(> input[data-testid="task-permission-override"])');
+    const permissionInput = page.locator('input[data-testid="task-permission-override"]');
+    await expect(permissionInput).toBeVisible();
+    // Mock fixture's global default permission mode is 'acceptEdits' -> "Accept
+    // Edits", shown bare (no "Inherit (...)" framing): the muted weight plus
+    // the absent clear-X are the inherited-not-pinned signals.
+    await expect(permissionInput).toHaveAttribute('placeholder', 'Accept Edits');
+    await expect(permissionRow.locator('button[title="Clear"]')).toHaveCount(0);
+
+    await permissionInput.click();
+    const permissionOptions = page.locator('[data-combobox-option]');
+    await expect(permissionOptions.first()).toBeVisible();
+    await page.locator('[data-testid="task-permission-override-option-plan"]').click();
+
+    // A concrete pick shows the bare value at full weight with a visible clear button.
+    await expect(permissionInput).toHaveValue('Plan (Read-Only)');
+    await expect(permissionRow.locator('button[title="Clear"]')).toBeVisible();
+
+    // The form is now dirty (a real override was committed): Escape opens the discard confirm.
+    await page.keyboard.press('Escape');
+    await page.locator('button:has-text("Discard")').click();
+    await page.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
+  });
+
   test('selected overrides persist on the created task row', async () => {
     await openNewTaskDialog();
 
@@ -116,6 +145,7 @@ test.describe('NewTaskDialog Advanced section', () => {
     await page.locator('[data-model-option]:has-text("opus")').click();
 
     await selectCombobox(page, 'task-effort-override', 'high');
+    await selectCombobox(page, 'task-permission-override', 'plan');
 
     await page.locator('button[type="submit"]:has-text("Create")').click();
     await page.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 3000 });
@@ -125,6 +155,7 @@ test.describe('NewTaskDialog Advanced section', () => {
     expect(task).toBeDefined();
     expect(task!.model_override).toBe('opus');
     expect(task!.effort_override).toBe('high');
+    expect(task!.permission_mode).toBe('plan');
   });
 
   test('leaving overrides on column default omits them from the row', async () => {
@@ -132,7 +163,7 @@ test.describe('NewTaskDialog Advanced section', () => {
 
     await page.locator('input[placeholder="Task title"]').fill('Default Override Task');
     await page.locator('[data-testid="task-advanced-toggle"]').click();
-    // Don't change either select - keep "Use column default"
+    // Don't change any select - keep "Inherit"
 
     await page.locator('button[type="submit"]:has-text("Create")').click();
     await page.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 3000 });
@@ -142,6 +173,7 @@ test.describe('NewTaskDialog Advanced section', () => {
     expect(task).toBeDefined();
     expect(task!.model_override).toBeNull();
     expect(task!.effort_override).toBeNull();
+    expect(task!.permission_mode).toBeNull();
   });
 });
 
@@ -304,8 +336,8 @@ test.describe('NewTaskDialog Advanced - Agent picker (multi-agent fixture)', () 
     await expect(agentInput).toBeVisible();
 
     // No column or project agent override is set in this fixture, so the
-    // inherit placeholder resolves to the app default (Claude Code) and
-    // shows that value directly, no "Use default (...)" framing.
+    // inherit placeholder resolves to the app default (Claude Code), shown
+    // bare and muted - no "Inherit (...)" framing.
     await expect(agentInput).toHaveAttribute('placeholder', 'Claude Code');
 
     await agentInput.click();
@@ -1096,8 +1128,13 @@ test.describe('Combobox (Effort field) - typing filters, never auto-commits', ()
  * reliable, non-flaky structural signal. Covers both the AgentTab call site
  * (Settings > Agent's Default Model/Effort are hardcoded 'muted' - top of the
  * resolution chain) and the AdvancedOverridesSection call site (New Task's
- * Model/Effort flip to 'resolved' once a project default gives them a real
- * fallback value), closing the gap that neither call site had any coverage.
+ * Agent/Model/Effort are ALWAYS muted, regardless of whether a concrete
+ * fallback exists - only the placeholder TEXT changes, from the generic
+ * "Agent default" to the bare resolved value once a project/column default
+ * resolves to something concrete. The muted weight plus the absent clear-X
+ * are what distinguish an inherited value from one the user actually picked,
+ * which is what let a task's Advanced overrides go unset while looking
+ * pinned), closing the gap that neither call site had any coverage.
  * Own browser instance: mutates the project's default_model/default_effort,
  * which no other test in this file may observe.
  */
@@ -1157,7 +1194,7 @@ test.describe('placeholderVariant: muted vs resolved', () => {
     await variantPage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
   }
 
-  test('with no project default set, Settings > Agent Default Model/Effort are always muted, and New Task Advanced Model/Effort start muted while Agent stays resolved', async () => {
+  test('with no project default set, Settings > Agent Default Model/Effort and New Task Advanced Model/Effort are all muted', async () => {
     await openSettingsAgentTab();
 
     const settingsModelInput = variantPage.locator('input[data-testid="project-default-model"]');
@@ -1173,13 +1210,12 @@ test.describe('placeholderVariant: muted vs resolved', () => {
     const taskModelInput = variantPage.locator('input[data-testid="task-model-override"]');
     const taskEffortInput = variantPage.locator('input[data-testid="task-effort-override"]');
 
-    // Agent's inherit label is always a resolved app default (there is
-    // always SOME agent, even with nothing configured), so
-    // AdvancedOverridesSection never passes a placeholderVariant for it -
-    // the Agent field is out of scope here (it needs a multi-agent fixture
-    // to render at all; see the "Agent picker" describe block above).
     // Model/Effort have no column or project default here, so their
-    // fallback computation bottoms out with no concrete value: muted.
+    // fallback computation bottoms out with no concrete value: plain
+    // "Agent default", muted. (Agent's inherit label always resolves to a
+    // concrete app default and is muted too, but the Agent field needs a
+    // multi-agent fixture to render at all; see the "Agent picker" describe
+    // block above.)
     await expect(taskModelInput).toHaveAttribute('placeholder', 'Agent default');
     await expect(taskEffortInput).toHaveAttribute('placeholder', 'Agent default');
     expect(await placeholderVariantOf(taskModelInput)).toBe('muted');
@@ -1188,7 +1224,7 @@ test.describe('placeholderVariant: muted vs resolved', () => {
     await closeNewTaskDialog();
   });
 
-  test('setting a project default model/effort flips the New Task Advanced placeholders to resolved with the concrete value', async () => {
+  test('setting a project default model/effort shows the bare resolved values as New Task Advanced placeholders, still muted', async () => {
     await openSettingsAgentTab();
 
     // Pick a project default model (raw id 'opus', no display-name fixture
@@ -1204,15 +1240,30 @@ test.describe('placeholderVariant: muted vs resolved', () => {
     const taskModelInput = variantPage.locator('input[data-testid="task-model-override"]');
     const taskEffortInput = variantPage.locator('input[data-testid="task-effort-override"]');
 
-    // The inherit placeholder now names the concrete project default
-    // directly - no "Use ... default" framing - and is styled at full
-    // weight (resolved) since it is exactly what will run.
+    // The inherit placeholder now names the concrete project default as the
+    // bare value - muted, since leaving the field alone still means "not
+    // pinned"; the muted weight (not any text framing) is the signal.
     await expect(taskModelInput).toHaveAttribute('placeholder', 'opus');
     await expect(taskEffortInput).toHaveAttribute('placeholder', 'medium');
-    expect(await placeholderVariantOf(taskModelInput)).toBe('resolved');
-    expect(await placeholderVariantOf(taskEffortInput)).toBe('resolved');
+    expect(await placeholderVariantOf(taskModelInput)).toBe('muted');
+    expect(await placeholderVariantOf(taskEffortInput)).toBe('muted');
 
-    await closeNewTaskDialog();
+    // Distinguishing guard: while inherited, neither field renders a clear
+    // (X) button (its value is still ''). Picking a concrete option shows
+    // the bare value in the input AND a visible clear button - the one
+    // signal that actually separates "not pinned" from "pinned", since the
+    // muted placeholder alone is no longer visible once a value is set.
+    const effortRow = variantPage.locator('div:has(> input[data-testid="task-effort-override"])');
+    await expect(effortRow.locator('button[title="Clear"]')).toHaveCount(0);
+    await selectCombobox(variantPage, 'task-effort-override', 'high');
+    await expect(taskEffortInput).toHaveValue('high');
+    await expect(effortRow.locator('button[title="Clear"]')).toBeVisible();
+
+    // A real override was committed, so the form is dirty: Escape opens the
+    // discard confirm instead of closing directly.
+    await variantPage.keyboard.press('Escape');
+    await variantPage.locator('button:has-text("Discard")').click();
+    await variantPage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
 
     // Cleanup: clear both project defaults directly via IPC + a store
     // reload (mirroring AgentTab's own refreshCurrentProject() call), rather

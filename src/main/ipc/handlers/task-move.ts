@@ -147,6 +147,14 @@ export function abortTaskMove(taskId: string): boolean {
 type MoveSpawnPlan = {
   task: Task;
   fromSwimlaneId: string;
+  /**
+   * The SOURCE lane the task lived in before this move, captured at Phase 1.
+   * Threaded to spawnAgent as `settingsSourceLane`: the freeze-on-first-spawn
+   * resolves still-inherited Advanced fields against the lane the user
+   * configured the task in, never the destination column. Required (not
+   * optional) so every plan-return site threads it through explicitly.
+   */
+  fromLane: Swimlane | undefined;
   originalPosition: number;
   toLane: Swimlane | undefined;
   skipPromptTemplate: boolean;
@@ -496,6 +504,7 @@ export async function handleTaskMove(
           return {
             task,
             fromSwimlaneId,
+            fromLane,
             originalPosition,
             toLane,
             skipPromptTemplate,
@@ -624,6 +633,7 @@ export async function handleTaskMove(
             return {
               task,
               fromSwimlaneId,
+              fromLane,
               originalPosition,
               toLane,
               skipPromptTemplate,
@@ -689,6 +699,7 @@ export async function handleTaskMove(
             return {
               task,
               fromSwimlaneId,
+              fromLane,
               originalPosition,
               toLane,
               skipPromptTemplate,
@@ -756,6 +767,7 @@ export async function handleTaskMove(
       return {
         task: planTask,
         fromSwimlaneId,
+        fromLane,
         originalPosition,
         toLane,
         skipPromptTemplate,
@@ -773,7 +785,7 @@ export async function handleTaskMove(
     // will spawn for the destination column.
     if (isShuttingDown()) return;
 
-    const { task, fromSwimlaneId, originalPosition, toLane, skipPromptTemplate, resolvedProjectId, resolvedProjectPath, continuationPrompt, suppressAutoCommand } = plan;
+    const { task, fromSwimlaneId, fromLane, originalPosition, toLane, skipPromptTemplate, resolvedProjectId, resolvedProjectPath, continuationPrompt, suppressAutoCommand } = plan;
 
     // === Phase 2 (unlocked, slow) ===
     // All async operations below receive the abort signal so a newer move
@@ -883,7 +895,7 @@ export async function handleTaskMove(
           const sessionRepoPhase3 = new SessionRepository(dbPhase3);
           const engine = createTransitionEngine(context, actionsPhase3, tasksPhase3, sessionRepoPhase3, attachmentsPhase3, resolvedProjectId, resolvedProjectPath);
           if (toLane) {
-            await spawnAgent({ context, engine, tasks: tasksPhase3, sessionRepo: sessionRepoPhase3, task: current, fromSwimlaneId, toLane, skipPromptTemplate, signal, projectId: resolvedProjectId, projectPath: resolvedProjectPath, continuationPrompt, suppressAutoCommand });
+            await spawnAgent({ context, engine, tasks: tasksPhase3, sessionRepo: sessionRepoPhase3, task: current, fromSwimlaneId, toLane, skipPromptTemplate, signal, projectId: resolvedProjectId, projectPath: resolvedProjectPath, continuationPrompt, suppressAutoCommand, settingsSourceLane: fromLane ?? null });
           }
         } finally {
           clearSpawnProgress(context.mainWindow, task.id);

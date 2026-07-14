@@ -406,10 +406,11 @@ describe('TransitionEngine - permission_mode resolution precedence', () => {
     });
   });
 
-  it('task.permission_mode wins over the passed permissionOverride (swimlane) argument', async () => {
-    // Resolution order in executeSpawnAgent is task -> swimlane override -> global
-    // default. The `permissionOverride` argument here is the caller-resolved
-    // swimlane permission_mode; a task-level pin must win over it.
+  it('task.permission_mode wins over a differing NON-plan permissionOverride (swimlane) argument', async () => {
+    // Resolution order in executeSpawnAgent is task -> swimlane override ->
+    // global default, EXCEPT a swimlane forcing 'plan' (see next test).
+    // 'acceptEdits' here is an ordinary column default, not a safety lock,
+    // so the task-level pin still wins.
     const task = makeTask({ permission_mode: 'plan' });
     const sessionRepo = makeSessionRepo();
 
@@ -419,6 +420,26 @@ describe('TransitionEngine - permission_mode resolution precedence', () => {
       'todo',
       'doing',
       'acceptEdits', // permissionOverride from the destination swimlane
+    );
+
+    expect(sessionRepo.insert).toHaveBeenCalledTimes(1);
+    const inserted = sessionRepo.insert.mock.calls[0][0] as { permission_mode?: string };
+    expect(inserted.permission_mode).toBe('plan');
+  });
+
+  it('a swimlane forcing plan mode ALWAYS wins, regardless of a differing task.permission_mode', async () => {
+    // Plan mode is a genuine safety guarantee (never let a task's
+    // Auto-Classifier/Accept-Edits pin bypass a deliberate read-only phase),
+    // so it wins even over an explicit, differing task-level pin.
+    const task = makeTask({ permission_mode: 'auto' });
+    const sessionRepo = makeSessionRepo();
+
+    const { engine } = makeEngine({ sessionRepo });
+    await engine.executeTransition(
+      task as Parameters<typeof engine.executeTransition>[0],
+      'todo',
+      'doing',
+      'plan', // permissionOverride from the destination swimlane
     );
 
     expect(sessionRepo.insert).toHaveBeenCalledTimes(1);
@@ -441,6 +462,25 @@ describe('TransitionEngine - permission_mode resolution precedence', () => {
     expect(sessionRepo.insert).toHaveBeenCalledTimes(1);
     const inserted = sessionRepo.insert.mock.calls[0][0] as { permission_mode?: string };
     expect(inserted.permission_mode).toBe('acceptEdits');
+  });
+
+  it('falls through to task.permission_mode when the swimlane has no permission_mode set', async () => {
+    // The column left permission_mode null (no permissionOverride argument),
+    // so the task's own pin is still a valid fallback tier.
+    const task = makeTask({ permission_mode: 'auto' });
+    const sessionRepo = makeSessionRepo();
+
+    const { engine } = makeEngine({ sessionRepo });
+    await engine.executeTransition(
+      task as Parameters<typeof engine.executeTransition>[0],
+      'todo',
+      'doing',
+      null,
+    );
+
+    expect(sessionRepo.insert).toHaveBeenCalledTimes(1);
+    const inserted = sessionRepo.insert.mock.calls[0][0] as { permission_mode?: string };
+    expect(inserted.permission_mode).toBe('auto');
   });
 });
 
