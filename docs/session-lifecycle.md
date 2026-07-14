@@ -244,7 +244,7 @@ Sessions from non-active projects must not interfere with the active project's t
 
 PTY output is captured for two purposes: terminal display (via the scrollback buffer) and persistent transcript storage (via `TranscriptWriter`).
 
-`TranscriptWriter` (`src/main/pty/transcript-writer.ts`) receives raw PTY data, strips ANSI escape sequences, and debounces writes to the `session_transcripts` table every 30 seconds. This provides a clean, searchable text transcript of the session without terminal formatting noise.
+`TranscriptWriter` (`src/main/pty/buffer/transcript-writer.ts`) receives raw PTY data, strips ANSI escape sequences, and debounces writes to the `session_transcripts` table every 30 seconds, flushing early if a session's pending buffer exceeds 256KB. This provides a clean, searchable text transcript of the session without terminal formatting noise.
 
 The transcript is used during cross-agent handoff: when a task moves to a column with a different agent, the `HandoffOrchestrator` reads the transcript from the database, combines it with git diff and session metrics, and packages it as handoff context for the new agent.
 

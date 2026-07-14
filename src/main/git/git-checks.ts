@@ -1,7 +1,10 @@
-import { execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import path from 'node:path';
 import fs from 'node:fs';
 import { slugify } from '../../shared/slugify';
+
+const execFileAsync = promisify(execFile);
 
 /**
  * Filesystem-only git introspection helpers. No simple-git dependency
@@ -46,11 +49,15 @@ export function isKangenticWorktree(projectPath: string): boolean {
   return parentSegment === 'worktrees' && grandparentSegment === '.kangentic';
 }
 
-/** Check whether a file is tracked by git (committed or staged). */
-export function isFileTracked(projectPath: string, filePath: string): boolean {
+/** Check whether a file is tracked by git (committed or staged). Async: this
+ *  shells out to git, and its one caller (ensureGitignore) runs on the
+ *  project-open path where a synchronous subprocess would block the main
+ *  process event loop. */
+export async function isFileTracked(projectPath: string, filePath: string): Promise<boolean> {
   try {
-    execFileSync('git', ['ls-files', '--error-unmatch', '--', filePath], {
-      cwd: projectPath, stdio: 'ignore',
+    await execFileAsync('git', ['ls-files', '--error-unmatch', '--', filePath], {
+      cwd: projectPath,
+      windowsHide: true,
     });
     return true;
   } catch {

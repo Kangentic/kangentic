@@ -6,7 +6,7 @@ import { sanitizeForPty } from '../../shared/paths';
 import { SessionManager } from '../pty/session-manager';
 import type { TerminalSubmit } from '../pty/terminal-submit';
 import { interpolateTemplate, buildTaskXml } from '../agent/shared';
-import { WorktreeManager } from '../git/worktree-manager';
+import { WorktreeManager, prepareWorktreeForRemoval, GitQueuePriority } from '../git/worktree-manager';
 import { agentRegistry } from '../agent/agent-registry';
 import { retireRecord, markRecordSuspended } from './session-lifecycle';
 import { resolveSpawnIntent } from './spawn-intent';
@@ -499,12 +499,20 @@ export class TransitionEngine {
 
     const wm = new WorktreeManager(appConfig.projectPath);
     let removed = false;
+    // Reap orphans + clear node_modules BEFORE taking the git lock, mirroring
+    // task-cleanup.ts: the multi-second fs removal must not hold the
+    // per-project queue and head-of-line-block spawns. Safe outside the lock:
+    // executeTransition callers hold withTaskLock(taskId), and removeWorktree
+    // re-runs prepareWorktreeForRemoval internally as a cheap no-op.
+    await prepareWorktreeForRemoval(task.worktree_path, 'moderate');
     await wm.withLock(async () => {
       removed = await wm.removeWorktree(task.worktree_path!, { removalProfile: 'moderate' });
       if (removed && appConfig.gitConfig.autoCleanup) {
         await wm.removeBranch(task.branch_name!);
       }
-    }, { label: `transition-cleanup:${task.id.slice(0, 8)}` });
+      // BACKGROUND: same rationale as task-cleanup.ts - batch cleanup must not
+      // park a fresh spawn at USER priority.
+    }, { label: `transition-cleanup:${task.id.slice(0, 8)}`, priority: GitQueuePriority.BACKGROUND });
 
     // Only clear DB fields if the directory was actually removed.
     // Keeping them set allows resource-cleanup to retry on next startup.

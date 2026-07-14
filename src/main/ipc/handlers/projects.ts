@@ -328,6 +328,58 @@ async function resolveDefaultAgent(configManager: ConfigManager): Promise<string
 }
 
 /**
+ * Await the orphan-worktree prune for a project and, when it actually deleted
+ * rows, push a TASK_SESSION_RESYNC so the renderer reloads (or invalidates)
+ * that project's board. The prune runs off the awaited open path now, so the
+ * renderer's first task-list load can race it and briefly show a task the
+ * prune is about to delete; the push closes that window. Never rejects -
+ * a prune failure must not block session recovery.
+ */
+async function pruneOrphanedTasksAndNotify(
+  context: IpcContext,
+  project: Project,
+  taskRepo: TaskRepository,
+  sessionRepo: SessionRepository,
+): Promise<void> {
+  const pruned = await pruneOrphanedWorktreeTasks(project.path, taskRepo, sessionRepo, context.sessionManager)
+    .catch((error) => {
+      console.error(`[PROJECT_OPEN] Worktree prune failed for ${project.name}:`, error);
+      return 0;
+    });
+  if (pruned > 0 && context.mainWindow && !context.mainWindow.isDestroyed()) {
+    context.mainWindow.webContents.send(IPC.TASK_SESSION_RESYNC, project.id);
+  }
+}
+
+/**
+ * Defer the board-config reconcile + kangentic.json export off the open/switch
+ * critical path. Guarded against rapid project switching: if the user has
+ * already switched again by the time the deferred tick runs, the
+ * boardConfigManager singleton is attached to the newer project, so the work
+ * is skipped to avoid exporting the wrong project's state. Safe to skip: the
+ * DB is the source of truth and the next open of that project re-runs this.
+ */
+function deferBoardConfigReconcile(context: IpcContext, projectId: string, projectName: string): void {
+  setImmediate(() => {
+    if (context.currentProjectId !== projectId) return;
+    runWithProjectLogContext(projectName, () => {
+      try {
+        if (context.boardConfigManager.exists()) {
+          const configWarnings = context.boardConfigManager.applyConfigOnOpen();
+          for (const warning of configWarnings) {
+            console.warn('[BOARD_CONFIG] Initial reconcile:', warning);
+          }
+        }
+        // Always export DB state to kangentic.json so teams can commit it
+        context.boardConfigManager.exportFromDb();
+      } catch (error) {
+        console.error('[PROJECT_OPEN] Deferred board config work failed:', error);
+      }
+    });
+  });
+}
+
+/**
  * Find an existing project by path, or create one and open it.
  * Returns the project object.
  */
@@ -373,18 +425,15 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
   context.currentProjectId = project.id;
   context.currentProjectPath = project.path;
   context.projectRepo.updateLastOpened(project.id);
-  ensureGitignore(project.path);
+  // Fire-and-forget: nothing downstream reads its effect, it never rejects,
+  // and its git tracked-file probe must not block the open critical path.
+  void ensureGitignore(project.path);
 
-  // Attach board config manager for file watching and reconciliation
+  // Attach board config manager for file watching (must be synchronous -
+  // wires the watcher the renderer needs).
   context.boardConfigManager.attach(project.id, project.path, context.mainWindow);
-  if (context.boardConfigManager.exists()) {
-    const configWarnings = context.boardConfigManager.applyConfigOnOpen();
-    for (const warning of configWarnings) {
-      console.warn('[BOARD_CONFIG] Initial reconcile:', warning);
-    }
-  }
-  // Always export DB state to kangentic.json so teams can commit it
-  context.boardConfigManager.exportFromDb();
+
+  deferBoardConfigReconcile(context, project.id, project.name);
 
   // Sync the project-level MCP config file with the current settings.
   // Honors the global Settings → MCP Server → Kangentic MCP Server toggle:
@@ -399,28 +448,32 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
   context.sessionManager.setTranscriptRepository(new TranscriptRepository(getProjectDb(project.id)));
 
   if (!isWarmReopen) {
+    // Stays synchronous: guards a rapid double-open from re-running recovery.
+    context.recoveredProjects.add(project.id);
+
     const db = getProjectDb(project.id);
     const taskRepo = new TaskRepository(db);
     const sessionRepo = new SessionRepository(db);
     const swimlaneRepo = new SwimlaneRepository(db);
 
-    // Prune orphan-worktree tasks synchronously so session recovery below
-    // sees a clean DB. The remaining passes (backlog cleanup + orphan
+    // Ordering contract (see pruneOrphanedWorktreeTasks): the prune completes
+    // before session recovery reads the DB, but the whole chain runs off the
+    // awaited open path. The remaining passes (backlog cleanup + orphan
     // directory removal) run hundreds of filesystem ops on repos with
     // leftover worktrees and previously blocked recovery for minutes, so
-    // they are fired in the background.
-    pruneOrphanedWorktreeTasks(project.path, taskRepo, sessionRepo, context.sessionManager);
-    cleanupStaleResourcesAsync(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager)
-      .catch((err) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${project.name}:`, err));
-
+    // they are fired without awaiting.
+    const openedProject = project;
     runWithProjectLogContext(project.name, () =>
-      resumeSuspendedSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort)
+      pruneOrphanedTasksAndNotify(context, openedProject, taskRepo, sessionRepo)
+        .then(() => {
+          cleanupStaleResourcesAsync(openedProject.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager)
+            .catch((error) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${openedProject.name}:`, error));
+          return resumeSuspendedSessions(openedProject.id, openedProject.path, context.sessionManager, context.configManager, openedProject.default_agent, context.mcpServerHandle, openedProject.default_model, openedProject.default_effort);
+        })
         .catch((err) => console.error('[PROJECT_OPEN] Session recovery failed:', err))
-        .then(() => autoSpawnTasks(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort))
+        .then(() => autoSpawnTasks(openedProject.id, openedProject.path, context.sessionManager, context.configManager, openedProject.default_agent, context.mcpServerHandle, openedProject.default_model, openedProject.default_effort))
         .catch((err) => console.error('[PROJECT_OPEN] Session reconciliation failed:', err)),
     );
-
-    context.recoveredProjects.add(project.id);
   }
 
   return project;
@@ -459,21 +512,27 @@ export async function activateAllProjects(context: IpcContext): Promise<void> {
         console.warn(`[PROJECT_OPEN] Skipping activation, path missing: ${project.path}`);
         return;
       }
-      ensureGitignore(project.path);
+      // Awaited (not fire-and-forget) to keep per-project sequencing
+      // deterministic; this whole closure already runs in the background.
+      await ensureGitignore(project.path);
       const db = getProjectDb(project.id);
       const taskRepo = new TaskRepository(db);
       const sessionRepo = new SessionRepository(db);
       const swimlaneRepo = new SwimlaneRepository(db);
 
-      // See openProjectByPath for rationale: sync prune ensures recovery
-      // reads a clean DB; the slow async passes run in the background and
-      // may still be in flight when activateAllProjects resolves.
-      pruneOrphanedWorktreeTasks(project.path, taskRepo, sessionRepo, context.sessionManager);
+      // See openProjectByPath for rationale: the awaited prune ensures
+      // recovery reads a clean DB; the slow async passes run in the
+      // background and may still be in flight when activateAllProjects
+      // resolves.
+      await pruneOrphanedTasksAndNotify(context, project, taskRepo, sessionRepo);
       cleanupStaleResourcesAsync(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager)
         .catch((err) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${project.name}:`, err));
 
       await resumeSuspendedSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort);
       await autoSpawnTasks(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort);
+      // Deliberately AFTER the chain (unlike the open paths, which mark up
+      // front to guard rapid double-opens): a failed background activation
+      // stays cold, so the user's next explicit open retries recovery.
       context.recoveredProjects.add(project.id);
     })),
   );
@@ -531,36 +590,15 @@ export function registerProjectHandlers(context: IpcContext): void {
     context.currentProjectId = id;
     context.currentProjectPath = project.path;
     context.projectRepo.updateLastOpened(id);
-    ensureGitignore(project.path);
+    // Fire-and-forget: nothing downstream reads its effect, it never rejects,
+    // and its git tracked-file probe must not block the switch critical path.
+    void ensureGitignore(project.path);
 
-    // Attach board config manager for file watching (must be synchronous --
+    // Attach board config manager for file watching (must be synchronous -
     // wires the watcher the renderer needs).
     context.boardConfigManager.attach(id, project.path, context.mainWindow);
 
-    // Defer reconcile + disk export off the IPC critical path so the
-    // renderer can begin loading the new board immediately. The DB is the
-    // source of truth, so a deferred kangentic.json export is safe.
-    setImmediate(() => {
-      // Guard against rapid project switching: if the user has already
-      // switched to a different project, the boardConfigManager singleton
-      // is now attached to that project -- skip the deferred work to
-      // avoid exporting the wrong project's state. The guard also makes the
-      // focused project the correct one to tag here.
-      if (context.currentProjectId !== id) return;
-      runWithProjectLogContext(project.name, () => {
-        try {
-          if (context.boardConfigManager.exists()) {
-            const configWarnings = context.boardConfigManager.applyConfigOnOpen();
-            for (const warning of configWarnings) {
-              console.warn('[BOARD_CONFIG] Initial reconcile:', warning);
-            }
-          }
-          context.boardConfigManager.exportFromDb();
-        } catch (err) {
-          console.error('[PROJECT_OPEN] Deferred board config work failed:', err);
-        }
-      });
-    });
+    deferBoardConfigReconcile(context, id, project.name);
 
     // Apply project config overrides (always -- config may have changed)
     applyRuntimeConfig(context.sessionManager, context.configManager, project.path);
@@ -577,26 +615,37 @@ export function registerProjectHandlers(context: IpcContext): void {
     retrievalService.startForProject(context, project);
 
     if (!isWarmReopen) {
-      const db = getProjectDb(id);
-      const taskRepo = new TaskRepository(db);
-      const sessionRepo = new SessionRepository(db);
-      const swimlaneRepo = new SwimlaneRepository(db);
-
-      // Same split as openProjectByPath: sync prune guarantees recovery
-      // reads a clean DB, and the slow filesystem passes run in the
-      // background so session spawn is not blocked on them.
-      pruneOrphanedWorktreeTasks(project.path, taskRepo, sessionRepo, context.sessionManager);
-      cleanupStaleResourcesAsync(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager)
-        .catch((err) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${project.name}:`, err));
-
-      runWithProjectLogContext(project.name, () =>
-        resumeSuspendedSessions(id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort)
-          .catch((err) => console.error('[PROJECT_OPEN] Session recovery failed:', err))
-          .then(() => autoSpawnTasks(id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort))
-          .catch((err) => console.error('[PROJECT_OPEN] Session reconciliation failed:', err)),
-      );
-
+      // Stays synchronous: guards a rapid double-open from re-running recovery.
       context.recoveredProjects.add(id);
+
+      // The whole cold-open block is deferred off the awaited IPC body: the
+      // SQLite open + migrations, the orphan prune, and session recovery are
+      // all main-thread-heavy and nothing in the PROJECT_OPEN response
+      // depends on them. Deliberately NO currentProjectId switch guard here:
+      // recovery for a project the user immediately left must still run
+      // (matching the previous fire-and-forget behavior); the guard belongs
+      // only on the board-config block above, which is tied to the singleton
+      // attach.
+      setImmediate(() => {
+        runWithProjectLogContext(project.name, async () => {
+          const db = getProjectDb(id);
+          const taskRepo = new TaskRepository(db);
+          const sessionRepo = new SessionRepository(db);
+          const swimlaneRepo = new SwimlaneRepository(db);
+
+          // Ordering contract (see pruneOrphanedWorktreeTasks): the prune
+          // completes before session recovery reads the DB; the slow
+          // filesystem passes are fired without awaiting.
+          await pruneOrphanedTasksAndNotify(context, project, taskRepo, sessionRepo);
+          cleanupStaleResourcesAsync(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager)
+            .catch((error) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${project.name}:`, error));
+
+          await resumeSuspendedSessions(id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort)
+            .catch((error) => console.error('[PROJECT_OPEN] Session recovery failed:', error));
+          await autoSpawnTasks(id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort)
+            .catch((error) => console.error('[PROJECT_OPEN] Session reconciliation failed:', error));
+        });
+      });
     }
   });
 

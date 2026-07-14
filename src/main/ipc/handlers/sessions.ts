@@ -308,8 +308,10 @@ export function registerSessionHandlers(context: IpcContext): void {
   let backgroundFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
   function isFocusedSession(sessionId: string): boolean {
-    const focused = context.sessionManager.getFocusedSessions();
-    return focused.size === 0 || focused.has(sessionId);
+    // Default-closed, matching SessionManager's focused-set contract: an empty
+    // set means NO session is focused (Backlog view, hidden panel, pre-first-
+    // push startup), so usage/events buffer instead of broadcasting per-emit.
+    return context.sessionManager.getFocusedSessions().has(sessionId);
   }
 
   function scheduleBackgroundFlush(): void {

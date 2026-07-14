@@ -977,6 +977,8 @@ describe('Data buffering', () => {
 
   it('batches multiple onData calls into single data emission', async () => {
     const { session, feedData } = await spawnSession();
+    // The gate is default-closed: 'data' only fires for focused sessions.
+    manager.setFocusedSessions([session.id]);
 
     const emissions: string[] = [];
     manager.on('data', (sessionId: string, data: string) => {
@@ -997,6 +999,9 @@ describe('Data buffering', () => {
 
   it('flush is skipped when session is removed during 16ms window', async () => {
     const { session, feedData } = await spawnSession();
+    // Focus the session so a surviving flush WOULD emit - otherwise this
+    // test passes vacuously under the default-closed gate.
+    manager.setFocusedSessions([session.id]);
 
     const emissions: string[] = [];
     manager.on('data', (sessionId: string, data: string) => {

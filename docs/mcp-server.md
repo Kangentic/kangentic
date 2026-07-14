@@ -463,7 +463,7 @@ Get the absolute paths to every per-session file: `events.jsonl` (activity log),
 
 ### kangentic_get_session_events
 
-Read parsed events from a session's `events.jsonl` activity log without locating or opening the file yourself. Each line is a JSON event emitted by the Claude Code hook bridge (`PreToolUse`, `PostToolUse`, `Stop`, `Notification`, etc.). Useful for idle-detection debugging, tracing tool usage, or replaying what an agent did. Provide either `taskId` or `sessionId`.
+Read parsed events from a session's `events.jsonl` activity log without locating or opening the file yourself. Each line is a JSON event emitted by the Claude Code hook bridge (`PreToolUse`, `PostToolUse`, `Stop`, `Notification`, etc.). Useful for idle-detection debugging, tracing tool usage, or replaying what an agent did. Provide either `taskId` or `sessionId`. Files over 1MB are read as a bounded tail window (the last 1MB): the response sets `truncated: true` and `totalBytes`, the `since`/`eventTypes` filters apply within the scanned window, and a huge file may therefore return fewer than `tail` matches.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

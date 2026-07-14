@@ -1,5 +1,5 @@
 import simpleGit from 'simple-git';
-import { readWorktreeHead } from './worktree-head';
+import { readWorktreeHeadUnqueued } from './worktree-head';
 import type { GitBranchSummaryInput, GitBranchSummaryResult } from '../../shared/types';
 
 /**
@@ -23,7 +23,9 @@ export async function getBranchSummary(input: GitBranchSummaryInput): Promise<Gi
 
   try {
     const git = simpleGit(workingDirectory);
-    const { branch: currentBranch } = await readWorktreeHead(workingDirectory);
+    // Unqueued: this interactive panel refresh stays off the global read cap
+    // (a queued read would wait behind a BACKGROUND churn capture's slot).
+    const { branch: currentBranch } = await readWorktreeHeadUnqueued(workingDirectory);
 
     let ahead = 0;
     let behind = 0;

@@ -57,8 +57,15 @@ export class SessionManager extends EventEmitter {
    * Sessions currently visible in the renderer (terminal panel + command bar overlay).
    * Only these sessions' PTY data is emitted via IPC - background sessions
    * accumulate silently in the scrollback buffer. This eliminates O(N) IPC
-   * flooding when many sessions run concurrently. An empty set means "all
-   * sessions are focused" (no filtering).
+   * flooding when many sessions run concurrently.
+   *
+   * Default-closed: an empty set means NO session's data is forwarded. The
+   * renderer pushes the real set from AppLayout's first render
+   * (useFocusedSessionsSync) and sends a legitimately empty set when no
+   * terminal is visible (Backlog view, hidden panel); an unfocused session
+   * catches up via getScrollback() on focus. Any headless caller listening on
+   * the manager's 'data' event must call setFocusedSessions first - the
+   * unfiltered 'data-tap' event is the focus-independent seam.
    */
   private focusedSessionIds = new Set<string>();
   /**
@@ -149,8 +156,11 @@ export class SessionManager extends EventEmitter {
         this.emit('data-tap', sessionId, data);
 
         // Only emit IPC data for focused sessions. Background sessions
-        // accumulate in scrollback and reload via getScrollback() on tab switch.
-        if (this.focusedSessionIds.size === 0 || this.focusedSessionIds.has(sessionId)) {
+        // accumulate in scrollback and reload via getScrollback() on tab
+        // switch. Default-closed (see focusedSessionIds): an empty set
+        // forwards nothing, so sessions spawned before the renderer's first
+        // SESSION_SET_FOCUSED never fan out over IPC.
+        if (this.focusedSessionIds.has(sessionId)) {
           this.emit('data', sessionId, data);
           this.backpressure.recordEmitted(sessionId, data.length);
         }
@@ -823,7 +833,6 @@ export class SessionManager extends EventEmitter {
     paused: boolean;
     inFlightBytes: number;
   }> {
-    const allFocused = this.focusedSessionIds.size === 0;
     const stats: Array<{
       sessionId: string;
       taskId: string;
@@ -840,7 +849,7 @@ export class SessionManager extends EventEmitter {
         sessionId: session.id,
         taskId: session.taskId,
         status: session.status,
-        focused: allFocused || this.focusedSessionIds.has(session.id),
+        focused: this.focusedSessionIds.has(session.id),
         pendingBytes: buffer?.pendingBytes ?? 0,
         scrollbackBytes: buffer?.scrollbackBytes ?? 0,
         paused: this.backpressure.isPaused(session.id),

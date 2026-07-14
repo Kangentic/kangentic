@@ -1,4 +1,3 @@
-import fs from 'node:fs';
 import path from 'node:path';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { sessionOutputPaths } from '../../transition-engine/session-paths';
@@ -7,6 +6,7 @@ import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { BacklogRepository } from '../../db/repositories/backlog-repository';
 import { agentRegistry } from '../../agent/agent-registry';
 import { listActiveSwimlanes } from './column-resolver';
+import { readBoundedTail } from './bounded-tail-read';
 import { resolveTask } from './task-resolver';
 import type { Task } from '../../../shared/types';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
@@ -385,24 +385,10 @@ export async function handleGetSessionHistory(
   // Read the file, truncating from the beginning if too large
   let content: string;
   try {
-    const stats = fs.statSync(filePath);
-    if (stats.size > MAX_SESSION_HISTORY_BYTES) {
-      // Read only the tail of the file (most recent entries)
-      const buffer = Buffer.alloc(MAX_SESSION_HISTORY_BYTES);
-      const fileDescriptor = fs.openSync(filePath, 'r');
-      try {
-        fs.readSync(fileDescriptor, buffer, 0, MAX_SESSION_HISTORY_BYTES, stats.size - MAX_SESSION_HISTORY_BYTES);
-      } finally {
-        fs.closeSync(fileDescriptor);
-      }
-      const rawTail = buffer.toString('utf-8');
-      // Skip the first partial line (we likely landed mid-line)
-      const firstNewline = rawTail.indexOf('\n');
-      const cleanTail = firstNewline >= 0 ? rawTail.slice(firstNewline + 1) : rawTail;
-      content = `[Truncated - showing last ${Math.round(MAX_SESSION_HISTORY_BYTES / 1024)}KB of ${Math.round(stats.size / 1024)}KB]\n${cleanTail}`;
-    } else {
-      content = fs.readFileSync(filePath, 'utf-8');
-    }
+    const tailResult = readBoundedTail(filePath, MAX_SESSION_HISTORY_BYTES);
+    content = tailResult.truncated
+      ? `[Truncated - showing last ${Math.round(MAX_SESSION_HISTORY_BYTES / 1024)}KB of ${Math.round(tailResult.totalBytes / 1024)}KB]\n${tailResult.content}`
+      : tailResult.content;
   } catch (readError) {
     return { success: false, error: `Failed to read session file at ${filePath}: ${readError instanceof Error ? readError.message : String(readError)}` };
   }

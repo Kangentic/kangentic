@@ -11,6 +11,9 @@
  * adapter's buildHooks() at spawn time, so projects that never use OpenCode
  * never receive a stray ignore line. See opencode-hook-manager.test.ts for
  * that behavior.
+ *
+ * ensureGitignore is async (its git tracked-file probe must not block the
+ * project-open critical path) and never rejects.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
@@ -75,8 +78,8 @@ describe('ensureGitignore', () => {
       git('init -b main');
     });
 
-    it('creates a .gitignore containing all three expected entries', () => {
-      ensureGitignore(tempDir);
+    it('creates a .gitignore containing all three expected entries', async () => {
+      await ensureGitignore(tempDir);
 
       expect(fs.existsSync(gitignorePath())).toBe(true);
       const content = readGitignore();
@@ -85,26 +88,26 @@ describe('ensureGitignore', () => {
       }
     });
 
-    it('contains .kangentic/ entry', () => {
-      ensureGitignore(tempDir);
+    it('contains .kangentic/ entry', async () => {
+      await ensureGitignore(tempDir);
       expect(readGitignore()).toContain('.kangentic/');
     });
 
-    it('contains .claude/settings.local.json entry', () => {
-      ensureGitignore(tempDir);
+    it('contains .claude/settings.local.json entry', async () => {
+      await ensureGitignore(tempDir);
       expect(readGitignore()).toContain('.claude/settings.local.json');
     });
 
-    it('contains kangentic.local.json entry', () => {
-      ensureGitignore(tempDir);
+    it('contains kangentic.local.json entry', async () => {
+      await ensureGitignore(tempDir);
       expect(readGitignore()).toContain('kangentic.local.json');
     });
 
-    it('does NOT add the OpenCode plugin entry (added lazily by buildHooks instead)', () => {
+    it('does NOT add the OpenCode plugin entry (added lazily by buildHooks instead)', async () => {
       // Regression guard for the unconditional-append bug: projects that
       // never use OpenCode must not get a stray .opencode/plugins/... line
       // in their .gitignore on every project open.
-      ensureGitignore(tempDir);
+      await ensureGitignore(tempDir);
 
       const content = readGitignore();
       const occurrences = content
@@ -114,9 +117,9 @@ describe('ensureGitignore', () => {
     });
 
     describe('idempotence', () => {
-      it('does not duplicate entries on repeated calls', () => {
-        ensureGitignore(tempDir);
-        ensureGitignore(tempDir);
+      it('does not duplicate entries on repeated calls', async () => {
+        await ensureGitignore(tempDir);
+        await ensureGitignore(tempDir);
 
         const content = readGitignore();
         for (const entry of EXPECTED_ENTRIES) {
@@ -126,9 +129,9 @@ describe('ensureGitignore', () => {
         }
       });
 
-      it('calling five times does not grow the file beyond one copy of each entry', () => {
+      it('calling five times does not grow the file beyond one copy of each entry', async () => {
         for (let callIndex = 0; callIndex < 5; callIndex++) {
-          ensureGitignore(tempDir);
+          await ensureGitignore(tempDir);
         }
 
         const lines = readGitignore().split('\n').filter((line) => line.trim() !== '');
@@ -140,11 +143,11 @@ describe('ensureGitignore', () => {
     });
 
     describe('preservation of existing user content', () => {
-      it('keeps pre-existing user lines when appending kangentic entries', () => {
+      it('keeps pre-existing user lines when appending kangentic entries', async () => {
         const userContent = 'node_modules/\ndist/\n*.log\n';
         fs.writeFileSync(gitignorePath(), userContent);
 
-        ensureGitignore(tempDir);
+        await ensureGitignore(tempDir);
 
         const content = readGitignore();
         // User lines must survive.
@@ -157,12 +160,12 @@ describe('ensureGitignore', () => {
         }
       });
 
-      it('does not overwrite a pre-existing .kangentic/ entry with slash variant', () => {
+      it('does not overwrite a pre-existing .kangentic/ entry with slash variant', async () => {
         // Users may write `.kangentic` without a trailing slash - both forms
         // are treated as already-covered by ensureGitignore.
         fs.writeFileSync(gitignorePath(), '.kangentic\n');
 
-        ensureGitignore(tempDir);
+        await ensureGitignore(tempDir);
 
         const content = readGitignore();
         // Should still contain the other two entries.
@@ -175,7 +178,7 @@ describe('ensureGitignore', () => {
         expect(kangenticLines).toHaveLength(1);
       });
 
-      it('does not duplicate entries that already exist in the user .gitignore', () => {
+      it('does not duplicate entries that already exist in the user .gitignore', async () => {
         // Pre-seed all three entries plus a user line.
         const preSeeded = [
           '# my project',
@@ -186,7 +189,7 @@ describe('ensureGitignore', () => {
         ].join('\n');
         fs.writeFileSync(gitignorePath(), preSeeded);
 
-        ensureGitignore(tempDir);
+        await ensureGitignore(tempDir);
 
         const content = readGitignore();
         for (const entry of EXPECTED_ENTRIES) {
@@ -195,23 +198,56 @@ describe('ensureGitignore', () => {
         }
       });
     });
+
+    describe('isFileTracked true-branch: .claude/settings.local.json already committed', () => {
+      it('does not append .claude/settings.local.json to .gitignore when the file is already tracked by git', async () => {
+        // Neutralize the host's global git excludes (a Claude Code dev
+        // machine's ~/.config/git/ignore commonly has
+        // `**/.claude/settings.local.json`), so `git add` below reliably
+        // tracks the fixture instead of silently skipping a globally-ignored
+        // path. Mirrors worktree-claude-dirs.test.ts's setup.
+        git(`config core.excludesFile "${path.join(tempDir, 'no-global-excludes')}"`);
+
+        const claudeDir = path.join(tempDir, '.claude');
+        fs.mkdirSync(claudeDir, { recursive: true });
+        fs.writeFileSync(path.join(claudeDir, 'settings.local.json'), '{}\n');
+        git('add .claude/settings.local.json');
+        git('commit -m "chore: track settings.local.json"');
+
+        await ensureGitignore(tempDir);
+
+        // Red-green: fails if isFileTracked's true result is ignored or
+        // inverted, which would append the line even though the file is
+        // already committed to the team's history.
+        const content = fs.existsSync(gitignorePath()) ? readGitignore() : '';
+        const settingsLines = content
+          .split('\n')
+          .filter((line) => line.trim() === '.claude/settings.local.json');
+        expect(settingsLines).toHaveLength(0);
+
+        // The other two universal entries are unaffected by the tracked-file
+        // check and are still added.
+        expect(content).toContain('.kangentic/');
+        expect(content).toContain('kangentic.local.json');
+      });
+    });
   });
 
   describe('when the directory is NOT a git repository', () => {
-    it('leaves the filesystem untouched (no .gitignore is created)', () => {
+    it('leaves the filesystem untouched (no .gitignore is created)', async () => {
       // tempDir has no .git directory - isGitRepo() returns false.
-      ensureGitignore(tempDir);
+      await ensureGitignore(tempDir);
 
       expect(fs.existsSync(gitignorePath())).toBe(false);
     });
 
-    it('does not throw', () => {
-      expect(() => ensureGitignore(tempDir)).not.toThrow();
+    it('never rejects', async () => {
+      await expect(ensureGitignore(tempDir)).resolves.toBeUndefined();
     });
 
-    it('does not create any files in the directory', () => {
+    it('does not create any files in the directory', async () => {
       const beforeEntries = fs.readdirSync(tempDir);
-      ensureGitignore(tempDir);
+      await ensureGitignore(tempDir);
       const afterEntries = fs.readdirSync(tempDir);
       expect(afterEntries).toEqual(beforeEntries);
     });

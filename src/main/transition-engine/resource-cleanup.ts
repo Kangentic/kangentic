@@ -29,11 +29,11 @@ const execFileAsync = promisify(execFile);
  * This is the single source of truth for resource cleanup - session-startup/
  * only handles session lifecycle (resume, auto-spawn).
  *
- * For startup, prefer calling {@link pruneOrphanedWorktreeTasks} (sync) and
- * {@link cleanupStaleResourcesAsync} (async) separately, so session recovery
- * can read the DB after the sync prune but without waiting on the slow
- * filesystem sweep. This wrapper is retained for tests and any callers that
- * want the full sequence awaited.
+ * For startup, prefer calling {@link pruneOrphanedWorktreeTasks} and then
+ * {@link cleanupStaleResourcesAsync} separately, awaiting the prune before
+ * session recovery reads the DB but firing the slow filesystem sweep without
+ * awaiting it. This wrapper is retained for tests and any callers that want
+ * the full sequence awaited.
  */
 export async function cleanupStaleResources(
   projectPath: string,
@@ -42,7 +42,7 @@ export async function cleanupStaleResources(
   sessionRepo: SessionRepository,
   sessionManager: SessionManager,
 ): Promise<void> {
-  pruneOrphanedWorktreeTasks(projectPath, taskRepo, sessionRepo, sessionManager);
+  await pruneOrphanedWorktreeTasks(projectPath, taskRepo, sessionRepo, sessionManager);
   await cleanupStaleResourcesAsync(projectPath, taskRepo, swimlaneRepo, sessionRepo, sessionManager);
 }
 
@@ -69,6 +69,16 @@ export async function cleanupStaleResourcesAsync(
 // Pass 1: Prune tasks with missing worktree directories
 // ---------------------------------------------------------------------------
 
+/** Bounded parallelism for the per-task existence probes below: cheap on a
+ *  local disk, safe on a network drive. */
+const PRUNE_EXISTENCE_CHECK_CONCURRENCY = 16;
+
+/** Async existence probe (fs.promises.stat) so a project with hundreds of
+ *  historical tasks never blocks the event loop on a sync existsSync loop. */
+function pathExists(targetPath: string): Promise<boolean> {
+  return fs.promises.stat(targetPath).then(() => true, () => false);
+}
+
 /**
  * Delete tasks whose worktree directories have been removed outside the app.
  *
@@ -77,19 +87,37 @@ export async function cleanupStaleResourcesAsync(
  *
  * Never prunes tasks without a worktree_path or tasks with an active PTY.
  *
- * Synchronous by design: startup callers need this to complete before
- * session recovery reads the DB, without paying for the async filesystem
- * sweep in passes 2-3. Do not add `await`s to this function.
+ * Async, with an ordering contract: startup callers MUST `await` this before
+ * `resumeSuspendedSessions` so recovery reads a clean DB. The slow passes 2-3
+ * ({@link cleanupStaleResourcesAsync}) may then be fired without awaiting.
+ * The existence checks run with bounded parallelism off the event loop; the
+ * active-session set is re-read AFTER that async gap (a spawn can interleave)
+ * and the DB deletes then run in one synchronous final pass.
  */
-export function pruneOrphanedWorktreeTasks(
+export async function pruneOrphanedWorktreeTasks(
   projectPath: string,
   taskRepo: TaskRepository,
   sessionRepo: SessionRepository,
   sessionManager: SessionManager,
-): number {
+): Promise<number> {
   const worktreesDir = path.join(projectPath, '.kangentic', 'worktrees');
-  if (!fs.existsSync(worktreesDir)) return 0;
+  if (!(await pathExists(worktreesDir))) return 0;
 
+  const candidates = taskRepo.list().filter(
+    (task): task is typeof task & { worktree_path: string } => Boolean(task.worktree_path),
+  );
+
+  const missing: typeof candidates = [];
+  for (let chunkStart = 0; chunkStart < candidates.length; chunkStart += PRUNE_EXISTENCE_CHECK_CONCURRENCY) {
+    const chunk = candidates.slice(chunkStart, chunkStart + PRUNE_EXISTENCE_CHECK_CONCURRENCY);
+    const existence = await Promise.all(chunk.map((task) => pathExists(task.worktree_path)));
+    for (let indexInChunk = 0; indexInChunk < chunk.length; indexInChunk += 1) {
+      if (!existence[indexInChunk]) missing.push(chunk[indexInChunk]);
+    }
+  }
+
+  // Recompute AFTER the async gap: a session spawned while the existence
+  // checks ran must protect its task from the prune.
   const activeTaskIds = new Set(
     sessionManager.listSessions()
       .filter(session => session.status === 'running' || session.status === 'queued')
@@ -97,10 +125,15 @@ export function pruneOrphanedWorktreeTasks(
   );
 
   let pruned = 0;
-  for (const task of taskRepo.list()) {
-    if (!task.worktree_path) continue;
-    if (fs.existsSync(task.worktree_path)) continue;
+  for (const task of missing) {
     if (activeTaskIds.has(task.id)) continue;
+    // Last-look re-probe (sync, only for the handful of missing tasks): a
+    // spawn that interleaved after the probes may have re-created the worktree
+    // before its session reached the registry; skip rather than delete a task
+    // that is coming back to life. A spawn that has started but neither
+    // registered a session nor created the directory yet remains a residual
+    // (much narrower) race.
+    if (fs.existsSync(task.worktree_path)) continue;
 
     console.log(`[RESOURCE_CLEANUP] Deleting orphaned task "${task.title}" (${task.id.slice(0, 8)}) - worktree missing`);
     sessionRepo.deleteByTaskId(task.id);

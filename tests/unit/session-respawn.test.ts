@@ -210,6 +210,9 @@ describe('Session respawn (column transition)', () => {
 
     manager.suspend(firstId);
     const { session: second, feedData } = await spawnForTask('task-9');
+    // Focus BOTH ids so a leak under the old id would still be caught
+    // (the gate is default-closed and only emits for focused sessions).
+    manager.setFocusedSessions([firstId, second.id]);
 
     const emissions: Array<{ sessionId: string; data: string }> = [];
     manager.on('data', (sessionId: string, data: string) => {

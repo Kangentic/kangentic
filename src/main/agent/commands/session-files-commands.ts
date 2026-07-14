@@ -4,6 +4,7 @@ import type Database from 'better-sqlite3';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { sessionOutputPaths } from '../../transition-engine/session-paths';
 import { agentRegistry } from '../../agent/agent-registry';
+import { readBoundedTail } from './bounded-tail-read';
 import { resolveTask } from './task-resolver';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
 
@@ -21,6 +22,10 @@ interface SessionRow {
 
 const DEFAULT_TAIL = 200;
 const MAX_TAIL = 2000;
+/** Byte window for the events.jsonl tail-read. MAX_TAIL (2000) hook events at
+ *  ~200-600B/line can legitimately span ~1.2MB, so this is sized above the
+ *  200KB session-history cap rather than sharing it. */
+const MAX_EVENTS_READ_BYTES = 1024 * 1024;
 
 function resolveSession(
   database: Database.Database,
@@ -194,8 +199,13 @@ export const handleGetSessionEvents: CommandHandler = (
     : null;
   const eventTypeFilter = eventTypesArray && eventTypesArray.length > 0 ? new Set(eventTypesArray) : null;
 
-  const fileContents = fs.readFileSync(eventsJsonlPath, 'utf-8');
-  const lines = fileContents.split(/\r?\n/);
+  // Bounded tail-read: events.jsonl grows without bound over a long session,
+  // and this handler only ever returns the last `tail` events. With
+  // truncation, `totalLines` counts only lines inside the scanned window and
+  // the since/eventTypes filters apply within that window, so a huge file may
+  // return fewer than `tail` matches - acceptable, signaled by `truncated`.
+  const { content, truncated, totalBytes } = readBoundedTail(eventsJsonlPath, MAX_EVENTS_READ_BYTES);
+  const lines = content.split(/\r?\n/);
   const totalLines = lines.length;
 
   const matched: Array<Record<string, unknown>> = [];
@@ -211,14 +221,19 @@ export const handleGetSessionEvents: CommandHandler = (
   }
   const tailed = matched.length > tail ? matched.slice(-tail) : matched;
 
+  const truncationNote = truncated
+    ? ` (file ${Math.round(totalBytes / 1024)}KB; scanned last ${Math.round(MAX_EVENTS_READ_BYTES / 1024)}KB)`
+    : '';
   return {
     success: true,
-    message: `Returned ${tailed.length} events from ${eventsJsonlPath}`,
+    message: `Returned ${tailed.length} events from ${eventsJsonlPath}${truncationNote}`,
     data: {
       sessionId: session.id,
       eventsJsonlPath,
       totalLines,
       returned: tailed.length,
+      truncated,
+      totalBytes,
       events: tailed,
     },
   };

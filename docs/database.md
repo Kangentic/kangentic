@@ -310,7 +310,7 @@ Mirrors `task_attachments` for backlog tasks. Files stored at `.kangentic/backlo
 | created_at | TEXT | NOT NULL | |
 | updated_at | TEXT | NOT NULL | |
 
-No foreign key constraint on `session_id`. Cascade cleanup is handled via a DELETE trigger on the `sessions` table. The `TranscriptWriter` in `src/main/pty/transcript-writer.ts` strips ANSI escape sequences from PTY output and debounces writes to this table every 30 seconds.
+No foreign key constraint on `session_id`. Cascade cleanup is handled via a DELETE trigger on the `sessions` table. The `TranscriptWriter` in `src/main/pty/buffer/transcript-writer.ts` strips ANSI escape sequences from PTY output and debounces writes to this table every 30 seconds, flushing early once a session's pending buffer exceeds 256KB.
 
 ### handoffs table
 

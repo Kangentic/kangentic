@@ -1,5 +1,10 @@
-import { describe, it, expect } from 'vitest';
-import { stripAnsiEscapes, filterAltScreenContent } from '../../src/main/pty/buffer/transcript-writer';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import {
+  TranscriptWriter,
+  stripAnsiEscapes,
+  filterAltScreenContent,
+} from '../../src/main/pty/buffer/transcript-writer';
+import type { TranscriptRepository } from '../../src/main/db/repositories/transcript-repository';
 
 describe('stripAnsiEscapes', () => {
   it('strips SGR color codes', () => {
@@ -220,5 +225,87 @@ describe('filterAltScreenContent', () => {
     const second = filterAltScreenContent(input, false);
     expect(first).toEqual(second);
     expect(first.content).toBe('before');
+  });
+});
+
+describe('TranscriptWriter class', () => {
+  const sessionId = 'session-under-test';
+  const MAX_PENDING_CHARS = TranscriptWriter.MAX_PENDING_CHARS;
+
+  let createSpy: ReturnType<typeof vi.fn>;
+  let appendChunkSpy: ReturnType<typeof vi.fn>;
+  let writer: TranscriptWriter;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    createSpy = vi.fn();
+    appendChunkSpy = vi.fn();
+    writer = new TranscriptWriter({
+      create: createSpy,
+      appendChunk: appendChunkSpy,
+    } as unknown as TranscriptRepository);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('flushes under-cap data only when the 30s debounce fires', () => {
+    writer.onData(sessionId, 'hello');
+    writer.onData(sessionId, '-world');
+    expect(appendChunkSpy).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(30_000);
+
+    expect(createSpy).toHaveBeenCalledWith(sessionId);
+    expect(appendChunkSpy).toHaveBeenCalledTimes(1);
+    expect(appendChunkSpy).toHaveBeenCalledWith(sessionId, 'hello-world');
+  });
+
+  it('flushes immediately once pending exceeds the byte cap, without a double flush at 30s', () => {
+    const bigChunk = 'x'.repeat(MAX_PENDING_CHARS);
+    writer.onData(sessionId, bigChunk);
+
+    // Early flush fired synchronously, no timer advance needed.
+    expect(appendChunkSpy).toHaveBeenCalledTimes(1);
+    expect(appendChunkSpy.mock.calls[0][1]).toHaveLength(MAX_PENDING_CHARS);
+
+    // The debounce timer was cleared by the flush; nothing further to write.
+    vi.advanceTimersByTime(30_000);
+    expect(appendChunkSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('accumulates across chunks and early-flushes when the total crosses the cap', () => {
+    const half = 'y'.repeat(Math.ceil(MAX_PENDING_CHARS / 2));
+    writer.onData(sessionId, half);
+    expect(appendChunkSpy).not.toHaveBeenCalled();
+
+    writer.onData(sessionId, half);
+    expect(appendChunkSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('never trips the cap on alt-screen content (dropped before accumulation)', () => {
+    writer.onData(sessionId, `\x1b[?1049h${'z'.repeat(MAX_PENDING_CHARS * 2)}`);
+    expect(appendChunkSpy).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(30_000);
+    expect(appendChunkSpy).not.toHaveBeenCalled();
+  });
+
+  it('remove() flushes the pending remainder', () => {
+    writer.onData(sessionId, 'tail content');
+    writer.remove(sessionId);
+
+    expect(appendChunkSpy).toHaveBeenCalledTimes(1);
+    expect(appendChunkSpy).toHaveBeenCalledWith(sessionId, 'tail content');
+  });
+
+  it('finalizeAll() flushes every session', () => {
+    writer.onData('session-a', 'aaa');
+    writer.onData('session-b', 'bbb');
+    writer.finalizeAll();
+
+    expect(appendChunkSpy).toHaveBeenCalledWith('session-a', 'aaa');
+    expect(appendChunkSpy).toHaveBeenCalledWith('session-b', 'bbb');
   });
 });

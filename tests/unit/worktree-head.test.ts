@@ -26,7 +26,8 @@ vi.mock('simple-git', () => ({
   simpleGit: vi.fn(() => mockGit),
 }));
 
-import { readWorktreeHead, hasCommitsAheadOfBase } from '../../src/main/git/worktree-head';
+import { readWorktreeHead, readWorktreeHeadUnqueued, hasCommitsAheadOfBase } from '../../src/main/git/worktree-head';
+import { viaGitRead } from '../../src/main/git/git-read-queue';
 
 describe('readWorktreeHead', () => {
   beforeEach(() => {
@@ -158,5 +159,106 @@ describe('hasCommitsAheadOfBase', () => {
     mockGit.raw.mockResolvedValue('1');
     await hasCommitsAheadOfBase('/mock/repo', 'develop', 'abc123');
     expect(mockGit.raw).toHaveBeenCalledWith(['rev-list', '--count', 'develop..abc123']);
+  });
+});
+
+/**
+ * Both helpers run through the global git read queue (viaGitRead), so a burst
+ * of callers (batch Done-moves, PR-link fan-in) never spawns unbounded git
+ * children. Red-green: these fail if a refactor silently unwraps the queue.
+ */
+describe('git read queue wiring', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('caps concurrent readWorktreeHead jobs at the queue concurrency (2)', async () => {
+    const gates: Array<() => void> = [];
+    // The FIRST revparse of each job blocks on a gate; a job's second revparse
+    // resolves immediately. Jobs admitted = gates created.
+    mockGit.revparse.mockImplementation((args: string[]) => {
+      if (args[0] === '--abbrev-ref') {
+        return new Promise<string>((resolve) => {
+          gates.push(() => resolve('main\n'));
+        });
+      }
+      return Promise.resolve('abc123\n');
+    });
+
+    const jobs = Array.from({ length: 4 }, () => readWorktreeHead('/mock/worktree'));
+
+    await expect.poll(() => gates.length).toBe(2);
+    // Let any stray microtasks run; still only 2 admitted.
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(gates.length).toBe(2);
+
+    // Draining the gates admits the remaining jobs.
+    while (gates.length > 0) {
+      gates.shift()!();
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    const results = await Promise.all(jobs);
+    expect(results).toHaveLength(4);
+    for (const result of results) {
+      expect(result).toEqual({ branch: 'main', sha: 'abc123' });
+    }
+  });
+
+  it('caps concurrent hasCommitsAheadOfBase jobs at the queue concurrency (2)', async () => {
+    // Every hasCommitsAheadOfBase call blocks on a gate; jobs admitted = gates
+    // created. Red-green: fails (4 gates instead of 2) if viaGitRead is ever
+    // unwrapped from hasCommitsAheadOfBase.
+    const gates: Array<() => void> = [];
+    mockGit.raw.mockImplementation(() => {
+      return new Promise<string>((resolve) => {
+        gates.push(() => resolve('3'));
+      });
+    });
+
+    const jobs = Array.from({ length: 4 }, (_, index) =>
+      hasCommitsAheadOfBase('/mock/repo', 'main', `sha-${index}`),
+    );
+
+    await expect.poll(() => gates.length).toBe(2);
+    // Let any stray microtasks run; still only 2 admitted.
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(gates.length).toBe(2);
+
+    // Draining the gates admits the remaining jobs.
+    while (gates.length > 0) {
+      gates.shift()!();
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    const results = await Promise.all(jobs);
+    expect(results).toEqual([true, true, true, true]);
+  });
+
+  it('readWorktreeHeadUnqueued bypasses the global read queue entirely', async () => {
+    // Interactive single-flight panel paths (branch-summary.ts,
+    // commit-graph.ts) must not wait behind a BACKGROUND churn capture
+    // holding both queue slots. Saturate both slots with jobs that never
+    // resolve on their own, then confirm readWorktreeHeadUnqueued still
+    // resolves. Red-green: fails (times out) if the unqueued variant is
+    // ever re-wrapped in viaGitRead.
+    const blockerGates: Array<() => void> = [];
+    const blockerJobs = Array.from({ length: 2 }, () =>
+      viaGitRead(() => new Promise<void>((resolve) => { blockerGates.push(resolve); })),
+    );
+    await expect.poll(() => blockerGates.length).toBe(2);
+
+    mockGit.revparse
+      .mockResolvedValueOnce('feat/unqueued\n')
+      .mockResolvedValueOnce('deadbeef00000000000000000000000000000000\n');
+
+    const result = await readWorktreeHeadUnqueued('/mock/worktree-unqueued');
+
+    expect(result).toEqual({
+      branch: 'feat/unqueued',
+      sha: 'deadbeef00000000000000000000000000000000',
+    });
+
+    // Clean up so the shared queue starts the next test empty.
+    for (const release of blockerGates) release();
+    await Promise.all(blockerJobs);
   });
 });

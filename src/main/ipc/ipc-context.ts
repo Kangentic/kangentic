@@ -62,10 +62,15 @@ export interface IpcContext {
   /**
    * Project IDs whose suspended-session recovery (`pruneOrphanedWorktreeTasks`,
    * `cleanupStaleResourcesAsync`, `resumeSuspendedSessions`, `autoSpawnTasks`)
-   * has already completed in this app lifetime. Warm reopens skip recovery
-   * because the registry-resident PTYs and the on-disk worktree state cannot
-   * drift without going through our own handlers. Cleared per-project on
-   * `cleanupProject` (PROJECT_DELETE); the whole set dies with the process.
+   * has already been STARTED in this app lifetime. The open paths add the id
+   * up front - before the deferred recovery chain runs - to guard a rapid
+   * double-open from re-running recovery, so a chain that later fails is not
+   * retried until app restart; `activateAllProjects` adds only after its chain
+   * succeeds, so a failed background activation retries on the next explicit
+   * open. Warm reopens skip recovery because the registry-resident PTYs and
+   * the on-disk worktree state cannot drift without going through our own
+   * handlers. Cleared per-project on `cleanupProject` (PROJECT_DELETE); the
+   * whole set dies with the process.
    */
   recoveredProjects: Set<string>;
   /**

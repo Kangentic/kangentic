@@ -176,8 +176,10 @@ export interface GitWaitProgress {
 
 /** Options accepted by withGitLock / withLock. */
 interface GitLockOptions {
-  /** Lower = runs sooner. Defaults to GitQueuePriority.USER. */
-  priority?: number;
+  /** Lower = runs sooner. Defaults to GitQueuePriority.USER. The enum type
+   *  keeps `GitReadPriority` values (the read queue's OPPOSITE-direction
+   *  constants) from type-checking here. */
+  priority?: GitQueuePriority;
   /**
    * Short identifier for logs and the waiting-card label (e.g.
    * `remove-worktree:1a2b3c4d`). Defaults to `git-op`.

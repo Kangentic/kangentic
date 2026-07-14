@@ -45,9 +45,12 @@ vi.mock('simple-git', () => ({
   default: vi.fn(() => mockGit),
 }));
 
-// Mock readWorktreeHead so we can drive tipHash/currentBranch independently of git.
+// Mock readWorktreeHeadUnqueued so we can drive tipHash/currentBranch
+// independently of git. The commit-graph panel uses the UNQUEUED variant
+// (commit-graph.ts): an interactive panel refresh must not wait behind the
+// global read cap.
 vi.mock('../../src/main/git/worktree-head', () => ({
-  readWorktreeHead: mockReadWorktreeHead,
+  readWorktreeHeadUnqueued: mockReadWorktreeHead,
 }));
 
 import { getCommitGraph } from '../../src/main/git/commit-graph';

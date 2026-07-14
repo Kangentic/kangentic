@@ -1,4 +1,5 @@
 import { DiffService } from '../../git/diff-service';
+import { viaGitRead, GitReadPriority } from '../../git/git-read-queue';
 import type { SessionRepository } from '../../db/repositories/session-repository';
 import type { UsageHistoryRepository } from '../../db/repositories/usage-history-repository';
 import type { Task } from '../../../shared/types';
@@ -60,8 +61,14 @@ export function captureGitChurn(
     const recordIds = sessionRepo.listForTaskNewestFirst(task.id).map((record) => record.id);
     const baseBranch = task.base_branch || defaultBaseBranch || 'main';
 
-    void new DiffService(gitDir)
-      .getChurnSummary(baseBranch)
+    // Global read-queue cap at BACKGROUND priority: every finalization branch
+    // fires one of these, and a batch Done-move used to fan out ~4 unqueued
+    // git children per task simultaneously. Stats capture yields to
+    // user-action reads (readWorktreeHead, PR linking).
+    void viaGitRead(
+      () => new DiffService(gitDir).getChurnSummary(baseBranch),
+      { priority: GitReadPriority.BACKGROUND },
+    )
       .then((stats) => {
         if (stats.linesAdded === 0 && stats.linesRemoved === 0 && stats.filesChanged === 0) return;
         sessionRepo.setTaskGitStats(recordIds, canonicalRecordId, stats);

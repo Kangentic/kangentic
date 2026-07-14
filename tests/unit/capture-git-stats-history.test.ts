@@ -199,4 +199,86 @@ describe('captureGitChurn', () => {
     expect(sessionSetTaskGitStats).toHaveBeenCalledWith(['record-001'], 'record-x', expectedStats);
     expect(historySetTaskGitStats).toHaveBeenCalledWith(['record-001'], 'record-x', expectedStats);
   });
+
+  it('caps concurrent churn captures via the global git read queue', async () => {
+    // Six simultaneous finalizations (the live-profiled worst case) must not
+    // fan out six concurrent DiffService churn reads: the shared viaGitRead
+    // queue admits at most GIT_READ_CONCURRENCY (2) at a time. Red-green: this
+    // test fails when captureGitChurn bypasses the queue.
+    const gates: Array<() => void> = [];
+    mockGetChurnSummary.mockImplementation(() =>
+      new Promise<void>((resolve) => {
+        gates.push(resolve);
+      }).then(() => ({ linesAdded: 1, linesRemoved: 1, filesChanged: 1 })),
+    );
+
+    const { sessionRepo, usageHistoryRepo, sessionSetTaskGitStats } = makeRepos();
+    for (let taskIndex = 0; taskIndex < 6; taskIndex += 1) {
+      captureGitChurn(
+        makeTask({ id: `task-${taskIndex}` }),
+        sessionRepo,
+        usageHistoryRepo,
+        `record-${taskIndex}`,
+        '/mock/project',
+        'main',
+      );
+    }
+
+    // Only the first 2 jobs may start; the other 4 wait in the queue.
+    await expect.poll(() => gates.length).toBe(2);
+    await flushAsync();
+    expect(gates.length).toBe(2);
+
+    // Releasing slots admits the rest, never exceeding the cap in flight.
+    while (gates.length > 0) {
+      const admittedBeforeRelease = gates.length;
+      gates.shift()!();
+      await flushAsync();
+      expect(gates.length).toBeLessThanOrEqual(admittedBeforeRelease + 1);
+      if (sessionSetTaskGitStats.mock.calls.length === 6) break;
+    }
+    await expect.poll(() => sessionSetTaskGitStats.mock.calls.length).toBe(6);
+  });
+
+  it('queues its churn read at BACKGROUND priority: a USER-priority read enqueued later still runs first', async () => {
+    // captureGitChurn's viaGitRead call passes { priority: GitReadPriority.BACKGROUND }
+    // (0) so it yields to user-action reads (readWorktreeHead, PR linking),
+    // which default to USER (1). p-queue treats higher numbers as higher
+    // priority. Red-green: this fails if that priority option were ever
+    // dropped (both jobs would then tie at the USER default, and FIFO order
+    // - captureGitChurn's job enqueued first - would win instead), or if the
+    // priority convention were inverted.
+    const { viaGitRead } = await import('../../src/main/git/git-read-queue');
+    const order: string[] = [];
+
+    // Saturate both concurrency slots with real queue jobs so captureGitChurn's
+    // subsequently-queued churn read must wait for a slot alongside the USER job.
+    const blockerGates: Array<() => void> = [];
+    const blockerJobs = Array.from({ length: 2 }, () =>
+      viaGitRead(() => new Promise<void>((resolve) => { blockerGates.push(resolve); })),
+    );
+    await expect.poll(() => blockerGates.length).toBe(2);
+
+    mockGetChurnSummary.mockImplementation(() => {
+      order.push('background');
+      return Promise.resolve({ linesAdded: 1, linesRemoved: 1, filesChanged: 1 });
+    });
+
+    const { sessionRepo, usageHistoryRepo } = makeRepos();
+    // captureGitChurn's internal viaGitRead call queues at BACKGROUND priority,
+    // enqueued FIRST (before the userJob below).
+    captureGitChurn(makeTask(), sessionRepo, usageHistoryRepo, 'record-001', '/mock/project', 'main');
+
+    // A plain (USER-priority, the default) read enqueued AFTER captureGitChurn's
+    // job must still run first once a slot frees.
+    const userJob = viaGitRead(async () => {
+      order.push('user');
+    });
+
+    for (const release of blockerGates) release();
+    await Promise.all([...blockerJobs, userJob]);
+    await flushAsync();
+
+    expect(order).toEqual(['user', 'background']);
+  });
 });

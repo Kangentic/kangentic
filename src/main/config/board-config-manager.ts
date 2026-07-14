@@ -38,6 +38,15 @@ import { buildBoardConfigFromDb } from './board-config/build-config';
  * Only watches the active (viewed) project. When the user switches projects,
  * attach() runs applyConfigOnOpen() which picks up any changes that happened
  * while the project was inactive. No background watchers for inactive projects.
+ *
+ * Reads of the ACTIVE project's two files are memoized: getDefaultBaseBranch()
+ * fires on every task finalization and every renderer CONFIG_GET, and used to
+ * re-read + re-parse both files each time. The cache is invalidated by every
+ * write path in this class and by the FileWatchers on external edits, so at
+ * worst a read within the watcher's 300ms debounce window after an external
+ * edit serves the previous content - acceptable, since the DB reconcile flow
+ * is itself watcher-driven. Non-active paths (the MCP writeBackForProject
+ * route) always bypass the cache: they have no watcher to invalidate it.
  */
 export class BoardConfigManager {
   private readonly isEphemeral: boolean;
@@ -51,6 +60,13 @@ export class BoardConfigManager {
   private writeBackDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   private lastTeamContentHash: string | null = null;
   private lastLocalContentHash: string | null = null;
+  /** Memoized parse of the ACTIVE project's kangentic.json / kangentic.local.json.
+   *  `undefined` = not cached; `null` = file missing or unparseable. Both store
+   *  and serve go through structuredClone: consumers mutate their copies
+   *  (applyBoardConfigToDb renames/splices in place, mergeBoardConfigs aliases
+   *  team column objects), so the cached instance must never leak. */
+  private cachedTeamConfig: BoardConfig | null | undefined = undefined;
+  private cachedLocalOverrides: Partial<BoardConfig> | null | undefined = undefined;
 
   constructor(options?: { ephemeral?: boolean }) {
     this.isEphemeral = options?.ephemeral ?? false;
@@ -66,6 +82,9 @@ export class BoardConfigManager {
     this.activeProjectId = projectId;
     this.activeProjectPath = projectPath;
     this.mainWindow = mainWindow;
+    // New active project = unknown files. (applyConfigOnOpen runs right after
+    // attach and only writes the DB, so it needs no invalidation of its own.)
+    this.invalidateConfigCache();
 
     const teamFilePath = path.join(projectPath, TEAM_FILE);
     const localFilePath = path.join(projectPath, LOCAL_FILE);
@@ -104,6 +123,12 @@ export class BoardConfigManager {
     this.isWritingBack = false;
     this.lastTeamContentHash = null;
     this.lastLocalContentHash = null;
+    this.invalidateConfigCache();
+  }
+
+  private invalidateConfigCache(): void {
+    this.cachedTeamConfig = undefined;
+    this.cachedLocalOverrides = undefined;
   }
 
   /** Check if kangentic.json exists for a given project path. */
@@ -119,16 +144,52 @@ export class BoardConfigManager {
 
   // --- File Reading ---
 
-  private loadTeamConfigForPath(projectPath: string): BoardConfig | null {
-    const filePath = path.join(projectPath, TEAM_FILE);
-    try {
-      const raw = fs.readFileSync(filePath, 'utf-8');
-      const config = JSON.parse(raw) as BoardConfig;
-      migrateBoardColumnFields(config);
-      return config;
-    } catch {
-      return null;
+  /**
+   * Shared read path for both config files: serve the memo for the ACTIVE
+   * project, otherwise read + parse from disk and (when active) store back.
+   * Both store and serve go through structuredClone so the cached instance
+   * never leaks to mutating consumers (see the cache fields' JSDoc).
+   * `undefined` from `readCache` = not cached; `null` = file missing or
+   * unparseable (also cached, so a missing file is not re-stat'd every read).
+   */
+  private readConfigFileMemoized<ConfigShape>(
+    projectPath: string,
+    fileName: string,
+    readCache: () => ConfigShape | null | undefined,
+    writeCache: (value: ConfigShape | null) => void,
+    parse: (raw: string) => ConfigShape,
+  ): ConfigShape | null {
+    const isActivePath = projectPath === this.activeProjectPath;
+    if (isActivePath) {
+      const cached = readCache();
+      if (cached !== undefined) {
+        return cached === null ? null : structuredClone(cached);
+      }
     }
+    let config: ConfigShape | null;
+    try {
+      config = parse(fs.readFileSync(path.join(projectPath, fileName), 'utf-8'));
+    } catch {
+      config = null;
+    }
+    if (isActivePath) {
+      writeCache(config === null ? null : structuredClone(config));
+    }
+    return config;
+  }
+
+  private loadTeamConfigForPath(projectPath: string): BoardConfig | null {
+    return this.readConfigFileMemoized(
+      projectPath,
+      TEAM_FILE,
+      () => this.cachedTeamConfig,
+      (value) => { this.cachedTeamConfig = value; },
+      (raw) => {
+        const config = JSON.parse(raw) as BoardConfig;
+        migrateBoardColumnFields(config);
+        return config;
+      },
+    );
   }
 
   loadTeamConfig(): BoardConfig | null {
@@ -137,15 +198,17 @@ export class BoardConfigManager {
   }
 
   private loadLocalOverridesForPath(projectPath: string): Partial<BoardConfig> | null {
-    const filePath = path.join(projectPath, LOCAL_FILE);
-    try {
-      const raw = fs.readFileSync(filePath, 'utf-8');
-      const config = JSON.parse(raw) as Partial<BoardConfig>;
-      if (config.columns) migrateBoardColumnFields(config as BoardConfig);
-      return config;
-    } catch {
-      return null;
-    }
+    return this.readConfigFileMemoized(
+      projectPath,
+      LOCAL_FILE,
+      () => this.cachedLocalOverrides,
+      (value) => { this.cachedLocalOverrides = value; },
+      (raw) => {
+        const config = JSON.parse(raw) as Partial<BoardConfig>;
+        if (config.columns) migrateBoardColumnFields(config as BoardConfig);
+        return config;
+      },
+    );
   }
 
   loadLocalOverrides(): Partial<BoardConfig> | null {
@@ -187,6 +250,9 @@ export class BoardConfigManager {
 
   setDefaultBaseBranch(value: string): void {
     if (!this.activeProjectPath) return;
+    // Invalidate up front so every exit path below (content-match early
+    // return, write, write failure) serves fresh reads afterwards.
+    this.invalidateConfigCache();
 
     const filePath = path.join(this.activeProjectPath, TEAM_FILE);
 
@@ -262,6 +328,7 @@ export class BoardConfigManager {
 
   setShortcuts(actions: ShortcutConfig[], target: 'team' | 'local'): void {
     if (!this.activeProjectPath) return;
+    this.invalidateConfigCache();
 
     const fileName = target === 'team' ? TEAM_FILE : LOCAL_FILE;
     const filePath = path.join(this.activeProjectPath, fileName);
@@ -384,6 +451,8 @@ export class BoardConfigManager {
     } catch (error) {
       console.warn('[BOARD_CONFIG] Write-back failed:', error);
     } finally {
+      // The active project's file just changed under the read memo.
+      if (isActive) this.invalidateConfigCache();
       // Keep isWritingBack true for a bit to suppress watcher re-entry
       if (isActive && this.isWritingBack) {
         setTimeout(() => {
@@ -404,6 +473,9 @@ export class BoardConfigManager {
   // --- Apply pending file change (called from renderer after user confirms) ---
 
   applyFileChange(projectId: string, projectPath: string): { warnings: string[] } {
+    // The user confirmed an external edit: drop the memo before applyConfig
+    // re-reads the files.
+    this.invalidateConfigCache();
     const result = this.applyConfig(projectId, projectPath);
     this.lastTeamContentHash = hashFilePath(path.join(projectPath, TEAM_FILE));
     this.lastLocalContentHash = hashFilePath(path.join(projectPath, LOCAL_FILE));
@@ -413,6 +485,9 @@ export class BoardConfigManager {
   // --- File change handler ---
 
   private onFileChanged(projectId: string, source: 'team' | 'local'): void {
+    // FIRST, before any suppression fast-path can return: the file on disk
+    // changed, so the read memo is stale regardless of who changed it.
+    this.invalidateConfigCache();
     // Fast path: suppress during active write-back
     if (this.isWritingBack && projectId === this.activeProjectId) return;
     if (!this.activeProjectPath) return;

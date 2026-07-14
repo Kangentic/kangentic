@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { SessionRepository } from '../../db/repositories/session-repository';
-import { WorktreeManager, prepareWorktreeForRemoval } from '../../git/worktree-manager';
+import { WorktreeManager, prepareWorktreeForRemoval, GitQueuePriority } from '../../git/worktree-manager';
 import { readWorktreeHead } from '../../git/worktree-head';
 import { getProjectDb } from '../../db/database';
 import type { IpcContext } from '../ipc-context';
@@ -139,7 +139,10 @@ export async function cleanupTaskResources(
             await worktreeManager.removeBranch(task.branch_name);
           }
         }
-      }, { label: `cleanup-worktree:${task.id.slice(0, 8)}` });
+        // BACKGROUND: cleanup is best-effort with a startup retry net
+        // (retryFailedDoneCleanups); a batch of removals must not park a
+        // fresh agent spawn waiting at USER priority on this project.
+      }, { label: `cleanup-worktree:${task.id.slice(0, 8)}`, priority: GitQueuePriority.BACKGROUND });
     } catch (err) {
       console.error(`[WORKTREE] Failed to clean up worktree for task ${task.id.slice(0, 8)}:`, err);
     }
@@ -212,7 +215,10 @@ export async function deleteTaskWorktree(
     await prepareWorktreeForRemoval(task.worktree_path, 'moderate');
     await worktreeManager.withLock(async () => {
       removed = await worktreeManager.removeWorktree(task.worktree_path!, { removalProfile: 'moderate' });
-    }, { label: `remove-worktree:${task.id.slice(0, 8)}` });
+      // BACKGROUND: nothing user-visible gates on the removal finishing (the
+      // board mutation + archive already happened); a batch Done-move must not
+      // park a fresh agent spawn behind its removals.
+    }, { label: `remove-worktree:${task.id.slice(0, 8)}`, priority: GitQueuePriority.BACKGROUND });
   } catch (err) {
     console.error(`[WORKTREE] Failed to delete worktree for task ${task.id.slice(0, 8)}:`, err);
   }

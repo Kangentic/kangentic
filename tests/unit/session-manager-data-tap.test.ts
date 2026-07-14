@@ -137,8 +137,7 @@ describe('SessionManager data-tap', () => {
 
   it('still fires alongside "data" for a focused session (unfiltered means "in addition to", not "instead of")', async () => {
     const { session, feedData } = await spawnSession('task-data-tap-focused');
-    // Empty set means "all focused" (session-manager.ts's documented default),
-    // so no explicit setFocusedSessions call is needed here.
+    manager.setFocusedSessions([session.id]);
 
     const dataTapListener = vi.fn();
     const dataListener = vi.fn();
@@ -150,5 +149,66 @@ describe('SessionManager data-tap', () => {
 
     expect(dataTapListener).toHaveBeenCalledWith(session.id, 'hello from a focused session');
     expect(dataListener).toHaveBeenCalledWith(session.id, 'hello from a focused session');
+  });
+
+  it('default-closed: with no setFocusedSessions call, "data" never fires while "data-tap" does', async () => {
+    // Before the renderer's first SESSION_SET_FOCUSED push, NO session's
+    // output goes over IPC (the empty set used to mean "all focused" and
+    // fanned every session out). Red-green: fails if the size===0 escape
+    // is ever restored in session-manager.ts's gate.
+    const { session, feedData } = await spawnSession('task-data-tap-default');
+
+    const dataTapListener = vi.fn();
+    const dataListener = vi.fn();
+    manager.on('data-tap', dataTapListener);
+    manager.on('data', dataListener);
+
+    feedData('output before any focus sync');
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(dataTapListener).toHaveBeenCalledWith(session.id, 'output before any focus sync');
+    expect(dataListener).not.toHaveBeenCalled();
+  });
+
+  it('an explicitly empty focused set stops "data" again (Backlog view / hidden panel)', async () => {
+    const { session, feedData } = await spawnSession('task-data-tap-empty-set');
+    manager.setFocusedSessions([session.id]);
+
+    const dataListener = vi.fn();
+    manager.on('data', dataListener);
+
+    feedData('while focused');
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(dataListener).toHaveBeenCalledTimes(1);
+
+    // The renderer derives [] when no terminal is visible; that must close
+    // the gate, not open the floodgates for every session.
+    manager.setFocusedSessions([]);
+    feedData('after focus cleared');
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(dataListener).toHaveBeenCalledTimes(1);
+  });
+
+  it('getPipelineStats reports focused: false by default and true only for the session passed to setFocusedSessions', async () => {
+    // Default-closed, matching the 'data'-event gate above: getPipelineStats's
+    // `focused` field must NOT fall back to "true for everyone" when the
+    // focused set is empty. Red-green: fails if the `size === 0` all-focused
+    // escape is ever restored to session-manager.ts's getPipelineStats.
+    const { session: sessionA } = await spawnSession('task-pipeline-stats-focus-a');
+    const { session: sessionB } = await spawnSession('task-pipeline-stats-focus-b');
+
+    const statsBefore = manager.getPipelineStats();
+    expect(statsBefore.find((entry) => entry.sessionId === sessionA.id)?.focused).toBe(false);
+    expect(statsBefore.find((entry) => entry.sessionId === sessionB.id)?.focused).toBe(false);
+
+    manager.setFocusedSessions([sessionA.id]);
+    const statsAfter = manager.getPipelineStats();
+    expect(statsAfter.find((entry) => entry.sessionId === sessionA.id)?.focused).toBe(true);
+    expect(statsAfter.find((entry) => entry.sessionId === sessionB.id)?.focused).toBe(false);
+
+    // spawnSession's afterEach cleanup only tracks the LAST spawned session;
+    // suspend sessionA explicitly since this test spawned two.
+    await manager.suspend(sessionA.id);
   });
 });

@@ -40,9 +40,11 @@ vi.mock('simple-git', () => ({
   default: vi.fn(() => mockGit),
 }));
 
-// Mock readWorktreeHead so we can drive currentBranch independently of git.
+// Mock readWorktreeHeadUnqueued so we can drive currentBranch independently of
+// git. The Changes-panel header uses the UNQUEUED variant (branch-summary.ts):
+// an interactive panel refresh must not wait behind the global read cap.
 vi.mock('../../src/main/git/worktree-head', () => ({
-  readWorktreeHead: mockReadWorktreeHead,
+  readWorktreeHeadUnqueued: mockReadWorktreeHead,
 }));
 
 import { getBranchSummary } from '../../src/main/git/branch-summary';

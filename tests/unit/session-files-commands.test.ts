@@ -265,4 +265,39 @@ describe('handleGetSessionEvents', () => {
     const data = result.data as { returned: number };
     expect(data.returned).toBe(5);
   });
+
+  it('reports truncated=false on small files', () => {
+    writeEventsJsonl(sessionId, ['{"hook_event_name":"Stop"}']);
+    const result = handleGetSessionEvents({ sessionId }, ctx());
+    const data = result.data as { truncated: boolean; totalBytes: number };
+    expect(data.truncated).toBe(false);
+    expect(data.totalBytes).toBeGreaterThan(0);
+  });
+
+  it('tail-reads a bounded window from a file over the byte cap', () => {
+    // ~4000 lines x ~400B = ~1.6MB, over the 1MB MAX_EVENTS_READ_BYTES cap.
+    const padding = 'p'.repeat(370);
+    const lines = Array.from(
+      { length: 4000 },
+      (_, index) => `{"hook_event_name":"E${index}","pad":"${padding}"}`,
+    );
+    writeEventsJsonl(sessionId, lines);
+
+    const result = handleGetSessionEvents({ sessionId, tail: 50 }, ctx());
+    expect(result.success).toBe(true);
+    const data = result.data as {
+      events: Array<Record<string, unknown>>;
+      returned: number;
+      truncated: boolean;
+      totalBytes: number;
+    };
+    expect(data.truncated).toBe(true);
+    expect(data.totalBytes).toBeGreaterThan(1024 * 1024);
+    expect(data.returned).toBe(50);
+    // The tail is the END of the file, and the dropped partial first line
+    // never corrupts parsing (every returned event parsed cleanly).
+    expect(data.events[data.events.length - 1].hook_event_name).toBe('E3999');
+    expect(data.events[0].hook_event_name).toBe('E3950');
+    expect(result.message).toContain('scanned last');
+  });
 });

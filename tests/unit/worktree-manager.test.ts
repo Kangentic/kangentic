@@ -116,6 +116,9 @@ const { mockSpawn, recordedSpawnCalls, spawnOverrides } = vi.hoisted(() => {
 
 vi.mock('node:child_process', () => ({
   execFileSync: vi.fn(),
+  // git-checks.ts (imported by worktree-manager) promisifies execFile at
+  // module load, so the mock must export it or the import graph throws.
+  execFile: vi.fn(),
   spawn: mockSpawn,
 }));
 

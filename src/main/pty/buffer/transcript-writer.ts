@@ -64,8 +64,9 @@ export function filterAltScreenContent(
  * (TUI mode) since redraws would otherwise produce dozens of duplicate copies
  * of the same plain text. Pre-TUI banner and post-TUI exit messages survive.
  *
- * Flushes to the database every 30 seconds (debounced). At worst, a crash
- * loses the last 30 seconds of output.
+ * Flushes to the database every 30 seconds (debounced), or immediately once a
+ * session's pending buffer exceeds 256KB. At worst, a crash loses the last 30
+ * seconds or 256KB of output, whichever is smaller.
  */
 export class TranscriptWriter {
   /** Per-session pending data not yet flushed to DB. */
@@ -79,6 +80,14 @@ export class TranscriptWriter {
   private inAltScreen = new Map<string, boolean>();
 
   private static readonly FLUSH_INTERVAL_MS = 30_000;
+  /** Early-flush threshold for the per-session pending buffer, in UTF-16 code
+   *  units (string .length - same convention as PtyBufferManager's
+   *  MAX_BYTES_PER_FLUSH). Every other PTY buffer is byte-capped; without this
+   *  a high-volume session accumulates unbounded text for the full 30s
+   *  debounce window. Alt-screen redraws are dropped before accumulation, so
+   *  only genuinely large plain-text output trips the cap. Public (not
+   *  private) so tests exercise the real threshold instead of mirroring it. */
+  static readonly MAX_PENDING_CHARS = 256 * 1024;
 
   constructor(private transcriptRepo: TranscriptRepository) {}
 
@@ -98,7 +107,15 @@ export class TranscriptWriter {
     if (!stripped) return;
 
     const existing = this.pending.get(sessionId) ?? '';
-    this.pending.set(sessionId, existing + stripped);
+    const combined = existing + stripped;
+    this.pending.set(sessionId, combined);
+
+    // Early flush: don't let a flooding session hold an unbounded string for
+    // the whole debounce window. flush() clears the pending timer itself.
+    if (combined.length >= TranscriptWriter.MAX_PENDING_CHARS) {
+      this.flush(sessionId);
+      return;
+    }
 
     // Debounce: schedule flush if not already scheduled
     if (!this.flushTimers.has(sessionId)) {

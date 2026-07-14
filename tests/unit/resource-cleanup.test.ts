@@ -10,7 +10,7 @@ const { mockExistsSync, mockRm, mockReaddir, mockStat, mockExecFile } = vi.hoist
   mockReaddir: vi.fn(async () => []),
   // Default to an old mtime so orphan sweeps proceed. Computed at call time
   // because the relevant block uses fake timers.
-  mockStat: vi.fn(async () => ({ mtimeMs: Date.now() - 24 * 60 * 60 * 1000 })),
+  mockStat: vi.fn(async (_pathArg?: unknown) => ({ mtimeMs: Date.now() - 24 * 60 * 60 * 1000 })),
   mockExecFile: vi.fn(),
 }));
 
@@ -99,6 +99,23 @@ function createMockRepos(backlogTasks: MockTask[] = []) {
   };
 
   return { swimlaneRepo, taskRepo, sessionRepo, sessionManager };
+}
+
+/**
+ * Route the async existence probes (fs.promises.stat, used by
+ * pruneOrphanedWorktreeTasks' pathExists) through the same path predicate as
+ * mockExistsSync, so each test configures existence exactly once.
+ */
+function statDelegatesToExistsSync() {
+  mockStat.mockImplementation(async (pathArg?: unknown) => {
+    if (!mockExistsSync(String(pathArg))) {
+      throw Object.assign(
+        new Error(`ENOENT: no such file or directory, stat '${String(pathArg)}'`),
+        { code: 'ENOENT' },
+      );
+    }
+    return { mtimeMs: Date.now() - 24 * 60 * 60 * 1000 };
+  });
 }
 
 /** Helper: configure mockExecFile to call back with success or error */
@@ -451,6 +468,7 @@ describe('cleanupStaleResources -- pruneOrphanedWorktreeTasks pass', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockExistsSync.mockReturnValue(false);
+    statDelegatesToExistsSync();
     mockRm.mockResolvedValue(undefined);
     mockReaddir.mockResolvedValue([]);
     setupExecFile(() => '');
@@ -626,36 +644,27 @@ describe('cleanupStaleResources -- pruneOrphanedWorktreeTasks pass', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Sync-ordering contract: pruneOrphanedWorktreeTasks must complete before
-// any microtask yields, so session recovery can read a clean DB after the
-// call without awaiting. Startup code in projects.ts depends on this.
+// Ordering contract: startup callers MUST await pruneOrphanedWorktreeTasks
+// before session recovery reads the DB, then fire cleanupStaleResourcesAsync
+// without awaiting it. Startup code in projects.ts depends on this, and the
+// prune re-reads the active-session set after its async existence checks so
+// a spawn that interleaves cannot lose its task.
 // ---------------------------------------------------------------------------
 
-describe('pruneOrphanedWorktreeTasks sync contract', () => {
+describe('pruneOrphanedWorktreeTasks ordering contract', () => {
   const projectPath = '/home/dev/my-project';
   const worktreesDir = '/home/dev/my-project/.kangentic/worktrees';
 
   beforeEach(() => {
     vi.clearAllMocks();
     mockExistsSync.mockReturnValue(false);
+    statDelegatesToExistsSync();
+    mockRm.mockResolvedValue(undefined);
+    mockReaddir.mockResolvedValue([]);
+    setupExecFile(() => '');
   });
 
-  it('is a synchronous function (does not return a Promise)', () => {
-    const { taskRepo, sessionRepo, sessionManager } =
-      createMockReposWithAllTasks([]);
-
-    const result: unknown = pruneOrphanedWorktreeTasks(
-      projectPath,
-      taskRepo as never,
-      sessionRepo as never,
-      sessionManager as never,
-    );
-
-    expect(result).not.toBeInstanceOf(Promise);
-    expect((result as { then?: unknown }).then).toBeUndefined();
-  });
-
-  it('completes pruning before cleanupStaleResourcesAsync yields', async () => {
+  it('the awaited prune completes its deletes before recovery would read the DB', async () => {
     const orphanTask = createMockTask({
       id: 'orphan11-0000-0000-0000-000000000000',
       title: 'Orphan task',
@@ -667,25 +676,17 @@ describe('pruneOrphanedWorktreeTasks sync contract', () => {
 
     mockExistsSync.mockImplementation((pathArg: string) => pathArg === worktreesDir);
 
-    // Emulate the startup call pattern exactly: sync prune, then fire the
-    // async tail without awaiting.
-    pruneOrphanedWorktreeTasks(
+    // Emulate the startup call pattern exactly: await the prune, THEN fire
+    // the async tail without awaiting.
+    await pruneOrphanedWorktreeTasks(
       projectPath,
       taskRepo as never,
-      sessionRepo as never,
-      sessionManager as never,
-    );
-    const asyncTail = cleanupStaleResourcesAsync(
-      projectPath,
-      taskRepo as never,
-      swimlaneRepo as never,
       sessionRepo as never,
       sessionManager as never,
     );
 
-    // At this synchronous point - before any await - the orphan task must
-    // already be deleted. Session recovery reads the DB in exactly this
-    // position in the real startup sequence.
+    // At this point - the exact position session recovery occupies in the
+    // real startup sequence - the orphan task must already be deleted.
     expect(taskRepo.delete).toHaveBeenCalledWith(
       'orphan11-0000-0000-0000-000000000000',
     );
@@ -693,7 +694,89 @@ describe('pruneOrphanedWorktreeTasks sync contract', () => {
       'orphan11-0000-0000-0000-000000000000',
     );
 
-    await asyncTail;
+    await cleanupStaleResourcesAsync(
+      projectPath,
+      taskRepo as never,
+      swimlaneRepo as never,
+      sessionRepo as never,
+      sessionManager as never,
+    );
+  });
+
+  it('re-reads the active-session set after the async gap (an interleaving spawn keeps its task)', async () => {
+    const racedTask = createMockTask({
+      id: 'raced111-0000-0000-0000-000000000000',
+      title: 'Raced task',
+      worktree_path: '/home/dev/my-project/.kangentic/worktrees/raced-raced111',
+      branch_name: 'raced-raced111',
+    });
+    const { taskRepo, sessionRepo, sessionManager } =
+      createMockReposWithAllTasks([racedTask]);
+
+    mockExistsSync.mockImplementation((pathArg: string) => pathArg === worktreesDir);
+
+    // No session is active when the prune starts; one spawns for the task
+    // while its existence check is in flight. Reading the active set before
+    // the gap would miss it and wrongly prune the task.
+    let liveSessions: Array<{ id: string; taskId: string; status: string }> = [];
+    sessionManager.listSessions = vi.fn(() => liveSessions);
+    mockStat.mockImplementation(async (pathArg?: unknown) => {
+      if (String(pathArg) === racedTask.worktree_path) {
+        liveSessions = [{ id: 'session-raced', taskId: racedTask.id, status: 'running' }];
+        throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      }
+      if (!mockExistsSync(String(pathArg))) {
+        throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      }
+      return { mtimeMs: Date.now() - 24 * 60 * 60 * 1000 };
+    });
+
+    const pruned = await pruneOrphanedWorktreeTasks(
+      projectPath,
+      taskRepo as never,
+      sessionRepo as never,
+      sessionManager as never,
+    );
+
+    expect(pruned).toBe(0);
+    expect(taskRepo.delete).not.toHaveBeenCalled();
+    expect(sessionRepo.deleteByTaskId).not.toHaveBeenCalled();
+  });
+
+  it('re-probes synchronously right before delete: a worktree re-created after the async gap keeps its task', async () => {
+    const recreatedTask = createMockTask({
+      id: 'recreat-0000-0000-0000-000000000000',
+      title: 'Recreated task',
+      worktree_path: '/home/dev/my-project/.kangentic/worktrees/recreated-recreat',
+      branch_name: 'recreated-recreat',
+    });
+    const { taskRepo, sessionRepo, sessionManager } =
+      createMockReposWithAllTasks([recreatedTask]);
+
+    // The async existence probe (fs.promises.stat) reports the worktrees
+    // parent dir as present but the task's own worktree dir as MISSING -
+    // this is the state captured during the async existence-check gap.
+    mockStat.mockImplementation(async (pathArg?: unknown) => {
+      if (String(pathArg) === recreatedTask.worktree_path) {
+        throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      }
+      return { mtimeMs: Date.now() - 24 * 60 * 60 * 1000 };
+    });
+
+    // By the time the synchronous delete loop runs its last-look re-probe, a
+    // spawn has re-created the worktree directory on disk.
+    mockExistsSync.mockImplementation((pathArg: string) => pathArg === recreatedTask.worktree_path);
+
+    const pruned = await pruneOrphanedWorktreeTasks(
+      projectPath,
+      taskRepo as never,
+      sessionRepo as never,
+      sessionManager as never,
+    );
+
+    expect(pruned).toBe(0);
+    expect(taskRepo.delete).not.toHaveBeenCalled();
+    expect(sessionRepo.deleteByTaskId).not.toHaveBeenCalled();
   });
 });
 

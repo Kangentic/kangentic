@@ -6,14 +6,18 @@ import { isGitRepo, isFileTracked } from '../../git/git-checks';
  * Ensure `.kangentic/` and `.claude/settings.local.json` are listed in the
  * project's `.gitignore`.  Fully wrapped in try-catch -- a read-only project
  * directory or permission issue must never prevent the app from opening.
+ *
+ * Async and safe to fire-and-forget: nothing downstream of a project open
+ * reads its effect, and the git tracked-file probe used to run as a
+ * synchronous subprocess on the switch critical path. Never rejects.
  */
-export function ensureGitignore(projectPath: string): void {
-  if (!isGitRepo(projectPath)) return;
+export async function ensureGitignore(projectPath: string): Promise<void> {
   try {
+    if (!isGitRepo(projectPath)) return;
     const gitignorePath = path.join(projectPath, '.gitignore');
     let content = '';
     try {
-      content = fs.readFileSync(gitignorePath, 'utf-8');
+      content = await fs.promises.readFile(gitignorePath, 'utf-8');
     } catch {
       // No .gitignore yet -- we'll create one
     }
@@ -26,7 +30,7 @@ export function ensureGitignore(projectPath: string): void {
     if (!kangenticIgnored) {
       const separator = content.length > 0 && !content.endsWith('\n') ? '\n' : '';
       content = content + separator + '.kangentic/\n';
-      fs.writeFileSync(gitignorePath, content);
+      await fs.promises.writeFile(gitignorePath, content);
     }
 
     // 2. Ensure .claude/settings.local.json is ignored -- but only if the project
@@ -36,11 +40,11 @@ export function ensureGitignore(projectPath: string): void {
       (l) => l.trim() === '.claude/settings.local.json',
     );
     if (!settingsIgnored) {
-      const settingsTracked = isFileTracked(projectPath, '.claude/settings.local.json');
+      const settingsTracked = await isFileTracked(projectPath, '.claude/settings.local.json');
       if (!settingsTracked) {
         const separator = content.length > 0 && !content.endsWith('\n') ? '\n' : '';
         content = content + separator + '.claude/settings.local.json\n';
-        fs.writeFileSync(gitignorePath, content);
+        await fs.promises.writeFile(gitignorePath, content);
       }
     }
 
@@ -52,7 +56,7 @@ export function ensureGitignore(projectPath: string): void {
     if (!localConfigIgnored) {
       const separator = content.length > 0 && !content.endsWith('\n') ? '\n' : '';
       content = content + separator + 'kangentic.local.json\n';
-      fs.writeFileSync(gitignorePath, content);
+      await fs.promises.writeFile(gitignorePath, content);
     }
 
     // Note: the OpenCode activity plugin (`.opencode/plugins/kangentic-activity.mjs`)

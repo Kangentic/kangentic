@@ -37,7 +37,10 @@ import type { SubmissionVerifier } from '../../shared/types';
  * deterministic without subscription. Browser pane and the keystroke
  * delivery path (TerminalSubmit) both run alongside an active terminal
  * panel that subscribes via `TERMINAL_SUBSCRIBE`, so they satisfy this
- * naturally.
+ * naturally. The gate is default-closed (an empty focused set forwards
+ * NOTHING - e.g. a mobile-bridge paste while the desktop shows the Backlog
+ * view), in which case the engine degrades to those wall-clock/activity
+ * fallbacks: slower, still correct.
  */
 
 export interface PasteOptions {
