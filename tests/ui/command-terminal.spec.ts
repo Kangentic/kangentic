@@ -2416,4 +2416,210 @@ test.describe('Command Terminal', () => {
       ).toBe(true);
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Container-only pane resize refit - regression tests for the clipped TUI
+  // bottom rows. The Command Terminal's terminal pane is overflow-hidden, so a
+  // pane-height change that is NOT a window-engine commit (the footer ContextBar
+  // growing as its pills populate or wrap) used to leave the xterm too tall and
+  // silently clip its bottom rows - exactly where the fullscreen Claude TUI
+  // anchors its input box and the model-switch prompt. The fix is the shared
+  // useTerminalRefit hook's persistent ResizeObserver. These tests assert on the
+  // instrumented sessions.resize IPC (programmatic state, relative comparisons)
+  // rather than pixels, per cross-platform-parity.
+  // ---------------------------------------------------------------------------
+  test.describe('Container-only pane resize refit', () => {
+    const REFIT_PROJECT_ID = 'proj-refit-test';
+    const REFIT_SESSION_ID = 'sess-refit-test-1';
+
+    interface RefitInstrumentation {
+      __terminalResizeCalls: Array<{ sessionId: string; cols: number; rows: number }>;
+      __panelResizeEventCount: number;
+    }
+
+    function refitPreConfig(): string {
+      return `
+        window.__mockPreConfigure(function (state) {
+          var ts = new Date().toISOString();
+          state.projects.push({
+            id: '${REFIT_PROJECT_ID}',
+            name: 'Refit Test Project',
+            path: '/mock/refit-test',
+            github_url: null,
+            default_agent: 'claude',
+            last_opened: ts,
+            created_at: ts,
+          });
+          state.DEFAULT_SWIMLANES.forEach(function (s, i) {
+            state.swimlanes.push(Object.assign({}, s, {
+              id: 'lane-refit-' + i,
+              position: i,
+              created_at: ts,
+            }));
+          });
+          return { currentProjectId: '${REFIT_PROJECT_ID}' };
+        });
+
+        // Deterministic spawn so markFirstOutput can target a known session id.
+        window.electronAPI.sessions.spawnTransient = async function (input) {
+          return {
+            session: {
+              id: '${REFIT_SESSION_ID}',
+              taskId: '${REFIT_SESSION_ID}',
+              projectId: input.projectId,
+              pid: null,
+              status: 'running',
+              shell: '/bin/bash',
+              cwd: '/mock/refit-test',
+              startedAt: new Date().toISOString(),
+              exitCode: null,
+              resuming: false,
+              transient: true,
+            },
+            branch: 'main',
+          };
+        };
+
+        // Record every PTY resize forward so the tests can assert refits on
+        // programmatic state instead of pixels.
+        window.__terminalResizeCalls = [];
+        var originalResize = window.electronAPI.sessions.resize;
+        window.electronAPI.sessions.resize = async function (sessionId, cols, rows) {
+          window.__terminalResizeCalls.push({ sessionId: sessionId, cols: cols, rows: rows });
+          return originalResize.call(this, sessionId, cols, rows);
+        };
+
+        // Count engine-commit dispatches so the tests can prove a refit came
+        // from the ResizeObserver path, not a terminal-panel-resize event.
+        window.__panelResizeEventCount = 0;
+        window.addEventListener('terminal-panel-resize', function () {
+          window.__panelResizeEventCount += 1;
+        });
+      `;
+    }
+
+    /**
+     * Open the Command Terminal, mount xterm (markFirstOutput lifts the shimmer,
+     * same pattern as the Maximize focus restore group), wait for the initial
+     * resize-first replay to record a baseline, then clear the instrumentation
+     * so the next recorded call is caused by the test's own container change.
+     * Returns the baseline cols/rows.
+     */
+    async function openTerminalAndSettleBaseline(page: Page): Promise<{ cols: number; rows: number }> {
+      await page.keyboard.press('Control+Shift+P');
+      await expect(page.getByTestId('command-terminal-window')).toBeVisible();
+
+      await page.evaluate((sessionId) => {
+        const stores = (window as unknown as {
+          __zustandStores?: {
+            session?: { getState: () => { markFirstOutput: (id: string) => void } };
+          };
+        }).__zustandStores;
+        stores?.session?.getState().markFirstOutput(sessionId);
+      }, REFIT_SESSION_ID);
+
+      await expect(
+        page.getByTestId('command-terminal-window').locator('.xterm-helper-textarea').first(),
+      ).toBeAttached({ timeout: 8000 });
+
+      // initTerminal's resize-first replay always records at least one call.
+      await expect.poll(
+        () => page.evaluate(
+          () => (window as unknown as RefitInstrumentation).__terminalResizeCalls.length,
+        ),
+        { timeout: 8000, intervals: [100, 100, 200, 200, 500] },
+      ).toBeGreaterThan(0);
+
+      const baseline = await page.evaluate(() => {
+        const calls = (window as unknown as RefitInstrumentation).__terminalResizeCalls;
+        const lastCall = calls[calls.length - 1];
+        return { cols: lastCall.cols, rows: lastCall.rows };
+      });
+
+      await page.evaluate(() => {
+        const instrumentation = window as unknown as RefitInstrumentation;
+        instrumentation.__terminalResizeCalls.length = 0;
+        instrumentation.__panelResizeEventCount = 0;
+      });
+
+      return baseline;
+    }
+
+    /** Rows (or cols) of the most recent recorded resize call, or a sentinel
+     *  larger than any real terminal dimension while none has arrived yet. */
+    function lastResizeDimension(page: Page, dimension: 'cols' | 'rows'): Promise<number> {
+      return page.evaluate((dimensionKey) => {
+        const calls = (window as unknown as {
+          __terminalResizeCalls: Array<{ cols: number; rows: number }>;
+        }).__terminalResizeCalls;
+        const lastCall = calls[calls.length - 1];
+        return lastCall ? lastCall[dimensionKey] : Number.MAX_SAFE_INTEGER;
+      }, dimension);
+    }
+
+    test('footer ContextBar growth refits the terminal via the ResizeObserver path', async () => {
+      const { browser, page } = await launchWithState(refitPreConfig());
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        const baseline = await openTerminalAndSettleBaseline(page);
+
+        // Container-only change: grow the footer ContextBar (as when its pills
+        // populate or wrap to a second row), shrinking the flex-1 terminal pane
+        // while the window frame's own rect stays identical - so no
+        // terminal-panel-resize event can fire; only the persistent
+        // ResizeObserver can catch it.
+        await page.evaluate(() => {
+          const contextBar = document.querySelector<HTMLElement>(
+            '[data-testid="command-terminal-window"] [data-testid="usage-bar"]',
+          );
+          if (!contextBar) throw new Error('ContextBar (usage-bar) not found in the command terminal window');
+          contextBar.style.minHeight = '160px';
+        });
+
+        // Observer debounce (200ms) + PTY forward debounce (200ms), so poll for
+        // the resulting resize call. Strictly-fewer-rows, never an exact value.
+        await expect.poll(
+          () => lastResizeDimension(page, 'rows'),
+          { timeout: 8000, intervals: [100, 200, 200, 500, 500] },
+        ).toBeLessThan(baseline.rows);
+
+        // Prove the refit came from the ResizeObserver path: no engine commit
+        // dispatched a terminal-panel-resize during the container-only change.
+        const panelResizeEvents = await page.evaluate(
+          () => (window as unknown as RefitInstrumentation).__panelResizeEventCount,
+        );
+        expect(panelResizeEvents).toBe(0);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('Changes panel toggle refits via the observer (pane width change)', async () => {
+      // Covers the responsibility of the deleted bespoke changesOpen effect: the
+      // pane flips flex-1 -> w-1/2, and the shared observer must catch the
+      // width change (no terminal-panel-resize fires for it either).
+      const { browser, page } = await launchWithState(refitPreConfig());
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        const baseline = await openTerminalAndSettleBaseline(page);
+
+        // Toggle via the kebab menu (always reachable, unlike the header pill
+        // which can fold at narrow widths).
+        await page.getByTestId('command-terminal-window').getByTitle('Actions').click();
+        await page.getByText('Show changes', { exact: true }).click();
+
+        await expect.poll(
+          () => lastResizeDimension(page, 'cols'),
+          { timeout: 8000, intervals: [100, 200, 200, 500, 500] },
+        ).toBeLessThan(baseline.cols);
+
+        const panelResizeEvents = await page.evaluate(
+          () => (window as unknown as RefitInstrumentation).__panelResizeEventCount,
+        );
+        expect(panelResizeEvents).toBe(0);
+      } finally {
+        await browser.close();
+      }
+    });
+  });
 });

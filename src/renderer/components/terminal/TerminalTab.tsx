@@ -8,7 +8,7 @@ import { useBoardStore } from '../../stores/board-store';
 import { LaunchOverlay } from '../LaunchOverlay';
 import { getIsHmrReload } from '../../utils/hmr-flag';
 import { useTerminalOverlay } from '../../utils/task-progress';
-import { isManagerResizeInProgress } from '../../window-manager/terminal/manager-resize-gate';
+import { useTerminalRefit } from '../../hooks/useTerminalRefit';
 
 const FIT_DELAY_MS = 100;
 
@@ -191,11 +191,10 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
     }
   }, [sessionStatus, terminalReady, taskId, pendingCommandLabel]);
 
-  // Re-fit and focus when tab becomes active or container resizes.
-  // Always set up the ResizeObserver when active -- even if the terminal
-  // hasn't initialized yet. Tabs that start with display:none initialize
-  // late (via the init effect's ResizeObserver), so we guard fit() calls
-  // with initialized checks inside the callbacks instead of bailing early.
+  // Re-fit and focus when the tab becomes active. Tabs that start with
+  // display:none initialize late (via the init effect's ResizeObserver), so we
+  // guard fit() calls with initialized checks inside the callbacks instead of
+  // bailing early.
   useEffect(() => {
     if (!active) return;
 
@@ -220,87 +219,29 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
       }
     }, FIT_DELAY_MS);
 
-    const el = terminalRef.current;
-    if (!el) return () => {
-      cancelAnimationFrame(initRafId);
-      clearTimeout(delayedFitId);
-    };
-
-    // Unified debounced resize mechanism. One timer, two entry points:
-    // - ResizeObserver debounces at 200ms (handles drag without scrollback
-    //   eviction: timer resets every frame during drag, fires once after).
-    // - terminal-panel-resize event uses 50ms (faster for explicit triggers
-    //   like sidebar resize, dialog edit-mode toggle, drag mouseUp).
-    let resizeTimer: ReturnType<typeof setTimeout> | null = null;
-    const scheduleRefit = (delayMs: number) => {
-      if (!initialized.current) return;
-      if (resizeTimer) clearTimeout(resizeTimer);
-      resizeTimer = setTimeout(() => {
-        resizeTimer = null;
-        fit();
-      }, delayMs);
-    };
-
-    const observer = new ResizeObserver(() => {
-      // Window-manager terminals defer container-driven fits: the window manager
-      // owns sizing and dispatches a single settle-debounced terminal-panel-resize,
-      // so rapid snap/maximize/restore resizes the PTY once (one clean SIGWINCH).
-      //
-      // While a window-manager imperative resize gesture is in progress (seam drag,
-      // footprint resize, 8-handle window resize) this observer fires per frame as
-      // the frame's DOM box is rewritten. Refitting per frame would send a SIGWINCH
-      // per frame, and a full-screen TUI re-emits its whole banner on each - stacking
-      // duplicates in scrollback. Suppress the per-frame refit during the gesture; the
-      // store commit on release dispatches a single terminal-panel-resize that refits
-      // once. The gate is OFF for container-only changes (Changes/Browser pane toggle),
-      // so those still refit normally.
-      if (!deferContainerResize && !isManagerResizeInProgress()) scheduleRefit(200);
-    });
-    observer.observe(el);
-
-    // A full-screen TUI re-emits its frame on each SIGWINCH; while the width is
-    // changing those redraws stack as duplicated banners in xterm's history.
-    // Once resizing fully settles, replay the buffer ONCE at the now-stable
-    // width (skipResize: no new SIGWINCH, so it cannot re-pollute). This is the
-    // same clean-up an HMR reload performs. Window terminals only.
-    let cleanupTimer: ReturnType<typeof setTimeout> | null = null;
-    const handlePanelResize = () => {
-      // Window-hosted terminals fit SYNCHRONOUSLY. The window engine dispatches
-      // this from a layout effect via a microtask (before the browser paints), so
-      // fitting here fills the committed size in the SAME frame as the resized
-      // window - no letterbox lag. Clear any pending debounced fit so it cannot
-      // run a redundant second fit afterward.
-      if (immediatePanelResize) {
-        if (resizeTimer) { clearTimeout(resizeTimer); resizeTimer = null; }
-        // Fit synchronously, then flush the PTY resize immediately (don't wait out
-        // the 200ms debounce) so Claude's redraw lands with the reflow instead of
-        // a beat later - minimizes the resize "flash". The manager-resize gate
-        // already guarantees one resize per gesture, so there's nothing to coalesce.
-        if (initialized.current) { fit(); flushResize(); }
-        return;
-      }
-      // Window terminals (deferContainerResize) fit on the next tick; other
-      // surfaces keep the 50ms debounce to batch their own events.
-      scheduleRefit(deferContainerResize ? 0 : 50);
-      if (deferContainerResize) {
-        if (cleanupTimer) clearTimeout(cleanupTimer);
-        cleanupTimer = setTimeout(() => {
-          cleanupTimer = null;
-          if (initialized.current) reloadScrollback({ skipResize: true });
-        }, 800);
-      }
-    };
-    window.addEventListener('terminal-panel-resize', handlePanelResize);
-
     return () => {
       cancelAnimationFrame(initRafId);
       clearTimeout(delayedFitId);
-      if (resizeTimer) clearTimeout(resizeTimer);
-      if (cleanupTimer) clearTimeout(cleanupTimer);
-      observer.disconnect();
-      window.removeEventListener('terminal-panel-resize', handlePanelResize);
     };
-  }, [active, fit, flushResize, focus, deferContainerResize, immediatePanelResize, reloadScrollback, terminalRef, scrollbackPending]);
+  }, [active, fit, focus, scrollbackPending]);
+
+  // Container refit while active: persistent gate-aware ResizeObserver plus the
+  // terminal-panel-resize handling, shared with CommandTerminalWindow via
+  // useTerminalRefit so the two hosts cannot drift.
+  const handleDeferredResizeSettled = useCallback(
+    () => reloadScrollback({ skipResize: true }),
+    [reloadScrollback],
+  );
+  useTerminalRefit({
+    terminalRef,
+    initializedRef: initialized,
+    fit,
+    flushResize,
+    enabled: active,
+    deferContainerResize,
+    immediatePanelResize,
+    onDeferredResizeSettled: handleDeferredResizeSettled,
+  });
 
   const fileDrop = useTerminalFileDrop(sessionId, focus, sessionShell, pasteImageTemplate);
 

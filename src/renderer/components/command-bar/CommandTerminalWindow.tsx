@@ -28,6 +28,7 @@ import { CommandPalettePopover } from '../dialogs/task-detail/CommandPalettePopo
 import { useHeaderPillOverflow, type HeaderPillSpec } from '../dialogs/task-detail/useHeaderPillOverflow';
 import { WindowLayoutMenu } from '../dialogs/WindowLayoutMenu';
 import { TERMINAL_BACKGROUND, useTerminal } from '../../hooks/useTerminal';
+import { useTerminalRefit } from '../../hooks/useTerminalRefit';
 import { useKeybinding, useFormattedCombo } from '../../hooks/useKeybinding';
 import { useTerminalFileDrop } from '../../hooks/useTerminalFileDrop';
 import { FileDropOverlay } from '../terminal/FileDropOverlay';
@@ -146,7 +147,6 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
 
   const maximizeCombo = useFormattedCombo('panel.maximize');
   const spawnedRef = useRef(false);
-  const terminalPaneRef = useRef<HTMLDivElement>(null);
   // The branch picker can fold into the kebab; this drives the kebab-anchored
   // fallback dropdown ("Switch branch").
   const [branchMenuOpen, setBranchMenuOpen] = useState(false);
@@ -355,25 +355,21 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
     };
   }, [effectiveSessionId, initTerminal, terminalRef, fit, focus]);
 
-  // Refit when the frame's settled size changes. The engine commits a drag/resize/
-  // maximize/snap/tile geometry ONCE and dispatches a single coalesced
-  // `terminal-panel-resize`; the xterm is never remounted, so fitting in place is
-  // all that is needed.
-  useEffect(() => {
-    const onPanelResize = () => {
-      // fit() reflows xterm; flushResize() lands the PTY SIGWINCH immediately rather
-      // than 200ms later, so Claude's redraw arrives with the reflow (no resize
-      // flash). Mirrors the task-detail terminal's immediatePanelResize path.
-      if (initialized.current) { fit(); flushResize(); }
-    };
-    window.addEventListener('terminal-panel-resize', onPanelResize);
-    return () => window.removeEventListener('terminal-panel-resize', onPanelResize);
-  }, [fit, flushResize]);
-
-  // Refit when the changes panel toggles (the terminal column width changes).
-  useEffect(() => {
-    if (initialized.current) requestAnimationFrame(() => fit());
-  }, [changesOpen, fit]);
+  // Refit on any size change, shared with TerminalTab via useTerminalRefit so
+  // the two hosts cannot drift:
+  // - Engine commits (drag/resize/maximize/snap/tile) dispatch one coalesced
+  //   `terminal-panel-resize`, handled synchronously (fit + immediate SIGWINCH).
+  // - Container-only changes (the footer ContextBar growing as pills populate or
+  //   wrap, the Changes panel toggling the column width) are caught by the hook's
+  //   persistent ResizeObserver, which the old hand-rolled paths missed - that
+  //   gap clipped the fullscreen TUI's bottom rows under the pane edge.
+  useTerminalRefit({
+    terminalRef,
+    initializedRef: initialized,
+    fit,
+    flushResize,
+    immediatePanelResize: true,
+  });
 
   // Restore terminal focus after a maximize/restore toggle (the button, Ctrl+Shift+M,
   // and the header double-click all flip `isMaximized`), so the next keystroke lands
@@ -692,7 +688,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
             to the terminal's column width, so it overflows the window and fit() reads
             the stale (too-wide) size and never reduces columns. overflow-hidden clips
             the brief pre-fit overflow. Mirrors the Changes panel sibling. */}
-        <div ref={terminalPaneRef} className={`${changesOpen ? 'w-1/2' : 'flex-1'} relative min-w-0 overflow-hidden`} style={{ backgroundColor: TERMINAL_BACKGROUND }}>
+        <div className={`${changesOpen ? 'w-1/2' : 'flex-1'} relative min-w-0 overflow-hidden`} style={{ backgroundColor: TERMINAL_BACKGROUND }}>
           {!terminalReady && <LaunchOverlay label="Starting Command Terminal..." />}
           <FileDropOverlay {...fileDrop} />
           <div
