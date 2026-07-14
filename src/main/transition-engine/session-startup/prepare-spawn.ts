@@ -4,8 +4,9 @@ import { randomUUID } from 'node:crypto';
 import { agentRegistry } from '../../agent/agent-registry';
 import type { AgentAdapter } from '../../agent/agent-adapter';
 import type { McpHttpServerHandle } from '../../agent/mcp-http-server';
-import type { AppConfig, PermissionMode, Swimlane, Task } from '../../../shared/types';
-import { resolveTargetAgent } from '../agent-resolver';
+import type { AppConfig, Swimlane, Task } from '../../../shared/types';
+import type { TaskRepository } from '../../db/repositories/task-repository';
+import { runSpawnPreamble, resolveEffectivePermissionMode } from '../spawn-preamble';
 import { sessionOutputPaths } from '../session-paths';
 
 /**
@@ -48,16 +49,19 @@ export type PrepareResult =
   | { ok: false; reason: 'unknown-agent' | 'cli-not-found' };
 
 /**
- * Shared pre-flight for both session recovery and reconciliation.
+ * Shared pre-flight for both session recovery and reconciliation. This is
+ * the STARTUP spawn chokepoint (see .claude/rules/spawn-entry-point-parity.md);
+ * board-driven spawns go through `spawnAgent` instead.
  *
- *   1. Resolve which agent adapter applies (column override → task hint
- *      → project default).
+ *   1. Run the shared spawn preamble (`runSpawnPreamble`): lock the Advanced
+ *      overrides on a first-ever spawn, then resolve which agent adapter
+ *      applies (task override → column override → project default).
  *   2. Detect the agent CLI binary (skipped or errored → skip signal).
  *   3. Ensure the CLI trusts the working directory so no trust prompt
  *      blocks the spawn.
- *   4. Resolve the effective permission mode (task → lane → global, EXCEPT a
- *      lane forcing 'plan' always wins - a genuine safety guarantee, not
- *      just a default).
+ *   4. Resolve the effective permission mode via
+ *      `resolveEffectivePermissionMode` (lane 'plan' always wins, else
+ *      task → lane → global).
  *   5. Generate a session record UUID (used as the PTY session ID and
  *      the on-disk session directory name).
  *   6. Generate the agent CLI session UUID - only for adapters that
@@ -83,14 +87,32 @@ export async function prepareAgentSpawn(input: {
   mcpServerHandle: McpHttpServerHandle | null | undefined;
   /** Non-null → build a resume command with the given agent session ID. */
   resume: { agentSessionId: string } | null;
+  /**
+   * Whether any session row exists for the task. First-ever-spawn detection
+   * for the override lock: recovery resumes pass `true` (a record is in hand,
+   * the lock no-ops by construction); the startup reconcile derives it from
+   * the session repository.
+   */
+  hasSessionRecord: boolean;
+  tasks: Pick<TaskRepository, 'update'>;
 }): Promise<PrepareResult> {
   const { task, swimlane, cwd, projectId, projectPath, effectiveConfig: config } = input;
 
-  const { agent } = resolveTargetAgent({
-    taskAgentOverride: task.agent_override,
-    columnAgent: swimlane?.agent_override ?? null,
-    taskAgent: task.agent,
-    projectDefaultAgent: input.projectDefaultAgent,
+  // The task sits in the lane it is spawning into on the startup paths, so
+  // the settings lane and the destination lane are the same lane here: the
+  // lane whose inherited values the Edit dialog displays for the task now.
+  const { agent } = runSpawnPreamble({
+    task,
+    hasSessionRecord: input.hasSessionRecord,
+    settingsLane: swimlane,
+    destinationLane: swimlane,
+    project: {
+      default_agent: input.projectDefaultAgent,
+      default_model: input.projectDefaultModel,
+      default_effort: input.projectDefaultEffort,
+    },
+    globalPermissionMode: () => config.agent.permissionMode,
+    tasks: input.tasks,
   });
   const adapter = agentRegistry.get(agent);
   if (!adapter) return { ok: false, reason: 'unknown-agent' };
@@ -101,16 +123,11 @@ export async function prepareAgentSpawn(input: {
 
   await adapter.ensureTrust(cwd);
 
-  // Plan mode is the one column-level permission setting that is a genuine
-  // safety guarantee (never let a task's Auto-Classifier/Accept-Edits pin
-  // bypass a deliberate read-only phase), so a column explicitly configured
-  // to force 'plan' always wins, regardless of any task-level override.
-  // Every OTHER permission_mode is an ordinary column default - same
-  // precedence as model/effort: task override wins when set, the column's
-  // setting is only a fallback for a task that leaves permission_mode null.
-  const permissionMode = swimlane?.permission_mode === 'plan'
-    ? 'plan'
-    : task.permission_mode ?? swimlane?.permission_mode ?? config.agent.permissionMode;
+  // "Plan always wins, else task -> lane -> global" - the rule lives in
+  // resolveEffectivePermissionMode (spawn-preamble.ts).
+  const permissionMode = resolveEffectivePermissionMode(
+    task.permission_mode, swimlane?.permission_mode, config.agent.permissionMode,
+  );
 
   let agentSessionId: string | null;
   const canResume = input.resume !== null;
@@ -132,7 +149,7 @@ export async function prepareAgentSpawn(input: {
     taskId: task.id,
     prompt: undefined,
     cwd,
-    permissionMode: permissionMode as PermissionMode,
+    permissionMode,
     projectRoot: projectPath,
     sessionId: agentSessionId ?? undefined,
     resume: canResume,

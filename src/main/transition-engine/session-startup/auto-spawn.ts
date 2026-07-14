@@ -131,6 +131,11 @@ export async function autoSpawnTasks(
         resolvedShell,
         mcpServerHandle,
         resume: null,
+        // First-ever-spawn detection for the override lock: a task placed in
+        // an auto_spawn lane that never spawned anywhere gets its Advanced
+        // overrides locked by this startup spawn, exactly like a board spawn.
+        hasSessionRecord: sessionRepo.getLatestForTask(task.id) !== undefined,
+        tasks: taskRepo,
       });
 
       if (!prep.ok) {

@@ -7,7 +7,7 @@ import {
   ensureTaskWorktree,
   ensureTaskBranchCheckout,
   createTransitionEngine,
-  resolveSpawnOverrides,
+  spawnAgent,
 } from '../helpers';
 import { resolveProjectContext } from '../helpers/project-repos';
 import { guardActiveNonWorktreeSessions } from './task-move';
@@ -67,41 +67,34 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
         return tasks.getById(input.id);
       }
 
-      // Execute transition actions (from Done -> target) for ALL non-kill columns
+      // Execute transition actions (from Done -> target) for ALL non-kill columns,
+      // via the shared spawn chokepoint (spawn preamble, transition actions,
+      // fallback spawn). Recovery move: unarchive is always the FIRST move out
+      // of Done, so suppressAutoCommand keeps the destination column's
+      // auto_command out of the resumed session - it comes up idle, ready for
+      // the user to inspect, matching startup recovery (resume-suspended.ts).
+      // The next normal move injects per column config. skipPromptTemplate for
+      // the same reason: an unarchived task is never a fresh "do this task" run.
       if (resolvedProjectPath) {
         const doneLane = swimlanes.list().find((l) => l.role === 'done');
         if (doneLane) {
           const db = getProjectDb(resolvedProjectId);
           const sessionRepo = new SessionRepository(db);
           const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachmentRepo, resolvedProjectId, resolvedProjectPath);
-          const project = context.projectRepo.getById(resolvedProjectId);
 
-          const overrides = resolveSpawnOverrides(task, toLane, project);
           try {
-            await engine.executeTransition(task, doneLane.id, input.targetSwimlaneId, toLane?.permission_mode, true, undefined, undefined, overrides);
+            await spawnAgent({
+              context, engine, tasks, sessionRepo, task,
+              fromSwimlaneId: doneLane.id,
+              toLane,
+              skipPromptTemplate: true,
+              suppressAutoCommand: true,
+              projectId: resolvedProjectId,
+              projectPath: resolvedProjectPath,
+            });
           } catch (err) {
-            console.error('[TASK_UNARCHIVE] Transition engine error:', err);
+            console.error('[TASK_UNARCHIVE] Failed to start session:', err);
           }
-
-          // Re-read task; if still no session, resume suspended or spawn fresh.
-          let finalTask = tasks.getById(task.id);
-          if (finalTask && !finalTask.session_id && toLane?.auto_spawn) {
-            console.log(`[TASK_UNARCHIVE] Ensuring agent for task ${task.id.slice(0, 8)}`);
-            try {
-              await engine.resumeSuspendedSession(finalTask, toLane.permission_mode, true, undefined, undefined, undefined, undefined, resolveSpawnOverrides(finalTask, toLane, project));
-              finalTask = tasks.getById(task.id);
-            } catch (err) {
-              console.error('[TASK_UNARCHIVE] Failed to start session:', err);
-            }
-          }
-
-          // Recovery move: unarchive is always the FIRST move out of Done, so
-          // the destination column's auto_command is intentionally NOT injected
-          // here. The session resumes idle, ready for the user to inspect or ask
-          // a question. This matches startup recovery (resume-suspended.ts),
-          // which also resumes without injecting auto_command. The next normal
-          // move of this task injects per column config via handleTaskMove ->
-          // spawnAgent.
         }
       }
 
@@ -115,9 +108,6 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
 
     const { tasks, swimlanes, actions, attachments: attachmentRepo } = getProjectRepos(context, resolvedProjectId);
     const toLane = swimlanes.getById(targetSwimlaneId);
-    // Project row is invariant for the whole batch (resolvedProjectId does not
-    // change per task); hoist the lookup out of the loop, matching board.ts.
-    const project = context.projectRepo.getById(resolvedProjectId);
 
     for (const id of ids) {
       // Per-task lock so each unarchive+spawn serializes against any
@@ -156,27 +146,22 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
             const sessionRepo = new SessionRepository(db);
             const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachmentRepo, resolvedProjectId, resolvedProjectPath);
 
-            const overrides = resolveSpawnOverrides(task, toLane, project);
+            // Same shared-chokepoint recovery-move contract as the single
+            // TASK_UNARCHIVE handler above: suppressAutoCommand +
+            // skipPromptTemplate, session resumes idle.
             try {
-              await engine.executeTransition(task, doneLane.id, targetSwimlaneId, toLane?.permission_mode, true, undefined, undefined, overrides);
+              await spawnAgent({
+                context, engine, tasks, sessionRepo, task,
+                fromSwimlaneId: doneLane.id,
+                toLane,
+                skipPromptTemplate: true,
+                suppressAutoCommand: true,
+                projectId: resolvedProjectId,
+                projectPath: resolvedProjectPath,
+              });
             } catch (error) {
-              console.error('[TASK_BULK_UNARCHIVE] Transition engine error:', error);
+              console.error('[TASK_BULK_UNARCHIVE] Failed to start session:', error);
             }
-
-            let finalTask = tasks.getById(task.id);
-            if (finalTask && !finalTask.session_id && toLane?.auto_spawn) {
-              try {
-                await engine.resumeSuspendedSession(finalTask, toLane.permission_mode, true, undefined, undefined, undefined, undefined, resolveSpawnOverrides(finalTask, toLane, project));
-                finalTask = tasks.getById(task.id);
-              } catch (error) {
-                console.error('[TASK_BULK_UNARCHIVE] Failed to start session:', error);
-              }
-            }
-
-            // Recovery move: unarchive is always the first move out of Done, so
-            // the destination column's auto_command is intentionally NOT injected
-            // here (see the single TASK_UNARCHIVE handler above). The session
-            // resumes idle; the next normal move injects per column config.
           }
         }
       });

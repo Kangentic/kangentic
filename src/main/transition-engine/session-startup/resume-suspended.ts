@@ -287,6 +287,10 @@ export async function resumeSuspendedSessions(
         resolvedShell,
         mcpServerHandle,
         resume,
+        // A session record is literally in hand on this path, so the
+        // first-spawn override lock no-ops by construction.
+        hasSessionRecord: true,
+        tasks: taskRepo,
       });
 
       if (!prep.ok) {

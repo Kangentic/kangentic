@@ -405,7 +405,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
   // =========================================================================
   // settingsSourceLane threading (fromLane, not toLane, reaches spawnAgent)
   //
-  // freezeAdvancedOverridesOnFirstSpawn resolves still-inherited Advanced
+  // lockAdvancedOverridesOnFirstSpawn resolves still-inherited Advanced
   // fields against the lane the task left, never the destination the New
   // Task / Edit dialog never showed the user. task-move.ts must thread the
   // SOURCE lane (captured once at Phase 1 as `fromLane`) through every

@@ -9,6 +9,7 @@ import { interpolateTemplate, buildTaskXml } from '../agent/shared';
 import { WorktreeManager, prepareWorktreeForRemoval, GitQueuePriority } from '../git/worktree-manager';
 import { agentRegistry } from '../agent/agent-registry';
 import { retireRecord, markRecordSuspended } from './session-lifecycle';
+import { resolveEffectivePermissionMode } from './spawn-preamble';
 import { resolveSpawnIntent } from './spawn-intent';
 import { migrateResumeCwdIfRenamed } from './resume-cwd-migration';
 import { sessionOutputPaths } from './session-paths';
@@ -192,14 +193,12 @@ export class TransitionEngine {
     }
     console.log(`[spawnAgent] ${agentName} CLI found at ${detection.path} (v${detection.version})`);
 
-    // Resolution order: task override → swimlane override → global setting,
-    // EXCEPT a swimlane forcing 'plan' always wins regardless of the task
-    // override - plan mode is a genuine safety guarantee (never let a
-    // task's Auto-Classifier/Accept-Edits pin bypass a deliberate read-only
-    // phase), not just an ordinary column default like every other mode.
-    const permissionMode = permissionOverride === 'plan'
-      ? 'plan'
-      : task.permission_mode ?? permissionOverride ?? appConfig.permissionMode;
+    // permissionOverride carries the destination lane's mode; the "plan
+    // always wins, else task -> lane -> global" rule lives in
+    // resolveEffectivePermissionMode (spawn-preamble.ts).
+    const permissionMode = resolveEffectivePermissionMode(
+      task.permission_mode, permissionOverride, appConfig.permissionMode as PermissionMode,
+    );
     const cwd = task.worktree_path || appConfig.projectPath || process.cwd();
 
     // Pre-populate trust so the agent doesn't block on the trust dialog.
@@ -290,7 +289,7 @@ export class TransitionEngine {
       taskId: task.id,
       prompt,
       cwd,
-      permissionMode: permissionMode as PermissionMode,
+      permissionMode,
       projectRoot: appConfig.projectPath || undefined,
       sessionId: agentSessionId ?? undefined,
       resume: canResume,

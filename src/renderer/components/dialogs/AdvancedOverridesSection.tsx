@@ -44,17 +44,17 @@ interface AdvancedOverridesSectionProps {
  *     moves cannot change it (see `resolveTargetAgent` and the cross-agent
  *     guards in `task-move.ts`). If the task has ANY of the four fields set
  *     when it spawns for the very first time ever, the other
- *     (still-inherited) fields are frozen too, to exactly the values this
+ *     (still-inherited) fields are locked too, to exactly the values this
  *     dialog displayed - resolved against the lane the task was configured
  *     in, never the destination column
- *     (`freezeAdvancedOverridesOnFirstSpawn` in `agent-spawn.ts`). So a
+ *     (`lockAdvancedOverridesOnFirstSpawn` in `spawn-preamble.ts`). So a
  *     value that already matched its inherited default gets locked, not
  *     silently left dynamic, and the whole Advanced tab is the task's
  *     contract from then on. One exception: a column that forces
  *     `permission_mode: 'plan'` always wins over the task's (picked or
- *     frozen) permission while the task is in that column - plan mode is a
+ *     locked) permission while the task is in that column - plan mode is a
  *     genuine safety guarantee, not just an ordinary column default (see
- *     `transition-engine.ts` / `prepare-spawn.ts`).
+ *     `resolveEffectivePermissionMode` in `spawn-preamble.ts`).
  *
  * Behaviour notes:
  *   - The Agent picker is hidden when only one agent is `found` (nothing

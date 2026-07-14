@@ -239,6 +239,13 @@ function makeSpawnInput(overrides: {
     resolvedShell: '/bin/bash',
     mcpServerHandle: overrides.mcpServerHandle ?? null,
     resume: overrides.resume ?? null,
+    // This suite tests the LIVE resolution chains (model/effort/permission
+    // passthrough), so keep the first-spawn override lock a no-op: with a
+    // session record "in hand" the preamble never locks, and the fixtures'
+    // task-vs-lane inheritance stays dynamic. The lock itself is covered by
+    // prepare-spawn-first-spawn-lock.test.ts.
+    hasSessionRecord: true,
+    tasks: { update: vi.fn() },
   };
 }
 

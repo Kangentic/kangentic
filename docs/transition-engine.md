@@ -179,6 +179,10 @@ When a task moves to a column with `auto_command` set, the command delivery depe
 
 This enables workflows like moving a task from "Running" to "Code Review" to automatically send a review prompt to the agent.
 
+A per-task `auto_command` (MCP-only, `kangentic_create_task`'s `autoCommand` param) wins over the column's for that task. The unarchive handlers (`TASK_UNARCHIVE` / `TASK_BULK_UNARCHIVE`) and any other move out of Done suppress injection entirely via `spawnAgent`'s `suppressAutoCommand` (the recovery-move contract; see [Session Lifecycle](session-lifecycle.md#resume)).
+
+When a `spawn_agent` transition action creates the session itself (a custom action wired onto the entry transition), that action's own prompt template runs and the fallback `auto_command` / continuation injection is skipped for that spawn. This is uniform across every entry point (move, create, promote, MCP create), since all route through `spawnAgent`, whose fallback delivery only fires when no action spawned the session. The default board is unaffected: its one action-backed column (Planning) has no `auto_command`.
+
 ## Swimlane Roles
 
 Two special roles affect behavior:
@@ -225,9 +229,11 @@ When a task moves to a column with a different agent (detected by `resolveTarget
 
 Spawn progress phases during handoff: `packaging-handoff` (while context is being assembled), `detecting-agent` (while the target agent CLI is detected), then `starting-agent`.
 
+Because create-into-spawn-column and unarchive route through the same `spawnAgent` chokepoint as task moves, handoff semantics apply on those paths too: unarchiving a task into a column whose resolved agent differs from `task.agent` packages handoff context when the column's `handoff_context` toggle is enabled, and spawns the new agent fresh (no context) when it is disabled. The full entry-point table lives in [Session Lifecycle](session-lifecycle.md#spawn-entry-points).
+
 ## See Also
 
-- [Session Lifecycle](session-lifecycle.md) -- spawn flow, queue, suspend, resume
+- [Session Lifecycle](session-lifecycle.md) -- spawn entry points, spawn flow, queue, suspend, resume
 - [Agent Integration](agent-integration.md) -- command building, permission modes, per-agent CLI details
 - [Worktree Strategy](worktree-strategy.md) -- worktree creation details
 - [Database](database.md) -- schema for actions, transitions, swimlanes

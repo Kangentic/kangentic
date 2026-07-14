@@ -149,8 +149,8 @@ type MoveSpawnPlan = {
   fromSwimlaneId: string;
   /**
    * The SOURCE lane the task lived in before this move, captured at Phase 1.
-   * Threaded to spawnAgent as `settingsSourceLane`: the freeze-on-first-spawn
-   * resolves still-inherited Advanced fields against the lane the user
+   * Threaded to spawnAgent as `settingsSourceLane`: the first-spawn override
+   * lock resolves still-inherited Advanced fields against the lane the user
    * configured the task in, never the destination column. Required (not
    * optional) so every plan-return site threads it through explicitly.
    */

@@ -18,6 +18,11 @@
  * Real implementations: task-lifecycle-lock and abort-utils.
  * Mocked: every repository, ensureTaskWorktree (the throw site), and the
  * agent helpers downstream of it.
+ *
+ * The same describe block also pins the Phase 2 spawnAgent call's argument
+ * shape on the happy path (no abort): projectId/projectPath/fromSwimlaneId/
+ * toLane must all be threaded through so the spawn preamble and
+ * resolveSpawnOverrides resolve against the real project instead of null.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -277,6 +282,39 @@ describe('BACKLOG_PROMOTE AbortError cleanup', () => {
     // post-worktree branch checkout never ran.
     expect(mockEnsureTaskBranchCheckout).not.toHaveBeenCalled();
     expect(mockSpawnAgent).not.toHaveBeenCalled();
+  });
+
+  it('threads projectId, projectPath, fromSwimlaneId, and the target swimlane into the Phase 2 spawnAgent call', async () => {
+    // Regression guard: the promote path's spawnAgent call must carry the
+    // resolved projectId/projectPath so the spawn preamble (first-spawn
+    // override lock, agent resolution) and resolveSpawnOverrides' project
+    // default fallback see the real project instead of resolving against
+    // null. Without them the handler still compiles and every count-only
+    // assertion (spawnAgent called / not called) stays green, so this test
+    // inspects the actual argument object rather than just the call count.
+    const handler = capturedHandlers.get(IPC.BACKLOG_PROMOTE);
+    if (!handler) throw new Error('BACKLOG_PROMOTE handler not registered');
+
+    await handler(null, {
+      backlogTaskIds: ['backlog-1'],
+      targetSwimlaneId: 'lane-doing',
+    });
+
+    // Phase 2 is a fire-and-forget IIFE; wait for the spawn call to land.
+    await vi.waitFor(() => {
+      expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+    });
+
+    const spawnAgentArgs = mockSpawnAgent.mock.calls[0][0] as {
+      projectId: string;
+      projectPath: string;
+      fromSwimlaneId: string;
+      toLane: { id: string };
+    };
+    expect(spawnAgentArgs.projectId).toBe(context.currentProjectId);
+    expect(spawnAgentArgs.projectPath).toBe(context.currentProjectPath);
+    expect(spawnAgentArgs.fromSwimlaneId).toBe('*');
+    expect(spawnAgentArgs.toLane).toEqual(expect.objectContaining({ id: 'lane-doing' }));
   });
 });
 

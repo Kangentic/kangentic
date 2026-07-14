@@ -9,16 +9,19 @@
  * added around TASK_CREATE's auto-spawn flow is observable.
  *
  * Covers:
- *   - auto_spawn=false on target lane: no ensureTaskWorktree, no transition,
- *     no auto-command; returns the created task
+ *   - auto_spawn=false on target lane: no ensureTaskWorktree, no spawnAgent;
+ *     returns the created task
  *   - worktree error branch: ensureTaskWorktree throws, returns task with no
  *     spawn (lock is still acquired and released cleanly)
  *   - checkout error branch: ensureTaskBranchCheckout throws, returns task
  *     with no spawn
- *   - transition engine called with '*' wildcard as fromSwimlaneId
- *   - resumeSuspendedSession fallback: called when task has no session_id
- *     after executeTransition
- *   - auto-command scheduled when session exists and lane has auto_command
+ *   - create-into-spawn-column routes through the shared spawnAgent
+ *     chokepoint: '*' wildcard fromSwimlaneId, the creation column as toLane,
+ *     projectId/projectPath threaded, and settingsSourceLane OMITTED so
+ *     spawnAgent's preamble locks against the creation column itself.
+ *     Engine-level behavior (transition, fallback resume, auto-command
+ *     delivery, the first-spawn override lock) is spawnAgent's responsibility,
+ *     covered by the spawn-agent-*.test.ts harness suites.
  *   - withTaskLock engagement: concurrent TASK_CREATE for the same task id
  *     serializes (second call waits for first)
  *   - no-project path: auto_spawn branch requires currentProjectId and
@@ -108,24 +111,17 @@ vi.mock('../../src/main/config/config-manager', () => ({
 const mockGetProjectRepos = vi.fn();
 const mockEnsureTaskWorktree = vi.fn(async () => null);
 const mockEnsureTaskBranchCheckout = vi.fn(async () => {});
-const mockBuildAutoCommandVars = vi.fn(() => ({}));
 const mockCreateTransitionEngine = vi.fn();
 const mockCleanupTaskResources = vi.fn(async () => {});
-const mockFreezeAdvancedOverridesOnFirstSpawn = vi.fn();
+const mockSpawnAgent = vi.fn(async () => {});
 
 vi.mock('../../src/main/ipc/helpers', () => ({
   getProjectRepos: (...args: unknown[]) => mockGetProjectRepos(...args),
-  buildAutoCommandVars: (...args: unknown[]) => mockBuildAutoCommandVars(...args),
   ensureTaskWorktree: (...args: unknown[]) => mockEnsureTaskWorktree(...args),
   ensureTaskBranchCheckout: (...args: unknown[]) => mockEnsureTaskBranchCheckout(...args),
   createTransitionEngine: (...args: unknown[]) => mockCreateTransitionEngine(...args),
-  interpolateTemplate: vi.fn((template: string) => template),
   cleanupTaskResources: (...args: unknown[]) => mockCleanupTaskResources(...args),
-  resolveSpawnOverrides: vi.fn((task: { model_override?: string | null; effort_override?: string | null } | undefined, lane: { model_override?: string | null; effort_override?: string | null } | null | undefined) => ({
-    model: task?.model_override ?? lane?.model_override,
-    effort: task?.effort_override ?? lane?.effort_override,
-  })),
-  freezeAdvancedOverridesOnFirstSpawn: (...args: unknown[]) => mockFreezeAdvancedOverridesOnFirstSpawn(...args),
+  spawnAgent: (...args: unknown[]) => mockSpawnAgent(...args),
 }));
 
 vi.mock('../../src/main/agent/shared', () => ({
@@ -382,8 +378,7 @@ describe('TASK_CREATE handler', () => {
     expect(result).toMatchObject({ id: 'task-no-spawn' });
     expect(mockEnsureTaskWorktree).not.toHaveBeenCalled();
     expect(mockCreateTransitionEngine).not.toHaveBeenCalled();
-    expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
-    expect(mockFreezeAdvancedOverridesOnFirstSpawn).not.toHaveBeenCalled();
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
   });
 
   it('skips lock block when currentProjectPath is null', async () => {
@@ -429,7 +424,7 @@ describe('TASK_CREATE handler', () => {
 
     expect(result).toMatchObject({ id: 'task-new' });
     expect(mockCreateTransitionEngine).not.toHaveBeenCalled();
-    expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
   });
 
   // =========================================================================
@@ -446,284 +441,67 @@ describe('TASK_CREATE handler', () => {
 
     expect(result).toMatchObject({ id: 'task-new' });
     expect(mockCreateTransitionEngine).not.toHaveBeenCalled();
-    expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
   });
 
   // =========================================================================
-  // Transition engine called with '*' wildcard
-  // =========================================================================
-
-  it('calls executeTransition with "*" wildcard as fromSwimlaneId', async () => {
-    const taskWithSession = { ...task, session_id: 'session-abc' };
-    taskRepo.getById.mockReturnValue(taskWithSession);
-
-    const engine = createMockEngine();
-    mockCreateTransitionEngine.mockReturnValue(engine);
-
-    await callCreateHandler(context, {
-      swimlane_id: 'lane-doing',
-      title: 'Wildcard transition task',
-    });
-
-    expect(engine.executeTransition).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'task-new' }),
-      '*',
-      'lane-doing',
-      targetLane.permission_mode,
-      undefined, // skipPromptTemplate
-      undefined, // signal
-      undefined, // agentOverride
-      // spawnOverrides: { model, effort } pulled from the destination swimlane
-      // (undefined here because the mock swimlane fixture doesn't set them).
-      { model: targetLane.model_override, effort: targetLane.effort_override },
-    );
-  });
-
-  // =========================================================================
-  // Freeze Advanced overrides call site (freeze-on-first-spawn wiring)
+  // Create-into-spawn-column routes through the shared spawnAgent chokepoint
   //
-  // A task created directly in a spawn column reaches executeTransition
-  // without ever going through spawnAgent, so task-crud.ts calls
-  // freezeAdvancedOverridesOnFirstSpawn itself, ahead of resolveSpawnOverrides.
-  // The New Task dialog displayed inherit values against the CREATION column,
-  // so that column (not some other lane) must be the settingsLane, and
-  // hasSessionRecord must be false (a brand-new task can never have a prior
-  // session row). Red-green: commenting out the freeze call in task-crud.ts
-  // makes this test fail (mockFreezeAdvancedOverridesOnFirstSpawn never
-  // called); restoring it makes it pass again.
+  // A task created directly in a spawn column must take the SAME path as
+  // every other spawn entry point (move, promote, MCP create, unarchive):
+  // spawnAgent, whose preamble locks the Advanced overrides and resolves the
+  // agent BEFORE the engine runs. Red-green: on the pre-consolidation handler
+  // (its own executeTransition + lock + auto-command block), spawnAgent is
+  // never called and this fails. See
+  // .claude/rules/spawn-entry-point-parity.md.
   // =========================================================================
 
-  it('calls freezeAdvancedOverridesOnFirstSpawn with the creation column as settingsLane and hasSessionRecord:false', async () => {
+  it('routes through spawnAgent with "*" wildcard, the creation column as toLane, and NO settingsSourceLane', async () => {
+    const engine = createMockEngine();
+    mockCreateTransitionEngine.mockReturnValue(engine);
+
     await callCreateHandler(context, {
       swimlane_id: 'lane-doing',
-      title: 'Freeze wiring task',
+      title: 'Spawn routing task',
     });
 
-    expect(mockFreezeAdvancedOverridesOnFirstSpawn).toHaveBeenCalledTimes(1);
-    const freezeArg = mockFreezeAdvancedOverridesOnFirstSpawn.mock.calls[0][0] as {
-      task: { id: string };
-      hasSessionRecord: boolean;
-      settingsLane: MockSwimlane;
-      project: { id: string } | null;
-      globalPermissionMode: () => string;
+    expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+    const spawnArg = mockSpawnAgent.mock.calls[0][0] as {
+      context: MockContext;
+      engine: MockEngine;
       tasks: MockTaskRepo;
+      task: { id: string };
+      fromSwimlaneId: string;
+      toLane: MockSwimlane;
+      projectId: string;
+      projectPath: string;
     };
-    expect(freezeArg.task).toMatchObject({ id: 'task-new' });
-    expect(freezeArg.hasSessionRecord).toBe(false);
-    // The creation column IS the settings lane - not some other lane.
-    expect(freezeArg.settingsLane).toBe(targetLane);
-    expect(freezeArg.project).toMatchObject({ id: 'proj-123' });
-    expect(freezeArg.tasks).toBe(taskRepo);
-    // globalPermissionMode is a lazy accessor reading the effective config.
-    expect(freezeArg.globalPermissionMode()).toBe('acceptEdits');
+    expect(spawnArg.task).toMatchObject({ id: 'task-new' });
+    // No source column on creation - matches wildcard transitions.
+    expect(spawnArg.fromSwimlaneId).toBe('*');
+    // The creation column IS the destination (and, via spawnAgent's
+    // settingsSourceLane fallback, the settings lane the lock resolves
+    // against) - so settingsSourceLane must be OMITTED, not null: null would
+    // mean "the settings lane no longer resolves" and skip the lane entirely.
+    expect('settingsSourceLane' in spawnArg).toBe(false);
+    expect(spawnArg.toLane).toBe(targetLane);
+    // Project context threaded so the preamble sees project defaults.
+    expect(spawnArg.projectId).toBe('proj-123');
+    expect(spawnArg.projectPath).toBe('/mock/project');
+    // The engine and repos the handler constructed are handed through.
+    expect(spawnArg.engine).toBe(engine);
+    expect(spawnArg.tasks).toBe(taskRepo);
   });
 
-  // =========================================================================
-  // resumeSuspendedSession fallback
-  // =========================================================================
+  it('returns the created task even when spawnAgent rejects', async () => {
+    mockSpawnAgent.mockRejectedValueOnce(new Error('CLI not found'));
 
-  it('calls resumeSuspendedSession when task has no session_id after executeTransition', async () => {
-    // getById returns task with no session_id (transition did not set one)
-    taskRepo.getById.mockReturnValue({ ...task, session_id: null });
-
-    const engine = createMockEngine();
-    mockCreateTransitionEngine.mockReturnValue(engine);
-
-    await callCreateHandler(context, {
+    const result = await callCreateHandler(context, {
       swimlane_id: 'lane-doing',
-      title: 'Resume fallback task',
+      title: 'Spawn failure task',
     });
 
-    expect(engine.resumeSuspendedSession).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'task-new', session_id: null }),
-      targetLane.permission_mode,
-      undefined, // skipPromptTemplate
-      undefined, // resumePrompt
-      undefined, // signal
-      undefined, // agentOverride
-      undefined, // handoffPromptPrefix
-      { model: targetLane.model_override, effort: targetLane.effort_override },
-    );
-  });
-
-  it('does NOT call resumeSuspendedSession when task already has session_id after transition', async () => {
-    // Simulate: transition engine set the session_id
-    taskRepo.getById.mockReturnValue({ ...task, session_id: 'session-from-transition' });
-
-    const engine = createMockEngine();
-    mockCreateTransitionEngine.mockReturnValue(engine);
-
-    await callCreateHandler(context, {
-      swimlane_id: 'lane-doing',
-      title: 'No resume task',
-    });
-
-    expect(engine.resumeSuspendedSession).not.toHaveBeenCalled();
-  });
-
-  // =========================================================================
-  // Auto-command scheduling
-  // =========================================================================
-
-  it('schedules auto-command when session exists and lane has auto_command', async () => {
-    const autoCommandLane = createMockSwimlane('lane-auto', {
-      auto_spawn: true,
-      auto_command: '/run-tests',
-    });
-    swimlaneRepo = createMockSwimlaneRepo([autoCommandLane]);
-    const autoTask = createMockTask('task-auto', { swimlane_id: 'lane-auto' });
-    taskRepo = createMockTaskRepo(autoTask);
-    taskRepo.getById.mockReturnValue({ ...autoTask, session_id: 'session-auto' });
-
-    mockGetProjectRepos.mockReturnValue({
-      tasks: taskRepo,
-      swimlanes: swimlaneRepo,
-      actions: { getTransitionsFor: vi.fn(() => []) },
-      attachments: attachmentRepo,
-    });
-
-    const engine = createMockEngine();
-    mockCreateTransitionEngine.mockReturnValue(engine);
-
-    await callCreateHandler(context, {
-      swimlane_id: 'lane-auto',
-      title: 'Auto command task',
-    });
-
-    expect(context.terminalSubmitScheduler.scheduleKeystrokes).toHaveBeenCalledWith(
-      'task-auto',
-      'session-auto',
-      ['/run-tests'],
-      { freshlySpawned: true },
-    );
-  });
-
-  it('does NOT schedule auto-command when finalTask has no session_id', async () => {
-    const autoCommandLane = createMockSwimlane('lane-auto-nosession', {
-      auto_spawn: true,
-      auto_command: '/run-tests',
-    });
-    swimlaneRepo = createMockSwimlaneRepo([autoCommandLane]);
-    const autoTask = createMockTask('task-no-session-auto', { swimlane_id: 'lane-auto-nosession' });
-    taskRepo = createMockTaskRepo(autoTask);
-    // Even after resumeSuspendedSession, getById returns task with no session_id
-    taskRepo.getById.mockReturnValue({ ...autoTask, session_id: null });
-
-    mockGetProjectRepos.mockReturnValue({
-      tasks: taskRepo,
-      swimlanes: swimlaneRepo,
-      actions: { getTransitionsFor: vi.fn(() => []) },
-      attachments: attachmentRepo,
-    });
-
-    const engine = createMockEngine();
-    mockCreateTransitionEngine.mockReturnValue(engine);
-
-    await callCreateHandler(context, {
-      swimlane_id: 'lane-auto-nosession',
-      title: 'No session auto task',
-    });
-
-    expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
-  });
-
-  it('does NOT schedule auto-command when lane has no auto_command', async () => {
-    taskRepo.getById.mockReturnValue({ ...task, session_id: 'session-no-cmd' });
-
-    const engine = createMockEngine();
-    mockCreateTransitionEngine.mockReturnValue(engine);
-
-    await callCreateHandler(context, {
-      swimlane_id: 'lane-doing',
-      title: 'No auto command task',
-    });
-
-    // targetLane.auto_command is null
-    expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
-  });
-
-  // =========================================================================
-  // Per-task auto_command precedence (effectiveAutoCommand = finalTask?.auto_command
-  // ?? toLane.auto_command). The task's value, set only via
-  // kangentic_create_task's MCP-only autoCommand param, must win over the
-  // destination column's auto_command for this task. Red-green: reverting
-  // task-crud.ts's `finalTask?.auto_command ?? toLane.auto_command` to plain
-  // `toLane.auto_command` makes the precedence test below fail (scheduler
-  // would receive the lane's command instead of the task's); reverting the
-  // `?? toLane.auto_command` fallback entirely makes the fallback test fail
-  // (scheduler would not be called at all).
-  // =========================================================================
-
-  it('schedules the TASK auto_command, not the lane auto_command, when both are set (task wins)', async () => {
-    const autoCommandLane = createMockSwimlane('lane-auto-both', {
-      auto_spawn: true,
-      auto_command: '/lane-command',
-    });
-    swimlaneRepo = createMockSwimlaneRepo([autoCommandLane]);
-    const autoTask = createMockTask('task-auto-both', {
-      swimlane_id: 'lane-auto-both',
-      auto_command: '/task-command',
-    });
-    taskRepo = createMockTaskRepo(autoTask);
-    taskRepo.getById.mockReturnValue({ ...autoTask, session_id: 'session-auto-both' });
-
-    mockGetProjectRepos.mockReturnValue({
-      tasks: taskRepo,
-      swimlanes: swimlaneRepo,
-      actions: { getTransitionsFor: vi.fn(() => []) },
-      attachments: attachmentRepo,
-    });
-
-    const engine = createMockEngine();
-    mockCreateTransitionEngine.mockReturnValue(engine);
-
-    await callCreateHandler(context, {
-      swimlane_id: 'lane-auto-both',
-      title: 'Task overrides lane auto command',
-    });
-
-    expect(context.terminalSubmitScheduler.scheduleKeystrokes).toHaveBeenCalledWith(
-      'task-auto-both',
-      'session-auto-both',
-      ['/task-command'],
-      { freshlySpawned: true },
-    );
-  });
-
-  it('falls back to the lane auto_command when the task has none', async () => {
-    const autoCommandLane = createMockSwimlane('lane-auto-fallback', {
-      auto_spawn: true,
-      auto_command: '/lane-command',
-    });
-    swimlaneRepo = createMockSwimlaneRepo([autoCommandLane]);
-    const autoTask = createMockTask('task-auto-fallback', {
-      swimlane_id: 'lane-auto-fallback',
-      auto_command: null,
-    });
-    taskRepo = createMockTaskRepo(autoTask);
-    taskRepo.getById.mockReturnValue({ ...autoTask, session_id: 'session-auto-fallback' });
-
-    mockGetProjectRepos.mockReturnValue({
-      tasks: taskRepo,
-      swimlanes: swimlaneRepo,
-      actions: { getTransitionsFor: vi.fn(() => []) },
-      attachments: attachmentRepo,
-    });
-
-    const engine = createMockEngine();
-    mockCreateTransitionEngine.mockReturnValue(engine);
-
-    await callCreateHandler(context, {
-      swimlane_id: 'lane-auto-fallback',
-      title: 'Task with no auto command falls back to lane',
-    });
-
-    expect(context.terminalSubmitScheduler.scheduleKeystrokes).toHaveBeenCalledWith(
-      'task-auto-fallback',
-      'session-auto-fallback',
-      ['/lane-command'],
-      { freshlySpawned: true },
-    );
+    expect(result).toMatchObject({ id: 'task-new' });
   });
 
   // =========================================================================

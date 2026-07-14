@@ -62,10 +62,38 @@ The in-memory `SessionStatus` does not include `orphaned` (that is a DB-only con
 
 ## Spawn Flow
 
-1. Transition engine triggers `spawn_agent` action.
+### Spawn entry points
+
+Every way a task agent can be spawned routes through one of TWO chokepoints, and both run the
+shared spawn preamble `runSpawnPreamble` (`src/main/transition-engine/spawn-preamble.ts`): lock
+the Advanced overrides on a first-ever spawn (`lockAdvancedOverridesOnFirstSpawn`), then resolve
+the target agent (`resolveTargetAgent`), in that order. Permission mode is resolved by the same
+module's `resolveEffectivePermissionMode` (a lane forcing `plan` always wins, else task -> lane
+-> global). Enforced by `.claude/rules/spawn-entry-point-parity.md` +
+`tests/unit/spawn-entry-point-parity.test.ts`.
+
+| Entry point | Trigger | Route |
+|---|---|---|
+| Task move (Phase 3 deferred spawn) | drag into an auto_spawn column | `spawnAgent` (`src/main/ipc/helpers/agent-spawn.ts`), `settingsSourceLane` = source lane |
+| Create into a spawn column | New Task dialog / `TASK_CREATE` | `spawnAgent`, `fromSwimlaneId: '*'` |
+| Backlog promote | promote from Backlog panel | `spawnAgent`, `fromSwimlaneId: '*'` |
+| MCP create (`kangentic_create_task`) | `autoSpawnForTask` | `spawnAgent` |
+| Unarchive (single + bulk) | Completed Tasks restore / `TASK_UNARCHIVE` | `spawnAgent`, `skipPromptTemplate` + `suppressAutoCommand` (recovery move) |
+| Startup crash recovery | project open, `resumeSuspendedSessions` | `prepareAgentSpawn` (`session-startup/prepare-spawn.ts`) |
+| Startup reconcile | project open, `autoSpawnTasks` | `prepareAgentSpawn` |
+
+In-place restarts of an existing session (`SESSION_RESUME`, `restartSessionForSettingsChange`)
+call the engine directly; they are not first-spawn entry points. Transient Command Terminal
+sessions bypass all of this (not task agents).
+
+### Engine spawn (board-driven path)
+
+1. `spawnAgent` runs the spawn preamble, executes the transition's actions, then falls back to
+   `resumeSuspendedSession` if no action created a session.
 2. `TransitionEngine.executeSpawnAgent()`:
-   - Detect Claude CLI via `ClaudeDetector`
-   - Resolve permission mode (swimlane override, then action config, then global)
+   - Detect the agent CLI via the resolved adapter
+   - Resolve permission mode via `resolveEffectivePermissionMode` (lane `plan` always wins,
+     else task pin -> lane -> global)
    - Determine CWD (worktree path or project path)
    - Pre-populate `~/.claude.json` trust for worktree paths
    - Check for previous suspended session (can resume?)
@@ -148,12 +176,13 @@ When a suspended task moves to an active column:
   column's `auto_command`. Restoring a Done task is usually to inspect the
   session or ask a question, so the column automation (e.g. `/merge-pull-request`)
   sits idle until the next move. This is unconditional and matches crash
-  recovery, which also resumes command-free. The drag-out-of-Done path
-  (`TASK_UNARCHIVE` / `TASK_BULK_UNARCHIVE`) suppresses it directly; a
-  non-archived Done-out move (MCP `move_task`, legacy rows) suppresses it via
-  `spawnAgent`'s `suppressAutoCommand`, set by `handleTaskMove` when
-  `fromLane.role === 'done'`. Model / effort / permission-mode settings still
-  apply on the recovery move. The next move injects per column config as usual.
+  recovery, which also resumes command-free. Every Done-out path goes through
+  `spawnAgent`'s `suppressAutoCommand`: the unarchive handlers
+  (`TASK_UNARCHIVE` / `TASK_BULK_UNARCHIVE`) set it on their `spawnAgent`
+  calls, and a non-archived Done-out move (MCP `move_task`, legacy rows) gets
+  it from `handleTaskMove` when `fromLane.role === 'done'`. Model / effort /
+  permission-mode settings still apply on the recovery move. The next move
+  injects per column config as usual.
 
 ## Crash Recovery (Session Recovery)
 

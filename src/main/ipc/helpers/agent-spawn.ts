@@ -10,10 +10,10 @@ import { interpolateTemplate } from '../../agent/shared';
 import { agentRegistry } from '../../agent/agent-registry';
 import { buildSessionHistoryReference } from '../../agent/handoff/session-history-reference';
 import { DEFAULT_AGENT } from '../../../shared/types';
-import type { Task, Swimlane, Project, PermissionMode } from '../../../shared/types';
+import type { Task, Swimlane, Project } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 import { isAbortError } from '../../../shared/abort-utils';
-import { resolveTargetAgent } from '../../transition-engine/agent-resolver';
+import { runSpawnPreamble } from '../../transition-engine/spawn-preamble';
 import { isResumeEligible } from '../../transition-engine/spawn-intent';
 import { resolveIsolatedSwimlaneId, resolveForceFresh } from '../../transition-engine/session-isolation';
 import { emitSpawnProgress, createProgressCallback } from '../../transition-engine/spawn-progress';
@@ -63,82 +63,6 @@ export function resolveSpawnOverrides(
     isolatedSwimlaneId: resolveIsolatedSwimlaneId(lane),
     forceFresh: resolveForceFresh(lane),
   };
-}
-
-/**
- * Freeze the Advanced (Agent / Model / Effort / Permission) overrides on a
- * task's very first ever spawn.
- *
- * A task that already carries at least one explicit override but leaves the
- * others on "inherit" gets ALL FOUR fields frozen to the values the Advanced
- * tab displayed when the user configured it: task override -> the lane the
- * task lived in at config time (`settingsLane`) -> project default (global
- * permission mode for Permission). The DESTINATION column's settings never
- * leak into the frozen contract - the user never saw them in the dialog. A
- * destination lane forcing `permission_mode: 'plan'` still wins at spawn
- * resolution (transition-engine.ts / prepare-spawn.ts); the frozen permission
- * is what the task runs under everywhere else.
- *
- * A task with NO overrides at all is untouched - it keeps following
- * column/project defaults for its whole life.
- *
- * "First ever spawn" = no session record exists AND task.agent is still null.
- * task.agent is set once, at first successful spawn (see transition-engine.ts),
- * and is NOT cleared by a To-Do reset (cleanupTaskResources wipes session rows
- * but never touches task.agent), so a task that spawned once, was reset to To
- * Do, and is redragged forward is correctly not treated as fresh.
- *
- * Mutates the passed `task` object in place (in addition to persisting) so the
- * spawn already in flight resolves against the frozen values without a re-read.
- */
-export function freezeAdvancedOverridesOnFirstSpawn(options: {
-  task: Task;
-  /** Whether any session row exists for the task (first-ever-spawn detection). */
-  hasSessionRecord: boolean;
-  /**
-   * The lane whose inherited settings the New Task / Edit dialog displayed
-   * when the user configured the task: the lane the task lived in before this
-   * spawn (a drag move passes the SOURCE lane), or the creation column for a
-   * task created directly in a spawn column. Null when that lane no longer
-   * resolves - inherited fields then freeze to project/global defaults.
-   */
-  settingsLane: Pick<Swimlane, 'agent_override' | 'model_override' | 'effort_override' | 'permission_mode'> | null;
-  project: Pick<Project, 'default_agent' | 'default_model' | 'default_effort'> | null | undefined;
-  /**
-   * Lazy accessor for the global permission-mode default. Invoked only when
-   * the freeze actually proceeds AND the global fallback is reached, so a
-   * no-op spawn (the common case) never pays for the synchronous project-config
-   * disk read behind `getEffectiveConfig`.
-   */
-  globalPermissionMode: () => PermissionMode;
-  tasks: Pick<TaskRepository, 'update'>;
-}): void {
-  const { task, hasSessionRecord, settingsLane, project, globalPermissionMode, tasks } = options;
-  const isFirstEverSpawn = !hasSessionRecord && task.agent === null;
-  const hasAnyOverrideSet = task.agent_override !== null || task.model_override !== null
-    || task.effort_override !== null || task.permission_mode !== null;
-  if (!isFirstEverSpawn || !hasAnyOverrideSet) return;
-
-  const frozenAgent = task.agent_override ?? settingsLane?.agent_override ?? project?.default_agent ?? DEFAULT_AGENT;
-  const frozenModel = task.model_override ?? settingsLane?.model_override ?? project?.default_model ?? null;
-  const frozenEffort = task.effort_override ?? settingsLane?.effort_override ?? project?.default_effort ?? null;
-  const frozenPermission = task.permission_mode ?? settingsLane?.permission_mode ?? globalPermissionMode();
-
-  tasks.update({
-    id: task.id,
-    agent_override: frozenAgent,
-    model_override: frozenModel,
-    effort_override: frozenEffort,
-    permission_mode: frozenPermission,
-  });
-  task.agent_override = frozenAgent;
-  task.model_override = frozenModel;
-  task.effort_override = frozenEffort;
-  task.permission_mode = frozenPermission;
-  console.log(
-    `[spawnAgent] Froze Advanced overrides for task ${task.id.slice(0, 8)} on first spawn:`
-    + ` agent=${frozenAgent} model=${frozenModel ?? 'null'} effort=${frozenEffort ?? 'null'} permission=${frozenPermission}`,
-  );
 }
 
 /** Create a TransitionEngine wired to explicit project context (not singletons). */
@@ -205,19 +129,21 @@ export interface AgentSpawnOptions {
    * Recovery move out of Done: resume the session but do NOT inject the
    * destination column's auto_command (as prompt or keystroke). The session
    * resumes idle, ready for the user to inspect; the NEXT move injects per
-   * column config. Set by handleTaskMove when fromLane.role === 'done'.
-   * Matches the unarchive (drag-out-of-Done) recovery contract in
-   * task-archive.ts and startup recovery in resume-suspended.ts.
+   * column config. Set by handleTaskMove when fromLane.role === 'done' and
+   * by the unarchive handlers (task-archive.ts, always a move out of Done).
+   * Matches startup recovery (resume-suspended.ts), which also resumes
+   * without injecting auto_command.
    */
   suppressAutoCommand?: boolean;
   /**
    * The lane whose inherited settings the New Task / Edit dialog displayed
-   * when the user configured the task. The freeze-on-first-spawn resolves
-   * still-inherited fields against THIS lane, never the destination column
-   * (whose settings the user never saw in the dialog). Drag moves pass the
-   * SOURCE lane (null when it no longer resolves); omit to fall back to
-   * `toLane` (promotion / MCP creation directly into a spawn column, where
-   * the task was configured against the destination itself).
+   * when the user configured the task. The first-spawn override lock
+   * (`lockAdvancedOverridesOnFirstSpawn`) resolves still-inherited fields
+   * against THIS lane, never the destination column (whose settings the user
+   * never saw in the dialog). Drag moves pass the SOURCE lane (null when it
+   * no longer resolves); omit to fall back to `toLane` (creation, promotion,
+   * MCP creation, or unarchive directly into a spawn column, where the
+   * destination is the lane the user chose).
    */
   settingsSourceLane?: Swimlane | null;
 }
@@ -256,25 +182,18 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
     return;
   }
 
-  // Freeze Advanced overrides on the task's very first ever spawn (see
-  // freezeAdvancedOverridesOnFirstSpawn). Runs BEFORE agent resolution so a
-  // just-frozen agent_override is what resolveTargetAgent picks up, and the
-  // in-flight spawn below already resolves against the frozen values.
-  freezeAdvancedOverridesOnFirstSpawn({
+  // Shared spawn preamble: lock the Advanced overrides on the task's very
+  // first ever spawn, then resolve the target agent ONCE (single source of
+  // truth) - a just-locked agent_override is what the resolution picks up,
+  // and the in-flight spawn below already resolves against the locked values.
+  const { agent: targetAgent, isHandoff } = runSpawnPreamble({
     task,
     hasSessionRecord: latestSession !== undefined,
     settingsLane: options.settingsSourceLane === undefined ? toLane : options.settingsSourceLane,
+    destinationLane: toLane,
     project,
     globalPermissionMode: () => context.configManager.getEffectiveConfig(options.projectPath || undefined).agent.permissionMode,
     tasks,
-  });
-
-  // --- Resolve target agent ONCE (single source of truth) ---
-  const { agent: targetAgent, isHandoff } = resolveTargetAgent({
-    taskAgentOverride: task.agent_override,
-    columnAgent: toLane.agent_override,
-    taskAgent: task.agent,
-    projectDefaultAgent: project?.default_agent ?? null,
   });
 
   // Handoff also requires a previous session to exist, a project context,
@@ -406,6 +325,14 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
     console.error('[spawnAgent] Transition engine error (continuing to fallback):', error);
   }
 
+  // Re-read after the transition. If a spawn_agent ACTION already created the
+  // session, we return here and the fallback below never runs - so its
+  // auto_command / continuationPrompt delivery is skipped for that leg. The
+  // action delivers its own promptTemplate, but a separately configured
+  // auto_command is NOT injected on top in that case. This is the same
+  // narrowing every spawnAgent entry point (move, create, promote, MCP create)
+  // shares; the default board is unaffected (its one action-backed column,
+  // Planning, has no auto_command).
   let currentTask = tasks.getById(task.id);
   if (!currentTask || currentTask.session_id) return;
 

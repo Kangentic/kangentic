@@ -209,4 +209,24 @@ describe('spawnAgent continuationPrompt delivery', () => {
     expect(resumePromptArg(deps.engine)).toBeUndefined();
     expect(deps.scheduleKeystrokes).not.toHaveBeenCalled();
   });
+
+  it('per-task auto_command (MCP autoCommand param) wins over the lane auto_command', async () => {
+    // effectiveAutoCommand = currentTask.auto_command ?? toLane.auto_command:
+    // the task-level value, set only via kangentic_create_task's MCP-only
+    // autoCommand param, must win for this task. Ported from the TASK_CREATE
+    // handler tests when creates were consolidated onto spawnAgent - this is
+    // where the precedence now lives for every entry point. Red-green:
+    // reverting agent-spawn.ts to plain `toLane.auto_command` delivers
+    // '/lane-command' here and fails.
+    const executingLane = makeSwimlane(EXECUTING_LANE_ID, { auto_command: '/lane-command' });
+    const deps = makeDeps({ resumeRecord: makeRecord() });
+    deps.tasks.getById.mockReset();
+    deps.tasks.getById
+      .mockReturnValueOnce(makeTask({ session_id: null, auto_command: '/task-command' }))
+      .mockReturnValue(makeTask({ session_id: FRESH_PTY_SESSION_ID, auto_command: '/task-command' }));
+
+    await runSpawn(executingLane, deps, undefined);
+
+    expect(resumePromptArg(deps.engine)).toBe('/task-command');
+  });
 });

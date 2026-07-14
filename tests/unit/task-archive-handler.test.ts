@@ -18,9 +18,15 @@
  *     - auto_spawn=false early return: returns task without spawning
  *     - worktree error branch: ensureTaskWorktree throws, returns task, no spawn
  *     - checkout error branch: ensureTaskBranchCheckout throws, returns task, no spawn
- *     - no done-lane branch: skips transition engine when no role='done' lane
- *     - recovery move: calls engine.executeTransition but suppresses auto-command
- *     - resumeSuspendedSession fallback: called when no session_id after transition
+ *     - no done-lane branch: skips the spawn when no role='done' lane
+ *     - routes through the shared spawnAgent chokepoint with the recovery-move
+ *       contract: fromSwimlaneId=doneLane.id, skipPromptTemplate,
+ *       suppressAutoCommand, projectId/projectPath threaded, and
+ *       settingsSourceLane OMITTED (the destination the user picked is the
+ *       settings lane for a never-spawned unarchived task). Engine-level
+ *       behavior (transition, fallback resume, the first-spawn override lock,
+ *       actual auto-command suppression) is spawnAgent's responsibility,
+ *       covered by the spawn-agent-*.test.ts harness suites.
  *     - withTaskLock serialization: concurrent calls for the same id serialize;
  *       different ids run independently
  *
@@ -28,7 +34,8 @@
  *     - auto_spawn=false lane skips spawn for every task in the batch
  *     - per-task worktree error is caught; subsequent tasks still process
  *     - per-iteration lock is independent per id (different ids don't block)
- *     - recovery move: auto-command suppressed for every restored task
+ *     - every restored task goes through spawnAgent with the same
+ *       recovery-move contract as the single handler
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -109,18 +116,15 @@ const mockGetProjectRepos = vi.fn();
 const mockEnsureTaskWorktree = vi.fn(async () => null);
 const mockEnsureTaskBranchCheckout = vi.fn(async () => {});
 const mockCreateTransitionEngine = vi.fn();
+const mockSpawnAgent = vi.fn(async () => {});
 
 vi.mock('../../src/main/ipc/helpers', () => ({
   getProjectRepos: (...args: unknown[]) => mockGetProjectRepos(...args),
   ensureTaskWorktree: (...args: unknown[]) => mockEnsureTaskWorktree(...args),
   ensureTaskBranchCheckout: (...args: unknown[]) => mockEnsureTaskBranchCheckout(...args),
   createTransitionEngine: (...args: unknown[]) => mockCreateTransitionEngine(...args),
-  interpolateTemplate: vi.fn((template: string) => template),
   cleanupTaskResources: vi.fn(async () => {}),
-  resolveSpawnOverrides: vi.fn((task: { model_override?: string | null; effort_override?: string | null } | undefined, lane: { model_override?: string | null; effort_override?: string | null } | null | undefined) => ({
-    model: task?.model_override ?? lane?.model_override,
-    effort: task?.effort_override ?? lane?.effort_override,
-  })),
+  spawnAgent: (...args: unknown[]) => mockSpawnAgent(...args),
 }));
 
 vi.mock('../../src/main/agent/shared', () => ({
@@ -440,7 +444,7 @@ describe('task-archive handlers', () => {
       expect(result).toMatchObject({ id: 'task-nospawn' });
       expect(mockEnsureTaskWorktree).not.toHaveBeenCalled();
       expect(mockCreateTransitionEngine).not.toHaveBeenCalled();
-      expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
+      expect(mockSpawnAgent).not.toHaveBeenCalled();
     });
 
     it('returns task without spawning when ensureTaskWorktree throws', async () => {
@@ -462,7 +466,7 @@ describe('task-archive handlers', () => {
 
       expect(result).toMatchObject({ id: 'task-worktree-err' });
       expect(mockCreateTransitionEngine).not.toHaveBeenCalled();
-      expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
+      expect(mockSpawnAgent).not.toHaveBeenCalled();
     });
 
     it('returns task without spawning when ensureTaskBranchCheckout throws', async () => {
@@ -485,7 +489,7 @@ describe('task-archive handlers', () => {
 
       expect(result).toMatchObject({ id: 'task-checkout-err' });
       expect(mockCreateTransitionEngine).not.toHaveBeenCalled();
-      expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
+      expect(mockSpawnAgent).not.toHaveBeenCalled();
     });
 
     it('skips transition engine when no role=done lane exists', async () => {
@@ -510,15 +514,27 @@ describe('task-archive handlers', () => {
 
       expect(result).toMatchObject({ id: 'task-no-done' });
       expect(mockCreateTransitionEngine).not.toHaveBeenCalled();
-      expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
+      expect(mockSpawnAgent).not.toHaveBeenCalled();
     });
 
-    it('calls executeTransition with doneLane -> targetSwimlaneId on happy path', async () => {
+    // -----------------------------------------------------------------------
+    // Shared spawn chokepoint routing (the unarchive first-spawn contract)
+    //
+    // Unarchive is a first-ever-spawn entry point: a task created in To Do,
+    // dragged to Done without spawning, and unarchived into a spawn column
+    // truly first-spawns HERE. It must therefore route through spawnAgent,
+    // whose preamble locks the Advanced overrides and resolves the agent -
+    // and it must carry the recovery-move contract (skipPromptTemplate +
+    // suppressAutoCommand: unarchive is always the first move out of Done,
+    // so the session comes up idle for the user to inspect). Red-green: on
+    // the pre-consolidation handler (its own executeTransition + fallback
+    // block, no lock anywhere), spawnAgent is never called and this fails.
+    // See .claude/rules/spawn-entry-point-parity.md.
+    // -----------------------------------------------------------------------
+
+    it('routes through spawnAgent with the recovery-move contract (doneLane source, suppress + skip, no settingsSourceLane)', async () => {
       const task = createMockTask('task-happy');
-      // After transition, getById returns a task with a session_id set
-      const taskWithSession = { ...task, session_id: 'session-abc' };
       taskRepo = createMockTaskRepo([task]);
-      taskRepo.getById.mockReturnValue(taskWithSession);
       mockGetProjectRepos.mockReturnValue({
         tasks: taskRepo,
         swimlanes: swimlaneRepo,
@@ -534,130 +550,52 @@ describe('task-archive handlers', () => {
         targetSwimlaneId: 'lane-doing',
       });
 
-      expect(engine.executeTransition).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 'task-happy' }),
-        doneLane.id,
-        'lane-doing',
-        targetLane.permission_mode,
-        true,      // skipPromptTemplate
-        undefined, // signal
-        undefined, // agentOverride
-        // spawnOverrides: { model, effort } pulled from the destination swimlane
-        // (undefined here because the mock swimlane fixture doesn't set them).
-        { model: targetLane.model_override, effort: targetLane.effort_override },
-      );
+      expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+      const spawnArg = mockSpawnAgent.mock.calls[0][0] as {
+        engine: MockEngine;
+        tasks: MockTaskRepo;
+        task: { id: string };
+        fromSwimlaneId: string;
+        toLane: MockSwimlane;
+        skipPromptTemplate: boolean;
+        suppressAutoCommand: boolean;
+        projectId: string;
+        projectPath: string;
+      };
+      expect(spawnArg.task).toMatchObject({ id: 'task-happy' });
+      expect(spawnArg.fromSwimlaneId).toBe(doneLane.id);
+      expect(spawnArg.toLane).toBe(targetLane);
+      expect(spawnArg.skipPromptTemplate).toBe(true);
+      expect(spawnArg.suppressAutoCommand).toBe(true);
+      // settingsSourceLane OMITTED (not null): spawnAgent then locks against
+      // the destination the user picked in the unarchive UI - Done's settings
+      // were never shown in any dialog, and the config-time lane of a
+      // never-spawned archived task is not recoverable.
+      expect('settingsSourceLane' in spawnArg).toBe(false);
+      // Project context threaded so the preamble sees project defaults.
+      expect(spawnArg.projectId).toBe('proj-123');
+      expect(spawnArg.projectPath).toBe('/mock/project');
+      expect(spawnArg.engine).toBe(engine);
+      expect(spawnArg.tasks).toBe(taskRepo);
     });
 
-    it('calls resumeSuspendedSession when task has no session_id after transition', async () => {
-      // getById returns a task with no session_id even after executeTransition
-      const task = createMockTask('task-no-session');
+    it('still returns the unarchived task when spawnAgent rejects', async () => {
+      const task = createMockTask('task-spawn-err');
       taskRepo = createMockTaskRepo([task]);
-      taskRepo.getById.mockReturnValue({ ...task, session_id: null });
       mockGetProjectRepos.mockReturnValue({
         tasks: taskRepo,
         swimlanes: swimlaneRepo,
         actions: { getTransitionsFor: vi.fn(() => []) },
         attachments: { deleteByTaskId: vi.fn() },
       });
+      mockSpawnAgent.mockRejectedValueOnce(new Error('CLI not found'));
 
-      const engine = createMockEngine();
-      mockCreateTransitionEngine.mockReturnValue(engine);
-
-      await callHandler(IPC.TASK_UNARCHIVE, {
-        id: 'task-no-session',
+      const result = await callHandler(IPC.TASK_UNARCHIVE, {
+        id: 'task-spawn-err',
         targetSwimlaneId: 'lane-doing',
       });
 
-      expect(engine.resumeSuspendedSession).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 'task-no-session' }),
-        targetLane.permission_mode,
-        true,      // skipPromptTemplate
-        undefined, // resumePrompt
-        undefined, // signal
-        undefined, // agentOverride
-        undefined, // handoffPromptPrefix
-        { model: targetLane.model_override, effort: targetLane.effort_override },
-      );
-    });
-
-    it('does NOT call resumeSuspendedSession when task already has a session_id after transition', async () => {
-      const task = createMockTask('task-has-session');
-      taskRepo = createMockTaskRepo([task]);
-      taskRepo.getById.mockReturnValue({ ...task, session_id: 'session-existing' });
-      mockGetProjectRepos.mockReturnValue({
-        tasks: taskRepo,
-        swimlanes: swimlaneRepo,
-        actions: { getTransitionsFor: vi.fn(() => []) },
-        attachments: { deleteByTaskId: vi.fn() },
-      });
-
-      const engine = createMockEngine();
-      mockCreateTransitionEngine.mockReturnValue(engine);
-
-      await callHandler(IPC.TASK_UNARCHIVE, {
-        id: 'task-has-session',
-        targetSwimlaneId: 'lane-doing',
-      });
-
-      expect(engine.resumeSuspendedSession).not.toHaveBeenCalled();
-    });
-
-    it('does NOT schedule auto-command on restore even when lane has auto_command (recovery move)', async () => {
-      // Unarchive is always the FIRST move out of Done. The destination
-      // column's auto_command is intentionally suppressed so the session
-      // resumes idle for the user to inspect; the next normal move injects.
-      const autoCommandLane = createMockSwimlane('lane-auto', {
-        auto_spawn: true,
-        auto_command: '/run-tests',
-      });
-      swimlaneRepo = createMockSwimlaneRepo([doneLane, autoCommandLane]);
-      const task = createMockTask('task-auto-cmd');
-      const taskWithSession = { ...task, session_id: 'session-xyz' };
-      taskRepo = createMockTaskRepo([task]);
-      taskRepo.getById.mockReturnValue(taskWithSession);
-      mockGetProjectRepos.mockReturnValue({
-        tasks: taskRepo,
-        swimlanes: swimlaneRepo,
-        actions: { getTransitionsFor: vi.fn(() => []) },
-        attachments: { deleteByTaskId: vi.fn() },
-      });
-
-      const engine = createMockEngine();
-      mockCreateTransitionEngine.mockReturnValue(engine);
-
-      await callHandler(IPC.TASK_UNARCHIVE, {
-        id: 'task-auto-cmd',
-        targetSwimlaneId: 'lane-auto',
-      });
-
-      // The transition still runs (model/effort/permission config applies),
-      // but no auto_command keystroke is scheduled on the recovery move.
-      expect(engine.executeTransition).toHaveBeenCalled();
-      expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
-    });
-
-    it('does NOT schedule auto-command when lane has no auto_command', async () => {
-      const task = createMockTask('task-no-cmd');
-      const taskWithSession = { ...task, session_id: 'session-noncmd' };
-      taskRepo = createMockTaskRepo([task]);
-      taskRepo.getById.mockReturnValue(taskWithSession);
-      mockGetProjectRepos.mockReturnValue({
-        tasks: taskRepo,
-        swimlanes: swimlaneRepo,
-        actions: { getTransitionsFor: vi.fn(() => []) },
-        attachments: { deleteByTaskId: vi.fn() },
-      });
-
-      const engine = createMockEngine();
-      mockCreateTransitionEngine.mockReturnValue(engine);
-
-      await callHandler(IPC.TASK_UNARCHIVE, {
-        id: 'task-no-cmd',
-        targetSwimlaneId: 'lane-doing',
-      });
-
-      // targetLane.auto_command is null
-      expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ id: 'task-spawn-err' });
     });
 
     // -----------------------------------------------------------------------
@@ -796,7 +734,7 @@ describe('task-archive handlers', () => {
       // ensureTaskWorktree must NOT have been called (auto_spawn=false short-circuits)
       expect(mockEnsureTaskWorktree).not.toHaveBeenCalled();
       expect(mockCreateTransitionEngine).not.toHaveBeenCalled();
-      expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
+      expect(mockSpawnAgent).not.toHaveBeenCalled();
     });
 
     it('continues processing subsequent tasks when one worktree creation fails', async () => {
@@ -831,8 +769,8 @@ describe('task-archive handlers', () => {
 
       // The second task still proceeded to ensureTaskWorktree
       expect(mockEnsureTaskWorktree).toHaveBeenCalledTimes(2);
-      // Transition engine called for the successful task only
-      expect(engine.executeTransition).toHaveBeenCalledTimes(1);
+      // spawnAgent reached for the successful task only
+      expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
     });
 
     it('processes each task with an independent lock (different ids do not block each other)', async () => {
@@ -861,31 +799,21 @@ describe('task-archive handlers', () => {
       await callHandler(IPC.TASK_BULK_UNARCHIVE, ['task-ind-a', 'task-ind-b'], 'lane-doing');
 
       expect(taskRepo.unarchive).toHaveBeenCalledTimes(2);
-      expect(engine.executeTransition).toHaveBeenCalledTimes(2);
+      expect(mockSpawnAgent).toHaveBeenCalledTimes(2);
     });
 
-    it('does NOT schedule auto-command per task on bulk restore even when lane has auto_command (recovery move)', async () => {
-      // Bulk unarchive (Completed Tasks dialog restore) is also a first move
-      // out of Done per task, so the destination auto_command is suppressed for
-      // every restored task.
-      const autoCommandLane = createMockSwimlane('lane-auto-bulk', {
-        auto_spawn: true,
-        auto_command: '/run-ci',
-      });
-      swimlaneRepo = createMockSwimlaneRepo([doneLane, autoCommandLane]);
-
+    it('routes every restored task through spawnAgent with the same recovery-move contract as the single handler', async () => {
+      // Bulk unarchive (Completed Tasks dialog restore) is also a
+      // first-ever-spawn entry point per task, so each task must go through
+      // the shared spawnAgent chokepoint with the identical contract:
+      // doneLane source, skipPromptTemplate + suppressAutoCommand (session
+      // resumes idle, no auto_command on the recovery move), project context
+      // threaded, settingsSourceLane omitted.
       const tasks = [
         createMockTask('task-bulk-cmd-a'),
         createMockTask('task-bulk-cmd-b'),
       ];
       taskRepo = createMockTaskRepo(tasks);
-
-      // Each getById returns the task with a session_id
-      taskRepo.getById.mockImplementation((id: string) => {
-        const found = tasks.find((t) => t.id === id);
-        return found ? { ...found, session_id: `session-${id}` } : null;
-      });
-
       mockGetProjectRepos.mockReturnValue({
         tasks: taskRepo,
         swimlanes: swimlaneRepo,
@@ -899,44 +827,31 @@ describe('task-archive handlers', () => {
       await callHandler(
         IPC.TASK_BULK_UNARCHIVE,
         ['task-bulk-cmd-a', 'task-bulk-cmd-b'],
-        'lane-auto-bulk',
+        'lane-doing',
       );
 
-      expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
-    });
-
-    it('skips auto-command when task has no session_id after resumeSuspendedSession', async () => {
-      const autoCommandLane = createMockSwimlane('lane-auto-skip', {
-        auto_spawn: true,
-        auto_command: '/do-something',
-      });
-      swimlaneRepo = createMockSwimlaneRepo([doneLane, autoCommandLane]);
-
-      const task = createMockTask('task-no-session-bulk');
-      taskRepo = createMockTaskRepo([task]);
-      // getById always returns the task with NO session_id
-      taskRepo.getById.mockReturnValue({ ...task, session_id: null });
-
-      mockGetProjectRepos.mockReturnValue({
-        tasks: taskRepo,
-        swimlanes: swimlaneRepo,
-        actions: { getTransitionsFor: vi.fn(() => []) },
-        attachments: { deleteByTaskId: vi.fn() },
-      });
-
-      const engine = createMockEngine();
-      mockCreateTransitionEngine.mockReturnValue(engine);
-
-      await callHandler(
-        IPC.TASK_BULK_UNARCHIVE,
-        ['task-no-session-bulk'],
-        'lane-auto-skip',
+      expect(mockSpawnAgent).toHaveBeenCalledTimes(2);
+      const spawnedTaskIds = mockSpawnAgent.mock.calls.map(
+        (call) => (call[0] as { task: { id: string } }).task.id,
       );
-
-      // resumeSuspendedSession should have been called (no session after transition)
-      expect(engine.resumeSuspendedSession).toHaveBeenCalledTimes(1);
-      // But schedule must NOT be called since finalTask.session_id is still null
-      expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
+      expect(spawnedTaskIds).toEqual(['task-bulk-cmd-a', 'task-bulk-cmd-b']);
+      for (const call of mockSpawnAgent.mock.calls) {
+        const spawnArg = call[0] as {
+          fromSwimlaneId: string;
+          toLane: MockSwimlane;
+          skipPromptTemplate: boolean;
+          suppressAutoCommand: boolean;
+          projectId: string;
+          projectPath: string;
+        };
+        expect(spawnArg.fromSwimlaneId).toBe(doneLane.id);
+        expect(spawnArg.toLane).toBe(targetLane);
+        expect(spawnArg.skipPromptTemplate).toBe(true);
+        expect(spawnArg.suppressAutoCommand).toBe(true);
+        expect('settingsSourceLane' in spawnArg).toBe(false);
+        expect(spawnArg.projectId).toBe('proj-123');
+        expect(spawnArg.projectPath).toBe('/mock/project');
+      }
     });
   });
 });

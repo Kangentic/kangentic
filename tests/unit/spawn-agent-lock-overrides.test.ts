@@ -1,29 +1,27 @@
 /**
- * Tests for the "freeze Advanced overrides on first spawn" behavior in
- * `spawnAgent` / `freezeAdvancedOverridesOnFirstSpawn`
- * (src/main/ipc/helpers/agent-spawn.ts).
+ * Tests for the "lock Advanced overrides on first spawn" behavior in
+ * `spawnAgent` -> `runSpawnPreamble` / `lockAdvancedOverridesOnFirstSpawn`
+ * (src/main/transition-engine/spawn-preamble.ts, wired in
+ * src/main/ipc/helpers/agent-spawn.ts).
  *
  * A task that already carries at least one explicit Agent/Model/Effort/
  * Permission override but leaves the others on "inherit" gets ALL FOUR
- * fields frozen, the moment it spawns for the very first time ever, to the
+ * fields locked, the moment it spawns for the very first time ever, to the
  * values the Advanced tab displayed when the user configured it: task
  * override -> the lane the task lived in at config time (the settings lane;
  * a drag move passes the SOURCE lane) -> project default / global permission
- * mode. The DESTINATION column's settings never leak into the frozen
+ * mode. The DESTINATION column's settings never leak into the locked
  * contract. A task with NO overrides at all is untouched.
  *
  * Harness mirrors spawn-agent-continuation-prompt.test.ts: the real
- * spawnAgent runs end to end with injected engine/repos/context mocks.
+ * spawnAgent runs end to end with injected engine/repos/context mocks. The
+ * REAL agent resolver runs too (deliberately unmocked), so these tests also
+ * pin the preamble's ordering contract: the lock runs BEFORE agent
+ * resolution, and the resolved agent is what reaches the engine.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Task, Swimlane } from '../../src/shared/types';
-
-const resolveTargetAgentMock = vi.fn(() => ({ agent: 'claude', isHandoff: false }));
-
-vi.mock('../../src/main/transition-engine/agent-resolver', () => ({
-  resolveTargetAgent: (...args: unknown[]) => resolveTargetAgentMock(...args),
-}));
 
 vi.mock('../../src/main/agent/agent-registry', () => ({
   agentRegistry: { get: vi.fn(() => ({ sessionType: 'claude_agent' })) },
@@ -31,7 +29,7 @@ vi.mock('../../src/main/agent/agent-registry', () => ({
 
 import { spawnAgent } from '../../src/main/ipc/helpers/agent-spawn';
 
-const TASK_ID = 'task-freeze-001';
+const TASK_ID = 'task-lock-001';
 const TO_LANE_ID = 'lane-executing';
 const FROM_LANE_ID = 'lane-todo';
 const PROJECT_ID = 'project-001';
@@ -93,7 +91,7 @@ function makeSwimlane(overrides: Partial<Swimlane> = {}): Swimlane {
 
 /**
  * The destination column deliberately differs from the project defaults in
- * EVERY field, so any leak of destination settings into the frozen values is
+ * EVERY field, so any leak of destination settings into the locked values is
  * caught by every test below.
  */
 function makeDestinationLane(): Swimlane {
@@ -140,6 +138,7 @@ async function runSpawn(
   toLane: Swimlane,
   deps: ReturnType<typeof makeDeps>,
   settingsSourceLane?: Swimlane | null,
+  extraOptions: { skipPromptTemplate?: boolean; suppressAutoCommand?: boolean } = {},
 ) {
   await spawnAgent({
     context: deps.context as never,
@@ -152,16 +151,16 @@ async function runSpawn(
     projectId: PROJECT_ID,
     projectPath: '/mock/project',
     ...(settingsSourceLane !== undefined ? { settingsSourceLane } : {}),
+    ...extraOptions,
   });
 }
 
-describe('spawnAgent freeze-Advanced-overrides-on-first-spawn', () => {
+describe('spawnAgent lock-Advanced-overrides-on-first-spawn', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    resolveTargetAgentMock.mockReturnValue({ agent: 'claude', isHandoff: false });
   });
 
-  it('freezes ALL FOUR fields to the settings-lane/project/global chain, never the destination column', async () => {
+  it('locks ALL FOUR fields to the settings-lane/project/global chain, never the destination column', async () => {
     const task = makeTask({ model_override: 'fable-5' });
     // Drag move: the source lane (To Do) has no overrides of its own, so the
     // dialog displayed project defaults + the global permission mode.
@@ -178,7 +177,7 @@ describe('spawnAgent freeze-Advanced-overrides-on-first-spawn', () => {
       permission_mode: 'auto',
     });
     // The in-memory task is updated too, so the spawn already in flight
-    // resolves against the frozen values (not the destination column's).
+    // resolves against the locked values (not the destination column's).
     expect(task.effort_override).toBe('xhigh');
     expect(task.permission_mode).toBe('auto');
   });
@@ -234,7 +233,7 @@ describe('spawnAgent freeze-Advanced-overrides-on-first-spawn', () => {
     });
   });
 
-  it('a permission-only pin also triggers the freeze', async () => {
+  it('a permission-only pin also triggers the lock', async () => {
     const task = makeTask({ permission_mode: 'plan' });
     const sourceLane = makeSwimlane({ id: FROM_LANE_ID, name: 'To Do', role: 'todo', auto_spawn: false });
     const deps = makeDeps({ latestSession: undefined, task });
@@ -250,7 +249,7 @@ describe('spawnAgent freeze-Advanced-overrides-on-first-spawn', () => {
     });
   });
 
-  it('does not freeze anything on first ever spawn when no override is set', async () => {
+  it('does not lock anything on first ever spawn when no override is set', async () => {
     const task = makeTask();
     const deps = makeDeps({ latestSession: undefined, task });
 
@@ -259,7 +258,7 @@ describe('spawnAgent freeze-Advanced-overrides-on-first-spawn', () => {
     expect(deps.tasks.update).not.toHaveBeenCalled();
   });
 
-  it('does not re-freeze a task reset to To Do and redragged (task.agent survives the reset)', async () => {
+  it('does not re-lock a task reset to To Do and redragged (task.agent survives the reset)', async () => {
     // No session record (wiped by the To-Do reset), but task.agent is still
     // set from its original first spawn - this must NOT be mistaken for a
     // fresh first-ever spawn.
@@ -269,5 +268,51 @@ describe('spawnAgent freeze-Advanced-overrides-on-first-spawn', () => {
     await runSpawn(task, makeDestinationLane(), deps, makeSwimlane({ id: FROM_LANE_ID, role: 'todo' }));
 
     expect(deps.tasks.update).not.toHaveBeenCalled();
+  });
+
+  it('locks then resolves: a conflicting destination agent_override loses to the just-locked settings-lane agent', async () => {
+    // The settings lane pins codex; the destination column says claude. The
+    // lock must persist codex (settings lane, the values the dialog showed)
+    // AND the spawn must actually run codex - the lock runs BEFORE agent
+    // resolution, so the just-locked task.agent_override wins over the
+    // destination column's agent_override. This is the create-path divergence
+    // bug shape: a locked agent that never reaches the engine.
+    const task = makeTask({ model_override: 'fable-5' });
+    const sourceLane = makeSwimlane({ id: FROM_LANE_ID, name: 'Staging', agent_override: 'codex' });
+    const destinationLane = makeSwimlane({ agent_override: 'claude' });
+    const deps = makeDeps({ latestSession: undefined, task });
+
+    await runSpawn(task, destinationLane, deps, sourceLane);
+
+    expect(deps.tasks.update).toHaveBeenCalledWith(
+      expect.objectContaining({ id: TASK_ID, agent_override: 'codex' }),
+    );
+    // The resolved agent reaches the engine on BOTH legs: the transition
+    // (agentOverride is the 7th argument) and the fallback resume (6th).
+    expect(deps.engine.executeTransition).toHaveBeenCalledTimes(1);
+    expect(deps.engine.executeTransition.mock.calls[0][6]).toBe('codex');
+    expect(deps.engine.resumeSuspendedSession).toHaveBeenCalledTimes(1);
+    expect(deps.engine.resumeSuspendedSession.mock.calls[0][5]).toBe('codex');
+  });
+
+  it('previously-spawned unarchive shape: no re-lock, and the resume keeps the task agent', async () => {
+    // The unarchive handlers route through spawnAgent with skipPromptTemplate
+    // + suppressAutoCommand. For a task that already spawned (session record
+    // in hand, task.agent set), the lock must no-op and the resolved agent
+    // must stay the task's agent - an unarchive never silently flips agents.
+    const task = makeTask({ agent: 'claude', model_override: 'fable-5' });
+    const suspendedRecord = { status: 'suspended', suspended_by: null };
+    const deps = makeDeps({ latestSession: suspendedRecord, task });
+
+    await runSpawn(task, makeDestinationLane(), deps, undefined, {
+      skipPromptTemplate: true,
+      suppressAutoCommand: true,
+    });
+
+    expect(deps.tasks.update).not.toHaveBeenCalled();
+    expect(deps.engine.executeTransition).toHaveBeenCalledTimes(1);
+    expect(deps.engine.executeTransition.mock.calls[0][6]).toBe('claude');
+    expect(deps.engine.resumeSuspendedSession).toHaveBeenCalledTimes(1);
+    expect(deps.engine.resumeSuspendedSession.mock.calls[0][5]).toBe('claude');
   });
 });

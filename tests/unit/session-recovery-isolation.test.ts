@@ -82,6 +82,9 @@ vi.mock('../../src/main/db/repositories/session-repository', () => {
     markRunningAsOrphanedExcluding = (...args: unknown[]) =>
       sessionRepoMarkRunningAsOrphanedExcluding(...args);
     getLatestForTaskByTypeAndIsolation = vi.fn(() => null);
+    // First-ever-spawn detection for the preamble's override lock: no session
+    // history in these tests, so autoSpawnTasks derives hasSessionRecord=false.
+    getLatestForTask = vi.fn(() => undefined);
     getUserPausedTaskIds = vi.fn(() => new Set<string>());
     insert = vi.fn();
     updateAppliedSettings = vi.fn();
