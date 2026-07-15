@@ -54,6 +54,28 @@ function asJsonValue(value: unknown): JsonValue {
   }
 }
 
+/**
+ * A tool_use input above this serialized size ships as a truncated preview
+ * marker instead. Transcript text/content spans are already clamped at
+ * parse time (transcript-cache MAX_SPAN_CHARS), but tool inputs are
+ * deliberately un-clamped there for the desktop viewer - the phone does
+ * not need a megabyte Write-file payload inside a prompt card, and
+ * bounding every entry is what lets the transcript-sync chunker guarantee
+ * its frames stay under the wire cap.
+ */
+const MAX_TOOL_INPUT_CHARS = 32 * 1024;
+const TOOL_INPUT_PREVIEW_CHARS = 2 * 1024;
+
+function clampToolInput(input: JsonValue): JsonValue {
+  const serialized = JSON.stringify(input);
+  if (serialized.length <= MAX_TOOL_INPUT_CHARS) return input;
+  return {
+    truncated: true,
+    originalChars: serialized.length,
+    preview: serialized.slice(0, TOOL_INPUT_PREVIEW_CHARS),
+  };
+}
+
 function toTranscriptBlockWire(block: TranscriptBlock): TranscriptBlockWire {
   switch (block.type) {
     case 'text':
@@ -61,38 +83,40 @@ function toTranscriptBlockWire(block: TranscriptBlock): TranscriptBlockWire {
     case 'thinking':
       return { type: 'thinking', text: block.text };
     case 'tool_use':
-      return { type: 'tool_use', id: block.id, name: block.name, input: asJsonValue(block.input) };
+      return { type: 'tool_use', id: block.id, name: block.name, input: clampToolInput(asJsonValue(block.input)) };
+  }
+}
+
+export function toTranscriptEntryWire(entry: TranscriptEntry): TranscriptEntryWire {
+  switch (entry.kind) {
+    case 'user':
+      return { kind: 'user', uuid: entry.uuid, ts: entry.ts, text: entry.text };
+    case 'assistant':
+      return {
+        kind: 'assistant',
+        uuid: entry.uuid,
+        ts: entry.ts,
+        ...(entry.model !== undefined ? { model: entry.model } : {}),
+        ...(entry.agentName !== undefined ? { agentName: entry.agentName } : {}),
+        ...(entry.usage !== undefined ? { usage: entry.usage } : {}),
+        blocks: entry.blocks.map(toTranscriptBlockWire),
+      };
+    case 'tool_result':
+      return {
+        kind: 'tool_result',
+        uuid: entry.uuid,
+        ts: entry.ts,
+        toolUseId: entry.toolUseId,
+        content: entry.content,
+        ...(entry.isError !== undefined ? { isError: entry.isError } : {}),
+      };
+    case 'system':
+      return { kind: 'system', uuid: entry.uuid, ts: entry.ts, subtype: entry.subtype, text: entry.text };
   }
 }
 
 export function toTranscriptEntriesWire(entries: TranscriptEntry[]): TranscriptEntryWire[] {
-  return entries.map((entry): TranscriptEntryWire => {
-    switch (entry.kind) {
-      case 'user':
-        return { kind: 'user', uuid: entry.uuid, ts: entry.ts, text: entry.text };
-      case 'assistant':
-        return {
-          kind: 'assistant',
-          uuid: entry.uuid,
-          ts: entry.ts,
-          ...(entry.model !== undefined ? { model: entry.model } : {}),
-          ...(entry.agentName !== undefined ? { agentName: entry.agentName } : {}),
-          ...(entry.usage !== undefined ? { usage: entry.usage } : {}),
-          blocks: entry.blocks.map(toTranscriptBlockWire),
-        };
-      case 'tool_result':
-        return {
-          kind: 'tool_result',
-          uuid: entry.uuid,
-          ts: entry.ts,
-          toolUseId: entry.toolUseId,
-          content: entry.content,
-          ...(entry.isError !== undefined ? { isError: entry.isError } : {}),
-        };
-      case 'system':
-        return { kind: 'system', uuid: entry.uuid, ts: entry.ts, subtype: entry.subtype, text: entry.text };
-    }
-  });
+  return entries.map(toTranscriptEntryWire);
 }
 
 export function toActivityReasonWire(reason: ActivityReason): ActivityReasonWire {

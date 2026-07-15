@@ -141,51 +141,78 @@ describe('handleReadStream', () => {
   const userEntry = { kind: 'user', uuid: 'entry-user-1', ts: 100, text: 'hello agent' };
   const assistantEntry = { kind: 'assistant', uuid: 'entry-assistant-1', ts: 200, blocks: [{ type: 'text', text: 'hi there' }] };
 
+  function liveTranscript(revision: number, entries: unknown[]): unknown {
+    return { revision, entries, source: 'live', degraded: false };
+  }
+
   function transcriptPushesOf(session: BridgeSession): unknown[][] {
     return (session.sendMessage as ReturnType<typeof vi.fn>).mock.calls.filter(
       ([message]) => (message as { event?: { kind?: string } }).event?.kind === 'transcript',
     );
   }
 
-  it('seeds the transcript once at subscribe time so a quiet session still delivers its conversation', async () => {
-    resolveTaskTranscriptMock.mockResolvedValue({ revision: 1, entries: [userEntry] });
+  it('subscribe seeds the transcript sync without pushing - the phone bootstraps via transcript-window', async () => {
+    resolveTaskTranscriptMock.mockResolvedValue(liveTranscript(1, [userEntry]));
     const session = fakeSession();
     const context = { sessionManager } as unknown as IpcContext;
     await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, new SubscriptionRegistry());
     await Promise.resolve();
     await Promise.resolve();
 
-    const transcriptPushes = transcriptPushesOf(session);
-    expect(transcriptPushes).toHaveLength(1);
-    expect(transcriptPushes[0][0]).toEqual({
-      type: 'event',
-      event: { kind: 'transcript', sessionId: 'sess-1', taskId: 'task-1', payload: [userEntry] },
-    });
+    expect(transcriptPushesOf(session)).toHaveLength(0);
   });
 
-  it('a session event push also checks the transcript and pushes a delta only when the revision increased', async () => {
+  it('a session event pushes only the changed entries as an indexed delta, and only when the revision increased', async () => {
     resolveTaskTranscriptMock
-      .mockResolvedValueOnce({ revision: 1, entries: [userEntry] }) // subscribe-time seed
-      .mockResolvedValueOnce({ revision: 1, entries: [userEntry] }) // unchanged revision - no push
-      .mockResolvedValueOnce({ revision: 2, entries: [userEntry, assistantEntry] });
+      .mockResolvedValueOnce(liveTranscript(1, [userEntry])) // subscribe-time seed (no push)
+      .mockResolvedValueOnce(liveTranscript(1, [userEntry])) // unchanged revision - no push
+      .mockResolvedValueOnce(liveTranscript(2, [userEntry, assistantEntry]));
     const session = fakeSession();
     const context = { sessionManager } as unknown as IpcContext;
     await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, new SubscriptionRegistry());
     await Promise.resolve();
     await Promise.resolve();
-    expect(transcriptPushesOf(session)).toHaveLength(1);
+    expect(transcriptPushesOf(session)).toHaveLength(0);
 
     sessionManager.emit('event', 'sess-1', { ts: 1, type: 'tool_start' });
     await Promise.resolve();
     await Promise.resolve();
-    expect(transcriptPushesOf(session)).toHaveLength(1); // unchanged revision
+    expect(transcriptPushesOf(session)).toHaveLength(0); // unchanged revision
 
     sessionManager.emit('event', 'sess-1', { ts: 2, type: 'tool_end' });
     await Promise.resolve();
     await Promise.resolve();
     const transcriptPushes = transcriptPushesOf(session);
-    expect(transcriptPushes).toHaveLength(2);
-    expect((transcriptPushes[1][0] as { event: { payload: unknown } }).event.payload).toEqual([userEntry, assistantEntry]);
+    expect(transcriptPushes).toHaveLength(1);
+    expect((transcriptPushes[0][0] as { event: { payload: unknown } }).event.payload).toEqual({
+      mode: 'delta',
+      revision: 2,
+      totalEntries: 2,
+      upserts: [{ index: 1, entry: assistantEntry }],
+    });
+  });
+
+  it('transcript-window returns the newest slice with its absolute start index', async () => {
+    const older = { kind: 'user', uuid: 'entry-older', ts: 50, text: 'earlier question' };
+    resolveTaskTranscriptMock.mockResolvedValue(liveTranscript(7, [older, userEntry, assistantEntry]));
+    const context = { sessionManager } as unknown as IpcContext;
+
+    const tail = await handleReadStream(
+      fakeRequest({ sessionId: 'sess-1', action: 'transcript-window', limit: 2 }),
+      fakeSession(),
+      context,
+      new SubscriptionRegistry(),
+    );
+    expect(tail.ok).toBe(true);
+    expect(tail.payload).toEqual({ revision: 7, totalEntries: 3, startIndex: 1, entries: [userEntry, assistantEntry] });
+
+    const olderPage = await handleReadStream(
+      fakeRequest({ sessionId: 'sess-1', action: 'transcript-window', beforeIndex: 1, limit: 2 }),
+      fakeSession(),
+      context,
+      new SubscriptionRegistry(),
+    );
+    expect(olderPage.payload).toEqual({ revision: 7, totalEntries: 3, startIndex: 0, entries: [older] });
   });
 
   it('pushes a permission activity event when a prompt appears, deduplicates, and clears with pending false', async () => {

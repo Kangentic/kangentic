@@ -35,7 +35,7 @@ export { deriveShortAuthenticationString, type ShortAuthenticationString } from 
 export { deriveSessionSlotId } from './crypto/slot';
 
 export type { JsonValue, BridgeMessage, HeartbeatMessage, CapabilityRequestMessage, CapabilityResponseMessage, EventMessage } from './wire/messages';
-export { encodeMessage, decodeMessage, MAX_FRAME_LENGTH } from './wire/framing';
+export { encodeMessage, decodeMessage, MAX_FRAME_LENGTH, MAX_DECODED_LENGTH, COMPRESSION_THRESHOLD } from './wire/framing';
 export { isJsonValue, isRecord } from './wire/json-value';
 export { SessionFrameKind, wrapSessionFrame, unwrapSessionFrame } from './wire/session-frame';
 
@@ -44,10 +44,12 @@ export {
   parseReadStreamResponsePayload,
   parseReadBoardResponsePayload,
   parseReadDiffResponsePayload,
+  parseTranscriptWindowResponsePayload,
   type CapabilityRequestPayloadMap,
   type CapabilityResponsePayloadMap,
   type ReadStreamRequestPayload,
   type ReadStreamResponsePayload,
+  type TranscriptWindowResponsePayload,
   type ReadBoardRequestPayload,
   type ReadBoardProjectSummary,
   type ReadBoardProjectListResponsePayload,
@@ -121,6 +123,9 @@ export {
 
 export {
   parseTranscriptEntriesWire,
+  parseTranscriptEventPayload,
+  type TranscriptEventPayload,
+  type TranscriptUpsertWire,
   isActivityStateWire,
   isActivityReasonWire,
   parseSessionUsageWire,

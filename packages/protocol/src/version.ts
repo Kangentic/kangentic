@@ -8,7 +8,7 @@
  * differing prologue produces a differing transcript hash `h` from the
  * first MixHash call, which cascades into every derived key.
  */
-export const PROTOCOL_VERSION = '1';
+export const PROTOCOL_VERSION = '2';
 
 export function encodeProtocolVersion(version: string = PROTOCOL_VERSION): Uint8Array {
   return new TextEncoder().encode(`kangentic-bridge-v${version}`);

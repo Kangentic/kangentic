@@ -1,34 +1,88 @@
 /**
  * Encodes/decodes a BridgeMessage to/from the plaintext bytes that flow
- * into and out of secretstream.seal()/open(). JSON for Phase 1 simplicity;
- * nothing above this module cares about the wire encoding, so a future
- * phase can switch to a binary format without touching callers.
+ * into and out of secretstream.seal()/open(). Nothing above this module
+ * cares about the wire encoding.
+ *
+ * Two self-describing frame forms (protocol v2):
+ * - Raw UTF-8 JSON. Every JSON message starts with '{' (0x7B), which
+ *   doubles as the format discriminant.
+ * - Deflated JSON: [0x01][u32le decodedByteLength][deflate-raw bytes].
+ *   encodeMessage produces this automatically when the JSON exceeds
+ *   COMPRESSION_THRESHOLD bytes and deflate actually helps; transcript
+ *   deltas and windowed history pages are text-heavy and typically
+ *   shrink 5-10x, which is what keeps chunked pushes small and fast.
  *
  * Size-bounded on both directions - even though this content is
  * post-Noise-authentication (unlike the QR payload), a malformed or
  * oversized message from a buggy or compromised peer should fail fast
- * with a clear error rather than trigger unbounded JSON parsing.
+ * with a clear error rather than trigger unbounded JSON parsing or a
+ * decompression bomb: the declared decoded length is validated against
+ * MAX_DECODED_LENGTH before any inflation happens, inflation is capped
+ * to exactly that allocation, and the result must fill it.
  */
+import { deflateSync, inflateSync } from 'fflate';
 import { isCapabilityVerb } from '../capabilities/verbs';
 import type { BridgeEvent } from '../events/event';
 import type { BridgeMessage, JsonValue } from './messages';
 import { isJsonValue, isRecord } from './json-value';
 
 export const MAX_FRAME_LENGTH = 1024 * 1024;
+/** Upper bound on the JSON a compressed frame may declare/inflate to. */
+export const MAX_DECODED_LENGTH = 4 * 1024 * 1024;
+/** JSON below this size ships raw - deflate overhead is not worth it. */
+export const COMPRESSION_THRESHOLD = 4 * 1024;
+
+const FRAME_FORMAT_DEFLATE = 0x01;
+const JSON_OPEN_BRACE = 0x7b;
+const DEFLATE_HEADER_LENGTH = 5;
 
 export function encodeMessage(message: BridgeMessage): Uint8Array {
-  const bytes = new TextEncoder().encode(JSON.stringify(message));
-  if (bytes.length > MAX_FRAME_LENGTH) {
+  const json = new TextEncoder().encode(JSON.stringify(message));
+  if (json.length > MAX_DECODED_LENGTH) {
+    throw new Error(`Encoded bridge message exceeds ${MAX_DECODED_LENGTH} bytes before compression`);
+  }
+  let frame = json;
+  if (json.length > COMPRESSION_THRESHOLD) {
+    const compressed = deflateSync(json);
+    if (compressed.length + DEFLATE_HEADER_LENGTH < json.length) {
+      frame = new Uint8Array(DEFLATE_HEADER_LENGTH + compressed.length);
+      frame[0] = FRAME_FORMAT_DEFLATE;
+      new DataView(frame.buffer).setUint32(1, json.length, true);
+      frame.set(compressed, DEFLATE_HEADER_LENGTH);
+    }
+  }
+  if (frame.length > MAX_FRAME_LENGTH) {
     throw new Error(`Encoded bridge message exceeds ${MAX_FRAME_LENGTH} bytes`);
   }
-  return bytes;
+  return frame;
 }
 
 export function decodeMessage(bytes: Uint8Array): BridgeMessage {
   if (bytes.length > MAX_FRAME_LENGTH) {
     throw new Error(`Bridge message frame exceeds ${MAX_FRAME_LENGTH} bytes`);
   }
-  const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes));
+  if (bytes.length === 0) throw new Error('Bridge message frame is empty');
+
+  let json: Uint8Array;
+  if (bytes[0] === JSON_OPEN_BRACE) {
+    json = bytes;
+  } else if (bytes[0] === FRAME_FORMAT_DEFLATE) {
+    if (bytes.length < DEFLATE_HEADER_LENGTH + 1) throw new Error('Compressed bridge message frame is truncated');
+    const declaredLength = new DataView(bytes.buffer, bytes.byteOffset).getUint32(1, true);
+    if (declaredLength === 0 || declaredLength > MAX_DECODED_LENGTH) {
+      throw new Error(`Compressed bridge message declares an invalid decoded length: ${declaredLength}`);
+    }
+    // fflate stops at the preallocated `out` size, so a frame lying about
+    // its decoded length cannot balloon past the declared allocation.
+    json = inflateSync(bytes.subarray(DEFLATE_HEADER_LENGTH), { out: new Uint8Array(declaredLength) });
+    if (json.length !== declaredLength) {
+      throw new Error('Compressed bridge message decoded length does not match its declaration');
+    }
+  } else {
+    throw new Error(`Unknown bridge message frame format: 0x${bytes[0].toString(16)}`);
+  }
+
+  const parsed: unknown = JSON.parse(new TextDecoder().decode(json));
   return validateBridgeMessage(parsed);
 }
 

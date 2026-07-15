@@ -3,6 +3,7 @@ import {
   type CapabilityRequestMessage,
   type CapabilityResponseMessage,
   type ReadStreamResponsePayload,
+  type TranscriptWindowResponsePayload,
 } from '@kangentic/protocol';
 import type { ActivityReason, ActivityState, SessionEvent, SessionUsage } from '../../../shared/types';
 import { getProjectDb } from '../../db/database';
@@ -12,11 +13,11 @@ import type { BridgeSession } from '../session/bridge-session';
 import type { SubscriptionRegistry } from '../session/subscription-registry';
 import { sendEvent } from './send-event';
 import { buildPermissionPromptId } from './permission-prompt-id';
+import { sliceTranscriptWindow, TranscriptSync } from './transcript-sync';
 import {
   toActivityReasonWire,
   toSessionEventWire,
   toSessionUsageWire,
-  toTranscriptEntriesWire,
   toWireJson,
 } from './wire-mappers';
 
@@ -43,7 +44,7 @@ function subscribeReadStream(
   subscriptions: SubscriptionRegistry,
 ): void {
   const db = getProjectDb(context.sessionManager.getSessionProjectId(sessionId) ?? '');
-  let lastKnownRevision = -1;
+  const transcriptSync = new TranscriptSync();
   let lastAwaitedPromptId = initialAwaitedPromptId;
   let pendingTerminalChunks: string[] = [];
   let terminalFlushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -59,9 +60,12 @@ function subscribeReadStream(
   const pushTranscriptIfChanged = async (): Promise<void> => {
     try {
       const resolved = await resolveTaskTranscript(db, sessionId);
-      if (!resolved || resolved.revision === lastKnownRevision) return;
-      lastKnownRevision = resolved.revision;
-      sendEvent(session, { kind: 'transcript', sessionId, taskId, payload: toTranscriptEntriesWire(resolved.entries) });
+      if (!resolved) return;
+      // Delta chunks stream the moment a turn's content changes - usually
+      // just the mutating tail entry, so each frame is small and immediate.
+      for (const payload of transcriptSync.diff(resolved)) {
+        sendEvent(session, { kind: 'transcript', sessionId, taskId, payload });
+      }
     } catch {
       // Best-effort; a transcript-read failure should not tear down the subscription.
     }
@@ -134,10 +138,20 @@ function subscribeReadStream(
     if (terminalFlushTimer) clearTimeout(terminalFlushTimer);
   });
 
-  // Seed the transcript immediately: a quiet session would otherwise push
-  // nothing until its next session event, leaving a fresh subscriber with
-  // scrollback but no parsed conversation.
-  void pushTranscriptIfChanged();
+  // Seed the sync state WITHOUT emitting: the phone bootstraps its view
+  // with a transcript-window request right after subscribing (tail first,
+  // older pages on demand), so pushing the whole transcript here would be
+  // redundant - and for long sessions impossible within the frame cap.
+  // Deltas cover only what changes from this point on.
+  void (async (): Promise<void> => {
+    try {
+      const resolved = await resolveTaskTranscript(db, sessionId);
+      if (resolved) transcriptSync.seed(resolved);
+    } catch {
+      // Best-effort: an unseeded sync just means the first post-subscribe
+      // change diffs against nothing and streams as plain appends.
+    }
+  })();
 }
 
 export async function handleReadStream(
@@ -157,6 +171,15 @@ export async function handleReadStream(
   const liveSession = context.sessionManager.getSession(payload.sessionId);
   if (!liveSession) {
     return { type: 'capability-response', requestId: request.requestId, ok: false, error: `No such session: ${payload.sessionId}` };
+  }
+
+  if (payload.action === 'transcript-window') {
+    const db = getProjectDb(context.sessionManager.getSessionProjectId(payload.sessionId) ?? '');
+    const resolved = await resolveTaskTranscript(db, payload.sessionId);
+    const windowPayload: TranscriptWindowResponsePayload = resolved
+      ? sliceTranscriptWindow(resolved, payload.beforeIndex, payload.limit)
+      : { revision: 0, totalEntries: 0, startIndex: 0, entries: [] };
+    return { type: 'capability-response', requestId: request.requestId, ok: true, payload: toWireJson(windowPayload) };
   }
 
   const scrollback = await context.sessionManager.getScrollback(payload.sessionId);

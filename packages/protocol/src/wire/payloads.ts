@@ -25,6 +25,7 @@ import {
   parseDiffFileContentWire,
   parseDiffFileListWire,
   parseSessionUsageWire,
+  parseTranscriptEntriesWire,
   type ActivityReasonWire,
   type ActivityStateWire,
   type BacklogItemWire,
@@ -33,13 +34,26 @@ import {
   type DiffFileContentWire,
   type DiffFileListWire,
   type SessionUsageWire,
+  type TranscriptEntryWire,
 } from '../events/payloads';
 
 // === read-stream ===
 
 export interface ReadStreamRequestPayload {
   sessionId: string;
-  action: 'subscribe' | 'unsubscribe';
+  /**
+   * 'transcript-window' is a one-shot windowed-history read: the newest
+   * `limit` transcript entries strictly before `beforeIndex` (or the tail
+   * when `beforeIndex` is omitted). The desktop may return fewer entries
+   * than `limit` to keep the response frame small - page again from the
+   * returned `startIndex`. Live updates after 'subscribe' arrive as
+   * incremental TranscriptEvent deltas, never full transcripts.
+   */
+  action: 'subscribe' | 'unsubscribe' | 'transcript-window';
+  /** transcript-window only: fetch entries strictly before this absolute index. Omit for the newest window. */
+  beforeIndex?: number;
+  /** transcript-window only: maximum entries wanted (the desktop may cap this and may return fewer). */
+  limit?: number;
 }
 
 /** Initial snapshot returned on subscribe; live updates arrive as TerminalEvent/ActivityEvent/TranscriptEvent. */
@@ -71,13 +85,59 @@ export function parseReadStreamResponsePayload(payload: JsonValue): ReadStreamRe
   };
 }
 
+/**
+ * A contiguous slice of the transcript, returned by the read-stream
+ * 'transcript-window' action. `startIndex` is the absolute index of
+ * `entries[0]`; `startIndex > 0` means more history exists above.
+ */
+export interface TranscriptWindowResponsePayload {
+  revision: number;
+  totalEntries: number;
+  startIndex: number;
+  entries: TranscriptEntryWire[];
+}
+
+/** Phone-side narrowing of a transcript-window response. Throws on a malformed required field. */
+export function parseTranscriptWindowResponsePayload(payload: JsonValue): TranscriptWindowResponsePayload {
+  if (!isRecord(payload)) throw new Error('transcript-window response must be an object');
+  const { revision, totalEntries, startIndex } = payload;
+  if (typeof revision !== 'number' || !Number.isInteger(revision) || revision < 0) {
+    throw new Error('transcript-window response has an invalid "revision"');
+  }
+  if (typeof totalEntries !== 'number' || !Number.isInteger(totalEntries) || totalEntries < 0) {
+    throw new Error('transcript-window response has an invalid "totalEntries"');
+  }
+  if (typeof startIndex !== 'number' || !Number.isInteger(startIndex) || startIndex < 0) {
+    throw new Error('transcript-window response has an invalid "startIndex"');
+  }
+  return {
+    revision,
+    totalEntries,
+    startIndex,
+    entries: parseTranscriptEntriesWire(payload.entries as JsonValue),
+  };
+}
+
 function parseReadStreamRequestPayload(payload: JsonValue): ReadStreamRequestPayload {
   if (!isRecord(payload)) throw new Error('read-stream payload must be an object');
   if (typeof payload.sessionId !== 'string') throw new Error('read-stream payload missing "sessionId"');
-  if (payload.action !== 'subscribe' && payload.action !== 'unsubscribe') {
+  if (payload.action !== 'subscribe' && payload.action !== 'unsubscribe' && payload.action !== 'transcript-window') {
     throw new Error('read-stream payload has an invalid "action"');
   }
-  return { sessionId: payload.sessionId, action: payload.action };
+  const request: ReadStreamRequestPayload = { sessionId: payload.sessionId, action: payload.action };
+  if (payload.beforeIndex !== undefined) {
+    if (typeof payload.beforeIndex !== 'number' || !Number.isInteger(payload.beforeIndex) || payload.beforeIndex < 0) {
+      throw new Error('read-stream payload has an invalid "beforeIndex"');
+    }
+    request.beforeIndex = payload.beforeIndex;
+  }
+  if (payload.limit !== undefined) {
+    if (typeof payload.limit !== 'number' || !Number.isInteger(payload.limit) || payload.limit < 1) {
+      throw new Error('read-stream payload has an invalid "limit"');
+    }
+    request.limit = payload.limit;
+  }
+  return request;
 }
 
 // === read-board ===
@@ -315,7 +375,7 @@ export interface CapabilityRequestPayloadMap {
 }
 
 export interface CapabilityResponsePayloadMap {
-  'read-stream': ReadStreamResponsePayload;
+  'read-stream': ReadStreamResponsePayload | TranscriptWindowResponsePayload;
   'read-board': ReadBoardResponsePayload;
   'read-diff': ReadDiffResponsePayload;
   'send-user-message': SendUserMessageResponsePayload;

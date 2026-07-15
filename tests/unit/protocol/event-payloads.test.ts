@@ -18,11 +18,13 @@ import {
   parseSessionEventWire,
   parseSessionUsageWire,
   parseTranscriptEntriesWire,
+  parseTranscriptEventPayload,
 } from '../../../packages/protocol/src/events/payloads';
 import {
   parseReadBoardResponsePayload,
   parseReadDiffResponsePayload,
   parseReadStreamResponsePayload,
+  parseTranscriptWindowResponsePayload,
 } from '../../../packages/protocol/src/wire/payloads';
 import type { JsonValue } from '../../../packages/protocol/src/wire/messages';
 
@@ -273,9 +275,54 @@ describe('read-* response parsers', () => {
   });
 });
 
+describe('parseTranscriptEventPayload', () => {
+  const userEntry = { kind: 'user', uuid: 'u', ts: 1, text: 'x' };
+
+  it('parses a delta payload with indexed upserts', () => {
+    const payload: JsonValue = { mode: 'delta', revision: 3, totalEntries: 12, upserts: [{ index: 11, entry: userEntry }] };
+    expect(parseTranscriptEventPayload(payload)).toEqual(payload);
+  });
+
+  it('parses a reset payload', () => {
+    expect(parseTranscriptEventPayload({ mode: 'reset', revision: 4, totalEntries: 0 })).toEqual({ mode: 'reset', revision: 4, totalEntries: 0 });
+  });
+
+  it('rejects a legacy whole-array payload, an unknown mode, and malformed upserts', () => {
+    expect(() => parseTranscriptEventPayload([userEntry] as unknown as JsonValue)).toThrow(/object/);
+    expect(() => parseTranscriptEventPayload({ mode: 'replace', revision: 1, totalEntries: 1 })).toThrow(/mode/);
+    expect(() => parseTranscriptEventPayload({ mode: 'delta', revision: 1, totalEntries: 1 })).toThrow(/upserts/);
+    expect(() => parseTranscriptEventPayload({ mode: 'delta', revision: 1, totalEntries: 1, upserts: [{ index: -1, entry: userEntry }] })).toThrow(/index/);
+    expect(() => parseTranscriptEventPayload({ mode: 'delta', revision: 1, totalEntries: 1, upserts: [{ index: 0, entry: { kind: 'user' } }] })).toThrow(/entry/);
+    expect(() => parseTranscriptEventPayload({ mode: 'delta', revision: 1.5, totalEntries: 1, upserts: [] })).toThrow(/revision/);
+  });
+});
+
+describe('parseTranscriptWindowResponsePayload', () => {
+  const userEntry = { kind: 'user', uuid: 'u', ts: 1, text: 'x' };
+
+  it('parses a windowed-history page', () => {
+    const payload: JsonValue = { revision: 9, totalEntries: 500, startIndex: 440, entries: [userEntry] };
+    expect(parseTranscriptWindowResponsePayload(payload)).toEqual(payload);
+  });
+
+  it('rejects malformed windows', () => {
+    expect(() => parseTranscriptWindowResponsePayload({ revision: 9, totalEntries: 500, startIndex: -1, entries: [] })).toThrow(/startIndex/);
+    expect(() => parseTranscriptWindowResponsePayload({ revision: 9, totalEntries: 500, startIndex: 0, entries: [{ kind: 'user' }] })).toThrow(/malformed/);
+    expect(() => parseTranscriptWindowResponsePayload({ revision: 9, startIndex: 0, entries: [] })).toThrow(/totalEntries/);
+  });
+});
+
 describe('isBridgeEvent', () => {
   it('accepts every well-formed event kind', () => {
-    expect(isBridgeEvent({ kind: 'transcript', sessionId: 's', taskId: 't', payload: [{ kind: 'user', uuid: 'u', ts: 1, text: 'x' }] })).toBe(true);
+    expect(
+      isBridgeEvent({
+        kind: 'transcript',
+        sessionId: 's',
+        taskId: 't',
+        payload: { mode: 'delta', revision: 1, totalEntries: 1, upserts: [{ index: 0, entry: { kind: 'user', uuid: 'u', ts: 1, text: 'x' } }] },
+      }),
+    ).toBe(true);
+    expect(isBridgeEvent({ kind: 'transcript', sessionId: 's', taskId: 't', payload: { mode: 'reset', revision: 2, totalEntries: 0 } })).toBe(true);
     expect(isBridgeEvent({ kind: 'activity', sessionId: 's', taskId: 't', payload: { type: 'permission', promptId: 'p', pending: true } })).toBe(true);
     expect(isBridgeEvent({ kind: 'terminal', sessionId: 's', taskId: 't', payload: { data: 'bytes' } })).toBe(true);
     expect(isBridgeEvent({ kind: 'board', projectId: 'p', payload: { change: 'task-updated', ids: ['t-1'] } })).toBe(true);
@@ -284,7 +331,8 @@ describe('isBridgeEvent', () => {
 
   it('rejects malformed events', () => {
     expect(isBridgeEvent(null)).toBe(false);
-    expect(isBridgeEvent({ kind: 'transcript', sessionId: 's', taskId: 't', payload: 'not-entries' })).toBe(false);
+    expect(isBridgeEvent({ kind: 'transcript', sessionId: 's', taskId: 't', payload: 'not-a-delta' })).toBe(false);
+    expect(isBridgeEvent({ kind: 'transcript', sessionId: 's', taskId: 't', payload: [{ kind: 'user', uuid: 'u', ts: 1, text: 'x' }] })).toBe(false);
     expect(isBridgeEvent({ kind: 'activity', sessionId: 's', taskId: 't', payload: { type: 'activity', state: 'busy', reason: { kind: 'idle' } } })).toBe(false);
     expect(isBridgeEvent({ kind: 'terminal', sessionId: 's', taskId: 't', payload: { data: 42 } })).toBe(false);
     expect(isBridgeEvent({ kind: 'board', projectId: 'p', payload: { change: 'exploded', ids: [] } })).toBe(false);

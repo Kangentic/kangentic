@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { decodeMessage, encodeMessage } from '../../../packages/protocol/src/wire/framing';
+import {
+  COMPRESSION_THRESHOLD,
+  decodeMessage,
+  encodeMessage,
+  MAX_DECODED_LENGTH,
+} from '../../../packages/protocol/src/wire/framing';
 import type { BridgeMessage } from '../../../packages/protocol/src/wire/messages';
 
 describe('wire message framing', () => {
@@ -122,13 +127,82 @@ describe('wire message framing', () => {
     expect(() => decodeMessage(new TextEncoder().encode('{not json'))).toThrow();
   });
 
-  it('rejects an oversized frame', () => {
+  it('keeps small messages as raw self-describing JSON frames', () => {
+    const frame = encodeMessage({ type: 'heartbeat' });
+    expect(frame[0]).toBe('{'.charCodeAt(0));
+    expect(frame.length).toBeLessThan(COMPRESSION_THRESHOLD);
+  });
+
+  it('deflates a large compressible message and round-trips it', () => {
+    const message: BridgeMessage = {
+      type: 'capability-response',
+      requestId: 'req-1',
+      ok: true,
+      payload: { text: 'streamed transcript content '.repeat(4096) },
+    };
+    const frame = encodeMessage(message);
+    expect(frame[0]).toBe(0x01);
+    expect(frame.length).toBeLessThan(JSON.stringify(message).length / 4);
+    expect(decodeMessage(frame)).toEqual(message);
+  });
+
+  it('rejects a message whose JSON exceeds the decoded-length cap even when compressible', () => {
     const huge: BridgeMessage = {
       type: 'capability-request',
       requestId: 'r',
       verb: 'send-user-message',
-      payload: { text: 'x'.repeat(2 * 1024 * 1024) },
+      payload: { text: 'x'.repeat(MAX_DECODED_LENGTH + 1024) },
     };
-    expect(() => encodeMessage(huge)).toThrow();
+    expect(() => encodeMessage(huge)).toThrow(/before compression/);
+  });
+
+  it('rejects an incompressible frame above the wire cap', () => {
+    // Pseudo-random hex compresses barely at all, so the deflated frame
+    // still exceeds MAX_FRAME_LENGTH and the encode must throw.
+    let seed = 0x12345678;
+    const randomHexChunk = (): string => {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      return seed.toString(16).padStart(8, '0');
+    };
+    const incompressible = Array.from({ length: (2 * 1024 * 1024) / 8 }, randomHexChunk).join('');
+    const huge: BridgeMessage = {
+      type: 'capability-request',
+      requestId: 'r',
+      verb: 'send-user-message',
+      payload: { text: incompressible },
+    };
+    expect(() => encodeMessage(huge)).toThrow(/exceeds/);
+  });
+
+  it('rejects a compressed frame declaring an oversized decoded length', () => {
+    const frame = encodeMessage({
+      type: 'capability-response',
+      requestId: 'req-1',
+      ok: true,
+      payload: { text: 'compress me '.repeat(2048) },
+    });
+    expect(frame[0]).toBe(0x01);
+    const tampered = frame.slice();
+    new DataView(tampered.buffer).setUint32(1, MAX_DECODED_LENGTH + 1, true);
+    expect(() => decodeMessage(tampered)).toThrow(/invalid decoded length/);
+  });
+
+  it('rejects a compressed frame whose declared length does not match its content', () => {
+    const frame = encodeMessage({
+      type: 'capability-response',
+      requestId: 'req-1',
+      ok: true,
+      payload: { text: 'compress me '.repeat(2048) },
+    });
+    expect(frame[0]).toBe(0x01);
+    const tampered = frame.slice();
+    const declared = new DataView(tampered.buffer).getUint32(1, true);
+    new DataView(tampered.buffer).setUint32(1, declared + 7, true);
+    expect(() => decodeMessage(tampered)).toThrow();
+  });
+
+  it('rejects an unknown frame format byte and an empty frame', () => {
+    expect(() => decodeMessage(new Uint8Array([0x7f, 1, 2, 3]))).toThrow(/Unknown bridge message frame format/);
+    expect(() => decodeMessage(new Uint8Array(0))).toThrow(/empty/);
   });
 });

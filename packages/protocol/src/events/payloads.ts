@@ -54,6 +54,35 @@ export type TranscriptEntryWire =
   | { kind: 'tool_result'; uuid: string; ts: number; toolUseId: string; content: string; isError?: boolean }
   | { kind: 'system'; uuid: string; ts: number; subtype: TranscriptSystemSubtypeWire; text: string };
 
+/** One transcript entry at its absolute position in the full transcript at the delta's revision. */
+export interface TranscriptUpsertWire {
+  index: number;
+  entry: TranscriptEntryWire;
+}
+
+/**
+ * Protocol v2 transcript payload: incremental, never the whole transcript.
+ *
+ * - 'delta' carries only the entries that changed or appeared since the
+ *   last delta the desktop sent on this subscription, as absolute-indexed
+ *   upserts in ascending order. A large delta is split across several
+ *   events (same revision) so every frame stays well under the transport
+ *   caps and the first chunk renders without waiting for the rest. The
+ *   phone applies upserts inside or adjacent to its loaded window and
+ *   re-requests a window when it detects a gap.
+ * - 'reset' tells the phone its local state is unreconstructable from
+ *   deltas (entries removed or reordered, or a degraded transcript source
+ *   whose uuids are unstable) - drop local entries and re-request a
+ *   window via the read-stream 'transcript-window' action.
+ *
+ * `revision` is the desktop's monotonically increasing whole-transcript
+ * version; `totalEntries` is the full transcript length at that revision,
+ * which is how the phone knows history extends above its window.
+ */
+export type TranscriptEventPayload =
+  | { mode: 'delta'; revision: number; totalEntries: number; upserts: TranscriptUpsertWire[] }
+  | { mode: 'reset'; revision: number; totalEntries: number };
+
 // === Activity ===
 
 /** Mirrors the desktop's ActivityState. 'permission' means the agent paused for user approval (incl. AskUserQuestion / ExitPlanMode pauses). */
@@ -237,13 +266,34 @@ function isTranscriptEntryWire(value: unknown): value is TranscriptEntryWire {
   }
 }
 
-/** Narrows a transcript event's payload to the entry array the phone renders. Throws on a malformed entry so the caller can drop the push. */
+/** Narrows a transcript entry array (windowed-history pages). Throws on a malformed entry so the caller can drop the payload. */
 export function parseTranscriptEntriesWire(payload: JsonValue): TranscriptEntryWire[] {
   if (!Array.isArray(payload)) throw new Error('transcript payload must be an array of entries');
   return payload.map((entry, index) => {
     if (!isTranscriptEntryWire(entry)) throw new Error(`transcript payload entry ${index} is malformed`);
     return entry;
   });
+}
+
+/** Narrows a transcript event's delta/reset payload. Throws on a malformed required field so the caller can drop the push. */
+export function parseTranscriptEventPayload(payload: JsonValue): TranscriptEventPayload {
+  if (!isRecord(payload)) throw new Error('transcript payload must be an object');
+  const revision = requireNumber(payload, 'revision', 'transcript payload');
+  const totalEntries = requireNumber(payload, 'totalEntries', 'transcript payload');
+  if (!Number.isInteger(revision) || revision < 0) throw new Error('transcript payload has an invalid "revision"');
+  if (!Number.isInteger(totalEntries) || totalEntries < 0) throw new Error('transcript payload has an invalid "totalEntries"');
+
+  if (payload.mode === 'reset') return { mode: 'reset', revision, totalEntries };
+  if (payload.mode !== 'delta') throw new Error('transcript payload has an invalid "mode"');
+  if (!Array.isArray(payload.upserts)) throw new Error('transcript delta is missing "upserts"');
+  const upserts = payload.upserts.map((upsert, position): TranscriptUpsertWire => {
+    if (!isRecord(upsert) || typeof upsert.index !== 'number' || !Number.isInteger(upsert.index) || upsert.index < 0) {
+      throw new Error(`transcript delta upsert ${position} has an invalid "index"`);
+    }
+    if (!isTranscriptEntryWire(upsert.entry)) throw new Error(`transcript delta upsert ${position} has a malformed "entry"`);
+    return { index: upsert.index, entry: upsert.entry };
+  });
+  return { mode: 'delta', revision, totalEntries, upserts };
 }
 
 /** True for a well-formed ActivityStateWire value. */

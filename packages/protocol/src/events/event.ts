@@ -30,19 +30,20 @@ import {
   isActivityStateWire,
   parseSessionEventWire,
   parseSessionUsageWire,
-  parseTranscriptEntriesWire,
+  parseTranscriptEventPayload,
   type ActivityReasonWire,
   type ActivityStateWire,
   type SessionEventWire,
   type SessionUsageWire,
-  type TranscriptEntryWire,
+  type TranscriptEventPayload,
 } from './payloads';
 
 export interface TranscriptEvent {
   kind: 'transcript';
   sessionId: string;
   taskId: string;
-  payload: TranscriptEntryWire[];
+  /** Incremental (protocol v2): indexed upserts or a reset signal, never the whole transcript. See TranscriptEventPayload. */
+  payload: TranscriptEventPayload;
 }
 
 export type ActivityEventPayload =
@@ -124,7 +125,7 @@ export function isBridgeEvent(value: unknown): value is BridgeEvent {
     case 'transcript': {
       if (typeof value.sessionId !== 'string' || typeof value.taskId !== 'string') return false;
       try {
-        parseTranscriptEntriesWire(value.payload as JsonValue);
+        parseTranscriptEventPayload(value.payload as JsonValue);
         return true;
       } catch {
         return false;
