@@ -294,8 +294,13 @@ describe('CONFIG_SET IPC handler - mobileBridgeService reconcile wiring', () => 
     invokeHandler('config:set', { mobileBridge: { enabled: true } });
 
     expect(context.mobileBridgeService.reconcile).toHaveBeenCalledTimes(1);
+    // The mobile bridge is gated to dev builds until the mobile app
+    // launches, and this suite compiles with __KANGENTIC_DEV__ = false
+    // (vitest.config.ts) - i.e. the production build. So even a persisted
+    // enabled:true must reconcile to enabled:false here; relayUrl still
+    // flows from the EFFECTIVE config (not the raw partial argument).
     expect(context.mobileBridgeService.reconcile).toHaveBeenCalledWith({
-      enabled: true,
+      enabled: false,
       relayUrl: 'wss://relay.example.com',
     });
   });
