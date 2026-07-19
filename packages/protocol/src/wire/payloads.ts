@@ -76,6 +76,15 @@ export interface ReadStreamResponsePayload {
   /** The live outstanding permission-prompt id (see answer-permission-prompt), or null when none is pending. */
   awaitedPromptId: string | null;
   /**
+   * The awaited prompt's numbered option labels, parsed by the desktop from
+   * the pending dialog's PTY frame, in keystroke order: options[0] is the
+   * row answered with "1\r", options[1] with "2\r", and so on. Absent from
+   * pre-0.6.0 desktops; absent or null means unknown (no numbered dialog
+   * could be parsed), and the phone falls back to its blind
+   * approve/deny keystrokes. Only meaningful while awaitedPromptId is set.
+   */
+  awaitedPromptOptions?: string[] | null;
+  /**
    * The PTY grid the scrollback bytes are laid out for. Absent from
    * pre-0.4.0 desktops; the phone then falls back to inferring a width
    * from the scrollback content.
@@ -106,6 +115,15 @@ export function parseReadStreamResponsePayload(payload: JsonValue): ReadStreamRe
     usage: payload.usage === null || payload.usage === undefined ? null : parseSessionUsageWire(payload.usage as JsonValue),
     awaitedPromptId: payload.awaitedPromptId ?? null,
   };
+  if (payload.awaitedPromptOptions !== undefined) {
+    if (payload.awaitedPromptOptions === null) {
+      response.awaitedPromptOptions = null;
+    } else if (Array.isArray(payload.awaitedPromptOptions) && payload.awaitedPromptOptions.every((option) => typeof option === 'string')) {
+      response.awaitedPromptOptions = payload.awaitedPromptOptions;
+    } else {
+      throw new Error('read-stream response has an invalid "awaitedPromptOptions"');
+    }
+  }
   if (payload.ptyDimensions !== undefined) {
     response.ptyDimensions = parseTerminalDimensionsWire(payload.ptyDimensions as JsonValue);
   }

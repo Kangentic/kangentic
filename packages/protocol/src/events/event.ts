@@ -55,7 +55,14 @@ export type ActivityEventPayload =
   | { type: 'activity'; state: ActivityStateWire; reason: ActivityReasonWire }
   | { type: 'usage'; usage: SessionUsageWire }
   | { type: 'event'; event: SessionEventWire }
-  | { type: 'permission'; promptId: string; pending: boolean }
+  /**
+   * `options`, when present on a pending push, carries the prompt dialog's
+   * numbered option labels in keystroke order (options[0] is answered with
+   * "1\r"). Absent from pre-0.6.0 desktops and whenever no numbered dialog
+   * could be parsed from the PTY frame; the phone then falls back to its
+   * blind approve/deny keystrokes.
+   */
+  | { type: 'permission'; promptId: string; pending: boolean; options?: string[] }
   /**
    * The streamed session's PTY exited. Pushed once by the desktop's
    * read-stream subscription right before it tears itself down, so the
@@ -128,7 +135,13 @@ export function parseActivityEventPayload(payload: JsonValue): ActivityEventPayl
     case 'permission': {
       if (typeof payload.promptId !== 'string') throw new Error('permission payload is missing "promptId"');
       if (typeof payload.pending !== 'boolean') throw new Error('permission payload is missing "pending"');
-      return { type: 'permission', promptId: payload.promptId, pending: payload.pending };
+      if (payload.options === undefined) {
+        return { type: 'permission', promptId: payload.promptId, pending: payload.pending };
+      }
+      if (!Array.isArray(payload.options) || !payload.options.every((option) => typeof option === 'string')) {
+        throw new Error('permission payload has an invalid "options"');
+      }
+      return { type: 'permission', promptId: payload.promptId, pending: payload.pending, options: payload.options };
     }
     case 'session-ended': {
       if (typeof payload.intentional !== 'boolean') throw new Error('session-ended payload is missing "intentional"');
