@@ -13,6 +13,7 @@ import type { BridgeSession } from '../session/bridge-session';
 import type { SubscriptionRegistry } from '../session/subscription-registry';
 import { sendEvent } from './send-event';
 import { buildPermissionPromptId } from './permission-prompt-id';
+import { extractPromptOptions } from '../prompt-options-probe';
 import { sliceTranscriptWindow, TranscriptSync } from './transcript-sync';
 import {
   toActivityReasonWire,
@@ -34,6 +35,14 @@ const TERMINAL_COALESCE_MS = 16;
  */
 const TERMINAL_IMMEDIATE_FLUSH_CHARS = 256;
 
+/**
+ * When a permission prompt appears and the option-label probe finds no
+ * numbered dialog in the frame, retry once after this delay: the activity
+ * emission that flips permissionPending can beat the TUI's dialog paint.
+ * Prompts are rare, so the (at most one) extra frame read is negligible.
+ */
+const PROMPT_OPTIONS_RETRY_MS = 400;
+
 function subscriptionKeyFor(sessionId: string): string {
   return `stream:${sessionId}`;
 }
@@ -43,6 +52,21 @@ function currentAwaitedPromptId(context: IpcContext, sessionId: string): string 
   return statsSnapshot?.permissionPending && statsSnapshot.permissionAwaitedToolId
     ? buildPermissionPromptId(sessionId, statsSnapshot.permissionAwaitedToolId)
     : null;
+}
+
+/**
+ * Best-effort option-label probe for the awaited prompt: parse the numbered
+ * dialog out of the session's serialized frame. Null (no dialog parsed, or
+ * the frame read failed) just means the phone falls back to its blind
+ * approve/deny keystrokes, exactly as before this field existed.
+ */
+async function probePromptOptions(context: IpcContext, sessionId: string): Promise<string[] | null> {
+  try {
+    const frame = await context.sessionManager.getSerializedFrame(sessionId);
+    return extractPromptOptions(frame, context.sessionManager.getDimensions(sessionId) ?? undefined);
+  } catch {
+    return null;
+  }
 }
 
 function subscribeReadStream(
@@ -56,6 +80,7 @@ function subscribeReadStream(
   const db = getProjectDb(context.sessionManager.getSessionProjectId(sessionId) ?? '');
   const transcriptSync = new TranscriptSync();
   let lastAwaitedPromptId = initialAwaitedPromptId;
+  let disposed = false;
   let pendingTerminalChunks: string[] = [];
   let pendingTerminalChars = 0;
   let terminalFlushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -90,13 +115,32 @@ function subscribeReadStream(
   // subscribe time - a prompt that appears (or clears) later must be pushed,
   // or the phone cannot answer it without blindly re-subscribing. Emitted as
   // the `permission` activity payload the protocol defined for exactly this.
+  // The pending:true push rides behind an async option-label probe (with one
+  // short retry when the frame has not painted the dialog yet); the phone's
+  // needs-you state still updates instantly via the activity event this
+  // subscription sends first, and a probe miss just omits `options`.
   const pushPermissionIfChanged = (): void => {
     const awaitedPromptId = currentAwaitedPromptId(context, sessionId);
     if (awaitedPromptId === lastAwaitedPromptId) return;
     const previousPromptId = lastAwaitedPromptId;
     lastAwaitedPromptId = awaitedPromptId;
     if (awaitedPromptId) {
-      sendEvent(session, { kind: 'activity', sessionId, taskId, payload: { type: 'permission', promptId: awaitedPromptId, pending: true } });
+      void (async (): Promise<void> => {
+        let options = await probePromptOptions(context, sessionId);
+        if (options === null && !disposed && lastAwaitedPromptId === awaitedPromptId) {
+          await new Promise((resolve) => setTimeout(resolve, PROMPT_OPTIONS_RETRY_MS));
+          options = await probePromptOptions(context, sessionId);
+        }
+        // The prompt may have cleared (or been replaced) while probing; a
+        // stale pending:true would strand the phone on an unanswerable card.
+        if (disposed || lastAwaitedPromptId !== awaitedPromptId) return;
+        sendEvent(session, {
+          kind: 'activity',
+          sessionId,
+          taskId,
+          payload: { type: 'permission', promptId: awaitedPromptId, pending: true, ...(options ? { options } : {}) },
+        });
+      })();
     } else if (previousPromptId) {
       sendEvent(session, { kind: 'activity', sessionId, taskId, payload: { type: 'permission', promptId: previousPromptId, pending: false } });
     }
@@ -171,6 +215,7 @@ function subscribeReadStream(
   context.sessionManager.on('exit', onExit);
 
   subscriptions.set(subscriptionKeyFor(sessionId), () => {
+    disposed = true; // parks any in-flight prompt-options probe so it never sends after teardown
     context.sessionManager.off('data-tap', onDataTap);
     context.sessionManager.off('pty-resize', onPtyResize);
     context.sessionManager.off('activity', onActivity);
@@ -235,6 +280,11 @@ export async function handleReadStream(
   const awaitedPromptId = currentAwaitedPromptId(context, payload.sessionId);
 
   const ptyDimensions = toTerminalDimensionsWire(context.sessionManager.getDimensions(payload.sessionId));
+  // The prompt was outstanding before this subscribe, so its dialog is
+  // already painted into the frame we just serialized - probe that frame
+  // directly instead of a second read. Null = no numbered dialog parsed;
+  // the phone falls back to its blind approve/deny keystrokes.
+  const awaitedPromptOptions = awaitedPromptId ? extractPromptOptions(scrollback, ptyDimensions) : null;
   const responsePayload: ReadStreamResponsePayload = {
     scrollback,
     activity: {
@@ -243,6 +293,7 @@ export async function handleReadStream(
     },
     usage: usage ? toSessionUsageWire(usage) : null,
     awaitedPromptId,
+    ...(awaitedPromptId ? { awaitedPromptOptions } : {}),
     ...(ptyDimensions ? { ptyDimensions } : {}),
     sessionStatus: toReadStreamSessionStatusWire(liveSession.status),
   };

@@ -30,6 +30,21 @@ const usageFixture = {
   model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8' },
 };
 
+// Authored fixture mirroring the numbered permission dialog Claude Code
+// paints (box border + ❯ marker), for the option-label probe.
+const permissionDialogFrame = [
+  'Do you want to proceed?',
+  '│ ❯ 1. Yes                                        │',
+  "│   2. Yes, and don't ask again for this command  │",
+  '│   3. No, and tell Claude what to do differently │',
+].join('\r\n');
+const permissionDialogOptions = ['Yes', "Yes, and don't ask again for this command", 'No, and tell Claude what to do differently'];
+
+/** Let the async option-label probe inside the permission push settle. */
+function flushProbe(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
 class FakeSessionManager extends EventEmitter {
   getSession = vi.fn((id: string) => ({ id, taskId: 'task-1', status: 'running' }));
   getScrollback = vi.fn(() => Promise.resolve('scrollback-content'));
@@ -64,10 +79,29 @@ describe('handleReadStream', () => {
     const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), fakeSession(), context, new SubscriptionRegistry());
 
     expect(response.ok).toBe(true);
-    const payload = response.payload as { scrollback: string; awaitedPromptId: string | null; ptyDimensions?: unknown };
+    const payload = response.payload as { scrollback: string; awaitedPromptId: string | null; awaitedPromptOptions?: string[] | null; ptyDimensions?: unknown };
     expect(payload.scrollback).toBe('serialized-frame');
     expect(payload.awaitedPromptId).toBe('sess-1:tool-9');
+    // The frame shows no numbered dialog, so the option labels are unknown.
+    expect(payload.awaitedPromptOptions).toBeNull();
     expect(payload.ptyDimensions).toEqual({ cols: 120, rows: 30 });
+  });
+
+  it('the snapshot carries the parsed option labels when the pending dialog is in the frame', async () => {
+    sessionManager.getActivityStatsSnapshot.mockReturnValue({ permissionPending: true, permissionAwaitedToolId: 'tool-9' });
+    sessionManager.getSerializedFrame.mockResolvedValue(permissionDialogFrame);
+    const context = { sessionManager } as unknown as IpcContext;
+    const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), fakeSession(), context, new SubscriptionRegistry());
+
+    const payload = response.payload as { awaitedPromptId: string | null; awaitedPromptOptions?: string[] | null };
+    expect(payload.awaitedPromptId).toBe('sess-1:tool-9');
+    expect(payload.awaitedPromptOptions).toEqual(permissionDialogOptions);
+  });
+
+  it('omits awaitedPromptOptions entirely when no prompt is pending', async () => {
+    const context = { sessionManager } as unknown as IpcContext;
+    const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), fakeSession(), context, new SubscriptionRegistry());
+    expect('awaitedPromptOptions' in (response.payload as Record<string, unknown>)).toBe(false);
   });
 
   it('omits ptyDimensions from the snapshot when the grid is unknowable', async () => {
@@ -321,8 +355,9 @@ describe('handleReadStream', () => {
     expect(olderPage.payload).toEqual({ revision: 7, totalEntries: 3, startIndex: 0, entries: [older] });
   });
 
-  it('pushes a permission activity event when a prompt appears, deduplicates, and clears with pending false', async () => {
+  it('pushes a permission activity event (with parsed option labels) when a prompt appears, deduplicates, and clears with pending false', async () => {
     const session = fakeSession();
+    sessionManager.getSerializedFrame.mockResolvedValue(permissionDialogFrame);
     const context = { sessionManager } as unknown as IpcContext;
     await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, new SubscriptionRegistry());
 
@@ -331,9 +366,11 @@ describe('handleReadStream', () => {
         ([message]) => (message as { event?: { payload?: { type?: string } } }).event?.payload?.type === 'permission',
       );
 
-    // A prompt appears after subscribe: the next activity emission carries it.
+    // A prompt appears after subscribe: the next activity emission carries it,
+    // labeled from the dialog the probe finds in the frame.
     sessionManager.getActivityStatsSnapshot.mockReturnValue({ permissionPending: true, permissionAwaitedToolId: 'tool-7' });
     sessionManager.emit('activity', 'sess-1', 'permission', { kind: 'permission' });
+    await flushProbe();
     expect(permissionPushes()).toHaveLength(1);
     expect(permissionPushes()[0][0]).toEqual({
       type: 'event',
@@ -341,12 +378,13 @@ describe('handleReadStream', () => {
         kind: 'activity',
         sessionId: 'sess-1',
         taskId: 'task-1',
-        payload: { type: 'permission', promptId: 'sess-1:tool-7', pending: true },
+        payload: { type: 'permission', promptId: 'sess-1:tool-7', pending: true, options: permissionDialogOptions },
       },
     });
 
     // The same outstanding prompt does not re-emit.
     sessionManager.emit('activity', 'sess-1', 'permission', { kind: 'permission' });
+    await flushProbe();
     expect(permissionPushes()).toHaveLength(1);
 
     // The prompt clears: pending false carries the id that was answered.
@@ -358,6 +396,114 @@ describe('handleReadStream', () => {
       promptId: 'sess-1:tool-7',
       pending: false,
     });
+  });
+
+  it('retries the option probe once when the dialog has not painted yet, then pushes with the labels', async () => {
+    vi.useFakeTimers();
+    try {
+      const session = fakeSession();
+      const context = { sessionManager } as unknown as IpcContext;
+      await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, new SubscriptionRegistry());
+
+      // First probe read races the TUI's dialog paint and misses; the retry sees it.
+      sessionManager.getSerializedFrame
+        .mockResolvedValueOnce('still thinking, no dialog yet')
+        .mockResolvedValue(permissionDialogFrame);
+      sessionManager.getActivityStatsSnapshot.mockReturnValue({ permissionPending: true, permissionAwaitedToolId: 'tool-7' });
+      sessionManager.emit('activity', 'sess-1', 'permission', { kind: 'permission' });
+      await vi.runAllTimersAsync();
+
+      const permissionPushes = (session.sendMessage as ReturnType<typeof vi.fn>).mock.calls.filter(
+        ([message]) => (message as { event?: { payload?: { type?: string } } }).event?.payload?.type === 'permission',
+      );
+      expect(permissionPushes).toHaveLength(1);
+      expect((permissionPushes[0][0] as { event: { payload: unknown } }).event.payload).toEqual({
+        type: 'permission',
+        promptId: 'sess-1:tool-7',
+        pending: true,
+        options: permissionDialogOptions,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('pushes pending true without options when no numbered dialog ever parses (blind fallback preserved)', async () => {
+    vi.useFakeTimers();
+    try {
+      const session = fakeSession(); // frame stays 'serialized-frame': never a dialog
+      const context = { sessionManager } as unknown as IpcContext;
+      await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, new SubscriptionRegistry());
+
+      sessionManager.getActivityStatsSnapshot.mockReturnValue({ permissionPending: true, permissionAwaitedToolId: 'tool-7' });
+      sessionManager.emit('activity', 'sess-1', 'permission', { kind: 'permission' });
+      await vi.runAllTimersAsync();
+
+      const permissionPushes = (session.sendMessage as ReturnType<typeof vi.fn>).mock.calls.filter(
+        ([message]) => (message as { event?: { payload?: { type?: string } } }).event?.payload?.type === 'permission',
+      );
+      expect(permissionPushes).toHaveLength(1);
+      expect((permissionPushes[0][0] as { event: { payload: unknown } }).event.payload).toEqual({
+        type: 'permission',
+        promptId: 'sess-1:tool-7',
+        pending: true,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('drops a stale pending push when the prompt clears while the probe is still in flight', async () => {
+    vi.useFakeTimers();
+    try {
+      const session = fakeSession(); // frame never shows a dialog, so the probe parks on its retry timer
+      const context = { sessionManager } as unknown as IpcContext;
+      await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, new SubscriptionRegistry());
+
+      sessionManager.getActivityStatsSnapshot.mockReturnValue({ permissionPending: true, permissionAwaitedToolId: 'tool-7' });
+      sessionManager.emit('activity', 'sess-1', 'permission', { kind: 'permission' });
+
+      // The prompt clears (answered at the desk) before the retry fires.
+      sessionManager.getActivityStatsSnapshot.mockReturnValue({ permissionPending: false, permissionAwaitedToolId: null });
+      sessionManager.emit('event', 'sess-1', { ts: 3, type: 'tool_end' });
+      await vi.runAllTimersAsync();
+
+      const permissionPushes = (session.sendMessage as ReturnType<typeof vi.fn>).mock.calls.filter(
+        ([message]) => (message as { event?: { payload?: { type?: string } } }).event?.payload?.type === 'permission',
+      );
+      // Only the clear went out; the in-flight pending push was dropped as stale.
+      expect(permissionPushes).toHaveLength(1);
+      expect((permissionPushes[0][0] as { event: { payload: unknown } }).event.payload).toEqual({
+        type: 'permission',
+        promptId: 'sess-1:tool-7',
+        pending: false,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a probe parked on its retry never sends after the subscription tears down on exit', async () => {
+    vi.useFakeTimers();
+    try {
+      const session = fakeSession(); // frame never shows a dialog, so the probe parks on its retry timer
+      const context = { sessionManager } as unknown as IpcContext;
+      const subscriptions = new SubscriptionRegistry();
+      await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, subscriptions);
+
+      sessionManager.getActivityStatsSnapshot.mockReturnValue({ permissionPending: true, permissionAwaitedToolId: 'tool-7' });
+      sessionManager.emit('activity', 'sess-1', 'permission', { kind: 'permission' });
+      sessionManager.emit('exit', 'sess-1', 0, true); // tears the subscription down
+      await vi.runAllTimersAsync();
+
+      const permissionPushes = (session.sendMessage as ReturnType<typeof vi.fn>).mock.calls.filter(
+        ([message]) => (message as { event?: { payload?: { type?: string } } }).event?.payload?.type === 'permission',
+      );
+      expect(permissionPushes).toHaveLength(0);
+      expect(subscriptions.has('stream:sess-1')).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('a prompt already outstanding at subscribe time is not re-pushed by the next activity emission', async () => {
