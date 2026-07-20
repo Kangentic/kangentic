@@ -257,5 +257,9 @@ export class BridgeSession extends EventEmitter {
     this.unsubscribeState = null;
     this.handshake = null;
     this.streams = null;
+    // The session owns its per-device transport (created alongside it in
+    // openSessionForDevice); closing it here stops RelayClient's reconnect
+    // loop from outliving a revoked or disabled session.
+    this.transport.close();
   }
 }

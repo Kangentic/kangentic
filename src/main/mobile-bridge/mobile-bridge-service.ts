@@ -230,10 +230,8 @@ export class MobileBridgeService extends EventEmitter {
    * BridgeSession for every roster device that does not already have one,
    * and disposes any session whose device fell out of the roster
    * (revocation). Never call directly - go through syncSessions() so
-   * overlapping runs are coalesced. Fire-and-forget from reconcile() -
-   * callers do not await session establishment, matching startPairing()'s own
-   * connect-then-close-on-throw guard so a failed dial does not leak the
-   * relay's internal reconnect loop against a now-abandoned attempt.
+   * overlapping runs are coalesced (reconcile() fires on every config:set
+   * and pairing confirmation calls in independently).
    */
   private async runSyncSessions(): Promise<void> {
     if (!this.ipcContext) return;
@@ -255,11 +253,11 @@ export class MobileBridgeService extends EventEmitter {
 
     for (const device of roster.devices) {
       if (this.sessions.has(device.deviceId)) continue;
-      await this.openSessionForDevice(identity, device);
+      this.openSessionForDevice(identity, device);
     }
   }
 
-  private async openSessionForDevice(identity: BridgeIdentity, device: RosterDeviceEntry): Promise<void> {
+  private openSessionForDevice(identity: BridgeIdentity, device: RosterDeviceEntry): void {
     const slotId = deriveSessionSlotId(identity.staticKeyPair.publicKey, device.staticPublicKey);
     const transport = createTransport({ relayUrl: this.config.relayUrl, slotId });
     const session = new BridgeSession({
@@ -270,18 +268,22 @@ export class MobileBridgeService extends EventEmitter {
       transport,
     });
     this.wireSessionListeners(session);
-    try {
-      await transport.connect();
-    } catch {
-      // Close the transport we just created before bailing: RelayClient
-      // arms an internal reconnect timer on a failed dial, so abandoning it
-      // here would leak a permanent reconnect loop against a now-meaningless
-      // attempt (same reasoning as startPairing()'s connect-failure guard).
-      transport.close();
-      return;
-    }
     session.start();
     this.sessions.set(device.deviceId, session);
+    // A roster session is persistent: the first dial can fail outright (a
+    // local relay that is not up yet - the desktop-launched-before-relay
+    // case), and RelayClient keeps re-dialing with capped backoff while
+    // BridgeSession re-initiates the handshake on every transition into
+    // 'connected', so the link self-heals whenever the relay appears.
+    // Bailing on a failed first dial (the previous behavior) left the
+    // bridge permanently disconnected until the user toggled it off and
+    // on. The reconnect loop cannot leak: session.dispose() closes the
+    // transport (revocation, disable, shutdown all route through it).
+    // Unlike a pairing ceremony's transport, this attempt is never
+    // meaningless while the device stays in the roster.
+    void transport.connect().catch(() => {
+      // The transport's own backoff loop owns recovery from here.
+    });
   }
 
   /**
