@@ -402,6 +402,16 @@ describe('read-* response parsers', () => {
     expect('projectColor' in bareSnapshot).toBe(false);
   });
 
+  it('carries showTicketNumbers when present, tolerating absence (pre-0.6.0 desktop)', () => {
+    const snapshot = parseReadBoardResponsePayload({ projectId: 'p-1', columns: [], tasks: [], backlog: [], showTicketNumbers: false });
+    expect(snapshot).toEqual({ projectId: 'p-1', columns: [], tasks: [], backlog: [], showTicketNumbers: false });
+    const bareSnapshot = parseReadBoardResponsePayload({ projectId: 'p-1', columns: [], tasks: [], backlog: [] });
+    expect('showTicketNumbers' in bareSnapshot).toBe(false);
+    expect(() =>
+      parseReadBoardResponsePayload({ projectId: 'p-1', columns: [], tasks: [], backlog: [], showTicketNumbers: 'yes' }),
+    ).toThrow(/showTicketNumbers/);
+  });
+
   it('rejects a malformed accent color on either read-board shape', () => {
     expect(() => parseReadBoardResponsePayload({ projects: [{ id: 'p-1', name: 'Alpha', color: 'amber' }] })).toThrow(/accent color/);
     expect(() => parseReadBoardResponsePayload({ projects: [{ id: 'p-1', name: 'Alpha', color: '#12345' }] })).toThrow(/accent color/);

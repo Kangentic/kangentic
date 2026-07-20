@@ -57,6 +57,9 @@ export async function handleReadBoard(
     tasks: repos.tasks.list().map(toBoardTaskWire),
     backlog: backlogRepo.list().map(toBacklogItemWire),
     projectColor: deriveProjectAccentColor(projectId),
+    // The Layout "Ticket Numbers" setting travels with the snapshot so the
+    // phone's cards match the desktop's (protocol 0.6.0 additive field).
+    showTicketNumbers: context.configManager.getEffectiveConfig(project.path || undefined).showTaskNumbers ?? true,
   };
 
   const listener = (event: BoardChangedEvent): void => {

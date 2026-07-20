@@ -224,6 +224,12 @@ export interface ReadBoardSnapshotResponsePayload {
   backlog: BacklogItemWire[];
   /** The project's accent color ("#rrggbb"); same semantics as ReadBoardProjectSummary.color. Absent from pre-0.5.0 desktops. */
   projectColor?: string;
+  /**
+   * The desktop's Layout "Ticket Numbers" setting: whether task cards
+   * display their #N number. Absent from pre-0.6.0 desktops (treat as
+   * true, the desktop default).
+   */
+  showTicketNumbers?: boolean;
 }
 
 export type ReadBoardResponsePayload = ReadBoardProjectListResponsePayload | ReadBoardSnapshotResponsePayload;
@@ -259,12 +265,16 @@ export function parseReadBoardResponsePayload(payload: JsonValue): ReadBoardResp
   if (!Array.isArray(payload.columns)) throw new Error('read-board response is missing "columns"');
   if (!Array.isArray(payload.tasks)) throw new Error('read-board response is missing "tasks"');
   if (!Array.isArray(payload.backlog)) throw new Error('read-board response is missing "backlog"');
+  if (payload.showTicketNumbers !== undefined && typeof payload.showTicketNumbers !== 'boolean') {
+    throw new Error('read-board response has a non-boolean "showTicketNumbers"');
+  }
   return {
     projectId: payload.projectId,
     columns: payload.columns.map((column) => parseBoardColumnWire(column as JsonValue)),
     tasks: payload.tasks.map((task) => parseBoardTaskWire(task as JsonValue)),
     backlog: payload.backlog.map((item) => parseBacklogItemWire(item as JsonValue)),
     ...(payload.projectColor !== undefined ? { projectColor: parseAccentColor(payload.projectColor, 'read-board snapshot') } : {}),
+    ...(payload.showTicketNumbers !== undefined ? { showTicketNumbers: payload.showTicketNumbers } : {}),
   };
 }
 
