@@ -259,6 +259,18 @@ describe('DesktopNotifier', () => {
     expect(sessionManager.listenerCount('exit')).toBe(0);
   });
 
+  it('calling start() twice attaches each listener only once', () => {
+    // register-all.ts constructs this notifier once and calls start() exactly
+    // once (guarded by the module-level idempotency check on registerAllIpc
+    // itself), but the class carries its own `started` guard as a defensive
+    // second layer. A caller mistake that invoked start() again must not
+    // double-attach listeners (which would double-fire every notification).
+    buildNotifier();
+    notifier.start();
+    expect(sessionManager.listenerCount('activity')).toBe(1);
+    expect(sessionManager.listenerCount('exit')).toBe(1);
+  });
+
   it('falls back to "A task" when resolveTaskTitle returns undefined for a non-transient session', () => {
     resolveTaskTitle.mockReturnValue(undefined);
     sessionManager.getSession.mockReturnValue(makeSession());

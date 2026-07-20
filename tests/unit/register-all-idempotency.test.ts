@@ -229,7 +229,7 @@ describe('registerAllIpc idempotency', () => {
   // re-import alone can exceed 5s). The explicit 30s timeout on each test keeps
   // them green under load; they still complete in ~1s when run scoped.
   it('first call initializes context and registers handlers', async () => {
-    const { registerAllIpc, getSessionManager } = await import('../../src/main/ipc/register-all');
+    const { registerAllIpc, getSessionManager, getOptionalIpcContext } = await import('../../src/main/ipc/register-all');
     const { registerProjectHandlers } = await import('../../src/main/ipc/handlers/projects');
     const { registerTaskCrudHandlers } = await import('../../src/main/ipc/handlers/task-crud');
     const { registerTaskArchiveHandlers } = await import('../../src/main/ipc/handlers/task-archive');
@@ -271,10 +271,20 @@ describe('registerAllIpc idempotency', () => {
 
     // Context is initialized (wrappers don't throw)
     expect(() => getSessionManager()).not.toThrow();
+
+    // The desktop notifier is constructed, wired into IpcContext, and
+    // start()-ed exactly once, attaching one 'activity' and one 'exit'
+    // listener to the real (unmocked) SessionManager EventEmitter. Nothing
+    // else in this test's dependency graph listens on those events (every
+    // other registerXHandlers call and retrievalService.attach are mocked
+    // above), so a count of 1 here is attributable to the desktop notifier.
+    expect(getOptionalIpcContext()?.desktopNotifier).toBeDefined();
+    expect(getSessionManager().listenerCount('activity')).toBe(1);
+    expect(getSessionManager().listenerCount('exit')).toBe(1);
   }, 30000);
 
   it('second call updates mainWindow without re-registering handlers', async () => {
-    const { registerAllIpc } = await import('../../src/main/ipc/register-all');
+    const { registerAllIpc, getSessionManager } = await import('../../src/main/ipc/register-all');
     const { registerProjectHandlers } = await import('../../src/main/ipc/handlers/projects');
     const { registerTaskCrudHandlers } = await import('../../src/main/ipc/handlers/task-crud');
     const { registerTaskArchiveHandlers } = await import('../../src/main/ipc/handlers/task-archive');
@@ -333,6 +343,12 @@ describe('registerAllIpc idempotency', () => {
     // router a second time would be a correctness bug even if the mock
     // doesn't throw the way a real double-registration might.
     expect(mobileBridgeAttachContextSpy).toHaveBeenCalledTimes(1);
+
+    // Same guarantee for the desktop notifier: a re-activate on macOS must
+    // not attach a second pair of SessionManager listeners (which would
+    // double-fire every idle/crash notification).
+    expect(getSessionManager().listenerCount('activity')).toBe(1);
+    expect(getSessionManager().listenerCount('exit')).toBe(1);
   }, 30000);
 
   it('second call preserves existing services', async () => {
