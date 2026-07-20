@@ -1478,13 +1478,13 @@
       },
       onActivity: function (callback) {
         // Tests can fire this via
-        // window.__mockFireActivity(sessionId, state, reason, projectId, taskId, taskTitle).
+        // window.__mockFireActivity(sessionId, state, reason, projectId, taskId).
         if (!window.__mockActivityListeners) window.__mockActivityListeners = [];
         window.__mockActivityListeners.push(callback);
         if (!window.__mockFireActivity) {
-          window.__mockFireActivity = function (sessionId, state, reason, projectId, taskId, taskTitle) {
+          window.__mockFireActivity = function (sessionId, state, reason, projectId, taskId) {
             var listeners = (window.__mockActivityListeners || []).slice();
-            for (var i = 0; i < listeners.length; i++) { listeners[i](sessionId, state, reason, projectId, taskId, taskTitle); }
+            for (var i = 0; i < listeners.length; i++) { listeners[i](sessionId, state, reason, projectId, taskId); }
           };
         }
         return function () {

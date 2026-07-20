@@ -32,7 +32,7 @@ import { registerTransientSessionHandlers } from './handlers/transient-sessions'
 import { registerTranscriptionHandlers } from './handlers/transcription';
 import { TranscriptionService } from '../transcription/transcription-service';
 import { registerBoardHandlers } from './handlers/board';
-import { registerSystemHandlers } from './handlers/system';
+import { registerSystemHandlers, showDesktopNotification } from './handlers/system';
 import { registerBacklogHandlers } from './handlers/backlog';
 import { registerGitDiffHandlers } from './handlers/git-diff';
 import { registerBrowserHandlers } from './handlers/browser';
@@ -44,6 +44,8 @@ import { registerPopOutHandlers } from './handlers/pop-out';
 import { retrievalService } from '../retrieval/retrieval-service';
 import { MobileBridgeService } from '../mobile-bridge/mobile-bridge-service';
 import { BoardEventBus } from '../mobile-bridge/board-event-bus';
+import { DesktopNotifier } from '../notifications/desktop-notifier';
+import { getProjectRepos } from './helpers';
 import type { IpcContext } from './ipc-context';
 import type { McpHttpServerHandle } from '../agent/mcp-http-server';
 
@@ -94,6 +96,34 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   // but configManager itself is only available once `context` exists.
   const mobileBridgeService = new MobileBridgeService({ enabled: false, relayUrl: '' });
   const boardEvents = new BoardEventBus();
+  // Owns the desktop idle/crash notification decision (cooldown, focus gate,
+  // active-project gate, title assembly). Every option closure goes through
+  // requireContext() rather than capturing `context` directly: this notifier
+  // is constructed before `context` is assigned below, and its callbacks only
+  // ever run later (in response to a SessionManager event), by which point
+  // `context` is set.
+  const desktopNotifier = new DesktopNotifier({
+    sessionManager,
+    getNotificationConfig: () => requireContext().configManager.load().notifications,
+    getActiveProjectId: () => requireContext().currentProjectId ?? undefined,
+    isWindowFocused: () => {
+      const mainWindow = requireContext().mainWindow;
+      return !mainWindow.isDestroyed() && mainWindow.isFocused();
+    },
+    flashFrame: () => {
+      const mainWindow = requireContext().mainWindow;
+      if (!mainWindow.isDestroyed()) mainWindow.flashFrame(true);
+    },
+    resolveTaskTitle: (projectId, taskId) => {
+      try {
+        return getProjectRepos(requireContext(), projectId).tasks.getById(taskId)?.title;
+      } catch {
+        return undefined;
+      }
+    },
+    resolveProjectName: (projectId) => requireContext().projectRepo.getById(projectId)?.name,
+    showNotification: (input) => showDesktopNotification(requireContext(), input),
+  });
 
   // Lazy-initialize heavy objects on first access
   let projectRepo: ProjectRepository | null = null;
@@ -136,6 +166,7 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
     mcpServerHandle,
     mobileBridgeService,
     boardEvents,
+    desktopNotifier,
   };
 
   // The bridge needs IpcContext (SessionManager, repos, DiffService,
@@ -144,6 +175,7 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   // yet at that point. attachContext() must run before reconcile() so the
   // first reconcile's syncSessions() has handlers to route into.
   mobileBridgeService.attachContext(context);
+  desktopNotifier.start();
 
   const effectiveConfig = context.configManager.getEffectiveConfig(context.currentProjectPath ?? undefined);
   mobileBridgeService.reconcile({

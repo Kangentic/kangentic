@@ -3533,7 +3533,7 @@ export interface ElectronAPI {
     onStatus: (callback: (sessionId: string, session: Session, projectId?: string) => void) => () => void;
     onUsage: (callback: (sessionId: string, data: SessionUsage, projectId?: string) => void) => () => void;
     getActivity: (projectId?: string) => Promise<Record<string, ActivityState>>;
-    onActivity: (callback: (sessionId: string, state: ActivityState, reason: ActivityReason, projectId?: string, taskId?: string, taskTitle?: string) => void) => () => void;
+    onActivity: (callback: (sessionId: string, state: ActivityState, reason: ActivityReason, projectId?: string, taskId?: string) => void) => () => void;
     getActivityReason: (sessionId: string) => Promise<ActivityReason | null>;
     getActivityReasons: (projectId?: string) => Promise<Record<string, ActivityReason>>;
     getActivityStats: (sessionId: string) => Promise<ActivityStatsSnapshot | null>;

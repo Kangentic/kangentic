@@ -24,6 +24,62 @@ import type {
 } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 
+// Held only so a shown Notification is not garbage-collected before the user
+// interacts with it (Electron's Notification has no other owner).
+const activeNotifications = new Set<Notification>();
+
+/**
+ * Shows a native OS notification and wires its click round-trip back to the
+ * renderer (restore/show/focus, then NOTIFICATION_CLICKED once the window is
+ * focused). Shared by the renderer-driven NOTIFICATION_SHOW IPC channel
+ * (spawn-stall, plan-complete) and the main-process desktop notifier
+ * (src/main/notifications/desktop-notifier.ts, idle and crash), which decides
+ * to notify without an IPC round-trip and calls this directly.
+ */
+export function showDesktopNotification(context: IpcContext, input: NotificationInput): void {
+  if (!Notification.isSupported()) {
+    console.warn('[NOTIFICATION] Notifications not supported on this system');
+    return;
+  }
+
+  const notification = new Notification({
+    title: input.title,
+    body: input.body,
+  });
+
+  activeNotifications.add(notification);
+
+  const cleanup = () => {
+    activeNotifications.delete(notification);
+  };
+
+  notification.on('click', () => {
+    cleanup();
+
+    const mainWindow = context.mainWindow;
+    if (mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) {
+      mainWindow.restore();
+    }
+    mainWindow.show();
+    mainWindow.focus();
+
+    const sendClickEvent = () => {
+      mainWindow.webContents.send(IPC.NOTIFICATION_CLICKED, input.projectId, input.taskId);
+    };
+
+    if (mainWindow.isFocused()) {
+      sendClickEvent();
+    } else {
+      mainWindow.once('focus', sendClickEvent);
+    }
+  });
+
+  notification.on('close', cleanup);
+
+  notification.show();
+}
+
 export function registerSystemHandlers(context: IpcContext): void {
   // === App ===
   ipcMain.handle(IPC.APP_GET_VERSION, () => app.getVersion());
@@ -522,51 +578,7 @@ export function registerSystemHandlers(context: IpcContext): void {
   ipcMain.handle(IPC.WINDOW_IS_FOCUSED, (event) => resolveSenderWindow(event).isFocused());
 
   // === Notifications ===
-  const activeNotifications = new Set<Notification>();
-
-  ipcMain.on(IPC.NOTIFICATION_SHOW, (_event, input: NotificationInput) => {
-    if (!Notification.isSupported()) {
-      console.warn('[NOTIFICATION] Notifications not supported on this system');
-      return;
-    }
-
-    const notification = new Notification({
-      title: input.title,
-      body: input.body,
-    });
-
-    activeNotifications.add(notification);
-
-    const cleanup = () => {
-      activeNotifications.delete(notification);
-    };
-
-    notification.on('click', () => {
-      cleanup();
-
-      const mainWindow = context.mainWindow;
-      if (mainWindow.isDestroyed()) return;
-      if (mainWindow.isMinimized()) {
-        mainWindow.restore();
-      }
-      mainWindow.show();
-      mainWindow.focus();
-
-      const sendClickEvent = () => {
-        mainWindow.webContents.send(IPC.NOTIFICATION_CLICKED, input.projectId, input.taskId);
-      };
-
-      if (mainWindow.isFocused()) {
-        sendClickEvent();
-      } else {
-        mainWindow.once('focus', sendClickEvent);
-      }
-    });
-
-    notification.on('close', cleanup);
-
-    notification.show();
-  });
+  ipcMain.on(IPC.NOTIFICATION_SHOW, (_event, input: NotificationInput) => showDesktopNotification(context, input));
 
   // === Clipboard ===
   // Read the clipboard image natively in the main process rather than via the web

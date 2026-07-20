@@ -1045,6 +1045,10 @@ function getShutdownDependencies() {
       // backoff) are already .unref()'d, but dispose() clears them
       // explicitly so nothing fires mid-shutdown.
       getOptionalIpcContext()?.mobileBridgeService.dispose();
+      // Synchronously detach the desktop notifier's SessionManager listeners.
+      // It holds no timers, so this is a pure listener-leak guard, not a
+      // functional requirement of shutdown.
+      getOptionalIpcContext()?.desktopNotifier.dispose();
     },
     isEphemeral,
   };

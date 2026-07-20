@@ -203,7 +203,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `session:exit` | on | Session exited (includes `projectId`) |
 | `session:status` | on | Session changed - pushes full `Session` object (includes `projectId`) |
 | `session:usage` | on | Usage data updated (includes `projectId`) |
-| `session:activity` | on | Activity state changed (includes `projectId`, `taskId`, `taskTitle`) |
+| `session:activity` | on | Activity state changed (includes `projectId`, `taskId`) |
 | `session:event` | on | Structured event (includes `projectId`) |
 | `session:idleTimeout` | on | Session idle timeout fired |
 | `session:getSummary` | invoke | Get summary of a single session |
@@ -325,7 +325,7 @@ Machine-global (like Config), not project-scoped - backs the Mobile Devices sett
 | `window:maximize` | send | Maximize/restore the sending window |
 | `window:close` | send | Close the sending window |
 | `window:flashFrame` | send | Flash the sending window's taskbar icon to attract attention |
-| `window:isFocused` | invoke | Check if the sending window has focus (for notification gating) |
+| `window:isFocused` | invoke | Check if the sending window has focus (for the renderer's spawn-stall/plan-complete notification gating; the idle/crash desktop notifier resolves focus synchronously in main instead - see `src/main/notifications/desktop-notifier.ts`) |
 
 ### Pop-out Windows (6 channels)
 Detach a registered UI surface (usage stats, git changes, the task Browser pane) into its own OS-level `BrowserWindow`. See `src/shared/pop-out.ts` for the surface registry (`PopOutKind`, params, per-surface push fan-out) and `src/main/pop-out/` for the window manager + broadcast helper. Distinct from the in-app DOM window manager (`src/renderer/window-manager/`), which tiles movable panes inside the single main `BrowserWindow`.

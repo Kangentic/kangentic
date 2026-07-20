@@ -1,19 +1,25 @@
 /**
- * UI test for the false "Session crashed" notification on move-to-Done.
+ * UI test for the false "Session crashed" toast on move-to-Done.
  *
  * When Kangentic deliberately suspends a session (move-to-Done, To-Do reset,
  * isolated switch, etc.) it force-kills the PTY, which exits non-zero. The
  * SESSION_EXIT event can reach the renderer before the suspended SESSION_STATUS
  * updates the store, so a store-status check alone races and a false "Session
- * crashed" desktop notification plus a warning toast fire. The fix tags the
- * exit event with `intentional`, and App.tsx's handler gates on it.
+ * crashed" toast fires. The fix tags the exit event with `intentional`, and
+ * App.tsx's handler gates on it.
+ *
+ * The equivalent desktop OS-notification decision now lives in main
+ * (src/main/notifications/desktop-notifier.ts), which listens to
+ * SessionManager's own 'exit' event and is not observable from this
+ * renderer-only harness; its `intentional === true` suppression is covered by
+ * tests/unit/desktop-notifier.test.ts instead.
  *
  * These tests reproduce the exact race: the store session status stays
  * 'running' (the suspended SESSION_STATUS has NOT arrived) while SESSION_EXIT
- * carries intentional=true. The gate must suppress the toast and notification.
- * A second exit with intentional=false (a genuine crash) is fired in the same
- * page so its toast appearing proves the pipeline ran - making the absence of
- * the intentional toast a meaningful, non-racy assertion.
+ * carries intentional=true. The gate must suppress the toast. A second exit
+ * with intentional=false (a genuine crash) is fired in the same page so its
+ * toast appearing proves the pipeline ran - making the absence of the
+ * intentional toast a meaningful, non-racy assertion.
  *
  * Determinism notes:
  *   - Toasts are made effectively permanent (durationSeconds override) so the
@@ -139,23 +145,13 @@ test.describe('SESSION_EXIT intentional-suspend gate', () => {
     ({ browser, page } = await launchWithState(makePreConfig()));
     // The onExit subscription (and __mockFireExit) is registered on mount.
     await page.waitForFunction(() => typeof (window as unknown as { __mockFireExit?: unknown }).__mockFireExit === 'function');
-    // Record desktop-notification calls so we can assert none target the
-    // intentionally-suspended session.
-    await page.evaluate(() => {
-      const win = window as unknown as {
-        __notificationTitles: string[];
-        electronAPI: { notifications: { show: (args: { title: string }) => void } };
-      };
-      win.__notificationTitles = [];
-      win.electronAPI.notifications.show = (args) => { win.__notificationTitles.push(args.title); };
-    });
   });
 
   test.afterAll(async () => {
     await browser?.close();
   });
 
-  test('intentional suspend exit fires no crash toast or notification; a genuine crash still does', async () => {
+  test('intentional suspend exit fires no crash toast; a genuine crash still does', async () => {
     // Fire the intentional suspend exit FIRST (store status still 'running'),
     // then a genuine crash exit. Both are processed before the crash toast
     // renders, so the crash toast appearing proves the intentional handler
@@ -181,11 +177,5 @@ test.describe('SESSION_EXIT intentional-suspend gate', () => {
       .getByText(/Session ended for .*Intentional Suspend Task/)
       .count();
     expect(intentionalToastCount).toBe(0);
-
-    // No desktop "Session crashed" notification for the intentional session.
-    const notificationTitles = await page.evaluate(
-      () => (window as unknown as { __notificationTitles: string[] }).__notificationTitles,
-    );
-    expect(notificationTitles.some((title) => title.includes('Intentional Suspend Task'))).toBe(false);
   });
 });

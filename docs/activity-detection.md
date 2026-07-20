@@ -90,7 +90,10 @@ type ActivityState = 'thinking' | 'idle' | 'permission';
 Three top-level states:
 
 - **`thinking`** - agent is working. Spinner shown on task card. Notifications NOT fired.
-- **`idle`** - agent is truly done. Notification fires. Auto-focus / auto-suspend can act.
+- **`idle`** - agent is truly done. Notification fires. Auto-focus / auto-suspend can act. The
+  desktop notify decision (cooldown, focus gate, active-project gate, title assembly) is owned by
+  `src/main/notifications/desktop-notifier.ts`, which listens to `SessionManager`'s own `activity`
+  event directly rather than a renderer round-trip.
 - **`permission`** - agent paused awaiting user approval. Distinct from `idle` so the UI can render a different affordance (lock icon vs idle dot).
 
 ## ActivityReason (discriminated union)

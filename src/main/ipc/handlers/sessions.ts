@@ -8,7 +8,6 @@ import { getProjectDb } from '../../db/database';
 import { getProjectRepos, ensureTaskWorktree, createTransitionEngine, resolveSpawnOverrides } from '../helpers';
 import { linkPR, autoLinkPRForTask } from '../../pr/pr-linking';
 import { resolveProjectContext } from '../helpers/project-repos';
-import { getCachedTaskTitle } from './task-title-cache';
 import { handleTaskMove } from './task-move';
 import { trackEvent } from '../../analytics/analytics';
 import { parseModelId } from '../../../shared/model-id';
@@ -368,22 +367,7 @@ export function registerSessionHandlers(context: IpcContext): void {
     if (!context.mainWindow.isDestroyed()) {
       const projectId = context.sessionManager.getSessionProjectId(sessionId);
       const taskId = context.sessionManager.getSessionTaskId(sessionId);
-      let taskTitle: string | undefined;
-      if (taskId && projectId) {
-        // Resolved through a short-TTL cache: this fires on every activity
-        // transition (including the frequent `thinking` signal) but the title
-        // is only used for the occasional notification, so a per-event DB query
-        // would be pure main-loop tax. See task-title-cache.ts.
-        taskTitle = getCachedTaskTitle(taskId, Date.now(), () => {
-          try {
-            return new TaskRepository(getProjectDb(projectId)).getById(taskId)?.title;
-          } catch {
-            // Project DB may not exist yet -- skip title lookup
-            return undefined;
-          }
-        });
-      }
-      broadcast(context.mainWindow, IPC.SESSION_ACTIVITY, sessionId, state, reason, projectId, taskId, taskTitle);
+      broadcast(context.mainWindow, IPC.SESSION_ACTIVITY, sessionId, state, reason, projectId, taskId);
 
       // A session going idle (the agent finished its turn) is the catch-all
       // signal that a PR may have just been created mid-session - the move-time

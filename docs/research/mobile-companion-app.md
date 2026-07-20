@@ -373,10 +373,15 @@ module with no renderer dependency:
 
 Refactors required:
 
-1. **Notification policy lives in the renderer** (`App.tsx` `shouldNotify`: cooldown, focus
-   gate, active-project gate). Main only emits raw `activity` events. The idle-detection ->
-   notify decision (cooldown, dedup, title assembly) must move to main so pushes fire with the
-   desktop window closed or unfocused. Single biggest refactor.
+1. ~~Notification policy lived in the renderer~~ - **done.** The desktop idle/permission and
+   crash notification decision (cooldown, focus gate, active-project gate, title assembly) moved
+   to main (`src/main/notifications/desktop-notifier.ts`), which listens to `SessionManager`'s
+   own `activity`/`exit` events directly instead of a renderer round-trip. This was purely
+   desktop-local robustness/de-duplication by the time it landed - the mobile push rationale
+   below (pushes firing with the desktop window closed) was already satisfied by the
+   `PushNotifier` built in Phase 2, which listens to `SessionManager` the same way. Full
+   notification-CATEGORY parity with the mobile push taxonomy is separate, ongoing work (see
+   Bridge Phase 3 below).
 2. **Session output is focus-gated**: `SessionManager` emits `data` only for
    `focusedSessionIds`. The bridge needs an unfiltered tap or membership in the focused set;
    `getScrollback` works today as the safe pull path.
@@ -419,11 +424,15 @@ Desktop / bridge (kangentic board):
   id); consolidated main-side board event stream; the MCP tool surface exposed to paired devices
   (task CRUD/move/create, board, backlog, search, session, transcript) minus code-execution
   verbs (no devtools/browser/raw-`query_db`).
-- **Bridge Phase 3 - Notifications & push sender:** move the notification should-fire policy
-  (cooldown, focus/attention gating, dedup, title assembly) from the renderer into main; Expo
-  push sender POSTing E2E-encrypted blobs directly to `exp.host`; presence suppression; full
-  notification-category parity (idle, permission, crash, plan-complete, spawn-stalled);
-  paired-devices settings UI (list, per-device capabilities, revoke).
+- **Bridge Phase 3 - Notifications & push sender:** Expo push sender POSTing E2E-encrypted blobs
+  directly to `exp.host`; presence suppression; a main-process `PushNotifier`
+  (`src/main/mobile-bridge/push/push-notifier.ts`) with cooldown/debounce - all shipped in the
+  Phase 2 landing. The desktop's OWN should-fire policy (cooldown, focus/active-project gating,
+  title assembly) also moved from the renderer into main
+  (`src/main/notifications/desktop-notifier.ts`) as a residual de-duplication pass. Still open:
+  full notification-CATEGORY parity between the two (idle, permission-needed, agent-crash,
+  plan-complete, spawn-stalled) and paired-devices settings UI (list, per-device capabilities,
+  revoke).
 - **Bridge Phase 4 (later) - Direct P2P + IPv6 speed upgrade:** WebRTC data channels
   (node-datachannel desktop / react-native-webrtc mobile) with signaling over the existing secure
   channel and DTLS fingerprints pinned at pairing; IPv6-first candidate ordering; opportunistic

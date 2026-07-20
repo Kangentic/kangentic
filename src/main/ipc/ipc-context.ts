@@ -13,6 +13,7 @@ import type { McpHttpServerHandle } from '../agent/mcp-http-server';
 import type { TranscriptionService } from '../transcription/transcription-service';
 import type { MobileBridgeService } from '../mobile-bridge/mobile-bridge-service';
 import type { BoardEventBus } from '../mobile-bridge/board-event-bus';
+import type { DesktopNotifier } from '../notifications/desktop-notifier';
 
 export interface IpcContext {
   mainWindow: BrowserWindow;
@@ -93,4 +94,11 @@ export interface IpcContext {
    * See src/main/mobile-bridge/board-event-bus.ts.
    */
   boardEvents: BoardEventBus;
+  /**
+   * Owns the desktop idle/crash notification policy (cooldown, focus gate,
+   * active-project gate, title assembly), listening to SessionManager's own
+   * events rather than a renderer round-trip. See
+   * src/main/notifications/desktop-notifier.ts.
+   */
+  desktopNotifier: DesktopNotifier;
 }

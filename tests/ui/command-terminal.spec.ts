@@ -1128,10 +1128,9 @@ test.describe('Command Terminal', () => {
                 reason: string | null,
                 projectId: string,
                 taskId: string | null,
-                taskTitle: string | null,
               ) => void;
             };
-            win.__mockFireActivity(sessionId, 'thinking', null, projectId, null, null);
+            win.__mockFireActivity(sessionId, 'thinking', null, projectId, null);
           },
           { sessionId, projectId: MULTI_PROJECT_ID },
         );

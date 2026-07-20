@@ -16,7 +16,7 @@ import { useProjectSwitchEffect } from './hooks/useProjectSwitchEffect';
 import { useAgentDrivenInvalidation } from './hooks/useAgentDrivenInvalidation';
 import { invalidateProject } from './stores/project-cache';
 import { resolveAutoFocusTarget } from './utils/auto-focus';
-import { requiresUserInteraction } from '../shared/activity-state';
+import { COMMAND_TERMINAL_NOTIFICATION_TASK_ID } from '../shared/notification-constants';
 import { bumpHmrGeneration } from './utils/hmr-generation';
 import { clearSnapPreviewDom } from './window-manager';
 import { setRebindCaptureActive } from './utils/rebind-state';
@@ -33,11 +33,6 @@ import {
   enqueueReload,
   resetCoalescerForHmr,
 } from './lib/session-update-coalescer';
-
-/** Sentinel taskId used in notification round-trips for transient (Command Terminal)
- *  sessions, which have no associated task. The click handler routes this value
- *  through `setPendingOpenCommandTerminal` instead of opening a task detail dialog. */
-const COMMAND_TERMINAL_NOTIFICATION_TASK_ID = '__command_terminal__';
 
 export function App() {
   const loadProjects = useProjectStore((s) => s.loadProjects);
@@ -352,20 +347,9 @@ export function App() {
         // for the DB write; no-ops while the dashboard is closed).
         setTimeout(() => useUsageDashboardStore.getState().loadDashboardStats({ force: true }), 1000);
 
-        // Desktop notification for non-zero exit on non-visible projects
-        if (exitCode !== 0 && notifyConfig.desktop.onAgentCrash) {
-          const resolvedProjectId = projectId ?? currentSession?.projectId;
-          if (resolvedProjectId) {
-            shouldNotify(sessionId, resolvedProjectId).then((notify) => {
-              if (!notify) return;
-              const project = useProjectStore.getState().projects.find((p) => p.id === resolvedProjectId);
-              const task = useBoardStore.getState().tasks.find((t) => t.session_id === sessionId)
-                ?? useBoardStore.getState().tasks.find((t) => t.id === currentSession?.taskId);
-              const label = task?.title ?? sessionId.slice(0, 8);
-              sendNotification(sessionId, `Session crashed: ${label}`, project?.name ?? 'A project', resolvedProjectId, task?.id ?? '');
-            });
-          }
-        }
+        // The desktop crash notification for a non-zero exit on a non-visible
+        // project now lives in main (src/main/notifications/desktop-notifier.ts),
+        // which listens to SessionManager's 'exit' event directly.
       }));
     }
 
@@ -419,11 +403,11 @@ export function App() {
     // ALWAYS update activity (sidebar badges need cross-project data),
     // but only run auto-focus for current project.
     if (sessions.onActivity) {
-      cleanups.push(sessions.onActivity((sessionId, state, reason, projectId, taskId, taskTitle) => {
+      cleanups.push(sessions.onActivity((sessionId, state, reason, projectId) => {
         // Deferred whole through the coalescer (held during an active board
-        // drag). The auto-focus and notification side effects read getState()
-        // AFTER updateActivity, so the write and its reads must stay atomic -
-        // deferring the body as one thunk preserves that read-after-write.
+        // drag). The auto-focus effect reads getState() AFTER updateActivity,
+        // so the write and its reads must stay atomic - deferring the body as
+        // one thunk preserves that read-after-write.
         enqueueSessionUpdate(() => {
           updateActivity(sessionId, state, reason);
 
@@ -451,28 +435,11 @@ export function App() {
             }
           }
 
-          // OS notification + taskbar flash for sessions awaiting the user
-          // (idle or permission) that are not visible. Bucketing via
-          // shared/activity-state.ts; the permission-specific message text below
-          // still keys off the granular state.
-          if (requiresUserInteraction(state)) {
-            const notifyConfig = useConfigStore.getState().config.notifications;
-            if (notifyConfig.desktop.onAgentIdle) {
-              const session = sessionStore.sessions.find((s) => s.id === sessionId);
-              if (session) {
-                shouldNotify(sessionId, session.projectId).then((notify) => {
-                  if (!notify) return;
-                  const project = useProjectStore.getState().projects.find((p) => p.id === session.projectId);
-                  const projectName = project?.name ?? 'A project';
-                  const label = session.transient ? 'Command Terminal' : (taskTitle ?? 'A task');
-                  // activity-state-ok: granular permission-vs-idle message text, not an idle-vs-active bucket
-                  const body = state === 'permission' ? `Needs permission: ${projectName}` : projectName;
-                  const clickTaskId = session.transient ? COMMAND_TERMINAL_NOTIFICATION_TASK_ID : (taskId ?? '');
-                  sendNotification(sessionId, label, body, session.projectId, clickTaskId);
-                });
-              }
-            }
-          }
+          // The desktop OS-notification decision for idle/permission sessions
+          // (cooldown, focus gate, active-project gate, title assembly) now
+          // lives in main (src/main/notifications/desktop-notifier.ts), which
+          // listens to SessionManager's 'activity' event directly. That keeps
+          // it working even when this renderer is gone (window closed).
         });
       }));
     }
