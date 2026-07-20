@@ -52,37 +52,92 @@ function stripDialogBorder(line: string): string {
 }
 
 /**
+ * An awaited dialog renders at the bottom of the frame, by the cursor; a
+ * winning run further above than this many rows from the last non-blank row
+ * is prose (an agent's numbered list in output), not the dialog. The budget
+ * covers the dialog's bottom border plus a few hint/status rows below it.
+ */
+const BOTTOM_ANCHOR_ROWS = 12;
+
+/**
  * Extract a numbered dialog's option labels from rendered (plain-text)
  * screen content. Options must be consecutive rows numbered 1, 2, 3, ...;
  * when several such runs exist (say a numbered list in older output above
- * the dialog), the LAST complete run wins, because an awaited dialog always
- * renders at the bottom of the frame, by the cursor.
+ * the dialog), the LAST complete run wins, and only when it sits near the
+ * rendered bottom (BOTTOM_ANCHOR_ROWS), where an awaited dialog lives.
+ *
+ * Wrapped labels are treated as corruption, not truncation: on a narrow
+ * grid an option label can wrap onto a continuation row, and naively
+ * closing the run there would publish a PARTIAL option list for a consent
+ * prompt (observed shape: the deny option missing). A run interrupted by a
+ * non-numbered row and then RESUMED by the next number in sequence is
+ * therefore discarded, and a corrupt dialog below the surviving candidate
+ * rejects the whole parse - the phone falls back to unlabeled keystrokes,
+ * never to confidently wrong buttons. Residual accepted risk: a wrap on
+ * the LAST option truncates that one label's text (the option count stays
+ * right, so digit answers still map 1:1).
  */
 export function extractNumberedOptions(screenText: string): string[] | null {
+  const lines = screenText.split('\n');
+
   let lastCompleteRun: string[] | null = null;
+  let lastCompleteRunEndIndex = -1;
+  let lastCorruptionIndex = -1;
   let currentRun: string[] = [];
+  let currentRunEndIndex = -1;
+  let interrupted = false;
 
   const closeRun = (): void => {
-    if (currentRun.length >= MINIMUM_OPTION_COUNT) lastCompleteRun = currentRun;
+    if (currentRun.length >= MINIMUM_OPTION_COUNT) {
+      lastCompleteRun = currentRun;
+      lastCompleteRunEndIndex = currentRunEndIndex;
+    }
     currentRun = [];
+    interrupted = false;
   };
 
-  for (const line of screenText.split('\n')) {
-    const rowMatch = stripDialogBorder(line).match(NUMBERED_ROW_PATTERN);
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const rowMatch = stripDialogBorder(lines[lineIndex]).match(NUMBERED_ROW_PATTERN);
     if (!rowMatch) {
-      closeRun();
+      // Not closed yet: if the run RESUMES after this row, the row was a
+      // wrapped label's continuation and the run is corrupt, not complete.
+      if (currentRun.length > 0) interrupted = true;
       continue;
     }
     const rowNumber = parseInt(rowMatch[1], 10);
     const label = rowMatch[2].trim();
-    if (rowNumber === currentRun.length + 1) {
+    if (rowNumber === currentRun.length + 1 && !interrupted) {
       currentRun.push(label);
-    } else {
-      closeRun();
-      if (rowNumber === 1) currentRun.push(label);
+      currentRunEndIndex = lineIndex;
+      continue;
+    }
+    if (rowNumber === currentRun.length + 1 && interrupted) {
+      // The sequence resumed across an interruption: a wrapped dialog.
+      // Discard it, and do not start a fresh run mid-dialog.
+      lastCorruptionIndex = lineIndex;
+      currentRun = [];
+      interrupted = false;
+      continue;
+    }
+    // A non-continuing number: whatever preceded it ended cleanly.
+    closeRun();
+    if (rowNumber === 1) {
+      currentRun.push(label);
+      currentRunEndIndex = lineIndex;
     }
   }
   closeRun();
+
+  if (lastCompleteRun === null) return null;
+  // A corrupt (wrapped) dialog BELOW the candidate is closer to the cursor,
+  // so it is likelier the real dialog; publishing the candidate's labels
+  // for it would mislabel a consent prompt.
+  if (lastCorruptionIndex > lastCompleteRunEndIndex) return null;
+  let lastContentIndex = lines.length - 1;
+  while (lastContentIndex >= 0 && lines[lastContentIndex].trim().length === 0) {
+    lastContentIndex -= 1;
+  }
+  if (lastCompleteRunEndIndex < lastContentIndex - BOTTOM_ANCHOR_ROWS) return null;
 
   return lastCompleteRun;
 }

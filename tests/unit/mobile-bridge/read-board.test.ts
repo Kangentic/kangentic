@@ -78,8 +78,9 @@ describe('handleReadBoard', () => {
       return vi.fn();
     });
     const context = {
-      projectRepo: { getById: vi.fn(() => ({ id: 'proj-1', name: 'Alpha' })) },
+      projectRepo: { getById: vi.fn(() => ({ id: 'proj-1', name: 'Alpha', path: 'C:/projects/alpha' })) },
       boardEvents: { onBoardChanged },
+      configManager: { getEffectiveConfig: vi.fn(() => ({ showTaskNumbers: false })) },
     } as unknown as IpcContext;
     const subscriptions = new SubscriptionRegistry();
     const session = fakeSession();
@@ -93,6 +94,7 @@ describe('handleReadBoard', () => {
       tasks: [{ id: 't-1', session_id: 'sess-1' }],
       backlog: [{ id: 'b-1' }],
       projectColor: deriveProjectAccentColor('proj-1'),
+      showTicketNumbers: false,
     });
     const snapshot = response.payload as { columns: object[]; tasks: object[]; backlog: object[] };
     expect(snapshot.tasks[0]).not.toHaveProperty('detail_view_state');
@@ -115,8 +117,9 @@ describe('handleReadBoard', () => {
   it('unsubscribe tears down the board subscription', async () => {
     const unsubscribe = vi.fn();
     const context = {
-      projectRepo: { getById: vi.fn(() => ({ id: 'proj-1', name: 'Alpha' })) },
+      projectRepo: { getById: vi.fn(() => ({ id: 'proj-1', name: 'Alpha', path: 'C:/projects/alpha' })) },
       boardEvents: { onBoardChanged: vi.fn(() => unsubscribe) },
+      configManager: { getEffectiveConfig: vi.fn(() => ({ showTaskNumbers: true })) },
     } as unknown as IpcContext;
     const subscriptions = new SubscriptionRegistry();
     const session = fakeSession();

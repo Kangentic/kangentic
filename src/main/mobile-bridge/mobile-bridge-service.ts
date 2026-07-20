@@ -197,13 +197,12 @@ export class MobileBridgeService extends EventEmitter {
   }
 
   /**
-   * Coalesces concurrent sync requests. `runSyncSessions()` awaits a real
-   * network dial per device and only inserts into `sessions` after it
-   * resolves, so two overlapping callers (reconcile() fires on every
-   * config:set, and pairing-confirmation calls in independently) could both
-   * see "no session for this device" and each open a full BridgeSession +
-   * transport + re-handshake timer, orphaning one that can never be disposed.
-   * A single in-flight run serializes them; a request that arrives mid-run
+   * Coalesces concurrent sync requests. Session insertion is synchronous now
+   * (openSessionForDevice inserts before its fire-and-forget dial), so the
+   * historical duplicate-session race is gone; the coalescing stays because
+   * its callers still overlap (reconcile() fires on every config:set, and
+   * pairing confirmation calls in independently) and a run in flight must not
+   * be interleaved with a second roster diff. A request that arrives mid-run
    * queues exactly one follow-up so the roster is re-diffed after the current
    * pass finishes.
    */

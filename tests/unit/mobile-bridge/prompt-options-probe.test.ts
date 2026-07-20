@@ -132,4 +132,50 @@ describe('extractNumberedOptions', () => {
   it('an unbordered, markerless numbered dialog still parses', () => {
     expect(extractNumberedOptions('1. Continue\n2. Abort')).toEqual(['Continue', 'Abort']);
   });
+
+  it('a wrapped option label rejects the parse instead of truncating the list', () => {
+    // On a narrow grid the second label wraps onto a continuation row; a
+    // naive parser closes the run there and publishes an affirmative-only
+    // two-option list for a three-option consent prompt.
+    const screen = [
+      '│ ❯ 1. Yes                                  │',
+      "│   2. Yes, and don't ask again for this    │",
+      '│      command                              │',
+      '│   3. No, and tell Claude what to do       │',
+      '│      differently                          │',
+    ].join('\n');
+    expect(extractNumberedOptions(screen)).toBeNull();
+  });
+
+  it('a wrapped dialog below a prose list rejects the parse instead of publishing the prose', () => {
+    const screen = [
+      'The plan:',
+      '1. Add the parser',
+      '2. Wire the handler',
+      '3. Ship it',
+      '',
+      'Do you want to proceed?',
+      '❯ 1. Yes, run the full suite and report every failure it',
+      '     finds',
+      '  2. No',
+    ].join('\n');
+    expect(extractNumberedOptions(screen)).toBeNull();
+  });
+
+  it('a numbered list far above the rendered bottom is prose, not the dialog', () => {
+    const buildOutput = Array.from({ length: 20 }, (_, index) => `compiling module ${index}`);
+    const screen = ['1. Add the parser', '2. Wire the handler', ...buildOutput].join('\n');
+    expect(extractNumberedOptions(screen)).toBeNull();
+  });
+
+  it('a dialog with a few chrome rows below it still parses', () => {
+    const screen = [
+      '❯ 1. Approve',
+      '  2. Deny',
+      '╰──────────╯',
+      '',
+      'Esc to cancel',
+    ].join('\n');
+    expect(extractNumberedOptions(screen)).toEqual(['Approve', 'Deny']);
+  });
 });

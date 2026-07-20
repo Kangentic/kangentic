@@ -303,6 +303,30 @@ describe('BridgeSession', () => {
     expect(messageListener).not.toHaveBeenCalled();
   });
 
+  it('dispose() closes its transport so the reconnect loop cannot outlive the session', () => {
+    // The session owns its per-device transport; the optimistic roster
+    // connect (a failed first dial keeps RelayClient re-dialing forever)
+    // leans on this to guarantee revoke/disable/shutdown actually stop the
+    // dialing - a dispose that leaks the transport strands a zombie dialer
+    // that blocks the device's relay slot.
+    const desktopIdentity = testIdentity();
+    const deviceStatic = generateX25519KeyPair();
+    const [desktopTransport] = createLoopbackTransportPair();
+    const closeSpy = vi.spyOn(desktopTransport, 'close');
+
+    const session = new BridgeSession({
+      identity: desktopIdentity,
+      deviceId: 'device-1',
+      remoteStaticPublicKey: deviceStatic.publicKey,
+      capabilities: new Set(),
+      transport: desktopTransport,
+    });
+    session.start();
+    session.dispose();
+
+    expect(closeSpy).toHaveBeenCalledTimes(1);
+  });
+
   it('re-initiates the handshake when the transport reconnects, instead of waiting for the rekey timer', () => {
     const desktopIdentity = testIdentity();
     const deviceStatic = generateX25519KeyPair();

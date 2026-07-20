@@ -89,10 +89,10 @@ export class BridgeSession extends EventEmitter {
     // phone then waits passively for us to initiate. Without this, that only
     // happened on the next REHANDSHAKE_INTERVAL_MS tick - up to a 2-minute stall.
     this.unsubscribeState = this.transport.onStateChange((state) => this.onTransportState(state));
-    // connect() is awaited before start(), so the initial 'connected' edge fired
-    // before we subscribed above and the listener missed it; kick the first
-    // handshake from the current state. Subsequent 'connected' edges (reconnects)
-    // are driven by the listener.
+    // Roster sessions start() BEFORE their fire-and-forget connect(), so the
+    // listener above drives the first handshake on the initial 'connected'
+    // edge. The kick below covers a caller that connected the transport before
+    // start() - that edge fired before we subscribed and the listener missed it.
     if (this.transport.state === 'connected') this.beginHandshake();
   }
 
