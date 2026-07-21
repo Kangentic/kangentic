@@ -7,6 +7,7 @@
  * re-registering ipcMain.handle handlers (which throws on duplicates).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { KANGENTIC_HOSTED_RELAY_URL } from '../../src/shared/relay';
 
 // ── Hoisted mocks ─────────────────────────────────────────────────────────
 
@@ -257,12 +258,19 @@ describe('registerAllIpc idempotency', () => {
     expect(retrievalService.attach).toHaveBeenCalledTimes(1);
 
     // MobileBridgeService.reconcile() is called once at startup with the
-    // real effective config's mobileBridge fields (defaulted, since the
-    // mocked ConfigManager.getEffectiveConfig() here returns no mobileBridge
-    // key) - not left at the { enabled: false, relayUrl: '' } placeholder
-    // the constructor takes before configManager is available.
+    // real effective config's mobileBridge fields resolved through
+    // resolveRelayUrl() (defaulted, since the mocked
+    // ConfigManager.getEffectiveConfig() here returns no mobileBridge key) -
+    // not left at the { enabled: false, relayUrl: '' } placeholder the
+    // constructor takes before configManager is available, and not the raw
+    // '' relayUrl either: resolveRelayUrl() never returns '', it infers
+    // 'hosted' mode from the missing mobileBridge key and falls back to the
+    // hosted relay (src/shared/relay.ts).
     expect(mobileBridgeReconcileSpy).toHaveBeenCalledTimes(1);
-    expect(mobileBridgeReconcileSpy).toHaveBeenCalledWith({ enabled: false, relayUrl: '' });
+    expect(mobileBridgeReconcileSpy).toHaveBeenCalledWith({
+      enabled: false,
+      relayUrl: KANGENTIC_HOSTED_RELAY_URL,
+    });
 
     // attachContext() wires the capability-verb handlers and must run once,
     // before reconcile() (which drives syncSessions()) so the first sync has
