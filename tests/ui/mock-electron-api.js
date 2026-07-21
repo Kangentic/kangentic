@@ -99,6 +99,8 @@
       queueOverflow: 'queue',
       idleTimeoutMinutes: 0,
       autoResumeSessionsOnRestart: false,
+      executionServers: {},
+      execution: {},
     },
     git: {
       worktreesEnabled: true,
@@ -247,6 +249,8 @@
       cursorStyle: terminal.cursorStyle,
     });
     if (pickedTerminal) result.terminal = pickedTerminal;
+    // agent.execution is deliberately excluded - see the comment on
+    // pickOverridableSubset() in src/main/config/config-manager.ts.
     if (agent.permissionMode !== undefined) result.agent = { permissionMode: agent.permissionMode };
     var pickedGit = pruneUndefined({
       worktreesEnabled: git.worktreesEnabled,
@@ -2026,6 +2030,16 @@
             ],
             defaultPermission: 'acceptEdits',
             supportsSummarize: true,
+            // KEEP IN SYNC with OpenCodeAdapter.remoteExecution.info - the only
+            // agent that declares this capability today, so the Agent tab's
+            // remote-execution rows have exactly one agent to render them for
+            // in tests.
+            remoteExecution: {
+              urlPlaceholder: 'http://10.0.0.5:4096',
+              authKind: 'basic',
+              workingDirectoryScope: 'per-invocation',
+              remoteModeCaveat: 'The server is the authority for providers, models, and MCP tools in remote mode.',
+            },
           },
           {
             name: 'droid', displayName: 'Droid', found: false, path: null, version: null,
@@ -2057,6 +2071,14 @@
           var override = overrides[agent.name];
           return override ? Object.assign({}, agent, override) : agent;
         });
+      },
+      // Tests can set window.__mockProbeExecutionServer = function (agentName) { ... }
+      // to control the "Test connection" result; default is a reachable stub.
+      probeExecutionServer: async function (agentName) {
+        if (typeof window !== 'undefined' && typeof window.__mockProbeExecutionServer === 'function') {
+          return window.__mockProbeExecutionServer(agentName);
+        }
+        return { reachable: true, version: '1.14.25' };
       },
     },
 

@@ -96,6 +96,8 @@ export function createTransitionEngine(
         mcpServerToken: context.mcpServerHandle?.token,
         defaultAgent: project?.default_agent ?? DEFAULT_AGENT,
         cliPathOverrides: config.agent.cliPaths,
+        executionServers: config.agent.executionServers,
+        execution: config.agent.execution,
       };
     },
     sessionRepo,

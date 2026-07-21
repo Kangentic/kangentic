@@ -149,6 +149,7 @@ export const IPC = {
 
   // Agents
   AGENT_LIST: 'agent:list',
+  AGENT_PROBE_EXECUTION_SERVER: 'agent:probeExecutionServer',
 
   // Handoffs
   HANDOFF_LIST: 'handoff:list',

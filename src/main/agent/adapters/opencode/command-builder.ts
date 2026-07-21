@@ -1,7 +1,7 @@
 import { quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import { interpolateTemplate } from '../../shared/template-utils';
 import { buildHooks } from './hook-manager';
-import type { PermissionMode } from '../../../../shared/types';
+import type { PermissionMode, ResolvedExecutionTarget } from '../../../../shared/types';
 
 export interface OpenCodeCommandOptions {
   opencodePath: string;
@@ -21,6 +21,8 @@ export interface OpenCodeCommandOptions {
   mcpServerToken?: string;
   model?: string;
   effort?: string;
+  /** Present only when this project's OpenCode execution mode is 'remote'. */
+  executionTarget?: ResolvedExecutionTarget;
 }
 
 /**
@@ -62,6 +64,16 @@ export interface OpenCodeCommandOptions {
 export class OpenCodeCommandBuilder {
   buildOpenCodeCommand(options: OpenCodeCommandOptions): string {
     const { shell } = options;
+
+    // Remote mode: attach to the user-run server instead of spawning a local
+    // session. The server owns providers/models/MCP/tools (per the task's
+    // acceptance criteria), so - unlike the local branch below - this never
+    // emits --model or installs the activity plugin (there is no local
+    // project directory to write it into; the server's filesystem is not
+    // ours to touch).
+    if (options.executionTarget) {
+      return buildOpenCodeAttachCommand(options, options.executionTarget, shell);
+    }
 
     // Install the activity-stream plugin into the project's
     // `.opencode/plugins/` directory before the CLI launches. OpenCode
@@ -130,6 +142,11 @@ export class OpenCodeCommandBuilder {
    * URL / token values are missing.
    */
   buildOpenCodeEnv(options: OpenCodeCommandOptions): Record<string, string> | null {
+    // Known v1 limitation: the Kangentic MCP server listens on
+    // 127.0.0.1 in this process, which a remote OpenCode server cannot
+    // reach. Omit the env block entirely rather than emitting an
+    // unreachable URL the server would silently fail to connect to.
+    if (options.executionTarget) return null;
     if (!options.mcpServerEnabled) return null;
     if (!options.mcpServerUrl || !options.mcpServerToken) return null;
 
@@ -152,6 +169,59 @@ export class OpenCodeCommandBuilder {
   interpolateTemplate(template: string, variables: Record<string, string>): string {
     return interpolateTemplate(template, variables);
   }
+}
+
+/**
+ * Build `opencode attach <url> [--dir <serverPath>] [--username u] [--password p]
+ * [--session <id>] [--prompt <text>]`.
+ *
+ * Verified against /anomalyco/opencode docs: `attach` accepts `--dir`,
+ * `--continue`/`-c`, `--session`/`-s`, `--fork`, `--username`/`-u`,
+ * `--password`/`-p`. UNVERIFIED (no live server available while building
+ * this): whether `attach` also accepts `--prompt` and `--agent`, which are
+ * documented only for the local TUI command above. `attach` is described as
+ * "connects a terminal to an already running backend server" - the same TUI,
+ * so both are passed on a fresh (non-resume) spawn on the reasoning that an
+ * unrecognized flag would surface as an immediate, visible spawn error rather
+ * than a silent behavior change. If real usage shows otherwise, drop them
+ * here rather than adjusting the local branch.
+ *
+ * No `--model` is ever emitted here: per the task's acceptance criteria the
+ * remote server is the authority for providers and models.
+ */
+function buildOpenCodeAttachCommand(
+  options: OpenCodeCommandOptions,
+  target: ResolvedExecutionTarget,
+  shell?: string,
+): string {
+  const parts: string[] = [quoteArg(options.opencodePath, shell), 'attach', quoteArg(target.url, shell)];
+
+  if (target.workingDirectory) {
+    parts.push('--dir', quoteArg(target.workingDirectory, shell));
+  }
+  if (target.auth.kind === 'basic') {
+    parts.push('--username', quoteArg(target.auth.username, shell));
+    parts.push('--password', quoteArg(target.auth.password, shell));
+  }
+
+  if (options.resume && options.sessionId) {
+    parts.push('--session', quoteArg(options.sessionId, shell));
+    // No prompt on resume, mirroring the local --session resume convention.
+    return parts.join(' ');
+  }
+
+  const agentName = mapPermissionModeToAgent(options.permissionMode);
+  if (agentName) {
+    parts.push('--agent', quoteArg(agentName, shell));
+  }
+
+  if (options.prompt) {
+    const needsDoubleQuoteReplacement = shell ? !isUnixLikeShell(shell) : process.platform === 'win32';
+    const safePrompt = needsDoubleQuoteReplacement ? options.prompt.replace(/"/g, "'") : options.prompt;
+    parts.push('--prompt', quoteArg(safePrompt, shell, { multiline: true }));
+  }
+
+  return parts.join(' ');
 }
 
 /**

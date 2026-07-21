@@ -20,7 +20,7 @@ The config directory (`<configDir>`) is platform-specific:
 
 Both panels use a VS Code-style layout: a sidebar with tab navigation on the left and the active settings pane on the right. A search bar at the top filters settings by keyword. Search uses multi-token matching (all tokens must appear in the setting name or description). Results are grouped by tab with match count badges on the sidebar; tabs with zero matches are dimmed. Press Ctrl+F (Cmd+F on macOS) to focus the search bar, Escape to clear the filter.
 
-- **Settings Panel** -- opened via the titlebar gear icon or the gear icon on each project row in the sidebar. A project switcher dropdown in the header allows switching between projects. Sidebar tabs: General, Theme, Terminal, Agent, Git, Browser, Shortcuts, Layout, Behavior, Dictation, Memory, Hotkeys, MCP Server, Agent Browser, Notifications, Mobile Devices, Privacy, Developer. The first seven tabs (above the separator) are per-project settings. Five of them (Theme, Terminal, Agent, Git, Browser) save to `.kangentic/config.json`, Shortcuts saves to the board config files (`kangentic.json` and `kangentic.local.json`), and the General tab edits the project record in the global index database. The General tab exposes the `project.location` setting -- the folder on disk the project points at -- with a "Change..." button to re-point the project after its folder is moved or renamed; because tasks and history are keyed by project id, they are preserved across a relocation. The Agent tab exposes the `project.defaultAgent` setting (the "Agent" combobox) -- the agent CLI used for new sessions in this project -- along with `project.defaultModel` and `project.defaultEffort` (the "Model" and "Effort" comboboxes), the project-level model and reasoning-effort defaults applied when no column or task override is set. Like `project.location`, all three are stored on the project record in the global index database rather than in `AppConfig`. The last eleven (Layout, Behavior, Dictation, Memory, Hotkeys, MCP Server, Agent Browser, Notifications, Mobile Devices, Privacy, Developer) are shared settings that apply across all projects, saved to the global config. When no project is open, only the 11 shared tabs appear. Changes save immediately. New projects inherit only the seeded settings subset (`theme`, `terminal.*`, `agent.permissionMode`, `git.*`) from the most recently configured project, falling back to defaults if none exist. Project-specific data such as `browser.defaultUrl` and `importSources` is stored per-project and is never cloned into a new project.
+- **Settings Panel** -- opened via the titlebar gear icon or the gear icon on each project row in the sidebar. A project switcher dropdown in the header allows switching between projects. Sidebar tabs: General, Theme, Terminal, Agent, Git, Browser, Shortcuts, Layout, Behavior, Dictation, Memory, Hotkeys, MCP Server, Agent Browser, Notifications, Mobile Devices, Privacy, Developer. The first seven tabs (above the separator) are per-project settings. Five of them (Theme, Terminal, Agent, Git, Browser) save to `.kangentic/config.json`, Shortcuts saves to the board config files (`kangentic.json` and `kangentic.local.json`), and the General tab edits the project record in the global index database. The General tab exposes the `project.location` setting -- the folder on disk the project points at -- with a "Change..." button to re-point the project after its folder is moved or renamed; because tasks and history are keyed by project id, they are preserved across a relocation. The Agent tab exposes the `project.defaultAgent` setting (the "Agent" combobox) -- the agent CLI used for new sessions in this project -- along with `project.defaultModel` and `project.defaultEffort` (the "Model" and "Effort" comboboxes), the project-level model and reasoning-effort defaults applied when no column or task override is set. Like `project.location`, all three are stored on the project record in the global index database rather than in `AppConfig`. When the selected agent declares remote-execution support (today: OpenCode only), the Agent tab also shows an Execution mode row right below the CLI Path row, letting the project run that agent locally (the default) or attach to a server it declares support for - see [Remote Execution](#remote-execution) below; an agent without the capability shows none of these rows. The last eleven (Layout, Behavior, Dictation, Memory, Hotkeys, MCP Server, Agent Browser, Notifications, Mobile Devices, Privacy, Developer) are shared settings that apply across all projects, saved to the global config. When no project is open, only the 11 shared tabs appear. Changes save immediately. New projects inherit only the seeded settings subset (`theme`, `terminal.*`, `agent.permissionMode`, `git.*`) from the most recently configured project, falling back to defaults if none exist. Project-specific data such as `browser.defaultUrl`, `importSources`, and `agent.execution` (a remote server's working directory is specific to the project it was configured for) is stored per-project and is never cloned into a new project.
 
 ### App-Only Settings
 
@@ -31,6 +31,7 @@ These settings appear only in App Settings and cannot be overridden per-project:
 - `diffDefaultScope`, `diffIgnoreWhitespace`, `diffCollapseUnchanged`, `diffFileSort`, `diffFlatList`
 - `restoreWindowPosition`
 - `agent.cliPaths`, `agent.maxConcurrentSessions`, `agent.queueOverflow`, `agent.autoResumeSessionsOnRestart`
+- `agent.executionServers` (per-agent remote-server url + auth; the Agent tab's Server URL / Authentication fields, shown when the selected agent declares remote-execution support)
 - `terminal.panelHeight`, `terminal.showPreview`
 - `autoFocusIdleSession`
 - `skipBoardConfigConfirm`
@@ -54,8 +55,9 @@ These settings appear in both App Settings (as defaults) and Project Settings (a
 - `agent.permissionMode`
 - `git.worktreesEnabled`, `git.autoCleanup`, `git.defaultBaseBranch`, `git.copyFiles`, `git.initScript`, `git.linkNodeModules`, `git.prRefreshIntervalMinutes`
 - `browser.enabled`, `browser.defaultUrl`
+- `agent.execution` (per-agent local/remote mode + server working directory; editable inline in the Agent tab for the currently-selected agent, but NOT seeded into new projects - see below)
 
-> **Seeded vs. stored.** All settings above are stored per-project in `.kangentic/config.json` and editable in Project Settings. When a *new* project is created it is seeded with only `theme`, `terminal.*`, `agent.permissionMode`, and `git.*` (via `pickOverridableSubset` in `config-manager.ts`). `browser.*`, and non-setting project data such as `importSources`, are kept per-project and never cloned, so one project's dev-server URL or import sources cannot leak into another.
+> **Seeded vs. stored.** All settings above are stored per-project in `.kangentic/config.json` and editable in Project Settings. When a *new* project is created it is seeded with only `theme`, `terminal.*`, `agent.permissionMode`, and `git.*` (via `pickOverridableSubset` in `config-manager.ts`). `browser.*`, `agent.execution`, and non-setting project data such as `importSources`, are kept per-project and never cloned, so one project's dev-server URL, remote-server directory, or import sources cannot leak into another.
 
 ## Full AppConfig Reference
 
@@ -122,6 +124,8 @@ These settings appear in both App Settings (as defaults) and Project Settings (a
 | `agent.queueOverflow` | `'queue'` \| `'reject'` | `'queue'` | What to do when max sessions reached. Global-only. |
 | `agent.idleTimeoutMinutes` | number | `0` | Auto-suspend sessions after this many minutes idle. 0 = disabled. Global-only. |
 | `agent.autoResumeSessionsOnRestart` | boolean | `true` | When true, agent sessions that were running at last close auto-resume when Kangentic restarts. When false, sessions stay paused and require a manual Resume click on each task. Turn off if auto-resuming many agents at once overwhelms your machine. Global-only. |
+| `agent.executionServers` | Record\<string, AgentExecutionServer\> | `{}` | Global, agent-keyed remote-server identity: `{ url, auth }`. `auth` is `{kind:'none'}`, `{kind:'basic', username, password}`, or `{kind:'bearerEnv', envVarName}`. Machine-scoped like `agent.cliPaths` - names a server, not a project. Global-only. |
+| `agent.execution` | Record\<string, AgentProjectExecution\> | `{}` | Per-project, agent-keyed: `{ mode: 'local' \| 'remote', workingDirectory }`. An absent entry means local. `workingDirectory` is a path ON THE SERVER for this project's tasks. See [Remote Execution](#remote-execution). |
 
 PermissionMode values:
 
@@ -133,6 +137,24 @@ PermissionMode values:
 - `bypassPermissions` -- `--dangerously-skip-permissions` (no prompts at all)
 
 All six modes are available in both the global App Settings "Permissions" dropdown and the per-column Edit Column dialog. The dropdown shows only the modes supported by the active agent (e.g., Cursor CLI only exposes Interactive and Non-Interactive; Oz CLI exposes Plan, Default, and Auto via Warp agent profiles).
+
+### Remote Execution
+
+An agent adapter can declare `remoteExecution` on `AgentAdapter` (`src/main/agent/agent-adapter.ts`) to support attaching to a server the user runs, instead of always spawning a local process. Today only OpenCode declares it (`opencode attach <url> --dir <serverPath>`). The fields live inline in the Agent settings tab, right after the CLI Path row, and render only when the currently-selected agent declares the capability (`AgentExecutionFields` in `src/renderer/components/settings/tabs/agent-execution-fields.tsx`) - an agent without it (everyone else) shows none of these rows, since the Agent tab only ever displays the one currently-selected agent.
+
+The configuration splits along a scope seam:
+
+- **`agent.executionServers[name]`** (global) is the server's identity - URL and auth. It is machine-scoped, like `agent.cliPaths`: the same server is available to every project on this machine.
+- **`agent.execution[name]`** (per-project) is this project's use of that server - `local` or `remote`, and if remote, the working directory ON THE SERVER for this project's tasks. It is intentionally excluded from new-project seeding (see the seeding note above) - a remote server's directory is specific to the project it was configured for.
+
+At spawn time, `resolveExecutionTarget()` (`src/main/agent/shared/execution-target.ts`) combines both into a single `ResolvedExecutionTarget` and threads it through `CommandOptions.executionTarget`, populated at both spawn chokepoints (`transition-engine.ts`, `session-startup/prepare-spawn.ts`) per `spawn-entry-point-parity.md`. It throws (rather than silently spawning locally) if a project's mode is `remote` but no server URL is configured.
+
+An adapter may also set `AgentRemoteExecutionInfo.remoteModeCaveat` - a short string shown under the remote fields (e.g. which Kangentic features, like MCP or the activity plugin, are unavailable in remote mode for that agent). The renderer only ever renders whatever string the adapter provides; it never branches on agent name to decide the copy, per `agent-adapters-boundary.md`.
+
+When a project's mode for an agent is `remote`:
+
+- `ensureTaskWorktree` (`src/main/ipc/helpers/task-git.ts`) skips creating a local git worktree - the task's `worktree_path` stays `null`, and the configured server-side directory travels separately via `executionTarget`, never through `cwd`.
+- For OpenCode specifically: the local `probeAuth()` (reads `~/.local/share/opencode/auth.json`) is bypassed in favor of a `GET /global/health` reachability probe (`remoteExecution.probeServer`, surfaced to the renderer's "Test connection" button via the `agent:probeExecutionServer` IPC channel); the transcript is read over HTTP (`GET /session/:id/message`) instead of the local SQLite database; the activity plugin is not installed (the server's filesystem is not local); and the Kangentic MCP server is not wired in (its callback URL is `127.0.0.1`-bound and unreachable from a remote host). PTY-silence activity detection and PTY-output session-ID capture both continue to work unchanged, since `opencode attach` still runs a real TUI over the local PTY.
 
 ### git.*
 

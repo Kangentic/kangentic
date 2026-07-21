@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import type DatabaseType from 'better-sqlite3';
 import type { TranscriptEntry, TranscriptBlock } from '../../../../shared/types';
 import { loadBetterSqlite3, openCodeDbPath } from './session-history-parser';
+import type { OpenCodeRemoteMessageEntry } from './remote-client';
 
 /**
  * Parse an OpenCode session into agent-agnostic `TranscriptEntry[]` for the
@@ -134,6 +135,72 @@ export function mapOpenCodeRows(
     if (role !== 'assistant') continue;
 
     const model = typeof messageData.modelID === 'string' ? messageData.modelID : undefined;
+    const blocks: TranscriptBlock[] = [];
+    const toolResults: TranscriptEntry[] = [];
+
+    for (const part of parts) {
+      if (part.type === 'text' && typeof part.text === 'string') {
+        if (part.text.trim().length > 0) blocks.push({ type: 'text', text: part.text });
+      } else if (part.type === 'reasoning' && typeof part.text === 'string') {
+        if (part.text.trim().length > 0) blocks.push({ type: 'thinking', text: part.text });
+      } else if (part.type === 'tool') {
+        const callId = typeof part.callID === 'string' ? part.callID : '';
+        const name = typeof part.tool === 'string' ? part.tool : 'tool';
+        const state = isRecord(part.state) ? part.state : {};
+        blocks.push({ type: 'tool_use', id: callId, name, input: state.input });
+        toolResults.push({
+          kind: 'tool_result',
+          uuid,
+          ts,
+          toolUseId: callId,
+          content: stringifyOutput(state.output),
+          isError: state.status === 'error',
+        });
+      }
+    }
+
+    if (blocks.length > 0) entries.push({ kind: 'assistant', uuid, ts, model, blocks });
+    for (const result of toolResults) entries.push(result);
+  }
+
+  return entries;
+}
+
+/**
+ * Map a remote OpenCode server's `GET /session/:id/message` response
+ * (`{info, parts}[]`) into the same agent-agnostic `TranscriptEntry[]` shape
+ * `mapOpenCodeRows` produces from the local SQLite tables. This is a
+ * genuinely different input shape, not a reuse of the SQLite mapper: the
+ * remote payload arrives as already-parsed JSON objects (`part.text`,
+ * `part.state`) rather than a `data` JSON-string column, so there is no
+ * `tryParseJson` step. The per-part-type switch (text / reasoning / tool)
+ * mirrors `mapOpenCodeRows` exactly so both code paths stay in sync if the
+ * conversation model grows a new block type.
+ *
+ * UNVERIFIED against a live server - see the field-name caveat on
+ * `OpenCodeRemoteMessage`/`OpenCodeRemotePart` in `remote-client.ts`.
+ */
+export function mapOpenCodeRemoteEntries(messages: OpenCodeRemoteMessageEntry[]): TranscriptEntry[] {
+  const entries: TranscriptEntry[] = [];
+
+  for (const { info, parts } of messages) {
+    if (!info || typeof info.id !== 'string') continue;
+    const uuid = info.id;
+    const ts = typeof info.time?.created === 'number' ? info.time.created : Date.now();
+
+    if (info.role === 'user') {
+      const text = parts
+        .filter((part) => part.type === 'text' && typeof part.text === 'string')
+        .map((part) => part.text as string)
+        .join('')
+        .trim();
+      if (text.length > 0) entries.push({ kind: 'user', uuid, ts, text });
+      continue;
+    }
+
+    if (info.role !== 'assistant') continue;
+
+    const model = typeof info.modelID === 'string' ? info.modelID : undefined;
     const blocks: TranscriptBlock[] = [];
     const toolResults: TranscriptEntry[] = [];
 

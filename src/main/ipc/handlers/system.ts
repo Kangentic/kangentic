@@ -13,6 +13,7 @@ import { HandoffRepository } from '../../db/repositories/handoff-repository';
 import { syncProjectMcpConfig } from './projects';
 import { applyRuntimeConfig } from '../../config/apply-runtime-config';
 import { listAgents, invalidateAgentListCache } from '../../agent/agent-list';
+import { agentRegistry } from '../../agent/agent-registry';
 import { broadcast } from '../../pop-out/window-broadcast';
 import type {
   NotificationInput,
@@ -21,6 +22,7 @@ import type {
   AgentSummarizeInput,
   AgentSummarizeResult,
   HandoffRecord,
+  RemoteServerStatus,
 } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 
@@ -277,6 +279,29 @@ export function registerSystemHandlers(context: IpcContext): void {
   ipcMain.handle(IPC.AGENT_LIST, async (_event, forceRefresh?: boolean): Promise<AgentDetectionInfo[]> => {
     const config = context.configManager.load();
     return listAgents(config.agent.cliPaths, forceRefresh ?? false);
+  });
+
+  // "Test connection" in the Agent settings tab. Reads the server record
+  // (url + auth, including the password) directly from config rather than
+  // accepting one from the renderer, so the password never has to round-trip
+  // through the renderer process. Never throws: an agent with no
+  // remoteExecution capability, or no configured server, reports unreachable
+  // with a clear reason instead of an IPC error.
+  ipcMain.handle(IPC.AGENT_PROBE_EXECUTION_SERVER, async (_event, agentName: string): Promise<RemoteServerStatus> => {
+    const adapter = agentRegistry.get(agentName);
+    if (!adapter?.remoteExecution) {
+      return { reachable: false, reason: `${agentName} does not support remote execution` };
+    }
+    const config = context.configManager.load();
+    const server = config.agent.executionServers[agentName];
+    if (!server) {
+      return { reachable: false, reason: 'No server configured' };
+    }
+    try {
+      return await adapter.remoteExecution.probeServer(server);
+    } catch (error) {
+      return { reachable: false, reason: error instanceof Error ? error.message : 'Unknown error' };
+    }
   });
 
   // Sliding-window rate limit for summarize calls. Each entry is a Date.now()

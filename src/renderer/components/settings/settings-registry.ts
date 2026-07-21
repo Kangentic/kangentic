@@ -70,6 +70,15 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'agent.idleTimeoutMinutes', tabId: 'agent', label: 'Idle Timeout (minutes)', description: 'Auto-suspend sessions after this many minutes idle. 0 to disable.', scope: 'global', keywords: ['suspend', 'minutes'] },
   { id: 'agent.permissionMode', tabId: 'agent', label: 'Permissions', description: 'How the agent handles tool approvals', scope: 'project', keywords: ['allowlist', 'bypass', 'approve'] },
 
+  // ── Agent > Remote Execution ──
+  // Keywords stay agent-agnostic: these rows render for ANY adapter that
+  // declares `remoteExecution`, so naming one agent here would go stale the
+  // moment a second one does (agent-adapters-boundary.md).
+  { id: 'agent.executionMode', tabId: 'agent', label: 'Execution', description: 'Run this agent locally, or attach to a server you run elsewhere', scope: 'project', keywords: ['remote', 'local', 'server', 'attach'] },
+  { id: 'agent.executionServerUrl', tabId: 'agent', label: 'Server URL', description: 'Address of the running server (e.g. http://10.0.0.5:4096)', scope: 'global', keywords: ['remote', 'url', 'server', 'host'] },
+  { id: 'agent.executionServerAuth', tabId: 'agent', label: 'Authentication', description: 'Leave blank if the server does not require credentials', scope: 'global', keywords: ['remote', 'auth', 'username', 'password', 'basic', 'optional'] },
+  { id: 'agent.executionWorkingDirectory', tabId: 'agent', label: 'Server Working Directory', description: "Path on the server for this project's tasks. Leave blank to use the server's own default directory", scope: 'project', keywords: ['remote', 'directory', 'path', 'worktree', 'cwd', 'optional'] },
+
   // ── Git ──
   { id: 'git.worktreesEnabled', tabId: 'git', label: 'Enable Worktrees', description: 'Create git worktrees for agent tasks', scope: 'project', keywords: ['branch', 'isolate'] },
   { id: 'git.autoCleanup', tabId: 'git', label: 'Auto-cleanup', description: 'Remove worktrees when tasks complete', scope: 'project', keywords: ['remove', 'delete'] },

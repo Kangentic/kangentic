@@ -14,6 +14,8 @@ import { deepMerge, deepMergeConfig } from '../../shared/object-utils';
 const CONFIG_DICTIONARY_PATHS = [
   'backlog.labelColors',
   'agent.cliPaths',
+  'agent.executionServers',
+  'agent.execution',
   'hotkeyOverrides',
   'workspaceByProject',
   'commandTerminalWorkspace',
@@ -54,6 +56,15 @@ export function pickOverridableSubset(source: DeepPartial<AppConfig>): Partial<A
   });
   if (terminal) result.terminal = terminal;
 
+  // agent.execution (local/remote mode + server working directory) is
+  // deliberately NOT included here, even though it is project-scoped and
+  // user-editable in Project Settings: this function also seeds a BRAND NEW
+  // project's config from the most-recently-configured project
+  // (getLastProjectOverrides in projects.ts), and a remote server's working
+  // directory is project-specific data (like browser.defaultUrl) - it would
+  // point a new project's tasks at a different project's server-side
+  // directory. `agent.execution` is written directly via updateProjectOverride
+  // (setting-scope.tsx), which does not go through this function.
   if (source.agent?.permissionMode !== undefined) {
     result.agent = { permissionMode: source.agent.permissionMode };
   }

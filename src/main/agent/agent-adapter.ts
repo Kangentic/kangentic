@@ -12,6 +12,10 @@ import type {
   TranscriptEntry,
   TranscriptUsage,
   TranscriptToolCounts,
+  AgentRemoteExecutionInfo,
+  AgentExecutionServer,
+  ResolvedExecutionTarget,
+  RemoteServerStatus,
 } from '../../shared/types';
 
 /**
@@ -73,6 +77,15 @@ export interface CommandOptions {
   model?: string;
   /** Adapter-specific effort/reasoning level (e.g. Claude `--effort xhigh`). Empty/undefined leaves the agent default in place. */
   effort?: string;
+  /**
+   * Present only when this project's execution mode for this agent is
+   * 'remote' (resolved by the spawn chokepoint from `agent.executionServers`
+   * + `agent.execution`). Adapters that declare `remoteExecution` read this
+   * instead of spawning the CLI locally; `cwd` still holds a locally-valid
+   * path for node-pty; the actual working directory the agent runs in is
+   * `executionTarget.workingDirectory`, which lives on the remote server.
+   */
+  executionTarget?: ResolvedExecutionTarget;
 }
 
 /** Agent-agnostic spawn options - renames `cliPath` to `agentPath`. */
@@ -135,6 +148,25 @@ export interface AgentAdapter {
    * called by IPC after detect() returns found:true. Must never throw.
    */
   probeAuth?(): Promise<boolean | null>;
+
+  /**
+   * Declared by adapters whose CLI can attach to an already-running server
+   * the user operates, instead of always spawning a local process (e.g.
+   * OpenCode's `opencode attach <url> --dir <serverPath>`). Absent for every
+   * other adapter - the Agent settings tab renders no remote-mode rows
+   * for an agent that omits this, per `agent-adapters-boundary.md` (no
+   * agent-name branching outside this folder; the renderer gates on the
+   * presence of this capability instead).
+   *
+   * `probeServer` replaces `probeAuth` as the reachability/auth check when a
+   * project's execution mode for this agent is 'remote': it must hit the
+   * server directly (e.g. a health endpoint) rather than reading local
+   * on-disk credentials, and must never throw.
+   */
+  readonly remoteExecution?: {
+    readonly info: AgentRemoteExecutionInfo;
+    probeServer(server: AgentExecutionServer): Promise<RemoteServerStatus>;
+  };
 
   /** Build the shell command string to spawn the agent. */
   buildCommand(options: SpawnCommandOptions): string;

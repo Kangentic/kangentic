@@ -25,6 +25,8 @@ import { TransitionEngine } from '../../src/main/transition-engine/transition-en
 import { buildTaskXml } from '../../src/main/agent/shared/prompt-xml';
 import { sanitizeForPty } from '../../src/shared/paths';
 import { migrateResumeCwdIfRenamed } from '../../src/main/transition-engine/resume-cwd-migration';
+import { OpenCodeCommandBuilder, type OpenCodeCommandOptions } from '../../src/main/agent/adapters/opencode';
+import type { AgentExecutionServer, AgentProjectExecution } from '../../src/shared/types';
 
 // ---------------------------------------------------------------------------
 // Minimal mock factories
@@ -197,6 +199,11 @@ function makeEngine(options: {
   sessionManager?: ReturnType<typeof makeSessionManager>;
   sessionRepo?: ReturnType<typeof makeSessionRepo>;
   action?: ReturnType<typeof makeAction>;
+  /** Global + per-project remote-execution config, keyed by agent name. Defaults
+   * to empty maps (local execution for every agent), matching every existing
+   * caller of makeEngine. */
+  executionServers?: Record<string, AgentExecutionServer>;
+  execution?: Record<string, AgentProjectExecution>;
 }) {
   const sessionManager = options.sessionManager ?? makeSessionManager();
   const sessionRepo = options.sessionRepo ?? makeSessionRepo();
@@ -220,6 +227,8 @@ function makeEngine(options: {
     mcpServerToken: undefined,
     defaultAgent: 'claude',
     cliPathOverrides: {},
+    executionServers: options.executionServers ?? {},
+    execution: options.execution ?? {},
   }));
 
   const terminalSubmit = makeTerminalSubmit();
@@ -595,5 +604,75 @@ describe('TransitionEngine - migrateResumeCwdIfRenamed wiring', () => {
         agentSessionId: 'agent-sess-uuid',
       }),
     );
+  });
+});
+
+describe('TransitionEngine - remote execution wiring (executeSpawnAgent chokepoint)', () => {
+  // Coverage hole: resolveExecutionTarget is called at this chokepoint
+  // (transition-engine.ts) and threaded into commandOptions.executionTarget, but
+  // no prior test spawned through it with a remote-configured agent. Deleting
+  // that wiring (either the resolveExecutionTarget call or the executionTarget
+  // property on commandOptions) would silently fall back to a local spawn while
+  // every other test here kept passing, because they all leave
+  // executionServers/execution empty.
+  //
+  // mockAdapter.buildCommand is swapped for the REAL OpenCodeCommandBuilder so
+  // the assertion exercises production attach-command logic, not a hand-rolled
+  // stub of "did executionTarget arrive". The agent name in this describe is
+  // still 'claude' (mockAdapter.name, appConfig.defaultAgent) - that identity is
+  // irrelevant to resolveExecutionTarget, which is agent-name-parameterized, not
+  // OpenCode-specific.
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('threads resolveExecutionTarget into commandOptions.executionTarget, producing an attach command with the server URL', async () => {
+    const openCodeCommandBuilder = new OpenCodeCommandBuilder();
+    mockAdapter.buildCommand.mockImplementation((options: { prompt?: string }) =>
+      openCodeCommandBuilder.buildOpenCodeCommand(options as unknown as OpenCodeCommandOptions),
+    );
+
+    const task = makeTask();
+    const sessionManager = makeSessionManager();
+    const { engine } = makeEngine({
+      sessionManager,
+      executionServers: {
+        claude: { url: 'http://10.0.0.9:5100', auth: { kind: 'none' } },
+      },
+      execution: {
+        claude: { mode: 'remote', workingDirectory: '/srv/remote-project' },
+      },
+    });
+
+    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
+
+    expect(sessionManager.spawnedSessions).toHaveLength(1);
+    const command = sessionManager.spawnedSessions[0].command;
+    // Red: commenting out `executionTarget,` in executeSpawnAgent's
+    // commandOptions (transition-engine.ts) makes buildOpenCodeCommand take the
+    // local branch instead, and this command would be the plain binary path
+    // with no 'attach' token and no server URL.
+    expect(command).toContain('attach');
+    expect(command).toContain('http://10.0.0.9:5100');
+  });
+
+  it('does not thread an executionTarget when the agent is not configured for remote mode', async () => {
+    // Plain capture stub, not the real OpenCodeCommandBuilder: this test only
+    // needs to see what commandOptions carried, not exercise the real
+    // attach-vs-local branch (which would otherwise hit buildHooks's real
+    // filesystem side effect against the hardcoded /some/project cwd).
+    let capturedExecutionTarget: unknown;
+    mockAdapter.buildCommand.mockImplementation((options: { executionTarget?: unknown; prompt?: string }) => {
+      capturedExecutionTarget = options.executionTarget;
+      return `claude ${options.prompt ?? ''}`;
+    });
+
+    const task = makeTask();
+    // executionServers/execution both default to {} (local execution).
+    const { engine } = makeEngine({});
+
+    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
+
+    expect(capturedExecutionTarget).toBeUndefined();
   });
 });

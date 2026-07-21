@@ -253,7 +253,9 @@ export function SectionHeader({ label, description, prominent, searchIds }: Sect
 /* ── Setting Row ── */
 
 interface SettingRowProps {
-  label: string;
+  /** Usually a string; a caller may pass a fragment (e.g. label text + a
+   *  small `Pill` tag like "Optional") for a row that needs inline markup. */
+  label: React.ReactNode;
   description: string;
   children: React.ReactNode;
   /** Registry ID for search filtering. */

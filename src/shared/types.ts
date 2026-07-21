@@ -102,7 +102,71 @@ export interface AgentDetectionInfo {
   supportsSummarize?: boolean;
   /** Discovered at detection time; absent for adapters that do not implement discovery. */
   capabilities?: AgentCapabilities;
+  /** Present when the adapter can attach to a user-run server instead of spawning locally.
+   *  Absent = this agent has no remote-execution capability; the Agent settings tab never
+   *  renders remote rows for it. */
+  remoteExecution?: AgentRemoteExecutionInfo;
 }
+
+/**
+ * Renderer-facing description of an adapter's remote-execution capability
+ * (`AgentAdapter.remoteExecution`, mirrored here by `agent-list.ts`). Declares
+ * shape only - never a value - so the Agent settings tab can render the
+ * right fields without branching on agent name.
+ */
+export interface AgentRemoteExecutionInfo {
+  /** Placeholder text for the Server URL field (e.g. "http://10.0.0.5:4096"). */
+  urlPlaceholder: string;
+  authKind: 'basic' | 'bearerEnv' | 'none';
+  /** Whether the server working directory is supplied per-invocation (OpenCode's
+   *  `--dir`) or fixed when the server itself starts (Qwen's `--workspace`). A
+   *  'server-bound' agent can serve only one directory per running server. */
+  workingDirectoryScope: 'per-invocation' | 'server-bound';
+  /** Optional adapter-authored caveat shown under the remote fields (e.g. which
+   *  Kangentic features are unavailable in remote mode). Renderer just renders
+   *  whatever string is present - never branches on agent name to decide the
+   *  copy (agent-adapters-boundary.md). Mirrors `AgentLiveTelemetryUnsupported`'s
+   *  adapter-declared-copy shape. */
+  remoteModeCaveat?: string;
+}
+
+/** Credentials for reaching an agent's remote execution server. Shape is a
+ *  discriminated union because different agents authenticate differently
+ *  (OpenCode: HTTP basic; Codex: a bearer token supplied via an env var NAME,
+ *  never the value itself, so the secret never leaves the user's own shell). */
+export type AgentExecutionServerAuth =
+  | { kind: 'none' }
+  | { kind: 'basic'; username: string; password: string }
+  | { kind: 'bearerEnv'; envVarName: string };
+
+/** Global, agent-keyed server identity - "where does this agent's remote server
+ *  live and how do I authenticate to it". Machine-scoped: not project-overridable,
+ *  mirrors `agent.cliPaths`. */
+export interface AgentExecutionServer {
+  url: string | null;
+  auth: AgentExecutionServerAuth;
+}
+
+/** Per-project, agent-keyed usage of that server - "does THIS project run this
+ *  agent locally or remotely, and if remote, in which server-side directory". */
+export interface AgentProjectExecution {
+  mode: 'local' | 'remote';
+  /** Path on the server. Ignored/unused for a 'server-bound' agent's workingDirectoryScope. */
+  workingDirectory: string | null;
+}
+
+/** The flattened value threaded through a spawn once a project resolves to
+ *  remote mode for an agent - global server identity + this project's directory. */
+export interface ResolvedExecutionTarget {
+  url: string;
+  auth: AgentExecutionServerAuth;
+  workingDirectory: string | null;
+}
+
+/** Result of probing a remote execution server for reachability. */
+export type RemoteServerStatus =
+  | { reachable: true; version: string | null }
+  | { reachable: false; reason: string };
 
 export interface AgentSummarizeInput {
   /** Free-form text to summarize into a short task title. */
@@ -1793,6 +1857,10 @@ export interface AppConfig {
     queueOverflow: 'queue' | 'reject';
     idleTimeoutMinutes: number; // 0 = disabled
     autoResumeSessionsOnRestart: boolean; // when false, sessions stay paused after restart and require a manual Resume click
+    /** Global, agent-keyed remote-server identity (url + auth). Machine-scoped, mirrors cliPaths. */
+    executionServers: Record<string, AgentExecutionServer>;
+    /** Per-project, agent-keyed local/remote choice + server working directory. Project-overridable. */
+    execution: Record<string, AgentProjectExecution>;
   };
 
   sidebar: {
@@ -2145,6 +2213,8 @@ export const DEFAULT_CONFIG: AppConfig = {
     queueOverflow: 'queue',
     idleTimeoutMinutes: 0,
     autoResumeSessionsOnRestart: true,
+    executionServers: {},
+    execution: {},
   },
   sidebar: {
     width: 400,
@@ -3676,6 +3746,11 @@ export interface ElectronAPI {
     // forceRefresh bypasses the main-process cache and re-probes detection
     // (the Agent settings "re-detect" button); omit/false uses the cache.
     list: (forceRefresh?: boolean) => Promise<AgentDetectionInfo[]>;
+    /** Reachability probe for an agent's configured remote execution server
+     *  ("Test connection" in the Agent settings tab). Reads the server
+     *  record directly from config rather than accepting one as an argument,
+     *  since the password never needs to round-trip through the renderer. */
+    probeExecutionServer: (agentName: string) => Promise<RemoteServerStatus>;
   };
 
   // Handoffs

@@ -6,6 +6,7 @@ import { sanitizeForPty } from '../../shared/paths';
 import { SessionManager } from '../pty/session-manager';
 import type { TerminalSubmit } from '../pty/terminal-submit';
 import { interpolateTemplate, buildTaskXml } from '../agent/shared';
+import { resolveExecutionTarget } from '../agent/shared/execution-target';
 import { WorktreeManager, prepareWorktreeForRemoval, GitQueuePriority } from '../git/worktree-manager';
 import { agentRegistry } from '../agent/agent-registry';
 import { retireRecord, markRecordSuspended } from './session-lifecycle';
@@ -30,6 +31,10 @@ interface TransitionEngineConfig {
   mcpServerToken?: string;
   defaultAgent: string;
   cliPathOverrides: Record<string, string | null>;
+  /** Global, agent-keyed remote-server identity (url + auth). */
+  executionServers: AppConfig['agent']['executionServers'];
+  /** Per-project, agent-keyed local/remote choice + server working directory. */
+  execution: AppConfig['agent']['execution'];
 }
 
 /**
@@ -284,6 +289,7 @@ export class TransitionEngine {
     const { statusOutputPath, eventsOutputPath } = sessionOutputPaths(sessionDir);
 
     const shell = await this.sessionManager.getShell();
+    const executionTarget = resolveExecutionTarget(agentName, appConfig.executionServers, appConfig.execution) ?? undefined;
     const commandOptions = {
       agentPath: detection.path,
       taskId: task.id,
@@ -302,6 +308,7 @@ export class TransitionEngine {
       mcpServerToken: appConfig.mcpServerToken,
       model: spawnOverrides?.model ?? undefined,
       effort: spawnOverrides?.effort ?? undefined,
+      executionTarget,
     };
     const command = adapter.buildCommand(commandOptions);
     const extraEnv = adapter.buildEnv?.(commandOptions) ?? null;

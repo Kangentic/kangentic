@@ -42,6 +42,26 @@ describe('pickOverridableSubset', () => {
     expect(result.git).toEqual({ worktreesEnabled: true, defaultBaseBranch: 'develop' });
   });
 
+  it('drops agent.execution and agent.executionServers - a new project must not inherit another project\'s remote server directory', () => {
+    // agent.execution is project-scoped and editable in Project Settings, but
+    // this function ALSO seeds a brand-new project's config from the most
+    // recently configured project (getLastProjectOverrides). A remote
+    // server's working directory is project-specific data, like
+    // browser.defaultUrl - cloning it here would point a new project's tasks
+    // at a different project's server-side directory.
+    const source = {
+      agent: {
+        permissionMode: 'acceptEdits',
+        execution: { opencode: { mode: 'remote', workingDirectory: '/srv/project' } },
+        executionServers: { opencode: { url: 'http://10.0.0.5:4096', auth: { kind: 'none' } } },
+      },
+    } as unknown as Parameters<typeof pickOverridableSubset>[0];
+
+    const result = pickOverridableSubset(source) as Record<string, unknown>;
+
+    expect(result.agent).toEqual({ permissionMode: 'acceptEdits' });
+  });
+
   it('returns {} when the source has only non-overridable keys', () => {
     // A project whose config holds ONLY importSources must not become the seed
     // source - getLastProjectOverrides relies on an empty result to fall through.

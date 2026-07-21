@@ -60,6 +60,7 @@ async function buildAgentList(
         pastedImageReferenceTemplate: adapter.pastedImageReferenceTemplate,
         supportsSummarize: typeof adapter.summarize === 'function',
         capabilities,
+        remoteExecution: adapter.remoteExecution?.info,
       };
     }),
   );
