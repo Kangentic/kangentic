@@ -93,6 +93,8 @@ export {
   type PairingQrPayload,
 } from './pairing/qr';
 
+export { MAX_RELAY_ADDRESS_LENGTH, isSecureRelayAddress } from './pairing/relay-address';
+
 export {
   signRosterEntry,
   verifyRosterEntry,

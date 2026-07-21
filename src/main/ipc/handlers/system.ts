@@ -15,6 +15,7 @@ import { applyRuntimeConfig } from '../../config/apply-runtime-config';
 import { listAgents, invalidateAgentListCache } from '../../agent/agent-list';
 import { agentRegistry } from '../../agent/agent-registry';
 import { broadcast } from '../../pop-out/window-broadcast';
+import { resolveRelayUrl } from '../../../shared/relay';
 import type {
   NotificationInput,
   AgentCommand,
@@ -136,7 +137,7 @@ export function registerSystemHandlers(context: IpcContext): void {
       context.mobileBridgeService.reconcile({
         // Dev-only until the mobile app launches (mirrors register-all.ts).
         enabled: __KANGENTIC_DEV__ && (effectiveConfig.mobileBridge?.enabled ?? false),
-        relayUrl: effectiveConfig.mobileBridge?.relayUrl ?? '',
+        relayUrl: resolveRelayUrl(effectiveConfig.mobileBridge),
       });
     }
     // Bare-signal broadcast so every open pop-out window re-fetches via config:get and

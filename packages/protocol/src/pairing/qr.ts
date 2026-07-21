@@ -11,11 +11,13 @@
  */
 import { X25519_KEY_LENGTH, concatBytes } from '../crypto/primitives';
 import { base64UrlDecode, base64UrlEncode } from '../wire/base64url';
+import { MAX_RELAY_ADDRESS_LENGTH } from './relay-address';
+
+export { MAX_RELAY_ADDRESS_LENGTH, isSecureRelayAddress } from './relay-address';
 
 export const PAIRING_URI_SCHEME = 'kangentic-pair';
 const PAYLOAD_VERSION = 1;
 const PAIRING_TOKEN_LENGTH = 32;
-const MAX_RELAY_ADDRESS_LENGTH = 512;
 /** Generous cap on the whole decoded payload - defends against a QR/URI crafted to trigger unbounded allocation before any other validation runs. */
 const MAX_PAYLOAD_LENGTH = 4096;
 

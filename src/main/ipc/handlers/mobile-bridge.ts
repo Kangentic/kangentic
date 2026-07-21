@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
+import { relayHealthUrl, validateRelayUrl } from '../../../shared/relay';
 import type {
   MobileBridgeStatus,
   MobileCapabilityVerb,
@@ -7,8 +8,12 @@ import type {
   MobilePairingEndedPayload,
   MobilePairingSasPayload,
   MobileStartPairingResult,
+  RemoteServerStatus,
 } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
+
+/** "Test connection" in the Mobile Devices tab must never hang against a black-holed relay. */
+const RELAY_TEST_TIMEOUT_MS = 5000;
 
 /**
  * Machine-global, not project-scoped - these channels take no trailing
@@ -41,6 +46,32 @@ export function registerMobileBridgeHandlers(context: IpcContext): void {
 
   ipcMain.handle(IPC.MOBILE_SET_DEVICE_CAPABILITIES, (_event, deviceId: string, capabilities: MobileCapabilityVerb[]) => {
     service.setDeviceCapabilities(deviceId, capabilities);
+  });
+
+  // Structurally a probe (mirrors AGENT_PROBE_EXECUTION_SERVER in
+  // handlers/system.ts), not a service delegation like this file's other
+  // handlers - it validates and fetches a candidate URL rather than reading
+  // or touching MobileBridgeService state. Takes the URL as an argument
+  // since testing BEFORE committing a save is the point, so it re-runs
+  // validateRelayUrl server-side rather than trusting the renderer's input.
+  // Never throws: every failure mode resolves to { reachable: false, reason }.
+  ipcMain.handle(IPC.MOBILE_TEST_RELAY, async (_event, relayUrl: string): Promise<RemoteServerStatus> => {
+    const validation = validateRelayUrl(relayUrl);
+    if (!validation.ok) return { reachable: false, reason: validation.reason };
+    try {
+      const response = await fetch(relayHealthUrl(validation.normalized), {
+        method: 'GET',
+        signal: AbortSignal.timeout(RELAY_TEST_TIMEOUT_MS),
+      });
+      if (!response.ok) return { reachable: false, reason: `Relay responded with HTTP ${response.status}` };
+      // Any 2xx counts as reachable: the relay's documented /healthz contract
+      // is `{"status":"ok"}` with no version field, so requiring one would
+      // report a working relay as unreachable.
+      const body = (await response.json().catch(() => null)) as { version?: string } | null;
+      return { reachable: true, version: body?.version ?? null };
+    } catch (error) {
+      return { reachable: false, reason: error instanceof Error ? error.message : 'Unknown error' };
+    }
   });
 
   const sendIfWindowAlive = (channel: string, ...args: unknown[]): void => {

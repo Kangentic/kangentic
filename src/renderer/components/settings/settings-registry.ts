@@ -154,7 +154,8 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   ...(__KANGENTIC_DEV__
     ? ([
         { id: 'mobileBridge.enabled', tabId: 'mobile', label: 'Mobile Bridge', description: 'Let a paired phone connect to this desktop through an end-to-end encrypted relay.', scope: 'global', keywords: ['mobile', 'phone', 'companion', 'pair', 'pairing', 'qr', 'relay', 'bridge', 'remote'] },
-        { id: 'mobileBridge.relayUrl', tabId: 'mobile', label: 'Relay Address', description: 'The relay this desktop connects to (self-hosted or Kangentic-hosted). The relay only ever sees encrypted traffic.', scope: 'global', keywords: ['relay', 'server', 'url', 'address', 'self-host', 'websocket', 'mobile'] },
+        { id: 'mobileBridge.relayMode', tabId: 'mobile', label: 'Relay', description: 'Where this desktop connects for mobile pairing. The relay only ever sees encrypted traffic.', scope: 'global', keywords: ['relay', 'server', 'hosted', 'local', 'custom', 'self-host', 'cloud', 'mobile', 'kangentic cloud'] },
+        { id: 'mobileBridge.relayUrl', tabId: 'mobile', label: 'Custom Relay Address', description: 'The self-hosted relay to dial when Relay above is set to Custom Relay.', scope: 'global', keywords: ['relay', 'server', 'url', 'address', 'self-host', 'websocket', 'mobile', 'custom'] },
         { id: 'mobileBridge.pairing', tabId: 'mobile', label: 'Pair a Device', description: 'Scan a QR code with the Kangentic mobile app to pair a new phone.', scope: 'global', keywords: ['pair', 'pairing', 'qr', 'scan', 'phone', 'mobile', 'sas', 'code'] },
         { id: 'mobileBridge.devices', tabId: 'mobile', label: 'Paired Devices', description: 'Phones paired to this desktop, their granted capabilities, and revocation.', scope: 'global', keywords: ['paired', 'devices', 'phone', 'revoke', 'capabilities', 'mobile'] },
       ] satisfies SettingDefinition[])

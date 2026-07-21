@@ -46,6 +46,7 @@ import { MobileBridgeService } from '../mobile-bridge/mobile-bridge-service';
 import { BoardEventBus } from '../mobile-bridge/board-event-bus';
 import { DesktopNotifier } from '../notifications/desktop-notifier';
 import { getProjectRepos } from './helpers';
+import { KANGENTIC_HOSTED_RELAY_URL, resolveRelayUrl } from '../../shared/relay';
 import type { IpcContext } from './ipc-context';
 import type { McpHttpServerHandle } from '../agent/mcp-http-server';
 
@@ -94,7 +95,7 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   // after `context` (and its configManager getter) is constructed below,
   // since MobileBridgeService's constructor needs a config synchronously
   // but configManager itself is only available once `context` exists.
-  const mobileBridgeService = new MobileBridgeService({ enabled: false, relayUrl: '' });
+  const mobileBridgeService = new MobileBridgeService({ enabled: false, relayUrl: KANGENTIC_HOSTED_RELAY_URL });
   const boardEvents = new BoardEventBus();
   // Owns the desktop idle/crash notification decision (cooldown, focus gate,
   // active-project gate, title assembly). Every option closure goes through
@@ -183,7 +184,7 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
     // enables the bridge regardless of persisted config (paired gates:
     // system.ts's config:set reconcile and the renderer's settings tab).
     enabled: __KANGENTIC_DEV__ && (effectiveConfig.mobileBridge?.enabled ?? false),
-    relayUrl: effectiveConfig.mobileBridge?.relayUrl ?? '',
+    relayUrl: resolveRelayUrl(effectiveConfig.mobileBridge),
   });
 
   registerProjectHandlers(context);

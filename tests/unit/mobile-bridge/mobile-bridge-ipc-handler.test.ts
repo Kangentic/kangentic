@@ -16,7 +16,7 @@
  * methods), then invoke the captured handlers directly.
  */
 import { EventEmitter } from 'node:events';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { IPC } from '../../../src/shared/ipc-channels';
 
 // ---------------------------------------------------------------------------
@@ -52,6 +52,7 @@ class FakeMobileBridgeService extends EventEmitter {
     relayUrl: 'wss://relay.example.com',
     pairedDeviceCount: 0,
     pairingInProgress: false,
+    relayState: 'idle' as const,
   }));
   startPairing = vi.fn(async () => ({
     qrPayload: { expiresAt: '2026-01-01T00:10:00.000Z' } as { expiresAt: string },
@@ -233,5 +234,111 @@ describe('registerMobileBridgeHandlers - push events', () => {
     context.mobileBridgeService.emit('stateChanged');
 
     expect(context.mainWindow.webContents.send).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MOBILE_TEST_RELAY: structurally a probe (mirrors handlers/system.ts's
+// AGENT_PROBE_EXECUTION_SERVER), not a service delegation - it validates and
+// fetches a candidate URL directly, using the real validateRelayUrl /
+// relayHealthUrl from src/shared/relay.ts (pure functions, safe to exercise
+// for real) with a stubbed global fetch. Every case below must resolve, never
+// throw or hang.
+// ---------------------------------------------------------------------------
+
+describe('registerMobileBridgeHandlers - MOBILE_TEST_RELAY', () => {
+  beforeEach(() => {
+    capturedHandlers.clear();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('rejects an invalid relay URL server-side without ever calling fetch', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const context = makeContext();
+    registerMobileBridgeHandlers(context);
+
+    const result = await invokeHandler(IPC.MOBILE_TEST_RELAY, 'not a url');
+
+    expect(result).toMatchObject({ reachable: false });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a non-loopback ws:// relay URL server-side, even if the renderer sent it', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const context = makeContext();
+    registerMobileBridgeHandlers(context);
+
+    const result = (await invokeHandler(IPC.MOBILE_TEST_RELAY, 'ws://not-loopback.example.com')) as { reachable: boolean; reason?: string };
+
+    expect(result.reachable).toBe(false);
+    expect(result.reason).toMatch(/TLS/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('reports unreachable when fetch rejects (host unreachable)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('ECONNREFUSED'); }));
+    const context = makeContext();
+    registerMobileBridgeHandlers(context);
+
+    const result = await invokeHandler(IPC.MOBILE_TEST_RELAY, 'wss://relay.example.com');
+
+    expect(result).toEqual({ reachable: false, reason: 'ECONNREFUSED' });
+  });
+
+  it('reports unreachable when the request times out (AbortSignal fires)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new DOMException('The operation was aborted.', 'AbortError'); }));
+    const context = makeContext();
+    registerMobileBridgeHandlers(context);
+
+    const result = (await invokeHandler(IPC.MOBILE_TEST_RELAY, 'wss://relay.example.com')) as { reachable: boolean; reason?: string };
+
+    expect(result.reachable).toBe(false);
+    expect(result.reason).toBeTruthy();
+  });
+
+  it('reports unreachable with the HTTP status on a non-2xx response', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 503, json: async () => ({}) })));
+    const context = makeContext();
+    registerMobileBridgeHandlers(context);
+
+    const result = await invokeHandler(IPC.MOBILE_TEST_RELAY, 'wss://relay.example.com');
+
+    expect(result).toEqual({ reachable: false, reason: 'Relay responded with HTTP 503' });
+  });
+
+  it('reports reachable with a null version when the body is not JSON (the documented /healthz contract has no version field)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => { throw new Error('Unexpected token'); } })));
+    const context = makeContext();
+    registerMobileBridgeHandlers(context);
+
+    const result = await invokeHandler(IPC.MOBILE_TEST_RELAY, 'wss://relay.example.com');
+
+    expect(result).toEqual({ reachable: true, version: null });
+  });
+
+  it('reports reachable with the version when the body provides one', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ version: '0.4.0' }) })));
+    const context = makeContext();
+    registerMobileBridgeHandlers(context);
+
+    const result = await invokeHandler(IPC.MOBILE_TEST_RELAY, 'wss://relay.example.com');
+
+    expect(result).toEqual({ reachable: true, version: '0.4.0' });
+  });
+
+  it('probes relayHealthUrl(normalized), not the raw input', async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) }));
+    vi.stubGlobal('fetch', fetchMock);
+    const context = makeContext();
+    registerMobileBridgeHandlers(context);
+
+    await invokeHandler(IPC.MOBILE_TEST_RELAY, 'WSS://Relay.Example.com');
+
+    expect(fetchMock).toHaveBeenCalledWith('https://relay.example.com/healthz', expect.anything());
   });
 });

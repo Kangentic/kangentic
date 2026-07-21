@@ -70,7 +70,20 @@ export class RelayClient implements Transport {
 
   private dial(): Promise<void> {
     this.setState(this.currentState === 'idle' ? 'connecting' : 'reconnecting');
-    const url = `${this.relayUrl}${this.relayUrl.includes('?') ? '&' : '?'}slot=${encodeURIComponent(this.slotId)}`;
+
+    let url: URL;
+    try {
+      url = new URL(this.relayUrl);
+    } catch (error) {
+      // A malformed relayUrl is a configuration bug, not a transient network
+      // hiccup - src/shared/relay.ts's resolveRelayUrl() guarantees a valid
+      // URL reaches every real caller, so this should be unreachable in
+      // practice. Fail the connect() immediately rather than entering the
+      // 500ms->30s backoff loop against a URL that can never parse.
+      this.setState('closed');
+      return Promise.reject(error instanceof Error ? error : new Error(`Invalid relay URL: ${String(error)}`));
+    }
+    url.searchParams.set('slot', this.slotId);
 
     return new Promise<void>((resolve, reject) => {
       // Wrap resolve/reject so the pendingDialReject pointer is cleared once
@@ -91,7 +104,7 @@ export class RelayClient implements Transport {
 
       let socket: WebSocket;
       try {
-        socket = new WebSocket(url);
+        socket = new WebSocket(url.href);
       } catch (error) {
         this.scheduleReconnect();
         rejectOnce(error instanceof Error ? error : new Error(String(error)));

@@ -449,6 +449,7 @@ const api: ElectronAPI = {
     listDevices: () => ipcRenderer.invoke(IPC.MOBILE_LIST_DEVICES),
     revokeDevice: (deviceId) => ipcRenderer.invoke(IPC.MOBILE_REVOKE_DEVICE, deviceId),
     setDeviceCapabilities: (deviceId, capabilities) => ipcRenderer.invoke(IPC.MOBILE_SET_DEVICE_CAPABILITIES, deviceId, capabilities),
+    testRelay: (relayUrl) => ipcRenderer.invoke(IPC.MOBILE_TEST_RELAY, relayUrl),
     onPairingSas: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, payload: MobilePairingSasPayload) => callback(payload);
       ipcRenderer.on(IPC.MOBILE_PAIRING_SAS, handler);

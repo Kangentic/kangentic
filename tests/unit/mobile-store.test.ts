@@ -68,6 +68,7 @@ function makeStatus(overrides: Partial<MobileBridgeStatus> = {}): MobileBridgeSt
     secureStorageAvailable: true,
     identityFingerprint: 'deadbeef',
     relayUrl: 'wss://relay.example.com',
+    relayState: 'idle',
     pairedDeviceCount: 0,
     pairingInProgress: false,
     ...overrides,

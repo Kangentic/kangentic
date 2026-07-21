@@ -127,6 +127,53 @@ describe('Config Manager -- Permission Mode Migration', () => {
   });
 });
 
+describe('Config Manager -- mobileBridge relay resolution across the default merge', () => {
+  // Regression: DEFAULT_CONFIG.mobileBridge used to seed relayMode: 'hosted'.
+  // mobileBridge is not a CONFIG_DICTIONARY_PATHS entry, so load() merges it
+  // key-by-key with the parsed file rather than replacing it wholesale - which
+  // meant that seeded 'hosted' filled in over a config written before
+  // relayMode existed, defeating resolveRelayUrl's "relayMode missing but
+  // relayUrl set => custom" inference and silently moving every upgrading
+  // self-hoster onto the Kangentic-hosted relay.
+  //
+  // These assert through ConfigManager.load() on purpose. tests/unit/relay-url.test.ts
+  // covers the same inference, but it hand-builds the mobileBridge object and so
+  // never sees the default merge - it stayed green while the shipped path was broken.
+
+  it('keeps dialing a pre-relayMode custom relay after the default merge', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({
+      mobileBridge: { enabled: true, relayUrl: 'wss://self-hosted.example.com' },
+    }));
+
+    const cm = await createConfigManager();
+    const config = cm.load();
+    const { resolveRelayUrl } = await import('../../src/shared/relay');
+
+    expect(config.mobileBridge?.relayMode).toBeUndefined();
+    expect(resolveRelayUrl(config.mobileBridge)).toBe('wss://self-hosted.example.com/');
+  });
+
+  it('resolves to the hosted relay for a fresh config with no relay settings', async () => {
+    const cm = await createConfigManager();
+    const config = cm.load();
+    const { KANGENTIC_HOSTED_RELAY_URL, resolveRelayUrl } = await import('../../src/shared/relay');
+
+    expect(resolveRelayUrl(config.mobileBridge)).toBe(KANGENTIC_HOSTED_RELAY_URL);
+  });
+
+  it('honors an explicit hosted choice even when a stale relayUrl is still on disk', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({
+      mobileBridge: { enabled: true, relayMode: 'hosted', relayUrl: 'wss://self-hosted.example.com' },
+    }));
+
+    const cm = await createConfigManager();
+    const config = cm.load();
+    const { KANGENTIC_HOSTED_RELAY_URL, resolveRelayUrl } = await import('../../src/shared/relay');
+
+    expect(resolveRelayUrl(config.mobileBridge)).toBe(KANGENTIC_HOSTED_RELAY_URL);
+  });
+});
+
 describe('Config Manager -- claude.* to agent.* namespace migration', () => {
   it('migrates legacy claude.* to agent.* on load', async () => {
     fs.writeFileSync(configPath, JSON.stringify({

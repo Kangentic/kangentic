@@ -128,6 +128,11 @@ describe('MobileBridgeService read paths never create an identity', () => {
     expect(status.enabled).toBe(false);
   });
 
+  it('getStatus() reports relayState "idle" when there are no roster devices to open a session for', () => {
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    expect(service.getStatus().relayState).toBe('idle');
+  });
+
   it('listDevices() returns an empty array without persisting an identity when none exists', () => {
     const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
     const devices = service.listDevices();
@@ -180,6 +185,16 @@ describe('MobileBridgeService.startPairing() is the deliberate identity-creation
     const service = new MobileBridgeService({ enabled: false, relayUrl: '' });
     await expect(service.startPairing()).rejects.toThrow(/not enabled/);
     expect(writeFileSyncSpy).not.toHaveBeenCalled();
+  });
+
+  it('refuses to start pairing on an invalid relay URL rather than minting a QR the phone will reject', async () => {
+    // This should be unreachable via the real reconcile() call sites (both
+    // resolve through resolveRelayUrl() before it reaches config), but a
+    // directly-constructed service with a bad URL still must not proceed.
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'ws://not-loopback.example.com' });
+    await expect(service.startPairing()).rejects.toThrow(/TLS/);
+    expect(writeFileSyncSpy).not.toHaveBeenCalled();
+    expect(fakeTransport.connect).not.toHaveBeenCalled();
   });
 });
 

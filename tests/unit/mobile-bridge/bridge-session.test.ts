@@ -428,6 +428,70 @@ describe('BridgeSession', () => {
     session.dispose();
   });
 
+  it('transportState getter reflects the underlying transport\'s current state, including through a reconnect', () => {
+    const desktopIdentity = testIdentity();
+    const deviceStatic = generateX25519KeyPair();
+    const { desktop, device, setDesktopState } = createReconnectableLoopback();
+
+    new ReestablishingResponder(deviceStatic, desktopIdentity.staticKeyPair.publicKey, device);
+    const session = new BridgeSession({
+      identity: desktopIdentity,
+      deviceId: 'device-1',
+      remoteStaticPublicKey: deviceStatic.publicKey,
+      capabilities: new Set(),
+      transport: desktop,
+    });
+
+    session.start();
+    expect(session.transportState).toBe('connected');
+
+    setDesktopState('reconnecting');
+    expect(session.transportState).toBe('reconnecting');
+
+    setDesktopState('connected');
+    expect(session.transportState).toBe('connected');
+
+    session.dispose();
+  });
+
+  it('emits "transportState" on every transport-state transition, including a reconnect back into "connected"', () => {
+    // Pins the ordering documented in bridge-session.ts's onTransportState():
+    // the emit happens BEFORE the `state === 'connected'` branch's early
+    // return, so a re-connect edge (not just reconnecting/closed) also
+    // reaches the service's relayState aggregation. If the emit were moved
+    // below that branch, the 'connected' transition below would silently
+    // stop appearing in transportStateEvents.
+    const desktopIdentity = testIdentity();
+    const deviceStatic = generateX25519KeyPair();
+    const { desktop, device, setDesktopState } = createReconnectableLoopback();
+
+    new ReestablishingResponder(deviceStatic, desktopIdentity.staticKeyPair.publicKey, device);
+    const session = new BridgeSession({
+      identity: desktopIdentity,
+      deviceId: 'device-1',
+      remoteStaticPublicKey: deviceStatic.publicKey,
+      capabilities: new Set(),
+      transport: desktop,
+    });
+
+    const transportStateEvents: TransportState[] = [];
+    session.on('transportState', (state: TransportState) => transportStateEvents.push(state));
+
+    // The INITIAL connect at start() bypasses onTransportState entirely (see
+    // start()'s "kick" comment: the transport was already 'connected' before
+    // the onStateChange listener was subscribed, so no transition fired).
+    session.start();
+    expect(transportStateEvents).toEqual([]);
+
+    setDesktopState('reconnecting');
+    expect(transportStateEvents).toEqual(['reconnecting']);
+
+    setDesktopState('connected');
+    expect(transportStateEvents).toEqual(['reconnecting', 'connected']);
+
+    session.dispose();
+  });
+
   it('recovers from a garbled handshake frame with a fast retry instead of wedging', () => {
     vi.useFakeTimers();
     try {

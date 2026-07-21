@@ -324,8 +324,9 @@ The Mobile Devices tab hosts the desktop half of the mobile companion app's pair
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `mobileBridge.enabled` | boolean | `false` | Master switch. When `false`, no relay connection is held and pairing is unavailable; the relay URL input and pairing controls are disabled in the UI. |
-| `mobileBridge.relayUrl` | string | `''` | The relay address to dial (self-hosted or Kangentic's hosted relay), e.g. `wss://relay.kangentic.com`. |
+| `mobileBridge.enabled` | boolean | `false` | Master switch. When `false`, no relay connection is held and pairing is unavailable; the relay Select and pairing controls are disabled in the UI. |
+| `mobileBridge.relayMode` | `'hosted' \| 'local' \| 'custom'` | `'hosted'` | `'hosted'` always dials the Kangentic-hosted relay (`wss://relay.kangentic.com`), in every build. `'local'` dials `ws://127.0.0.1:8080` - a dev-only option, only offered by the Select in a dev build (see `src/shared/relay.ts`'s `LOCAL_DEV_RELAY_URL`). `'custom'` dials `relayUrl` instead, for self-hosters. |
+| `mobileBridge.relayUrl` | string | `''` | The self-hosted relay to dial. Only consulted when `relayMode === 'custom'`; resolve the actual dial address through `resolveRelayUrl()` rather than reading this key directly - it normalizes the value and falls back to the hosted relay if this is empty or fails validation, so it never resolves to `''`. |
 
 **Actions (not config keys):** the Mobile Devices tab also exposes two settings-registry entries that are UI surfaces, not `AppConfig` keys: **Pair a Device** (registry id `mobileBridge.pairing`) starts the QR pairing ceremony described in [Mobile Bridge](mobile-bridge.md#pairing-ceremony), and **Paired Devices** (registry id `mobileBridge.devices`) lists currently paired phones with their granted capabilities and a revoke action. Both are backed by the `mobile:*` IPC channels and the signed device roster (`src/main/mobile-bridge/roster-store.ts`), not persisted in `AppConfig`.
 

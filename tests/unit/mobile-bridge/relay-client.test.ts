@@ -141,6 +141,18 @@ describe('RelayClient', () => {
     expect(client.state).toBe('closed');
   });
 
+  it('rejects immediately on a malformed relayUrl instead of entering the reconnect backoff loop', async () => {
+    const client = new RelayClient({ relayUrl: 'not a url', slotId: 'test-slot' });
+    activeClients.push(client);
+
+    await expect(client.connect()).rejects.toThrow();
+    expect(client.state).toBe('closed');
+
+    // No reconnect timer was armed: state stays 'closed' rather than cycling into 'reconnecting'.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(client.state).toBe('closed');
+  });
+
   it('send() throws when called before connecting', () => {
     const client = new RelayClient({ relayUrl: 'ws://127.0.0.1:1', slotId: 'test-slot' });
     activeClients.push(client);

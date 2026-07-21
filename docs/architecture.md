@@ -249,17 +249,18 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `boardConfig:shortcutsChanged` | on | Event: shortcuts file changed |
 | `boardConfig:setDefaultBaseBranch` | invoke | Set the team-shared default base branch in `kangentic.json` |
 
-### Mobile Bridge (10 channels)
+### Mobile Bridge (11 channels)
 Machine-global (like Config), not project-scoped - backs the Mobile Devices settings tab. See [Mobile Bridge](mobile-bridge.md) for the pairing ceremony, roster, capability verbs, and relay transport this group fronts.
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `mobile:getStatus` | invoke | Report bridge status: enabled, secure-storage availability, identity fingerprint, relay URL, paired device count, pairing-in-progress |
+| `mobile:getStatus` | invoke | Report bridge status: enabled, secure-storage availability, identity fingerprint, relay URL, relay transport state, paired device count, pairing-in-progress |
 | `mobile:startPairing` | invoke | Mint a pairing token, connect the pairing relay slot, and return the QR payload URI |
 | `mobile:confirmPairing` | invoke | Confirm the SAS matched; signs the phone's static key into the roster with the given display name and capabilities |
 | `mobile:cancelPairing` | invoke | Cancel an in-progress pairing ceremony |
 | `mobile:listDevices` | invoke | List paired devices (id, display name, capabilities, paired-at) |
 | `mobile:revokeDevice` | invoke | Revoke a paired device: drop it from the signed roster and tear down its session |
 | `mobile:setDeviceCapabilities` | invoke | Update a paired device's granted capability verbs (re-signs the roster entry) |
+| `mobile:testRelay` | invoke | Reachability probe for a candidate relay URL ("Test connection"); validates server-side and never throws |
 | `mobile:pairingSas` | on | Event: the SAS (digits + emoji) to display for the current pairing ceremony |
 | `mobile:pairingEnded` | on | Event: pairing cancelled or failed, with a reason |
 | `mobile:stateChanged` | on | Event: status or device list changed (confirm/revoke/capability update) |

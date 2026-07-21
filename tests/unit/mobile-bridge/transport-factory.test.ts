@@ -25,7 +25,9 @@ describe('createTransport()', () => {
     // is observed indirectly: the dial URL RelayClient builds embeds both
     // (see relay-client.ts's `dial()`), which surfaces as the actual
     // WebSocket connection target. We assert this via the connect-time URL
-    // rather than reaching into RelayClient internals.
+    // rather than reaching into RelayClient internals. dial() parses with
+    // new URL() and sets the slot via searchParams, so a bare-host input
+    // gains a normalized trailing slash before the query string.
     const capturedUrls: string[] = [];
     class RecordingWebSocket {
       binaryType = 'blob';
@@ -50,7 +52,7 @@ describe('createTransport()', () => {
       // to have run, which happens before any await point.
       void transport.connect().catch(() => undefined);
 
-      expect(capturedUrls).toEqual(['ws://relay.example.com?slot=my-slot-id']);
+      expect(capturedUrls).toEqual(['ws://relay.example.com/?slot=my-slot-id']);
       transport.close();
     } finally {
       (globalThis as unknown as { WebSocket: unknown }).WebSocket = originalWebSocket;

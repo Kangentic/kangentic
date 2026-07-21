@@ -225,6 +225,7 @@ export const IPC = {
   MOBILE_LIST_DEVICES: 'mobile:listDevices',
   MOBILE_REVOKE_DEVICE: 'mobile:revokeDevice',
   MOBILE_SET_DEVICE_CAPABILITIES: 'mobile:setDeviceCapabilities',
+  MOBILE_TEST_RELAY: 'mobile:testRelay',
   MOBILE_PAIRING_SAS: 'mobile:pairingSas',
   MOBILE_PAIRING_ENDED: 'mobile:pairingEnded',
   MOBILE_STATE_CHANGED: 'mobile:stateChanged',

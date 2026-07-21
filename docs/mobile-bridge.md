@@ -213,7 +213,7 @@ Even a correctly-implemented blind relay is not metadata-invisible. A relay oper
 - Signed device roster with revoke-drop (rekey-on-revoke is scaffolded but the full multi-device re-provisioning flow is deferred).
 - QR pairing ceremony (token-bound Noise PSK + SAS confirmation) with desktop settings UI.
 - The desktop's outbound relay CLIENT connection with reconnect/backoff.
-- Mobile Devices settings tab: enable toggle, relay URL, pairing flow, paired-device list, revoke.
+- Mobile Devices settings tab: enable toggle, relay mode (resolved default vs. custom override) with a Test connection probe, pairing flow, paired-device list, revoke.
 
 **Shipped (Bridge Phase 2 - data feeds, interactive control & capabilities):**
 
@@ -241,6 +241,6 @@ Even a correctly-implemented blind relay is not metadata-invisible. A relay oper
 ## See Also
 
 - [Mobile Companion App Research](research/mobile-companion-app.md) - Full product rationale, transport decision (relay-first), security architecture, notification design, and phasing this doc summarizes.
-- [Architecture > Mobile Bridge](architecture.md#mobile-bridge-10-channels) - IPC channel table.
-- [Configuration](configuration.md) - `AppConfig.mobileBridge` (`enabled`, `relayUrl`).
+- [Architecture > Mobile Bridge](architecture.md#mobile-bridge-11-channels) - IPC channel table.
+- [Configuration](configuration.md) - `AppConfig.mobileBridge` (`enabled`, `relayMode`, `relayUrl`) and `src/shared/relay.ts`'s resolver/validator.
 - [Board Integration](board-integration.md) - The analogous per-provider adapter pattern this bridge's `Transport` swap point mirrors in spirit.

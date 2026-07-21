@@ -12,6 +12,8 @@ import {
   type ShortAuthenticationString,
 } from '@kangentic/protocol';
 import { isGenuineEncryptionAvailable } from '../boards/shared/auth';
+import { validateRelayUrl } from '../../shared/relay';
+import type { MobileBridgeStatus, MobileBridgeTransportState } from '../../shared/types';
 import { DevQuickPair } from './dev-quick-pair';
 import { DiffWatcher } from '../git/diff-watcher';
 import { loadBridgeIdentity, loadOrCreateBridgeIdentity, type BridgeIdentity } from './identity';
@@ -38,15 +40,17 @@ export interface MobileBridgeConfig {
   relayUrl: string;
 }
 
-export interface MobileBridgeStatus {
-  enabled: boolean;
-  secureStorageAvailable: boolean;
-  /** Hex-encoded static public key, for display/verification - never the private key. */
-  identityFingerprint: string | null;
-  relayUrl: string;
-  pairedDeviceCount: number;
-  pairingInProgress: boolean;
-}
+/** MobileBridgeStatus is defined once, in src/shared/types.ts (the renderer needs the same shape) - this file only builds and returns it. */
+
+/**
+ * RelayClient cycles connecting<->reconnecting on a 500ms backoff while a
+ * relay is unreachable; without coalescing, every device's transport flap
+ * would fire 'stateChanged' (which the renderer answers with a status +
+ * devices re-fetch) up to twice a second. A device's relayState is always
+ * readable synchronously via getStatus() regardless of this window - only
+ * the CHANGE NOTIFICATION is throttled, not the value itself.
+ */
+const RELAY_STATE_EMIT_WINDOW_MS = 500;
 
 export interface PairedDeviceSummary {
   deviceId: string;
@@ -95,7 +99,7 @@ export class MobileBridgeService extends EventEmitter {
     getRelayUrl: () => this.config.relayUrl,
     onRosterChanged: () => {
       void this.syncSessions();
-      this.emit('stateChanged');
+      this.emitStateChanged();
     },
   });
   private ipcContext: IpcContext | null = null;
@@ -107,6 +111,9 @@ export class MobileBridgeService extends EventEmitter {
   private pushNotifier: PushNotifier | null = null;
   /** Fires PushNotifier.notifyTaskStalled() when a task's spawn sits in-flight past the stall threshold. */
   private spawnStallWatcher: SpawnStallWatcher | null = null;
+  /** The aggregate relayState most recently emitted via 'stateChanged', so RELAY_STATE_EMIT_WINDOW_MS only re-emits on an actual value change, not on every transport flap. */
+  private lastEmittedRelayState: MobileBridgeTransportState | null = null;
+  private relayStateEmitTimer: ReturnType<typeof setTimeout> | null = null;
   private disposed = false;
 
   constructor(config: MobileBridgeConfig) {
@@ -202,7 +209,10 @@ export class MobileBridgeService extends EventEmitter {
     const wasEnabled = this.config.enabled;
     this.config = config;
     if (__KANGENTIC_DEV__) {
-      this.devQuickPair.reconcile(config.enabled && config.relayUrl.length > 0 && isGenuineEncryptionAvailable());
+      // config.relayUrl is always resolved (see src/shared/relay.ts's
+      // resolveRelayUrl at both reconcile() call sites) and therefore never
+      // '', so there is no longer a meaningful empty-URL case to gate on here.
+      this.devQuickPair.reconcile(config.enabled && isGenuineEncryptionAvailable());
     }
     if (!config.enabled && wasEnabled) {
       this.cancelPairing('Mobile bridge disabled');
@@ -333,6 +343,63 @@ export class MobileBridgeService extends EventEmitter {
       this.subscriptionsByDevice.get(deviceId)?.dispose();
       this.subscriptionsByDevice.delete(deviceId);
     });
+    session.on('transportState', () => this.scheduleRelayStateEmit());
+  }
+
+  /**
+   * Precedence connected > connecting > reconnecting > closed, so any one
+   * healthy device reads as healthy overall; 'idle' when there are no
+   * sessions. Deliberately excludes the ephemeral pairing transport (see
+   * startPairing()) - it has its own error surface via 'pairingEnded', and
+   * including it would flap this steady-state field during every pairing
+   * ceremony.
+   */
+  private aggregateRelayState(): MobileBridgeTransportState {
+    if (this.sessions.size === 0) return 'idle';
+    const states = new Set<MobileBridgeTransportState>();
+    for (const session of this.sessions.values()) states.add(session.transportState);
+    if (states.has('connected')) return 'connected';
+    if (states.has('connecting')) return 'connecting';
+    if (states.has('reconnecting')) return 'reconnecting';
+    if (states.has('closed')) return 'closed';
+    return 'idle';
+  }
+
+  /**
+   * Coalesces bursts of per-session transport-state churn into at most one
+   * 'stateChanged' emission per RELAY_STATE_EMIT_WINDOW_MS, and only when
+   * the AGGREGATE actually changed - not a plain debounce (which would
+   * reset on every flap and could delay delivery indefinitely under
+   * sustained backoff churn), a throttle: the first change in a window
+   * schedules a check at the end of that window, and further changes
+   * during the window are absorbed into it.
+   */
+  private scheduleRelayStateEmit(): void {
+    if (this.relayStateEmitTimer) return;
+    this.relayStateEmitTimer = setTimeout(() => {
+      this.relayStateEmitTimer = null;
+      if (this.aggregateRelayState() === this.lastEmittedRelayState) return;
+      this.emitStateChanged();
+    }, RELAY_STATE_EMIT_WINDOW_MS);
+    this.relayStateEmitTimer.unref?.();
+  }
+
+  /**
+   * The ONLY way this service emits 'stateChanged'. Rebaselines
+   * lastEmittedRelayState so the throttle above always compares against what
+   * the renderer was last actually told.
+   *
+   * A bare this.emit('stateChanged') leaves that baseline stale, and the
+   * throttle then suppresses a later REAL transition as a no-op change. The
+   * concrete failure: connect device A (baseline := 'connected'), revoke it
+   * (direct emit, aggregate now 'idle', baseline still 'connected'), pair
+   * device B - when B reaches 'connected' the throttle compares 'connected'
+   * against the stale 'connected', suppresses, and the indicator stays stuck
+   * on "Connecting..." forever.
+   */
+  private emitStateChanged(): void {
+    this.lastEmittedRelayState = this.aggregateRelayState();
+    this.emit('stateChanged');
   }
 
   private disposeSession(deviceId: string): void {
@@ -379,6 +446,9 @@ export class MobileBridgeService extends EventEmitter {
       relayUrl: this.config.relayUrl,
       pairedDeviceCount,
       pairingInProgress: this.activePairing !== null,
+      // Computed fresh every call - only the CHANGE NOTIFICATION
+      // ('stateChanged') is throttled, never the value itself.
+      relayState: this.aggregateRelayState(),
     };
   }
 
@@ -410,7 +480,7 @@ export class MobileBridgeService extends EventEmitter {
     // flow for any remaining paired devices is Phase 2/3 scope once there
     // is more than a single paired device to reason about in practice.
     // Phase 1 ships the roster-side "drop" half.
-    this.emit('stateChanged');
+    this.emitStateChanged();
   }
 
   setDeviceCapabilities(deviceId: string, capabilities: CapabilityVerb[]): void {
@@ -419,12 +489,18 @@ export class MobileBridgeService extends EventEmitter {
     setDeviceCapabilitiesInRoster(identity, deviceId, capabilities);
     const session = this.sessions.get(deviceId);
     if (session) session.capabilities = capabilitySetFromArray(capabilities);
-    this.emit('stateChanged');
+    this.emitStateChanged();
   }
 
   async startPairing(): Promise<{ qrPayload: PairingQrPayload; qrUri: string }> {
     if (!this.config.enabled) throw new Error('Mobile bridge is not enabled');
     if (this.activePairing) throw new Error('A pairing ceremony is already in progress');
+    // Both reconcile() call sites resolve relayUrl through resolveRelayUrl()
+    // before it ever reaches this.config, so this should be unreachable in
+    // practice - it is insurance against minting a QR the phone will refuse,
+    // not the primary validation path.
+    const relayValidation = validateRelayUrl(this.config.relayUrl);
+    if (!relayValidation.ok) throw new Error(`Cannot start pairing: ${relayValidation.reason}`);
 
     const identity = this.ensureIdentity();
     const pairingService = new PairingService(identity);
@@ -442,7 +518,7 @@ export class MobileBridgeService extends EventEmitter {
     pairingService.once('confirmed', () => {
       this.activePairing = null;
       this.pendingPairingDeviceId = null;
-      this.emit('stateChanged');
+      this.emitStateChanged();
       // The freshly-paired device is now in the roster; open its
       // BridgeSession immediately rather than waiting for the next
       // config-driven reconcile() (which may not happen again this run).
@@ -509,6 +585,10 @@ export class MobileBridgeService extends EventEmitter {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    if (this.relayStateEmitTimer) {
+      clearTimeout(this.relayStateEmitTimer);
+      this.relayStateEmitTimer = null;
+    }
     this.devQuickPair.stop();
     this.sessionLifecycleFeed?.dispose();
     this.sessionLifecycleFeed = null;

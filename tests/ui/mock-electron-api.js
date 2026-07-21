@@ -2704,6 +2704,9 @@
             relayUrl: state.relayUrl,
             pairedDeviceCount: state.devices.length,
             pairingInProgress: state.pairingInProgress,
+            // No live transport in the mock, so 'idle' (no sessions) unless
+            // a spec overrides via window.__mockMobileBridgeStatus.
+            relayState: 'idle',
           }, overrides);
         },
         startPairing: async function () {
@@ -2741,6 +2744,14 @@
           state.devices = state.devices.map(function (device) {
             return device.deviceId === deviceId ? Object.assign({}, device, { capabilities: capabilities }) : device;
           });
+        },
+        // Tests can set window.__mockTestRelay = function (relayUrl) { ... }
+        // to control the "Test connection" result; default is a reachable stub.
+        testRelay: async function (relayUrl) {
+          if (typeof window !== 'undefined' && typeof window.__mockTestRelay === 'function') {
+            return window.__mockTestRelay(relayUrl);
+          }
+          return { reachable: true, version: null };
         },
         onPairingSas: function (callback) {
           sasListeners.push(callback);

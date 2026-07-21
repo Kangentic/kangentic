@@ -45,6 +45,14 @@ describe('pairing QR payload', () => {
     expect(() => encodePairingQrPayload(payload)).toThrow();
   });
 
+  it('rejects a relay address under 512 characters but over 512 bytes (multi-byte) - proves the cap is byte-based like src/shared/relay.ts validateRelayUrl', () => {
+    // Euro sign is 3 bytes in UTF-8: 200 of them is 600 bytes but only 206 characters.
+    const relayAddress = 'wss://' + '€'.repeat(200);
+    expect(relayAddress.length).toBeLessThan(512);
+    const payload = samplePayload({ relayAddress });
+    expect(() => encodePairingQrPayload(payload)).toThrow();
+  });
+
   it('rejects a corrupted/truncated payload at decode time', () => {
     const uri = encodePairingQrPayload(samplePayload());
     const truncated = uri.slice(0, uri.length - 40);

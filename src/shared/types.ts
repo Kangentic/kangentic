@@ -2062,7 +2062,13 @@ export interface AppConfig {
   mobileBridge?: {
     /** Master switch. When false, no relay connection is held and pairing is unavailable. Default false. */
     enabled?: boolean;
-    /** The relay address to dial (self-hosted or Kangentic's hosted relay), e.g. "wss://relay.kangentic.com". */
+    /**
+     * 'hosted' dials the Kangentic-hosted relay; 'local' dials a relay
+     * running on 127.0.0.1 (dev builds only - see src/shared/relay.ts's
+     * LOCAL_DEV_RELAY_URL); 'custom' uses relayUrl. Default 'hosted'.
+     */
+    relayMode?: 'hosted' | 'local' | 'custom';
+    /** The relay address to dial. Only consulted when relayMode === 'custom'; resolve through src/shared/relay.ts's resolveRelayUrl rather than reading this directly. */
     relayUrl?: string;
   };
 
@@ -2312,6 +2318,18 @@ export const DEFAULT_CONFIG: AppConfig = {
     experience: 'popup',
   },
   mobileBridge: {
+    // relayMode is deliberately ABSENT, not 'hosted'. ConfigManager.load()
+    // deep-merges this default with the parsed config file key-by-key
+    // (mobileBridge is not a CONFIG_DICTIONARY_PATHS entry, so it is not
+    // replaced wholesale), which means any value set here fills in over a
+    // config written before relayMode existed. Seeding 'hosted' therefore
+    // defeated resolveRelayUrl's "relayMode missing but relayUrl set =>
+    // custom" compat inference (src/shared/relay.ts) for exactly the users it
+    // was written for: a self-hoster upgrading from the pre-relayMode schema
+    // would silently be switched onto the Kangentic-hosted relay. Leaving it
+    // undefined lets that inference run. An explicit user choice still
+    // persists a concrete mode, and a fresh config with no relayUrl resolves
+    // to hosted anyway.
     enabled: false,
     relayUrl: '',
   },
@@ -2556,7 +2574,20 @@ export interface MobileBridgeStatus {
   relayUrl: string;
   pairedDeviceCount: number;
   pairingInProgress: boolean;
+  /**
+   * Aggregate transport state across every paired device's live relay
+   * connection: 'connected' if any is connected, else 'connecting' if any
+   * is connecting, else 'reconnecting' if any is reconnecting, else
+   * 'closed' if any is closed, else 'idle' when there are no sessions.
+   * Excludes the ephemeral pairing transport, which has its own error
+   * surface via the pairingEnded event. So a paired device whose relay is
+   * unreachable does not render as healthy.
+   */
+  relayState: MobileBridgeTransportState;
 }
+
+/** Mirrors @kangentic/protocol's TransportState - re-declared here (not re-exported) so src/shared/types.ts stays free of a protocol-package runtime dependency; only the string union shape needs to match. */
+export type MobileBridgeTransportState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'closed';
 
 export interface MobileStartPairingResult {
   /** The `kangentic-pair://...` URI to render as a QR code. */
@@ -3882,6 +3913,10 @@ export interface ElectronAPI {
     listDevices: () => Promise<MobilePairedDevice[]>;
     revokeDevice: (deviceId: string) => Promise<void>;
     setDeviceCapabilities: (deviceId: string, capabilities: MobileCapabilityVerb[]) => Promise<void>;
+    /** Reachability probe for a candidate relay URL ("Test connection" in the Mobile Devices
+     *  tab). Takes the URL as an argument rather than reading it from config, since testing
+     *  BEFORE committing a save is the point; never throws. */
+    testRelay: (relayUrl: string) => Promise<RemoteServerStatus>;
     onPairingSas: (callback: (payload: MobilePairingSasPayload) => void) => () => void;
     onPairingEnded: (callback: (payload: MobilePairingEndedPayload) => void) => () => void;
     onStateChanged: (callback: () => void) => () => void;

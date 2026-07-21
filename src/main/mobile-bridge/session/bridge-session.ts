@@ -80,6 +80,11 @@ export class BridgeSession extends EventEmitter {
     return this.streams !== null;
   }
 
+  /** The underlying transport's current connection state, for the service's aggregate MobileBridgeStatus.relayState. */
+  get transportState(): TransportState {
+    return this.transport.state;
+  }
+
   start(): void {
     if (this.unsubscribeFrame) throw new Error('BridgeSession.start() called twice');
     this.unsubscribeFrame = this.transport.onFrame((frame) => this.onFrame(frame));
@@ -98,6 +103,10 @@ export class BridgeSession extends EventEmitter {
 
   private onTransportState(state: TransportState): void {
     if (this.disposed) return;
+    // Emitted before the branch below (and its early return) so every
+    // transition - including into 'connected' - reaches the service's
+    // relayState aggregation, not just the ones that fall through.
+    this.emit('transportState', state);
     if (state === 'connected') {
       // A reconnect (the initial connect was handled in start()). Re-initiate
       // immediately so the phone re-establishes in ~1s instead of waiting out
