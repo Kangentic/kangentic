@@ -135,13 +135,24 @@ test.describe('Changes panel: per-file history popover', () => {
     // This test chains dialog mount, Changes panel mount, a right-click
     // context menu, a fetched history popover, a commit-detail selection, and
     // a close - each step waiting on real DOM/programmatic state (never a
-    // fixed sleep). Individually-budgeted waits (up to 8000ms) don't protect
-    // the ENCLOSING test: the ui project's default per-test timeout is
-    // 15000ms, so under CI worker contention a single slow mount (observed:
-    // the file-tree row missed its 8000ms budget on attempt 1, passed at
-    // retry) can exhaust the whole test's budget regardless of its own
-    // per-step timeout. test.slow() triples the enclosing budget to 45000ms,
-    // which is the envelope that actually needed to change.
+    // fixed sleep). test.slow() triples the ENCLOSING per-test budget from
+    // 15000ms to 45000ms so a single slow step doesn't exhaust the whole
+    // test's budget before the remaining steps run - but that alone does not
+    // widen any individual step's own timeout. The three steps that are
+    // gated on an async IPC fetch (file-tree row: dialog-open ->
+    // toggle-click -> diffFiles -> re-render; history popover + its rows:
+    // fileHistory fetch, see the Loader2 spinner state in
+    // FileHistoryPopover) are the ones exposed to CI worker contention - the
+    // file-tree row is also the FIRST async render right after the dialog's
+    // own open animation, so it additionally competes with that animation
+    // for the main thread. A tight 8000ms budget there flaked (failed at
+    // 8s, passed on retry); since the timeout truncates the observed
+    // duration, the true stall could be well past 8s, not just past it.
+    // Fixed per the sibling changes-diff-scroll-memory.spec.ts pattern
+    // (commit a523964b): widen the fetch-gated steps' own timeouts to
+    // 15000ms for real margin, leaving the purely-synchronous steps (menu
+    // open/close, which is a plain right-click -> setState -> render with no
+    // IPC) at their original tighter budgets.
     test.slow();
     const card = page.locator('[data-swimlane-name="Code Review"]').locator('text=File History Task').first();
     await card.click();
@@ -153,9 +164,10 @@ test.describe('Changes panel: per-file history popover', () => {
     if (!(await fileTree.isVisible())) {
       await page.locator('[data-testid="changes-toggle"]').click();
     }
+    await fileTree.waitFor({ state: 'visible', timeout: 8000 });
 
     const fileRow = fileTree.getByRole('button', { name: /index\.ts/ });
-    await fileRow.waitFor({ state: 'visible', timeout: 8000 });
+    await fileRow.waitFor({ state: 'visible', timeout: 15000 });
 
     await fileRow.click({ button: 'right' });
     const menu = page.locator('[data-testid="changes-file-context-menu"]');
@@ -167,9 +179,9 @@ test.describe('Changes panel: per-file history popover', () => {
     await expect(menu).toBeHidden({ timeout: 5000 });
 
     const popover = page.locator('[data-testid="changes-file-history"]');
-    await expect(popover).toBeVisible({ timeout: 8000 });
+    await expect(popover).toBeVisible({ timeout: 15000 });
     const rows = popover.locator('[data-testid="changes-file-history-row"]');
-    await expect(rows).toHaveCount(2, { timeout: 8000 });
+    await expect(rows).toHaveCount(2, { timeout: 15000 });
     await expect(rows.nth(0)).toContainText('refine index');
     await expect(rows.nth(1)).toContainText('introduce index');
 
