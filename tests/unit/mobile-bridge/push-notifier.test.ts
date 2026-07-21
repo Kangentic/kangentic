@@ -198,6 +198,25 @@ describe('PushNotifier', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
+  it('an explicit empty categories list on the registration means none', () => {
+    listRegistrations = vi.fn(() => [{ ...REGISTRATION, categories: [] }]);
+    buildNotifier();
+    sessionManager.emit('activity', 'sess-1', 'thinking', { kind: 'turn-active' });
+    sessionManager.emit('activity', 'sess-1', 'idle', { kind: 'idle' });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('a taskId-keyed spawn-stalled cooldown never collides with a session cooldown of the same string id', () => {
+    buildNotifier();
+    notifier.notifyTaskStalled('task-Xw2yL');
+    // A session whose id happens to equal that same string, on an
+    // unrelated category: the cooldown key includes category, so the
+    // taskId-subject cooldown above must not suppress this.
+    sessionManager.emit('exit', 'task-Xw2yL', 1, false);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(sealedCategories()).toEqual(['spawn-stalled', 'session-failed']);
+  });
+
   it('applies a 30s cooldown per (device, session, category)', async () => {
     buildNotifier();
     sessionManager.emit('activity', 'sess-1', 'thinking', { kind: 'turn-active' });
