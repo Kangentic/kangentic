@@ -272,6 +272,35 @@ describe('OpenCodeAdapter - remote target tracking by cwd', () => {
     parserSpy.mockRestore();
   });
 
+  it('buildCommand for a local spawn clears a previously tracked remote target for the same cwd', async () => {
+    const adapter = new OpenCodeAdapter();
+    const cwd = '/home/dev/kangentic-worktree';
+
+    // First spawn on this cwd is remote - locateSessionHistoryFile degrades
+    // to null (handoff has no local file for a remote session).
+    adapter.buildCommand(makeOptions({ cwd, executionTarget: REMOTE_TARGET }));
+    const locateSpy = vi.spyOn(OpenCodeSessionHistoryParser, 'locate').mockResolvedValue('/should/not/be/used');
+    expect(await adapter.locateSessionHistoryFile('ses_abc123', cwd)).toBeNull();
+    expect(locateSpy).not.toHaveBeenCalled();
+
+    // The task flips back to local mode (a fresh spawn with no
+    // executionTarget) on the SAME cwd. Without the `delete` in
+    // buildCommand's local branch, this cwd would keep branching to the
+    // dead remote target forever.
+    adapter.buildCommand(makeOptions({ cwd }));
+
+    const result = await adapter.locateSessionHistoryFile('ses_abc123', cwd);
+    expect(locateSpy).toHaveBeenCalledTimes(1);
+    expect(result).toBe('/should/not/be/used');
+    locateSpy.mockRestore();
+
+    // Same flip observed through the other remote-gated consumer.
+    const parserSpy = vi.spyOn(OpenCodeSessionHistoryParser, 'captureSessionIdFromFilesystem').mockResolvedValue(null);
+    await adapter.runtime.sessionId.fromFilesystem({ spawnedAt: new Date(), cwd });
+    expect(parserSpy).toHaveBeenCalledTimes(1);
+    parserSpy.mockRestore();
+  });
+
   it('declares the remoteExecution capability with OpenCode-specific info', () => {
     const adapter = new OpenCodeAdapter();
     expect(adapter.remoteExecution?.info).toMatchObject({

@@ -202,6 +202,27 @@ test.describe('AgentTab - Remote Execution fields', () => {
     await closeSettings(page);
   });
 
+  test('remote mode shows the adapter-declared caveat text; local mode shows none', async () => {
+    ({ browser, page } = await launch());
+    await openAgentSettingsTabAs(page, 'opencode');
+
+    // Local mode: no caveat text anywhere (contrast case for the assertion below).
+    await expect(
+      page.getByText('The server is the authority for providers, models, and MCP tools in remote mode.'),
+    ).toHaveCount(0);
+
+    await page.locator('[data-testid="execution-mode-opencode"]').selectOption('remote');
+
+    // Mock fixture's remoteExecution.remoteModeCaveat (mock-electron-api.js) -
+    // asserting the mock's string, not the real OpenCodeAdapter's fuller copy,
+    // since this UI tier renders against the mock, not the real adapter.
+    await expect(
+      page.getByText('The server is the authority for providers, models, and MCP tools in remote mode.'),
+    ).toBeVisible();
+
+    await closeSettings(page);
+  });
+
   test('a non-capable agent (Claude) shows no execution rows at all', async () => {
     ({ browser, page } = await launch());
     await openAgentSettingsTabAs(page, 'claude');

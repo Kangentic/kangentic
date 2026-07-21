@@ -1,17 +1,21 @@
 /**
- * Unit tests for the AGENT_LIST IPC handler in
- * src/main/ipc/handlers/system.ts.
+ * Unit tests for the AGENT_LIST and AGENT_PROBE_EXECUTION_SERVER IPC
+ * handlers in src/main/ipc/handlers/system.ts.
  *
- * The handler iterates the agent registry, calls detect() on each adapter,
- * and conditionally calls probeAuth() (only when detect() returned found:true
- * AND the adapter has a probeAuth method). The result is merged into the
- * AgentDetectionInfo output shape as `authenticated`.
+ * AGENT_LIST: the handler iterates the agent registry, calls detect() on
+ * each adapter, and conditionally calls probeAuth() (only when detect()
+ * returned found:true AND the adapter has a probeAuth method). The result is
+ * merged into the AgentDetectionInfo output shape as `authenticated`, and
+ * (support-remote-opencode) as `remoteExecution: adapter.remoteExecution?.info`.
+ *
+ * AGENT_PROBE_EXECUTION_SERVER: the "Test connection" handler. Reads the
+ * server record from config, never from the renderer, and never throws.
  *
  * Strategy: mock electron (ipcMain.handle captures the registered callback),
  * mock the agent-registry dynamic import, and mock config-manager. Tests call
  * the captured handler directly - no Electron binary needed.
  *
- * Covers:
+ * Covers (AGENT_LIST):
  *   - found:false agent -> probeAuth is NOT called, authenticated is undefined
  *   - found:true + probeAuth not defined -> authenticated is undefined
  *   - found:true + probeAuth returns true -> authenticated is true
@@ -19,10 +23,19 @@
  *   - found:true + probeAuth returns null -> authenticated is null
  *   - found:true + probeAuth throws -> .catch(() => null) coerces to null
  *   - multiple agents returned in registry order
+ *   - remoteExecution passthrough: present -> surfaced as adapter.remoteExecution.info
+ *     verbatim (and never leaks the probeServer function); absent -> undefined
+ *
+ * Covers (AGENT_PROBE_EXECUTION_SERVER):
+ *   - adapter has no remoteExecution capability -> unreachable, capability reason
+ *   - adapter has the capability but no server is configured -> unreachable, "No server configured"
+ *   - server configured -> delegates to adapter.remoteExecution.probeServer and returns its result verbatim
+ *   - probeServer throws an Error -> caught, unreachable with the error message
+ *   - probeServer throws a non-Error -> caught, unreachable with "Unknown error"
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { AgentDetectionInfo } from '../../src/shared/types';
+import type { AgentDetectionInfo, AgentExecutionServer, AgentRemoteExecutionInfo, RemoteServerStatus } from '../../src/shared/types';
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -66,6 +79,10 @@ type MockAdapter = {
   probeAuth?: () => Promise<boolean | null>;
   discoverCapabilities?: (cliPath: string, forceRefresh?: boolean) => Promise<unknown>;
   invalidateDetectionCache: () => void;
+  remoteExecution?: {
+    info: AgentRemoteExecutionInfo;
+    probeServer: (server: AgentExecutionServer) => Promise<RemoteServerStatus>;
+  };
 };
 
 let mockRegistryAdapters: MockAdapter[] = [];
@@ -147,6 +164,7 @@ function makeContext() {
           idleTimeoutMinutes: 30,
           permissionMode: 'default',
           queueOverflow: 'queue',
+          executionServers: {},
         },
         terminal: { shell: null },
         mcpServer: { enabled: false },
@@ -350,6 +368,39 @@ describe('AGENT_LIST IPC handler - probeAuth integration', () => {
     expect(Array.isArray(result.permissions)).toBe(true);
     expect(result.defaultPermission).toBe('default');
   });
+
+  it('surfaces adapter.remoteExecution.info verbatim, without leaking the probeServer function', async () => {
+    const info: AgentRemoteExecutionInfo = {
+      urlPlaceholder: 'http://10.0.0.5:4096',
+      authKind: 'basic',
+      workingDirectoryScope: 'per-invocation',
+      remoteModeCaveat: 'The server is the authority for providers, models, and MCP tools in remote mode.',
+    };
+    mockRegistryAdapters = [
+      makeAdapter({
+        name: 'opencode',
+        remoteExecution: { info, probeServer: vi.fn() },
+      }),
+    ];
+
+    const results = await invokeAgentList();
+
+    expect(results[0].remoteExecution).toEqual(info);
+    // Regression guard: a future edit that surfaces the whole
+    // `adapter.remoteExecution` object (instead of just `.info`) would leak
+    // a non-serializable function across the IPC boundary.
+    expect(results[0].remoteExecution).not.toHaveProperty('probeServer');
+  });
+
+  it('leaves remoteExecution undefined for an adapter with no remote-execution capability', async () => {
+    mockRegistryAdapters = [
+      makeAdapter({ name: 'claude' }),
+    ];
+
+    const results = await invokeAgentList();
+
+    expect(results[0].remoteExecution).toBeUndefined();
+  });
 });
 
 describe('AGENT_LIST IPC handler - caching', () => {
@@ -418,5 +469,124 @@ describe('AGENT_LIST IPC handler - caching', () => {
     await invokeAgentList();
 
     expect(detect).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('AGENT_PROBE_EXECUTION_SERVER IPC handler', () => {
+  let context: ReturnType<typeof makeContext>;
+
+  async function invokeProbeExecutionServer(agentName: string): Promise<RemoteServerStatus> {
+    const handler = capturedHandlers.get('agent:probeExecutionServer');
+    if (!handler) throw new Error('agent:probeExecutionServer handler not registered');
+    return handler(undefined, agentName) as Promise<RemoteServerStatus>;
+  }
+
+  beforeEach(() => {
+    capturedHandlers.clear();
+    mockRegistryAdapters = [];
+    resetAgentListForTests();
+    context = makeContext();
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+  });
+
+  it('reports unreachable with a capability-specific reason when the adapter has no remoteExecution', async () => {
+    mockRegistryAdapters = [makeAdapter({ name: 'claude' })];
+
+    const result = await invokeProbeExecutionServer('claude');
+
+    expect(result).toEqual({ reachable: false, reason: 'claude does not support remote execution' });
+  });
+
+  it('reports unreachable with "No server configured" when the capability exists but no server is set', async () => {
+    const probeServer = vi.fn();
+    mockRegistryAdapters = [
+      makeAdapter({
+        name: 'opencode',
+        remoteExecution: {
+          info: { urlPlaceholder: 'http://10.0.0.5:4096', authKind: 'basic', workingDirectoryScope: 'per-invocation' },
+          probeServer,
+        },
+      }),
+    ];
+    // executionServers has no 'opencode' entry (default from makeContext).
+
+    const result = await invokeProbeExecutionServer('opencode');
+
+    expect(result).toEqual({ reachable: false, reason: 'No server configured' });
+    expect(probeServer).not.toHaveBeenCalled();
+  });
+
+  it('delegates to adapter.remoteExecution.probeServer with the configured server and returns its result verbatim', async () => {
+    const server: AgentExecutionServer = { url: 'http://10.0.0.5:4096', auth: { kind: 'basic', username: 'dev', password: 'secret' } };
+    const probeServer = vi.fn(async () => ({ reachable: true, version: '1.14.25' }) as RemoteServerStatus);
+    mockRegistryAdapters = [
+      makeAdapter({
+        name: 'opencode',
+        remoteExecution: {
+          info: { urlPlaceholder: 'http://10.0.0.5:4096', authKind: 'basic', workingDirectoryScope: 'per-invocation' },
+          probeServer,
+        },
+      }),
+    ];
+    context.configManager.load.mockReturnValue({
+      agent: { cliPaths: {}, cliPath: null, maxConcurrentSessions: 5, idleTimeoutMinutes: 30, permissionMode: 'default', queueOverflow: 'queue', executionServers: { opencode: server } },
+      terminal: { shell: null },
+      mcpServer: { enabled: false },
+    });
+
+    const result = await invokeProbeExecutionServer('opencode');
+
+    expect(probeServer).toHaveBeenCalledWith(server);
+    expect(result).toEqual({ reachable: true, version: '1.14.25' });
+  });
+
+  it('catches an Error thrown by probeServer and reports it as unreachable', async () => {
+    const server: AgentExecutionServer = { url: 'http://10.0.0.5:4096', auth: { kind: 'none' } };
+    const probeServer = vi.fn(async () => {
+      throw new Error('ECONNREFUSED');
+    });
+    mockRegistryAdapters = [
+      makeAdapter({
+        name: 'opencode',
+        remoteExecution: {
+          info: { urlPlaceholder: 'http://10.0.0.5:4096', authKind: 'basic', workingDirectoryScope: 'per-invocation' },
+          probeServer,
+        },
+      }),
+    ];
+    context.configManager.load.mockReturnValue({
+      agent: { cliPaths: {}, cliPath: null, maxConcurrentSessions: 5, idleTimeoutMinutes: 30, permissionMode: 'default', queueOverflow: 'queue', executionServers: { opencode: server } },
+      terminal: { shell: null },
+      mcpServer: { enabled: false },
+    });
+
+    const result = await invokeProbeExecutionServer('opencode');
+
+    expect(result).toEqual({ reachable: false, reason: 'ECONNREFUSED' });
+  });
+
+  it('catches a non-Error thrown by probeServer and reports "Unknown error"', async () => {
+    const server: AgentExecutionServer = { url: 'http://10.0.0.5:4096', auth: { kind: 'none' } };
+    const probeServer = vi.fn(async () => {
+      throw 'a raw string rejection';
+    });
+    mockRegistryAdapters = [
+      makeAdapter({
+        name: 'opencode',
+        remoteExecution: {
+          info: { urlPlaceholder: 'http://10.0.0.5:4096', authKind: 'basic', workingDirectoryScope: 'per-invocation' },
+          probeServer,
+        },
+      }),
+    ];
+    context.configManager.load.mockReturnValue({
+      agent: { cliPaths: {}, cliPath: null, maxConcurrentSessions: 5, idleTimeoutMinutes: 30, permissionMode: 'default', queueOverflow: 'queue', executionServers: { opencode: server } },
+      terminal: { shell: null },
+      mcpServer: { enabled: false },
+    });
+
+    const result = await invokeProbeExecutionServer('opencode');
+
+    expect(result).toEqual({ reachable: false, reason: 'Unknown error' });
   });
 });
