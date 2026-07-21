@@ -20,7 +20,7 @@ import { base64UrlDecode, base64UrlEncode } from '../../../packages/protocol/src
 
 function plaintextFixture(overrides: Partial<PushEnvelopePlaintext> = {}): PushEnvelopePlaintext {
   return {
-    category: 'permission-needed',
+    category: 'input-required',
     projectId: 'proj-1',
     taskId: 'task-1',
     sessionId: 'sess-1',

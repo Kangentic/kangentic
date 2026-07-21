@@ -180,6 +180,53 @@ describe('parseCapabilityRequestPayload', () => {
     expect(parseCapabilityRequestPayload('register-push', { action: 'unregister' })).toEqual({ action: 'unregister' });
   });
 
+  it('register-push: categories is absent by default, and an explicit list survives', () => {
+    const pushKeyBase64 = 'A'.repeat(43);
+    const withoutCategories = parseCapabilityRequestPayload('register-push', {
+      action: 'register',
+      expoPushToken: 'tok',
+      pushKeyBase64,
+    });
+    expect(withoutCategories).not.toHaveProperty('categories');
+
+    const withCategories = parseCapabilityRequestPayload('register-push', {
+      action: 'register',
+      expoPushToken: 'tok',
+      pushKeyBase64,
+      categories: ['turn-complete', 'session-failed'],
+    });
+    expect(withCategories).toMatchObject({ categories: ['turn-complete', 'session-failed'] });
+  });
+
+  it('register-push: an unrecognized category is dropped, not rejected', () => {
+    const parsed = parseCapabilityRequestPayload('register-push', {
+      action: 'register',
+      expoPushToken: 'tok',
+      pushKeyBase64: 'A'.repeat(43),
+      categories: ['turn-complete', 'a-category-from-the-future'],
+    });
+    expect(parsed).toMatchObject({ categories: ['turn-complete'] });
+  });
+
+  it('register-push: an explicitly empty categories list is preserved as "none"', () => {
+    const parsed = parseCapabilityRequestPayload('register-push', {
+      action: 'register',
+      expoPushToken: 'tok',
+      pushKeyBase64: 'A'.repeat(43),
+      categories: [],
+    });
+    expect(parsed).toMatchObject({ categories: [] });
+  });
+
+  it('register-push: rejects a malformed categories value', () => {
+    expect(() =>
+      parseCapabilityRequestPayload('register-push', { action: 'register', expoPushToken: 'tok', pushKeyBase64: 'A'.repeat(43), categories: 'turn-complete' }),
+    ).toThrow(/categories/);
+    expect(() =>
+      parseCapabilityRequestPayload('register-push', { action: 'register', expoPushToken: 'tok', pushKeyBase64: 'A'.repeat(43), categories: [123] }),
+    ).toThrow(/categories/);
+  });
+
   it('rejects a non-object payload for every verb', () => {
     expect(() => parseCapabilityRequestPayload('read-board', 'not-an-object' as unknown as JsonValue)).toThrow();
     expect(() => parseCapabilityRequestPayload('move-task', null as unknown as JsonValue)).toThrow();

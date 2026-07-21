@@ -124,10 +124,19 @@ describe('PushRegistrationStore', () => {
         'device-no-token': { pushKeyHex: 'ab'.repeat(32), platform: 'android', registeredAt: 'x' },
         'device-bad-key': { ...valid, pushKeyHex: 'not-hex' },
         'device-bad-platform': { ...valid, platform: 'windows' },
+        'device-bad-categories': { ...valid, categories: ['turn-complete', 'not-a-real-category'] },
         'device-not-object': 'nope',
       }),
     );
     const store = new PushRegistrationStore();
     expect(store.list()).toEqual([{ deviceId: 'device-good', ...valid }]);
+  });
+
+  it('round-trips a registration with categories, and one without', () => {
+    const store = new PushRegistrationStore();
+    store.upsert('device-1', registrationFixture({ categories: ['turn-complete', 'session-failed'] }));
+    store.upsert('device-2', registrationFixture());
+    expect(store.list().find((entry) => entry.deviceId === 'device-1')?.categories).toEqual(['turn-complete', 'session-failed']);
+    expect(store.list().find((entry) => entry.deviceId === 'device-2')?.categories).toBeUndefined();
   });
 });

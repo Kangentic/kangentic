@@ -15,6 +15,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { isPushCategory, type PushCategory } from '@kangentic/protocol';
 import { PATHS } from '../../config/paths';
 
 const REGISTRATIONS_FILENAME = 'mobile-push-registrations.json';
@@ -25,6 +26,8 @@ export interface PushRegistration {
   pushKeyHex: string;
   platform: 'android' | 'ios';
   registeredAt: string;
+  /** The device's push preferences; undefined means every category (older or default registration). */
+  categories?: PushCategory[];
 }
 
 export interface PushRegistrationEntry extends PushRegistration {
@@ -34,13 +37,17 @@ export interface PushRegistrationEntry extends PushRegistration {
 function isPushRegistration(value: unknown): value is PushRegistration {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
-  return (
-    typeof record.expoPushToken === 'string' &&
-    typeof record.pushKeyHex === 'string' &&
-    /^[0-9a-f]{64}$/.test(record.pushKeyHex) &&
-    (record.platform === 'android' || record.platform === 'ios') &&
-    typeof record.registeredAt === 'string'
-  );
+  if (
+    typeof record.expoPushToken !== 'string' ||
+    typeof record.pushKeyHex !== 'string' ||
+    !/^[0-9a-f]{64}$/.test(record.pushKeyHex) ||
+    (record.platform !== 'android' && record.platform !== 'ios') ||
+    typeof record.registeredAt !== 'string'
+  ) {
+    return false;
+  }
+  if (record.categories === undefined) return true;
+  return Array.isArray(record.categories) && record.categories.every(isPushCategory);
 }
 
 export class PushRegistrationStore {

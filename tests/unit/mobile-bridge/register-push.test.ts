@@ -49,6 +49,18 @@ describe('handleRegisterPush', () => {
     expect(typeof registration.registeredAt).toBe('string');
   });
 
+  it('threads the requested categories through to the store, and omits it when absent', () => {
+    handleRegisterPush(
+      fakeRequest({ action: 'register', expoPushToken: 'tok', pushKeyBase64: VALID_KEY_BASE64, categories: ['turn-complete', 'session-failed'] }),
+      { deviceId: 'device-1' },
+      store,
+    );
+    expect((upsert.mock.calls[0][1] as { categories?: string[] }).categories).toEqual(['turn-complete', 'session-failed']);
+
+    handleRegisterPush(fakeRequest({ action: 'register', expoPushToken: 'tok', pushKeyBase64: VALID_KEY_BASE64 }), { deviceId: 'device-1' }, store);
+    expect((upsert.mock.calls[1][1] as { categories?: string[] }).categories).toBeUndefined();
+  });
+
   it('platform defaults to android when omitted', () => {
     handleRegisterPush(
       fakeRequest({ action: 'register', expoPushToken: 'tok', pushKeyBase64: VALID_KEY_BASE64 }),

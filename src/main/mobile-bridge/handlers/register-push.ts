@@ -51,6 +51,7 @@ export function handleRegisterPush(
     pushKeyHex: pushKey.toString('hex'),
     platform: payload.platform ?? 'android',
     registeredAt: new Date().toISOString(),
+    categories: payload.categories,
   });
   return respond(request.requestId, true);
 }

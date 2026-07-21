@@ -11,6 +11,8 @@
  * else is best-effort and reported as a plain failure.
  */
 
+import type { WakeChannel, WakeMessage, WakeResult } from './wake-channel';
+
 export const EXPO_PUSH_ENDPOINT = 'https://exp.host/--/api/v2/push/send';
 
 /** One retry after this long when the POST itself fails (network error), per Expo's guidance to retry transient failures. */
@@ -73,6 +75,10 @@ export async function sendExpoPush(fetchImpl: FetchLike, message: ExpoPushMessag
     data: { blob: message.dataBlob },
     priority: 'high',
     channelId: message.channelId,
+    // Required for iOS: without mutable-content:1 the Notification Service
+    // Extension that decrypts the envelope is never invoked. Expo maps this
+    // camelCase field to the APNs header; Android ignores it.
+    mutableContent: true,
   });
   const requestInit = {
     method: 'POST',
@@ -112,4 +118,19 @@ export async function sendExpoPush(fetchImpl: FetchLike, message: ExpoPushMessag
     return { delivered: false, reason: 'send-failed', detail: ticket.message ?? ticket.details?.error ?? 'Expo push ticket reported an error' };
   }
   return { delivered: true };
+}
+
+/** The default WakeChannel: Expo push, unchanged behavior, adapted to the vendor-neutral interface. */
+export function createExpoWakeChannel(fetchImpl: FetchLike): WakeChannel {
+  return {
+    send(message: WakeMessage): Promise<WakeResult> {
+      return sendExpoPush(fetchImpl, {
+        to: message.token,
+        channelId: message.channelId,
+        title: message.title,
+        body: message.body,
+        dataBlob: message.blob,
+      });
+    },
+  };
 }

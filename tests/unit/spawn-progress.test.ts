@@ -19,6 +19,7 @@ import {
   createProgressCallback,
   clearSpawnProgress,
   getInFlightSpawnProgress,
+  onSpawnProgressTransition,
   __resetSpawnProgressForTest,
 } from '../../src/main/transition-engine/spawn-progress';
 
@@ -179,6 +180,32 @@ describe('spawn-progress queryable map', () => {
     // Past the 120s TTL: pruned on read.
     nowSpy.mockReturnValue(1_000 + 120_001);
     expect(getInFlightSpawnProgress()['task-old']).toBeUndefined();
+  });
+
+  it('onSpawnProgressTransition fires true on first entry, nothing on a label-only change, false on removal', () => {
+    const { window } = makeWindow();
+    const events: Array<[string, boolean]> = [];
+    const unsubscribe = onSpawnProgressTransition((taskId, active) => events.push([taskId, active]));
+
+    emitSpawnProgress(window, 'task-1', 'fetching'); // first entry: arm
+    emitSpawnProgress(window, 'task-1', 'creating-worktree'); // label-only change: no re-arm
+    clearSpawnProgress(window, 'task-1'); // removal: disarm
+
+    unsubscribe();
+    expect(events).toEqual([
+      ['task-1', true],
+      ['task-1', false],
+    ]);
+  });
+
+  it('onSpawnProgressTransition stops firing after unsubscribe', () => {
+    const { window } = makeWindow();
+    const events: Array<[string, boolean]> = [];
+    const unsubscribe = onSpawnProgressTransition((taskId, active) => events.push([taskId, active]));
+    unsubscribe();
+
+    emitSpawnProgress(window, 'task-1', 'fetching');
+    expect(events).toEqual([]);
   });
 
   it('updates the map even when the window is destroyed, but skips the IPC send', () => {

@@ -17,6 +17,7 @@ import type { CapabilityVerb } from '../capabilities/verbs';
 import type { JsonValue } from './messages';
 import { isJsonValue, isRecord } from './json-value';
 import { base64UrlDecode } from './base64url';
+import { isPushCategory, type PushCategory } from '../crypto/push-envelope';
 import {
   isActivityReasonWire,
   isActivityStateWire,
@@ -482,12 +483,20 @@ const PUSH_KEY_LENGTH = 32;
  * notification envelope with (see crypto/push-envelope.ts); 'unregister'
  * carries neither. The desktop keys the registration by the requesting
  * device's roster identity, never by anything in this payload.
+ *
+ * `categories`, when present, is the device's push preferences: the desktop
+ * filters outgoing notifications to this set before sending, so preference
+ * enforcement never depends on the receiving device (a future iOS
+ * Notification Service Extension stays preference-free). Absent means every
+ * category (the default, and what an older device that predates this field
+ * implicitly requests); an explicit empty array means none.
  */
 export interface RegisterPushRequestPayload {
   action: 'register' | 'unregister';
   expoPushToken?: string;
   pushKeyBase64?: string;
   platform?: 'android' | 'ios';
+  categories?: PushCategory[];
 }
 
 export interface RegisterPushResponsePayload {
@@ -522,6 +531,15 @@ export function parseRegisterPushRequestPayload(payload: JsonValue): RegisterPus
       throw new Error('register-push payload has an invalid "platform"');
     }
     request.platform = payload.platform;
+  }
+  if (payload.categories !== undefined) {
+    if (!Array.isArray(payload.categories) || !payload.categories.every((entry) => typeof entry === 'string')) {
+      throw new Error('register-push payload has a malformed "categories"');
+    }
+    // An unrecognized category (e.g. from a newer device) is dropped, not
+    // rejected: registration must not fail outright over a category this
+    // desktop does not yet know.
+    request.categories = payload.categories.filter(isPushCategory);
   }
   if (request.action === 'register') {
     if (request.expoPushToken === undefined) throw new Error('register-push register payload missing "expoPushToken"');

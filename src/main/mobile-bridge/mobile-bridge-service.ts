@@ -29,6 +29,7 @@ import { registerCapabilityHandlers } from './handlers';
 import { SessionLifecycleBoardFeed } from './session-lifecycle-feed';
 import { PushRegistrationStore } from './push/push-registration-store';
 import { PushNotifier } from './push/push-notifier';
+import { SpawnStallWatcher } from './push/spawn-stall-watcher';
 import { getProjectRepos } from '../ipc/helpers/project-repos';
 import type { IpcContext } from '../ipc/ipc-context';
 
@@ -102,8 +103,10 @@ export class MobileBridgeService extends EventEmitter {
   private sessionLifecycleFeed: SessionLifecycleBoardFeed | null = null;
   /** Per-device push registrations (Expo token + envelope key), written by the register-push handler and read by the notifier. */
   readonly pushRegistrations = new PushRegistrationStore();
-  /** Seals and sends E2E push notifications on permission/turn-complete/crash triggers. */
+  /** Seals and sends E2E push notifications on permission/turn-complete/crash/plan/stall triggers. */
   private pushNotifier: PushNotifier | null = null;
+  /** Fires PushNotifier.notifyTaskStalled() when a task's spawn sits in-flight past the stall threshold. */
+  private spawnStallWatcher: SpawnStallWatcher | null = null;
   private disposed = false;
 
   constructor(config: MobileBridgeConfig) {
@@ -156,6 +159,21 @@ export class MobileBridgeService extends EventEmitter {
         }
         return { projectId, taskId, taskTitle };
       },
+      // A spawn stall has no session yet, so there is no getSessionProjectId
+      // to consult - scan every known project's task repo instead. Rare
+      // (fires once per stalled spawn, 8s after it starts), so a linear
+      // scan over the project list is fine.
+      resolveTaskContextByTaskId: (taskId) => {
+        for (const project of context.projectRepo.list()) {
+          try {
+            const task = getProjectRepos(context, project.id).tasks.getById(taskId);
+            if (task) return { projectId: project.id, taskId, taskTitle: task.title };
+          } catch {
+            // This project's repos may not be initialized; try the next one.
+          }
+        }
+        return null;
+      },
       getDeviceStaticPublicKey: (deviceId) => {
         const identity = this.tryLoadIdentity();
         if (!identity) return null;
@@ -163,6 +181,10 @@ export class MobileBridgeService extends EventEmitter {
       },
     });
     this.pushNotifier.start();
+    this.spawnStallWatcher = new SpawnStallWatcher({
+      onStall: (taskId) => this.pushNotifier?.notifyTaskStalled(taskId),
+    });
+    this.spawnStallWatcher.start();
   }
 
   private getOrCreateSubscriptions(deviceId: string): SubscriptionRegistry {
@@ -492,6 +514,8 @@ export class MobileBridgeService extends EventEmitter {
     this.sessionLifecycleFeed = null;
     this.pushNotifier?.dispose();
     this.pushNotifier = null;
+    this.spawnStallWatcher?.dispose();
+    this.spawnStallWatcher = null;
     this.cancelPairing('Mobile bridge service shutting down');
     this.disposeAllSessions();
     this.diffWatcher.closeAll();

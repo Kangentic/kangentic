@@ -36,6 +36,22 @@ import { IPC } from '../../shared/ipc-channels';
 const inFlightSpawnProgress = new Map<string, { label: string; updatedAt: number }>();
 
 /**
+ * Fired on a task's transition INTO or OUT OF the map (active=true/false),
+ * never on a same-task label-only update - a listener that arms a stall
+ * timer on `true` and disarms on `false` gets exactly the "arm on first
+ * appearance, do not re-arm on phase change" behavior the desktop's own
+ * spawn-stall toast uses, without duplicating that transition logic.
+ */
+type SpawnProgressTransitionListener = (taskId: string, active: boolean) => void;
+const spawnProgressTransitionListeners = new Set<SpawnProgressTransitionListener>();
+
+/** Subscribe to spawn-progress arm/disarm transitions. Returns an unsubscribe function. */
+export function onSpawnProgressTransition(listener: SpawnProgressTransitionListener): () => void {
+  spawnProgressTransitionListeners.add(listener);
+  return () => spawnProgressTransitionListeners.delete(listener);
+}
+
+/**
  * TTL safety net. Longer than any realistic worktree-create + fetch + agent
  * spawn (those are bounded by AbortControllers anyway); this only catches the
  * pathological "never cleared" case. Normal cleanup is clearSpawnProgress().
@@ -49,10 +65,15 @@ const SPAWN_PROGRESS_TTL_MS = 120_000;
  * `label === null` removes the entry (spawn done/aborted).
  */
 function pushSpawnProgress(mainWindow: BrowserWindow, taskId: string, label: string | null): void {
+  const wasTracked = inFlightSpawnProgress.has(taskId);
   if (label === null) {
     inFlightSpawnProgress.delete(taskId);
   } else {
     inFlightSpawnProgress.set(taskId, { label, updatedAt: Date.now() });
+  }
+  const isTracked = label !== null;
+  if (wasTracked !== isTracked) {
+    for (const listener of spawnProgressTransitionListeners) listener(taskId, isTracked);
   }
   if (mainWindow.isDestroyed()) return;
   mainWindow.webContents.send(IPC.TASK_SPAWN_PROGRESS, taskId, label);

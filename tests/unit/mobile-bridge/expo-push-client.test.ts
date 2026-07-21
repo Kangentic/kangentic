@@ -8,7 +8,7 @@
  * typed result so the notifier can drop the registration.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { EXPO_PUSH_ENDPOINT, sendExpoPush, type FetchLike } from '../../../src/main/mobile-bridge/push/expo-push-client';
+import { EXPO_PUSH_ENDPOINT, sendExpoPush, createExpoWakeChannel, type FetchLike } from '../../../src/main/mobile-bridge/push/expo-push-client';
 
 const message = {
   to: 'ExponentPushToken[abc]',
@@ -45,6 +45,9 @@ describe('sendExpoPush', () => {
       data: { blob: 'sealed-blob' },
       priority: 'high',
       channelId: 'needs-attention',
+      // Required for iOS: without it the Notification Service Extension
+      // that decrypts the envelope is never invoked.
+      mutableContent: true,
     });
   });
 
@@ -93,5 +96,29 @@ describe('sendExpoPush', () => {
       jsonResponse({ data: { status: 'error', message: 'MessageTooBig', details: { error: 'MessageTooBig' } } }),
     ) as FetchLike;
     expect(await sendExpoPush(fetchImpl, message)).toEqual({ delivered: false, reason: 'send-failed', detail: 'MessageTooBig' });
+  });
+});
+
+describe('createExpoWakeChannel', () => {
+  it('adapts a WakeMessage onto the same Expo POST shape', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ data: { status: 'ok' } })) as FetchLike;
+    const wakeChannel = createExpoWakeChannel(fetchImpl);
+
+    const result = await wakeChannel.send({
+      token: 'ExponentPushToken[abc]',
+      channelId: 'needs-attention',
+      title: 'Kangentic',
+      body: 'Agent needs your attention',
+      blob: 'sealed-blob',
+    });
+
+    expect(result).toEqual({ delivered: true });
+    const [, init] = vi.mocked(fetchImpl).mock.calls[0];
+    expect(JSON.parse(init.body)).toMatchObject({
+      to: 'ExponentPushToken[abc]',
+      channelId: 'needs-attention',
+      data: { blob: 'sealed-blob' },
+      mutableContent: true,
+    });
   });
 });
