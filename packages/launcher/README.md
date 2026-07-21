@@ -25,7 +25,9 @@ npx kangentic /path/to/your/project
 3. Installs per platform:
    - **Windows:** Runs NSIS installer silently to `%LOCALAPPDATA%\Programs\Kangentic\`
    - **macOS:** Extracts .zip to `~/Applications/Kangentic.app`
-   - **Linux:** Installs .deb via `sudo dpkg -i` (prompts for password)
+   - **Linux:** Installs .rpm on RPM-family systems (`sudo dnf install` on Fedora/RHEL,
+     `sudo zypper install` on openSUSE, falling back to `sudo rpm -i`) or .deb elsewhere
+     (`sudo apt install`, falling back to `sudo dpkg -i`); prompts for password
 4. Launches the app
 
 ## Updates

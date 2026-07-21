@@ -157,6 +157,55 @@ jobs:
           }
           Write-Host "Found $manifest"
 
+      # Actually installs the built .rpm/.deb on clean distro containers. A hand-maintained
+      # dependency name can look correct and still fail on a real system - this is what would
+      # have caught the libXShmfence bug (a package name no RPM distro has ever shipped) before
+      # release. See .claude/rules/linux-package-dependencies.md.
+      # Each distro is its OWN step so all four report independently. Chained under one `set -e`,
+      # a failure in the first container aborts before the second ever runs, so a single CI run
+      # could only ever prove the first distro of a pair - the gate would claim four-distro
+      # coverage while delivering two.
+      #
+      # --nogpgcheck / --no-gpg-checks: electron-builder emits an UNSIGNED rpm. Fedora 45 flips
+      # RPM's %_pkgverify_level from "digest" to "all", so without the override an unsigned local
+      # package is refused outright and every release would fail here on a signature error rather
+      # than on the dependency resolution this gate actually tests.
+      - name: Verify rpm installs on Fedora
+        if: matrix.platform == 'linux'
+        run: |
+          set -e
+          rpm_file=$(ls out/kangentic-*.x86_64.rpm)
+          echo "Testing $rpm_file"
+          docker run --rm -v "$PWD/out:/out:ro" fedora:latest \
+            dnf install -y --nogpgcheck "/out/$(basename "$rpm_file")"
+
+      - name: Verify rpm installs on openSUSE
+        if: matrix.platform == 'linux'
+        run: |
+          set -e
+          rpm_file=$(ls out/kangentic-*.x86_64.rpm)
+          echo "Testing $rpm_file"
+          docker run --rm -v "$PWD/out:/out:ro" opensuse/tumbleweed:latest \
+            zypper --non-interactive --no-gpg-checks install "/out/$(basename "$rpm_file")"
+
+      - name: Verify deb installs on Debian
+        if: matrix.platform == 'linux'
+        run: |
+          set -e
+          deb_file=$(ls out/kangentic_*_amd64.deb)
+          echo "Testing $deb_file"
+          docker run --rm -v "$PWD/out:/out:ro" debian:stable sh -c \
+            "apt-get update -qq && apt-get install -y \"/out/$(basename "$deb_file")\""
+
+      - name: Verify deb installs on Ubuntu
+        if: matrix.platform == 'linux'
+        run: |
+          set -e
+          deb_file=$(ls out/kangentic_*_amd64.deb)
+          echo "Testing $deb_file"
+          docker run --rm -v "$PWD/out:/out:ro" ubuntu:24.04 sh -c \
+            "apt-get update -qq && apt-get install -y \"/out/$(basename "$deb_file")\""
+
   # Only publish the draft release when ALL platform builds succeed.
   # This prevents partial releases (e.g. missing macOS artifacts) from
   # reaching users. If any platform fails, the release stays as a draft.

@@ -264,6 +264,7 @@ session; rules with one load when you touch matching files. Each rule names its 
 - `central-embedding-engine.md` - only `embed-engine.ts` embeds; lifecycle/IPC call sites index and `markDirty()`, never embed inline (`src/main/retrieval/**`, `src/main/ipc/handlers/**`).
 - `pop-out-surface-registry.md` - every OS `BrowserWindow` is created only in `createWindow` or the pop-out window manager; every detachable surface goes through the shared + renderer registries (`src/main/pop-out/**`, `src/shared/pop-out.ts`, `src/renderer/pop-out/**`).
 - `spawn-entry-point-parity.md` - every agent-spawn entry point routes through `spawnAgent` / `prepareAgentSpawn` and the shared `runSpawnPreamble` (first-spawn override lock + agent resolution); no direct engine spawn calls in handlers (`src/main/ipc/**`, `src/main/transition-engine/**`).
+- `linux-package-dependencies.md` - rpm dependencies are soname capabilities, never package names, since RPM package names differ per distro (`electron-builder.yml`).
 
 **Local overrides:** there is no per-rule local file. Put machine-specific instruction
 overrides in a gitignored `CLAUDE.local.md` at the project root.

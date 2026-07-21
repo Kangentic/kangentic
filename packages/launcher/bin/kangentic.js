@@ -31,7 +31,7 @@ function getPlatformInfo() {
     return { platform: 'darwin', arch, extension: 'zip' };
   }
   if (platform === 'linux') {
-    return { platform: 'linux', arch: 'x64', extension: 'deb' };
+    return { platform: 'linux', arch: 'x64' };
   }
 
   return null;
@@ -83,22 +83,8 @@ function getArtifactFilename(platformInfo) {
     return `Kangentic-${version}-${platformInfo.arch}-mac.zip`;
   }
   if (platformInfo.platform === 'linux') {
-    // Check if rpm-based system
-    try {
-      execFileSync('which', ['rpm'], { stdio: 'ignore' });
-      const hasApt = (() => {
-        try {
-          execFileSync('which', ['apt'], { stdio: 'ignore' });
-          return true;
-        } catch {
-          return false;
-        }
-      })();
-      if (!hasApt) {
-        return `kangentic-${version}-1.x86_64.rpm`;
-      }
-    } catch {
-      // not rpm-based, use deb
+    if (commandExists('rpm') && !commandExists('apt')) {
+      return `kangentic-${version}-1.x86_64.rpm`;
     }
     return `kangentic_${version}_amd64.deb`;
   }
@@ -206,14 +192,39 @@ function installMacOS(artifactPath) {
   console.log('Installation complete.');
 }
 
+function commandExists(command) {
+  try {
+    execFileSync('which', [command], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function installLinux(artifactPath) {
   console.log('Installing Kangentic...');
   if (artifactPath.endsWith('.deb')) {
-    console.log('Running: sudo dpkg -i (you may be prompted for your password)');
-    execFileSync('sudo', ['dpkg', '-i', artifactPath], { stdio: 'inherit' });
+    if (commandExists('apt')) {
+      console.log('Running: sudo apt install (you may be prompted for your password)');
+      execFileSync('sudo', ['apt', 'install', '-y', artifactPath], { stdio: 'inherit' });
+    } else {
+      console.log('Running: sudo dpkg -i (you may be prompted for your password)');
+      execFileSync('sudo', ['dpkg', '-i', artifactPath], { stdio: 'inherit' });
+    }
   } else if (artifactPath.endsWith('.rpm')) {
-    console.log('Running: sudo rpm -i (you may be prompted for your password)');
-    execFileSync('sudo', ['rpm', '-i', artifactPath], { stdio: 'inherit' });
+    if (commandExists('dnf')) {
+      console.log('Running: sudo dnf install (you may be prompted for your password)');
+      execFileSync('sudo', ['dnf', 'install', '-y', artifactPath], { stdio: 'inherit' });
+    } else if (commandExists('zypper')) {
+      // openSUSE ships zypper, not dnf. Without this branch it falls through to `rpm -i`,
+      // which enforces Requires without resolving them - the exact install failure this
+      // launcher path exists to avoid.
+      console.log('Running: sudo zypper install (you may be prompted for your password)');
+      execFileSync('sudo', ['zypper', '--non-interactive', 'install', artifactPath], { stdio: 'inherit' });
+    } else {
+      console.log('Running: sudo rpm -i (you may be prompted for your password)');
+      execFileSync('sudo', ['rpm', '-i', artifactPath], { stdio: 'inherit' });
+    }
   }
   console.log('Installation complete.');
 }
@@ -432,4 +443,13 @@ if (require.main === module) {
 }
 
 // Exported for testing
-module.exports = { isInstalled, getVersionMarkerPath, writeVersionMarker, getInstallPath, getTempDir };
+module.exports = {
+  isInstalled,
+  getVersionMarkerPath,
+  writeVersionMarker,
+  getInstallPath,
+  getTempDir,
+  getPlatformInfo,
+  getArtifactFilename,
+  installLinux,
+};

@@ -109,7 +109,7 @@ deb:
     - libatk-bridge2.0-0
     - libgtk-3-0
     - libgbm1
-    - libasound2
+    - libasound2t64 | libasound2
     - libdrm2
     - libxshmfence1
 
@@ -117,14 +117,21 @@ rpm:
   # Pin filename to match what the launcher (packages/launcher/bin/kangentic.js) expects.
   # electron-builder's default may or may not include the -1 release number.
   artifactName: "${name}-${version}-1.${arch}.rpm"
+  # Soname capabilities, not package names: RPM package names for these libraries
+  # differ per distro (Fedora "libxshmfence" / openSUSE "libxshmfence1"; Fedora "nss" /
+  # openSUSE "mozilla-nss"), but every distro's rpm auto-generates a Provides: for the
+  # soname itself, so it resolves everywhere. Each string below was confirmed against
+  # a real Fedora 44 package's `rpm -q --provides` output and confirmed to survive the
+  # electron-builder -> fpm -> rpmbuild pipeline unmodified via `rpm -qpR`.
+  # See .claude/rules/linux-package-dependencies.md
   depends:
-    - nss
-    - atk
-    - gtk3
-    - mesa-libgbm
-    - alsa-lib
-    - libdrm
-    - libXShmfence
+    - libnss3.so()(64bit)
+    - libatk-1.0.so.0()(64bit)
+    - libgtk-3.so.0()(64bit)
+    - libgbm.so.1()(64bit)
+    - libasound.so.2()(64bit)
+    - libdrm.so.2()(64bit)
+    - libxshmfence.so.1()(64bit)
 
 publish:
   provider: github

@@ -81,6 +81,14 @@ Scan the changed files (or the full codebase if no specific scope is given) for 
 - Shell-parameterized tests should run for all detected terminals
 - **Severity: Low** -- causes test failures on other platforms
 
+### 7. Linux Package Dependencies
+- `electron-builder.yml`'s `rpm.depends` entries must be soname capabilities
+  (`libfoo.so.1()(64bit)`) or a rich-dependency boolean (`(libXtst or libXtst6)`), never a bare
+  package name - RPM package names differ per distro (Fedora `libxshmfence` vs. openSUSE
+  `libxshmfence1`). See `.claude/rules/linux-package-dependencies.md`.
+- **Severity: High** - a bad dependency name fails the RPM install outright on every user's
+  machine, not just in CI.
+
 ## Output Format
 
 ### Findings

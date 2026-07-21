@@ -33,8 +33,8 @@ Download the latest release for your platform from [GitHub Releases](https://git
 |----------|------|-------|
 | Windows | `Kangentic Setup X.Y.Z.exe` | NSIS installer. Auto-updates. |
 | macOS | `Kangentic-X.Y.Z.dmg` | Drag to Applications. See [Gatekeeper note](#macos-gatekeeper). |
-| Linux (Debian/Ubuntu) | `kangentic_X.Y.Z_amd64.deb` | `sudo dpkg -i kangentic_*.deb` |
-| Linux (Fedora/RHEL) | `kangentic-X.Y.Z-1.x86_64.rpm` | `sudo rpm -i kangentic-*.rpm` |
+| Linux (Debian/Ubuntu) | `kangentic_X.Y.Z_amd64.deb` | `sudo apt install ./kangentic_*.deb` |
+| Linux (Fedora/RHEL/openSUSE) | `kangentic-X.Y.Z-1.x86_64.rpm` | `sudo dnf install kangentic-*.rpm` |
 
 ### Windows
 
@@ -64,11 +64,18 @@ Install with your package manager:
 
 ```bash
 # Debian/Ubuntu
-sudo dpkg -i kangentic_X.Y.Z_amd64.deb
+sudo apt install ./kangentic_X.Y.Z_amd64.deb
 
 # Fedora/RHEL
-sudo rpm -i kangentic-X.Y.Z-1.x86_64.rpm
+sudo dnf install kangentic-X.Y.Z-1.x86_64.rpm
+
+# openSUSE
+sudo zypper install kangentic-X.Y.Z-1.x86_64.rpm
 ```
+
+`apt install` and `dnf install` resolve and fetch missing dependencies automatically. `dpkg -i`
+and `rpm -i` (still supported) do not - a missing library fails with a raw dependency error
+instead of being installed.
 
 Linux does not have built-in auto-updates. Download new releases manually from GitHub.
 
