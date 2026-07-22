@@ -138,14 +138,25 @@ export class OpenCodeCommandBuilder {
    * `headers`. We pass the per-launch token via the `X-Kangentic-Token`
    * header that the in-process MCP HTTP server expects.
    *
-   * Returns `null` when MCP wiring is disabled or any of the required
-   * URL / token values are missing.
+   * This only wires MCP for a LOCAL spawn (`opencode [project]`), where
+   * the process we spawn is the server itself and legitimately reads its
+   * own `OPENCODE_CONFIG_CONTENT` at startup. Returns `null` when MCP
+   * wiring is disabled or any of the required URL / token values are
+   * missing.
    */
   buildOpenCodeEnv(options: OpenCodeCommandOptions): Record<string, string> | null {
-    // Known v1 limitation: the Kangentic MCP server listens on
-    // 127.0.0.1 in this process, which a remote OpenCode server cannot
-    // reach. Omit the env block entirely rather than emitting an
-    // unreachable URL the server would silently fail to connect to.
+    // Remote mode (`options.executionTarget` set): the process Kangentic
+    // spawns is `opencode attach <url>`, a stateless HTTP client to a
+    // server that was started - and had its config, including any `mcp.*`
+    // entries, fixed - independently and earlier. `attach`'s CLI surface
+    // has no config-push flags (`--dir`, `--continue`, `--session`,
+    // `--fork`, `--username`, `--password` only; verified against
+    // `opencode attach --help`), so env vars set on the attach process,
+    // including OPENCODE_CONFIG_CONTENT, are never read by the already-
+    // running server and cannot wire MCP into it - this holds whether the
+    // target host is loopback or genuinely remote. There is currently no
+    // way for Kangentic to deliver its MCP tools to a remote OpenCode
+    // session; see the `remoteModeCaveat` on the adapter.
     if (options.executionTarget) return null;
     if (!options.mcpServerEnabled) return null;
     if (!options.mcpServerUrl || !options.mcpServerToken) return null;

@@ -802,7 +802,10 @@ app.whenReady().then(async () => {
   // Start the in-process MCP HTTP server BEFORE createWindow so the URL
   // is available when projects.ts writes per-project mcp-config.json
   // and command-builder writes per-session mcp.json. Bound to 127.0.0.1
-  // only -- no firewall prompt, no exposure to other machines.
+  // by default - no firewall prompt, no exposure to other machines -
+  // unless the user opts into a wider bindAddress by hand-editing the
+  // global config.json (there is no Settings UI for it). Network config
+  // is read once here, at startup; changing it requires an app restart.
   //
   // The factory passed in here is the only path that resolves a project
   // ID to a CommandContext. It returns null if (a) the IPC context is
@@ -813,6 +816,7 @@ app.whenReady().then(async () => {
   // from before the toggle was flipped off can never grant access at
   // runtime.
   try {
+    const startupMcpServerConfig = windowConfigManager.load().mcpServer;
     mcpServerHandle = await startMcpHttpServer(
       (projectId) => {
         const ctx = getOptionalIpcContext();
@@ -822,6 +826,10 @@ app.whenReady().then(async () => {
         return createRequestResolver(ctx, projectId);
       },
       () => readBrowserAutomationConfig(getOptionalIpcContext()?.configManager ?? windowConfigManager),
+      {
+        bindAddress: startupMcpServerConfig?.bindAddress ?? '127.0.0.1',
+        callbackHost: startupMcpServerConfig?.callbackHost,
+      },
     );
   } catch (err) {
     console.error('[APP] Failed to start MCP HTTP server:', err);

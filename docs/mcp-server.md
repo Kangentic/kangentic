@@ -25,7 +25,7 @@ Claude Code agent calls MCP tool (e.g. kangentic_create_task)
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| MCP HTTP Server | `src/main/agent/mcp-http-server.ts` | In-process Node `http` server using `@modelcontextprotocol/sdk` Streamable HTTP transport. Binds 127.0.0.1, random `:0` port, random per-launch token validated via `X-Kangentic-Token`. |
+| MCP HTTP Server | `src/main/agent/mcp-http-server.ts` | In-process Node `http` server using `@modelcontextprotocol/sdk` Streamable HTTP transport. Binds 127.0.0.1 by default (configurable via `mcpServer.bindAddress`), random `:0` port, random per-launch token validated via `X-Kangentic-Token`. See [Network Access](#network-access). |
 | Task Tools | `src/main/agent/mcp-http/task-tools.ts` | Board/task/column mutations + related reads (`kangentic_create_task`, `kangentic_move_task`, `kangentic_update_task`, `kangentic_link_pr`, `kangentic_update_column`, `kangentic_delete_task`, `kangentic_list_columns`, `kangentic_find_task`, `kangentic_get_current_task`, etc.). |
 | Session Tools | `src/main/agent/mcp-http/session-tools.ts` | Session inspection, backlog, read-only SQL (`kangentic_list_sessions`, `kangentic_get_transcript`, `kangentic_get_session_files`, `kangentic_get_session_events`, `kangentic_query_db`, `kangentic_list_backlog`, etc.). |
 | Project Tools | `src/main/agent/mcp-http/project-tools.ts` | Multi-project discovery (`kangentic_list_projects`). |
@@ -579,6 +579,20 @@ When disabled:
 
 Config key: `mcpServer.enabled` (boolean, default `true`)
 
+### Network Access
+
+Two advanced config keys, both read once at app startup (changing either requires a restart), are not exposed in the Settings UI - set them by hand-editing the global `config.json`: `mcpServer.bindAddress` (string, default `'127.0.0.1'`) is the interface the HTTP server listens on - widening this beyond loopback (`0.0.0.0` for every interface) is what actually exposes the server to other machines; `mcpServer.callbackHost` (string, optional, default unset) is allowlisted alongside `bindAddress` for the DNS-rebinding-protection check (see Security below), so a real client naming that host in its request is not rejected.
+
+Both default to today's exact loopback-only behavior. `urlForProject` (used by every local consumer - `.kangentic/mcp-config.json`, per-session `mcp.json`) always stays on `127.0.0.1` regardless of `bindAddress`.
+
+That keeps locally-spawned agents working for the default and for a **wildcard** bind, since `0.0.0.0` (and `::`) bind loopback along with every other interface. Known limitation: it does **not** hold for a bind to one specific non-loopback interface (e.g. `bindAddress: '10.0.0.5'`). That leaves loopback unbound, so every local agent gets a `127.0.0.1` URL the server is not listening on and its MCP calls fail with a connection error. Prefer a wildcard `bindAddress` plus a `callbackHost` naming the reachable address.
+
+Widening `bindAddress` alone is not enough for an external client to actually connect: `bindAddress: '0.0.0.0'` binds every interface, but a real client's request carries a `Host` header naming the machine's actual LAN/VPN address (e.g. `10.0.0.5`), not `0.0.0.0` - so `mcpServer.callbackHost` also needs to be set to that same reachable address, or the request is rejected by DNS-rebinding protection even though the socket accepted the connection.
+
+To point an external MCP client (a manually-run remote OpenCode server's own `opencode.json`, a second machine's Claude Desktop, etc.) at Kangentic: read the URL and token Kangentic already writes to `.kangentic/mcp-config.json` for that project (see Discovery above) and substitute the reachable `callbackHost` for that file's `127.0.0.1`. There is no separate delivery mechanism - Kangentic does not push this config anywhere itself, and the port and token both rotate on every Kangentic restart, so this is not a durable setup.
+
+**Remote OpenCode sessions are not automatically wired**, and widening these settings does not change that: `opencode attach <url>` (which Kangentic spawns in OpenCode's remote-execution mode) is a stateless HTTP client to a server that was started, and had its config fixed, independently and earlier. It has no config-push mechanism (`opencode attach --help` lists only `--dir`, `--continue`, `--session`, `--fork`, `--username`, `--password`), so env vars Kangentic sets on the attach process are never read by the already-running server. This holds even when the target server is on the same machine.
+
 ### Permissions
 
 Agents Kangentic spawns never see a permission prompt for Kangentic's own tools. Three layers cover the axes (which mode, which project):
@@ -591,9 +605,9 @@ The committed `.claude/settings.json` `mcp__kangentic` entry remains for humans 
 
 ## Security
 
-- **Loopback-only bind** - the HTTP server binds explicitly to `127.0.0.1:0` (random port). Not reachable from other machines and does not trigger a Windows Defender Firewall prompt. Not `localhost` (which can resolve to `::1` on IPv6-preferring systems) and not `0.0.0.0`.
-- **Per-launch token** - every Kangentic launch generates a fresh 32-byte random `X-Kangentic-Token`. Clients without the token get `401`. Comparison is constant-time (`timingSafeEqual`) so a local timing oracle cannot byte-by-byte recover the token.
-- **DNS rebinding protection** - the Streamable HTTP transport enforces a host allowlist (`127.0.0.1`, `localhost`, `[::1]`) on top of the loopback bind.
+- **Loopback bind by default** - the HTTP server binds to `127.0.0.1:0` (random port) unless a user opts into a wider `mcpServer.bindAddress` (see Network Access above). Loopback is not reachable from other machines and does not trigger a Windows Defender Firewall prompt. Not `localhost` (which can resolve to `::1` on IPv6-preferring systems) and not `0.0.0.0` unless explicitly configured.
+- **Per-launch token** - every Kangentic launch generates a fresh 32-byte random `X-Kangentic-Token`. Clients without the token get `401`. Comparison is constant-time (`timingSafeEqual`) so a local timing oracle cannot byte-by-byte recover the token. This becomes the primary defense once a user widens `bindAddress`.
+- **DNS rebinding protection** - the Streamable HTTP transport enforces a host allowlist (`127.0.0.1`, `localhost`, `[::1]`, plus the configured `bindAddress`/`callbackHost` when set) on top of the bind.
 - **Project routing via URL path** - the URL embeds the project ID (`/mcp/<projectId>`). A stale `mcp.json` for a different project cannot be reused against the current launch.
 - **Runaway-loop safeguard** - task creations are capped at a fixed 500 per app launch, enforced atomically by the shared `TaskCounter`. This is an internal circuit breaker against a looping agent, not a user-tunable knob; the count resets on restart.
 - **Input validation** - Zod schemas enforce title (200 chars) and description (50000 chars for tasks; 10000 chars for backlog item descriptions) limits at the protocol level, and the command handlers validate again. A backlog item created via `kangentic_create_task` shares the task 50000-char Zod schema, so `handleCreateTask` enforces the 10000 backlog cap itself and rejects an over-cap backlog description rather than truncating it.

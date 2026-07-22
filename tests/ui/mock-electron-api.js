@@ -113,6 +113,7 @@
     },
     mcpServer: {
       enabled: true,
+      bindAddress: '127.0.0.1',
     },
     contextBar: {
       showShell: true,

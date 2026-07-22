@@ -1881,6 +1881,16 @@ export interface AppConfig {
 
   mcpServer: {
     enabled: boolean;
+    /** Interface the in-process MCP HTTP server listens on. Default '127.0.0.1' (loopback only). */
+    bindAddress: string;
+    /**
+     * Extra host allowlisted alongside `bindAddress` for the MCP server's DNS-rebinding
+     * protection, so an external client naming it in its `Host` header is not rejected.
+     * Kangentic never advertises or pushes this value anywhere: to point an external
+     * client at the server the user substitutes it by hand for the `127.0.0.1` in
+     * `.kangentic/mcp-config.json`. Unset means loopback only.
+     */
+    callbackHost?: string;
   };
 
   contextBar: {
@@ -2236,6 +2246,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   },
   mcpServer: {
     enabled: true,
+    bindAddress: '127.0.0.1',
   },
   contextBar: {
     showShell: true,

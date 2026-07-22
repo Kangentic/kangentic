@@ -207,6 +207,26 @@ describe('OpenCodeCommandBuilder.buildOpenCodeEnv - remote mode', () => {
     });
     expect(env).toBeNull();
   });
+
+  it('returns null even when the execution target itself is loopback', () => {
+    // `opencode attach` is a config-less HTTP client regardless of whether the
+    // server it attaches to happens to be on this machine - there is no
+    // config-push mechanism, so a loopback-target server is no more reachable
+    // by env-var injection than a genuinely remote one. See buildOpenCodeEnv's
+    // JSDoc for the verified reasoning (no "cheap first step" special case).
+    const builder = new OpenCodeCommandBuilder();
+    const env = builder.buildOpenCodeEnv({
+      opencodePath: '/usr/bin/opencode',
+      taskId: 'task-001',
+      cwd: '/home/dev/kangentic-worktree',
+      permissionMode: 'default',
+      mcpServerEnabled: true,
+      mcpServerUrl: 'http://127.0.0.1:51234/mcp/proj-abc',
+      mcpServerToken: 'token-deadbeef',
+      executionTarget: { ...REMOTE_TARGET, url: 'http://127.0.0.1:4096' },
+    });
+    expect(env).toBeNull();
+  });
 });
 
 describe('OpenCodeAdapter - remote target tracking by cwd', () => {

@@ -154,7 +154,7 @@ An adapter may also set `AgentRemoteExecutionInfo.remoteModeCaveat` - a short st
 When a project's mode for an agent is `remote`:
 
 - `ensureTaskWorktree` (`src/main/ipc/helpers/task-git.ts`) skips creating a local git worktree - the task's `worktree_path` stays `null`, and the configured server-side directory travels separately via `executionTarget`, never through `cwd`.
-- For OpenCode specifically: the local `probeAuth()` (reads `~/.local/share/opencode/auth.json`) is bypassed in favor of a `GET /global/health` reachability probe (`remoteExecution.probeServer`, surfaced to the renderer's "Test connection" button via the `agent:probeExecutionServer` IPC channel); the transcript is read over HTTP (`GET /session/:id/message`) instead of the local SQLite database; the activity plugin is not installed (the server's filesystem is not local); and the Kangentic MCP server is not wired in (its callback URL is `127.0.0.1`-bound and unreachable from a remote host). PTY-silence activity detection and PTY-output session-ID capture both continue to work unchanged, since `opencode attach` still runs a real TUI over the local PTY.
+- For OpenCode specifically: the local `probeAuth()` (reads `~/.local/share/opencode/auth.json`) is bypassed in favor of a `GET /global/health` reachability probe (`remoteExecution.probeServer`, surfaced to the renderer's "Test connection" button via the `agent:probeExecutionServer` IPC channel); the transcript is read over HTTP (`GET /session/:id/message`) instead of the local SQLite database; the activity plugin is not installed (the server's filesystem is not local); and the Kangentic MCP server is not wired in. This is not a reachability problem `mcpServer.callbackHost` can fix: `opencode attach <url>` is a stateless HTTP client to a server that was started, and had its config fixed, independently and earlier - its CLI surface has no config-push flags, so env vars Kangentic sets on the spawned attach process are never read by the already-running server, whether that server is local or genuinely remote. See [MCP Server > Network Access](mcp-server.md) for the full reasoning and the (non-durable, since port/token rotate on restart) manual workaround. PTY-silence activity detection and PTY-output session-ID capture both continue to work unchanged, since `opencode attach` still runs a real TUI over the local PTY.
 
 ### git.*
 
@@ -193,6 +193,8 @@ IPC channels for shortcuts are in the Board Config group: `boardConfig:getShortc
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `mcpServer.enabled` | boolean | `true` | Allow agents to create and query tasks via MCP tools. When disabled, no kangentic MCP server is injected into sessions. See [MCP Server](mcp-server.md). |
+| `mcpServer.bindAddress` | string | `'127.0.0.1'` | Interface the in-process MCP HTTP server listens on. Not exposed in Settings UI - edit `config.json` directly. Widening past loopback exposes the server to other machines; read once at startup. Use a wildcard (`0.0.0.0`), which binds loopback too - binding one specific non-loopback interface leaves loopback unbound and breaks every local agent. See [MCP Server > Network Access](mcp-server.md). |
+| `mcpServer.callbackHost` | string \| undefined | unset | Not exposed in Settings UI - edit `config.json` directly. Allowlisted alongside `bindAddress` for DNS-rebinding-protection so a real external request is not rejected. Does not auto-wire a remote OpenCode session (see [MCP Server > Network Access](mcp-server.md)). |
 
 ### notifications.*
 

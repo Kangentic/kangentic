@@ -147,7 +147,8 @@ export class OpenCodeAdapter implements AgentAdapter {
       workingDirectoryScope: 'per-invocation' as const,
       remoteModeCaveat:
         'The server is the authority for providers, models, and MCP tools in remote mode. '
-        + 'The Kangentic MCP server and the activity-tracking plugin are not available for remote OpenCode sessions.',
+        + 'The Kangentic MCP server and the activity-tracking plugin are not available for remote '
+        + 'OpenCode sessions - attach has no way to push local config into an already-running server.',
     },
     probeServer: probeOpenCodeServer,
   };

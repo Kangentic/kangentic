@@ -9,8 +9,19 @@
  *
  * URL shape: http://127.0.0.1:<port>/mcp/<projectId>
  * Auth: random per-launch token, validated via `X-Kangentic-Token` header
- * Bind: 127.0.0.1 only -- loopback skips Windows Defender Firewall
- *       prompts and is unreachable from other machines.
+ * Bind: 127.0.0.1 by default -- loopback skips Windows Defender Firewall
+ *       prompts and is unreachable from other machines. A user can widen
+ *       this by hand-editing `mcpServer.bindAddress` in the global
+ *       config.json (there is no Settings UI for it) to expose the server
+ *       on a LAN/VPN interface; `mcpServer.callbackHost` is allowlisted
+ *       alongside it so a real external request is not rejected by
+ *       DNS-rebinding protection. Both are opt-in and read once at
+ *       startup. `urlForProject`/`baseUrl` always stay loopback, which
+ *       keeps local consumers working for the default and for a wildcard
+ *       bind ('0.0.0.0' / '::' bind loopback too). A bind to one SPECIFIC
+ *       non-loopback interface does NOT bind loopback, so local agents
+ *       would get an unreachable URL - see docs/mcp-server.md's Network
+ *       Access section.
  *
  * Tool registrations live under ./mcp-http/:
  *   - task-tools.ts     - board/task/column mutations + related reads
@@ -50,6 +61,21 @@ const SERVER_VERSION = '1.0.0';
  */
 export type ProjectContextFactory = (projectId: string) => RequestResolver | null;
 
+/** Network config for the MCP HTTP server, read once at startup. */
+export interface McpServerNetworkConfig {
+  /** Interface to bind. Default '127.0.0.1' (loopback only). */
+  bindAddress: string;
+  /**
+   * Host allowlisted alongside `bindAddress` for DNS-rebinding protection (see
+   * `buildAllowedHosts`), so a legitimate LAN/VPN request naming this host in its `Host`
+   * header is not rejected. There is no delivery mechanism that reads this to build a URL
+   * for an external client - the user reads their own reachable address from
+   * `.kangentic/mcp-config.json` (already written for every project) and substitutes it
+   * for that file's `127.0.0.1`.
+   */
+  callbackHost?: string;
+}
+
 export interface McpHttpServerHandle {
   /** Full URL with port substituted in. Pass to claude --mcp-config or write into mcp.json. */
   baseUrl: string;
@@ -68,13 +94,14 @@ export interface McpHttpServerHandle {
 export async function startMcpHttpServer(
   buildContext: ProjectContextFactory,
   getBrowserAutomationConfig: AutomationConfigReader,
+  networkConfig: McpServerNetworkConfig,
 ): Promise<McpHttpServerHandle> {
   const token = randomBytes(32).toString('hex');
   const expectedTokenBuffer = Buffer.from(token, 'utf-8');
   const taskCounter = makeTaskCounter();
 
   const httpServer: Server = createServer((req, res) => {
-    handleHttpRequest(req, res, expectedTokenBuffer, buildContext, taskCounter, getBrowserAutomationConfig)
+    handleHttpRequest(req, res, expectedTokenBuffer, buildContext, taskCounter, getBrowserAutomationConfig, networkConfig)
       .catch((error) => {
         console.error('[mcp-http] Request handler crashed:', error);
         if (!res.headersSent) {
@@ -93,14 +120,16 @@ export async function startMcpHttpServer(
     console.error('[mcp-http] Server error:', error);
   });
 
-  // Bind 127.0.0.1 explicitly. NOT 'localhost' (which can resolve to ::1
-  // on IPv6-preferring systems and miss the 127.0.0.1 binding) and NOT
-  // 0.0.0.0 (which exposes the port to the network and triggers a Windows
-  // Defender Firewall prompt). Loopback v4 works identically on Windows,
-  // macOS, and Linux.
+  // Bind the configured interface. Default '127.0.0.1' - NOT 'localhost'
+  // (which can resolve to ::1 on IPv6-preferring systems and miss the
+  // 127.0.0.1 binding) and NOT '0.0.0.0' unless the user explicitly opts
+  // in by hand-editing config.json (widening the bind triggers a Windows
+  // Defender Firewall prompt and makes the port LAN-reachable). Loopback
+  // v4 works identically on Windows, macOS, and Linux.
+  const bindAddress = networkConfig.bindAddress;
   await new Promise<void>((resolve, reject) => {
     httpServer.once('error', reject);
-    httpServer.listen(0, '127.0.0.1', () => {
+    httpServer.listen(0, bindAddress, () => {
       httpServer.removeListener('error', reject);
       resolve();
     });
@@ -111,9 +140,15 @@ export async function startMcpHttpServer(
     httpServer.close();
     throw new Error('[mcp-http] Failed to obtain HTTP server address after listen()');
   }
+  // baseUrl / urlForProject stay on loopback regardless of bindAddress. That
+  // holds for the default and for a wildcard bind ('0.0.0.0' / '::' bind
+  // loopback too), so every locally-spawned agent still reaches the server
+  // over 127.0.0.1. Known limitation: it does NOT hold for a bind to one
+  // specific non-loopback interface, which leaves loopback unbound and hands
+  // every local agent a URL nothing is listening on.
   const baseUrl = `http://127.0.0.1:${address.port}/mcp`;
 
-  console.log(`[mcp-http] Listening on ${baseUrl}`);
+  console.log(`[mcp-http] Listening on ${baseUrl} (bind ${bindAddress})`);
 
   return {
     baseUrl,
@@ -145,6 +180,34 @@ export function closeMcpHttpServerSafely(httpServer: Pick<Server, 'closeAllConne
   } catch (error) {
     console.error('[mcp-http] close() failed:', error);
   }
+}
+
+/**
+ * Build the DNS-rebinding-protection allowlist for one request. Loopback and
+ * `req.socket.localPort` are always allowed. Widening `bindAddress` or
+ * configuring `callbackHost` expands who can legitimately dial in, so both
+ * must be allowlisted too - otherwise a real LAN/VPN request would bind
+ * successfully but still get rejected by DNS-rebinding protection.
+ *
+ * Entries are matched by the SDK against the raw `Host` header with an exact
+ * string compare, so an IPv6 literal has to be stored bracketed the way a
+ * client actually sends it (`Host: [2001:db8::1]:51234`, per RFC 3986 /
+ * RFC 7230). Hostnames and IPv4 literals never contain a colon, so the
+ * colon test below is a safe discriminator.
+ *
+ * Exported as a pure function for unit-test isolation - testing this via a
+ * real HTTP request through startMcpHttpServer would require booting the
+ * full MCP module graph.
+ */
+export function buildAllowedHosts(localPort: number | string, networkConfig: McpServerNetworkConfig): string[] {
+  const allowedHosts = ['127.0.0.1', `127.0.0.1:${localPort}`, 'localhost', '[::1]'];
+  for (const host of [networkConfig.bindAddress, networkConfig.callbackHost]) {
+    if (host && host !== '127.0.0.1') {
+      const hostAsSentInHeader = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
+      allowedHosts.push(hostAsSentInHeader, `${hostAsSentInHeader}:${localPort}`);
+    }
+  }
+  return allowedHosts;
 }
 
 /**
@@ -200,11 +263,13 @@ async function handleHttpRequest(
   buildContext: ProjectContextFactory,
   taskCounter: TaskCounter,
   getBrowserAutomationConfig: AutomationConfigReader,
+  networkConfig: McpServerNetworkConfig,
 ): Promise<void> {
   // Token check first -- cheapest reject path. Constant-time compare so a
-  // local timing oracle can't byte-by-byte recover the token. Pure
-  // belt-and-suspenders since we already bind 127.0.0.1 only and the
-  // attacker would need same-machine code execution to even try.
+  // local timing oracle can't byte-by-byte recover the token. When bound to
+  // loopback only (the default), this is pure belt-and-suspenders since the
+  // attacker would need same-machine code execution to even try; it becomes
+  // the primary defense once a user opts into a wider `bindAddress`.
   const headerToken = req.headers['x-kangentic-token'];
   if (typeof headerToken !== 'string') {
     res.statusCode = 401;
@@ -251,7 +316,7 @@ async function handleHttpRequest(
     sessionIdGenerator: undefined,
     enableJsonResponse: true,
     enableDnsRebindingProtection: true,
-    allowedHosts: ['127.0.0.1', `127.0.0.1:${req.socket.localPort ?? ''}`, 'localhost', '[::1]'],
+    allowedHosts: buildAllowedHosts(req.socket.localPort ?? '', networkConfig),
   });
 
   try {
