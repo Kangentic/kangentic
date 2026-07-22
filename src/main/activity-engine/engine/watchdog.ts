@@ -63,6 +63,17 @@ export interface WatchdogHold {
    * (now shorter) deadline. Undefined holds always use `thresholdMs`.
    */
   idleHintThresholdMs?: number;
+  /**
+   * Optional shortened threshold used INSTEAD of `thresholdMs` while
+   * `state.turnForcedByHeartbeat` is set (a hook-less `--resume` resume-picker
+   * turn the status heartbeat force-thought, never confirmed by a real
+   * turn-initiating hook - task #331/#364). Checked before `idleHintThresholdMs`
+   * in `effectiveThreshold`; only the stale-thinking hold sets it, since it is
+   * the only hold whose predicate a heartbeat-forced turn (no pending tools, no
+   * subagents, no bg shells) can match. Undefined holds always fall through to
+   * `idleHintThresholdMs` / `thresholdMs`.
+   */
+  heartbeatForcedThresholdMs?: number;
   /** Audit-log label written to the transition record. */
   trigger: TransitionTrigger;
   /**
@@ -131,6 +142,14 @@ export interface WatchdogConfig {
    * unchanged, so a genuinely-live subagent's streaming output still defers it.
    */
   staleAfterIdleHintMs: number;
+  /**
+   * ms threshold for the stale-thinking hold while `state.turnForcedByHeartbeat`
+   * is set (a hook-less resume-picker turn, task #331/#364). The anchor is
+   * unchanged (already narrowed to `signal` via `parkedAnchor` whenever
+   * heartbeat-forced), so this only shortens HOW LONG the net waits once
+   * `lastSignalAt` freezes.
+   */
+  staleAfterHeartbeatForcedMs: number;
 }
 
 /**
@@ -265,6 +284,12 @@ export function buildWatchdogHolds(config: WatchdogConfig): readonly WatchdogHol
         && (state.activeBackgroundShellIds.size + state.anonymousBackgroundShellCount) === 0
         && !state.permissionPending,
       thresholdMs: config.staleThinkingTimeoutMs,
+      // Task #331/#364 follow-up: a hook-less resume-picker turn is already
+      // anchored to `signal` (parkedAnchor below) once turnForcedByHeartbeat is
+      // set, so lastSignalAt is already frozen at the moment output stopped
+      // growing. Reclaim on this shorter budget instead of the general 180s -
+      // see DEFAULT_STALE_AFTER_HEARTBEAT_FORCED_MS for the safety argument.
+      heartbeatForcedThresholdMs: config.staleAfterHeartbeatForcedMs,
       trigger: 'timer:stale-thinking',
       anchor: 'signal-or-pty-output',
       parkedAnchor: 'signal',

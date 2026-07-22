@@ -299,6 +299,8 @@ Held by `turnActive` alone (no tools, no subagent, no bg shells) for 180 seconds
 
 Any of the three freezes the anchor at the last genuine hook / output growth / retry signal, so the 180s net still fires ~180s after real activity stopped. A live long-generation turn never fires `idle_hint`, is never heartbeat-forced, and is never in a retry hold (it is thinking via a real turn hook), so it keeps the `signal-or-pty-output` anchor and the PTY keeps it alive (#246).
 
+**Fast heal for the heartbeat-forced case (30s, not 180s).** Freezing the anchor is only half the fix for `turnForcedByHeartbeat`: `lastSignalAt` is frozen at the moment output stopped growing, but the hold still waited the general 180s from there before task #331/#364's follow-up. A hook-less `--resume` resume-picker turn is a distinct class from a genuine `idle_hint`/`retryFailurePending` parked turn - it can never receive ANY confirming hook, so once `lastSignalAt` freezes there is nothing further to wait for. The stale-thinking hold's `effectiveThreshold` therefore checks `state.turnForcedByHeartbeat` FIRST (before the `idleHintPending` short grace) and, when set, uses `DEFAULT_STALE_AFTER_HEARTBEAT_FORCED_MS` (30s) instead of `staleThinkingTimeoutMs` (180s). The anchor is unchanged (still `signal`), so this only shortens how long the net waits once frozen - a live reload that is still genuinely generating keeps refreshing `lastSignalAt` via output-token growth and never reaches the grace. The 30s value is reasoned, not empirically calibrated: it is safe because a too-aggressive heal self-corrects (the next output-growth status write re-triggers `forceThinking(sessionId, true)` via the same idle → thinking heartbeat recovery), so the worst case is a brief idle blip, not a stuck-wrong state. Reuses the stale-thinking hold's `timer:stale-thinking` trigger and `staleThinking` counter rather than adding a new one - a trace cannot distinguish the fast 30s heal from the slow 180s net except by the transition's timestamp relative to when output froze. Pinned by `session-024-fast-heal-hook-less-resume` (enabled vs. disabled-grace red-green) and `session-022-false-active-repainting-past-180s` (updated to assert the tighter 30s deadline).
+
 ### 4. Stuck-pending-tools watchdog (5 min)
 
 Held by `pendingToolCount > 0` alone for 5 minutes. Common cause: user pressed Ctrl+C, the agent killed the bash, but `PostToolUseFailure` didn't propagate. Without this hatch the engine would be stuck in `thinking` forever - the stale-thinking watchdog requires `pendingToolCount === 0` to fire, the bg-shell holds require bg shells, and the Idle clamp only works when Idle actually fires.
@@ -441,7 +443,7 @@ Each entry in `recentTransitions` (the ring of 50 returned by `getStatsSnapshot`
 | `force-idle` | PTY silence timer, Esc, or shutdown forced idle. |
 | `timer:stability` | The 400ms idle stability window expired and committed a pending idle. |
 | `timer:bg-shell-hatch` | A bg-shell sole-holder hold fired (named 5-min cap or anonymous 30s grace; same label, different threshold). |
-| `timer:stale-thinking` | The 180s stale-thinking watchdog fired (`turnActive` held alone, matching Idle never arrived). |
+| `timer:stale-thinking` | The stale-thinking watchdog fired (`turnActive` held alone, matching Idle never arrived); 180s cap, or the 30s `staleAfterHeartbeatForcedMs` budget when the turn was heartbeat-forced (`turnForcedByHeartbeat`, a hook-less `--resume` turn - see "Fast heal for the heartbeat-forced case" above). |
 | `timer:stuck-pending-tools` | The stuck-pending-tools hatch fired (orphaned `tool_start`, lost `PostToolUse`); 5-min cap, or the 180s `staleAfterIdleHintMs` budget when an `idle_hint` was pending. |
 | `timer:stuck-subagent` | The stuck-subagent hatch fired (`subagentDepth` held > 0, a named `subagent_stop` was dropped after its empty-detail inner stop was ignored); 5-min cap, or the 180s `staleAfterIdleHintMs` budget when an `idle_hint` was pending. |
 | `interrupted` | An Interrupted event (Esc / Ctrl+C, real or synthesized) reset all counters. |
@@ -497,6 +499,7 @@ interface ActivityEngineOptions {
   bgShellOnlyGraceMs?: number;       // default 30_000 (anonymous bg-shell sole-holder grace)
   staleThinkingTimeoutMs?: number;   // default 180_000
   staleAfterIdleHintMs?: number;     // default 180_000 (stuck-subagent / stuck-pending-tools grace while idle_hint pending)
+  staleAfterHeartbeatForcedMs?: number; // default 30_000 (stale-thinking hold, heartbeat-forced turns only)
   idleStabilityWindowMs?: number;    // default 400
   now?: () => number;                // testability
 }

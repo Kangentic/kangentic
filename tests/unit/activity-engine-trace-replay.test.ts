@@ -25,8 +25,16 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { ActivityEngine, DEFAULT_STALE_THINKING_TIMEOUT_MS } from '../../src/main/activity-engine/engine';
-import type { TransitionRecord, ActivityStatsSnapshot } from '../../src/main/activity-engine/engine';
+import {
+  ActivityEngine,
+  DEFAULT_STALE_THINKING_TIMEOUT_MS,
+  DEFAULT_STALE_AFTER_HEARTBEAT_FORCED_MS,
+} from '../../src/main/activity-engine/engine';
+import type {
+  TransitionRecord,
+  ActivityStatsSnapshot,
+  ActivityEngineOptions,
+} from '../../src/main/activity-engine/engine';
 import type { ActivityState, SessionEvent } from '../../src/shared/types';
 
 const FIXTURES_DIR = path.join(__dirname, '..', 'fixtures', 'replay');
@@ -152,7 +160,7 @@ function applyStatusDelta(
   }
 }
 
-export function replayBundle(bundle: TraceBundle): ReplayResult {
+export function replayBundle(bundle: TraceBundle, engineOptions: ActivityEngineOptions = {}): ReplayResult {
   const merged = mergeStreams(bundle);
   if (merged.length === 0) {
     return { transitions: [], finalActivity: 'idle' };
@@ -168,8 +176,11 @@ export function replayBundle(bundle: TraceBundle): ReplayResult {
       },
     },
     {
-      // Faithful production timing - the whole point of trace replay
-      // is to verify the engine under real-world thresholds.
+      // Faithful production timing by default - the whole point of trace
+      // replay is to verify the engine under real-world thresholds. Callers
+      // may override individual thresholds (e.g. to prove a fast-heal grace
+      // is load-bearing by disabling it) via engineOptions.
+      ...engineOptions,
     },
   );
   const sessionId = bundle.meta.sessionId || SESSION_ID;
@@ -527,9 +538,11 @@ describe('ActivityEngine trace-bundle replay', () => {
   // and the 180s net NEVER fires: the card pins ACTIVE indefinitely
   // (staleThinking: 0, finalActivity 'thinking'). Post-#364 the heartbeat's
   // provenance flag (turnForcedByHeartbeat) narrows the anchor to `signal`
-  // (lastSignalAt only, which froze the moment output stopped growing), so the
-  // net fires ~180s after output froze regardless of the continuing PTY
-  // repaints.
+  // (lastSignalAt only, which froze the moment output stopped growing). Post the
+  // follow-up fast-heal task, the net additionally reclaims on the shorter
+  // DEFAULT_STALE_AFTER_HEARTBEAT_FORCED_MS budget instead of the general 180s,
+  // since turnForcedByHeartbeat is already known here - so the net fires ~30s
+  // after output froze, not ~180s, regardless of the continuing PTY repaints.
   describe('session-022-false-active-repainting-past-180s', () => {
     let result: ReplayResult;
     beforeEach(() => {
@@ -555,7 +568,7 @@ describe('ActivityEngine trace-bundle replay', () => {
       expect(result.compensationCounters.staleThinking).toBe(1);
     });
 
-    it('fires the stale-thinking net ~180s after output froze, not after the last PTY repaint', () => {
+    it('fires the stale-thinking net ~30s after output froze (heartbeat-forced grace), not after the last PTY repaint or the general 180s', () => {
       const staleIdles = result.transitions.filter(
         (transition) =>
           transition.from === 'thinking'
@@ -565,7 +578,7 @@ describe('ActivityEngine trace-bundle replay', () => {
       expect(staleIdles).toHaveLength(1);
       // Output froze at the growth delta's ts (fixture: status-deltas.jsonl line 2).
       const outputFrozeAtTs = 1783515975712;
-      expect(staleIdles[0].ts).toBe(outputFrozeAtTs + DEFAULT_STALE_THINKING_TIMEOUT_MS);
+      expect(staleIdles[0].ts).toBe(outputFrozeAtTs + DEFAULT_STALE_AFTER_HEARTBEAT_FORCED_MS);
       // Frozen-output churn after the heal must not force-think it back active.
       const staleIdleTs = staleIdles[0].ts;
       const laterForceThinks = result.transitions.filter(
@@ -577,6 +590,78 @@ describe('ActivityEngine trace-bundle replay', () => {
 
     it('settles idle, not pinned active by the chatty parked TUI', () => {
       expect(result.finalActivity).toBe('idle');
+    });
+  });
+
+  // Fast-heal follow-up (continuing #331/#364): a hook-less --resume turn is
+  // heartbeat-forced (forceThinking(sessionId, true), turnForcedByHeartbeat set)
+  // on real output growth, then output FREEZES while the parked TUI keeps
+  // repainting every 10s (the #364 chatty-TUI shape). Because turnActive was
+  // heartbeat-forced and never confirmed by a real hook, the stale-thinking
+  // hold now reclaims on the shorter DEFAULT_STALE_AFTER_HEARTBEAT_FORCED_MS
+  // budget instead of the general 180s - the anchor is unchanged (already
+  // narrowed to `signal` by #364), only how long the net waits once frozen.
+  describe('session-024-fast-heal-hook-less-resume', () => {
+    const bundle = loadTraceBundle(
+      path.join(FIXTURES_DIR, 'session-024-fast-heal-hook-less-resume'),
+    );
+    // Output froze at the growth delta's ts (fixture: status-deltas.jsonl line 2).
+    const outputFrozeAtTs = 1784764805000;
+
+    describe('fast heal enabled (default grace)', () => {
+      let result: ReplayResult;
+      beforeEach(() => {
+        result = replayBundle(bundle);
+      });
+
+      it('force-thinks once on the resume-summary output growth (the genuine flip is preserved)', () => {
+        expect(result.compensationCounters.forceThinking).toBe(1);
+      });
+
+      it('self-heals via the stale-thinking watchdog at the heartbeat-forced grace, not the general 180s', () => {
+        expect(result.compensationCounters.staleThinking).toBe(1);
+        const staleIdles = result.transitions.filter(
+          (transition) =>
+            transition.from === 'thinking'
+            && transition.to === 'idle'
+            && transition.trigger === 'timer:stale-thinking',
+        );
+        expect(staleIdles).toHaveLength(1);
+        expect(staleIdles[0].ts).toBe(outputFrozeAtTs + DEFAULT_STALE_AFTER_HEARTBEAT_FORCED_MS);
+        // Frozen-output churn and continuing PTY repaints after the heal must
+        // not force-think it back active.
+        const staleIdleTs = staleIdles[0].ts;
+        const laterForceThinks = result.transitions.filter(
+          (transition) =>
+            transition.trigger === 'force-thinking' && transition.ts > staleIdleTs,
+        );
+        expect(laterForceThinks).toEqual([]);
+      });
+
+      it('settles idle well within the general 180s window', () => {
+        expect(result.finalActivity).toBe('idle');
+      });
+    });
+
+    describe('fast heal disabled (grace overridden back to the general 180s)', () => {
+      let result: ReplayResult;
+      beforeEach(() => {
+        result = replayBundle(bundle, {
+          staleAfterHeartbeatForcedMs: DEFAULT_STALE_THINKING_TIMEOUT_MS,
+        });
+      });
+
+      it('does not fire the stale-thinking watchdog within the replay window', () => {
+        expect(result.compensationCounters.staleThinking).toBe(0);
+        const staleIdles = result.transitions.filter(
+          (transition) => transition.trigger === 'timer:stale-thinking',
+        );
+        expect(staleIdles).toEqual([]);
+      });
+
+      it('stays pinned thinking past the fast-heal grace (proving the grace, not something else, healed the enabled leg)', () => {
+        expect(result.finalActivity).toBe('thinking');
+      });
     });
   });
 

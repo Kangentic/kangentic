@@ -82,6 +82,12 @@ function makeEngine(options: Partial<ActivityEngineOptions> = {}): {
       bgShellOnlyGraceMs: TEST_BG_SHELL_HATCH_MS,
       staleThinkingTimeoutMs: TEST_STALE_TIMEOUT_MS,
       staleAfterIdleHintMs: TEST_STALE_AFTER_IDLE_HINT_MS,
+      // Default to the same window as staleThinkingTimeoutMs so tests written
+      // before the heartbeat-forced short grace existed (e.g. the
+      // turnForcedByHeartbeat provenance suite below, which advances by
+      // TEST_STALE_TIMEOUT_MS expecting the stale-thinking hold to fire) are
+      // unaffected; the dedicated fast-heal test below overrides this per-case.
+      staleAfterHeartbeatForcedMs: TEST_STALE_TIMEOUT_MS,
       idleStabilityWindowMs: TEST_STABILITY_WINDOW_MS,
       ...options,
     },
@@ -2461,6 +2467,43 @@ describe('ActivityEngine', () => {
       vi.advanceTimersByTime(TEST_BG_SHELL_HATCH_MS + TEST_STABILITY_WINDOW_MS + 50);
       expect(engine.getState(SESSION_ID)?.activity).toBe('idle');
       expect(engine.getState(SESSION_ID)?.turnForcedByHeartbeat).toBe(false);
+    });
+  });
+
+  // Fast-heal follow-up (continuing #331/#364): the stale-thinking hold
+  // reclaims a heartbeat-forced turn on a SHORTER budget than a real turn.
+  // Uses distinct short/long values (unlike the outer beforeEach's engine,
+  // which defaults both to the same TEST_STALE_TIMEOUT_MS) so the two paths
+  // are provably different, not coincidentally equal.
+  describe('heartbeat-forced fast heal (staleAfterHeartbeatForcedMs)', () => {
+    const FAST_MS = 200;
+    const SLOW_MS = 2_000;
+
+    it('a heartbeat-forced turn (turnForcedByHeartbeat) reclaims at the SHORT grace, not the long stale-thinking timeout', () => {
+      const { engine: localEngine } = makeEngine({ staleThinkingTimeoutMs: SLOW_MS, staleAfterHeartbeatForcedMs: FAST_MS });
+      localEngine.initSession(SESSION_ID);
+      localEngine.forceThinking(SESSION_ID, true);
+      expect(localEngine.getState(SESSION_ID)?.turnForcedByHeartbeat).toBe(true);
+
+      vi.advanceTimersByTime(FAST_MS + 50);
+      expect(localEngine.getState(SESSION_ID)?.activity).toBe('idle');
+      localEngine.dispose();
+    });
+
+    it('a real turn (turnForcedByHeartbeat=false) still uses the long stale-thinking timeout, unaffected by the short grace (#246 guard)', () => {
+      const { engine: localEngine } = makeEngine({ staleThinkingTimeoutMs: SLOW_MS, staleAfterHeartbeatForcedMs: FAST_MS });
+      localEngine.initSession(SESSION_ID);
+      localEngine.processEvent(SESSION_ID, event(EventType.Prompt));
+      expect(localEngine.getState(SESSION_ID)?.turnForcedByHeartbeat).toBe(false);
+
+      // Past the short grace, but well short of the long timeout: a live
+      // long-generation turn (task #246) must not be fast-healed.
+      vi.advanceTimersByTime(FAST_MS + 50);
+      expect(localEngine.getState(SESSION_ID)?.activity).toBe('thinking');
+
+      vi.advanceTimersByTime(SLOW_MS);
+      expect(localEngine.getState(SESSION_ID)?.activity).toBe('idle');
+      localEngine.dispose();
     });
   });
 

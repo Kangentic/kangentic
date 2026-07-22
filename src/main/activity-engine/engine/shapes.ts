@@ -75,6 +75,34 @@ export const DEFAULT_BG_SHELL_ONLY_GRACE_MS = 30_000;
 export const DEFAULT_STALE_THINKING_TIMEOUT_MS = 180_000;
 
 /**
+ * Shortened threshold for the stale-thinking hold while `turnActive` was set by
+ * the status-heartbeat (`turnForcedByHeartbeat`, task #364) and never confirmed
+ * by a real turn-initiating hook - the hook-less `--resume` resume-picker class
+ * (task #331/#364). That turn's anchor already narrows to `signal`
+ * (`lastSignalAt` only, ignoring parked-TUI PTY repaints - see
+ * `WatchdogHold.parkedAnchor`), so `lastSignalAt` is already frozen at the
+ * moment output stopped growing; this only shortens HOW LONG the net waits
+ * once frozen, from the general 180s down to this budget.
+ *
+ * Reasoned, not empirically calibrated (no capture of a live reload's
+ * inter-output-growth cadence exists) - chosen for a strong self-correction
+ * property instead: if this fires while the reload is still genuinely
+ * generating, the very next output-growth status write re-triggers
+ * `forceThinking(sessionId, true)` via the existing idle -> thinking heartbeat
+ * recovery (`SessionTelemetry.processStatusUpdate`), so a too-aggressive grace
+ * costs at most a brief idle blip (one status-write cycle, observed ~10s in
+ * #331/#364), never a stuck-wrong state. That property is what makes 30s (the
+ * fast end of the task's ~20-30s range) safe to pick without a live sample.
+ *
+ * Only the stale-thinking hold reads this (`WatchdogHold.heartbeatForcedThresholdMs`);
+ * a real turn (`turnForcedByHeartbeat === false`) - including a live
+ * long-generation turn that streams for minutes with no hooks (task #246) -
+ * always uses `staleThinkingTimeoutMs`, never this budget. Override via
+ * constructor option for tests.
+ */
+export const DEFAULT_STALE_AFTER_HEARTBEAT_FORCED_MS = 30_000;
+
+/**
  * Shortened threshold for the `stuck-subagent` and `stuck-pending-tools` holds
  * while an `idle_hint` ("Claude is waiting for your input") is pending. When the
  * agent has reported it is back at the top-level prompt but a counter is still
@@ -156,6 +184,8 @@ export interface ActivityEngineOptions {
   staleThinkingTimeoutMs?: number;
   /** Shortened stuck-subagent / stuck-pending-tools grace while an idle_hint is pending. */
   staleAfterIdleHintMs?: number;
+  /** Shortened stale-thinking grace while turnActive was set by the status-heartbeat (turnForcedByHeartbeat). */
+  staleAfterHeartbeatForcedMs?: number;
   /** Stability window before emitting Stop-driven idle. Set to 0 to disable. */
   idleStabilityWindowMs?: number;
   /** Time source - injectable for tests. */

@@ -31,11 +31,18 @@ function makeTelemetry(
   notRunning: Set<string>,
   engineOverrides: Partial<NonNullable<SessionTelemetryOptions['activityEngineOptions']>> = {},
 ): SessionTelemetry {
+  const staleThinkingTimeoutMs = engineOverrides.staleThinkingTimeoutMs ?? 600_000;
   const options: SessionTelemetryOptions = {
     disableBgShellWatcher: true,
     activityEngineOptions: {
       bgShellEscapeHatchMs: 600_000,
-      staleThinkingTimeoutMs: 600_000,
+      staleThinkingTimeoutMs,
+      // Default to the resolved staleThinkingTimeoutMs (not the production
+      // 30s fast-heal default) so tests that override staleThinkingTimeoutMs
+      // to a short test window and expect a heartbeat-forced turn to reclaim
+      // on that same window (e.g. the #331 resume-picker suite below) are
+      // unaffected by the heartbeat-forced short grace.
+      staleAfterHeartbeatForcedMs: staleThinkingTimeoutMs,
       idleStabilityWindowMs: 0,
       ...engineOverrides,
     },

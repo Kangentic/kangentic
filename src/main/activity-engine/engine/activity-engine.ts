@@ -5,6 +5,7 @@ import {
   DEFAULT_BG_SHELL_ONLY_GRACE_MS,
   DEFAULT_STALE_THINKING_TIMEOUT_MS,
   DEFAULT_STALE_AFTER_IDLE_HINT_MS,
+  DEFAULT_STALE_AFTER_HEARTBEAT_FORCED_MS,
   DEFAULT_IDLE_STABILITY_WINDOW_MS,
   RECENT_TRANSITIONS_RING_SIZE,
   PTY_CHUNK_BUCKET_MS,
@@ -73,6 +74,8 @@ export class ActivityEngine {
       bgShellOnlyGraceMs: this.bgShellOnlyGraceMs,
       staleThinkingTimeoutMs: options.staleThinkingTimeoutMs ?? DEFAULT_STALE_THINKING_TIMEOUT_MS,
       staleAfterIdleHintMs: options.staleAfterIdleHintMs ?? DEFAULT_STALE_AFTER_IDLE_HINT_MS,
+      staleAfterHeartbeatForcedMs:
+        options.staleAfterHeartbeatForcedMs ?? DEFAULT_STALE_AFTER_HEARTBEAT_FORCED_MS,
     });
   }
 
@@ -850,17 +853,30 @@ export class ActivityEngine {
   }
 
   /**
-   * The threshold a watchdog hold fires at, given the current state. Normally
-   * `hold.thresholdMs`, but a hold that opts in (`idleHintThresholdMs`, set on
-   * stuck-subagent / stuck-pending-tools) uses its SHORT grace while an
-   * `idle_hint` is pending: the agent reported it is waiting for input, so a
-   * counter still stuck > 0 is the aborted/errored-turn signature and should be
-   * reclaimed fast rather than at the 5-min cap. The anchor is unchanged, so a
-   * genuinely-live holder that keeps streaming PTY output still defers the
-   * (shorter) deadline. Shared by arming (`scheduleTimer`) and firing
-   * (`onTick`) so the two cannot drift.
+   * The threshold a watchdog hold fires at, given the current state. Checked in
+   * order:
+   *
+   * 1. `heartbeatForcedThresholdMs` (set only on stale-thinking) while
+   *    `state.turnForcedByHeartbeat` is set: a hook-less resume-picker turn the
+   *    status heartbeat force-thought and never confirmed by a real hook (task
+   *    #331/#364) reclaims on this short grace instead of the general 180s.
+   * 2. `idleHintThresholdMs` (set on stuck-subagent / stuck-pending-tools) while
+   *    an `idle_hint` is pending: the agent reported it is waiting for input, so
+   *    a counter still stuck > 0 is the aborted/errored-turn signature and
+   *    should be reclaimed fast rather than at the 5-min cap.
+   * 3. `hold.thresholdMs` otherwise.
+   *
+   * The two provenance flags are mutually exclusive in practice (both require a
+   * real turn-initiating hook to have never fired), so the ordering above never
+   * has to arbitrate a conflict. The anchor is unchanged by either branch, so a
+   * genuinely-live holder that keeps streaming PTY output (or growing output
+   * tokens) still defers the (shorter) deadline. Shared by arming
+   * (`scheduleTimer`) and firing (`onTick`) so the two cannot drift.
    */
   private effectiveThreshold(hold: WatchdogHold, state: SessionEngineState): number {
+    if (state.turnForcedByHeartbeat && hold.heartbeatForcedThresholdMs !== undefined) {
+      return hold.heartbeatForcedThresholdMs;
+    }
     if (state.idleHintPending && hold.idleHintThresholdMs !== undefined) {
       return hold.idleHintThresholdMs;
     }
