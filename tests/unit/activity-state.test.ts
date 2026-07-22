@@ -17,6 +17,7 @@ import type { ActivityState } from '../../src/shared/types';
 import {
   requiresUserInteraction,
   isActive,
+  dispositionOf,
 } from '../../src/shared/activity-state';
 
 // Every ActivityState variant. Adding a new variant here (after adding it to
@@ -103,6 +104,31 @@ describe('isActive - full table', () => {
         isActive(state),
         `isActive('${state}') should be ${expected[state]}`,
       ).toBe(expected[state]);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// dispositionOf: the disposition VALUE ('idle' | 'active'), not just a
+// boolean bucket check. Consumed by session_activity_intervals' recorder so
+// the persisted `disposition` column is derived from this single table
+// instead of a re-derived copy.
+// ---------------------------------------------------------------------------
+
+describe('dispositionOf - full table', () => {
+  it('every ActivityState maps to the correct disposition value, agreeing with requiresUserInteraction/isActive', () => {
+    const expected: Record<ActivityState, 'idle' | 'active'> = {
+      idle: 'idle',
+      permission: 'idle',
+      thinking: 'active',
+    };
+
+    for (const state of ALL_ACTIVITY_STATES) {
+      expect(dispositionOf(state), `dispositionOf('${state}') should be '${expected[state]}'`).toBe(expected[state]);
+      // Cross-check against the boolean helpers so the two representations
+      // of the same classification table can never silently diverge.
+      expect(dispositionOf(state) === 'idle').toBe(requiresUserInteraction(state));
+      expect(dispositionOf(state) === 'active').toBe(isActive(state));
     }
   });
 });

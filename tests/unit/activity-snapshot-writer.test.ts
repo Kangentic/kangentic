@@ -30,7 +30,7 @@ function makeDummySnapshot(): ActivityStatsSnapshot {
   return {
     sessionId: SESSION_ID,
     activity: 'idle',
-    reason: { kind: 'idle' },
+    reason: { kind: 'idle', since: 1700000000000 },
     pendingToolCount: 0,
     subagentDepth: 0,
     backgroundShellIds: [],
@@ -41,6 +41,7 @@ function makeDummySnapshot(): ActivityStatsSnapshot {
     lastPtyOutputAt: null,
     msSincePtyOutput: null,
     pendingIdleArmed: false,
+    needsUserSince: 1700000000000,
     recentTransitions: [],
   };
 }

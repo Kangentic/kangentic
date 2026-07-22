@@ -629,10 +629,16 @@ export type ActivityState = 'thinking' | 'idle' | 'permission';
  * Kinds where the predicate is `'thinking'`: tool, subagent,
  * background-shell, turn-active. Others map to `'permission'` or
  * `'idle'`.
+ *
+ * `since` on the `idle`/`permission` variants is the epoch ms the session
+ * FIRST needed the user (`SessionEngineState.needsUserSince`) - spans both
+ * variants, so a `thinking -> permission -> idle` run reports the original
+ * park time rather than resetting when permission resolves into idle. Lets
+ * the UI render elapsed wait time next to the mail affordance.
  */
 export type ActivityReason =
-  | { kind: 'idle' }
-  | { kind: 'permission' }
+  | { kind: 'idle'; since: number }
+  | { kind: 'permission'; since: number }
   | {
       kind: 'tool';
       pendingCount: number;
@@ -686,6 +692,9 @@ export interface ActivityStatsSnapshot {
   /** ms since the most recent PTY output chunk, or null when no chunk yet. */
   msSincePtyOutput: number | null;
   pendingIdleArmed: boolean;
+  /** Wall-clock ms since the session first needed the user (idle or
+   *  permission), or null while thinking. See `ActivityReason`'s `since`. */
+  needsUserSince: number | null;
   /**
    * True between an `idle_hint` ("waiting for your input") notification and the
    * next genuine turn-initiating event. While set, the stuck-subagent and

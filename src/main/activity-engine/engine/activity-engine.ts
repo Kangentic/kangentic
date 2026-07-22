@@ -1,5 +1,6 @@
 import { EventType, IdleReason } from '../../../shared/types';
 import type { ActivityState, ActivityReason, SessionEvent } from '../../../shared/types';
+import { requiresUserInteraction } from '../../../shared/activity-state';
 import {
   DEFAULT_BG_SHELL_ESCAPE_HATCH_MS,
   DEFAULT_BG_SHELL_ONLY_GRACE_MS,
@@ -106,6 +107,11 @@ export class ActivityEngine {
       // spawn. A seeded 'thinking' turn leaves idleTimestamp null, preserving
       // the invariant that idleTimestamp is non-null iff activity is 'idle'.
       state.idleTimestamp = nowMs;
+      // The seed predicate below always resolves 'idle' (permissionPending
+      // starts false), so this mirrors idleTimestamp: the elapsed-wait clock
+      // measures from spawn too, not from whenever the first real transition
+      // happens to land.
+      state.needsUserSince = nowMs;
     }
     const { activity, reason } = deriveActivityAndReason(state);
     state.activity = activity;
@@ -204,6 +210,7 @@ export class ActivityEngine {
       lastPtyOutputAt,
       msSincePtyOutput: lastPtyOutputAt === null ? null : this.now() - lastPtyOutputAt,
       pendingIdleArmed: state.pendingIdleAt !== null,
+      needsUserSince: state.needsUserSince,
       idleHintPending: state.idleHintPending,
       retryFailurePending: state.retryFailurePending,
       recentTransitions: state.recentTransitions.slice(),
@@ -774,6 +781,16 @@ export class ActivityEngine {
       state.idleTimestamp = this.now();
     } else {
       state.idleTimestamp = null;
+    }
+    // needsUserSince spans BOTH needs-user states (idle and permission), unlike
+    // idleTimestamp above which is idle-only: stamp it only when entering a
+    // needs-user state from thinking (a fresh park), leave it untouched on a
+    // permission<->idle crossing (still the same park), and clear it on
+    // entering thinking (the agent resumed).
+    if (requiresUserInteraction(newActivity)) {
+      if (!requiresUserInteraction(fromActivity)) state.needsUserSince = this.now();
+    } else {
+      state.needsUserSince = null;
     }
     const reason = deriveReason(state);
     this.recordTransition(state, fromActivity, newActivity, reason.kind, trigger, counterDelta);

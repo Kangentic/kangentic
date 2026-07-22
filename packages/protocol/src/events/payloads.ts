@@ -102,10 +102,16 @@ export interface TerminalDimensionsWire {
 /** Mirrors the desktop's ActivityState. 'permission' means the agent paused for user approval (incl. AskUserQuestion / ExitPlanMode pauses). */
 export type ActivityStateWire = 'thinking' | 'idle' | 'permission';
 
-/** Mirrors the desktop's ActivityReason discriminated union. */
+/**
+ * Mirrors the desktop's ActivityReason discriminated union. `since` (epoch ms
+ * the session first needed the user) is optional, additive-field style like
+ * `toolCallCount`/`effort` above: an older phone parsing a payload with the
+ * field missing still validates, and a desktop that has not yet learned a
+ * `since` for a phantom-state edge case can omit it.
+ */
 export type ActivityReasonWire =
-  | { kind: 'idle' }
-  | { kind: 'permission' }
+  | { kind: 'idle'; since?: number }
+  | { kind: 'permission'; since?: number }
   | { kind: 'tool'; pendingCount: number; currentTool: string | null }
   | { kind: 'subagent'; depth: number }
   | { kind: 'background-shell'; count: number; ids: string[] }
@@ -335,6 +341,7 @@ export function isActivityReasonWire(value: unknown): value is ActivityReasonWir
   switch (value.kind) {
     case 'idle':
     case 'permission':
+      return value.since === undefined || typeof value.since === 'number';
     case 'turn-active':
       return true;
     case 'tool':

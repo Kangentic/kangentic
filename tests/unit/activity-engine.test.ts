@@ -229,6 +229,83 @@ describe('ActivityEngine', () => {
     });
   });
 
+  describe('needsUserSince (elapsed-wait clock)', () => {
+    // Mirrors idleTimestamp's seed invariant (see the 'lifecycle' describe
+    // above), but needsUserSince spans BOTH needs-user states (idle and
+    // permission), not idle alone - see shapes.ts's field doc.
+    it('seed invariant: thinking seed leaves it null, idle seed stamps it', () => {
+      engine.initSession(SESSION_ID, true);
+      expect(engine.getState(SESSION_ID)?.needsUserSince).toBeNull();
+      engine.deleteSession(SESSION_ID);
+
+      engine.initSession(SESSION_ID, false);
+      expect(engine.getState(SESSION_ID)?.needsUserSince).not.toBeNull();
+    });
+
+    it('is stamped on entering idle from thinking, and cleared on leaving to thinking', () => {
+      engine.initSession(SESSION_ID);
+      transitions.length = 0;
+
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+      expect(engine.getState(SESSION_ID)?.activity).toBe('thinking');
+      expect(engine.getState(SESSION_ID)?.needsUserSince).toBeNull();
+
+      engine.processEvent(SESSION_ID, event(EventType.Idle));
+      vi.advanceTimersByTime(TEST_STABILITY_WINDOW_MS + 10);
+      expect(engine.getState(SESSION_ID)?.activity).toBe('idle');
+      expect(engine.getState(SESSION_ID)?.needsUserSince).not.toBeNull();
+
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+      expect(engine.getState(SESSION_ID)?.activity).toBe('thinking');
+      expect(engine.getState(SESSION_ID)?.needsUserSince).toBeNull();
+    });
+
+    it('is stamped on entering permission from thinking', () => {
+      engine.initSession(SESSION_ID);
+      transitions.length = 0;
+
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+      expect(engine.getState(SESSION_ID)?.needsUserSince).toBeNull();
+
+      engine.processEvent(SESSION_ID, event(EventType.Idle, { detail: IdleReason.Permission }));
+      expect(engine.getState(SESSION_ID)?.activity).toBe('permission');
+      expect(engine.getState(SESSION_ID)?.needsUserSince).not.toBeNull();
+    });
+
+    it('a permission <-> idle crossing keeps the ORIGINAL park time - only leaving to thinking resets it', () => {
+      engine.initSession(SESSION_ID);
+      transitions.length = 0;
+
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+      engine.processEvent(SESSION_ID, event(EventType.Idle, { detail: IdleReason.Permission }));
+      expect(engine.getState(SESSION_ID)?.activity).toBe('permission');
+      const parkedAt = engine.getState(SESSION_ID)?.needsUserSince;
+      expect(parkedAt).not.toBeNull();
+
+      // Advance the clock so a re-stamp (the bug this test guards against)
+      // would be observably different from the original park time.
+      vi.advanceTimersByTime(5_000);
+
+      // Non-permission Idle clears permissionPending and drops straight to
+      // idle (see event-handlers.ts's updatePermissionFlag) - no stability
+      // window applies, since the FROM state is 'permission', not 'thinking'.
+      engine.processEvent(SESSION_ID, event(EventType.Idle));
+      expect(engine.getState(SESSION_ID)?.activity).toBe('idle');
+      expect(engine.getState(SESSION_ID)?.needsUserSince).toBe(parkedAt);
+    });
+
+    it('ActivityReason.since matches needsUserSince for both idle and permission reasons', () => {
+      engine.initSession(SESSION_ID);
+      transitions.length = 0;
+
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+      engine.processEvent(SESSION_ID, event(EventType.Idle, { detail: IdleReason.Permission }));
+      const reason = engine.getActivityReason(SESSION_ID);
+      expect(reason?.kind).toBe('permission');
+      expect((reason as { since: number }).since).toBe(engine.getState(SESSION_ID)?.needsUserSince);
+    });
+  });
+
   describe('basic transitions', () => {
     beforeEach(() => {
       engine.initSession(SESSION_ID);
@@ -2790,6 +2867,28 @@ describe('ActivityEngine', () => {
       expect(snapshot.turnActive).toBe(true);
       expect(snapshot.permissionPending).toBe(false);
       expect(snapshot.msSinceLastSignal).not.toBeNull();
+      // Thinking is not a needs-user state, so the snapshot's public
+      // needsUserSince must mirror the raw state's null - see the sibling
+      // test below for the parked-into-idle polarity.
+      expect(snapshot.needsUserSince).toBeNull();
+    });
+
+    it('needsUserSince mirrors the raw engine state once parked in idle', () => {
+      // Deleting `needsUserSince: state.needsUserSince,` from
+      // getStatsSnapshot() (activity-engine.ts) would leave this field
+      // undefined while engine.getState()?.needsUserSince stays populated -
+      // the two must agree. Drive thinking -> idle (not just the initSession
+      // seed) so this exercises the same freshly-parked stamp as the
+      // needsUserSince describe block above, through the public snapshot API.
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+      expect(engine.getState(SESSION_ID)?.activity).toBe('thinking');
+      engine.processEvent(SESSION_ID, event(EventType.Idle));
+      vi.advanceTimersByTime(TEST_STABILITY_WINDOW_MS + 10);
+      expect(engine.getState(SESSION_ID)?.activity).toBe('idle');
+
+      const snapshot = engine.getStatsSnapshot(SESSION_ID)!;
+      expect(snapshot.needsUserSince).not.toBeNull();
+      expect(snapshot.needsUserSince).toBe(engine.getState(SESSION_ID)?.needsUserSince);
     });
 
     it('includes ring buffer of recent audit log entries (capped at 50)', () => {

@@ -60,8 +60,14 @@ export function deriveReasonForActivity(
   state: SessionEngineState,
   activity: ActivityState,
 ): ActivityReason {
-  if (activity === 'permission') return { kind: 'permission' };
-  if (activity === 'idle') return { kind: 'idle' };
+  // needsUserSince is stamped by both entry points that can produce an
+  // idle/permission activity (ActivityEngine.initSession's idle seed and
+  // commitTransition), so it is null here only for the pre-existing
+  // "event arrived before initSession" phantom-state edge case (same gap
+  // idleTimestamp already has in that path) - fall back to now() rather than
+  // propagate null onto a field callers depend on being a real timestamp.
+  if (activity === 'permission') return { kind: 'permission', since: state.needsUserSince ?? Date.now() };
+  if (activity === 'idle') return { kind: 'idle', since: state.needsUserSince ?? Date.now() };
   // activity === 'thinking'
   if (state.pendingToolCount > 0) {
     return {

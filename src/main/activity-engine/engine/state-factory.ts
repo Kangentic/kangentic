@@ -20,6 +20,7 @@ export function createSessionEngineState(): SessionEngineState {
     currentTool: null,
     pendingToolStack: [],
     idleTimestamp: null,
+    needsUserSince: null,
     idleAuthoritative: false,
     turnForcedByHeartbeat: false,
     pendingIdleAt: null,

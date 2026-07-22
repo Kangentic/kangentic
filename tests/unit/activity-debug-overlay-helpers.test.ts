@@ -66,7 +66,7 @@ function makeSnapshot(overrides: Partial<ActivityStatsSnapshot> = {}): ActivityS
   return {
     sessionId: 'session-1',
     activity: 'idle' as ActivityState,
-    reason: { kind: 'idle' } as ActivityReason,
+    reason: { kind: 'idle', since: 1700000000000 } as ActivityReason,
     pendingToolCount: 0,
     subagentDepth: 0,
     backgroundShellIds: [],
@@ -78,6 +78,7 @@ function makeSnapshot(overrides: Partial<ActivityStatsSnapshot> = {}): ActivityS
     lastPtyOutputAt: null,
     msSincePtyOutput: null,
     pendingIdleArmed: false,
+    needsUserSince: 1700000000000,
     recentTransitions: [],
     compensationCounters: EMPTY_COMPENSATION_COUNTERS,
     recentPtyChunks: [],
@@ -170,19 +171,19 @@ describe('computeGridLayout', () => {
 
 describe('reasonsEqual', () => {
   it('returns true for identical reference', () => {
-    const reason: ActivityReason = { kind: 'idle' };
+    const reason: ActivityReason = { kind: 'idle', since: 1700000000000 };
     expect(reasonsEqual(reason, reason)).toBe(true);
   });
 
   describe('kind: idle', () => {
     it('returns true for two distinct idle reasons', () => {
-      expect(reasonsEqual({ kind: 'idle' }, { kind: 'idle' })).toBe(true);
+      expect(reasonsEqual({ kind: 'idle', since: 1700000000000 }, { kind: 'idle', since: 1700000000000 })).toBe(true);
     });
   });
 
   describe('kind: permission', () => {
     it('returns true for two distinct permission reasons', () => {
-      expect(reasonsEqual({ kind: 'permission' }, { kind: 'permission' })).toBe(true);
+      expect(reasonsEqual({ kind: 'permission', since: 1700000000000 }, { kind: 'permission', since: 1700000000000 })).toBe(true);
     });
   });
 
@@ -278,7 +279,7 @@ describe('reasonsEqual', () => {
 
   describe('cross-kind', () => {
     it('returns false when kinds differ (idle vs permission)', () => {
-      expect(reasonsEqual({ kind: 'idle' }, { kind: 'permission' })).toBe(false);
+      expect(reasonsEqual({ kind: 'idle', since: 1700000000000 }, { kind: 'permission', since: 1700000000000 })).toBe(false);
     });
 
     it('returns false when kinds differ (tool vs subagent)', () => {
@@ -380,8 +381,8 @@ describe('snapshotsContentEqual', () => {
 
   describe('reason comparison (delegates to reasonsEqual)', () => {
     it('returns false when reason kind differs', () => {
-      const snapshotA = makeSnapshot({ reason: { kind: 'idle' } });
-      const snapshotB = makeSnapshot({ reason: { kind: 'permission' } });
+      const snapshotA = makeSnapshot({ reason: { kind: 'idle', since: 1700000000000 } });
+      const snapshotB = makeSnapshot({ reason: { kind: 'permission', since: 1700000000000 } });
       expect(snapshotsContentEqual(snapshotA, snapshotB)).toBe(false);
     });
 

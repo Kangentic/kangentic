@@ -236,7 +236,7 @@ describe('syncSessions - cache reconciliation evicts stale entries', () => {
     // syncSessions, so HMR / full reload left stale idle reasons in the
     // map indefinitely. The reconcile must use the same eviction
     // semantics as sessionActivity.
-    const staleReason: ActivityReason = { kind: 'idle' };
+    const staleReason: ActivityReason = { kind: 'idle', since: 1700000000000 };
     const liveReason: ActivityReason = { kind: 'turn-active' };
     useSessionStore.setState({
       sessionActivityReason: { 'sess-a': liveReason, 'sess-stale': staleReason },
@@ -327,7 +327,7 @@ describe('syncSessions - cache reconciliation preserves IPC-during-async-gap upd
     // onActivity push during the async gap may have delivered a fresher
     // reason than the cache snapshot; reconcile must keep the store value.
     const liveReason: ActivityReason = { kind: 'turn-active' };
-    const cacheReason: ActivityReason = { kind: 'idle' };
+    const cacheReason: ActivityReason = { kind: 'idle', since: 1700000000000 };
     useSessionStore.setState({
       sessionActivityReason: { 'sess-a': liveReason },
     });
@@ -468,7 +468,7 @@ describe('syncSessions - HMR resilience: tolerates missing or failing preload me
     // the methods that DO exist).
     useSessionStore.setState({
       sessionActivity: { 'sess-stale': 'thinking' },
-      sessionActivityReason: { 'sess-stale': { kind: 'idle' } },
+      sessionActivityReason: { 'sess-stale': { kind: 'idle', since: 1700000000000 } },
     });
 
     const sessions = (window as Record<string, unknown> & {
@@ -493,7 +493,7 @@ describe('syncSessions - HMR resilience: tolerates missing or failing preload me
     // sessionActivityReason preserved unchanged because the fetch was
     // unavailable (NOT evicted).
     const reasons = useSessionStore.getState().sessionActivityReason;
-    expect(reasons['sess-stale']).toEqual({ kind: 'idle' });
+    expect(reasons['sess-stale']).toEqual({ kind: 'idle', since: 1700000000000 });
   });
 });
 

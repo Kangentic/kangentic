@@ -236,6 +236,27 @@ export function registerSessionTools(server: McpServer, resolver: RequestResolve
     }),
   );
 
+  // --- kangentic_get_activity_intervals ---
+  server.registerTool(
+    'kangentic_get_activity_intervals',
+    {
+      description: 'Read the durable activity-disposition history for a task or session: every span the agent spent \'active\' (working on its own) or \'idle\' (needing the user - covering both the idle and permission states) since Kangentic started tracking it. Unlike the live board indicator, this SURVIVES app restarts and session end - it is written the moment the activity engine commits a transition, independent of the in-memory engine state and of events.jsonl (which records raw hook events, not committed transitions, and is not reliably retained). Use this to answer "how long has this task been waiting on me" or "how much of this session was the agent actually working vs blocked on approval/input". Returns the raw interval rows (each with disposition, state, previousState, enterTrigger, exitTrigger, startedMs, startedAt, endedMs, endedAt, durationMs - the `At` fields are UTC ISO 8601 mirrors of the `Ms` epoch fields, stored so you do not have to convert), a `totals` rollup summing durationMs by disposition across CLOSED intervals only, and `openIntervals` - any interval still in progress (durationMs is null until it closes), with startedAt and a `liveElapsedMs` computed at read time so a still-parked task is not silently excluded from an elapsed-time question. Provide either taskId (every session the task has ever accumulated, since a resume creates a new session row) or sessionId (one session only). Pass `project` to read from a different project.',
+      inputSchema: z.object({
+        taskId: z.string().optional().describe('Task ID (numeric display ID or UUID). Returns intervals across every session the task has ever had.'),
+        sessionId: z.string().optional().describe('Kangentic session UUID (sessions.id column). Returns intervals for that session only.'),
+        project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
+      }),
+      annotations: READ_ONLY_ANNOTATIONS,
+    },
+    async ({ taskId, sessionId, project }) => withProject(resolver, project, async (ctx) => {
+      const result = await runHandler('get_activity_intervals', { taskId, sessionId }, ctx);
+      if (!result.success) {
+        return { content: [{ type: 'text' as const, text: `Failed to get activity intervals: ${result.error}` }], isError: true };
+      }
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result.data, null, 2) }] };
+    }),
+  );
+
   // --- kangentic_query_db ---
   server.registerTool(
     'kangentic_query_db',

@@ -416,6 +416,31 @@ Keyed by `turn_uuid` because a `--resume` replays its parent's turns verbatim un
 
 Module: `src/main/retrieval/` (store `RetrievalStore`, usage ledger `ConversationUsageStore`, indexer `ConversationIndexer`, service `retrievalService`, query `searchConversationMemory`).
 
+### session_activity_intervals table
+
+Durable activity-disposition ledger. One row per continuous span a session spent in one `ActivityDisposition` bucket - `'idle'` (needing the user, covering both the `idle` and `permission` activity states) or `'active'` (the agent working on its own, the `thinking` state); see `dispositionOf` in `src/shared/activity-state.ts`. Written the moment the activity engine commits a disposition-changing transition, so it survives the engine's own in-memory state (wiped on `deleteSession`/dispose) and is faithful where `events.jsonl` is not (that file logs raw hook events, not committed transitions, and is not reliably retained). Symmetric by design: both dispositions are recorded directly, so "active time" and "idle time" are each a straight SUM rather than an inverse requiring session-boundary reconciliation.
+
+| Column | Type | Constraints | Default |
+|--------|------|-------------|---------|
+| id | INTEGER | PRIMARY KEY AUTOINCREMENT | |
+| session_id | TEXT | NOT NULL | |
+| task_id | TEXT | | NULL |
+| disposition | TEXT | NOT NULL | |
+| state | TEXT | NOT NULL | |
+| previous_state | TEXT | NOT NULL | |
+| enter_trigger | TEXT | NOT NULL | |
+| started_ms | INTEGER | NOT NULL | |
+| started_at | TEXT | NOT NULL | |
+| ended_ms | INTEGER | | NULL |
+| ended_at | TEXT | | NULL |
+| duration_ms | INTEGER | | NULL |
+| exit_trigger | TEXT | | NULL |
+| recorded_at | TEXT | NOT NULL | |
+
+One row per INTERVAL, not per transition: a `permission` to `idle` crossing stays inside the same `'idle'`-disposition interval, so nothing closes and reopens. `enter_trigger` / `exit_trigger` carry the engine's own `TransitionTrigger` labels, so a consumer can tell a hook-authoritative park (`event:idle`) from a watchdog guess (`timer:stale-thinking`), and a genuine human reply (`event:prompt`) from the agent resuming itself (`event:prompt:pty-activity`). `started_at` / `ended_at` are TEXT UTC ISO 8601 mirrors of `started_ms` / `ended_ms`, written by the store from the same value so the two representations cannot drift; `ended_at` is NULL exactly when `ended_ms` is (the interval is still open). Indices: `idx_activity_intervals_task` (task_id), `idx_activity_intervals_session` (session_id), `idx_activity_intervals_started` (started_ms), `idx_activity_intervals_open` (session_id, ended_ms - resolves the one open interval per session without holding row ids across a restart). Deliberately has NO `sessions` DELETE cascade, for the same reason as `conversation_turn_usage`: it is a durable ledger, so an interval outlives the session row that produced it. A session that dies mid-interval leaves it permanently open; consumers filter `ended_ms IS NOT NULL`.
+
+Module: `src/main/activity-engine/` (store `ActivityIntervalStore`, recorder `ActivityIntervalRecorder`). Read via the `kangentic_get_activity_intervals` MCP tool (see [mcp-server.md](mcp-server.md)) or `kangentic_query_db`; there is no desktop-facing IPC endpoint yet.
+
 ## Migration Strategy
 
 Migrations run automatically on database open via `runGlobalMigrations()` (from `src/main/db/migrations/global-schema.ts`) and `runProjectMigrations()` (from `src/main/db/migrations/project-schema.ts`). Default swimlane and action seeding lives in `src/main/db/migrations/default-data.ts`. The strategy uses three approaches depending on the change:
@@ -482,6 +507,7 @@ Grouped by feature. The numbering is for cross-reference only and does not refle
 47. **`permission_mode` column on tasks** - adds `permission_mode TEXT DEFAULT NULL`, a per-task permission override mirroring `agent_override`/`model_override`/`effort_override`: settable via the New Task dialog's Advanced section and the task-detail edit form (pre-spawn or suspended only, same lock as `agent_override`). Takes precedence over the swimlane's `permission_mode` and the project's default permission mode; NULL means inherit. Idempotent guarded `ALTER TABLE`.
 48. **`auto_command` column on tasks** - adds `auto_command TEXT DEFAULT NULL`, an MCP-only per-task initial command set via `kangentic_create_task`'s `autoCommand` param so a skill can mint a task that runs a command (e.g. `/code-review`) once the agent spawns. Not surfaced in the New Task dialog or project settings. Takes precedence over the swimlane's `auto_command` for this task only; NULL means inherit from the swimlane. Idempotent guarded `ALTER TABLE`.
 49. **`agent` and `effort` columns on `usage_history`** - adds `agent TEXT` and `effort TEXT` (both in the `CREATE TABLE` block plus guarded `ALTER TABLE` for existing DBs) so the usage dashboard can break usage down by agent and by reasoning effort. `agent` is stamped at capture time from the session manager's recorded agent name; `effort` from `sessions.applied_effort` (the last-applied `--effort` value, NULL = agent default). Each has a one-shot backfill: `agent` from surviving `sessions` -> `tasks.agent` joins, `effort` from surviving `sessions.applied_effort`. Rows whose source was deleted stay NULL (rendered "(unknown)" / "(default)"). The one-shot `usage_history` seed backfill (migration 36) also carries both columns. Idempotent guarded `ALTER TABLE`.
+50. **Durable activity-disposition-interval ledger (`session_activity_intervals`)** - creates the table plus its `idx_activity_intervals_task` / `idx_activity_intervals_session` / `idx_activity_intervals_started` / `idx_activity_intervals_open` indices. One row per continuous span a session spent in the `'active'` or `'idle'` `ActivityDisposition` bucket, written by `ActivityIntervalRecorder` the moment the activity engine commits a disposition-changing transition - symmetric by design (both dispositions recorded directly, not one derived as the inverse of the other). `started_at`/`ended_at` mirror `started_ms`/`ended_ms` as UTC ISO 8601, derived from the same value at write time. Deliberately has NO `sessions` DELETE cascade (same rationale as `conversation_turn_usage`): a durable ledger, so an interval outlives the session row that produced it. See the `session_activity_intervals table` section above. Idempotent `CREATE ... IF NOT EXISTS`.
 
 ### Key Migrations (Global DB)
 

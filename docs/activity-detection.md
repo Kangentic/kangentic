@@ -102,15 +102,49 @@ Every transition emits both an `ActivityState` AND an `ActivityReason` describin
 
 ```ts
 type ActivityReason =
-  | { kind: 'idle' }
-  | { kind: 'permission' }
+  | { kind: 'idle'; since: number }
+  | { kind: 'permission'; since: number }
   | { kind: 'tool';            pendingCount: number; currentTool: string | null }
   | { kind: 'subagent';        depth: number }
   | { kind: 'background-shell'; count: number; ids: readonly string[] }
   | { kind: 'turn-active' };
 ```
 
+`since` (epoch ms) is `SessionEngineState.needsUserSince`: when the session FIRST entered a
+needs-user state. It spans both `idle` and `permission` - a `permission <-> idle` crossing keeps
+the original park time rather than resetting it - and is cleared only on returning to `thinking`.
+The renderer uses it to show elapsed wait time ("Idle for 12m") in the TaskCard hover tooltip
+(`formatActivityReasonText` / `ActivityReasonTooltip` in
+`src/renderer/components/board/ActivityReasonTooltip.tsx`).
+
 The renderer uses `reason.kind` to pick a Lucide icon (Wrench / Users / Terminal / Lock / Loader2 / Mail) and inline label for the TaskCard hover tooltip.
+
+### Durable activity-interval history
+
+The engine's own state is in-memory only - `needsUserSince` (and every other field) is lost on
+`deleteSession()` / app restart, and `events.jsonl` records raw hook events, not committed
+transitions, so it is neither a faithful nor a reliably-retained substitute (a raw `idle` event
+cancelled by the 400ms stability window still appears there with no matching state change, and a
+watchdog-synthesized idle commits with no raw event at all).
+
+`src/main/activity-engine/activity-interval-recorder.ts` durably records every committed
+`ActivityDisposition` transition (`shared/activity-state.ts`'s `dispositionOf` - `'active'` for
+`thinking`, `'idle'` for both `idle` and `permission`) to the per-project
+`session_activity_intervals` table (migration in `src/main/db/migrations/project-schema.ts`,
+alongside `conversation_turn_usage`), one row per interval (not per transition - a
+`permission <-> idle` crossing shares the `'idle'` disposition, so it does not close and reopen a
+row). Symmetric by design: both dispositions are recorded directly rather than deriving "active
+time" as the inverse of "idle time", which would need exact session-boundary reconciliation
+across resumes/suspends and would silently break on a crash-orphaned open row. Each row carries
+the engine's own `enter_trigger` / `exit_trigger` labels, so a consumer can distinguish a
+hook-authoritative park (`event:idle`) from a watchdog guess (`timer:stale-thinking`), and a
+genuine human reply (`event:prompt`) from the agent resuming itself
+(`event:prompt:pty-activity`, `force-thinking`). `started_ms`/`ended_ms` (epoch integers, used by
+the `duration_ms` arithmetic and the `started_ms` index) are mirrored by `started_at`/`ended_at`
+(TEXT UTC ISO 8601, per `.claude/rules/utc-timestamps.md`) - the store derives the mirror from the
+same value it writes to the `_ms` column, so the two can never drift. Read via the
+`kangentic_get_activity_intervals` MCP tool (see `docs/mcp-server.md`) or `kangentic_query_db`. No
+desktop-facing IPC endpoint exists yet.
 
 Priority ladder: `permission > tool > subagent > background-shell > turn-active > idle`. Anchored to `state.activity` for consistency - when forced paths (Interrupted, forceIdle) commit a transition that diverges from the bare predicate (e.g. clearing all counters on Esc), the reason follows the committed state.
 

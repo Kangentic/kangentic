@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { Wrench, Users, Terminal, Lock, Loader2, Mail } from 'lucide-react';
+import { formatDurationBetween } from '../../lib/datetime';
 import type { ActivityReason } from '../../../shared/types';
 
 /**
@@ -9,11 +10,18 @@ import type { ActivityReason } from '../../../shared/types';
  *
  * Same priority ladder as the engine: permission > tool > subagent >
  * background-shell > turn-active > idle.
+ *
+ * The idle/permission cases append how long the session has needed the user
+ * (`reason.since`, epoch ms - `ActivityEngine`'s `needsUserSince`). Computed
+ * at render time, not ticked by an interval: a tooltip's text going a few
+ * seconds stale between re-renders is normal (matches formatRelativeTime's
+ * own Date.now() read), and a card-count worth of per-second timers on a
+ * busy board is not a cost worth paying for a hover label.
  */
 export function formatActivityReasonText(reason: ActivityReason): string {
   switch (reason.kind) {
-    case 'idle': return 'Idle';
-    case 'permission': return 'Awaiting permission';
+    case 'idle': return `Idle for ${formatDurationBetween(reason.since, Date.now())}`;
+    case 'permission': return `Awaiting permission for ${formatDurationBetween(reason.since, Date.now())}`;
     case 'tool': {
       if (reason.currentTool) return `Running ${reason.currentTool}`;
       return `${reason.pendingCount} tool${reason.pendingCount === 1 ? '' : 's'} in flight`;
@@ -46,14 +54,14 @@ export function ActivityReasonTooltip({ reason }: { reason: ActivityReason }): R
       return (
         <span className="inline-flex items-center gap-1.5 text-xs text-fg-faint">
           <Mail size={12} className="text-attention" />
-          <span>Idle</span>
+          <span>Idle for {formatDurationBetween(reason.since, Date.now())}</span>
         </span>
       );
     case 'permission':
       return (
         <span className="inline-flex items-center gap-1.5 text-xs text-fg-faint">
           <Lock size={12} className="text-attention" />
-          <span>Awaiting permission</span>
+          <span>Awaiting permission for {formatDurationBetween(reason.since, Date.now())}</span>
         </span>
       );
     case 'tool':

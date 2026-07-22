@@ -104,6 +104,22 @@ describe('parseActivityEventPayload', () => {
     expect(parseActivityEventPayload(payload)).toEqual(payload);
   });
 
+  it('parses idle/permission reasons carrying the optional since field', () => {
+    const idlePayload: JsonValue = { type: 'activity', state: 'idle', reason: { kind: 'idle', since: 1700000000000 } };
+    expect(parseActivityEventPayload(idlePayload)).toEqual(idlePayload);
+    const permissionPayload: JsonValue = { type: 'activity', state: 'permission', reason: { kind: 'permission', since: 1700000000000 } };
+    expect(parseActivityEventPayload(permissionPayload)).toEqual(permissionPayload);
+  });
+
+  it('parses idle/permission reasons with since OMITTED - additive-field compatibility with an older desktop', () => {
+    const payload: JsonValue = { type: 'activity', state: 'idle', reason: { kind: 'idle' } };
+    expect(parseActivityEventPayload(payload)).toEqual(payload);
+  });
+
+  it('rejects an idle/permission reason whose since is not a number', () => {
+    expect(() => parseActivityEventPayload({ type: 'activity', state: 'idle', reason: { kind: 'idle', since: '1700000000000' } })).toThrow(/reason/);
+  });
+
   it('parses a usage payload', () => {
     expect(parseActivityEventPayload({ type: 'usage', usage: usageFixture })).toEqual({ type: 'usage', usage: usageFixture });
   });

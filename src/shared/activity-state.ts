@@ -58,3 +58,16 @@ export function requiresUserInteraction(state: ActivityState | undefined): boole
 export function isActive(state: ActivityState | undefined): boolean {
   return state !== undefined && ACTIVITY_DISPOSITION[state] === 'active';
 }
+
+/**
+ * The disposition VALUE itself ('idle' | 'active'), not just a boolean bucket
+ * check. Use this when persisting or displaying the disposition (e.g. the
+ * `disposition` column on `session_activity_intervals`) so a future
+ * `ActivityState` variant is classified here once, at the compile-time-checked
+ * source, rather than re-derived (and risking drift) at each storage/display
+ * call site. Requires a defined state - a caller with `ActivityState |
+ * undefined` should branch on `requiresUserInteraction`/`isActive` first.
+ */
+export function dispositionOf(state: ActivityState): ActivityDisposition {
+  return ACTIVITY_DISPOSITION[state];
+}

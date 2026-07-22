@@ -45,6 +45,9 @@ import { retrievalService } from '../retrieval/retrieval-service';
 import { MobileBridgeService } from '../mobile-bridge/mobile-bridge-service';
 import { BoardEventBus } from '../mobile-bridge/board-event-bus';
 import { DesktopNotifier } from '../notifications/desktop-notifier';
+import { ActivityIntervalRecorder } from '../activity-engine/activity-interval-recorder';
+import { ActivityIntervalStore } from '../activity-engine/activity-interval-store';
+import { getProjectDb } from '../db/database';
 import { getProjectRepos } from './helpers';
 import { KANGENTIC_HOSTED_RELAY_URL, resolveRelayUrl } from '../../shared/relay';
 import type { IpcContext } from './ipc-context';
@@ -177,6 +180,19 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   // first reconcile's syncSessions() has handlers to route into.
   mobileBridgeService.attachContext(context);
   desktopNotifier.start();
+
+  // Durable activity-disposition-interval ledger (see
+  // activity-interval-recorder.ts and the session_activity_intervals
+  // migration comment for why this exists: the engine's own state is
+  // in-memory only, and events.jsonl is neither a faithful nor a
+  // reliably-retained record of committed transitions). getProjectDb caches
+  // connections per project, so resolving a fresh store on every event is
+  // cheap - it never opens a new connection.
+  const activityIntervalRecorder = new ActivityIntervalRecorder({
+    sessionManager,
+    getStore: (projectId) => new ActivityIntervalStore(getProjectDb(projectId)),
+  });
+  activityIntervalRecorder.start();
 
   const effectiveConfig = context.configManager.getEffectiveConfig(context.currentProjectPath ?? undefined);
   mobileBridgeService.reconcile({

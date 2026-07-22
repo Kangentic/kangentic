@@ -360,6 +360,19 @@ export interface SessionEngineState {
   /** Wall-clock ms of the most recent idle transition (used by idle-timeout sweep). */
   idleTimestamp: number | null;
   /**
+   * Wall-clock ms since the session first entered a state that needs the
+   * user (`requiresUserInteraction` true - `'idle'` or `'permission'`).
+   * Distinct from `idleTimestamp`, which is scoped to `'idle'` alone and
+   * drives auto-suspend: this field spans BOTH needs-user states so a
+   * `thinking -> permission -> idle` run keeps the ORIGINAL park time
+   * instead of resetting when permission resolves into idle. Set on first
+   * entering either state from `'thinking'`; left unchanged on a
+   * `permission <-> idle` crossing; cleared to null on entering
+   * `'thinking'`. Surfaced on `ActivityReason` so the UI can render "waiting
+   * Nm" next to the mail affordance.
+   */
+  needsUserSince: number | null;
+  /**
    * Provenance of the CURRENT idle: true iff this idle was entered via a
    * genuine hook turn-end (a non-permission `Idle` hook, an `idle_hint` that
    * cleared `turnActive`, or an `Interrupted`/`TurnFailed`) - "the agent told
@@ -543,6 +556,9 @@ export interface ActivityStatsSnapshot {
   /** ms since the most recent PTY output chunk, or null when no chunk yet. */
   msSincePtyOutput: number | null;
   pendingIdleArmed: boolean;
+  /** Wall-clock ms since the session first needed the user (see
+   *  `SessionEngineState.needsUserSince`), or null while thinking. */
+  needsUserSince: number | null;
   /** True while an `idle_hint` is pending (see `SessionEngineState.idleHintPending`):
    *  the stuck-subagent / stuck-pending-tools watchdogs are on their short grace,
    *  not the 5-min cap. Lets the debug overlay explain a fast watchdog fire. */

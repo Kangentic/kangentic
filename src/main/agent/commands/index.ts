@@ -11,6 +11,7 @@ import { handleListBacklog, handleCreateBacklogTask, handlePromoteBacklog, handl
 import { handleGetHandoffContext } from './handoff-commands';
 import { handleGetTranscript, handleQueryDb } from './inspect-commands';
 import { handleGetSessionFiles, handleGetSessionEvents } from './session-files-commands';
+import { handleGetActivityIntervals } from './activity-interval-commands';
 import type { CommandHandler } from './types';
 
 /**
@@ -47,4 +48,5 @@ export const commandHandlers: Record<string, CommandHandler> = {
   query_db: handleQueryDb,
   get_session_files: handleGetSessionFiles,
   get_session_events: handleGetSessionEvents,
+  get_activity_intervals: handleGetActivityIntervals,
 };

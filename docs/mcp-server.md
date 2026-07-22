@@ -27,14 +27,14 @@ Claude Code agent calls MCP tool (e.g. kangentic_create_task)
 |-----------|------|---------|
 | MCP HTTP Server | `src/main/agent/mcp-http-server.ts` | In-process Node `http` server using `@modelcontextprotocol/sdk` Streamable HTTP transport. Binds 127.0.0.1 by default (configurable via `mcpServer.bindAddress`), random `:0` port, random per-launch token validated via `X-Kangentic-Token`. See [Network Access](#network-access). |
 | Task Tools | `src/main/agent/mcp-http/task-tools.ts` | Board/task/column mutations + related reads (`kangentic_create_task`, `kangentic_move_task`, `kangentic_update_task`, `kangentic_link_pr`, `kangentic_update_column`, `kangentic_delete_task`, `kangentic_list_columns`, `kangentic_find_task`, `kangentic_get_current_task`, etc.). |
-| Session Tools | `src/main/agent/mcp-http/session-tools.ts` | Session inspection, backlog, read-only SQL (`kangentic_list_sessions`, `kangentic_get_transcript`, `kangentic_get_session_files`, `kangentic_get_session_events`, `kangentic_query_db`, `kangentic_list_backlog`, etc.). |
+| Session Tools | `src/main/agent/mcp-http/session-tools.ts` | Session inspection, backlog, read-only SQL (`kangentic_list_sessions`, `kangentic_get_transcript`, `kangentic_get_session_files`, `kangentic_get_session_events`, `kangentic_get_activity_intervals`, `kangentic_query_db`, `kangentic_list_backlog`, etc.). |
 | Project Tools | `src/main/agent/mcp-http/project-tools.ts` | Multi-project discovery (`kangentic_list_projects`). |
 | Search Tools | `src/main/agent/mcp-http/search-tools.ts` | The single unified search (`kangentic_search`): tasks, backlog, session events, projects, and past conversations (keyword or, with `mode:"hybrid"`, semantic). The board-scoped `kangentic_search_tasks` lives in `task-tools.ts`. |
 | Diagnostics Tools | `src/main/agent/mcp-http/diagnostics-tools.ts` | Read-only product tools backing crash records, persistent console logs, process metrics, IPC traffic recordings, and worktree state. |
 | Tool Annotations | `src/main/agent/mcp-http/annotations.ts` | Shared `READ_ONLY_ANNOTATIONS` / `MUTATING_ANNOTATIONS` MCP tool-annotation constants. Every tool in every `*-tools.ts` file declares one of these (see the Tool annotations note below). |
 | Browser Tools | `src/main/agent/mcp-http/browser-tools.ts` | Shipped `kangentic_browser_*` MCP tool family driving the embedded Browser pane via in-process CDP (no HTTP bridge, no lockfile). Gated by the global `browserAutomation.*` policy. |
 | Usage Tools | `src/main/agent/mcp-http/usage-tools.ts` | Aggregated usage statistics (`kangentic_get_usage_stats`): tokens, cost, burn rate, and by-model / by-agent / by-effort breakdowns, per project or app-wide, over the shared time ranges. Reads the same usage-stats service as the in-app dashboard. |
-| Command Handlers | `src/main/agent/commands/` | Per-domain handlers shared by the HTTP tools: task, column, inventory, search, analytics, usage, backlog, handoff, inspect (`get_transcript`, `query_db`), and session-files (`get_session_files`, `get_session_events`) commands. |
+| Command Handlers | `src/main/agent/commands/` | Per-domain handlers shared by the HTTP tools: task, column, inventory, search, analytics, usage, backlog, handoff, inspect (`get_transcript`, `query_db`), session-files (`get_session_files`, `get_session_events`), and activity-interval (`get_activity_intervals`) commands. |
 | Column Resolver | `src/main/agent/commands/column-resolver.ts` | Shared case-insensitive column name to swimlane lookup used by multiple handlers. |
 | MCP Config Delivery | `src/main/agent/adapters/claude/command-builder.ts` | Writes session `mcp.json` (with the per-launch URL + token) and adds `--mcp-config` flag to CLI command. |
 | Trust Manager | `src/main/agent/adapters/claude/trust-manager.ts` | Pre-approves kangentic MCP server in `~/.claude.json`. |
@@ -473,6 +473,22 @@ Read parsed events from a session's `events.jsonl` activity log without locating
 | `tail` | number | No | Return the last N matching events. Default 200, hard cap 2000. |
 | `since` | number | No | Epoch milliseconds. Only return events with `timestamp >= since`. |
 | `eventTypes` | string[] | No | Only return events whose `hook_event_name` or `type` is in this list (e.g. `["PreToolUse", "Stop", "Notification"]`). |
+| `project` | string | No | Project selector (name or UUID). Defaults to the URL-path project. |
+
+### kangentic_get_activity_intervals
+
+Read the durable activity-disposition history for a task or session: every span the agent spent `'active'` (working on its own) or `'idle'` (needing the user - covering both the `idle` and `permission` engine states) since Kangentic started tracking it. This SURVIVES app restarts and session end - it is written the moment the activity engine commits a transition, independent of the in-memory engine state and of `events.jsonl` (which records raw hook events, not committed transitions, and is not reliably retained). Use it to answer "how long has this task been waiting on me" or "how much of this session was the agent actually working vs blocked on approval/input". Provide either `taskId` (every session the task has ever accumulated - a resume creates a new session row) or `sessionId` (one session only).
+
+Response shape:
+
+- `intervals` - raw rows (`id`, `sessionId`, `taskId`, `disposition`, `state`, `previousState`, `enterTrigger`, `exitTrigger`, `startedMs`, `startedAt`, `endedMs`, `endedAt`, `durationMs`, `recordedAt`), oldest first. `startedAt`/`endedAt` are UTC ISO 8601 mirrors of `startedMs`/`endedMs` (stored, not computed on read) - `endedAt` is `null` exactly when `endedMs` is.
+- `totals` - `{ activeMs, idleMs }`, summing `durationMs` across CLOSED intervals only.
+- `openIntervals` - intervals still in progress (`durationMs` is `null` until closed), each with `startedAt` and a `liveElapsedMs` computed at read time so a still-parked task is not silently excluded from an elapsed-time answer.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `taskId` | string | No | Task ID. Returns intervals across every session the task has ever had. |
+| `sessionId` | string | No | Kangentic session UUID (the `sessions.id` column). Returns intervals for that session only. |
 | `project` | string | No | Project selector (name or UUID). Defaults to the URL-path project. |
 
 ### kangentic_query_db
