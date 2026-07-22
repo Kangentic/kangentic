@@ -204,6 +204,10 @@ function makeEngine(options: {
    * caller of makeEngine. */
   executionServers?: Record<string, AgentExecutionServer>;
   execution?: Record<string, AgentProjectExecution>;
+  /** Override the default no-op terminalSubmit stub (e.g. send_command tests
+   * need submitKeystrokes to return a real Promise so its internal `.catch`
+   * doesn't throw). */
+  terminalSubmit?: ReturnType<typeof makeTerminalSubmit>;
 }) {
   const sessionManager = options.sessionManager ?? makeSessionManager();
   const sessionRepo = options.sessionRepo ?? makeSessionRepo();
@@ -231,7 +235,7 @@ function makeEngine(options: {
     execution: options.execution ?? {},
   }));
 
-  const terminalSubmit = makeTerminalSubmit();
+  const terminalSubmit = options.terminalSubmit ?? makeTerminalSubmit();
   type EngineArgs = ConstructorParameters<typeof TransitionEngine>;
   const engine = new TransitionEngine(
     sessionManager as unknown as EngineArgs[0],
@@ -243,7 +247,7 @@ function makeEngine(options: {
     attachmentRepo as unknown as EngineArgs[6],
   );
 
-  return { engine, sessionManager, sessionRepo, taskRepo, actionRepo };
+  return { engine, sessionManager, sessionRepo, taskRepo, actionRepo, terminalSubmit };
 }
 
 // ---------------------------------------------------------------------------
@@ -674,5 +678,44 @@ describe('TransitionEngine - remote execution wiring (executeSpawnAgent chokepoi
     await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
 
     expect(capturedExecutionTarget).toBeUndefined();
+  });
+});
+
+describe('TransitionEngine - executeAction builds ONE shared templateVars for every action type', () => {
+  // Coverage hole: executeAction resolves templateVars = resolveTaskTemplateVars(...) once and
+  // feeds spawn_agent, send_command, run_script, AND webhook from that single object (see
+  // .claude/rules/task-template-vars-parity.md, rule #7: "only the interpolation MECHANICS are
+  // scoped, not the resolved VALUES"). Every existing test above only drives spawn_agent, so a
+  // regression on the OTHER three consumers (e.g. reverting {{baseBranch}} back to the old
+  // `task.base_branch || ''` behavior) fails nothing. This pins send_command specifically:
+  // task.base_branch is null, so {{baseBranch}} must resolve to the effective project default
+  // ('main', from getConfig().gitConfig.defaultBaseBranch) rather than an empty string.
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('send_command: a null task.base_branch interpolates {{baseBranch}} to the effective project default, not empty', async () => {
+    const task = makeTask({ base_branch: null, session_id: 'sess-abc12345' });
+    const action = makeAction({
+      type: 'send_command',
+      config_json: JSON.stringify({ command: '/review {{baseBranch}}' }),
+    });
+    // submitKeystrokes must return a real Promise: executeSendCommand chains
+    // `.catch(...)` onto its return value, which throws synchronously against
+    // the file's default no-op `vi.fn()` stub (returns undefined).
+    const terminalSubmit = { submitKeystrokes: vi.fn(async () => {}) };
+
+    const { engine } = makeEngine({ action, terminalSubmit });
+    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
+
+    // Red: reverting executeAction's templateVars to `{ baseBranch: task.base_branch || '' }`
+    // (the pre-refactor shape) makes this '/review' (empty, collapsed by sanitizeForPty),
+    // never '/review main'.
+    expect(terminalSubmit.submitKeystrokes).toHaveBeenCalledTimes(1);
+    expect(terminalSubmit.submitKeystrokes).toHaveBeenCalledWith(
+      'sess-abc12345',
+      ['/review main'],
+      { sendCtrlC: true, source: `send_command:${task.id.slice(0, 8)}` },
+    );
   });
 });

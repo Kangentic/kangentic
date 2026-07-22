@@ -117,7 +117,6 @@ vi.mock('../../src/main/ipc/helpers/index', () => ({
   ensureTaskBranchCheckout: (...args: unknown[]) => mockEnsureTaskBranchCheckout(...args),
   spawnAgent: (...args: unknown[]) => mockSpawnAgent(...args),
   createTransitionEngine: vi.fn(() => ({})),
-  buildAutoCommandVars: vi.fn(() => ({})),
   cleanupTaskResources: vi.fn(async () => {}),
   deleteTaskWorktree: vi.fn(async () => true),
   autoSpawnForTask: vi.fn(async () => {}),

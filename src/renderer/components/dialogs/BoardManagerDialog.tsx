@@ -39,6 +39,7 @@ import {
   type SwimlaneCreateInput,
   type SwimlaneUpdateInput,
 } from '../../../shared/types';
+import { TASK_TEMPLATE_VARS } from '../../../shared/task-template-vars';
 
 /** Sentinel entity id keying this dialog's maximize flag in the session store. */
 const BOARD_MANAGER_ENTITY_ID = 'board-manager-dialog';
@@ -61,9 +62,10 @@ const SECTIONS: { id: SectionId; label: string; icon: typeof Sliders }[] = [
   { id: 'handoff', label: 'Handoff', icon: History },
 ];
 
-// Mirrors the keys in buildAutoCommandVars (agent-spawn.ts) - keep in sync so the
-// chips surface exactly what the auto-command interpolation actually substitutes.
-const TEMPLATE_VARIABLES = ['{{title}}', '{{description}}', '{{taskId}}', '{{worktreePath}}', '{{branchName}}'];
+// Sourced from TASK_TEMPLATE_VARS (shared/task-template-vars.ts) - the same
+// declaration the auto-command resolver and the docs-parity test read, so the
+// chips can never drift from what the interpolation actually substitutes.
+const TEMPLATE_VARIABLES = TASK_TEMPLATE_VARS.map((templateVar) => templateVar.chip);
 
 // ────────────────────────────────────────────────────────────────────────
 // Pure helpers (exported for unit tests)

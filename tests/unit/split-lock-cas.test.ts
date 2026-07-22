@@ -111,7 +111,6 @@ const mockSpawnAgent = vi.fn(async () => {});
 const mockCreateTransitionEngine = vi.fn();
 const mockCleanupTaskResources = vi.fn(async () => {});
 const mockDeleteTaskWorktree = vi.fn(async () => true);
-const mockBuildAutoCommandVars = vi.fn(() => ({}));
 
 vi.mock('../../src/main/ipc/helpers', () => ({
   getProjectRepos: (...args: unknown[]) => mockGetProjectRepos(...args),
@@ -121,7 +120,6 @@ vi.mock('../../src/main/ipc/helpers', () => ({
   createTransitionEngine: (...args: unknown[]) => mockCreateTransitionEngine(...args),
   cleanupTaskResources: (...args: unknown[]) => mockCleanupTaskResources(...args),
   deleteTaskWorktree: (...args: unknown[]) => mockDeleteTaskWorktree(...args),
-  buildAutoCommandVars: (...args: unknown[]) => mockBuildAutoCommandVars(...args),
 }));
 
 // Import under test AFTER all mocks are registered

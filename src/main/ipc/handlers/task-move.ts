@@ -16,11 +16,10 @@ import {
   cleanupTaskResources,
   deleteTaskWorktree,
   spawnAgent,
-  buildAutoCommandVars,
 } from '../helpers';
 import { autoLinkPRForTask } from '../../pr/pr-linking';
 import { resolveProjectContext } from '../helpers/project-repos';
-import { interpolateTemplate } from '../../agent/shared';
+import { interpolateTaskTemplate, resolveTaskTemplateVars } from '../../agent/shared';
 import { trackEvent } from '../../analytics/analytics';
 import { parseModelId } from '../../../shared/model-id';
 import { captureSessionMetrics, refineTranscriptTokens, refineTranscriptToolCounts } from './session-metrics';
@@ -219,7 +218,7 @@ export async function handleTaskMove(
       const resolvedProjectPath = projectPath !== undefined ? projectPath : context.currentProjectPath;
       if (!resolvedProjectId) throw new Error('No project is currently open');
 
-      const { tasks, swimlanes } = getProjectRepos(context, resolvedProjectId);
+      const { tasks, swimlanes, attachments } = getProjectRepos(context, resolvedProjectId);
       const task = tasks.getById(input.taskId);
       if (!task) throw new Error(`Task ${input.taskId} not found`);
 
@@ -599,7 +598,11 @@ export async function handleTaskMove(
           // model-restart policy stays in one place (agent-agnostic here).
           const adapter = task.agent ? agentRegistry.get(task.agent) : undefined;
           const interpolatedAuto = toLane?.auto_command?.trim()
-            ? interpolateTemplate(toLane.auto_command, buildAutoCommandVars(task))
+            ? interpolateTaskTemplate(toLane.auto_command, resolveTaskTemplateVars({
+                task,
+                defaultBaseBranch: effectiveDefaultBranch,
+                attachmentPaths: attachments.getPathsForTask(task.id),
+              }))
             : '';
           const plan = prepareInjectionPlan({
             adapter,
@@ -895,7 +898,7 @@ export async function handleTaskMove(
           const sessionRepoPhase3 = new SessionRepository(dbPhase3);
           const engine = createTransitionEngine(context, actionsPhase3, tasksPhase3, sessionRepoPhase3, attachmentsPhase3, resolvedProjectId, resolvedProjectPath);
           if (toLane) {
-            await spawnAgent({ context, engine, tasks: tasksPhase3, sessionRepo: sessionRepoPhase3, task: current, fromSwimlaneId, toLane, skipPromptTemplate, signal, projectId: resolvedProjectId, projectPath: resolvedProjectPath, continuationPrompt, suppressAutoCommand, settingsSourceLane: fromLane ?? null });
+            await spawnAgent({ context, engine, tasks: tasksPhase3, sessionRepo: sessionRepoPhase3, task: current, fromSwimlaneId, toLane, skipPromptTemplate, signal, projectId: resolvedProjectId, projectPath: resolvedProjectPath, continuationPrompt, suppressAutoCommand, settingsSourceLane: fromLane ?? null, attachments: attachmentsPhase3 });
           }
         } finally {
           clearSpawnProgress(context.mainWindow, task.id);

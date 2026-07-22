@@ -112,7 +112,6 @@ const mockEnsureTaskWorktree = vi.fn(async () => null);
 const mockEnsureTaskBranchCheckout = vi.fn(async () => {});
 const mockSpawnAgent = vi.fn(async () => {});
 const mockCreateTransitionEngine = vi.fn(() => ({}));
-const mockBuildAutoCommandVars = vi.fn(() => ({}));
 
 vi.mock('../../src/main/ipc/helpers/index', () => ({
   getProjectRepos: (...args: unknown[]) => mockGetProjectRepos(...args),
@@ -120,7 +119,6 @@ vi.mock('../../src/main/ipc/helpers/index', () => ({
   ensureTaskBranchCheckout: (...args: unknown[]) => mockEnsureTaskBranchCheckout(...args),
   spawnAgent: (...args: unknown[]) => mockSpawnAgent(...args),
   createTransitionEngine: (...args: unknown[]) => mockCreateTransitionEngine(...args),
-  buildAutoCommandVars: (...args: unknown[]) => mockBuildAutoCommandVars(...args),
   cleanupTaskResources: vi.fn(async () => {}),
   deleteTaskWorktree: vi.fn(async () => true),
   autoSpawnForTask: vi.fn(async () => {}),

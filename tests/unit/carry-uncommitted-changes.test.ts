@@ -51,7 +51,6 @@ vi.mock('../../src/main/git/worktree-manager', () => ({ WorktreeManager: vi.fn()
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn() }));
 vi.mock('../../src/main/ipc/helpers', () => ({
   getProjectRepos: vi.fn(),
-  buildAutoCommandVars: vi.fn(),
   ensureTaskWorktree: vi.fn(),
   createTransitionEngine: vi.fn(),
   cleanupTaskSession: vi.fn(),

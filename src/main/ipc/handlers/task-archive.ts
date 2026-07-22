@@ -91,6 +91,7 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
               suppressAutoCommand: true,
               projectId: resolvedProjectId,
               projectPath: resolvedProjectPath,
+              attachments: attachmentRepo,
             });
           } catch (err) {
             console.error('[TASK_UNARCHIVE] Failed to start session:', err);
@@ -158,6 +159,7 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
                 suppressAutoCommand: true,
                 projectId: resolvedProjectId,
                 projectPath: resolvedProjectPath,
+                attachments: attachmentRepo,
               });
             } catch (error) {
               console.error('[TASK_BULK_UNARCHIVE] Failed to start session:', error);

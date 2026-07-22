@@ -103,10 +103,22 @@ When an anchor maps to multiple target docs, one doc is the **canonical** locati
 4. Find the settings section
 5. Compare: report missing registry entries
 
-## Template Variable Anchors
+## Shortcut Template Variable Anchors
 
 1. Read `src/shared/template-vars.ts`
-2. Extract all exported template variable names and their descriptions
-3. Read `docs/transition-engine.md` and `docs/agent-integration.md`
-4. Find sections documenting template variables
-5. Compare: report missing variables
+2. Extract all exported template variable names (`{{cwd}}`, `{{branchName}}`, `{{taskTitle}}`,
+   `{{projectPath}}`) and their descriptions
+3. Read `docs/configuration.md#shortcuts` (canonical)
+4. Compare: report missing variables. `docs/transition-engine.md` and `docs/agent-integration.md`
+   only cross-reference this system with a link - they do not enumerate it.
+
+## Task Template Variable Anchors (auto_command / spawn_agent promptTemplate)
+
+1. Read `src/shared/task-template-vars.ts` (`TASK_TEMPLATE_VAR_NAMES` / `TASK_TEMPLATE_VARS`)
+2. Extract all 10 keyword names and their `chip`/`description` fields
+3. Read `docs/transition-engine.md` ("## Template Variables", canonical) and
+   `docs/architecture.md` (the "Template variables available" line, cross-reference)
+4. Compare: report any chip missing from either doc, or documented with stale prose (e.g.
+   describing `{{baseBranch}}` as resolving empty rather than falling back to the effective
+   project default). `tests/unit/task-template-vars-parity.test.ts` runs this same check
+   mechanically in CI.

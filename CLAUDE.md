@@ -265,6 +265,7 @@ session; rules with one load when you touch matching files. Each rule names its 
 - `pop-out-surface-registry.md` - every OS `BrowserWindow` is created only in `createWindow` or the pop-out window manager; every detachable surface goes through the shared + renderer registries (`src/main/pop-out/**`, `src/shared/pop-out.ts`, `src/renderer/pop-out/**`).
 - `spawn-entry-point-parity.md` - every agent-spawn entry point routes through `spawnAgent` / `prepareAgentSpawn` and the shared `runSpawnPreamble` (first-spawn override lock + agent resolution); no direct engine spawn calls in handlers (`src/main/ipc/**`, `src/main/transition-engine/**`).
 - `linux-package-dependencies.md` - rpm dependencies are soname capabilities, never package names, since RPM package names differ per distro (`electron-builder.yml`).
+- `task-template-vars-parity.md` - the 10 auto_command / spawn_agent promptTemplate keywords are declared once in `TASK_TEMPLATE_VARS` and drive the resolver map, UI chips, and docs tables (`src/shared/task-template-vars.ts`, `src/main/agent/shared/task-template-resolvers.ts`, `src/renderer/components/dialogs/BoardManagerDialog.tsx`).
 
 **Local overrides:** there is no per-rule local file. Put machine-specific instruction
 overrides in a gitignored `CLAUDE.local.md` at the project root.

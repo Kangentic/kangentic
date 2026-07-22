@@ -115,7 +115,6 @@ vi.mock('../../src/main/git/node-modules-link', () => ({
 // Mocked helpers - set up per test
 const mockGetProjectRepos = vi.fn();
 const mockCleanupTaskResources = vi.fn();
-const mockBuildAutoCommandVars = vi.fn(() => ({}));
 const mockEnsureTaskWorktree = vi.fn(async () => null);
 const mockEnsureTaskBranchCheckout = vi.fn(async () => {});
 const mockCreateTransitionEngine = vi.fn(() => ({}));
@@ -123,7 +122,6 @@ const mockCreateTransitionEngine = vi.fn(() => ({}));
 vi.mock('../../src/main/ipc/helpers', () => ({
   getProjectRepos: (...args: unknown[]) => mockGetProjectRepos(...args),
   cleanupTaskResources: (...args: unknown[]) => mockCleanupTaskResources(...args),
-  buildAutoCommandVars: (...args: unknown[]) => mockBuildAutoCommandVars(...args),
   ensureTaskWorktree: (...args: unknown[]) => mockEnsureTaskWorktree(...args),
   ensureTaskBranchCheckout: (...args: unknown[]) => mockEnsureTaskBranchCheckout(...args),
   createTransitionEngine: (...args: unknown[]) => mockCreateTransitionEngine(...args),

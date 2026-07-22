@@ -5,7 +5,7 @@ import type { Task, Action, ActionConfig, AppConfig, PermissionMode } from '../.
 import { sanitizeForPty } from '../../shared/paths';
 import { SessionManager } from '../pty/session-manager';
 import type { TerminalSubmit } from '../pty/terminal-submit';
-import { interpolateTemplate, buildTaskXml } from '../agent/shared';
+import { interpolateTemplate, resolveTaskTemplateVars } from '../agent/shared';
 import { resolveExecutionTarget } from '../agent/shared/execution-target';
 import { WorktreeManager, prepareWorktreeForRemoval, GitQueuePriority } from '../git/worktree-manager';
 import { agentRegistry } from '../agent/agent-registry';
@@ -76,28 +76,20 @@ export class TransitionEngine {
   async resumeSuspendedSession(task: Task, permissionOverride?: PermissionMode | null, skipPromptTemplate?: boolean, resumePrompt?: string, signal?: AbortSignal, agentOverride?: string, handoffPromptPrefix?: string, spawnOverrides?: SpawnOverrides): Promise<void> {
     signal?.throwIfAborted();
     const attachmentPaths = this.attachmentRepo?.getPathsForTask(task.id) ?? [];
-    const cleanTitle = sanitizeForPty(task.title);
-    const cleanDesc = sanitizeForPty(task.description);
     // {{task_xml}} wraps title/description in a <task> envelope (Anthropic +
     // OpenAI guidance for clear data/instruction boundaries). The XML body
     // uses the RAW description so multi-line markdown content survives end
     // to end - quoteArg's `multiline: true` opt-in keeps newlines through
     // shell delivery. The legacy `{{description}}` prose var stays sanitized
     // so user-customized single-line templates don't break.
+    const templateVars = resolveTaskTemplateVars({
+      task,
+      defaultBaseBranch: this.getConfig().gitConfig.defaultBaseBranch,
+      attachmentPaths,
+    });
     await this.executeSpawnAgent({
       promptTemplate: skipPromptTemplate ? undefined : '{{task_xml}}{{attachments}}',
-    }, task, {
-      task_xml: buildTaskXml({ title: cleanTitle, description: task.description }),
-      title: cleanTitle,
-      description: cleanDesc ? `: ${cleanDesc}` : '',
-      taskId: task.id,
-      worktreePath: task.worktree_path || '',
-      branchName: task.branch_name || '',
-      baseBranch: task.base_branch || '',
-      attachments: attachmentPaths.length > 0
-        ? `\n${attachmentPaths.join('\n')}`
-        : '',
-    }, permissionOverride, resumePrompt, signal, agentOverride, handoffPromptPrefix, spawnOverrides);
+    }, task, templateVars, permissionOverride, resumePrompt, signal, agentOverride, handoffPromptPrefix, spawnOverrides);
   }
 
   async executeTransition(task: Task, fromSwimlaneId: string, toSwimlaneId: string, permissionOverride?: PermissionMode | null, skipPromptTemplate?: boolean, signal?: AbortSignal, agentOverride?: string, spawnOverrides?: SpawnOverrides, onProgress?: (phase: string) => void): Promise<void> {
@@ -122,24 +114,13 @@ export class TransitionEngine {
       return; // skip action with malformed config
     }
     const attachmentPaths = this.attachmentRepo?.getPathsForTask(task.id) ?? [];
-    const cleanTitle = sanitizeForPty(task.title);
-    const cleanDesc = sanitizeForPty(task.description);
     // task_xml gets the RAW description so multi-line markdown survives;
     // {{description}} stays sanitized for legacy single-line prose templates.
-    const templateVars: Record<string, string> = {
-      task_xml: buildTaskXml({ title: cleanTitle, description: task.description }),
-      title: cleanTitle,
-      description: cleanDesc ? `: ${cleanDesc}` : '',
-      taskId: task.id,
-      worktreePath: task.worktree_path || '',
-      branchName: task.branch_name || '',
-      baseBranch: task.base_branch || '',
-      prUrl: task.pr_url || '',
-      prNumber: task.pr_number ? String(task.pr_number) : '',
-      attachments: attachmentPaths.length > 0
-        ? `\n${attachmentPaths.join('\n')}`
-        : '',
-    };
+    const templateVars = resolveTaskTemplateVars({
+      task,
+      defaultBaseBranch: this.getConfig().gitConfig.defaultBaseBranch,
+      attachmentPaths,
+    });
 
     switch (action.type) {
       case 'spawn_agent':

@@ -86,7 +86,6 @@ vi.mock('../../src/main/ipc/helpers', () => ({
   createTransitionEngine: vi.fn(),
   cleanupTaskResources: vi.fn(),
   deleteTaskWorktree: vi.fn(),
-  buildAutoCommandVars: vi.fn(() => ({})),
 }));
 
 // Import under test AFTER all mocks are registered.

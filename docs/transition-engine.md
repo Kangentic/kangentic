@@ -135,7 +135,14 @@ Content-Type defaults to `application/json`. Failures are logged but don't block
 
 ## Template Variables
 
-All action types that accept templates can use these placeholders:
+One declaration (`src/shared/task-template-vars.ts`) drives every consumer: the
+`auto_command` field (column and per-task), the `spawn_agent` action's
+`promptTemplate`, the Automation tab's chip list, and this table - see
+`tests/unit/task-template-vars-parity.test.ts`. All 10 keywords resolve
+identically in both `auto_command` and `promptTemplate`; `send_command` /
+`run_script` / `webhook` use the same values but keep literal, non-collapsing
+substitution (an unknown or empty `{{key}}` is left as-is, matching
+`interpolateTemplate`'s general behavior).
 
 | Variable | Value |
 |----------|-------|
@@ -143,12 +150,17 @@ All action types that accept templates can use these placeholders:
 | `{{description}}` | Task description with `: ` prefix when non-empty |
 | `{{task_xml}}` | Task title and description wrapped in a `<task>` envelope (`<title>` / `<description>` children). Default seeded prompt template is `{{task_xml}}{{attachments}}`, which gives the agent a structured envelope without forcing the user to template it manually. |
 | `{{taskId}}` | Task UUID |
-| `{{worktreePath}}` | Worktree directory path (empty if none) |
-| `{{branchName}}` | Git branch name (empty if none) |
-| `{{baseBranch}}` | Base branch the task forked from (empty if unset) |
+| `{{worktreePath}}` | Worktree directory path (empty if none) - a raw read, never falls back to a project-level path |
+| `{{branchName}}` | Git branch name (empty if none) - a raw read, never falls back to a project-level branch |
+| `{{baseBranch}}` | Effective base branch: the task's `base_branch` override, else the project's configured default (board config, then app config, then `'main'`) |
 | `{{prUrl}}` | Pull request URL (empty if none) |
 | `{{prNumber}}` | Pull request number as string (empty if none) |
 | `{{attachments}}` | Bare file paths (one per line) when present |
+
+In `auto_command` and `promptTemplate` specifically, an empty-valued or unknown
+`{{key}}` is dropped and surrounding horizontal whitespace collapses (newlines
+are preserved), so `/code-review {{baseBranch}}` with no configured default
+still yields `/code-review`, not a trailing space or a literal placeholder.
 
 Shortcut commands use a separate set of template variables. See [Configuration](configuration.md#shortcuts) for the full list.
 

@@ -64,7 +64,6 @@ vi.mock('../../src/main/ipc/helpers', () => ({
       listByTaskId: vi.fn(() => []),
     },
   })),
-  buildAutoCommandVars: vi.fn(() => ({})),
   ensureTaskWorktree: vi.fn(async () => ({ worktreePath: '/tmp', checkoutError: undefined })),
   ensureTaskBranchCheckout: vi.fn(),
   createTransitionEngine: vi.fn(() => ({ run: vi.fn(async () => ({})) })),

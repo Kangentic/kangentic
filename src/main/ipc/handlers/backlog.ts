@@ -212,7 +212,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
                 const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachments, projectId, projectPath);
                 // projectId/projectPath so the spawn preamble (override lock +
                 // agent resolution) sees the project defaults instead of null.
-                await spawnAgent({ context, engine, tasks, sessionRepo, task, fromSwimlaneId: '*', toLane: targetSwimlane, signal, projectId, projectPath });
+                await spawnAgent({ context, engine, tasks, sessionRepo, task, fromSwimlaneId: '*', toLane: targetSwimlane, signal, projectId, projectPath, attachments });
               } catch (error) {
                 if (isAbortError(error)) {
                   console.log(`[BACKLOG_PROMOTE] Aborted promotion for task ${task.id.slice(0, 8)}`);

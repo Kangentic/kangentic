@@ -496,7 +496,7 @@ Transitions only fire for case 5. The action chain runs in `execution_order`: ty
 | `create_pr` | Reserved. Not yet implemented. |
 | `webhook` | POST to URL with interpolated body |
 
-Template variables available: `{{title}}`, `{{description}}`, `{{task_xml}}`, `{{taskId}}`, `{{worktreePath}}`, `{{branchName}}`, `{{baseBranch}}`, `{{prUrl}}`, `{{prNumber}}`, `{{attachments}}`.
+Template variables available: `{{title}}`, `{{description}}`, `{{task_xml}}`, `{{taskId}}`, `{{worktreePath}}`, `{{branchName}}`, `{{baseBranch}}`, `{{prUrl}}`, `{{prNumber}}`, `{{attachments}}`. One declaration (`src/shared/task-template-vars.ts`) drives the `auto_command` field, the `spawn_agent` promptTemplate, and the Automation tab's chip list - see [Transition Engine](transition-engine.md#template-variables).
 
 ## PTY Session Manager
 

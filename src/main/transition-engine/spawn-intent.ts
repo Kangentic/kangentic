@@ -14,7 +14,7 @@
  * This is a pure function with no side effects - easy to unit test.
  */
 
-import { interpolateTemplate } from '../agent/shared';
+import { interpolateTaskTemplate } from '../agent/shared';
 import type { SessionRecord } from '../../shared/types';
 import type { SessionRepository } from '../db/repositories/session-repository';
 
@@ -119,7 +119,7 @@ export function resolveSpawnIntent(options: SpawnIntentOptions): SpawnIntent {
     // owns the prompt slot and the auto_command is injected as a post-spawn
     // keystroke instead.
     prompt: promptTemplate
-      ? interpolateTemplate(promptTemplate, templateVars)
+      ? interpolateTaskTemplate(promptTemplate, templateVars)
       : resumePrompt,
     // On a forced-fresh entry, retire the prior record we deliberately skipped so
     // it does not linger or get resumed later. (retireRecord no-ops on records

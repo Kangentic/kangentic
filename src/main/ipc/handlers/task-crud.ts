@@ -138,7 +138,7 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
         // falls back to toLane, and the New Task dialog displayed inherit
         // values against the creation column itself.
         try {
-          await spawnAgent({ context, engine, tasks, sessionRepo, task, fromSwimlaneId: '*', toLane, projectId, projectPath });
+          await spawnAgent({ context, engine, tasks, sessionRepo, task, fromSwimlaneId: '*', toLane, projectId, projectPath, attachments });
         } catch (err) {
           console.error('[TASK_CREATE] Failed to start session:', err);
         }

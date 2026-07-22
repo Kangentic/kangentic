@@ -140,6 +140,7 @@ Anchors are enumerable source-code structures that must be exhaustively listed i
 | Anchor | Source file | Target doc |
 |--------|-----------|------------|
 | Template variables | `src/shared/template-vars.ts` | configuration.md (canonical), transition-engine.md and agent-integration.md (cross-reference only) |
+| Task template variables (auto_command / promptTemplate) | `src/shared/task-template-vars.ts` | transition-engine.md (canonical, "Template Variables"), architecture.md (cross-reference only) |
 
 ### Verification Procedures
 
@@ -188,6 +189,9 @@ Each entry has a one-line rationale so future edits know what the entry was prot
 
 - `src/shared/template-vars.ts`
   WHY: template variable list is mirrored in configuration.md (canonical) and cross-referenced in transition-engine.md and agent-integration.md.
+
+- `src/shared/task-template-vars.ts`
+  WHY: the 10-keyword auto_command / spawn_agent promptTemplate catalog (title, description, task_xml, taskId, worktreePath, branchName, baseBranch, prUrl, prNumber, attachments) is tabulated in transition-engine.md "Template Variables" and cross-referenced in architecture.md. Mechanically enforced by tests/unit/task-template-vars-parity.test.ts; see .claude/rules/task-template-vars-parity.md. Distinct from src/shared/template-vars.ts (the unrelated Shortcut command system). agent-integration.md's "Prompt Templates" section also names the full keyword list in prose (linking back to transition-engine.md as canonical) - not mechanically checked, spot-check it by hand on a keyword add/rename.
 
 - `src/main/agent/agent-adapter.ts`
   WHY: AgentAdapter interface methods (discoverCapabilities, getInjectionSequence, getCommandInjectionVerifier, summarize, locateSessionHistoryFile, getExitSequence, detectFirstOutput) are tabulated in agent-integration.md. Catches drift that types.ts re-exports miss.

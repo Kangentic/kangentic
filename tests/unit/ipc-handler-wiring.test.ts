@@ -72,7 +72,6 @@ vi.mock('../../src/main/ipc/helpers', () => ({
   cleanupTaskResources: vi.fn(),
   deleteTaskWorktree: vi.fn(),
   spawnAgent: vi.fn(),
-  buildAutoCommandVars: vi.fn(),
   resolveSpawnOverrides: vi.fn(),
 }));
 vi.mock('../../src/main/ipc/handlers/task-move', () => ({

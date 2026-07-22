@@ -153,7 +153,6 @@ vi.mock('../../src/main/ipc/helpers', () => ({
   })),
   cleanupTaskResources: vi.fn(async () => {}),
   deleteTaskWorktree: vi.fn(async () => true),
-  buildAutoCommandVars: vi.fn(() => ({})),
 }));
 
 // Import the module under test AFTER all vi.mock declarations.

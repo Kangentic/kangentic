@@ -84,7 +84,6 @@ vi.mock('../../src/main/ipc/helpers', () => ({
   createTransitionEngine: vi.fn(),
   cleanupTaskResources: vi.fn(),
   deleteTaskWorktree: vi.fn(),
-  buildAutoCommandVars: vi.fn(() => ({})),
   resolveSpawnOverrides: vi.fn(() => ({})),
 }));
 
