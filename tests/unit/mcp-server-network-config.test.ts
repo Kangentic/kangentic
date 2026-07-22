@@ -217,6 +217,46 @@ describe('startMcpHttpServer - allowedHosts wiring (Hole 1)', () => {
   });
 });
 
+describe('startMcpHttpServer - bindAddress passthrough (Hole 2)', () => {
+  let handle: McpHttpServerHandle | undefined;
+
+  afterEach(() => {
+    handle?.close();
+    handle = undefined;
+  });
+
+  /**
+   * Every other test in this file (and the pre-existing suite) only ever
+   * passes `bindAddress: '127.0.0.1'` into `startMcpHttpServer`, so none of
+   * them would notice a regression to a hardcoded
+   * `httpServer.listen(0, '127.0.0.1', ...)` call - the exact bug this
+   * feature fixed. `handle` deliberately does not expose the bound socket
+   * address (`baseUrl` is hardcoded loopback by design), and binding to a
+   * real non-loopback interface is not portable in a sandboxed CI runner,
+   * so there is no way to observe the actual bind from outside.
+   *
+   * Substitute: spy on the real `http.Server.prototype.listen` (call-through,
+   * not mocked - the server still actually starts) and assert the configured
+   * value reaches it. `'0.0.0.0'` (wildcard, all interfaces) is used rather
+   * than a real LAN IP because it needs no interface assignment and binds
+   * identically on Windows/macOS/Linux/CI, per the "wildcard bind" note in
+   * mcp-http-server.ts's file header.
+   */
+  it('passes the configured bindAddress through to httpServer.listen instead of hardcoding loopback', async () => {
+    const listenSpy = vi.spyOn(http.Server.prototype, 'listen');
+    try {
+      handle = await startMcpHttpServer(
+        () => null,
+        () => ({ enabled: false, allowInteraction: false, allowNavigation: false, allowEval: false, restrictNavigationToLocalhost: false }),
+        { bindAddress: '0.0.0.0' },
+      );
+      expect(listenSpy).toHaveBeenCalledWith(0, '0.0.0.0', expect.any(Function));
+    } finally {
+      listenSpy.mockRestore();
+    }
+  });
+});
+
 describe('DEFAULT_CONFIG.mcpServer - network defaults reproduce today\'s behavior', () => {
   it('binds to loopback and leaves callbackHost unset', () => {
     expect(DEFAULT_CONFIG.mcpServer.bindAddress).toBe('127.0.0.1');
