@@ -134,7 +134,16 @@ function makeDeps(args: { resumeRecord: SessionRecord | undefined }) {
   const scheduleKeystrokes = vi.fn();
   const context = {
     terminalSubmitScheduler: { scheduleKeystrokes },
-    configManager: { getEffectiveConfig: vi.fn(() => ({ agent: { permissionMode: 'acceptEdits' } })) },
+    configManager: {
+      getEffectiveConfig: vi.fn(() => ({
+        agent: { permissionMode: 'acceptEdits' },
+        git: { defaultBaseBranch: 'main' },
+      })),
+    },
+    // resolveDefaultBaseBranch (git-stats-capture.ts) reads this for the
+    // team-shared board default; undefined falls through to the git config
+    // default above, matching resolveAutoCommandVars in agent-spawn.ts.
+    boardConfigManager: { getDefaultBaseBranch: vi.fn(() => undefined) },
   };
 
   return { tasks, sessionRepo, engine, scheduleKeystrokes, context };

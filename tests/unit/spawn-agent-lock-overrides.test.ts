@@ -128,7 +128,18 @@ function makeDeps(args: { latestSession: unknown; task: Task }) {
     mainWindow: { isDestroyed: vi.fn(() => false), webContents: { send: vi.fn() } },
     terminalSubmitScheduler: { scheduleKeystrokes: vi.fn() },
     projectRepo: { getById: vi.fn(() => PROJECT_ROW) },
-    configManager: { getEffectiveConfig: vi.fn(() => ({ agent: { permissionMode: 'auto' } })) },
+    configManager: {
+      getEffectiveConfig: vi.fn(() => ({
+        agent: { permissionMode: 'auto' },
+        git: { defaultBaseBranch: 'main' },
+      })),
+    },
+    // resolveDefaultBaseBranch (git-stats-capture.ts) reads this for the
+    // team-shared board default; undefined falls through to the git config
+    // default above, matching resolveAutoCommandVars in agent-spawn.ts. No
+    // fixture here sets a truthy auto_command today, but every real spawnAgent
+    // context carries this shape - keep the mock honest.
+    boardConfigManager: { getDefaultBaseBranch: vi.fn(() => undefined) },
   };
   return { tasks, sessionRepo, engine, context };
 }
