@@ -20,7 +20,7 @@
  * to the session repo and the command built by the adapter mock to verify
  * what was interpolated.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TransitionEngine } from '../../src/main/transition-engine/transition-engine';
 import { buildTaskXml } from '../../src/main/agent/shared/prompt-xml';
 import { sanitizeForPty } from '../../src/shared/paths';
@@ -694,6 +694,13 @@ describe('TransitionEngine - executeAction builds ONE shared templateVars for ev
     vi.clearAllMocks();
   });
 
+  afterEach(() => {
+    // run_script/webhook tests below stub the global fetch; unstub
+    // unconditionally so a stub never leaks into an unrelated test file run
+    // in the same worker.
+    vi.unstubAllGlobals();
+  });
+
   it('send_command: a null task.base_branch interpolates {{baseBranch}} to the effective project default, not empty', async () => {
     const task = makeTask({ base_branch: null, session_id: 'sess-abc12345' });
     const action = makeAction({
@@ -717,5 +724,51 @@ describe('TransitionEngine - executeAction builds ONE shared templateVars for ev
       ['/review main'],
       { sendCtrlC: true, source: `send_command:${task.id.slice(0, 8)}` },
     );
+  });
+
+  it('run_script: a null task.base_branch interpolates {{baseBranch}} to the effective project default, not empty', async () => {
+    // Guards the OTHER two consumers the comment above flags: run_script and
+    // webhook (this test + the next) both read the SAME executeAction-built
+    // templateVars as send_command, but a call-site-specific regression (e.g.
+    // someone passing a different/empty vars object into just this one
+    // switch-case line) would fail nothing without a dedicated assertion here.
+    const task = makeTask({ base_branch: null });
+    const action = makeAction({
+      type: 'run_script',
+      config_json: JSON.stringify({ script: 'deploy.sh {{baseBranch}}' }),
+    });
+    const sessionManager = makeSessionManager();
+
+    const { engine } = makeEngine({ action, sessionManager });
+    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
+
+    // Red: reverting executeAction's templateVars to the pre-refactor
+    // `{ baseBranch: task.base_branch || '' }` shape makes this 'deploy.sh '
+    // (empty), never 'deploy.sh main'.
+    expect(sessionManager.spawnedSessions).toHaveLength(1);
+    expect(sessionManager.spawnedSessions[0].command).toBe('deploy.sh main');
+  });
+
+  it('webhook: a null task.base_branch interpolates {{baseBranch}} into both url and body, not empty', async () => {
+    const task = makeTask({ base_branch: null });
+    const action = makeAction({
+      type: 'webhook',
+      config_json: JSON.stringify({
+        url: 'https://example.test/notify?branch={{baseBranch}}',
+        body: JSON.stringify({ branch: '{{baseBranch}}' }),
+      }),
+    });
+    const fetchMock = vi.fn(async () => new Response(''));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { engine } = makeEngine({ action });
+    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
+
+    // Red: reverting executeAction's templateVars to the pre-refactor shape
+    // makes both of these resolve with an empty branch, never 'main'.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://example.test/notify?branch=main');
+    expect(init.body).toBe(JSON.stringify({ branch: 'main' }));
   });
 });

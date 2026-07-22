@@ -101,11 +101,24 @@ vi.mock('../../src/main/agent/agent-registry', () => ({
 vi.mock('../../src/main/ipc/handlers/backlog', () => ({ abortBacklogPromotion: vi.fn() }));
 vi.mock('../../src/main/ipc/handlers/session-metrics', () => ({ captureSessionMetrics: vi.fn(), refineTranscriptTokens: vi.fn(), refineTranscriptToolCounts: vi.fn() }));
 
-vi.mock('../../src/main/agent/shared', () => ({
-  interpolateTemplate: vi.fn((template: string) => template),
-  resolveBridgeScript: vi.fn(() => '/mock/bridge.js'),
-  execVersion: vi.fn(async () => '1.0.0'),
-}));
+// interpolateTaskTemplate/resolveTaskTemplateVars are the REAL implementations
+// (dynamically imported below), not stubs: the live-inject branch in
+// task-move.ts feeds toLane.auto_command through them, and a test that stubs
+// them out would only prove wiring, never the {{baseBranch}} effective-default
+// fix itself (see the "live-inject: {{baseBranch}}" describe block below).
+// Both source modules are pure (no DB/electron deps), so importing them for
+// real here is safe.
+vi.mock('../../src/main/agent/shared', async () => {
+  const { interpolateTaskTemplate } = await import('../../src/main/agent/shared/template-utils');
+  const { resolveTaskTemplateVars } = await import('../../src/main/agent/shared/task-template-resolvers');
+  return {
+    interpolateTemplate: vi.fn((template: string) => template),
+    resolveBridgeScript: vi.fn(() => '/mock/bridge.js'),
+    execVersion: vi.fn(async () => '1.0.0'),
+    interpolateTaskTemplate,
+    resolveTaskTemplateVars,
+  };
+});
 
 const mockGetProjectRepos = vi.fn();
 const mockEnsureTaskWorktree = vi.fn(async () => null);
@@ -208,7 +221,9 @@ function makeContext(taskRepo: unknown, swimlaneRepo: unknown) {
     tasks: taskRepo,
     swimlanes: swimlaneRepo,
     actions: { getTransitionsFor: vi.fn(() => []) },
-    attachments: { deleteByTaskId: vi.fn() },
+    // getPathsForTask is required by the live-inject branch (resolveTaskTemplateVars'
+    // attachmentPaths); real code always has this from getProjectRepos.
+    attachments: { deleteByTaskId: vi.fn(), getPathsForTask: vi.fn(() => []) },
   });
   return context;
 }
@@ -688,5 +703,95 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
     expect(context.sessionManager.suspend).not.toHaveBeenCalled();
     expect(markRecordSuspended).not.toHaveBeenCalled();
     expect(mockSpawnAgent).not.toHaveBeenCalled();
+  });
+});
+
+// =============================================================================
+// Coverage gap (task-template-vars-parity fix): the live-inject branch above
+// (Priority 3c, "same agent, live session") builds `interpolatedAuto` by
+// calling the REAL resolveTaskTemplateVars/interpolateTaskTemplate against
+// toLane.auto_command - but every test above uses makeLanes(), whose
+// executingLane defaults `auto_command: null`, so `toLane?.auto_command?.trim()`
+// is always falsy there and this call is never reached. Two things were
+// therefore unverified: (1) the barrel mock upstream never even provided these
+// two functions (so a real call would throw "not a function"), and (2) nothing
+// pinned that {{baseBranch}} resolves to the effective project default (not
+// empty) on THIS call site, mirroring the fix already pinned for spawnAgent
+// (spawn-agent-isolated-auto-command.test.ts) and send_command
+// (transition-engine.test.ts).
+// =============================================================================
+describe('handleTaskMove live-inject: {{baseBranch}} template resolution (task-template-vars-parity fix)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    hoisted.activeRecord = null;
+    hoisted.updateAppliedSettings.mockReset();
+    mockEnsureTaskWorktree.mockResolvedValue(null);
+    mockEnsureTaskBranchCheckout.mockResolvedValue(undefined);
+    mockSpawnAgent.mockResolvedValue(undefined);
+    vi.mocked(prepareInjectionPlan).mockReturnValue(null);
+  });
+
+  it('interpolates the destination auto_command with the effective default base branch, not empty', async () => {
+    // task.base_branch is null (see makeTask defaults), so the pre-fix
+    // buildAutoCommandVars/interpolateTemplate path resolved {{baseBranch}} to
+    // '' (task.base_branch || ''), leaving the literal placeholder text
+    // replaced by an empty string: '/merge-back '. The fix resolves it to the
+    // effective project default ('main', from configManager.getEffectiveConfig
+    // in makeContext) via the real interpolateTaskTemplate drop-and-collapse
+    // semantics: '/merge-back main'.
+    const { swimlaneRepo } = makeLanes({
+      permission_mode: null,
+      auto_command: '/merge-back {{baseBranch}}',
+    });
+    setActiveRecord('acceptEdits');
+    const taskRepo = makeTaskRepo();
+    const context = makeContext(taskRepo, swimlaneRepo);
+
+    await handleTaskMove(context as never, {
+      taskId: 'task-aaa00001',
+      targetSwimlaneId: EXECUTING_LANE_ID,
+      targetPosition: 0,
+    });
+
+    expect(vi.mocked(prepareInjectionPlan)).toHaveBeenCalledTimes(1);
+    const planArg = vi.mocked(prepareInjectionPlan).mock.calls[0][0] as { autoCommand?: string };
+    // Red: reverting to the old buildAutoCommandVars/interpolateTemplate shape
+    // makes this '/merge-back ' (trailing space, no branch name), never
+    // '/merge-back main'.
+    expect(planArg.autoCommand).toBe('/merge-back main');
+  });
+
+  it('threads the task attachments repo into {{attachments}} resolution via getPathsForTask', async () => {
+    const { swimlaneRepo } = makeLanes({
+      permission_mode: null,
+      auto_command: '/code-review {{attachments}}',
+    });
+    setActiveRecord('acceptEdits');
+    const taskRepo = makeTaskRepo();
+    const context = makeContext(taskRepo, swimlaneRepo);
+    const getPathsForTask = vi.fn(() => ['/mock/project/screenshot.png']);
+    mockGetProjectRepos.mockReturnValue({
+      tasks: taskRepo,
+      swimlanes: swimlaneRepo,
+      actions: { getTransitionsFor: vi.fn(() => []) },
+      attachments: { deleteByTaskId: vi.fn(), getPathsForTask },
+    });
+
+    await handleTaskMove(context as never, {
+      taskId: 'task-aaa00001',
+      targetSwimlaneId: EXECUTING_LANE_ID,
+      targetPosition: 0,
+    });
+
+    // Wiring: the destructured `attachments` repo (added by this diff to
+    // handleTaskMove's getProjectRepos call) reaches resolveTaskTemplateVars
+    // via getPathsForTask, not a stub. The exact collapse/whitespace shape of
+    // {{attachments}} interpolation is pinned separately in
+    // task-template-vars-parity.test.ts; this only proves the real path
+    // resolved (rather than an empty array from a caller that forgot to pass
+    // `attachments` through).
+    expect(getPathsForTask).toHaveBeenCalledWith('task-aaa00001');
+    const planArg = vi.mocked(prepareInjectionPlan).mock.calls[0][0] as { autoCommand?: string };
+    expect(planArg.autoCommand).toContain('/mock/project/screenshot.png');
   });
 });
