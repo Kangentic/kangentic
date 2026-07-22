@@ -27,6 +27,7 @@ export const BOARD_TOOL_READ_NAMES = [
   'get_transcript',
   'get_session_files',
   'get_session_events',
+  'get_activity_intervals',
 ] as const;
 
 export const BOARD_TOOL_WRITE_NAMES = [
