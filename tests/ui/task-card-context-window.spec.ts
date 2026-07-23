@@ -1,23 +1,28 @@
 /**
- * UI tests for TaskCard's board-card context-window trust gate.
+ * UI tests for TaskCard's board-card context-window render gate.
  *
  * TaskCard (src/renderer/components/board/TaskCard.tsx), the 'running'
  * bottom-bar case, computes the SAME gate as ContextBar but on its own
  * separate render path:
  *
- *   windowTrusted = contextWindowSize > 0 && usedTokens <= contextWindowSize
+ *   windowKnown = contextWindowSize > 0
+ *   overBudget = contextWindowSize > 0 && usedTokens > contextWindowSize
  *
- * When untrusted, the card footer renders `<div data-testid="usage-bar"
- * data-context-window="unknown"><span>{modelName}</span></div>` - model name
- * only, no "%" text, no bar track div. When trusted, it renders the model
- * name + `{pct}%` label + the bar track (`div.h-full.rounded-full`).
+ * When the window is unknown, the card footer renders `<div
+ * data-testid="usage-bar" data-context-window="unknown"><span>{modelName}
+ * </span></div>` with the bar reserved at 0% (stable card height) - no
+ * denominator to draw a real bar against. When the window is known but
+ * over budget (the near-full/auto-compaction state), the bar still renders,
+ * clamped to a full 100% critical bar. When usage fits comfortably, it
+ * renders the model name + `{pct}%` label + the bar track
+ * (`div.h-full.rounded-full`).
  *
  * The card must have already streamed a model displayName (else it shows the
  * "Starting agent..." spinner), so usage is seeded via a `sessions.getUsage`
  * override BEFORE mount - the same pattern task-activity-indicators.spec.ts
  * uses in its "ContextBar spinner pill" group (e.g. "shows model name with 0%
  * bar when usage exists but no tokens streamed yet"), which this spec's cases
- * extend to the impossible/consistent context-window pairing.
+ * extend to the over-budget/consistent context-window pairing.
  */
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
@@ -146,8 +151,8 @@ function makePreConfig(contextWindow: ContextWindowPatch): string {
   `;
 }
 
-test.describe('TaskCard context-window trust gate', () => {
-  test('impossible usage (usedTokens > contextWindowSize) shows a 0% bar, never the impossible percent', async () => {
+test.describe('TaskCard context-window render gate', () => {
+  test('over-budget usage (usedTokens > contextWindowSize) shows a full 100% critical bar', async () => {
     const { browser, page } = await launchWithState(makePreConfig({
       usedPercentage: 325,
       usedTokens: 650398,
@@ -163,11 +168,12 @@ test.describe('TaskCard context-window trust gate', () => {
       await expect(usageBar).toBeVisible({ timeout: 10000 });
 
       await expect(usageBar).toContainText('Opus 4.8');
-      // The bar layout is reserved (stable card height) at 0%, never the
-      // impossible 325% - the window is untrusted, so we do not divide by it.
-      await expect(usageBar).toContainText('0%');
+      // Over budget on a KNOWN window (200k) clamps to a full 100%, never the
+      // impossible 325% - this is a critical state to show, not a broken
+      // denominator to hide.
+      await expect(usageBar).toContainText('100%');
       await expect(usageBar).not.toContainText('325');
-      await expect(usageBar).toHaveAttribute('data-context-window', 'unknown');
+      await expect(usageBar).not.toHaveAttribute('data-context-window', 'unknown');
       await expect(usageBar.locator('div.h-full.rounded-full')).toHaveCount(1);
     } finally {
       await browser.close();

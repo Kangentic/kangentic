@@ -205,7 +205,7 @@ test.describe('Cursor ContextBar model pill', () => {
 
       // Same store-driven update path as the "resolves model pill" test
       // above: contextWindowSize: 0 is the "unknown size" sentinel, so
-      // windowTrusted is false and the fraction/bar/percent must not render.
+      // windowKnown is false and the fraction/bar/percent must not render.
       await page.evaluate(
         (sessionId: string) => {
           const stores = (window as unknown as {

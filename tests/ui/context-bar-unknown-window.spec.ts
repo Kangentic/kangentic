@@ -1,16 +1,19 @@
 /**
- * UI tests for ContextBar's context-window trust gate.
+ * UI tests for ContextBar's context-window render gate.
  *
  * ContextBar (src/renderer/components/terminal/ContextBar.tsx) reads
  * `usage.contextWindow` and computes:
  *
- *   windowTrusted = contextWindowSize > 0 && usedTokens <= contextWindowSize
+ *   windowKnown = contextWindowSize > 0
+ *   overBudget = contextWindowSize > 0 && usedTokens > contextWindowSize
  *
- * When the window is untrusted (unknown size, or an impossible pairing where
- * usedTokens exceeds the reported window), the context-usage section renders
- * nothing but a hidden sentinel (`<span data-context-window="unknown"
- * className="hidden" />`) - no fraction, no bar, no percent. The model/effort
- * pills render regardless (separate cells). When the window is trusted, the
+ * When the window is unknown (size 0, no denominator to draw a bar against),
+ * the context-usage section renders nothing but a hidden sentinel (`<span
+ * data-context-window="unknown" className="hidden" />`) - no fraction, no
+ * bar, no percent. The model/effort pills render regardless (separate
+ * cells). When the window is known but over budget (usedTokens exceeds it -
+ * the near-full/auto-compaction state), the bar still renders, clamped to a
+ * full 100% critical bar instead of hiding. When usage fits comfortably, the
  * fraction pill + bar + `{pct}%` render as usual.
  *
  * Setup mirrors context-bar-popover.spec.ts's CLAUDE_RUNNING_PRECONFIG and
@@ -154,8 +157,8 @@ async function applyUsage(
   );
 }
 
-test.describe('ContextBar context-window trust gate', () => {
-  test('impossible usage (usedTokens > contextWindowSize) hides percent/fraction/bar', async () => {
+test.describe('ContextBar context-window render gate', () => {
+  test('over-budget usage (usedTokens > contextWindowSize) clamps to a full 100% critical bar', async () => {
     const { browser, page } = await launchWithState(CLAUDE_RUNNING_PRECONFIG);
     try {
       await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
@@ -180,16 +183,18 @@ test.describe('ContextBar context-window trust gate', () => {
       // Model pill renders as usual (separate cell from the context-usage section).
       await expect.poll(async () => contextBar.textContent(), { timeout: 5000 }).toMatch(/Opus 4\.8/);
 
-      // The impossible 325% and the guessed-window fraction/bar are gone: the
-      // context-usage section renders only the hidden sentinel. Assert
-      // structurally (the bar track carries a "cached (system)" title, the
-      // percent label an "N% remaining" title) rather than by raw text, because
-      // the SEPARATE tokens pill legitimately still shows the used-token count
+      // The over-budget pairing is a known window (200k, not the unknown
+      // sentinel), so the segment still renders - clamped to a full 100%
+      // critical bar rather than the impossible 325%. Assert structurally
+      // (the bar track carries a "cached (system)" title, the percent label
+      // an "N% remaining" title) rather than by raw text, because the
+      // SEPARATE tokens pill legitimately still shows the used-token count
       // ("650.4k") - that cell is not the context-window bar.
       await expect(contextBar).not.toContainText('325');
-      await expect(contextBar.locator('[data-context-window="unknown"]')).toHaveCount(1);
-      await expect(contextBar.locator('[title*="cached (system)"]')).toHaveCount(0);
-      await expect(contextBar.locator('[title*="remaining"]')).toHaveCount(0);
+      await expect(contextBar.locator('[data-context-window="unknown"]')).toHaveCount(0);
+      await expect(contextBar.locator('[title*="cached (system)"]')).toHaveCount(1);
+      await expect(contextBar.locator('[title*="remaining"]')).toHaveCount(1);
+      await expect.poll(async () => contextBar.textContent(), { timeout: 5000 }).toMatch(/100%/);
     } finally {
       await browser.close();
     }

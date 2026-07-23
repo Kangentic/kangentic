@@ -7,7 +7,7 @@ import { useSessionStore } from '../../stores/session-store';
 import { useConfigStore } from '../../stores/config-store';
 import { getProgressColor } from '../../utils/color-lerp';
 import { windowElapsedPercentage } from '../../utils/rate-limit-window';
-import { formatTokenCount, isContextWindowTrusted } from '../../utils/format-tokens';
+import { formatTokenCount, isContextWindowKnown, contextWindowDisplayPercent } from '../../utils/format-tokens';
 import { formatCost, formatDuration } from '../../utils/format-session';
 import { formatDateTime, formatTime } from '../../lib/datetime';
 import { agentDisplayName } from '../../utils/agent-display-name';
@@ -177,7 +177,20 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
   const outputTokens = usage?.contextWindow.totalOutputTokens;
   const tokenKey = `${inputTokens}-${outputTokens}`;
   const tokenRef = useValuePulse(tokenKey, { resetKey: sessionId });
-  const pctRef = useValuePulse(usage ? Math.round(usage.contextWindow.usedPercentage) : 0, { resetKey: sessionId });
+  // Pulse on the CLAMPED display percent, not the raw usedPercentage: an
+  // over-budget window paints a fixed "100%" while the raw value keeps climbing
+  // (105 -> 110 ...), and pulsing on the raw value would flash the pill on every
+  // status update even though the visible text never changes.
+  const pctRef = useValuePulse(
+    usage
+      ? contextWindowDisplayPercent(
+          usage.contextWindow.contextWindowSize,
+          usage.contextWindow.usedTokens ?? 0,
+          usage.contextWindow.usedPercentage,
+        )
+      : 0,
+    { resetKey: sessionId },
+  );
   const fractionRef = useValuePulse(usage?.contextWindow.usedTokens, { resetKey: sessionId });
   const rateLimitsKey = latestRateLimits
     ? latestRateLimits.rateLimits.map((limitWindow) => `${limitWindow.id}:${Math.round(limitWindow.usedPercentage)}`).join('|')
@@ -230,9 +243,6 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
     );
   }
 
-  const pct = Math.round(usage.contextWindow.usedPercentage);
-  const progressColor = getProgressColor(pct);
-
   const modelName = resolvedModelName;
 
   // Transient (command-terminal) sessions have no task row, so the task-keyed
@@ -262,13 +272,17 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
   const cacheTokens = usage.contextWindow.cacheTokens ?? 0;
   const { contextWindowSize } = usage.contextWindow;
 
-  // Render the context fraction/bar/percent ONLY when the window is trustworthy:
-  // a positive size (0 is the "unknown size" sentinel) AND usedTokens within it
-  // (usedTokens > window is physically impossible, so the window is wrong).
-  // Numerator and denominator both come from this one `usage.contextWindow`, so
-  // a trustworthy pairing renders and an untrustworthy one degrades to the model
-  // name only - we never render a percentage whose parts disagree.
-  const windowTrusted = isContextWindowTrusted(contextWindowSize, usedTokens);
+  // Render the context fraction/bar/percent whenever the window is KNOWN (a
+  // positive size - 0 is the "unknown size" sentinel before any window has
+  // been learned for this session's model). `pct` is the shared clamped
+  // display percentage: an over-budget pairing (usedTokens > window) is a
+  // legitimate critical state on this authoritative status.json snapshot, not a
+  // broken denominator, so contextWindowDisplayPercent forces a full 100%
+  // critical bar rather than hiding it - a near-full/auto-compacting session
+  // still shows a full bar instead of vanishing.
+  const windowKnown = isContextWindowKnown(contextWindowSize);
+  const pct = contextWindowDisplayPercent(contextWindowSize, usedTokens, usage.contextWindow.usedPercentage);
+  const progressColor = getProgressColor(pct);
 
   const barTooltip = `${formatTokenCount(cacheTokens)} cached (system) \u00b7 ${formatTokenCount(Math.max(0, usedTokens - cacheTokens))} conversation`;
 
@@ -432,11 +446,12 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
           When only the fraction is enabled (bar off), it renders as a minimal
           pill so the toggle stays meaningful. */}
       {(() => {
-        // No bar/fraction/percent when the window is untrusted (unknown size, or
-        // an impossible usedTokens > window): show the model name only, never a
-        // bar against a bad denominator. The hidden sentinel keeps the state
-        // queryable for tests without adding a visible element.
-        if (!windowTrusted) {
+        // No bar/fraction/percent when the window is unknown (size 0, no
+        // denominator to draw a bar against): show the model name only. An
+        // over-budget window (usedTokens > size) still renders below, clamped
+        // to a full 100% critical bar rather than hidden. The hidden sentinel
+        // keeps the state queryable for tests without adding a visible element.
+        if (!windowKnown) {
           return <span data-context-window="unknown" className="hidden" />;
         }
         // Shared so the bar-embedded fraction and the bare-fraction pill render

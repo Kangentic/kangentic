@@ -210,8 +210,26 @@ export class UsageAccumulator {
    * Replace the cached usage for a session outright (no merge). Used
    * by Claude's status.json reader where each parse already carries the
    * complete usage payload.
+   *
+   * Fills a zero/missing window from the account's known window for this
+   * model, mirroring setSessionUsage's merge-path fill: a status.json can
+   * omit `context_window_size` (or report 0) while still carrying real usage,
+   * which would otherwise blank the bar with no recovery until a later
+   * nonzero status. Reads the map as it stood BEFORE this call, since the
+   * caller (SessionTelemetry.processStatusUpdate) teaches the map from this
+   * same usage AFTER replacing. Unlike the merge path, an over-budget pairing
+   * (usedTokens > window) is left as-is: this snapshot is authoritative, so
+   * usedTokens > window is a legitimate critical state, not a stale seed.
    */
   replaceSessionUsage(sessionId: string, usage: SessionUsage): void {
+    const context = usage.contextWindow;
+    if (context.contextWindowSize <= 0 && context.usedTokens > 0) {
+      const knownWindow = this.getKnownWindow(usage.model.id);
+      if (knownWindow && knownWindow > 0) {
+        context.contextWindowSize = knownWindow;
+        context.usedPercentage = (context.usedTokens / knownWindow) * 100;
+      }
+    }
     // Recording the authoritative window for this model (and re-emitting any
     // sibling background sessions it back-fills) is done by the caller
     // (SessionTelemetry.processStatusUpdate) so it can push the re-emits.

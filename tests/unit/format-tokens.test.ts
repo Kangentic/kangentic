@@ -5,7 +5,9 @@ import { describe, it, expect } from 'vitest';
 import {
   formatTokenCount,
   formatContextWindow,
-  isContextWindowTrusted,
+  isContextWindowKnown,
+  isContextWindowOverBudget,
+  contextWindowDisplayPercent,
   modelContextBadgeLabel,
   modelRowLabel,
 } from '../../src/renderer/utils/format-tokens';
@@ -50,14 +52,50 @@ describe('formatContextWindow', () => {
   });
 });
 
-describe('isContextWindowTrusted', () => {
-  it('trusts a positive window that fits the used tokens', () => {
-    expect(isContextWindowTrusted(1_000_000, 85_000)).toBe(true);
+describe('isContextWindowKnown', () => {
+  it('is known for any positive window size, regardless of usage', () => {
+    expect(isContextWindowKnown(1_000_000)).toBe(true);
+    expect(isContextWindowKnown(200_000)).toBe(true);
   });
 
-  it('rejects the 0 sentinel and an impossible over-full window', () => {
-    expect(isContextWindowTrusted(0, 85_000)).toBe(false);
-    expect(isContextWindowTrusted(200_000, 250_000)).toBe(false);
+  it('rejects the 0/negative "unknown size" sentinel', () => {
+    expect(isContextWindowKnown(0)).toBe(false);
+    expect(isContextWindowKnown(-1)).toBe(false);
+  });
+});
+
+describe('isContextWindowOverBudget', () => {
+  it('flags usedTokens exceeding a known window', () => {
+    expect(isContextWindowOverBudget(200_000, 250_000)).toBe(true);
+  });
+
+  it('is not over budget when tokens fit the window, or the window is unknown', () => {
+    expect(isContextWindowOverBudget(1_000_000, 85_000)).toBe(false);
+    expect(isContextWindowOverBudget(0, 85_000)).toBe(false);
+  });
+});
+
+describe('contextWindowDisplayPercent', () => {
+  it('rounds the reported percentage for a known, in-budget window', () => {
+    expect(contextWindowDisplayPercent(1_000_000, 85_000, 8.5)).toBe(9);
+    expect(contextWindowDisplayPercent(200_000, 130_000, 65)).toBe(65);
+  });
+
+  it('returns 0 for an unknown window regardless of the reported percentage', () => {
+    expect(contextWindowDisplayPercent(0, 100_000, 42)).toBe(0);
+    expect(contextWindowDisplayPercent(-1, 100_000, 42)).toBe(0);
+  });
+
+  it('forces 100 when usedTokens exceeds a known window', () => {
+    expect(contextWindowDisplayPercent(200_000, 250_000, 325)).toBe(100);
+  });
+
+  it('caps a known, in-budget window whose reported percentage still exceeds 100', () => {
+    // usedTokens fits the window (not over budget), but Claude's authoritative
+    // used_percentage can exceed 100 against an auto-compact-adjusted
+    // denominator. The cap keeps the label from reading e.g. 105%. Reverting the
+    // Math.min to a plain Math.round turns this case red.
+    expect(contextWindowDisplayPercent(200_000, 190_000, 105)).toBe(100);
   });
 });
 

@@ -78,15 +78,60 @@ export function modelRowLabel(id: string, displayNames: Record<string, string>):
 }
 
 /**
- * A context-window pairing is trustworthy only when the reported window size is
- * positive (0 is the "unknown size" sentinel) AND the used-token count fits
- * within it (usedTokens > window is physically impossible, so the window is
- * wrong, never the tokens). TaskCard and ContextBar both gate their
- * fraction/bar/percent on this single predicate so the two board surfaces
- * cannot drift apart on what counts as trustworthy. The main-process
- * UsageAccumulator.setSessionUsage enforces the same invariant on the merge
- * path, where the 0 sentinel originates.
+ * A context window is known (has a real denominator to draw a bar against)
+ * only when the reported size is positive - 0 is the "unknown size" sentinel
+ * used before any window has been learned for a session's model. TaskCard and
+ * ContextBar both gate their fraction/bar/percent render on this predicate so
+ * the two board surfaces cannot drift on what counts as renderable.
  */
-export function isContextWindowTrusted(contextWindowSize: number, usedTokens: number): boolean {
-  return contextWindowSize > 0 && usedTokens <= contextWindowSize;
+export function isContextWindowKnown(contextWindowSize: number): boolean {
+  return contextWindowSize > 0;
+}
+
+/**
+ * True when usedTokens exceeds a known window - occupancy at or past
+ * auto-compaction. This is a legitimate critical state, not a broken
+ * denominator: it only ever reaches the renderer from the Claude status.json
+ * replace path (UsageAccumulator.replaceSessionUsage), where window and tokens
+ * come from one authoritative snapshot. TaskCard and ContextBar both force the
+ * displayed percent to 100 on this predicate instead of hiding the bar, so a
+ * near-full/auto-compacting session still shows a full critical bar rather
+ * than vanishing. (The merge path, UsageAccumulator.setSessionUsage, degrades
+ * an over-budget pairing to the 0 sentinel before it reaches the renderer -
+ * that protects against a stale/mismatched window seed paired with fresh
+ * transcript-fallback tokens, and is unaffected by this predicate.)
+ */
+export function isContextWindowOverBudget(contextWindowSize: number, usedTokens: number): boolean {
+  return contextWindowSize > 0 && usedTokens > contextWindowSize;
+}
+
+/**
+ * The clamped context-window percentage to DISPLAY, shared by TaskCard and
+ * ContextBar so the two board surfaces cannot drift on the number they paint
+ * (the same reason the predicates above are shared). Returns:
+ *   - 0 for an unknown window (size 0, no denominator - callers render a
+ *     reserved 0% bar or hide the segment entirely via isContextWindowKnown),
+ *   - 100 for an over-budget window (the near-full/auto-compaction critical
+ *     state - a full bar rather than a hidden one),
+ *   - otherwise the reported percentage rounded and capped at 100. Claude's
+ *     authoritative used_percentage can exceed 100 against an
+ *     auto-compact-adjusted denominator even while usedTokens still fits the
+ *     window, so the cap is load-bearing, not decorative.
+ * This computes the NUMBER only; callers still gate the render on
+ * isContextWindowKnown. Feeding both the value-pulse baseline and the rendered
+ * label through this one function keeps the pulse inert while the displayed
+ * percent holds at a clamped 100 during sustained over-budget growth.
+ */
+export function contextWindowDisplayPercent(
+  contextWindowSize: number,
+  usedTokens: number,
+  usedPercentage: number,
+): number {
+  if (!isContextWindowKnown(contextWindowSize)) {
+    return 0;
+  }
+  if (isContextWindowOverBudget(contextWindowSize, usedTokens)) {
+    return 100;
+  }
+  return Math.min(100, Math.round(usedPercentage));
 }

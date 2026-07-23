@@ -368,6 +368,68 @@ describe('UsageAccumulator.setSessionUsage - merge behavior', () => {
     expect(cached?.contextWindow.contextWindowSize).toBe(200_000);
     expect(cached?.contextWindow.usedPercentage).toBe(92);
   });
+
+  it('replaceSessionUsage fills a zero/missing window from a known window and recomputes the percentage', () => {
+    usage.recordKnownWindow('claude-opus-4-8', 1_000_000);
+    const zeroWindowStatus: SessionUsage = {
+      contextWindow: {
+        usedPercentage: 0,
+        usedTokens: 100_000,
+        cacheTokens: 90_000,
+        totalInputTokens: 100_000,
+        totalOutputTokens: 0,
+        contextWindowSize: 0,
+      },
+      cost: { totalCostUsd: 0, totalDurationMs: 0 },
+      model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8' },
+    };
+    usage.replaceSessionUsage('zero-window-session', zeroWindowStatus);
+    const cached = usage.getSessionUsage('zero-window-session');
+    expect(cached?.contextWindow.contextWindowSize).toBe(1_000_000);
+    expect(cached?.contextWindow.usedPercentage).toBe(10);
+  });
+
+  it('replaceSessionUsage fill can itself land over budget, left for the renderer to clamp', () => {
+    usage.recordKnownWindow('claude-opus-4-8', 200_000);
+    const zeroWindowOverBudget: SessionUsage = {
+      contextWindow: {
+        usedPercentage: 0,
+        usedTokens: 250_000,
+        cacheTokens: 200_000,
+        totalInputTokens: 250_000,
+        totalOutputTokens: 0,
+        contextWindowSize: 0,
+      },
+      cost: { totalCostUsd: 0, totalDurationMs: 0 },
+      model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8' },
+    };
+    usage.replaceSessionUsage('fill-over-budget-session', zeroWindowOverBudget);
+    const cached = usage.getSessionUsage('fill-over-budget-session');
+    // Filled to the known window, not degraded to 0 - the replace path never
+    // second-guesses an over-budget pairing (see the "bypasses the
+    // impossibility guard" test above); the renderer clamps the display.
+    expect(cached?.contextWindow.contextWindowSize).toBe(200_000);
+    expect(cached?.contextWindow.usedPercentage).toBe(125);
+  });
+
+  it('replaceSessionUsage leaves a zero window at 0 when no known window has been learned', () => {
+    const zeroWindowStatus: SessionUsage = {
+      contextWindow: {
+        usedPercentage: 0,
+        usedTokens: 100_000,
+        cacheTokens: 90_000,
+        totalInputTokens: 100_000,
+        totalOutputTokens: 0,
+        contextWindowSize: 0,
+      },
+      cost: { totalCostUsd: 0, totalDurationMs: 0 },
+      model: { id: 'claude-sonnet-5', displayName: 'Sonnet 5' },
+    };
+    usage.replaceSessionUsage('unlearned-session', zeroWindowStatus);
+    const cached = usage.getSessionUsage('unlearned-session');
+    expect(cached?.contextWindow.contextWindowSize).toBe(0);
+    expect(cached?.contextWindow.usedPercentage).toBe(0);
+  });
 });
 
 describe('UsageAccumulator - per-tool aggregation', () => {
