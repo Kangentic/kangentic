@@ -314,3 +314,65 @@ describe('Config Manager -- commandTerminalWorkspace replace semantics', () => {
     expect(raw.commandTerminalWorkspace.focusedTaskId).toBe('slot-new');
   });
 });
+
+describe('Config Manager -- agent.launchOptions replace semantics', () => {
+  // Coverage hole: 'agent.launchOptions' is a CONFIG_DICTIONARY_PATHS entry
+  // (config-manager.ts), which makes save() REPLACE the whole two-level
+  // agent-name -> option-id -> enabled map wholesale instead of deep-merging
+  // it, so deleting a previously-stored agent's entry actually works. No prior
+  // test in this file (or deep-merge.test.ts, which only exercises the
+  // generic deepMerge mechanism with a hand-supplied dictionaryPaths list
+  // decoupled from this constant) drives a save() call through this specific
+  // entry, so removing 'agent.launchOptions' from CONFIG_DICTIONARY_PATHS
+  // currently goes undetected.
+  it('save({ agent: { launchOptions } }) REPLACES the previous two-level map, not deep-merges it', async () => {
+    const cm = await createConfigManager();
+
+    // First write: two agents both carry a launchOptions entry, plus a
+    // sibling agent.* field (cliPaths) that must survive the second write.
+    cm.save({
+      agent: {
+        cliPaths: { claude: '/usr/bin/claude' },
+        launchOptions: {
+          claude: { foo: true },
+          codex: { disableApps: false },
+        },
+      } as Parameters<typeof cm.save>[0]['agent'],
+    });
+    const afterFirstWrite = cm.load();
+    expect(afterFirstWrite.agent.launchOptions).toEqual({
+      claude: { foo: true },
+      codex: { disableApps: false },
+    });
+
+    // Second write: only codex.disableApps is mentioned. With deep-merge
+    // semantics the prior 'claude' entry would survive; with replace
+    // semantics the whole map is swapped out and 'claude' is gone.
+    cm.save({
+      agent: {
+        launchOptions: {
+          codex: { disableApps: true },
+        },
+      } as Parameters<typeof cm.save>[0]['agent'],
+    });
+    const afterSecondWrite = cm.load();
+
+    // Red: commenting out 'agent.launchOptions' in CONFIG_DICTIONARY_PATHS
+    // (config-manager.ts) makes this deep-merge instead, so the 'claude'
+    // entry from the first write survives and this fails.
+    expect(afterSecondWrite.agent.launchOptions).toEqual({ codex: { disableApps: true } });
+    expect('claude' in afterSecondWrite.agent.launchOptions).toBe(false);
+
+    // Sibling agent.* fields (untouched by the second, launchOptions-only
+    // save) must survive: cliPaths from the first write, permissionMode from
+    // DEFAULT_CONFIG.
+    expect(afterSecondWrite.agent.cliPaths).toEqual({ claude: '/usr/bin/claude' });
+    expect(afterSecondWrite.agent.permissionMode).toBe('acceptEdits');
+
+    // Verify the on-disk file also reflects replace semantics, not the
+    // previous map.
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect(raw.agent.launchOptions).toEqual({ codex: { disableApps: true } });
+    expect('claude' in raw.agent.launchOptions).toBe(false);
+  });
+});

@@ -79,6 +79,15 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'agent.executionServerAuth', tabId: 'agent', label: 'Authentication', description: 'Leave blank if the server does not require credentials', scope: 'global', keywords: ['remote', 'auth', 'username', 'password', 'basic', 'optional'] },
   { id: 'agent.executionWorkingDirectory', tabId: 'agent', label: 'Server Working Directory', description: "Path on the server for this project's tasks. Leave blank to use the server's own default directory", scope: 'project', keywords: ['remote', 'directory', 'path', 'worktree', 'cwd', 'optional'] },
 
+  // ── Agent > Launch Options ──
+  // One registry entry backs the rows of EVERY adapter that declares
+  // `launchOptions`; no agent name appears here, so the row never branches on
+  // one (agent-adapters-boundary.md). The concrete per-option label/description
+  // is adapter-authored and rendered as-is. The keywords below are seeded from
+  // today's sole option (Codex's ChatGPT Apps hang) so users can search for the
+  // symptom - revisit and generalize them when a second adapter adds one.
+  { id: 'agent.launchOptions', tabId: 'agent', label: 'Launch Options', description: 'Optional startup features this agent CLI can turn off', scope: 'global', keywords: ['apps', 'feature', 'flag', 'disable', 'startup', 'hang', 'mcp', 'boot', 'connector'] },
+
   // ── Git ──
   { id: 'git.worktreesEnabled', tabId: 'git', label: 'Enable Worktrees', description: 'Create git worktrees for agent tasks', scope: 'project', keywords: ['branch', 'isolate'] },
   { id: 'git.autoCleanup', tabId: 'git', label: 'Auto-cleanup', description: 'Remove worktrees when tasks complete', scope: 'project', keywords: ['remove', 'delete'] },

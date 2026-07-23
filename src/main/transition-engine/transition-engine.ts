@@ -7,6 +7,7 @@ import { SessionManager } from '../pty/session-manager';
 import type { TerminalSubmit } from '../pty/terminal-submit';
 import { interpolateTemplate, resolveTaskTemplateVars } from '../agent/shared';
 import { resolveExecutionTarget } from '../agent/shared/execution-target';
+import { resolveLaunchOptions } from '../agent/shared/launch-options';
 import { WorktreeManager, prepareWorktreeForRemoval, GitQueuePriority } from '../git/worktree-manager';
 import { agentRegistry } from '../agent/agent-registry';
 import { retireRecord, markRecordSuspended } from './session-lifecycle';
@@ -35,6 +36,8 @@ interface TransitionEngineConfig {
   executionServers: AppConfig['agent']['executionServers'];
   /** Per-project, agent-keyed local/remote choice + server working directory. */
   execution: AppConfig['agent']['execution'];
+  /** Global, agent-keyed boolean launch-option toggles (agent name -> option id -> enabled). */
+  launchOptions: AppConfig['agent']['launchOptions'];
 }
 
 /**
@@ -271,6 +274,7 @@ export class TransitionEngine {
 
     const shell = await this.sessionManager.getShell();
     const executionTarget = resolveExecutionTarget(agentName, appConfig.executionServers, appConfig.execution) ?? undefined;
+    const launchOptions = resolveLaunchOptions(adapter, appConfig.launchOptions);
     const commandOptions = {
       agentPath: detection.path,
       taskId: task.id,
@@ -290,6 +294,7 @@ export class TransitionEngine {
       model: spawnOverrides?.model ?? undefined,
       effort: spawnOverrides?.effort ?? undefined,
       executionTarget,
+      launchOptions,
     };
     const command = adapter.buildCommand(commandOptions);
     const extraEnv = adapter.buildEnv?.(commandOptions) ?? null;

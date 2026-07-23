@@ -16,6 +16,7 @@ const CONFIG_DICTIONARY_PATHS = [
   'agent.cliPaths',
   'agent.executionServers',
   'agent.execution',
+  'agent.launchOptions',
   'hotkeyOverrides',
   'workspaceByProject',
   'commandTerminalWorkspace',

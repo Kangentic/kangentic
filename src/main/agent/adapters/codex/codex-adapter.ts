@@ -8,7 +8,7 @@ import { CodexStatusParser } from './status-parser';
 import { discoverCodexCapabilities } from './capability-discovery';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import type { AgentAdapter, AgentInfo, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript } from '../../agent-adapter';
-import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier, AgentCapabilities } from '../../../../shared/types';
+import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier, AgentCapabilities, AgentLaunchOptionInfo } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
 
 /**
@@ -28,6 +28,22 @@ export class CodexAdapter implements AgentAdapter {
     { mode: 'bypassPermissions', label: 'Dangerous Full Access' },
   ];
   readonly defaultPermission: PermissionMode = 'acceptEdits';
+
+  /**
+   * Codex boots an optional cloud ChatGPT Apps MCP connector on startup
+   * (`apps` feature, stable and on by default per `codex features list`),
+   * which can hang the whole session at "Booting MCP server: codex_apps"
+   * (openai/codex#20167, #19284, #16550). `--disable apps` skips it for
+   * Kangentic-launched sessions only - the user's `~/.codex/config.toml`
+   * is never touched. See command-builder.ts for where `disableApps`
+   * becomes the CLI flag.
+   */
+  readonly launchOptions: readonly AgentLaunchOptionInfo[] = [{
+    id: 'disableApps',
+    label: 'Disable ChatGPT Apps',
+    description: "Skips Codex's optional ChatGPT Apps connector, which can hang startup. Doesn't touch your global config.",
+    default: false,
+  }];
 
   private readonly detector = new CodexDetector();
   private readonly commandBuilder = new CodexCommandBuilder();

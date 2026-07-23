@@ -106,6 +106,25 @@ export interface AgentDetectionInfo {
    *  Absent = this agent has no remote-execution capability; the Agent settings tab never
    *  renders remote rows for it. */
   remoteExecution?: AgentRemoteExecutionInfo;
+  /** Optional boolean startup toggles this agent CLI exposes (e.g. Codex's "Disable ChatGPT
+   *  Apps"). Absent/empty = this agent declares none; the Agent settings tab renders nothing. */
+  launchOptions?: readonly AgentLaunchOptionInfo[];
+}
+
+/**
+ * Renderer-facing description of a single adapter-declared launch-option toggle
+ * (`AgentAdapter.launchOptions`). Declares shape and copy only - never a value - so the Agent
+ * settings tab can render a toggle for any agent without branching on agent name
+ * (agent-adapters-boundary.md). The adapter interprets `id` into whatever CLI flag it needs;
+ * nothing outside the adapter knows the mapping.
+ */
+export interface AgentLaunchOptionInfo {
+  /** Stable id, used as the config key under `agent.launchOptions[agentName]`. Never renamed. */
+  id: string;
+  label: string;
+  description: string;
+  /** Value used when the user has not set one. */
+  default: boolean;
 }
 
 /**
@@ -1870,6 +1889,10 @@ export interface AppConfig {
     executionServers: Record<string, AgentExecutionServer>;
     /** Per-project, agent-keyed local/remote choice + server working directory. Project-overridable. */
     execution: Record<string, AgentProjectExecution>;
+    /** Global, agent-keyed boolean launch-option toggles (agent name -> option id -> enabled).
+     *  Machine-scoped, mirrors cliPaths - not project-overridable. An absent entry falls back
+     *  to the adapter's declared `AgentLaunchOptionInfo.default`. */
+    launchOptions: Record<string, Record<string, boolean>>;
   };
 
   sidebar: {
@@ -2240,6 +2263,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     autoResumeSessionsOnRestart: true,
     executionServers: {},
     execution: {},
+    launchOptions: {},
   },
   sidebar: {
     width: 400,

@@ -9,6 +9,7 @@ import type { TaskRepository } from '../../db/repositories/task-repository';
 import { runSpawnPreamble, resolveEffectivePermissionMode } from '../spawn-preamble';
 import { sessionOutputPaths } from '../session-paths';
 import { resolveExecutionTarget } from '../../agent/shared/execution-target';
+import { resolveLaunchOptions } from '../../agent/shared/launch-options';
 
 /**
  * Fully-prepared agent spawn: the adapter has been resolved, the CLI
@@ -167,6 +168,7 @@ export async function prepareAgentSpawn(input: {
     model: task.model_override ?? swimlane?.model_override ?? input.projectDefaultModel ?? undefined,
     effort: task.effort_override ?? swimlane?.effort_override ?? input.projectDefaultEffort ?? undefined,
     executionTarget: resolveExecutionTarget(agent, config.agent.executionServers, config.agent.execution) ?? undefined,
+    launchOptions: resolveLaunchOptions(adapter, config.agent.launchOptions),
   };
 
   const command = adapter.buildCommand(commandOptions);

@@ -26,7 +26,8 @@ import { buildTaskXml } from '../../src/main/agent/shared/prompt-xml';
 import { sanitizeForPty } from '../../src/shared/paths';
 import { migrateResumeCwdIfRenamed } from '../../src/main/transition-engine/resume-cwd-migration';
 import { OpenCodeCommandBuilder, type OpenCodeCommandOptions } from '../../src/main/agent/adapters/opencode';
-import type { AgentExecutionServer, AgentProjectExecution } from '../../src/shared/types';
+import { CodexCommandBuilder, type CodexCommandOptions } from '../../src/main/agent/adapters/codex';
+import type { AgentExecutionServer, AgentProjectExecution, AgentLaunchOptionInfo } from '../../src/shared/types';
 
 // ---------------------------------------------------------------------------
 // Minimal mock factories
@@ -132,6 +133,11 @@ const mockAdapter = {
   sessionType: 'claude_agent',
   supportsCallerSessionId: true,
   defaultPermission: 'default',
+  // Undefined by default, matching every adapter but Codex (see
+  // AgentAdapter.launchOptions). The launch-option wiring describe below
+  // sets this per-test and restores it to undefined afterward so later
+  // describe blocks in this file are unaffected.
+  launchOptions: undefined as readonly AgentLaunchOptionInfo[] | undefined,
   detect: vi.fn(async () => ({ found: true, path: '/usr/bin/claude', version: '1.0.0' })),
   ensureTrust: vi.fn(async () => {}),
   buildCommand: vi.fn((options: { prompt?: string }) => {
@@ -204,6 +210,9 @@ function makeEngine(options: {
    * caller of makeEngine. */
   executionServers?: Record<string, AgentExecutionServer>;
   execution?: Record<string, AgentProjectExecution>;
+  /** Global, agent-keyed boolean launch-option toggles. Defaults to an empty
+   * map (no stored overrides), matching every existing caller of makeEngine. */
+  launchOptions?: Record<string, Record<string, boolean>>;
   /** Override the default no-op terminalSubmit stub (e.g. send_command tests
    * need submitKeystrokes to return a real Promise so its internal `.catch`
    * doesn't throw). */
@@ -233,6 +242,7 @@ function makeEngine(options: {
     cliPathOverrides: {},
     executionServers: options.executionServers ?? {},
     execution: options.execution ?? {},
+    launchOptions: options.launchOptions ?? {},
   }));
 
   const terminalSubmit = options.terminalSubmit ?? makeTerminalSubmit();
@@ -678,6 +688,92 @@ describe('TransitionEngine - remote execution wiring (executeSpawnAgent chokepoi
     await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
 
     expect(capturedExecutionTarget).toBeUndefined();
+  });
+});
+
+describe('TransitionEngine - launch-option wiring (executeSpawnAgent chokepoint)', () => {
+  // Coverage hole: resolveLaunchOptions is called at this chokepoint
+  // (transition-engine.ts) and threaded into commandOptions.launchOptions, but
+  // no prior test spawned through it with an adapter that declares launch
+  // options. Deleting that wiring (either the resolveLaunchOptions call or the
+  // launchOptions property on commandOptions) would silently drop the toggle
+  // while every other test here kept passing, because they all use
+  // mockAdapter with launchOptions left undefined (no adapter but Codex
+  // declares any).
+  //
+  // mockAdapter.buildCommand is swapped for the REAL CodexCommandBuilder so
+  // the assertion exercises production --disable-apps flag logic, not a
+  // hand-rolled stub of "did launchOptions arrive". mockAdapter.launchOptions
+  // is set to Codex's real declared option per-test and restored to
+  // undefined afterward so it does not leak into other describe blocks in
+  // this file.
+  const codexLaunchOptions: readonly AgentLaunchOptionInfo[] = [{
+    id: 'disableApps',
+    label: 'Disable ChatGPT Apps',
+    description: "Skips the optional ChatGPT Apps connector.",
+    default: false,
+  }];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAdapter.buildCommand.mockImplementation((options: { prompt?: string }) => {
+      return `claude ${options.prompt ?? ''}`;
+    });
+  });
+
+  afterEach(() => {
+    mockAdapter.launchOptions = undefined;
+  });
+
+  it('threads resolveLaunchOptions into commandOptions.launchOptions, producing a --disable apps flag', async () => {
+    mockAdapter.launchOptions = codexLaunchOptions;
+    const codexCommandBuilder = new CodexCommandBuilder();
+    mockAdapter.buildCommand.mockImplementation((options: { agentPath: string; prompt?: string }) => {
+      const { agentPath, ...rest } = options;
+      return codexCommandBuilder.buildCodexCommand({ codexPath: agentPath, ...rest } as CodexCommandOptions);
+    });
+
+    const task = makeTask();
+    const sessionManager = makeSessionManager();
+    const { engine } = makeEngine({
+      sessionManager,
+      launchOptions: {
+        claude: { disableApps: true },
+      },
+    });
+
+    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
+
+    expect(sessionManager.spawnedSessions).toHaveLength(1);
+    const command = sessionManager.spawnedSessions[0].command;
+    // Red: commenting out `const launchOptions = resolveLaunchOptions(...)` or
+    // the `launchOptions,` key on executeSpawnAgent's commandOptions
+    // (transition-engine.ts) makes buildCodexCommand never see the flag, so
+    // this command would omit `--disable apps` entirely.
+    expect(command).toContain('--disable apps');
+  });
+
+  it('does not thread a launchOptions value when the adapter declares no launch options', async () => {
+    // mockAdapter.launchOptions stays undefined (default, mirrors every
+    // adapter but Codex), even though a stored override IS configured -
+    // resolveLaunchOptions must key off the ADAPTER's declared options, not
+    // the presence of stored config.
+    let capturedLaunchOptions: unknown;
+    mockAdapter.buildCommand.mockImplementation((options: { launchOptions?: unknown; prompt?: string }) => {
+      capturedLaunchOptions = options.launchOptions;
+      return `claude ${options.prompt ?? ''}`;
+    });
+
+    const task = makeTask();
+    const { engine } = makeEngine({
+      launchOptions: {
+        claude: { disableApps: true },
+      },
+    });
+
+    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
+
+    expect(capturedLaunchOptions).toBeUndefined();
   });
 });
 

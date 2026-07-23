@@ -12,6 +12,7 @@ import { Combobox } from '../../dialogs/Combobox';
 import { SettingRow, INPUT_CLASS, useScopedUpdate } from '../shared';
 import { settingProps } from '../settings-registry';
 import { AgentExecutionFields } from './agent-execution-fields';
+import { AgentLaunchOptionFields } from './agent-launch-option-fields';
 
 export function AgentTab({ config, globalConfig, agentInfo, agentList }: {
   config: AppConfig;
@@ -204,6 +205,7 @@ export function AgentTab({ config, globalConfig, agentInfo, agentList }: {
             )}
           </SettingRow>
           <AgentExecutionFields agent={agent} config={config} globalConfig={globalConfig} />
+          <AgentLaunchOptionFields agent={agent} globalConfig={globalConfig} />
         </Fragment>
         );
       })}

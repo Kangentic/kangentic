@@ -17,6 +17,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { AgentAdapter, SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
 import type { Task, Swimlane, AppConfig } from '../../src/shared/types';
 import { OpenCodeCommandBuilder, type OpenCodeCommandOptions } from '../../src/main/agent/adapters/opencode';
+import { CodexCommandBuilder, type CodexCommandOptions } from '../../src/main/agent/adapters/codex';
+import type { AgentLaunchOptionInfo } from '../../src/shared/types';
 
 // ---------------------------------------------------------------------------
 // Hoisted mock functions - all mocks that need to be referenced outside of
@@ -283,6 +285,11 @@ function makeCaptureAdapter(
   options: {
     name?: string;
     supportsCallerSessionId?: boolean;
+    /** Declared boolean launch-option toggles (AgentAdapter.launchOptions is
+     * readonly, so it must be set here at construction rather than assigned
+     * after the fact). Defaults to undefined, matching every adapter but
+     * Codex. */
+    launchOptions?: readonly AgentLaunchOptionInfo[];
   } = {},
 ): { adapter: AgentAdapter; capturedCommandOptions: SpawnCommandOptions[] } {
   const capturedCommandOptions: SpawnCommandOptions[] = [];
@@ -293,6 +300,7 @@ function makeCaptureAdapter(
     displayName: adapterName,
     sessionType: `${adapterName}_agent` as AgentAdapter['sessionType'],
     supportsCallerSessionId: options.supportsCallerSessionId ?? false,
+    launchOptions: options.launchOptions,
     permissions: [],
     defaultPermission: 'default',
     async detect(_overridePath?: string | null) {
@@ -610,5 +618,97 @@ describe('prepareAgentSpawn - remote OpenCode execution wiring', () => {
     if (!result.ok) throw new Error('Expected ok:true');
     expect(capturedCommandOptions).toHaveLength(1);
     expect(capturedCommandOptions[0].executionTarget).toBeUndefined();
+  });
+});
+
+describe('prepareAgentSpawn - Codex launch-option wiring', () => {
+  // Coverage hole: resolveLaunchOptions is called at this chokepoint
+  // (session-startup/prepare-spawn.ts) and threaded into
+  // commandOptions.launchOptions, but no prior test spawned through it with
+  // an adapter that declares launch options. Deleting that wiring (either the
+  // resolveLaunchOptions call or the launchOptions property on
+  // commandOptions) would silently drop the toggle while every other test in
+  // this file kept passing, because they all use adapters with no declared
+  // launchOptions.
+  //
+  // The capture adapter's buildCommand is swapped for the REAL
+  // CodexCommandBuilder so the assertion exercises production
+  // --disable-apps flag logic, not a hand-rolled stub of "did launchOptions
+  // arrive".
+  const codexLaunchOptions: readonly AgentLaunchOptionInfo[] = [{
+    id: 'disableApps',
+    label: 'Disable ChatGPT Apps',
+    description: "Skips the optional ChatGPT Apps connector.",
+    default: false,
+  }];
+
+  it('threads resolveLaunchOptions into commandOptions.launchOptions, producing a --disable apps flag', async () => {
+    const codexCommandBuilder = new CodexCommandBuilder();
+    const { adapter, capturedCommandOptions } = makeCaptureAdapter({
+      name: 'codex',
+      launchOptions: codexLaunchOptions,
+    });
+    adapter.buildCommand = (commandOptions: SpawnCommandOptions) => {
+      capturedCommandOptions.push(commandOptions);
+      const { agentPath, ...rest } = commandOptions;
+      return codexCommandBuilder.buildCodexCommand({ codexPath: agentPath, ...rest } as CodexCommandOptions);
+    };
+    agentRegistryGetMock.mockReturnValue(adapter);
+
+    const configWithLaunchOption = makeAppConfig({
+      agent: {
+        cliPaths: {},
+        permissionMode: 'default',
+        maxConcurrentSessions: 5,
+        queueOverflow: 'queue',
+        autoResumeSessionsOnRestart: true,
+        launchOptions: {
+          codex: { disableApps: true },
+        },
+      } as unknown as AppConfig['agent'],
+    });
+
+    const result = await prepareAgentSpawn(makeSpawnInput({ effectiveConfig: configWithLaunchOption }));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('Expected ok:true');
+    expect(capturedCommandOptions).toHaveLength(1);
+    expect(capturedCommandOptions[0].launchOptions).toEqual({ disableApps: true });
+    // Red: commenting out `launchOptions: resolveLaunchOptions(...)` in
+    // prepareAgentSpawn's commandOptions (prepare-spawn.ts) makes
+    // buildCodexCommand never see the flag, so this command would omit
+    // `--disable apps` entirely.
+    expect(result.data.command).toContain('--disable apps');
+  });
+
+  it('does not thread a launchOptions value when the adapter declares no launch options', async () => {
+    // Plain capture stub (the default makeCaptureAdapter behavior), not the
+    // real CodexCommandBuilder: this test only needs to see what
+    // commandOptions carried. launchOptions is left unset on the adapter even
+    // though a stored override IS configured below - resolveLaunchOptions
+    // must key off the ADAPTER's declared options, not the presence of
+    // stored config.
+    const { adapter, capturedCommandOptions } = makeCaptureAdapter({ name: 'codex' });
+    agentRegistryGetMock.mockReturnValue(adapter);
+
+    const configWithLaunchOption = makeAppConfig({
+      agent: {
+        cliPaths: {},
+        permissionMode: 'default',
+        maxConcurrentSessions: 5,
+        queueOverflow: 'queue',
+        autoResumeSessionsOnRestart: true,
+        launchOptions: {
+          codex: { disableApps: true },
+        },
+      } as unknown as AppConfig['agent'],
+    });
+
+    const result = await prepareAgentSpawn(makeSpawnInput({ effectiveConfig: configWithLaunchOption }));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('Expected ok:true');
+    expect(capturedCommandOptions).toHaveLength(1);
+    expect(capturedCommandOptions[0].launchOptions).toBeUndefined();
   });
 });

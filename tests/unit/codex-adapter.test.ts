@@ -71,6 +71,21 @@ describe('Codex Adapter', () => {
       expect(command).toContain('-q');
       expect(command).toContain('--json');
     });
+
+    it('adds --disable apps when the disableApps launch option is enabled', () => {
+      const command = adapter.buildCommand(makeOptions({ launchOptions: { disableApps: true } }));
+      expect(command).toContain('--disable apps');
+    });
+
+    it('omits --disable apps when the disableApps launch option is false', () => {
+      const command = adapter.buildCommand(makeOptions({ launchOptions: { disableApps: false } }));
+      expect(command).not.toContain('--disable');
+    });
+
+    it('omits --disable apps when no launch options are provided', () => {
+      const command = adapter.buildCommand(makeOptions());
+      expect(command).not.toContain('--disable');
+    });
   });
 
   describe('buildCommand - resume session', () => {
@@ -102,6 +117,24 @@ describe('Codex Adapter', () => {
         prompt: 'this should be ignored',
       }));
       expect(command).not.toContain('this should be ignored');
+    });
+
+    it('resume command adds --disable apps when the disableApps launch option is enabled', () => {
+      const command = adapter.buildCommand(makeOptions({
+        resume: true,
+        sessionId: 'sess-abc-123',
+        launchOptions: { disableApps: true },
+      }));
+      expect(command).toContain('--disable apps');
+    });
+
+    it('resume command omits --disable apps when the disableApps launch option is false', () => {
+      const command = adapter.buildCommand(makeOptions({
+        resume: true,
+        sessionId: 'sess-abc-123',
+        launchOptions: { disableApps: false },
+      }));
+      expect(command).not.toContain('--disable');
     });
   });
 

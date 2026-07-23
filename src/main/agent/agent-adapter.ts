@@ -16,6 +16,7 @@ import type {
   AgentExecutionServer,
   ResolvedExecutionTarget,
   RemoteServerStatus,
+  AgentLaunchOptionInfo,
 } from '../../shared/types';
 
 /**
@@ -77,6 +78,12 @@ export interface CommandOptions {
   model?: string;
   /** Adapter-specific effort/reasoning level (e.g. Claude `--effort xhigh`). Empty/undefined leaves the agent default in place. */
   effort?: string;
+  /**
+   * Fully-defaulted launch-option values for THIS agent, keyed by
+   * `AgentLaunchOptionInfo.id`. Populated by the spawn chokepoints via
+   * `resolveLaunchOptions`. Undefined for adapters that declare no launch options.
+   */
+  launchOptions?: Record<string, boolean>;
   /**
    * Present only when this project's execution mode for this agent is
    * 'remote' (resolved by the spawn chokepoint from `agent.executionServers`
@@ -167,6 +174,17 @@ export interface AgentAdapter {
     readonly info: AgentRemoteExecutionInfo;
     probeServer(server: AgentExecutionServer): Promise<RemoteServerStatus>;
   };
+
+  /**
+   * Optional boolean startup toggles this agent CLI exposes (e.g. Codex's "Disable ChatGPT
+   * Apps", which maps to `--disable apps`). Absent for every other adapter - the Agent settings
+   * tab renders no launch-option rows for an agent that omits this, per
+   * `agent-adapters-boundary.md`. Values are resolved by `resolveLaunchOptions`
+   * (`src/main/agent/shared/launch-options.ts`) and threaded through as
+   * `CommandOptions.launchOptions`; only this adapter's command builder interprets `id` into a
+   * concrete CLI flag.
+   */
+  readonly launchOptions?: readonly AgentLaunchOptionInfo[];
 
   /** Build the shell command string to spawn the agent. */
   buildCommand(options: SpawnCommandOptions): string;

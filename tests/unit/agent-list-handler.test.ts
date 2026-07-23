@@ -35,7 +35,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { AgentDetectionInfo, AgentExecutionServer, AgentRemoteExecutionInfo, RemoteServerStatus } from '../../src/shared/types';
+import type { AgentDetectionInfo, AgentExecutionServer, AgentLaunchOptionInfo, AgentRemoteExecutionInfo, RemoteServerStatus } from '../../src/shared/types';
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -83,6 +83,7 @@ type MockAdapter = {
     info: AgentRemoteExecutionInfo;
     probeServer: (server: AgentExecutionServer) => Promise<RemoteServerStatus>;
   };
+  launchOptions?: readonly AgentLaunchOptionInfo[];
 };
 
 let mockRegistryAdapters: MockAdapter[] = [];
@@ -400,6 +401,32 @@ describe('AGENT_LIST IPC handler - probeAuth integration', () => {
     const results = await invokeAgentList();
 
     expect(results[0].remoteExecution).toBeUndefined();
+  });
+
+  it('surfaces adapter.launchOptions verbatim for an adapter that declares them (Codex)', async () => {
+    const launchOptions: AgentLaunchOptionInfo[] = [{
+      id: 'disableApps',
+      label: 'Disable ChatGPT Apps',
+      description: 'Skip the optional cloud ChatGPT Apps MCP connector.',
+      default: false,
+    }];
+    mockRegistryAdapters = [
+      makeAdapter({ name: 'codex', launchOptions }),
+    ];
+
+    const results = await invokeAgentList();
+
+    expect(results[0].launchOptions).toEqual(launchOptions);
+  });
+
+  it('leaves launchOptions undefined for an adapter with no launch-option capability', async () => {
+    mockRegistryAdapters = [
+      makeAdapter({ name: 'claude' }),
+    ];
+
+    const results = await invokeAgentList();
+
+    expect(results[0].launchOptions).toBeUndefined();
   });
 });
 

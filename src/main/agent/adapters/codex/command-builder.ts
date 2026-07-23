@@ -21,6 +21,8 @@ export interface CodexCommandOptions {
   mcpServerToken?: string;
   model?: string;
   effort?: string;
+  /** Fully-defaulted launch-option values (`AgentLaunchOptionInfo.id` -> enabled). */
+  launchOptions?: Record<string, boolean>;
 }
 
 /**
@@ -75,6 +77,11 @@ export class CodexCommandBuilder {
       parts.push(quoteArg(options.codexPath, shell));
       parts.push('resume', quoteArg(options.sessionId, shell));
       parts.push('-C', quoteArg(toForwardSlash(options.cwd), shell));
+      // Same ChatGPT Apps opt-out as the new-session branch below; a resumed
+      // session boots the connector too, so the flag has to be repeated here.
+      if (options.launchOptions?.disableApps) {
+        parts.push('--disable', 'apps');
+      }
       return parts.join(' ');
     }
 
@@ -90,6 +97,12 @@ export class CodexCommandBuilder {
 
     // Approval mode
     parts.push(...mapPermissionMode(options.permissionMode));
+
+    // Skip the optional cloud ChatGPT Apps MCP connector, which can hang
+    // startup at "Booting MCP server: codex_apps" (openai/codex#20167).
+    if (options.launchOptions?.disableApps) {
+      parts.push('--disable', 'apps');
+    }
 
     // Per-column model override
     if (options.model && options.model.trim().length > 0) {

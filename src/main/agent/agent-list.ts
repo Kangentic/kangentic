@@ -61,6 +61,7 @@ async function buildAgentList(
         supportsSummarize: typeof adapter.summarize === 'function',
         capabilities,
         remoteExecution: adapter.remoteExecution?.info,
+        launchOptions: adapter.launchOptions,
       };
     }),
   );

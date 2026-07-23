@@ -101,6 +101,7 @@
       autoResumeSessionsOnRestart: false,
       executionServers: {},
       execution: {},
+      launchOptions: {},
     },
     git: {
       worktreesEnabled: true,
@@ -1960,6 +1961,16 @@
             ],
             defaultPermission: 'acceptEdits',
             supportsSummarize: true,
+            // KEEP IN SYNC with CodexAdapter.launchOptions in
+            // src/main/agent/adapters/codex/codex-adapter.ts - the only agent
+            // that declares a launch option today, so the Agent tab's launch
+            // option row has exactly one agent to render it for in tests.
+            launchOptions: [{
+              id: 'disableApps',
+              label: 'Disable ChatGPT Apps',
+              description: "Skips Codex's optional ChatGPT Apps connector, which can hang startup. Doesn't touch your global config.",
+              default: false,
+            }],
           },
           {
             name: 'gemini', displayName: 'Gemini CLI', found: false, path: null, version: null,

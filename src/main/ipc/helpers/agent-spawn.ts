@@ -87,6 +87,7 @@ export function createTransitionEngine(
         cliPathOverrides: config.agent.cliPaths,
         executionServers: config.agent.executionServers,
         execution: config.agent.execution,
+        launchOptions: config.agent.launchOptions,
       };
     },
     sessionRepo,

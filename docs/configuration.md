@@ -32,6 +32,7 @@ These settings appear only in App Settings and cannot be overridden per-project:
 - `restoreWindowPosition`
 - `agent.cliPaths`, `agent.maxConcurrentSessions`, `agent.queueOverflow`, `agent.autoResumeSessionsOnRestart`
 - `agent.executionServers` (per-agent remote-server url + auth; the Agent tab's Server URL / Authentication fields, shown when the selected agent declares remote-execution support)
+- `agent.launchOptions` (per-agent boolean startup toggles; the Agent tab's Launch Options rows, shown when the selected agent declares launch-option capability)
 - `terminal.panelHeight`, `terminal.showPreview`
 - `autoFocusIdleSession`
 - `skipBoardConfigConfirm`
@@ -126,6 +127,7 @@ These settings appear in both App Settings (as defaults) and Project Settings (a
 | `agent.autoResumeSessionsOnRestart` | boolean | `true` | When true, agent sessions that were running at last close auto-resume when Kangentic restarts. When false, sessions stay paused and require a manual Resume click on each task. Turn off if auto-resuming many agents at once overwhelms your machine. Global-only. |
 | `agent.executionServers` | Record\<string, AgentExecutionServer\> | `{}` | Global, agent-keyed remote-server identity: `{ url, auth }`. `auth` is `{kind:'none'}`, `{kind:'basic', username, password}`, or `{kind:'bearerEnv', envVarName}`. Machine-scoped like `agent.cliPaths` - names a server, not a project. Global-only. |
 | `agent.execution` | Record\<string, AgentProjectExecution\> | `{}` | Per-project, agent-keyed: `{ mode: 'local' \| 'remote', workingDirectory }`. An absent entry means local. `workingDirectory` is a path ON THE SERVER for this project's tasks. See [Remote Execution](#remote-execution). |
+| `agent.launchOptions` | Record\<string, Record\<string, boolean\>\> | `{}` | Global, agent-keyed boolean startup toggles: agent name -> option id -> enabled. An absent entry falls back to the adapter's declared default. Machine-scoped like `agent.cliPaths`. Global-only. Today only Codex declares one option, `disableApps` (launches with `--disable apps` to skip the optional cloud ChatGPT Apps MCP connector, which can hang startup at "Booting MCP server: codex_apps"). |
 
 PermissionMode values:
 
