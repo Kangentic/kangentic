@@ -133,7 +133,7 @@ test.describe('Settings Panel', () => {
     await closeSettings();
   });
 
-  test('shows Terminal tab with shell, font size, font family, scrollback, and cursor style', async () => {
+  test('shows Terminal tab with shell, font size, font family, scrollback, cursor style, and backspace behavior', async () => {
     await openSettings();
     await page.getByRole('button', { name: 'Terminal', exact: true }).click();
 
@@ -142,6 +142,10 @@ test.describe('Settings Panel', () => {
     await expect(page.getByText('Font Family', { exact: true })).toBeVisible();
     await expect(page.getByText('Scrollback Lines')).toBeVisible();
     await expect(page.getByText('Cursor Style')).toBeVisible();
+    // Word delete on Backspace (terminal.backspaceSendsCtrlH) - goes RED if the
+    // SettingToggleRow is removed from TerminalTab.tsx, while leaving all other
+    // assertions here green.
+    await expect(page.getByText('Word delete on Backspace')).toBeVisible();
     await expect(page.getByText('Context Bar')).toBeVisible();
 
     await closeSettings();
@@ -152,6 +156,34 @@ test.describe('Settings Panel', () => {
     await page.getByRole('button', { name: 'Terminal', exact: true }).click();
     await expect(page.getByText('Rate Limits', { exact: true })).toBeVisible();
     await expect(page.getByText('Claude 5h / weekly quota bars')).toBeVisible();
+    await closeSettings();
+  });
+
+  test('toggling Word delete on Backspace persists terminal.backspaceSendsCtrlH as a project override', async () => {
+    // DEFAULT_CONFIG.terminal.backspaceSendsCtrlH is true on all platforms
+    // (src/shared/types.ts), so the switch starts checked with no prior setup.
+    await openSettings();
+    await page.getByRole('button', { name: 'Terminal', exact: true }).click();
+
+    const toggle = page.getByRole('switch', { name: 'Word delete on Backspace' });
+    await expect(toggle).toHaveAttribute('aria-checked', 'true');
+
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-checked', 'false');
+    await expect.poll(async () => {
+      const overrides = await page.evaluate(() => window.electronAPI.config.getProjectOverrides());
+      return overrides?.terminal?.backspaceSendsCtrlH;
+    }, { timeout: 3000 }).toBe(false);
+
+    // Toggle back on and confirm the override round-trips, restoring the
+    // default state so later tests in this shared-page file are unaffected.
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-checked', 'true');
+    await expect.poll(async () => {
+      const overrides = await page.evaluate(() => window.electronAPI.config.getProjectOverrides());
+      return overrides?.terminal?.backspaceSendsCtrlH;
+    }, { timeout: 3000 }).toBe(true);
+
     await closeSettings();
   });
 
