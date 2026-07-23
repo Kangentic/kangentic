@@ -82,7 +82,7 @@ export function resolveTerminalBackground(colors: TerminalColorOverrides | undef
  *  `cursorAccent` always tracks the resolved `background` (not a fixed value)
  *  so the glyph under a block cursor stays legible even when the user picks a
  *  custom background. */
-function buildTerminalTheme(colors: TerminalColorOverrides | undefined) {
+export function buildTerminalTheme(colors: TerminalColorOverrides | undefined) {
   const background = resolveTerminalBackground(colors);
   return {
     ...TERMINAL_DEFAULT_COLORS,

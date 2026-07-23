@@ -16,7 +16,7 @@ type TerminalColorKey = keyof TerminalColorOverrides;
  *  theme). `cursor` mirrors `foreground`: the terminal's cursor has never
  *  been a distinct app-theme concept, and its own default already always
  *  equals foreground's default. */
-function getThemeMatchColor(key: TerminalColorKey, theme: ThemeMode): string {
+export function getThemeMatchColor(key: TerminalColorKey, theme: ThemeMode): string {
   return key === 'background' ? THEME_BACKGROUNDS[theme] : THEME_FOREGROUNDS[theme];
 }
 
@@ -34,7 +34,7 @@ function getThemeMatchColor(key: TerminalColorKey, theme: ThemeMode): string {
  *  The two-row result is therefore tied to PRESET_COLORS staying a multiple of
  *  the grid's 6 columns minus one; that array is shared with the label-color
  *  picker, so re-check the row math if its length ever changes. */
-function presetsWithDefaultFirst(defaultColor: string, themeMatchColor: string): string[] {
+export function presetsWithDefaultFirst(defaultColor: string, themeMatchColor: string): string[] {
   if (themeMatchColor === defaultColor) return [defaultColor, ...PRESET_COLORS.slice(0, -1)];
   return [defaultColor, themeMatchColor, ...PRESET_COLORS.slice(1, -1)];
 }
