@@ -1910,6 +1910,7 @@ export interface AppConfig {
     scrollbackLines: number;
     cursorStyle: 'block' | 'underline' | 'bar';
     colors: TerminalColorOverrides; // global-only: applies across every project
+    backspaceSendsCtrlH: boolean; // send Ctrl+H (0x08) instead of DEL (0x7f) on plain Backspace; default true, all platforms
   };
 
   agent: {
@@ -2288,6 +2289,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     scrollbackLines: 5000,
     cursorStyle: 'block',
     colors: {},
+    backspaceSendsCtrlH: true,
   },
   agent: {
     permissionMode: 'acceptEdits',

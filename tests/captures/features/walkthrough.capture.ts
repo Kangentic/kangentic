@@ -128,6 +128,7 @@ test('full product walkthrough', async () => {
         scrollbackLines: 5000,
         cursorStyle: 'block',
         colors: {},
+        backspaceSendsCtrlH: true,
       },
     };
   `);

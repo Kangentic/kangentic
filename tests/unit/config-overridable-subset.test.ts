@@ -108,6 +108,7 @@ describe('pickOverridableSubset', () => {
         fontFamily: 'Consolas',
         scrollbackLines: 1000,
         cursorStyle: 'block',
+        backspaceSendsCtrlH: true,
       },
       agent: { permissionMode: 'plan' },
       git: {
@@ -129,6 +130,7 @@ describe('pickOverridableSubset', () => {
         fontFamily: 'Consolas',
         scrollbackLines: 1000,
         cursorStyle: 'block',
+        backspaceSendsCtrlH: true,
       },
       agent: { permissionMode: 'plan' },
       git: {

@@ -89,6 +89,7 @@
       scrollbackLines: 5000,
       cursorStyle: 'block',
       colors: {},
+      backspaceSendsCtrlH: true,
     },
     sidebar: {
       width: 224,
@@ -250,6 +251,7 @@
       fontFamily: terminal.fontFamily,
       scrollbackLines: terminal.scrollbackLines,
       cursorStyle: terminal.cursorStyle,
+      backspaceSendsCtrlH: terminal.backspaceSendsCtrlH,
     });
     if (pickedTerminal) result.terminal = pickedTerminal;
     // agent.execution is deliberately excluded - see the comment on

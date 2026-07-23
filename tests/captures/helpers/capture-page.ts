@@ -74,6 +74,7 @@ export async function launchCapturePage(options: CaptureOptions): Promise<Captur
       scrollbackLines: 5000,
       cursorStyle: 'block',
       colors: {},
+      backspaceSendsCtrlH: true,
     },
     terminalPanelVisible: !options.hideTerminal,
   };

@@ -1,6 +1,6 @@
 import type { AppConfig } from '../../../../shared/types';
 import { DEFAULT_CONFIG } from '../../../../shared/types';
-import { SectionHeader, SettingRow, Select, CompactToggleList, INPUT_CLASS, useScopedUpdate } from '../shared';
+import { SectionHeader, SettingRow, SettingToggleRow, Select, CompactToggleList, INPUT_CLASS, useScopedUpdate } from '../shared';
 import { settingProps } from '../settings-registry';
 
 export function TerminalTab({ config, globalConfig, shells }: {
@@ -73,6 +73,11 @@ export function TerminalTab({ config, globalConfig, shells }: {
           <option value="bar">Bar</option>
         </Select>
       </SettingRow>
+      <SettingToggleRow
+        {...settingProps('terminal.backspaceSendsCtrlH')}
+        checked={config.terminal.backspaceSendsCtrlH}
+        onChange={(value) => updateProject({ terminal: { backspaceSendsCtrlH: value } })}
+      />
       <SectionHeader
         label="Context Bar"
         searchIds={[

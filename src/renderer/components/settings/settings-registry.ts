@@ -51,6 +51,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'terminal.fontFamily', tabId: 'terminal', label: 'Font Family', description: 'CSS font-family for the terminal', scope: 'project', keywords: ['monospace', 'typeface'] },
   { id: 'terminal.scrollbackLines', tabId: 'terminal', label: 'Scrollback Lines', description: 'Lines kept in the visible scrollback. Full session history is preserved for replay regardless of this value.', scope: 'project', keywords: ['buffer', 'history'] },
   { id: 'terminal.cursorStyle', tabId: 'terminal', label: 'Cursor Style', description: 'Terminal cursor appearance', scope: 'project', keywords: ['block', 'underline', 'bar'] },
+  { id: 'terminal.backspaceSendsCtrlH', tabId: 'terminal', label: 'Word delete on Backspace', description: 'Backspace deletes the whole previous word instead of one character.', scope: 'project', keywords: ['ctrl+h', 'delete word', 'backspace', 'putty', 'windows'] },
 
   // ── Terminal > Context Bar ──
   { id: 'contextBar.showShell', tabId: 'terminal', label: 'Shell', description: 'Detected shell name', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },

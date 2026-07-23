@@ -101,6 +101,7 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
     shellName: sessionShell,
     releaseEscapeWhenPointerOutside,
     pasteImageTemplate,
+    backspaceSendsCtrlH: config.terminal.backspaceSendsCtrlH,
     onScrollbackSettled: handleScrollbackSettled,
   });
 

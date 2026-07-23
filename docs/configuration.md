@@ -52,7 +52,7 @@ These settings appear only in App Settings and cannot be overridden per-project:
 These settings appear in both App Settings (as defaults) and Project Settings (as overrides):
 
 - `theme`
-- `terminal.shell`, `terminal.fontSize`, `terminal.fontFamily`, `terminal.scrollbackLines`, `terminal.cursorStyle`
+- `terminal.shell`, `terminal.fontSize`, `terminal.fontFamily`, `terminal.scrollbackLines`, `terminal.cursorStyle`, `terminal.backspaceSendsCtrlH`
 - `agent.permissionMode`
 - `git.worktreesEnabled`, `git.autoCleanup`, `git.defaultBaseBranch`, `git.copyFiles`, `git.initScript`, `git.linkNodeModules`, `git.prRefreshIntervalMinutes`
 - `browser.enabled`, `browser.defaultUrl`
@@ -114,6 +114,7 @@ These settings appear in both App Settings (as defaults) and Project Settings (a
 | `terminal.panelCollapsed` | boolean | `false` | Whether the bottom terminal panel is collapsed. Global-only. |
 | `terminal.scrollbackLines` | number | `5000` | Lines kept in the visible xterm scrollback (1000-100000). Full session history is preserved separately by the main-process PTY buffer for replay regardless of this value. |
 | `terminal.cursorStyle` | `'block'` \| `'underline'` \| `'bar'` | `'block'` | Terminal cursor appearance |
+| `terminal.backspaceSendsCtrlH` | boolean | `true` | When enabled, plain Backspace sends Ctrl+H (`0x08`) instead of xterm's default Delete (`0x7f`), so Claude Code's TUI deletes the previous word instead of one character (Claude reads `0x08` as a modified backspace regardless of platform; `0x08` is the byte native Windows conhost happens to send for plain Backspace, but the setting's on-by-default behavior is not Windows-specific). Settings panel label: "Word delete on Backspace". On by default on all platforms; Ctrl+W, Alt+Backspace, and Ctrl+Backspace already word-delete regardless of this setting. |
 | `terminal.colors` | `TerminalColorOverrides` | `{}` | Custom terminal background, foreground, and cursor color, edited via color swatches in the Layout settings tab's Terminal section. Any slot left unset falls back to the built-in default: background `#0c0c0c`, foreground/cursor `#e4e4e7`. The 16-color ANSI palette (based on Windows Terminal's "Campbell" scheme) is a fixed built-in scheme, not exposed for per-color editing. `cursorAccent` always tracks the resolved background (for cursor legibility) and `selectionBackground` is a fixed app accent; neither is user-customizable. A dictionary-style field (`CONFIG_DICTIONARY_PATHS`): saved wholesale so resetting a slot actually deletes it. Global-only. |
 
 ### agent.*

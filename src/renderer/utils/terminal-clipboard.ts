@@ -237,6 +237,7 @@ async function handlePaste(
  * - Ctrl+V / Cmd+V pastes text or image from clipboard
  * - Ctrl+Shift+V also pastes from clipboard
  * - Ctrl+Enter / Cmd+Enter sends a newline for the Claude Code TUI
+ * - Backspace sends Ctrl+H (0x08) instead of DEL (0x7f), when enabled
  * - Right-click shows the browser's native context menu (with Copy)
  *
  * These combos are the embedded terminal's own; they are mirrored in the central
@@ -259,6 +260,7 @@ export function enableTerminalClipboard(
   sessionId?: string,
   releaseEscapeWhenPointerOutside?: boolean,
   getImageReferenceTemplate?: () => string | undefined,
+  getBackspaceSendsCtrlH?: () => boolean,
 ): void {
   // OSC 52 clipboard writes (write-only). Claude Code's TUI copies a selection by
   // emitting ESC]52;c;<base64>BEL alongside a fire-and-forget PowerShell Set-Clipboard;
@@ -317,6 +319,21 @@ export function enableTerminalClipboard(
     // as "new line in multiline input" rather than "submit prompt".
     if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && onWrite) {
       onWrite('\n');
+      return false;
+    }
+
+    // Backspace -> Ctrl+H (0x08) instead of xterm's default DEL (0x7f), when enabled.
+    // Native Windows conhost sends 0x08 for plain Backspace, which Claude Code's TUI
+    // reads as a modified backspace and routes to delete-word-before. Shells still
+    // treat ^H as a single-char backspace via readline/PSReadLine. Modified Backspace
+    // (Ctrl/Alt/Meta) is excluded so Ctrl+Backspace (already 0x08) and Alt+Backspace
+    // (ESC 0x7f) keep their existing behavior unchanged.
+    if (
+      event.key === 'Backspace' &&
+      !event.ctrlKey && !event.altKey && !event.metaKey &&
+      onWrite && getBackspaceSendsCtrlH?.()
+    ) {
+      onWrite('\x08');
       return false;
     }
 

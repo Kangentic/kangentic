@@ -55,6 +55,7 @@ export function pickOverridableSubset(source: DeepPartial<AppConfig>): Partial<A
     fontFamily: source.terminal?.fontFamily,
     scrollbackLines: source.terminal?.scrollbackLines,
     cursorStyle: source.terminal?.cursorStyle,
+    backspaceSendsCtrlH: source.terminal?.backspaceSendsCtrlH,
   });
   if (terminal) result.terminal = terminal;
 

@@ -61,7 +61,7 @@ describe('keybinding registry hygiene', () => {
     // Cross-reference: these combos are handled in
     // src/renderer/utils/terminal-clipboard.ts. If that handler changes, update
     // both it and the registry's terminalUnsafe entries (defaultCombo + alt).
-    const expected = new Set(['Mod+C', 'Mod+Shift+C', 'Mod+V', 'Mod+Shift+V', 'Mod+Enter', 'Ctrl+C']);
+    const expected = new Set(['Mod+C', 'Mod+Shift+C', 'Mod+V', 'Mod+Shift+V', 'Mod+Enter', 'Backspace', 'Ctrl+C']);
     const actual = new Set(
       KEYBINDINGS.filter((definition) => definition.terminalUnsafe).flatMap((definition) =>
         definition.defaultComboAlt ? [definition.defaultCombo, definition.defaultComboAlt] : [definition.defaultCombo],

@@ -119,6 +119,11 @@ interface UseTerminalOptions {
    *  a ref (not captured at attach time) since the agent list loads asynchronously and can
    *  resolve after `enableTerminalClipboard` has already attached its key handler. */
   pasteImageTemplate?: string;
+  /** When true, plain Backspace sends Ctrl+H (0x08) instead of xterm's default
+   *  DEL (0x7f), matching native Windows conhost so Claude Code's TUI deletes
+   *  the previous word. Read live via a ref (same pattern as
+   *  pasteImageTemplate) so a settings toggle applies without remount. */
+  backspaceSendsCtrlH?: boolean;
   /** Fired every time a scrollback operation (mount replay, reload, watchdog
    *  force-recovery, or IPC-rejection recovery) settles, i.e. whenever
    *  scrollbackPendingRef flips back to false. TerminalTab uses the first
@@ -175,6 +180,10 @@ export function useTerminal(options: UseTerminalOptions) {
    *  asynchronously after the terminal has already initialized. */
   const pasteImageTemplateRef = useRef(options.pasteImageTemplate);
   pasteImageTemplateRef.current = options.pasteImageTemplate;
+  /** Updated every render (same pattern as pasteImageTemplateRef) so the key
+   *  handler attached once by initTerminal always reads the current setting. */
+  const backspaceSendsCtrlHRef = useRef(options.backspaceSendsCtrlH);
+  backspaceSendsCtrlHRef.current = options.backspaceSendsCtrlH;
   /** Updated every render (same pattern as pasteImageTemplateRef) so the settle
    *  paths attached by initTerminal/reloadScrollback always call the caller's
    *  current callback. */
@@ -265,6 +274,7 @@ export function useTerminal(options: UseTerminalOptions) {
       options.sessionId ?? undefined,
       options.releaseEscapeWhenPointerOutside,
       () => pasteImageTemplateRef.current,
+      () => backspaceSendsCtrlHRef.current ?? false,
     );
 
     terminal.onScroll(() => {

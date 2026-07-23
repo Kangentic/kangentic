@@ -318,6 +318,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
     colors: config.terminal.colors,
     shellName: commandTerminalShell ?? undefined,
     pasteImageTemplate,
+    backspaceSendsCtrlH: config.terminal.backspaceSendsCtrlH,
   });
 
   const fileDrop = useTerminalFileDrop(effectiveSessionId, focus, commandTerminalShell ?? undefined, pasteImageTemplate);
