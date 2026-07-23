@@ -1154,6 +1154,43 @@ test.describe('Command Terminal', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Launch overlay (terminal variant) - CommandTerminalWindow.tsx passes
+  // variant="terminal" to LaunchOverlay so the pre-terminal shimmer is painted
+  // with the resolved terminal background instead of the theme's bg-surface (no
+  // flash when the overlay lifts and the real terminal is revealed). This is a
+  // SEPARATE call site from TerminalTab.tsx (covered by
+  // launch-overlay-terminal-surface.spec.ts) - reverting variant="terminal" here
+  // alone would go undetected by that spec.
+  // ---------------------------------------------------------------------------
+  test.describe('Launch overlay (terminal variant)', () => {
+    test('a cold command-terminal spawn paints the launch overlay with the resolved terminal background', async () => {
+      // multiTerminalPreConfig's spawnTransient never fires onFirstOutput or
+      // onUsage, so `terminalReady` (CommandTerminalWindow.tsx) stays false and
+      // the launch overlay stays mounted after the window opens - mirrors the
+      // cold-session setup in launch-overlay-terminal-surface.spec.ts.
+      const { browser, page } = await launchWithState(multiTerminalPreConfig());
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        await page.getByTestId('quick-session-button').click();
+        const commandWindow = page.getByTestId('command-terminal-window');
+        await expect(commandWindow).toBeVisible();
+
+        const overlay = commandWindow.locator('[data-testid="launch-overlay"]');
+        await expect(overlay).toBeVisible();
+
+        // Resolved default (#0c0c0c), not the theme-tracking bg-surface color -
+        // this is the property that goes red if variant="terminal" is dropped
+        // from the CommandTerminalWindow.tsx call site.
+        const overlayBackground = await overlay.evaluate((element) => getComputedStyle(element).backgroundColor);
+        expect(overlayBackground).toBe('rgb(12, 12, 12)');
+      } finally {
+        await browser.close();
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // Window population reconciliation (per project) - the headline bug fix: the
   // GLOBAL window store's population is reconciled to the CURRENT project's live
   // transient sessions on open, so a window count carried from one project never

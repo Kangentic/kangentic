@@ -690,7 +690,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
             the stale (too-wide) size and never reduces columns. overflow-hidden clips
             the brief pre-fit overflow. Mirrors the Changes panel sibling. */}
         <div className={`${changesOpen ? 'w-1/2' : 'flex-1'} relative min-w-0 overflow-hidden`} style={{ backgroundColor: resolveTerminalBackground(config.terminal.colors) }}>
-          {!terminalReady && <LaunchOverlay label="Starting Command Terminal..." />}
+          {!terminalReady && <LaunchOverlay label="Starting Command Terminal..." variant="terminal" />}
           <FileDropOverlay {...fileDrop} />
           <div
             ref={terminalRef}

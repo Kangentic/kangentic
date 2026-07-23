@@ -269,7 +269,7 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
       {/* Placeholder overlay while Claude CLI is loading (before first usage report).
           Stays visible until scrollback replay + clear are both done.
           z-10 ensures it paints above xterm's WebGL canvas layers. */}
-      {!terminalReady && <LaunchOverlay label={overlayLabel} />}
+      {!terminalReady && <LaunchOverlay label={overlayLabel} variant="terminal" />}
     </div>
   );
 }
