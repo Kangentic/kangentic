@@ -121,7 +121,7 @@ These are summarized for review convenience; the authoritative, enforced version
 - Zustand stores with IPC bridge pattern
 - IPC channels defined in `src/shared/ipc-channels.ts`
 - All dialogs use global `useEffect` Escape key listener
-- Shared UI primitives: use `Select` (no raw `<select>`), `CountBadge` for counts, `ConfirmDialog` for confirmations; min font `text-[11px]`; avoid hover-only controls - see `.claude/rules/ui-conventions.md`
+- Shared UI primitives: use `Select` (no raw `<select>`), `CountBadge` for counts, `ConfirmDialog` for confirmations; min font `text-[11px]`; avoid hover-only controls; brief accurate settings/UI copy (purpose + distinguishing behavior, no raw hex/byte literals, no platform-specific justification for a universal default) - see `.claude/rules/ui-conventions.md`
 - No personal info / machine paths in committed code (repo is public) - see `.claude/rules/no-personal-info.md`
 - Dev tooling build-time excluded via `__KANGENTIC_DEV__`, not runtime-toggled - see `.claude/rules/dev-tooling-build-exclusion.md`
 - **No agent-specific code outside `src/main/agent/adapters/`.** Flag any branch on agent name (`agent === 'claude'`, `agent === 'droid'`, `taskAgent === '<x>'`, `switch (adapter.name)`, etc.) found in renderer code, IPC handlers, shared utilities, stores, or tests outside the `adapters/` tree. Adapter-specific copy, tooltips, capability decisions, and behavior must live with the adapter and surface through generic capability fields (e.g. `AgentAdapter.liveTelemetryUnsupported`, `AdapterRuntimeStrategy`, `AgentDetectionInfo` extensions). Suggested grep: `agent === '|taskAgent ===|adapter\.name ===` under `src/renderer/`, `src/shared/`, and `src/main/ipc/`.

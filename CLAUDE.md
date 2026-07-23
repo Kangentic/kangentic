@@ -241,7 +241,7 @@ session; rules with one load when you touch matching files. Each rule names its 
 **Path-scoped rules (load with their subsystem):**
 - `task-lifecycle-lock.md` - wrap per-task async mutation in `withTaskLock` (`src/main/ipc/`).
 - `hmr-patterns.md` - dev-mode HMR parity patterns A through D (`src/renderer/`).
-- `ui-conventions.md` - shared UI primitives, selectors, font floor, no hover-only controls (`src/renderer/`).
+- `ui-conventions.md` - shared UI primitives, selectors, font floor, no hover-only controls, brief accurate copy (`src/renderer/`).
 - `synchronous-shutdown.md` - the `before-quit` path must be synchronous (`src/main/` shutdown).
 - `utc-timestamps.md` - DB writes use `new Date().toISOString()` (`src/main/db/`).
 - `ipc-7-layer-parity.md` - wire an IPC endpoint through all 7 layers.
