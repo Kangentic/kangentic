@@ -174,7 +174,7 @@ test.describe('Image paste/drop on a real task terminal - adapter reference temp
 
       await page.evaluate(() => {
         const textarea = document.querySelector('.xterm-helper-textarea');
-        const overlay = textarea?.closest('.bg-surface.relative')?.querySelector('.z-20');
+        const overlay = textarea?.closest('[data-testid="terminal-tab-container"]')?.querySelector('.z-20');
         if (!overlay) throw new Error('file-drop overlay not found');
 
         const file = new File(['fake-png-bytes'], 'screenshot.png', { type: 'image/png' });
@@ -217,7 +217,7 @@ test.describe('Image paste/drop on a real task terminal - adapter reference temp
 
       await page.evaluate(() => {
         const textarea = document.querySelector('.xterm-helper-textarea');
-        const overlay = textarea?.closest('.bg-surface.relative')?.querySelector('.z-20');
+        const overlay = textarea?.closest('[data-testid="terminal-tab-container"]')?.querySelector('.z-20');
         if (!overlay) throw new Error('file-drop overlay not found');
 
         const file = new File(['fake-png-bytes'], 'screenshot.png', { type: '' });
@@ -254,7 +254,7 @@ test.describe('Image paste/drop on a real task terminal - adapter reference temp
 
       await page.evaluate(() => {
         const textarea = document.querySelector('.xterm-helper-textarea');
-        const overlay = textarea?.closest('.bg-surface.relative')?.querySelector('.z-20');
+        const overlay = textarea?.closest('[data-testid="terminal-tab-container"]')?.querySelector('.z-20');
         if (!overlay) throw new Error('file-drop overlay not found');
 
         const file = new File(['plain text'], 'notes.txt', { type: 'text/plain' });

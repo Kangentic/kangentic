@@ -248,7 +248,7 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
   const terminalBackground = resolveTerminalBackground(config.terminal.colors);
 
   return (
-    <div ref={containerRef} className="h-full w-full relative" style={{ backgroundColor: terminalBackground }}>
+    <div ref={containerRef} data-testid="terminal-tab-container" className="h-full w-full relative" style={{ backgroundColor: terminalBackground }}>
       <div ref={terminalRef} className="h-full w-full" />
       <FileDropOverlay {...fileDrop} />
       {/* Replay veil: covers the mount-time replay window (first fit, chunked
