@@ -260,8 +260,24 @@ test.describe('Task Activity Indicators', () => {
       // The old status-bar usage strip was replaced by the dashboard; the live
       // KPI layering reads the same in-memory sessionUsage. Self-cleaning for
       // the shared page: closes the dashboard before finishing.
+      //
+      // This is the only test in the file that opens the usage dashboard, so
+      // it is the first hit on the StatsDashboardBody lazy chunk in this
+      // browser (see LazyStatsDashboard.tsx / stats-lazy-retry.spec.ts). The
+      // idle warm (AppLayout's warmStatsDashboardOnIdle) races the click
+      // under CI worker/shard contention, so a genuinely cold chunk
+      // compile/fetch can leave the Suspense skeleton showing well past this
+      // test's default 15s budget - that is what produced the CI flake
+      // ("element(s) not found" on kpi-tokens, not a content mismatch: the
+      // real dashboard body, and kpi-tokens with it, simply hadn't mounted
+      // yet). Raise the test's own timeout and poll for the real body to
+      // mount (kpi-tiles only exists in the real body, never the skeleton)
+      // before asserting content, instead of assuming the chunk is warm.
+      test.setTimeout(60_000);
+
       await page.locator('[data-testid="usage-stats-button"]').click();
       await page.locator('[data-testid="stats-page"]').waitFor({ state: 'visible', timeout: 10000 });
+      await page.locator('[data-testid="kpi-tiles"]').waitFor({ state: 'visible', timeout: 40000 });
 
       const tokens = page.locator('[data-testid="kpi-tokens"]');
       const cost = page.locator('[data-testid="kpi-cost-value"]');
