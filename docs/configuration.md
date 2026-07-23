@@ -33,7 +33,7 @@ These settings appear only in App Settings and cannot be overridden per-project:
 - `agent.cliPaths`, `agent.maxConcurrentSessions`, `agent.queueOverflow`, `agent.autoResumeSessionsOnRestart`
 - `agent.executionServers` (per-agent remote-server url + auth; the Agent tab's Server URL / Authentication fields, shown when the selected agent declares remote-execution support)
 - `agent.launchOptions` (per-agent boolean startup toggles; the Agent tab's Launch Options rows, shown when the selected agent declares launch-option capability)
-- `terminal.panelHeight`, `terminal.showPreview`
+- `terminal.panelHeight`, `terminal.showPreview`, `terminal.colors`
 - `autoFocusIdleSession`
 - `skipBoardConfigConfirm`
 - `windowLightDismiss`
@@ -114,6 +114,7 @@ These settings appear in both App Settings (as defaults) and Project Settings (a
 | `terminal.panelCollapsed` | boolean | `false` | Whether the bottom terminal panel is collapsed. Global-only. |
 | `terminal.scrollbackLines` | number | `5000` | Lines kept in the visible xterm scrollback (1000-100000). Full session history is preserved separately by the main-process PTY buffer for replay regardless of this value. |
 | `terminal.cursorStyle` | `'block'` \| `'underline'` \| `'bar'` | `'block'` | Terminal cursor appearance |
+| `terminal.colors` | `TerminalColorOverrides` | `{}` | Custom terminal background, foreground, and cursor color, edited via color swatches in the Layout settings tab's Terminal section. Any slot left unset falls back to the built-in default: background `#0c0c0c`, foreground/cursor `#e4e4e7`. The 16-color ANSI palette (based on Windows Terminal's "Campbell" scheme) is a fixed built-in scheme, not exposed for per-color editing. `cursorAccent` always tracks the resolved background (for cursor legibility) and `selectionBackground` is a fixed app accent; neither is user-customizable. A dictionary-style field (`CONFIG_DICTIONARY_PATHS`): saved wholesale so resetting a slot actually deletes it. Global-only. |
 
 ### agent.*
 

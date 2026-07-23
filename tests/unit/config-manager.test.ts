@@ -376,3 +376,38 @@ describe('Config Manager -- agent.launchOptions replace semantics', () => {
     expect('claude' in raw.agent.launchOptions).toBe(false);
   });
 });
+
+describe('Config Manager -- terminal.colors replace semantics', () => {
+  it('removing a slot key from a later save() actually clears it, not deep-merges it back', async () => {
+    const cm = await createConfigManager();
+
+    cm.save({ terminal: { colors: { background: '#fff', foreground: '#000' } } });
+    const afterFirstWrite = cm.load();
+    expect(afterFirstWrite.terminal.colors).toEqual({ background: '#fff', foreground: '#000' });
+
+    // Save again WITHOUT foreground. With dictionaryPaths replace semantics the
+    // whole terminal.colors map is swapped out, so foreground is gone. With
+    // deep-merge semantics (replaceFlatMaps: false, no dictionaryPaths entry)
+    // the previous foreground would survive the merge instead.
+    cm.save({ terminal: { colors: { background: '#fff' } } });
+    const afterSecondWrite = cm.load();
+    expect(afterSecondWrite.terminal.colors.foreground).toBeUndefined();
+    expect(afterSecondWrite.terminal.colors.background).toBe('#fff');
+
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect(raw.terminal.colors).not.toHaveProperty('foreground');
+  });
+
+  it('saving an empty colors map clears every previously-set slot', async () => {
+    const cm = await createConfigManager();
+
+    cm.save({ terminal: { colors: { background: '#fff', foreground: '#000', cursor: '#abc' } } });
+    cm.save({ terminal: { colors: {} } });
+
+    const config = cm.load();
+    expect(config.terminal.colors).toEqual({});
+
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect(raw.terminal.colors).toEqual({});
+  });
+});

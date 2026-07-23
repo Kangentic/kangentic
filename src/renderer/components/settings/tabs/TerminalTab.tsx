@@ -73,7 +73,6 @@ export function TerminalTab({ config, globalConfig, shells }: {
           <option value="bar">Bar</option>
         </Select>
       </SettingRow>
-
       <SectionHeader
         label="Context Bar"
         searchIds={[

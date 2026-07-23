@@ -353,6 +353,10 @@ Choose from 10 themes:
 - **Dark variants:** Moon, Forest, Ocean, Ember
 - **Light variants:** Sand, Mint, Sky, Peach
 
+### Terminal Colors
+
+The Layout tab's **Terminal** section (not Theme - this is a global setting, not per-project) lets you customize the terminal's background, foreground, and cursor color. Click a swatch to open the color picker; any color left at its default shows the built-in value (near-black `#0c0c0c` background, `#e4e4e7` foreground/cursor). The 16-color ANSI palette (used by shell tools like `git diff` and `ls --color`) is a fixed scheme based on Windows Terminal's Campbell, not individually customizable. "Reset to default" clears every customization. Applies globally across all projects.
+
 ### Terminal Settings
 
 | Setting | Description |

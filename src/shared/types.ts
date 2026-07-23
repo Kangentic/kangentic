@@ -1677,6 +1677,18 @@ export const THEME_BACKGROUNDS: Record<ThemeMode, string> = {
   sand: '#f5f0e8', mint: '#eef5f0', sky: '#edf3f8', peach: '#f8f0ec',
 };
 
+/** Per-theme foreground color (mirrors index.css's `--kng-fg-secondary`,
+ *  renderer-only need so not read live from CSS). Used by the Layout settings
+ *  tab to offer "match my current app theme" as a terminal color preset:
+ *  the terminal's foreground/cursor default (#e4e4e7) is byte-identical to
+ *  the dark theme's value here, since that is literally where it came from
+ *  before the terminal had its own fixed color scheme. */
+export const THEME_FOREGROUNDS: Record<ThemeMode, string> = {
+  dark: '#e4e4e7', light: '#292524',
+  moon: '#c6c8d0', forest: '#c6cac4', ocean: '#c0c6ce', ember: '#ccc8c4',
+  sand: '#3d3228', mint: '#1e3028', sky: '#1a2a3a', peach: '#3a2520',
+};
+
 /** UI metadata for the settings dropdown. */
 export const NAMED_THEMES: { id: ThemeMode; label: string; base: 'dark' | 'light' }[] = [
   { id: 'moon', label: 'Moon', base: 'dark' },
@@ -1688,6 +1700,27 @@ export const NAMED_THEMES: { id: ThemeMode; label: string; base: 'dark' | 'light
   { id: 'sky', label: 'Sky', base: 'light' },
   { id: 'peach', label: 'Peach', base: 'light' },
 ];
+
+/** Custom terminal color overrides, editable in the Layout settings tab's
+ *  Terminal section. Any
+ *  slot left unset falls back to the built-in default (see
+ *  TERMINAL_DEFAULT_COLORS in useTerminal.ts, renderer-only since only xterm
+ *  rendering needs the concrete hex values). Deliberately just these three:
+ *  the 16-color ANSI palette (used by shell tools like `git diff`/`ls
+ *  --color`) is a fixed built-in scheme, not exposed for per-color editing -
+ *  most users want to set their overall look, not tune individual ANSI
+ *  slots. `cursorAccent` and `selectionBackground` are also NOT here:
+ *  cursorAccent always tracks whatever `background` resolves to (so the
+ *  glyph under a block cursor stays legible), and selectionBackground is a
+ *  fixed app accent, not a terminal color a user would pick independently.
+ *  A dictionary-style field (CONFIG_DICTIONARY_PATHS in config-manager.ts):
+ *  saved wholesale so resetting a slot (deleting its key) actually takes
+ *  effect. Global-only. */
+export interface TerminalColorOverrides {
+  background?: string;
+  foreground?: string;
+  cursor?: string;
+}
 
 /** Recursively makes all properties optional. Arrays are kept whole (not element-partial). */
 export type DeepPartial<T> = {
@@ -1876,6 +1909,7 @@ export interface AppConfig {
     panelCollapsed: boolean; // persisted collapsed state
     scrollbackLines: number;
     cursorStyle: 'block' | 'underline' | 'bar';
+    colors: TerminalColorOverrides; // global-only: applies across every project
   };
 
   agent: {
@@ -2253,6 +2287,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     panelCollapsed: false,
     scrollbackLines: 5000,
     cursorStyle: 'block',
+    colors: {},
   },
   agent: {
     permissionMode: 'acceptEdits',

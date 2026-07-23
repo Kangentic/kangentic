@@ -101,6 +101,26 @@ test.describe('Settings Panel', () => {
     await closeSettings();
   });
 
+  test('Layout tab Terminal Colors offers customizable background, foreground, and cursor swatches', async () => {
+    await openSettings();
+    await page.getByRole('button', { name: 'Layout' }).click();
+
+    const colorsRow = page.locator('[data-testid="setting-row-terminal.colors"]');
+    await expect(colorsRow.getByTestId('terminal-color-swatch-background')).toBeVisible();
+    await expect(colorsRow.getByTestId('terminal-color-swatch-foreground')).toBeVisible();
+    await expect(colorsRow.getByTestId('terminal-color-swatch-cursor')).toBeVisible();
+
+    // Opening a swatch shows the shared color picker popover.
+    await colorsRow.getByTestId('terminal-color-swatch-background').click();
+    await expect(page.getByTitle('Custom color')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByTitle('Custom color')).toHaveCount(0);
+
+    await expect(colorsRow.getByTestId('terminal-colors-reset-all')).toBeVisible();
+
+    await closeSettings();
+  });
+
   test('shows Notifications tab with event grid and delivery settings', async () => {
     await openSettings();
     await page.getByRole('button', { name: 'Notifications' }).click();

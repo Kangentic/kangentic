@@ -9,6 +9,7 @@ import { isBoardDragActive, onBoardDragEnd } from '../lib/session-update-coalesc
 import { isTerminalParked, onTerminalReveal } from '../utils/parked-terminals';
 import { noteTerminalFocus } from '../utils/dictation-target';
 import { registerTerminalCapture, unregisterTerminalCapture, type TerminalCaptureReader } from '../utils/terminal-capture-registry';
+import type { TerminalColorOverrides } from '../../shared/types';
 import '@xterm/xterm/css/xterm.css';
 
 /** Delay before forwarding a resize to the PTY. Coalesces rapid resizes
@@ -46,38 +47,51 @@ function nextTransientRendererKey(): number {
   return transientRendererKeyCounter;
 }
 
-/** Fixed terminal background, exported for surfaces that must match it exactly
- *  (e.g. TerminalTab's replay veil). NOT a theme token: the terminal stays dark
- *  on every app theme, so a veil using a theme surface color would flash. */
-export const TERMINAL_BACKGROUND = '#18181b';
-
-/** Fixed dark terminal theme -- Claude Code's TUI is designed for dark backgrounds. */
-const TERMINAL_THEME = {
-  background: TERMINAL_BACKGROUND,
+/** Built-in terminal colors, used whenever the user hasn't customized a given
+ *  slot (see TerminalColorOverrides in shared/types.ts). The ANSI 16 default to
+ *  Windows Terminal's real "Campbell" scheme (learn.microsoft.com/windows/terminal
+ *  /customize-settings/color-schemes) so an unconfigured terminal still reads as
+ *  a real terminal, not an app panel with text in it. `black` is deliberately
+ *  NOT Campbell's native black (`#0C0C0C`, identical to the default background):
+ *  that would make black-on-default text and black fills invisible, so it's
+ *  kept at the old zinc-900 tone instead, subdued but present. */
+export const TERMINAL_DEFAULT_COLORS = {
+  background: '#0c0c0c',
   foreground: '#e4e4e7',
-  // Light cursor. It was the background color (#18181b) - i.e. invisible - which is
-  // why no cursor ever showed. cursorAccent is the dark background so the character
-  // under a block cursor stays readable (dark glyph on the light block).
   cursor: '#e4e4e7',
-  cursorAccent: '#18181b',
   selectionBackground: 'rgba(58, 130, 246, 0.35)',
   black: '#18181b',
-  red: '#ef4444',
-  green: '#22c55e',
-  yellow: '#eab308',
-  blue: '#3b82f6',
-  magenta: '#a855f7',
-  cyan: '#06b6d4',
-  white: '#e4e4e7',
-  brightBlack: '#52525b',
-  brightRed: '#f87171',
-  brightGreen: '#4ade80',
-  brightYellow: '#facc15',
-  brightBlue: '#60a5fa',
-  brightMagenta: '#c084fc',
-  brightCyan: '#22d3ee',
-  brightWhite: '#fafafa',
+  red: '#C50F1F', green: '#13A10E', yellow: '#C19C00', blue: '#0037DA', magenta: '#881798', cyan: '#3A96DD', white: '#CCCCCC',
+  brightBlack: '#767676', brightRed: '#E74856', brightGreen: '#16C60C', brightYellow: '#F9F1A5', brightBlue: '#3B78FF', brightMagenta: '#B4009E', brightCyan: '#61D6D6', brightWhite: '#F2F2F2',
 } as const;
+
+/** Resolves the effective terminal background: the user's custom override, or
+ *  the built-in default. Exported so surfaces that must paint the identical
+ *  color BEFORE (or independent of) the xterm instance itself - the host
+ *  container, the replay veil - stay in lockstep with whatever the user has
+ *  configured, instead of drifting from a stale fixed constant. A veil or
+ *  container using a different color than the live xterm theme would show a
+ *  visible seam/flash; see TerminalTab.tsx and CommandTerminalWindow.tsx. */
+export function resolveTerminalBackground(colors: TerminalColorOverrides | undefined): string {
+  return colors?.background || TERMINAL_DEFAULT_COLORS.background;
+}
+
+/** Builds the full xterm theme: background/foreground/cursor layer the user's
+ *  overrides over the defaults; the 16-color ANSI palette is always the fixed
+ *  built-in scheme (not user-customizable - see TerminalColorOverrides).
+ *  `cursorAccent` always tracks the resolved `background` (not a fixed value)
+ *  so the glyph under a block cursor stays legible even when the user picks a
+ *  custom background. */
+function buildTerminalTheme(colors: TerminalColorOverrides | undefined) {
+  const background = resolveTerminalBackground(colors);
+  return {
+    ...TERMINAL_DEFAULT_COLORS,
+    background,
+    foreground: colors?.foreground || TERMINAL_DEFAULT_COLORS.foreground,
+    cursor: colors?.cursor || TERMINAL_DEFAULT_COLORS.cursor,
+    cursorAccent: background,
+  };
+}
 
 interface UseTerminalOptions {
   sessionId: string | null;
@@ -85,6 +99,9 @@ interface UseTerminalOptions {
   fontSize?: number;
   scrollbackLines?: number;
   cursorStyle?: 'block' | 'underline' | 'bar';
+  /** Global-only setting: per-slot custom terminal colors. Any unset slot
+   *  falls back to TERMINAL_DEFAULT_COLORS. */
+  colors?: TerminalColorOverrides;
   shellName?: string;
   /** Let Escape bubble (to close the containing dialog) when the mouse pointer
    *  is outside the terminal. Used by the task detail dialog. */
@@ -169,10 +186,26 @@ export function useTerminal(options: UseTerminalOptions) {
     onScrollbackSettledRef.current?.();
   }, []);
 
+  // Destructured to PRIMITIVES, deliberately: `config.terminal.colors` is a
+  // fresh object on every config refetch (updateConfig -> refreshConfigs
+  // re-fetches the whole tree over IPC), so depending on the OBJECT would churn
+  // initTerminal's identity on any unrelated settings write - including
+  // background ones like model-discovery telemetry - and retrigger the callers'
+  // mount effects (overlay flash + scrollback reload in TerminalTab, focus theft
+  // in CommandTerminalWindow). Every other entry in those dep arrays is already
+  // a primitive for the same reason.
+  const customBackground = options.colors?.background;
+  const customForeground = options.colors?.foreground;
+  const customCursor = options.colors?.cursor;
+
   const initTerminal = useCallback(() => {
     if (!terminalRef.current || xtermRef.current) return;
 
-    const xtermTheme = TERMINAL_THEME;
+    const xtermTheme = buildTerminalTheme({
+      background: customBackground,
+      foreground: customForeground,
+      cursor: customCursor,
+    });
 
     const terminal = new Terminal({
       fontFamily: options.fontFamily || 'Menlo, Consolas, "Courier New", monospace',
@@ -351,7 +384,7 @@ export function useTerminal(options: UseTerminalOptions) {
       // No session -- just fit immediately
       fitAddon.fit();
     }
-  }, [options.sessionId, options.fontFamily, options.fontSize, options.scrollbackLines, options.cursorStyle, options.shellName, options.releaseEscapeWhenPointerOutside, settleScrollback]);
+  }, [options.sessionId, options.fontFamily, options.fontSize, options.scrollbackLines, options.cursorStyle, customBackground, customForeground, customCursor, options.shellName, options.releaseEscapeWhenPointerOutside, settleScrollback]);
 
   // Set up data listener. Inbound PTY data flows through a bounded queue that
   // writes capped slices paced by xterm.write's completion callback, yielding
@@ -514,6 +547,38 @@ export function useTerminal(options: UseTerminalOptions) {
       xtermRef.current.scrollToBottom();
     }
   }, []);
+
+  // Live-apply display settings to an already-mounted terminal, mirroring how
+  // an app theme change applies immediately (rather than requiring the
+  // terminal to be reopened). xterm.js exposes `options` as a live-settable
+  // object post-construction; `theme` specifically needs a FRESH object on
+  // every assignment (a reference-equal object is a no-op per xterm's docs),
+  // which buildTerminalTheme always returns. A no-op (xtermRef.current is
+  // null) before initTerminal has run; initTerminal reads the same options
+  // directly, so there is no gap once it does. Re-fit goes through the shared
+  // fit() (not the raw addon) so a terminal pinned to the bottom stays pinned
+  // when a font-size change alters the row count, and it picks up the cell-size
+  // change through the existing debounced onResize -> PTY resize path (a no-op
+  // if cols/rows did not change). Declared AFTER fit() so the callback is
+  // initialized before this effect's dependency array references it. `shell` is
+  // deliberately excluded: switching it means killing and respawning the PTY
+  // process, not a rendering change, and is out of scope here.
+  useEffect(() => {
+    const terminal = xtermRef.current;
+    if (!terminal) return;
+    terminal.options = {
+      fontFamily: options.fontFamily || 'Menlo, Consolas, "Courier New", monospace',
+      fontSize: options.fontSize || 14,
+      cursorStyle: options.cursorStyle || 'block',
+      scrollback: options.scrollbackLines || 5000,
+      theme: buildTerminalTheme({
+        background: customBackground,
+        foreground: customForeground,
+        cursor: customCursor,
+      }),
+    };
+    fit();
+  }, [options.fontFamily, options.fontSize, options.cursorStyle, options.scrollbackLines, customBackground, customForeground, customCursor, fit]);
 
   // Flush a pending (debounced) PTY resize immediately, instead of waiting out
   // PTY_RESIZE_DEBOUNCE_MS. Window-hosted terminals fit synchronously on the

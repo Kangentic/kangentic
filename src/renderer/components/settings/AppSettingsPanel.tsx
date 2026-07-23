@@ -112,7 +112,7 @@ export function SettingsContent({ activeTab, isSearching, searchQuery, matchingT
       case 'browser': return <BrowserTab config={effectiveConfig} />;
       case 'shortcuts': return <ShortcutsTab />;
       case 'developer': return <DeveloperTab globalConfig={globalConfig} />;
-      case 'layout': return <LayoutTab globalConfig={globalConfig} />;
+      case 'layout': return <LayoutTab config={effectiveConfig} globalConfig={globalConfig} />;
       case 'behavior': return <BehaviorTab globalConfig={globalConfig} />;
       case 'dictation': return <DictationTab globalConfig={globalConfig} onOpenHotkeys={() => navigateToTab('hotkeys')} />;
       case 'hotkeys': return <HotkeysTab globalConfig={globalConfig} />;

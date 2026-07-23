@@ -42,6 +42,9 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'diffFileSort', tabId: 'layout', label: 'File Sort', description: 'How the Changes panel orders files: by name, by status (added / modified / deleted), or by size (most changes first).', scope: 'global', section: 'Diff', keywords: ['sort', 'order', 'name', 'status', 'size', 'files', 'diff', 'changes'] },
   { id: 'diffFlatList', tabId: 'layout', label: 'Flat File List', description: 'Show changed files as a flat list of full paths instead of a nested directory tree.', scope: 'global', section: 'Diff', keywords: ['flat', 'list', 'tree', 'directory', 'folder', 'nested', 'files', 'diff', 'changes'] },
 
+  // ── Layout > Terminal ──
+  { id: 'terminal.colors', tabId: 'layout', label: 'Terminal Colors', description: 'Customize the terminal background, foreground, and cursor color', scope: 'global', section: 'Terminal', keywords: ['colors', 'background', 'foreground', 'cursor', 'custom', 'terminal'] },
+
   // ── Terminal ──
   { id: 'terminal.shell', tabId: 'terminal', label: 'Shell', description: 'Terminal shell used for agent sessions', scope: 'project', keywords: ['bash', 'powershell', 'zsh', 'fish'] },
   { id: 'terminal.fontSize', tabId: 'terminal', label: 'Font Size', description: 'Terminal text size in pixels', scope: 'project', keywords: ['px', 'text size'] },

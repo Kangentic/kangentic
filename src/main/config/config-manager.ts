@@ -21,6 +21,7 @@ const CONFIG_DICTIONARY_PATHS = [
   'workspaceByProject',
   'commandTerminalWorkspace',
   'popOutBounds',
+  'terminal.colors',
 ] as const;
 
 /** Drop keys whose value is undefined. Returns undefined when nothing is left,

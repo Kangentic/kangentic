@@ -127,6 +127,7 @@ test('full product walkthrough', async () => {
         panelHeight: 280,
         scrollbackLines: 5000,
         cursorStyle: 'block',
+        colors: {},
       },
     };
   `);

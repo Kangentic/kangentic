@@ -22,16 +22,21 @@ export function ColorPickerPopover({
   triggerRef,
   onChange,
   onClose,
+  presetColors = PRESET_COLORS,
 }: {
   color: string;
   triggerRef: React.RefObject<HTMLElement | null>;
   onChange: (color: string) => void;
   onClose: () => void;
+  /** Override the preset swatch grid. Defaults to the generic label-color
+   *  presets; callers with a meaningful per-field default (e.g. a terminal
+   *  color slot) should pass that default first. */
+  presetColors?: string[];
 }) {
   const popoverRef = useRef<HTMLDivElement>(null);
   const [showCustomPicker, setShowCustomPicker] = useState(false);
   const [hexInput, setHexInput] = useState(color);
-  const isCustomColor = !PRESET_COLORS.includes(color);
+  const isCustomColor = !presetColors.includes(color);
 
   const [position, setPosition] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
 
@@ -76,7 +81,7 @@ export function ColorPickerPopover({
       onClick={(event) => event.stopPropagation()}
     >
       <div className="grid grid-cols-6 gap-1.5 place-items-center">
-        {PRESET_COLORS.map((presetColor) => (
+        {presetColors.map((presetColor) => (
           <button
             key={presetColor}
             type="button"

@@ -193,6 +193,17 @@ test.describe('TerminalTab replay veil', () => {
       await expect(veil).toBeVisible();
       await expect(dialog.locator('[data-testid="launch-overlay"]')).toHaveCount(0);
 
+      // The viewport must not paint its own (theme-tracking) background - it
+      // is transparent so the host container's resolved terminal background
+      // (near-black by default, user-customizable) shows through as one
+      // continuous surface, with no seam along the sub-cell strip xterm
+      // itself doesn't paint.
+      const viewportBackground = await dialog
+        .locator('.xterm-viewport')
+        .first()
+        .evaluate((element) => getComputedStyle(element).backgroundColor);
+      expect(viewportBackground).toBe('rgba(0, 0, 0, 0)');
+
       // Resolve the replay.
       await page.evaluate(() => {
         const resolvers = (window as unknown as { __mockScrollbackResolvers: Array<(value: string) => void> })

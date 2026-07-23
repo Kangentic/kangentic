@@ -72,6 +72,25 @@ describe('pickOverridableSubset', () => {
     expect(pickOverridableSubset(source)).toEqual({});
   });
 
+  it('drops terminal.colors - it is documented global-only, never per-project', () => {
+    // terminal.colors (TerminalColorOverrides) is a global-only setting (see
+    // its doc comment in shared/types.ts); it must never be cloned into a new
+    // project's overrides or snapshotted as a project default alongside the
+    // other terminal.* fields.
+    const source = {
+      terminal: {
+        shell: 'bash',
+        fontSize: 13,
+        colors: { background: '#111111', foreground: '#eeeeee', cursor: '#eeeeee' },
+      },
+    } as unknown as Parameters<typeof pickOverridableSubset>[0];
+
+    const result = pickOverridableSubset(source) as Record<string, unknown>;
+
+    expect(result.terminal).toEqual({ shell: 'bash', fontSize: 13 });
+    expect(result.terminal).not.toHaveProperty('colors');
+  });
+
   it('tolerates a sparse source and omits empty nested objects', () => {
     const result = pickOverridableSubset({ theme: 'ember' } as Parameters<typeof pickOverridableSubset>[0]);
 

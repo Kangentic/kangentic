@@ -88,6 +88,7 @@
       panelHeight: 250,
       scrollbackLines: 5000,
       cursorStyle: 'block',
+      colors: {},
     },
     sidebar: {
       width: 224,
@@ -1835,9 +1836,15 @@
         if (partial && Object.prototype.hasOwnProperty.call(partial, 'commandTerminalWorkspace')) {
           config.commandTerminalWorkspace = partial.commandTerminalWorkspace;
         }
+        // terminal.colors is a nested dictionary-style map (CONFIG_DICTIONARY_PATHS:
+        // 'terminal.colors'): the real save REPLACES it wholesale so resetting a
+        // single color slot (deleting its key) actually takes effect.
+        if (partial && partial.terminal && Object.prototype.hasOwnProperty.call(partial.terminal, 'colors')) {
+          config.terminal.colors = Object.assign({}, partial.terminal.colors);
+        }
       },
       // Synchronous sibling of set() for the quit/unload flush. Mirrors the real
-      // configManager.save dictionary-path replace semantics (hotkeyOverrides + workspaceByProject + commandTerminalWorkspace).
+      // configManager.save dictionary-path replace semantics (hotkeyOverrides + workspaceByProject + commandTerminalWorkspace + terminal.colors).
       setSync: function (partial) {
         config = deepMerge(config, partial);
         if (partial && Object.prototype.hasOwnProperty.call(partial, 'hotkeyOverrides')) {
@@ -1848,6 +1855,9 @@
         }
         if (partial && Object.prototype.hasOwnProperty.call(partial, 'commandTerminalWorkspace')) {
           config.commandTerminalWorkspace = partial.commandTerminalWorkspace;
+        }
+        if (partial && partial.terminal && Object.prototype.hasOwnProperty.call(partial.terminal, 'colors')) {
+          config.terminal.colors = Object.assign({}, partial.terminal.colors);
         }
       },
       getProjectOverrides: async function () {

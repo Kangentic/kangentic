@@ -108,6 +108,7 @@ window.__mockConfigOverrides = {
     panelHeight: 280,
     scrollbackLines: 5000,
     cursorStyle: 'block',
+    colors: {},
   },
   terminalPanelVisible: false,  // Hide for board-only captures
 };

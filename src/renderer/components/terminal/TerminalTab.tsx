@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { TERMINAL_BACKGROUND, useTerminal } from '../../hooks/useTerminal';
+import { resolveTerminalBackground, useTerminal } from '../../hooks/useTerminal';
 import { useTerminalFileDrop } from '../../hooks/useTerminalFileDrop';
 import { FileDropOverlay } from './FileDropOverlay';
 import { useConfigStore } from '../../stores/config-store';
@@ -97,6 +97,7 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
     fontSize: config.terminal.fontSize,
     scrollbackLines: config.terminal.scrollbackLines,
     cursorStyle: config.terminal.cursorStyle,
+    colors: config.terminal.colors,
     shellName: sessionShell,
     releaseEscapeWhenPointerOutside,
     pasteImageTemplate,
@@ -244,24 +245,25 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
   });
 
   const fileDrop = useTerminalFileDrop(sessionId, focus, sessionShell, pasteImageTemplate);
+  const terminalBackground = resolveTerminalBackground(config.terminal.colors);
 
   return (
-    <div ref={containerRef} className="h-full w-full bg-surface relative">
+    <div ref={containerRef} className="h-full w-full relative" style={{ backgroundColor: terminalBackground }}>
       <div ref={terminalRef} className="h-full w-full" />
       <FileDropOverlay {...fileDrop} />
       {/* Replay veil: covers the mount-time replay window (first fit, chunked
           scrollback write, afterWrite refit, held-byte flush, DOM-to-WebGL
           promotion) so a warm session's terminal appears once, settled, with
-          no intermediate frame. Same fixed color as the terminal background,
-          so it reads as the empty terminal, not a flash of its own; no
-          transition, per restore-no-animation-replay. Rendered BEFORE
-          LaunchOverlay so the cold-start overlay (same z-10, later sibling)
-          paints above it. */}
+          no intermediate frame. Same color as the terminal background (tracks
+          the user's custom override, if any), so it reads as the empty
+          terminal, not a flash of its own; no transition, per
+          restore-no-animation-replay. Rendered BEFORE LaunchOverlay so the
+          cold-start overlay (same z-10, later sibling) paints above it. */}
       {!replaySettled && (
         <div
           data-testid="terminal-replay-veil"
           className="pointer-events-none absolute inset-0 z-10"
-          style={{ backgroundColor: TERMINAL_BACKGROUND }}
+          style={{ backgroundColor: terminalBackground }}
         />
       )}
       {/* Placeholder overlay while Claude CLI is loading (before first usage report).
