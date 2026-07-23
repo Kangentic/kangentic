@@ -122,6 +122,24 @@ test.describe('Settings Panel', () => {
     await closeSettings();
   });
 
+  test('shows Changes tab with diff scope, whitespace, collapse, sort, and flat-list settings', async () => {
+    // diffViewMode itself is exercised end-to-end (including that the Changes
+    // tab mounts and drives the shared config key) by
+    // diff-view-mode-preference.spec.ts. This test's unique value is the other
+    // five rows on ChangesTab.tsx, which had no render-level assertion of their
+    // own before (only the sidebar tab BUTTON's visibility was checked).
+    await openSettings();
+    await page.getByTestId('settings-tab-list').getByRole('button', { name: 'Changes' }).click();
+    await expect(page.locator('text=Default Diff Scope')).toBeVisible();
+    await expect(page.locator('text=Ignore Whitespace')).toBeVisible();
+    // Collapse Unchanged Regions toggle row - goes RED if the SettingToggleRow
+    // is removed from ChangesTab.tsx, while leaving all other assertions green.
+    await expect(page.locator('text=Collapse Unchanged Regions')).toBeVisible();
+    await expect(page.locator('text=File Sort')).toBeVisible();
+    await expect(page.locator('text=Flat File List')).toBeVisible();
+    await closeSettings();
+  });
+
   test('Terminal tab Terminal Colors offers customizable background, foreground, and cursor swatches', async () => {
     await openSettings();
     await page.getByRole('button', { name: 'Terminal', exact: true }).click();

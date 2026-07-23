@@ -311,6 +311,27 @@ describe('Config Manager -- terminal.* project-override migration', () => {
 
     expect(overrides).not.toHaveProperty('terminal');
   });
+
+  it('strips a legacy terminal.backspaceSendsCtrlH override in isolation, keeping its sibling terminal.* key', async () => {
+    // backspaceSendsCtrlH joined the other 5 legacy keys (shell/fontFamily/
+    // fontSize/scrollbackLines/cursorStyle) as global-only in this same
+    // change (it was merged in from an upstream PR as project-scoped and
+    // rescoped during conflict resolution). Isolate it from its siblings so
+    // this test only goes red if backspaceSendsCtrlH specifically falls out
+    // of the migration's droppedKeys list, not if some other key does.
+    const projectDir = path.join(tmpDir, 'proj-e');
+    writeProjectOverrides(projectDir, {
+      terminal: { backspaceSendsCtrlH: false, colors: { background: '#333' } },
+    });
+
+    const cm = await createConfigManager();
+    const overrides = cm.loadProjectOverrides(projectDir);
+
+    expect(overrides?.terminal).toEqual({ colors: { background: '#333' } });
+
+    const raw = JSON.parse(fs.readFileSync(projectOverridesPath(projectDir), 'utf-8'));
+    expect(raw.terminal).toEqual({ colors: { background: '#333' } });
+  });
 });
 
 describe('Config Manager -- commandTerminalWorkspace replace semantics', () => {
