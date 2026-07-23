@@ -170,7 +170,7 @@ export function DiffViewer({
   }, [blameUnavailable]);
 
   // Diff-rendering preferences are single global config keys (the toolbar
-  // toggles and the Layout settings tab read and write the same keys), so the
+  // toggles and the Changes settings tab read and write the same keys), so the
   // choices stick across every diff, all mount points, and restarts - exactly
   // like the split/inline view mode.
   const ignoreWhitespace = useConfigStore((state) => state.config.diffIgnoreWhitespace);
@@ -498,7 +498,7 @@ export function DiffViewer({
   // The binary placeholder and the markdown preview both unmount the child
   // DiffEditor, which disposes the editor before this parent effect runs. Drop
   // the stale ref so nothing (the whitespace/collapse effects below, reachable
-  // from the Layout settings tab while previewing) touches a disposed editor;
+  // from the Changes settings tab while previewing) touches a disposed editor;
   // onMount repopulates it on remount.
   useEffect(() => {
     if (binary || previewActive) {
@@ -689,7 +689,7 @@ export function DiffViewer({
 
               <div className="w-px h-4 bg-edge mx-1" aria-hidden="true" />
 
-              {/* Diff-rendering toggles (persisted as global Layout settings) */}
+              {/* Diff-rendering toggles (persisted as global Changes settings) */}
               <button
                 onClick={() => updateConfig({ diffIgnoreWhitespace: !ignoreWhitespace })}
                 className={toolbarButtonClass(ignoreWhitespace)}

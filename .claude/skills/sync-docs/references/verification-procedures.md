@@ -89,9 +89,9 @@ When an anchor maps to multiple target docs, one doc is the **canonical** locati
 ## UI Anchors
 
 ### Settings Tabs
-1. Read `src/renderer/components/settings/AppSettingsPanel.tsx`
-2. Find the tabs array definition
-3. Extract each tab's label/id and note the `separator: true` position
+1. Read `src/renderer/components/settings/settings-tabs.ts`
+2. Find the `SETTINGS_TABS` array definition
+3. Extract each tab's label/id and note its `category` ('project' vs 'system') and `tier`
 4. Read `docs/user-guide.md` and `docs/configuration.md`
 5. Verify all tabs are documented and the project/shared split is described correctly
 6. Compare: report missing tabs

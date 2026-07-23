@@ -49,11 +49,13 @@ test.afterAll(async () => {
   await browser?.close();
 });
 
-/** Open settings and navigate to the given tab. */
+/** Open settings and navigate to the given tab. Scoped to the settings
+ *  sidebar - some tab names (e.g. "Board") collide with buttons elsewhere
+ *  in the app chrome (the board/backlog view-toggle behind the panel). */
 async function openTab(tabName: string) {
   await page.locator('[data-testid="settings-button"]').click();
   await page.locator('h2:has-text("Settings")').waitFor({ state: 'visible', timeout: 3000 });
-  await page.getByRole('button', { name: tabName, exact: true }).click();
+  await page.getByTestId('settings-tab-list').getByRole('button', { name: tabName, exact: true }).click();
 }
 
 /** Close settings via Escape, clearing search first if active. */
@@ -181,10 +183,10 @@ test.describe('ToggleCard keyboard activation', () => {
 
 // ── Gap 4: CompactToggleList click-anywhere (dense rows) ─────────────────────
 //
-// The Terminal tab Context Bar section renders a CompactToggleList. Each row is
-// a `<button role="switch" aria-label="...">` that should toggle when any part
-// of the row (including the label text) is clicked.
-// "Shell" row (contextBar.showShell) starts checked=true in the mock.
+// The Terminal tab Context Bar section renders a CompactToggleList. Each row
+// is a `<button role="switch" aria-label="...">` that should toggle when any
+// part of the row (including the label text) is clicked.
+// "Shell Name" row (contextBar.showShell) starts checked=true in the mock.
 
 test.describe('CompactToggleList click-anywhere invariant', () => {
   test.beforeEach(async () => {
@@ -194,12 +196,12 @@ test.describe('CompactToggleList click-anywhere invariant', () => {
   test('clicking the row label text flips aria-checked on that row only', async () => {
     await openTab('Terminal');
 
-    // The CompactToggleList item for "Shell" is a button with role="switch".
-    const shellRow = page.getByRole('switch', { name: 'Shell', exact: true });
+    // The CompactToggleList item for "Shell Name" is a button with role="switch".
+    const shellRow = page.getByRole('switch', { name: 'Shell Name', exact: true });
     await expect(shellRow).toHaveAttribute('aria-checked', 'true');
 
     // Click the label text div inside the button.
-    const labelText = shellRow.locator('text=Shell').first();
+    const labelText = shellRow.locator('text=Shell Name').first();
     await labelText.click();
 
     await expect(shellRow).toHaveAttribute('aria-checked', 'false');
@@ -289,7 +291,7 @@ test.describe('SettingToggleRow filter detach', () => {
 //
 // Pattern mirrors browser-settings.spec.ts "toggling Enable Browser Pane persists".
 
-test.describe('BehaviorTab SettingToggleRow persistence', () => {
+test.describe('Behavior/Board tab SettingToggleRow persistence', () => {
   test.afterEach(async () => {
     // Restore all three toggles to their mock defaults.
     await setGlobalConfigAndSync({
@@ -349,10 +351,12 @@ test.describe('BehaviorTab SettingToggleRow persistence', () => {
   });
 
   test('clicking Auto-Apply Board Config Changes persists skipBoardConfigConfirm to global config', async () => {
-    // skipBoardConfigConfirm starts false (mock default).
+    // skipBoardConfigConfirm starts false (mock default). Lives in the Board
+    // tab's Config Sync section, not Behavior - it is board data reconciliation,
+    // not session/window behavior.
     await setGlobalConfigAndSync({ skipBoardConfigConfirm: false });
 
-    await openTab('Behavior');
+    await openTab('Board');
 
     const card = page.getByRole('switch', { name: 'Auto-Apply Board Config Changes' });
     await expect(card).toHaveAttribute('aria-checked', 'false');

@@ -284,8 +284,9 @@ export async function pruneStaleWorktreeProjects(context: IpcContext): Promise<v
  * settings from the last configured project rather than from global defaults.
  * Falls back to getProjectOverridableDefaults() if no projects have overrides.
  *
- * Only the project-overridable subset (theme/terminal/git/permissionMode) is
- * returned - never project-specific data that also lives in config.json such as
+ * Only the project-overridable subset (theme/git/permissionMode - terminal.* is
+ * global-only, see pickOverridableSubset) is returned - never project-specific
+ * data that also lives in config.json such as
  * `importSources` or `browser.defaultUrl`. Cloning the raw config.json here is
  * what previously leaked one project's import sources into every project created
  * after it.

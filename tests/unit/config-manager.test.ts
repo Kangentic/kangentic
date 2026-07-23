@@ -239,6 +239,80 @@ describe('Config Manager -- claude.* to agent.* namespace migration', () => {
   });
 });
 
+describe('Config Manager -- terminal.* project-override migration', () => {
+  // terminal.{shell,fontFamily,fontSize,scrollbackLines,cursorStyle} moved from
+  // project-overridable to global-only (see AppConfig['terminal'] doc comments
+  // in shared/types.ts). loadProjectOverrides() must strip any of these a
+  // project already has on disk rather than silently keep applying them with
+  // no UI left to see or clear them.
+  function projectOverridesPath(projectDir: string): string {
+    return path.join(projectDir, '.kangentic', 'config.json');
+  }
+
+  function writeProjectOverrides(projectDir: string, overrides: Record<string, unknown>): void {
+    fs.mkdirSync(path.join(projectDir, '.kangentic'), { recursive: true });
+    fs.writeFileSync(projectOverridesPath(projectDir), JSON.stringify(overrides));
+  }
+
+  it('strips the migrated keys but keeps other terminal.* and non-terminal settings', async () => {
+    const projectDir = path.join(tmpDir, 'proj-a');
+    writeProjectOverrides(projectDir, {
+      theme: 'forest',
+      terminal: { shell: 'pwsh.exe', fontSize: 16, colors: { background: '#111' } },
+      git: { worktreesEnabled: true },
+    });
+
+    const cm = await createConfigManager();
+    const overrides = cm.loadProjectOverrides(projectDir);
+
+    expect(overrides?.theme).toBe('forest');
+    expect(overrides?.git).toEqual({ worktreesEnabled: true });
+    expect(overrides?.terminal).toEqual({ colors: { background: '#111' } });
+
+    const raw = JSON.parse(fs.readFileSync(projectOverridesPath(projectDir), 'utf-8'));
+    expect(raw.terminal).toEqual({ colors: { background: '#111' } });
+  });
+
+  it('deletes the terminal key entirely when nothing survives the strip', async () => {
+    const projectDir = path.join(tmpDir, 'proj-b');
+    writeProjectOverrides(projectDir, {
+      theme: 'ember',
+      terminal: { shell: 'bash', fontFamily: 'Consolas', scrollbackLines: 2000, cursorStyle: 'bar' },
+    });
+
+    const cm = await createConfigManager();
+    const overrides = cm.loadProjectOverrides(projectDir);
+
+    expect(overrides).not.toHaveProperty('terminal');
+
+    const raw = JSON.parse(fs.readFileSync(projectOverridesPath(projectDir), 'utf-8'));
+    expect(raw).not.toHaveProperty('terminal');
+  });
+
+  it('does not rewrite the file when there is nothing to migrate', async () => {
+    const projectDir = path.join(tmpDir, 'proj-c');
+    writeProjectOverrides(projectDir, { theme: 'sky', terminal: { colors: { background: '#222' } } });
+    const before = fs.statSync(projectOverridesPath(projectDir)).mtimeMs;
+
+    const cm = await createConfigManager();
+    cm.loadProjectOverrides(projectDir);
+
+    const after = fs.statSync(projectOverridesPath(projectDir)).mtimeMs;
+    expect(after).toBe(before);
+  });
+
+  it('does not re-migrate on a second load (idempotent)', async () => {
+    const projectDir = path.join(tmpDir, 'proj-d');
+    writeProjectOverrides(projectDir, { terminal: { shell: 'zsh' } });
+
+    const cm = await createConfigManager();
+    cm.loadProjectOverrides(projectDir);
+    const overrides = cm.loadProjectOverrides(projectDir);
+
+    expect(overrides).not.toHaveProperty('terminal');
+  });
+});
+
 describe('Config Manager -- commandTerminalWorkspace replace semantics', () => {
   it('set({ commandTerminalWorkspace: null }) REPLACES the previous blob, not deep-merges it', async () => {
     // A realistic minimal serialized-workspace blob (shape mirrors SerializedWorkspace).

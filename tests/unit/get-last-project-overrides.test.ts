@@ -296,6 +296,9 @@ describe('getLastProjectOverrides (via PROJECT_CREATE handler)', () => {
 
     const previousConfig: Record<string, unknown> = {
       theme: 'forest',
+      // terminal.* is global-only (see pickOverridableSubset in
+      // config-manager.ts) - included here specifically to assert it is
+      // dropped, not carried over like theme/agent/git below.
       terminal: { shell: 'pwsh.exe', fontSize: 14 },
       agent: { permissionMode: 'acceptEdits' },
       git: { worktreesEnabled: true, defaultBaseBranch: 'develop' },
@@ -325,13 +328,14 @@ describe('getLastProjectOverrides (via PROJECT_CREATE handler)', () => {
 
     // The overridable settings are carried over
     expect(savedOverrides.theme).toBe('forest');
-    expect(savedOverrides.terminal).toEqual({ shell: 'pwsh.exe', fontSize: 14 });
     expect(savedOverrides.agent).toEqual({ permissionMode: 'acceptEdits' });
     expect(savedOverrides.git).toMatchObject({ worktreesEnabled: true, defaultBaseBranch: 'develop' });
 
     // Non-overridable keys must be absent
     expect(savedOverrides).not.toHaveProperty('importSources');
     expect(savedOverrides).not.toHaveProperty('browser');
+    // terminal.* is global-only now - must never be cloned into a new project.
+    expect(savedOverrides).not.toHaveProperty('terminal');
   });
 
   it('(ii) skips the new project path (excludePath) when scanning for the previous project', async () => {
@@ -426,7 +430,7 @@ describe('getLastProjectOverrides (via PROJECT_CREATE handler)', () => {
 
     const globalDefaults = {
       theme: 'dark',
-      terminal: { shell: null, fontSize: 14 },
+      agent: { permissionMode: 'acceptEdits' },
     };
 
     const context = makeContext(
@@ -447,7 +451,9 @@ describe('getLastProjectOverrides (via PROJECT_CREATE handler)', () => {
     const savedOverrides = context.configManager.saveProjectOverrides.mock.calls[0][1] as Record<string, unknown>;
 
     // The saved overrides should match what getProjectOverridableDefaults returned
+    // (this test mocks that function directly, so it does not exercise
+    // pickOverridableSubset's real terminal.* filtering - see test (i) for that).
     expect(savedOverrides.theme).toBe('dark');
-    expect(savedOverrides.terminal).toEqual({ shell: null, fontSize: 14 });
+    expect(savedOverrides.agent).toEqual({ permissionMode: 'acceptEdits' });
   });
 });

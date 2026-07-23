@@ -6,9 +6,9 @@ import { SettingRow } from '../shared';
 import { settingProps } from '../settings-registry';
 
 /**
- * General per-project settings. Unlike the other per-project tabs, this one
- * edits the project row in the global DB (via the projects IPC surface), not
- * the project's config overrides, so it bypasses useScopedUpdate.
+ * General per-project settings. Project Location is unlike every other
+ * per-project row, editing the project row in the global DB (via the
+ * projects IPC surface) rather than the project's config overrides.
  */
 export function GeneralTab() {
   const projectSettingsPath = useConfigStore((state) => state.projectSettingsPath);
@@ -28,30 +28,30 @@ export function GeneralTab() {
     openProjectSettings(updated.path, updated.name, 'general');
   });
 
-  if (!project) return null;
-
   return (
     <>
-      <SettingRow {...settingProps('project.location')}>
-        <div className="flex items-center gap-2">
-          <div
-            className="flex-1 min-w-0 px-3 py-1.5 text-sm bg-surface border border-edge rounded text-fg-muted truncate"
-            title={project.path}
-            data-testid="project-location-path"
-          >
-            {project.path}
+      {project && (
+        <SettingRow {...settingProps('project.location')}>
+          <div className="flex items-center gap-2">
+            <div
+              className="flex-1 min-w-0 px-3 py-1.5 text-sm bg-surface border border-edge rounded text-fg-muted truncate"
+              title={project.path}
+              data-testid="project-location-path"
+            >
+              {project.path}
+            </div>
+            <button
+              type="button"
+              onClick={() => requestMove(project)}
+              data-testid="project-location-move"
+              className="flex-shrink-0 inline-flex items-center gap-2 px-3 py-1.5 text-xs rounded border border-edge-input text-fg-muted hover:text-fg hover:border-edge-hover transition-colors"
+            >
+              <FolderInput size={14} />
+              <span>Move...</span>
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={() => requestMove(project)}
-            data-testid="project-location-move"
-            className="flex-shrink-0 inline-flex items-center gap-2 px-3 py-1.5 text-xs rounded border border-edge-input text-fg-muted hover:text-fg hover:border-edge-hover transition-colors"
-          >
-            <FolderInput size={14} />
-            <span>Move...</span>
-          </button>
-        </div>
-      </SettingRow>
+        </SettingRow>
+      )}
       {relocationDialog}
     </>
   );

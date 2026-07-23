@@ -240,20 +240,13 @@
    *  KEEP IN SYNC with pickOverridableSubset() in src/main/config/config-manager.ts */
   function pickOverridableSubset(source) {
     source = source || {};
-    var terminal = source.terminal || {};
     var agent = source.agent || {};
     var git = source.git || {};
     var result = {};
     if (source.theme !== undefined) result.theme = source.theme;
-    var pickedTerminal = pruneUndefined({
-      shell: terminal.shell,
-      fontSize: terminal.fontSize,
-      fontFamily: terminal.fontFamily,
-      scrollbackLines: terminal.scrollbackLines,
-      cursorStyle: terminal.cursorStyle,
-      backspaceSendsCtrlH: terminal.backspaceSendsCtrlH,
-    });
-    if (pickedTerminal) result.terminal = pickedTerminal;
+    // terminal.* (shell, fontSize, fontFamily, scrollbackLines, cursorStyle,
+    // backspaceSendsCtrlH) is global-only now - see the comment on
+    // pickOverridableSubset() in src/main/config/config-manager.ts.
     // agent.execution is deliberately excluded - see the comment on
     // pickOverridableSubset() in src/main/config/config-manager.ts.
     if (agent.permissionMode !== undefined) result.agent = { permissionMode: agent.permissionMode };

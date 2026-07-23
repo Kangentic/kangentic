@@ -9,10 +9,10 @@ import { APP_TABS, GLOBAL_ONLY_TABS, SettingsContent } from './AppSettingsPanel'
 import { SETTINGS_REGISTRY } from './settings-registry';
 
 /**
- * Unified settings panel. Shows all 7 tabs when a project is open,
- * or only the 3 shared tabs (Behavior, Notifications, Privacy) when
- * no project is selected. No scope toggle; each setting saves to
- * the correct target based on its position relative to the separator.
+ * Unified settings panel. Shows every Project + System tab when a project is
+ * open, or only the System-category tabs when none is selected. No scope
+ * toggle; each setting saves to the correct target based on its tab's
+ * category (see settings-tabs.ts and .claude/rules/settings-tab-scope.md).
  */
 export function SettingsPanel() {
   const setSettingsOpen = useConfigStore((state) => state.setSettingsOpen);
@@ -43,7 +43,7 @@ export function SettingsPanel() {
     // tab so closing and reopening returns to the same section.
     if (state.projectSettingsInitialTab) return state.projectSettingsInitialTab;
     if (state.lastSettingsTab) return state.lastSettingsTab;
-    return hasProject ? 'theme' : tabs[0].id;
+    return hasProject ? 'general' : tabs[0].id;
   });
   const [searchQuery, setSearchQuery] = useState('');
 

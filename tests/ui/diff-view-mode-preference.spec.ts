@@ -5,7 +5,7 @@
  * Two entry points read and write it:
  *   1. The in-diff toggle buttons (`data-testid="diff-view-split"` /
  *      `data-testid="diff-view-inline"`) inside DiffViewer.
- *   2. The "Git Diff View" select in the Layout settings tab
+ *   2. The "Git Diff View" select in the Changes settings tab
  *      (`data-testid="setting-row-diffViewMode"`).
  *
  * Both read from `useConfigStore(state => state.config.diffViewMode)` and write
@@ -22,8 +22,8 @@
  *      - Click inline: assert inline becomes active, config reflects the write.
  *      - Close the Changes panel, reopen it: inline is still active (read path).
  *
- *   2. Layout settings tab reflects and drives the same global value.
- *      - Set inline via the in-diff toggle, then open Settings > Layout.
+ *   2. Changes settings tab reflects and drives the same global value.
+ *      - Set inline via the in-diff toggle, then open Settings > Changes.
  *      - Assert the "Git Diff View" select shows `inline` (the shared key).
  *      - Change it to `split` via selectOption; assert config reflects the write.
  *
@@ -205,7 +205,7 @@ async function closeDialogAndPanel(): Promise<void> {
 }
 
 /** Read the persisted diffViewMode from the mock config: the single global key
- *  that both the in-diff toggle and the Layout settings select read and write. */
+ *  that both the in-diff toggle and the Changes settings select read and write. */
 async function getDiffViewMode(): Promise<unknown> {
   const config = await page.evaluate(() =>
     (window as unknown as { electronAPI: { config: { get: () => Promise<Record<string, unknown>> } } })
@@ -268,11 +268,11 @@ test.describe('diffViewMode: in-diff toggle persists across panel reopen', () =>
   });
 });
 
-test.describe('diffViewMode: Layout settings tab reflects and drives the same value', () => {
-  test('Layout tab Git Diff View select reflects the toggle and can update config', async () => {
+test.describe('diffViewMode: Changes settings tab reflects and drives the same value', () => {
+  test('Changes tab Git Diff View select reflects the toggle and can update config', async () => {
     // Self-contained: establish the value through the in-diff toggle (the OTHER
     // entry point that writes the shared global key) so this test never depends
-    // on a previous test's state. Then confirm the Layout select reflects that
+    // on a previous test's state. Then confirm the Changes select reflects that
     // same value and can drive it back.
     await openChangesPanel();
     await page.locator('[data-testid="diff-view-inline"]').click();
@@ -283,8 +283,8 @@ test.describe('diffViewMode: Layout settings tab reflects and drives the same va
     await page.locator('[data-testid="settings-button"]').click();
     await page.locator('h2:has-text("Settings")').waitFor({ state: 'visible', timeout: 3000 });
 
-    // Navigate to the Layout tab.
-    await page.getByRole('button', { name: 'Layout' }).click();
+    // Navigate to the Changes tab.
+    await page.getByRole('button', { name: 'Changes' }).click();
 
     // Target the row by its stable data-testid instead of walking the DOM.
     const diffViewSelect = page.locator('[data-testid="setting-row-diffViewMode"] select');

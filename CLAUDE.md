@@ -151,12 +151,30 @@ won't be found.
   `useEnsureCommandWindow` for the app-restart blob-restore path), because a carried-over window
   committed into the store would otherwise spawn a fresh PTY under the wrong project before a
   bridge-effect reconcile could close it.
-- **Settings tab separator** - In `AppSettingsPanel`, tabs above the `separator: true` marker
-  are per-project settings (saved to `.kangentic/config.json`). Tabs below the separator
-  (Behavior, Notifications, Privacy) are shared settings that apply across all projects (saved
-  to global config). When a project is open, all 7 tabs are shown. When no project is selected,
-  only the 3 shared tabs appear. There is no Global/Project scope toggle. When adding new
-  settings, decide if they are per-project or shared and place the tab accordingly.
+- **Settings tab separator** - Each tab in `SETTINGS_TABS` (`settings-tabs.ts`) declares a
+  `category`. `'project'` tabs (General, Theme, Agent, Git, Browser, Shortcuts) are per-project
+  settings, saved to `.kangentic/config.json`, and hidden when no project is selected.
+  `'system'` tabs (Board, Changes, Terminal, Behavior, Hotkeys, Notifications, Dictation, Memory,
+  MCP Server, Agent Browser, Mobile Devices, Privacy, Developer) are shared settings that
+  apply across all projects, saved to global config, and remain fully functional with no
+  project open. Terminal (shell, font, scrollback, cursor style, colors, context bar) is
+  global-only, not per-project: shell in particular was never reliably project-scoped at the
+  PTY-spawn level (`SessionManager` caches a single `configuredShell` keyed to whichever project
+  is currently focused - `src/main/pty/session-manager.ts`), so a background project's
+  spawn/resume could silently pick up the wrong shell. There is no Global/Project scope toggle.
+  Theme is its own tab, not folded into General, so it has a discoverable sidebar entry distinct
+  from Project Location. System tabs are further grouped in the sidebar into three tiers (`tier`
+  in `settings-tabs.ts`): Core (Board through Notifications, unlabeled - the default group
+  directly under the System header), Advanced (Dictation through Mobile Devices), and Other
+  (Privacy, Developer). Tiers must stay contiguous; `settings-tab-scope-parity.test.ts` enforces
+  it. A thin full-bleed divider (not just the "System" text label) marks the Project/System
+  boundary, since that split is behavioral (System tabs must work with no project open), not just
+  organizational. Order within each group (Project; each System tier) is curated by
+  frequency/concept, not alphabetical - see the comment above `SETTINGS_TABS` in
+  `settings-tabs.ts` for why.
+  When adding a new setting, its `tabId` must match its `scope` - see
+  `.claude/rules/settings-tab-scope.md`, which is enforced by
+  `tests/unit/settings-tab-scope-parity.test.ts`.
 
 ### Per-Project Directory
 All runtime data lives under `<project>/.kangentic/` (auto-added to `.gitignore` on project
@@ -266,6 +284,7 @@ session; rules with one load when you touch matching files. Each rule names its 
 - `spawn-entry-point-parity.md` - every agent-spawn entry point routes through `spawnAgent` / `prepareAgentSpawn` and the shared `runSpawnPreamble` (first-spawn override lock + agent resolution); no direct engine spawn calls in handlers (`src/main/ipc/**`, `src/main/transition-engine/**`).
 - `linux-package-dependencies.md` - rpm dependencies are soname capabilities, never package names, since RPM package names differ per distro (`electron-builder.yml`).
 - `task-template-vars-parity.md` - the 10 auto_command / spawn_agent promptTemplate keywords are declared once in `TASK_TEMPLATE_VARS` and drive the resolver map, UI chips, and docs tables (`src/shared/task-template-vars.ts`, `src/main/agent/shared/task-template-resolvers.ts`, `src/renderer/components/dialogs/BoardManagerDialog.tsx`).
+- `settings-tab-scope.md` - a setting's tab must match its persistence scope; a project-scoped setting in a system tab silently drops its write with no project open (`src/renderer/components/settings/settings-registry.ts`, `settings-tabs.ts`, `tabs/**`).
 
 **Local overrides:** there is no per-rule local file. Put machine-specific instruction
 overrides in a gitignored `CLAUDE.local.md` at the project root.

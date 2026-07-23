@@ -49,15 +49,13 @@ export function pickOverridableSubset(source: DeepPartial<AppConfig>): Partial<A
 
   if (source.theme !== undefined) result.theme = source.theme;
 
-  const terminal = pruneUndefined({
-    shell: source.terminal?.shell,
-    fontSize: source.terminal?.fontSize,
-    fontFamily: source.terminal?.fontFamily,
-    scrollbackLines: source.terminal?.scrollbackLines,
-    cursorStyle: source.terminal?.cursorStyle,
-    backspaceSendsCtrlH: source.terminal?.backspaceSendsCtrlH,
-  });
-  if (terminal) result.terminal = terminal;
+  // terminal.* (shell, fontSize, fontFamily, scrollbackLines, cursorStyle,
+  // backspaceSendsCtrlH) used to be project-overridable but is now global-only
+  // (see the doc comments on AppConfig['terminal'] in shared/types.ts) - shell
+  // in particular was never reliably per-project at the PTY-spawn level
+  // (SessionManager caches a single configuredShell keyed to whichever project
+  // is currently focused), so this function deliberately does not pick a
+  // terminal block at all anymore.
 
   // agent.execution (local/remote mode + server working directory) is
   // deliberately NOT included here, even though it is project-scoped and
@@ -174,6 +172,27 @@ export class ConfigManager {
       delete (overrides.agent as Record<string, unknown>).cliPath;
       delete overrides.claude;
       this.saveProjectOverrides(projectPath, overrides as Partial<AppConfig>);
+    }
+
+    // One-time migration: terminal.{shell,fontFamily,fontSize,scrollbackLines,
+    // cursorStyle,backspaceSendsCtrlH} moved from project-overridable to
+    // global-only (see the doc comments on AppConfig['terminal'] in
+    // shared/types.ts). Any value a project already had is dropped rather
+    // than promoted to global - a user with several projects holding
+    // different values would otherwise have one arbitrarily "win" depending
+    // on load order. Global terminal settings simply start from
+    // DEFAULT_CONFIG (or whatever the user later sets).
+    const legacyTerminal = overrides.terminal as Record<string, unknown> | undefined;
+    if (legacyTerminal) {
+      const droppedKeys = ['shell', 'fontFamily', 'fontSize', 'scrollbackLines', 'cursorStyle', 'backspaceSendsCtrlH'] as const;
+      const hadDroppedKey = droppedKeys.some((key) => key in legacyTerminal);
+      if (hadDroppedKey) {
+        for (const key of droppedKeys) delete legacyTerminal[key];
+        if (Object.keys(legacyTerminal).length === 0) {
+          delete overrides.terminal;
+        }
+        this.saveProjectOverrides(projectPath, overrides as Partial<AppConfig>);
+      }
     }
 
     return overrides as Partial<AppConfig>;

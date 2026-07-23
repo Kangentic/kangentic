@@ -8,7 +8,7 @@ export function BehaviorTab({ globalConfig }: { globalConfig: AppConfig }) {
     <>
       <SectionHeader
         label="Sessions"
-        searchIds={['agent.maxConcurrentSessions', 'agent.queueOverflow', 'autoFocusIdleSession', 'agent.autoResumeSessionsOnRestart']}
+        searchIds={['agent.maxConcurrentSessions', 'agent.queueOverflow', 'autoFocusIdleSession', 'agent.autoResumeSessionsOnRestart', 'agent.idleTimeoutMinutes']}
       />
       <SettingRow {...settingProps('agent.maxConcurrentSessions')}>
         <input
@@ -38,15 +38,18 @@ export function BehaviorTab({ globalConfig }: { globalConfig: AppConfig }) {
         checked={globalConfig.agent.autoResumeSessionsOnRestart}
         onChange={(value) => updateGlobal({ agent: { autoResumeSessionsOnRestart: value } })}
       />
+      <SettingRow {...settingProps('agent.idleTimeoutMinutes')}>
+        <input
+          type="number"
+          value={globalConfig.agent.idleTimeoutMinutes}
+          onChange={(event) => updateGlobal({ agent: { idleTimeoutMinutes: Number(event.target.value) } })}
+          min={0}
+          max={120}
+          className={INPUT_CLASS}
+        />
+      </SettingRow>
 
-      <SectionHeader label="Board" searchIds={['skipBoardConfigConfirm']} />
-      <SettingToggleRow
-        {...settingProps('skipBoardConfigConfirm')}
-        checked={globalConfig.skipBoardConfigConfirm}
-        onChange={(value) => updateGlobal({ skipBoardConfigConfirm: value })}
-      />
-
-      <SectionHeader label="Task Windows" searchIds={['windowLightDismiss']} />
+      <SectionHeader label="Windows" searchIds={['windowLightDismiss', 'restoreWindowPosition']} />
       <SettingRow {...settingProps('windowLightDismiss')}>
         <Select
           value={globalConfig.windowLightDismiss}
@@ -58,6 +61,11 @@ export function BehaviorTab({ globalConfig }: { globalConfig: AppConfig }) {
           <option value="all">All Windows</option>
         </Select>
       </SettingRow>
+      <SettingToggleRow
+        {...settingProps('restoreWindowPosition')}
+        checked={globalConfig.restoreWindowPosition}
+        onChange={(value) => updateGlobal({ restoreWindowPosition: value })}
+      />
     </>
   );
 }

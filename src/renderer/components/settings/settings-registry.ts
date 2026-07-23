@@ -25,72 +25,76 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   // ── Theme ──
   { id: 'theme', tabId: 'theme', label: 'Theme', description: 'Color scheme for the interface', scope: 'project', keywords: ['color', 'dark', 'light', 'appearance'] },
 
-  // ── Layout ──
-  { id: 'cardDensity', tabId: 'layout', label: 'Card Density', description: 'Amount of detail shown on task cards', scope: 'global', keywords: ['compact', 'comfortable', 'minimal', 'detailed'] },
-  { id: 'columnWidth', tabId: 'layout', label: 'Column Width', description: 'Width of board columns', scope: 'global', keywords: ['narrow', 'wide', 'size'] },
-  { id: 'showTaskNumbers', tabId: 'layout', label: 'Ticket Numbers', description: "Show each task's #N number on its card", scope: 'global', keywords: ['ticket', 'number', 'id', 'display', 'card', 'display_id', 'hash'] },
-  { id: 'terminalPanelVisible', tabId: 'layout', label: 'Terminal Panel', description: 'Show the terminal panel below the board', scope: 'global', keywords: ['bottom', 'panel', 'hide', 'terminal', 'visible'] },
-  { id: 'statusBarVisible', tabId: 'layout', label: 'Status Bar', description: 'Show the status bar at the bottom of the window', scope: 'global', keywords: ['bottom', 'bar', 'hide', 'visible'] },
-  { id: 'restoreWindowPosition', tabId: 'layout', label: 'Restore Window Position', description: 'Remember window size and position between launches', scope: 'global', keywords: ['size', 'bounds', 'remember'] },
-  { id: 'animationsEnabled', tabId: 'layout', label: 'Animations', description: 'Enable transition and motion effects', scope: 'global', keywords: ['motion', 'reduce', 'transition', 'disable', 'accessibility'] },
+  // ── Board ──
+  { id: 'cardDensity', tabId: 'board', label: 'Card Density', description: 'Amount of detail shown on task cards', scope: 'global', keywords: ['compact', 'comfortable', 'minimal', 'detailed'] },
+  { id: 'columnWidth', tabId: 'board', label: 'Column Width', description: 'Width of board columns', scope: 'global', keywords: ['narrow', 'wide', 'size'] },
+  { id: 'showTaskNumbers', tabId: 'board', label: 'Ticket Numbers', description: "Show each task's #N number on its card", scope: 'global', keywords: ['ticket', 'number', 'id', 'display', 'card', 'display_id', 'hash'] },
 
-  // ── Layout > Diff ──
-  { id: 'diffViewMode', tabId: 'layout', label: 'Git Diff View', description: 'Default layout for Git file diffs in the Changes panel: split (side by side) or inline (unified).', scope: 'global', section: 'Diff', keywords: ['split', 'inline', 'side by side', 'side-by-side', 'unified', 'diff', 'changes', 'git', 'review', 'compare'] },
-  { id: 'diffDefaultScope', tabId: 'layout', label: 'Default Diff Scope', description: 'Which changes a freshly opened Changes panel shows: working (uncommitted edits), staged (index), or the full branch vs its base.', scope: 'global', section: 'Diff', keywords: ['scope', 'working', 'staged', 'branch', 'uncommitted', 'index', 'diff', 'changes', 'git', 'review'] },
-  { id: 'diffIgnoreWhitespace', tabId: 'layout', label: 'Ignore Whitespace', description: 'Hide whitespace-only changes in the diff to filter reformatting noise.', scope: 'global', section: 'Diff', keywords: ['whitespace', 'trim', 'indent', 'reformat', 'diff', 'changes'] },
-  { id: 'diffCollapseUnchanged', tabId: 'layout', label: 'Collapse Unchanged Regions', description: 'Fold away large unchanged spans so a big file shows only the changed hunks with a little context.', scope: 'global', section: 'Diff', keywords: ['collapse', 'fold', 'hide', 'unchanged', 'context', 'hunks', 'diff'] },
-  { id: 'diffFileSort', tabId: 'layout', label: 'File Sort', description: 'How the Changes panel orders files: by name, by status (added / modified / deleted), or by size (most changes first).', scope: 'global', section: 'Diff', keywords: ['sort', 'order', 'name', 'status', 'size', 'files', 'diff', 'changes'] },
-  { id: 'diffFlatList', tabId: 'layout', label: 'Flat File List', description: 'Show changed files as a flat list of full paths instead of a nested directory tree.', scope: 'global', section: 'Diff', keywords: ['flat', 'list', 'tree', 'directory', 'folder', 'nested', 'files', 'diff', 'changes'] },
+  // ── Board > Config Sync ──
+  { id: 'skipBoardConfigConfirm', tabId: 'board', label: 'Auto-Apply Board Config Changes', description: 'Apply a detected kangentic.json change immediately instead of asking to confirm.', scope: 'global', section: 'Config Sync', keywords: ['board config', 'kangentic.json', 'reconcile', 'reconciliation', 'apply', 'confirm', 'dialog', 'pull', 'auto'] },
 
-  // ── Layout > Terminal ──
-  { id: 'terminal.colors', tabId: 'layout', label: 'Terminal Colors', description: 'Customize the terminal background, foreground, and cursor color', scope: 'global', section: 'Terminal', keywords: ['colors', 'background', 'foreground', 'cursor', 'custom', 'terminal'] },
+  // ── Board > Window ──
+  { id: 'terminalPanelVisible', tabId: 'board', label: 'Terminal Panel', description: 'Show the terminal panel below the board', scope: 'global', section: 'Window', keywords: ['bottom', 'panel', 'hide', 'terminal', 'visible'] },
+  { id: 'statusBarVisible', tabId: 'board', label: 'Status Bar', description: 'Show the status bar at the bottom of the window', scope: 'global', section: 'Window', keywords: ['bottom', 'bar', 'hide', 'visible'] },
+  { id: 'animationsEnabled', tabId: 'board', label: 'Animations', description: 'Enable transition and motion effects', scope: 'global', section: 'Window', keywords: ['motion', 'reduce', 'transition', 'disable', 'accessibility'] },
 
-  // ── Terminal ──
-  { id: 'terminal.shell', tabId: 'terminal', label: 'Shell', description: 'Terminal shell used for agent sessions', scope: 'project', keywords: ['bash', 'powershell', 'zsh', 'fish'] },
-  { id: 'terminal.fontSize', tabId: 'terminal', label: 'Font Size', description: 'Terminal text size in pixels', scope: 'project', keywords: ['px', 'text size'] },
-  { id: 'terminal.fontFamily', tabId: 'terminal', label: 'Font Family', description: 'CSS font-family for the terminal', scope: 'project', keywords: ['monospace', 'typeface'] },
-  { id: 'terminal.scrollbackLines', tabId: 'terminal', label: 'Scrollback Lines', description: 'Lines kept in the visible scrollback. Full session history is preserved for replay regardless of this value.', scope: 'project', keywords: ['buffer', 'history'] },
-  { id: 'terminal.cursorStyle', tabId: 'terminal', label: 'Cursor Style', description: 'Terminal cursor appearance', scope: 'project', keywords: ['block', 'underline', 'bar'] },
-  { id: 'terminal.backspaceSendsCtrlH', tabId: 'terminal', label: 'Word delete on Backspace', description: 'Backspace deletes the whole previous word instead of one character.', scope: 'project', keywords: ['ctrl+h', 'delete word', 'backspace', 'putty', 'windows'] },
+  // ── Changes ──
+  { id: 'diffViewMode', tabId: 'changes', label: 'Git Diff View', description: 'Default layout for Git file diffs in the Changes panel: split (side by side) or inline (unified).', scope: 'global', keywords: ['split', 'inline', 'side by side', 'side-by-side', 'unified', 'diff', 'changes', 'git', 'review', 'compare'] },
+  { id: 'diffDefaultScope', tabId: 'changes', label: 'Default Diff Scope', description: 'Which changes a freshly opened Changes panel shows: working (uncommitted edits), staged (index), or the full branch vs its base.', scope: 'global', keywords: ['scope', 'working', 'staged', 'branch', 'uncommitted', 'index', 'diff', 'changes', 'git', 'review'] },
+  { id: 'diffIgnoreWhitespace', tabId: 'changes', label: 'Ignore Whitespace', description: 'Hide whitespace-only changes in the diff to filter reformatting noise.', scope: 'global', keywords: ['whitespace', 'trim', 'indent', 'reformat', 'diff', 'changes'] },
+  { id: 'diffCollapseUnchanged', tabId: 'changes', label: 'Collapse Unchanged Regions', description: 'Fold away large unchanged spans so a big file shows only the changed hunks with a little context.', scope: 'global', keywords: ['collapse', 'fold', 'hide', 'unchanged', 'context', 'hunks', 'diff'] },
+  { id: 'diffFileSort', tabId: 'changes', label: 'File Sort', description: 'How the Changes panel orders files: by name, by status (added / modified / deleted), or by size (most changes first).', scope: 'global', keywords: ['sort', 'order', 'name', 'status', 'size', 'files', 'diff', 'changes'] },
+  { id: 'diffFlatList', tabId: 'changes', label: 'Flat File List', description: 'Show changed files as a flat list of full paths instead of a nested directory tree.', scope: 'global', keywords: ['flat', 'list', 'tree', 'directory', 'folder', 'nested', 'files', 'diff', 'changes'] },
+
+  // ── Terminal (global-only; see the doc comments on AppConfig['terminal'] in shared/types.ts) ──
+  { id: 'terminal.shell', tabId: 'terminal', label: 'Shell', description: 'Terminal shell used for agent sessions', scope: 'global', keywords: ['bash', 'powershell', 'zsh', 'fish'] },
+  { id: 'terminal.fontSize', tabId: 'terminal', label: 'Font Size', description: 'Terminal text size in pixels', scope: 'global', keywords: ['px', 'text size'] },
+  { id: 'terminal.fontFamily', tabId: 'terminal', label: 'Font Family', description: 'CSS font-family for the terminal', scope: 'global', keywords: ['monospace', 'typeface'] },
+  { id: 'terminal.scrollbackLines', tabId: 'terminal', label: 'Scrollback Lines', description: 'Lines kept in the visible scrollback. Full session history is preserved for replay regardless of this value.', scope: 'global', keywords: ['buffer', 'history'] },
+  { id: 'terminal.cursorStyle', tabId: 'terminal', label: 'Cursor Style', description: 'Terminal cursor appearance', scope: 'global', keywords: ['block', 'underline', 'bar'] },
+  { id: 'terminal.backspaceSendsCtrlH', tabId: 'terminal', label: 'Word delete on Backspace', description: 'Backspace deletes the whole previous word instead of one character.', scope: 'global', keywords: ['ctrl+h', 'delete word', 'backspace', 'putty', 'windows'] },
+
+  // ── Terminal > Colors ──
+  { id: 'terminal.colors', tabId: 'terminal', label: 'Terminal Colors', description: 'Customize the terminal background, foreground, and cursor color', scope: 'global', section: 'Colors', keywords: ['colors', 'background', 'foreground', 'cursor', 'custom', 'terminal', 'appearance'] },
 
   // ── Terminal > Context Bar ──
-  { id: 'contextBar.showShell', tabId: 'terminal', label: 'Shell', description: 'Detected shell name', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },
+  { id: 'contextBar.showShell', tabId: 'terminal', label: 'Shell Name', description: 'Detected shell name', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },
   { id: 'contextBar.showVersion', tabId: 'terminal', label: 'Version', description: 'Agent CLI version', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },
+  { id: 'contextBar.showElapsed', tabId: 'terminal', label: 'Elapsed Time', description: 'Ticking session duration', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status', 'duration', 'timer'] },
   // Note: model and effort are intentionally NOT in the registry. Those
   // pills double as the in-place picker triggers, so a "hide" toggle would
   // silently disable a feature, not just declutter chrome. They're a
   // permanent fixture of the context bar.
   { id: 'contextBar.showCost', tabId: 'terminal', label: 'Cost', description: 'Session API cost', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status', 'price'] },
+  { id: 'contextBar.showToolCalls', tabId: 'terminal', label: 'Tool Calls', description: 'Cumulative tool invocations', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status', 'tool', 'invocations'] },
+  { id: 'contextBar.showAgentActive', tabId: 'terminal', label: 'Agent Active', description: 'Agent active time', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status', 'active'] },
   { id: 'contextBar.showTokens', tabId: 'terminal', label: 'Token Counts', description: 'Input / output totals', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },
   { id: 'contextBar.showContextFraction', tabId: 'terminal', label: 'Context Window', description: 'Used / total tokens', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },
   { id: 'contextBar.showProgressBar', tabId: 'terminal', label: 'Progress Bar', description: 'Usage bar and percentage', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },
   { id: 'contextBar.showRateLimits', tabId: 'terminal', label: 'Rate Limits', description: 'Claude 5h / weekly quota bars', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status', 'claude', 'quota', 'plan', 'limit', '5h', 'weekly'] },
 
-  // ── Agent ──
-  { id: 'project.defaultAgent', tabId: 'agent', label: 'Agent', description: 'Which agent CLI to use for new sessions', scope: 'project', keywords: ['agent', 'claude', 'default'] },
-  { id: 'project.defaultModel', tabId: 'agent', label: 'Model', description: 'Model used for new sessions when no column or task override is set', scope: 'project', keywords: ['model', 'opus', 'sonnet', 'default'] },
-  { id: 'project.defaultEffort', tabId: 'agent', label: 'Effort', description: 'Reasoning effort used for new sessions when no column or task override is set', scope: 'project', keywords: ['effort', 'reasoning', 'xhigh', 'default'] },
-  { id: 'agent.cliPaths', tabId: 'agent', label: 'CLI Paths', description: 'Paths to agent CLI binaries (auto-detected if empty)', scope: 'global', keywords: ['binary', 'executable'] },
-  { id: 'agent.idleTimeoutMinutes', tabId: 'agent', label: 'Idle Timeout (minutes)', description: 'Auto-suspend sessions after this many minutes idle. 0 to disable.', scope: 'global', keywords: ['suspend', 'minutes'] },
-  { id: 'agent.permissionMode', tabId: 'agent', label: 'Permissions', description: 'How the agent handles tool approvals', scope: 'project', keywords: ['allowlist', 'bypass', 'approve'] },
+  // ── Agent > Project Defaults ──
+  { id: 'project.defaultAgent', tabId: 'agent', label: 'Agent', description: 'Which agent CLI to use for new sessions', scope: 'project', section: 'Project Defaults', keywords: ['agent', 'claude', 'default'] },
+  { id: 'project.defaultModel', tabId: 'agent', label: 'Model', description: 'Model used for new sessions when no column or task override is set', scope: 'project', section: 'Project Defaults', keywords: ['model', 'opus', 'sonnet', 'default'] },
+  { id: 'project.defaultEffort', tabId: 'agent', label: 'Effort', description: 'Reasoning effort used for new sessions when no column or task override is set', scope: 'project', section: 'Project Defaults', keywords: ['effort', 'reasoning', 'xhigh', 'default'] },
+  { id: 'agent.permissionMode', tabId: 'agent', label: 'Permissions', description: 'How the agent handles tool approvals', scope: 'project', section: 'Project Defaults', keywords: ['allowlist', 'bypass', 'approve'] },
 
-  // ── Agent > Remote Execution ──
+  // ── Agent > Agent CLI ──
+  { id: 'agent.cliPaths', tabId: 'agent', label: 'CLI Paths', description: 'Paths to agent CLI binaries (auto-detected if empty)', scope: 'global', section: 'Agent CLI', keywords: ['binary', 'executable'] },
   // Keywords stay agent-agnostic: these rows render for ANY adapter that
   // declares `remoteExecution`, so naming one agent here would go stale the
   // moment a second one does (agent-adapters-boundary.md).
-  { id: 'agent.executionMode', tabId: 'agent', label: 'Execution', description: 'Run this agent locally, or attach to a server you run elsewhere', scope: 'project', keywords: ['remote', 'local', 'server', 'attach'] },
-  { id: 'agent.executionServerUrl', tabId: 'agent', label: 'Server URL', description: 'Address of the running server (e.g. http://10.0.0.5:4096)', scope: 'global', keywords: ['remote', 'url', 'server', 'host'] },
-  { id: 'agent.executionServerAuth', tabId: 'agent', label: 'Authentication', description: 'Leave blank if the server does not require credentials', scope: 'global', keywords: ['remote', 'auth', 'username', 'password', 'basic', 'optional'] },
-  { id: 'agent.executionWorkingDirectory', tabId: 'agent', label: 'Server Working Directory', description: "Path on the server for this project's tasks. Leave blank to use the server's own default directory", scope: 'project', keywords: ['remote', 'directory', 'path', 'worktree', 'cwd', 'optional'] },
-
-  // ── Agent > Launch Options ──
+  { id: 'agent.executionMode', tabId: 'agent', label: 'Execution', description: 'Run this agent locally, or attach to a server you run elsewhere', scope: 'project', section: 'Agent CLI', keywords: ['remote', 'local', 'server', 'attach'] },
+  { id: 'agent.executionServerUrl', tabId: 'agent', label: 'Server URL', description: 'Address of the running server (e.g. http://10.0.0.5:4096)', scope: 'global', section: 'Agent CLI', keywords: ['remote', 'url', 'server', 'host'] },
+  { id: 'agent.executionServerAuth', tabId: 'agent', label: 'Authentication', description: 'Leave blank if the server does not require credentials', scope: 'global', section: 'Agent CLI', keywords: ['remote', 'auth', 'username', 'password', 'basic', 'optional'] },
+  { id: 'agent.executionWorkingDirectory', tabId: 'agent', label: 'Server Working Directory', description: "Path on the server for this project's tasks. Leave blank to use the server's own default directory", scope: 'project', section: 'Agent CLI', keywords: ['remote', 'directory', 'path', 'worktree', 'cwd', 'optional'] },
   // One registry entry backs the rows of EVERY adapter that declares
   // `launchOptions`; no agent name appears here, so the row never branches on
   // one (agent-adapters-boundary.md). The concrete per-option label/description
   // is adapter-authored and rendered as-is. The keywords below are seeded from
   // today's sole option (Codex's ChatGPT Apps hang) so users can search for the
   // symptom - revisit and generalize them when a second adapter adds one.
-  { id: 'agent.launchOptions', tabId: 'agent', label: 'Launch Options', description: 'Optional startup features this agent CLI can turn off', scope: 'global', keywords: ['apps', 'feature', 'flag', 'disable', 'startup', 'hang', 'mcp', 'boot', 'connector'] },
+  { id: 'agent.launchOptions', tabId: 'agent', label: 'Launch Options', description: 'Optional startup features this agent CLI can turn off', scope: 'global', section: 'Agent CLI', keywords: ['apps', 'feature', 'flag', 'disable', 'startup', 'hang', 'mcp', 'boot', 'connector'] },
 
   // ── Git ──
   { id: 'git.worktreesEnabled', tabId: 'git', label: 'Enable Worktrees', description: 'Create git worktrees for agent tasks', scope: 'project', keywords: ['branch', 'isolate'] },
@@ -122,21 +126,22 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   // ── Behavior > Sessions ──
   { id: 'agent.maxConcurrentSessions', tabId: 'behavior', label: 'Max Concurrent Sessions', description: 'Limit how many agents can run at the same time', scope: 'global', section: 'Sessions', keywords: ['parallel', 'limit'] },
   { id: 'agent.queueOverflow', tabId: 'behavior', label: 'When Max Sessions Reached', description: 'How new agent requests are handled when all slots are in use', scope: 'global', section: 'Sessions', keywords: ['overflow', 'queue', 'reject', 'limit'] },
-  { id: 'autoFocusIdleSession', tabId: 'behavior', label: 'Auto-Focus Idle Sessions', description: 'Automatically switch the bottom panel to idle sessions. Idle tabs are always highlighted regardless of this setting.', scope: 'global', section: 'Sessions', keywords: ['switch', 'panel', 'attention'] },
-  { id: 'agent.autoResumeSessionsOnRestart', tabId: 'behavior', label: 'Auto-Resume Agents on Restart', description: 'When a project opens, resume any agent sessions that were running at last close. When off, those sessions stay paused until you click Resume on each task. Turn off if resuming many agents at once slows your machine.', scope: 'global', section: 'Sessions', keywords: ['resume', 'restart', 'startup', 'suspend', 'pause', 'stampede', 'auto', 'sessions', 'agents'] },
+  { id: 'autoFocusIdleSession', tabId: 'behavior', label: 'Auto-Focus Idle Sessions', description: 'Automatically switch the bottom panel to idle sessions. Idle tabs stay highlighted either way.', scope: 'global', section: 'Sessions', keywords: ['switch', 'panel', 'attention'] },
+  { id: 'agent.autoResumeSessionsOnRestart', tabId: 'behavior', label: 'Auto-Resume Agents on Restart', description: 'Resume agent sessions that were running when the project last closed. Turn off if resuming many at once slows your machine.', scope: 'global', section: 'Sessions', keywords: ['resume', 'restart', 'startup', 'suspend', 'pause', 'stampede', 'auto', 'sessions', 'agents'] },
+  { id: 'agent.idleTimeoutMinutes', tabId: 'behavior', label: 'Idle Timeout (minutes)', description: 'Auto-suspend sessions after this many minutes idle. 0 to disable.', scope: 'global', section: 'Sessions', keywords: ['suspend', 'minutes'] },
 
-  // ── Behavior > Board ──
-  { id: 'skipBoardConfigConfirm', tabId: 'behavior', label: 'Auto-Apply Board Config Changes', description: 'When a kangentic.json board change is detected (from a teammate or your own pulled-back commit), apply it immediately instead of showing the confirmation dialog.', scope: 'global', section: 'Board', keywords: ['board config', 'kangentic.json', 'reconcile', 'reconciliation', 'apply', 'confirm', 'dialog', 'pull', 'auto'] },
+  // ── Behavior > Windows ──
+  { id: 'windowLightDismiss', tabId: 'behavior', label: 'Close on Outside Click', description: 'Click empty space outside a task window to dismiss it. The agent keeps running and reattaches when you reopen the task.', scope: 'global', section: 'Windows', keywords: ['dismiss', 'click outside', 'window', 'peek', 'close', 'light dismiss', 'task window'] },
+  { id: 'restoreWindowPosition', tabId: 'behavior', label: 'Restore Window Position', description: 'Remember window size and position between launches', scope: 'global', section: 'Windows', keywords: ['size', 'bounds', 'remember'] },
 
-  // ── Behavior > Task Windows ──
-  { id: 'windowLightDismiss', tabId: 'behavior', label: 'Close on Outside Click', description: 'Click empty space outside a task window (anything but a button or the terminal panel) to dismiss it. Closing keeps the agent running and hands its terminal back to the panel; reopening the task reattaches.', scope: 'global', section: 'Task Windows', keywords: ['dismiss', 'click outside', 'window', 'peek', 'close', 'light dismiss', 'task window'] },
+  // ── Notifications > Events ──
+  { id: 'notifications.onAgentIdle', tabId: 'notifications', label: 'Agent Idle', description: 'When an agent needs attention on a non-visible project', scope: 'global', section: 'Events', keywords: ['desktop', 'toast', 'alert'] },
+  { id: 'notifications.onPlanComplete', tabId: 'notifications', label: 'Plan Complete', description: 'When a plan finishes and the task auto-moves', scope: 'global', section: 'Events', keywords: ['desktop', 'toast', 'alert'] },
+  { id: 'notifications.onSpawnStalled', tabId: 'notifications', label: 'Spawn Stalled', description: 'When a task spawn waits too long on the git queue while preparing', scope: 'global', section: 'Events', keywords: ['desktop', 'toast', 'alert', 'queue', 'fetching', 'worktree', 'preparing'] },
 
-  // ── Notifications ──
-  { id: 'notifications.onAgentIdle', tabId: 'notifications', label: 'Agent Idle', description: 'When an agent needs attention on a non-visible project', scope: 'global', keywords: ['desktop', 'toast', 'alert'] },
-  { id: 'notifications.onPlanComplete', tabId: 'notifications', label: 'Plan Complete', description: 'When a plan finishes and the task auto-moves', scope: 'global', keywords: ['desktop', 'toast', 'alert'] },
-  { id: 'notifications.onSpawnStalled', tabId: 'notifications', label: 'Spawn Stalled', description: 'When a task spawn waits too long on the git queue while preparing', scope: 'global', keywords: ['desktop', 'toast', 'alert', 'queue', 'fetching', 'worktree', 'preparing'] },
-  { id: 'notifications.toasts.durationSeconds', tabId: 'notifications', label: 'Toast Auto-Dismiss', description: 'How long toasts remain visible', scope: 'global', keywords: ['timeout', 'seconds'] },
-  { id: 'notifications.toasts.maxCount', tabId: 'notifications', label: 'Max Visible Toasts', description: 'Maximum simultaneous toasts on screen', scope: 'global', keywords: ['limit', 'count'] },
+  // ── Notifications > Delivery ──
+  { id: 'notifications.toasts.durationSeconds', tabId: 'notifications', label: 'Toast Auto-Dismiss', description: 'How long toasts remain visible', scope: 'global', section: 'Delivery', keywords: ['timeout', 'seconds'] },
+  { id: 'notifications.toasts.maxCount', tabId: 'notifications', label: 'Max Visible Toasts', description: 'Maximum simultaneous toasts on screen', scope: 'global', section: 'Delivery', keywords: ['limit', 'count'] },
 
   // ── Hotkeys ──
   { id: 'hotkeys', tabId: 'hotkeys', label: 'Hotkeys', description: 'Rebind keyboard hotkeys', scope: 'global', keywords: ['keyboard', 'hotkey', 'keybind', 'rebind', 'key', 'ctrl', 'cmd', 'shift', 'combo'] },
@@ -180,23 +185,45 @@ export const SETTINGS_BY_ID: Record<string, SettingDefinition> = Object.fromEntr
   SETTINGS_REGISTRY.map((setting) => [setting.id, setting]),
 );
 
-/** Tab label lookup for search matching against tab names. */
+/**
+ * Allowlist of `scope: 'global'` settings deliberately kept inside a
+ * `category: 'project'` tab (see .claude/rules/settings-tab-scope.md). Each
+ * is unreachable with no project open; that is accepted only when the
+ * setting is genuinely project-contextual and moving it would need a
+ * duplicate picker in a second tab. Enforced by
+ * tests/unit/settings-tab-scope-parity.test.ts: a new global landing in a
+ * project tab fails until it is either moved or added here with a reason.
+ */
+export const PROJECT_TAB_GLOBALS: Record<string, string> = {
+  'agent.cliPaths': 'Per-agent CLI path, edited against the project\'s selected agent; a second tab would need a duplicate agent picker.',
+  'agent.launchOptions': 'Per-agent startup toggles, rendered only for the project\'s selected agent when it declares the capability.',
+  'agent.executionServerUrl': 'Per-agent remote-execution server address, edited inline in the Agent tab\'s Execution block for the selected agent.',
+  'agent.executionServerAuth': 'Per-agent remote-execution credentials, edited alongside executionServerUrl.',
+  'browser.clearStorage': 'Wipes the embedded Browser pane\'s data; kept next to the pane it clears rather than a general system tab.',
+};
+
+/** Tab label lookup for search matching against tab names. Kept in sync with
+ *  SETTINGS_TABS by tests/unit/settings-tab-scope-parity.test.ts. */
 export const TAB_LABELS: Record<string, string> = {
   general: 'General',
   theme: 'Theme',
-  terminal: 'Terminal',
   agent: 'Agent',
   git: 'Git',
   browser: 'Browser',
   shortcuts: 'Shortcuts',
-  layout: 'Layout',
+  board: 'Board',
+  changes: 'Changes',
+  terminal: 'Terminal',
   behavior: 'Behavior',
+  dictation: 'Dictation',
+  memory: 'Memory',
   hotkeys: 'Hotkeys',
   mcpServer: 'MCP Server',
+  browserAutomation: 'Agent Browser',
   notifications: 'Notifications',
-  privacy: 'Privacy',
-  dictation: 'Dictation',
   mobile: 'Mobile Devices',
+  privacy: 'Privacy',
+  developer: 'Developer',
 };
 
 /** Helper to get props for a SettingRow from the registry. */

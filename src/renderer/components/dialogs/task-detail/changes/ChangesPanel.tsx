@@ -146,7 +146,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   // while the user is browsing a commit's detail.
   const [uncommittedFileCount, setUncommittedFileCount] = useState(0);
   // Split-vs-inline diff rendering is a single global preference: the in-diff
-  // toggle and the Layout settings tab read and write the same config key, so
+  // toggle and the Changes settings tab read and write the same config key, so
   // the choice sticks across every diff, all mount points, and restarts.
   const viewMode = useConfigStore((state) => state.config.diffViewMode);
   const updateConfig = useConfigStore((state) => state.updateConfig);

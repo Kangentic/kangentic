@@ -5,10 +5,10 @@
  * `#N` (`display_id`) as a subtle, muted badge in the card header
  * (`data-testid="task-card-display-id"`). The setting is global and defaults
  * to OFF, so a fresh board shows no numbers until the user opts in via the
- * Layout settings tab.
+ * Board settings tab.
  *
  * The card reads `useConfigStore(state => state.config.showTaskNumbers)`; the
- * Layout tab toggle writes the same key via `updateConfig({ showTaskNumbers })`.
+ * Board tab toggle writes the same key via `updateConfig({ showTaskNumbers })`.
  * These tests drive that exact write path through the dev-only config store
  * handle (`__zustandStores.config`) and assert the card read path, rather than
  * walking the settings UI, so they stay robust.

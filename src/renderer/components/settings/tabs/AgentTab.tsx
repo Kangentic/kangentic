@@ -9,7 +9,7 @@ import { useAgentCapabilityResolution } from '../../../hooks/useAgentCapabilityR
 import { useModelContextWindows, useModelDisplayNames } from '../../../hooks/useKnownModels';
 import { ModelCombobox } from '../../dialogs/ModelCombobox';
 import { Combobox } from '../../dialogs/Combobox';
-import { SettingRow, INPUT_CLASS, useScopedUpdate } from '../shared';
+import { SectionHeader, SettingRow, INPUT_CLASS, useScopedUpdate } from '../shared';
 import { settingProps } from '../settings-registry';
 import { AgentExecutionFields } from './agent-execution-fields';
 import { AgentLaunchOptionFields } from './agent-launch-option-fields';
@@ -99,6 +99,10 @@ export function AgentTab({ config, globalConfig, agentInfo, agentList }: {
 
   return (
     <>
+      <SectionHeader
+        label="Project Defaults"
+        searchIds={['project.defaultAgent', 'project.defaultModel', 'project.defaultEffort', 'agent.permissionMode']}
+      />
       <SettingRow {...settingProps('project.defaultAgent')}>
         <Combobox
           value={effectiveAgent}
@@ -149,6 +153,10 @@ export function AgentTab({ config, globalConfig, agentInfo, agentList }: {
           testId="agent-permission-mode"
         />
       </SettingRow>
+      <SectionHeader
+        label="Agent CLI"
+        searchIds={['agent.cliPaths', 'agent.executionMode', 'agent.executionServerUrl', 'agent.executionServerAuth', 'agent.executionWorkingDirectory', 'agent.launchOptions']}
+      />
       {agentList.filter((agent) => agent.name === effectiveAgent).map((agent) => {
         const loginCommand = agentLoginCommand(agent.name);
         const unauthenticated = agent.found && agent.authenticated === false;
@@ -209,16 +217,6 @@ export function AgentTab({ config, globalConfig, agentInfo, agentList }: {
         </Fragment>
         );
       })}
-      <SettingRow {...settingProps('agent.idleTimeoutMinutes')}>
-        <input
-          type="number"
-          value={globalConfig.agent.idleTimeoutMinutes}
-          onChange={(event) => updateGlobal({ agent: { idleTimeoutMinutes: Number(event.target.value) } })}
-          min={0}
-          max={120}
-          className={INPUT_CLASS}
-        />
-      </SettingRow>
     </>
   );
 }

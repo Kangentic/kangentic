@@ -1,17 +1,19 @@
 import { useCallback, useMemo } from 'react';
-import { Bell, Bot, Brain, Bug, FolderCog, GitBranch, Globe, Keyboard, LayoutGrid, Mic, MousePointerClick, Palette, Plug, ShieldCheck, SlidersHorizontal, Smartphone, Terminal, Zap } from 'lucide-react';
+import type { ElementType } from 'react';
+import { Bell, Bot, Brain, Bug, FolderCog, GitBranch, GitCompare, Globe, Keyboard, LayoutGrid, Mic, MousePointerClick, Palette, Plug, ShieldCheck, SlidersHorizontal, Smartphone, Terminal, Zap } from 'lucide-react';
 import { useConfigStore } from '../../stores/config-store';
 import { SettingsPanelProvider, SearchTabGroupHeader, NoSearchResults } from './shared';
 import type { SettingsTabDefinition, SettingScope, SettingsContentProps } from './shared';
+import { SETTINGS_TABS } from './settings-tabs';
 import type { AppConfig, DeepPartial } from '../../../shared/types';
 import { deepMergeConfig } from '../../../shared/object-utils';
 import { ShortcutsTab } from './tabs/ShortcutsTab';
-import { ThemeTab } from './tabs/ThemeTab';
 import { TerminalTab } from './tabs/TerminalTab';
 import { AgentTab } from './tabs/AgentTab';
 import { GitTab } from './tabs/GitTab';
 import { BrowserTab } from './tabs/BrowserTab';
-import { LayoutTab } from './tabs/LayoutTab';
+import { BoardTab } from './tabs/BoardTab';
+import { ChangesTab } from './tabs/ChangesTab';
 import { BehaviorTab } from './tabs/BehaviorTab';
 import { DictationTab } from './tabs/DictationTab';
 import { McpServerTab } from './tabs/McpServerTab';
@@ -23,57 +25,58 @@ import { PrivacyTab } from './tabs/PrivacyTab';
 import { DeveloperTab } from './tabs/DeveloperTab';
 import { HotkeysTab } from './tabs/HotkeysTab';
 import { GeneralTab } from './tabs/GeneralTab';
+import { ThemeTab } from './tabs/ThemeTab';
+
+/** Icon for each tab id. Kept separate from settings-tabs.ts so that JSX-free
+ *  module can be imported by tests/unit without pulling in lucide-react. */
+const TAB_ICONS: Record<string, ElementType> = {
+  general: FolderCog,
+  theme: Palette,
+  terminal: Terminal,
+  agent: Bot,
+  git: GitBranch,
+  browser: Globe,
+  shortcuts: Zap,
+  board: LayoutGrid,
+  changes: GitCompare,
+  behavior: SlidersHorizontal,
+  dictation: Mic,
+  memory: Brain,
+  hotkeys: Keyboard,
+  mcpServer: Plug,
+  browserAutomation: MousePointerClick,
+  notifications: Bell,
+  mobile: Smartphone,
+  privacy: ShieldCheck,
+  developer: Bug,
+};
 
 /**
  * Settings tab layout:
  *
- * Tabs ABOVE the separator are per-project settings. When a project is open,
- * changes save to the project's override file. These tabs are hidden when
- * no project is selected.
+ * Tabs whose `category` is 'project' (see settings-tabs.ts) are per-project
+ * settings. When a project is open, changes save to the project's override
+ * file. These tabs are hidden when no project is selected.
  *
- * Tabs BELOW the separator (after `separator: true`) are shared settings
- * that apply across all projects. They save to the global config.
+ * Tabs whose `category` is 'system' are shared settings that apply across
+ * all projects. They save to the global config, and MUST remain fully
+ * functional with no project open (.claude/rules/settings-tab-scope.md).
  */
-export const APP_TABS: SettingsTabDefinition[] = [
-  // -- Per-project settings --
-  { id: 'general', label: 'General', icon: FolderCog },
-  { id: 'theme', label: 'Theme', icon: Palette },
-  { id: 'terminal', label: 'Terminal', icon: Terminal },
-  { id: 'agent', label: 'Agent', icon: Bot },
-  { id: 'git', label: 'Git', icon: GitBranch },
-  { id: 'browser', label: 'Browser', icon: Globe },
-  { id: 'shortcuts', label: 'Shortcuts', icon: Zap },
-  // -- Shared settings (separator marks the boundary) --
-  { id: 'layout', label: 'Layout', icon: LayoutGrid, separator: true, tooltip: 'Applies to all projects' },
-  { id: 'behavior', label: 'Behavior', icon: SlidersHorizontal, tooltip: 'Applies to all projects' },
-  { id: 'dictation', label: 'Dictation', icon: Mic, tooltip: 'Applies to all projects' },
-  { id: 'memory', label: 'Memory', icon: Brain, tooltip: 'Applies to all projects' },
-  { id: 'hotkeys', label: 'Hotkeys', icon: Keyboard, tooltip: 'Applies to all projects' },
-  { id: 'mcpServer', label: 'MCP Server', icon: Plug, tooltip: 'Applies to all projects' },
-  { id: 'browserAutomation', label: 'Agent Browser', icon: MousePointerClick, tooltip: 'Applies to all projects' },
-  { id: 'notifications', label: 'Notifications', icon: Bell, tooltip: 'Applies to all projects' },
-  // Dev-only until the mobile app launches (paired gates: settings-registry
-  // entries, and the service reconcile in register-all.ts / system.ts).
-  ...(__KANGENTIC_DEV__
-    ? ([{ id: 'mobile', label: 'Mobile Devices', icon: Smartphone, tooltip: 'Applies to all projects' }] satisfies SettingsTabDefinition[])
-    : []),
-  { id: 'privacy', label: 'Privacy', icon: ShieldCheck, tooltip: 'Applies to all projects' },
-  { id: 'developer', label: 'Developer', icon: Bug, tooltip: 'Applies to all projects' },
-];
+export const APP_TABS: SettingsTabDefinition[] = SETTINGS_TABS.map((tab) => ({
+  ...tab,
+  icon: TAB_ICONS[tab.id],
+}));
 
-/** Separator index: tabs before this are per-project, tabs at/after are shared. */
-const SEPARATOR_INDEX = APP_TABS.findIndex((tab) => tab.separator);
-
-/** Shared-only tabs (below separator). Shown even when no project is open. */
-export const GLOBAL_ONLY_TABS = APP_TABS.slice(SEPARATOR_INDEX);
+/** Shared-only tabs (category 'system'). Shown even when no project is open. */
+export const GLOBAL_ONLY_TABS = APP_TABS.filter((tab) => tab.category === 'system');
 
 /**
  * Unified settings content. Rendered inside the SettingsPanel shell.
  *
- * For per-project tabs (above separator): reads from effectiveConfig
+ * For per-project tabs (category 'project'): reads from effectiveConfig
  * (global merged with project overrides), writes to project overrides.
  *
- * For shared tabs (below separator): reads from globalConfig, writes
+ * For shared tabs (category 'system'): reads from globalConfig, writes
  * to global config. These settings apply across all projects.
  *
  * Individual tab bodies live under ./tabs/; this file owns the tab
@@ -112,7 +115,8 @@ export function SettingsContent({ activeTab, isSearching, searchQuery, matchingT
       case 'browser': return <BrowserTab config={effectiveConfig} />;
       case 'shortcuts': return <ShortcutsTab />;
       case 'developer': return <DeveloperTab globalConfig={globalConfig} />;
-      case 'layout': return <LayoutTab config={effectiveConfig} globalConfig={globalConfig} />;
+      case 'board': return <BoardTab globalConfig={globalConfig} />;
+      case 'changes': return <ChangesTab globalConfig={globalConfig} />;
       case 'behavior': return <BehaviorTab globalConfig={globalConfig} />;
       case 'dictation': return <DictationTab globalConfig={globalConfig} onOpenHotkeys={() => navigateToTab('hotkeys')} />;
       case 'hotkeys': return <HotkeysTab globalConfig={globalConfig} />;

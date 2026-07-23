@@ -1,5 +1,5 @@
 import type { AppConfig, NotificationConfig } from '../../../../shared/types';
-import { SettingRow, Select, INPUT_CLASS, useScopedUpdate } from '../shared';
+import { SectionHeader, SettingRow, Select, INPUT_CLASS, useScopedUpdate } from '../shared';
 import { settingProps } from '../settings-registry';
 
 type NotifyEventKey = 'onAgentIdle' | 'onPlanComplete' | 'onSpawnStalled';
@@ -50,6 +50,10 @@ export function NotificationsTab({ globalConfig }: { globalConfig: AppConfig }) 
   const updateGlobal = useScopedUpdate('global');
   return (
     <>
+      <SectionHeader
+        label="Events"
+        searchIds={['notifications.onAgentIdle', 'notifications.onPlanComplete', 'notifications.onSpawnStalled']}
+      />
       <NotifyChannelRow
         eventKey="onAgentIdle"
         config={globalConfig.notifications}
@@ -65,7 +69,11 @@ export function NotificationsTab({ globalConfig }: { globalConfig: AppConfig }) 
         config={globalConfig.notifications}
         searchId="notifications.onSpawnStalled"
       />
-      <div className="border-t border-edge my-2" />
+
+      <SectionHeader
+        label="Delivery"
+        searchIds={['notifications.toasts.durationSeconds', 'notifications.toasts.maxCount']}
+      />
       <SettingRow {...settingProps('notifications.toasts.durationSeconds')}>
         <input
           type="number"

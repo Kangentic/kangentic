@@ -18,9 +18,11 @@ import { describe, it, expect } from 'vitest';
 import { pickOverridableSubset } from '../../src/main/config/config-manager';
 
 describe('pickOverridableSubset', () => {
-  it('drops importSources and browser while keeping the setting keys', () => {
+  it('drops importSources, browser, and terminal.* while keeping the setting keys', () => {
     // Mirrors a real leaked config (TWC-Website): legit settings alongside the
     // project-specific importSources array and a per-project browser URL.
+    // terminal.* is global-only (see AppConfig['terminal'] doc comments in
+    // shared/types.ts), so it must never be picked as an overridable setting.
     const source = {
       theme: 'forest',
       terminal: { shell: 'pwsh.exe', fontSize: 14, scrollbackLines: 5000 },
@@ -36,8 +38,8 @@ describe('pickOverridableSubset', () => {
 
     expect(result).not.toHaveProperty('importSources');
     expect(result).not.toHaveProperty('browser');
+    expect(result).not.toHaveProperty('terminal');
     expect(result.theme).toBe('forest');
-    expect(result.terminal).toEqual({ shell: 'pwsh.exe', fontSize: 14, scrollbackLines: 5000 });
     expect(result.agent).toEqual({ permissionMode: 'acceptEdits' });
     expect(result.git).toEqual({ worktreesEnabled: true, defaultBaseBranch: 'develop' });
   });
@@ -72,11 +74,12 @@ describe('pickOverridableSubset', () => {
     expect(pickOverridableSubset(source)).toEqual({});
   });
 
-  it('drops terminal.colors - it is documented global-only, never per-project', () => {
-    // terminal.colors (TerminalColorOverrides) is a global-only setting (see
-    // its doc comment in shared/types.ts); it must never be cloned into a new
-    // project's overrides or snapshotted as a project default alongside the
-    // other terminal.* fields.
+  it('drops the entire terminal block - every terminal.* field is documented global-only', () => {
+    // Every field under AppConfig['terminal'] (shell, fontSize, fontFamily,
+    // scrollbackLines, cursorStyle, colors, backspaceSendsCtrlH) is
+    // global-only (see the doc comments in shared/types.ts); none may be
+    // cloned into a new project's overrides or snapshotted as a project
+    // default.
     const source = {
       terminal: {
         shell: 'bash',
@@ -87,8 +90,7 @@ describe('pickOverridableSubset', () => {
 
     const result = pickOverridableSubset(source) as Record<string, unknown>;
 
-    expect(result.terminal).toEqual({ shell: 'bash', fontSize: 13 });
-    expect(result.terminal).not.toHaveProperty('colors');
+    expect(result).not.toHaveProperty('terminal');
   });
 
   it('tolerates a sparse source and omits empty nested objects', () => {
@@ -124,14 +126,6 @@ describe('pickOverridableSubset', () => {
 
     expect(pickOverridableSubset(fullConfig)).toEqual({
       theme: 'ocean',
-      terminal: {
-        shell: 'bash',
-        fontSize: 13,
-        fontFamily: 'Consolas',
-        scrollbackLines: 1000,
-        cursorStyle: 'block',
-        backspaceSendsCtrlH: true,
-      },
       agent: { permissionMode: 'plan' },
       git: {
         worktreesEnabled: false,

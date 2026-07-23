@@ -1,6 +1,6 @@
 /**
- * Unit tests for the LayoutTab terminal-color preset helpers
- * (src/renderer/components/settings/tabs/LayoutTab.tsx):
+ * Unit tests for the TerminalTab terminal-color preset helpers
+ * (src/renderer/components/settings/tabs/TerminalTab.tsx):
  * `getThemeMatchColor` and `presetsWithDefaultFirst`.
  *
  * Both are pure functions previously exercised only indirectly, by clicking
@@ -12,7 +12,7 @@
  * clean rows in a 6-column grid" invariant).
  */
 import { describe, it, expect } from 'vitest';
-import { getThemeMatchColor, presetsWithDefaultFirst } from '../../src/renderer/components/settings/tabs/LayoutTab';
+import { getThemeMatchColor, presetsWithDefaultFirst } from '../../src/renderer/components/settings/tabs/TerminalTab';
 import { THEME_BACKGROUNDS, THEME_FOREGROUNDS } from '../../src/shared/types';
 import { PRESET_COLORS } from '../../src/renderer/components/backlog/manage-labels/ColorPickerPopover';
 

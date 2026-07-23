@@ -325,12 +325,12 @@ Columns can only be deleted when empty (no tasks).
 
 ## Settings
 
-Settings are accessed from two entry points:
+Settings are accessed from two entry points, both opening the same unified panel:
 
-- **App Settings** - click the gear icon in the title bar. This is the main settings panel with all app-wide and project-default settings.
-- **Project Settings** - click the gear icon on a project row in the sidebar. This shows only the per-project overridable subset.
+- **App Settings** - click the gear icon in the title bar. Scoped to the currently active project (or, if none is open, only the shared System tabs appear).
+- **Project Settings** - click the gear icon on a project row in the sidebar. Opens the same panel scoped to that project, with a project switcher dropdown in the header to jump between projects.
 
-Both panels use a VS Code-style layout: a sidebar with tab navigation on the left, and the active settings pane on the right. In App Settings, tabs above the separator (General, Theme, Terminal, Agent, Git, Browser, Shortcuts) are per-project settings; tabs below the separator (Layout, Behavior, Dictation, Memory, Hotkeys, MCP Server, Agent Browser, Notifications, Mobile Devices, Privacy, Developer) are shared across all projects. The General tab shows the project's location on disk with a "Move..." button (see [Moving a project](#moving-a-project)). When no project is open, only the shared tabs appear. Project Settings shows inherited defaults as hints, with reset buttons on any overridden value and a "Reset All" footer when overrides exist.
+Both panels use a VS Code-style layout: a sidebar with tab navigation on the left, and the active settings pane on the right. Tabs above the divider (General, Theme, Agent, Git, Browser, Shortcuts) are per-project settings; tabs below it (Board, Changes, Terminal, Behavior, Hotkeys, Notifications, Dictation, Memory, MCP Server, Agent Browser, Mobile Devices, Privacy, Developer) are shared across all projects. The shared tabs are further grouped into Core (Board through Notifications, unlabeled), Advanced (Dictation through Mobile Devices), and Other (Privacy, Developer). The General tab shows the project's location on disk with a "Move..." button (see [Moving a project](#moving-a-project)); the Theme tab holds the interface color-scheme picker. Terminal (shell, font, scrollback, cursor style, colors, context bar) is a shared tab, not per-project: nobody wants a different font per project, and the shell setting in particular was never reliably project-scoped under the hood. When no project is open, only the shared tabs appear.
 
 ### Moving a project
 
@@ -348,16 +348,18 @@ A search bar at the top of each panel filters settings by keyword. Type multiple
 
 ### Themes
 
-Choose from 10 themes:
+Choose from 10 themes in the Theme tab's dropdown (a per-project setting):
 - **Base:** Dark, Light
 - **Dark variants:** Moon, Forest, Ocean, Ember
 - **Light variants:** Sand, Mint, Sky, Peach
 
 ### Terminal Colors
 
-The Layout tab's **Terminal** section (not Theme - this is a global setting, not per-project) lets you customize the terminal's background, foreground, and cursor color. Click a swatch to open the color picker; any color left at its default shows the built-in value (near-black `#0c0c0c` background, `#e4e4e7` foreground/cursor). The preset grid offers the built-in default first, then a color matching your current app theme (skipped if it would duplicate the default), then curated generic presets. The 16-color ANSI palette (used by shell tools like `git diff` and `ls --color`) is a fixed scheme based on Windows Terminal's Campbell, not individually customizable. "Reset to default" clears every customization. Applies globally across all projects.
+The Terminal tab's **Colors** section (not the Theme tab's color-scheme picker - this is a global setting, not per-project) lets you customize the terminal's background, foreground, and cursor color. Click a swatch to open the color picker; any color left at its default shows the built-in value (near-black `#0c0c0c` background, `#e4e4e7` foreground/cursor). The preset grid offers the built-in default first, then a color matching your current app theme (skipped if it would duplicate the default), then curated generic presets. The 16-color ANSI palette (used by shell tools like `git diff` and `ls --color`) is a fixed scheme based on Windows Terminal's Campbell, not individually customizable. "Reset to default" clears every customization. Applies globally across all projects.
 
 ### Terminal Settings
+
+Applies to every project (Settings > Terminal, not a per-project override):
 
 | Setting | Description |
 |---------|-------------|
@@ -373,7 +375,7 @@ The context bar is a status line displayed below the terminal showing session me
 
 | Toggle | What it shows |
 |--------|--------------|
-| Shell | The active shell name (e.g., pwsh, bash, zsh) |
+| Shell Name | The active shell name (e.g., pwsh, bash, zsh) |
 | Version | Agent CLI version |
 | Elapsed | Ticking wall-clock time since the session started |
 | Model | Active model name (e.g., Claude Sonnet 4) |
@@ -391,7 +393,6 @@ The context bar is a status line displayed below the terminal showing session me
 |---------|-------------|
 | Default Agent | Which agent CLI to use for new sessions in this project. Supported agents: Claude Code, Codex CLI, Gemini CLI, Qwen Code, Kimi Code, OpenCode, Droid (Factory), Cursor CLI, GitHub Copilot CLI, Aider, Oz CLI (Warp). Per-project setting. |
 | CLI Path | Path to agent CLI binary (auto-detected if empty) |
-| Idle Timeout (minutes) | Auto-suspend sessions after N minutes idle; 0 to disable |
 | Permissions | Default permission mode for all sessions. Options vary by agent (e.g., Claude Code has Plan, Don't Ask, Default, Accept Edits, Auto, and Bypass; Aider has Interactive and Auto-Approve) |
 
 All permission modes are available in both the global App Settings dropdown and the per-column Edit Column dialog. The dropdown shows only the modes supported by the active agent. Each column can override the project default agent via the Edit Column dialog. When a task moves between columns with different agents, a context handoff occurs automatically - see [Column Management](#column-management) above.
@@ -431,10 +432,13 @@ These are global-only settings that apply to the entire app.
 |---------|-------------|
 | Max Concurrent Sessions | Limit how many agents can run at the same time |
 | When Max Sessions Reached | How new agent requests are handled when all slots are in use (Queue or Reject) |
-| Auto-Focus Idle Sessions | Automatically switch the bottom panel to idle sessions. Idle tabs are always highlighted regardless of this setting. |
-| Auto-Resume Agents on Restart | When a project opens, resume any agent sessions that were running at last close. When off, those sessions stay paused until you click Resume on each task. Turn off if resuming many agents at once slows your machine. |
-| Auto-Apply Board Config Changes | When a kangentic.json board change is detected (from a teammate or a pulled-back commit), apply it immediately instead of showing the confirmation dialog. |
+| Auto-Focus Idle Sessions | Automatically switch the bottom panel to idle sessions. Idle tabs stay highlighted either way. |
+| Auto-Resume Agents on Restart | Resume agent sessions that were running when the project last closed. Turn off if resuming many at once slows your machine. |
+| Idle Timeout (minutes) | Auto-suspend sessions after N minutes idle; 0 to disable |
 | Close on Outside Click | Click-outside (light-dismiss) policy for modeless task-detail windows. Closing a window does not kill its session. |
+| Restore Window Position | Remember window size and position between launches |
+
+The Board tab has its own Auto-Apply Board Config Changes toggle - see [Applying Changes](#applying-changes) below.
 
 ### MCP Server
 
@@ -470,7 +474,7 @@ Create a `kangentic.local.json` in the project root for personal customizations 
 
 ### Applying Changes
 
-When `kangentic.json` or `kangentic.local.json` changes on disk, a reconciliation banner appears at the top of the board. Click "Apply" to reconcile the file into your database, or dismiss to ignore. Enable `skipBoardConfigConfirm` in settings to apply changes automatically.
+When `kangentic.json` or `kangentic.local.json` changes on disk, a reconciliation banner appears at the top of the board. Click "Apply" to reconcile the file into your database, or dismiss to ignore. Enable Auto-Apply Board Config Changes in the Board settings tab to apply changes automatically instead.
 
 If a teammate removes a column that still has your tasks, the column becomes a "ghost" (hidden but preserved). Once you move all tasks out of the ghost column, it is automatically deleted.
 

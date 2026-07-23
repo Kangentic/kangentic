@@ -1678,8 +1678,8 @@ export const THEME_BACKGROUNDS: Record<ThemeMode, string> = {
 };
 
 /** Per-theme foreground color (mirrors index.css's `--kng-fg-secondary`,
- *  renderer-only need so not read live from CSS). Used by the Layout settings
- *  tab to offer "match my current app theme" as a terminal color preset:
+ *  renderer-only need so not read live from CSS). Used by the Terminal settings
+ *  tab's Colors section to offer "match my current app theme" as a terminal color preset:
  *  the terminal's foreground/cursor default (#e4e4e7) is byte-identical to
  *  the dark theme's value here, since that is literally where it came from
  *  before the terminal had its own fixed color scheme. */
@@ -1701,8 +1701,8 @@ export const NAMED_THEMES: { id: ThemeMode; label: string; base: 'dark' | 'light
   { id: 'peach', label: 'Peach', base: 'light' },
 ];
 
-/** Custom terminal color overrides, editable in the Layout settings tab's
- *  Terminal section. Any
+/** Custom terminal color overrides, editable in the Terminal settings tab's
+ *  Colors section. Any
  *  slot left unset falls back to the built-in default (see
  *  TERMINAL_DEFAULT_COLORS in useTerminal.ts, renderer-only since only xterm
  *  rendering needs the concrete hex values). Deliberately just these three:
@@ -1901,14 +1901,14 @@ export interface AppConfig {
   diffFlatList: boolean; // Changes panel file list: flat full-path list vs nested directory tree
 
   terminal: {
-    shell: string | null; // null = auto-detect
-    fontFamily: string;
-    fontSize: number;
+    shell: string | null; // null = auto-detect. Global-only: applies across every project.
+    fontFamily: string; // global-only: applies across every project
+    fontSize: number; // global-only: applies across every project
     showPreview: boolean;
     panelHeight: number; // persisted terminal panel height in px
     panelCollapsed: boolean; // persisted collapsed state
-    scrollbackLines: number;
-    cursorStyle: 'block' | 'underline' | 'bar';
+    scrollbackLines: number; // global-only: applies across every project
+    cursorStyle: 'block' | 'underline' | 'bar'; // global-only: applies across every project
     colors: TerminalColorOverrides; // global-only: applies across every project
     backspaceSendsCtrlH: boolean; // send Ctrl+H (0x08) instead of DEL (0x7f) on plain Backspace; default true, all platforms
   };

@@ -2,6 +2,8 @@ import React, { useEffect, useRef } from 'react';
 import { ChevronDown, Search, X } from 'lucide-react';
 import { useOverlayPhase } from '../../hooks/useOverlayPhase';
 import { useSettingVisible, useSettingsSearch } from './settings-search';
+import { TIER_LABELS } from './settings-tabs';
+import type { SettingsTabTier } from './settings-tabs';
 import { Pill } from '../Pill';
 import { ToggleCard, ToggleIndicator } from '../ToggleCard';
 
@@ -15,10 +17,14 @@ export interface SettingsTabDefinition {
   id: string;
   label: string;
   icon: React.ElementType;
-  /** Render a horizontal divider above this tab in the sidebar. */
-  separator?: boolean;
+  /** 'project' tabs save to the project's override file; 'system' tabs are
+   *  shared across all projects and must render with no project open. See
+   *  settings-tabs.ts and .claude/rules/settings-tab-scope.md. */
+  category: 'project' | 'system';
   /** Tooltip shown on hover (e.g. "Applies to all projects"). */
   tooltip?: string;
+  /** Sidebar sub-grouping within the System group. See SettingsTabTier. */
+  tier?: SettingsTabTier;
 }
 
 /* ── Settings Content Props ── */
@@ -79,7 +85,7 @@ export function SettingsPanelShell({ onClose, children, projectSwitcher, tabs, a
   }, [requestClose, isSearching, onSearchChange]);
 
   const sectionHeaderClass = 'text-[10px] uppercase tracking-widest text-fg-faint font-semibold px-4';
-  const hasProjectTabs = tabs && !tabs[0]?.separator;
+  const hasProjectTabs = Boolean(tabs?.some((tab) => tab.category === 'project'));
 
   return (
     <div
@@ -141,19 +147,35 @@ export function SettingsPanelShell({ onClose, children, projectSwitcher, tabs, a
         {tabs && activeTab && onTabChange ? (
           <div className="flex-1 flex overflow-hidden">
             {/* Tab sidebar */}
-            <div className="w-44 flex-shrink-0 border-r border-edge py-3 space-y-0.5 overflow-y-auto">
+            <div data-testid="settings-tab-list" className="w-44 flex-shrink-0 border-r border-edge py-3 space-y-0.5 overflow-y-auto">
               {tabs.map((tab, index) => {
                 const Icon = tab.icon;
                 const isActive = tab.id === activeTab;
                 const matchCount = isSearching && tabMatchCounts ? tabMatchCounts.get(tab.id) : undefined;
                 const hasNoMatches = isSearching && (matchCount === undefined || matchCount === 0);
+                const isFirstSystemTab = tab.category === 'system' && tabs[index - 1]?.category !== 'system';
+                // 'core' is the first, unlabeled tier directly under the System
+                // header (mirrors the unsectioned-first-group convention used
+                // within individual tabs). Only later tiers get their own header.
+                const isNewTier = tab.category === 'system' && tab.tier && tab.tier !== 'core'
+                  && tab.tier !== tabs[index - 1]?.tier;
                 return (
                   <React.Fragment key={tab.id}>
                     {index === 0 && hasProjectTabs && (
                       <div className={`${sectionHeaderClass} pt-1 pb-1`}>Project</div>
                     )}
-                    {tab.separator && (
-                      <div className={`${sectionHeaderClass} pt-3 pb-1`}>System</div>
+                    {isFirstSystemTab && (
+                      <>
+                        {/* Full-bleed divider: the Project/System boundary is
+                            load-bearing (System tabs must work with no project
+                            open), so it gets a stronger visual break than the
+                            tier headers below. */}
+                        <div className="border-t border-edge mt-2" />
+                        <div className={`${sectionHeaderClass} pt-2 pb-1`}>System</div>
+                      </>
+                    )}
+                    {isNewTier && (
+                      <div className={`${sectionHeaderClass} pt-3 pb-1`}>{TIER_LABELS[tab.tier as Exclude<SettingsTabTier, 'core'>]}</div>
                     )}
                     <button
                       onClick={() => { if (!hasNoMatches) onTabChange(tab.id); }}
