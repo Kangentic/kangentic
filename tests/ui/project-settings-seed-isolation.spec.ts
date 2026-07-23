@@ -15,8 +15,9 @@
  *
  *   1. A previously configured project whose config.json contains
  *      importSources + browser does NOT leak those fields into a new project.
- *   2. The overridable settings (theme, terminal, agent.permissionMode, git)
- *      ARE carried over correctly.
+ *   2. The overridable settings (theme, agent.permissionMode, git) ARE
+ *      carried over correctly, and terminal.* (global-only, never
+ *      overridable) is dropped even when present in the source project.
  *   3. When the most-recently-opened project has ONLY non-overridable keys,
  *      getLastProjectDefaults falls through to the global defaults.
  *
@@ -89,6 +90,9 @@ test('new project inherits settings but not importSources or browser from previo
       // Store overrides that include non-overridable keys alongside real settings.
       state.projectConfigs[previousPath] = {
         theme: 'forest',
+        // Legacy per-project terminal override (predates terminal.* becoming
+        // global-only) - must be dropped by pickOverridableSubset, never
+        // cloned into the new project.
         terminal: { shell: 'pwsh.exe', fontSize: 14, scrollbackLines: 5000 },
         agent: { permissionMode: 'acceptEdits' },
         git: { worktreesEnabled: true, defaultBaseBranch: 'develop' },
@@ -113,12 +117,12 @@ test('new project inherits settings but not importSources or browser from previo
   // Non-overridable fields must be absent.
   expect(seededOverrides).not.toHaveProperty('importSources');
   expect(seededOverrides).not.toHaveProperty('browser');
+  // terminal.* is global-only, never project-overridable - dropped even
+  // though the source project's config had it.
+  expect(seededOverrides).not.toHaveProperty('terminal');
 
   // The overridable settings from the previous project must be present.
   expect((seededOverrides as Record<string, unknown>).theme).toBe('forest');
-  const terminal = (seededOverrides as Record<string, unknown>).terminal as Record<string, unknown>;
-  expect(terminal?.shell).toBe('pwsh.exe');
-  expect(terminal?.fontSize).toBe(14);
   const agent = (seededOverrides as Record<string, unknown>).agent as Record<string, unknown>;
   expect(agent?.permissionMode).toBe('acceptEdits');
   const git = (seededOverrides as Record<string, unknown>).git as Record<string, unknown>;
@@ -178,8 +182,9 @@ test('falls through to global defaults when most-recent project has only non-ove
   if (seededOverrides !== null) {
     const keys = Object.keys(seededOverrides);
     for (const key of keys) {
-      // Only overridable setting keys are permitted.
-      const overridableKeys = ['theme', 'terminal', 'agent', 'git'];
+      // Only overridable setting keys are permitted. terminal.* is
+      // global-only, never project-overridable.
+      const overridableKeys = ['theme', 'agent', 'git'];
       expect(overridableKeys).toContain(key);
     }
   }
