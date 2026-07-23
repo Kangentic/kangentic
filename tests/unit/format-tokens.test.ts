@@ -73,6 +73,13 @@ describe('isContextWindowOverBudget', () => {
     expect(isContextWindowOverBudget(1_000_000, 85_000)).toBe(false);
     expect(isContextWindowOverBudget(0, 85_000)).toBe(false);
   });
+
+  it('is not over budget when usedTokens exactly equals the window (strict >, not >=)', () => {
+    // Pins the strict-inequality boundary: a session that has used exactly its
+    // full window has not exceeded it. Flipping the predicate's `>` to `>=`
+    // would turn this red while leaving every other case in this file green.
+    expect(isContextWindowOverBudget(200_000, 200_000)).toBe(false);
+  });
 });
 
 describe('contextWindowDisplayPercent', () => {

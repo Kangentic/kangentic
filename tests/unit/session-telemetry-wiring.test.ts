@@ -839,6 +839,118 @@ describe('SessionTelemetry: processStatusUpdate -> reemitBackfilled wiring', () 
 });
 
 // ---------------------------------------------------------------------------
+// Gap: processStatusUpdate -> replaceSessionUsage's own-session window fill
+// must reach the EMITTED onUsageChange callback, not just the cache
+// ---------------------------------------------------------------------------
+
+describe('SessionTelemetry: processStatusUpdate -> replaceSessionUsage own-session fill wiring', () => {
+  // UsageAccumulator.replaceSessionUsage fills a zero/missing window from the
+  // account's known window for this model (tests/unit/usage-accumulator.test.ts
+  // covers that fill directly against the accumulator). What that test cannot
+  // see is whether the fill reaches the renderer: processStatusUpdate calls
+  // `usage.toolCallCount = ...; this.usage.replaceSessionUsage(sessionId, usage);
+  // this.callbacks.onUsageChange(sessionId, usage);` - the fill only helps if
+  // it lands on the SAME `usage` object before the emit fires.
+  //
+  // Two calls, same session: the first status update establishes the known
+  // window via processStatusUpdate's own recordKnownWindow call (the real
+  // wiring path, not a direct accumulator seed); the second, for the SAME
+  // session, arrives with contextWindowSize 0 (a status.json glitch/model
+  // hiccup) but real tokens. replaceSessionUsage's fill (reading the map as it
+  // stood after call 1) should recover the window on call 2's own emit.
+  //
+  // Red-green: commenting out the fill block in
+  // UsageAccumulator.replaceSessionUsage leaves call 2's emitted usage at
+  // contextWindowSize 0, so the assertion below goes red; restoring it goes
+  // green (verified below).
+
+  let probe: MockProcessTreeProbe;
+  let rootPids: Map<string, number>;
+  let log: CallbackLog;
+  let usageChanges: Array<{ sessionId: string; usage: SessionUsage }>;
+  let telemetry: SessionTelemetry;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    probe = new MockProcessTreeProbe();
+    rootPids = new Map();
+    log = { activityChanges: [], events: [], usageChanges: [] };
+    usageChanges = [];
+    const baseCallbacks = makeCallbacks(log);
+    telemetry = new SessionTelemetry(
+      {
+        ...baseCallbacks,
+        onUsageChange: (sessionId, usage) => {
+          usageChanges.push({ sessionId, usage });
+        },
+        getSessionRootPid: (sessionId) => rootPids.get(sessionId),
+      },
+      {
+        processTreeProbe: probe,
+        disableBgShellWatcher: false,
+        activityEngineOptions: {
+          bgShellEscapeHatchMs: 60_000,
+          staleThinkingTimeoutMs: 60_000,
+          idleStabilityWindowMs: 0,
+        },
+      },
+    );
+  });
+
+  afterEach(() => {
+    telemetry.dispose();
+    vi.useRealTimers();
+  });
+
+  it('recovers a same-session window drop on the very emit that reports it, using the window learned on the prior call', () => {
+    const firstStatus: SessionUsage = {
+      contextWindow: {
+        usedPercentage: 10,
+        usedTokens: 100_000,
+        cacheTokens: 0,
+        totalInputTokens: 100_000,
+        totalOutputTokens: 500,
+        contextWindowSize: 1_000_000,
+      },
+      cost: { totalCostUsd: 0.05, totalDurationMs: 500 },
+      model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8' },
+    };
+    telemetry.processStatusUpdate('session-x', firstStatus);
+
+    const firstEmit = usageChanges.find((entry) => entry.sessionId === 'session-x');
+    expect(firstEmit).toBeDefined();
+    expect(firstEmit!.usage.contextWindow.contextWindowSize).toBe(1_000_000);
+
+    usageChanges.length = 0;
+
+    // Second status.json for the SAME session drops the window to 0 while
+    // still carrying real tokens (200k of the same 1M window - a clean ratio,
+    // matching the hydrate wiring test's proven-float-safe 200k/1M -> 20).
+    const secondStatus: SessionUsage = {
+      contextWindow: {
+        usedPercentage: 0,
+        usedTokens: 200_000,
+        cacheTokens: 0,
+        totalInputTokens: 200_000,
+        totalOutputTokens: 600,
+        contextWindowSize: 0,
+      },
+      cost: { totalCostUsd: 0.06, totalDurationMs: 600 },
+      model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8' },
+    };
+    telemetry.processStatusUpdate('session-x', secondStatus);
+
+    // Exactly one emit for session-x on this call: the fill means
+    // recordKnownWindow finds nothing left to back-fill (session-x's own cache
+    // entry IS the one being replaced), so reemitBackfilled does not also fire.
+    const secondEmits = usageChanges.filter((entry) => entry.sessionId === 'session-x');
+    expect(secondEmits).toHaveLength(1);
+    expect(secondEmits[0].usage.contextWindow.contextWindowSize).toBe(1_000_000);
+    expect(secondEmits[0].usage.contextWindow.usedPercentage).toBe(20);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Gap: hydrateKnownWindows - boot-time hydration from persisted metrics
 // ---------------------------------------------------------------------------
 
