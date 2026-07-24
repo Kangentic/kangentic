@@ -194,6 +194,11 @@ test.describe('Settings Panel', () => {
     // SettingToggleRow is removed from TerminalTab.tsx, while leaving all other
     // assertions here green.
     await expect(page.getByText('Word delete on Backspace')).toBeVisible();
+    // Scrollback Lines was removed (the live xterm scrollback cap is now a
+    // fixed internal constant, TERMINAL_SCROLLBACK_LINES in useTerminal.ts,
+    // not a user setting). Pin the row's absence by testid so a re-added
+    // SettingRow/registry entry is caught even if the label text changes.
+    await expect(page.locator('[data-testid="setting-row-terminal.scrollbackLines"]')).toHaveCount(0);
 
     await closeSettings();
   });
