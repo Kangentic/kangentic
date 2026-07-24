@@ -131,6 +131,28 @@ async function openTaskAndChanges(): Promise<void> {
 
 test.describe('Changes panel: lazy-import failure is scoped and recoverable', () => {
   test('a chunk failure shows a panel-scoped error, not a root crash, and reload recovers', async () => {
+    // This test chains a full TaskDetailDialog mount (a LIVE running session,
+    // so the dialog also constructs the xterm/WebGL terminal), a dynamic-import
+    // abort, a full `window.location.reload()` navigation (re-running the mock
+    // init scripts and re-mounting the whole app), and a second TaskDetailDialog
+    // + terminal mount, each step already gated on real DOM/programmatic state
+    // (dialog visible, boundary visible, swimlane visible post-reload,
+    // changes-expand visible), never a fixed sleep. Bumping an individual
+    // waitFor's own timeout does nothing for the ENCLOSING test: the ui
+    // project's default per-test timeout is 15000ms, so under CI worker
+    // contention the cumulative real cost of two terminal mounts plus a full
+    // page reload can exhaust the whole budget before the remaining steps run,
+    // independent of their own per-step timeouts. Confirmed by reproduction
+    // (CDP `Emulation.setCPUThrottlingRate` at a moderate rate against this
+    // exact test body reliably reproduces "Test timeout of 15000ms exceeded";
+    // the same body with test.slow() added passes cleanly at the same
+    // throttle). Same failure shape and same fix as
+    // changes-file-history.spec.ts and changes-diff-scroll-memory.spec.ts (see
+    // their comments, commit a523964b): test.slow() triples the enclosing
+    // budget to 45000ms - there is no further step here to restructure into a
+    // poll, since none of them use a fixed wait to begin with.
+    test.slow();
+
     // Abort the ChangesPanel module fetch BEFORE anything imports it. The panel
     // is only imported the first time the Changes pill is clicked (no static
     // import exists), and this page's context has a cold module map, so the
