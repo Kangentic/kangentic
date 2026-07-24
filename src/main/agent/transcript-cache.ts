@@ -7,10 +7,23 @@ import type { TranscriptEntry } from '../../shared/types';
  *  identical rule instead of maintaining a second copy that could drift. */
 export const MAX_SPAN_CHARS = 20_000;
 
-/** Cached results are keyed by `(sessionType, agentSessionId)`; cap the number
- *  of distinct sessions held so a long-running app with many opened
- *  conversations does not grow this map unbounded. */
-const CACHE_LIMIT = 16;
+/**
+ * Cached results are keyed by `(sessionType, agentSessionId)`.
+ *
+ * The entry cap used to be 16, which is smaller than a single working set: a
+ * `--resume` writes a NEW transcript file replaying its parent's whole
+ * history, so one task resumed five times owns five files, and a live board
+ * measured 20 files (319MB) behind ONE mobile Home-feed refresh. At 16 the
+ * LRU evicted faster than the feed could reuse it, so every refresh re-parsed
+ * from scratch - the cache was doing strictly negative work.
+ *
+ * Raised well past a realistic board, and bounded by BYTES as well so the
+ * larger count cannot turn into unbounded memory: parsed entries are roughly
+ * proportional to their source file, and a handful of 50MB transcripts would
+ * otherwise dwarf everything else. Whichever bound binds first evicts.
+ */
+const CACHE_LIMIT = 64;
+const CACHE_BYTE_BUDGET = 192 * 1024 * 1024;
 
 export function clampSpan(text: string): string {
   if (text.length <= MAX_SPAN_CHARS) return text;
@@ -55,10 +68,14 @@ const cache = new Map<string, CacheRecord>();
 function touch(key: string, record: CacheRecord): void {
   cache.delete(key);
   cache.set(key, record);
-  while (cache.size > CACHE_LIMIT) {
+  let heldBytes = 0;
+  for (const held of cache.values()) heldBytes += held.size;
+  while (cache.size > CACHE_LIMIT || (heldBytes > CACHE_BYTE_BUDGET && cache.size > 1)) {
     const oldestKey = cache.keys().next().value;
     if (oldestKey === undefined) break;
+    const evicted = cache.get(oldestKey);
     cache.delete(oldestKey);
+    if (evicted) heldBytes -= evicted.size;
   }
 }
 
@@ -122,6 +139,39 @@ export async function getCachedTranscript(
   }
 
   return { entries: truncatedEntries, sourcePath: parsed.sourcePath };
+}
+
+/**
+ * The file signature this session's cached parse was validated against, or
+ * null when nothing is cached for it yet.
+ *
+ * Exported so the task-level stitch memo can ask "is every file behind this
+ * task still untouched?" using stats alone. Without it, answering that
+ * question required parsing every session first, which is precisely the work
+ * the memo exists to avoid - a task with five resumed sessions re-read
+ * hundreds of megabytes of near-identical JSONL to serve one tail request.
+ */
+export function peekCachedFileSignature(
+  sessionType: string,
+  agentSessionId: string,
+): { sourcePath: string; mtimeMs: number; size: number } | null {
+  const cached = cache.get(`${sessionType}:${agentSessionId}`);
+  if (!cached) return null;
+  return { sourcePath: cached.sourcePath, mtimeMs: cached.mtimeMs, size: cached.size };
+}
+
+/** True when the file behind a signature is still byte-identical by stat. */
+export async function isCachedFileUnchanged(signature: {
+  sourcePath: string;
+  mtimeMs: number;
+  size: number;
+}): Promise<boolean> {
+  try {
+    const stat = await fs.stat(signature.sourcePath);
+    return stat.mtimeMs === signature.mtimeMs && stat.size === signature.size;
+  } catch {
+    return false;
+  }
 }
 
 /** Test-only: clear the module-scope cache between test cases. */

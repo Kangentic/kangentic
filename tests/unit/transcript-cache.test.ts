@@ -105,11 +105,38 @@ describe('getCachedTranscript', () => {
     expect(result.entries).toEqual([]);
   });
 
-  it('evicts the least-recently-used entry once the cache grows past its cap', async () => {
-    // The cache is capped at 16; fill it with 17 distinct sessions and verify
-    // the FIRST (oldest, never re-touched) session re-parses on next access.
+  /**
+   * The cap has to clear a realistic working set, not just be non-zero. A
+   * `--resume` writes a NEW transcript file replaying its parent's history,
+   * so one task resumed five times owns five files, and a live board measured
+   * 20 files behind ONE mobile Home-feed refresh. The old cap of 16 evicted
+   * faster than the feed reused it, so every refresh re-parsed from scratch.
+   */
+  it('keeps a whole board-sized working set resident', async () => {
     const files: string[] = [];
-    for (let index = 0; index < 17; index += 1) {
+    for (let index = 0; index < 24; index += 1) {
+      const file = writeFile(tmpDir, `busy-${index}.jsonl`, `content-${index}\n`);
+      files.push(file);
+      await getCachedTranscript('claude_agent', `busy-${index}`, async () => ({
+        entries: [{ kind: 'user', uuid: `u${index}`, ts: index, text: `t${index}` }] as TranscriptEntry[],
+        sourcePath: file,
+      }));
+    }
+
+    let reparsed = false;
+    await getCachedTranscript('claude_agent', 'busy-0', async () => {
+      reparsed = true;
+      return { entries: [] as TranscriptEntry[], sourcePath: files[0] };
+    });
+
+    expect(reparsed).toBe(false);
+  });
+
+  it('evicts the least-recently-used entry once the cache grows past its cap', async () => {
+    // Fill past the 64-entry cap and verify the FIRST (oldest, never
+    // re-touched) session re-parses on next access.
+    const files: string[] = [];
+    for (let index = 0; index < 65; index += 1) {
       const file = writeFile(tmpDir, `session-${index}.jsonl`, `content-${index}\n`);
       files.push(file);
       await getCachedTranscript('claude_agent', `agent-${index}`, async () => ({

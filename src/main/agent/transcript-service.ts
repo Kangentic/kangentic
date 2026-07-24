@@ -5,6 +5,8 @@ import { RetrievalStore } from '../retrieval/retrieval-store';
 import {
   clampSpan,
   getCachedTranscript,
+  isCachedFileUnchanged,
+  peekCachedFileSignature,
   resetForTests as resetTranscriptCacheForTests,
 } from './transcript-cache';
 import type {
@@ -181,6 +183,25 @@ interface StitchMemoRecord {
   depsFingerprint: string;
   revision: number;
   entries: TranscriptEntry[];
+  /**
+   * The file signatures this stitch was built from, captured HERE rather than
+   * read back out of the file cache. That independence is the whole point:
+   * the file cache is a small LRU, and a busy board evicts it constantly (one
+   * measured Home refresh touched 20 files against a 16-entry cache), so a
+   * fast path that depended on it would go dark exactly when it is needed
+   * most. Empty when any contributing session had no file to stat (an
+   * index/none source), which disables the fast path for that task rather
+   * than letting it return a stitch it cannot prove is current.
+   */
+  fileSignatures: Array<{ sourcePath: string; mtimeMs: number; size: number }>;
+  /** File-derived fields, safe to reuse when every file is untouched. */
+  fileDerived: {
+    source: TranscriptSource;
+    sourcePath: string | null;
+    degraded: boolean;
+    unavailableReason: TranscriptUnavailableReason | undefined;
+    agentName: string;
+  };
 }
 
 /** Task-level stitch memo, capped so a long-running app does not grow this
@@ -264,6 +285,50 @@ export async function resolveTaskTranscript(
   const sessions = anchor.task_id
     ? sessionRepo.listForTaskNewestFirst(anchor.task_id).reverse() // oldest first
     : [anchor];
+
+  /**
+   * STAT-ONLY FAST PATH.
+   *
+   * The loop below resolves EVERY session of the task, and a `--resume`
+   * session's JSONL replays its parent's full history, so a task resumed five
+   * times is five near-identical files. Measured on a live board: one task
+   * held 267MB across five files, and a single Home-feed refresh touched
+   * 20 files totalling 319MB - all of it re-read to serve tail requests of a
+   * few KB, because the memo below could only be consulted AFTER parsing.
+   *
+   * The file cache already remembers each session's path/mtime/size, so ask
+   * it first: when every contributing file is untouched, the previous stitch
+   * is still exactly correct. Only the DB-derived fields (task title, session
+   * records) are re-read, and those are sub-millisecond.
+   */
+  if (anchor.task_id) {
+    const memo = stitchMemoByTaskId.get(anchor.task_id);
+    if (memo && memo.fileSignatures.length > 0 && memo.fileSignatures.length === sessions.length) {
+      const freshness = await Promise.all(memo.fileSignatures.map((signature) => isCachedFileUnchanged(signature)));
+      if (freshness.every(Boolean)) {
+        {
+          touchStitchMemo(anchor.task_id, memo);
+          const taskRow = db.prepare('SELECT title FROM tasks WHERE id = ?').get(anchor.task_id) as
+            | { title: string }
+            | undefined;
+          return {
+            record: sessions[sessions.length - 1] ?? anchor,
+            taskTitle: taskRow?.title ?? '(unknown task)',
+            agentName: memo.fileDerived.agentName,
+            source: memo.fileDerived.source,
+            sourcePath: memo.fileDerived.sourcePath,
+            entries: memo.entries,
+            degraded: memo.fileDerived.degraded,
+            unavailableReason: memo.fileDerived.unavailableReason,
+            sessions: sessions.map((session) =>
+              toSessionMeta(session, agentRegistry.getBySessionType(session.session_type)?.displayName ?? session.session_type),
+            ),
+            revision: memo.revision,
+          };
+        }
+      }
+    }
+  }
 
   const sessionMetas: ConversationSessionMeta[] = [];
   const depsParts: string[] = [];
@@ -364,7 +429,35 @@ export async function resolveTaskTranscript(
 
   const revision = taskId ? (stitchMemoByTaskId.get(taskId)?.revision ?? 0) + 1 : 0;
   if (taskId) {
-    touchStitchMemo(taskId, { depsFingerprint, revision, entries });
+    // Only record file keys when EVERY contributing session has a cached file
+    // signature. A session resolved from the index (or with no source at all)
+    // has no file to stat, so it cannot be revalidated cheaply - leaving the
+    // list empty disables the stat-only fast path for this task rather than
+    // letting it return a stitch it cannot prove is current.
+    const fileSignatures: Array<{ sourcePath: string; mtimeMs: number; size: number }> = [];
+    let everySessionHasFile = resolvedBySession.length === sessions.length;
+    for (const { session } of resolvedBySession) {
+      const agentSessionId = session.agent_session_id;
+      const signature = agentSessionId ? peekCachedFileSignature(session.session_type, agentSessionId) : null;
+      if (!signature) {
+        everySessionHasFile = false;
+        break;
+      }
+      fileSignatures.push(signature);
+    }
+    touchStitchMemo(taskId, {
+      depsFingerprint,
+      revision,
+      entries,
+      fileSignatures: everySessionHasFile ? fileSignatures : [],
+      fileDerived: {
+        source: latest.source,
+        sourcePath: latest.sourcePath,
+        degraded: anyDegraded,
+        unavailableReason: latest.unavailableReason,
+        agentName: latest.agentName,
+      },
+    });
   }
 
   return {
