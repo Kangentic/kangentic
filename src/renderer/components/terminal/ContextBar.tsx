@@ -5,7 +5,7 @@ import type { RateLimitWindow } from '../../../shared/types';
 import { useBoardStore } from '../../stores/board-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useConfigStore } from '../../stores/config-store';
-import { getProgressColor } from '../../utils/color-lerp';
+import { getProgressColor } from '../../utils/progress-color';
 import { windowElapsedPercentage } from '../../utils/rate-limit-window';
 import { formatTokenCount, isContextWindowKnown, contextWindowDisplayPercent } from '../../utils/format-tokens';
 import { formatCost, formatDuration } from '../../utils/format-session';

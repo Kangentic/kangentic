@@ -16,7 +16,7 @@ import { useToastStore } from '../../stores/toast-store';
 import { useTaskProgress } from '../../utils/task-progress';
 import { isContextWindowKnown, contextWindowDisplayPercent } from '../../utils/format-tokens';
 import { requiresUserInteraction, isActive } from '../../../shared/activity-state';
-import { getProgressColor } from '../../utils/color-lerp';
+import { getProgressColor } from '../../utils/progress-color';
 import { LabelPills } from '../Pill';
 import { PrLink } from '../PrLink';
 import type { Task } from '../../../shared/types';

@@ -54,6 +54,14 @@
   --kng-active: #34d399;      /* working / thinking (emerald-400) */
   --kng-attention: #e3b341;   /* needs-you / idle / permission (soft honey) */
 
+  /* Severity bands for consumed-budget progress fills (context window, rate-limit
+     quota). Identical across all themes, like the activity indicators above.
+     Deliberately NOT --kng-attention: that amber already means "session needs you",
+     and a caution band must not borrow a session-state hue. Seeded from
+     kangentic-mobile's warning/danger tokens. */
+  --kng-warning: #d9b83f;   /* caution band (true yellow, distinct from attention amber) */
+  --kng-danger: #e05d5d;    /* critical band */
+
   /* Categorical chart series (usage dashboard donuts/legends). Dark-surface
      steps of the validated dataviz reference palette; slot ORDER is the
      CVD-safety mechanism - assign series by slot index, never re-order or
@@ -299,6 +307,8 @@
 
   --color-active: var(--kng-active);
   --color-attention: var(--kng-attention);
+  --color-warning: var(--kng-warning);
+  --color-danger: var(--kng-danger);
 
   --color-chart-1: var(--kng-chart-1);
   --color-chart-2: var(--kng-chart-2);
