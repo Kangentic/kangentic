@@ -137,7 +137,7 @@ test.describe('BoardManagerDialog - agents.list() load gate', () => {
 
     await waitForBootstrapComplete(page);
 
-    // Clear only agentList (BoardManagerDialog gates on agentList, not agentInfo).
+    // Clear the agentList so the gate condition triggers on next open.
     await page.evaluate(() => {
       const configStore = (window as unknown as {
         __zustandStores?: {

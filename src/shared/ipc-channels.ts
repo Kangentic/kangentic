@@ -143,7 +143,6 @@ export const IPC = {
   KEYBINDINGS_PROBE_GLOBAL: 'keybindings:probeGlobal',
 
   // Agent
-  AGENT_DETECT: 'agent:detect',
   AGENT_LIST_COMMANDS: 'agent:listCommands',
   AGENT_SUMMARIZE: 'agent:summarize',
 

@@ -1893,9 +1893,6 @@
     },
 
     agent: {
-      detect: async function () {
-        return { found: true, path: '/usr/bin/claude', version: '2.1.72 (Claude Code)' };
-      },
       listCommands: async function (/* cwd */) {
         return [
           { name: 'code-review', displayName: '/code-review', description: 'Review code for quality and conventions', argumentHint: '', source: 'command' },

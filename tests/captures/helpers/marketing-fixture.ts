@@ -543,9 +543,15 @@ export function buildMarketingPreConfig(): string {
       return function () { clearInterval(interval); };
     };
 
-    // Override agent.detect to show correct version in context bar
-    window.electronAPI.agent.detect = async function () {
-      return { found: true, path: '/usr/bin/claude', version: '2.1.104 (Claude Code)' };
+    // Override agents.list so the context bar shows a nicer marketing
+    // version number for Claude (the ContextBar version pill reads the
+    // agent's own agentList entry, not a separate detection probe).
+    var origAgentsList = window.electronAPI.agents.list;
+    window.electronAPI.agents.list = async function (forceRefresh) {
+      var list = await origAgentsList(forceRefresh);
+      return list.map(function (agent) {
+        return agent.name === 'claude' ? Object.assign({}, agent, { version: '2.1.104' }) : agent;
+      });
     };
 
     // Override getUsage to return realistic model/cost data

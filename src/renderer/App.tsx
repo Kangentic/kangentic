@@ -40,7 +40,6 @@ export function App() {
   const currentProject = useProjectStore((s) => s.currentProject);
   const loadConfig = useConfigStore((s) => s.loadConfig);
   const loadAppVersion = useConfigStore((s) => s.loadAppVersion);
-  const detectAgent = useConfigStore((s) => s.detectAgent);
   const loadAgentList = useConfigStore((s) => s.loadAgentList);
   const detectGit = useConfigStore((s) => s.detectGit);
   const upsertSession = useSessionStore((s) => s.upsertSession);
@@ -53,7 +52,6 @@ export function App() {
     }
     loadConfig();
     loadAppVersion();
-    detectAgent();
     loadAgentList();
     detectGit();
     loadProjects();

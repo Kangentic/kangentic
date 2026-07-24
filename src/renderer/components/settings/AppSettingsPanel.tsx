@@ -89,7 +89,6 @@ export function SettingsContent({ activeTab, isSearching, searchQuery, matchingT
   const projectOverrides = useConfigStore((state) => state.projectOverrides);
   const updateConfig = useConfigStore((state) => state.updateConfig);
   const updateProjectOverride = useConfigStore((state) => state.updateProjectOverride);
-  const agentInfo = useConfigStore((state) => state.agentInfo);
   const agentList = useConfigStore((state) => state.agentList);
 
   // Effective config for per-project tabs: global merged with project overrides
@@ -112,7 +111,7 @@ export function SettingsContent({ activeTab, isSearching, searchQuery, matchingT
       case 'general': return <GeneralTab />;
       case 'theme': return <ThemeTab config={effectiveConfig} />;
       case 'terminal': return <TerminalTab config={effectiveConfig} globalConfig={globalConfig} shells={shells} fonts={fonts} />;
-      case 'agent': return <AgentTab config={effectiveConfig} globalConfig={globalConfig} agentInfo={agentInfo} agentList={agentList} />;
+      case 'agent': return <AgentTab config={effectiveConfig} globalConfig={globalConfig} agentList={agentList} />;
       case 'git': return <GitTab config={effectiveConfig} />;
       case 'browser': return <BrowserTab config={effectiveConfig} />;
       case 'shortcuts': return <ShortcutsTab />;

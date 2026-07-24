@@ -299,7 +299,6 @@ const api: ElectronAPI = {
   },
 
   agent: {
-    detect: () => ipcRenderer.invoke(IPC.AGENT_DETECT),
     listCommands: (cwd?) => ipcRenderer.invoke(IPC.AGENT_LIST_COMMANDS, cwd),
     summarize: (input) => ipcRenderer.invoke(IPC.AGENT_SUMMARIZE, input),
   },

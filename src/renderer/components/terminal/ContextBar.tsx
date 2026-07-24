@@ -23,6 +23,11 @@ interface ContextBarProps {
   agentFallback?: string | null;
 }
 
+/** Extract the version number from the raw string (e.g. "2.1.50 (Claude Code)" -> "2.1.50"). */
+function parseAgentVersion(version: string | null | undefined): string | null {
+  return version?.replace(/\s*\(.*\)/, '') || null;
+}
+
 const pill = 'px-2 py-0.5 rounded bg-surface-raised whitespace-nowrap select-none';
 // `[transform:translateZ(0)]` promotes the footer to its own compositing layer.
 // Without it, a freshly-spawned tiled window's frame composites such that the bar's
@@ -150,7 +155,14 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
   const sourceAgent = useBoardStore((s) =>
     latestRateLimits ? s.tasks.find((t) => t.session_id === latestRateLimits.sourceSessionId)?.agent : undefined,
   );
-  const agentVersionNumber = useConfigStore((s) => s.agentVersionNumber);
+  // The agent's own list entry - not agentDisplayName's separate hardcoded map - so the
+  // version pill can never name one agent while showing another's version number.
+  const taskAgentDisplayName = useConfigStore(
+    (s) => s.agentList.find((a) => a.name === taskAgent)?.displayName
+  );
+  const taskAgentVersion = useConfigStore(
+    (s) => s.agentList.find((a) => a.name === taskAgent)?.version
+  );
   const contextBarConfig = useConfigStore((s) => s.config.contextBar);
   // Adapter-declared affordance for agents whose CLI exposes no live-telemetry
   // channel. Label and tooltip live with the adapter (see AgentAdapter.liveTelemetryUnsupported);
@@ -312,6 +324,7 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
   const showRateLimits = agentReportsRateLimits
     && !!latestRateLimits && latestRateLimits.rateLimits.length > 0
     && contextBarConfig.showRateLimits;
+  const taskAgentVersionNumber = parseAgentVersion(taskAgentVersion);
 
   // No empty-state early-return: model pill is permanent (it doubles as
   // the picker trigger), so the bar always has at least one cell of content
@@ -329,9 +342,9 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
       )}
       {showVersion && (
         <span className={`${pill} text-fg-muted`}>
-          {agentDisplayName(taskAgent)}
-          {agentVersionNumber && (
-            <span className="text-fg-faint ml-1.5">v{agentVersionNumber}</span>
+          {taskAgentDisplayName ?? agentDisplayName(taskAgent)}
+          {taskAgentVersionNumber && (
+            <span className="text-fg-faint ml-1.5">v{taskAgentVersionNumber}</span>
           )}
         </span>
       )}

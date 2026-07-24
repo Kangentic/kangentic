@@ -150,10 +150,10 @@ test.describe('SettingsPanel - agents.list() load gate', () => {
     await page.evaluate(() => {
       const configStore = (window as unknown as {
         __zustandStores?: {
-          config?: { setState: (partial: { agentList: unknown[]; agentInfo: null }) => void };
+          config?: { setState: (partial: { agentList: unknown[] }) => void };
         };
       }).__zustandStores?.config;
-      configStore?.setState({ agentList: [], agentInfo: null });
+      configStore?.setState({ agentList: [] });
     });
 
     // Install the call counter AFTER clearing the store.

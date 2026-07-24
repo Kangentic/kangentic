@@ -3,7 +3,6 @@ import { useSessionStore } from '../../stores/session-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useBoardStore } from '../../stores/board-store';
 import { useProjectStore } from '../../stores/project-store';
-import { agentDisplayName } from '../../utils/agent-display-name';
 import { DEFAULT_AGENT } from '../../../shared/types';
 import { Pill } from '../Pill';
 
@@ -15,11 +14,12 @@ import { Pill } from '../Pill';
  */
 export function StatusBar() {
   const allSessions = useSessionStore((s) => s.sessions);
-  const agentInfo = useConfigStore((s) => s.agentInfo);
   const appVersion = useConfigStore((s) => s.appVersion);
   const tasks = useBoardStore((s) => s.tasks);
   const swimlanes = useBoardStore((s) => s.swimlanes);
   const currentProject = useProjectStore((s) => s.currentProject);
+  const agentEntry = useConfigStore((s) =>
+    s.agentList.find((agent) => agent.name === (currentProject?.default_agent ?? DEFAULT_AGENT)));
 
   const projectSessions = allSessions.filter((s) => s.projectId === currentProject?.id);
   const activeSessions = projectSessions.filter((s) => s.status === 'running').length;
@@ -55,8 +55,8 @@ export function StatusBar() {
       <div className="flex-1" />
 
       <div className="flex items-center gap-4">
-        {agentInfo && !agentInfo.found && (
-          <span className="text-red-400">{agentDisplayName(currentProject?.default_agent ?? DEFAULT_AGENT)} not found</span>
+        {agentEntry && !agentEntry.found && (
+          <span className="text-red-400" data-testid="agent-not-found">{agentEntry.displayName} not found</span>
         )}
         {appVersion && (
           <Pill size="sm" className="border border-edge text-fg-muted">v{appVersion}</Pill>

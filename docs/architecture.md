@@ -271,10 +271,9 @@ Machine-global (like Config), not project-scoped - backs the Mobile Devices sett
 | `notification:show` | send | Show native OS notification (task name + project name) |
 | `notification:clicked` | on | User clicked a notification (includes projectId, taskId) |
 
-### Agent (3 channels)
+### Agent (2 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `agent:detect` | invoke | Detect agent CLI (path, version) |
 | `agent:listCommands` | invoke | List available agent commands and skills |
 | `agent:summarize` | invoke | Summarize a free-form prompt into a short task title via the active project's default agent (or `input.agentName`). Returns `{ ok, title } \| { ok: false, reason }`. Sliding-window rate limit per `AppConfig.autoNameRateLimitPerHour`. |
 
@@ -601,11 +600,11 @@ State: `sessions`, `activeSessionId`, `openTaskId`, `dialogSessionIds`, `session
 
 ### ConfigStore (`config-store.ts`)
 
-State: `config` (AppConfig), `globalConfig`, `appVersion`, `agentInfo`, `agentVersionNumber`, `gitInfo`, `settingsOpen`, `projectOverrides`
+State: `config` (AppConfig), `globalConfig`, `appVersion`, `agentList`, `gitInfo`, `settingsOpen`, `projectOverrides`
 
 - **Theme subscription** -- watches theme changes, updates `<html>` class for CSS variables.
 - **App version** -- `loadAppVersion()` fetches the Electron app version via IPC.
-- **Agent detection** -- `detectAgent()` finds CLI path and parses version string.
+- **Agent inventory** - `loadAgentList()` probes every registered agent adapter and returns per-agent found/path/version/displayName (`AgentDetectionInfo[]`); consumers look up their own agent's entry rather than reading a single Claude-only detection result.
 - **Git detection** -- `detectGit()` checks for git installation, version, and minimum version requirement.
 - **Project overrides** -- `loadProjectOverrides()`, `updateProjectOverride()`, `removeProjectOverride()` manage per-project config overrides by filesystem path.
 

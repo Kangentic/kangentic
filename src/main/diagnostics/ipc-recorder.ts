@@ -49,7 +49,6 @@ const SAFE_CHANNELS = new Set<string>([
   'backlog:list',
   'search:everything',
   'system:getAppVersion',
-  'system:detectAgent',
   'diagnostics:logAppend',
 ]);
 

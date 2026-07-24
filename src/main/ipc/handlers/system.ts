@@ -263,15 +263,6 @@ export function registerSystemHandlers(context: IpcContext): void {
     },
   );
 
-  // === Agent ===
-  ipcMain.handle(IPC.AGENT_DETECT, async () => {
-    const { agentRegistry } = await import('../../agent/agent-registry');
-    const config = context.configManager.load();
-    const claudeAdapter = agentRegistry.get('claude');
-    if (!claudeAdapter) return { found: false, path: null, version: null };
-    return claudeAdapter.detect(config.agent.cliPaths.claude ?? null);
-  });
-
   // === Agents ===
   // The inventory is cached across calls (bootstrap, welcome screen, Settings,
   // and the column manager all request it) and rebuilt only on agent-config

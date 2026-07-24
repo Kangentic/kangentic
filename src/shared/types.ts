@@ -3844,9 +3844,8 @@ export interface ElectronAPI {
     probeGlobal: (combos: string[]) => Promise<Record<string, 'available' | 'taken' | 'unsupported'>>;
   };
 
-  // Agent detection & commands
+  // Agent commands
   agent: {
-    detect: () => Promise<{ found: boolean; path: string | null; version: string | null }>;
     listCommands: (cwd?: string) => Promise<AgentCommand[]>;
     summarize: (input: AgentSummarizeInput) => Promise<AgentSummarizeResult>;
   };

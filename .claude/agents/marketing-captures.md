@@ -115,13 +115,18 @@ window.__mockConfigOverrides = {
 
 **IMPORTANT:** `Object.assign` is shallow — the `terminal` object must include ALL defaults, not just overrides.
 
-### Agent Detection Override
+### Agent Version Override
 
-The context bar version comes from `window.electronAPI.agent.detect()`. Override it in the fixture:
+The context bar version pill reads the agent's own entry in `agentList` (returned by
+`window.electronAPI.agents.list()`), not a separate detection probe. Override it in the fixture:
 
 ```javascript
-window.electronAPI.agent.detect = async function () {
-  return { found: true, path: '/usr/bin/claude', version: '2.1.104 (Claude Code)' };
+var origAgentsList = window.electronAPI.agents.list;
+window.electronAPI.agents.list = async function (forceRefresh) {
+  var list = await origAgentsList(forceRefresh);
+  return list.map(function (agent) {
+    return agent.name === 'claude' ? Object.assign({}, agent, { version: '2.1.104' }) : agent;
+  });
 };
 ```
 

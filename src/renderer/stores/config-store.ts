@@ -19,11 +19,6 @@ if (import.meta.hot) {
   });
 }
 
-/** Extract the version number from the raw string (e.g. "2.1.50 (Claude Code)" -> "2.1.50"). */
-function parseAgentVersion(version: string | null): string | null {
-  return version?.replace(/\s*\(.*\)/, '') || null;
-}
-
 /** Throttle for the on-demand model rescan a Model dropdown fires when it opens
  *  (`rescanModels`). Models ship rarely and each forced rescan spawns a fresh
  *  hidden /model PTY probe, so re-opening a dropdown within this window is a
@@ -64,11 +59,6 @@ interface ConfigStore {
   // -- App version --
   appVersion: string | null;
   loadAppVersion: () => Promise<void>;
-
-  // -- Agent CLI detection --
-  agentInfo: { found: boolean; path: string | null; version: string | null } | null;
-  agentVersionNumber: string | null;
-  detectAgent: () => Promise<void>;
 
   // -- Git detection --
   gitInfo: { found: boolean; path: string | null; version: string | null; meetsMinimum: boolean } | null;
@@ -187,8 +177,6 @@ export const useConfigStore = create<ConfigStore>((set, get) => {
     globalConfig: DEFAULT_CONFIG,
     appVersion: null,
     agentList: [],
-    agentInfo: null,
-    agentVersionNumber: null,
     gitInfo: null,
     loading: true,
     workspaceSeeded: false,
@@ -214,9 +202,11 @@ export const useConfigStore = create<ConfigStore>((set, get) => {
       // need to be invalidated so a future switch refetches.
       invalidateAllProjects();
       // Re-detect agents when CLI path settings change so the UI
-      // updates immediately instead of requiring an app restart.
+      // updates immediately instead of requiring an app restart. CONFIG_SET
+      // already invalidated the detection + list caches server-side, so a
+      // plain (non-forced) reload is enough to pick up the new cliPaths.
       if (partial.agent) {
-        get().detectAgent();
+        get().loadAgentList();
       }
     },
 
@@ -244,15 +234,6 @@ export const useConfigStore = create<ConfigStore>((set, get) => {
     loadAppVersion: async () => {
       const appVersion = await window.electronAPI.app.getVersion();
       set({ appVersion });
-    },
-
-    detectAgent: async () => {
-      const agentInfo = await window.electronAPI.agent.detect();
-      const version = parseAgentVersion(agentInfo?.version ?? null);
-      set({
-        agentInfo,
-        agentVersionNumber: version,
-      });
     },
 
     detectGit: async () => {

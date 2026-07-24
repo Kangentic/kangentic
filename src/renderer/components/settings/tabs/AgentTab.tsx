@@ -14,16 +14,11 @@ import { settingProps } from '../settings-registry';
 import { AgentExecutionFields } from './agent-execution-fields';
 import { AgentLaunchOptionFields } from './agent-launch-option-fields';
 
-export function AgentTab({ config, globalConfig, agentInfo, agentList }: {
+export function AgentTab({ config, globalConfig, agentList }: {
   config: AppConfig;
   globalConfig: AppConfig;
-  agentInfo: { found: boolean; path: string | null; version: string | null } | null;
   agentList: AgentDetectionInfo[];
 }) {
-  // agentInfo is kept in the signature for future use (e.g. surfacing the currently-detected
-  // Claude CLI details even when another agent is the project default).
-  void agentInfo;
-
   const updateGlobal = useScopedUpdate('global');
   const updateProject = useScopedUpdate('project');
   const currentProject = useProjectStore((state) => state.currentProject);
