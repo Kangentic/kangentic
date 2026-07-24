@@ -25,7 +25,7 @@ describe('pickOverridableSubset', () => {
     // shared/types.ts), so it must never be picked as an overridable setting.
     const source = {
       theme: 'forest',
-      terminal: { shell: 'pwsh.exe', fontSize: 14, scrollbackLines: 5000 },
+      terminal: { shell: 'pwsh.exe', fontSize: 14, cursorStyle: 'block' },
       agent: { permissionMode: 'acceptEdits' },
       git: { worktreesEnabled: true, defaultBaseBranch: 'develop' },
       browser: { defaultUrl: 'http://troyweb.com/' },
@@ -76,7 +76,7 @@ describe('pickOverridableSubset', () => {
 
   it('drops the entire terminal block - every terminal.* field is documented global-only', () => {
     // Every field under AppConfig['terminal'] (shell, fontSize, fontFamily,
-    // scrollbackLines, cursorStyle, colors, backspaceSendsCtrlH) is
+    // cursorStyle, colors, backspaceSendsCtrlH) is
     // global-only (see the doc comments in shared/types.ts); none may be
     // cloned into a new project's overrides or snapshotted as a project
     // default.
@@ -108,7 +108,6 @@ describe('pickOverridableSubset', () => {
         shell: 'bash',
         fontSize: 13,
         fontFamily: 'Consolas',
-        scrollbackLines: 1000,
         cursorStyle: 'block',
         backspaceSendsCtrlH: true,
       },

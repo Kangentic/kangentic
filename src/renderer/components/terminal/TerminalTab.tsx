@@ -95,7 +95,6 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
     sessionId,
     fontFamily: config.terminal.fontFamily,
     fontSize: config.terminal.fontSize,
-    scrollbackLines: config.terminal.scrollbackLines,
     cursorStyle: config.terminal.cursorStyle,
     colors: config.terminal.colors,
     shellName: sessionShell,

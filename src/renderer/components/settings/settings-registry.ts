@@ -68,7 +68,6 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'terminal.shell', tabId: 'terminal', label: 'Shell', description: 'Terminal shell used for agent sessions', scope: 'global', keywords: ['bash', 'powershell', 'zsh', 'fish'] },
   { id: 'terminal.fontSize', tabId: 'terminal', label: 'Font Size', description: 'Terminal text size in pixels', scope: 'global', keywords: ['px', 'text size'] },
   { id: 'terminal.fontFamily', tabId: 'terminal', label: 'Font Family', description: 'CSS font-family for the terminal', scope: 'global', keywords: ['monospace', 'typeface'] },
-  { id: 'terminal.scrollbackLines', tabId: 'terminal', label: 'Scrollback Lines', description: 'Lines kept in the visible scrollback. Full session history is preserved for replay regardless of this value.', scope: 'global', keywords: ['buffer', 'history'] },
   { id: 'terminal.cursorStyle', tabId: 'terminal', label: 'Cursor Style', description: 'Terminal cursor appearance', scope: 'global', keywords: ['block', 'underline', 'bar'] },
   { id: 'terminal.backspaceSendsCtrlH', tabId: 'terminal', label: 'Word delete on Backspace', description: 'Backspace deletes the whole previous word instead of one character.', scope: 'global', keywords: ['ctrl+h', 'delete word', 'backspace', 'putty', 'windows'] },
 

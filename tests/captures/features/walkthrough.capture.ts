@@ -125,7 +125,6 @@ test('full product walkthrough', async () => {
         fontSize: 10,
         showPreview: false,
         panelHeight: 280,
-        scrollbackLines: 5000,
         cursorStyle: 'block',
         colors: {},
         backspaceSendsCtrlH: false,

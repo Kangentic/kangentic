@@ -93,7 +93,7 @@ test('new project inherits settings but not importSources or browser from previo
         // Legacy per-project terminal override (predates terminal.* becoming
         // global-only) - must be dropped by pickOverridableSubset, never
         // cloned into the new project.
-        terminal: { shell: 'pwsh.exe', fontSize: 14, scrollbackLines: 5000 },
+        terminal: { shell: 'pwsh.exe', fontSize: 14, cursorStyle: 'block' },
         agent: { permissionMode: 'acceptEdits' },
         git: { worktreesEnabled: true, defaultBaseBranch: 'develop' },
         // Non-overridable keys that must be dropped by pickOverridableSubset:

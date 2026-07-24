@@ -180,7 +180,7 @@ test.describe('Settings Panel', () => {
     await closeSettings();
   });
 
-  test('shows Terminal tab with shell, font size, font family, scrollback, cursor style, and backspace behavior', async () => {
+  test('shows Terminal tab with shell, font size, font family, cursor style, and backspace behavior', async () => {
     // Terminal is a SYSTEM (global-only) tab: these fields no longer save to
     // the project override, they save to global config.
     await openSettings();
@@ -189,7 +189,6 @@ test.describe('Settings Panel', () => {
     await expect(page.getByText('Terminal shell used for agent sessions')).toBeVisible();
     await expect(page.getByText('Font Size', { exact: true })).toBeVisible();
     await expect(page.getByText('Font Family', { exact: true })).toBeVisible();
-    await expect(page.getByText('Scrollback Lines')).toBeVisible();
     await expect(page.getByText('Cursor Style')).toBeVisible();
     // Word delete on Backspace (terminal.backspaceSendsCtrlH) - goes RED if the
     // SettingToggleRow is removed from TerminalTab.tsx, while leaving all other
@@ -200,7 +199,7 @@ test.describe('Settings Panel', () => {
   });
 
   test('Terminal tab font size writes to global config, not the project override', async () => {
-    // terminal.fontSize (and shell/fontFamily/scrollbackLines/cursorStyle) moved
+    // terminal.fontSize (and shell/fontFamily/cursorStyle) moved
     // from project-overridable to global-only. This pins the actual write
     // path, not just the UI copy.
     await openSettings();

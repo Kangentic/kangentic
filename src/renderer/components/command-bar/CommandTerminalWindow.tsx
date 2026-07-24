@@ -313,7 +313,6 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
     sessionId: effectiveSessionId,
     fontFamily: config.terminal.fontFamily,
     fontSize: config.terminal.fontSize,
-    scrollbackLines: config.terminal.scrollbackLines,
     cursorStyle: config.terminal.cursorStyle,
     colors: config.terminal.colors,
     shellName: commandTerminalShell ?? undefined,

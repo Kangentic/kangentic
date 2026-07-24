@@ -29,8 +29,8 @@ chrome unless these are stated.
   for the single most-used primary action. Default to visual subtraction over addition.
 - **Brief, accurate copy for labels and descriptions.** State what the control does and what
   distinguishes it - purpose plus distinguishing behavior, the way task and PR descriptions are
-  written. Plain language, no filler. Model: existing registry entries like "Lines kept in the
-  visible scrollback. Full session history is preserved for replay regardless of this value."
+  written. Plain language, no filler. Model: existing registry entries like "Fold away large
+  unchanged spans so a big file shows only the changed hunks with a little context."
   - No raw hex, byte codes, control-code literals, or escape sequences in a label or description
     (not "Send Ctrl+H (0x08) instead of Delete (0x7F)"). Describe the behavior a user sees
     ("Backspace deletes the whole previous word instead of one character").

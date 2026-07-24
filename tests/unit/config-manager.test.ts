@@ -472,6 +472,42 @@ describe('Config Manager -- agent.launchOptions replace semantics', () => {
   });
 });
 
+describe('Config Manager -- terminal.scrollbackLines global migration', () => {
+  // The scrollbackLines setting was removed; the live xterm scrollback cap
+  // is now a fixed internal constant (TERMINAL_SCROLLBACK_LINES in
+  // useTerminal.ts). load() must one-time-strip a stale global
+  // terminal.scrollbackLines left over from before the removal.
+
+  it('strips scrollbackLines from the loaded config and rewrites the file, keeping sibling terminal.* keys', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({
+      terminal: { scrollbackLines: 5000, cursorStyle: 'underline' },
+    }));
+
+    const cm = await createConfigManager();
+    const config = cm.load();
+
+    expect(config.terminal).not.toHaveProperty('scrollbackLines');
+    expect(config.terminal.cursorStyle).toBe('underline');
+
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect(raw.terminal).not.toHaveProperty('scrollbackLines');
+    expect(raw.terminal.cursorStyle).toBe('underline');
+  });
+
+  it('does not re-migrate on a second load of the already-clean file', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({
+      terminal: { scrollbackLines: 3000, cursorStyle: 'block' },
+    }));
+
+    const cm = await createConfigManager();
+    cm.load();
+    const config = cm.load();
+
+    expect(config.terminal).not.toHaveProperty('scrollbackLines');
+    expect(config.terminal.cursorStyle).toBe('block');
+  });
+});
+
 describe('Config Manager -- terminal.colors replace semantics', () => {
   it('removing a slot key from a later save() actually clears it, not deep-merges it back', async () => {
     const cm = await createConfigManager();

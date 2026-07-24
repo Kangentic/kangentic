@@ -160,7 +160,7 @@ won't be found.
   project open. The Task tab holds task-presentation settings split out of Board (Card Density,
   Ticket Numbers) and Terminal (the whole Context Bar section): those describe how an individual
   task presents itself, not board layout or terminal cosmetics, so Board stays pure board layout
-  and Terminal stays pure terminal cosmetics. Terminal (shell, font, scrollback, cursor style,
+  and Terminal stays pure terminal cosmetics. Terminal (shell, font, cursor style,
   colors) is global-only, not per-project: shell in particular was never reliably project-scoped
   at the PTY-spawn level (`SessionManager` caches a single `configuredShell` keyed to whichever
   project is currently focused - `src/main/pty/session-manager.ts`), so a background project's

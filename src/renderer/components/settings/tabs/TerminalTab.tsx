@@ -144,22 +144,6 @@ export function TerminalTab({ config, globalConfig, shells, fonts }: {
           testId="terminal-font-family"
         />
       </SettingRow>
-      <SettingRow {...settingProps('terminal.scrollbackLines')}>
-        <input
-          type="number"
-          value={globalConfig.terminal.scrollbackLines ?? DEFAULT_CONFIG.terminal.scrollbackLines}
-          onChange={(event) => {
-            if (event.target.value === '') return;
-            const value = Number(event.target.value);
-            if (!Number.isNaN(value)) updateGlobal({ terminal: { scrollbackLines: value } });
-          }}
-          min={1000}
-          max={100000}
-          step={1000}
-          placeholder={String(DEFAULT_CONFIG.terminal.scrollbackLines)}
-          className={INPUT_CLASS}
-        />
-      </SettingRow>
       <SettingRow {...settingProps('terminal.cursorStyle')}>
         <Select
           value={globalConfig.terminal.cursorStyle}

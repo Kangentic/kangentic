@@ -106,7 +106,6 @@ window.__mockConfigOverrides = {
     fontSize: 10,
     showPreview: false,
     panelHeight: 280,
-    scrollbackLines: 5000,
     cursorStyle: 'block',
     colors: {},
   },

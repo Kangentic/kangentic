@@ -86,7 +86,6 @@
       fontSize: 14,
       showPreview: false,
       panelHeight: 250,
-      scrollbackLines: 5000,
       cursorStyle: 'block',
       colors: {},
       backspaceSendsCtrlH: false,
@@ -244,7 +243,7 @@
     var git = source.git || {};
     var result = {};
     if (source.theme !== undefined) result.theme = source.theme;
-    // terminal.* (shell, fontSize, fontFamily, scrollbackLines, cursorStyle,
+    // terminal.* (shell, fontSize, fontFamily, cursorStyle,
     // backspaceSendsCtrlH) is global-only now - see the comment on
     // pickOverridableSubset() in src/main/config/config-manager.ts.
     // agent.execution is deliberately excluded - see the comment on

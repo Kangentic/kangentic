@@ -24,6 +24,14 @@ const PTY_RESIZE_DEBOUNCE_MS = 200;
  *  512KB chunked write) and far below a pathological hang. */
 const SCROLLBACK_WATCHDOG_MS = 5000;
 
+/** Live xterm scrollback cap (lines), applied to every session terminal.
+ *  Every terminal (re)creation - mount, tab/window switch, resize,
+ *  park-then-reveal, ownership handoff - refills the visible buffer from the
+ *  main-process 512KB raw-ANSI ring (MAX_SCROLLBACK in pty-buffer-manager.ts)
+ *  regardless of this cap, so it only bounds a continuously-mounted,
+ *  actively-streaming terminal's in-place scroll depth between replays. */
+const TERMINAL_SCROLLBACK_LINES = 5000;
+
 /** Scroll positions saved before xterm dispose, keyed by session ID.
  *  Preserved across HMR via import.meta.hot.data so terminals restore
  *  the user's viewport position instead of jumping to the bottom. */
@@ -105,7 +113,6 @@ interface UseTerminalOptions {
   sessionId: string | null;
   fontFamily?: string;
   fontSize?: number;
-  scrollbackLines?: number;
   cursorStyle?: 'block' | 'underline' | 'bar';
   /** Global-only setting: per-slot custom terminal colors. Any unset slot
    *  falls back to TERMINAL_DEFAULT_COLORS. */
@@ -237,7 +244,7 @@ export function useTerminal(options: UseTerminalOptions) {
       fontFamily: options.fontFamily || 'Menlo, Consolas, "Courier New", monospace',
       fontSize: options.fontSize || 14,
       theme: xtermTheme,
-      scrollback: options.scrollbackLines || 5000,
+      scrollback: TERMINAL_SCROLLBACK_LINES,
       cursorBlink: true,
       cursorStyle: options.cursorStyle || 'block',
       // HIDE the cursor when this terminal is BLURRED. Only the focused pane (where
@@ -412,7 +419,7 @@ export function useTerminal(options: UseTerminalOptions) {
       // No session -- just fit immediately
       fitAddon.fit();
     }
-  }, [options.sessionId, options.fontFamily, options.fontSize, options.scrollbackLines, options.cursorStyle, customBackground, customForeground, customCursor, options.shellName, options.releaseEscapeWhenPointerOutside, settleScrollback]);
+  }, [options.sessionId, options.fontFamily, options.fontSize, options.cursorStyle, customBackground, customForeground, customCursor, options.shellName, options.releaseEscapeWhenPointerOutside, settleScrollback]);
 
   // Set up data listener. Inbound PTY data flows through a bounded queue that
   // writes capped slices paced by xterm.write's completion callback, yielding
@@ -619,7 +626,7 @@ export function useTerminal(options: UseTerminalOptions) {
         fontFamily,
         fontSize,
         cursorStyle: options.cursorStyle || 'block',
-        scrollback: options.scrollbackLines || 5000,
+        scrollback: TERMINAL_SCROLLBACK_LINES,
         theme: buildTerminalTheme({
           background: customBackground,
           foreground: customForeground,
@@ -656,7 +663,7 @@ export function useTerminal(options: UseTerminalOptions) {
     return () => {
       cancelled = true;
     };
-  }, [options.fontFamily, options.fontSize, options.cursorStyle, options.scrollbackLines, customBackground, customForeground, customCursor, fit]);
+  }, [options.fontFamily, options.fontSize, options.cursorStyle, customBackground, customForeground, customCursor, fit]);
 
   // Flush a pending (debounced) PTY resize immediately, instead of waiting out
   // PTY_RESIZE_DEBOUNCE_MS. Window-hosted terminals fit synchronously on the

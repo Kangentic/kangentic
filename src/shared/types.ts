@@ -1907,7 +1907,6 @@ export interface AppConfig {
     showPreview: boolean;
     panelHeight: number; // persisted terminal panel height in px
     panelCollapsed: boolean; // persisted collapsed state
-    scrollbackLines: number; // global-only: applies across every project
     cursorStyle: 'block' | 'underline' | 'bar'; // global-only: applies across every project
     colors: TerminalColorOverrides; // global-only: applies across every project
     backspaceSendsCtrlH: boolean; // send Ctrl+H (0x08) instead of DEL (0x7f) on plain Backspace; opt-in, default false, all platforms
@@ -2286,7 +2285,6 @@ export const DEFAULT_CONFIG: AppConfig = {
     showPreview: false,
     panelHeight: 250,
     panelCollapsed: false,
-    scrollbackLines: 5000,
     cursorStyle: 'block',
     colors: {},
     backspaceSendsCtrlH: false,

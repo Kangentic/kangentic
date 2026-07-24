@@ -71,7 +71,6 @@ export async function launchCapturePage(options: CaptureOptions): Promise<Captur
       fontSize: 10,
       showPreview: false,
       panelHeight: 280,
-      scrollbackLines: 5000,
       cursorStyle: 'block',
       colors: {},
       backspaceSendsCtrlH: false,

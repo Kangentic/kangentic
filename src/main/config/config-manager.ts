@@ -138,6 +138,15 @@ export class ConfigManager {
       this.save(this.config);
     }
 
+    // One-time migration: drop a stale global terminal.scrollbackLines. The
+    // setting was removed; the live xterm scrollback cap is now a fixed
+    // internal constant (TERMINAL_SCROLLBACK_LINES in useTerminal.ts).
+    const parsedTerminal = parsed?.terminal as Record<string, unknown> | undefined;
+    if (parsedTerminal && typeof parsedTerminal === 'object' && 'scrollbackLines' in parsedTerminal) {
+      delete (this.config.terminal as unknown as Record<string, unknown>).scrollbackLines;
+      this.save(this.config);
+    }
+
     return this.config;
   }
 
