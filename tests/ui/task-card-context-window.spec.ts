@@ -174,7 +174,41 @@ test.describe('TaskCard context-window render gate', () => {
       await expect(usageBar).toContainText('100%');
       await expect(usageBar).not.toContainText('325');
       await expect(usageBar).not.toHaveAttribute('data-context-window', 'unknown');
-      await expect(usageBar.locator('div.h-full.rounded-full')).toHaveCount(1);
+      const fillBar = usageBar.locator('div.h-full.rounded-full');
+      await expect(fillBar).toHaveCount(1);
+
+      // getProgressColor's own unit tests (tests/unit/progress-color.test.ts)
+      // prove the pure function returns 'var(--kng-danger)' at 100% and that
+      // index.css DECLARES the --kng-danger custom property. Neither proves
+      // the browser actually RESOLVES it: --kng-danger and --kng-warning are
+      // brand new tokens (unlike --kng-active, already load-bearing for the
+      // activity indicators) that have never rendered anywhere before this
+      // change. If the token failed to resolve, the inline backgroundColor
+      // would be invalid and the fill would paint transparent while every
+      // unit test stayed green - that gap is what this closes.
+      const fillColor = await fillBar.evaluate((el) => getComputedStyle(el).backgroundColor);
+      const expectedDangerColor = await page.evaluate(() => {
+        const probe = document.createElement('div');
+        probe.style.backgroundColor = 'var(--kng-danger)';
+        document.body.appendChild(probe);
+        const resolved = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        return resolved;
+      });
+      // The load-bearing assertion: if --kng-danger failed to resolve, BOTH
+      // the fill and the probe would come back as the same transparent
+      // default, and a bare equality check would pass for the wrong reason.
+      expect(fillColor).not.toBe('rgba(0, 0, 0, 0)');
+      expect(fillColor).toBe(expectedDangerColor);
+
+      // Cheap sibling coverage while the page is already up: confirm
+      // --kng-warning is also a live, non-empty custom property (its own
+      // color-band boundary is pinned by the unit test; this only proves the
+      // token resolves in a real browser, same failure mode as above).
+      const warningTokenValue = await page.evaluate(() =>
+        getComputedStyle(document.documentElement).getPropertyValue('--kng-warning').trim(),
+      );
+      expect(warningTokenValue).not.toBe('');
     } finally {
       await browser.close();
     }
