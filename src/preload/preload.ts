@@ -322,6 +322,10 @@ const api: ElectronAPI = {
     exec: (command: string, cwd: string) => ipcRenderer.invoke(IPC.SHELL_EXEC, command, cwd),
   },
 
+  font: {
+    getAvailable: () => ipcRenderer.invoke(IPC.FONT_GET_AVAILABLE),
+  },
+
   git: {
     detect: () => ipcRenderer.invoke(IPC.GIT_DETECT),
     listBranches: () => ipcRenderer.invoke(IPC.GIT_LIST_BRANCHES),

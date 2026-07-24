@@ -47,6 +47,7 @@ export interface TerminalRendererStatus {
 interface WebglAddonLike {
   onContextLoss(handler: () => void): void;
   dispose(): void;
+  clearTextureAtlas(): void;
 }
 
 interface AttachWebglOptions {
@@ -78,6 +79,7 @@ export const WEBGL_ATTACH_BUDGET = 8;
 interface WebglAttachmentController {
   suspend(): void;
   resume(): boolean;
+  clearTextureAtlas(): void;
 }
 
 export interface WebglAttachmentPlan {
@@ -156,6 +158,19 @@ export function applyWebglAttachmentPlan(plan: WebglAttachmentPlan): void {
   for (const key of plan.attachKeys) {
     attachmentControllersByKey.get(key)?.resume();
   }
+}
+
+/**
+ * Force the WebGL renderer to re-rasterize every glyph from scratch. Call this
+ * after a live font change: xterm's char-size measurement re-runs as soon as
+ * `terminal.options.fontFamily` is assigned, and a glyph rasterized against a
+ * measurement taken mid-font-swap can read back a 0-width cell, which throws
+ * `IndexSizeError` in `TextureAtlas._drawToCache`'s `getImageData` call. A
+ * no-op if the terminal has no live WebGL attachment (DOM fallback, or no
+ * entry for this key).
+ */
+export function notifyFontChanged(rendererKey: string): void {
+  attachmentControllersByKey.get(rendererKey)?.clearTextureAtlas();
 }
 
 /**
@@ -286,6 +301,12 @@ export function attachWebglRenderer(
     return false;
   };
 
+  const clearTextureAtlas = (): void => {
+    // Best-effort: a no-op while on DOM (budget-suspended or permanently
+    // fallen back) since there is no live addon to clear.
+    try { currentAddon?.clearTextureAtlas(); } catch { /* best-effort */ }
+  };
+
   if (countLiveWebgl() >= attachBudget) {
     // Over budget: start suspended WITHOUT requesting a context, so this page
     // never asks Chromium for a context past the cap (which would silently
@@ -301,7 +322,7 @@ export function attachWebglRenderer(
     console.warn(`[terminal-webgl] WebGL unavailable for ${rendererKey}; using the DOM renderer`);
   }
 
-  attachmentControllersByKey.set(rendererKey, { suspend, resume });
+  attachmentControllersByKey.set(rendererKey, { suspend, resume, clearTextureAtlas });
   notifyWebglAttachmentsChanged();
 
   return () => {

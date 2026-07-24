@@ -26,9 +26,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'theme', tabId: 'theme', label: 'Theme', description: 'Color scheme for the interface', scope: 'project', keywords: ['color', 'dark', 'light', 'appearance'] },
 
   // ── Board ──
-  { id: 'cardDensity', tabId: 'board', label: 'Card Density', description: 'Amount of detail shown on task cards', scope: 'global', keywords: ['compact', 'comfortable', 'minimal', 'detailed'] },
   { id: 'columnWidth', tabId: 'board', label: 'Column Width', description: 'Width of board columns', scope: 'global', keywords: ['narrow', 'wide', 'size'] },
-  { id: 'showTaskNumbers', tabId: 'board', label: 'Ticket Numbers', description: "Show each task's #N number on its card", scope: 'global', keywords: ['ticket', 'number', 'id', 'display', 'card', 'display_id', 'hash'] },
 
   // ── Board > Config Sync ──
   { id: 'skipBoardConfigConfirm', tabId: 'board', label: 'Auto-Apply Board Config Changes', description: 'Apply a detected kangentic.json change immediately instead of asking to confirm.', scope: 'global', section: 'Config Sync', keywords: ['board config', 'kangentic.json', 'reconcile', 'reconciliation', 'apply', 'confirm', 'dialog', 'pull', 'auto'] },
@@ -37,6 +35,26 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'terminalPanelVisible', tabId: 'board', label: 'Terminal Panel', description: 'Show the terminal panel below the board', scope: 'global', section: 'Window', keywords: ['bottom', 'panel', 'hide', 'terminal', 'visible'] },
   { id: 'statusBarVisible', tabId: 'board', label: 'Status Bar', description: 'Show the status bar at the bottom of the window', scope: 'global', section: 'Window', keywords: ['bottom', 'bar', 'hide', 'visible'] },
   { id: 'animationsEnabled', tabId: 'board', label: 'Animations', description: 'Enable transition and motion effects', scope: 'global', section: 'Window', keywords: ['motion', 'reduce', 'transition', 'disable', 'accessibility'] },
+
+  // ── Task ──
+  { id: 'cardDensity', tabId: 'task', label: 'Card Density', description: 'Amount of detail shown on task cards', scope: 'global', keywords: ['compact', 'comfortable', 'minimal', 'detailed'] },
+  { id: 'showTaskNumbers', tabId: 'task', label: 'Ticket Numbers', description: "Show each task's #N number on its card", scope: 'global', keywords: ['ticket', 'number', 'id', 'display', 'card', 'display_id', 'hash'] },
+
+  // ── Task > Context Bar ──
+  { id: 'contextBar.showShell', tabId: 'task', label: 'Shell Name', description: 'Detected shell name', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },
+  { id: 'contextBar.showVersion', tabId: 'task', label: 'Version', description: 'Agent CLI version', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },
+  { id: 'contextBar.showElapsed', tabId: 'task', label: 'Elapsed Time', description: 'Ticking session duration', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status', 'duration', 'timer'] },
+  // Note: model and effort are intentionally NOT in the registry. Those
+  // pills double as the in-place picker triggers, so a "hide" toggle would
+  // silently disable a feature, not just declutter chrome. They're a
+  // permanent fixture of the context bar.
+  { id: 'contextBar.showCost', tabId: 'task', label: 'Cost', description: 'Session API cost', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status', 'price'] },
+  { id: 'contextBar.showToolCalls', tabId: 'task', label: 'Tool Calls', description: 'Cumulative tool invocations', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status', 'tool', 'invocations'] },
+  { id: 'contextBar.showAgentActive', tabId: 'task', label: 'Agent Active', description: 'Agent active time', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status', 'active'] },
+  { id: 'contextBar.showTokens', tabId: 'task', label: 'Token Counts', description: 'Input / output totals', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },
+  { id: 'contextBar.showContextFraction', tabId: 'task', label: 'Context Window', description: 'Used / total tokens', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },
+  { id: 'contextBar.showProgressBar', tabId: 'task', label: 'Progress Bar', description: 'Usage bar and percentage', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },
+  { id: 'contextBar.showRateLimits', tabId: 'task', label: 'Rate Limits', description: 'Claude 5h / weekly quota bars', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status', 'claude', 'quota', 'plan', 'limit', '5h', 'weekly'] },
 
   // ── Changes ──
   { id: 'diffViewMode', tabId: 'changes', label: 'Git Diff View', description: 'Default layout for Git file diffs in the Changes panel: split (side by side) or inline (unified).', scope: 'global', keywords: ['split', 'inline', 'side by side', 'side-by-side', 'unified', 'diff', 'changes', 'git', 'review', 'compare'] },
@@ -56,22 +74,6 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
 
   // ── Terminal > Colors ──
   { id: 'terminal.colors', tabId: 'terminal', label: 'Terminal Colors', description: 'Customize the terminal background, foreground, and cursor color', scope: 'global', section: 'Colors', keywords: ['colors', 'background', 'foreground', 'cursor', 'custom', 'terminal', 'appearance'] },
-
-  // ── Terminal > Context Bar ──
-  { id: 'contextBar.showShell', tabId: 'terminal', label: 'Shell Name', description: 'Detected shell name', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },
-  { id: 'contextBar.showVersion', tabId: 'terminal', label: 'Version', description: 'Agent CLI version', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },
-  { id: 'contextBar.showElapsed', tabId: 'terminal', label: 'Elapsed Time', description: 'Ticking session duration', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status', 'duration', 'timer'] },
-  // Note: model and effort are intentionally NOT in the registry. Those
-  // pills double as the in-place picker triggers, so a "hide" toggle would
-  // silently disable a feature, not just declutter chrome. They're a
-  // permanent fixture of the context bar.
-  { id: 'contextBar.showCost', tabId: 'terminal', label: 'Cost', description: 'Session API cost', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status', 'price'] },
-  { id: 'contextBar.showToolCalls', tabId: 'terminal', label: 'Tool Calls', description: 'Cumulative tool invocations', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status', 'tool', 'invocations'] },
-  { id: 'contextBar.showAgentActive', tabId: 'terminal', label: 'Agent Active', description: 'Agent active time', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status', 'active'] },
-  { id: 'contextBar.showTokens', tabId: 'terminal', label: 'Token Counts', description: 'Input / output totals', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },
-  { id: 'contextBar.showContextFraction', tabId: 'terminal', label: 'Context Window', description: 'Used / total tokens', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },
-  { id: 'contextBar.showProgressBar', tabId: 'terminal', label: 'Progress Bar', description: 'Usage bar and percentage', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },
-  { id: 'contextBar.showRateLimits', tabId: 'terminal', label: 'Rate Limits', description: 'Claude 5h / weekly quota bars', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status', 'claude', 'quota', 'plan', 'limit', '5h', 'weekly'] },
 
   // ── Agent > Project Defaults ──
   { id: 'project.defaultAgent', tabId: 'agent', label: 'Agent', description: 'Which agent CLI to use for new sessions', scope: 'project', section: 'Project Defaults', keywords: ['agent', 'claude', 'default'] },
@@ -212,6 +214,7 @@ export const TAB_LABELS: Record<string, string> = {
   browser: 'Browser',
   shortcuts: 'Shortcuts',
   board: 'Board',
+  task: 'Task',
   changes: 'Changes',
   terminal: 'Terminal',
   behavior: 'Behavior',

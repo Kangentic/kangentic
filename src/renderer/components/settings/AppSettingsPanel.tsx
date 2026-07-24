@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from 'react';
 import type { ElementType } from 'react';
-import { Bell, Bot, Brain, Bug, FolderCog, GitBranch, GitCompare, Globe, Keyboard, LayoutGrid, Mic, MousePointerClick, Palette, Plug, ShieldCheck, SlidersHorizontal, Smartphone, Terminal, Zap } from 'lucide-react';
+import { Bell, Bot, Brain, Bug, FolderCog, GitBranch, GitCompare, Globe, Keyboard, LayoutGrid, Mic, MousePointerClick, Palette, Plug, ShieldCheck, SlidersHorizontal, Smartphone, SquareKanban, Terminal, Zap } from 'lucide-react';
 import { useConfigStore } from '../../stores/config-store';
 import { SettingsPanelProvider, SearchTabGroupHeader, NoSearchResults } from './shared';
 import type { SettingsTabDefinition, SettingScope, SettingsContentProps } from './shared';
@@ -13,6 +13,7 @@ import { AgentTab } from './tabs/AgentTab';
 import { GitTab } from './tabs/GitTab';
 import { BrowserTab } from './tabs/BrowserTab';
 import { BoardTab } from './tabs/BoardTab';
+import { TaskTab } from './tabs/TaskTab';
 import { ChangesTab } from './tabs/ChangesTab';
 import { BehaviorTab } from './tabs/BehaviorTab';
 import { DictationTab } from './tabs/DictationTab';
@@ -38,6 +39,7 @@ const TAB_ICONS: Record<string, ElementType> = {
   browser: Globe,
   shortcuts: Zap,
   board: LayoutGrid,
+  task: SquareKanban,
   changes: GitCompare,
   behavior: SlidersHorizontal,
   dictation: Mic,
@@ -82,7 +84,7 @@ export const GLOBAL_ONLY_TABS = APP_TABS.filter((tab) => tab.category === 'syste
  * Individual tab bodies live under ./tabs/; this file owns the tab
  * registry and the active/search dispatcher.
  */
-export function SettingsContent({ activeTab, isSearching, searchQuery, matchingTabs, navigateToTab, shells }: SettingsContentProps) {
+export function SettingsContent({ activeTab, isSearching, searchQuery, matchingTabs, navigateToTab, shells, fonts }: SettingsContentProps) {
   const globalConfig = useConfigStore((state) => state.globalConfig);
   const projectOverrides = useConfigStore((state) => state.projectOverrides);
   const updateConfig = useConfigStore((state) => state.updateConfig);
@@ -109,13 +111,14 @@ export function SettingsContent({ activeTab, isSearching, searchQuery, matchingT
     switch (tabId) {
       case 'general': return <GeneralTab />;
       case 'theme': return <ThemeTab config={effectiveConfig} />;
-      case 'terminal': return <TerminalTab config={effectiveConfig} globalConfig={globalConfig} shells={shells} />;
+      case 'terminal': return <TerminalTab config={effectiveConfig} globalConfig={globalConfig} shells={shells} fonts={fonts} />;
       case 'agent': return <AgentTab config={effectiveConfig} globalConfig={globalConfig} agentInfo={agentInfo} agentList={agentList} />;
       case 'git': return <GitTab config={effectiveConfig} />;
       case 'browser': return <BrowserTab config={effectiveConfig} />;
       case 'shortcuts': return <ShortcutsTab />;
       case 'developer': return <DeveloperTab globalConfig={globalConfig} />;
       case 'board': return <BoardTab globalConfig={globalConfig} />;
+      case 'task': return <TaskTab globalConfig={globalConfig} />;
       case 'changes': return <ChangesTab globalConfig={globalConfig} />;
       case 'behavior': return <BehaviorTab globalConfig={globalConfig} />;
       case 'dictation': return <DictationTab globalConfig={globalConfig} onOpenHotkeys={() => navigateToTab('hotkeys')} />;

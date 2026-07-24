@@ -57,6 +57,7 @@ test.describe('Settings Panel', () => {
     await expect(page.getByRole('button', { name: 'Git' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Shortcuts' })).toBeVisible();
     await expect(page.getByTestId('settings-tab-list').getByRole('button', { name: 'Board' })).toBeVisible();
+    await expect(page.getByTestId('settings-tab-list').getByRole('button', { name: 'Task', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Changes' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Terminal', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Behavior' })).toBeVisible();
@@ -105,20 +106,27 @@ test.describe('Settings Panel', () => {
     await closeSettings();
   });
 
-  test('shows Board tab with density, width, visibility, config sync, and animation settings', async () => {
+  test('shows Board tab with width, config sync, and animation settings', async () => {
     await openSettings();
     await page.getByTestId('settings-tab-list').getByRole('button', { name: 'Board' }).click();
-    await expect(page.locator('text=Card Density')).toBeVisible();
     await expect(page.locator('text=Column Width')).toBeVisible();
-    // Ticket Numbers toggle row (showTaskNumbers) - goes RED if SettingToggleRow is
-    // removed from BoardTab.tsx, while leaving all other assertions green.
-    await expect(page.locator('text=Ticket Numbers')).toBeVisible();
     // Config Sync section: moved here from Behavior - it is board data
     // reconciliation (kangentic.json), not session/window behavior.
     await expect(page.locator('text=Auto-Apply Board Config Changes')).toBeVisible();
     await expect(page.getByText('Terminal Panel', { exact: true })).toBeVisible();
     await expect(page.getByText('Status Bar', { exact: true })).toBeVisible();
     await expect(page.locator('text=Animations')).toBeVisible();
+    await closeSettings();
+  });
+
+  test('shows Task tab with card density, ticket numbers, and context bar settings', async () => {
+    await openSettings();
+    await page.getByTestId('settings-tab-list').getByRole('button', { name: 'Task', exact: true }).click();
+    await expect(page.locator('text=Card Density')).toBeVisible();
+    // Ticket Numbers toggle row (showTaskNumbers) - goes RED if SettingToggleRow is
+    // removed from TaskTab.tsx, while leaving all other assertions green.
+    await expect(page.locator('text=Ticket Numbers')).toBeVisible();
+    await expect(page.getByText('Context Bar')).toBeVisible();
     await closeSettings();
   });
 
@@ -187,7 +195,6 @@ test.describe('Settings Panel', () => {
     // SettingToggleRow is removed from TerminalTab.tsx, while leaving all other
     // assertions here green.
     await expect(page.getByText('Word delete on Backspace')).toBeVisible();
-    await expect(page.getByText('Context Bar')).toBeVisible();
 
     await closeSettings();
   });
@@ -223,9 +230,205 @@ test.describe('Settings Panel', () => {
     await closeSettings();
   });
 
-  test('Terminal tab Context Bar section exposes Rate Limits toggle', async () => {
+  test('Terminal tab Font Family offers detected system fonts and accepts a typed value', async () => {
+    // FontResolver is mocked (mock-electron-api.js font.getAvailable) to a
+    // fixed list so this stays deterministic across dev machines and CI.
     await openSettings();
     await page.getByRole('button', { name: 'Terminal', exact: true }).click();
+
+    const fontFamilyRow = page.locator('[data-testid="setting-row-terminal.fontFamily"]');
+    const fontFamilyInput = fontFamilyRow.locator('[data-testid="terminal-font-family"]');
+    await fontFamilyInput.click();
+    await expect(fontFamilyRow.getByTestId('terminal-font-family-option-Consolas')).toBeVisible();
+
+    await fontFamilyRow.getByTestId('terminal-font-family-option-Consolas').click();
+    await expect(fontFamilyInput).toHaveValue('Consolas');
+    await expect.poll(async () => {
+      const globalConfig = await page.evaluate(() => window.electronAPI.config.getGlobal());
+      return (globalConfig as { terminal: { fontFamily: string } }).terminal.fontFamily;
+    }, { timeout: 3000 }).toBe('Consolas');
+
+    // A font not in the detected list is still a valid typed value - the
+    // picker must never block entry when detection misses (or fails on) a
+    // font the user actually wants.
+    await fontFamilyInput.fill('Custom Handwritten Font');
+    await expect.poll(async () => {
+      const globalConfig = await page.evaluate(() => window.electronAPI.config.getGlobal());
+      return (globalConfig as { terminal: { fontFamily: string } }).terminal.fontFamily;
+    }, { timeout: 3000 }).toBe('Custom Handwritten Font');
+
+    // Restore so later tests are unaffected.
+    await fontFamilyInput.fill('Menlo, Consolas, "Courier New", monospace');
+    await expect.poll(async () => {
+      const globalConfig = await page.evaluate(() => window.electronAPI.config.getGlobal());
+      return (globalConfig as { terminal: { fontFamily: string } }).terminal.fontFamily;
+    }, { timeout: 3000 }).toBe('Menlo, Consolas, "Courier New", monospace');
+
+    await closeSettings();
+  });
+
+  test('Terminal tab Font Family shows the live-cleared value, not the stale committed one, while the async config round trip is still pending', async () => {
+    // Regression test for FontCombobox's `filterText` sentinel fix. `value`
+    // is committed through an ASYNC config-store round trip (updateConfig
+    // awaits config.set, then re-fetches, before globalConfig.terminal.fontFamily
+    // updates), so a just-cleared field must display the live edit rather than
+    // falling back to the stale committed value while that round trip is still
+    // in flight. The mock's config.set() normally resolves within the same
+    // microtask turn (no real IPC latency), which collapses the race window to
+    // nothing observable - so this test patches config.set() with an
+    // artificial delay to create a real, deterministic window to observe the
+    // mid-flight display value against.
+    await openSettings();
+    await page.getByRole('button', { name: 'Terminal', exact: true }).click();
+
+    const fontFamilyRow = page.locator('[data-testid="setting-row-terminal.fontFamily"]');
+    const fontFamilyInput = fontFamilyRow.locator('[data-testid="terminal-font-family"]');
+
+    // Establish a known starting value before slowing the round trip.
+    await fontFamilyInput.click();
+    await fontFamilyRow.getByTestId('terminal-font-family-option-Consolas').click();
+    await expect.poll(async () => {
+      const globalConfig = await page.evaluate(() => window.electronAPI.config.getGlobal());
+      return (globalConfig as { terminal: { fontFamily: string } }).terminal.fontFamily;
+    }, { timeout: 3000 }).toBe('Consolas');
+
+    try {
+      // Artificially slow config.set() so the async round trip has a real,
+      // observable window. The real preload IPC round trip is normally too
+      // fast for Playwright to reliably catch mid-flight; this mock is a
+      // synchronous in-memory function with no such latency by default.
+      await page.evaluate(() => {
+        const original = window.electronAPI.config.set;
+        (window as unknown as { __originalConfigSet: typeof original }).__originalConfigSet = original;
+        window.electronAPI.config.set = (partial: Parameters<typeof original>[0]) =>
+          new Promise((resolve) => {
+            setTimeout(() => resolve(original(partial)), 1000);
+          });
+      });
+
+      await fontFamilyInput.click();
+      // selectText + Backspace (not fill()) so a snap-back-to-stale-value
+      // shows up as a wrong `.inputValue()` read rather than a fill()
+      // actionability timeout - the assertion below is the sole discriminator
+      // either way.
+      await fontFamilyInput.selectText();
+      await fontFamilyInput.press('Backspace');
+
+      // Mid-flight: read a single snapshot (never a retrying `toHaveValue`,
+      // which would just wait out the delay and pass on buggy code too). The
+      // input must already show the live (cleared) edit...
+      const displayedRightAfterClear = await fontFamilyInput.inputValue();
+      expect(displayedRightAfterClear).toBe('');
+      // ...while the config's committed value is still the OLD one, proving
+      // this is genuinely observing the async gap and not a resolved update.
+      const midFlightConfig = await page.evaluate(() => window.electronAPI.config.getGlobal());
+      expect((midFlightConfig as { terminal: { fontFamily: string } }).terminal.fontFamily).toBe('Consolas');
+
+      // Once the round trip actually completes, the cleared value persists
+      // (no snap-back either during or after the round trip).
+      await expect.poll(async () => {
+        const globalConfig = await page.evaluate(() => window.electronAPI.config.getGlobal());
+        return (globalConfig as { terminal: { fontFamily: string } }).terminal.fontFamily;
+      }, { timeout: 3000 }).toBe('');
+      expect(await fontFamilyInput.inputValue()).toBe('');
+    } finally {
+      await page.evaluate(() => {
+        const patched = window as unknown as { __originalConfigSet?: typeof window.electronAPI.config.set };
+        if (patched.__originalConfigSet) {
+          window.electronAPI.config.set = patched.__originalConfigSet;
+          delete patched.__originalConfigSet;
+        }
+      });
+
+      // Restore so later tests are unaffected, even if an assertion above threw.
+      await fontFamilyInput.fill('Menlo, Consolas, "Courier New", monospace');
+      await expect.poll(async () => {
+        const globalConfig = await page.evaluate(() => window.electronAPI.config.getGlobal());
+        return (globalConfig as { terminal: { fontFamily: string } }).terminal.fontFamily;
+      }, { timeout: 3000 }).toBe('Menlo, Consolas, "Courier New", monospace');
+
+      await closeSettings();
+    }
+  });
+
+  test('Terminal tab Font Family filters suggestions as you type and shows an empty state for no matches', async () => {
+    await openSettings();
+    await page.getByRole('button', { name: 'Terminal', exact: true }).click();
+
+    const fontFamilyRow = page.locator('[data-testid="setting-row-terminal.fontFamily"]');
+    const fontFamilyInput = fontFamilyRow.locator('[data-testid="terminal-font-family"]');
+
+    await fontFamilyInput.click();
+    await fontFamilyInput.fill('Con');
+
+    // Mock font list (mock-electron-api.js font.getAvailable): Cascadia Code,
+    // Consolas, Courier New, Fira Code, JetBrains Mono, Menlo. "Con" narrows
+    // to Consolas only (case-insensitive substring match) - none of the other
+    // five fonts contain "con".
+    await expect(fontFamilyRow.getByTestId('terminal-font-family-option-Consolas')).toBeVisible();
+    await expect(fontFamilyRow.getByTestId('terminal-font-family-option-Cascadia Code')).toHaveCount(0);
+    await expect(fontFamilyRow.getByTestId('terminal-font-family-option-Courier New')).toHaveCount(0);
+    await expect(fontFamilyRow.getByTestId('terminal-font-family-option-Fira Code')).toHaveCount(0);
+    await expect(fontFamilyRow.getByTestId('terminal-font-family-option-JetBrains Mono')).toHaveCount(0);
+    await expect(fontFamilyRow.getByTestId('terminal-font-family-option-Menlo')).toHaveCount(0);
+
+    await fontFamilyInput.fill('zzzznomatch');
+    await expect(fontFamilyRow.getByText('No fonts match "zzzznomatch"')).toBeVisible();
+
+    // Restore so later tests are unaffected.
+    await fontFamilyInput.fill('Menlo, Consolas, "Courier New", monospace');
+    await expect.poll(async () => {
+      const globalConfig = await page.evaluate(() => window.electronAPI.config.getGlobal());
+      return (globalConfig as { terminal: { fontFamily: string } }).terminal.fontFamily;
+    }, { timeout: 3000 }).toBe('Menlo, Consolas, "Courier New", monospace');
+
+    await closeSettings();
+  });
+
+  test('Terminal tab Font Family dropdown closes when clicking outside', async () => {
+    await openSettings();
+    await page.getByRole('button', { name: 'Terminal', exact: true }).click();
+
+    const fontFamilyRow = page.locator('[data-testid="setting-row-terminal.fontFamily"]');
+    const fontFamilyInput = fontFamilyRow.locator('[data-testid="terminal-font-family"]');
+
+    await fontFamilyInput.click();
+    await expect(fontFamilyRow.getByTestId('terminal-font-family-option-Consolas')).toBeVisible();
+
+    // Click something else within the panel, outside the combobox - the
+    // capture-phase mousedown listener should close the dropdown.
+    await page.locator('h2:has-text("Settings")').click();
+
+    await expect(fontFamilyRow.getByTestId('terminal-font-family-option-Consolas')).toHaveCount(0);
+
+    await closeSettings();
+  });
+
+  test('Terminal tab Font Family keyboard: ArrowDown moves focus into the option list, Escape closes it', async () => {
+    await openSettings();
+    await page.getByRole('button', { name: 'Terminal', exact: true }).click();
+
+    const fontFamilyRow = page.locator('[data-testid="setting-row-terminal.fontFamily"]');
+    const fontFamilyInput = fontFamilyRow.locator('[data-testid="terminal-font-family"]');
+
+    await fontFamilyInput.click();
+    // "Cascadia Code" is first in the mock font list, so it's the first
+    // navigable suggestion.
+    const firstOption = fontFamilyRow.getByTestId('terminal-font-family-option-Cascadia Code');
+    await expect(firstOption).toBeVisible();
+
+    await fontFamilyInput.press('ArrowDown');
+    await expect(firstOption).toBeFocused();
+
+    await firstOption.press('Escape');
+    await expect(firstOption).toHaveCount(0);
+
+    await closeSettings();
+  });
+
+  test('Task tab Context Bar section exposes Rate Limits toggle', async () => {
+    await openSettings();
+    await page.getByTestId('settings-tab-list').getByRole('button', { name: 'Task', exact: true }).click();
     await expect(page.getByText('Context Bar')).toBeVisible();
     await expect(page.getByText('Rate Limits', { exact: true })).toBeVisible();
     await expect(page.getByText('Claude 5h / weekly quota bars')).toBeVisible();
@@ -233,34 +436,35 @@ test.describe('Settings Panel', () => {
   });
 
   test('toggling Word delete on Backspace persists terminal.backspaceSendsCtrlH to global config, not the project override', async () => {
-    // DEFAULT_CONFIG.terminal.backspaceSendsCtrlH is true on all platforms
-    // (src/shared/types.ts), so the switch starts checked with no prior setup.
-    // Terminal is a SYSTEM (global-only) tab, so this pins the actual write
-    // path, not just the UI copy.
+    // DEFAULT_CONFIG.terminal.backspaceSendsCtrlH is false on all platforms
+    // (src/shared/types.ts) - opt-in, so existing users never feel a Backspace
+    // behavior change they didn't ask for - so the switch starts unchecked
+    // with no prior setup. Terminal is a SYSTEM (global-only) tab, so this
+    // pins the actual write path, not just the UI copy.
     await openSettings();
     await page.getByRole('button', { name: 'Terminal', exact: true }).click();
 
     const toggle = page.getByRole('switch', { name: 'Word delete on Backspace' });
-    await expect(toggle).toHaveAttribute('aria-checked', 'true');
-
-    await toggle.click();
     await expect(toggle).toHaveAttribute('aria-checked', 'false');
-    await expect.poll(async () => {
-      const globalConfig = await page.evaluate(() => window.electronAPI.config.getGlobal());
-      return (globalConfig as { terminal: { backspaceSendsCtrlH: boolean } }).terminal.backspaceSendsCtrlH;
-    }, { timeout: 3000 }).toBe(false);
 
-    const projectOverrides = await page.evaluate(() => window.electronAPI.config.getProjectOverrides());
-    expect((projectOverrides as { terminal?: { backspaceSendsCtrlH?: boolean } } | null)?.terminal?.backspaceSendsCtrlH).toBeUndefined();
-
-    // Toggle back on, restoring the default state so later tests in this
-    // shared-page file are unaffected.
     await toggle.click();
     await expect(toggle).toHaveAttribute('aria-checked', 'true');
     await expect.poll(async () => {
       const globalConfig = await page.evaluate(() => window.electronAPI.config.getGlobal());
       return (globalConfig as { terminal: { backspaceSendsCtrlH: boolean } }).terminal.backspaceSendsCtrlH;
     }, { timeout: 3000 }).toBe(true);
+
+    const projectOverrides = await page.evaluate(() => window.electronAPI.config.getProjectOverrides());
+    expect((projectOverrides as { terminal?: { backspaceSendsCtrlH?: boolean } } | null)?.terminal?.backspaceSendsCtrlH).toBeUndefined();
+
+    // Toggle back off, restoring the default state so later tests in this
+    // shared-page file are unaffected.
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-checked', 'false');
+    await expect.poll(async () => {
+      const globalConfig = await page.evaluate(() => window.electronAPI.config.getGlobal());
+      return (globalConfig as { terminal: { backspaceSendsCtrlH: boolean } }).terminal.backspaceSendsCtrlH;
+    }, { timeout: 3000 }).toBe(false);
 
     await closeSettings();
   });

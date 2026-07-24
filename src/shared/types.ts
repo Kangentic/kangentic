@@ -1910,7 +1910,7 @@ export interface AppConfig {
     scrollbackLines: number; // global-only: applies across every project
     cursorStyle: 'block' | 'underline' | 'bar'; // global-only: applies across every project
     colors: TerminalColorOverrides; // global-only: applies across every project
-    backspaceSendsCtrlH: boolean; // send Ctrl+H (0x08) instead of DEL (0x7f) on plain Backspace; default true, all platforms
+    backspaceSendsCtrlH: boolean; // send Ctrl+H (0x08) instead of DEL (0x7f) on plain Backspace; opt-in, default false, all platforms
   };
 
   agent: {
@@ -2289,7 +2289,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     scrollbackLines: 5000,
     cursorStyle: 'block',
     colors: {},
-    backspaceSendsCtrlH: true,
+    backspaceSendsCtrlH: false,
   },
   agent: {
     permissionMode: 'acceptEdits',
@@ -3878,6 +3878,11 @@ export interface ElectronAPI {
     openExternal: (url: string) => Promise<void>;
     showItemInFolder: (fullPath: string) => Promise<void>;
     exec: (command: string, cwd: string) => Promise<{ pid: number | undefined }>;
+  };
+
+  // Fonts
+  font: {
+    getAvailable: () => Promise<string[]>;
   };
 
   // Git

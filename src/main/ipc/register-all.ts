@@ -9,6 +9,7 @@ import { BoardConfigManager } from '../config/board-config-manager';
 import { DiffWatcher } from '../git/diff-watcher';
 import { GitDetector } from '../git/git-detector';
 import { ShellResolver } from '../pty/spawn/shell-resolver';
+import { FontResolver } from '../font-resolver';
 import { TerminalSubmitScheduler } from '../transition-engine/terminal-submit-scheduler';
 import { createPasteEngine } from '../pty/paste-engine';
 import { TerminalSubmit } from '../pty/terminal-submit';
@@ -135,6 +136,7 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   let configManager: ConfigManager | null = null;
   let gitDetector: GitDetector | null = null;
   let shellResolver: ShellResolver | null = null;
+  let fontResolver: FontResolver | null = null;
 
   context = {
     mainWindow,
@@ -160,6 +162,10 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
     get shellResolver() {
       if (!shellResolver) shellResolver = new ShellResolver();
       return shellResolver;
+    },
+    get fontResolver() {
+      if (!fontResolver) fontResolver = new FontResolver();
+      return fontResolver;
     },
     terminalSubmitScheduler,
     terminalSubmit,

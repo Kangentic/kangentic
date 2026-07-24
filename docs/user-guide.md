@@ -330,7 +330,7 @@ Settings are accessed from two entry points, both opening the same unified panel
 - **App Settings** - click the gear icon in the title bar. Scoped to the currently active project (or, if none is open, only the shared System tabs appear).
 - **Project Settings** - click the gear icon on a project row in the sidebar. Opens the same panel scoped to that project, with a project switcher dropdown in the header to jump between projects.
 
-Both panels use a VS Code-style layout: a sidebar with tab navigation on the left, and the active settings pane on the right. Tabs above the divider (General, Theme, Agent, Git, Browser, Shortcuts) are per-project settings; tabs below it (Board, Changes, Terminal, Behavior, Hotkeys, Notifications, Dictation, Memory, MCP Server, Agent Browser, Mobile Devices, Privacy, Developer) are shared across all projects. The shared tabs are further grouped into Core (Board through Notifications, unlabeled), Advanced (Dictation through Mobile Devices), and Other (Privacy, Developer). The General tab shows the project's location on disk with a "Move..." button (see [Moving a project](#moving-a-project)); the Theme tab holds the interface color-scheme picker. Terminal (shell, font, scrollback, cursor style, colors, context bar) is a shared tab, not per-project: nobody wants a different font per project, and the shell setting in particular was never reliably project-scoped under the hood. When no project is open, only the shared tabs appear.
+Both panels use a VS Code-style layout: a sidebar with tab navigation on the left, and the active settings pane on the right. Tabs above the divider (General, Theme, Agent, Git, Browser, Shortcuts) are per-project settings; tabs below it (Board, Task, Changes, Terminal, Behavior, Hotkeys, Notifications, Dictation, Memory, MCP Server, Agent Browser, Mobile Devices, Privacy, Developer) are shared across all projects. The shared tabs are further grouped into Core (Board through Notifications, unlabeled), Advanced (Dictation through Mobile Devices), and Other (Privacy, Developer). The General tab shows the project's location on disk with a "Move..." button (see [Moving a project](#moving-a-project)); the Theme tab holds the interface color-scheme picker. The Task tab (Card Density, Ticket Numbers, Context Bar) holds settings for how an individual task presents itself, split out from Board and Terminal. Terminal (shell, font, scrollback, cursor style, colors) is a shared tab, not per-project: nobody wants a different font per project, and the shell setting in particular was never reliably project-scoped under the hood. When no project is open, only the shared tabs appear.
 
 ### Moving a project
 
@@ -369,9 +369,20 @@ Applies to every project (Settings > Terminal, not a per-project override):
 | Scrollback Lines | Lines kept in the visible scrollback (1000 to 100000, default 5000). Full session history is preserved for replay regardless of this value. |
 | Cursor Style | Terminal cursor appearance (block, underline, or bar) |
 
+### Task Settings
+
+Applies to every project (Settings > Task, not a per-project override). These describe how an individual task presents itself, not board layout or terminal cosmetics:
+
+| Setting | Description |
+|---------|-------------|
+| Card Density | Amount of detail shown on task cards (compact, default, comfortable) |
+| Ticket Numbers | Show each task's `#N` number as a muted badge on its card (off by default) |
+
+The Task tab also holds the Context Bar toggles below.
+
 ### Context Bar
 
-The context bar is a status line displayed below the terminal showing session metadata. Each element can be individually toggled on or off in App Settings > Terminal.
+The context bar is a status line displayed below the terminal showing session metadata. Each element can be individually toggled on or off in App Settings > Task.
 
 | Toggle | What it shows |
 |--------|--------------|

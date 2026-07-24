@@ -154,13 +154,16 @@ won't be found.
 - **Settings tab separator** - Each tab in `SETTINGS_TABS` (`settings-tabs.ts`) declares a
   `category`. `'project'` tabs (General, Theme, Agent, Git, Browser, Shortcuts) are per-project
   settings, saved to `.kangentic/config.json`, and hidden when no project is selected.
-  `'system'` tabs (Board, Changes, Terminal, Behavior, Hotkeys, Notifications, Dictation, Memory,
-  MCP Server, Agent Browser, Mobile Devices, Privacy, Developer) are shared settings that
+  `'system'` tabs (Board, Task, Changes, Terminal, Behavior, Hotkeys, Notifications, Dictation,
+  Memory, MCP Server, Agent Browser, Mobile Devices, Privacy, Developer) are shared settings that
   apply across all projects, saved to global config, and remain fully functional with no
-  project open. Terminal (shell, font, scrollback, cursor style, colors, context bar) is
-  global-only, not per-project: shell in particular was never reliably project-scoped at the
-  PTY-spawn level (`SessionManager` caches a single `configuredShell` keyed to whichever project
-  is currently focused - `src/main/pty/session-manager.ts`), so a background project's
+  project open. The Task tab holds task-presentation settings split out of Board (Card Density,
+  Ticket Numbers) and Terminal (the whole Context Bar section): those describe how an individual
+  task presents itself, not board layout or terminal cosmetics, so Board stays pure board layout
+  and Terminal stays pure terminal cosmetics. Terminal (shell, font, scrollback, cursor style,
+  colors) is global-only, not per-project: shell in particular was never reliably project-scoped
+  at the PTY-spawn level (`SessionManager` caches a single `configuredShell` keyed to whichever
+  project is currently focused - `src/main/pty/session-manager.ts`), so a background project's
   spawn/resume could silently pick up the wrong shell. There is no Global/Project scope toggle.
   Theme is its own tab, not folded into General, so it has a discoverable sidebar entry distinct
   from Project Location. System tabs are further grouped in the sidebar into three tiers (`tier`

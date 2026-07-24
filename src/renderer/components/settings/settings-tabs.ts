@@ -46,10 +46,10 @@ export interface SettingsTabMeta {
  * Order within each group (Project; each System tier) is curated, not
  * alphabetical: General/Core-tier tabs lead with the most-landed-on and
  * most-frequently-touched tabs, and related tabs stay adjacent (e.g. Board /
- * Changes / Terminal as the "display" cluster). Alphabetizing would scatter
- * those groupings, bump General out of the landing slot, and couple sidebar
- * position to label spelling - a tab rename would silently reorder the
- * sidebar. The settings search bar already covers fast lookup-by-name, so
+ * Task / Changes / Terminal as the "display" cluster). Alphabetizing would
+ * scatter those groupings, bump General out of the landing slot, and couple
+ * sidebar position to label spelling - a tab rename would silently reorder
+ * the sidebar. The settings search bar already covers fast lookup-by-name, so
  * this list is free to optimize for browsing and muscle memory instead.
  */
 export const SETTINGS_TABS: SettingsTabMeta[] = [
@@ -62,6 +62,7 @@ export const SETTINGS_TABS: SettingsTabMeta[] = [
   { id: 'shortcuts', label: 'Shortcuts', category: 'project' },
   // -- Shared settings: Core tier --
   { id: 'board', label: 'Board', category: 'system', tier: 'core', tooltip: 'Applies to all projects' },
+  { id: 'task', label: 'Task', category: 'system', tier: 'core', tooltip: 'Applies to all projects' },
   { id: 'changes', label: 'Changes', category: 'system', tier: 'core', tooltip: 'Applies to all projects' },
   // Terminal is global-only: shell/font/scrollback/cursor are cosmetic
   // per-machine preferences (nobody wants per-project fonts), and shell in

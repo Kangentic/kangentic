@@ -13,13 +13,16 @@ import {
   getTerminalRendererReport,
   applyWebglAttachmentPlan,
   onWebglAttachmentsChanged,
+  notifyFontChanged,
 } from '../../src/renderer/utils/terminal-webgl';
 
 interface FakeAddon {
   lossHandlers: Array<() => void>;
   disposed: boolean;
+  textureAtlasCleared: boolean;
   onContextLoss(handler: () => void): void;
   dispose(): void;
+  clearTextureAtlas(): void;
   triggerLoss(): void;
 }
 
@@ -27,8 +30,10 @@ function makeFakeAddon(): FakeAddon {
   const addon: FakeAddon = {
     lossHandlers: [],
     disposed: false,
+    textureAtlasCleared: false,
     onContextLoss(handler: () => void) { addon.lossHandlers.push(handler); },
     dispose() { addon.disposed = true; },
+    clearTextureAtlas() { addon.textureAtlasCleared = true; },
     triggerLoss() { for (const handler of addon.lossHandlers) handler(); },
   };
   return addon;
@@ -237,6 +242,35 @@ describe('attachWebglRenderer', () => {
     // Advancing past the would-be retry does nothing (no new addon).
     vi.advanceTimersByTime(10_000);
     expect(addons).toHaveLength(1);
+  });
+});
+
+describe('notifyFontChanged', () => {
+  it('clears the texture atlas of a live webgl attachment', () => {
+    const { createAddon, addons } = makeAddonFactory(['ok']);
+    const dispose = attachWebglRenderer(fakeTerminal, 'k-font-live', {
+      createAddon,
+      retryDelaysMs: RETRY_DELAYS,
+    });
+
+    notifyFontChanged('k-font-live');
+
+    expect(addons[0].textureAtlasCleared).toBe(true);
+    dispose();
+  });
+
+  it('is a safe no-op for a terminal permanently on the DOM renderer', () => {
+    const dispose = attachWebglRenderer(fakeTerminal, 'k-font-dom', {
+      createAddon: () => { throw new Error('WebGL unavailable'); },
+      retryDelaysMs: RETRY_DELAYS,
+    });
+
+    expect(() => notifyFontChanged('k-font-dom')).not.toThrow();
+    dispose();
+  });
+
+  it('is a safe no-op for an unknown renderer key', () => {
+    expect(() => notifyFontChanged('k-font-unregistered')).not.toThrow();
   });
 });
 

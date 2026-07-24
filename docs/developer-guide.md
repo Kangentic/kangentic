@@ -168,7 +168,7 @@ Three parallel processes:
 2. **esbuild watch** -- bundles `src/main/index.ts` → `.vite/build/index.js` and `src/preload/preload.ts` → `.vite/build/preload.js`
 3. **Electron** -- launched with `MAIN_WINDOW_VITE_DEV_SERVER_URL` pointing to Vite
 
-Native modules (`better-sqlite3`, `node-pty`, `sherpa-onnx-node`, `simple-git`) are marked external in esbuild -- loaded at runtime from `node_modules`.
+Native modules (`better-sqlite3`, `node-pty`, `sherpa-onnx-node`, `font-list`, `simple-git`) are marked external in esbuild -- loaded at runtime from `node_modules`.
 
 Flags:
 - `--port=<n>` -- override Vite port
@@ -361,6 +361,7 @@ Native modules:
 - `better-sqlite3` -- rebuilt against Electron headers via `scripts/rebuild-native.js`
 - `node-pty` -- uses prebuilt NAPI binaries, no rebuild needed
 - `sherpa-onnx-node` -- prebuilt platform-specific binaries, no rebuild needed (voice dictation; unpacked from asar via the `sherpa-onnx-*` glob in `asarUnpack`)
+- `font-list` -- shells out to `fc-list` / a PowerShell script / a bundled macOS binary, no rebuild needed (Terminal Font Family picker; unpacked from asar via `asarUnpack` since the macOS binary is spawned via `child_process`)
 
 Security fuses enabled: no RunAsNode, no NodeOptions, no inspection, cookie encryption, ASAR integrity validation.
 

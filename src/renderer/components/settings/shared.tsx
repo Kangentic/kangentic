@@ -37,6 +37,7 @@ export interface SettingsContentProps {
   matchingTabs: SettingsTabDefinition[];
   navigateToTab: (tabId: string) => void;
   shells: Array<{ name: string; path: string }>;
+  fonts: string[];
 }
 
 /* ── Panel Shell ── */

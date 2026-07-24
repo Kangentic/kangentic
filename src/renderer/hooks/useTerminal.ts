@@ -1,7 +1,7 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '../addons/fit-addon';
-import { attachWebglRenderer } from '../utils/terminal-webgl';
+import { attachWebglRenderer, notifyFontChanged } from '../utils/terminal-webgl';
 import { copySelectionToClipboard, enableTerminalClipboard, stripOsc52Sequences } from '../utils/terminal-clipboard';
 import { createWriteBatcher, type WriteBatcher } from '../utils/write-batcher';
 import { createIncomingWriteQueue, writeChunkedToTerminal } from '../utils/incoming-write-queue';
@@ -175,6 +175,15 @@ export function useTerminal(options: UseTerminalOptions) {
   const writeBatcherRef = useRef<WriteBatcher | null>(null);
   /** Tears down the WebGL renderer attachment (cancels retries, disposes addon). */
   const disposeWebglRef = useRef<(() => void) | null>(null);
+  /** This terminal's key in the WebGL renderer report, so the font-family
+   *  effect can force a fresh glyph rasterization after a live font change
+   *  (see terminal-webgl.ts's notifyFontChanged). */
+  const rendererKeyRef = useRef<string | null>(null);
+  /** The font family/size last applied to xterm, so the apply effect can tell
+   *  an actual font change (which needs the document.fonts.load race guard and
+   *  a glyph-atlas re-rasterization) apart from a cursor/scrollback/color-only
+   *  change (which reuses the existing atlas and applies synchronously). */
+  const lastAppliedFontRef = useRef<{ family: string; size: number } | null>(null);
   /** Updated every render so the paste handler (attached once by initTerminal)
    *  always reads the current template, even though the agent list resolves
    *  asynchronously after the terminal has already initialized. */
@@ -287,6 +296,7 @@ export function useTerminal(options: UseTerminalOptions) {
     // key for a session-less pane so the devtools report can distinguish them.
     const rendererKey = options.sessionId ?? `transient-${nextTransientRendererKey()}`;
     disposeWebglRef.current = attachWebglRenderer(terminal, rendererKey);
+    rendererKeyRef.current = rendererKey;
 
     xtermRef.current = terminal;
     fitAddonRef.current = fitAddon;
@@ -514,6 +524,8 @@ export function useTerminal(options: UseTerminalOptions) {
       // before disposing the terminal it is attached to.
       disposeWebglRef.current?.();
       disposeWebglRef.current = null;
+      rendererKeyRef.current = null;
+      lastAppliedFontRef.current = null;
       xtermRef.current?.dispose();
       xtermRef.current = null;
       fitAddonRef.current = null;
@@ -582,20 +594,68 @@ export function useTerminal(options: UseTerminalOptions) {
   // deliberately excluded: switching it means killing and respawning the PTY
   // process, not a rendering change, and is out of scope here.
   useEffect(() => {
-    const terminal = xtermRef.current;
-    if (!terminal) return;
-    terminal.options = {
-      fontFamily: options.fontFamily || 'Menlo, Consolas, "Courier New", monospace',
-      fontSize: options.fontSize || 14,
-      cursorStyle: options.cursorStyle || 'block',
-      scrollback: options.scrollbackLines || 5000,
-      theme: buildTerminalTheme({
-        background: customBackground,
-        foreground: customForeground,
-        cursor: customCursor,
-      }),
+    if (!xtermRef.current) return;
+    const fontFamily = options.fontFamily || 'Menlo, Consolas, "Courier New", monospace';
+    const fontSize = options.fontSize || 14;
+    // Only an actual font family/size change needs the document.fonts.load
+    // race guard and the glyph-atlas re-rasterization below. A cursor,
+    // scrollback, or color change reuses the current font metrics and atlas,
+    // so it applies synchronously with no load round trip and no atlas clear -
+    // which also stops per-keystroke atlas thrash while a font name is being
+    // typed in Settings (onChange commits per character, across every mounted
+    // terminal).
+    const fontChanged =
+      !lastAppliedFontRef.current ||
+      lastAppliedFontRef.current.family !== fontFamily ||
+      lastAppliedFontRef.current.size !== fontSize;
+    let cancelled = false;
+
+    const applyOptions = () => {
+      // Dropped if a newer font change superseded this one while the load
+      // below was in flight (see the cleanup below), or if the terminal was
+      // torn down in the meantime.
+      if (cancelled || !xtermRef.current) return;
+      xtermRef.current.options = {
+        fontFamily,
+        fontSize,
+        cursorStyle: options.cursorStyle || 'block',
+        scrollback: options.scrollbackLines || 5000,
+        theme: buildTerminalTheme({
+          background: customBackground,
+          foreground: customForeground,
+          cursor: customCursor,
+        }),
+      };
+      fit();
+      if (fontChanged) {
+        lastAppliedFontRef.current = { family: fontFamily, size: fontSize };
+        // xterm re-measures character size as soon as `options.fontFamily` is
+        // assigned above. Force the WebGL renderer to re-rasterize every glyph
+        // under the new metrics rather than risk it reusing a stale cache entry
+        // from the previous font.
+        if (rendererKeyRef.current) notifyFontChanged(rendererKeyRef.current);
+      }
     };
-    fit();
+
+    if (fontChanged) {
+      // Make sure the browser has actually resolved/loaded this font BEFORE
+      // letting xterm measure character size against it. Re-measuring mid-load
+      // is what produces a transient 0-width glyph cell, which the WebGL
+      // addon's texture-atlas rasterization then throws IndexSizeError on
+      // ("source width is 0") - this closes that race, most reachable by
+      // clicking rapidly through the Font Family picker's suggestions.
+      // document.fonts.load() can reject (a font that fails to resolve
+      // entirely); the options are applied either way rather than left stale.
+      document.fonts.load(`${fontSize}px ${fontFamily}`).then(applyOptions, applyOptions);
+    } else {
+      // No font change: apply synchronously, exactly as before this effect
+      // grew its font-load path.
+      applyOptions();
+    }
+
+    return () => {
+      cancelled = true;
+    };
   }, [options.fontFamily, options.fontSize, options.cursorStyle, options.scrollbackLines, customBackground, customForeground, customCursor, fit]);
 
   // Flush a pending (debounced) PTY resize immediately, instead of waiting out

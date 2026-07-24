@@ -37,6 +37,7 @@ export function SettingsPanel() {
 
   const setLastSettingsTab = useConfigStore((state) => state.setLastSettingsTab);
   const [shells, setShells] = useState<Array<{ name: string; path: string }>>([]);
+  const [fonts, setFonts] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState(() => {
     const state = useConfigStore.getState();
     // An explicit open-to-tab (sidebar) wins; otherwise resume the last viewed
@@ -55,6 +56,7 @@ export function SettingsPanel() {
 
   useEffect(() => {
     window.electronAPI.shell.getAvailable().then(setShells).catch(() => {});
+    window.electronAPI.font.getAvailable().then(setFonts).catch(() => {});
     // The store already holds the agent inventory and detected-agent info from
     // app bootstrap (App.tsx), so opening Settings does not need to re-probe -
     // only fetch when the store is empty (e.g. opened before bootstrap settled).
@@ -126,6 +128,7 @@ export function SettingsPanel() {
     matchingTabs,
     navigateToTab,
     shells,
+    fonts,
   };
 
   // Project switcher dropdown: shown when projects exist, allows switching

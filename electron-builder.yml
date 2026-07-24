@@ -19,6 +19,9 @@ files:
   - "node_modules/file-uri-to-path/**"
   - "node_modules/sherpa-onnx-node/**"
   - "node_modules/sherpa-onnx-*/**"
+  # Terminal Font Family picker: font-list shells out to fc-list (Linux) / a
+  # PowerShell script (Windows) and ships a bundled native binary for macOS.
+  - "node_modules/font-list/**"
   # Conversation-memory retrieval: sqlite-vec loadable extension (per-platform
   # binary packages) + transformers.js. The embed worker runs on the NATIVE
   # onnxruntime-node execution providers (DirectML / WebGPU / CPU) because
@@ -42,6 +45,9 @@ asar: true
 asarUnpack:
   - "node_modules/node-pty/prebuilds/**"
   - "node_modules/sherpa-onnx-*/**"
+  # font-list's macOS binary is spawned via child_process, which cannot exec a
+  # path inside an asar archive.
+  - "node_modules/font-list/**"
   # SQLite dlopen cannot read a loadable extension inside an asar archive, and a
   # native .node addon (plus its sibling onnxruntime.dll / DirectML.dll on
   # Windows) cannot be dlopen'd from inside asar either; the embed worker runs

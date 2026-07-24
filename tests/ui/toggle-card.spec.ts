@@ -183,7 +183,7 @@ test.describe('ToggleCard keyboard activation', () => {
 
 // ── Gap 4: CompactToggleList click-anywhere (dense rows) ─────────────────────
 //
-// The Terminal tab Context Bar section renders a CompactToggleList. Each row
+// The Task tab Context Bar section renders a CompactToggleList. Each row
 // is a `<button role="switch" aria-label="...">` that should toggle when any
 // part of the row (including the label text) is clicked.
 // "Shell Name" row (contextBar.showShell) starts checked=true in the mock.
@@ -194,7 +194,7 @@ test.describe('CompactToggleList click-anywhere invariant', () => {
   });
 
   test('clicking the row label text flips aria-checked on that row only', async () => {
-    await openTab('Terminal');
+    await openTab('Task');
 
     // The CompactToggleList item for "Shell Name" is a button with role="switch".
     const shellRow = page.getByRole('switch', { name: 'Shell Name', exact: true });

@@ -299,6 +299,11 @@ Machine-global (like Config), not project-scoped - backs the Mobile Devices sett
 | `shell:showItemInFolder` | invoke | Reveal a file or directory in the native file manager (Explorer on Windows, Finder on macOS); the path is normalized to platform separators before dispatch |
 | `shell:exec` | invoke | Execute shell command |
 
+### Fonts (1 channel)
+| Channel | Pattern | Purpose |
+|---------|---------|---------|
+| `font:getAvailable` | invoke | List detected system fonts (monospace-filtered when detectable) for the Terminal tab's Font Family picker |
+
 ### Git (12 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|

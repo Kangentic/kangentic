@@ -3,10 +3,11 @@ import { RotateCcw } from 'lucide-react';
 import type { AppConfig, ThemeMode, TerminalColorOverrides } from '../../../../shared/types';
 import { DEFAULT_CONFIG, THEME_BACKGROUNDS, THEME_FOREGROUNDS } from '../../../../shared/types';
 import { TERMINAL_DEFAULT_COLORS } from '../../../hooks/useTerminal';
-import { SectionHeader, SettingRow, SettingToggleRow, Select, CompactToggleList, INPUT_CLASS, useScopedUpdate } from '../shared';
+import { SectionHeader, SettingRow, SettingToggleRow, Select, INPUT_CLASS, useScopedUpdate } from '../shared';
 import { settingProps } from '../settings-registry';
 import { ColorPickerPopover, PRESET_COLORS } from '../../backlog/manage-labels/ColorPickerPopover';
 import { Pill } from '../../Pill';
+import { FontCombobox } from '../../dialogs/FontCombobox';
 
 type TerminalColorKey = keyof TerminalColorOverrides;
 
@@ -94,10 +95,11 @@ const TERMINAL_COLOR_FIELDS: { key: TerminalColorKey; label: string }[] = [
  * theme-match swatch - that must track whichever theme is actually resolved
  * (project override or global), not just the global default.
  */
-export function TerminalTab({ config, globalConfig, shells }: {
+export function TerminalTab({ config, globalConfig, shells, fonts }: {
   config: AppConfig;
   globalConfig: AppConfig;
   shells: Array<{ name: string; path: string }>;
+  fonts: string[];
 }) {
   const updateGlobal = useScopedUpdate('global');
   // `?? {}` mirrors the optional-chaining every other reader of this field uses
@@ -134,12 +136,12 @@ export function TerminalTab({ config, globalConfig, shells }: {
         />
       </SettingRow>
       <SettingRow {...settingProps('terminal.fontFamily')}>
-        <input
-          type="text"
+        <FontCombobox
           value={globalConfig.terminal.fontFamily ?? ''}
-          onChange={(event) => updateGlobal({ terminal: { fontFamily: event.target.value } })}
+          onChange={(value) => updateGlobal({ terminal: { fontFamily: value } })}
+          fonts={fonts}
           placeholder={DEFAULT_CONFIG.terminal.fontFamily}
-          className={`${INPUT_CLASS} placeholder-fg-faint`}
+          testId="terminal-font-family"
         />
       </SettingRow>
       <SettingRow {...settingProps('terminal.scrollbackLines')}>
@@ -202,35 +204,6 @@ export function TerminalTab({ config, globalConfig, shells }: {
           ))}
         </div>
       </SettingRow>
-
-      <SectionHeader
-        label="Context Bar"
-        searchIds={[
-          'contextBar.showShell', 'contextBar.showVersion', 'contextBar.showElapsed',
-          'contextBar.showCost', 'contextBar.showToolCalls', 'contextBar.showAgentActive', 'contextBar.showTokens',
-          'contextBar.showContextFraction', 'contextBar.showProgressBar', 'contextBar.showRateLimits',
-        ]}
-      />
-      {/*
-        Model and Effort are intentionally NOT toggleable. Those pills double
-        as the in-place model/effort picker triggers (clicking them opens a
-        popover that lets the user switch models/effort live without restarting
-        the session). Hiding them via toggle would silently disable that
-        feature, not just declutter the chrome - so they stay a permanent
-        fixture of the context bar.
-      */}
-      <CompactToggleList items={[
-        { label: 'Shell Name', description: 'Detected shell name', checked: globalConfig.contextBar.showShell, onChange: (value) => updateGlobal({ contextBar: { showShell: value } }), searchId: 'contextBar.showShell' },
-        { label: 'Version', description: 'Agent CLI version', checked: globalConfig.contextBar.showVersion, onChange: (value) => updateGlobal({ contextBar: { showVersion: value } }), searchId: 'contextBar.showVersion' },
-        { label: 'Elapsed Time', description: 'Ticking session duration', checked: globalConfig.contextBar.showElapsed, onChange: (value) => updateGlobal({ contextBar: { showElapsed: value } }), searchId: 'contextBar.showElapsed' },
-        { label: 'Cost', description: 'Session API cost', checked: globalConfig.contextBar.showCost, onChange: (value) => updateGlobal({ contextBar: { showCost: value } }), searchId: 'contextBar.showCost' },
-        { label: 'Tool Calls', description: 'Cumulative tool invocations', checked: globalConfig.contextBar.showToolCalls, onChange: (value) => updateGlobal({ contextBar: { showToolCalls: value } }), searchId: 'contextBar.showToolCalls' },
-        { label: 'Agent Active', description: 'Agent active time', checked: globalConfig.contextBar.showAgentActive, onChange: (value) => updateGlobal({ contextBar: { showAgentActive: value } }), searchId: 'contextBar.showAgentActive' },
-        { label: 'Token Counts', description: 'Input / output totals', checked: globalConfig.contextBar.showTokens, onChange: (value) => updateGlobal({ contextBar: { showTokens: value } }), searchId: 'contextBar.showTokens' },
-        { label: 'Context Window', description: 'Used / total tokens', checked: globalConfig.contextBar.showContextFraction, onChange: (value) => updateGlobal({ contextBar: { showContextFraction: value } }), searchId: 'contextBar.showContextFraction' },
-        { label: 'Progress Bar', description: 'Usage bar and percentage', checked: globalConfig.contextBar.showProgressBar, onChange: (value) => updateGlobal({ contextBar: { showProgressBar: value } }), searchId: 'contextBar.showProgressBar' },
-        { label: 'Rate Limits', description: 'Claude 5h / weekly quota bars', checked: globalConfig.contextBar.showRateLimits, onChange: (value) => updateGlobal({ contextBar: { showRateLimits: value } }), searchId: 'contextBar.showRateLimits' },
-      ]} />
     </>
   );
 }

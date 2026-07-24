@@ -158,6 +158,9 @@ export const IPC = {
   SHELL_GET_AVAILABLE: 'shell:getAvailable',
   SHELL_GET_DEFAULT: 'shell:getDefault',
 
+  // Fonts
+  FONT_GET_AVAILABLE: 'font:getAvailable',
+
   // Shell utilities
   SHELL_OPEN_PATH: 'shell:openPath',
   SHELL_OPEN_EXTERNAL: 'shell:openExternal',

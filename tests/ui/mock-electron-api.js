@@ -89,7 +89,7 @@
       scrollbackLines: 5000,
       cursorStyle: 'block',
       colors: {},
-      backspaceSendsCtrlH: true,
+      backspaceSendsCtrlH: false,
     },
     sidebar: {
       width: 224,
@@ -2138,6 +2138,12 @@
       },
       exec: async function (/* command, cwd */) {
         return { pid: 12345 };
+      },
+    },
+
+    font: {
+      getAvailable: async function () {
+        return ['Cascadia Code', 'Consolas', 'Courier New', 'Fira Code', 'JetBrains Mono', 'Menlo'];
       },
     },
 
