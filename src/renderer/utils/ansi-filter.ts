@@ -42,6 +42,11 @@ export function createAnsiFilter(): {
   el.style.cssText = 'width:800px;height:400px';
   container.appendChild(el);
 
+  // No `linkHandler` here, unlike useTerminal's real terminal: this instance is
+  // a headless serializer sink parked off-screen with pointer-events:none, so an
+  // OSC 8 hyperlink can never be activated in it. If this terminal ever becomes
+  // user-visible or interactive, wire createTerminalLinkHandler in - otherwise a
+  // link activation would fall through to xterm's built-in window.open fallback.
   const term = new Terminal({
     cols: 120,
     rows: 40,

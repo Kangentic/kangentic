@@ -1,6 +1,6 @@
 const PROCESS_START = performance.now();
 
-import { app, BrowserWindow, clipboard, Menu, nativeImage, powerMonitor, session } from 'electron';
+import { app, BrowserWindow, clipboard, Menu, nativeImage, powerMonitor, session, shell } from 'electron';
 import path from 'node:path';
 import { registerAllIpc, getSessionManager, getTerminalSubmitScheduler, getBoardConfigManager, getCurrentProjectId, getOptionalIpcContext, openProjectByPath, deleteProjectFromIndex, pruneStaleWorktreeProjects, activateAllProjects, getLastOpenedProject } from './ipc/register-all';
 import { installDiagnostics } from './diagnostics/install';
@@ -39,6 +39,7 @@ import { restoreShellEnv } from './shell-env';
 import { isFirstPartyPermissionAllowed } from './permission-policy';
 import { MIN_ZOOM, MAX_ZOOM } from '../shared/zoom-steps';
 import { defaultDeveloperFlag, type DeveloperFlagKey } from '../shared/developer-flag-defaults';
+import { createExternalWindowOpenHandler } from './window-open-policy';
 
 initStartupTimer(PROCESS_START);
 mark('process_start');
@@ -246,8 +247,13 @@ app.on('web-contents-created', (_event, contents) => {
     }
   });
 
-  // The remaining handlers apply only to webview contents themselves.
-  if (contents.getType() !== 'webview') return;
+  // Non-webview contents (the main window, and any pop-out window - both fire
+  // web-contents-created) get the shared external-window-open policy (see
+  // createExternalWindowOpenHandler for the full rationale).
+  if (contents.getType() !== 'webview') {
+    contents.setWindowOpenHandler(createExternalWindowOpenHandler((url) => shell.openExternal(url)));
+    return;
+  }
 
   contents.setWindowOpenHandler(() => ({ action: 'deny' }));
 

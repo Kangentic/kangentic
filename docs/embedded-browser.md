@@ -23,6 +23,11 @@ The webview is hardened in `src/main/index.ts`:
   - `setWindowOpenHandler` denies all `window.open` and `target=_blank`.
   - `will-navigate` rejects non-`http(s):` schemes.
   - `before-input-event` binds F5 / Ctrl+R / Cmd+R to `webContents.reload`.
+- Non-webview contents (the main window, and any pop-out window) get a `setWindowOpenHandler`
+  too: always deny the popup, and route an allowed URL (`src/shared/external-url.ts`'s
+  `EXTERNAL_OPEN_SCHEMES`) out to the OS default browser instead. This is what stops a
+  `window.open()` call - including the one xterm's OSC-8 link fallback used to trigger - from
+  spawning a bare, chrome-less `BrowserWindow`.
 
 The webview runs in its own renderer process. The host renderer cannot reach into it; the only channel is `webview.executeJavaScript()` (used by the inspector) and the navigation/capture APIs.
 

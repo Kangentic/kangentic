@@ -3,6 +3,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '../addons/fit-addon';
 import { attachWebglRenderer, notifyFontChanged } from '../utils/terminal-webgl';
 import { copySelectionToClipboard, enableTerminalClipboard, stripOsc52Sequences } from '../utils/terminal-clipboard';
+import { createTerminalLinkHandler } from '../utils/terminal-link-handler';
 import { createWriteBatcher, type WriteBatcher } from '../utils/write-batcher';
 import { createIncomingWriteQueue, writeChunkedToTerminal } from '../utils/incoming-write-queue';
 import { isBoardDragActive, onBoardDragEnd } from '../lib/session-update-coalescer';
@@ -293,6 +294,7 @@ export function useTerminal(options: UseTerminalOptions) {
       // the "which window is selected" cue for the unfocused panes.
       cursorInactiveStyle: 'none',
       allowProposedApi: true,
+      linkHandler: createTerminalLinkHandler((url) => window.electronAPI.shell.openExternal(url)),
     });
 
     const fitAddon = new FitAddon();

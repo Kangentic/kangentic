@@ -295,7 +295,7 @@ Machine-global (like Config), not project-scoped - backs the Mobile Devices sett
 | `shell:getAvailable` | invoke | List available shells |
 | `shell:getDefault` | invoke | Get default shell |
 | `shell:openPath` | invoke | Open directory in file explorer |
-| `shell:openExternal` | invoke | Open URL in default browser |
+| `shell:openExternal` | invoke | Open URL in default browser (http/https/mailto only; other schemes are rejected) |
 | `shell:showItemInFolder` | invoke | Reveal a file or directory in the native file manager (Explorer on Windows, Finder on macOS); the path is normalized to platform separators before dispatch |
 | `shell:exec` | invoke | Execute shell command |
 

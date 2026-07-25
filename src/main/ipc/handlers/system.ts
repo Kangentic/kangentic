@@ -16,6 +16,7 @@ import { listAgents, invalidateAgentListCache } from '../../agent/agent-list';
 import { agentRegistry } from '../../agent/agent-registry';
 import { broadcast } from '../../pop-out/window-broadcast';
 import { resolveRelayUrl } from '../../../shared/relay';
+import { EXTERNAL_OPEN_SCHEMES, isAllowedExternalUrl } from '../../../shared/external-url';
 import type {
   NotificationInput,
   AgentCommand,
@@ -531,7 +532,19 @@ export function registerSystemHandlers(context: IpcContext): void {
   // '/') opens correctly on Windows, which needs native backslash separators -
   // matching the SHELL_SHOW_ITEM_IN_FOLDER handler below.
   ipcMain.handle(IPC.SHELL_OPEN_PATH, (_, dirPath: string) => shell.openPath(path.normalize(dirPath)));
-  ipcMain.handle(IPC.SHELL_OPEN_EXTERNAL, (_, url: string) => shell.openExternal(url));
+  // shell.openExternal is ShellExecute on Windows and will launch any
+  // registered protocol handler, so this is a process trust boundary -
+  // reject anything outside the allowlist instead of passing it straight to
+  // the OS. A rejected URL is silently inert (warn + no-op) rather than
+  // thrown, because several callers invoke this as a bare `void` with no
+  // .catch (e.g. MarkdownRenderer's link handler on agent-authored markdown).
+  ipcMain.handle(IPC.SHELL_OPEN_EXTERNAL, (_, url: string) => {
+    if (!isAllowedExternalUrl(url, EXTERNAL_OPEN_SCHEMES)) {
+      console.warn(`[SHELL_OPEN_EXTERNAL] Blocked disallowed URL: ${url}`);
+      return;
+    }
+    return shell.openExternal(url);
+  });
   // Normalize so a worktree-relative path joined with forward slashes in the
   // renderer (git paths use '/') resolves correctly on Windows, where
   // showItemInFolder needs native backslash separators.
