@@ -22,7 +22,8 @@ const LEADING_STRUCTURE_MARKERS = /^(?:#{1,6}\s+|>\s*|[-*+]\s+|\d{1,3}[.)]\s+)+/
  * Miscellaneous Technical (agent status indicators), the private-use area
  * (icon fonts), variation selectors, and the replacement character.
  */
-const UNRENDERABLE_CHROME = /[⌀-⏿-︀-️�]/g;
+const UNRENDERABLE_CHROME = /[\u2300-\u23FF\uE000-\uF8FF\uFFFD]/gu;
+const VARIATION_SELECTORS = /[\uFE00-\uFE0F]/gu;
 
 /** Collapse markdown prose to a single plain line; empty when it was decoration through and through. */
 function collapseToPreviewText(text: string): string {
@@ -39,6 +40,7 @@ function collapseToPreviewText(text: string): string {
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/\*\*|`/g, '')
     .replace(UNRENDERABLE_CHROME, '')
+    .replace(VARIATION_SELECTORS, '')
     .replace(/\s+/g, ' ')
     .trim();
 }
