@@ -18,6 +18,8 @@ import {
   createPairingInitiatorHandshake,
   deriveShortAuthenticationString,
   generateX25519KeyPair,
+  sealPairingConfirm,
+  type CipherState,
   type ShortAuthenticationString,
 } from '@kangentic/protocol';
 import { startRelayDouble, type RelayDouble } from './relay-double';
@@ -132,10 +134,12 @@ describe('mobile bridge pairing over a real relay double', () => {
     });
 
     let phoneComputedSas: ShortAuthenticationString | undefined;
+    let phoneConfirmCipher: CipherState | undefined;
     const phoneSasReady = new Promise<void>((resolve) => {
       phoneSocket.on('message', (data) => {
-        phoneHandshake.readMessage(toBytes(data));
+        const result = phoneHandshake.readMessage(toBytes(data));
         phoneComputedSas = deriveShortAuthenticationString(phoneHandshake.getHandshakeHash());
+        if (result.split) phoneConfirmCipher = result.split[0];
         resolve();
       });
     });
@@ -153,12 +157,18 @@ describe('mobile bridge pairing over a real relay double', () => {
     expect(phoneComputedSas).toBeDefined();
     expect(sasEvent.sas).toEqual(phoneComputedSas);
 
-    const confirmedPromise = new Promise<{ deviceId: string }>((resolve) => {
+    // Auto-enroll: the phone seals a confirm frame under the transport key
+    // its own read of message 2 just derived, exactly as a real "tap
+    // Confirm" would - the desktop opens it and enrolls with no further
+    // desktop-side confirmation.
+    const confirmedPromise = new Promise<{ deviceId: string; displayName: string }>((resolve) => {
       service.once('confirmed', resolve);
     });
-    service.confirmSas('relay-device-1', 'Real Relay Phone');
+    if (!phoneConfirmCipher) throw new Error('test setup: phone did not derive a confirm cipher from message 2');
+    phoneSocket.send(sealPairingConfirm(phoneConfirmCipher));
     const confirmed = await confirmedPromise;
-    expect(confirmed.deviceId).toBe('relay-device-1');
+    expect(confirmed.deviceId).toBe(bytesToHex(phoneStaticKeyPair.publicKey));
+    expect(confirmed.displayName).toBe('Real Relay Phone');
 
     phoneSocket.close();
     desktopTransport.close();

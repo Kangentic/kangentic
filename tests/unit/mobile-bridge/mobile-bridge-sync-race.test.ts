@@ -13,6 +13,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { EventEmitter } from 'node:events';
+import { CAPABILITY_VERBS } from '@kangentic/protocol';
 
 vi.mock('electron', () => ({
   app: { isReady: () => true, whenReady: () => Promise.resolve() },
@@ -43,7 +44,14 @@ const fakeDevice = {
   deviceId: 'device-A',
   displayName: 'Phone A',
   staticPublicKey: new Uint8Array(32).fill(3),
-  capabilities: ['read-board'],
+  // Full grant, not an arbitrary subset: attachContext() now runs a
+  // one-shot migration that upgrades any under-provisioned device via the
+  // REAL roster-store.setDeviceCapabilities (this file only stubs
+  // loadRoster, not the sign/save write path), so a partial capability set
+  // here would crash on the fake identity's missing masterSigningKeyPair.
+  // What this file actually exercises (session-open reentrancy) does not
+  // depend on the capability set.
+  capabilities: [...CAPABILITY_VERBS],
 };
 
 vi.mock('../../../src/main/mobile-bridge/identity', async (importOriginal) => ({

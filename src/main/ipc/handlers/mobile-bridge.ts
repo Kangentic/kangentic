@@ -5,6 +5,7 @@ import type {
   MobileBridgeStatus,
   MobileCapabilityVerb,
   MobilePairedDevice,
+  MobilePairingConfirmedPayload,
   MobilePairingEndedPayload,
   MobilePairingSasPayload,
   MobileStartPairingResult,
@@ -30,10 +31,6 @@ export function registerMobileBridgeHandlers(context: IpcContext): void {
     return { qrUri, expiresAt: qrPayload.expiresAt };
   });
 
-  ipcMain.handle(IPC.MOBILE_CONFIRM_PAIRING, (_event, displayName: string, capabilities?: MobileCapabilityVerb[]) => {
-    service.confirmPairing(displayName, capabilities);
-  });
-
   ipcMain.handle(IPC.MOBILE_CANCEL_PAIRING, () => {
     service.cancelPairing();
   });
@@ -42,6 +39,10 @@ export function registerMobileBridgeHandlers(context: IpcContext): void {
 
   ipcMain.handle(IPC.MOBILE_REVOKE_DEVICE, (_event, deviceId: string) => {
     service.revokeDevice(deviceId);
+  });
+
+  ipcMain.handle(IPC.MOBILE_RENAME_DEVICE, (_event, deviceId: string, displayName: string) => {
+    service.renameDevice(deviceId, displayName);
   });
 
   ipcMain.handle(IPC.MOBILE_SET_DEVICE_CAPABILITIES, (_event, deviceId: string, capabilities: MobileCapabilityVerb[]) => {
@@ -78,13 +79,16 @@ export function registerMobileBridgeHandlers(context: IpcContext): void {
     if (!context.mainWindow.isDestroyed()) context.mainWindow.webContents.send(channel, ...args);
   };
 
-  service.on('pairingSas', (payload: { sas: { digits: string; emoji: string[] }; phoneStaticPublicKeyHex: string }) => {
+  service.on('pairingSas', (payload: { sas: { digits: string }; phoneStaticPublicKeyHex: string }) => {
     const pushPayload: MobilePairingSasPayload = {
       digits: payload.sas.digits,
-      emoji: payload.sas.emoji,
       phoneStaticPublicKeyHex: payload.phoneStaticPublicKeyHex,
     };
     sendIfWindowAlive(IPC.MOBILE_PAIRING_SAS, pushPayload);
+  });
+
+  service.on('pairingConfirmed', (payload: MobilePairingConfirmedPayload) => {
+    sendIfWindowAlive(IPC.MOBILE_PAIRING_CONFIRMED, payload);
   });
 
   service.on('pairingEnded', (payload: MobilePairingEndedPayload) => {

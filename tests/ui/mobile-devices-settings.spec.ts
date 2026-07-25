@@ -4,10 +4,12 @@
  * Covers the shared/global (below-separator) surface: the enable toggle, the
  * relay mode Select (resolved default vs. custom override) and its draft
  * relay URL input, the pairing ceremony (start pairing -> QR render ->
- * simulated SAS -> confirm), and the paired-device list with
- * revoke-via-ConfirmDialog. Mirrors the structure of browser-settings.spec.ts
- * and hotkeys-settings.spec.ts, the closest precedents for a global settings
- * tab with a toggle + input + list + destructive action.
+ * simulated SAS -> the phone's confirm frame auto-enrolling the device, with
+ * no second desktop-side confirmation), and the paired-device list (key
+ * fingerprint, live connection state, paired date, rename, revoke-via-
+ * ConfirmDialog). Mirrors the structure of browser-settings.spec.ts and
+ * hotkeys-settings.spec.ts, the closest precedents for a global settings tab
+ * with a toggle + input + list + destructive action.
  *
  * The UI tier's webServer runs plain `vite` (development mode), so
  * __KANGENTIC_DEV__ is always true here and the relay mode Select renders
@@ -31,7 +33,6 @@
 import { test, expect } from '@playwright/test';
 import { launchPage, createProject } from './helpers';
 import type { Browser, Page } from '@playwright/test';
-import { MOBILE_CAPABILITY_VERBS } from '../../src/shared/types';
 import type { AppConfig, MobilePairedDevice } from '../../src/shared/types';
 
 // Each describe is isolated per worker (separate process; per-test page launch / goto reset),
@@ -87,28 +88,33 @@ async function setMobileBridgeConfig(partial: { enabled?: boolean; relayMode?: '
   }, partial);
 }
 
-/** Drives the full pairing ceremony (start -> SAS -> confirm) so the named device lands in the mock's real (non-override) device list, exercising confirmPairing() for real. */
+/**
+ * Drives the full pairing ceremony (start -> SAS -> phone confirm frame) so
+ * the named device lands in the mock's real (non-override) device list.
+ * __mockCompleteMobilePairing stands in for the phone tapping Confirm: the
+ * desktop auto-enrolls with no second tap of its own.
+ */
 async function pairDevice(displayName: string): Promise<void> {
   await page.getByRole('button', { name: 'Pair a device' }).click();
   await expect(page.getByAltText('Pairing QR code')).toBeVisible();
 
   await page.evaluate(() => {
     (window as unknown as {
-      __mockFireMobilePairingSas: (payload: { digits: string; emoji: string[]; phoneStaticPublicKeyHex: string }) => void;
-    }).__mockFireMobilePairingSas({ digits: '135790', emoji: ['star'], phoneStaticPublicKeyHex: 'deadbeef' });
+      __mockFireMobilePairingSas: (payload: { digits: string; phoneStaticPublicKeyHex: string }) => void;
+    }).__mockFireMobilePairingSas({ digits: '135790', phoneStaticPublicKeyHex: 'deadbeef' });
   });
-  await expect(page.getByText('135790')).toBeVisible();
+  await expect(page.getByTestId('mobile-pair-sas-digits')).toHaveText('135790');
 
-  const deviceNameInput = page.locator('input[placeholder="Device name (e.g. My iPhone)"]');
-  await deviceNameInput.fill(displayName);
-  await page.getByRole('button', { name: 'Codes match' }).click();
+  await page.evaluate((name) => {
+    (window as unknown as { __mockCompleteMobilePairing: (displayName: string) => void }).__mockCompleteMobilePairing(name);
+  }, displayName);
 
   await expect(page.locator('li', { hasText: displayName })).toBeVisible();
 }
 
 /** Revokes a real, previously-paired device by name via the ConfirmDialog. */
 async function revokeDevice(displayName: string): Promise<void> {
-  await page.locator('li', { hasText: displayName }).getByTitle('Revoke').click();
+  await page.locator('li', { hasText: displayName }).getByTestId('mobile-device-revoke').click();
   const dialog = page.locator('h3:has-text("Revoke device")').locator('xpath=ancestor::*[contains(@class, "z-[60]")][1]');
   await expect(dialog).toBeVisible();
   await dialog.getByRole('button', { name: 'Revoke', exact: true }).click();
@@ -441,7 +447,7 @@ test.describe('Mobile Devices settings tab', () => {
     await closeSettings();
   });
 
-  test('a simulated SAS renders digits/emoji, and confirming adds the device to the list', async () => {
+  test('the waiting panel shows the SAS digits with no emoji, and the phone confirm frame auto-enrolls the device with no second tap', async () => {
     await openMobileTab();
 
     await page.getByRole('button', { name: 'Pair a device' }).click();
@@ -449,27 +455,26 @@ test.describe('Mobile Devices settings tab', () => {
 
     await page.evaluate(() => {
       (window as unknown as {
-        __mockFireMobilePairingSas: (payload: { digits: string; emoji: string[]; phoneStaticPublicKeyHex: string }) => void;
-      }).__mockFireMobilePairingSas({
-        digits: '123456',
-        emoji: ['rocket', 'lock', 'star'],
-        phoneStaticPublicKeyHex: 'deadbeef',
-      });
+        __mockFireMobilePairingSas: (payload: { digits: string; phoneStaticPublicKeyHex: string }) => void;
+      }).__mockFireMobilePairingSas({ digits: '123456', phoneStaticPublicKeyHex: 'deadbeef' });
     });
 
-    await expect(page.getByText('123456')).toBeVisible();
-    await expect(page.getByText('rocket lock star')).toBeVisible();
+    const waitingPanel = page.getByTestId('mobile-pair-waiting');
+    await expect(waitingPanel).toBeVisible();
+    await expect(page.getByTestId('mobile-pair-sas-digits')).toHaveText('123456');
+    // No emoji rendered anywhere in the waiting panel - the digits alone
+    // carry the full transcript-hash comparison.
+    await expect(waitingPanel).not.toContainText(/[\u{1F300}-\u{1FAFF}]/u);
 
-    const deviceNameInput = page.locator('input[placeholder="Device name (e.g. My iPhone)"]');
-    await deviceNameInput.fill('SAS Confirm Device');
-    await page.getByRole('button', { name: 'Codes match' }).click();
+    // The phone's confirm frame arrives - the desktop auto-enrolls with no
+    // "Codes match" button anywhere for the human to click.
+    await page.evaluate(() => {
+      (window as unknown as { __mockCompleteMobilePairing: (displayName: string) => void }).__mockCompleteMobilePairing('SAS Confirm Device');
+    });
 
-    // confirmPairing() resolves and the store re-fetches listDevices(), which
-    // the mock has already pushed the new device into.
+    await expect(page.getByText('Paired: SAS Confirm Device')).toBeVisible();
     await expect(page.locator('li', { hasText: 'SAS Confirm Device' })).toBeVisible();
-    // Pairing UI collapses back to the idle "Pair a device" button.
     await expect(page.getByAltText('Pairing QR code')).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Pair a device' })).toBeVisible();
 
     // Clean up so later tests in this worker don't accumulate leftover devices.
     await revokeDevice('SAS Confirm Device');
@@ -477,34 +482,151 @@ test.describe('Mobile Devices settings tab', () => {
     await closeSettings();
   });
 
-  test('"Codes don\'t match" cancels pairing without adding a device', async () => {
+  test('cancelling from the waiting panel cancels pairing without adding a device', async () => {
     await openMobileTab();
 
     await page.getByRole('button', { name: 'Pair a device' }).click();
     await page.evaluate(() => {
       (window as unknown as {
-        __mockFireMobilePairingSas: (payload: { digits: string; emoji: string[]; phoneStaticPublicKeyHex: string }) => void;
-      }).__mockFireMobilePairingSas({ digits: '654321', emoji: ['ghost'], phoneStaticPublicKeyHex: 'facefeed' });
+        __mockFireMobilePairingSas: (payload: { digits: string; phoneStaticPublicKeyHex: string }) => void;
+      }).__mockFireMobilePairingSas({ digits: '654321', phoneStaticPublicKeyHex: 'facefeed' });
     });
-    await expect(page.getByText('654321')).toBeVisible();
+    await expect(page.getByTestId('mobile-pair-waiting')).toBeVisible();
 
-    await page.getByRole('button', { name: "Codes don't match" }).click();
+    await page.getByRole('button', { name: 'Cancel' }).click();
 
-    await expect(page.getByText('654321')).toHaveCount(0);
+    await expect(page.getByTestId('mobile-pair-waiting')).toHaveCount(0);
     await expect(page.getByAltText('Pairing QR code')).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Pair a device' })).toBeVisible();
 
     await closeSettings();
   });
 
-  test('paired-device list renders seeded devices with a toggle per capability, checked for granted verbs', async () => {
+  test('a "cancelled" pairing-ended push clears the ceremony but shows no error message', async () => {
+    // Exercises the pairingEnded push handler's kind gate directly (the
+    // main-process 'cancelled' path - e.g. the panel closing mid-ceremony -
+    // not just the desktop's own Cancel button, which is covered by the
+    // "cancelling from the waiting panel" test above).
+    await openMobileTab();
+    await page.getByRole('button', { name: 'Pair a device' }).click();
+    await expect(page.getByAltText('Pairing QR code')).toBeVisible();
+
+    await page.evaluate(() => {
+      (window as unknown as {
+        __mockFireMobilePairingEnded: (payload: { reason: string; kind: 'cancelled' | 'failed' }) => void;
+      }).__mockFireMobilePairingEnded({ reason: 'CANCELLED_REASON_TEXT_SHOULD_NOT_SHOW', kind: 'cancelled' });
+    });
+
+    await expect(page.getByAltText('Pairing QR code')).toHaveCount(0);
+    const startButton = page.getByRole('button', { name: 'Pair a device' });
+    await expect(startButton).toBeVisible();
+    await expect(page.getByText('CANCELLED_REASON_TEXT_SHOULD_NOT_SHOW')).toHaveCount(0);
+
+    await closeSettings();
+  });
+
+  test('a "failed" pairing-ended push shows the reason as an inline error', async () => {
+    await openMobileTab();
+    await page.getByRole('button', { name: 'Pair a device' }).click();
+    await expect(page.getByAltText('Pairing QR code')).toBeVisible();
+
+    await page.evaluate(() => {
+      (window as unknown as {
+        __mockFireMobilePairingEnded: (payload: { reason: string; kind: 'cancelled' | 'failed' }) => void;
+      }).__mockFireMobilePairingEnded({ reason: 'MOCK_PAIRING_FAILURE_REASON', kind: 'failed' });
+    });
+
+    await expect(page.getByAltText('Pairing QR code')).toHaveCount(0);
+    const startButton = page.getByRole('button', { name: 'Pair a device' });
+    await expect(startButton).toBeVisible();
+    const errorText = page.getByText('MOCK_PAIRING_FAILURE_REASON');
+    await expect(errorText).toBeVisible();
+    await expect(errorText).toHaveClass(/text-danger/);
+
+    await closeSettings();
+  });
+
+  test('Part 4 regression: closing Settings mid-ceremony and reopening lets "Pair a device" show a fresh QR again', async () => {
+    // Historically the "Pair a device" click silently no-op'd the second time
+    // if the panel was closed while a ceremony was in progress - the
+    // main-process activePairing guard threw, and the tab awaited the
+    // rejection with no catch. startPairing() now self-heals (supersedes a
+    // stale ceremony) and the tab cancels on unmount, so this must always
+    // show a QR.
+    await openMobileTab();
+    await page.getByRole('button', { name: 'Pair a device' }).click();
+    await expect(page.getByAltText('Pairing QR code')).toBeVisible();
+
+    await closeSettings();
+    await openMobileTab();
+
+    await expect(page.getByRole('button', { name: 'Pair a device' })).toBeVisible();
+    await page.getByRole('button', { name: 'Pair a device' }).click();
+    await expect(page.getByAltText('Pairing QR code')).toBeVisible();
+
+    await closeSettings();
+  });
+
+  test('closing Settings mid-ceremony calls cancelPairing (genuine unmount, not the re-subscribe effect)', async () => {
+    await page.evaluate(() => {
+      window.__mockCancelPairingCallCount = 0;
+    });
+
+    await openMobileTab();
+    await page.getByRole('button', { name: 'Pair a device' }).click();
+    await expect(page.getByAltText('Pairing QR code')).toBeVisible();
+
+    const cancelCallCountBeforeClose = await page.evaluate(() => window.__mockCancelPairingCallCount || 0);
+
+    await closeSettings();
+
+    const cancelCallCountAfterClose = await page.evaluate(() => window.__mockCancelPairingCallCount || 0);
+    // Not an exact-count assertion: this UI tier serves the app via Vite dev
+    // mode, and React.StrictMode (always on, src/renderer/index.tsx) double-
+    // invokes every effect's mount-time cleanup as a synthetic
+    // mount/unmount/remount simulation in development, so the mount-time
+    // cleanup can ALSO tick this same counter before the real close ever
+    // happens (harmless in production, where StrictMode's double-invoke does
+    // not occur). The real, falsifiable claim is that the genuine close
+    // increments the counter at least once more - a deleted/broken unmount
+    // effect would leave it unchanged.
+    expect(cancelCallCountAfterClose).toBeGreaterThan(cancelCallCountBeforeClose);
+  });
+
+  test('a stale pairing-failure banner does not survive a tab unmount/remount', async () => {
+    // The failure reason lives in the module-global useMobileStore, so it
+    // must be cleared on unmount (MobileDevicesTab.tsx's own-unmount effect)
+    // or it would otherwise reappear as stale text the next time this tab
+    // mounts - it was previously only ever cleared by starting a NEW pairing.
+    await openMobileTab();
+    await page.getByRole('button', { name: 'Pair a device' }).click();
+    await expect(page.getByAltText('Pairing QR code')).toBeVisible();
+
+    await page.evaluate(() => {
+      (window as unknown as {
+        __mockFireMobilePairingEnded: (payload: { reason: string; kind: 'cancelled' | 'failed' }) => void;
+      }).__mockFireMobilePairingEnded({ reason: 'STALE_FAILURE_REASON_MUST_NOT_PERSIST', kind: 'failed' });
+    });
+    await expect(page.getByText('STALE_FAILURE_REASON_MUST_NOT_PERSIST')).toBeVisible();
+
+    await closeSettings();
+    await openMobileTab();
+
+    await expect(page.getByRole('button', { name: 'Pair a device' })).toBeVisible();
+    await expect(page.getByText('STALE_FAILURE_REASON_MUST_NOT_PERSIST')).toHaveCount(0);
+
+    await closeSettings();
+  });
+
+  test('a paired device shows its key fingerprint, connection state, and paired date', async () => {
     await page.evaluate(() => {
       (window as unknown as { __mockMobileDevices: MobilePairedDevice[] }).__mockMobileDevices = [
         {
-          deviceId: 'seed-device-1',
+          deviceId: 'a1b2c3d4e5f60789fedcba9876543210',
           displayName: 'Seeded iPhone',
-          capabilities: ['read-stream', 'read-board'],
-          pairedAt: new Date().toISOString(),
+          capabilities: [],
+          pairedAt: '2026-01-01T00:00:00.000Z',
+          connectionState: 'connected',
         },
       ];
     });
@@ -513,104 +635,73 @@ test.describe('Mobile Devices settings tab', () => {
 
     const deviceRow = page.locator('li', { hasText: 'Seeded iPhone' });
     await expect(deviceRow).toBeVisible();
-    await expect(deviceRow.getByRole('switch', { name: 'Live output', exact: true })).toHaveAttribute('aria-checked', 'true');
-    await expect(deviceRow.getByRole('switch', { name: 'Board', exact: true })).toHaveAttribute('aria-checked', 'true');
-    await expect(deviceRow.getByRole('switch', { name: 'Interactive terminal', exact: true })).toHaveAttribute('aria-checked', 'false');
+    // Matches @kangentic/protocol's formatKeyFingerprint: first 16 hex chars
+    // as four space-separated groups of four.
+    await expect(deviceRow.getByTestId('mobile-device-fingerprint')).toHaveText('a1b2 c3d4 e5f6 0789');
+    await expect(deviceRow.getByTestId('mobile-device-connection')).toContainText('Connected');
+    await expect(deviceRow).toContainText('Paired');
 
     await closeSettings();
   });
 
-  test('shows a relay status indicator next to Paired Devices once a device is paired', async () => {
+  test('a device with no live session shows no connection badge (idle is not an error)', async () => {
     await page.evaluate(() => {
       (window as unknown as { __mockMobileDevices: MobilePairedDevice[] }).__mockMobileDevices = [
-        { deviceId: 'status-device-1', displayName: 'Status Device', capabilities: [], pairedAt: new Date().toISOString() },
+        {
+          deviceId: 'idle-device-1',
+          displayName: 'Idle Device',
+          capabilities: [],
+          pairedAt: new Date().toISOString(),
+          connectionState: 'idle',
+        },
       ];
-      (window as unknown as { __mockMobileBridgeStatus: object }).__mockMobileBridgeStatus = { relayState: 'connected' };
     });
 
     await openMobileTab();
 
-    const indicator = page.locator('[data-testid="mobile-relay-status"]');
-    await expect(indicator).toBeVisible();
-    await expect(indicator).toContainText('Connected');
+    const deviceRow = page.locator('li', { hasText: 'Idle Device' });
+    await expect(deviceRow).toBeVisible();
+    await expect(deviceRow.getByTestId('mobile-device-connection')).toHaveCount(0);
 
     await closeSettings();
   });
 
-  test('does not show a relay status indicator when there are no paired devices', async () => {
-    await openMobileTab();
-    await expect(page.locator('[data-testid="mobile-relay-status"]')).toHaveCount(0);
-    await closeSettings();
-  });
-
-  test('renders no relay status indicator for "idle", even with a device paired (a device-less desktop must never read "Disconnected")', async () => {
-    // relayStatusDisplay('idle') deliberately returns null: the aggregate is
-    // 'idle' only because no BridgeSession exists yet for this device (e.g.
-    // mid-sync), and showing "Disconnected" here would misreport a desktop
-    // that in fact has no live-session problem to report.
+  test('shows the "Connecting…" and "Reconnecting…" connection states in amber, distinct from each other', async () => {
     await page.evaluate(() => {
       (window as unknown as { __mockMobileDevices: MobilePairedDevice[] }).__mockMobileDevices = [
-        { deviceId: 'idle-device-1', displayName: 'Idle Device', capabilities: [], pairedAt: new Date().toISOString() },
+        { deviceId: 'connecting-device-1', displayName: 'Connecting Device', capabilities: [], pairedAt: new Date().toISOString(), connectionState: 'connecting' },
+        { deviceId: 'reconnecting-device-1', displayName: 'Reconnecting Device', capabilities: [], pairedAt: new Date().toISOString(), connectionState: 'reconnecting' },
       ];
-      (window as unknown as { __mockMobileBridgeStatus: object }).__mockMobileBridgeStatus = { relayState: 'idle' };
     });
 
     await openMobileTab();
 
-    await expect(page.locator('li', { hasText: 'Idle Device' })).toBeVisible();
-    await expect(page.locator('[data-testid="mobile-relay-status"]')).toHaveCount(0);
+    // Anchored regex, not a plain string: Playwright's string `hasText` is a
+    // case-insensitive SUBSTRING match, and "Reconnecting Device" contains
+    // "connecting device" as a substring, so a plain-string filter here
+    // would resolve to both list items.
+    const connecting = page.locator('li', { hasText: /^Connecting Device/ }).getByTestId('mobile-device-connection');
+    await expect(connecting).toContainText('Connecting…');
+    await expect(connecting).toHaveClass(/text-amber-400/);
+
+    const reconnecting = page.locator('li', { hasText: /^Reconnecting Device/ }).getByTestId('mobile-device-connection');
+    await expect(reconnecting).toContainText('Reconnecting…');
+    await expect(reconnecting).not.toContainText('Connecting…');
+    await expect(reconnecting).toHaveClass(/text-amber-400/);
 
     await closeSettings();
   });
 
-  test('shows the "Connecting…" state in amber while a session is dialing', async () => {
+  test('shows the "Disconnected" connection state in the danger color when the relay is closed', async () => {
     await page.evaluate(() => {
       (window as unknown as { __mockMobileDevices: MobilePairedDevice[] }).__mockMobileDevices = [
-        { deviceId: 'connecting-device-1', displayName: 'Connecting Device', capabilities: [], pairedAt: new Date().toISOString() },
+        { deviceId: 'closed-device-1', displayName: 'Closed Device', capabilities: [], pairedAt: new Date().toISOString(), connectionState: 'closed' },
       ];
-      (window as unknown as { __mockMobileBridgeStatus: object }).__mockMobileBridgeStatus = { relayState: 'connecting' };
     });
 
     await openMobileTab();
 
-    const indicator = page.locator('[data-testid="mobile-relay-status"]');
-    await expect(indicator).toBeVisible();
-    await expect(indicator).toContainText('Connecting…');
-    await expect(indicator).toHaveClass(/text-amber-400/);
-
-    await closeSettings();
-  });
-
-  test('shows the "Reconnecting…" state in amber, distinct from "Connecting…"', async () => {
-    await page.evaluate(() => {
-      (window as unknown as { __mockMobileDevices: MobilePairedDevice[] }).__mockMobileDevices = [
-        { deviceId: 'reconnecting-device-1', displayName: 'Reconnecting Device', capabilities: [], pairedAt: new Date().toISOString() },
-      ];
-      (window as unknown as { __mockMobileBridgeStatus: object }).__mockMobileBridgeStatus = { relayState: 'reconnecting' };
-    });
-
-    await openMobileTab();
-
-    const indicator = page.locator('[data-testid="mobile-relay-status"]');
-    await expect(indicator).toBeVisible();
-    await expect(indicator).toContainText('Reconnecting…');
-    await expect(indicator).not.toContainText('Connecting…');
-    await expect(indicator).toHaveClass(/text-amber-400/);
-
-    await closeSettings();
-  });
-
-  test('shows the "Disconnected" state in the danger color when the relay is closed', async () => {
-    await page.evaluate(() => {
-      (window as unknown as { __mockMobileDevices: MobilePairedDevice[] }).__mockMobileDevices = [
-        { deviceId: 'closed-device-1', displayName: 'Closed Device', capabilities: [], pairedAt: new Date().toISOString() },
-      ];
-      (window as unknown as { __mockMobileBridgeStatus: object }).__mockMobileBridgeStatus = { relayState: 'closed' };
-    });
-
-    await openMobileTab();
-
-    const indicator = page.locator('[data-testid="mobile-relay-status"]');
+    const indicator = page.locator('li', { hasText: 'Closed Device' }).getByTestId('mobile-device-connection');
     await expect(indicator).toBeVisible();
     await expect(indicator).toContainText('Disconnected');
     await expect(indicator).toHaveClass(/text-danger/);
@@ -618,75 +709,148 @@ test.describe('Mobile Devices settings tab', () => {
     await closeSettings();
   });
 
-  test('devices with no capabilities show every toggle unchecked', async () => {
-    await page.evaluate(() => {
-      (window as unknown as { __mockMobileDevices: MobilePairedDevice[] }).__mockMobileDevices = [
-        {
-          deviceId: 'seed-device-2',
-          displayName: 'Bare Device',
-          capabilities: [],
-          pairedAt: new Date().toISOString(),
-        },
-      ];
-    });
-
+  test('renaming a device persists via renameDevice and updates the list', async () => {
     await openMobileTab();
+    await pairDevice('Rename Target Device');
 
-    const deviceRow = page.locator('li', { hasText: 'Bare Device' });
-    await expect(deviceRow).toBeVisible();
-    const switches = deviceRow.getByRole('switch');
-    await expect(switches).toHaveCount(MOBILE_CAPABILITY_VERBS.length);
-    for (const toggle of await switches.all()) {
-      await expect(toggle).toHaveAttribute('aria-checked', 'false');
-    }
+    const deviceRow = page.locator('li', { hasText: 'Rename Target Device' });
+    await deviceRow.getByTestId('mobile-device-rename').click();
+    // Editing replaces the display-name <div> (a text node deviceRow's
+    // hasText matched) with an <input> whose current value is NOT part of
+    // the DOM's textContent - so a hasText-filtered locator stops matching
+    // anything the instant edit mode renders. Re-locate the row without
+    // the text filter (there is only one paired device in this test).
+    const editingRow = page.getByTestId('mobile-device-row');
+    const renameInput = editingRow.locator('input');
+    await renameInput.fill('Renamed Device');
+    await renameInput.press('Enter');
 
-    await closeSettings();
-  });
-
-  test('toggling a capability grants it and persists via setDeviceCapabilities', async () => {
-    await openMobileTab();
-    await pairDevice('Capability Toggle Device');
-
-    const deviceRow = page.locator('li', { hasText: 'Capability Toggle Device' });
-    // Pairing grants only the read-only default set - interactive-terminal
-    // (a write/control verb) starts ungranted.
-    const terminalToggle = deviceRow.getByRole('switch', { name: 'Interactive terminal', exact: true });
-    await expect(terminalToggle).toHaveAttribute('aria-checked', 'false');
-
-    await terminalToggle.click();
-    await expect(terminalToggle).toHaveAttribute('aria-checked', 'true');
-
-    // Persisted through setDeviceCapabilities + a devices re-fetch, not just local UI state.
+    await expect(page.locator('li', { hasText: 'Renamed Device' })).toBeVisible();
     await expect.poll(async () =>
       page.evaluate(async () => {
         const devices = await window.electronAPI.mobile.listDevices();
-        return devices.find((device) => device.displayName === 'Capability Toggle Device')?.capabilities.includes('interactive-terminal');
+        return devices.some((device) => device.displayName === 'Renamed Device');
       }),
     ).toBe(true);
 
-    // Toggling off removes it again.
-    await terminalToggle.click();
-    await expect(terminalToggle).toHaveAttribute('aria-checked', 'false');
-    await expect.poll(async () =>
-      page.evaluate(async () => {
-        const devices = await window.electronAPI.mobile.listDevices();
-        return devices.find((device) => device.displayName === 'Capability Toggle Device')?.capabilities.includes('interactive-terminal');
-      }),
-    ).toBe(false);
-
-    await revokeDevice('Capability Toggle Device');
+    await revokeDevice('Renamed Device');
     await closeSettings();
   });
 
-  test('revoke: Cancel keeps the device, Revoke removes it via revokeDevice()', async () => {
+  test('Escape while renaming cancels the edit, discards the draft, and leaves Settings open', async () => {
+    // Pins BOTH halves of the rename input's Escape handling, which are two
+    // separate source lines that fail in different ways:
+    //   1. `event.stopPropagation()` - Settings dismisses on a bubble-phase
+    //      document keydown (shared.tsx), so without this the Escape that
+    //      cancels the rename also tears down the whole panel. Falsified by
+    //      deleting that line: the Settings heading goes hidden.
+    //   2. `setRenamingDeviceId(null)` - drops out of edit mode. Only
+    //      independently falsifiable once (1) exists; before it, the panel
+    //      unmount discarded the draft on its own and masked this line.
+    // Neither may commit the draft, which is the third assertion.
+    await openMobileTab();
+    await pairDevice('Escape Target Device');
+
+    const deviceRow = page.locator('li', { hasText: 'Escape Target Device' });
+    await deviceRow.getByTestId('mobile-device-rename').click();
+    const editingRow = page.getByTestId('mobile-device-row');
+    const renameInput = editingRow.locator('input');
+    await renameInput.fill('Should Not Be Saved');
+    await renameInput.press('Escape');
+
+    // The edit closes: the input unmounts back to the static name + actions.
+    await renameInput.waitFor({ state: 'detached', timeout: 3000 });
+
+    // Settings is still open AND still interactive, asserted by re-entering
+    // edit mode rather than by a bare toBeVisible() on the heading: the
+    // panel's dismiss is animated, so an immediate visibility sample can pass
+    // even when Escape did close it - which is exactly the regression this
+    // test exists to catch. A click that lands proves the panel is alive.
+    await deviceRow.getByTestId('mobile-device-rename').click();
+    const reopenedInput = editingRow.locator('input');
+    await expect(reopenedInput).toBeVisible();
+    await reopenedInput.press('Escape');
+    await reopenedInput.waitFor({ state: 'detached', timeout: 3000 });
+    await expect(page.locator('h2:has-text("Settings")')).toBeVisible();
+
+    // The draft was never committed, in the list or in the roster.
+    await expect(page.locator('li', { hasText: 'Escape Target Device' })).toBeVisible();
+    await expect(page.getByText('Should Not Be Saved')).toHaveCount(0);
+    await expect.poll(async () =>
+      page.evaluate(async () => {
+        const devices = await window.electronAPI.mobile.listDevices();
+        return devices.some((device) => device.displayName === 'Should Not Be Saved');
+      }),
+    ).toBe(false);
+
+    await revokeDevice('Escape Target Device');
+    await closeSettings();
+  });
+
+  test('committing a whitespace-only rename draft is a no-op: renameDevice is never called and the name is unchanged', async () => {
+    await openMobileTab();
+    await pairDevice('Whitespace Target Device');
+
+    // Spy on the mock's renameDevice so a "no-op" claim is falsifiable
+    // (the display name alone could stay put even if renameDevice fired with
+    // whitespace and the mock happened to render it identically). The
+    // original is stashed on window (not a local closure const) so a later,
+    // separate page.evaluate call can restore it - see the cleanup below.
+    await page.evaluate(() => {
+      const calls: Array<{ deviceId: string; displayName: string }> = [];
+      (window as unknown as { __renameDeviceCalls: typeof calls }).__renameDeviceCalls = calls;
+      (window as unknown as { __renameDeviceOriginal: typeof window.electronAPI.mobile.renameDevice }).__renameDeviceOriginal =
+        window.electronAPI.mobile.renameDevice;
+      window.electronAPI.mobile.renameDevice = (deviceId: string, displayName: string) => {
+        calls.push({ deviceId, displayName });
+        return (window as unknown as { __renameDeviceOriginal: typeof window.electronAPI.mobile.renameDevice }).__renameDeviceOriginal(
+          deviceId,
+          displayName,
+        );
+      };
+    });
+
+    const deviceRow = page.locator('li', { hasText: 'Whitespace Target Device' });
+    await deviceRow.getByTestId('mobile-device-rename').click();
+    const editingRow = page.getByTestId('mobile-device-row');
+    const renameInput = editingRow.locator('input');
+    await renameInput.fill('   ');
+    await renameInput.press('Enter');
+
+    // Edit mode still closes (commitRename clears renamingDeviceId
+    // unconditionally, before the trim check), but the trimmed-empty draft
+    // must never reach renameDevice, and the original name stays.
+    await expect(editingRow.locator('input')).toHaveCount(0);
+    await expect(page.locator('li', { hasText: 'Whitespace Target Device' })).toBeVisible();
+    const renameCallCount = await page.evaluate(
+      () => (window as unknown as { __renameDeviceCalls: unknown[] }).__renameDeviceCalls.length,
+    );
+    expect(renameCallCount).toBe(0);
+
+    // Restore the un-patched mock method so this spy never leaks into a
+    // sibling test sharing this worker's page (cross-platform-parity.md).
+    await page.evaluate(() => {
+      window.electronAPI.mobile.renameDevice = (
+        window as unknown as { __renameDeviceOriginal: typeof window.electronAPI.mobile.renameDevice }
+      ).__renameDeviceOriginal;
+    });
+
+    await revokeDevice('Whitespace Target Device');
+    await closeSettings();
+  });
+
+  test('revoke: Cancel keeps the device, Revoke removes it via revokeDevice() and the confirm text includes the fingerprint', async () => {
     await openMobileTab();
     await pairDevice('Revoke Target Device');
 
     // Cancel path: dialog closes, device stays in the list.
-    await page.locator('li', { hasText: 'Revoke Target Device' }).getByTitle('Revoke').click();
+    await page.locator('li', { hasText: 'Revoke Target Device' }).getByTestId('mobile-device-revoke').click();
     const dialog = page.locator('h3:has-text("Revoke device")').locator('xpath=ancestor::*[contains(@class, "z-[60]")][1]');
     await expect(dialog).toBeVisible();
     await expect(dialog).toContainText('Revoke Target Device');
+    // The revoke confirm text names the fingerprint too, so revoking against
+    // a real device list of same-named devices is unambiguous.
+    await expect(dialog).toContainText(/\([0-9a-f]{4} [0-9a-f]{4} [0-9a-f]{4} [0-9a-f]{4}\)/);
     await dialog.getByRole('button', { name: 'Cancel' }).click();
     await expect(dialog).toHaveCount(0);
     await expect(page.locator('li', { hasText: 'Revoke Target Device' })).toBeVisible();

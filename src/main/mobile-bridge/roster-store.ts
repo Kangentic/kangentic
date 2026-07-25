@@ -104,9 +104,20 @@ export interface AddDeviceInput {
   expiresAt: string | null;
 }
 
-export function addOrReplaceDevice(identity: BridgeIdentity, input: AddDeviceInput): DeviceRoster {
+/** Signs `entryInput` and splices it into the roster in place of any existing entry for the same deviceId. The shared tail of addOrReplaceDevice/setDeviceCapabilities/setDeviceDisplayName - what differs between them is only which fields change and whether pairedAt gets restamped. */
+function replaceDeviceEntry(identity: BridgeIdentity, entryInput: Omit<RosterDeviceEntry, 'signature'>): DeviceRoster {
   const roster = loadRoster(identity);
-  const entry = signRosterEntry(identity.masterSigningKeyPair.secretKey, {
+  const entry = signRosterEntry(identity.masterSigningKeyPair.secretKey, entryInput);
+  const nextRoster: DeviceRoster = {
+    ...roster,
+    devices: [...roster.devices.filter((device) => device.deviceId !== entryInput.deviceId), entry],
+  };
+  saveRoster(nextRoster);
+  return nextRoster;
+}
+
+export function addOrReplaceDevice(identity: BridgeIdentity, input: AddDeviceInput): DeviceRoster {
+  return replaceDeviceEntry(identity, {
     deviceId: input.deviceId,
     staticPublicKey: input.staticPublicKey,
     displayName: input.displayName,
@@ -114,24 +125,34 @@ export function addOrReplaceDevice(identity: BridgeIdentity, input: AddDeviceInp
     pairedAt: new Date().toISOString(),
     expiresAt: input.expiresAt,
   });
-  const nextRoster: DeviceRoster = {
-    ...roster,
-    devices: [...roster.devices.filter((device) => device.deviceId !== input.deviceId), entry],
-  };
-  saveRoster(nextRoster);
-  return nextRoster;
 }
 
-/** Capabilities are part of the signed payload, so changing them re-signs the entry. */
+/** Capabilities are part of the signed payload, so changing them re-signs the entry. Preserves the original pairedAt - a capability change (including the one-shot full-grant migration) is not a re-pairing. */
 export function setDeviceCapabilities(identity: BridgeIdentity, deviceId: string, capabilities: CapabilityVerb[]): DeviceRoster {
   const roster = loadRoster(identity);
   const existing = roster.devices.find((device) => device.deviceId === deviceId);
   if (!existing) throw new Error(`No such paired device: ${deviceId}`);
-  return addOrReplaceDevice(identity, {
+  return replaceDeviceEntry(identity, {
     deviceId: existing.deviceId,
     staticPublicKey: existing.staticPublicKey,
     displayName: existing.displayName,
     capabilities,
+    pairedAt: existing.pairedAt,
+    expiresAt: existing.expiresAt,
+  });
+}
+
+/** Display name is part of the signed payload too, so renaming re-signs the entry. Preserves the original pairedAt - a rename is not a re-pairing. */
+export function setDeviceDisplayName(identity: BridgeIdentity, deviceId: string, displayName: string): DeviceRoster {
+  const roster = loadRoster(identity);
+  const existing = roster.devices.find((device) => device.deviceId === deviceId);
+  if (!existing) throw new Error(`No such paired device: ${deviceId}`);
+  return replaceDeviceEntry(identity, {
+    deviceId: existing.deviceId,
+    staticPublicKey: existing.staticPublicKey,
+    displayName,
+    capabilities: existing.capabilities,
+    pairedAt: existing.pairedAt,
     expiresAt: existing.expiresAt,
   });
 }

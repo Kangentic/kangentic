@@ -20,7 +20,11 @@ model, and the honest relay-metadata statement.
 - `Noise_KK_25519_ChaChaPoly_BLAKE2s` for ongoing sessions (mutual authentication by construction,
   no trust-on-first-use).
 - A token-bound Noise PSK handshake for the one-time pairing ceremony, confirmed by a Matrix-style
-  short authentication string (SAS) on both screens.
+  short authentication string (SAS) compared on both screens - digits only, no emoji.
+- A sealed pairing-confirm frame (`pairing/confirm.ts`), sent once the human taps Confirm on the
+  phone: it is a liveness/intent signal, not the security boundary. It opens only if both peers
+  completed the same handshake transcript, which is exactly the property the SAS comparison
+  already vouches for - the human's comparison remains the actual defense.
 - No shell, file, or arbitrary-command verb exists in the protocol.
 
 This package has not undergone a third-party security audit. Report suspected vulnerabilities

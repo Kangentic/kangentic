@@ -2695,6 +2695,14 @@
     //   - window.__mockMobileBridgeStatus: shallow-merged onto getStatus()'s result
     //   - window.__mockMobileDevices: overrides listDevices()'s return value
     //   - window.__mockFireMobilePairingSas(payload) / __mockFireMobilePairingEnded(payload) / __mockFireMobileStateChanged()
+    //   - window.__mockCancelPairingCallCount: incremented on every cancelPairing()
+    //     call, so a spec can assert the tab's unmount cleanup actually fired one
+    //   - window.__mockCompleteMobilePairing(displayName): stands in for the
+    //     desktop auto-enrolling on the phone's confirm frame. Production
+    //     pairing is driven by a main-process PUSH (mobile:pairingConfirmed),
+    //     not a renderer-initiated confirm call, so this seeds a device with
+    //     the full ten-verb grant and fires that push directly, exactly as
+    //     MobileBridgeService does on a successful ceremony.
     mobile: (function () {
       var state = {
         enabled: false,
@@ -2705,18 +2713,63 @@
         pairingInProgress: false,
       };
       var sasListeners = [];
+      var pairingConfirmedListeners = [];
       var pairingEndedListeners = [];
       var stateChangedListeners = [];
+      var mockDeviceCounter = 0;
+
+      // Mirrors packages/protocol/src/capabilities/verbs.ts's CAPABILITY_VERBS -
+      // pairing grants all ten, not a read-only subset.
+      var FULL_CAPABILITY_SET = [
+        'read-stream', 'read-board', 'read-diff', 'send-user-message', 'move-task',
+        'answer-permission-prompt', 'interactive-terminal', 'board-tool-read',
+        'board-tool-write', 'register-push',
+      ];
 
       if (typeof window !== 'undefined') {
         window.__mockFireMobilePairingSas = function (payload) {
           sasListeners.forEach(function (listener) { listener(payload); });
         };
         window.__mockFireMobilePairingEnded = function (payload) {
+          // MobilePairingEndedPayload.kind is required (types.ts) and the tab
+          // branches on it (only 'failed' surfaces a message) - a spec that
+          // forgets to pass it would otherwise fail silently (no message ever
+          // shows, easy to misread as "the feature is broken") instead of
+          // loudly here.
+          if (payload.kind !== 'cancelled' && payload.kind !== 'failed') {
+            throw new Error('__mockFireMobilePairingEnded: payload.kind must be "cancelled" or "failed", got ' + JSON.stringify(payload.kind));
+          }
           pairingEndedListeners.forEach(function (listener) { listener(payload); });
         };
         window.__mockFireMobileStateChanged = function () {
           stateChangedListeners.forEach(function (listener) { listener(); });
+        };
+        window.__mockCompleteMobilePairing = function (displayName) {
+          mockDeviceCounter += 1;
+          // deviceId is production's phone static-public-key hex (64 hex
+          // chars), NOT an opaque label - formatKeyFingerprint() renders its
+          // first 16 chars, so a non-hex mock id would render as garbled
+          // text instead of a plausible fingerprint. Zero-padded so it stays
+          // valid hex and unique per call.
+          var deviceIdHex = ('0'.repeat(63) + mockDeviceCounter.toString(16)).slice(-64);
+          var device = {
+            deviceId: deviceIdHex,
+            displayName: displayName || 'Paired Device',
+            capabilities: FULL_CAPABILITY_SET.slice(),
+            pairedAt: new Date().toISOString(),
+            connectionState: 'connected',
+          };
+          state.devices.push(device);
+          state.pairingInProgress = false;
+          // Ordering mirrors production (mobile-bridge-service.ts's
+          // 'confirmed' handler): emitStateChanged() fires BEFORE
+          // 'pairingConfirmed', and it is stateChanged - not pairingConfirmed
+          // - that the tab answers with a devices re-fetch.
+          stateChangedListeners.forEach(function (listener) { listener(); });
+          pairingConfirmedListeners.forEach(function (listener) {
+            listener({ deviceId: device.deviceId, displayName: device.displayName });
+          });
+          return device;
         };
       }
 
@@ -2742,23 +2795,27 @@
             expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
           };
         },
-        confirmPairing: async function (displayName, capabilities) {
-          state.pairingInProgress = false;
-          state.devices.push({
-            deviceId: 'mock-device-' + (state.devices.length + 1),
-            displayName: displayName,
-            capabilities: capabilities || [],
-            pairedAt: new Date().toISOString(),
-          });
-        },
         cancelPairing: async function () {
           state.pairingInProgress = false;
+          // Call-count tracker so a spec can assert the tab's unmount cleanup
+          // actually invoked this (MobileDevicesTab.tsx's own-unmount-only
+          // effect), not just that no error was thrown.
+          if (typeof window !== 'undefined') {
+            window.__mockCancelPairingCallCount = (window.__mockCancelPairingCallCount || 0) + 1;
+          }
         },
         listDevices: async function () {
           return (typeof window !== 'undefined' && window.__mockMobileDevices) || state.devices;
         },
         revokeDevice: async function (deviceId) {
           state.devices = state.devices.filter(function (device) { return device.deviceId !== deviceId; });
+        },
+        renameDevice: async function (deviceId, displayName) {
+          // Reassign to a NEW array (see setDeviceCapabilities below) - the
+          // renderer's selector is reference-equality gated.
+          state.devices = state.devices.map(function (device) {
+            return device.deviceId === deviceId ? Object.assign({}, device, { displayName: displayName }) : device;
+          });
         },
         setDeviceCapabilities: async function (deviceId, capabilities) {
           // Reassign to a NEW array (like revokeDevice's .filter above), not an
@@ -2784,6 +2841,13 @@
           return function () {
             var index = sasListeners.indexOf(callback);
             if (index >= 0) sasListeners.splice(index, 1);
+          };
+        },
+        onPairingConfirmed: function (callback) {
+          pairingConfirmedListeners.push(callback);
+          return function () {
+            var index = pairingConfirmedListeners.indexOf(callback);
+            if (index >= 0) pairingConfirmedListeners.splice(index, 1);
           };
         },
         onPairingEnded: function (callback) {

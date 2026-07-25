@@ -93,6 +93,8 @@ export {
   type PairingQrPayload,
 } from './pairing/qr';
 
+export { sealPairingConfirm, openPairingConfirm } from './pairing/confirm';
+
 export { MAX_RELAY_ADDRESS_LENGTH, isSecureRelayAddress } from './pairing/relay-address';
 
 export {
@@ -106,6 +108,8 @@ export {
   type RosterDeviceEntry,
   type DeviceRoster,
 } from './roster/roster';
+
+export { formatKeyFingerprint } from './roster/fingerprint';
 
 export {
   CAPABILITY_VERBS,

@@ -249,21 +249,22 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `boardConfig:shortcutsChanged` | on | Event: shortcuts file changed |
 | `boardConfig:setDefaultBaseBranch` | invoke | Set the team-shared default base branch in `kangentic.json` |
 
-### Mobile Bridge (11 channels)
+### Mobile Bridge (12 channels)
 Machine-global (like Config), not project-scoped - backs the Mobile Devices settings tab. See [Mobile Bridge](mobile-bridge.md) for the pairing ceremony, roster, capability verbs, and relay transport this group fronts.
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `mobile:getStatus` | invoke | Report bridge status: enabled, secure-storage availability, identity fingerprint, relay URL, relay transport state, paired device count, pairing-in-progress |
-| `mobile:startPairing` | invoke | Mint a pairing token, connect the pairing relay slot, and return the QR payload URI |
-| `mobile:confirmPairing` | invoke | Confirm the SAS matched; signs the phone's static key into the roster with the given display name and capabilities |
+| `mobile:startPairing` | invoke | Mint a pairing token, connect the pairing relay slot, and return the QR payload URI. Supersedes a stale in-progress ceremony rather than throwing |
 | `mobile:cancelPairing` | invoke | Cancel an in-progress pairing ceremony |
-| `mobile:listDevices` | invoke | List paired devices (id, display name, capabilities, paired-at) |
+| `mobile:listDevices` | invoke | List paired devices (id, display name, capabilities, paired-at, live connection state) |
 | `mobile:revokeDevice` | invoke | Revoke a paired device: drop it from the signed roster and tear down its session |
-| `mobile:setDeviceCapabilities` | invoke | Update a paired device's granted capability verbs (re-signs the roster entry) |
+| `mobile:renameDevice` | invoke | Rename a paired device (re-signs the roster entry, preserves paired-at) |
+| `mobile:setDeviceCapabilities` | invoke | Update a paired device's granted capability verbs (re-signs the roster entry); no longer surfaced as settings-tab UI, kept as the enforcement/future-preset seam |
 | `mobile:testRelay` | invoke | Reachability probe for a candidate relay URL ("Test connection"); validates server-side and never throws |
-| `mobile:pairingSas` | on | Event: the SAS (digits + emoji) to display for the current pairing ceremony |
-| `mobile:pairingEnded` | on | Event: pairing cancelled or failed, with a reason |
-| `mobile:stateChanged` | on | Event: status or device list changed (confirm/revoke/capability update) |
+| `mobile:pairingSas` | on | Event: the SAS digits to display for the current pairing ceremony (no emoji) |
+| `mobile:pairingConfirmed` | on | Event: the phone's sealed confirm frame opened and the device was auto-enrolled, with its deviceId and phone-supplied display name |
+| `mobile:pairingEnded` | on | Event: pairing ended with a reason and a `kind` (`'cancelled'` \| `'failed'`); the desktop only surfaces a message for `'failed'` (mismatch, timeout, handshake error) - a plain cancel is already obvious from the UI returning to idle |
+| `mobile:stateChanged` | on | Event: status or device list changed (pairing confirmed/revoke/capability update) |
 
 ### Notifications (2 channels)
 | Channel | Pattern | Purpose |

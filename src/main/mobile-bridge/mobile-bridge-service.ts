@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import {
   bytesToHex,
   capabilitySetFromArray,
+  CAPABILITY_VERBS,
   deriveSessionSlotId,
   encodePairingQrPayload,
   PROTOCOL_VERSION,
@@ -21,8 +22,9 @@ import {
   loadRoster,
   revokeDevice as revokeDeviceInRoster,
   setDeviceCapabilities as setDeviceCapabilitiesInRoster,
+  setDeviceDisplayName as setDeviceDisplayNameInRoster,
 } from './roster-store';
-import { DEFAULT_PAIRING_CAPABILITIES, PairingService } from './pairing/pairing-service';
+import { PairingService, sanitizeDeviceName } from './pairing/pairing-service';
 import { createTransport } from './transport/transport-factory';
 import { BridgeSession } from './session/bridge-session';
 import { SubscriptionRegistry } from './session/subscription-registry';
@@ -57,6 +59,8 @@ export interface PairedDeviceSummary {
   displayName: string;
   capabilities: CapabilityVerb[];
   pairedAt: string;
+  /** Live, not persisted - per-device transport state, sourced from its open BridgeSession (or 'idle' if none is open yet). Replaces a panel-wide relay indicator with one that answers "is THIS device reachable". */
+  connectionState: MobileBridgeTransportState;
 }
 
 /**
@@ -83,7 +87,6 @@ export class MobileBridgeService extends EventEmitter {
   private config: MobileBridgeConfig;
   private identity: BridgeIdentity | null = null;
   private activePairing: PairingService | null = null;
-  private pendingPairingDeviceId: string | null = null;
   private readonly sessions = new Map<string, BridgeSession>();
   private readonly subscriptionsByDevice = new Map<string, SubscriptionRegistry>();
   /**
@@ -192,6 +195,32 @@ export class MobileBridgeService extends EventEmitter {
       onStall: (taskId) => this.pushNotifier?.notifyTaskStalled(taskId),
     });
     this.spawnStallWatcher.start();
+    // Runs exactly once, before the first reconcile()'s syncSessions() opens
+    // any BridgeSession - see the method's own doc comment for why this
+    // cannot be a plain roster field mutation.
+    this.migrateDevicesToFullCapabilityGrant();
+  }
+
+  /**
+   * One-shot upgrade for devices paired before pairing granted the full
+   * verb set: capabilities live inside the Ed25519-signed roster payload
+   * (roster-store.ts), so mutating them without re-signing would fail
+   * verifyRosterEntry and silently drop the device from the roster on the
+   * next load. Routing through the public setDeviceCapabilities (which
+   * re-signs) is what makes this safe, and it also updates any
+   * already-open BridgeSession's live capability set - though at
+   * attachContext() time no session has opened yet, so in practice this
+   * only rewrites the on-disk roster before syncSessions() reads it.
+   */
+  private migrateDevicesToFullCapabilityGrant(): void {
+    const identity = this.tryLoadIdentity();
+    if (!identity) return;
+    const fullGrant = new Set<CapabilityVerb>(CAPABILITY_VERBS);
+    for (const device of loadRoster(identity).devices) {
+      const currentGrant = new Set(device.capabilities);
+      const hasFullGrant = currentGrant.size === fullGrant.size && CAPABILITY_VERBS.every((verb) => currentGrant.has(verb));
+      if (!hasFullGrant) this.setDeviceCapabilities(device.deviceId, [...CAPABILITY_VERBS]);
+    }
   }
 
   private getOrCreateSubscriptions(deviceId: string): SubscriptionRegistry {
@@ -460,7 +489,18 @@ export class MobileBridgeService extends EventEmitter {
       displayName: device.displayName,
       capabilities: device.capabilities,
       pairedAt: device.pairedAt,
+      connectionState: this.sessions.get(device.deviceId)?.transportState ?? 'idle',
     }));
+  }
+
+  renameDevice(deviceId: string, displayName: string): void {
+    const identity = this.tryLoadIdentity();
+    if (!identity) throw new Error(`No such paired device: ${deviceId}`);
+    // Same clamp and control-character filter the pairing path applies to the
+    // phone-supplied name: a rename lands in the same signed roster entry and
+    // the same settings list, so it cannot be the unguarded way in.
+    setDeviceDisplayNameInRoster(identity, deviceId, sanitizeDeviceName(displayName));
+    this.emitStateChanged();
   }
 
   revokeDevice(deviceId: string): void {
@@ -494,7 +534,13 @@ export class MobileBridgeService extends EventEmitter {
 
   async startPairing(): Promise<{ qrPayload: PairingQrPayload; qrUri: string }> {
     if (!this.config.enabled) throw new Error('Mobile bridge is not enabled');
-    if (this.activePairing) throw new Error('A pairing ceremony is already in progress');
+    if (this.activePairing) {
+      // Supersede rather than throw: this is what makes "Pair a device"
+      // self-heal after the pairing panel was closed mid-ceremony without a
+      // cancel ever reaching the main process (a stale ceremony used to
+      // wedge every future click on this guard until an app restart).
+      this.cancelPairing('Superseded by a new pairing attempt');
+    }
     // Both reconcile() call sites resolve relayUrl through resolveRelayUrl()
     // before it ever reaches this.config, so this should be unreachable in
     // practice - it is insurance against minting a QR the phone will refuse,
@@ -506,19 +552,22 @@ export class MobileBridgeService extends EventEmitter {
     const pairingService = new PairingService(identity);
     const token = pairingService.mintToken();
     this.activePairing = pairingService;
-    this.pendingPairingDeviceId = null;
 
     const slotId = bytesToHex(token.token);
     const transport = createTransport({ relayUrl: this.config.relayUrl, slotId });
 
     pairingService.on('sas', (payload: { sas: ShortAuthenticationString; phoneStaticPublicKeyHex: string }) => {
-      this.pendingPairingDeviceId = payload.phoneStaticPublicKeyHex;
       this.emit('pairingSas', payload);
     });
-    pairingService.once('confirmed', () => {
+    pairingService.once('confirmed', (payload: { deviceId: string; displayName: string }) => {
       this.activePairing = null;
-      this.pendingPairingDeviceId = null;
+      // Close the ephemeral pairing transport on the SUCCESS path too - it
+      // used to be closed only on cancelled/failed, leaking a live
+      // RelayClient reconnecting against a consumed-token slot for the rest
+      // of the process's lifetime after every successful pairing.
+      transport.close();
       this.emitStateChanged();
+      this.emit('pairingConfirmed', payload);
       // The freshly-paired device is now in the roster; open its
       // BridgeSession immediately rather than waiting for the next
       // config-driven reconcile() (which may not happen again this run).
@@ -526,15 +575,13 @@ export class MobileBridgeService extends EventEmitter {
     });
     pairingService.once('cancelled', (payload: { reason: string }) => {
       this.activePairing = null;
-      this.pendingPairingDeviceId = null;
       transport.close();
-      this.emit('pairingEnded', payload);
+      this.emit('pairingEnded', { ...payload, kind: 'cancelled' });
     });
     pairingService.once('failed', (payload: { reason: string }) => {
       this.activePairing = null;
-      this.pendingPairingDeviceId = null;
       transport.close();
-      this.emit('pairingEnded', payload);
+      this.emit('pairingEnded', { ...payload, kind: 'failed' });
     });
 
     try {
@@ -545,8 +592,22 @@ export class MobileBridgeService extends EventEmitter {
       // here (it is not stored on `this`, so dispose() cannot reach it)
       // would leak a permanent reconnect loop against a now-meaningless slot.
       transport.close();
-      this.activePairing = null;
+      // Clear the pointer ONLY if it still refers to this ceremony. A
+      // concurrent startPairing() can supersede us while connect() is in
+      // flight: its cancel path closes THIS transport, which is exactly what
+      // rejected the dial above, and it has already installed its own
+      // PairingService. Nulling unconditionally here would orphan that live
+      // ceremony - pairingInProgress would read false, cancelPairing() would
+      // no-op against it, and the next startPairing() would skip the
+      // supersede branch and leak a second live ceremony alongside it.
+      if (this.activePairing === pairingService) this.activePairing = null;
       throw error;
+    }
+    if (this.activePairing !== pairingService) {
+      // Superseded while connect() was in flight, but the dial happened to
+      // resolve anyway. Do not arm a ceremony nothing points at any more.
+      transport.close();
+      throw new Error('Pairing was superseded by a new pairing attempt');
     }
     pairingService.start(transport);
 
@@ -560,18 +621,9 @@ export class MobileBridgeService extends EventEmitter {
     return { qrPayload, qrUri: encodePairingQrPayload(qrPayload) };
   }
 
-  /** deviceId is derived from the phone's static key at SAS time, not chosen by the caller - the settings UI only ever supplies a display name and the granted capabilities. */
-  confirmPairing(displayName: string, capabilities: CapabilityVerb[] = DEFAULT_PAIRING_CAPABILITIES): void {
-    if (!this.activePairing || !this.pendingPairingDeviceId) {
-      throw new Error('No pairing ceremony with a confirmed SAS is in progress');
-    }
-    this.activePairing.confirmSas(this.pendingPairingDeviceId, displayName, capabilities);
-  }
-
   cancelPairing(reason = 'Cancelled by user'): void {
     this.activePairing?.cancel(reason);
     this.activePairing = null;
-    this.pendingPairingDeviceId = null;
   }
 
   private disposeAllSessions(): void {

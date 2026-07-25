@@ -2681,18 +2681,28 @@ export interface MobilePairedDevice {
   capabilities: MobileCapabilityVerb[];
   /** ISO 8601. */
   pairedAt: string;
+  /** Live, not persisted - this device's own transport state, not the panel-wide aggregate. */
+  connectionState: MobileBridgeTransportState;
 }
 
 export interface MobilePairingSasPayload {
-  /** 6-digit short authentication string, shown alongside `emoji` for the user to compare against the phone's screen. */
+  /** 6-digit short authentication string for the user to compare against the phone's screen. No emoji: the digits alone already carry the full transcript-hash comparison. */
   digits: string;
-  emoji: string[];
   /** Hex-encoded, for display only -- the roster entry itself is signed and persisted main-side. */
   phoneStaticPublicKeyHex: string;
 }
 
+/** Fired once the phone's sealed confirm frame opens and the device is auto-enrolled - see @kangentic/protocol's pairing/confirm.ts for what that frame does and does not prove. */
+export interface MobilePairingConfirmedPayload {
+  deviceId: string;
+  /** The phone-supplied device name from the pairing handshake, not user-entered - renaming afterward is a separate action (mobile:renameDevice). */
+  displayName: string;
+}
+
 export interface MobilePairingEndedPayload {
   reason: string;
+  /** 'cancelled' is a deliberate user action (Cancel, or the panel closing mid-ceremony) - already obvious from the UI transition back to idle, so the desktop does not surface its reason as a message. Only 'failed' (mismatch, timeout, handshake error) is shown. */
+  kind: 'cancelled' | 'failed';
 }
 
 // === IPC API Types ===
@@ -4002,16 +4012,17 @@ export interface ElectronAPI {
   mobile: {
     getStatus: () => Promise<MobileBridgeStatus>;
     startPairing: () => Promise<MobileStartPairingResult>;
-    confirmPairing: (displayName: string, capabilities?: MobileCapabilityVerb[]) => Promise<void>;
     cancelPairing: () => Promise<void>;
     listDevices: () => Promise<MobilePairedDevice[]>;
     revokeDevice: (deviceId: string) => Promise<void>;
+    renameDevice: (deviceId: string, displayName: string) => Promise<void>;
     setDeviceCapabilities: (deviceId: string, capabilities: MobileCapabilityVerb[]) => Promise<void>;
     /** Reachability probe for a candidate relay URL ("Test connection" in the Mobile Devices
      *  tab). Takes the URL as an argument rather than reading it from config, since testing
      *  BEFORE committing a save is the point; never throws. */
     testRelay: (relayUrl: string) => Promise<RemoteServerStatus>;
     onPairingSas: (callback: (payload: MobilePairingSasPayload) => void) => () => void;
+    onPairingConfirmed: (callback: (payload: MobilePairingConfirmedPayload) => void) => () => void;
     onPairingEnded: (callback: (payload: MobilePairingEndedPayload) => void) => () => void;
     onStateChanged: (callback: () => void) => () => void;
   };

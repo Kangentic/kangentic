@@ -3,14 +3,16 @@
  *
  * Drives a full pairing ceremony end to end over an in-memory loopback
  * Transport pair, with the "phone" side built directly from
- * @kangentic/protocol's createPairingInitiatorHandshake (the phone app
- * itself is out of scope for this repo, so it is simulated by hand here,
- * exactly the way a real phone would drive the initiator side of the Noise
- * IKpsk0 handshake). This proves the desktop's responder wiring - token
- * validation, message 2 construction, remote static key capture, and SAS
- * derivation - against a real peer rather than against mocked crypto.
+ * @kangentic/protocol's createPairingInitiatorHandshake + sealPairingConfirm
+ * (the phone app itself is out of scope for this repo, so it is simulated
+ * by hand here, exactly the way a real phone would drive the initiator
+ * side of the Noise IKpsk0 handshake and then seal a confirm frame under
+ * the resulting transport key). This proves the desktop's responder wiring
+ * - token validation, message 2 construction, remote static key capture,
+ * SAS derivation, and auto-enroll on the confirm frame - against a real
+ * peer rather than against mocked crypto.
  *
- * PairingService itself needs no fs/electron mocking, but confirmSas()
+ * PairingService itself needs no fs/electron mocking, but auto-enroll
  * calls roster-store's addOrReplaceDevice(), which touches disk unless
  * mocked. So this file carries the same electron+fs+PATHS mocking
  * scaffolding as tests/unit/mobile-bridge/identity.test.ts and
@@ -19,11 +21,14 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
+  CAPABILITY_VERBS,
   createPairingInitiatorHandshake,
   deriveShortAuthenticationString,
   generateX25519KeyPair,
   randomBytes,
   bytesToHex,
+  sealPairingConfirm,
+  type CipherState,
   type Transport,
 } from '@kangentic/protocol';
 import { PAIRING_TOKEN_TTL_MS } from '../../../src/main/mobile-bridge/pairing/pairing-token';
@@ -76,12 +81,13 @@ vi.mock('../../../src/main/config/paths', () => ({
 }));
 
 // Import AFTER all vi.mock declarations.
-const { PairingService, DEFAULT_PAIRING_CAPABILITIES } = await import(
+const { PairingService, DEFAULT_PAIRING_CAPABILITIES, SAS_PENDING_TIMEOUT_MS, sanitizeDeviceName } = await import(
   '../../../src/main/mobile-bridge/pairing/pairing-service'
 );
 const { generateEd25519KeyPair } = await import('@kangentic/protocol');
 type BridgeIdentityModule = typeof import('../../../src/main/mobile-bridge/identity');
 type BridgeIdentity = ReturnType<BridgeIdentityModule['loadOrCreateBridgeIdentity']>;
+type PairingServiceInstance = InstanceType<typeof PairingService>;
 
 function testIdentity(): BridgeIdentity {
   return {
@@ -134,6 +140,53 @@ function createLoopbackTransportPair(): [Transport, Transport] {
   return [first, second];
 }
 
+interface ParsedRosterFile {
+  devices: Array<{ deviceId: string; staticPublicKeyHex: string; displayName: string; capabilities: string[] }>;
+}
+
+/**
+ * Drives a full ceremony (handshake -> SAS -> phone confirm frame) over a
+ * fresh loopback pair, exactly as a real phone would: reads message 2,
+ * captures the initiator-to-responder cipher state split() yields, seals a
+ * confirm frame under it, and sends that back to the desktop.
+ */
+async function runPairingCeremony(
+  identity: BridgeIdentity,
+  service: PairingServiceInstance,
+  deviceNamePayload: string,
+): Promise<{ deviceId: string; displayName: string; phoneStaticKeyPair: ReturnType<typeof generateX25519KeyPair> }> {
+  const token = service.mintToken();
+  const [desktopTransport, phoneTransport] = createLoopbackTransportPair();
+  service.start(desktopTransport);
+
+  const phoneStaticKeyPair = generateX25519KeyPair();
+  const phoneHandshake = createPairingInitiatorHandshake({
+    localStatic: phoneStaticKeyPair,
+    remoteStatic: identity.staticKeyPair.publicKey,
+    pairingToken: token.token,
+  });
+
+  let phoneConfirmCipher: CipherState | undefined;
+  phoneTransport.onFrame((frame) => {
+    const result = phoneHandshake.readMessage(frame);
+    if (result.split) phoneConfirmCipher = result.split[0];
+  });
+
+  const sasEventPromise = new Promise<void>((resolve) => service.once('sas', () => resolve()));
+  const message1 = phoneHandshake.writeMessage(new TextEncoder().encode(deviceNamePayload)).message;
+  phoneTransport.send(message1);
+  await sasEventPromise;
+
+  if (!phoneConfirmCipher) throw new Error('test setup: phone did not derive a confirm cipher from message 2');
+  const confirmedEventPromise = new Promise<{ deviceId: string; displayName: string }>((resolve) => {
+    service.once('confirmed', resolve);
+  });
+  phoneTransport.send(sealPairingConfirm(phoneConfirmCipher));
+  const confirmedEvent = await confirmedEventPromise;
+
+  return { ...confirmedEvent, phoneStaticKeyPair };
+}
+
 beforeEach(() => {
   existsSyncSpy.mockReset();
   readFileSyncSpy.mockReset();
@@ -143,49 +196,23 @@ beforeEach(() => {
 });
 
 describe('PairingService ceremony', () => {
-  it('completes the happy path: matching SAS on both sides, then confirmSas signs the device into the roster', async () => {
+  it('completes the happy path: matching SAS on both sides, then the phone confirm frame auto-enrolls the device', async () => {
     const identity = testIdentity();
     const service = new PairingService(identity);
-    const token = service.mintToken();
-    const [desktopTransport, phoneTransport] = createLoopbackTransportPair();
-    service.start(desktopTransport);
+    const { deviceId, displayName, phoneStaticKeyPair } = await runPairingCeremony(identity, service, 'Test Phone');
 
-    const phoneStaticKeyPair = generateX25519KeyPair();
-    const phoneHandshake = createPairingInitiatorHandshake({
-      localStatic: phoneStaticKeyPair,
-      remoteStatic: identity.staticKeyPair.publicKey,
-      pairingToken: token.token,
-    });
+    // Enrollment is keyed off the handshake's own remote static key, not
+    // anything a payload could claim - the confirm frame carries no fields
+    // at all, so there is nothing else it COULD have enrolled from.
+    expect(deviceId).toBe(bytesToHex(phoneStaticKeyPair.publicKey));
+    expect(displayName).toBe('Test Phone');
 
-    let phoneComputedSas: ReturnType<typeof deriveShortAuthenticationString> | undefined;
-    phoneTransport.onFrame((frame) => {
-      phoneHandshake.readMessage(frame);
-      phoneComputedSas = deriveShortAuthenticationString(phoneHandshake.getHandshakeHash());
-    });
-
-    const sasEventPromise = new Promise<{
-      sas: ReturnType<typeof deriveShortAuthenticationString>;
-      phoneStaticPublicKeyHex: string;
-    }>((resolve) => {
-      service.once('sas', resolve);
-    });
-
-    const message1 = phoneHandshake.writeMessage(new TextEncoder().encode('Test Phone')).message;
-    phoneTransport.send(message1);
-
-    const sasEvent = await sasEventPromise;
-
-    expect(sasEvent.phoneStaticPublicKeyHex).toBe(bytesToHex(phoneStaticKeyPair.publicKey));
-    expect(phoneComputedSas).toBeDefined();
-    expect(sasEvent.sas).toEqual(phoneComputedSas);
-
-    const confirmedEventPromise = new Promise<{ deviceId: string }>((resolve) => {
-      service.once('confirmed', resolve);
-    });
-    service.confirmSas('device-abc', 'Test Phone');
-    const confirmedEvent = await confirmedEventPromise;
-
-    expect(confirmedEvent.deviceId).toBe('device-abc');
+    expect(writeFileSyncSpy).toHaveBeenCalledTimes(1);
+    const [, writtenJson] = writeFileSyncSpy.mock.calls[0] as [string, string];
+    const writtenRoster = JSON.parse(writtenJson) as ParsedRosterFile;
+    const persistedDevice = writtenRoster.devices.find((device) => device.deviceId === deviceId);
+    expect(persistedDevice?.staticPublicKeyHex).toBe(bytesToHex(phoneStaticKeyPair.publicKey));
+    expect(persistedDevice?.capabilities).toEqual(DEFAULT_PAIRING_CAPABILITIES);
   });
 
   it('emits failed (not sas) when the phone uses the wrong pairing token', async () => {
@@ -219,20 +246,45 @@ describe('PairingService ceremony', () => {
     expect(sasListener).not.toHaveBeenCalled();
   });
 
+  it('fails the ceremony (does not enroll) when the confirm frame does not open', async () => {
+    const identity = testIdentity();
+    const service = new PairingService(identity);
+    const token = service.mintToken();
+    const [desktopTransport, phoneTransport] = createLoopbackTransportPair();
+    service.start(desktopTransport);
+
+    const phoneStaticKeyPair = generateX25519KeyPair();
+    const phoneHandshake = createPairingInitiatorHandshake({
+      localStatic: phoneStaticKeyPair,
+      remoteStatic: identity.staticKeyPair.publicKey,
+      pairingToken: token.token,
+    });
+    const sasEventPromise = new Promise<void>((resolve) => service.once('sas', () => resolve()));
+    const message1 = phoneHandshake.writeMessage(new TextEncoder().encode('Test Phone')).message;
+    phoneTransport.send(message1);
+    await sasEventPromise;
+
+    const confirmedListener = vi.fn();
+    service.on('confirmed', confirmedListener);
+    const failedEventPromise = new Promise<{ reason: string }>((resolve) => service.once('failed', resolve));
+
+    // Garbage bytes instead of a genuine sealed confirm frame - simulates a
+    // relay-in-the-middle (or a corrupted transit) that cannot produce a
+    // frame that opens under the desktop's derived key.
+    phoneTransport.send(new Uint8Array([1, 2, 3, 4]));
+
+    const failedEvent = await failedEventPromise;
+    expect(failedEvent.reason).toMatch(/Could not verify your phone/);
+    expect(confirmedListener).not.toHaveBeenCalled();
+    expect(writeFileSyncSpy).not.toHaveBeenCalled();
+  });
+
   it('start() before mintToken() throws synchronously', () => {
     const identity = testIdentity();
     const service = new PairingService(identity);
     const [desktopTransport] = createLoopbackTransportPair();
 
     expect(() => service.start(desktopTransport)).toThrow(/mintToken\(\) must be called before start\(\)/);
-  });
-
-  it('confirmSas() before the sas event has fired throws synchronously', () => {
-    const identity = testIdentity();
-    const service = new PairingService(identity);
-    service.mintToken();
-
-    expect(() => service.confirmSas('device-x', 'Some Device')).toThrow(/Cannot confirm pairing while phase is/);
   });
 
   it('cancel() before any frame arrives emits cancelled and does not throw', () => {
@@ -250,17 +302,91 @@ describe('PairingService ceremony', () => {
   });
 });
 
-interface ParsedRosterFile {
-  devices: Array<{ deviceId: string; capabilities: string[] }>;
-}
+describe('PairingService default capability grant', () => {
+  it('DEFAULT_PAIRING_CAPABILITIES is the full ten-verb set', () => {
+    expect(DEFAULT_PAIRING_CAPABILITIES).toEqual(CAPABILITY_VERBS);
+  });
 
-describe('PairingService.confirmSas default capabilities', () => {
-  it('persists the default capability set (read-only verbs plus register-push) when confirmSas is called without an explicit capabilities argument', async () => {
+  it('persists the full capability grant on auto-enroll', async () => {
+    const identity = testIdentity();
+    const service = new PairingService(identity);
+    const { deviceId } = await runPairingCeremony(identity, service, 'Test Phone');
+
+    expect(writeFileSyncSpy).toHaveBeenCalledTimes(1);
+    const [, writtenJson] = writeFileSyncSpy.mock.calls[0] as [string, string];
+    const writtenRoster = JSON.parse(writtenJson) as ParsedRosterFile;
+    const persistedDevice = writtenRoster.devices.find((device) => device.deviceId === deviceId);
+    expect(persistedDevice?.capabilities).toEqual(CAPABILITY_VERBS);
+  });
+});
+
+describe('PairingService phone-supplied device name sanitization', () => {
+  it('strips control characters and trims the phone-supplied name', async () => {
+    const identity = testIdentity();
+    const service = new PairingService(identity);
+    // Built via fromCharCode rather than a literal escape in source, so this
+    // file's authored text stays free of literal control bytes.
+    const bellCharacter = String.fromCharCode(7);
+    const { displayName } = await runPairingCeremony(identity, service, `  My${bellCharacter}Phone  `);
+    expect(displayName).toBe('MyPhone');
+  });
+
+  it('clamps an overlong phone-supplied name to 64 characters', async () => {
+    const identity = testIdentity();
+    const service = new PairingService(identity);
+    const longName = 'a'.repeat(100);
+    const { displayName } = await runPairingCeremony(identity, service, longName);
+    expect(displayName).toBe('a'.repeat(64));
+  });
+
+  it('falls back to "Paired Device" for a blank phone-supplied name', async () => {
+    const identity = testIdentity();
+    const service = new PairingService(identity);
+    const { displayName } = await runPairingCeremony(identity, service, '   ');
+    expect(displayName).toBe('Paired Device');
+  });
+});
+
+describe('sanitizeDeviceName clamps by code point, not UTF-16 code unit', () => {
+  it('does not split an astral character in half when clamping to MAX_DEVICE_NAME_LENGTH', () => {
+    // A plain decoded.slice(0, 64) clamps by UTF-16 CODE UNIT: the emoji at
+    // code-point index 63 is a surrogate pair, so a code-unit slice to 64
+    // units keeps only its lone high surrogate, corrupting the result. The
+    // fix clamps by code point via Array.from(...).slice(...), which keeps
+    // the whole emoji or drops it entirely, never a fragment.
+    const emoji = '\u{1F600}';
+    const rawName = 'a'.repeat(63) + emoji + 'trailing text that must be clamped away entirely';
+
+    const result = sanitizeDeviceName(rawName);
+    const resultCodePoints = Array.from(result);
+
+    expect(resultCodePoints).toHaveLength(64);
+    for (const character of resultCodePoints) {
+      const codePoint = character.codePointAt(0) ?? 0;
+      // No lone surrogate (0xD800-0xDFFF) anywhere in the result.
+      expect(codePoint < 0xd800 || codePoint > 0xdfff).toBe(true);
+    }
+    // The emoji at index 63 must survive intact as the 64th code point, not
+    // be cut into a fragment.
+    expect(result.endsWith(emoji)).toBe(true);
+  });
+});
+
+describe('PairingService pairing-token expiry and single-use enforcement', () => {
+  it('rejects a message-1 handshake attempt against an expired pairing token', async () => {
     const identity = testIdentity();
     const service = new PairingService(identity);
     const token = service.mintToken();
     const [desktopTransport, phoneTransport] = createLoopbackTransportPair();
     service.start(desktopTransport);
+
+    // Force expiry directly on the token object rather than advancing real
+    // or fake time: the ceremony's own phase timer (armed at start() for
+    // exactly this token's TTL) would otherwise race the same deadline and
+    // fail the ceremony first, with a DIFFERENT (timeout) reason. Setting
+    // expiresAt in the past isolates handleMessage1's lazy
+    // isPairingTokenValid check, mirroring the "already consumed" test below.
+    (service as unknown as { activeToken: { expiresAt: number } }).activeToken.expiresAt = Date.now() - 1;
 
     const phoneStaticKeyPair = generateX25519KeyPair();
     const phoneHandshake = createPairingInitiatorHandshake({
@@ -269,62 +395,18 @@ describe('PairingService.confirmSas default capabilities', () => {
       pairingToken: token.token,
     });
 
-    const sasEventPromise = new Promise<void>((resolve) => {
-      service.once('sas', () => resolve());
+    const sasListener = vi.fn();
+    service.on('sas', sasListener);
+    const failedEventPromise = new Promise<{ reason: string }>((resolve) => {
+      service.once('failed', resolve);
     });
+
     const message1 = phoneHandshake.writeMessage(new TextEncoder().encode('Test Phone')).message;
     phoneTransport.send(message1);
-    await sasEventPromise;
 
-    // Deliberately omit the capabilities argument - this is the exact call
-    // shape the settings UI makes for a brand-new pairing.
-    service.confirmSas('device-default-caps', 'Test Phone');
-
-    expect(writeFileSyncSpy).toHaveBeenCalledTimes(1);
-    const [, writtenJson] = writeFileSyncSpy.mock.calls[0] as [string, string];
-    const writtenRoster = JSON.parse(writtenJson) as ParsedRosterFile;
-    const persistedDevice = writtenRoster.devices.find((device) => device.deviceId === 'device-default-caps');
-
-    expect(persistedDevice).toBeDefined();
-    expect(persistedDevice?.capabilities).toEqual(DEFAULT_PAIRING_CAPABILITIES);
-    expect(persistedDevice?.capabilities).toEqual(['read-stream', 'read-board', 'read-diff', 'board-tool-read', 'register-push']);
-  });
-});
-
-describe('PairingService pairing-token expiry and single-use enforcement', () => {
-  it('rejects a message-1 handshake attempt against an expired pairing token', async () => {
-    vi.useFakeTimers();
-    try {
-      const identity = testIdentity();
-      const service = new PairingService(identity);
-      const token = service.mintToken();
-      const [desktopTransport, phoneTransport] = createLoopbackTransportPair();
-      service.start(desktopTransport);
-
-      vi.advanceTimersByTime(PAIRING_TOKEN_TTL_MS + 1);
-
-      const phoneStaticKeyPair = generateX25519KeyPair();
-      const phoneHandshake = createPairingInitiatorHandshake({
-        localStatic: phoneStaticKeyPair,
-        remoteStatic: identity.staticKeyPair.publicKey,
-        pairingToken: token.token,
-      });
-
-      const sasListener = vi.fn();
-      service.on('sas', sasListener);
-      const failedEventPromise = new Promise<{ reason: string }>((resolve) => {
-        service.once('failed', resolve);
-      });
-
-      const message1 = phoneHandshake.writeMessage(new TextEncoder().encode('Test Phone')).message;
-      phoneTransport.send(message1);
-
-      const failedEvent = await failedEventPromise;
-      expect(failedEvent.reason).toMatch(/expired or already used/);
-      expect(sasListener).not.toHaveBeenCalled();
-    } finally {
-      vi.useRealTimers();
-    }
+    const failedEvent = await failedEventPromise;
+    expect(failedEvent.reason).toMatch(/expired or already used/);
+    expect(sasListener).not.toHaveBeenCalled();
   });
 
   it('rejects a handshake attempt once the pairing token has already been marked consumed', async () => {
@@ -359,5 +441,62 @@ describe('PairingService pairing-token expiry and single-use enforcement', () =>
 
     const failedEvent = await failedEventPromise;
     expect(failedEvent.reason).toMatch(/expired or already used/);
+  });
+});
+
+describe('PairingService ceremony timeouts', () => {
+  it('fails the ceremony if the QR is never scanned before the pairing token TTL elapses', async () => {
+    vi.useFakeTimers();
+    try {
+      const identity = testIdentity();
+      const service = new PairingService(identity);
+      service.mintToken();
+      const [desktopTransport] = createLoopbackTransportPair();
+      service.start(desktopTransport);
+
+      const failedEventPromise = new Promise<{ reason: string }>((resolve) => {
+        service.once('failed', resolve);
+      });
+
+      vi.advanceTimersByTime(PAIRING_TOKEN_TTL_MS + 1);
+
+      const failedEvent = await failedEventPromise;
+      expect(failedEvent.reason).toMatch(/Timed out waiting for your phone/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('fails the ceremony if the phone never sends its confirm frame before the SAS-pending timeout elapses', async () => {
+    vi.useFakeTimers();
+    try {
+      const identity = testIdentity();
+      const service = new PairingService(identity);
+      const token = service.mintToken();
+      const [desktopTransport, phoneTransport] = createLoopbackTransportPair();
+      service.start(desktopTransport);
+
+      const phoneStaticKeyPair = generateX25519KeyPair();
+      const phoneHandshake = createPairingInitiatorHandshake({
+        localStatic: phoneStaticKeyPair,
+        remoteStatic: identity.staticKeyPair.publicKey,
+        pairingToken: token.token,
+      });
+      const sasEventPromise = new Promise<void>((resolve) => service.once('sas', () => resolve()));
+      const message1 = phoneHandshake.writeMessage(new TextEncoder().encode('Test Phone')).message;
+      phoneTransport.send(message1);
+      await sasEventPromise;
+
+      const failedEventPromise = new Promise<{ reason: string }>((resolve) => {
+        service.once('failed', resolve);
+      });
+
+      vi.advanceTimersByTime(SAS_PENDING_TIMEOUT_MS + 1);
+
+      const failedEvent = await failedEventPromise;
+      expect(failedEvent.reason).toMatch(/Timed out waiting for your phone/);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

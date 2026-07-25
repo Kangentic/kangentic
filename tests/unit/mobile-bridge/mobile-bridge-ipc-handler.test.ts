@@ -5,10 +5,11 @@
  * pairing-service.test.ts, etc.) exercises MobileBridgeService directly.
  * Nothing exercised the IPC handler layer itself: whether each channel
  * forwards to the right service method with the right arguments and shapes
- * its return value correctly, and whether the three push-event listeners
- * (pairingSas, pairingEnded, stateChanged) forward the service's emitted
- * payloads to the renderer and honor the mainWindow.isDestroyed() guard
- * documented on every other push-event handler in the codebase.
+ * its return value correctly, and whether the four push-event listeners
+ * (pairingSas, pairingConfirmed, pairingEnded, stateChanged) forward the
+ * service's emitted payloads to the renderer and honor the
+ * mainWindow.isDestroyed() guard documented on every other push-event
+ * handler in the codebase.
  *
  * Strategy mirrors config-handler-wiring.test.ts: mock electron's ipcMain to
  * capture registered handlers, build a fake MobileBridgeService (a real
@@ -58,10 +59,10 @@ class FakeMobileBridgeService extends EventEmitter {
     qrPayload: { expiresAt: '2026-01-01T00:10:00.000Z' } as { expiresAt: string },
     qrUri: 'kangentic-pair://mock',
   }));
-  confirmPairing = vi.fn();
   cancelPairing = vi.fn();
   listDevices = vi.fn(() => []);
   revokeDevice = vi.fn();
+  renameDevice = vi.fn();
   setDeviceCapabilities = vi.fn();
 }
 
@@ -110,24 +111,6 @@ describe('registerMobileBridgeHandlers - request/response channels', () => {
     expect(result).toEqual({ qrUri: 'kangentic-pair://mock', expiresAt: '2026-01-01T00:10:00.000Z' });
   });
 
-  it('MOBILE_CONFIRM_PAIRING forwards displayName and capabilities to service.confirmPairing()', () => {
-    const context = makeContext();
-    registerMobileBridgeHandlers(context);
-
-    invokeHandler(IPC.MOBILE_CONFIRM_PAIRING, "Tyler's Phone", ['read-board', 'move-task']);
-
-    expect(context.mobileBridgeService.confirmPairing).toHaveBeenCalledWith("Tyler's Phone", ['read-board', 'move-task']);
-  });
-
-  it('MOBILE_CONFIRM_PAIRING forwards an omitted capabilities arg as undefined (service applies its own default)', () => {
-    const context = makeContext();
-    registerMobileBridgeHandlers(context);
-
-    invokeHandler(IPC.MOBILE_CONFIRM_PAIRING, 'Paired Device');
-
-    expect(context.mobileBridgeService.confirmPairing).toHaveBeenCalledWith('Paired Device', undefined);
-  });
-
   it('MOBILE_CANCEL_PAIRING forwards to service.cancelPairing() with no arguments', () => {
     const context = makeContext();
     registerMobileBridgeHandlers(context);
@@ -157,6 +140,15 @@ describe('registerMobileBridgeHandlers - request/response channels', () => {
     expect(context.mobileBridgeService.revokeDevice).toHaveBeenCalledWith('device-123');
   });
 
+  it('MOBILE_RENAME_DEVICE forwards the deviceId and new display name to service.renameDevice()', () => {
+    const context = makeContext();
+    registerMobileBridgeHandlers(context);
+
+    invokeHandler(IPC.MOBILE_RENAME_DEVICE, 'device-123', 'New Name');
+
+    expect(context.mobileBridgeService.renameDevice).toHaveBeenCalledWith('device-123', 'New Name');
+  });
+
   it('MOBILE_SET_DEVICE_CAPABILITIES forwards deviceId and capabilities to service.setDeviceCapabilities()', () => {
     const context = makeContext();
     registerMobileBridgeHandlers(context);
@@ -172,7 +164,7 @@ describe('registerMobileBridgeHandlers - push events', () => {
     capturedHandlers.clear();
   });
 
-  it('forwards a pairingSas event to the renderer with the reshaped payload (drops any extra service fields)', () => {
+  it('forwards a pairingSas event to the renderer with the reshaped payload (drops the emoji field, if the service happened to still emit one)', () => {
     const context = makeContext();
     registerMobileBridgeHandlers(context);
 
@@ -183,7 +175,6 @@ describe('registerMobileBridgeHandlers - push events', () => {
 
     expect(context.mainWindow.webContents.send).toHaveBeenCalledWith(IPC.MOBILE_PAIRING_SAS, {
       digits: '123456',
-      emoji: ['star', 'rocket'],
       phoneStaticPublicKeyHex: 'deadbeef',
     });
   });
@@ -193,27 +184,48 @@ describe('registerMobileBridgeHandlers - push events', () => {
     registerMobileBridgeHandlers(context);
 
     context.mobileBridgeService.emit('pairingSas', {
-      sas: { digits: '123456', emoji: [] },
+      sas: { digits: '123456' },
       phoneStaticPublicKeyHex: 'deadbeef',
     });
 
     expect(context.mainWindow.webContents.send).not.toHaveBeenCalled();
   });
 
-  it('forwards a pairingEnded event to the renderer verbatim', () => {
+  it('forwards a pairingConfirmed event to the renderer verbatim', () => {
     const context = makeContext();
     registerMobileBridgeHandlers(context);
 
-    context.mobileBridgeService.emit('pairingEnded', { reason: 'Cancelled by user' });
+    context.mobileBridgeService.emit('pairingConfirmed', { deviceId: 'device-123', displayName: 'Pixel 10' });
 
-    expect(context.mainWindow.webContents.send).toHaveBeenCalledWith(IPC.MOBILE_PAIRING_ENDED, { reason: 'Cancelled by user' });
+    expect(context.mainWindow.webContents.send).toHaveBeenCalledWith(IPC.MOBILE_PAIRING_CONFIRMED, {
+      deviceId: 'device-123',
+      displayName: 'Pixel 10',
+    });
+  });
+
+  it('does NOT forward a pairingConfirmed event when the main window is destroyed', () => {
+    const context = makeContext({ isDestroyed: true });
+    registerMobileBridgeHandlers(context);
+
+    context.mobileBridgeService.emit('pairingConfirmed', { deviceId: 'device-123', displayName: 'Pixel 10' });
+
+    expect(context.mainWindow.webContents.send).not.toHaveBeenCalled();
+  });
+
+  it('forwards a pairingEnded event to the renderer verbatim, including kind', () => {
+    const context = makeContext();
+    registerMobileBridgeHandlers(context);
+
+    context.mobileBridgeService.emit('pairingEnded', { reason: 'Cancelled by user', kind: 'cancelled' });
+
+    expect(context.mainWindow.webContents.send).toHaveBeenCalledWith(IPC.MOBILE_PAIRING_ENDED, { reason: 'Cancelled by user', kind: 'cancelled' });
   });
 
   it('does NOT forward a pairingEnded event when the main window is destroyed', () => {
     const context = makeContext({ isDestroyed: true });
     registerMobileBridgeHandlers(context);
 
-    context.mobileBridgeService.emit('pairingEnded', { reason: 'timeout' });
+    context.mobileBridgeService.emit('pairingEnded', { reason: 'timeout', kind: 'failed' });
 
     expect(context.mainWindow.webContents.send).not.toHaveBeenCalled();
   });
