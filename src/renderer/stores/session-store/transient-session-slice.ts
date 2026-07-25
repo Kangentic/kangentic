@@ -82,8 +82,14 @@ export interface TransientSessionSlice {
   transientSessions: Record<string, TransientSessionEntry>;
 
   /** Spawn a transient session for `slot` in the current project (optionally on a
-   *  branch). Records it in the map under `transientKey(projectId, slot)`. */
-  spawnTransientSession: (slot: string, branch?: string) => Promise<{ session: Session; branch: string; checkoutError?: string }>;
+   *  branch). Records it in the map under `transientKey(projectId, slot)`. `grid`
+   *  seeds the new PTY's dimensions (e.g. a branch respawn reusing the still-mounted
+   *  xterm's current size); omit to spawn at the defaults. */
+  spawnTransientSession: (
+    slot: string,
+    branch?: string,
+    grid?: { cols: number; rows: number },
+  ) => Promise<{ session: Session; branch: string; checkoutError?: string }>;
   /** Kill one slot's transient PTY (IPC) and scrub its renderer state. */
   killTransientSessionBySlot: (projectId: string, slot: string) => Promise<void>;
   /** Remove a transient session's renderer state by session id, no IPC (the PTY
@@ -123,12 +129,14 @@ export function createTransientSessionSlice(preserved: {
 
     transientSessions: preserved?.transientSessions ?? {},
 
-    spawnTransientSession: async (slot, branch?) => {
+    spawnTransientSession: async (slot, branch?, grid?) => {
       const currentProject = useProjectStore.getState().currentProject;
       if (!currentProject) throw new Error('No project is currently open');
       const result = await window.electronAPI.sessions.spawnTransient({
         projectId: currentProject.id,
         branch,
+        cols: grid?.cols,
+        rows: grid?.rows,
       });
       // Insert the session synchronously so anything that filters
       // state.sessions for `projectId === current && status === 'running'`

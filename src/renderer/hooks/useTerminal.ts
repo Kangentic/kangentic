@@ -155,6 +155,27 @@ function restoreScrollPosition(terminal: Terminal, sessionId: string | null): bo
   return true;
 }
 
+/** Pure predicate for the hook's host contract (see the unmount-only dispose
+ *  effect's eslint-disable below): a host must remount (key={sessionId})
+ *  rather than swap `options.sessionId` to a different live session on the
+ *  same instance. Swapping in place leaves `initTerminal`'s
+ *  `if (xtermRef.current) return` guard permanently short-circuited, so
+ *  onData/onResize/clipboard/WebGL stay bound to the dead session - the exact
+ *  bug a Command Terminal branch switch shipped. Exported so the contract is
+ *  unit-testable without mounting a real Terminal. */
+export function isSessionSwapWithoutRemount(
+  previousSessionId: string | null,
+  nextSessionId: string | null,
+  hasLiveTerminal: boolean,
+): boolean {
+  return (
+    hasLiveTerminal
+    && previousSessionId !== null
+    && nextSessionId !== null
+    && previousSessionId !== nextSessionId
+  );
+}
+
 export function useTerminal(options: UseTerminalOptions) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
@@ -218,6 +239,25 @@ export function useTerminal(options: UseTerminalOptions) {
     if (shouldKickIncomingQueue) incomingResumeRef.current?.();
     onScrollbackSettledRef.current?.();
   }, []);
+
+  // Dev-only host-contract tripwire (compiled out of production, where
+  // import.meta.env.DEV is statically false). Registered before any effect the
+  // host itself declares (useTerminal()'s own hooks always run first within a
+  // render, since the host calls useTerminal() before its own useEffect
+  // calls), so it observes xtermRef.current from the PRIOR commit - still the
+  // old session's terminal - the same instant the host's init effect would.
+  // Never fires for a correctly-keyed host (see isSessionSwapWithoutRemount).
+  const lastNonNullSessionIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    // @ts-expect-error -- Vite defines import.meta.env; tsc's "module": "commonjs" doesn't support it
+    if (import.meta.env?.DEV && isSessionSwapWithoutRemount(lastNonNullSessionIdRef.current, options.sessionId, xtermRef.current !== null)) {
+      console.error(
+        `[useTerminal] sessionId changed from ${lastNonNullSessionIdRef.current} to ${options.sessionId} on a live terminal instance. `
+        + 'A host must remount (key={sessionId}) instead of swapping sessionId in place - see the unmount-only dispose effect below.',
+      );
+    }
+    if (options.sessionId !== null) lastNonNullSessionIdRef.current = options.sessionId;
+  }, [options.sessionId]);
 
   // Destructured to PRIMITIVES, deliberately: `config.terminal.colors` is a
   // fresh object on every config refetch (updateConfig -> refreshConfigs
@@ -400,7 +440,16 @@ export function useTerminal(options: UseTerminalOptions) {
           if (scrollback && xtermRef.current) {
             // Chunked so a 512KB replay doesn't parse in one synchronous write.
             // Strip OSC 52 so replaying recorded output never clobbers the live clipboard.
-            writeChunkedToTerminal(xtermRef.current, stripOsc52Sequences(scrollback), afterWrite);
+            // shouldAbort: a newer replay (reveal catch-up, reloadScrollback) may
+            // start and bump the generation while this chunked write is still
+            // draining; abandon rather than write a stale frame over the new one.
+            writeChunkedToTerminal(
+              xtermRef.current,
+              stripOsc52Sequences(scrollback),
+              afterWrite,
+              undefined,
+              () => scrollbackGenerationRef.current !== scrollbackGeneration,
+            );
           } else {
             afterWrite();
           }
@@ -771,7 +820,14 @@ export function useTerminal(options: UseTerminalOptions) {
           // Chunked so a 512KB replay (tab/window switch, resize) doesn't parse
           // in one synchronous write that stalls the renderer mid-drag.
           // Strip OSC 52 so replaying recorded output never clobbers the live clipboard.
-          writeChunkedToTerminal(xtermRef.current, stripOsc52Sequences(scrollback), afterWrite);
+          // shouldAbort: see the matching call in initTerminal above.
+          writeChunkedToTerminal(
+            xtermRef.current,
+            stripOsc52Sequences(scrollback),
+            afterWrite,
+            undefined,
+            () => scrollbackGenerationRef.current !== scrollbackGeneration,
+          );
         } else {
           afterWrite();
         }
@@ -808,6 +864,15 @@ export function useTerminal(options: UseTerminalOptions) {
     xtermRef.current?.focus();
   }, []);
 
+  // The terminal's current grid, read live off the xterm instance (the same
+  // read flushResize already does). Used to seed a respawned PTY's dimensions
+  // (e.g. a Command Terminal branch switch) so the new session starts at the
+  // grid the user is already looking at instead of the spawn defaults.
+  const getDimensions = useCallback((): { cols: number; rows: number } | null => {
+    if (!xtermRef.current) return null;
+    return { cols: xtermRef.current.cols, rows: xtermRef.current.rows };
+  }, []);
+
   return {
     terminalRef,
     initTerminal,
@@ -817,5 +882,6 @@ export function useTerminal(options: UseTerminalOptions) {
     reloadScrollback,
     scrollbackPending: scrollbackPendingRef,
     suppressDataRef,
+    getDimensions,
   };
 }

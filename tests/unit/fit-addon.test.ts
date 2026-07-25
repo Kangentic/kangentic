@@ -76,6 +76,47 @@ function makeWindowStub(parentEl: object) {
   };
 }
 
+/** Same shape as makeWindowStub, but the parent box reports a collapsed size
+ *  for one axis - a hidden/mid-transition container. */
+function makeCollapsedWindowStub(parentEl: object, dimension: 'width' | 'height' | 'both'): unknown {
+  const width = dimension === 'width' || dimension === 'both' ? '0' : '800';
+  const height = dimension === 'height' || dimension === 'both' ? '0' : '600';
+  return {
+    getComputedStyle: (element: unknown) => ({
+      getPropertyValue: (prop: string): string => {
+        if (element === parentEl) {
+          if (prop === 'width') return width;
+          if (prop === 'height') return height;
+        }
+        return '0';
+      },
+    }),
+  };
+}
+
+/** Same shape as makeCollapsedWindowStub, but the parent box reports an EMPTY
+ *  string (not '0') for the selected axis - a real-world computed-style value
+ *  ('' or 'auto') that `parseInt` turns into NaN rather than 0. The guard's
+ *  comment claims `> 0` also rejects NaN; this stub is what proves it, since
+ *  an equivalent-looking `=== 0` rewrite would let a NaN box slip past every
+ *  '0'-only case above. The other axis stays a valid '800'/'600' so each
+ *  single-axis case is discriminating. */
+function makeNaNWindowStub(parentEl: object, dimension: 'width' | 'height' | 'both'): unknown {
+  const width = dimension === 'width' || dimension === 'both' ? '' : '800';
+  const height = dimension === 'height' || dimension === 'both' ? '' : '600';
+  return {
+    getComputedStyle: (element: unknown) => ({
+      getPropertyValue: (prop: string): string => {
+        if (element === parentEl) {
+          if (prop === 'width') return width;
+          if (prop === 'height') return height;
+        }
+        return '0';
+      },
+    }),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -124,5 +165,108 @@ describe('FitAddon.proposeDimensions -- alt-buffer scrollbar reclaim', () => {
     const dims = fitAddon.proposeDimensions();
     expect(dims).toBeDefined();
     expect(dims!.cols).toBe(100);
+  });
+});
+
+describe('FitAddon.proposeDimensions -- collapsed container bails instead of clamping', () => {
+  // A hidden/mid-transition container (tile/untile, visibility toggle) can report
+  // a 0 (or NaN) box. Clamping to MINIMUM_COLS/MINIMUM_ROWS would still produce a
+  // valid-looking 2x1 grid that flows all the way to sessions.resize, corrupting
+  // the PTY's real width. proposeDimensions() must return undefined instead, so
+  // fit() no-ops and the real grid survives until the container has real
+  // dimensions again.
+  let fitAddon: FitAddon;
+  const { parentEl, elementEl } = makeElements();
+
+  beforeEach(() => {
+    fitAddon = new FitAddon();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('returns undefined when the parent width is 0', () => {
+    vi.stubGlobal('window', makeCollapsedWindowStub(parentEl, 'width'));
+    const terminal = makeTerminalStub(elementEl, 'normal', 1000);
+    fitAddon.activate(terminal);
+    expect(fitAddon.proposeDimensions()).toBeUndefined();
+  });
+
+  it('returns undefined when the parent height is 0', () => {
+    vi.stubGlobal('window', makeCollapsedWindowStub(parentEl, 'height'));
+    const terminal = makeTerminalStub(elementEl, 'normal', 1000);
+    fitAddon.activate(terminal);
+    expect(fitAddon.proposeDimensions()).toBeUndefined();
+  });
+
+  it('returns undefined when both dimensions are 0', () => {
+    vi.stubGlobal('window', makeCollapsedWindowStub(parentEl, 'both'));
+    const terminal = makeTerminalStub(elementEl, 'normal', 1000);
+    fitAddon.activate(terminal);
+    expect(fitAddon.proposeDimensions()).toBeUndefined();
+  });
+
+  it('fit() no-ops (never calls terminal.resize) against a collapsed container', () => {
+    vi.stubGlobal('window', makeCollapsedWindowStub(parentEl, 'both'));
+    const terminal = makeTerminalStub(elementEl, 'normal', 1000);
+    const resize = vi.fn();
+    (terminal as unknown as { resize: typeof resize }).resize = resize;
+    fitAddon.activate(terminal);
+    fitAddon.fit();
+    expect(resize).not.toHaveBeenCalled();
+  });
+});
+
+describe('FitAddon.proposeDimensions -- NaN parent box bails instead of clamping', () => {
+  // A real-world collapsed/mid-transition container does not necessarily
+  // report '0' from getComputedStyle - it can report '' or 'auto', which
+  // parseInt turns into NaN, not 0. The guard at fit-addon.ts:88 is written
+  // as `!(parentWidth > 0) || !(parentHeight > 0)` specifically because that
+  // form also rejects NaN (any comparison against NaN is false). An
+  // equivalent-looking `parentWidth === 0 || parentHeight === 0` rewrite
+  // would pass every '0'-only case in the describe block above while letting
+  // a NaN box fall through to the clamp logic below it - the exact
+  // corruption the guard exists to prevent (a valid-looking 2x1 grid flowing
+  // to sessions.resize and corrupting the PTY's real width).
+  //
+  // parentWidth is `Math.max(0, parseInt(...))` and parentHeight is a bare
+  // `parseInt(...)`; Math.max propagates NaN (Math.max(0, NaN) === NaN), so
+  // both axes reach the guard as NaN and both return undefined - there is no
+  // axis-specific carve-out to assert.
+  //
+  // Red-green: reverting the guard to `parentWidth === 0 || parentHeight === 0`
+  // makes all three cases below return a clamped {cols: 2, rows: ...} /
+  // {cols: ..., rows: 1} object instead of undefined.
+  let fitAddon: FitAddon;
+  const { parentEl, elementEl } = makeElements();
+
+  beforeEach(() => {
+    fitAddon = new FitAddon();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('returns undefined when the parent width computed style is NaN (e.g. \'\')', () => {
+    vi.stubGlobal('window', makeNaNWindowStub(parentEl, 'width'));
+    const terminal = makeTerminalStub(elementEl, 'normal', 1000);
+    fitAddon.activate(terminal);
+    expect(fitAddon.proposeDimensions()).toBeUndefined();
+  });
+
+  it('returns undefined when the parent height computed style is NaN (e.g. \'\')', () => {
+    vi.stubGlobal('window', makeNaNWindowStub(parentEl, 'height'));
+    const terminal = makeTerminalStub(elementEl, 'normal', 1000);
+    fitAddon.activate(terminal);
+    expect(fitAddon.proposeDimensions()).toBeUndefined();
+  });
+
+  it('returns undefined when both parent dimensions are NaN', () => {
+    vi.stubGlobal('window', makeNaNWindowStub(parentEl, 'both'));
+    const terminal = makeTerminalStub(elementEl, 'normal', 1000);
+    fitAddon.activate(terminal);
+    expect(fitAddon.proposeDimensions()).toBeUndefined();
   });
 });

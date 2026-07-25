@@ -84,7 +84,7 @@ vi.mock('../../src/shared/paths', () => ({
 }));
 
 // ---- Import under test (after all vi.mock hoisting) ----
-import { performSpawn } from '../../src/main/pty/lifecycle/session-spawn-flow';
+import { performSpawn, DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS } from '../../src/main/pty/lifecycle/session-spawn-flow';
 import { SessionRegistry } from '../../src/main/pty/session-registry';
 import { resolveSpawnCwd } from '../../src/main/pty/spawn/pty-spawn';
 import { adaptCommandForShell } from '../../src/shared/paths';
@@ -624,5 +624,121 @@ describe('performSpawn - activity engine initialTurnActive seed (thinking vs idl
     expect(context.telemetry.initSession).toHaveBeenCalledOnce();
     const initArgs = (context.telemetry.initSession as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(initArgs[2]).toBe(false);
+  });
+});
+
+describe('performSpawn - cols/rows precedence', () => {
+  // Pins the precedence chain documented at session-spawn-flow.ts lines
+  // 167-192: takePendingResize's stashed grid wins over a caller-supplied
+  // input.cols/rows, which in turn wins over the DEFAULT_PTY_COLS/ROWS
+  // fallback. Also pins the clamp applied to input.cols/rows (mirroring
+  // SessionManager.resize's clamp) before the value can reach pty.spawn.
+  //
+  // Pending grid (200x60) and input grid (100x40) are chosen to be
+  // distinguishable from each other AND from the 120x30 default, so a test
+  // asserting the wrong value in the chain cannot pass by accident.
+  //
+  // Red-green: for each case, the corresponding source line in
+  // session-spawn-flow.ts was temporarily reverted (see the report), the
+  // test observed red, and the source was restored to observe green.
+  //
+  // Tier: Unit - pure mock collaborators, no PTY, no OS, no IPC.
+
+  const ptySpawnMock = ptyModule.spawn as ReturnType<typeof vi.fn>;
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('case (a): uses input.cols/rows when set and no pendingResize is stashed', async () => {
+    const context = makeContext();
+    const input = makeInput({ cols: 100, rows: 40 });
+
+    await performSpawn(input, context);
+
+    expect(ptySpawnMock).toHaveBeenCalledOnce();
+    const spawnOptions = ptySpawnMock.mock.calls[0]?.[2] as { cols: number; rows: number };
+    expect(spawnOptions.cols).toBe(100);
+    expect(spawnOptions.rows).toBe(40);
+  });
+
+  it('case (b): a stashed pendingResize wins over input.cols/rows when both are present', async () => {
+    const context = makeContext();
+    (context.takePendingResize as ReturnType<typeof vi.fn>).mockReturnValue({ cols: 200, rows: 60 });
+    const input = makeInput({ cols: 100, rows: 40 });
+
+    await performSpawn(input, context);
+
+    const spawnOptions = ptySpawnMock.mock.calls[0]?.[2] as { cols: number; rows: number };
+    expect(spawnOptions.cols).toBe(200);
+    expect(spawnOptions.rows).toBe(60);
+  });
+
+  it('case (c): falls back to DEFAULT_PTY_COLS/ROWS when neither pendingResize nor input.cols/rows is set', async () => {
+    const context = makeContext();
+    const input = makeInput();
+
+    await performSpawn(input, context);
+
+    const spawnOptions = ptySpawnMock.mock.calls[0]?.[2] as { cols: number; rows: number };
+    expect(spawnOptions.cols).toBe(DEFAULT_PTY_COLS);
+    expect(spawnOptions.rows).toBe(DEFAULT_PTY_ROWS);
+  });
+
+  it('case (d): takePendingResize is consumed exactly once, unconditionally, keyed on the resolved session id', async () => {
+    // Pins the "called unconditionally" invariant documented at line 176-177:
+    // the pending entry must be consumed even when input.cols/rows also
+    // applies, never gated behind an `if (input.cols === undefined)` check.
+    const context = makeContext();
+    const input = makeInput({ cols: 100, rows: 40 });
+
+    await performSpawn(input, context);
+
+    expect(context.takePendingResize).toHaveBeenCalledTimes(1);
+    expect(context.takePendingResize).toHaveBeenCalledWith(input.id);
+  });
+
+  it('case (e1): clamps input.cols=0 to the minimum of 2', async () => {
+    const context = makeContext();
+    const input = makeInput({ cols: 0, rows: 40 });
+
+    await performSpawn(input, context);
+
+    const spawnOptions = ptySpawnMock.mock.calls[0]?.[2] as { cols: number; rows: number };
+    expect(spawnOptions.cols).toBe(2);
+    expect(spawnOptions.rows).toBe(40);
+  });
+
+  it('case (e2): clamps input.rows=0 to the minimum of 1', async () => {
+    const context = makeContext();
+    const input = makeInput({ cols: 100, rows: 0 });
+
+    await performSpawn(input, context);
+
+    const spawnOptions = ptySpawnMock.mock.calls[0]?.[2] as { cols: number; rows: number };
+    expect(spawnOptions.cols).toBe(100);
+    expect(spawnOptions.rows).toBe(1);
+  });
+
+  it('case (e3): a non-finite input.cols (NaN) is treated as absent and falls through to DEFAULT_PTY_COLS', async () => {
+    const context = makeContext();
+    const input = makeInput({ cols: NaN, rows: 40 });
+
+    await performSpawn(input, context);
+
+    const spawnOptions = ptySpawnMock.mock.calls[0]?.[2] as { cols: number; rows: number };
+    expect(spawnOptions.cols).toBe(DEFAULT_PTY_COLS);
+    expect(spawnOptions.rows).toBe(40);
+  });
+
+  it('case (e4): floors a non-integer input.cols (100.7) to 100', async () => {
+    const context = makeContext();
+    const input = makeInput({ cols: 100.7, rows: 40 });
+
+    await performSpawn(input, context);
+
+    const spawnOptions = ptySpawnMock.mock.calls[0]?.[2] as { cols: number; rows: number };
+    expect(spawnOptions.cols).toBe(100);
+    expect(spawnOptions.rows).toBe(40);
   });
 });

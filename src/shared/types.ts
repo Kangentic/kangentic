@@ -3378,12 +3378,23 @@ export interface SpawnSessionInput {
    * Isolated. Defaults to null when omitted.
    */
   isolatedSwimlaneId?: string | null;
+  /**
+   * Caller-known PTY grid to spawn at, when available (e.g. a Command
+   * Terminal branch respawn reusing the still-mounted xterm's current size).
+   * Falls back to `takePendingResize` (a resize that beat the spawn), then to
+   * DEFAULT_PTY_COLS/ROWS - see session-spawn-flow.ts.
+   */
+  cols?: number;
+  rows?: number;
 }
 
 export interface SpawnTransientSessionInput {
   projectId: string;
   /** Branch to checkout before spawning. If omitted, uses the project's default base branch. */
   branch?: string;
+  /** See `SpawnSessionInput.cols`/`rows` - the same seed-the-real-grid escape hatch. */
+  cols?: number;
+  rows?: number;
 }
 
 export interface NotificationInput {

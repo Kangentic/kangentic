@@ -118,6 +118,8 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
       agentParser: adapter,
       agentName: adapter.name,
       exitSequence: adapter.getExitSequence?.() ?? ['\x03'],
+      cols: input.cols,
+      rows: input.rows,
     });
 
     trackEvent('transient_session_spawn', { agent: adapter.name });

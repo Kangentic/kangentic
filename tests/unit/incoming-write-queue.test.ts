@@ -295,4 +295,55 @@ describe('writeChunkedToTerminal', () => {
     expect(onDone).toHaveBeenCalledTimes(1);
     expect(writes.join('')).toBe('abcdefghij');
   });
+
+  // shouldAbort: a newer replay (reveal catch-up, reloadScrollback,
+  // overlay-lift reload) can start while an older chunked replay is still
+  // draining into the same Terminal. useTerminal.ts wires this to a
+  // generation check; these tests exercise the abort contract directly.
+  it('never writes when already aborted before the first slice', async () => {
+    const { term, writes } = fakeTerminal();
+    const onDone = vi.fn();
+    writeChunkedToTerminal(term, 'abcdefghij', onDone, 4, () => true);
+    await flush();
+    expect(writes).toEqual([]);
+    expect(onDone).not.toHaveBeenCalled();
+  });
+
+  it('stops writing further slices once shouldAbort flips true mid-replay, and never fires onDone', async () => {
+    const { term, writes } = fakeTerminal();
+    const onDone = vi.fn();
+    let aborted = false;
+    // writeChunkedToTerminal writes its first slice synchronously (only the
+    // continuation to the NEXT slice is deferred via term.write's callback),
+    // so flipping `aborted` right after the call - before yielding at all -
+    // lands strictly between the first and second slice.
+    writeChunkedToTerminal(term, 'abcdefghij', onDone, 4, () => aborted);
+    expect(writes).toEqual(['abcd']);
+    aborted = true;
+    await flush(); // the deferred writeNext for slice 2 now sees aborted=true
+    expect(writes).toEqual(['abcd']);
+    expect(onDone).not.toHaveBeenCalled();
+  });
+
+  it('a short (non-chunked) write checks shouldAbort before firing onDone off the write callback', async () => {
+    const { term, writes } = fakeTerminal();
+    const onDone = vi.fn();
+    let aborted = false;
+    writeChunkedToTerminal(term, 'short', onDone, 64, () => aborted);
+    // The write happens synchronously (before the callback fires); flip abort
+    // before the microtask callback runs.
+    aborted = true;
+    await flush();
+    expect(writes).toEqual(['short']); // the write itself already landed
+    expect(onDone).not.toHaveBeenCalled(); // but settling was suppressed
+  });
+
+  it('a non-aborted replay is unaffected by an always-false shouldAbort', async () => {
+    const { term, writes } = fakeTerminal();
+    const onDone = vi.fn();
+    writeChunkedToTerminal(term, 'abcdefghij', onDone, 4, () => false);
+    await flush();
+    expect(writes).toEqual(['abcd', 'efgh', 'ij']);
+    expect(onDone).toHaveBeenCalledTimes(1);
+  });
 });

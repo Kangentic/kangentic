@@ -149,19 +149,34 @@ export function createIncomingWriteQueue(
  * surrogate-safe slices, calling `onDone` after the last slice is processed.
  * Avoids one giant synchronous parse on a tab/window switch or resize.
  * Not backpressure-counted: scrollback is pulled, not pushed, so no acking.
+ *
+ * `shouldAbort`, when provided, is checked before writing each slice AND
+ * before firing `onDone` off a slice's write callback: two chunked replays
+ * can race into the same Terminal (a reveal catch-up or overlay-lift reload
+ * starting while a mount-time replay is still draining its writes). On abort
+ * this returns WITHOUT calling `onDone` - the newer replay owns
+ * scrollbackPendingRef and the incoming-queue kick, so firing the aborted
+ * write's onDone would open the drop/hold gate early and race the newer
+ * replay's own settle. Callers pass a generation check (see useTerminal.ts).
  */
 export function writeChunkedToTerminal(
   term: Terminal,
   data: string,
   onDone: () => void,
   chunkSize: number = DEFAULT_INCOMING_CHUNK,
+  shouldAbort?: () => boolean,
 ): void {
+  if (shouldAbort?.()) return;
   if (data.length <= chunkSize) {
-    term.write(data, onDone);
+    term.write(data, () => {
+      if (shouldAbort?.()) return;
+      onDone();
+    });
     return;
   }
   let offset = 0;
   const writeNext = (): void => {
+    if (shouldAbort?.()) return;
     if (offset >= data.length) {
       onDone();
       return;

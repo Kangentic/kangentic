@@ -124,7 +124,11 @@ export function useTerminalRefit(options: TerminalRefitOptions): void {
       if (resizeTimer) clearTimeout(resizeTimer);
       resizeTimer = setTimeout(() => {
         resizeTimer = null;
-        fit();
+        // Re-check size at fire time, not just at schedule time: a container
+        // can collapse to 0 during the debounce (a tile/untile or visibility
+        // transition), and FitAddon's own zero-size guard already no-ops in
+        // that case - this just skips the wasted fit() call.
+        if (element.offsetWidth > 0 && element.offsetHeight > 0) fit();
       }, delayMs);
     };
 

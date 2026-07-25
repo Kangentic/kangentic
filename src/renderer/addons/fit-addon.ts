@@ -78,6 +78,17 @@ export class FitAddon implements ITerminalAddon {
     const parentHeight = parseInt(parentStyle.getPropertyValue('height'));
     const parentWidth = Math.max(0, parseInt(parentStyle.getPropertyValue('width')));
 
+    // A collapsed or hidden container (a visibility toggle mid-transition, a
+    // tile/untile or reflow race) reports a 0 (or NaN) box. Clamping to
+    // MINIMUM_COLS/MINIMUM_ROWS below would still produce a valid-looking 2x1
+    // grid that flows all the way to sessions.resize, corrupting the PTY's
+    // real width instead of leaving it alone. Bail here instead - the next
+    // real resize/refit (once the container has real dimensions again)
+    // supplies the true grid. `> 0` also rejects NaN.
+    if (!(parentWidth > 0) || !(parentHeight > 0)) {
+      return undefined;
+    }
+
     const elementStyle = window.getComputedStyle(this._terminal.element);
     const paddingVertical = parseInt(elementStyle.getPropertyValue('padding-top'))
       + parseInt(elementStyle.getPropertyValue('padding-bottom'));

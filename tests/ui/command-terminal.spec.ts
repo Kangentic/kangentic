@@ -2658,4 +2658,209 @@ test.describe('Command Terminal', () => {
       }
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Branch switch (regression lock): CommandTerminalWindow used to swap
+  // sessionId in place on a live useTerminal instance, leaving onData/onResize
+  // permanently bound to the killed session (initTerminal's
+  // `if (xtermRef.current) return` guard). CommandTerminalPane now mounts
+  // keyed-and-gated by session id, so a branch switch remounts the xterm host
+  // instead. See CommandTerminalPane.tsx.
+  // ---------------------------------------------------------------------------
+  test.describe('Branch switch', () => {
+    const BRANCH_SWITCH_PROJECT_ID = 'proj-branch-switch';
+
+    /** One project; a counter-based deterministic spawnTransient that records
+     *  every input (for the cols/rows assertion) and never auto-fires first
+     *  output - the test drives that explicitly via markFirstOutput, mirroring
+     *  openCommandBarWithMountedTerminal above, for both the initial spawn and
+     *  the branch respawn. */
+    function branchSwitchPreConfig(): string {
+      return `
+        window.__mockPreConfigure(function (state) {
+          var ts = new Date().toISOString();
+          state.projects.push({
+            id: '${BRANCH_SWITCH_PROJECT_ID}',
+            name: 'Branch Switch Project',
+            path: '/mock/branch-switch-project',
+            github_url: null,
+            default_agent: 'claude',
+            last_opened: ts,
+            created_at: ts,
+          });
+          state.DEFAULT_SWIMLANES.forEach(function (s, i) {
+            state.swimlanes.push(Object.assign({}, s, {
+              id: 'lane-branch-switch-' + i,
+              position: i,
+              created_at: ts,
+            }));
+          });
+          return { currentProjectId: '${BRANCH_SWITCH_PROJECT_ID}' };
+        });
+
+        var branchSwitchSpawnCounter = 0;
+        window.__branchSwitchSpawnCalls = [];
+        window.electronAPI.sessions.spawnTransient = async function (input) {
+          branchSwitchSpawnCounter += 1;
+          var id = 'branch-switch-session-' + branchSwitchSpawnCounter;
+          window.__branchSwitchSpawnCalls.push(input);
+          var session = {
+            id: id,
+            taskId: id,
+            projectId: input.projectId,
+            pid: null,
+            status: 'running',
+            shell: '/bin/bash',
+            cwd: '/mock/branch-switch-project',
+            startedAt: new Date().toISOString(),
+            exitCode: null,
+            resuming: false,
+            transient: true,
+            isolatedSwimlaneId: null,
+            agentSessionId: null,
+          };
+          return { session: session, branch: input.branch || 'main' };
+        };
+      `;
+    }
+
+    /** Flip sessionFirstOutput for `sessionId` so CommandTerminalPane mounts
+     *  (see CommandTerminalWindow's terminalReady gate). Mirrors
+     *  openCommandBarWithMountedTerminal's injection above. */
+    async function markFirstOutput(page: Page, sessionId: string): Promise<void> {
+      await page.evaluate((id) => {
+        const stores = (window as unknown as {
+          __zustandStores?: { session?: { getState: () => { markFirstOutput: (id: string) => void } } };
+        }).__zustandStores;
+        stores?.session?.getState().markFirstOutput(id);
+      }, sessionId);
+    }
+
+    /** Every input passed to the mock's spawnTransient so far. */
+    async function branchSwitchSpawnCalls(page: Page): Promise<Array<{ branch?: string; cols?: number; rows?: number }>> {
+      return page.evaluate(() => (window as unknown as { __branchSwitchSpawnCalls: Array<{ branch?: string; cols?: number; rows?: number }> }).__branchSwitchSpawnCalls);
+    }
+
+    /** The most recent sessions.resize(sessionId, cols, rows) call recorded by
+     *  the mock for `sessionId`, or undefined if none yet. initTerminal calls
+     *  sessions.resize synchronously (before any await) right after fitting the
+     *  xterm host to its container, so the last entry for a mounted pane's
+     *  session id is that pane's live grid. */
+    async function lastResizeCallFor(
+      page: Page,
+      sessionId: string,
+    ): Promise<{ sessionId: string; cols: number; rows: number } | undefined> {
+      return page.evaluate((id) => {
+        const calls = (window as unknown as {
+          electronAPI: { sessions: { __resizeCalls: Array<{ sessionId: string; cols: number; rows: number }> } };
+        }).electronAPI.sessions.__resizeCalls;
+        return calls.filter((call) => call.sessionId === id).at(-1);
+      }, sessionId);
+    }
+
+    test('typing after a branch switch reaches the NEW session, not the killed one', async () => {
+      const { browser, page } = await launchWithState(branchSwitchPreConfig());
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toBeVisible();
+        await markFirstOutput(page, 'branch-switch-session-1');
+
+        const pane = page.getByTestId('command-bar-terminal-pane');
+        await expect(pane).toBeAttached({ timeout: 8000 });
+        await expect(pane).toHaveAttribute('data-session-id', 'branch-switch-session-1');
+
+        // Switch branch via the header chip.
+        await page.getByTestId('branch-picker-chip').click();
+        const developButton = page.locator('button:has-text("develop")');
+        await developButton.waitFor({ state: 'visible' });
+        await developButton.click();
+
+        // The store's transientSessions entry must carry the NEW session id
+        // before the pane can be expected to have remounted.
+        await expect.poll(async () => {
+          const entries = await transientEntriesFor(page, BRANCH_SWITCH_PROJECT_ID);
+          return entries[0]?.sessionId;
+        }, { timeout: 8000, intervals: [50, 100, 200, 500] }).toBe('branch-switch-session-2');
+
+        await markFirstOutput(page, 'branch-switch-session-2');
+
+        // The pane remounted (React key changed): data-session-id updates, and
+        // there is still exactly one xterm instance (the old one was disposed,
+        // not left running alongside a second one).
+        await expect(pane).toHaveAttribute('data-session-id', 'branch-switch-session-2', { timeout: 8000 });
+        await expect(page.getByTestId('command-terminal-window').locator('.xterm')).toHaveCount(1);
+
+        // Type into the terminal and assert the write landed on the NEW
+        // session id, not the killed one - the positive assertion the vacuous
+        // "no write to the old id" check would miss if the pane never mounted.
+        // .focus() (not a click) is deterministic - xterm's own focus() call
+        // happens inside initTerminal's requestAnimationFrame.
+        const textarea = pane.locator('.xterm-helper-textarea').first();
+        await expect(textarea).toBeAttached({ timeout: 8000 });
+        await page.evaluate(() => { window.electronAPI.sessions.__writeCalls.length = 0; });
+        await textarea.focus();
+        await page.keyboard.type('echo hi');
+
+        await expect.poll(async () => {
+          const calls = await page.evaluate(
+            () => (window as unknown as { electronAPI: { sessions: { __writeCalls: Array<{ sessionId: string; payload: string }> } } })
+              .electronAPI.sessions.__writeCalls,
+          );
+          const last = calls[calls.length - 1];
+          return last?.sessionId;
+        }, { timeout: 8000, intervals: [50, 100, 200, 500] }).toBe('branch-switch-session-2');
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('branch respawn seeds the new PTY with the pre-switch grid', async () => {
+      const { browser, page } = await launchWithState(branchSwitchPreConfig());
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toBeVisible();
+        await markFirstOutput(page, 'branch-switch-session-1');
+        await expect(page.getByTestId('command-terminal-window').locator('.xterm-helper-textarea').first())
+          .toBeAttached({ timeout: 8000 });
+
+        await page.getByTestId('branch-picker-chip').click();
+        const developButton = page.locator('button:has-text("develop")');
+        await developButton.waitFor({ state: 'visible' });
+
+        // Snapshot the pre-switch pane's live grid via the resize call its
+        // mount-time fit() already sent, immediately before triggering the
+        // switch. This is the SAME grid handleBranchChange reads via
+        // gridGetterRef right before the kill, so equating the two proves the
+        // respawn was seeded from the pane's ACTUAL live grid - not merely
+        // "some positive number" (a regression hardcoding {cols: 80, rows: 24}
+        // in handleBranchChange would pass the old >0 assertions unchanged,
+        // but fails this equality unless it coincidentally matched).
+        await expect.poll(
+          async () => (await lastResizeCallFor(page, 'branch-switch-session-1')) !== undefined,
+          { timeout: 8000, intervals: [50, 100, 200, 500] },
+        ).toBe(true);
+        const preSwitchGrid = await lastResizeCallFor(page, 'branch-switch-session-1');
+
+        await developButton.click();
+
+        await expect.poll(async () => (await branchSwitchSpawnCalls(page)).length, { timeout: 8000 }).toBe(2);
+
+        const calls = await branchSwitchSpawnCalls(page);
+        const respawnCall = calls[1];
+        expect(respawnCall.branch).toBe('develop');
+        // Grid was read from the still-mounted pane before the kill (see
+        // handleBranchChange), so it must equal the pre-switch pane's actual
+        // live grid, not merely be some positive number.
+        expect(preSwitchGrid).toBeDefined();
+        expect(respawnCall.cols).toBe(preSwitchGrid!.cols);
+        expect(respawnCall.rows).toBe(preSwitchGrid!.rows);
+      } finally {
+        await browser.close();
+      }
+    });
+  });
 });

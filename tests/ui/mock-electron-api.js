@@ -1373,7 +1373,14 @@
       write: async function (sessionId, payload) {
         window.electronAPI.sessions.__writeCalls.push({ sessionId: sessionId, payload: payload });
       },
-      resize: async function () { return { colsChanged: false }; },
+      // Call log for test assertions. Each entry is { sessionId, cols, rows },
+      // in call order. Mirrors the __writeCalls log above. Reset between tests
+      // via window.electronAPI.sessions.__resizeCalls.length = 0.
+      __resizeCalls: [],
+      resize: async function (sessionId, cols, rows) {
+        window.electronAPI.sessions.__resizeCalls.push({ sessionId: sessionId, cols: cols, rows: rows });
+        return { colsChanged: false };
+      },
       list: async function () {
         return sessions;
       },

@@ -165,14 +165,30 @@ export async function performSpawn(
   });
 
   // Spawn at the real fitted dimensions if a resize arrived before the PTY
-  // existed (auto-resume / queued / suspended-resume race). Otherwise the
+  // existed (auto-resume / queued / suspended-resume race) - takePendingResize
+  // wins even when the caller also passed input.cols/rows, since it reflects a
+  // resize that happened AFTER the caller computed its own grid. Next,
+  // input.cols/rows: a caller-known grid (e.g. a Command Terminal branch
+  // respawn reusing its still-mounted xterm's current size). Otherwise the
   // default: a background session that is never opened keeps this size, and an
   // opened one is resized to its container on mount. Spawning at the fitted
   // size means that mount-time resize is a no-op, avoiding the stale-width
-  // repaint window entirely.
+  // repaint window entirely. takePendingResize is called unconditionally so
+  // its entry is always consumed, even when input.cols/rows also apply.
   const pendingResize = context.takePendingResize(id);
-  const spawnCols = pendingResize?.cols ?? DEFAULT_PTY_COLS;
-  const spawnRows = pendingResize?.rows ?? DEFAULT_PTY_ROWS;
+  // A caller-supplied grid is clamped here exactly the way SessionManager.resize
+  // clamps before it stashes a pendingResize: node-pty throws on 0 or negative,
+  // and a non-finite value (a layout edge case yielding parseInt -> NaN) must
+  // never reach pty.spawn. pendingResize is already clamped at its source;
+  // input.cols/rows arrives straight off the IPC boundary, so it is clamped here.
+  const requestedCols = input.cols !== undefined && Number.isFinite(input.cols)
+    ? Math.max(2, Math.floor(input.cols))
+    : undefined;
+  const requestedRows = input.rows !== undefined && Number.isFinite(input.rows)
+    ? Math.max(1, Math.floor(input.rows))
+    : undefined;
+  const spawnCols = pendingResize?.cols ?? requestedCols ?? DEFAULT_PTY_COLS;
+  const spawnRows = pendingResize?.rows ?? requestedRows ?? DEFAULT_PTY_ROWS;
 
   let ptyProcess: pty.IPty;
   try {
