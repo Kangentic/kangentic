@@ -231,6 +231,12 @@ Even a correctly-implemented blind relay is not metadata-invisible. A relay oper
 - Protocol: the `session-ended` activity payload and read-stream `sessionStatus`, the `register-push` verb + payloads, the E2E push envelope (`crypto/push-envelope.ts`), and optional project accent colors on the read-board payloads. All additive and wire-compatible (absent fields parse as before on older peers).
 - Desktop: `SessionLifecycleBoardFeed` (lifecycle edges onto the board-changed bus), the read-stream `session-ended` push + `sessionStatus` snapshot field, the push stack described under [Push Notifications](#push-notifications-e2e), and derived project accent colors in `read-board`.
 
+**Shipped (Protocol 0.8.0 - what a session list actually costs):**
+
+- Protocol: the read-stream subscribe `terminal` flag and the `message-preview` activity payload. Both additive and wire-compatible - absent means the previous behaviour, so an older phone and an older desktop each keep working against a newer peer.
+- Desktop: `resolveTaskTranscript` revalidates a task by `fs.stat` before parsing any session, using file signatures recorded in the stitch memo itself (not read back from the file cache, which is a bounded LRU and goes empty on a busy board); `transcript-cache.ts`'s cap raised 16 -> 64 with a 192MB byte budget; `read-stream` honours `terminal: false` by attaching neither the `data-tap` nor the `pty-resize` listener and returning an empty `scrollback` instead of building a serialized frame; `message-preview.ts` derives the one line a phone's session list renders from the transcript the subscription already resolves.
+- Why: measured from a Pixel over a LOOPBACK relay, one Home-feed refresh touched 20 transcript files totalling 319MB (a `--resume` writes a NEW file replaying its parent's whole history, so one task resumed five times owned 267MB across five near-identical files), and individual `transcript-window` requests took 0.7 to 3.8 seconds - the SMALLEST response was the slowest, because the cost was finding the entries rather than sending them. Separately, `event:terminal` streamed continuously to a phone showing no terminal at all (~13MB/hour), because every subscription carried PTY bytes the phone discards by design at its own terminal boundary.
+
 **Explicitly out of scope, later phases:**
 
 - **Bridge Phase 3 remainder:** full desktop static-key rotation and re-provisioning of remaining paired devices on revoke; fuller device-management UX beyond the per-verb toggles.
