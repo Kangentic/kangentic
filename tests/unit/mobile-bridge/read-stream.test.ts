@@ -201,6 +201,62 @@ describe('handleReadStream', () => {
     expect(sent.some((message) => message?.event?.kind === 'terminal-resize')).toBe(false);
   });
 
+  /**
+   * Usage ticks on essentially every token but renders as a percentage bar.
+   * Measured live, unthrottled pushes were the largest ONGOING cost once the
+   * terminal stream was removed - roughly 1MB an hour to animate one bar.
+   */
+  it('coalesces a usage burst into one push carrying the newest value', async () => {
+    vi.useFakeTimers();
+    try {
+      const context = { sessionManager } as unknown as IpcContext;
+      const subscriptions = new SubscriptionRegistry();
+      const session = fakeSession();
+      await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, subscriptions);
+      const before = vi.mocked(session.sendMessage).mock.calls.length;
+
+      for (let tick = 1; tick <= 20; tick += 1) {
+        sessionManager.emit('usage', 'sess-1', { ...usageFixture, contextWindow: { ...usageFixture.contextWindow, usedTokens: tick } });
+      }
+      // Nothing on the wire yet: the whole burst is parked on one timer.
+      expect(vi.mocked(session.sendMessage).mock.calls.length).toBe(before);
+
+      await vi.advanceTimersByTimeAsync(2100);
+
+      const usagePushes = vi
+        .mocked(session.sendMessage)
+        .mock.calls.slice(before)
+        .map((call) => call[0] as { event?: { payload?: { type?: string; usage?: { contextWindow?: { usedTokens?: number } } } } })
+        .filter((message) => message?.event?.payload?.type === 'usage');
+      expect(usagePushes).toHaveLength(1);
+      // The NEWEST value, not the first of the burst.
+      expect(usagePushes[0].event?.payload?.usage?.contextWindow?.usedTokens).toBe(20);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('flushes the pending usage when the session exits, so the final count is not lost', async () => {
+    vi.useFakeTimers();
+    try {
+      const context = { sessionManager } as unknown as IpcContext;
+      const subscriptions = new SubscriptionRegistry();
+      const session = fakeSession();
+      await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, subscriptions);
+
+      sessionManager.emit('usage', 'sess-1', usageFixture);
+      sessionManager.emit('exit', 'sess-1', 0, true);
+
+      const sent = vi
+        .mocked(session.sendMessage)
+        .mock.calls.map((call) => call[0] as { event?: { payload?: { type?: string } } })
+        .filter((message) => message?.event?.payload?.type === 'usage');
+      expect(sent).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('tears its own subscription down when the streamed session exits (no listener leak)', async () => {
     const context = { sessionManager } as unknown as IpcContext;
     const subscriptions = new SubscriptionRegistry();

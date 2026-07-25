@@ -44,6 +44,14 @@ const TERMINAL_IMMEDIATE_FLUSH_CHARS = 256;
  */
 const PROMPT_OPTIONS_RETRY_MS = 400;
 
+/**
+ * Wire-coalesce window for token-accounting pushes. Two seconds is far below
+ * the rate at which a percentage bar reads as stale, and far above the rate
+ * tokens tick at, so it collapses a firehose into a trickle without the phone
+ * ever showing a number a user would call wrong.
+ */
+const USAGE_COALESCE_MS = 2000;
+
 function subscriptionKeyFor(sessionId: string): string {
   return `stream:${sessionId}`;
 }
@@ -83,7 +91,17 @@ function subscribeReadStream(
   const transcriptSync = new TranscriptSync();
   let lastAwaitedPromptId = initialAwaitedPromptId;
   let lastMessagePreview: string | null = null;
+  let pendingUsage: SessionUsage | null = null;
+  let usageFlushTimer: ReturnType<typeof setTimeout> | null = null;
   let disposed = false;
+
+  const flushUsage = (): void => {
+    usageFlushTimer = null;
+    if (pendingUsage === null || disposed) return;
+    const usage = pendingUsage;
+    pendingUsage = null;
+    sendEvent(session, { kind: 'activity', sessionId, taskId, payload: { type: 'usage', usage: toSessionUsageWire(usage) } });
+  };
   let pendingTerminalChunks: string[] = [];
   let pendingTerminalChars = 0;
   let terminalFlushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -189,9 +207,22 @@ function subscribeReadStream(
     });
     pushPermissionIfChanged();
   };
+  /**
+   * Usage is token accounting: it ticks on essentially every token, but the
+   * phone renders it as a context-percentage bar. Measured on a live board,
+   * unthrottled pushes were the single largest ONGOING cost once the terminal
+   * stream was removed - 117 events in a few minutes, roughly 1MB an hour of
+   * mobile data and relay egress to animate one progress bar.
+   *
+   * So coalesce on the WIRE, not just in the phone's renderer: keep the newest
+   * value and emit at most one per window. The trailing edge always fires, so
+   * the bar still settles on the true final number when a turn ends.
+   */
   const onUsage = (usageSessionId: string, usage: SessionUsage): void => {
     if (usageSessionId !== sessionId) return;
-    sendEvent(session, { kind: 'activity', sessionId, taskId, payload: { type: 'usage', usage: toSessionUsageWire(usage) } });
+    pendingUsage = usage;
+    if (usageFlushTimer) return;
+    usageFlushTimer = setTimeout(flushUsage, USAGE_COALESCE_MS);
   };
   const onSessionEvent = (eventSessionId: string, event: SessionEvent): void => {
     if (eventSessionId !== sessionId) return;
@@ -212,6 +243,10 @@ function subscribeReadStream(
   const onExit = (exitedSessionId: string, _exitCode: number, intentional?: boolean): void => {
     if (exitedSessionId !== sessionId) return;
     flushTerminal(); // push any last coalesced output before we stop listening
+    // Same for the coalesced usage: the final token count of a finished turn
+    // is the one number a user is most likely to look at.
+    if (usageFlushTimer) clearTimeout(usageFlushTimer);
+    flushUsage();
     sendEvent(session, {
       kind: 'activity',
       sessionId,
@@ -245,6 +280,7 @@ function subscribeReadStream(
     context.sessionManager.off('event', onSessionEvent);
     context.sessionManager.off('exit', onExit);
     if (terminalFlushTimer) clearTimeout(terminalFlushTimer);
+    if (usageFlushTimer) clearTimeout(usageFlushTimer);
   });
 
   // Seed the sync state WITHOUT emitting: the phone bootstraps its view
