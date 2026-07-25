@@ -76,6 +76,7 @@ function subscribeReadStream(
   session: BridgeSession,
   context: IpcContext,
   subscriptions: SubscriptionRegistry,
+  wantsTerminal: boolean,
 ): void {
   const db = getProjectDb(context.sessionManager.getSessionProjectId(sessionId) ?? '');
   const transcriptSync = new TranscriptSync();
@@ -207,8 +208,16 @@ function subscribeReadStream(
     subscriptions.remove(subscriptionKeyFor(sessionId));
   };
 
-  context.sessionManager.on('data-tap', onDataTap);
-  context.sessionManager.on('pty-resize', onPtyResize);
+  // A list-only subscriber (a phone showing its session feed) discards PTY
+  // bytes on arrival, so never attach the taps that produce them. Activity,
+  // permission and transcript pushes still flow - those are what the list is
+  // for. The grid-size event goes too: it only explains bytes we are not
+  // sending, and the phone re-subscribes with terminal:true the moment a
+  // terminal opens, which delivers a fresh frame and its dimensions together.
+  if (wantsTerminal) {
+    context.sessionManager.on('data-tap', onDataTap);
+    context.sessionManager.on('pty-resize', onPtyResize);
+  }
   context.sessionManager.on('activity', onActivity);
   context.sessionManager.on('usage', onUsage);
   context.sessionManager.on('event', onSessionEvent);
@@ -273,7 +282,13 @@ export async function handleReadStream(
   // replay: a raw 512KB replay drops a fullscreen TUI's write-once static cells
   // once their drawing bytes age out of the window, so the phone's cold replay
   // renders them blank. The serialized frame reconstructs every visible cell.
-  const scrollback = await context.sessionManager.getSerializedFrame(payload.sessionId);
+  //
+  // A list-only subscriber (terminal:false) has no renderer to seed and drops
+  // this on arrival, so skip building it entirely - it is the single largest
+  // field in this response, and it was being sent once per live session on
+  // every cold start.
+  const wantsTerminal = payload.terminal !== false;
+  const scrollback = wantsTerminal ? await context.sessionManager.getSerializedFrame(payload.sessionId) : '';
   const activityState = context.sessionManager.getActivityCache()[payload.sessionId] ?? null;
   const activityReason = context.sessionManager.getActivityReason(payload.sessionId);
   const usage = context.sessionManager.getUsageCache()[payload.sessionId] ?? null;
@@ -298,7 +313,7 @@ export async function handleReadStream(
     sessionStatus: toReadStreamSessionStatusWire(liveSession.status),
   };
 
-  subscribeReadStream(payload.sessionId, liveSession.taskId, awaitedPromptId, session, context, subscriptions);
+  subscribeReadStream(payload.sessionId, liveSession.taskId, awaitedPromptId, session, context, subscriptions, wantsTerminal);
 
   return { type: 'capability-response', requestId: request.requestId, ok: true, payload: toWireJson(responsePayload) };
 }

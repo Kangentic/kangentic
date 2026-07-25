@@ -138,6 +138,69 @@ describe('handleReadStream', () => {
     expect(sessionManager.listenerCount('event')).toBe(0);
   });
 
+  /**
+   * A phone showing its session list needs activity, permission and
+   * transcript pushes, but discards PTY bytes on arrival. Measured live, that
+   * discard cost roughly 13MB an hour of relay traffic for a feed with no
+   * terminal open, plus a full serialized frame per session on every cold
+   * start. `terminal: false` subscribes to everything except the bytes.
+   */
+  it('a list-only subscribe attaches no terminal taps and returns no scrollback', async () => {
+    const context = { sessionManager } as unknown as IpcContext;
+    const subscriptions = new SubscriptionRegistry();
+
+    const response = await handleReadStream(
+      fakeRequest({ sessionId: 'sess-1', action: 'subscribe', terminal: false }),
+      fakeSession(),
+      context,
+      subscriptions,
+    );
+
+    expect((response.payload as { scrollback: string }).scrollback).toBe('');
+    expect(sessionManager.listenerCount('data-tap')).toBe(0);
+    expect(sessionManager.listenerCount('pty-resize')).toBe(0);
+    // Everything the list actually renders still flows.
+    expect(sessionManager.listenerCount('activity')).toBe(1);
+    expect(sessionManager.listenerCount('usage')).toBe(1);
+    expect(sessionManager.listenerCount('event')).toBe(1);
+    expect(sessionManager.listenerCount('exit')).toBe(1);
+  });
+
+  it('an omitted terminal flag keeps the full stream, so an older phone is unaffected', async () => {
+    const context = { sessionManager } as unknown as IpcContext;
+    const subscriptions = new SubscriptionRegistry();
+
+    const response = await handleReadStream(
+      fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }),
+      fakeSession(),
+      context,
+      subscriptions,
+    );
+
+    expect((response.payload as { scrollback: string }).scrollback).toBe('serialized-frame');
+    expect(sessionManager.listenerCount('data-tap')).toBe(1);
+    expect(sessionManager.listenerCount('pty-resize')).toBe(1);
+  });
+
+  it('a list-only subscriber receives no terminal events when the pty produces output', async () => {
+    const context = { sessionManager } as unknown as IpcContext;
+    const subscriptions = new SubscriptionRegistry();
+    const session = fakeSession();
+
+    await handleReadStream(
+      fakeRequest({ sessionId: 'sess-1', action: 'subscribe', terminal: false }),
+      session,
+      context,
+      subscriptions,
+    );
+    sessionManager.emit('data-tap', 'sess-1', 'output the phone would have discarded');
+    sessionManager.emit('pty-resize', 'sess-1', 100, 40);
+
+    const sent = vi.mocked(session.sendMessage).mock.calls.map((call) => call[0] as { event?: { kind?: string } });
+    expect(sent.some((message) => message?.event?.kind === 'terminal')).toBe(false);
+    expect(sent.some((message) => message?.event?.kind === 'terminal-resize')).toBe(false);
+  });
+
   it('tears its own subscription down when the streamed session exits (no listener leak)', async () => {
     const context = { sessionManager } as unknown as IpcContext;
     const subscriptions = new SubscriptionRegistry();

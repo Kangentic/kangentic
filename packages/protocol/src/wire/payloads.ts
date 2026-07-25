@@ -58,6 +58,20 @@ export interface ReadStreamRequestPayload {
   beforeIndex?: number;
   /** transcript-window only: maximum entries wanted (the desktop may cap this and may return fewer). */
   limit?: number;
+  /**
+   * subscribe only: whether this subscription wants live PTY bytes.
+   *
+   * A phone watching its session list needs activity, permission and
+   * transcript pushes, but NOT the terminal - it discards those bytes on
+   * arrival. Measured on a live board, that discard cost roughly 13MB an hour
+   * of relay traffic and mobile data for a feed showing no terminal at all.
+   *
+   * Omitted means true, so an older phone keeps the previous behaviour and an
+   * older desktop that ignores the field simply keeps sending (wasteful, not
+   * broken). Set false for a list-only subscription and re-subscribe with it
+   * true when a terminal actually opens.
+   */
+  terminal?: boolean;
 }
 
 /**
@@ -188,6 +202,10 @@ function parseReadStreamRequestPayload(payload: JsonValue): ReadStreamRequestPay
       throw new Error('read-stream payload has an invalid "limit"');
     }
     request.limit = payload.limit;
+  }
+  if (payload.terminal !== undefined) {
+    if (typeof payload.terminal !== 'boolean') throw new Error('read-stream payload has an invalid "terminal"');
+    request.terminal = payload.terminal;
   }
   return request;
 }

@@ -25,6 +25,26 @@ describe('parseCapabilityRequestPayload', () => {
     expect(() => parseCapabilityRequestPayload('read-stream', { sessionId: 'sess-1', action: 'watch' })).toThrow(/action/);
   });
 
+  /**
+   * `terminal: false` is how a phone showing its session list subscribes to
+   * activity without the PTY bytes it would discard. Absent means true, so an
+   * older phone that never sends it keeps the full stream.
+   */
+  it('read-stream: carries the terminal flag through, and omits it when absent', () => {
+    expect(parseCapabilityRequestPayload('read-stream', { sessionId: 'sess-1', action: 'subscribe', terminal: false })).toEqual({
+      sessionId: 'sess-1',
+      action: 'subscribe',
+      terminal: false,
+    });
+    expect(parseCapabilityRequestPayload('read-stream', { sessionId: 'sess-1', action: 'subscribe' })).not.toHaveProperty('terminal');
+  });
+
+  it('read-stream: rejects a non-boolean terminal flag', () => {
+    expect(() => parseCapabilityRequestPayload('read-stream', { sessionId: 'sess-1', action: 'subscribe', terminal: 'no' })).toThrow(
+      /terminal/,
+    );
+  });
+
   it('read-board: allows an omitted projectId', () => {
     const parsed = parseCapabilityRequestPayload('read-board', {});
     expect(parsed).toEqual({ projectId: undefined, action: undefined });
