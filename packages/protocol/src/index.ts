@@ -53,6 +53,7 @@ export {
   type ReadStreamSessionStatusWire,
   type TranscriptWindowResponsePayload,
   type ReadBoardRequestPayload,
+  type ReadBoardView,
   type ReadBoardProjectSummary,
   type ReadBoardProjectListResponsePayload,
   type ReadBoardSnapshotResponsePayload,

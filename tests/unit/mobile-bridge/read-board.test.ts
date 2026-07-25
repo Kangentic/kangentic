@@ -114,6 +114,75 @@ describe('handleReadBoard', () => {
     });
   });
 
+  describe('view projections (protocol 0.9.0)', () => {
+    function boardContext(): IpcContext {
+      return {
+        projectRepo: { getById: vi.fn(() => ({ id: 'proj-1', name: 'Alpha', path: 'C:/projects/alpha' })) },
+        boardEvents: { onBoardChanged: vi.fn(() => vi.fn()) },
+        configManager: { getEffectiveConfig: vi.fn(() => ({ showTaskNumbers: true })) },
+      } as unknown as IpcContext;
+    }
+
+    beforeEach(() => {
+      tasksList.mockReturnValue([
+        { id: 't-1', swimlane_id: 'lane-1', session_id: 'sess-1' },
+        { id: 't-2', swimlane_id: 'lane-1', session_id: null },
+        { id: 't-3', swimlane_id: 'lane-2', session_id: null },
+      ]);
+    });
+
+    it("'sessions' returns only session-bearing tasks, with real per-column counts and no backlog", async () => {
+      const response = await handleReadBoard(
+        fakeRequest({ projectId: 'proj-1', view: 'sessions' }),
+        fakeSession(),
+        boardContext(),
+        new SubscriptionRegistry(),
+      );
+
+      const snapshot = response.payload as {
+        tasks: Array<{ id: string }>;
+        view: string;
+        taskCountsByColumnId: Record<string, number>;
+      };
+      expect(snapshot.tasks.map((task) => task.id)).toEqual(['t-1']);
+      expect(snapshot.view).toBe('sessions');
+      // Counts describe the WHOLE column, not the filtered list - appending a
+      // card to lane-1 has to land after t-2, not on top of it.
+      expect(snapshot.taskCountsByColumnId).toEqual({ 'lane-1': 2, 'lane-2': 1 });
+      expect(response.payload).not.toHaveProperty('backlog');
+      expect(backlogList).not.toHaveBeenCalled();
+    });
+
+    it("'full' returns every task but still drops the backlog, and sends no counts", async () => {
+      const response = await handleReadBoard(
+        fakeRequest({ projectId: 'proj-1', view: 'full' }),
+        fakeSession(),
+        boardContext(),
+        new SubscriptionRegistry(),
+      );
+
+      const snapshot = response.payload as { tasks: Array<{ id: string }>; view: string };
+      expect(snapshot.tasks.map((task) => task.id)).toEqual(['t-1', 't-2', 't-3']);
+      expect(snapshot.view).toBe('full');
+      expect(response.payload).not.toHaveProperty('backlog');
+      expect(response.payload).not.toHaveProperty('taskCountsByColumnId');
+      expect(backlogList).not.toHaveBeenCalled();
+    });
+
+    it('a request with no view keeps the pre-0.9.0 payload, backlog included', async () => {
+      const response = await handleReadBoard(
+        fakeRequest({ projectId: 'proj-1' }),
+        fakeSession(),
+        boardContext(),
+        new SubscriptionRegistry(),
+      );
+
+      expect(response.payload).toHaveProperty('backlog');
+      expect(response.payload).not.toHaveProperty('view');
+      expect(backlogList).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('unsubscribe tears down the board subscription', async () => {
     const unsubscribe = vi.fn();
     const context = {

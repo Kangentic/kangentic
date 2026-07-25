@@ -212,10 +212,42 @@ function parseReadStreamRequestPayload(payload: JsonValue): ReadStreamRequestPay
 
 // === read-board ===
 
+/**
+ * Which projection of a board the phone wants.
+ *
+ * - 'sessions': columns, per-column task counts, and only the non-archived
+ *   tasks that carry a `session_id`. This is what an agent feed renders: it
+ *   watches every project at once but only ever draws the handful of tasks
+ *   with a live agent on them.
+ * - 'full': every non-archived task, for the one project whose board the user
+ *   actually has open.
+ *
+ * Neither carries the backlog. Sending the field at all is the signal that
+ * this phone tolerates a response without one; a phone that omits it gets the
+ * pre-0.9.0 payload unchanged.
+ */
+export type ReadBoardView = 'full' | 'sessions';
+
 export interface ReadBoardRequestPayload {
   projectId?: string;
   /** Defaults to 'subscribe' when omitted. 'unsubscribe' only has an effect when projectId is set - the no-projectId project list is a one-shot read with no live feed to tear down. */
   action?: 'subscribe' | 'unsubscribe';
+  /**
+   * subscribe only: the projection wanted (protocol 0.9.0). Omitted means the
+   * legacy full board WITH the backlog.
+   *
+   * Measured on a 15-project desktop, the full boards were 63 kB compressed
+   * of a ~96 kB cold start, of which 23 kB was a backlog no phone has ever
+   * rendered and another 30 kB was tasks with no session on them. Worse, a
+   * board subscription re-snapshots on every board change, so that payload
+   * repeats for as long as the phone is connected. The 'sessions' projection
+   * is 12 kB for the same 15 projects.
+   *
+   * A pre-0.9.0 desktop ignores the field and returns a full board with no
+   * `view` echo, which is exactly how a 0.9.0 phone detects that it must not
+   * treat the snapshot as filtered.
+   */
+  view?: ReadBoardView;
 }
 
 export interface ReadBoardProjectSummary {
@@ -239,8 +271,10 @@ export interface ReadBoardProjectListResponsePayload {
 export interface ReadBoardSnapshotResponsePayload {
   projectId: string;
   columns: BoardColumnWire[];
+  /** Non-archived tasks; filtered to the ones carrying a `session_id` when `view` is 'sessions'. */
   tasks: BoardTaskWire[];
-  backlog: BacklogItemWire[];
+  /** Absent whenever the request carried a `view` (protocol 0.9.0) - no phone has ever rendered it. */
+  backlog?: BacklogItemWire[];
   /** The project's accent color ("#rrggbb"); same semantics as ReadBoardProjectSummary.color. Absent from pre-0.5.0 desktops. */
   projectColor?: string;
   /**
@@ -249,6 +283,18 @@ export interface ReadBoardSnapshotResponsePayload {
    * true, the desktop default).
    */
   showTicketNumbers?: boolean;
+  /**
+   * The projection actually applied, echoed back. Absent from a pre-0.9.0
+   * desktop, which always sends a full board - so treat an absent `view` as
+   * 'full', never as "filtered, unknown how".
+   */
+  view?: ReadBoardView;
+  /**
+   * Non-archived task count per column id, sent with a 'sessions' view because
+   * `tasks` is filtered and a count taken from it would be wrong. Appending a
+   * card to a column needs the real length.
+   */
+  taskCountsByColumnId?: Record<string, number>;
 }
 
 export type ReadBoardResponsePayload = ReadBoardProjectListResponsePayload | ReadBoardSnapshotResponsePayload;
@@ -283,18 +329,40 @@ export function parseReadBoardResponsePayload(payload: JsonValue): ReadBoardResp
   if (typeof payload.projectId !== 'string') throw new Error('read-board response is missing "projectId"');
   if (!Array.isArray(payload.columns)) throw new Error('read-board response is missing "columns"');
   if (!Array.isArray(payload.tasks)) throw new Error('read-board response is missing "tasks"');
-  if (!Array.isArray(payload.backlog)) throw new Error('read-board response is missing "backlog"');
+  // 0.9.0+ responses omit the backlog entirely; only a present-but-wrong value is an error.
+  if (payload.backlog !== undefined && !Array.isArray(payload.backlog)) {
+    throw new Error('read-board response has a non-array "backlog"');
+  }
   if (payload.showTicketNumbers !== undefined && typeof payload.showTicketNumbers !== 'boolean') {
     throw new Error('read-board response has a non-boolean "showTicketNumbers"');
+  }
+  if (payload.view !== undefined && payload.view !== 'full' && payload.view !== 'sessions') {
+    throw new Error('read-board response has an invalid "view"');
   }
   return {
     projectId: payload.projectId,
     columns: payload.columns.map((column) => parseBoardColumnWire(column as JsonValue)),
     tasks: payload.tasks.map((task) => parseBoardTaskWire(task as JsonValue)),
-    backlog: payload.backlog.map((item) => parseBacklogItemWire(item as JsonValue)),
+    ...(payload.backlog !== undefined
+      ? { backlog: payload.backlog.map((item) => parseBacklogItemWire(item as JsonValue)) }
+      : {}),
     ...(payload.projectColor !== undefined ? { projectColor: parseAccentColor(payload.projectColor, 'read-board snapshot') } : {}),
     ...(payload.showTicketNumbers !== undefined ? { showTicketNumbers: payload.showTicketNumbers } : {}),
+    ...(payload.view !== undefined ? { view: payload.view } : {}),
+    ...(payload.taskCountsByColumnId !== undefined
+      ? { taskCountsByColumnId: parseTaskCountsByColumnId(payload.taskCountsByColumnId) }
+      : {}),
   };
+}
+
+/** Narrows the 'sessions' view's per-column task counts; a malformed entry is dropped rather than failing the whole snapshot. */
+function parseTaskCountsByColumnId(value: unknown): Record<string, number> {
+  if (!isRecord(value)) throw new Error('read-board response has a non-object "taskCountsByColumnId"');
+  const counts: Record<string, number> = {};
+  for (const [columnId, count] of Object.entries(value)) {
+    if (typeof count === 'number' && Number.isInteger(count) && count >= 0) counts[columnId] = count;
+  }
+  return counts;
 }
 
 function parseReadBoardRequestPayload(payload: JsonValue): ReadBoardRequestPayload {
@@ -305,7 +373,10 @@ function parseReadBoardRequestPayload(payload: JsonValue): ReadBoardRequestPaylo
   if (payload.action !== undefined && payload.action !== 'subscribe' && payload.action !== 'unsubscribe') {
     throw new Error('read-board payload has an invalid "action"');
   }
-  return { projectId: payload.projectId, action: payload.action };
+  if (payload.view !== undefined && payload.view !== 'full' && payload.view !== 'sessions') {
+    throw new Error('read-board payload has an invalid "view"');
+  }
+  return { projectId: payload.projectId, action: payload.action, view: payload.view };
 }
 
 // === read-diff ===
