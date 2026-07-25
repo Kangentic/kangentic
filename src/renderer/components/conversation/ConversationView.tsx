@@ -21,7 +21,12 @@
  *   2. A later `scrollToTurnUuid` (search palette, or the in-viewer search bar
  *      via `navigateToUuid`) - centers + flashes the target for 4s.
  *   3. Auto-follow-to-bottom on a live-poll append - suppressed while a settle
- *      loop is active, and cancelled itself by any user wheel/pointerdown.
+ *      loop is active, cancelled itself by any user wheel/pointerdown, and
+ *      gated on the user's scroll position already sitting at the tail
+ *      (`isAtBottomRef`, mirroring `ConversationScrollbar`'s own "Jump to
+ *      latest" pill visibility via the shared `isScrolledToBottom` predicate)
+ *      so a message arriving while the user has scrolled up to read earlier
+ *      context never yanks them back down.
  */
 
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
@@ -33,7 +38,7 @@ import { useKeybinding } from '../../hooks/useKeybinding';
 import { ConversationSearchBar, type ConversationSearchBarHandle } from './ConversationSearchBar';
 import { ConversationScrollbar, CONTENT_RIGHT_CLEARANCE_PX, ROW_LEFT_INSET_PX } from './ConversationScrollbar';
 import { reconcileDisplayRows, isSlashCommandRow, speakerGroup, type DisplayRow, type DisplayRowResult } from './display-rows';
-import { FAR_FROM_BOTTOM_PX } from './scrollbar-math';
+import { FAR_FROM_BOTTOM_PX, isScrolledToBottom } from './scrollbar-math';
 import { ESTIMATED_ROW_HEIGHT, computeSettleScrollTop, type SettleVirtualItem } from './settle-scroll';
 import { renderAssistantBlocksMarkdown } from '../../../shared/transcript-format';
 import { sanitizeTranscriptText } from '../../../shared/ansi-strip';
@@ -402,12 +407,37 @@ export function ConversationView({
     onConsumedScroll();
   }, [scrollToTurnUuid, navigateToUuid, onConsumedScroll]);
 
-  // Auto-follow: while the window isn't focused/hovered AND no settle loop is
-  // active, smoothly scroll to the bottom whenever the live-refresh poll grows
-  // the transcript, so the newest turn stays in view. Tracks the previous row
-  // count in a ref rather than state so this never fires on the initial load
-  // (previousCount starts null) - only on a genuine append after the view is
-  // already showing something.
+  // Whether the user is at (or within isScrolledToBottom's epsilon of) the
+  // scroll tail - kept in a ref, not state, so reading it below never
+  // triggers a render of its own. Updated ONLY by real 'scroll' events (plus
+  // one synchronous read right when the container first mounts), never
+  // recomputed from geometry read after a row has already been appended:
+  // a live append grows scrollHeight by the new row's height before scrollTop
+  // catches up, so reading post-append geometry would read "not at bottom"
+  // on every single append even when the user was genuinely following along.
+  const isAtBottomRef = useRef(true);
+  const hasRows = rows.length > 0;
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return undefined;
+    const updateIsAtBottom = () => {
+      isAtBottomRef.current = isScrolledToBottom(container);
+    };
+    updateIsAtBottom();
+    container.addEventListener('scroll', updateIsAtBottom, { passive: true });
+    return () => container.removeEventListener('scroll', updateIsAtBottom);
+    // Re-attaches only when the container div itself mounts (hasRows crosses
+    // the 0 <-> nonzero boundary that swaps in the empty-state div), never on
+    // a plain append - see the ref's own comment above for why.
+  }, [hasRows]);
+
+  // Auto-follow: while the window isn't focused/hovered, the user is already
+  // at the scroll tail, AND no settle loop is active, smoothly scroll to the
+  // bottom whenever the live-refresh poll grows the transcript, so the newest
+  // turn stays in view. Tracks the previous row count in a ref rather than
+  // state so this never fires on the initial load (previousCount starts
+  // null) - only on a genuine append after the view is already showing
+  // something.
   const previousRowCountRef = useRef<number | null>(null);
   useEffect(() => {
     const previousCount = previousRowCountRef.current;
@@ -415,6 +445,7 @@ export function ConversationView({
     if (previousCount === null) return;
     if (rows.length <= previousCount) return;
     if (!autoFollowNewMessages) return;
+    if (!isAtBottomRef.current) return;
     if (isSettlingRef.current) return;
     virtualizer.scrollToEnd({ behavior: 'smooth' });
   }, [rows.length, autoFollowNewMessages, virtualizer, isSettlingRef]);

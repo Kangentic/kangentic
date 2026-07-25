@@ -21,7 +21,7 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import { ArrowDown, Hash } from 'lucide-react';
 import { formatTime } from '../../lib/datetime';
-import { computeThumbGeometry, thumbPositionToOffset, FAR_FROM_BOTTOM_PX } from './scrollbar-math';
+import { computeThumbGeometry, thumbPositionToOffset, isScrolledToBottom, FAR_FROM_BOTTOM_PX, type ScrollGeometry } from './scrollbar-math';
 import type { DisplayRow } from './display-rows';
 
 interface ConversationScrollbarProps {
@@ -57,13 +57,6 @@ export const ROW_LEFT_INSET_PX = 12;
  *  gap. Exported so ConversationView can size its row padding against it
  *  instead of duplicating the rail's own geometry as a second magic number. */
 export const CONTENT_RIGHT_CLEARANCE_PX = (RAIL_WIDTH_PX - THUMB_MARGIN_PX) + ROW_LEFT_INSET_PX;
-const BOTTOM_EPSILON_PX = 4;
-
-interface ScrollGeometry {
-  scrollTop: number;
-  scrollHeight: number;
-  clientHeight: number;
-}
 
 export function ConversationScrollbar({ containerRef, rows, onJumpToLatest, onShowRailChange }: ConversationScrollbarProps) {
   const [geometry, setGeometry] = useState<ScrollGeometry>({ scrollTop: 0, scrollHeight: 0, clientHeight: 0 });
@@ -161,7 +154,7 @@ export function ConversationScrollbar({ containerRef, rows, onJumpToLatest, onSh
   }, []);
 
   const distanceFromBottom = geometry.scrollHeight - (geometry.scrollTop + geometry.clientHeight);
-  const isAtBottom = distanceFromBottom <= BOTTOM_EPSILON_PX;
+  const isAtBottom = isScrolledToBottom(geometry);
   const showRail = geometry.scrollHeight > railSize && railSize > 0;
 
   useEffect(() => {

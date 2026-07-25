@@ -23,6 +23,27 @@ export const MIN_THUMB_SIZE_PX = 48;
  *  jump pill's `data-far`) so the two can never disagree. */
 export const FAR_FROM_BOTTOM_PX = 4000;
 
+/** Within this distance (px) of the tail, the user counts as "at the bottom" -
+ *  small enough to absorb sub-pixel rounding, not so large that a user reading
+ *  the last couple of rows gets treated as still following live. Shared by
+ *  `ConversationScrollbar` (which pill visibility keys on it) and
+ *  `ConversationView` (which auto-follow-on-new-message keys on it), so both
+ *  answer the same "is the user at the bottom?" question identically - the
+ *  pill hides exactly when auto-follow would fire on the next append. */
+export const BOTTOM_EPSILON_PX = 4;
+
+export interface ScrollGeometry {
+  scrollTop: number;
+  scrollHeight: number;
+  clientHeight: number;
+}
+
+/** Whether `geometry` is within `epsilonPx` of its scrollable tail. */
+export function isScrolledToBottom(geometry: ScrollGeometry, epsilonPx: number = BOTTOM_EPSILON_PX): boolean {
+  const distanceFromBottom = geometry.scrollHeight - (geometry.scrollTop + geometry.clientHeight);
+  return distanceFromBottom <= epsilonPx;
+}
+
 function clamp01(value: number): number {
   if (Number.isNaN(value)) return 0;
   return Math.min(1, Math.max(0, value));

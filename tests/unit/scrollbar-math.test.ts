@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { computeThumbGeometry, thumbPositionToOffset, MIN_THUMB_SIZE_PX } from '../../src/renderer/components/conversation/scrollbar-math';
+import {
+  computeThumbGeometry,
+  thumbPositionToOffset,
+  isScrolledToBottom,
+  MIN_THUMB_SIZE_PX,
+  BOTTOM_EPSILON_PX,
+} from '../../src/renderer/components/conversation/scrollbar-math';
 
 /**
  * Pure geometry helpers behind ConversationScrollbar.tsx. Covers: the
@@ -54,7 +60,36 @@ describe('thumbPositionToOffset <-> computeThumbGeometry round trip', () => {
 
     expect(recoveredThumbTop).toBeCloseTo(thumbTop, 1);
   });
+});
 
+describe('isScrolledToBottom', () => {
+  it('is true when scrollTop + clientHeight exactly reaches scrollHeight', () => {
+    expect(isScrolledToBottom({ scrollTop: 400, scrollHeight: 1000, clientHeight: 600 })).toBe(true);
+  });
+
+  it('is true within the epsilon (sub-pixel rounding tolerance)', () => {
+    expect(isScrolledToBottom({ scrollTop: 400 - BOTTOM_EPSILON_PX, scrollHeight: 1000, clientHeight: 600 })).toBe(true);
+  });
+
+  it('is false just beyond the epsilon', () => {
+    expect(isScrolledToBottom({ scrollTop: 400 - BOTTOM_EPSILON_PX - 1, scrollHeight: 1000, clientHeight: 600 })).toBe(false);
+  });
+
+  it('is false when scrolled to the top of a long transcript', () => {
+    expect(isScrolledToBottom({ scrollTop: 0, scrollHeight: 10_000, clientHeight: 600 })).toBe(false);
+  });
+
+  it('is true when content does not overflow the viewport at all', () => {
+    expect(isScrolledToBottom({ scrollTop: 0, scrollHeight: 400, clientHeight: 600 })).toBe(true);
+  });
+
+  it('honors a custom epsilon override', () => {
+    expect(isScrolledToBottom({ scrollTop: 300, scrollHeight: 1000, clientHeight: 600 }, 150)).toBe(true);
+    expect(isScrolledToBottom({ scrollTop: 300, scrollHeight: 1000, clientHeight: 600 }, 50)).toBe(false);
+  });
+});
+
+describe('thumbPositionToOffset <-> computeThumbGeometry round trip (top/bottom pins)', () => {
   it('dragging the thumb to the very top of the rail maps back to offset 0', () => {
     const offset = thumbPositionToOffset({ thumbTop: 0, thumbSize: MIN_THUMB_SIZE_PX, totalSize: 500_000, viewportSize: 600, railSize: 600 });
     expect(offset).toBe(0);
