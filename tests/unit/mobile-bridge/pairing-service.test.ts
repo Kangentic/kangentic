@@ -347,6 +347,29 @@ describe('PairingService phone-supplied device name sanitization', () => {
   });
 });
 
+describe('sanitizeDeviceName filters the full control-character range, not just C0 low codes', () => {
+  it('strips the DEL character (code point 127), which sits above MIN_PRINTABLE_CODE_POINT and needs its own exclusion', () => {
+    // Every other "strips control characters" test in this file (and in
+    // mobile-bridge-service.test.ts's rename tests) uses BEL (7), which is
+    // caught by the `codePoint >= 32` half of the filter. DEL (127) is NOT
+    // caught by that half - it only gets excluded by the separate
+    // `codePoint !== DELETE_CODE_POINT` check, which was otherwise never
+    // exercised by any existing test.
+    const deleteCharacter = String.fromCharCode(127);
+    expect(sanitizeDeviceName(`My${deleteCharacter}Phone`)).toBe('MyPhone');
+  });
+
+  it('falls back to "Paired Device" when the raw name is entirely control characters, not just whitespace', () => {
+    // The existing blank-fallback tests use whitespace-only input ('   '),
+    // which trim() alone would reduce to empty. This exercises the OTHER
+    // path to an empty result: the control-character filter itself removing
+    // every character, with no whitespace involved at all.
+    const bellCharacter = String.fromCharCode(7);
+    const deleteCharacter = String.fromCharCode(127);
+    expect(sanitizeDeviceName(bellCharacter + bellCharacter + deleteCharacter)).toBe('Paired Device');
+  });
+});
+
 describe('sanitizeDeviceName clamps by code point, not UTF-16 code unit', () => {
   it('does not split an astral character in half when clamping to MAX_DEVICE_NAME_LENGTH', () => {
     // A plain decoded.slice(0, 64) clamps by UTF-16 CODE UNIT: the emoji at
