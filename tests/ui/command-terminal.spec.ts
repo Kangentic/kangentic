@@ -2862,5 +2862,54 @@ test.describe('Command Terminal', () => {
         await browser.close();
       }
     });
+
+    test('a branch switch never fires the dev-only session-swap-without-remount tripwire', async () => {
+      // useTerminal's dev-only tripwire (isSessionSwapWithoutRemount,
+      // useTerminal.ts) console.errors if a host's sessionId changes to a
+      // different LIVE session without remounting. UI specs run against the
+      // real Vite dev server, so import.meta.env.DEV is true here - the
+      // tripwire is live in this test the same way it is in `npm start`
+      // dogfooding. This is the wiring the pure-predicate unit test
+      // (terminal-session-swap-contract.test.ts) cannot reach: it exercises
+      // real refs across real re-renders, not a copy of the effect's logic.
+      const { browser, page } = await launchWithState(branchSwitchPreConfig());
+      const consoleErrors: string[] = [];
+      page.on('console', (message) => {
+        if (message.type() === 'error') consoleErrors.push(message.text());
+      });
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toBeVisible();
+        await markFirstOutput(page, 'branch-switch-session-1');
+        await expect(page.getByTestId('command-terminal-window').locator('.xterm-helper-textarea').first())
+          .toBeAttached({ timeout: 8000 });
+
+        await page.getByTestId('branch-picker-chip').click();
+        const developButton = page.locator('button:has-text("develop")');
+        await developButton.waitFor({ state: 'visible' });
+        await developButton.click();
+
+        await expect.poll(async () => {
+          const entries = await transientEntriesFor(page, BRANCH_SWITCH_PROJECT_ID);
+          return entries[0]?.sessionId;
+        }, { timeout: 8000, intervals: [50, 100, 200, 500] }).toBe('branch-switch-session-2');
+
+        await markFirstOutput(page, 'branch-switch-session-2');
+        await expect(page.getByTestId('command-terminal-window').locator('.xterm-helper-textarea').first())
+          .toBeAttached({ timeout: 8000 });
+
+        // Negative assertion, so a fixed budget rather than a poll: give the
+        // tripwire's effect (and any deferred console output) time to have
+        // fired by now if it was going to.
+        await page.waitForTimeout(500);
+
+        const tripwireErrors = consoleErrors.filter((text) => text.includes('[useTerminal] sessionId changed'));
+        expect(tripwireErrors).toEqual([]);
+      } finally {
+        await browser.close();
+      }
+    });
   });
 });
