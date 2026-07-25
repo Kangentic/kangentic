@@ -5,7 +5,8 @@ import {
   type ReadStreamResponsePayload,
   type TranscriptWindowResponsePayload,
 } from '@kangentic/protocol';
-import type { ActivityReason, ActivityState, SessionEvent, SessionUsage } from '../../../shared/types';
+import type { ActivityReason, ActivityState, SessionEvent, SessionUsage, TranscriptEntry } from '../../../shared/types';
+import { lastAssistantPreview } from '../message-preview';
 import { getProjectDb } from '../../db/database';
 import { resolveTaskTranscript } from '../../agent/transcript-service';
 import type { IpcContext } from '../../ipc/ipc-context';
@@ -81,6 +82,7 @@ function subscribeReadStream(
   const db = getProjectDb(context.sessionManager.getSessionProjectId(sessionId) ?? '');
   const transcriptSync = new TranscriptSync();
   let lastAwaitedPromptId = initialAwaitedPromptId;
+  let lastMessagePreview: string | null = null;
   let disposed = false;
   let pendingTerminalChunks: string[] = [];
   let pendingTerminalChars = 0;
@@ -107,9 +109,20 @@ function subscribeReadStream(
       for (const payload of transcriptSync.diff(resolved)) {
         sendEvent(session, { kind: 'transcript', sessionId, taskId, payload });
       }
+      pushMessagePreviewIfChanged(resolved.entries);
     } catch {
       // Best-effort; a transcript-read failure should not tear down the subscription.
     }
+  };
+
+  // The one line a phone's session list renders. Derived from the transcript
+  // we just resolved anyway, so the list costs no request of its own; sent
+  // only when the text actually changes, so an idle session is silent.
+  const pushMessagePreviewIfChanged = (entries: TranscriptEntry[]): void => {
+    const text = lastAssistantPreview(entries);
+    if (text === null || text === lastMessagePreview) return;
+    lastMessagePreview = text;
+    sendEvent(session, { kind: 'activity', sessionId, taskId, payload: { type: 'message-preview', text } });
   };
 
   // The snapshot's awaitedPromptId only covers a prompt outstanding AT
@@ -242,7 +255,12 @@ function subscribeReadStream(
   void (async (): Promise<void> => {
     try {
       const resolved = await resolveTaskTranscript(db, sessionId);
-      if (resolved) transcriptSync.seed(resolved);
+      if (!resolved) return;
+      transcriptSync.seed(resolved);
+      // The list's one line, delivered at subscribe rather than waiting for
+      // the session's next change: an idle session may never change again,
+      // and its card would otherwise have nothing to show.
+      if (!disposed) pushMessagePreviewIfChanged(resolved.entries);
     } catch {
       // Best-effort: an unseeded sync just means the first post-subscribe
       // change diffs against nothing and streams as plain appends.

@@ -70,7 +70,22 @@ export type ActivityEventPayload =
    * inferring it from silence. `intentional` distinguishes a deliberate
    * stop (desktop Stop button, suspend, shutdown) from a crash.
    */
-  | { type: 'session-ended'; intentional: boolean };
+  | { type: 'session-ended'; intentional: boolean }
+  /**
+   * The agent's most recent assistant message, already collapsed to a short
+   * plain-text preview, pushed whenever it changes.
+   *
+   * A phone's session list renders exactly one line per session. Deriving it
+   * client-side cost a transcript-window request per session (measured 2.3 to
+   * 34.6 KB each, to keep a string under 200 characters) plus 0.7 to 3.8
+   * seconds of desktop work per request. The desktop already resolves the
+   * transcript to compute its delta pushes, so it can carry the line for
+   * free on a feed the phone is receiving anyway.
+   *
+   * Absent from pre-0.8.0 desktops; a phone that sees none should fall back
+   * to whatever it can derive locally rather than showing nothing.
+   */
+  | { type: 'message-preview'; text: string };
 
 export interface ActivityEvent {
   kind: 'activity';
@@ -146,6 +161,10 @@ export function parseActivityEventPayload(payload: JsonValue): ActivityEventPayl
     case 'session-ended': {
       if (typeof payload.intentional !== 'boolean') throw new Error('session-ended payload is missing "intentional"');
       return { type: 'session-ended', intentional: payload.intentional };
+    }
+    case 'message-preview': {
+      if (typeof payload.text !== 'string') throw new Error('message-preview payload is missing "text"');
+      return { type: 'message-preview', text: payload.text };
     }
     default:
       throw new Error('activity payload has an unknown "type"');
