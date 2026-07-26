@@ -74,7 +74,10 @@ export function DescriptionEditor({
           (attachments, priority, branch, how-this-task-runs) fit or get pushed
           under the fold. At 280 a To Do task with attachments had to be scrolled
           to reach its own run-mode controls. */}
-      <div className="relative w-full bg-surface flex-1 min-h-[120px] overflow-hidden">
+      <div
+        className="relative w-full bg-surface flex-1 min-h-[120px] overflow-hidden"
+        data-testid="description-editor-body"
+      >
         {showPreview ? (
           <div
             className="absolute inset-0 px-3 py-2 overflow-y-auto"

@@ -54,10 +54,21 @@ test.describe('New Task Dialog Layout', () => {
     await openNewTaskDialog();
     const textarea = page.locator('textarea');
     await expect(textarea).toBeVisible();
-    // The editor body grows to fill a maximized dialog (flex-1) but keeps a
-    // 280px floor when the dialog is windowed.
-    const container = page.locator('.min-h-\\[280px\\]');
-    await expect(container).toBeVisible();
+
+    // The editor body grows to fill available space (flex-1) but keeps a floor
+    // so it never collapses.
+    //
+    // Asserted as the COMPUTED min-height, not a literal `.min-h-[280px]` class
+    // selector. That value is deliberately tuned - it is what decides whether
+    // the fields below the editor stay reachable without scrolling - so pinning
+    // the exact class breaks on every tune while testing nothing this test's
+    // own title claims. A floor that was REMOVED, the regression actually worth
+    // catching, still fails here.
+    const body = page.locator('[data-testid="description-editor-body"]');
+    await expect(body).toBeVisible();
+    const floorPx = await body.evaluate((element) => parseFloat(getComputedStyle(element).minHeight));
+    expect(floorPx).toBeGreaterThan(0);
+
     // Form is clean - Escape closes directly (no ConfirmDialog) and animates out.
     await page.keyboard.press('Escape');
   });
