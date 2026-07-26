@@ -26,6 +26,7 @@ import {
   parseBoardTaskWire,
   parseDiffFileContentWire,
   parseDiffFileListWire,
+  parseSessionSummaryWire,
   parseSessionUsageWire,
   parseTerminalDimensionsWire,
   parseTranscriptEntriesWire,
@@ -36,6 +37,7 @@ import {
   type BoardTaskWire,
   type DiffFileContentWire,
   type DiffFileListWire,
+  type SessionSummaryWire,
   type SessionUsageWire,
   type TerminalDimensionsWire,
   type TranscriptEntryWire,
@@ -230,8 +232,24 @@ export type ReadBoardView = 'full' | 'sessions';
 
 export interface ReadBoardRequestPayload {
   projectId?: string;
-  /** Defaults to 'subscribe' when omitted. 'unsubscribe' only has an effect when projectId is set - the no-projectId project list is a one-shot read with no live feed to tear down. */
-  action?: 'subscribe' | 'unsubscribe';
+  /**
+   * Defaults to 'subscribe' when omitted. 'unsubscribe' only has an effect
+   * when projectId is set - the no-projectId project list is a one-shot read
+   * with no live feed to tear down.
+   *
+   * 'archived' (protocol 0.10.0) is a one-shot page of the project's COMPLETED
+   * tasks, which no other projection carries: both 'full' and 'sessions' are
+   * built from the desktop's non-archived task list. It is deliberately not a
+   * field on the snapshot, because a board subscription re-snapshots on every
+   * board change - archived tasks would then repeat down the wire forever,
+   * which is the exact bloat the 0.9.0 projections removed. Completed work
+   * changes rarely and is read on demand.
+   */
+  action?: 'subscribe' | 'unsubscribe' | 'archived';
+  /** 'archived' only: page size, newest-archived first. The desktop clamps it. */
+  limit?: number;
+  /** 'archived' only: how many newest to skip, for paging. Defaults to 0. */
+  offset?: number;
   /**
    * subscribe only: the projection wanted (protocol 0.9.0). Omitted means the
    * legacy full board WITH the backlog.
@@ -297,7 +315,36 @@ export interface ReadBoardSnapshotResponsePayload {
   taskCountsByColumnId?: Record<string, number>;
 }
 
-export type ReadBoardResponsePayload = ReadBoardProjectListResponsePayload | ReadBoardSnapshotResponsePayload;
+/**
+ * Returned for `action: 'archived'` - one page of a project's completed tasks
+ * (protocol 0.10.0).
+ *
+ * These never appear in a board snapshot: the desktop builds those from its
+ * non-archived task list, so a phone that only ever subscribed has no way to
+ * know a completed task exists at all.
+ */
+export interface ReadBoardArchivedResponsePayload {
+  projectId: string;
+  /** Newest-archived first. At most the requested `limit`. */
+  archivedTasks: BoardTaskWire[];
+  /**
+   * Total archived tasks in the project, NOT the length of the page above.
+   * Drives the column count and tells the phone whether another page exists.
+   */
+  archivedTotalCount: number;
+  /**
+   * Lifetime cost/duration/churn per task id, for the tasks on THIS page that
+   * have recorded metrics. Sparse on purpose: a task archived without ever
+   * running an agent has nothing to summarize and is simply absent, which is
+   * not an error.
+   */
+  summariesByTaskId: Record<string, SessionSummaryWire>;
+}
+
+export type ReadBoardResponsePayload =
+  | ReadBoardProjectListResponsePayload
+  | ReadBoardSnapshotResponsePayload
+  | ReadBoardArchivedResponsePayload;
 
 const ACCENT_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
 
@@ -308,9 +355,25 @@ function parseAccentColor(value: unknown, context: string): string {
   return value;
 }
 
-/** Phone-side narrowing of a read-board response (project list or board snapshot). Throws on a malformed required field. */
+/** Phone-side narrowing of a read-board response (project list, board snapshot, or archived page). Throws on a malformed required field. */
 export function parseReadBoardResponsePayload(payload: JsonValue): ReadBoardResponsePayload {
   if (!isRecord(payload)) throw new Error('read-board response must be an object');
+
+  // Discriminated before the snapshot branch: an archived page also carries a
+  // projectId, but no `columns`, so testing it later would fail the snapshot's
+  // required-field checks first and report a confusing "missing columns".
+  if (Array.isArray(payload.archivedTasks)) {
+    if (typeof payload.projectId !== 'string') throw new Error('read-board archived response is missing "projectId"');
+    if (typeof payload.archivedTotalCount !== 'number') {
+      throw new Error('read-board archived response is missing "archivedTotalCount"');
+    }
+    return {
+      projectId: payload.projectId,
+      archivedTasks: payload.archivedTasks.map((task) => parseBoardTaskWire(task as JsonValue)),
+      archivedTotalCount: payload.archivedTotalCount,
+      summariesByTaskId: parseSummariesByTaskId(payload.summariesByTaskId),
+    };
+  }
 
   if (Array.isArray(payload.projects)) {
     const projects = payload.projects.map((project, index): ReadBoardProjectSummary => {
@@ -365,18 +428,58 @@ function parseTaskCountsByColumnId(value: unknown): Record<string, number> {
   return counts;
 }
 
+/**
+ * Narrows the archived page's per-task summaries. A malformed entry is
+ * dropped, matching parseTaskCountsByColumnId: the map is already sparse by
+ * design (a task that never ran an agent has no summary), so one bad entry
+ * costs that task its stat strip rather than costing the whole page.
+ */
+function parseSummariesByTaskId(value: unknown): Record<string, SessionSummaryWire> {
+  if (value === undefined) return {};
+  if (!isRecord(value)) throw new Error('read-board archived response has a non-object "summariesByTaskId"');
+  const summaries: Record<string, SessionSummaryWire> = {};
+  for (const [taskId, summary] of Object.entries(value)) {
+    try {
+      summaries[taskId] = parseSessionSummaryWire(summary as JsonValue);
+    } catch {
+      // Dropped deliberately; see the doc comment above.
+    }
+  }
+  return summaries;
+}
+
 function parseReadBoardRequestPayload(payload: JsonValue): ReadBoardRequestPayload {
   if (!isRecord(payload)) throw new Error('read-board payload must be an object');
   if (payload.projectId !== undefined && typeof payload.projectId !== 'string') {
     throw new Error('read-board payload has a non-string "projectId"');
   }
-  if (payload.action !== undefined && payload.action !== 'subscribe' && payload.action !== 'unsubscribe') {
+  if (
+    payload.action !== undefined
+    && payload.action !== 'subscribe'
+    && payload.action !== 'unsubscribe'
+    && payload.action !== 'archived'
+  ) {
     throw new Error('read-board payload has an invalid "action"');
   }
   if (payload.view !== undefined && payload.view !== 'full' && payload.view !== 'sessions') {
     throw new Error('read-board payload has an invalid "view"');
   }
-  return { projectId: payload.projectId, action: payload.action, view: payload.view };
+  // Rejected rather than clamped: a negative or fractional page bound is a
+  // caller bug, and silently repairing it here would hide it behind results
+  // that look plausible. The desktop still caps `limit` from above.
+  if (payload.limit !== undefined && (typeof payload.limit !== 'number' || !Number.isInteger(payload.limit) || payload.limit < 1)) {
+    throw new Error('read-board payload has an invalid "limit"');
+  }
+  if (payload.offset !== undefined && (typeof payload.offset !== 'number' || !Number.isInteger(payload.offset) || payload.offset < 0)) {
+    throw new Error('read-board payload has an invalid "offset"');
+  }
+  return {
+    projectId: payload.projectId,
+    action: payload.action,
+    view: payload.view,
+    limit: payload.limit,
+    offset: payload.offset,
+  };
 }
 
 // === read-diff ===

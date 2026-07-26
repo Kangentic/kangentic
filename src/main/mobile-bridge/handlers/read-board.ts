@@ -3,22 +3,28 @@ import {
   type BoardTaskWire,
   type CapabilityRequestMessage,
   type CapabilityResponseMessage,
+  type ReadBoardArchivedResponsePayload,
   type ReadBoardResponsePayload,
+  type SessionSummaryWire,
 } from '@kangentic/protocol';
 import { getProjectRepos } from '../../ipc/helpers/project-repos';
 import { getProjectDb } from '../../db/database';
 import { BacklogRepository } from '../../db/repositories/backlog-repository';
+import { SessionRepository } from '../../db/repositories/session-repository';
 import type { IpcContext } from '../../ipc/ipc-context';
 import type { BridgeSession } from '../session/bridge-session';
 import type { SubscriptionRegistry } from '../session/subscription-registry';
 import type { BoardChangedEvent } from '../board-event-bus';
 import { sendEvent } from './send-event';
 import { deriveProjectAccentColor } from './project-color';
-import { toBacklogItemWire, toBoardColumnWire, toBoardTaskWire, toWireJson } from './wire-mappers';
+import { toBacklogItemWire, toBoardColumnWire, toBoardTaskWire, toSessionSummaryWire, toWireJson } from './wire-mappers';
 
 function subscriptionKeyFor(projectId: string): string {
   return `board:${projectId}`;
 }
+
+/** Page size when the phone names none. The repository clamps to 100 regardless. */
+const ARCHIVED_PAGE_DEFAULT_LIMIT = 25;
 
 /** Non-archived tasks per column. TaskRepository.list() already excludes archived, so every task here counts. */
 function countTasksByColumnId(tasks: BoardTaskWire[]): Record<string, number> {
@@ -57,6 +63,29 @@ export async function handleReadBoard(
   }
 
   const repos = getProjectRepos(context, projectId);
+
+  // One-shot page of completed work. Deliberately NOT part of the snapshot
+  // and NOT subscribed: a board subscription re-snapshots on every board
+  // change, and archived tasks only grow, so folding them in would repeat an
+  // ever-larger payload for the life of the connection.
+  if (payload.action === 'archived') {
+    const page = repos.tasks.listArchivedPage(payload.limit ?? ARCHIVED_PAGE_DEFAULT_LIMIT, payload.offset ?? 0);
+    const sessionRepo = new SessionRepository(getProjectDb(projectId));
+    const summariesByTaskId: Record<string, SessionSummaryWire> = {};
+    for (const task of page.tasks) {
+      const summary = sessionRepo.getSummaryForTask(task.id);
+      // Sparse by design: a task archived without ever running an agent has
+      // nothing to summarize, which is a normal state rather than an error.
+      if (summary) summariesByTaskId[task.id] = toSessionSummaryWire(summary);
+    }
+    const archivedPayload: ReadBoardArchivedResponsePayload = {
+      projectId,
+      archivedTasks: page.tasks.map(toBoardTaskWire),
+      archivedTotalCount: page.totalCount,
+      summariesByTaskId,
+    };
+    return { type: 'capability-response', requestId: request.requestId, ok: true, payload: toWireJson(archivedPayload) };
+  }
   const allTasks = repos.tasks.list().map(toBoardTaskWire);
 
   // A phone that names a `view` (protocol 0.9.0) gets only what it renders:

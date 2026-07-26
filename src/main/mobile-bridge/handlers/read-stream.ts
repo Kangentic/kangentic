@@ -8,6 +8,7 @@ import {
 import type { ActivityReason, ActivityState, SessionEvent, SessionUsage, TranscriptEntry } from '../../../shared/types';
 import { lastAssistantPreview } from '../message-preview';
 import { getProjectDb } from '../../db/database';
+import { SessionRepository } from '../../db/repositories/session-repository';
 import { resolveTaskTranscript } from '../../agent/transcript-service';
 import type { IpcContext } from '../../ipc/ipc-context';
 import type { BridgeSession } from '../session/bridge-session';
@@ -54,6 +55,32 @@ const USAGE_COALESCE_MS = 2000;
 
 function subscriptionKeyFor(sessionId: string): string {
   return `stream:${sessionId}`;
+}
+
+/**
+ * Which project owns a session, for a session that may no longer be running.
+ *
+ * `sessionManager.getSessionProjectId` reads the LIVE registry, so it answers
+ * undefined for anything already exited or suspended - including every
+ * completed task the phone's Done column reads. The fallback asks each
+ * project's own database, which is where the session records outlive the PTY.
+ *
+ * The scan is per-project but each step is one indexed lookup against an
+ * already-cached connection, and it only runs on the fallback path (a live
+ * session never reaches it).
+ */
+function resolveProjectIdForSession(context: IpcContext, sessionId: string): string | null {
+  const liveProjectId = context.sessionManager.getSessionProjectId(sessionId);
+  if (liveProjectId) return liveProjectId;
+  for (const project of context.projectRepo.list()) {
+    try {
+      if (new SessionRepository(getProjectDb(project.id)).findByAnyId(sessionId)) return project.id;
+    } catch {
+      // A project whose database will not open cannot own the session as far
+      // as this read is concerned; keep looking rather than failing the request.
+    }
+  }
+  return null;
 }
 
 function currentAwaitedPromptId(context: IpcContext, sessionId: string): string | null {
@@ -318,18 +345,31 @@ export async function handleReadStream(
     return { type: 'capability-response', requestId: request.requestId, ok: true };
   }
 
-  const liveSession = context.sessionManager.getSession(payload.sessionId);
-  if (!liveSession) {
-    return { type: 'capability-response', requestId: request.requestId, ok: false, error: `No such session: ${payload.sessionId}` };
-  }
-
+  // Reading a transcript needs no live session, and must not require one: a
+  // completed task's conversation is the whole point of the phone's Done
+  // column, and by the time a task is archived its agent is long gone (the
+  // move to Done suspends the PTY and nulls task.session_id). The transcript
+  // itself outlives all of that - resolveTaskTranscript stitches it from the
+  // session RECORDS plus their JSONL on disk, both of which are preserved
+  // precisely so the work can be resumed or re-read later.
+  //
+  // Ordered ahead of the live-session gate rather than relaxing that gate,
+  // so every other action still requires a running session exactly as before.
   if (payload.action === 'transcript-window') {
-    const db = getProjectDb(context.sessionManager.getSessionProjectId(payload.sessionId) ?? '');
-    const resolved = await resolveTaskTranscript(db, payload.sessionId);
+    const projectId = resolveProjectIdForSession(context, payload.sessionId);
+    if (!projectId) {
+      return { type: 'capability-response', requestId: request.requestId, ok: false, error: `No such session: ${payload.sessionId}` };
+    }
+    const resolved = await resolveTaskTranscript(getProjectDb(projectId), payload.sessionId);
     const windowPayload: TranscriptWindowResponsePayload = resolved
       ? sliceTranscriptWindow(resolved, payload.beforeIndex, payload.limit)
       : { revision: 0, totalEntries: 0, startIndex: 0, entries: [] };
     return { type: 'capability-response', requestId: request.requestId, ok: true, payload: toWireJson(windowPayload) };
+  }
+
+  const liveSession = context.sessionManager.getSession(payload.sessionId);
+  if (!liveSession) {
+    return { type: 'capability-response', requestId: request.requestId, ok: false, error: `No such session: ${payload.sessionId}` };
   }
 
   // The mobile seed is the PARSED-grid serialized frame, not the raw byte

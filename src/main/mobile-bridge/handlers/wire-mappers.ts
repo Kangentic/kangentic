@@ -19,6 +19,7 @@ import {
   type JsonValue,
   type ReadStreamSessionStatusWire,
   type SessionEventWire,
+  type SessionSummaryWire,
   type SessionUsageWire,
   type TerminalDimensionsWire,
   type TranscriptBlockWire,
@@ -30,6 +31,7 @@ import type {
   BacklogTask,
   SessionEvent,
   SessionStatus,
+  SessionSummary,
   SessionUsage,
   Swimlane,
   Task,
@@ -169,6 +171,31 @@ export function toSessionUsageWire(usage: SessionUsage): SessionUsageWire {
       displayName: usage.model.displayName,
       ...(usage.model.effort !== undefined ? { effort: usage.model.effort } : {}),
     },
+  };
+}
+
+/**
+ * Lifetime session summary for a COMPLETED task. Drops the desktop's
+ * `toolBreakdown` (the renderer's per-tool table has no phone counterpart)
+ * and keeps everything the phone's summary actually renders.
+ */
+export function toSessionSummaryWire(summary: SessionSummary): SessionSummaryWire {
+  return {
+    sessionId: summary.sessionId,
+    totalCostUsd: summary.totalCostUsd,
+    totalInputTokens: summary.totalInputTokens,
+    totalOutputTokens: summary.totalOutputTokens,
+    modelDisplayName: summary.modelDisplayName,
+    durationMs: summary.durationMs,
+    toolCallCount: summary.toolCallCount,
+    compactionCount: summary.compactionCount,
+    linesAdded: summary.linesAdded,
+    linesRemoved: summary.linesRemoved,
+    filesChanged: summary.filesChanged,
+    taskCreatedAt: summary.taskCreatedAt,
+    startedAt: summary.startedAt,
+    exitedAt: summary.exitedAt,
+    exitCode: summary.exitCode,
   };
 }
 

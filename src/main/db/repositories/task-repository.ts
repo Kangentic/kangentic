@@ -234,6 +234,28 @@ export class TaskRepository {
   }
 
   /**
+   * One page of archived tasks, newest first, plus the total archived count.
+   *
+   * Sibling of `listArchivedPreview` for a caller that scrolls rather than
+   * previews: the mobile bridge's Done column pages through the archive, and
+   * neither existing method fits - `listArchivedPreview` has no offset, and
+   * `listArchived` loads the whole archive (the exact cost that method's own
+   * doc comment warns about) to serve one screenful.
+   */
+  listArchivedPage(limit: number, offset: number): ArchivedTasksPreview {
+    const boundedLimit = Math.max(1, Math.min(100, Math.floor(limit)));
+    const boundedOffset = Math.max(0, Math.floor(offset));
+    const { count } = this.db
+      .prepare('SELECT COUNT(*) AS count FROM tasks WHERE archived_at IS NOT NULL')
+      .get() as { count: number };
+    const rows = this.db.prepare(`${TaskRepository.SELECT_WITH_COUNT}
+      WHERE t.archived_at IS NOT NULL
+      ORDER BY t.archived_at DESC
+      LIMIT ? OFFSET ?`).all(boundedLimit, boundedOffset) as TaskRow[];
+    return { totalCount: count, tasks: rows.map(rowToTask) };
+  }
+
+  /**
    * Tasks in a given swimlane, including archived ones. Used by resource
    * cleanup where `archived_at` is not relevant to disk-state reconciliation
    * (e.g. retrying worktree removal for Done-role tasks whose initial
