@@ -116,6 +116,34 @@ test.describe('Release notes modal', () => {
     await expect(page.getByTestId('update-available-button')).toBeVisible();
   });
 
+  test('Escape dismisses the modal (BaseDialog\'s shared Escape handler) and leaves the reopenable indicator', async () => {
+    await fireUpdateDownloaded(page, { version: '9.9.9', releaseNotes: 'Some notes' });
+    const dialog = page.getByTestId('release-notes-dialog');
+    await expect(dialog).toBeVisible();
+
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+
+    await expect(page.getByTestId('update-available-button')).toBeVisible();
+  });
+
+  test('a markdown link in the notes body opens externally instead of navigating the window', async () => {
+    await fireUpdateDownloaded(page, {
+      version: '9.9.9',
+      releaseNotes: 'See the [full changelog](https://github.com/Kangentic/kangentic/compare/v9.9.8...v9.9.9) for details.',
+    });
+    const dialog = page.getByTestId('release-notes-dialog');
+    await expect(dialog).toBeVisible();
+
+    await dialog.getByRole('link', { name: 'full changelog' }).click();
+
+    const calls = await page.evaluate(() => window.__openedExternalUrls ?? []);
+    expect(calls).toEqual(['https://github.com/Kangentic/kangentic/compare/v9.9.8...v9.9.9']);
+    // preventDefault() in MarkdownRenderer's <a onClick> must stop the click from
+    // navigating the renderer window; the dialog staying open is proof it didn't.
+    await expect(dialog).toBeVisible();
+  });
+
   test('an auto-opened modal does not steal focus; reopening via the title-bar indicator traps it', async () => {
     // Anchor a known focus target before the update lands, so we can prove
     // the auto-opened modal never pulls focus away from it.
