@@ -12,6 +12,8 @@
  * Tier: Unit (vitest, no browser, no Electron - openExternal is injected).
  */
 import { describe, it, expect, vi } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 import { createExternalWindowOpenHandler } from '../../src/main/window-open-policy';
 
 // Flushes the setImmediate the handler defers openExternal into.
@@ -114,5 +116,28 @@ describe('createExternalWindowOpenHandler', () => {
     );
 
     warnSpy.mockRestore();
+  });
+});
+
+// createExternalWindowOpenHandler is fully covered above in isolation, but
+// nothing asserted it is actually WIRED into the main window's
+// web-contents-created handler in src/main/index.ts. Without this scan,
+// deleting the setWindowOpenHandler(createExternalWindowOpenHandler(...))
+// call silently restores Electron's default: a renderer window.open() spawns
+// a bare, chrome-less BrowserWindow with no policy at all. This mirrors the
+// same-PR precedent in tests/unit/terminal-link-handler.test.ts (which scans
+// useTerminal.ts for its linkHandler wiring) applied to the other wiring site
+// this change touches, and the existing src/main/index.ts static-scan
+// precedent in tests/unit/pop-out-surface-registry.test.ts.
+describe('createExternalWindowOpenHandler is wired into src/main/index.ts', () => {
+  it('calls setWindowOpenHandler(createExternalWindowOpenHandler(...)) for non-webview contents', () => {
+    const REPO_ROOT = path.resolve(__dirname, '../..');
+    const indexPath = path.join(REPO_ROOT, 'src/main/index.ts');
+    const source = fs.readFileSync(indexPath, 'utf-8');
+
+    expect(
+      source,
+      "src/main/index.ts must call contents.setWindowOpenHandler(createExternalWindowOpenHandler(...)) for non-webview contents, otherwise a renderer window.open() falls through to Electron's default: a bare, chrome-less BrowserWindow with no policy at all",
+    ).toMatch(/setWindowOpenHandler\(\s*createExternalWindowOpenHandler\(/);
   });
 });

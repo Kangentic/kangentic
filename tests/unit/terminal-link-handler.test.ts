@@ -34,6 +34,20 @@ describe('createTerminalLinkHandler', () => {
     const handler = createTerminalLinkHandler(vi.fn());
     expect(handler.allowNonHttpProtocols).toBeUndefined();
   });
+
+  it('warns with the [terminal-link-handler] prefix for a blocked link', () => {
+    const openExternal = vi.fn();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const handler = createTerminalLinkHandler(openExternal);
+
+    handler.activate(fakeEvent, 'javascript:alert(1)', fakeRange);
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[terminal-link-handler] Blocked link with disallowed scheme: javascript:alert(1)'),
+    );
+
+    warnSpy.mockRestore();
+  });
 });
 
 // allowNonHttpProtocols disables xterm's own http(s)-only OSC 8 filter (see

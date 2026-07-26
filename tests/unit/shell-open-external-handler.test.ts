@@ -160,4 +160,16 @@ describe('SHELL_OPEN_EXTERNAL IPC handler', () => {
     expect(() => invokeShellOpenExternalHandler(url)).not.toThrow();
     expect(mockShell.openExternal).not.toHaveBeenCalled();
   });
+
+  it('warns with the [SHELL_OPEN_EXTERNAL] prefix for a blocked URL', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    invokeShellOpenExternalHandler('file:///etc/passwd');
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[SHELL_OPEN_EXTERNAL] Blocked disallowed URL: file:///etc/passwd'),
+    );
+
+    warnSpy.mockRestore();
+  });
 });
