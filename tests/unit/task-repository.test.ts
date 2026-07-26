@@ -32,9 +32,15 @@ interface PreparedStatement {
  * Every `prepare(sql)` call appends a new PreparedStatement entry.
  * The returned statement object records the positional args from run/get/all
  * into that same entry so callers can assert on both SQL text and bindings.
+ *
+ * `setExistingRow` seeds the row `getById` (and therefore `update()` /
+ * `updateOverrides()`, which both call it internally) returns. Additive and
+ * backward-compatible: when unset, `WHERE t.id = ?` lookups still return
+ * `undefined` exactly as before, so every pre-existing test is unaffected.
  */
 function createSqlTracker() {
   const statements: PreparedStatement[] = [];
+  let existingRow: TaskRow | undefined;
 
   function makeStatement(sql: string): ReturnType<Database.Database['prepare']> {
     const entry: PreparedStatement = { sql, args: [] };
@@ -47,10 +53,17 @@ function createSqlTracker() {
       }),
       get: vi.fn((...args: unknown[]) => {
         entry.args = args;
+        // Row-shaped SELECT_WITH_COUNT lookups (getById and siblings) are
+        // checked FIRST and separately from the two aggregate checks below,
+        // because SELECT_WITH_COUNT's own attachment-count subquery contains
+        // the literal text "COUNT(*)" - matching the aggregate check first
+        // would misroute every single-row lookup into the `{ count: 0 }`
+        // branch instead of returning the seeded row.
+        if (sql.includes('SELECT t.*')) {
+          return sql.includes('WHERE t.id = ?') ? existingRow : undefined;
+        }
         // COUNT(*) queries expect a { count } row; the position/display_id
-        // COALESCE(MAX(...)) queries in create() expect a { max } row;
-        // everything else models a "not found" lookup, matching real
-        // better-sqlite3 semantics.
+        // COALESCE(MAX(...)) queries in create() expect a { max } row.
         if (/COUNT\(\*\)/i.test(sql)) return { count: 0 };
         if (/COALESCE\(MAX\(/i.test(sql)) return { max: -1 };
         return undefined;
@@ -82,7 +95,46 @@ function createSqlTracker() {
     pragma: vi.fn(() => []),
   } as unknown as Database.Database;
 
-  return { db, statements };
+  return { db, statements, setExistingRow: (row: TaskRow) => { existingRow = row; } };
+}
+
+/** A full DB row (labels pre-serialized) for seeding `getById` via `setExistingRow`. */
+function makeTaskRow(overrides: Partial<TaskRow> = {}): TaskRow {
+  return {
+    id: 'task-1',
+    display_id: 1,
+    title: 'Existing task',
+    description: '',
+    swimlane_id: 'lane-1',
+    position: 0,
+    agent: null,
+    session_id: null,
+    worktree_path: null,
+    branch_name: null,
+    pr_number: null,
+    pr_url: null,
+    pr_state: null,
+    head_sha: null,
+    external_id: null,
+    external_source: null,
+    external_url: null,
+    base_branch: null,
+    use_worktree: null,
+    labels: '[]',
+    priority: 0,
+    model_override: null,
+    effort_override: null,
+    agent_override: null,
+    permission_mode: null,
+    auto_command: null,
+    profile_id: null,
+    attachment_count: 0,
+    detail_view_state: null,
+    archived_at: null,
+    created_at: '2026-01-01T00:00:00.000Z',
+    updated_at: '2026-01-01T00:00:00.000Z',
+    ...overrides,
+  };
 }
 
 describe('TaskRepository SQL contracts', () => {
@@ -267,6 +319,112 @@ describe('TaskRepository SQL contracts', () => {
       const updatedAtArg = args[args.length - 1];
       expect(createdAtArg).toBe('2020-01-01T00:00:00.000Z');
       expect(updatedAtArg).not.toBe('2020-01-01T00:00:00.000Z');
+    });
+  });
+
+  describe('profile-vs-pin mutual exclusivity (applyProfileExclusivity)', () => {
+    // Board Profiles: a task either pins the four Advanced fields for its whole
+    // life OR rides a profile's per-column ladder, never both. Covered here on
+    // all three write paths that enforce it - create, update, updateOverrides -
+    // since each merges "what changed" differently and each has its own bug
+    // class if it reads intent from the merged result instead of the request.
+
+    describe('create()', () => {
+      it('a profile_id passed alongside a pin wins: the pin is dropped', () => {
+        const task = repo.create({
+          title: 'T', description: '', swimlane_id: 'lane-1',
+          profile_id: 'profile-1', model_override: 'opus',
+        });
+
+        expect(task.profile_id).toBe('profile-1');
+        expect(task.model_override).toBeNull();
+      });
+
+      it('a pin with no profile_id leaves profile_id null', () => {
+        const task = repo.create({
+          title: 'T', description: '', swimlane_id: 'lane-1', model_override: 'opus',
+        });
+
+        expect(task.model_override).toBe('opus');
+        expect(task.profile_id).toBeNull();
+      });
+
+      it('a profile_id with no pins carries the profile through untouched', () => {
+        const task = repo.create({
+          title: 'T', description: '', swimlane_id: 'lane-1', profile_id: 'profile-1',
+        });
+
+        expect(task.profile_id).toBe('profile-1');
+        expect(task.agent_override).toBeNull();
+        expect(task.model_override).toBeNull();
+        expect(task.effort_override).toBeNull();
+        expect(task.permission_mode).toBeNull();
+      });
+    });
+
+    describe('update()', () => {
+      it('pinning a model on a task currently riding a profile switches it to Custom (clears profile_id)', () => {
+        // This is the scenario the JSDoc calls out by name: deciding exclusivity
+        // from the MERGED result (which still carries the inherited profile_id)
+        // instead of from what the caller asked to change would silently
+        // re-clear the very pin the caller just requested.
+        tracker.setExistingRow(makeTaskRow({ profile_id: 'profile-1', model_override: null }));
+
+        const updated = repo.update({ id: 'task-1', model_override: 'sonnet' });
+
+        expect(updated.model_override).toBe('sonnet');
+        expect(updated.profile_id).toBeNull();
+      });
+
+      it('setting profile_id clears all four existing pins, even ones untouched by this call', () => {
+        tracker.setExistingRow(makeTaskRow({
+          model_override: 'sonnet', effort_override: 'high',
+          agent_override: 'claude', permission_mode: 'default', profile_id: null,
+        }));
+
+        const updated = repo.update({ id: 'task-1', profile_id: 'profile-2' });
+
+        expect(updated.profile_id).toBe('profile-2');
+        expect(updated.model_override).toBeNull();
+        expect(updated.effort_override).toBeNull();
+        expect(updated.agent_override).toBeNull();
+        expect(updated.permission_mode).toBeNull();
+      });
+
+      it('an unrelated field update leaves an existing profile_id and pins untouched', () => {
+        tracker.setExistingRow(makeTaskRow({ profile_id: 'profile-1' }));
+
+        const updated = repo.update({ id: 'task-1', title: 'Renamed' });
+
+        expect(updated.title).toBe('Renamed');
+        expect(updated.profile_id).toBe('profile-1');
+      });
+    });
+
+    describe('updateOverrides()', () => {
+      it('pinning a model via the ContextBar popover detaches the task from its profile', () => {
+        tracker.setExistingRow(makeTaskRow({ profile_id: 'profile-1' }));
+
+        repo.updateOverrides('task-1', { model_override: 'opus' });
+
+        const updateStatement = tracker.statements.find((s) => s.sql.includes('UPDATE tasks SET model_override'));
+        expect(updateStatement).toBeDefined();
+        const [modelArg, , profileIdArg] = updateStatement!.args;
+        expect(modelArg).toBe('opus');
+        expect(profileIdArg).toBeNull();
+      });
+
+      it('clearing an override to null is not a pin and leaves profile_id intact', () => {
+        tracker.setExistingRow(makeTaskRow({ profile_id: 'profile-1', model_override: 'opus' }));
+
+        repo.updateOverrides('task-1', { model_override: null });
+
+        const updateStatement = tracker.statements.find((s) => s.sql.includes('UPDATE tasks SET model_override'));
+        expect(updateStatement).toBeDefined();
+        const [modelArg, , profileIdArg] = updateStatement!.args;
+        expect(modelArg).toBeNull();
+        expect(profileIdArg).toBe('profile-1');
+      });
     });
   });
 });
