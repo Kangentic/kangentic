@@ -96,6 +96,36 @@ describe('session-send coordinator', () => {
     });
   });
 
+  it('still resolves "delivered" when the recorder throws, per "provenance is best-effort"', async () => {
+    // record() wraps recordSentMessage in try/catch specifically so a failing
+    // provenance write (e.g. a locked SQLite handle) cannot turn a message that
+    // actually landed in the target's PTY into a thrown error out of the tool
+    // handler - the delivery already happened and cannot be undone.
+    const sessionManager = createFakeSessionManager({ writable: ['target'], activity: { target: 'idle' } });
+    const submitContent = vi.fn(() => Promise.resolve());
+    const recordSentMessage = vi.fn(() => {
+      throw new Error('db locked');
+    });
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const coordinator = createSessionSendCoordinator({ sessionManager, terminalSubmit: { submitContent } });
+
+    const outcome = await coordinator.send({
+      targetSessionId: 'target',
+      message: 'go',
+      deliverWhen: 'now',
+      recordSentMessage,
+    });
+
+    // Red: removing the try/catch around `recordSentMessage?.(...)` in
+    // session-send.ts's `record` makes this reject with "db locked" instead of
+    // resolving.
+    expect(outcome).toMatchObject({ status: 'delivered' });
+    expect(submitContent).toHaveBeenCalledTimes(1);
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('db locked'));
+    consoleErrorSpy.mockRestore();
+    coordinator.dispose();
+  });
+
   it('records a refusal so "did my message go through?" always has an answer', async () => {
     const sessionManager = createFakeSessionManager({ writable: [] });
     const submitContent = vi.fn(() => Promise.resolve());

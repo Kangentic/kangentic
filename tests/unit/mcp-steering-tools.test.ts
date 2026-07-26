@@ -405,6 +405,25 @@ describe('kangentic_send_session_message registration', () => {
       expect(payload.messages).toHaveLength(2);
     });
 
+    it('resolves a taskId and reads via listForTask, not listForSession(taskId)', async () => {
+      // storedSentMessages carries session_id 'target-session', which is NOT
+      // task-uuid-target (the id 'task-uuid-target' resolves to for display_id
+      // 42). The mocked listForSession filters by session_id === the id it is
+      // given, so calling it with the task's id (a plausible copy-paste
+      // regression: `repository.listForSession(task.id)` instead of
+      // `repository.listForTask(task.id)`) would return 0 rows here, not 2.
+      storedSentMessages = [
+        { session_id: 'target-session', message: 'one', status: 'delivered', error: null },
+        { session_id: 'target-session', message: 'two', status: 'failed', error: 'no-submission-evidence' },
+      ];
+      const { handler } = captureReadTool();
+
+      const result = await handler({ taskId: '42' });
+      const payload = JSON.parse(result.content[0].text) as { total: number; returned: number; messages: unknown[] };
+
+      expect(payload).toMatchObject({ total: 2, returned: 2 });
+    });
+
     it('filters to a single status so failures can be isolated', async () => {
       storedSentMessages = [
         { session_id: 'target-session', message: 'ok', status: 'delivered', error: null },
