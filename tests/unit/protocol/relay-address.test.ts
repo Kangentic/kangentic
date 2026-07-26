@@ -44,6 +44,18 @@ describe('isSecureRelayAddress', () => {
     expect(isSecureRelayAddress('ws://[::1]evil.com')).toBe(false);
   });
 
+  it('rejects userinfo that disguises the real host as loopback', () => {
+    // Everything before an '@' in an authority is credentials, so each of
+    // these dials evil.test. The pairing token IS the Noise PSK and is dialed
+    // verbatim as ?slot=, so accepting one would hand the PSK to an
+    // attacker-chosen host in cleartext, and the pairing would then persist
+    // that host to the trust anchor for every later session.
+    expect(isSecureRelayAddress('ws://127.0.0.1:8080@evil.test')).toBe(false);
+    expect(isSecureRelayAddress('ws://localhost@evil.test')).toBe(false);
+    expect(isSecureRelayAddress('ws://[::1]:8080@evil.test')).toBe(false);
+    expect(isSecureRelayAddress('ws://user:pass@127.0.0.1')).toBe(false);
+  });
+
   it('rejects a plain non-loopback ws:// address', () => {
     expect(isSecureRelayAddress('ws://relay.kangentic.com')).toBe(false);
     expect(isSecureRelayAddress('ws://my-server.example.com')).toBe(false);
