@@ -55,6 +55,7 @@ export {
   type ReadBoardRequestPayload,
   type ReadBoardView,
   type ReadBoardProjectSummary,
+  type ReadBoardProjectGroup,
   type ReadBoardProjectListResponsePayload,
   type ReadBoardSnapshotResponsePayload,
   type ReadBoardArchivedResponsePayload,

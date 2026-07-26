@@ -42,10 +42,19 @@ export async function handleReadBoard(
   const payload = parseCapabilityRequestPayload('read-board', request.payload);
 
   if (!payload.projectId) {
-    const projects = context.projectRepo
+    const projects = context.projectRepo.list().map((project) => ({
+      id: project.id,
+      name: project.name,
+      color: deriveProjectAccentColor(project.id),
+      // Structure the desktop sidebar already shows, so the phone's picker can
+      // render the same grouping instead of one flat list (protocol 0.11.0).
+      groupId: project.group_id,
+      position: project.position,
+    }));
+    const groups = context.projectGroupRepo
       .list()
-      .map((project) => ({ id: project.id, name: project.name, color: deriveProjectAccentColor(project.id) }));
-    const responsePayload: ReadBoardResponsePayload = { projects };
+      .map((group) => ({ id: group.id, name: group.name, position: group.position }));
+    const responsePayload: ReadBoardResponsePayload = { projects, groups };
     return { type: 'capability-response', requestId: request.requestId, ok: true, payload: toWireJson(responsePayload) };
   }
 

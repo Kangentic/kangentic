@@ -268,9 +268,29 @@ export interface ReadBoardRequestPayload {
   view?: ReadBoardView;
 }
 
+/**
+ * A desktop project group ("KANGENTIC", "TROY WEB"), for a phone rendering
+ * its project list with the same structure the desktop sidebar shows
+ * (protocol 0.11.0).
+ */
+export interface ReadBoardProjectGroup {
+  id: string;
+  name: string;
+  /** Display order among groups. */
+  position: number;
+}
+
 export interface ReadBoardProjectSummary {
   id: string;
   name: string;
+  /**
+   * The group this project belongs to, or null/absent for an ungrouped one
+   * (protocol 0.11.0). Absent from an older desktop, which is indistinguishable
+   * from ungrouped and renders the same flat list as before.
+   */
+  groupId?: string | null;
+  /** Display order within the group, mirroring the desktop's own ordering (protocol 0.11.0). */
+  position?: number;
   /**
    * Accent color for this project ("#rrggbb"). Today the desktop derives
    * it deterministically from the project id; a user-set project color
@@ -283,6 +303,12 @@ export interface ReadBoardProjectSummary {
 /** Returned when the request omits projectId - the phone's project-bootstrap listing. */
 export interface ReadBoardProjectListResponsePayload {
   projects: ReadBoardProjectSummary[];
+  /**
+   * The desktop's project groups, in display order (protocol 0.11.0). Absent
+   * from an older desktop; a phone that gets none renders one flat list, which
+   * is exactly the pre-0.11.0 behaviour.
+   */
+  groups?: ReadBoardProjectGroup[];
 }
 
 /** Returned when the request carries a projectId - a snapshot of that project's board. */
@@ -384,9 +410,21 @@ export function parseReadBoardResponsePayload(payload: JsonValue): ReadBoardResp
         id: project.id,
         name: project.name,
         ...(project.color !== undefined ? { color: parseAccentColor(project.color, `read-board project ${index}`) } : {}),
+        ...(typeof project.groupId === 'string' ? { groupId: project.groupId } : {}),
+        ...(typeof project.position === 'number' ? { position: project.position } : {}),
       };
     });
-    return { projects };
+    // A malformed group is dropped rather than failing the whole listing: the
+    // projects are what the phone cannot work without, and grouping degrades
+    // to the flat list it rendered before 0.11.0.
+    const groups = Array.isArray(payload.groups)
+      ? payload.groups.flatMap((group): ReadBoardProjectGroup[] =>
+          isRecord(group) && typeof group.id === 'string' && typeof group.name === 'string' && typeof group.position === 'number'
+            ? [{ id: group.id, name: group.name, position: group.position }]
+            : [],
+        )
+      : undefined;
+    return { projects, ...(groups !== undefined ? { groups } : {}) };
   }
 
   if (typeof payload.projectId !== 'string') throw new Error('read-board response is missing "projectId"');
