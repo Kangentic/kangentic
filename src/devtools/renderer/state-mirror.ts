@@ -7,6 +7,7 @@ import { usePopOutStore } from '../../renderer/stores/pop-out-store';
 import { useProjectStore } from '../../renderer/stores/project-store';
 import { useSessionStore } from '../../renderer/stores/session-store';
 import { useToastStore } from '../../renderer/stores/toast-store';
+import { useUpdaterStore } from '../../renderer/stores/updater-store';
 import { useUsageDashboardStore } from '../../renderer/stores/usage-dashboard-store';
 import type { RendererStateSnapshot, StoreStateResult } from '../shared/types';
 import { readStoreStateFrom, type ReadableStore } from './store-state';
@@ -76,6 +77,7 @@ const PREVIEW_STORES: Record<string, ReadableStore> = {
   project: useProjectStore,
   session: useSessionStore,
   toast: useToastStore,
+  updater: useUpdaterStore,
   // Quoted because the file stem is kebab-case (usage-dashboard-store.ts);
   // the completeness test matches the key to the filename stem.
   'usage-dashboard': useUsageDashboardStore,
