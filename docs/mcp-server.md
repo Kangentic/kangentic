@@ -359,9 +359,15 @@ Update a task's title, description (full replace, in-place find/replace edits, o
 | `model` | string | No | Model override for this task (e.g. `"opus"`, `"claude-opus-4-8"`, or the friendly `"Opus 4.8"`). Best-effort friendly-name resolution. Pass empty string to clear. |
 | `effort` | string | No | Effort/reasoning level override for this task (e.g. `"xhigh"`). Pass empty string to clear. |
 | `permissionMode` | string | No | Permission mode override for this task: `"default"`, `"plan"`, `"acceptEdits"`, `"dontAsk"`, `"bypassPermissions"`, or `"auto"`. Pass empty string to clear. |
+| `profile` | string | No | Board Profile this task rides (name or id) - an alternate set of per-column agent/model/effort settings, applied as the task moves. Pass empty string to clear it back to "Default". See [Board Profiles](#board-profiles). |
 | `attachments` | array | No | File attachments to ADD to the task: `[{ filePath: string, filename?: string }]`. Additive - existing attachments are kept, not replaced. Use `kangentic_remove_task_attachment` to remove one. |
 
 At least one updatable field is required.
+
+`profile` is **mutually exclusive** with `model` / `effort` / `permissionMode` (and the task's
+`agent_override`): setting a profile clears the pins and setting any pin clears the profile, so
+passing both in one call is rejected rather than silently discarding one side. An unknown profile
+name is an error, not a fall back to Default.
 
 ### kangentic_link_pr
 
