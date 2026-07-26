@@ -8,6 +8,7 @@ import { readFileAsAttachment } from '../../db/repositories/attachment-utils';
 import { resolveColumn } from './column-resolver';
 import { resolveTask } from './task-resolver';
 import { handleCreateBacklogTask, BACKLOG_DESCRIPTION_MAX_LENGTH } from './backlog-commands';
+import { resolveProfileSelector } from './profile-commands';
 import { linkPRForTask } from '../../pr/pr-linking';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
 import type { TaskUpdateInput, PermissionMode } from '../../../shared/types';
@@ -95,6 +96,7 @@ export const handleCreateTask: CommandHandler = (
   const effortOverride = params.effortOverride as string | null;
   const permissionMode = params.permissionMode as PermissionMode | null;
   const autoCommand = params.autoCommand as string | null;
+  const profileSelector = params.profile as string | null;
 
   // Observability for the "labels dropped on a large description" bug
   // (task #229). Logs what `labels` actually reached the handler. If it is
@@ -148,6 +150,15 @@ export const handleCreateTask: CommandHandler = (
     return { success: false, error: 'Priority must be 0-4 (0=none, 1=low, 2=medium, 3=high, 4=urgent)' };
   }
 
+  // Resolved BEFORE the row is written: a typoed profile name must fail the
+  // create outright rather than leave a task silently running Default.
+  let profileId: string | null = null;
+  if (profileSelector) {
+    const resolvedProfile = resolveProfileSelector(context, profileSelector);
+    if (!resolvedProfile.ok) return { success: false, error: resolvedProfile.error };
+    profileId = resolvedProfile.profileId;
+  }
+
   const db = context.getProjectDb();
   const taskRepo = new TaskRepository(db);
 
@@ -171,6 +182,7 @@ export const handleCreateTask: CommandHandler = (
     ...(effortOverride ? { effort_override: effortOverride } : {}),
     ...(permissionMode ? { permission_mode: permissionMode } : {}),
     ...(autoCommand ? { auto_command: autoCommand } : {}),
+    ...(profileId ? { profile_id: profileId } : {}),
   });
 
   // Persist label colors to config if any were provided
@@ -220,6 +232,7 @@ export const handleUpdateTask: CommandHandler = (
   const newModel = params.model as string | null | undefined;
   const newEffort = params.effort as string | null | undefined;
   const newPermissionMode = params.permissionMode as PermissionMode | null | undefined;
+  const newProfileSelector = params.profile as string | null | undefined;
   const newAttachments = params.attachments as Array<{ filePath: string; filename?: string }> | null;
 
   // Observability for the "labels dropped on a large description" bug
@@ -284,6 +297,18 @@ export const handleUpdateTask: CommandHandler = (
   if (newModel !== undefined) updates.model_override = newModel;
   if (newEffort !== undefined) updates.effort_override = newEffort;
   if (newPermissionMode !== undefined) updates.permission_mode = newPermissionMode;
+  // Same tri-state, plus a name-to-id resolution. An unknown name fails the
+  // whole update rather than clearing the task's profile, which is what `null`
+  // would otherwise mean here.
+  if (newProfileSelector !== undefined) {
+    if (newProfileSelector === null) {
+      updates.profile_id = null;
+    } else {
+      const resolvedProfile = resolveProfileSelector(context, newProfileSelector);
+      if (!resolvedProfile.ok) return { success: false, error: resolvedProfile.error };
+      updates.profile_id = resolvedProfile.profileId;
+    }
+  }
 
   const hasScalarChange = Object.keys(updates).length > 1;
   let updated = hasScalarChange ? taskRepo.update(updates as unknown as TaskUpdateInput) : task;
@@ -334,6 +359,7 @@ export const handleUpdateTask: CommandHandler = (
   if (newModel !== undefined) changedFields.push('model');
   if (newEffort !== undefined) changedFields.push('effort');
   if (newPermissionMode !== undefined) changedFields.push('permissionMode');
+  if (newProfileSelector !== undefined) changedFields.push('profile');
   if (attachmentsAdded > 0) changedFields.push('attachments');
 
   return {
@@ -354,6 +380,7 @@ export const handleUpdateTask: CommandHandler = (
       modelOverride: updated.model_override,
       effortOverride: updated.effort_override,
       permissionMode: updated.permission_mode,
+      profileId: updated.profile_id,
       ...(newAttachments !== null ? { attachmentCount: updated.attachment_count, attachmentsAdded } : {}),
     },
   };

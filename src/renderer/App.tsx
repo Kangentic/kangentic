@@ -515,6 +515,22 @@ export function App() {
         useBoardStore.getState().loadShortcuts();
       }));
     }
+    if (boardConfig?.onBoardProfilesChanged) {
+      // An agent (MCP) rewrote the profiles. Unlike a column edit this raises no
+      // BOARD_CONFIG_CHANGED, so without this the live profile pickers
+      // (ProfilePicker, AdvancedOverridesSection) would keep showing the
+      // pre-edit list. An already-open Column Manager deliberately does NOT
+      // adopt the change - it snapshots its profile drafts once on mount so an
+      // external write cannot clobber in-progress edits.
+      //
+      // Filtered by project: an agent can retune a BACKGROUND project's
+      // profiles, and `getBoardProfiles()` always reads the ACTIVE board, so an
+      // unfiltered reload would refetch the wrong project's list for no reason.
+      cleanups.push(boardConfig.onBoardProfilesChanged((changedProjectId) => {
+        if (changedProjectId !== useProjectStore.getState().currentProject?.id) return;
+        useBoardStore.getState().loadBoardProfiles();
+      }));
+    }
 
     // Agent-driven board/backlog/swimlane/label-color push handlers
     // and their debouncers live in `useAgentDrivenInvalidation` so the
@@ -657,6 +673,7 @@ if (import.meta.hot) {
     useConfigStore.getState().loadConfig();
     useConfigStore.getState().loadAgentList();
     useBoardStore.getState().loadBoard();
+    useBoardStore.getState().loadBoardProfiles();
     useBacklogStore.getState().loadBacklog();
     useMobileStore.getState().loadStatus();
     useMobileStore.getState().loadDevices();

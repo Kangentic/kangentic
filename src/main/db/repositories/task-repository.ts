@@ -15,6 +15,49 @@ function rowToTask(row: TaskRow): Task {
   return { ...row, labels };
 }
 
+/**
+ * The four "Advanced pin" fields. A task either pins these for its whole life OR
+ * rides a Board Profile's per-column ladder - never both.
+ *
+ * `auto_command` is deliberately absent: it is an MCP-only escape hatch rather
+ * than an Advanced pin, so a task may carry it alongside a profile. It is also
+ * absent from `hasAnyOverrideSet` in spawn-preamble.ts, which is why an
+ * MCP-set auto-command never trips the first-spawn lock.
+ */
+const ADVANCED_PIN_FIELDS = ['agent_override', 'model_override', 'effort_override', 'permission_mode'] as const;
+
+type AdvancedPinFields = Pick<Task, typeof ADVANCED_PIN_FIELDS[number]>;
+type ExclusiveFields = AdvancedPinFields & Pick<Task, 'profile_id'>;
+
+/**
+ * Enforce profile-vs-pin mutual exclusivity, deciding by what the CALLER asked
+ * for rather than by the merged result.
+ *
+ * This is the single write-time chokepoint for the invariant, so IPC, MCP, and
+ * every other caller inherit it rather than each remembering the rule. It is
+ * load-bearing beyond tidiness: `lockAdvancedOverridesOnFirstSpawn` gates on
+ * "does this task have any pin set", so a profile task that also carried a pin
+ * would get all four frozen to its first column's values and its ladder would
+ * silently flatten.
+ *
+ * `requested` must contain only the fields the caller explicitly provided
+ * (`undefined` = untouched). Reading intent from `requested` rather than from the
+ * merged `next` is what makes "pin a model on a task that currently rides a
+ * profile" do the obvious thing - switch it to Custom - instead of the merged
+ * view seeing a non-null profile_id and throwing the new pin away.
+ *
+ * When one call sets both, the profile wins: selecting a profile is the more
+ * specific intent, and it is how the UI expresses "switch this task off its
+ * Custom pins onto a ladder".
+ */
+function applyProfileExclusivity(next: ExclusiveFields, requested: Partial<ExclusiveFields>): ExclusiveFields {
+  if (requested.profile_id != null) {
+    return { ...next, agent_override: null, model_override: null, effort_override: null, permission_mode: null };
+  }
+  const pinsAnyField = ADVANCED_PIN_FIELDS.some((field) => requested[field] != null);
+  return pinsAnyField ? { ...next, profile_id: null } : next;
+}
+
 export class TaskRepository {
   constructor(private db: Database.Database) {}
 
@@ -88,6 +131,14 @@ export class TaskRepository {
     const labels = input.labels ?? [];
     const priority = input.priority ?? 0;
 
+    const exclusive = applyProfileExclusivity({
+      agent_override: input.agent_override ?? null,
+      model_override: input.model_override ?? null,
+      effort_override: input.effort_override ?? null,
+      permission_mode: input.permission_mode ?? null,
+      profile_id: input.profile_id ?? null,
+    }, input);
+
     const task: Task = {
       id,
       display_id: displayId,
@@ -110,11 +161,12 @@ export class TaskRepository {
       use_worktree: input.useWorktree != null ? (input.useWorktree ? 1 : 0) : null,
       labels,
       priority,
-      model_override: input.model_override ?? null,
-      effort_override: input.effort_override ?? null,
-      agent_override: input.agent_override ?? null,
-      permission_mode: input.permission_mode ?? null,
+      model_override: exclusive.model_override,
+      effort_override: exclusive.effort_override,
+      agent_override: exclusive.agent_override,
+      permission_mode: exclusive.permission_mode,
       auto_command: input.auto_command ?? null,
+      profile_id: exclusive.profile_id,
       attachment_count: 0,
       detail_view_state: null,
       archived_at: null,
@@ -123,9 +175,9 @@ export class TaskRepository {
     };
 
     this.db.prepare(`
-      INSERT INTO tasks (id, display_id, title, description, swimlane_id, position, agent, session_id, worktree_path, branch_name, pr_number, pr_url, pr_state, head_sha, external_id, external_source, external_url, base_branch, use_worktree, labels, priority, model_override, effort_override, agent_override, permission_mode, auto_command, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(task.id, task.display_id, task.title, task.description, task.swimlane_id, task.position, task.agent, task.session_id, task.worktree_path, task.branch_name, task.pr_number, task.pr_url, task.pr_state, task.head_sha, task.external_id, task.external_source, task.external_url, task.base_branch, task.use_worktree, JSON.stringify(labels), task.priority, task.model_override, task.effort_override, task.agent_override, task.permission_mode, task.auto_command, task.created_at, task.updated_at);
+      INSERT INTO tasks (id, display_id, title, description, swimlane_id, position, agent, session_id, worktree_path, branch_name, pr_number, pr_url, pr_state, head_sha, external_id, external_source, external_url, base_branch, use_worktree, labels, priority, model_override, effort_override, agent_override, permission_mode, auto_command, profile_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(task.id, task.display_id, task.title, task.description, task.swimlane_id, task.position, task.agent, task.session_id, task.worktree_path, task.branch_name, task.pr_number, task.pr_url, task.pr_state, task.head_sha, task.external_id, task.external_source, task.external_url, task.base_branch, task.use_worktree, JSON.stringify(labels), task.priority, task.model_override, task.effort_override, task.agent_override, task.permission_mode, task.auto_command, task.profile_id, task.created_at, task.updated_at);
 
     return task;
   }
@@ -134,16 +186,20 @@ export class TaskRepository {
     const existing = this.getById(input.id);
     if (!existing) throw new Error(`Task ${input.id} not found`);
 
-    const updated: Task = {
+    const merged: Task = {
       ...existing,
       ...Object.fromEntries(Object.entries(input).filter(([_, v]) => v !== undefined)),
       updated_at: new Date().toISOString(),
     };
+    // Decide exclusivity from `input` (what the caller asked to change), not
+    // `merged` - otherwise pinning a model on a task that currently rides a
+    // profile would see the inherited profile_id and discard the new pin.
+    const updated: Task = { ...merged, ...applyProfileExclusivity(merged, input) };
 
     this.db.prepare(`
-      UPDATE tasks SET title = ?, description = ?, swimlane_id = ?, position = ?, agent = ?, session_id = ?, worktree_path = ?, branch_name = ?, pr_number = ?, pr_url = ?, pr_state = ?, head_sha = ?, base_branch = ?, use_worktree = ?, labels = ?, priority = ?, model_override = ?, effort_override = ?, agent_override = ?, permission_mode = ?, updated_at = ?
+      UPDATE tasks SET title = ?, description = ?, swimlane_id = ?, position = ?, agent = ?, session_id = ?, worktree_path = ?, branch_name = ?, pr_number = ?, pr_url = ?, pr_state = ?, head_sha = ?, base_branch = ?, use_worktree = ?, labels = ?, priority = ?, model_override = ?, effort_override = ?, agent_override = ?, permission_mode = ?, profile_id = ?, updated_at = ?
       WHERE id = ?
-    `).run(updated.title, updated.description, updated.swimlane_id, updated.position, updated.agent, updated.session_id, updated.worktree_path, updated.branch_name, updated.pr_number, updated.pr_url, updated.pr_state, updated.head_sha, updated.base_branch, updated.use_worktree, JSON.stringify(updated.labels), updated.priority, updated.model_override, updated.effort_override, updated.agent_override, updated.permission_mode, updated.updated_at, updated.id);
+    `).run(updated.title, updated.description, updated.swimlane_id, updated.position, updated.agent, updated.session_id, updated.worktree_path, updated.branch_name, updated.pr_number, updated.pr_url, updated.pr_state, updated.head_sha, updated.base_branch, updated.use_worktree, JSON.stringify(updated.labels), updated.priority, updated.model_override, updated.effort_override, updated.agent_override, updated.permission_mode, updated.profile_id, updated.updated_at, updated.id);
 
     return updated;
   }
@@ -153,15 +209,29 @@ export class TaskRepository {
    * from `patch` is left untouched; passing `null` clears that override.
    * Used by the ContextBar popover (`task:setRuntimeOverride` IPC) so that
    * we don't have to load the full task and re-write every column.
+   *
+   * Pinning a value here is a pin like any other, so it clears `profile_id` via
+   * the same exclusivity rule. This DOES fire in practice: `ModelEffortPicker`
+   * (the ContextBar / PreSpawnContextBar model and effort pills) has no
+   * awareness of `profile_id`, so picking a concrete model or effort on a task
+   * riding a profile detaches it from the ladder here, with no confirmation in
+   * the UI. Clearing a value to null is not a pin and leaves `profile_id`
+   * intact. Gating the picker on `profile_id` is a deliberate open question
+   * (block, warn, or allow); until it is answered this repository is the only
+   * enforcement point, which is why the rule lives here rather than in the UI.
    */
   updateOverrides(taskId: string, patch: { model_override?: string | null; effort_override?: string | null }): void {
     const existing = this.getById(taskId);
     if (!existing) throw new Error(`Task ${taskId} not found`);
     const newModel = patch.model_override !== undefined ? patch.model_override : existing.model_override;
     const newEffort = patch.effort_override !== undefined ? patch.effort_override : existing.effort_override;
+    const exclusive = applyProfileExclusivity(
+      { ...existing, model_override: newModel, effort_override: newEffort },
+      patch,
+    );
     this.db.prepare(
-      'UPDATE tasks SET model_override = ?, effort_override = ?, updated_at = ? WHERE id = ?',
-    ).run(newModel, newEffort, new Date().toISOString(), taskId);
+      'UPDATE tasks SET model_override = ?, effort_override = ?, profile_id = ?, updated_at = ? WHERE id = ?',
+    ).run(exclusive.model_override, exclusive.effort_override, exclusive.profile_id, new Date().toISOString(), taskId);
   }
 
   /**

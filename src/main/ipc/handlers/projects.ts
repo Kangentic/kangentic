@@ -309,6 +309,41 @@ function getLastProjectOverrides(
 }
 
 /**
+ * The model / effort defaults a NEW project should start with, taken from the
+ * most recently opened project that has either set.
+ *
+ * These live on the `projects` row, not in `.kangentic/config.json`, so
+ * `getLastProjectOverrides` above never covered them and a new project always
+ * started at "Agent default" - visibly different from every existing project
+ * even when the user had configured the same preference everywhere. It shows up
+ * most sharply in an ephemeral `/preview` project, where the placeholders in the
+ * New Task dialog read differently than in the instance being previewed.
+ *
+ * Same inheritance rule as the config subset: prefer the last configured
+ * project, fall back to nothing (which resolves to the agent's own default).
+ * `default_agent` is deliberately NOT inherited here - it is resolved by
+ * detection (`resolveDefaultAgent`), so an installed-agent change is picked up
+ * rather than a stale name being copied forward.
+ */
+export function getLastProjectAgentDefaults(
+  projectRepo: Pick<ProjectRepository, 'list'>,
+  excludePath?: string,
+): { default_model: string | null; default_effort: string | null } {
+  const projects = projectRepo.list()
+    .sort((a, b) => (b.last_opened || '').localeCompare(a.last_opened || ''));
+  for (const project of projects) {
+    if (project.path === excludePath) continue;
+    if (project.default_model || project.default_effort) {
+      return {
+        default_model: project.default_model ?? null,
+        default_effort: project.default_effort ?? null,
+      };
+    }
+  }
+  return { default_model: null, default_effort: null };
+}
+
+/**
  * Detect installed agents and return the first one found.
  * Falls back to DEFAULT_AGENT ('claude') if none are detected.
  */
@@ -408,7 +443,12 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
     // Create a new project using the directory name
     const name = path.basename(normalized);
     const defaultAgent = await resolveDefaultAgent(context.configManager);
-    project = context.projectRepo.create({ name, path: normalized, default_agent: defaultAgent });
+    project = context.projectRepo.create({
+      name,
+      path: normalized,
+      default_agent: defaultAgent,
+      ...getLastProjectAgentDefaults(context.projectRepo, normalized),
+    });
     // Initialize the project database (creates tables + default swimlanes)
     getProjectDb(project.id);
     // Clone settings from the last modified project (or global defaults if none).
@@ -469,10 +509,10 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
         .then(() => {
           cleanupStaleResourcesAsync(openedProject.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager)
             .catch((error) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${openedProject.name}:`, error));
-          return resumeSuspendedSessions(openedProject.id, openedProject.path, context.sessionManager, context.configManager, openedProject.default_agent, context.mcpServerHandle, openedProject.default_model, openedProject.default_effort);
+          return resumeSuspendedSessions(openedProject.id, openedProject.path, context.sessionManager, context.configManager, openedProject.default_agent, context.mcpServerHandle, openedProject.default_model, openedProject.default_effort, context.boardConfigManager.getBoardProfiles(openedProject.path));
         })
         .catch((err) => console.error('[PROJECT_OPEN] Session recovery failed:', err))
-        .then(() => autoSpawnTasks(openedProject.id, openedProject.path, context.sessionManager, context.configManager, openedProject.default_agent, context.mcpServerHandle, openedProject.default_model, openedProject.default_effort))
+        .then(() => autoSpawnTasks(openedProject.id, openedProject.path, context.sessionManager, context.configManager, openedProject.default_agent, context.mcpServerHandle, openedProject.default_model, openedProject.default_effort, context.boardConfigManager.getBoardProfiles(openedProject.path)))
         .catch((err) => console.error('[PROJECT_OPEN] Session reconciliation failed:', err)),
     );
   }
@@ -529,8 +569,8 @@ export async function activateAllProjects(context: IpcContext): Promise<void> {
       cleanupStaleResourcesAsync(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager)
         .catch((err) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${project.name}:`, err));
 
-      await resumeSuspendedSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort);
-      await autoSpawnTasks(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort);
+      await resumeSuspendedSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, context.boardConfigManager.getBoardProfiles(project.path));
+      await autoSpawnTasks(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, context.boardConfigManager.getBoardProfiles(project.path));
       // Deliberately AFTER the chain (unlike the open paths, which mark up
       // front to guard rapid double-opens): a failed background activation
       // stays cold, so the user's next explicit open retries recovery.
@@ -553,7 +593,11 @@ export function registerProjectHandlers(context: IpcContext): void {
   ipcMain.handle(IPC.PROJECT_LIST, () => context.projectRepo.list());
 
   ipcMain.handle(IPC.PROJECT_CREATE, (_, input) => {
-    const project = context.projectRepo.create(input);
+    // Explicit input wins; the inherited defaults only fill what it left unset.
+    const project = context.projectRepo.create({
+      ...getLastProjectAgentDefaults(context.projectRepo, input.path),
+      ...input,
+    });
     // Initialize the project database (creates tables + default swimlanes)
     getProjectDb(project.id);
     // Clone settings from the last modified project (or global defaults if none).
@@ -641,9 +685,9 @@ export function registerProjectHandlers(context: IpcContext): void {
           cleanupStaleResourcesAsync(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager)
             .catch((error) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${project.name}:`, error));
 
-          await resumeSuspendedSessions(id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort)
+          await resumeSuspendedSessions(id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, context.boardConfigManager.getBoardProfiles(project.path))
             .catch((error) => console.error('[PROJECT_OPEN] Session recovery failed:', error));
-          await autoSpawnTasks(id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort)
+          await autoSpawnTasks(id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, context.boardConfigManager.getBoardProfiles(project.path))
             .catch((error) => console.error('[PROJECT_OPEN] Session reconciliation failed:', error));
         });
       });

@@ -319,7 +319,16 @@
 
   function noop() {}
 
+  // Board Profiles live in kangentic.json, not the DB, so the mock keeps them
+  // in a plain module-scope array. Declared here (alongside noop) rather than
+  // beside the boardConfig object, whose neighbouring `state` bindings belong to
+  // IIFEs that have already closed by that point.
+  let mockBoardProfiles = window.__mockBoardProfiles
+    ? JSON.parse(JSON.stringify(window.__mockBoardProfiles))
+    : [];
+
   // Test override conventions consumed below (set via addInitScript before this mock loads):
+  //   - window.__mockBoardProfiles: pre-seeded BoardProfile[] for boardConfig.getBoardProfiles()
   //   - window.__mockAgentListOverrides: per-agent override of agents.list() entries
   //   - window.__mockFolderPath: path returned by dialog.selectFolder() (consume-once)
   //   - window.__mockDefaultAgentOverride: default_agent for the next project created
@@ -686,6 +695,10 @@
           effort_override: input.effort_override || null,
           agent_override: input.agent_override || null,
           permission_mode: input.permission_mode || null,
+          // Deliberately a plain passthrough, NOT a copy of the repository's
+          // profile-vs-pin exclusivity: a dialog that sent both would then show
+          // up as a failure here instead of being silently corrected.
+          profile_id: input.profile_id || null,
           auto_command: input.auto_command || null,
           attachment_count: 0,
           archived_at: null,
@@ -2873,6 +2886,9 @@
       apply: async function (/* projectId */) { return []; },
       onChanged: function (/* callback(projectId) */) { return noop; },
       onShortcutsChanged: function (/* callback(projectId) */) { return noop; },
+      getBoardProfiles: async function () { return mockBoardProfiles; },
+      setBoardProfiles: async function (profiles) { mockBoardProfiles = profiles; },
+      onBoardProfilesChanged: function (/* callback(projectId) */) { return noop; },
       getShortcuts: async function () { return []; },
       setShortcuts: async function (/* actions, target */) {},
       setDefaultBaseBranch: async function (/* branch */) {},

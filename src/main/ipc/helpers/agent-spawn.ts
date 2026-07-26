@@ -17,6 +17,8 @@ import { isAbortError } from '../../../shared/abort-utils';
 import { runSpawnPreamble } from '../../transition-engine/spawn-preamble';
 import { isResumeEligible } from '../../transition-engine/spawn-intent';
 import { resolveIsolatedSwimlaneId, resolveForceFresh } from '../../transition-engine/session-isolation';
+import { resolveEffectiveAutoCommand, applyProfileToLane } from '../../transition-engine/column-strategy';
+import { loadTaskProfile } from './task-profile';
 import { emitSpawnProgress, createProgressCallback } from '../../transition-engine/spawn-progress';
 import { ensureTaskWorktree, ensureTaskBranchCheckout } from './task-git';
 import { getProjectRepos } from './project-repos';
@@ -161,7 +163,21 @@ export interface AgentSpawnOptions {
  * task was deleted mid-operation. AbortError always propagates for cancellation.
  */
 export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
-  const { context, engine, tasks, sessionRepo, task, fromSwimlaneId, toLane, skipPromptTemplate, signal } = options;
+  const { context, engine, tasks, sessionRepo, task, fromSwimlaneId, skipPromptTemplate, signal } = options;
+
+  // Board Profiles: fold the task's profile over the destination column ONCE,
+  // here, and shadow `toLane` with the result. Everything below then reads the
+  // profile-resolved strategy without threading a parallel argument through each
+  // downstream call - which is how one path ends up honoring a profile while
+  // another silently ignores it.
+  //
+  // Only strategy fields are re-pointed; identity (id, name, role, ...) passes
+  // through untouched. A task with no profile gets the lane back unchanged, so
+  // a board with no profiles behaves exactly as before.
+  const toLane = applyProfileToLane(
+    options.toLane,
+    loadTaskProfile(context, task, options.projectPath),
+  ) ?? options.toLane;
 
   // Resolve the owning project once: used for the default-agent fallback below
   // and to tag every log this spawn emits with [projectName] (see
@@ -309,7 +325,7 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
         console.error('[spawnAgent] Failed to finalize handoff:', error);
       }
 
-      const effectiveAutoCommand = currentTask.auto_command ?? toLane.auto_command;
+      const effectiveAutoCommand = resolveEffectiveAutoCommand(currentTask.auto_command, toLane.auto_command);
       if (!options.suppressAutoCommand && effectiveAutoCommand?.trim()) {
         const interpolated = interpolateTaskTemplate(effectiveAutoCommand, resolveAutoCommandVars(currentTask));
         context.terminalSubmitScheduler.scheduleKeystrokes(currentTask.id, currentTask.session_id, [interpolated], { freshlySpawned: true });
@@ -380,7 +396,7 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
   // so the resume is promptless, and the post-spawn keystroke is skipped. A
   // fresh-spawn outcome also sits idle because skipPromptTemplate is already
   // true for any non-To-Do source.
-  const effectiveAutoCommand = currentTask.auto_command ?? toLane.auto_command;
+  const effectiveAutoCommand = resolveEffectiveAutoCommand(currentTask.auto_command, toLane.auto_command);
   const interpolatedAutoCommand = !options.suppressAutoCommand && effectiveAutoCommand?.trim()
     ? interpolateTaskTemplate(effectiveAutoCommand, resolveAutoCommandVars(currentTask))
     : undefined;

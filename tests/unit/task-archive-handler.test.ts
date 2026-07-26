@@ -207,6 +207,7 @@ interface MockContext {
   };
   boardConfigManager: {
     getDefaultBaseBranch: ReturnType<typeof vi.fn>;
+    getBoardProfiles: ReturnType<typeof vi.fn>;
   };
   terminalSubmitScheduler: {
     scheduleKeystrokes: ReturnType<typeof vi.fn>;
@@ -291,6 +292,7 @@ function createMockContext(overrides: Partial<MockContext> = {}): MockContext {
     },
     boardConfigManager: {
       getDefaultBaseBranch: vi.fn(() => null),
+      getBoardProfiles: vi.fn(() => []),
     },
     terminalSubmitScheduler: {
       scheduleKeystrokes: vi.fn(),

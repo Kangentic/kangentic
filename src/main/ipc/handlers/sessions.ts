@@ -8,6 +8,8 @@ import { getProjectDb } from '../../db/database';
 import { getProjectRepos, ensureTaskWorktree, createTransitionEngine, resolveSpawnOverrides } from '../helpers';
 import { linkPR, autoLinkPRForTask } from '../../pr/pr-linking';
 import { resolveProjectContext } from '../helpers/project-repos';
+import { applyProfileToLane } from '../../transition-engine/column-strategy';
+import { loadTaskProfile } from '../helpers/task-profile';
 import { handleTaskMove } from './task-move';
 import { trackEvent } from '../../analytics/analytics';
 import { parseModelId } from '../../../shared/model-id';
@@ -184,7 +186,14 @@ export function registerSessionHandlers(context: IpcContext): void {
           // clears it so we proceed to spawn fresh.
           const { task: current, liveSession } = reconcileTaskSessionRef(context, resolvedProjectId, taskId);
           if (liveSession) return liveSession;
-          const currentLane = swimlanes.getById(current.swimlane_id);
+          // Folded through the task's Board Profile so an explicit Resume
+          // restarts on the same rung the task was running, not the column's
+          // base settings. Identity fields (including `role`, checked next) pass
+          // through the fold untouched.
+          const currentLane = applyProfileToLane(
+            swimlanes.getById(current.swimlane_id),
+            loadTaskProfile(context, current, resolvedProjectPath),
+          );
           if (currentLane?.role === 'todo') {
             throw new Error('Cannot resume a session for a task in the To Do column');
           }
@@ -669,7 +678,14 @@ export function registerSessionHandlers(context: IpcContext): void {
       const task = tasks.getBySessionId(sessionId);
       if (!task) return;
 
-      const lane = swimlanes.getById(task.swimlane_id);
+      // Folded through the task's Board Profile: a profile can re-point where
+      // this column routes on plan exit, so two tasks leaving plan mode in the
+      // same column can legitimately land in different columns.
+      const lane = applyProfileToLane(
+        swimlanes.getById(task.swimlane_id),
+        loadTaskProfile(context, task, resolvedProjectPath),
+        swimlanes.list(),
+      );
       if (!lane?.plan_exit_target_id) return;
 
       const target = swimlanes.getById(lane.plan_exit_target_id);

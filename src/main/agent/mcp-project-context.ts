@@ -11,6 +11,7 @@ import { autoSpawnForTask } from '../ipc/helpers';
 import { handleTaskMove } from '../ipc/handlers/task-move';
 import { WorktreeManager } from '../git/worktree-manager';
 import { recordPush } from '../diagnostics/ipc-recorder';
+import { propagateBoardProfileChange } from '../ipc/handlers/strategy-propagation';
 import type { CommandContext } from './commands';
 import type { IpcContext } from '../ipc/ipc-context';
 import type { AppConfig } from '../../shared/types';
@@ -51,6 +52,28 @@ export function buildCommandContextForProject(
   return {
     getProjectDb: () => getProjectDb(projectId),
     getProjectPath: () => projectPath,
+    // Explicit path, not the active project: a cross-project tool call must
+    // resolve its profile selector against the board it is targeting. The same
+    // reason applies to the write - an agent syncing profiles between projects
+    // targets a board that is usually not the one on screen.
+    getBoardProfiles: () => ipcContext.boardConfigManager.getBoardProfiles(projectPath),
+    setBoardProfiles: (profiles) => {
+      const previousProfiles = ipcContext.boardConfigManager.getBoardProfiles(projectPath);
+      ipcContext.boardConfigManager.setBoardProfiles(profiles, projectPath);
+      // Profiles are config-only, so no board-changed event covers them; without
+      // this push an open Board Manager would keep showing the pre-edit list.
+      // The renderer filters on projectId and ignores other projects' writes.
+      sendToRenderer(ipcContext.mainWindow, IPC.BOARD_CONFIG_BOARD_PROFILES_CHANGED, projectId);
+      // The same live-session propagation the Board Manager's own save runs: an
+      // agent retuning a profile ("swap Opus 4.8 for Opus 5 everywhere") has to
+      // reach in-flight sessions exactly as a human edit does. Scoped to the
+      // ACTIVE project - `propagateStrategyToLiveSessions` resolves sessions
+      // through the active context, and a background project has no live PTYs to
+      // update; its tasks pick the change up from config when they next spawn.
+      if (projectId === ipcContext.currentProjectId) {
+        propagateBoardProfileChange(ipcContext, previousProfiles, profiles);
+      }
+    },
 
     onTaskCreated: (task, columnName, swimlaneId) => {
       sendToRenderer(

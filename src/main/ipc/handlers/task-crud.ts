@@ -16,6 +16,8 @@ import {
   spawnAgent,
 } from '../helpers';
 import { resolveProjectContext } from '../helpers/project-repos';
+import { applyProfileToLane } from '../../transition-engine/column-strategy';
+import { loadTaskProfile } from '../helpers/task-profile';
 import { guardActiveNonWorktreeSessions } from './task-move';
 import { withTaskLock } from '../task-lifecycle-lock';
 import type { IpcContext } from '../ipc-context';
@@ -99,8 +101,14 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
       }
     }
 
-    // Auto-spawn: if target column has auto_spawn, start the agent
-    const toLane = swimlanes.getById(task.swimlane_id);
+    // Auto-spawn: if target column has auto_spawn, start the agent.
+    // Folded through the task's Board Profile so a profile that turns
+    // auto_spawn on (or off) for this column is honored at creation, exactly as
+    // it is on the move path.
+    const toLane = applyProfileToLane(
+      swimlanes.getById(task.swimlane_id),
+      loadTaskProfile(context, task, resolvedProjectPath),
+    );
     if (toLane?.auto_spawn && resolvedProjectPath && resolvedProjectId) {
       const projectPath = resolvedProjectPath;
       const projectId = resolvedProjectId;

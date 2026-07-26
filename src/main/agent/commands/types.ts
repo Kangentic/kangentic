@@ -1,9 +1,28 @@
 import type Database from 'better-sqlite3';
-import type { Task, Swimlane } from '../../../shared/types';
+import type { BoardProfile, Task, Swimlane } from '../../../shared/types';
 
 export interface CommandContext {
   getProjectDb: () => Database.Database;
   getProjectPath: () => string;
+  /**
+   * This project's Board Profiles, read from `kangentic.json`. Profiles are
+   * config-only (no DB table), so `getProjectDb` cannot reach them.
+   *
+   * Bound to the request's project rather than the active one: a cross-project
+   * `create_task` must resolve `profile: "Heavy"` against the board it is
+   * filing into, not the board on screen. Returns `[]` when the project has
+   * none, which is the normal state.
+   */
+  getBoardProfiles: () => BoardProfile[];
+  /**
+   * Persist this project's Board Profiles, replacing the whole list, and tell
+   * an open renderer to re-read them.
+   *
+   * Whole-list rather than per-profile because that is the shape
+   * `kangentic.json` stores and the Column Manager already writes; the profile
+   * handlers do the add/edit/remove against a copy and hand back the result.
+   */
+  setBoardProfiles: (profiles: BoardProfile[]) => void;
   onTaskCreated: (task: Task, columnName: string, swimlaneId: string) => void;
   onTaskUpdated: (task: Task) => void;
   onTaskDeleted: (task: Task) => void;

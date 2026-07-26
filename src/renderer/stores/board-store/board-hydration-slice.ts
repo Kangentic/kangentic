@@ -37,6 +37,10 @@ export const createBoardHydrationSlice: StateCreator<BoardStore, [], [], BoardHy
         window.electronAPI.swimlanes.list(),
         window.electronAPI.tasks.listArchivedPreview(ARCHIVED_PREVIEW_LIMIT),
       ]);
+      // Board Profiles ride the board load so a project switch re-reads them
+      // from the new project's kangentic.json. Fire-and-forget: profiles are
+      // optional and a slow/missing config file must not delay the board paint.
+      void get().loadBoardProfiles();
       // Reuse object references for unchanged tasks/swimlanes so React.memo can
       // short-circuit. Every IPC roundtrip returns fresh JSON objects - if we
       // set them directly, every card and column re-renders on every agent event

@@ -27,6 +27,7 @@ Claude Code agent calls MCP tool (e.g. kangentic_create_task)
 |-----------|------|---------|
 | MCP HTTP Server | `src/main/agent/mcp-http-server.ts` | In-process Node `http` server using `@modelcontextprotocol/sdk` Streamable HTTP transport. Binds 127.0.0.1 by default (configurable via `mcpServer.bindAddress`), random `:0` port, random per-launch token validated via `X-Kangentic-Token`. See [Network Access](#network-access). |
 | Task Tools | `src/main/agent/mcp-http/task-tools.ts` | Board/task/column mutations + related reads (`kangentic_create_task`, `kangentic_move_task`, `kangentic_update_task`, `kangentic_link_pr`, `kangentic_update_column`, `kangentic_delete_task`, `kangentic_list_columns`, `kangentic_find_task`, `kangentic_get_current_task`, etc.). |
+| Profile Tools | `src/main/agent/mcp-http/profile-tools.ts` | Board Profile read + authoring (`kangentic_list_board_profiles`, `kangentic_create_board_profile`, `kangentic_update_board_profile`, `kangentic_delete_board_profile`). Entries are keyed by column NAME so a profile can be copied between projects; see [Board Profiles](#board-profiles). |
 | Session Tools | `src/main/agent/mcp-http/session-tools.ts` | Session inspection, backlog, read-only SQL (`kangentic_list_sessions`, `kangentic_get_transcript`, `kangentic_get_session_files`, `kangentic_get_session_events`, `kangentic_get_activity_intervals`, `kangentic_query_db`, `kangentic_list_backlog`, etc.). |
 | Steering Tools | `src/main/agent/mcp-http/steering-tools.ts` | The write side of the session surface (`kangentic_send_session_message`) plus its debugging read (`kangentic_get_session_messages_sent`). Kept out of `session-tools.ts` because the send needs live main-process singletons (SessionManager, TerminalSubmit) that `CommandContext` does not carry. |
 | Session Send Coordinator | `src/main/agent/mcp-http/session-send.ts` | Delivery + guards behind the steering tools: per-target serialization, the sliding-window ceiling, the steer-chain depth backstop, deferred `deliverWhen: "idle"` delivery, and out-of-band provenance recording (the message itself carries no in-band prefix). |
@@ -36,7 +37,7 @@ Claude Code agent calls MCP tool (e.g. kangentic_create_task)
 | Tool Annotations | `src/main/agent/mcp-http/annotations.ts` | Shared `READ_ONLY_ANNOTATIONS` / `MUTATING_ANNOTATIONS` MCP tool-annotation constants. Every tool in every `*-tools.ts` file declares one of these (see the Tool annotations note below). |
 | Browser Tools | `src/main/agent/mcp-http/browser-tools.ts` | Shipped `kangentic_browser_*` MCP tool family driving the embedded Browser pane via in-process CDP (no HTTP bridge, no lockfile). Gated by the global `browserAutomation.*` policy. |
 | Usage Tools | `src/main/agent/mcp-http/usage-tools.ts` | Aggregated usage statistics (`kangentic_get_usage_stats`): tokens, cost, burn rate, and by-model / by-agent / by-effort breakdowns, per project or app-wide, over the shared time ranges. Reads the same usage-stats service as the in-app dashboard. |
-| Command Handlers | `src/main/agent/commands/` | Per-domain handlers shared by the HTTP tools: task, column, inventory, search, analytics, usage, backlog, handoff, inspect (`get_transcript`, `query_db`), session-files (`get_session_files`, `get_session_events`), and activity-interval (`get_activity_intervals`) commands. |
+| Command Handlers | `src/main/agent/commands/` | Per-domain handlers shared by the HTTP tools: task, column, profile (`profile-commands.ts`: the four `*_board_profile` commands plus the shared `resolveProfileSelector` used by create/update task), inventory, search, analytics, usage, backlog, handoff, inspect (`get_transcript`, `query_db`), session-files (`get_session_files`, `get_session_events`), and activity-interval (`get_activity_intervals`) commands. |
 | Column Resolver | `src/main/agent/commands/column-resolver.ts` | Shared case-insensitive column name to swimlane lookup used by multiple handlers. |
 | MCP Config Delivery | `src/main/agent/adapters/claude/command-builder.ts` | Writes session `mcp.json` (with the per-launch URL + token) and adds `--mcp-config` flag to CLI command. |
 | Trust Manager | `src/main/agent/adapters/claude/trust-manager.ts` | Pre-approves kangentic MCP server in `~/.claude.json`. |
@@ -118,6 +119,9 @@ Create a task on the board (default: the To Do column on the active board) or in
 | `effortOverride` | string | No | Effort/reasoning level to spawn this task with (e.g. `"xhigh"`). Valid values are agent-specific. Omit to resolve column override -> project default -> agent default. |
 | `permissionMode` | string | No | Permission mode to spawn this task with: `"default"`, `"plan"`, `"acceptEdits"`, `"dontAsk"`, `"bypassPermissions"`, or `"auto"`. Omit to resolve column override -> project default -> app default. |
 | `autoCommand` | string | No | Slash command to run once the agent spawns for this task (e.g. `"/code-review"`, `"/release"`). Overrides the destination column's `auto_command` for this task only. MCP-only - not surfaced in the New Task dialog. |
+| `profile` | string | No | Board Profile this task rides (name or id) - an alternate set of per-column agent/model/effort settings, applied as the task moves. Omit for "Default" (every column uses its own settings). See [kangentic_list_board_profiles](#kangentic_list_board_profiles). |
+
+`profile` is **mutually exclusive** with `agentOverride` / `modelOverride` / `effortOverride` / `permissionMode`: a profile changes settings per column, those pin one value for the task's whole life. Passing both is rejected and nothing is created, rather than silently discarding one side (the repository enforces the same exclusivity on write). An unknown profile name is an error too - a typo must not quietly produce a task that looks tiered and runs on the plain board settings.
 
 If the target column has `auto_spawn` enabled, creating a task there will also spawn an agent session for it. Backlog items never auto-spawn.
 
@@ -130,6 +134,99 @@ Runaway-loop safeguard: a single Kangentic launch can create at most 500 tasks v
 List all non-archived columns with task counts.
 
 No parameters. Returns column names, roles, and current task counts.
+
+### Board Profiles
+
+A **Board Profile** is a named alternate ladder of per-column strategy settings, so one task can
+run Planning in Opus xhigh and Merge in Sonnet high while another rides a cheaper ladder over the
+same board. Column *identity* (which columns exist, their name, order, role, color, icon) is
+singular across profiles; only strategy is profile-scoped. Profiles live in `kangentic.json`, not
+the database, so they are team-shared and travel through git. A task selects one with `profile` on
+[kangentic_create_task](#kangentic_create_task) / [kangentic_update_task](#kangentic_update_task).
+
+There is no stored "Default" profile. Default is synthetic: a task with no profile simply runs each
+column's own settings, which is why it never appears in a listing.
+
+**Entries are keyed by column NAME across this whole tool family.** Internally a profile keys its
+entries by swimlane uuid so a rename cannot detach in-flight tasks, but a uuid is useless to an
+agent and actively wrong across projects - the entire point of copying a profile into project X is
+that X has its own columns with their own ids. Every tool below translates names to ids on write
+and back to names on read, and an unknown column name fails the call rather than being silently
+dropped.
+
+**Three states per setting**, and the difference is load-bearing:
+
+| Form | Meaning |
+|------|---------|
+| key omitted | Inherit whatever the column itself is configured with |
+| key set to `null` | Clear to the agent default, overriding the column's own pin |
+| key set to a value | Use that value in this column |
+
+Because these tools all accept `project`, they are the practical way to keep profiles in sync as
+models and strategies change: *"change every profile's Opus 4.8 to Opus 5"*, *"copy this board's
+Heavy profile into project X"*, *"what differs between project A's and B's profiles"* (two
+`kangentic_list_board_profiles` calls and a diff).
+
+The per-column settings a profile may carry are `agentOverride`, `modelOverride`, `effortOverride`,
+`permissionMode`, `autoCommand`, `autoSpawn`, `handoffContext`, `sessionTarget`,
+`sessionSpawnStrategy`, and `planExitTarget` (a column *name*). To Do and Done columns never spawn
+agents, so entries for them have no effect.
+
+### kangentic_list_board_profiles
+
+List the board's Board Profiles: id, name, description, and per-column settings keyed by column
+name (only the columns each profile overrides). Returns JSON, because the primary uses are diffing
+and copying, both of which need the exact structure back out - and because a `null` (clear) must
+stay visibly distinct from an absent key.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `project` | string | No | Read another project's profiles. Call twice to compare two boards. |
+
+Entries for columns that no longer exist are omitted, so the listing reflects what will actually
+apply.
+
+### kangentic_create_board_profile
+
+Create a Board Profile. Names must be unique on the board.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | Yes | Profile name, unique on this board (e.g. `"Heavy"`, `"Frugal"`), max 100 chars |
+| `description` | string | No | What this profile is for (max 500 chars) |
+| `columns` | object | No | Per-column settings keyed by column name, e.g. `{"Planning": {"modelOverride": "opus", "effortOverride": "xhigh"}}`. Sparse: list only the columns this profile changes. |
+| `project` | string | No | Create it on another project's board |
+
+### kangentic_update_board_profile
+
+Rename a profile, change its description, or retune its per-column settings.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `profile` | string | Yes | Profile name (case-insensitive) or id |
+| `name` | string | No | New name. Must stay unique on the board. |
+| `description` | string | No | New description. Pass an empty string to clear it. |
+| `columns` | object | No | Per-column settings keyed by column name |
+| `replaceColumns` | boolean | No | Replace the profile's entire column set instead of merging into it. Default `false`. |
+| `project` | string | No | Update a profile on another project's board |
+
+`columns` **merges** by default, so retuning one column does not wipe the rest - which is what makes
+a sweep like *"change every profile's Opus 4.8 to Opus 5"* safe to run column by column. Pass
+`replaceColumns: true` for a wholesale swap, the usual choice when copying a profile from another
+board.
+
+### kangentic_delete_board_profile
+
+Delete a Board Profile.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `profile` | string | Yes | Profile name (case-insensitive) or id |
+| `project` | string | No | Delete from another project's board |
+
+Tasks riding the deleted profile are **not** rewritten; they fall back to each column's own settings
+and keep running, and the response reports how many were affected. Rewriting those rows would make
+a delete far more destructive than it looks and could not be undone by re-creating the profile.
 
 ### kangentic_list_tasks
 

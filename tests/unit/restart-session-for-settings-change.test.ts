@@ -26,6 +26,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { BoardProfile } from '../../src/shared/types';
 
 // ---------------------------------------------------------------------------
 // Hoisted mock state
@@ -169,7 +170,12 @@ function makeContext(sessionSuspend: ReturnType<typeof vi.fn> = vi.fn(async () =
     // applySuspendDbWrites resolves the churn-capture base branch via
     // resolveDefaultBaseBranch(context, projectPath), which reads
     // boardConfigManager before falling back to configManager's git default.
-    boardConfigManager: { getDefaultBaseBranch: vi.fn(() => null) },
+    // getBoardProfiles backs loadTaskProfile's Board Profile lookup; defaults
+    // to no profiles, overridden per-test via .mockReturnValue(...).
+    boardConfigManager: {
+      getDefaultBaseBranch: vi.fn(() => null),
+      getBoardProfiles: vi.fn(() => [] as BoardProfile[]),
+    },
     terminalSubmitScheduler: { cancel: vi.fn(), scheduleKeystrokes: vi.fn() },
     mainWindow: { isDestroyed: vi.fn(() => false), webContents: { send: vi.fn() } },
     projectRepo: { getById: vi.fn(() => ({ id: PROJECT_ID, default_agent: 'claude', default_model: null, default_effort: null })) },
@@ -291,6 +297,129 @@ describe('restartSessionForSettingsChange', () => {
     expect(mockResolveSpawnOverrides).toHaveBeenCalledWith(
       expect.objectContaining({ id: TASK_ID }),
       expect.objectContaining({ id: 'lane-executing' }),
+      expect.objectContaining({ id: PROJECT_ID }),
+    );
+  });
+
+  // =========================================================================
+  // Board Profile fold (pins the bug: the re-read lane must be profile-folded)
+  //
+  // A task riding a Board Profile carries model_override / effort_override /
+  // permission_mode all null (the profile-vs-pins exclusivity invariant), so
+  // resolveSpawnOverrides falls through to whatever LANE object it is handed.
+  // restartSessionForSettingsChange must fold the task's Board Profile over
+  // the re-read lane (applyProfileToLane + loadTaskProfile) before calling
+  // resolveSpawnOverrides and before reading permission_mode for
+  // resumeSuspendedSession. Reading the lane raw (swimlanes.getById alone)
+  // silently demotes the task back to the column's BASE rung on every
+  // settings-change restart, even though the delta was correctly detected
+  // upstream in propagateBoardProfileChange.
+  // =========================================================================
+
+  const PROFILE_ID = 'profile-heavy';
+  const PROFILE_LANE_ID = 'lane-profile-executing';
+
+  const heavyProfile: BoardProfile = {
+    id: PROFILE_ID,
+    name: 'Heavy',
+    columns: {
+      [PROFILE_LANE_ID]: {
+        modelOverride: 'opus',
+        permissionMode: 'plan',
+      },
+    },
+  };
+
+  function makeProfileTask(sessionId: string | null) {
+    return {
+      id: TASK_ID,
+      session_id: sessionId,
+      swimlane_id: PROFILE_LANE_ID,
+      agent: 'claude',
+      profile_id: PROFILE_ID,
+      // Profile-vs-pins exclusivity invariant: a task riding a profile has
+      // null Advanced-override pins.
+      model_override: null,
+      effort_override: null,
+    };
+  }
+
+  function makeProfileBaseLane() {
+    return {
+      id: PROFILE_LANE_ID,
+      agent_override: null,
+      // Column BASE model - must NOT reach the respawn once a profile applies.
+      model_override: 'sonnet',
+      effort_override: null,
+      permission_mode: 'auto' as const,
+      auto_command: null,
+      auto_spawn: false,
+      handoff_context: false,
+      session_target: 'main' as const,
+      session_spawn_strategy: 'create_or_resume' as const,
+      plan_exit_target_id: null,
+    };
+  }
+
+  /**
+   * Shared arrange + act for the Board Profile fold tests below. Returns the
+   * result plus the raw args `resumeSuspendedSession` was called with, so
+   * each test can assert its own seam independently - a revert of the fold
+   * must fail BOTH seams, not just whichever assertion happens to run first.
+   */
+  async function runProfileRestart() {
+    const liveTask = makeProfileTask(SESSION_ID);
+    const updatedTask = makeProfileTask(null);
+    const taskRepo = {
+      getById: vi.fn()
+        .mockReturnValueOnce(liveTask)    // restartSessionForSettingsChange: initial read
+        .mockReturnValueOnce(liveTask)    // applySuspendDbWrites: internal read
+        .mockReturnValueOnce(updatedTask), // restartSessionForSettingsChange: re-read after suspend
+      update: vi.fn(),
+    };
+    const laneRepo = { getById: vi.fn(() => makeProfileBaseLane()) };
+    mockGetProjectRepos.mockReturnValue({
+      tasks: taskRepo,
+      swimlanes: laneRepo,
+      actions: {},
+      attachments: {},
+    });
+    const context = makeContext();
+    context.boardConfigManager.getBoardProfiles.mockReturnValue([heavyProfile]);
+
+    const result = await restartSessionForSettingsChange(context as never, PROJECT_ID, PROJECT_PATH, TASK_ID);
+    const callArgs = engine.resumeSuspendedSession.mock.calls[0] as unknown[];
+    return { result, callArgs };
+  }
+
+  it('passes the profile\'s permission_mode to resumeSuspendedSession, not the column base', async () => {
+    const { result, callArgs } = await runProfileRestart();
+
+    expect(result).toEqual({ ok: true });
+
+    // The profile's permission_mode ('plan') must reach resumeSuspendedSession,
+    // not the column's base ('auto'). Reverting the fold back to
+    // `swimlanes.getById(...)` alone makes this 'auto' and fails the test.
+    const passedPermissionMode = callArgs[1];
+    expect(passedPermissionMode).toBe('plan');
+  });
+
+  it('resolves spawn overrides from the profile-folded lane, not the column base model', async () => {
+    const { result, callArgs } = await runProfileRestart();
+
+    expect(result).toEqual({ ok: true });
+
+    // resolveSpawnOverrides must receive a profile-folded lane (model 'opus'),
+    // never the column's raw base model ('sonnet'). Reverting the fold back to
+    // `swimlanes.getById(...)` alone makes this 'sonnet' and fails the test.
+    const passedSpawnOverrides = callArgs[7];
+    expect(passedSpawnOverrides).toEqual({ model: 'opus', effort: undefined });
+
+    // Directly confirm the LANE object handed to resolveSpawnOverrides was
+    // profile-folded, not the raw column lane.
+    expect(mockResolveSpawnOverrides).toHaveBeenCalledWith(
+      expect.objectContaining({ id: TASK_ID }),
+      expect.objectContaining({ id: PROFILE_LANE_ID, model_override: 'opus', permission_mode: 'plan' }),
       expect.objectContaining({ id: PROJECT_ID }),
     );
   });

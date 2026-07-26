@@ -489,6 +489,13 @@ const api: ElectronAPI = {
       ipcRenderer.on(IPC.BOARD_CONFIG_SHORTCUTS_CHANGED, handler);
       return () => ipcRenderer.removeListener(IPC.BOARD_CONFIG_SHORTCUTS_CHANGED, handler);
     },
+    getBoardProfiles: () => ipcRenderer.invoke(IPC.BOARD_CONFIG_GET_BOARD_PROFILES),
+    setBoardProfiles: (profiles) => ipcRenderer.invoke(IPC.BOARD_CONFIG_SET_BOARD_PROFILES, profiles),
+    onBoardProfilesChanged: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, projectId: string) => callback(projectId);
+      ipcRenderer.on(IPC.BOARD_CONFIG_BOARD_PROFILES_CHANGED, handler);
+      return () => ipcRenderer.removeListener(IPC.BOARD_CONFIG_BOARD_PROFILES_CHANGED, handler);
+    },
     getShortcuts: () => ipcRenderer.invoke(IPC.BOARD_CONFIG_GET_SHORTCUTS),
     setShortcuts: (actions, target) => ipcRenderer.invoke(IPC.BOARD_CONFIG_SET_SHORTCUTS, actions, target),
     setDefaultBaseBranch: (branch: string) => ipcRenderer.invoke(IPC.BOARD_CONFIG_SET_DEFAULT_BASE_BRANCH, branch),

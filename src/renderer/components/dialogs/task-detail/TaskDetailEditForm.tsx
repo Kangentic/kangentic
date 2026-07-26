@@ -35,6 +35,8 @@ interface TaskDetailEditFormProps {
   effortOverride: string;
   setEffortOverride: (value: string) => void;
   permissionOverride: string;
+  profileId: string | null;
+  setProfileId: (value: string | null) => void;
   setPermissionOverride: (value: string) => void;
   attachments: AttachmentsState;
   branchConfig: BranchConfigState;
@@ -62,6 +64,8 @@ export function TaskDetailEditForm({
   effortOverride,
   setEffortOverride,
   permissionOverride,
+  profileId,
+  setProfileId,
   setPermissionOverride,
   attachments,
   branchConfig,
@@ -201,8 +205,9 @@ export function TaskDetailEditForm({
           effortOverride={effortOverride}
           setEffortOverride={setEffortOverride}
           permissionOverride={permissionOverride}
+          profileId={profileId}
+          setProfileId={setProfileId}
           setPermissionOverride={setPermissionOverride}
-          defaultOpen={!!agentOverride || !!modelOverride || !!effortOverride || !!permissionOverride}
         />
       )}
       {attachments.isDragOver && (

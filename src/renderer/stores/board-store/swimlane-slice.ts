@@ -1,18 +1,56 @@
 import { type StateCreator } from 'zustand';
-import type { Swimlane, SwimlaneCreateInput, SwimlaneUpdateInput } from '../../../shared/types';
+import type { BoardProfile, Swimlane, SwimlaneCreateInput, SwimlaneUpdateInput } from '../../../shared/types';
 import { useToastStore } from '../toast-store';
 import type { BoardStore } from './types';
 
 export interface SwimlaneSlice {
   swimlanes: Swimlane[];
+  /**
+   * The board's named Board Profiles (see `BoardProfile`). Empty is the normal
+   * state and means every task runs the columns' own settings - the synthetic
+   * "Default" profile, which is deliberately not stored.
+   */
+  boardProfiles: BoardProfile[];
   createSwimlane: (input: SwimlaneCreateInput) => Promise<Swimlane>;
   updateSwimlane: (input: SwimlaneUpdateInput) => Promise<Swimlane>;
   deleteSwimlane: (id: string) => Promise<void>;
   reorderSwimlanes: (ids: string[]) => Promise<void>;
+  loadBoardProfiles: () => Promise<void>;
+  saveBoardProfiles: (profiles: BoardProfile[]) => Promise<void>;
 }
 
 export const createSwimlaneSlice: StateCreator<BoardStore, [], [], SwimlaneSlice> = (set, get) => ({
   swimlanes: [],
+  boardProfiles: [],
+
+  loadBoardProfiles: async () => {
+    try {
+      set({ boardProfiles: await window.electronAPI.boardConfig.getBoardProfiles() });
+    } catch (error) {
+      // A project with no kangentic.json resolves to an empty list on the main
+      // side rather than throwing, so reaching here means a genuine IPC failure.
+      // Keep the last known list instead of clearing it: `loadBoard()` fires
+      // this fire-and-forget as well, so a transient failure racing that call
+      // would otherwise blank the ContextBar's profile pill (ProfilePicker
+      // hides itself on an empty list) until the slower call resolved.
+      console.warn('[boardProfiles] load failed; keeping the last known list', error);
+    }
+  },
+
+  saveBoardProfiles: async (profiles) => {
+    // Optimistic: the picker and Column Manager both read from the store, and a
+    // failed write surfaces as a toast rather than a silently reverted edit.
+    set({ boardProfiles: profiles });
+    try {
+      await window.electronAPI.boardConfig.setBoardProfiles(profiles);
+    } catch (error) {
+      await get().loadBoardProfiles();
+      useToastStore.getState().addToast({
+        message: `Failed to save profiles: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        variant: 'error',
+      });
+    }
+  },
 
   createSwimlane: async (input) => {
     const swimlane = await window.electronAPI.swimlanes.create(input);

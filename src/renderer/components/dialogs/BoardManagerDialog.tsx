@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Layers, Sliders, Bot, Zap, History,
-  Trash2, RotateCcw, Palette, ChevronRight, X,
+  RotateCcw, Palette, ChevronRight, X,
 } from 'lucide-react';
 import { HexColorPicker } from 'react-colorful';
 import { useBoardStore } from '../../stores/board-store';
@@ -38,7 +38,11 @@ import {
   type SessionSpawnStrategy,
   type SwimlaneCreateInput,
   type SwimlaneUpdateInput,
+  type BoardProfile,
+  type BoardProfileEntry,
 } from '../../../shared/types';
+import { ProfileBar } from './board-manager/ProfileBar';
+import { ProfileNameDialog } from './board-manager/ProfileNameDialog';
 import { TASK_TEMPLATE_VARS } from '../../../shared/task-template-vars';
 
 /** Sentinel entity id keying this dialog's maximize flag in the session store. */
@@ -73,6 +77,103 @@ const TEMPLATE_VARIABLES = TASK_TEMPLATE_VARS.map((templateVar) => templateVar.c
 
 export function isNewDraftId(id: string): boolean {
   return id.startsWith(NEW_DRAFT_PREFIX);
+}
+
+/**
+ * The strategy fields a Board Profile can re-point, paired with their
+ * camelCase key in `BoardProfileEntry`. Column identity (name, role, position,
+ * color, icon) is deliberately absent: it is singular across profiles.
+ */
+const PROFILE_FIELD_MAP = [
+  ['agent_override', 'agentOverride'],
+  ['model_override', 'modelOverride'],
+  ['effort_override', 'effortOverride'],
+  ['permission_mode', 'permissionMode'],
+  ['auto_command', 'autoCommand'],
+  ['auto_spawn', 'autoSpawn'],
+  ['handoff_context', 'handoffContext'],
+  ['session_target', 'sessionTarget'],
+  ['session_spawn_strategy', 'sessionSpawnStrategy'],
+] as const satisfies ReadonlyArray<readonly [keyof Swimlane, keyof BoardProfileEntry]>;
+
+/**
+ * Apply a profile's delta for one column on top of that column's base settings,
+ * producing the lane the form should display and edit.
+ *
+ * Mirrors `applyProfileToLane` in the main process (column-strategy.ts) so what
+ * the Column Manager shows is what a spawn will actually resolve. Key PRESENCE
+ * is what matters, never `??`: a profile stores `null` to mean "clear this
+ * column's pin to the agent default", which is indistinguishable from "inherit"
+ * under a nullish coalesce.
+ */
+export function foldProfileOverDraft(
+  base: Swimlane | undefined,
+  profile: BoardProfile | null,
+): Swimlane | undefined {
+  if (!base || !profile) return base;
+  const entry = profile.columns[base.id];
+  if (!entry) return base;
+  const folded: Swimlane = { ...base };
+  for (const [laneKey, profileKey] of PROFILE_FIELD_MAP) {
+    if (Object.prototype.hasOwnProperty.call(entry, profileKey)) {
+      // Safe by construction: PROFILE_FIELD_MAP pairs each lane field with the
+      // profile key that carries the same value type.
+      (folded as unknown as Record<string, unknown>)[laneKey] = entry[profileKey] ?? null;
+    }
+  }
+  return folded;
+}
+
+/**
+ * Reduce an edited lane to the delta that differs from its base column.
+ *
+ * A field equal to the base is OMITTED (inherit), so the profile keeps tracking
+ * the column when the column later changes. A field that differs is stored -
+ * including an explicit `null`, which is how a profile says "run the agent
+ * default here" against a base column that pins a value.
+ */
+export function diffStrategyAgainstBase(edited: Swimlane, base: Swimlane): BoardProfileEntry {
+  const entry: BoardProfileEntry = {};
+  for (const [laneKey, profileKey] of PROFILE_FIELD_MAP) {
+    const editedValue = (edited as unknown as Record<string, unknown>)[laneKey] ?? null;
+    const baseValue = (base as unknown as Record<string, unknown>)[laneKey] ?? null;
+    if (editedValue !== baseValue) {
+      (entry as Record<string, unknown>)[profileKey] = editedValue;
+    }
+  }
+  return entry;
+}
+
+/**
+ * The `BoardProfileEntry` keys `PROFILE_FIELD_MAP` covers. Anything outside this
+ * set must survive a Board Manager save untouched (see `carryUnmappedEntryKeys`).
+ */
+const MAPPED_PROFILE_ENTRY_KEYS = new Set<string>(
+  PROFILE_FIELD_MAP.map(([, profileKey]) => profileKey),
+);
+
+/**
+ * Pull forward the entry keys this form does not edit.
+ *
+ * `diffStrategyAgainstBase` rebuilds an entry from scratch over
+ * `PROFILE_FIELD_MAP` only, and the caller replaces the stored entry wholesale,
+ * so without this any key the map does not cover is silently DESTROYED by an
+ * unrelated edit to the same column.
+ *
+ * `planExitTarget` is that key today: it is carried by column NAME (matching
+ * `BoardColumnConfig.planExitTarget`) while this form edits a swimlane uuid, so
+ * it cannot be a straight map entry, but it is fully settable through
+ * `kangentic_update_board_profile`. Keying off the map rather than a hardcoded
+ * list means a future entry field is preserved by default instead of being lost
+ * until someone remembers to add it here.
+ */
+export function carryUnmappedEntryKeys(existing: BoardProfileEntry | undefined): BoardProfileEntry {
+  if (!existing) return {};
+  const carried: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(existing)) {
+    if (!MAPPED_PROFILE_ENTRY_KEYS.has(key)) carried[key] = value;
+  }
+  return carried as BoardProfileEntry;
 }
 
 export function isDirty(draft: Swimlane, original: Swimlane | undefined): boolean {
@@ -308,17 +409,22 @@ function DisabledSectionNotice({ reason }: { reason: string }) {
  * Pinned identity header for the detail pane: large tinted column icon, name,
  * role badge, board position, and the Delete control (named to its target).
  */
-function DetailIdentityHeader({ draft, position, total, canDelete, onDelete }: {
+function DetailIdentityHeader({ draft, position, total, profileName }: {
   draft: Swimlane;
   position: number;
   total: number;
-  canDelete: boolean;
-  onDelete: () => void;
+  /**
+   * Name of the Board Profile currently being edited, or null for Default.
+   * The switcher lives in the rail, so without this the detail form gives no
+   * indication whose settings it is showing - and editing a profile while
+   * believing you are on Default is the one mistake this UI must not allow.
+   */
+  profileName?: string | null;
 }) {
   const Icon = draft.icon ? ICON_REGISTRY.get(draft.icon) : (draft.role ? ROLE_DEFAULTS[draft.role] : null);
-  const deleteLabel = `Delete "${draft.name || 'column'}"`;
-  // Single, lightweight identity row: small tinted icon + name + role badge +
-  // position, then the delete control. Keeps the header off the "heavy" look.
+  // Identity only: small tinted icon + name + role badge + position + the
+  // active profile. Delete moved to the rail's COLUMNS group, where it sits
+  // with the other structure actions (add, reorder) instead of alone here.
   return (
     <div className="flex items-center gap-2.5 px-7 py-2.5 border-b border-edge/60 flex-shrink-0">
       {Icon ? (
@@ -333,24 +439,16 @@ function DetailIdentityHeader({ draft, position, total, canDelete, onDelete }: {
         </Pill>
       )}
       <Pill size="sm" className="bg-surface-hover/60 text-fg-faint flex-shrink-0">{position} of {total}</Pill>
+      {profileName && (
+        <Pill
+          size="sm"
+          className="bg-accent/15 text-accent flex-shrink-0"
+          data-testid="board-manager-active-profile-pill"
+        >
+          {profileName}
+        </Pill>
+      )}
       <div className="flex-1" />
-      {/* Always rendered (reserving its slot) so the header height and layout do
-          not shift when navigating between deletable columns and role-pinned
-          ones that cannot be deleted. Hidden (not just unmounted) for the latter. */}
-      <button
-        type="button"
-        onClick={canDelete ? onDelete : undefined}
-        data-testid="board-manager-delete"
-        aria-label={deleteLabel}
-        title={deleteLabel}
-        tabIndex={canDelete ? undefined : -1}
-        aria-hidden={canDelete ? undefined : true}
-        className={`p-1.5 rounded-full transition-colors flex-shrink-0 text-fg-faint ${
-          canDelete ? 'hover:text-red-400 hover:bg-red-500/10' : 'invisible pointer-events-none'
-        }`}
-      >
-        <Trash2 size={15} strokeWidth={1.75} />
-      </button>
     </div>
   );
 }
@@ -574,8 +672,49 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     return () => window.cancelAnimationFrame(handle);
   }, [autoFocusNameId, activeId]);
 
+  // ── Board Profiles ────────────────────────────────────────────────
+  // A profile is a named alternate ladder of the per-column STRATEGY fields, so
+  // one task can run Planning in Opus xhigh and Merge in Sonnet high while
+  // another rides a cheaper ladder over the same board. Column IDENTITY (which
+  // columns exist, their name, order, role, color, icon) is singular across
+  // profiles - only strategy is profile-scoped.
+  //
+  // Editing works by folding: `draft` below becomes the base column with the
+  // active profile's delta applied, and `updateDraft` diffs writes back into the
+  // profile instead of the lane. That is why every field in this form works
+  // under a profile without being individually rewired.
+  const storeBoardProfiles = useBoardStore((state) => state.boardProfiles);
+  const saveBoardProfiles = useBoardStore((state) => state.saveBoardProfiles);
+  const [profileDrafts, setProfileDrafts] = useState<BoardProfile[]>([]);
+  const [profileOriginals, setProfileOriginals] = useState<BoardProfile[]>([]);
+  const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
+  const [profileNameDialog, setProfileNameDialog] = useState<
+    { mode: 'new' | 'duplicate' | 'rename'; value: string } | null
+  >(null);
+
+  // Snapshot the store's profiles once per open. Deep-cloned so edits stay local
+  // until Save, matching how column drafts work. Hand-written profiles in
+  // kangentic.json load here like any other, so they round-trip through an edit
+  // rather than being clobbered by it.
+  useEffect(() => {
+    const snapshot = structuredClone(storeBoardProfiles) as BoardProfile[];
+    setProfileDrafts(snapshot);
+    setProfileOriginals(structuredClone(storeBoardProfiles) as BoardProfile[]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- snapshot on mount only; live store changes must not clobber in-progress edits
+  }, []);
+
+  const activeProfile = activeProfileId
+    ? profileDrafts.find((profile) => profile.id === activeProfileId) ?? null
+    : null;
+
   // ── Derived ────────────────────────────────────────────────────────
-  const draft = drafts[activeId];
+  const baseDraft = drafts[activeId];
+  // The base column with the active profile's delta folded over it. Identical to
+  // the base column when no profile is selected, so the form is unchanged.
+  const draft = useMemo(
+    () => foldProfileOverDraft(baseDraft, activeProfile),
+    [baseDraft, activeProfile],
+  );
   const isNewDraft = newDraftIds.has(activeId);
   const draftRole: SwimlaneRole | null = draft?.role ?? null;
   const isTodoOrDone = draftRole === 'todo' || draftRole === 'done';
@@ -593,7 +732,13 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     [drafts, originals, laneOrder, newDraftIds],
   );
   const orderDirty = useMemo(() => isOrderChanged(laneOrder, originals), [laneOrder, originals]);
-  const hasDirty = dirtyIds.length > 0 || orderDirty;
+  // Whole-object compare, matching how column dirtiness is tracked. Covers
+  // create, rename, duplicate, delete, and any per-column delta edit in one go.
+  const profilesDirty = useMemo(
+    () => JSON.stringify(profileDrafts) !== JSON.stringify(profileOriginals),
+    [profileDrafts, profileOriginals],
+  );
+  const hasDirty = dirtyIds.length > 0 || orderDirty || profilesDirty;
 
   // Rows for the left rail. The inline override hints (agent / isolated) are
   // suppressed for role-pinned To Do / Done columns, where they never apply.
@@ -705,12 +850,40 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
 
   // ── Mutators ───────────────────────────────────────────────────────
   const updateDraft = useCallback((updater: (current: Swimlane) => Swimlane) => {
-    setDrafts((previous) => {
-      const current = previous[activeId];
-      if (!current) return previous;
-      return { ...previous, [activeId]: updater(current) };
+    // Default profile: edit the column itself, exactly as before.
+    if (!activeProfileId) {
+      setDrafts((previous) => {
+        const current = previous[activeId];
+        if (!current) return previous;
+        return { ...previous, [activeId]: updater(current) };
+      });
+      return;
+    }
+    // A profile is selected: run the updater against the FOLDED view the user
+    // sees, then diff the result against the base column and store only the
+    // differences. Storing a diff (rather than a copy) is what keeps a profile
+    // from rotting when the base column later changes.
+    setProfileDrafts((previous) => {
+      const base = drafts[activeId];
+      if (!base) return previous;
+      const folded = foldProfileOverDraft(base, previous.find((p) => p.id === activeProfileId) ?? null);
+      if (!folded) return previous;
+      const nextEntry = diffStrategyAgainstBase(updater(folded), base);
+      return previous.map((profile) => {
+        if (profile.id !== activeProfileId) return profile;
+        const nextColumns = { ...profile.columns };
+        // Layer the recomputed delta over the keys this form does not edit, so
+        // an entry field set elsewhere (an MCP-authored `planExitTarget`) is not
+        // destroyed by an unrelated edit to the same column.
+        const mergedEntry = { ...carryUnmappedEntryKeys(profile.columns[activeId]), ...nextEntry };
+        // An empty delta means "this column matches the base in every field",
+        // so drop the key entirely rather than persisting an empty object.
+        if (Object.keys(mergedEntry).length === 0) delete nextColumns[activeId];
+        else nextColumns[activeId] = mergedEntry;
+        return { ...profile, columns: nextColumns };
+      });
     });
-  }, [activeId]);
+  }, [activeId, activeProfileId, drafts]);
 
   // ── Save / cancel / delete ────────────────────────────────────────
   const requestCancel = useCallback(() => {
@@ -751,7 +924,11 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
       }
     }
 
-    if (creates.length === 0 && updates.length === 0 && !orderDirty) {
+    // `profilesDirty` is load-bearing here: profile edits live in
+    // `profileDrafts`, never in `drafts`, so a profile-only change leaves the
+    // three column checks false. Without it this early return closed the dialog
+    // before the profile write below ever ran, silently discarding the edit.
+    if (creates.length === 0 && updates.length === 0 && !orderDirty && !profilesDirty) {
       onClose();
       return;
     }
@@ -874,16 +1051,28 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
       return;
     }
 
+    // Profiles persist AFTER the column creates above, so an entry can reference
+    // a newly-created column's real uuid (the create path assigns it server-side).
+    // Written whole rather than diffed: profiles live in kangentic.json with no
+    // DB representation, so this array IS the source of truth. A hand-written
+    // profile the user never touched round-trips unchanged, and one keyed to a
+    // column this machine does not have is preserved rather than dropped.
+    if (profilesDirty) {
+      await saveBoardProfiles(profileDrafts);
+      setProfileOriginals(structuredClone(profileDrafts) as BoardProfile[]);
+    }
+
     const parts: string[] = [];
     if (savedUpdates > 0) parts.push(`Saved ${savedUpdates} column${savedUpdates > 1 ? 's' : ''}`);
     if (savedCreates > 0) parts.push(`created ${savedCreates} column${savedCreates > 1 ? 's' : ''}`);
     if (orderDirty) parts.push(parts.length === 0 ? 'Updated column order' : 'updated column order');
+    if (profilesDirty) parts.push(parts.length === 0 ? 'Saved profiles' : 'saved profiles');
     useToastStore.getState().addToast({
-      message: parts.join(' and '),
+      message: parts.length > 0 ? parts.join(' and ') : 'No changes to save',
       variant: 'info',
     });
     onClose();
-  }, [saving, laneOrder, drafts, originals, newDraftIds, orderDirty, updateSwimlane, createSwimlane, reorderSwimlanes, onClose]);
+  }, [saving, laneOrder, drafts, originals, newDraftIds, orderDirty, profilesDirty, profileDrafts, saveBoardProfiles, updateSwimlane, createSwimlane, reorderSwimlanes, onClose]);
 
   // Cmd/Ctrl+S to save, via the central keybinding registry. Document-level,
   // bubble phase, preventDefault only - matching the original listener.
@@ -1090,6 +1279,26 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
           onSelectOverview={() => setActiveId(ALL_COLUMNS_ID)}
           onReorder={handleRailReorder}
           onAddColumn={addNewDraft}
+          structureLocked={activeProfileId !== null}
+          onDeleteColumn={isNewDraft ? handleDiscardNewDraft : () => setConfirmDeleteId(activeId)}
+          profileBar={(
+            <ProfileBar
+              profiles={profileDrafts}
+              activeProfileId={activeProfileId}
+              onSelect={setActiveProfileId}
+              onNew={() => setProfileNameDialog({ mode: 'new', value: '' })}
+              onDuplicate={() => setProfileNameDialog({
+                mode: 'duplicate',
+                value: activeProfile ? `${activeProfile.name} copy` : '',
+              })}
+              onRename={() => setProfileNameDialog({ mode: 'rename', value: activeProfile?.name ?? '' })}
+              onDelete={() => {
+                if (!activeProfileId) return;
+                setProfileDrafts((previous) => previous.filter((profile) => profile.id !== activeProfileId));
+                setActiveProfileId(null);
+              }}
+            />
+          )}
         />
 
         {isOverview || !draft ? (
@@ -1100,8 +1309,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
               draft={draft}
               position={activePosition}
               total={laneOrder.length}
-              canDelete={!isTodoOrDone}
-              onDelete={isNewDraft ? handleDiscardNewDraft : () => setConfirmDeleteId(activeId)}
+              profileName={activeProfile?.name ?? null}
             />
 
             {/* One scrollable form with sticky section headers. `@container`
@@ -1112,6 +1320,17 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                 short column and a taller (scrolling) one never shifts the
                 content horizontally. */}
             <div className="flex-1 overflow-y-auto px-7 pb-4 min-w-0 @container [scrollbar-gutter:stable]">
+              {/* General is column IDENTITY (name, description, color, icon),
+                  which is singular across profiles - editing it under a profile
+                  would silently change it for every task on the board. Hidden
+                  rather than disabled, so a profile view shows only what it can
+                  actually change. */}
+              {activeProfileId ? (
+                <div className="pt-4">
+                  <DisabledSectionNotice reason="Name, description, color, and icon are shared by every profile. Switch to Default to edit them." />
+                </div>
+              ) : (
+                <>
               <SectionHeading section={SECTIONS[0]} />
               <div className={SECTION_GRID_CLASS}>
                 <SettingField label="Name" className={SECTION_FULL_SPAN}>
@@ -1256,6 +1475,8 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                 </div>
 
               </div>
+                </>
+              )}
 
               <SectionHeading section={SECTIONS[1]} />
               {isTodoOrDone ? (
@@ -1542,6 +1763,42 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
             setShowIconPicker(false);
           }}
           onClose={() => setShowIconPicker(false)}
+        />
+      )}
+
+      {profileNameDialog && (
+        <ProfileNameDialog
+          mode={profileNameDialog.mode}
+          value={profileNameDialog.value}
+          existingNames={profileDrafts
+            .filter((profile) => profileNameDialog.mode !== 'rename' || profile.id !== activeProfileId)
+            .map((profile) => profile.name)}
+          // New starts with no overrides, so every column resolves to the
+          // board's own settings - the synthetic "Default". Duplicate inherits
+          // from the profile it is copying.
+          sourceName={profileNameDialog.mode === 'duplicate' && activeProfile ? activeProfile.name : 'Default'}
+          onChange={(value) => setProfileNameDialog((previous) => (previous ? { ...previous, value } : previous))}
+          onCancel={() => setProfileNameDialog(null)}
+          onConfirm={(name) => {
+            const { mode } = profileNameDialog;
+            if (mode === 'rename') {
+              setProfileDrafts((previous) => previous.map((profile) => (
+                profile.id === activeProfileId ? { ...profile, name } : profile
+              )));
+            } else {
+              // Duplicate seeds from the active profile's deltas; New starts
+              // empty, meaning every column inherits its own settings until the
+              // user overrides one. Both get a fresh uuid so `tasks.profile_id`
+              // on other machines keeps pointing at the original.
+              const seed = mode === 'duplicate' && activeProfile
+                ? (structuredClone(activeProfile.columns) as BoardProfile['columns'])
+                : {};
+              const created: BoardProfile = { id: crypto.randomUUID(), name, columns: seed };
+              setProfileDrafts((previous) => [...previous, created]);
+              setActiveProfileId(created.id);
+            }
+            setProfileNameDialog(null);
+          }}
         />
       )}
 

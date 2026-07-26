@@ -65,6 +65,15 @@ interface BaseDialogProps {
   // (e.g. a confirm). Do NOT use for a dialog that embeds a terminal, where Tab
   // belongs to the PTY.
   trapFocus?: boolean;
+  // Ignore Escape entirely while another surface is layered over this dialog and
+  // owns the key. Escape listeners here and in the layered surface are both
+  // bubble-phase on `document`, so the one registered first (this dialog, which
+  // mounted first) wins - and a single Escape aimed at the surface on top would
+  // otherwise ALSO dismiss this dialog underneath it. The consumer owns this
+  // because only it knows what it can spawn (e.g. NewTaskDialog opening the
+  // Board Manager from the profile picker). Nested ConfirmDialogs do not need it:
+  // they render inside this dialog's own guarded close flow.
+  suppressEscape?: boolean;
 
   // Content mouse tracking (for callers that need hover state)
   onContentMouseEnter?: () => void;
@@ -107,6 +116,7 @@ export function BaseDialog({
   onBackdropClick,
   onCloseRequest,
   trapFocus,
+  suppressEscape,
   rawBody,
   bodyClassName,
   closeHotkeyActionId,
@@ -192,6 +202,7 @@ export function BaseDialog({
   }, [trapFocus]);
 
   useEffect(() => {
+    if (suppressEscape) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       // Route through the consumer's close-intent guard when present (e.g. a
@@ -205,7 +216,7 @@ export function BaseDialog({
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [requestClose, preventBackdropClose, onCloseRequest, requestCloseViaGuard]);
+  }, [requestClose, preventBackdropClose, onCloseRequest, requestCloseViaGuard, suppressEscape]);
 
   const backdropMouseDown = useRef(false);
 

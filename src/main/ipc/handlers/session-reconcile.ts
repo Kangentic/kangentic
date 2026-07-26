@@ -5,6 +5,8 @@ import { getProjectRepos, createTransitionEngine, resolveSpawnOverrides } from '
 import { captureSessionMetrics, refineTranscriptTokens, refineTranscriptToolCounts } from './session-metrics';
 import { captureGitChurn, resolveDefaultBaseBranch } from './git-stats-capture';
 import { markRecordExited, markRecordSuspended } from '../../transition-engine/session-lifecycle';
+import { applyProfileToLane } from '../../transition-engine/column-strategy';
+import { loadTaskProfile } from '../helpers/task-profile';
 import { decideSuspendDbAction, isLiveSession } from '../../pty/session-registry';
 import { isAbortError } from '../../../shared/abort-utils';
 import type { Session, SuspendedBy, Task } from '../../../shared/types';
@@ -113,7 +115,17 @@ export async function restartSessionForSettingsChange(
     // the lane too in case the task moved during the unlocked suspend.
     const updatedTask = tasks.getById(taskId);
     if (!updatedTask) return { ok: false, reason: 'task disappeared during restart' };
-    const updatedLane = swimlanes.getById(updatedTask.swimlane_id);
+    // Fold the task's Board Profile over the re-read lane. Without this, a
+    // profile edit correctly DETECTS the delta (propagateStrategyToLiveSessions
+    // compares profile-folded values) and then respawns the session on the
+    // column's BASE rung - actively demoting the task off the ladder the edit
+    // was meant to retune. Re-resolving the profile here (rather than reusing a
+    // value from before the unlocked suspend) is also correct for a task that
+    // moved columns during the gap.
+    const updatedLane = applyProfileToLane(
+      swimlanes.getById(updatedTask.swimlane_id),
+      loadTaskProfile(context, updatedTask, projectPath),
+    );
     const project = context.projectRepo.getById(projectId);
 
     const sessionRepo = new SessionRepository(getProjectDb(projectId));

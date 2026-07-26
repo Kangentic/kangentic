@@ -237,13 +237,16 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 |---------|---------|---------|
 | `keybindings:probeGlobal` | invoke | Probe whether each canonical combo can be claimed as a system-wide global shortcut (via Electron `globalShortcut`); returns `Record<combo, 'available' \| 'taken' \| 'unsupported'>`. Used by the Hotkeys settings tab to warn when a combo is already owned by the OS or another app. |
 
-### Board Config (8 channels)
+### Board Config (11 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `boardConfig:exists` | invoke | Check if `kangentic.json` exists for the active project |
 | `boardConfig:export` | invoke | Export current board state to `kangentic.json` (auto-runs on project open) |
 | `boardConfig:apply` | invoke | Apply pending config file changes (reconcile file into DB) |
 | `boardConfig:changed` | on | Event: `kangentic.json` or `kangentic.local.json` changed on disk |
+| `boardConfig:getBoardProfiles` | invoke | Get the board's Board Profiles (see [Configuration](configuration.md#board-profiles)) |
+| `boardConfig:setBoardProfiles` | invoke | Replace the board's Board Profiles (team-scoped) |
+| `boardConfig:boardProfilesChanged` | on | Event: an agent (MCP) rewrote this project's Board Profiles |
 | `boardConfig:getShortcuts` | invoke | Get task detail dialog shortcuts |
 | `boardConfig:setShortcuts` | invoke | Update task detail dialog shortcuts |
 | `boardConfig:shortcutsChanged` | on | Event: shortcuts file changed |
@@ -448,7 +451,7 @@ Stores the project list. Tables:
 Created on project open. Stored in the global config directory (not inside the project). Tables:
 
 - **swimlanes** -- Kanban columns. Fields: id, name, role (`todo`/`done`/null), position, color, icon, is_archived, permission_mode, auto_spawn, auto_command, agent_override, model_override, effort_override, handoff_context, plan_exit_target_id, session_target, session_spawn_strategy, is_ghost, created_at
-- **tasks** -- Kanban cards. Fields: id, display_id, title, description, swimlane_id, position, agent, agent_override, model_override, effort_override, session_id, worktree_path, branch_name, pr_number, pr_url, pr_state, head_sha, base_branch, use_worktree, labels, priority, external_id, external_source, external_url, detail_view_state, archived_at, created_at, updated_at
+- **tasks** -- Kanban cards. Fields: id, display_id, title, description, swimlane_id, position, agent, agent_override, model_override, effort_override, permission_mode, auto_command, profile_id, session_id, worktree_path, branch_name, pr_number, pr_url, pr_state, head_sha, base_branch, use_worktree, labels, priority, external_id, external_source, external_url, detail_view_state, archived_at, created_at, updated_at
 - **actions** -- Executable steps. Types: `spawn_agent`, `send_command`, `run_script`, `kill_session`, `create_worktree`, `cleanup_worktree`, `create_pr`, `webhook`. Config stored as JSON.
 - **swimlane_transitions** -- Maps lane pairs to action chains. Fields: from_swimlane_id (`*` = any), to_swimlane_id, action_id, execution_order
 - **sessions** -- Session persistence for recovery/resume. Fields: id, task_id, session_type, agent_session_id, command, cwd, permission_mode, prompt, status (`running`/`queued`/`suspended`/`exited`/`orphaned`), exit_code, timestamps
@@ -468,11 +471,37 @@ Repositories follow a simple pattern -- one class per table, all queries are syn
 `resolveTargetAgent()` determines which agent CLI to use when spawning a session. Resolution priority:
 
 1. **Task `agent_override`** - per-task override set at creation time (highest priority)
-2. **Column `agent_override`** - the target swimlane's per-column agent override (if set)
+2. **Column `agent_override`** - the target swimlane's per-column agent override, *after* the task's Board Profile has been folded over it (see below)
 3. **Project `default_agent`** - the project-level default agent setting
 4. **Global fallback** - `'claude'`
 
 This function is used by task-move (to detect cross-agent handoff), session-recovery (to respawn with the correct agent), and agent-spawn (to build the right CLI command).
+
+### Board Profiles (the column tier)
+
+Tier 2 is not read straight off the swimlane row. A task may carry a `profile_id` naming a **Board
+Profile**: a team-shared, named alternate set of per-column strategy settings, so one task runs
+Planning in Opus xhigh and Merge in Sonnet high while another runs the same board more cheaply. The
+profile's delta for the destination column is folded over the column's own settings before any tier
+above or below it applies.
+
+`src/main/transition-engine/column-strategy.ts` is the **single** place that fold happens
+(`resolveColumnStrategy` / `applyProfileToLane`), with `loadTaskProfile`
+(`src/main/ipc/helpers/task-profile.ts`) as the one accessor that reads the profile for a task.
+Everything is pure and total - it runs inside `runSpawnPreamble` on both spawn chokepoints, and a
+profile deleted by a teammate must degrade to the column's own settings rather than wedge an
+in-flight task.
+
+Centralising it is not tidiness. The `auto_command` split-brain it replaced shipped for real: the
+cold-spawn path honored the per-task tier while the warm live-injection path in `task-move.ts` read
+only the destination column, so the same task behaved differently depending on whether the
+destination already had a live session. `tests/unit/column-strategy-parity.test.ts` now fails the
+build on a spawn-path file that reads a lane's strategy fields without folding the profile first.
+
+Because a profile and the task's Advanced pins are mutually exclusive (enforced in
+`TaskRepository`), a profile task has no pins - so `lockAdvancedOverridesOnFirstSpawn` never fires
+for it and the ladder survives the task's whole life. See
+[Configuration > Board Profiles](configuration.md#board-profiles).
 
 ## Transition Engine
 

@@ -74,11 +74,21 @@ export function registerTaskTools(
         effortOverride: z.string().max(50).optional().describe('Effort/reasoning level to spawn this task with (e.g. "xhigh", "high"). Valid values are agent-specific. Omit to resolve through the normal chain: column override -> project default -> agent default.'),
         permissionMode: PERMISSION_MODE_SCHEMA.optional().describe('Permission mode to spawn this task with. Omit to resolve through the normal chain: column override -> project default -> app default.'),
         autoCommand: z.string().max(4000).optional().describe('Slash command to run once the agent spawns for this task (e.g. "/code-review", "/release"). Overrides the destination column\'s auto_command for this task only. Not surfaced in the UI - MCP-only.'),
+        profile: z.string().optional().describe('Board Profile this task rides (name or id) - an alternate set of per-column agent/model/effort settings, applied as the task moves. Mutually exclusive with the four *Override fields above: a profile changes per column, those pin one value for the task\'s whole life, so passing both is rejected. Omit for "Default" (every column uses its own settings). Use kangentic_list_board_profiles to see the board\'s profiles.'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ title, description, column, priority, labels, branchName, baseBranch, useWorktree, attachments, agentOverride, modelOverride, effortOverride, permissionMode, autoCommand, project }) => withProject(resolver, project, (ctx, resolved) => {
+    async ({ title, description, column, priority, labels, branchName, baseBranch, useWorktree, attachments, agentOverride, modelOverride, effortOverride, permissionMode, autoCommand, profile, project }) => withProject(resolver, project, (ctx, resolved) => {
+      // Rejected rather than silently resolved: the repository enforces
+      // exclusivity by clearing whichever side the write did not set, so
+      // accepting both would quietly discard half of what the caller asked for.
+      if (profile !== undefined && (agentOverride !== undefined || modelOverride !== undefined || effortOverride !== undefined || permissionMode !== undefined)) {
+        return Promise.resolve({
+          content: [{ type: 'text' as const, text: 'Pass either `profile` (per-column settings as the task moves) or the agentOverride/modelOverride/effortOverride/permissionMode pins (one set for the task\'s whole life), not both. No task was created.' }],
+          isError: true,
+        });
+      }
       // Routing guardrail: when the caller defaulted to the active
       // project (no explicit selector) but the task text names a
       // DIFFERENT registered project, refuse instead of silently filing
@@ -125,6 +135,7 @@ export function registerTaskTools(
         effortOverride: effortOverride ? resolveEffortSelector(effortOverride) : null,
         permissionMode: permissionMode ?? null,
         autoCommand: autoCommand ?? null,
+        profile: profile ?? null,
       }, ctx, 'Failed to create task');
     }, { alwaysAnnotate: true }),
   );
@@ -389,6 +400,7 @@ export function registerTaskTools(
         model: z.string().max(200).optional().describe('Model override for this task (e.g. "opus", "claude-opus-4-8", or the friendly "Opus 4.8"). Best-effort: a friendly name is converted to the CLI id. Pass empty string to clear.'),
         effort: z.string().max(50).optional().describe('Effort/reasoning level override for this task (e.g. "xhigh"). Valid values are agent-specific. Pass empty string to clear.'),
         permissionMode: z.union([PERMISSION_MODE_SCHEMA, z.literal('')]).optional().describe('Permission mode override for this task. Pass empty string to clear.'),
+        profile: z.string().optional().describe('Board Profile this task rides (name or id) - an alternate set of per-column agent/model/effort settings, applied as the task moves. Pass empty string to clear it back to "Default". Mutually exclusive with the model/effort/agent/permissionMode pins: setting a profile clears them and setting any of them clears the profile. Use kangentic_list_board_profiles to see the board\'s profiles.'),
         attachments: z.array(z.object({
           filePath: z.string().describe('Absolute path to the file to attach'),
           filename: z.string().optional().describe('Override display filename'),
@@ -397,18 +409,23 @@ export function registerTaskTools(
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ taskId, title, description, descriptionEdits, appendDescription, prUrl, prNumber, agent, priority, labels, baseBranch, useWorktree, model, effort, permissionMode, attachments, project }) => {
+    async ({ taskId, title, description, descriptionEdits, appendDescription, prUrl, prNumber, agent, priority, labels, baseBranch, useWorktree, model, effort, permissionMode, profile, attachments, project }) => {
       if (
         title === undefined && description === undefined && descriptionEdits === undefined && appendDescription === undefined &&
         prUrl === undefined && prNumber === undefined &&
         agent === undefined && priority === undefined && labels === undefined && baseBranch === undefined &&
         useWorktree === undefined && model === undefined && effort === undefined && permissionMode === undefined &&
-        attachments === undefined
+        profile === undefined && attachments === undefined
       ) {
         return { content: [{ type: 'text' as const, text: 'Provide at least one field to update.' }], isError: true };
       }
       if (description !== undefined && (descriptionEdits !== undefined || appendDescription !== undefined)) {
         return { content: [{ type: 'text' as const, text: 'Pass either `description` (full replace) or `descriptionEdits`/`appendDescription` (in-place edits), not both.' }], isError: true };
+      }
+      // Same reasoning as create_task: the repository clears whichever side this
+      // write did not set, so accepting both would discard half the request.
+      if (profile && (model || effort || permissionMode)) {
+        return { content: [{ type: 'text' as const, text: 'Pass either `profile` (per-column settings as the task moves) or the model/effort/permissionMode pins (one set for the task\'s whole life), not both.' }], isError: true };
       }
       return withProject(resolver, project, (ctx) => callHandler('update_task', {
         taskId,
@@ -426,6 +443,7 @@ export function registerTaskTools(
         model: model !== undefined ? (model ? resolveModelSelector(model) : null) : undefined,
         effort: effort !== undefined ? (effort ? resolveEffortSelector(effort) : null) : undefined,
         permissionMode: permissionMode !== undefined ? (permissionMode || null) : undefined,
+        profile: profile !== undefined ? (profile || null) : undefined,
         attachments: attachments ?? null,
       }, ctx, 'Failed to update task'));
     },

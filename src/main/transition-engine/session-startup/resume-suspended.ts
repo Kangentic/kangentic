@@ -5,8 +5,9 @@ import { TaskRepository } from '../../db/repositories/task-repository';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { SessionManager } from '../../pty/session-manager';
 import { ConfigManager } from '../../config/config-manager';
-import type { SessionRecord, Task } from '../../../shared/types';
+import type { BoardProfile, SessionRecord, Task } from '../../../shared/types';
 import { isResumeEligible } from '../spawn-intent';
+import { applyProfileToLane, findTaskProfile } from '../column-strategy';
 import { resolveIsolatedSwimlaneId } from '../session-isolation';
 import { retireRecord, markRecordSuspended } from '../session-lifecycle';
 import { isShuttingDown } from '../../shutdown-state';
@@ -42,6 +43,8 @@ export async function resumeSuspendedSessions(
   mcpServerHandle?: import('../../agent/mcp-http-server').McpHttpServerHandle | null,
   projectDefaultModel?: string | null,
   projectDefaultEffort?: string | null,
+  /** Board Board Profiles, so a profiled task resumes on the same rung it spawned under. */
+  boardProfiles?: ReadonlyArray<BoardProfile>,
 ): Promise<void> {
   if (isShuttingDown()) return;
 
@@ -83,9 +86,28 @@ export async function resumeSuspendedSessions(
   // Resolve tasks and lanes once: needed for isolation targeting (3b) and the
   // auto_spawn / deleted / paused filters below.
   const swimlaneRepo = new SwimlaneRepository(db);
-  const laneMap = new Map(swimlaneRepo.list().map((lane) => [lane.id, lane]));
+  const allLanes = swimlaneRepo.list();
+  const laneMap = new Map(allLanes.map((lane) => [lane.id, lane]));
   const allTasks = taskRepo.list();
   const taskMap = new Map(allTasks.map((task) => [task.id, task]));
+
+  /**
+   * The task's own lane: its column with its Board Profile folded over it.
+   *
+   * Every strategy read on this path has to go through here, because both of the
+   * flags it feeds are profile-scoped. `auto_spawn` decides whether a suspended
+   * session is resumed or retired at startup, and `session_target` decides which
+   * isolated track a record belongs to - reading either off the raw column would
+   * retire a profiled task's session, or match it against the wrong track.
+   */
+  const laneForTask = (task: Task) => {
+    const lane = laneMap.get(task.swimlane_id);
+    return applyProfileToLane(
+      lane,
+      findTaskProfile({ profiles: boardProfiles, profileId: task.profile_id, taskId: task.id }),
+      allLanes,
+    ) ?? lane;
+  };
 
   // 3a. Deduplicate PER (task_id, isolated_swimlane_id): keep only the most recent
   //     record for each parallel session. Retire strictly-older SAME-session
@@ -129,7 +151,7 @@ export async function resumeSuspendedSessions(
       retireRecord(sessionRepo, record.id);
       continue;
     }
-    const targetIsolatedSwimlaneId = resolveIsolatedSwimlaneId(laneMap.get(task.swimlane_id));
+    const targetIsolatedSwimlaneId = resolveIsolatedSwimlaneId(laneForTask(task));
     if (record.isolated_swimlane_id === targetIsolatedSwimlaneId) {
       toRecover.push(record);
     } else {
@@ -143,13 +165,10 @@ export async function resumeSuspendedSessions(
     console.log(`[SESSION_RECOVERY] Preserved ${preservedSessions} non-target session(s) for later resume`);
   }
 
-  // 4. Determine which columns should NOT have active agents (auto_spawn=false)
-  const excludedLaneIds = new Set(
-    Array.from(laneMap.values())
-      .filter((lane) => !lane.auto_spawn)
-      .map((lane) => lane.id),
-  );
-
+  // 4. Whether a task's column should have an active agent is decided PER TASK
+  //    (see laneForTask): auto_spawn is profile-scoped, so a lane-keyed
+  //    exclusion set would retire the session of a task whose profile turns
+  //    auto_spawn on - or resume one whose profile turns it off.
   const autoResumeSessionsOnRestart = configManager.load().agent.autoResumeSessionsOnRestart;
 
   const toProcess: Array<{ record: SessionRecord; task: Task }> = [];
@@ -168,7 +187,12 @@ export async function resumeSuspendedSessions(
       continue;
     }
 
-    if (excludedLaneIds.has(task.swimlane_id)) {
+    // `resolvedLane &&` preserves the pre-profile semantics exactly: the old
+    // lane-keyed set could only contain lanes that EXIST, so a task whose column
+    // is missing was never excluded. Dropping the guard would silently start
+    // retiring those records.
+    const resolvedLane = laneForTask(task);
+    if (resolvedLane && !resolvedLane.auto_spawn) {
       if (record.status === 'exited') {
         // OS-killed session whose task sits in a non-auto-spawn column (To Do /
         // Done): preserve it as 'suspended' for future resume, mirroring the
@@ -291,6 +315,7 @@ export async function resumeSuspendedSessions(
         // first-spawn override lock no-ops by construction.
         hasSessionRecord: true,
         tasks: taskRepo,
+        boardProfiles,
       });
 
       if (!prep.ok) {

@@ -14,6 +14,7 @@ import { agentDisplayName } from '../../utils/agent-display-name';
 import { shellDisplayName } from '../../utils/shell-display-name';
 import { useValuePulse } from '../../hooks/useValuePulse';
 import { ModelEffortPicker } from './ModelEffortPicker';
+import { ProfilePicker } from './ProfilePicker';
 import { ElapsedTime } from './ElapsedTime';
 import { ToolBreakdownPopover } from './ToolBreakdownPopover';
 
@@ -335,6 +336,10 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
       className={containerClass}
       data-testid="usage-bar"
     >
+      {/* First in the row: the profile determines the agent/model/effort to its
+          right. Task-scoped only - the transient Command Terminal variant below
+          has no task, so there is no profile to pick. */}
+      {task && <ProfilePicker taskId={task.id} />}
       {showShell && (
         <span className={`${pill} text-fg-faint`} title={sessionShell as string}>
           {shellDisplayName(sessionShell as string)}

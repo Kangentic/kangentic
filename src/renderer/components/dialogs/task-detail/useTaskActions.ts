@@ -42,6 +42,8 @@ export function useTaskActions(input: {
   modelOverride: string;
   effortOverride: string;
   permissionOverride: string;
+  /** Board Profile the task rides, or null for Default. */
+  profileId: string | null;
   setTitle: Dispatch<SetStateAction<string>>;
   setDescription: Dispatch<SetStateAction<string>>;
   setPrUrl: Dispatch<SetStateAction<string>>;
@@ -269,6 +271,10 @@ export function useTaskActions(input: {
           model_override: input.modelOverride || null,
           effort_override: input.effortOverride || null,
           permission_mode: (input.permissionOverride || null) as PermissionMode | null,
+          // Sent alongside the pins because they are mutually exclusive: the
+          // repository clears whichever side this write did not set, so both
+          // must travel together or one silently wins.
+          profile_id: input.profileId ?? null,
         }
         : {};
 
@@ -287,7 +293,8 @@ export function useTaskActions(input: {
             || (input.agentOverride || null) !== input.task.agent_override
             || (input.modelOverride || null) !== input.task.model_override
             || (input.effortOverride || null) !== input.task.effort_override
-            || (input.permissionOverride || null) !== input.task.permission_mode) {
+            || (input.permissionOverride || null) !== input.task.permission_mode
+            || (input.profileId ?? null) !== input.task.profile_id) {
             await input.updateTask({
               id: input.task.id,
               title: input.title,

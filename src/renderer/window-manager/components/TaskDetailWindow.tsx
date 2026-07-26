@@ -92,6 +92,7 @@ export function TaskDetailWindow({
   const swimlanes = useBoardStore((s) => s.swimlanes);
   const shortcuts = useBoardStore((s) => s.shortcuts);
   const loadBoard = useBoardStore((s) => s.loadBoard);
+  const boardManagerOpen = useBoardStore((s) => s.boardManagerOpen);
   const projectPath = useProjectStore((s) => s.currentProject?.path ?? null);
   const killSession = useSessionStore((s) => s.killSession);
   const suspendSession = useSessionStore((s) => s.suspendSession);
@@ -122,6 +123,7 @@ export function TaskDetailWindow({
   const [modelOverride, setModelOverride] = useState(task.model_override ?? '');
   const [effortOverride, setEffortOverride] = useState(task.effort_override ?? '');
   const [permissionOverride, setPermissionOverride] = useState(task.permission_mode ?? '');
+  const [profileId, setProfileId] = useState<string | null>(task.profile_id ?? null);
   const [isEditing, setIsEditing] = useState(!!initialEdit);
   const [descriptionPeekOpen, setDescriptionPeekOpen] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
@@ -158,6 +160,7 @@ export function TaskDetailWindow({
     modelOverride,
     effortOverride,
     permissionOverride,
+    profileId,
     setTitle,
     setDescription,
     setPrUrl,
@@ -230,11 +233,12 @@ export function TaskDetailWindow({
     || modelOverride !== (task.model_override ?? '')
     || effortOverride !== (task.effort_override ?? '')
     || permissionOverride !== (task.permission_mode ?? '')
+    || profileId !== (task.profile_id ?? null)
     || JSON.stringify(labels) !== JSON.stringify(task.labels ?? [])
     || branchConfig.baseBranch !== (task.base_branch || '')
     || branchConfig.customBranchName !== (task.branch_name || '')
     || branchConfig.useWorktree !== (task.use_worktree != null ? Boolean(task.use_worktree) : null)
-  ), [title, description, prUrl, priority, agentOverride, modelOverride, effortOverride, permissionOverride, labels, branchConfig.baseBranch, branchConfig.customBranchName, branchConfig.useWorktree, task]);
+  ), [title, description, prUrl, priority, agentOverride, modelOverride, effortOverride, permissionOverride, profileId, labels, branchConfig.baseBranch, branchConfig.customBranchName, branchConfig.useWorktree, task]);
 
   // Guard close gestures (header X, Escape, panel.close) while editing with
   // unsaved changes: ask before discarding. Returns true to let the caller
@@ -398,7 +402,11 @@ export function TaskDetailWindow({
   // xterm consumes the Ctrl-letter control chars). Gated on `isFocused` so only
   // the focused window reacts when several are open.
   useKeybinding('panel.maximize', handleToggleMaximized, { capture: true, enabled: isFocused });
-  useKeybinding('panel.close', closeWithGuard, { capture: true, enabled: isFocused });
+  // `!boardManagerOpen`: the edit form's profile picker can open the Board
+  // Manager over this window, and a single Escape meant for the manager must not
+  // also close the window (or raise its discard confirm) underneath. Gates the
+  // bubble-phase Escape listener below too.
+  useKeybinding('panel.close', closeWithGuard, { capture: true, enabled: isFocused && !boardManagerOpen });
   // Close on a header click with the bound mouse button (default middle). Routed
   // through `closeWithGuard` so an unsaved edit still prompts to discard. The
   // `when` scopes the mouse path to THIS window's title bar; a keyboard rebind
@@ -427,14 +435,14 @@ export function TaskDetailWindow({
   // PTY, consumes Escape itself (reaching the agent's TUI) and this never sees
   // it; with the pointer elsewhere Escape bubbles here and closes.
   useEffect(() => {
-    if (!isFocused) return;
+    if (!isFocused || boardManagerOpen) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       closeWithGuard();
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isFocused, closeWithGuard]);
+  }, [isFocused, boardManagerOpen, closeWithGuard]);
 
   // Expose this window's guarded close to the central click-outside dismiss hook
   // (`useClickOutsideToClose`), so a board-background click routes through the
@@ -573,7 +581,10 @@ export function TaskDetailWindow({
         <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
           {isEditing ? (
             <>
-              <div className="px-4 py-4 flex-1 flex flex-col min-h-0 overflow-y-auto">
+              <div
+                className="px-4 py-4 flex-1 flex flex-col min-h-0 overflow-y-auto"
+                data-testid="task-detail-edit-scroll"
+              >
                 <TaskDetailEditForm
                   task={task}
                   title={title}
@@ -593,6 +604,8 @@ export function TaskDetailWindow({
                   effortOverride={effortOverride}
                   setEffortOverride={setEffortOverride}
                   permissionOverride={permissionOverride}
+                  profileId={profileId}
+                  setProfileId={setProfileId}
                   setPermissionOverride={setPermissionOverride}
                   attachments={attachments}
                   branchConfig={branchConfig}

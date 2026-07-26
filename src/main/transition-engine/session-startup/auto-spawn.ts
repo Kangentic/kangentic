@@ -5,8 +5,9 @@ import { TaskRepository } from '../../db/repositories/task-repository';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { SessionManager } from '../../pty/session-manager';
 import { ConfigManager } from '../../config/config-manager';
-import type { Swimlane, Task } from '../../../shared/types';
+import type { BoardProfile, Swimlane, Task } from '../../../shared/types';
 import { isShuttingDown } from '../../shutdown-state';
+import { applyProfileToLane, findTaskProfile } from '../column-strategy';
 import { resolveIsolatedSwimlaneId } from '../session-isolation';
 import { prepareAgentSpawn, type PreparedSpawn } from './prepare-spawn';
 import { startStartupTimer } from './timing';
@@ -34,6 +35,8 @@ export async function autoSpawnTasks(
   mcpServerHandle?: import('../../agent/mcp-http-server').McpHttpServerHandle | null,
   projectDefaultModel?: string | null,
   projectDefaultEffort?: string | null,
+  /** Board Board Profiles, so a profiled task spawns on its own rung for this column. */
+  boardProfiles?: ReadonlyArray<BoardProfile>,
 ): Promise<void> {
   if (isShuttingDown()) return;
 
@@ -45,8 +48,21 @@ export async function autoSpawnTasks(
   // Determine which columns should have active agents (auto_spawn=true)
   const swimlaneRepo = new SwimlaneRepository(db);
   const allLanes = swimlaneRepo.list();
-  const activeLanes = allLanes.filter((lane) => lane.auto_spawn);
-  if (activeLanes.length === 0) {
+
+  // auto_spawn is profile-scoped, so a lane's own flag cannot decide alone: a
+  // profile may turn it ON for a column whose base has it off, or OFF for one
+  // that has it on. Only the ON direction needs extra lanes scanned - the OFF
+  // direction is caught by the per-task check below, inside lanes we already
+  // visit. With no profiles on the board this set is empty and both the scanned
+  // lanes and the cost are exactly what they were before profiles existed.
+  const laneIdsSomeProfileEnables = new Set<string>();
+  for (const profile of boardProfiles ?? []) {
+    for (const [laneId, entry] of Object.entries(profile.columns ?? {})) {
+      if (entry.autoSpawn === true) laneIdsSomeProfileEnables.add(laneId);
+    }
+  }
+  const lanesToScan = allLanes.filter((lane) => lane.auto_spawn || laneIdsSomeProfileEnables.has(lane.id));
+  if (lanesToScan.length === 0) {
     done(0);
     return;
   }
@@ -57,12 +73,21 @@ export async function autoSpawnTasks(
   // and is preserved by design, so no transition/action lookup is needed here.
   // Done before any shell/config/paused-ID resolution so a project where
   // everything already has a session costs nothing.
+  //
+  // The lane is folded ONCE here and carried on the candidate, so every
+  // downstream read (prepareAgentSpawn's `swimlane`, resolveIsolatedSwimlaneId)
+  // sees the task's own rung rather than the column's base settings.
   const candidates: Array<{ lane: Swimlane; task: Task }> = [];
-  for (const lane of activeLanes) {
+  for (const lane of lanesToScan) {
     for (const task of taskRepo.list(lane.id)) {
-      if (!sessionManager.hasSessionForTask(task.id)) {
-        candidates.push({ lane, task });
-      }
+      if (sessionManager.hasSessionForTask(task.id)) continue;
+      const laneForTask = applyProfileToLane(
+        lane,
+        findTaskProfile({ profiles: boardProfiles, profileId: task.profile_id, taskId: task.id }),
+        allLanes,
+      ) ?? lane;
+      if (!laneForTask.auto_spawn) continue;
+      candidates.push({ lane: laneForTask, task });
     }
   }
   if (candidates.length === 0) {
@@ -136,6 +161,7 @@ export async function autoSpawnTasks(
         // overrides locked by this startup spawn, exactly like a board spawn.
         hasSessionRecord: sessionRepo.getLatestForTask(task.id) !== undefined,
         tasks: taskRepo,
+        boardProfiles,
       });
 
       if (!prep.ok) {

@@ -121,6 +121,7 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
   const [modelOverride, setModelOverride] = useState('');
   const [effortOverride, setEffortOverride] = useState('');
   const [permissionOverride, setPermissionOverride] = useState('');
+  const [profileId, setProfileId] = useState<string | null>(null);
 
   const isDirty = title.trim() !== '' || description.trim() !== '' || customBranchName.trim() !== '' || attachments.length > 0 || labels.length > 0 || priority !== 0 || agentOverride !== '' || modelOverride !== '' || effortOverride !== '' || permissionOverride !== '';
 
@@ -152,7 +153,14 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
   // mirroring the task detail dialog and command terminal). panel.close and
   // Escape both route through the dirty-changes guard. No ad-hoc keydown listener.
   useKeybinding('panel.maximize', handleToggleMaximized, { capture: true });
-  useKeybinding('panel.close', closeWithAnimation, { capture: true });
+  // Suppressed while the Board Manager is open over this dialog (opened from the
+  // Advanced section's profile edit button). This binding is capture-phase while
+  // BoardManagerDialog's Escape is a bubble-phase listener, so without the gate a
+  // single Escape meant to dismiss the manager would reach here first and raise
+  // the discard-changes confirm over a draft the user never tried to abandon.
+  // Mirrors how BoardManagerDialog suppresses its own Escape under a nested modal.
+  const boardManagerOpen = useBoardStore((state) => state.boardManagerOpen);
+  useKeybinding('panel.close', closeWithAnimation, { capture: true, enabled: !boardManagerOpen });
 
   // Cleanup object URLs on unmount. Track the latest attachments in a ref so the
   // unmount-only cleanup revokes the CURRENT set: a [] dep captures the
@@ -301,6 +309,7 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
         ...(modelOverride ? { model_override: modelOverride } : {}),
         ...(effortOverride ? { effort_override: effortOverride } : {}),
         ...(permissionOverride ? { permission_mode: permissionOverride as PermissionMode } : {}),
+      ...(profileId ? { profile_id: profileId } : {}),
         ...(attachments.length > 0 ? {
           pendingAttachments: attachments.map((attachment) => ({
             filename: attachment.filename,
@@ -332,6 +341,9 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
           closeRef={dialogCloseRef}
           onHeaderDoubleClick={handleToggleMaximized}
           onCloseRequest={handleCloseAttempt}
+          // The Advanced section's profile edit button opens the Board Manager
+          // over this dialog; Escape then belongs to the manager alone.
+          suppressEscape={boardManagerOpen}
           title="New Task"
           icon={<Plus size={14} className="text-fg-muted" />}
           headerRight={
@@ -464,7 +476,10 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
             </div>
 
             <div>
-              <label className="text-[10px] text-fg-muted mb-1 block">Branch</label>
+              {/* text-xs to match Priority / Labels / Profile. Was text-[10px],
+                  which is below the documented minimum and made this one label
+                  visibly smaller than every other in the dialog. */}
+              <label className="text-xs text-fg-muted mb-1 block">Branch</label>
               <div className="flex items-center gap-2">
                 <input
                   data-testid="custom-branch-name-input"
@@ -500,6 +515,8 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
               setEffortOverride={setEffortOverride}
               permissionOverride={permissionOverride}
               setPermissionOverride={setPermissionOverride}
+              profileId={profileId}
+              setProfileId={setProfileId}
             />
 
             {/* Drag overlay */}

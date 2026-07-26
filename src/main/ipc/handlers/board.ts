@@ -4,14 +4,10 @@ import path from 'node:path';
 import { ipcMain, shell } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import { getProjectRepos } from '../helpers';
-import { SessionRepository } from '../../db/repositories/session-repository';
-import { getProjectDb } from '../../db/database';
-import { agentRegistry } from '../../agent/agent-registry';
-import { prepareInjectionPlan } from '../../transition-engine/injection-plan';
-import { restartSessionForSettingsChange } from './session-reconcile';
-import { withTaskLock } from '../task-lifecycle-lock';
+import { applyProfileToLane, findTaskProfile } from '../../transition-engine/column-strategy';
+import { propagateStrategyToLiveSessions, propagateBoardProfileChange } from './strategy-propagation';
 import { runWithProjectLogContext } from '../../diagnostics/project-log-context';
-import type { ShortcutConfig } from '../../../shared/types';
+import type { BoardProfile, ShortcutConfig } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 
 /** Trigger write-back if kangentic.json exists. */
@@ -96,94 +92,26 @@ export function registerBoardHandlers(context: IpcContext): void {
     // propagates to a session running at the default, but re-saving a column at
     // a value the session already has injects nothing.
     //
-    // We gate the whole loop on the column's `model_override`/`effort_override`
-    // actually changing in this save (`overridesChanged`). A color/title/icon/WIP
-    // edit, or a re-save that re-selects the same model/effort, leaves the
-    // overrides untouched and must NOT suspend/respawn or inject into in-flight
-    // sessions. This holds even when a running session's recorded `applied_*` is
-    // stale (e.g. NULL on a session predating applied-settings recording), where
-    // the per-session delta alone would otherwise see a phantom change and
-    // needlessly restart the session. (`before` also guards that the swimlane
-    // existed pre-update.)
-    //
-    // A MODEL change restarts the session (suspend + `--resume --model`) rather
-    // than live-injecting `/model`, for consistency with the column-transition
-    // and ContextBar paths (a live model swap left the agent paused after a
-    // Planning -> Executing handoff). An EFFORT change still swaps live.
-    const overridesChanged = !!before && (
-      before.model_override !== result.model_override
-      || before.effort_override !== result.effort_override
-    );
-    if (overridesChanged) {
-      const projectId = context.currentProjectId;
-      const projectPath = context.currentProjectPath;
-      const sessionRepo = projectId
-        ? new SessionRepository(getProjectDb(projectId))
-        : null;
-      const project = projectId ? context.projectRepo.getById(projectId) : null;
-      for (const task of tasks.list(result.id)) {
-        if (!task.session_id) continue;
-        const session = context.sessionManager.getSession(task.session_id);
-        if (!session || session.status !== 'running') continue;
-        const adapter = task.agent ? agentRegistry.get(task.agent) : undefined;
-        // No auto_command propagation on column edits - the column-edit
-        // intent is "change settings", not "re-run any auto trigger".
-        const plan = prepareInjectionPlan({
-          adapter,
-          sessionRepo,
+    // The before/after are folded PER TASK so a task riding a Board Profile is
+    // judged on its own rung: editing this column's model must not push that
+    // model into a task whose profile pins a different one here. The shared
+    // helper owns the gate and the inject-vs-restart decision, so a profile edit
+    // (below) behaves identically.
+    const boardProfiles = context.boardConfigManager.getBoardProfiles();
+    const laneList = swimlanes.list();
+    propagateStrategyToLiveSessions(
+      context,
+      'SWIMLANE_UPDATE',
+      tasks.list(result.id).map((task) => {
+        const profile = findTaskProfile({ profiles: boardProfiles, profileId: task.profile_id, taskId: task.id });
+        return {
           task,
-          toLane: result,
-          project,
-        });
-        if (!plan) continue;
-
-        // Model change: suspend + respawn in place. Run in the background so the
-        // config save stays responsive (the session updates the UI via
-        // session-changed events); per-task locked so it can't race a user drag.
-        if (plan.needsRestartForModel) {
-          if (projectId && projectPath) {
-            const taskId = task.id;
-            void withTaskLock(taskId, async () => {
-              const restart = await restartSessionForSettingsChange(context, projectId, projectPath, taskId);
-              if (!restart.ok) {
-                console.warn(
-                  `[SWIMLANE_UPDATE] Could not restart session for task ${taskId.slice(0, 8)}`
-                  + ` after model change in column "${result.name}": ${restart.reason}`,
-                );
-                return;
-              }
-              // The restart respawned the task with a new session_id; the board
-              // store still has the pre-restart session_id until it reloads.
-              // Push a quiet (toast-free) re-sync trigger, distinct from
-              // TASK_UPDATED_BY_AGENT, since this is a consequence of the
-              // user's own column edit, not an agent-driven change.
-              if (!context.mainWindow.isDestroyed()) {
-                context.mainWindow.webContents.send(IPC.TASK_SESSION_RESYNC, projectId);
-              }
-            });
-          } else {
-            console.warn(
-              `[SWIMLANE_UPDATE] Skipping model-change restart for task ${task.id.slice(0, 8)}`
-              + ` in column "${result.name}": no resolved project context.`,
-            );
-          }
-          continue;
-        }
-
-        context.terminalSubmitScheduler.scheduleKeystrokes(task.id, task.session_id, plan.sequence, {
-          verifier: plan.verifier,
-          verifiedPrefixLength: plan.verifiedPrefixLength,
-        });
-        // Record the new running value so a later column move doesn't re-inject.
-        if (plan.appliedSettings && sessionRepo) {
-          sessionRepo.updateAppliedSettings(task.session_id, plan.appliedSettings);
-        }
-        console.log(
-          `[SWIMLANE_UPDATE] Propagating ${plan.sequence.length} setting(s) to active session for task ${task.id.slice(0, 8)}`
-          + ` in column "${result.name}"${plan.verifier ? ' (with command verification)' : ''}: ${plan.sequence.join(' | ')}`,
-        );
-      }
-    }
+          before: applyProfileToLane(before, profile, laneList),
+          after: applyProfileToLane(result, profile, laneList),
+          sourceName: result.name,
+        };
+      }),
+    );
 
     return result;
   });
@@ -263,6 +191,21 @@ export function registerBoardHandlers(context: IpcContext): void {
       const result = context.boardConfigManager.applyFileChange(projectId, project.path);
       return result.warnings;
     });
+  });
+
+  ipcMain.handle(IPC.BOARD_CONFIG_GET_BOARD_PROFILES, () => {
+    return context.boardConfigManager.getBoardProfiles();
+  });
+
+  ipcMain.handle(IPC.BOARD_CONFIG_SET_BOARD_PROFILES, (_, profiles: BoardProfile[]) => {
+    // Snapshot BEFORE the write: retuning a profile has to reach the live
+    // sessions of the tasks riding it, exactly as editing a column reaches the
+    // sessions in that column. Without this a task on an edited profile kept its
+    // old model until the user moved it out and back - the settings-edit path
+    // silently applied to one authoring surface and not the other.
+    const previousProfiles = context.boardConfigManager.getBoardProfiles();
+    context.boardConfigManager.setBoardProfiles(profiles);
+    propagateBoardProfileChange(context, previousProfiles, profiles);
   });
 
   ipcMain.handle(IPC.BOARD_CONFIG_GET_SHORTCUTS, () => {

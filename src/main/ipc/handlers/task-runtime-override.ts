@@ -6,6 +6,8 @@ import { SessionRepository } from '../../db/repositories/session-repository';
 import { getProjectDb } from '../../db/database';
 import { getProjectRepos } from '../helpers';
 import { resolveProjectContext } from '../helpers/project-repos';
+import { applyProfileToLane } from '../../transition-engine/column-strategy';
+import { loadTaskProfile } from '../helpers/task-profile';
 import { restartSessionForSettingsChange } from './session-reconcile';
 import { buildCommandInjectionVerifier } from '../../transition-engine/injection-plan';
 import type { SettingsChangeSpec } from '../../agent/agent-adapter';
@@ -86,7 +88,14 @@ export function registerTaskRuntimeOverrideHandlers(context: IpcContext): void {
         // `{ model: null, modelChanged: true }` to Claude, whose
         // getInjectionSequence skips on null and forces a restart even
         // though `/model opus` would have worked live.
-        const lane = swimlanes.getById(task.swimlane_id);
+        // Folded through the task's Board Profile: "use column default" must
+        // resolve to the rung the task actually runs on for this column, not the
+        // column's base pin, or the adapter gets a slash sequence for a model
+        // the task was never going to use.
+        const lane = applyProfileToLane(
+          swimlanes.getById(task.swimlane_id),
+          loadTaskProfile(context, task, projectPath),
+        );
         const swimlaneModel = lane?.model_override ?? null;
         const swimlaneEffort = lane?.effort_override ?? null;
         const project = context.projectRepo.getById(projectId);

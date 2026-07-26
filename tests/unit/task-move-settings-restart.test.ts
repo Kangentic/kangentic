@@ -213,7 +213,7 @@ function makeContext(taskRepo: unknown, swimlaneRepo: unknown) {
         agent: { permissionMode: 'acceptEdits' },
       })),
     },
-    boardConfigManager: { getDefaultBaseBranch: vi.fn(() => null) },
+    boardConfigManager: { getDefaultBaseBranch: vi.fn(() => null), getBoardProfiles: vi.fn(() => []) },
     terminalSubmitScheduler: { cancel: vi.fn(), scheduleKeystrokes: vi.fn() },
     projectRepo: { getById: vi.fn(() => ({ id: 'proj-test', default_agent: 'claude' })) },
   };

@@ -217,6 +217,7 @@ interface MockContext {
     exists: ReturnType<typeof vi.fn>;
     applyConfigOnOpen: ReturnType<typeof vi.fn>;
     exportFromDb: ReturnType<typeof vi.fn>;
+    getBoardProfiles: ReturnType<typeof vi.fn>;
   };
   currentProjectId: string | null;
   currentProjectPath: string | null;
@@ -240,6 +241,7 @@ function createMockContext(overrides: Partial<MockContext> = {}): MockContext {
       exists: vi.fn(() => false),
       applyConfigOnOpen: vi.fn(() => []),
       exportFromDb: vi.fn(),
+      getBoardProfiles: vi.fn(() => []),
     },
     currentProjectId: null,
     currentProjectPath: null,

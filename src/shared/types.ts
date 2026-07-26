@@ -299,8 +299,26 @@ export interface Task {
   agent_override: string | null;
   /** Per-task permission mode override. Takes precedence over the swimlane's `permission_mode` and the project's default permission mode, same as `model_override`/`effort_override` - EXCEPT when the destination swimlane forces `permission_mode: 'plan'`, which always wins regardless of this field: plan mode is a genuine safety guarantee (never let a task's Auto-Classifier/Accept-Edits pin bypass a deliberate read-only phase), not just an ordinary column default like every other permission mode. Null inherits. Set via the New Task dialog's Advanced section / the task-detail edit form, or locked at first spawn alongside agent/model/effort (`lockAdvancedOverridesOnFirstSpawn`) so a task with ANY Advanced override runs under the permission the dialog displayed, not the destination column's. */
   permission_mode: PermissionMode | null;
-  /** Per-task initial command, injected once the agent spawns for this task. MCP-only (set via `kangentic_create_task`'s `autoCommand` param); not surfaced in the UI. Takes precedence over the swimlane's `auto_command` for this task only; null inherits the swimlane. */
+  /** Per-task initial command, injected once the agent spawns for this task. MCP-only (set via `kangentic_create_task`'s `autoCommand` param); not surfaced in the UI. Takes precedence over the profile's and then the swimlane's `auto_command` for this task only; null inherits. Deliberately NOT part of the profile/direct-override exclusivity set (it is an MCP escape hatch, not an Advanced pin), so a task may carry both this and `profile_id`. */
   auto_command: string | null;
+  /**
+   * The Board Profile (`kangentic.json` `profiles`) whose per-column strategy
+   * deltas this task follows as it moves across the board. Null = the synthetic
+   * "Default" profile, i.e. the columns' own base settings.
+   *
+   * MUTUALLY EXCLUSIVE with the four Advanced pins (`agent_override`,
+   * `model_override`, `effort_override`, `permission_mode`), enforced in
+   * `TaskRepository`: a task either pins one set of values for its whole life OR
+   * rides a per-column ladder, never both. That exclusivity is load-bearing -
+   * because a profile task carries none of those four, `hasAnyOverrideSet` is
+   * false and `lockAdvancedOverridesOnFirstSpawn` no-ops, which is what stops the
+   * first-spawn lock from freezing the ladder at column 1.
+   *
+   * An id naming no known profile degrades to Default rather than throwing: the
+   * profiles live in a checked-in file while this column lives in the local DB,
+   * so a teammate deleting a profile must never wedge an in-flight task.
+   */
+  profile_id: string | null;
   attachment_count: number;
   /** Serialized `TaskDetailViewState` (JSON) persisting the task-detail dialog's layout across restarts. null until the user changes the layout once. */
   detail_view_state: string | null;
@@ -2769,6 +2787,8 @@ export interface TaskCreateInput {
   permission_mode?: PermissionMode | null;
   /** MCP-only initial command, injected once the agent spawns for this task. Not surfaced in the New Task dialog. */
   auto_command?: string | null;
+  /** Board Profile to ride (see `Task.profile_id`). Setting this clears the four Advanced pins; they are mutually exclusive. */
+  profile_id?: string | null;
   /** External origin carried through when promoting an imported backlog item, so import dedup survives promotion. */
   externalId?: string;
   externalSource?: string;
@@ -2804,6 +2824,8 @@ export interface TaskUpdateInput {
   effort_override?: string | null;
   agent_override?: string | null;
   permission_mode?: PermissionMode | null;
+  /** Board Profile to ride (see `Task.profile_id`). Setting this clears the four Advanced pins, and setting any of those four clears this. */
+  profile_id?: string | null;
 }
 
 /** Result of `IPC.TASK_RESOLVE_PR` - the on-demand branch->PR resolver. */
@@ -3511,12 +3533,88 @@ export interface ShortcutConfig {
   display?: ShortcutDisplay; // where the shortcut appears (default: 'both')
 }
 
+/**
+ * One column's strategy delta inside a Board Profile.
+ *
+ * SPARSE BY DESIGN, with three states per field - consumers MUST branch on key
+ * PRESENCE (`'modelOverride' in entry`), never `entry.modelOverride ?? lane.x`:
+ *
+ *   key absent         -> inherit the column's own base value
+ *   key present, null  -> clear to the agent default (no CLI flag), even when
+ *                         the base column pins one
+ *   key present, value -> use that value
+ *
+ * The middle state is why `??` is wrong: a profile must be able to say "Executing
+ * runs the agent's default model" against a base column that pins Opus. Sparse
+ * (rather than a full copy of every field) means adding a column, or editing a
+ * base column, does not silently rot every profile.
+ *
+ * `JSON.stringify` drops `undefined` and keeps `null`, so a writer that emits
+ * `undefined` for inherit and `null` for clear serializes correctly for free.
+ */
+export interface BoardProfileEntry {
+  agentOverride?: string | null;
+  modelOverride?: string | null;
+  effortOverride?: string | null;
+  permissionMode?: PermissionMode | null;
+  autoCommand?: string | null;
+  autoSpawn?: boolean;
+  handoffContext?: boolean;
+  sessionTarget?: SessionTarget;
+  sessionSpawnStrategy?: SessionSpawnStrategy;
+  /**
+   * Name of the target column (NOT a uuid), matching `BoardColumnConfig.planExitTarget`.
+   * This one field keeps the by-name convention it already round-trips under; it is
+   * resolved to a swimlane id at read time.
+   */
+  planExitTarget?: string;
+}
+
+/**
+ * A named alternate ladder of per-column STRATEGY settings, so a task can ride
+ * different horsepower per column (e.g. Planning in Opus xhigh, Executing in
+ * Opus high, Merge in Sonnet high) without changing the shared board for
+ * everyone else.
+ *
+ * Column IDENTITY (which columns exist, their name, order, role, color, icon) is
+ * singular across profiles - only strategy is profile-scoped.
+ *
+ * Lives only in `kangentic.json` / `kangentic.local.json`, following the
+ * `ShortcutConfig` pattern: no DB table and no migration, with team/local scoping
+ * for free. A task's ASSIGNMENT to a profile is separate per-machine state
+ * (`tasks.profile_id`).
+ *
+ * `id` is a stable uuid and is what `tasks.profile_id` stores; `name` is display
+ * only, so a teammate renaming a profile never detaches in-flight tasks. Entries
+ * are keyed by swimlane uuid for the same reason - a column RENAME is far more
+ * common than a uuid regeneration, and name-keying would silently detach every
+ * entry on a rename with no error.
+ */
+export interface BoardProfile {
+  /** UUID, assigned on write-back (mirrors `ShortcutConfig.id`). */
+  id: string;
+  /** Unique display name. */
+  name: string;
+  description?: string;
+  /** Per-column deltas, keyed by swimlane uuid. A column with no entry inherits its base config verbatim. */
+  columns: Record<string, BoardProfileEntry>;
+}
+
 export interface BoardConfig {
   version: number;
   columns: BoardColumnConfig[];
   actions: BoardActionConfig[];
   transitions: BoardTransitionConfig[];
   shortcuts?: ShortcutConfig[];
+  /**
+   * Named alternate strategy ladders (see BoardProfile). Absent / empty means
+   * every task runs the columns' own settings, i.e. the synthetic "Default"
+   * profile, which is deliberately NOT stored here.
+   *
+   * Like `shortcuts`, this key has no DB representation, so `buildBoardConfigFromDb`
+   * must carry it across from the existing team config or a column edit destroys it.
+   */
+  profiles?: BoardProfile[];
   defaultBaseBranch?: string;
   _modifiedBy?: string;
 }
@@ -4081,6 +4179,12 @@ export interface ElectronAPI {
     apply: (projectId: string) => Promise<string[]>;
     onChanged: (callback: (projectId: string) => void) => () => void;
     onShortcutsChanged: (callback: (projectId: string) => void) => () => void;
+    /** The board's named Board Profiles (see `BoardProfile`). Empty when the board has none. */
+    getBoardProfiles: () => Promise<BoardProfile[]>;
+    /** Replace the board's Board Profiles. Team-scoped: `tasks.profile_id` is resolved on every machine that opens the board. */
+    setBoardProfiles: (profiles: BoardProfile[]) => Promise<void>;
+    /** An agent (MCP) rewrote this project's Board Profiles; re-read them. */
+    onBoardProfilesChanged: (callback: (projectId: string) => void) => () => void;
     getShortcuts: () => Promise<(ShortcutConfig & { source: 'team' | 'local' })[]>;
     setShortcuts: (actions: ShortcutConfig[], target: 'team' | 'local') => Promise<void>;
     setDefaultBaseBranch: (branch: string) => Promise<void>;

@@ -5,9 +5,10 @@ import { agentRegistry } from '../../agent/agent-registry';
 import type { AgentAdapter } from '../../agent/agent-adapter';
 import type { McpHttpServerHandle } from '../../agent/mcp-http-server';
 import { appendCallerSession } from '../../agent/mcp-http/caller-url';
-import type { AppConfig, Swimlane, Task } from '../../../shared/types';
+import type { AppConfig, BoardProfile, Swimlane, Task } from '../../../shared/types';
 import type { TaskRepository } from '../../db/repositories/task-repository';
 import { runSpawnPreamble, resolveEffectivePermissionMode } from '../spawn-preamble';
+import { applyProfileToLane, findTaskProfile } from '../column-strategy';
 import { sessionOutputPaths } from '../session-paths';
 import { resolveExecutionTarget } from '../../agent/shared/execution-target';
 import { resolveLaunchOptions } from '../../agent/shared/launch-options';
@@ -98,8 +99,25 @@ export async function prepareAgentSpawn(input: {
    */
   hasSessionRecord: boolean;
   tasks: Pick<TaskRepository, 'update'>;
+  /**
+   * The board's Board Profiles, so a task riding one resumes under that
+   * profile's rung for its current column rather than the column's base
+   * settings. Omitted (or empty) means every task runs the columns' own
+   * settings, which is the pre-profile behavior.
+   */
+  boardProfiles?: ReadonlyArray<BoardProfile>;
 }): Promise<PrepareResult> {
-  const { task, swimlane, cwd, projectId, projectPath, effectiveConfig: config } = input;
+  const { task, cwd, projectId, projectPath, effectiveConfig: config } = input;
+
+  // Fold the task's profile over its column once, then shadow `swimlane` so
+  // every read below (the preamble, permission mode, model/effort) sees the
+  // profile-resolved strategy. Startup recovery must agree with the board path
+  // here: a task that spawned under a profile and is then resumed after a crash
+  // has to come back on the same rung.
+  const swimlane = applyProfileToLane(
+    input.swimlane,
+    findTaskProfile({ profiles: input.boardProfiles, profileId: task.profile_id, taskId: task.id }),
+  );
 
   // The task sits in the lane it is spawning into on the startup paths, so
   // the settings lane and the destination lane are the same lane here: the

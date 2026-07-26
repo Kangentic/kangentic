@@ -191,6 +191,59 @@ Template variables available in shortcut commands (defined in `src/shared/templa
 
 IPC channels for shortcuts are in the Board Config group: `boardConfig:getShortcuts`, `boardConfig:setShortcuts`, `boardConfig:shortcutsChanged`.
 
+### Board Profiles
+
+A **Board Profile** is a named alternate set of per-column strategy settings (agent, model, effort,
+permission mode, auto-command, auto-spawn, handoff context, session target, session spawn strategy,
+plan-exit target). A task selects one and rides its ladder as it moves - so one task can run Planning
+in Opus xhigh and Merge in Sonnet high while another runs the same board more cheaply. Column
+*identity* (which columns exist, their name, order, role, color, icon) is singular across profiles;
+only strategy is profile-scoped.
+
+Profiles are authored in the Board Manager (Edit Columns) and stored under a `profiles` key in
+`kangentic.json`. Unlike shortcuts they are **team-only** - never `kangentic.local.json` - because
+`tasks.profile_id` is resolved on every machine that opens the board, so a personal-only profile
+would leave teammates with tasks pointing at an id they cannot resolve. Boards with no profiles omit
+the key entirely.
+
+```json
+"profiles": [
+  {
+    "id": "6f3d9c21-...",
+    "name": "Heavy",
+    "columns": {
+      "<swimlane-uuid>": { "modelOverride": "opus", "effortOverride": "xhigh" },
+      "<swimlane-uuid>": { "modelOverride": null }
+    }
+  }
+]
+```
+
+Entries are keyed by **swimlane uuid** (a rename must not detach in-flight tasks) and are **sparse**,
+with three distinct states per setting:
+
+| Form | Meaning |
+|------|---------|
+| key omitted | Inherit the column's own setting |
+| key set to `null` | Clear to the agent default, overriding the column's own pin |
+| key set to a value | Use that value in this column |
+
+That third state is why the resolver (`src/main/transition-engine/column-strategy.ts`) branches on
+key *presence* and never `??`: under `??`, "run the agent default here even though the column pins
+one" is indistinguishable from "inherit", and a profile could only ever add pins, never remove them.
+
+A task's assignment lives in the per-project database (`tasks.profile_id`), not in config: the
+profile *definition* is team-shared, the *assignment* is per-task local runtime state. A task
+pointing at a profile a teammate deleted degrades to the columns' own settings and logs once.
+
+Profiles are mutually exclusive with the task's Advanced agent/model/effort/permission pins,
+enforced at write time in `TaskRepository`.
+
+IPC channels are in the Board Config group: `boardConfig:getBoardProfiles`,
+`boardConfig:setBoardProfiles`, `boardConfig:boardProfilesChanged`. Agents can read and edit
+profiles (including across projects) via the `kangentic_*_board_profile` MCP tools - see
+[MCP Server > Board Profiles](mcp-server.md#board-profiles).
+
 ### mcpServer.*
 
 | Key | Type | Default | Description |
@@ -432,6 +485,15 @@ Ghost columns are invisible on the board but still exist in the database. Once a
   ],
   "defaultBaseBranch": "main",
   "shortcuts": [],
+  "profiles": [
+    {
+      "id": "uuid",
+      "name": "Heavy",
+      "columns": {
+        "<swimlane-uuid>": { "modelOverride": "opus", "effortOverride": "xhigh" }
+      }
+    }
+  ],
   "actions": [
     {
       "id": "uuid",
@@ -482,6 +544,12 @@ Config files written by hand (without `id` fields on columns) are treated as add
 | `boardConfig:export` | Export current board state to `kangentic.json` (auto-runs on project open) |
 | `boardConfig:apply` | Apply pending config file changes (reconcile file into DB) |
 | `boardConfig:changed` | Event: `kangentic.json` or `kangentic.local.json` changed on disk |
+| `boardConfig:getBoardProfiles` | Get the board's [Board Profiles](#board-profiles) |
+| `boardConfig:setBoardProfiles` | Replace the board's Board Profiles (team-scoped) |
+| `boardConfig:boardProfilesChanged` | Event: an agent (MCP) rewrote this project's Board Profiles |
+| `boardConfig:getShortcuts` | Get task detail dialog [shortcuts](#shortcuts) |
+| `boardConfig:setShortcuts` | Update task detail dialog shortcuts |
+| `boardConfig:shortcutsChanged` | Event: shortcuts file changed |
 | `boardConfig:setDefaultBaseBranch` | Update the default base branch in `kangentic.json` |
 
 ## Environment Variables

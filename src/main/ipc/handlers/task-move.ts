@@ -35,6 +35,8 @@ import { resolveTargetAgent } from '../../transition-engine/agent-resolver';
 import { agentRegistry } from '../../agent/agent-registry';
 import { prepareInjectionPlan } from '../../transition-engine/injection-plan';
 import { resolveIsolatedSwimlaneId, resolveForceFresh } from '../../transition-engine/session-isolation';
+import { resolveEffectiveAutoCommand, applyProfileToLane } from '../../transition-engine/column-strategy';
+import { loadTaskProfile } from '../helpers/task-profile';
 import type { Task, Swimlane, SessionRecord } from '../../../shared/types';
 
 /**
@@ -225,7 +227,19 @@ export async function handleTaskMove(
       const fromSwimlaneId = task.swimlane_id;
       const originalPosition = task.position;
       const fromLane = swimlanes.getById(fromSwimlaneId);
-      const toLane = swimlanes.getById(input.targetSwimlaneId);
+      // Board Profiles: fold the task's profile over the destination column
+      // ONCE, here, so every read below (agent resolution, the injection plan's
+      // model/effort delta, the effort restart check, auto_command) sees the
+      // same profile-resolved strategy the cold spawn path uses.
+      //
+      // This path is the warm one - the destination already has a live session -
+      // and it is where a half-wired profile does its quiet damage: the delta
+      // check would compare the running session against the column's BASE model,
+      // see no change, and leave the PTY on the previous column's rung while
+      // spawnAgent would have switched it. Same task, different horsepower
+      // depending on whether a session happened to be live.
+      const rawToLane = swimlanes.getById(input.targetSwimlaneId);
+      const toLane = applyProfileToLane(rawToLane, loadTaskProfile(context, task, resolvedProjectPath)) ?? rawToLane;
 
       // Only send the full prompt template (title + description + attachments) when
       // starting from To Do. Non-To Do sources are resuming previously-started
@@ -597,8 +611,14 @@ export async function handleTaskMove(
           // prepareInjectionPlan so adapters own their slash syntax and the
           // model-restart policy stays in one place (agent-agnostic here).
           const adapter = task.agent ? agentRegistry.get(task.agent) : undefined;
-          const interpolatedAuto = toLane?.auto_command?.trim()
-            ? interpolateTaskTemplate(toLane.auto_command, resolveTaskTemplateVars({
+          // Resolve through the shared tier chain (task -> column) rather than
+          // reading the lane directly. Reading `toLane.auto_command` alone
+          // dropped a task's own auto_command on this path while the spawn path
+          // honored it, so the same task behaved differently on a cold spawn
+          // than on a warm move into a column with a live session.
+          const effectiveAutoCommand = resolveEffectiveAutoCommand(task.auto_command, toLane?.auto_command);
+          const interpolatedAuto = effectiveAutoCommand?.trim()
+            ? interpolateTaskTemplate(effectiveAutoCommand, resolveTaskTemplateVars({
                 task,
                 defaultBaseBranch: effectiveDefaultBranch,
                 attachmentPaths: attachments.getPathsForTask(task.id),

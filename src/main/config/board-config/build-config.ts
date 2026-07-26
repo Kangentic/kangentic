@@ -102,8 +102,16 @@ export function buildBoardConfigFromDb(params: {
   boardConfig.transitions = Array.from(transitionGroups.values());
 
   // Preserve fields that aren't stored in the DB.
+  //
+  // This function rebuilds kangentic.json wholesale from the database, so any
+  // key without a DB representation is DESTROYED unless it is carried across
+  // here. Adding a config-only key elsewhere and forgetting this block means it
+  // silently vanishes the first time anyone edits a column.
   if (params.existingTeamConfig?.shortcuts && params.existingTeamConfig.shortcuts.length > 0) {
     boardConfig.shortcuts = params.existingTeamConfig.shortcuts;
+  }
+  if (params.existingTeamConfig?.profiles && params.existingTeamConfig.profiles.length > 0) {
+    boardConfig.profiles = params.existingTeamConfig.profiles;
   }
   if (params.existingTeamConfig?.defaultBaseBranch) {
     boardConfig.defaultBaseBranch = params.existingTeamConfig.defaultBaseBranch;

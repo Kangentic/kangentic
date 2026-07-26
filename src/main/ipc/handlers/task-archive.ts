@@ -10,6 +10,8 @@ import {
   spawnAgent,
 } from '../helpers';
 import { resolveProjectContext } from '../helpers/project-repos';
+import { applyProfileToLane } from '../../transition-engine/column-strategy';
+import { loadTaskProfile } from '../helpers/task-profile';
 import { guardActiveNonWorktreeSessions } from './task-move';
 import { withTaskLock } from '../task-lifecycle-lock';
 import type { IpcContext } from '../ipc-context';
@@ -42,7 +44,12 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
 
       const task = tasks.unarchive(input.id, input.targetSwimlaneId, position);
 
-      const toLane = swimlanes.getById(input.targetSwimlaneId);
+      // Folded through the unarchived task's Board Profile, so it comes back
+      // on the same rung it was archived from.
+      const toLane = applyProfileToLane(
+        swimlanes.getById(input.targetSwimlaneId),
+        loadTaskProfile(context, task, resolvedProjectPath),
+      );
 
       // Guard: don't resume if target doesn't auto-spawn (backlog, done, or custom with auto_spawn=false)
       if (!toLane?.auto_spawn) {
@@ -121,7 +128,11 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
         const position = laneTasks.length;
         const task = tasks.unarchive(id, targetSwimlaneId, position);
 
-        if (!toLane?.auto_spawn) return;
+        // Per-task fold: a bulk unarchive can carry tasks on different profiles
+        // into the same column, so the auto-spawn gate is resolved per task
+        // rather than once for the shared lane.
+        const taskLane = applyProfileToLane(toLane, loadTaskProfile(context, task, resolvedProjectPath));
+        if (!taskLane?.auto_spawn) return;
 
         try {
           await ensureTaskWorktree(context, task, tasks, resolvedProjectPath);
@@ -154,7 +165,9 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
               await spawnAgent({
                 context, engine, tasks, sessionRepo, task,
                 fromSwimlaneId: doneLane.id,
-                toLane,
+                // The per-task folded lane, so a bulk unarchive spawns each task
+                // on its own profile's rung rather than the column's base.
+                toLane: taskLane,
                 skipPromptTemplate: true,
                 suppressAutoCommand: true,
                 projectId: resolvedProjectId,

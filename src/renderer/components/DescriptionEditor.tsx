@@ -67,7 +67,14 @@ export function DescriptionEditor({
           Preview
         </button>
       </div>
-      <div className="relative w-full bg-surface flex-1 min-h-[280px] overflow-hidden">
+      {/* The floor is deliberately well below a comfortable editing height: every
+          caller passes `flex-1`, so with room to spare the editor GROWS past it
+          and the floor is invisible. It only binds when the dialog is already
+          over-full - and there it decides whether the fields BELOW the editor
+          (attachments, priority, branch, how-this-task-runs) fit or get pushed
+          under the fold. At 280 a To Do task with attachments had to be scrolled
+          to reach its own run-mode controls. */}
+      <div className="relative w-full bg-surface flex-1 min-h-[120px] overflow-hidden">
         {showPreview ? (
           <div
             className="absolute inset-0 px-3 py-2 overflow-y-auto"

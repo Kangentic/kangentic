@@ -74,6 +74,19 @@ export function lockAdvancedOverridesOnFirstSpawn(options: {
   tasks: Pick<TaskRepository, 'update'>;
 }): void {
   const { task, hasSessionRecord, settingsLane, project, globalPermissionMode, tasks } = options;
+
+  // Board Profile mode: the ladder IS the contract, not a snapshot to freeze.
+  // Locking here would resolve the task's first column and pin those values for
+  // its whole life, which is exactly the per-column variation a profile exists
+  // to provide - Planning in Opus xhigh would silently become Merge in Opus
+  // xhigh too.
+  //
+  // The guard below already covers this, since a profile task carries none of
+  // the four pins (TaskRepository enforces the exclusivity). This states the
+  // intent explicitly so the behavior does not silently depend on that
+  // invariant holding somewhere else.
+  if (task.profile_id) return;
+
   const isFirstEverSpawn = !hasSessionRecord && task.agent === null;
   const hasAnyOverrideSet = task.agent_override !== null || task.model_override !== null
     || task.effort_override !== null || task.permission_mode !== null;

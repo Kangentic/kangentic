@@ -48,17 +48,61 @@ async function selectCombobox(target: Page, testId: string, optionValue: string)
 }
 
 test.describe('NewTaskDialog Advanced section', () => {
-  test('Advanced toggle is visible and starts collapsed', async () => {
+  test('Agent Override is offered as the unselected half of the run-mode choice', async () => {
     await openNewTaskDialog();
 
+    // "How this task runs" is one either/or: Column Settings (the default) or
+    // Agent Override. The two are mutually exclusive in storage, so the UI is a
+    // radio group rather than two independently-settable controls.
     const toggle = page.locator('[data-testid="task-advanced-toggle"]');
     await expect(toggle).toBeVisible();
-    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(toggle).not.toBeChecked();
+    await expect(page.locator('[data-testid="task-run-mode-profile"]')).toBeChecked();
 
-    // Section body is hidden until expanded
+    // The override fields stay hidden until that branch is chosen.
     await expect(page.locator('[data-testid="task-advanced-section"]')).not.toBeVisible();
 
     await closeDialog();
+  });
+
+  test('with no saved profiles the Profile picker shows Default, disabled, beside an edit button', async () => {
+    await openNewTaskDialog();
+
+    // The branch is named for the mechanism (the board's column configuration);
+    // Profile is the variant selector inside it.
+    await expect(page.locator('[data-testid="task-run-mode-profile"]')).toContainText('Column Settings');
+
+    // Disabled rather than hidden: it shows the concept exists and that Default
+    // is what this task will use. The edit button beside it is the only route to
+    // authoring, so it stays enabled even with nothing to pick yet.
+    const select = page.locator('[data-testid="task-profile-select"]');
+    await expect(select).toBeDisabled();
+    expect(await select.locator('option').allTextContents()).toEqual(['Default']);
+    await expect(page.locator('[data-testid="task-profile-edit"]')).toBeEnabled();
+
+    await closeDialog();
+  });
+
+  test('the profile edit button opens the Board Manager over the dialog, and Escape closes only that', async () => {
+    await openNewTaskDialog();
+    await page.locator('input[placeholder="Task title"]').fill('Draft Survives Task');
+
+    await page.locator('[data-testid="task-profile-edit"]').click();
+    const boardManager = page.locator('text=Edit Columns').first();
+    await expect(boardManager).toBeVisible();
+
+    // The New Task dialog suppresses its own Escape while the manager is over it.
+    // Without that, this keypress would reach the capture-phase panel.close first
+    // and raise the discard confirm over a draft the user never tried to abandon.
+    await page.keyboard.press('Escape');
+    await expect(boardManager).toBeHidden();
+    await expect(page.locator('input[placeholder="Task title"]')).toHaveValue('Draft Survives Task');
+    await expect(page.locator('button:has-text("Discard")')).toHaveCount(0);
+
+    // Now that the manager is gone, Escape reaches the dialog again.
+    await page.keyboard.press('Escape');
+    await page.locator('button:has-text("Discard")').click();
+    await page.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
   });
 
   test('expanding Advanced reveals model combobox and effort select with a resolved-default placeholder', async () => {
@@ -195,6 +239,37 @@ test.describe('TaskDetailEditForm Advanced section (edit-mode overrides)', () =>
     await expect(page.locator('input[data-testid="task-model-override"]')).toBeVisible();
 
     // Close without saving
+    await page.locator('button:has-text("Cancel")').click();
+    await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden' });
+  });
+
+  test('a To Do task opens with its run-mode controls reachable without scrolling', async () => {
+    // The how-this-task-runs cards sit at the BOTTOM of the edit form, so any
+    // growth above them pushes them under the fold - and a control you have to
+    // scroll to find on every open is one users stop using. The description
+    // editor is the elastic element (`flex-1` with a min-height floor); its floor
+    // is what decides whether the fields below it fit.
+    const column = page.locator('[data-swimlane-name="To Do"]');
+    await column.locator('text=Add task').click();
+    await page.locator('input[placeholder="Task title"]').fill('No Scroll Task');
+    await page.locator('[data-testid="task-description"]').fill(
+      'A description long enough to be realistic.\n\n'.repeat(4),
+    );
+    await page.locator('button[type="submit"]:has-text("Create")').click();
+    await page.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 3000 });
+
+    await page.locator('text=No Scroll Task').first().click();
+    await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible' });
+
+    const scroller = page.locator('[data-testid="task-detail-edit-scroll"]');
+    await expect(page.locator('[data-testid="task-run-mode"]')).toBeVisible();
+
+    // Asserts the BEHAVIOR (does this pane scroll), not a pixel height. An
+    // overflow regression is tens of pixels, well clear of the rounding
+    // tolerance, so this stays stable across platforms and font stacks.
+    const overflow = await scroller.evaluate((element) => element.scrollHeight - element.clientHeight);
+    expect(overflow).toBeLessThanOrEqual(8);
+
     await page.locator('button:has-text("Cancel")').click();
     await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden' });
   });
@@ -1286,5 +1361,171 @@ test.describe('placeholderVariant: muted vs resolved', () => {
     await expect(variantPage.locator('input[data-testid="project-default-model"]')).toHaveAttribute('placeholder', 'Agent default');
     await expect(variantPage.locator('input[data-testid="project-default-effort"]')).toHaveAttribute('placeholder', 'Agent default');
     await closeSettings();
+  });
+});
+
+/**
+ * "How this task runs" is ONE either/or: ride a Board Profile's per-column
+ * ladder, or pin an agent for the task's whole life. The two are mutually
+ * exclusive in storage (`applyProfileExclusivity` in task-repository.ts), so
+ * these tests assert the dialog clears the other branch on switch rather than
+ * letting a user assemble a state the repository will silently rewrite.
+ *
+ * Needs its own fixture: the default mock board has no profiles, which is the
+ * Default-only case covered in the first describe.
+ */
+test.describe('NewTaskDialog run-mode choice (profiles fixture)', () => {
+  let profileBrowser: Browser;
+  let profilePage: Page;
+
+  test.beforeAll(async () => {
+    await waitForViteReady();
+    profileBrowser = await chromium.launch({ headless: true });
+    const context = await profileBrowser.newContext({ viewport: { width: 1920, height: 1080 } });
+    profilePage = await context.newPage();
+
+    // Seeded BEFORE the mock script so `boardConfig.getBoardProfiles()` is
+    // already populated when board hydration calls it.
+    await profilePage.addInitScript(() => {
+      (window as Record<string, unknown>).__mockBoardProfiles = [
+        { id: 'profile-light', name: 'Light', columns: {} },
+        { id: 'profile-heavy', name: 'Heavy', columns: {} },
+      ];
+    });
+    await profilePage.addInitScript({ path: MOCK_SCRIPT });
+    await profilePage.goto(VITE_URL);
+    await profilePage.waitForLoadState('load');
+    await profilePage.waitForSelector('text=Kangentic', { timeout: 15000 });
+    await createProject(profilePage, `Profiles ${Date.now()}`);
+  });
+
+  test.afterAll(async () => {
+    await profileBrowser?.close();
+  });
+
+  /** Omit the title for a read-only assertion: an untouched form closes on a
+   *  bare Escape, with no discard confirm to clear first. */
+  async function openDialog(title?: string) {
+    const column = profilePage.locator('[data-swimlane-name="To Do"]');
+    await column.locator('text=Add task').click();
+    await profilePage.locator('input[placeholder="Task title"]').waitFor({ state: 'visible' });
+    if (title) await profilePage.locator('input[placeholder="Task title"]').fill(title);
+  }
+
+  async function submitAndRead(title: string) {
+    await profilePage.locator('button[type="submit"]:has-text("Create")').click();
+    await profilePage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 3000 });
+    const tasks = await profilePage.evaluate(() => window.electronAPI.tasks.list());
+    const created = tasks.find((task: { title: string }) => task.title === title);
+    expect(created).toBeDefined();
+    return created!;
+  }
+
+  test('the Profile branch is selected by default and lists Default plus every saved profile', async () => {
+    await openDialog();
+
+    await expect(profilePage.locator('[data-testid="task-run-mode-profile"]')).toBeChecked();
+    const select = profilePage.locator('[data-testid="task-profile-select"]');
+    await expect(select).toBeEnabled();
+    expect(await select.locator('option').allTextContents()).toEqual(['Default', 'Light', 'Heavy']);
+
+    await profilePage.keyboard.press('Escape');
+    await profilePage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
+  });
+
+  test('picking a profile stores profile_id and leaves every lifetime pin null', async () => {
+    await openDialog('Profile Ride Task');
+    await profilePage.locator('[data-testid="task-profile-select"]').selectOption('profile-heavy');
+
+    const created = await submitAndRead('Profile Ride Task');
+    expect(created.profile_id).toBe('profile-heavy');
+    expect(created.model_override).toBeNull();
+    expect(created.effort_override).toBeNull();
+    expect(created.permission_mode).toBeNull();
+  });
+
+  test('switching to Agent Override discards the chosen profile', async () => {
+    await openDialog('Override Wins Task');
+    await profilePage.locator('[data-testid="task-profile-select"]').selectOption('profile-light');
+
+    await profilePage.locator('[data-testid="task-advanced-toggle"]').click();
+    // The Profile branch's control is gone, not merely ignored.
+    await expect(profilePage.locator('[data-testid="task-profile-select"]')).toHaveCount(0);
+    await selectCombobox(profilePage, 'task-effort-override', 'high');
+
+    const created = await submitAndRead('Override Wins Task');
+    expect(created.profile_id).toBeNull();
+    expect(created.effort_override).toBe('high');
+  });
+
+  test('switching back to Profile discards the lifetime pins', async () => {
+    await openDialog('Profile Wins Task');
+    await profilePage.locator('[data-testid="task-advanced-toggle"]').click();
+    await selectCombobox(profilePage, 'task-effort-override', 'high');
+    await selectCombobox(profilePage, 'task-permission-override', 'plan');
+
+    await profilePage.locator('[data-testid="task-run-mode-profile"]').click();
+    await expect(profilePage.locator('[data-testid="task-advanced-section"]')).toHaveCount(0);
+    await profilePage.locator('[data-testid="task-profile-select"]').selectOption('profile-light');
+
+    const created = await submitAndRead('Profile Wins Task');
+    expect(created.profile_id).toBe('profile-light');
+    expect(created.effort_override).toBeNull();
+    expect(created.permission_mode).toBeNull();
+  });
+
+  /** Re-tiering a parked To Do task is the flow the feature exists for, and it
+   *  goes through tasks.update, not tasks.create. A mode switch changes no field
+   *  the user typed into, so it has to reach the edit form's dirty check on its
+   *  own for Save to be enabled at all. */
+  async function openTaskDetail(title: string) {
+    await profilePage.locator(`text=${title}`).first().click();
+    await profilePage.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible' });
+  }
+
+  async function saveAndRead(title: string) {
+    await profilePage.locator('button:has-text("Save")').click();
+    await profilePage.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden' });
+    const tasks = await profilePage.evaluate(() => window.electronAPI.tasks.list());
+    const saved = tasks.find((task: { title: string }) => task.title === title);
+    expect(saved).toBeDefined();
+    return saved!;
+  }
+
+  test('switching an existing profile task to Agent Override saves the swap', async () => {
+    await openDialog('Edit To Override Task');
+    await profilePage.locator('[data-testid="task-profile-select"]').selectOption('profile-heavy');
+    await submitAndRead('Edit To Override Task');
+
+    await openTaskDetail('Edit To Override Task');
+    // Reopens on the branch the task is riding, with its profile pre-selected.
+    await expect(profilePage.locator('[data-testid="task-run-mode-profile"]')).toBeChecked();
+    await expect(profilePage.locator('[data-testid="task-profile-select"]')).toHaveValue('profile-heavy');
+
+    await profilePage.locator('[data-testid="task-advanced-toggle"]').click();
+    await selectCombobox(profilePage, 'task-effort-override', 'high');
+
+    const saved = await saveAndRead('Edit To Override Task');
+    expect(saved.profile_id).toBeNull();
+    expect(saved.effort_override).toBe('high');
+  });
+
+  test('switching an existing pinned task to a profile saves the swap', async () => {
+    await openDialog('Edit To Profile Task');
+    await profilePage.locator('[data-testid="task-advanced-toggle"]').click();
+    await selectCombobox(profilePage, 'task-effort-override', 'high');
+    await submitAndRead('Edit To Profile Task');
+
+    await openTaskDetail('Edit To Profile Task');
+    // A pinned task reopens on the Agent Override branch, already expanded.
+    await expect(profilePage.locator('[data-testid="task-advanced-toggle"]')).toBeChecked();
+    await expect(profilePage.locator('input[data-testid="task-effort-override"]')).toHaveValue('high');
+
+    await profilePage.locator('[data-testid="task-run-mode-profile"]').click();
+    await profilePage.locator('[data-testid="task-profile-select"]').selectOption('profile-heavy');
+
+    const saved = await saveAndRead('Edit To Profile Task');
+    expect(saved.profile_id).toBe('profile-heavy');
+    expect(saved.effort_override).toBeNull();
   });
 });

@@ -6,6 +6,7 @@ import { FileWatcher } from '../pty/readers/file-watcher';
 import { IPC } from '../../shared/ipc-channels';
 import type {
   BoardConfig,
+  BoardProfile,
   ShortcutConfig,
 } from '../../shared/types';
 import {
@@ -282,6 +283,99 @@ export class BoardConfigManager {
       setTimeout(() => {
         this.isWritingBack = false;
       }, 1000);
+    }
+  }
+
+  // --- Board Profiles ---
+
+  /**
+   * The board's named Board Profiles (see `BoardProfile`), team config merged
+   * with local overrides.
+   *
+   * Takes an explicit `projectPath` because spawns are not limited to the active
+   * project - startup recovery resumes sessions across every open project, and
+   * resolving a task's profile against the wrong board would silently hand it
+   * another project's ladder. Falls back to the active project for call sites
+   * that genuinely mean "the board on screen".
+   *
+   * Returns `[]` rather than throwing when there is no config: a board with no
+   * profiles is the normal state, and every consumer treats it as "everything
+   * runs the columns' own settings".
+   */
+  getBoardProfiles(projectPath?: string): BoardProfile[] {
+    const targetPath = projectPath ?? this.activeProjectPath;
+    if (!targetPath) return [];
+    return this.getEffectiveConfigForPath(targetPath)?.profiles ?? [];
+  }
+
+  /**
+   * Persist the board's Board Profiles to the team file, assigning a uuid to
+   * any profile that lacks one (mirrors `setShortcuts`).
+   *
+   * Team-only, deliberately: a profile is referenced by `tasks.profile_id` on
+   * every machine that opens the board, so a personal-only profile would leave
+   * teammates with tasks pointing at an id they cannot resolve. Shortcuts can be
+   * local because nothing else references them.
+   *
+   * Like `setShortcuts`, this does NOT emit BOARD_CONFIG_CHANGED: profiles do
+   * not alter board structure (columns, actions, transitions), so raising the
+   * reconciliation dialog would be noise.
+   *
+   * `projectPath` mirrors `getBoardProfiles`. An agent syncing profiles across
+   * projects ("copy this board's Heavy profile into project X") targets a board
+   * that is not the one on screen, and without the parameter that write would
+   * either no-op or land on the wrong board. Watcher-suppression bookkeeping is
+   * gated on the target actually being the active project, exactly as
+   * `doWriteBack` does - an inactive project has no watcher here, so touching
+   * `isWritingBack` / `lastTeamContentHash` would corrupt the active project's
+   * state.
+   */
+  setBoardProfiles(profiles: BoardProfile[], projectPath?: string): void {
+    const targetPath = projectPath ?? this.activeProjectPath;
+    if (!targetPath) return;
+    const isActive = targetPath === this.activeProjectPath;
+    if (isActive) this.invalidateConfigCache();
+
+    const filePath = path.join(targetPath, TEAM_FILE);
+    const profilesWithIds = profiles.map((profile) => ({
+      ...profile,
+      id: profile.id || crypto.randomUUID(),
+    }));
+
+    let existing: Partial<BoardConfig> = {};
+    try {
+      existing = JSON.parse(fs.readFileSync(filePath, 'utf-8')) as Partial<BoardConfig>;
+    } catch {
+      existing = { version: CURRENT_VERSION, columns: [], actions: [], transitions: [] };
+    }
+
+    // Drop the key entirely when empty rather than writing `"profiles": []`, so
+    // a board that has never used the feature stays byte-identical to before.
+    if (profilesWithIds.length > 0) {
+      existing.profiles = profilesWithIds;
+    } else {
+      delete existing.profiles;
+    }
+    (existing as BoardConfig)._modifiedBy = this.fingerprint;
+
+    const fileCheck = contentMatchesFile(filePath, existing);
+    if (fileCheck.matches) {
+      if (isActive) this.lastTeamContentHash = fileCheck.contentHash;
+      return;
+    }
+
+    if (isActive) this.isWritingBack = true;
+    try {
+      const contentHash = atomicWriteJson(filePath, existing);
+      if (isActive) this.lastTeamContentHash = contentHash;
+    } catch (error) {
+      console.warn('[BOARD_CONFIG] setBoardProfiles failed:', error);
+    } finally {
+      if (isActive) {
+        setTimeout(() => {
+          this.isWritingBack = false;
+        }, 1000);
+      }
     }
   }
 

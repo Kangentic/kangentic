@@ -1127,6 +1127,27 @@ export function runProjectMigrations(db: Database.Database): void {
     db.exec('ALTER TABLE session_messages_sent ADD COLUMN error TEXT DEFAULT NULL');
   }
 
+  // Migration: add per-task profile_id column. Points at a named Board Profile
+  // in kangentic.json's `profiles` array, whose per-column strategy deltas this
+  // task follows as it moves (e.g. Planning in Opus xhigh, Executing in Opus
+  // high, Merge in Sonnet high). NULL means the synthetic "Default" profile -
+  // the columns' own base settings - so existing tasks need no backfill and
+  // behavior is unchanged until someone creates a profile.
+  //
+  // Deliberately NOT a foreign key: profiles live in a checked-in config file,
+  // not this database, so a teammate deleting a profile must degrade to Default
+  // rather than fail a write. Resolution is total (see resolveColumnStrategy).
+  //
+  // Mutually exclusive with agent_override / model_override / effort_override /
+  // permission_mode, enforced in TaskRepository. That exclusivity is what keeps
+  // lockAdvancedOverridesOnFirstSpawn from freezing a profile task's ladder at
+  // its first column.
+  const hasTaskProfileId = (db.pragma('table_info(tasks)') as Array<{ name: string }>)
+    .some((col) => col.name === 'profile_id');
+  if (!hasTaskProfileId) {
+    db.exec('ALTER TABLE tasks ADD COLUMN profile_id TEXT DEFAULT NULL');
+  }
+
   // Seed default swimlanes if empty (must run after all ALTER TABLE migrations)
   const laneCount = db.prepare('SELECT COUNT(*) as c FROM swimlanes').get() as { c: number };
   if (laneCount.c === 0) {

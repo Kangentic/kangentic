@@ -34,17 +34,47 @@ Pasted screenshots are automatically compressed to fit Claude's per-image budget
 
 In the description field, type `@` to trigger file autocomplete. A dropdown lists files and directories from the project root, which you can navigate with arrow keys and select with Enter to insert the path.
 
-#### Advanced: Per-Task Agent / Model / Effort Override
+#### How this task runs: Column Settings or Agent Override
 
-Click **Advanced** in the New Task dialog (or in the task detail edit form for an existing task) to set per-task overrides:
+At the bottom of the New Task dialog (and the task detail edit form for an existing task) is a
+single either/or choice. The two options are mutually exclusive - picking one clears the other -
+because one varies settings per column while the other pins them for the task's whole life.
+
+| Option | Behavior |
+|--------|----------|
+| **Column Settings** | Each column applies its own settings as the task moves. A **Profile** dropdown picks *which* set: **Default** (the board as configured) or a named Board Profile. |
+| **Agent Override** | Pinned for the whole task, ignoring column settings. |
+
+**Board Profiles** are the answer to "I want Opus xhigh for Planning but Sonnet high for Merge."
+A profile is a named alternate set of per-column settings, so a heavy task and a light task can
+ride the same board at different tiers without either user changing the shared column config.
+Profiles are created and edited in **Edit Columns** (the Board Manager), where selecting one
+switches the column editors to that profile's values; column structure (which columns exist, their
+names and order) is shared across all profiles and is locked while a profile is selected. Profiles
+are saved to `kangentic.json`, so they reach teammates through git.
+
+The pencil button beside the Profile dropdown opens Edit Columns, which is the only place profiles
+are authored - so creating your first one and retuning an existing one are the same trip. Until a
+board has any, the dropdown shows **Default**, disabled: the concept stays visible without adding a
+second creation path to keep in sync.
+
+Choosing **Agent Override** reveals the per-task pins:
 
 | Field | Description |
 |-------|-------------|
 | **Agent** | Pick a specific agent CLI (Claude, Codex, etc.) for this task. Defaults to the destination column's agent override, then the project default. Hidden when only one agent is detected on the machine. |
 | **Model** | Adapter-specific model identifier (e.g. `opus`, `sonnet`, `claude-opus-4-8`). The dropdown is fed by the shared model cache. For Claude, the list is populated both by scanning past session transcripts and by harvesting the CLI's own `/model` picker through a hidden background probe, so newly shipped models surface without first being used in a session. |
 | **Effort** | Adapter-specific reasoning tier (Claude: `low`, `medium`, `high`, `xhigh`, `max`). Only shown when the agent reports effort levels. |
+| **Permission** | Permission mode for this task. A column that forces Plan mode still wins while the task is in that column - that is a safety guarantee, not an ordinary default. |
 
-A per-task pick **stays with the task across column moves** - column settings are ignored once a task carries its own override. Changing the Agent resets Model + Effort because the previous picks were valid for the previous agent's capability matrix.
+A per-task pin **stays with the task across column moves** - column settings are ignored once a task
+carries its own override. Changing the Agent resets Model + Effort because the previous picks were
+valid for the previous agent's capability matrix.
+
+Agents can read and edit Board Profiles too, including across projects, which is the practical way
+to keep them in sync as models change ("update every profile's Opus 4.8 to Opus 5", "copy this
+board's Heavy profile into project X"). See
+[MCP Server > Board Profiles](mcp-server.md#board-profiles).
 
 Before the first spawn, the task detail dialog also shows a slim **pre-spawn context bar** with the same Model and Effort pills. Set them there to avoid the spawn -> cancel -> restart loop: the picker writes the override to the DB, and `prepare-spawn` picks it up on the next agent launch.
 

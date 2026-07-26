@@ -199,6 +199,68 @@ describe('board-config parity: build (DB -> kangentic.json)', () => {
       ).toBe(entry.configValue);
     }
   });
+
+  // ---------------------------------------------------------------------------
+  // Config-only keys (no DB representation) must survive a write-back.
+  //
+  // buildBoardConfigFromDb rebuilds kangentic.json wholesale from the database,
+  // so a top-level key the DB knows nothing about is DESTROYED unless it is
+  // explicitly carried across from the existing team config. That preservation
+  // block was hand-maintained with no test, which is exactly how a config-only
+  // key gets silently wiped by the next column edit.
+  // ---------------------------------------------------------------------------
+  describe('config-only key preservation', () => {
+    it('carries `profiles` across a rebuild, so editing a column does not wipe Board Profiles', () => {
+      // Red trigger: delete the `profiles` preservation line in build-config.ts.
+      hoisted.lanes = [makeSwimlane({ id: 'lane-executing', name: 'Executing' })];
+
+      const existingTeamConfig: BoardConfig = {
+        version: 1,
+        columns: [],
+        actions: [],
+        transitions: [],
+        profiles: [{
+          id: 'profile-frugal',
+          name: 'Frugal',
+          columns: { 'lane-executing': { modelOverride: 'claude-sonnet-5', effortOverride: 'high' } },
+        }],
+      };
+
+      const rebuilt = buildBoardConfigFromDb({ projectId: 'p', existingTeamConfig, fingerprint: 'fp' });
+
+      expect(
+        rebuilt.profiles,
+        'build-config.ts dropped the `profiles` key on rebuild - every Board Profile would be '
+        + 'destroyed the first time anyone edits a column',
+      ).toEqual(existingTeamConfig.profiles);
+    });
+
+    it('carries `shortcuts` and `defaultBaseBranch` across a rebuild', () => {
+      hoisted.lanes = [makeSwimlane()];
+
+      const existingTeamConfig: BoardConfig = {
+        version: 1,
+        columns: [],
+        actions: [],
+        transitions: [],
+        shortcuts: [{ id: 'shortcut-1', label: 'Open in VS Code', command: 'code "{{cwd}}"' }],
+        defaultBaseBranch: 'develop',
+      };
+
+      const rebuilt = buildBoardConfigFromDb({ projectId: 'p', existingTeamConfig, fingerprint: 'fp' });
+
+      expect(rebuilt.shortcuts).toEqual(existingTeamConfig.shortcuts);
+      expect(rebuilt.defaultBaseBranch).toBe('develop');
+    });
+
+    it('omits `profiles` entirely when the board has none, so day one is unchanged', () => {
+      hoisted.lanes = [makeSwimlane()];
+
+      const rebuilt = buildBoardConfigFromDb({ projectId: 'p', existingTeamConfig: null, fingerprint: 'fp' });
+
+      expect(rebuilt.profiles).toBeUndefined();
+    });
+  });
 });
 
 describe('board-config parity: apply (kangentic.json -> DB)', () => {
