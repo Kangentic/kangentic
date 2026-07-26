@@ -139,6 +139,12 @@ interface MockContext {
     getShortcuts: ReturnType<typeof vi.fn>;
     setShortcuts: ReturnType<typeof vi.fn>;
     setDefaultBaseBranch: ReturnType<typeof vi.fn>;
+    // SWIMLANE_UPDATE folds each task's Board Profile over the edited column
+    // before deciding whether that TASK's resolved settings actually changed.
+    // Empty here: these cases are all unprofiled tasks, so the fold is identity
+    // and the before/after comparison is the column's own values, as before.
+    getBoardProfiles: ReturnType<typeof vi.fn>;
+    setBoardProfiles: ReturnType<typeof vi.fn>;
   };
   projectRepo: {
     getById: ReturnType<typeof vi.fn>;
@@ -165,6 +171,8 @@ function createMockContext(overrides: Partial<MockContext> = {}): MockContext {
       getShortcuts: vi.fn(() => []),
       setShortcuts: vi.fn(),
       setDefaultBaseBranch: vi.fn(),
+      getBoardProfiles: vi.fn(() => []),
+      setBoardProfiles: vi.fn(),
     },
     projectRepo: {
       getById: vi.fn(() => ({ id: 'proj-board-1', name: 'Test Project', path: '/mock/board-project' })),
