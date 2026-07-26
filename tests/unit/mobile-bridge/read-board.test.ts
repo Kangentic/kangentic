@@ -42,15 +42,26 @@ describe('handleReadBoard', () => {
     backlogList.mockReset().mockReturnValue([{ id: 'b-1', external_metadata: { secret: true } }]);
   });
 
-  it('with no projectId, returns the project bootstrap list (with derived accent colors) and never touches repos', async () => {
-    const projectRepoList = vi.fn(() => [{ id: 'proj-1', name: 'Alpha' }]);
-    const context = { projectRepo: { list: projectRepoList, getById: vi.fn() } } as unknown as IpcContext;
+  it('with no projectId, returns the project bootstrap list (with derived accent colors, group and position) and never touches task repos', async () => {
+    const projectRepoList = vi.fn(() => [{ id: 'proj-1', name: 'Alpha', group_id: 'grp-1', position: 0 }]);
+    const projectGroupList = vi.fn(() => [{ id: 'grp-1', name: 'Kangentic', position: 0, is_collapsed: false }]);
+    const context = {
+      projectRepo: { list: projectRepoList, getById: vi.fn() },
+      projectGroupRepo: { list: projectGroupList },
+    } as unknown as IpcContext;
     const subscriptions = new SubscriptionRegistry();
 
     const response = await handleReadBoard(fakeRequest({}), fakeSession(), context, subscriptions);
 
     expect(response.ok).toBe(true);
-    expect(response.payload).toEqual({ projects: [{ id: 'proj-1', name: 'Alpha', color: deriveProjectAccentColor('proj-1') }] });
+    expect(response.payload).toEqual({
+      projects: [
+        { id: 'proj-1', name: 'Alpha', color: deriveProjectAccentColor('proj-1'), groupId: 'grp-1', position: 0 },
+      ],
+      // is_collapsed stays desktop-internal: the phone's sheet is scrolled,
+      // not collapsed, so a collapse flag would describe nothing it renders.
+      groups: [{ id: 'grp-1', name: 'Kangentic', position: 0 }],
+    });
     const listed = (response.payload as { projects: Array<{ color: string }> }).projects[0];
     expect(PROJECT_ACCENT_PALETTE).toContain(listed.color);
     expect(tasksList).not.toHaveBeenCalled();
@@ -59,7 +70,10 @@ describe('handleReadBoard', () => {
   it('rejects an unsubscribe with no projectId as a no-op success (nothing to tear down)', async () => {
     // action alone with no projectId falls through to the project-list branch
     // since there is no per-project subscription to identify.
-    const context = { projectRepo: { list: vi.fn(() => []), getById: vi.fn() } } as unknown as IpcContext;
+    const context = {
+      projectRepo: { list: vi.fn(() => []), getById: vi.fn() },
+      projectGroupRepo: { list: vi.fn(() => []) },
+    } as unknown as IpcContext;
     const response = await handleReadBoard(fakeRequest({ action: 'unsubscribe' }), fakeSession(), context, new SubscriptionRegistry());
     expect(response.ok).toBe(true);
   });
