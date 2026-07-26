@@ -86,6 +86,7 @@ These settings appear in both App Settings (as defaults) and Project Settings (a
 | `windowLightDismiss` | `'off'` \| `'single'` \| `'focused'` \| `'all'` | `'single'` | Click-outside (light-dismiss) policy for modeless task-detail windows. `off` disables; `single` closes the lone window (any state); `focused` closes the focused window (any state); `all` closes every window. Closing a window does not kill its session. Global-only. |
 | `restoreWindowPosition` | boolean | `true` | Remember window size and position between launches. Global-only. |
 | `hasCompletedFirstRun` | boolean | `false` | Whether the user has completed first-run onboarding. Auto-set, not shown in UI. |
+| `lastSeenReleaseNotesVersion` | string | `''` | The version whose release-notes modal has already been auto-shown (see [Auto-Update Behavior](deployment.md#auto-update-behavior)), so it does not reopen on every relaunch after "Later". Auto-set, not shown in UI. |
 | `windowBounds` | object \| null | `null` | Persisted window bounds `{x, y, width, height}`. Auto-saved, not shown in UI. |
 | `windowMaximized` | boolean | `false` | Whether the window was maximized at last close. Auto-saved, not shown in UI. |
 | `popOutBounds` | object | `{}` | Persisted bounds + last target display id for each detached pop-out surface (usage stats, git changes, the Browser pane), keyed by `PopOutKind` so a surface reopens on the monitor it was last placed on. Auto-saved, not shown in UI. |

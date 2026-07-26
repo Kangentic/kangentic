@@ -144,3 +144,9 @@ publish:
   owner: Kangentic
   repo: kangentic
   releaseType: draft
+
+# Bakes RELEASE_NOTES.md into every generated latest*.yml at build time, so
+# electron-updater's GitHubProvider finds releaseNotes already populated and
+# never falls back to the (HTML, unsanitized) Atom feed content.
+releaseInfo:
+  releaseNotesFile: RELEASE_NOTES.md

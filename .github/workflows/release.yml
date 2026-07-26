@@ -209,30 +209,15 @@ jobs:
   # Only publish the draft release when ALL platform builds succeed.
   # This prevents partial releases (e.g. missing macOS artifacts) from
   # reaching users. If any platform fails, the release stays as a draft.
+  #
+  # Publishing (--draft=false) and setting the notes body happen in the SAME
+  # `gh release edit` call so the release is never live with an empty body:
+  # two separate calls (draft=false, then --notes-file) left a window where
+  # the release was published and discoverable with no body for the
+  # duration of a whole job.
   publish-release:
     needs: [release]
     if: ${{ !cancelled() && needs.release.result == 'success' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Determine version tag
-        id: version
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "tag=v${{ inputs.version }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Publish release (remove draft status)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release edit "${{ steps.version.outputs.tag }}" --draft=false --repo ${{ github.repository }}
-
-  publish-notes:
-    needs: [publish-release]
-    if: ${{ !cancelled() && needs.publish-release.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -250,10 +235,10 @@ jobs:
             echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Set release body from RELEASE_NOTES.md
+      - name: Publish release with notes (remove draft status)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release edit "${{ steps.version.outputs.tag }}" --notes-file RELEASE_NOTES.md
+        run: gh release edit "${{ steps.version.outputs.tag }}" --draft=false --notes-file RELEASE_NOTES.md --repo ${{ github.repository }}
 
   publish-npm:
     needs: [publish-release]

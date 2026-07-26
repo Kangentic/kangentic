@@ -1,12 +1,24 @@
-import { Network, Code2 } from 'lucide-react';
+import { Network, Code2, Sparkles } from 'lucide-react';
 import type { AppConfig } from '../../shared/types';
 import { useScopedUpdate } from '../../renderer/components/settings/shared';
+import { useUpdaterStore } from '../../renderer/stores/updater-store';
 import {
   Code,
   Description,
   GroupHeading,
   ToggleRow,
 } from '../../renderer/components/settings/tabs/dev-tab-primitives';
+
+const FIXTURE_RELEASE_NOTES = `## What's New
+
+- **Release notes modal** - see what changed before you restart to update.
+- **Faster board load** - the initial swimlane render is now [twice as fast](https://github.com/Kangentic/kangentic).
+
+## Bug Fixes
+
+- Fixed a crash when opening an empty board.
+- \`Escape\` now closes the release-notes modal like every other dialog.
+`;
 
 /**
  * Dev-only sections appended to the bottom of the product Developer
@@ -72,6 +84,36 @@ export function DevToolsSections({ globalConfig }: { globalConfig: AppConfig }) 
           including control codes that bypass the click/type input path). Flip on for stress-testing
           and hard-to-reach UI paths; leave off otherwise.
         </Description>
+      </section>
+
+      {/* initUpdater() early-returns on !app.isPackaged and on Linux (see
+          src/main/updater.ts), so the release-notes modal is unreachable while
+          dogfooding from `npm start`. This trigger fires it directly with
+          fixture notes so the modal stays visible to whoever is working on it. */}
+      <section className="space-y-2">
+        <div className="flex items-center justify-between gap-3 rounded-lg bg-surface-hover px-4 py-3">
+          <div className="min-w-0">
+            <div className="text-sm font-medium text-fg-primary">Release Notes Modal</div>
+            <div className="text-xs text-fg-muted">
+              Fire an update-downloaded push with fixture markdown notes. The real trigger is
+              unreachable in dev (the updater only runs on a packaged Windows/macOS build).
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              useUpdaterStore.getState().receiveUpdate({
+                version: '99.0.0',
+                releaseNotes: FIXTURE_RELEASE_NOTES,
+              });
+            }}
+            data-testid="dev-trigger-release-notes-modal"
+            className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-md border border-edge/60 bg-surface-inset/40 px-2.5 py-1 text-xs font-medium text-fg-secondary transition-colors hover:border-accent/50 hover:bg-accent/10 hover:text-fg"
+          >
+            <Sparkles size={13} />
+            Show modal
+          </button>
+        </div>
       </section>
     </div>
   );

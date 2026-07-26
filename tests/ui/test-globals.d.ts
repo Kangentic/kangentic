@@ -26,6 +26,14 @@ declare global {
 
     /** Records URLs passed to a spec-patched `shell.openExternal`. */
     __openedExternalUrls?: string[];
+
+    /** Release-notes modal mock hooks. See mock-electron-api.js. */
+    /** Records `installUpdate()` calls (Restart to update button). */
+    __mockInstallUpdateCalls?: unknown[];
+    /** Subscribers registered via `updater.onUpdateDownloaded`; fired by `__mockFireUpdateDownloaded`. */
+    __mockUpdateDownloadedListeners?: Array<(info: { version: string; releaseNotes: string }) => void>;
+    /** Fires the update-downloaded push to every registered subscriber. Installed eagerly at mock-bootstrap time. */
+    __mockFireUpdateDownloaded?: (info: { version: string; releaseNotes: string }) => void;
   }
 }
 

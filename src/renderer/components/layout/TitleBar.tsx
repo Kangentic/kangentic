@@ -1,9 +1,10 @@
 import React from 'react';
-import { ChartColumn, Command, Mic, Minus, Settings, Square, X } from 'lucide-react';
+import { ChartColumn, CloudDownload, Command, Mic, Minus, Settings, Square, X } from 'lucide-react';
 import { useProjectStore } from '../../stores/project-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useDictationStore } from '../../stores/dictation-store';
 import { useSessionStore } from '../../stores/session-store';
+import { useUpdaterStore } from '../../stores/updater-store';
 import { useUsageDashboardStore } from '../../stores/usage-dashboard-store';
 import { warmStatsDashboard } from '../stats/LazyStatsDashboard';
 import { usePopOut } from '../../pop-out/usePopOut';
@@ -110,6 +111,9 @@ export function TitleBar({
   const setSettingsOpen = useConfigStore((s) => s.setSettingsOpen);
   const openProjectSettings = useConfigStore((s) => s.openProjectSettings);
   const openSettingsToTab = useConfigStore((s) => s.openSettingsToTab);
+
+  const pendingUpdate = useUpdaterStore((s) => s.pendingUpdate);
+  const openUpdateModal = useUpdaterStore((s) => s.openModal);
 
   // Voice dictation mic button: shown only when dictation is enabled; its color
   // reflects whether a push-to-talk session is live (active token), matching the
@@ -224,6 +228,24 @@ export function TitleBar({
       <div className="flex-1" />
 
       <div className="flex items-center gap-1" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+        {/* Update-available indicator: LEFT-MOST of all conditionally-mounted
+            controls in this row, for the same reason "New terminal" is (see
+            the comment on that pair below) - this row is right-anchored, so
+            an element's on-screen position is fixed by what comes AFTER it.
+            Placing this first means it appearing/disappearing (when an
+            update lands / is installed) never shifts the "New terminal" /
+            Command Terminal pair or anything to their right. */}
+        {pendingUpdate && (
+          <button
+            onClick={openUpdateModal}
+            className="p-1.5 hover:bg-surface-hover rounded text-attention transition-colors"
+            title={`Version ${pendingUpdate.version} is ready to install`}
+            aria-label="Update available"
+            data-testid="update-available-button"
+          >
+            <CloudDownload size={20} />
+          </button>
+        )}
         {/* "New terminal" + the Command Terminal toggle are the LEFT-MOST icons
             in this row on purpose: this row is right-anchored (the flex-1
             spacer eats the space to its left), so an element's on-screen

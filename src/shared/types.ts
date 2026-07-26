@@ -2214,6 +2214,9 @@ export interface AppConfig {
   };
 
   hasCompletedFirstRun: boolean;
+  /** The version whose release-notes modal has already been auto-shown, so it does
+   *  not reopen on every relaunch. Empty string until the first update lands. */
+  lastSeenReleaseNotesVersion: string;
   skipDeleteConfirm: boolean;
   skipBoardConfigConfirm: boolean;
   autoFocusIdleSession: boolean;
@@ -2426,6 +2429,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     enabled: true,
   },
   hasCompletedFirstRun: false,
+  lastSeenReleaseNotesVersion: '',
   skipDeleteConfirm: false,
   skipBoardConfigConfirm: false,
   autoFocusIdleSession: false,
@@ -2493,6 +2497,8 @@ export interface AgentCommand {
 
 export interface UpdateDownloadedInfo {
   version: string;
+  /** Markdown release notes for this version, normalized to a flat string. Empty if none. */
+  releaseNotes: string;
 }
 
 // === Backlog ===

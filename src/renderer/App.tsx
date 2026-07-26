@@ -10,6 +10,7 @@ import { useMobileStore } from './stores/mobile-store';
 import { useSessionStore } from './stores/session-store';
 import { useBacklogStore } from './stores/backlog-store';
 import { useToastStore } from './stores/toast-store';
+import { useUpdaterStore } from './stores/updater-store';
 import { useUsageDashboardStore } from './stores/usage-dashboard-store';
 import { usePopOutStore } from './stores/pop-out-store';
 import { useProjectSwitchEffect } from './hooks/useProjectSwitchEffect';
@@ -94,15 +95,7 @@ export function App() {
 
     // Listen for auto-update downloaded notification
     const cleanupUpdateListener = window.electronAPI.updater?.onUpdateDownloaded((info) => {
-      useToastStore.getState().addToast({
-        message: `Version ${info.version} is ready to install`,
-        variant: 'info',
-        duration: 0, // persistent -- user must act or dismiss
-        action: {
-          label: 'Restart to update',
-          onClick: () => window.electronAPI.updater.installUpdate(),
-        },
-      });
+      useUpdaterStore.getState().receiveUpdate(info);
     });
 
     return () => {

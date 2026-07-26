@@ -4,6 +4,7 @@ import { app, BrowserWindow, ipcMain } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import { IPC } from '../shared/ipc-channels';
 import { trackEvent, sanitizeErrorMessage } from './analytics/analytics';
+import { normalizeReleaseNotes } from './updater-release-notes';
 
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
 const INITIAL_DELAY_MS = 5000; // 5 seconds after launch
@@ -98,11 +99,29 @@ export async function downloadWithRetry(): Promise<void> {
 }
 
 /**
+ * Registered on every path that bails out of updater init (dev, Linux, and a
+ * build with no update manifest). The renderer's updater surfaces still exist
+ * on those paths, so without these `ipcRenderer.invoke` rejects with
+ * `No handler registered` and surfaces as an unhandled rejection.
+ */
+function registerNoOpUpdaterHandlers(): void {
+  ipcMain.handle(IPC.UPDATE_CHECK, () => {});
+  ipcMain.handle(IPC.UPDATE_INSTALL, () => {});
+}
+
+/**
  * Initialize the auto-updater for packaged builds (Windows and macOS only).
  * Linux users update via the launcher package (`npx kangentic`).
  */
 export function initUpdater(mainWindow: BrowserWindow): void {
-  if (!app.isPackaged || process.platform === 'linux') return;
+  if (!app.isPackaged || process.platform === 'linux') {
+    // The renderer's release-notes modal reaches `installUpdate()` from its
+    // primary button, and the Developer tab can open that modal with fixture
+    // notes in dev. Register no-ops so the invoke resolves instead of
+    // rejecting with `No handler registered` (an unhandled rejection).
+    registerNoOpUpdaterHandlers();
+    return;
+  }
 
   updaterWindow = mainWindow;
 
@@ -115,11 +134,7 @@ export function initUpdater(mainWindow: BrowserWindow): void {
   // catch a recurrence in production, and bail before scheduling.
   if (!manifestExists()) {
     console.warn(`[UPDATER] Skipping init: ${manifestPath()} not found.`);
-    // Defense-in-depth: no current renderer surface invokes these, but
-    // registering no-ops keeps any future "Check for updates" UI from
-    // throwing `No handler registered` on a manifest-less build.
-    ipcMain.handle(IPC.UPDATE_CHECK, () => {});
-    ipcMain.handle(IPC.UPDATE_INSTALL, () => {});
+    registerNoOpUpdaterHandlers();
     trackEvent('app_error', {
       source: 'updater',
       message: 'missing_manifest',
@@ -160,7 +175,10 @@ export function initUpdater(mainWindow: BrowserWindow): void {
   autoUpdater.on('update-downloaded', (info) => {
     console.log('[UPDATER] Update downloaded:', info.version);
     if (updaterWindow && !updaterWindow.isDestroyed()) {
-      updaterWindow.webContents.send(IPC.UPDATE_DOWNLOADED, { version: info.version });
+      updaterWindow.webContents.send(IPC.UPDATE_DOWNLOADED, {
+        version: info.version,
+        releaseNotes: normalizeReleaseNotes(info.releaseNotes),
+      });
     }
   });
 

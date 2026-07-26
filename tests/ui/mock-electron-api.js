@@ -160,6 +160,7 @@
     workspaceByProject: {},
     commandTerminalWorkspace: null,
     hasCompletedFirstRun: true,
+    lastSeenReleaseNotesVersion: '',
     skipDeleteConfirm: false,
     skipBoardConfigConfirm: false,
     autoFocusIdleSession: false,
@@ -334,6 +335,17 @@
   //   - window.__mockDefaultAgentOverride: default_agent for the next project created
   //     via projects.create() or projects.openByPath(); cleared after first use
   //     (used by agent-tab-auth-warning.spec.ts to seed projects with kimi/opencode/etc.)
+  // Release-notes modal test hooks: installed eagerly here (not lazily inside
+  // updater.onUpdateDownloaded) so `__mockFireUpdateDownloaded` exists even
+  // before any renderer subscriber has registered. A spec that calls it too
+  // early throws loudly instead of silently no-op'ing into a confusing
+  // "dialog never appeared" failure.
+  window.__mockUpdateDownloadedListeners = [];
+  window.__mockFireUpdateDownloaded = function (info) {
+    var listeners = window.__mockUpdateDownloadedListeners.slice();
+    listeners.forEach(function (fn) { fn(info); });
+  };
+
   window.electronAPI = {
     projects: {
       list: async function () {
@@ -2142,6 +2154,15 @@
         return '';
       },
       openExternal: async function () {
+        // Test hook: record external-open calls so a test can assert the URL.
+        // Shares window.__openedExternalUrls with the ad-hoc openExternal
+        // patches in pr-link-badge.spec.ts / settings-panel.spec.ts (both
+        // replace this function wholesale before use, so there is no
+        // double-recording risk).
+        if (typeof window !== 'undefined') {
+          window.__openedExternalUrls = window.__openedExternalUrls || [];
+          window.__openedExternalUrls.push(arguments[0]);
+        }
         return;
       },
       showItemInFolder: async function () {
@@ -2896,8 +2917,24 @@
 
     updater: {
       checkForUpdate: async function () {},
-      installUpdate: async function () {},
-      onUpdateDownloaded: function () { return noop; },
+      installUpdate: async function () {
+        // Record calls so UI tests can assert "Restart to update" wired
+        // through to the IPC layer.
+        if (!window.__mockInstallUpdateCalls) window.__mockInstallUpdateCalls = [];
+        window.__mockInstallUpdateCalls.push(true);
+      },
+      onUpdateDownloaded: function (callback) {
+        // Tests can fire the update-downloaded push via
+        // `window.__mockFireUpdateDownloaded({ version, releaseNotes })`. The
+        // listener array and the fire hook itself are installed eagerly at
+        // mock-bootstrap time (see top of file), not lazily here.
+        window.__mockUpdateDownloadedListeners.push(callback);
+        return function () {
+          var listeners = window.__mockUpdateDownloadedListeners || [];
+          var idx = listeners.indexOf(callback);
+          if (idx >= 0) listeners.splice(idx, 1);
+        };
+      },
     },
 
     notifications: {

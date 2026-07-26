@@ -14,6 +14,7 @@ import { commandWindowManager } from '../../window-manager';
 import { SearchPalette } from '../search/SearchPalette';
 import { WelcomeScreen } from './WelcomeScreen';
 import { ProjectPathMissingDialog } from '../dialogs/ProjectPathMissingDialog';
+import { ReleaseNotesDialog } from '../dialogs/ReleaseNotesDialog';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useBoardStore } from '../../stores/board-store';
@@ -249,6 +250,7 @@ export function AppLayout() {
       {commandBar.isOpen && <CommandTerminalLayer onHide={commandBar.close} />}
       {searchPalette.isOpen && <SearchPalette onClose={searchPalette.close} />}
       <ProjectPathMissingDialog />
+      <ReleaseNotesDialog />
       <ToastContainer />
       <DictationSurface />
       <WindowLayer />
