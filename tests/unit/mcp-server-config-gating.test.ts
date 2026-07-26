@@ -65,6 +65,7 @@ import { buildServerInstructions } from '../../src/main/agent/mcp-http/server-in
 import { PROJECT_SELECTOR_DESCRIPTION, type TaskCounter } from '../../src/main/agent/mcp-http/handler-helpers';
 import type { RequestResolver } from '../../src/main/agent/mcp-http/project-resolver';
 import type { ResolvedBrowserAutomationConfig } from '../../src/main/browser/browser-automation-config';
+import type { SteeringToolDependencies } from '../../src/main/agent/mcp-http/steering-tools';
 
 function makeResolver(): RequestResolver {
   return {
@@ -88,11 +89,15 @@ function configReader(enabled: boolean): () => ResolvedBrowserAutomationConfig {
 }
 
 /** Build a configured server and read its advertised tool names via the public client API. */
-async function listToolNames(browserEnabled: boolean): Promise<string[]> {
+async function listToolNames(
+  browserEnabled: boolean,
+  steering?: SteeringToolDependencies | null,
+): Promise<string[]> {
   const server = buildConfiguredMcpServer(
     makeResolver(),
     fakeTaskCounter,
     configReader(browserEnabled),
+    steering,
   );
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'guard', version: '1.0.0' });
@@ -102,6 +107,22 @@ async function listToolNames(browserEnabled: boolean): Promise<string[]> {
   await client.close();
   await server.close();
   return tools.map((tool) => tool.name);
+}
+
+/** A minimal, valid SteeringToolDependencies stub - only the shape matters for gating. */
+function fakeSteeringDependencies(): SteeringToolDependencies {
+  return {
+    coordinator: {
+      send: async () => ({ error: 'unused in this test' }),
+      dispose: () => {},
+      _stateSizesForTesting: () => ({ queues: 0, pending: 0, hops: 0, windows: 0, refusalNotices: 0 }),
+    },
+    sessions: {
+      findLiveSessionByTaskId: () => undefined,
+      getSessionTaskId: () => undefined,
+      getSessionProjectId: () => undefined,
+    },
+  };
 }
 
 describe('buildConfiguredMcpServer - browser tool gating', () => {
@@ -136,5 +157,41 @@ describe('project-selector description dedup', () => {
     const instructions = buildServerInstructions(makeResolver());
     expect(instructions).toContain('PROJECT ROUTING RULE');
     expect(instructions).toContain("X's backlog");
+  });
+});
+
+describe('buildConfiguredMcpServer - steering tool gating', () => {
+  // Coverage hole: registerSteeringTools is called only `if (steering)`
+  // (mcp-http-server.ts's buildConfiguredMcpServer). Every browser-gating test
+  // above calls buildConfiguredMcpServer with the `steering` argument omitted,
+  // so a regression that registered the steering tools unconditionally (or
+  // never registered them at all) would fail nothing above.
+  it('registers the steering tools when a truthy steering dependency is passed', async () => {
+    const names = await listToolNames(true, fakeSteeringDependencies());
+
+    // Red: wrapping registerSteeringTools's call site in `if (false)` (or
+    // deleting the call) makes these absent even with steering supplied.
+    expect(names).toContain('kangentic_send_session_message');
+    expect(names).toContain('kangentic_get_session_messages_sent');
+  });
+
+  it('omits the steering tools when steering is undefined (IPC context not ready yet)', async () => {
+    const names = await listToolNames(true, undefined);
+
+    expect(names).not.toContain('kangentic_send_session_message');
+    expect(names).not.toContain('kangentic_get_session_messages_sent');
+    // Confirms the omission is scoped to steering, not a broken server.
+    expect(names).toContain('kangentic_create_task');
+  });
+
+  it('omits the steering tools when steering is explicitly null', async () => {
+    // Red: removing the `if (steering)` guard entirely (calling
+    // registerSteeringTools unconditionally) would crash on a null
+    // `dependencies.coordinator` before this assertion, or - if guarded only
+    // against undefined - register the tools here when it should not.
+    const names = await listToolNames(true, null);
+
+    expect(names).not.toContain('kangentic_send_session_message');
+    expect(names).not.toContain('kangentic_get_session_messages_sent');
   });
 });

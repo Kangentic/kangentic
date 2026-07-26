@@ -19,6 +19,9 @@ import type { Task, Swimlane, AppConfig } from '../../src/shared/types';
 import { OpenCodeCommandBuilder, type OpenCodeCommandOptions } from '../../src/main/agent/adapters/opencode';
 import { CodexCommandBuilder, type CodexCommandOptions } from '../../src/main/agent/adapters/codex';
 import type { AgentLaunchOptionInfo } from '../../src/shared/types';
+// Type-only: erased at compile time, so importing it does not drag the heavy
+// mcp-http-server module graph (SDK, agent commands, ...) into this test.
+import type { McpHttpServerHandle } from '../../src/main/agent/mcp-http-server';
 
 // ---------------------------------------------------------------------------
 // Hoisted mock functions - all mocks that need to be referenced outside of
@@ -710,5 +713,58 @@ describe('prepareAgentSpawn - Codex launch-option wiring', () => {
     if (!result.ok) throw new Error('Expected ok:true');
     expect(capturedCommandOptions).toHaveLength(1);
     expect(capturedCommandOptions[0].launchOptions).toBeUndefined();
+  });
+});
+
+describe('prepareAgentSpawn - MCP caller-session URL stamping', () => {
+  // Coverage hole: prepareAgentSpawn wraps mcpServerUrl in
+  // `appendCallerSession(input.mcpServerHandle?.urlForProject(projectId), sessionRecordId)`
+  // so the MCP server can identify which session is calling (see
+  // caller-url.ts). Every existing test in this file passes
+  // mcpServerHandle: null (the makeSpawnInput default), so
+  // appendCallerSession(undefined, id) returns undefined either way and a
+  // regression to `input.mcpServerHandle?.urlForProject(projectId)` (dropping
+  // the appendCallerSession wrapper entirely) would fail nothing above.
+  function makeFakeMcpHandle(baseUrl: string): McpHttpServerHandle {
+    return {
+      baseUrl: `${baseUrl}/mcp`,
+      token: 'mcp-token',
+      urlForProject: (projectId: string) => `${baseUrl}/mcp/${projectId}`,
+      close: () => {},
+    };
+  }
+
+  it('stamps the spawned session record id as the third URL segment when an mcpServerHandle is supplied', async () => {
+    const { adapter, capturedCommandOptions } = makeCaptureAdapter();
+    agentRegistryGetMock.mockReturnValue(adapter);
+
+    const result = await prepareAgentSpawn(makeSpawnInput({
+      projectId: 'proj-caller-test',
+      mcpServerHandle: makeFakeMcpHandle('http://127.0.0.1:9999'),
+    }));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('Expected ok:true');
+    expect(capturedCommandOptions).toHaveLength(1);
+    // Red: reverting prepare-spawn.ts's
+    // `mcpServerUrl: appendCallerSession(input.mcpServerHandle?.urlForProject(projectId), sessionRecordId)`
+    // back to `input.mcpServerHandle?.urlForProject(projectId)` makes this
+    // 'http://127.0.0.1:9999/mcp/proj-caller-test' - no session segment.
+    expect(capturedCommandOptions[0].mcpServerUrl).toBe(
+      `http://127.0.0.1:9999/mcp/proj-caller-test/${FAKE_SESSION_RECORD_ID}`,
+    );
+    expect(result.data.sessionRecordId).toBe(FAKE_SESSION_RECORD_ID);
+  });
+
+  it('leaves mcpServerUrl undefined when no mcpServerHandle is supplied', async () => {
+    const { adapter, capturedCommandOptions } = makeCaptureAdapter();
+    agentRegistryGetMock.mockReturnValue(adapter);
+
+    const result = await prepareAgentSpawn(makeSpawnInput({ mcpServerHandle: null }));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('Expected ok:true');
+    expect(capturedCommandOptions).toHaveLength(1);
+    expect(capturedCommandOptions[0].mcpServerUrl).toBeUndefined();
   });
 });

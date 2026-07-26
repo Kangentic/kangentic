@@ -836,6 +836,15 @@ app.whenReady().then(async () => {
         bindAddress: startupMcpServerConfig?.bindAddress ?? '127.0.0.1',
         callbackHost: startupMcpServerConfig?.callbackHost,
       },
+      // Steering (kangentic_send_session_message) needs the live PTY
+      // singletons, which do not exist until the IPC context is built. Read
+      // lazily per request; null just means the tool is not registered yet,
+      // which is only true before any agent could be running.
+      () => {
+        const ctx = getOptionalIpcContext();
+        if (!ctx) return null;
+        return { sessionManager: ctx.sessionManager, terminalSubmit: ctx.terminalSubmit };
+      },
     );
   } catch (err) {
     console.error('[APP] Failed to start MCP HTTP server:', err);

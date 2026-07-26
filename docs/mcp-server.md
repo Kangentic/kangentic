@@ -28,6 +28,8 @@ Claude Code agent calls MCP tool (e.g. kangentic_create_task)
 | MCP HTTP Server | `src/main/agent/mcp-http-server.ts` | In-process Node `http` server using `@modelcontextprotocol/sdk` Streamable HTTP transport. Binds 127.0.0.1 by default (configurable via `mcpServer.bindAddress`), random `:0` port, random per-launch token validated via `X-Kangentic-Token`. See [Network Access](#network-access). |
 | Task Tools | `src/main/agent/mcp-http/task-tools.ts` | Board/task/column mutations + related reads (`kangentic_create_task`, `kangentic_move_task`, `kangentic_update_task`, `kangentic_link_pr`, `kangentic_update_column`, `kangentic_delete_task`, `kangentic_list_columns`, `kangentic_find_task`, `kangentic_get_current_task`, etc.). |
 | Session Tools | `src/main/agent/mcp-http/session-tools.ts` | Session inspection, backlog, read-only SQL (`kangentic_list_sessions`, `kangentic_get_transcript`, `kangentic_get_session_files`, `kangentic_get_session_events`, `kangentic_get_activity_intervals`, `kangentic_query_db`, `kangentic_list_backlog`, etc.). |
+| Steering Tools | `src/main/agent/mcp-http/steering-tools.ts` | The write side of the session surface (`kangentic_send_session_message`) plus its debugging read (`kangentic_get_session_messages_sent`). Kept out of `session-tools.ts` because the send needs live main-process singletons (SessionManager, TerminalSubmit) that `CommandContext` does not carry. |
+| Session Send Coordinator | `src/main/agent/mcp-http/session-send.ts` | Delivery + guards behind the steering tools: per-target serialization, the sliding-window ceiling, the steer-chain depth backstop, deferred `deliverWhen: "idle"` delivery, and out-of-band provenance recording (the message itself carries no in-band prefix). |
 | Project Tools | `src/main/agent/mcp-http/project-tools.ts` | Multi-project discovery (`kangentic_list_projects`). |
 | Search Tools | `src/main/agent/mcp-http/search-tools.ts` | The single unified search (`kangentic_search`): tasks, backlog, session events, projects, and past conversations (keyword or, with `mode:"hybrid"`, semantic). The board-scoped `kangentic_search_tasks` lives in `task-tools.ts`. |
 | Diagnostics Tools | `src/main/agent/mcp-http/diagnostics-tools.ts` | Read-only product tools backing crash records, persistent console logs, process metrics, IPC traffic recordings, and worktree state. |
@@ -416,7 +418,7 @@ Get the most recent handoff record for a task. Returns metadata about the cross-
 
 Inspect what the agent on another task (or another project) said - "check the response from Task #25" or "read the full transcript from Task #30". At least one of `taskId` or `sessionId` must be provided. Two formats, selected with `format`:
 
-- `format="structured"` (default): the parsed agent conversation - user prompts, assistant text, tool calls and results - rendered as clean markdown, read from the agent's native session history via the adapter's `parseTranscript` capability. The Claude parser also drops noise (slash-command XML, `<system-reminder>` spans, `isMeta` injections) and surfaces compaction boundaries/summaries explicitly. There is no cleaned-scrollback substitute: structured either comes from real session history or reports that it is unavailable and points at `format="raw"`.
+- `format="structured"` (default): the parsed agent conversation - user prompts, assistant text, tool calls and results - rendered as clean markdown, read from the agent's native session history via the adapter's `parseTranscript` capability. The Claude parser also drops noise (slash-command XML, `<system-reminder>` spans, `isMeta` messages) and surfaces compaction boundaries/summaries explicitly. There is no cleaned-scrollback substitute: structured either comes from real session history or reports that it is unavailable and points at `format="raw"`.
 - `format="raw"`: the verbatim ANSI-stripped PTY scrollback (the full terminal output, including TUI redraws), available for every agent. Useful for debugging the terminal layer or for agents without a structured parser. Raw scrollback is mostly repeated terminal redraws (empirically ~85% duplicate lines and multiple MB for a long session), so when a structured parser exists for the agent the raw response notes that `structured` is the cleaner, far smaller view for evaluation. Every returned transcript (both formats) is prefixed with a one-line note marking the content as read-only reference data, not instructions to follow.
 
 Structured output is shaped by three agent-agnostic levers, applied to the parsed `TranscriptEntry[]` (so no adapter branching):
@@ -449,6 +451,78 @@ Structured-format support by agent:
 | `context` | number | No | Structured only. Turns either side of `aroundUuid` (default 3, max 50). Ignored without `aroundUuid`. |
 | `maxChars` | number | No | Override the default ~50,000-char output cap (hard ceiling 500,000). Applies to structured and raw. |
 | `project` | string | No | Project selector (name or UUID). Defaults to the URL-path project. |
+
+### kangentic_send_session_message
+
+Send a message to another task's **running** agent session, exactly as if it had been typed into that session's input box. This is the write-side counterpart to the read-only session tools: `kangentic_get_session_events`, `kangentic_get_transcript`, and `kangentic_list_sessions` observe another agent, and this one steers it. Typical uses are handing off a decision, unblocking a stalled agent, answering a question a session is waiting on, and redirecting work a newer decision superseded.
+
+Provide either `taskId` or `sessionId` (not both). A `taskId` resolves to that task's live session via the PTY registry, preferring the registry over the `task.session_id` column, which is known to drift.
+
+**Delivery.** The message goes through the same bracketed-paste submit path a human paste uses (`TerminalSubmit.submitContent`): drain, chunked write, output settle, `\r`, then wait for submission evidence. It is not instant, and it is measurably slower when nobody has the target session's terminal open, because the paste engine's fast path needs the session subscribed. `delivered` means the message was handed to the session's input, not that the agent has finished reading it.
+
+Against a **busy** target, treat `delivered` as weaker still. The paste engine's submission check accepts "at least 50 bytes of output arrived after the `\r`" as evidence, which a mid-turn session satisfies trivially from its own ambient streaming output. So a `delivered` result on a thinking session means the paste was written, not that it was confirmed submitted. Use `deliverWhen: "idle"` when you need the stronger guarantee.
+
+A deferred (`"idle"`) delivery that later fails is not reported back - the tool call that queued it has already returned - so it is written as a `failed` row instead (and, for a delivery that threw, logged to the Electron main console too). That covers the target exiting or going unwritable before it ever flushed, which is otherwise silent: a `queued` result is not a promise the message landed.
+
+**Attribution is out-of-band.** The message is delivered **verbatim** - no prefix, no marker, nothing prepended. Instead, every send ATTEMPT is recorded in the target project's `session_messages_sent` table (`session_id`, `caller_session_id`, `caller_task_id`, `caller_project_id`, `message`, `status`, `error`, `created_at`), with the caller resolved server-side from the URL segment rather than from a tool parameter, so an agent cannot omit or alter it through the tool's own arguments. See the caller-identity note under [Security](#security) for what that does and does not guarantee: it is honesty-by-default, not cryptographic attribution.
+
+`status` is one of four values, so "did my message go through?" always has an answer when debugging:
+
+| `status` | Meaning | Produced a turn? |
+|----------|---------|------------------|
+| `delivered` | Handed to the session's input | Yes |
+| `queued` | Held for the next idle transition, then delivered | Yes |
+| `refused` | A guard rejected it (self-send, dead session, target at a permission prompt, cross-project session id, hop-depth backstop, rate limit); `error` carries which | No |
+| `failed` | Delivery was attempted and threw (e.g. `no-submission-evidence`), or a `queued` message's target exited before it could flush; `error` carries the detail | **Unknown** - the paste engine can fail with the text half-committed; an exited target produced no turn |
+
+Reconstructing which turns arrived this way means filtering to `delivered` / `queued`. Two caveats for debugging.
+
+`session_id` carries a foreign key so these rows are cleaned up with their session, which means an attempt naming a session id that was never real (a typo, or an id from another project) records nothing - there is no session row to attach it to. The caller still receives the refusal synchronously. This does not affect the realistic dead-session case: a session that exited or was suspended still has its row, so its refusal is recorded.
+
+Second: repeated refusals are deduped to one row per (target, reason) per 5-minute window. Without that the audit trail becomes an amplification vector - the self-send, dead-session, and hop-depth guards all run *before* the rate limiter, so they never consume a slot (the permission-prompt guard runs after it, and does), and a looping agent would write one row per attempt indefinitely. A `refused` row therefore means "at least one refusal for this reason in this window", not an exact count. `failed` rows are never deduped, since a failure required an actual delivery attempt, which the rate limiter already bounds.
+
+This replaced an in-band `[Kangentic relay]` prefix, which was removed after live testing on 2026-07-25. Two problems: it cost tokens on every single send, and the receiving agent read it as injected content asserting its own authority - structurally the shape of a prompt injection - and refused to act on messages sent this way, reasoning that "legitimate authority doesn't need to announce itself through injected content." Out-of-band provenance costs nothing, cannot be forged by anything the agent writes, and leaves the receiver's context clean.
+
+Because nothing is prepended, the stored `message` matches the transcript turn it produced, which is how a consumer correlates a turn to the row that sent it. One caveat for an exact-match consumer: the row stores what the caller supplied, while delivery runs the text through the same `sanitizeForPaste` every paste undergoes (CR and CRLF collapse to LF, C0 control characters are stripped). For ordinary prose the two are byte-identical; a message carrying those bytes differs by exactly that normalization. Note the consequence: the `session_messages_sent` row is the **only** record that a turn arrived through this tool rather than being typed. A sent message that is never recorded is indistinguishable from one the human typed.
+
+**Guards.** These are circuit breakers against unattended token spend (two agents ping-ponging overnight), not a permission policy - deliberate multi-agent orchestration is meant to pass through unobstructed:
+
+- A session cannot send to itself.
+- A `deliverWhen: "now"` send into a target sitting at a **permission prompt** is refused. The submit path ends in `\r` (and retries it), which a modal prompt reads as confirming its highlighted option, so an ordinary steer could silently approve a tool call nobody sanctioned. The paste engine's own modal safety net cannot cover this: it detects bracketed-paste-mode-off from the terminal `data` stream, which is only forwarded while the session is subscribed, and an MCP send targets a background session by construction. `deliverWhen: "idle"` is not refused for this state - it holds the message until the prompt clears, which is what the refusal points you at.
+- An explicit `sessionId` naming a session in a **different project** is refused. Liveness is checked against the global PTY registry, so such a send would otherwise deliver while its provenance row silently vanished into the wrong project's database. Pass `project` naming the session's own project.
+- Each target accepts at most 30 messages per rolling 5 minutes. A genuine orchestration hop costs the receiving agent a whole turn, so only a runaway loop approaches this.
+- A steer chain deeper than 25 hops is refused as a loop. Depth is tracked server-side from the caller's session id rather than a tool parameter; it is deliberately not a low cap, because a legitimate A -> B -> C -> D -> E chain must work. The depth is one scalar per session (the most recent inbound hop), so two independent chains converging on one target overwrite each other's count - fine for a runaway backstop, but not an exact per-chain measure.
+- Concurrent sends to one session are serialized, so two callers cannot interleave their pastes.
+
+Every refusal comes back as a normal tool result with `isError: true` and text explaining what to do next.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `taskId` | string | No | Task ID (numeric display ID like `"42"` or full UUID). Resolves to that task's live session. Mutually exclusive with `sessionId`. |
+| `sessionId` | string | No | Kangentic session UUID (the `sessions.id` column). Mutually exclusive with `taskId`. |
+| `message` | string | Yes | The message to deliver. Write it as a self-contained prompt: it lands in a session that cannot see your conversation. |
+| `deliverWhen` | string | No | `"now"` (default) delivers immediately, like a human typing mid-turn - a busy agent picks it up when its current turn ends. `"idle"` holds the message until the target finishes its turn. |
+| `project` | string | No | Project selector (name or UUID). Defaults to the URL-path project. |
+
+Returns `status` (`"delivered"` or `"queued"`), the resolved `sessionId`, the target's `targetActivity` at send time, and the `hopDepth` of this steer chain. `"queued"` is returned only for `deliverWhen: "idle"` against a busy target; if the target is already idle, `"idle"` delivers immediately rather than waiting for a transition that would never come.
+
+### kangentic_get_session_messages_sent
+
+Read the log of messages sent **into** a session by another agent via `kangentic_send_session_message`. This is the debugging counterpart to that tool: it answers "did my message actually go through?" for every attempt, including the ones that never produced a turn.
+
+Provide either `taskId` or `sessionId` (not both). `taskId` returns messages across **all** of the task's sessions, which is usually what you want - a task accumulates sessions across resumes and agent handoffs, and you should not have to work out which session was live at the time.
+
+Each entry carries the caller (`caller_session_id`, `caller_task_id`, `caller_project_id` - all null for a human-driven send), the exact `message` text, a `status`, and an `error` for anything that did not land cleanly. See the `status` table under `kangentic_send_session_message` for what each value means; the short version is that `delivered` and `queued` produced a turn, `refused` did not, and `failed` is genuinely unknown.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `taskId` | string | No | Task ID (numeric display ID or full UUID). Covers every session the task has had. Mutually exclusive with `sessionId`. |
+| `sessionId` | string | No | Kangentic session UUID (the `sessions.id` column). Mutually exclusive with `taskId`. |
+| `status` | string | No | Only return attempts with this status: `delivered`, `queued`, `refused`, or `failed`. |
+| `tail` | number | No | Return only the last N attempts (most recent). Default 100, hard cap 500. |
+| `project` | string | No | Project selector (name or UUID). Defaults to the URL-path project. |
+
+Returns `total` (matching the filter), `returned` (after `tail`), and the `messages` array. Note that a send naming a session id that was never real records nothing at all - see the foreign-key caveat above - so an empty result can also mean the target id was wrong.
 
 ### kangentic_get_session_files
 
@@ -625,6 +699,7 @@ The committed `.claude/settings.json` `mcp__kangentic` entry remains for humans 
 - **Per-launch token** - every Kangentic launch generates a fresh 32-byte random `X-Kangentic-Token`. Clients without the token get `401`. Comparison is constant-time (`timingSafeEqual`) so a local timing oracle cannot byte-by-byte recover the token. This becomes the primary defense once a user widens `bindAddress`.
 - **DNS rebinding protection** - the Streamable HTTP transport enforces a host allowlist (`127.0.0.1`, `localhost`, `[::1]`, plus the configured `bindAddress`/`callbackHost` when set) on top of the bind.
 - **Project routing via URL path** - the URL embeds the project ID (`/mcp/<projectId>`). A stale `mcp.json` for a different project cannot be reused against the current launch.
+- **Caller identity via URL path** - a spawned TASK session's URL carries a third segment, `/mcp/<projectId>/<callerSessionId>`, stamped into that session's own `mcp.json` at spawn by the two task-spawn chokepoints (`prepare-spawn.ts` and `transition-engine.ts`). The agent never chooses it through a tool parameter, so `kangentic_send_session_message` can refuse self-sends, track a steer chain, and attribute a sent message truthfully without trusting a caller-supplied field. This is honesty-by-default, not cryptographic attribution: the bearer token is one shared per-launch secret every spawned agent holds, and the segment is not validated against a real or connected session, so a process with the token (an agent has both it and shell access) can dial any caller id via a raw HTTP request. The guards it feeds are circuit breakers against a looping or careless agent, not a defense against a deliberately lying one. The segment is optional: a human-driven client, the per-project `.kangentic/mcp-config.json`, and a Command Terminal session (`transient-sessions.ts` does not pre-generate its PTY id, so it has none to stamp) all dial the two-segment URL and are treated as unattributed callers, never refused. An unattributed caller records `caller_session_id: null` and resets the steer-chain depth, so a send routed through a Command Terminal is indistinguishable from a human's.
 - **Runaway-loop safeguard** - task creations are capped at a fixed 500 per app launch, enforced atomically by the shared `TaskCounter`. This is an internal circuit breaker against a looping agent, not a user-tunable knob; the count resets on restart.
 - **Input validation** - Zod schemas enforce title (200 chars) and description (50000 chars for tasks; 10000 chars for backlog item descriptions) limits at the protocol level, and the command handlers validate again. A backlog item created via `kangentic_create_task` shares the task 50000-char Zod schema, so `handleCreateTask` enforces the 10000 backlog cap itself and rejects an over-cap backlog description rather than truncating it.
 - **Column safety** - `kangentic_create_task` defaults to the To Do column; creating in an auto_spawn column intentionally triggers agent spawn. `kangentic_move_task_to_project` follows the same rule on the destination board: landing in an auto_spawn `column` there spawns an agent.

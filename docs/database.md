@@ -333,6 +333,32 @@ Index: `idx_handoffs_task_id` on (task_id).
 
 TypeScript type: `HandoffRecord` in `src/shared/types.ts`. Repository: `HandoffRepository` in `src/main/db/repositories/handoff-repository.ts`.
 
+### session_messages_sent table
+
+Provenance for messages sent into a session via `kangentic_send_session_message` (see [mcp-server.md](mcp-server.md)) - by another agent, or by a human steering that session directly. The delivered message carries no in-band marker, so these rows are the only record that a turn arrived through the tool rather than being typed at the keyboard.
+
+| Column | Type | Constraints | Default |
+|--------|------|-------------|---------|
+| id | TEXT | PRIMARY KEY | |
+| session_id | TEXT | NOT NULL, FK->sessions ON DELETE CASCADE | |
+| caller_session_id | TEXT | | NULL |
+| caller_task_id | TEXT | | NULL |
+| caller_project_id | TEXT | | NULL |
+| message | TEXT | NOT NULL | |
+| status | TEXT | NOT NULL | |
+| error | TEXT | | NULL |
+| created_at | TEXT | NOT NULL | |
+
+Index: `idx_session_messages_sent_session_id` on (session_id).
+
+`session_id` is the session that RECEIVED the message. `status` is one of `delivered`, `queued` (both produced a turn), `refused` (a guard rejected it), or `failed` (delivery threw; whether a turn landed is unknown) - so a row exists for every attempt, not just the successes. `error` carries the refusal or failure detail and is NULL on success.
+
+The three `caller_*` columns are deliberately NOT foreign keys: a cross-project steer originates in a different project's database, so those ids are unresolvable locally. They are NULL for a human-driven caller with no Kangentic session.
+
+`message` is stored as the caller supplied it, which is how a consumer correlates it to the transcript turn it produced. The delivered text is byte-identical for ordinary prose; the paste path additionally collapses CR/CRLF to LF and strips C0 control characters, so a message carrying those differs from the stored row by exactly that normalization. Reconstructing "which turns arrived this way" means filtering to `delivered` / `queued`.
+
+TypeScript type: `SentSessionMessage` in `src/shared/types.ts`. Repository: `SentSessionMessageRepository` in `src/main/db/repositories/sent-session-message-repository.ts`.
+
 ### memory_chunks table
 
 Conversation-memory index: a per-project retrieval store over the STRUCTURED transcript (TranscriptEntry-derived chunks), not the raw `session_transcripts` scrollback blob. Corpus-generic (a `corpus` column) so the same store can later index repo files/docs; `session_id`/`task_id` are nullable for that reuse and always set for the conversation corpus.
@@ -508,6 +534,7 @@ Grouped by feature. The numbering is for cross-reference only and does not refle
 48. **`auto_command` column on tasks** - adds `auto_command TEXT DEFAULT NULL`, an MCP-only per-task initial command set via `kangentic_create_task`'s `autoCommand` param so a skill can mint a task that runs a command (e.g. `/code-review`) once the agent spawns. Not surfaced in the New Task dialog or project settings. Takes precedence over the swimlane's `auto_command` for this task only; NULL means inherit from the swimlane. Idempotent guarded `ALTER TABLE`.
 49. **`agent` and `effort` columns on `usage_history`** - adds `agent TEXT` and `effort TEXT` (both in the `CREATE TABLE` block plus guarded `ALTER TABLE` for existing DBs) so the usage dashboard can break usage down by agent and by reasoning effort. `agent` is stamped at capture time from the session manager's recorded agent name; `effort` from `sessions.applied_effort` (the last-applied `--effort` value, NULL = agent default). Each has a one-shot backfill: `agent` from surviving `sessions` -> `tasks.agent` joins, `effort` from surviving `sessions.applied_effort`. Rows whose source was deleted stay NULL (rendered "(unknown)" / "(default)"). The one-shot `usage_history` seed backfill (migration 36) also carries both columns. Idempotent guarded `ALTER TABLE`.
 50. **Durable activity-disposition-interval ledger (`session_activity_intervals`)** - creates the table plus its `idx_activity_intervals_task` / `idx_activity_intervals_session` / `idx_activity_intervals_started` / `idx_activity_intervals_open` indices. One row per continuous span a session spent in the `'active'` or `'idle'` `ActivityDisposition` bucket, written by `ActivityIntervalRecorder` the moment the activity engine commits a disposition-changing transition - symmetric by design (both dispositions recorded directly, not one derived as the inverse of the other). `started_at`/`ended_at` mirror `started_ms`/`ended_ms` as UTC ISO 8601, derived from the same value at write time. Deliberately has NO `sessions` DELETE cascade (same rationale as `conversation_turn_usage`): a durable ledger, so an interval outlives the session row that produced it. See the `session_activity_intervals table` section above. Idempotent `CREATE ... IF NOT EXISTS`.
+51. **Sent-message provenance (`session_messages_sent`)** - creates the table plus `idx_session_messages_sent_session_id`, recording every `kangentic_send_session_message` ATTEMPT (`delivered` / `queued` / `refused` / `failed`) against the session that received it. `session_id` cascades on `sessions` DELETE; the three `caller_*` columns are deliberately plain ids, not foreign keys, because a cross-project steer originates in another project's database. Followed by a guarded `ALTER TABLE ... ADD COLUMN error TEXT` so a database created by the intermediate (pre-`error`) shape picks the column up. Because the delivered message carries no in-band marker, these rows are the only record that a turn arrived through the tool rather than being typed. See the `session_messages_sent table` section above. Idempotent `CREATE ... IF NOT EXISTS` + `pragma table_info` guard.
 
 ### Key Migrations (Global DB)
 

@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { agentRegistry } from '../../agent/agent-registry';
 import type { AgentAdapter } from '../../agent/agent-adapter';
 import type { McpHttpServerHandle } from '../../agent/mcp-http-server';
+import { appendCallerSession } from '../../agent/mcp-http/caller-url';
 import type { AppConfig, Swimlane, Task } from '../../../shared/types';
 import type { TaskRepository } from '../../db/repositories/task-repository';
 import { runSpawnPreamble, resolveEffectivePermissionMode } from '../spawn-preamble';
@@ -159,7 +160,9 @@ export async function prepareAgentSpawn(input: {
     eventsOutputPath,
     shell: input.resolvedShell,
     mcpServerEnabled: config.mcpServer?.enabled ?? true,
-    mcpServerUrl: input.mcpServerHandle?.urlForProject(projectId),
+    // Carries this session's own id so the MCP server can identify the caller
+    // (see appendCallerSession). Stamped, never looked up, so it cannot drift.
+    mcpServerUrl: appendCallerSession(input.mcpServerHandle?.urlForProject(projectId), sessionRecordId),
     mcpServerToken: input.mcpServerHandle?.token,
     // Task-level override (set by the ContextBar popover) wins over the
     // swimlane override, which wins over the project-level default - once a

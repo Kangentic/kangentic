@@ -76,7 +76,8 @@ export const MCP_TOOL_MANIFEST: McpToolManifestEntry[] = [
   { name: 'kangentic_list_projects', label: 'List Projects', blurb: 'every Kangentic project registered on this machine', category: 'board' },
   { name: 'kangentic_search', label: 'Search', blurb: 'unified search across tasks, backlog, session events, projects, and past conversations (keyword or semantic)', category: 'board' },
 
-  // ── Sessions (session-tools.ts) - per-task session history, transcripts, and handoff ──
+  // ── Sessions (session-tools.ts, steering-tools.ts) - per-task session history,
+  //    transcripts, handoff, and the one write-side tool that steers a live session ──
   { name: 'kangentic_list_sessions', label: 'List Sessions', blurb: 'session records for a task with timings, cost, and exit info', category: 'sessions' },
   { name: 'kangentic_get_session_history', label: 'Session History', blurb: 'read the native agent session transcript file for a task', category: 'sessions' },
   { name: 'kangentic_get_session_files', label: 'Session Files', blurb: 'absolute paths to a session activity, status, and history files', category: 'sessions' },
@@ -84,6 +85,8 @@ export const MCP_TOOL_MANIFEST: McpToolManifestEntry[] = [
   { name: 'kangentic_get_activity_intervals', label: 'Activity Intervals', blurb: 'durable history of active vs idle time for a task or session', category: 'sessions' },
   { name: 'kangentic_get_handoff_context', label: 'Handoff Context', blurb: 'the most recent cross-agent handoff record for a task', category: 'sessions' },
   { name: 'kangentic_get_transcript', label: 'Get Transcript', blurb: 'read what the agent on another task or project said', category: 'sessions' },
+  { name: 'kangentic_send_session_message', label: 'Send Session Message', blurb: 'send a message to another task\'s running agent to steer it', category: 'sessions' },
+  { name: 'kangentic_get_session_messages_sent', label: 'Sent Session Messages', blurb: 'log of messages sent into a session, and whether each landed', category: 'sessions' },
 
   // ── Browser Automation (browser-tools.ts) ──
   { name: 'kangentic_browser_list_panes', label: 'List Browser Panes', blurb: 'open embedded Browser panes and their URLs', category: 'browser' },

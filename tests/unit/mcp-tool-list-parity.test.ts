@@ -97,7 +97,16 @@ function collectToolRegistrations(): ToolRegistration[] {
   return registrations;
 }
 
-/** Tool-name prefixes that unambiguously denote a board/backlog mutation. */
+/**
+ * Tool-name prefixes that unambiguously denote a mutation - of the board, the
+ * backlog, or (for `send`) a live agent session.
+ *
+ * `kangentic_send_` is here because a send writes into a running PTY, which is
+ * at least as consequential as a board edit: annotated read-only it would be
+ * silently auto-approved in plan mode, letting a plan-mode agent launder a side
+ * effect through another agent that is not in plan mode. Keep this list ahead
+ * of new write verbs (an `interrupt` tool would need `kangentic_interrupt_`).
+ */
 const MUTATING_NAME_PREFIXES = [
   'kangentic_create_',
   'kangentic_update_',
@@ -106,6 +115,7 @@ const MUTATING_NAME_PREFIXES = [
   'kangentic_move_',
   'kangentic_promote_',
   'kangentic_link_',
+  'kangentic_send_',
 ];
 
 const toolRegistrations = collectToolRegistrations();

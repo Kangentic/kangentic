@@ -598,6 +598,53 @@ export interface HandoffRecord {
   created_at: string;
 }
 
+/**
+ * Outcome of one `kangentic_send_session_message` ATTEMPT. Declared here rather
+ * than beside the coordinator so the row type and the code that writes it share
+ * one definition, with the dependency running shared -> main (never the
+ * reverse). `delivered` and `queued` produced a turn; `refused` and `failed`
+ * record an attempt only.
+ */
+export type SentSessionMessageStatus = 'delivered' | 'queued' | 'refused' | 'failed';
+
+/**
+ * One message sent into a session via `kangentic_send_session_message`, by
+ * another agent or by a human steering it directly.
+ *
+ * The delivered text carries no in-band marker, so this row is the ONLY record
+ * that a given turn arrived through the tool rather than being typed at the
+ * keyboard. `message` is stored as the caller supplied it, which matches the
+ * transcript turn it produced for ordinary prose - the paste path normalizes CR
+ * to LF and strips C0 control characters, so a message containing those differs
+ * from the delivered text by exactly that normalization.
+ *
+ * The caller fields are null when a human sent it with no Kangentic session of
+ * their own, and are plain ids (not foreign keys) because a cross-project send
+ * originates in a different project's database.
+ */
+export interface SentSessionMessage {
+  id: string;
+  /** The session that RECEIVED the message. */
+  session_id: string;
+  caller_session_id: string | null;
+  caller_task_id: string | null;
+  caller_project_id: string | null;
+  message: string;
+  /**
+   * The attempt's outcome, not just its successes:
+   * `delivered` (sent straight through), `queued` (held for the next idle
+   * transition), `refused` (a guard rejected it - no turn produced), or
+   * `failed` (delivery threw; whether a turn was produced is unknown).
+   *
+   * Reconstructing "which turns arrived this way" means filtering to
+   * `delivered` / `queued`. The other two record an attempt, not a turn.
+   */
+  status: SentSessionMessageStatus;
+  /** Refusal or failure detail. Null for a successful delivery. */
+  error: string | null;
+  created_at: string;
+}
+
 export interface SessionSummary {
   sessionId: string;
   totalCostUsd: number;

@@ -217,6 +217,9 @@ function makeEngine(options: {
    * need submitKeystrokes to return a real Promise so its internal `.catch`
    * doesn't throw). */
   terminalSubmit?: ReturnType<typeof makeTerminalSubmit>;
+  /** Project-scoped MCP server URL (mirrors TransitionEngineConfig.mcpServerUrl).
+   * Defaults to undefined, matching every existing caller of makeEngine. */
+  mcpServerUrl?: string;
 }) {
   const sessionManager = options.sessionManager ?? makeSessionManager();
   const sessionRepo = options.sessionRepo ?? makeSessionRepo();
@@ -236,7 +239,7 @@ function makeEngine(options: {
       copyFiles: [],
     },
     mcpServerEnabled: false,
-    mcpServerUrl: undefined,
+    mcpServerUrl: options.mcpServerUrl,
     mcpServerToken: undefined,
     defaultAgent: 'claude',
     cliPathOverrides: {},
@@ -866,5 +869,62 @@ describe('TransitionEngine - executeAction builds ONE shared templateVars for ev
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('https://example.test/notify?branch=main');
     expect(init.body).toBe(JSON.stringify({ branch: 'main' }));
+  });
+});
+
+describe('TransitionEngine - MCP caller-session URL stamping (executeSpawnAgent chokepoint)', () => {
+  // Coverage hole: executeSpawnAgent wraps mcpServerUrl in
+  // `appendCallerSession(appConfig.mcpServerUrl, ptySessionId)` so the MCP
+  // server can identify which session is calling (see caller-url.ts). Every
+  // existing test in this file leaves mcpServerUrl undefined (the makeEngine
+  // default), so appendCallerSession(undefined, id) returns undefined either
+  // way and a regression to `appConfig.mcpServerUrl` (dropping the
+  // appendCallerSession wrapper) would fail nothing above. ptySessionId is a
+  // real crypto.randomUUID() generated inside executeSpawnAgent (this file
+  // does not mock node:crypto), so it is read back from the inserted session
+  // record rather than predicted.
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAdapter.buildCommand.mockImplementation((options: { prompt?: string }) => {
+      return `claude ${options.prompt ?? ''}`;
+    });
+  });
+
+  it('stamps the spawned ptySessionId as the third URL segment when mcpServerUrl is configured', async () => {
+    let capturedOptions: { mcpServerUrl?: string } | undefined;
+    mockAdapter.buildCommand.mockImplementation((options: { mcpServerUrl?: string; prompt?: string }) => {
+      capturedOptions = options;
+      return `claude ${options.prompt ?? ''}`;
+    });
+
+    const task = makeTask();
+    const sessionRepo = makeSessionRepo();
+    const { engine } = makeEngine({ sessionRepo, mcpServerUrl: 'http://127.0.0.1:1234/mcp/proj-1' });
+
+    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
+
+    expect(sessionRepo.insert).toHaveBeenCalledTimes(1);
+    const insertedId = (sessionRepo.insert.mock.calls[0][0] as { id: string }).id;
+    expect(insertedId).toBeTruthy();
+    // Red: reverting executeSpawnAgent's
+    // `mcpServerUrl: appendCallerSession(appConfig.mcpServerUrl, ptySessionId)`
+    // back to `appConfig.mcpServerUrl` makes this
+    // 'http://127.0.0.1:1234/mcp/proj-1' - no session segment.
+    expect(capturedOptions?.mcpServerUrl).toBe(`http://127.0.0.1:1234/mcp/proj-1/${insertedId}`);
+  });
+
+  it('leaves mcpServerUrl undefined when the project has no configured MCP server URL', async () => {
+    let capturedOptions: { mcpServerUrl?: string } | undefined;
+    mockAdapter.buildCommand.mockImplementation((options: { mcpServerUrl?: string; prompt?: string }) => {
+      capturedOptions = options;
+      return `claude ${options.prompt ?? ''}`;
+    });
+
+    const task = makeTask();
+    const { engine } = makeEngine({});
+
+    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
+
+    expect(capturedOptions?.mcpServerUrl).toBeUndefined();
   });
 });

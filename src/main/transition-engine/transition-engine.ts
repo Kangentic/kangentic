@@ -10,6 +10,7 @@ import { resolveExecutionTarget } from '../agent/shared/execution-target';
 import { resolveLaunchOptions } from '../agent/shared/launch-options';
 import { WorktreeManager, prepareWorktreeForRemoval, GitQueuePriority } from '../git/worktree-manager';
 import { agentRegistry } from '../agent/agent-registry';
+import { appendCallerSession } from '../agent/mcp-http/caller-url';
 import { retireRecord, markRecordSuspended } from './session-lifecycle';
 import { resolveEffectivePermissionMode } from './spawn-preamble';
 import { resolveSpawnIntent } from './spawn-intent';
@@ -289,7 +290,9 @@ export class TransitionEngine {
       eventsOutputPath,
       shell,
       mcpServerEnabled: appConfig.mcpServerEnabled,
-      mcpServerUrl: appConfig.mcpServerUrl,
+      // Carries this session's own id so the MCP server can identify the caller
+      // (see appendCallerSession). Stamped, never looked up, so it cannot drift.
+      mcpServerUrl: appendCallerSession(appConfig.mcpServerUrl, ptySessionId),
       mcpServerToken: appConfig.mcpServerToken,
       model: spawnOverrides?.model ?? undefined,
       effort: spawnOverrides?.effort ?? undefined,

@@ -1084,6 +1084,49 @@ export function runProjectMigrations(db: Database.Database): void {
     db.exec('ALTER TABLE tasks ADD COLUMN auto_command TEXT DEFAULT NULL');
   }
 
+  // Migration: record every message sent into a session via
+  // kangentic_send_session_message - by another agent, or by a human steering
+  // that session directly.
+  //
+  // The delivered text carries NO in-band marker: an attribution prefix costs
+  // tokens on every send and, empirically (2026-07-25), reads to the receiving
+  // agent as injected content asserting its own authority, which is the shape
+  // of a prompt injection - it refused messages sent this way rather than
+  // acting on them. So provenance lives here, out of the agent's context, where
+  // it costs nothing and cannot be forged by anything the agent writes.
+  // `message` is stored verbatim, which is exactly the transcript turn's
+  // content now that nothing is prepended, so a consumer can match a turn to
+  // the row that sent it.
+  //
+  // caller_session_id / caller_task_id are deliberately NOT foreign keys: a
+  // cross-project send originates in a different project's database, so the
+  // ids are not resolvable locally. They are null when a human sent the message
+  // with no Kangentic session of their own.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS session_messages_sent (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      caller_session_id TEXT,
+      caller_task_id TEXT,
+      caller_project_id TEXT,
+      message TEXT NOT NULL,
+      status TEXT NOT NULL,
+      error TEXT,
+      created_at TEXT NOT NULL
+    )
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_session_messages_sent_session_id ON session_messages_sent(session_id)');
+
+  // `error` was added after the table shipped: a row records every
+  // ATTEMPT (delivered / queued / refused / failed), not just the ones that
+  // landed, so "did my message go through?" always has an answer. Guarded so a
+  // database created by the intermediate shape picks the column up.
+  const hasSentMessageError = (db.pragma('table_info(session_messages_sent)') as Array<{ name: string }>)
+    .some((col) => col.name === 'error');
+  if (!hasSentMessageError) {
+    db.exec('ALTER TABLE session_messages_sent ADD COLUMN error TEXT DEFAULT NULL');
+  }
+
   // Seed default swimlanes if empty (must run after all ALTER TABLE migrations)
   const laneCount = db.prepare('SELECT COUNT(*) as c FROM swimlanes').get() as { c: number };
   if (laneCount.c === 0) {
