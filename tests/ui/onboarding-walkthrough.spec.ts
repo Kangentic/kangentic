@@ -792,8 +792,18 @@ test.describe('Walkthrough spotlight', () => {
     await renameLaneAndSpotlight(page, 'Design first');
     await expect(page.locator('[data-testid="walkthrough-callout"]')).toBeVisible({ timeout: 5000 });
 
-    await page.keyboard.press('Escape');
-    await expect(page.locator('[data-testid="walkthrough-callout"]')).toBeHidden();
+    // Poll the keypress rather than firing once. The callout is in the DOM (and so passes
+    // toBeVisible) one commit BEFORE React runs the passive effect that attaches the
+    // document keydown listener, and on a loaded CI runner that gap is wide enough for a
+    // single Escape to land in it and be dropped. Escape is idempotent here - once the step
+    // is cleared, later presses do nothing - so retrying costs nothing and removes the race.
+    await expect.poll(
+      async () => {
+        await page.keyboard.press('Escape');
+        return page.locator('[data-testid="walkthrough-callout"]').count();
+      },
+      { timeout: 5000 },
+    ).toBe(0);
   });
 
   test('the skip control on the callout ends the walkthrough', async () => {

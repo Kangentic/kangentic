@@ -504,7 +504,12 @@
         window.__mockEnsureGitCalls = (window.__mockEnsureGitCalls || 0) + 1;
         window.__mockEnsureGitLastPath = folderPath;
         if (window.__mockEnsureGitResult) return window.__mockEnsureGitResult;
-        return { ok: true, created: true, error: null };
+        // created:false by default - "the folder was already a repo", the common case and
+        // the only one that raises no toast. Defaulting to created:true meant every spec
+        // that calls createProject() got the "Started a git repo in this folder" info toast,
+        // which broke unrelated specs asserting on a single `toast` testid. A spec that
+        // wants the freshly-created path sets __mockEnsureGitResult explicitly.
+        return { ok: true, created: false, error: null };
       },
       searchEntries: async function (input) {
         var normalizedQuery = normalizeEntryQuery(input.query);
