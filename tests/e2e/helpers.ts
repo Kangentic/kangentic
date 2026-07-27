@@ -128,12 +128,22 @@ export async function launchApp(options?: {
   // generate one from the Playwright worker index to avoid collisions.
   const dataDir = options?.dataDir || getTestDataDir(`worker-${process.pid}`);
 
-  // Ensure hasCompletedFirstRun is true so the WelcomeOverlay doesn't block
-  // tests, and suppress all desktop notifications + toasts so killing mock
-  // sessions during tests (e.g. archive flows, exit handling) doesn't fire
-  // spurious "Session crashed" desktop notifications on the developer's
-  // machine. Tests may pre-write their own config.json (e.g. with mock Claude
-  // CLI paths), so merge rather than overwrite.
+  // hasCompletedFirstRun is now legacy (kept for schema/fixture compatibility;
+  // no onboarding UI reads it). Written true regardless, cheap and harmless.
+  //
+  // onboardedProjectIds is deliberately NOT seeded, because it cannot be: E2E
+  // creates its project through the app at runtime, so its id does not exist
+  // when this config is written. Every E2E project is therefore a genuinely new
+  // one and auto-opens the onboarding checklist. That is handled where it can
+  // be - createProject() calls dismissOnboardingChecklist() after its reload -
+  // rather than here, since a config seed cannot reference an id that does not
+  // exist yet.
+  //
+  // Also suppress all desktop notifications + toasts so killing mock sessions
+  // during tests (e.g. archive flows, exit handling) doesn't fire spurious
+  // "Session crashed" desktop notifications on the developer's machine. Tests
+  // may pre-write their own config.json (e.g. with mock Claude CLI paths), so
+  // merge rather than overwrite.
   const configPath = path.join(dataDir, 'config.json');
   const notificationDefaults = {
     desktop: { onAgentIdle: false, onAgentCrash: false, onPlanComplete: false },
@@ -344,7 +354,31 @@ export async function createProject(page: Page, _name: string, projectPath: stri
   await page.evaluate((p: string) => window.electronAPI.projects.openByPath(p), projectPath);
   // Reload so the renderer picks up the new current project
   await page.reload();
+  await dismissOnboardingChecklist(page);
   await waitForBoard(page);
+}
+
+/**
+ * Dismiss the onboarding checklist a brand-new project auto-opens.
+ *
+ * Required at this tier, not merely tidy: E2E creates its projects through the app at
+ * runtime, so their ids cannot be pre-seeded into `onboardedProjectIds` when the config
+ * file is written. Every E2E project is therefore genuinely new, and the checklist is a
+ * focus-trapping modal whose backdrop swallows pointer events over the board. Skipping it
+ * persists, so it cannot come back mid-test.
+ */
+export async function dismissOnboardingChecklist(page: Page): Promise<void> {
+  const checklist = page.locator('[data-testid="onboarding-checklist"]');
+  // Deliberately short. The checklist opens from an effect that runs as soon as the
+  // project and config have hydrated, so if it is coming it is here well inside a second.
+  // The wait is also the NOT-coming path (a project already marked onboarded, which the
+  // shared Electron instance produces on a repeat open), and a 5s timeout there would be
+  // paid silently on every such test across all E2E shards.
+  await checklist.waitFor({ state: 'visible', timeout: 1500 }).catch(() => {});
+  if (await checklist.isVisible().catch(() => false)) {
+    await page.locator('[data-testid="onboarding-skip"]').click();
+    await checklist.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {});
+  }
 }
 
 // Create a task via the UI in the To Do column (the only column with an "Add task" button).

@@ -28,7 +28,7 @@
 
 import { test, expect, chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady } from './helpers';
+import { waitForViteReady, dismissOnboardingChecklist } from './helpers';
 
 // Each describe is isolated per worker (separate process; per-test page launch / goto reset),
 // so the file's tests can fan out across the UI workers safely.
@@ -103,6 +103,7 @@ async function openAgentSettingsTab(page: Page, agentId: string): Promise<void> 
   } else {
     await sidebarButton.click();
   }
+  await dismissOnboardingChecklist(page);
 
   await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
 

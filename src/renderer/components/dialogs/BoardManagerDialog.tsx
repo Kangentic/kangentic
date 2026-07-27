@@ -1217,7 +1217,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   const disabledReasonFor = (label: string): string =>
     isTodoOrDone
       ? `Sessions don't run in ${draftRole === 'todo' ? 'To Do' : 'Done'} columns, so ${label} doesn't apply.`
-      : `Turn on Auto-spawn in the Agent section to enable ${label}.`;
+      : `Turn on "Start an agent here" in the Agent section to enable ${label}.`;
 
   return (
     <>
@@ -1488,7 +1488,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                       Effort / Permissions then pair up as two-column rows. */}
                   <div className={SECTION_FULL_SPAN}>
                     <ToggleCard
-                      label="Auto-spawn"
+                      label="Start an agent here"
                       description="Start an agent automatically when a task enters this column."
                       checked={draft.auto_spawn}
                       onChange={(next) => updateDraft((current) => ({ ...current, auto_spawn: next }))}

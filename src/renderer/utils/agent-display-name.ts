@@ -77,7 +77,19 @@ const AGENT_META: Record<string, AgentMeta> = {
     short: 'Ollama',
     installUrl: 'https://ollama.com/download',
   },
+  cursor: {
+    display: 'Cursor CLI',
+    short: 'Cursor',
+    installUrl: 'https://cursor.com/cli',
+  },
 };
+
+/**
+ * Agents to show first in a curated, space-limited list (e.g. the welcome
+ * screen's collapsed setup panel). Display metadata only - not a behavioral
+ * branch, so it does not fall under the agent-adapters-boundary rule.
+ */
+export const RECOMMENDED_AGENT_ORDER = ['claude', 'codex', 'gemini'];
 
 /** Full product name for an agent identifier (e.g. 'claude' -> 'Claude Code'). */
 export function agentDisplayName(agentId: string | null | undefined): string {

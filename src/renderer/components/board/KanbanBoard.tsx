@@ -14,7 +14,6 @@ import { DoneSwimlane } from './DoneSwimlane';
 import { TaskCard } from './TaskCard';
 import { BoardDialogs } from './BoardDialogs';
 import { NewTaskDialog } from '../dialogs/NewTaskDialog';
-import { WelcomeOverlay } from './WelcomeOverlay';
 import { useBoardStore } from '../../stores/board-store';
 import { useBoardDragDrop } from '../../hooks/useBoardDragDrop';
 import { useHmrGeneration } from '../../utils/hmr-generation';
@@ -273,10 +272,16 @@ export function KanbanBoard() {
   // defaulting to the To Do column. This mirrors the per-lane "+" button without
   // coupling the global shortcut to any one lane's local state.
   const newTaskRequestNonce = useBoardStore((s) => s.newTaskRequestNonce);
+  const newTaskDismissNonce = useBoardStore((s) => s.newTaskDismissNonce);
   const [newTaskOpen, setNewTaskOpen] = useState(false);
+  // ONE effect reading BOTH counters, so whichever was bumped last wins regardless of the
+  // order the effects would have run in. Two separate effects made "close everything, then
+  // open this" - exactly what the onboarding walkthrough does when it advances into the
+  // create-a-task step - resolve as close-then-close, and the dialog never appeared.
   useEffect(() => {
-    if (newTaskRequestNonce > 0) setNewTaskOpen(true);
-  }, [newTaskRequestNonce]);
+    if (newTaskRequestNonce === 0 && newTaskDismissNonce === 0) return;
+    setNewTaskOpen(newTaskRequestNonce > newTaskDismissNonce);
+  }, [newTaskRequestNonce, newTaskDismissNonce]);
   const newTaskLaneId = useMemo(() => {
     return (
       swimlanes.find((lane) => lane.role === 'todo')?.id
@@ -360,7 +365,6 @@ export function KanbanBoard() {
           child added here must carry `cursor-pointer` or `data-no-dismiss`, or a
           click on it will also dismiss a window. */}
       <div className="flex-1 overflow-x-auto overflow-y-hidden p-4" data-dismiss-surface>
-      <WelcomeOverlay />
       <DndContext
         key={hmrGeneration}
         sensors={sensors}

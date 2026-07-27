@@ -1,12 +1,11 @@
 import React, { useState, useMemo } from 'react';
 import { useDroppable } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import { GripVertical, Pencil, Plus, ClipboardPlus } from 'lucide-react';
+import { GripVertical, Pencil, ClipboardPlus } from 'lucide-react';
 import { TaskCard } from './TaskCard';
 import { NewTaskDialog } from '../dialogs/NewTaskDialog';
 import { getSwimlaneIcon } from '../../utils/swimlane-icons';
 import { useBoardStore } from '../../stores/board-store';
-import { useConfigStore } from '../../stores/config-store';
 import { useColumnWidthClass } from './column-width';
 import { CountBadge } from '../CountBadge';
 import type { Swimlane as SwimlaneType, Task } from '../../../shared/types';
@@ -26,14 +25,12 @@ export const Swimlane = React.memo(function Swimlane({ swimlane, tasks, dragHand
     data: { type: 'swimlane' },
   });
 
-  const hasCompletedFirstRun = useConfigStore((state) => state.config.hasCompletedFirstRun);
   const widthClass = useColumnWidthClass();
 
   const taskIds = useMemo(() => tasks.map((t) => t.id), [tasks]);
 
   const role = swimlane.role;
   const isGhost = swimlane.is_ghost;
-  const showFirstRunHint = role === 'todo' && tasks.length === 0 && !hasCompletedFirstRun;
   const isSystemColumn = role !== null;
   const isDraggable = !!dragHandleProps && !isGhost;
 
@@ -124,22 +121,6 @@ export const Swimlane = React.memo(function Swimlane({ swimlane, tasks, dragHand
             <TaskCard key={task.id} task={task} />
           ))}
         </SortableContext>
-
-        {showFirstRunHint && (
-          <button
-            onClick={() => setShowNewTask(true)}
-            className="w-full p-4 rounded-lg border-2 border-dashed border-accent/40 hover:border-accent hover:bg-accent/5 transition-colors cursor-pointer text-left"
-            data-testid="first-run-hint"
-          >
-            <div className="flex items-center gap-2 text-sm text-fg font-medium mb-1.5">
-              <Plus size={16} className="text-accent" />
-              <span>Create your first task</span>
-            </div>
-            <p className="text-xs text-fg-muted pl-6 leading-relaxed">
-              Describe what you want an agent to do, then drag it to a column to start a session.
-            </p>
-          </button>
-        )}
       </div>
 
       {/* Add task button (To Do only, hidden for ghost columns) */}
@@ -148,6 +129,7 @@ export const Swimlane = React.memo(function Swimlane({ swimlane, tasks, dragHand
           type="button"
           onClick={() => setShowNewTask(true)}
           className="flex items-center gap-1.5 px-3 py-2.5 border-t border-dashed border-edge/40 text-sm text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover/30 transition-colors w-full text-left cursor-pointer"
+          data-testid="swimlane-add-task"
         >
           <ClipboardPlus size={16} />
           Add task

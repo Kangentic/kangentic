@@ -448,7 +448,7 @@ test.describe('BrowserAutomationTab master-switch gating', () => {
 // flip the switch (the icon's onClick calls stopPropagation). The Board
 // Manager's "Receive context from prior agent" toggle (Handoff section) is the
 // sole current usage; "Auto-spawn" in the same dialog has no `info` and is the
-// negative case.
+// negative case. "Auto-spawn" was renamed "Start an agent here" (2026-07-26).
 
 test.describe('ToggleCard info icon', () => {
   async function openManagerByHeader(columnName: string) {
@@ -488,7 +488,7 @@ test.describe('ToggleCard info icon', () => {
   test('a ToggleCard without `info` renders no Info icon', async () => {
     await openManagerByHeader('Code Review');
 
-    const autoSpawnSwitch = page.getByRole('switch', { name: 'Auto-spawn' });
+    const autoSpawnSwitch = page.getByRole('switch', { name: 'Start an agent here' });
     await expect(autoSpawnSwitch).toBeVisible();
     await expect(autoSpawnSwitch.locator('span[title]')).toHaveCount(0);
 

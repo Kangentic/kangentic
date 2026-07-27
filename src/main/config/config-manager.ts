@@ -22,6 +22,7 @@ const CONFIG_DICTIONARY_PATHS = [
   'commandTerminalWorkspace',
   'popOutBounds',
   'terminal.colors',
+  'onboardingBaseline',
 ] as const;
 
 /** Drop keys whose value is undefined. Returns undefined when nothing is left,

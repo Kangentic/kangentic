@@ -1,5 +1,5 @@
 import { create, type StateCreator } from 'zustand';
-import type { Project, ProjectCreateInput, ProjectGroup, ProjectGroupCreateInput, ProjectRelocateOptions, ProjectRelocateResult } from '../../shared/types';
+import type { Project, ProjectCreateInput, ProjectGroup, ProjectGroupCreateInput, ProjectRelocateOptions, ProjectRelocateResult, ProjectOpenByPathOverrides, ProjectPathProbe, ProjectEnsureGitResult } from '../../shared/types';
 import { PROJECT_PATH_MISSING_PREFIX } from '../../shared/ipc-channels';
 import { useSessionStore } from './session-store';
 import { useConfigStore } from './config-store';
@@ -26,7 +26,10 @@ interface ProjectStore {
   createProject: (input: ProjectCreateInput) => Promise<Project>;
   deleteProject: (id: string) => Promise<void>;
   openProject: (id: string) => Promise<void>;
-  openProjectByPath: (folderPath: string) => Promise<Project>;
+  openProjectByPath: (folderPath: string, overrides?: ProjectOpenByPathOverrides) => Promise<Project>;
+  probePath: (folderPath: string) => Promise<ProjectPathProbe>;
+  /** Make sure a picked folder is covered by git, initialising a repo when it is not. */
+  ensureGit: (folderPath: string) => Promise<ProjectEnsureGitResult>;
   reorderProjects: (ids: string[]) => Promise<void>;
   renameProject: (id: string, name: string) => Promise<void>;
   relocateProject: (id: string, newPath: string, options?: ProjectRelocateOptions) => Promise<ProjectRelocateResult>;
@@ -111,7 +114,7 @@ const projectStoreInitializer: StateCreator<ProjectStore> = (set, get) => ({
     useSessionStore.getState().markIdleSessionsSeen(id);
   },
 
-  openProjectByPath: async (folderPath) => {
+  openProjectByPath: async (folderPath, overrides) => {
     const { projects } = get();
     const normalized = folderPath.replace(/\\/g, '/');
     const existing = projects.find(
@@ -123,11 +126,15 @@ const projectStoreInitializer: StateCreator<ProjectStore> = (set, get) => ({
       return existing;
     }
 
-    const project = await window.electronAPI.projects.openByPath(folderPath);
+    const project = await window.electronAPI.projects.openByPath(folderPath, overrides);
     await get().loadProjects();
     await get().loadCurrent();
     return project;
   },
+
+  probePath: (folderPath) => window.electronAPI.projects.probePath(folderPath),
+
+  ensureGit: (folderPath) => window.electronAPI.projects.ensureGit(folderPath),
 
   reorderProjects: async (ids) => {
     // Optimistic update: reorder projects array and update position fields

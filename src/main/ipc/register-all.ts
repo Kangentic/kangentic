@@ -1,5 +1,6 @@
 import { type BrowserWindow, ipcMain } from 'electron';
 import { IPC } from '../../shared/ipc-channels';
+import type { ProjectOpenByPathOverrides } from '../../shared/types';
 import { trackEvent, sanitizeErrorMessage } from '../analytics/analytics';
 import { ProjectRepository } from '../db/repositories/project-repository';
 import { ProjectGroupRepository } from '../db/repositories/project-group-repository';
@@ -282,8 +283,8 @@ export async function pruneStaleWorktreeProjects(): Promise<void> {
   return pruneStaleWorktreeProjectsImpl(requireContext());
 }
 
-export async function openProjectByPath(projectPath: string) {
-  return openProjectByPathImpl(requireContext(), projectPath);
+export async function openProjectByPath(projectPath: string, overrides?: ProjectOpenByPathOverrides) {
+  return openProjectByPathImpl(requireContext(), projectPath, overrides);
 }
 
 export async function activateAllProjects(): Promise<void> {

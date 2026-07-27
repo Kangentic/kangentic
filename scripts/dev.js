@@ -90,19 +90,25 @@ async function start() {
   const resolvedTarget = targetDir ? path.resolve(targetDir) : projectDir;
   const ephemeralDataDir = ephemeral ? path.join(resolvedTarget, '.kangentic', 'data') : null;
   let previewClonePromise = Promise.resolve();
-  if (ephemeral && !fresh && ephemeralDataDir) {
+  if (ephemeral && ephemeralDataDir) {
     // Fresh data dir every boot so a previous (possibly crashed) preview's clones
     // never persist. The node_modules junction lives OUTSIDE .kangentic/ and clones
     // are source-only (no junctions), so this rm is safe.
     // force suppresses ENOENT but not EBUSY/EPERM from a still-locked handle a
     // previous (crashed) preview left behind; retry briefly, then degrade to a
     // warning rather than crashing the dev server before the build starts.
+    //
+    // This runs for --fresh TOO. It used to be skipped there, which made --fresh the one
+    // mode that INHERITED whatever the last preview left behind: the flag exists to test
+    // the first-launch experience, and it was the only launch that could not show it.
     try {
       fs.rmSync(ephemeralDataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
     } catch (rmError) {
       console.warn('[dev] could not fully clear the ephemeral data dir (a previous preview may still hold a lock):', rmError);
     }
     fs.mkdirSync(ephemeralDataDir, { recursive: true });
+  }
+  if (ephemeral && !fresh && ephemeralDataDir) {
     fs.writeFileSync(path.join(ephemeralDataDir, 'config.json'), JSON.stringify({ hasCompletedFirstRun: true }, null, 2));
     const preClone = (cloneDir) => new Promise((resolve) => {
       const cloneProc = spawn('git', ['clone', '--no-checkout', '--local', resolvedTarget, cloneDir], { stdio: 'inherit', windowsHide: true });

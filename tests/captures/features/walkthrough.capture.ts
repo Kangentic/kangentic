@@ -327,22 +327,26 @@ test('full product walkthrough', async () => {
   await page.evaluate(() => {
     (window as any).__mockFolderPath = '/home/dev/projects/acme-saas';
   });
+  // Picking a folder lands straight on the board: no confirmation dialog, git set up
+  // silently, and the onboarding checklist waiting there.
   await page.locator('[data-testid="welcome-open-project"]').click();
 
   await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
   await page.locator('[data-swimlane-name="Planning"]').waitFor({ state: 'visible', timeout: 5000 });
 
-  // Welcome overlay
-  const overlay = page.locator('[data-testid="welcome-overlay"]');
-  if (await overlay.isVisible().catch(() => false)) {
+  // Onboarding checklist (a modal centered on the board; replaces the docked board column,
+  // which itself replaced the old auto-dismissing welcome overlay).
+  const onboardingChecklist = page.locator('[data-testid="onboarding-checklist"]');
+  if (await onboardingChecklist.isVisible().catch(() => false)) {
     await beat(page, 3000);
-    await chapter(page, '02-welcome-overlay');
-    const dismiss = page.locator('[data-testid="welcome-overlay-dismiss"]');
-    if (await dismiss.isVisible().catch(() => false)) await dismiss.click();
+    await chapter(page, '03-onboarding-checklist');
     await beat(page, 800);
+    // Dismiss it so the rest of the walkthrough films an unobstructed board.
+    await page.locator('[data-testid="onboarding-skip"]').click();
+    await onboardingChecklist.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {});
   }
 
-  await chapter(page, '03-empty-board');
+  await chapter(page, '04-empty-board');
 
   // ═══════════════════════════════════════════════════════════
   // ACT 2: CREATE TASKS

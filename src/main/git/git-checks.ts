@@ -66,6 +66,116 @@ export async function isFileTracked(projectPath: string, filePath: string): Prom
 }
 
 /**
+ * Whether a folder is tracked by SOME git repository - either its own or an ancestor's.
+ *
+ * `isGitRepo` only looks for `.git` in that exact folder, so a SUBDIRECTORY of a repo
+ * reads as "not a repo". That distinction stops mattering the moment we initialise
+ * without asking: running `git init` in a subdirectory of someone's real repository
+ * silently creates a nested repo that shadows their history for everything beneath it.
+ * Resolving the true toplevel is the only way to tell the two cases apart.
+ */
+export async function isInsideGitRepo(projectPath: string): Promise<boolean> {
+  try {
+    await execFileAsync('git', ['rev-parse', '--show-toplevel'], {
+      cwd: projectPath,
+      windowsHide: true,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether the repository has at least one commit.
+ *
+ * A freshly `git init`-ed repo has an UNBORN HEAD: the branch exists in name only, with no
+ * commit behind it. Everything that resolves a base ref fails against that - `git worktree add`
+ * reports `fatal: invalid reference: main` - so this is what separates a usable repo from a
+ * brand-new one.
+ *
+ * It matters because Kangentic initialises a repo for anyone who opens a folder that has none,
+ * and the very next thing they do is move a task. Committing on their behalf is not the answer:
+ * an empty first commit gives worktrees with none of their files in them, and staging the whole
+ * folder means committing however many gigabytes they happened to point us at.
+ */
+export async function hasCommits(projectPath: string): Promise<boolean> {
+  try {
+    await execFileAsync('git', ['rev-parse', '--verify', 'HEAD'], {
+      cwd: projectPath,
+      windowsHide: true,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Outcome of ensureGitRepo. `created` distinguishes "we ran git init" from "there was
+ *  already nothing to do", which the caller needs in order to stay quiet in the latter case. */
+export interface EnsureGitRepoResult {
+  ok: boolean;
+  created: boolean;
+  error: string | null;
+}
+
+/**
+ * Make sure a project folder is covered by git, initialising one if it is not.
+ *
+ * Kangentic runs every task on its own branch in its own worktree, so a project without
+ * git is a broken project - which is why this happens without asking rather than behind a
+ * prompt. It is also what keeps `.kangentic/mcp-config.json`, carrying the MCP auth token,
+ * out of an un-ignorable folder: `ensureGitignore` early-returns when there is no repo, so
+ * a project added to a non-repo leaves that token in a directory a later `git init` would
+ * happily start tracking.
+ *
+ * "Ensure", not "init": a folder already covered by a repo (its own or a parent's) is
+ * success with nothing done, NOT an error. Only a genuine failure returns `ok: false`, and
+ * even then the caller opens the project anyway - being unable to set up git is a reason to
+ * warn, never a reason to lock someone out of their own folder.
+ */
+export async function ensureGitRepo(projectPath: string): Promise<EnsureGitRepoResult> {
+  // statSync inside the guard, not beside existsSync: a directory that exists but cannot be
+  // stat'ed (Windows EPERM on a reparse point, EBUSY on a locked folder, a TOCTOU delete
+  // between the two calls) would otherwise throw out of a function whose whole contract is to
+  // report failure as a value. The caller invokes this from a click handler, so a throw here
+  // becomes an unhandled rejection and the button silently does nothing.
+  try {
+    if (!fs.existsSync(projectPath) || !fs.statSync(projectPath).isDirectory()) {
+      return { ok: false, created: false, error: 'That folder no longer exists.' };
+    }
+  } catch {
+    return { ok: false, created: false, error: 'That folder could not be read.' };
+  }
+  if (isGitRepo(projectPath)) {
+    return { ok: true, created: false, error: null };
+  }
+  // A subdirectory of an existing repo is already covered; initialising here would nest.
+  if (await isInsideGitRepo(projectPath)) {
+    return { ok: true, created: false, error: null };
+  }
+  try {
+    // `-b main` is not cosmetic. Without it the initial branch is whatever the machine's
+    // `init.defaultBranch` says, and an unset config (still the default on plenty of installs)
+    // gives `master` - while `DEFAULT_CONFIG.git.defaultBaseBranch` is the hardcoded string
+    // 'main'. The mismatch surfaces on the very first task move as
+    // `fatal: invalid reference: main` from `git worktree add`. tests/e2e/helpers.ts pins the
+    // same flag for the same reason; this is the product path finally doing likewise.
+    try {
+      await execFileAsync('git', ['init', '-b', 'main'], { cwd: projectPath, windowsHide: true });
+    } catch {
+      // `-b` needs git >= 2.28. On anything older, take the repo git gives us rather than
+      // leaving the folder with no repo at all.
+      await execFileAsync('git', ['init'], { cwd: projectPath, windowsHide: true });
+    }
+    return { ok: true, created: true, error: null };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : 'Unknown error';
+    return { ok: false, created: false, error: `Could not set up git. ${reason}` };
+  }
+}
+
+/**
  * Check whether a branch name matches the auto-generated pattern for a task.
  * Auto-generated branches are `{slug}-{shortId}` where shortId is the first 8
  * chars of the task UUID. When the task was created off a non-default base

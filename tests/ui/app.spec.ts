@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { launchPage, waitForBoard, createProject, createTask } from './helpers';
+import { launchPage, waitForBoard, createProject, createTask, dismissOnboardingChecklist } from './helpers';
 import type { Browser, Page } from '@playwright/test';
 
 const PROJECT_NAME = `UI Test ${Date.now()}`;
@@ -416,6 +416,7 @@ test.describe('Worktree Title Bar', () => {
     } else {
       await page.locator('button[title="Open folder as project"]').click();
     }
+    await dismissOnboardingChecklist(page);
     await waitForBoard(page);
 
     await expect(page.locator('text=(worktree)')).toBeVisible();

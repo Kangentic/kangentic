@@ -13,7 +13,7 @@
 
 import { test, expect, chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady } from './helpers';
+import { waitForViteReady, dismissOnboardingChecklist } from './helpers';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
@@ -45,6 +45,7 @@ async function createProjectAndWaitForBoard(page: Page, projectSlug: string): Pr
   } else {
     await sidebarButton.click();
   }
+  await dismissOnboardingChecklist(page);
 
   await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
 }

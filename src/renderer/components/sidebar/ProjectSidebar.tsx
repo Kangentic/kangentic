@@ -12,6 +12,7 @@ import { useConfigStore } from '../../stores/config-store';
 import { useToastStore } from '../../stores/toast-store';
 import { useHmrGeneration } from '../../utils/hmr-generation';
 import { useFormattedCombo } from '../../hooks/useKeybinding';
+import { useAddProject } from '../../hooks/useAddProject';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
 import { CountBadge } from '../CountBadge';
 import type { Project, ProjectGroup } from '../../../shared/types';
@@ -43,8 +44,8 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
   const reorderGroups = useProjectStore((s) => s.reorderGroups);
   const toggleGroupCollapsed = useProjectStore((s) => s.toggleGroupCollapsed);
   const openProjectSettings = useConfigStore((state) => state.openProjectSettings);
-  const openProjectByPath = useProjectStore((s) => s.openProjectByPath);
   const sidebarCombo = useFormattedCombo('view.toggleSidebar');
+  const { startAddProject } = useAddProject();
 
   const renameProject = useProjectStore((s) => s.renameProject);
   const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
@@ -114,20 +115,6 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
       newGroupInputRef.current.focus();
     }
   }, [creatingGroup]);
-
-  const handleNewProject = async () => {
-    const selectedPath = await window.electronAPI.dialog.selectFolder();
-    if (!selectedPath) return;
-
-    const project = await openProjectByPath(selectedPath);
-    const wasExisting = projects.some(
-      (p) => p.path.replace(/\\/g, '/') === selectedPath.replace(/\\/g, '/'),
-    );
-    useToastStore.getState().addToast({
-      message: wasExisting ? `Opened project "${project.name}"` : `Created project "${project.name}"`,
-      variant: 'info',
-    });
-  };
 
   const handleNewGroup = () => {
     setCreatingGroup(!creatingGroup);
@@ -399,13 +386,13 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
       <div className="px-3 py-2 border-t border-edge flex items-center gap-1.5">
         <button
           type="button"
-          onClick={handleNewProject}
+          onClick={startAddProject}
           className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-edge/60 text-fg-muted hover:text-fg hover:bg-surface-hover/40 hover:border-edge transition-colors"
           title="Open folder as project"
           data-testid="sidebar-new-project-button"
         >
           <FolderPlus size={14} />
-          Add Project
+          Add project
         </button>
         <button
           type="button"

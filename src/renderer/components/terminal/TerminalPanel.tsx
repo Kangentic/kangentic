@@ -123,7 +123,7 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
         data-dismiss-surface
         className="h-full bg-surface flex items-center justify-center text-fg-disabled text-sm"
       >
-        No active sessions. Drag a task into a working column to start an agent.
+        No active sessions. Drag a task into a column that starts an agent.
       </div>
     );
   }

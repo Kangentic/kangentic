@@ -1,7 +1,7 @@
 import { PanelLeft, FolderPlus } from 'lucide-react';
 import { useProjectStore } from '../../stores/project-store';
-import { useToastStore } from '../../stores/toast-store';
 import { useFormattedCombo } from '../../hooks/useKeybinding';
+import { useAddProject } from '../../hooks/useAddProject';
 import type { Project } from '../../../shared/types';
 
 interface CollapsedRailProps {
@@ -23,21 +23,8 @@ export function CollapsedRail({ onExpandSidebar }: CollapsedRailProps) {
   const projects = useProjectStore((s) => s.projects);
   const currentProject = useProjectStore((s) => s.currentProject);
   const openProject = useProjectStore((s) => s.openProject);
-  const openProjectByPath = useProjectStore((s) => s.openProjectByPath);
   const sidebarCombo = useFormattedCombo('view.toggleSidebar');
-
-  const handleNewProject = async () => {
-    const selectedPath = await window.electronAPI.dialog.selectFolder();
-    if (!selectedPath) return;
-    const project = await openProjectByPath(selectedPath);
-    const wasExisting = projects.some(
-      (p) => p.path.replace(/\\/g, '/') === selectedPath.replace(/\\/g, '/'),
-    );
-    useToastStore.getState().addToast({
-      message: wasExisting ? `Opened project "${project.name}"` : `Created project "${project.name}"`,
-      variant: 'info',
-    });
-  };
+  const { startAddProject } = useAddProject();
 
   return (
     <div className="h-full flex flex-col items-center pt-3 pb-2 px-1 bg-surface-raised">
@@ -74,7 +61,7 @@ export function CollapsedRail({ onExpandSidebar }: CollapsedRailProps) {
       </div>
 
       <button
-        onClick={handleNewProject}
+        onClick={startAddProject}
         className="p-1.5 mt-2 rounded hover:bg-surface-hover text-fg-muted hover:text-fg transition-colors"
         title="New project"
         data-testid="rail-new-project-button"

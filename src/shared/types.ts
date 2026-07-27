@@ -1948,6 +1948,42 @@ export interface DictationAudioChunk {
  *  a platform with no mic. */
 export type DictationMicPermission = 'granted' | 'denied' | 'unavailable';
 
+/** The five onboarding checklist steps, in the order they are presented. Lives here rather
+ *  than beside the hook so the config store can reference it without importing a renderer
+ *  hook that imports the config store back. */
+export type OnboardingStepKey =
+  | 'defaultsChosen'
+  | 'boardShaped'
+  | 'taskCreated'
+  | 'draggedToAutoSpawnLane'
+  | 'taskDetailOpened';
+
+/**
+ * Snapshot of the settings the onboarding checklist watches, taken when a project is
+ * added. Steps 1 and 2 tick when live state DIFFERS from this, so a user who opens
+ * Settings or Board manager and closes it again gets no checkmark - only a real change
+ * earns one.
+ *
+ * Note the four "defaults" a user picks do not live together: `default_agent` /
+ * `default_model` / `default_effort` are columns on the project row, while
+ * `permissionMode` is global config (`agent.permissionMode`). This snapshot flattens
+ * both so the comparison has a single shape.
+ */
+export interface OnboardingBaseline {
+  /** Project row `default_agent`. Always populated, so it needs a baseline to be meaningful. */
+  defaultAgent: string;
+  /** Project row `default_model`. Null means no project preference was set. */
+  defaultModel: string | null;
+  /** Project row `default_effort`. Null means no project preference was set. */
+  defaultEffort: string | null;
+  /** Effective `agent.permissionMode` at capture time. Always populated. */
+  permissionMode: PermissionMode;
+  /** Stable string encoding of the board's shape - see buildSwimlaneSignature. Not a hash: it
+   *  is the lane fields joined with separators, compared only for equality. Deliberately excludes
+   *  `position` (it is rewritten by any reorder, including one the user undoes). */
+  swimlaneSignature: string;
+}
+
 export interface AppConfig {
   theme: ThemeMode;
   sidebarVisible: boolean;
@@ -2217,6 +2253,19 @@ export interface AppConfig {
   /** The version whose release-notes modal has already been auto-shown, so it does
    *  not reopen on every relaunch. Empty string until the first update lands. */
   lastSeenReleaseNotesVersion: string;
+  /** Project ids whose onboarding checklist the user has dismissed. Global (per-machine)
+   *  memory keyed by project id, like `lastActiveTaskByProject`. `undefined` means the
+   *  one-time upgrade backfill (App.tsx, on first hydration) has not run yet; `[]` means
+   *  it has run and nothing is dismissed. The backfill seeds every project the user already
+   *  had open so existing users never see the checklist on projects they already use. */
+  onboardedProjectIds?: string[];
+  /** Per-project snapshot of the settings the onboarding checklist watches, taken when the
+   *  project is first added (or on first checklist open for a project that predates this
+   *  key). Steps 1 and 2 tick by comparing live state against this, so opening a settings
+   *  screen and closing it again ticks nothing - only a real change does. Keyed by project
+   *  id; listed in CONFIG_DICTIONARY_PATHS so per-project removal is not swallowed by the
+   *  deep merge. */
+  onboardingBaseline?: Record<string, OnboardingBaseline>;
   skipDeleteConfirm: boolean;
   skipBoardConfigConfirm: boolean;
   autoFocusIdleSession: boolean;
@@ -3011,6 +3060,53 @@ export interface ProjectCreateInput {
   default_effort?: string | null;
 }
 
+/** Optional overrides for project creation at open-by-path time (the Add project dialog). */
+export interface ProjectOpenByPathOverrides {
+  name?: string;
+  defaultAgent?: string;
+}
+
+/** Optional native folder-picker dialog customization (dialog.selectFolder). */
+export interface SelectFolderOptions {
+  title?: string;
+  buttonLabel?: string;
+  /** macOS only; ignored on Windows/Linux. */
+  message?: string;
+  defaultPath?: string;
+}
+
+/**
+ * Read-only probe of a candidate project folder, returned by
+ * `projects.probePath`. Drives the Add project dialog's git verdict and
+ * already-registered branch before any project is actually created.
+ */
+export interface ProjectPathProbe {
+  exists: boolean;
+  isDirectory: boolean;
+  isGitRepo: boolean;
+  isInsideWorktree: boolean;
+  /** Current branch name, or null when not a git repo or HEAD is unreadable. */
+  currentBranch: string | null;
+  /** The folder's basename, offered as the dialog's default project name. */
+  suggestedName: string;
+  /** id of an already-registered project at this exact path, or null. */
+  alreadyRegisteredProjectId: string | null;
+}
+
+/**
+ * Outcome of `projects.ensureGit`.
+ *
+ * `ok` is false only for a genuine failure (git missing, permission denied). A folder
+ * that was already covered by a repo - its own or a parent's - is `ok: true` with
+ * `created: false`, so the caller can stay silent instead of reporting a non-problem.
+ */
+export interface ProjectEnsureGitResult {
+  ok: boolean;
+  /** True only when `git init` actually ran. */
+  created: boolean;
+  error: string | null;
+}
+
 /** Minimal parsing interface for agent-specific runtime behavior. */
 export interface AgentParser {
   /**
@@ -3744,7 +3840,11 @@ export interface ElectronAPI {
     delete: (id: string) => Promise<void>;
     open: (id: string) => Promise<void>;
     getCurrent: () => Promise<Project | null>;
-    openByPath: (path: string) => Promise<Project>;
+    openByPath: (path: string, overrides?: ProjectOpenByPathOverrides) => Promise<Project>;
+    probePath: (path: string) => Promise<ProjectPathProbe>;
+    /** Make sure a picked folder is covered by git, initialising a repo when it is not.
+     *  A folder already inside a repo is a no-op success, not an error. */
+    ensureGit: (path: string) => Promise<ProjectEnsureGitResult>;
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
     rename: (id: string, name: string) => Promise<Project>;
     setDefaultAgent: (id: string, agentName: string) => Promise<Project>;
@@ -4068,7 +4168,7 @@ export interface ElectronAPI {
 
   // Git
   git: {
-    detect: () => Promise<{ found: boolean; path: string | null; version: string | null; meetsMinimum: boolean }>;
+    detect: (forceRefresh?: boolean) => Promise<{ found: boolean; path: string | null; version: string | null; meetsMinimum: boolean }>;
     listBranches: () => Promise<string[]>;
     diffFiles: (input: GitDiffFilesInput) => Promise<GitDiffFilesResult>;
     fileContent: (input: GitFileContentInput) => Promise<GitFileContentResult>;
@@ -4084,7 +4184,7 @@ export interface ElectronAPI {
 
   // Dialog
   dialog: {
-    selectFolder: () => Promise<string | null>;
+    selectFolder: (options?: SelectFolderOptions) => Promise<string | null>;
   };
 
   // Notifications

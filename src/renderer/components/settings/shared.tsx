@@ -101,6 +101,7 @@ export function SettingsPanelShell({ onClose, children, projectSwitcher, tabs, a
         className={`fixed top-10 right-0 bottom-0 w-[720px] bg-surface-raised border-l border-edge shadow-2xl flex flex-col ${contentClassName}`}
         onAnimationEnd={onAnimationEnd}
         onMouseDown={(event) => event.stopPropagation()}
+        data-testid="settings-panel"
       >
         {/* Header */}
         <div className="flex-shrink-0 border-b border-edge">

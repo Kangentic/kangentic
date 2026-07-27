@@ -10,7 +10,8 @@ import { cleanupStaleResourcesAsync, pruneOrphanedWorktreeTasks } from '../../tr
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { TranscriptRepository } from '../../db/repositories/transcript-repository';
 import { WorktreeManager } from '../../git/worktree-manager';
-import { isGitRepo, isInsideWorktree, isKangenticWorktree } from '../../git/git-checks';
+import { isGitRepo, isInsideWorktree, isKangenticWorktree, ensureGitRepo } from '../../git/git-checks';
+import { readWorktreeHeadUnqueued } from '../../git/worktree-head';
 import { agentRegistry } from '../../agent/agent-registry';
 import { getProjectDb, closeProjectDb } from '../../db/database';
 import { PATHS } from '../../config/paths';
@@ -23,7 +24,7 @@ import { runWithProjectLogContext } from '../../diagnostics/project-log-context'
 import { prRefreshScheduler } from '../../pr/pr-refresh-scheduler';
 import { retrievalService } from '../../retrieval/retrieval-service';
 import { DEFAULT_AGENT } from '../../../shared/types';
-import type { Project, Task, AppConfig, ProjectSearchEntriesInput, ProjectRelocateOptions } from '../../../shared/types';
+import type { Project, Task, AppConfig, ProjectSearchEntriesInput, ProjectRelocateOptions, ProjectPathProbe, ProjectEnsureGitResult, ProjectOpenByPathOverrides } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 import type { ProjectRepository } from '../../db/repositories/project-repository';
 import type { ConfigManager } from '../../config/config-manager';
@@ -419,7 +420,7 @@ function deferBoardConfigReconcile(context: IpcContext, projectId: string, proje
  * Find an existing project by path, or create one and open it.
  * Returns the project object.
  */
-export async function openProjectByPath(context: IpcContext, projectPath: string) {
+export async function openProjectByPath(context: IpcContext, projectPath: string, overrides?: ProjectOpenByPathOverrides) {
   // Normalize the path for comparison
   const normalized = path.resolve(projectPath);
 
@@ -440,9 +441,12 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
   }
 
   if (!project) {
-    // Create a new project using the directory name
-    const name = path.basename(normalized);
-    const defaultAgent = await resolveDefaultAgent(context.configManager);
+    // Create a new project. overrides comes from the Add project dialog
+    // (editable name, chosen default agent); falls back to the folder's
+    // basename and detection-order resolution when absent (e.g. the
+    // sidebar's direct-open flow, which skips the dialog).
+    const name = overrides?.name?.trim() || path.basename(normalized);
+    const defaultAgent = overrides?.defaultAgent ?? await resolveDefaultAgent(context.configManager);
     project = context.projectRepo.create({
       name,
       path: normalized,
@@ -731,8 +735,35 @@ export function registerProjectHandlers(context: IpcContext): void {
     return context.projectRepo.setDefaultEffort(id, effort);
   });
 
-  ipcMain.handle(IPC.PROJECT_OPEN_BY_PATH, async (_, projectPath: string) => {
-    return openProjectByPath(context, projectPath);
+  ipcMain.handle(IPC.PROJECT_OPEN_BY_PATH, async (_, projectPath: string, overrides?: ProjectOpenByPathOverrides) => {
+    return openProjectByPath(context, projectPath, overrides);
+  });
+
+  const probeFolder = async (folderPath: string): Promise<ProjectPathProbe> => {
+    const normalized = path.resolve(folderPath);
+    const exists = fs.existsSync(normalized);
+    const isDirectory = exists && fs.statSync(normalized).isDirectory();
+    const isGit = isDirectory && isGitRepo(normalized);
+    const insideWorktree = isDirectory && isInsideWorktree(normalized);
+    const { branch } = isGit ? await readWorktreeHeadUnqueued(normalized) : { branch: null };
+    const existingProject = context.projectRepo.list().find((p) => path.resolve(p.path) === normalized);
+    return {
+      exists,
+      isDirectory,
+      isGitRepo: isGit,
+      isInsideWorktree: insideWorktree,
+      currentBranch: branch,
+      suggestedName: path.basename(normalized),
+      alreadyRegisteredProjectId: existingProject?.id ?? null,
+    };
+  };
+
+  ipcMain.handle(IPC.PROJECT_PROBE_PATH, async (_, folderPath: string): Promise<ProjectPathProbe> => {
+    return probeFolder(folderPath);
+  });
+
+  ipcMain.handle(IPC.PROJECT_ENSURE_GIT, async (_, folderPath: string): Promise<ProjectEnsureGitResult> => {
+    return ensureGitRepo(path.resolve(folderPath));
   });
 
   ipcMain.handle(IPC.PROJECT_SEARCH_ENTRIES, async (_, input: ProjectSearchEntriesInput) => {

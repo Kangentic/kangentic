@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChartColumn, CloudDownload, Command, Mic, Minus, Settings, Square, X } from 'lucide-react';
+import { ChartColumn, CloudDownload, Command, Compass, Mic, Minus, Settings, Square, X } from 'lucide-react';
 import { useProjectStore } from '../../stores/project-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useDictationStore } from '../../stores/dictation-store';
@@ -108,6 +108,8 @@ export function TitleBar({
 }: TitleBarProps) {
   const currentProject = useProjectStore((s) => s.currentProject);
   const settingsOpen = useConfigStore((s) => s.settingsOpen);
+  const onboardingChecklistOpen = useConfigStore((s) => s.onboardingChecklistOpen);
+  const setOnboardingChecklistOpen = useConfigStore((s) => s.setOnboardingChecklistOpen);
   const setSettingsOpen = useConfigStore((s) => s.setSettingsOpen);
   const openProjectSettings = useConfigStore((s) => s.openProjectSettings);
   const openSettingsToTab = useConfigStore((s) => s.openSettingsToTab);
@@ -330,6 +332,30 @@ export function TitleBar({
         >
           <ChartColumn size={20} />
         </button>
+        {/* Dev only, and deliberately so. Onboarding is a first-run experience: it shows once
+            per project and then retires itself, and a permanent re-entry button in the title
+            bar of a shipped app is clutter for a thing the user has already done (or already
+            chose to skip). Anyone who wants it again has the docs. It stays in dev builds
+            because re-running the flow is exactly what preview testing needs.
+
+            Build-time gate per dev-tooling-build-exclusion.md: esbuild drops the whole block
+            in production, so this is not a hidden button, it is an absent one. Disabled rather
+            than unmounted without a project - this row is right-anchored, so a button that
+            mounts and unmounts shifts everything after it (the gear, the OS controls). */}
+        {__KANGENTIC_DEV__ && (
+          <button
+            onClick={() => currentProject && setOnboardingChecklistOpen(true)}
+            disabled={!currentProject}
+            className={`p-1.5 rounded transition-colors ${
+              onboardingChecklistOpen ? 'text-fg bg-surface-hover' : 'text-fg-muted'
+            } ${currentProject ? 'hover:bg-surface-hover hover:text-fg cursor-pointer' : 'opacity-40'}`}
+            title="Get started (dev only)"
+            aria-label="Get started"
+            data-testid="get-started-button"
+          >
+            <Compass size={20} />
+          </button>
+        )}
         <button
           onClick={handleGearClick}
           className={`p-1.5 hover:bg-surface-hover rounded transition-colors ${

@@ -25,6 +25,7 @@ import type {
   AgentSummarizeResult,
   HandoffRecord,
   RemoteServerStatus,
+  SelectFolderOptions,
 } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 
@@ -570,7 +571,10 @@ export function registerSystemHandlers(context: IpcContext): void {
   });
 
   // === Git ===
-  ipcMain.handle(IPC.GIT_DETECT, () => context.gitDetector.detect());
+  ipcMain.handle(IPC.GIT_DETECT, (_event, forceRefresh?: boolean) => {
+    if (forceRefresh) context.gitDetector.invalidateCache();
+    return context.gitDetector.detect();
+  });
 
   ipcMain.handle(IPC.GIT_LIST_BRANCHES, async () => {
     if (!context.currentProjectPath || !isGitRepo(context.currentProjectPath)) return [];
@@ -581,9 +585,18 @@ export function registerSystemHandlers(context: IpcContext): void {
   });
 
   // === Dialog ===
-  ipcMain.handle(IPC.DIALOG_SELECT_FOLDER, async () => {
+  ipcMain.handle(IPC.DIALOG_SELECT_FOLDER, async (_event, options?: SelectFolderOptions) => {
+    // Both additions are scoped to callers that actually pass options (today: Add project).
+    // The no-argument callers - relocating a project, locating one whose folder moved - are
+    // pointing at a folder that already exists, so starting them at $HOME every time discards
+    // the location the OS remembered, and offering "New folder" there invites creating an empty
+    // directory that cannot be the thing they were asked to find.
     const result = await dialog.showOpenDialog(context.mainWindow, {
-      properties: ['openDirectory'],
+      properties: options ? ['openDirectory', 'createDirectory'] : ['openDirectory'],
+      title: options?.title,
+      buttonLabel: options?.buttonLabel,
+      message: options?.message,
+      defaultPath: options ? (options.defaultPath ?? app.getPath('home')) : undefined,
     });
     if (result.canceled || result.filePaths.length === 0) return null;
     return result.filePaths[0];

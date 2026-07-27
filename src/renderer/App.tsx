@@ -51,15 +51,31 @@ export function App() {
     if (process.env.NODE_ENV !== 'production') {
       performance.mark('renderer-mount-start');
     }
-    loadConfig();
+    const configLoaded = loadConfig();
     loadAppVersion();
     loadAgentList();
     detectGit();
-    loadProjects();
+    const projectsLoaded = loadProjects();
     useProjectStore.getState().loadGroups();
     // Restore the current project after a page reload (e.g. Vite HMR).
     // The main process retains currentProjectId across renderer reloads.
     loadCurrent();
+
+    // One-time upgrade backfill for onboardedProjectIds. The field starts
+    // undefined for every user (new or existing); this seeds every project
+    // already known at first hydration as onboarded, so an existing user never
+    // sees the Get started panel retroactively on a project they already use.
+    // A brand-new user has no known projects yet, so this simply writes `[]`,
+    // and their first real project starts un-onboarded as intended. Runs once
+    // on cold mount, not on every HMR tick, because this effect body only runs
+    // on genuine (re)mount.
+    Promise.all([configLoaded, projectsLoaded]).then(() => {
+      const { config, updateConfig } = useConfigStore.getState();
+      if (config.onboardedProjectIds === undefined) {
+        const allProjectIds = useProjectStore.getState().projects.map((project) => project.id);
+        updateConfig({ onboardedProjectIds: allProjectIds });
+      }
+    });
 
     // Measure after first paint via requestAnimationFrame
     let mountTimerRafId: number | undefined;
@@ -665,6 +681,7 @@ if (import.meta.hot) {
     useProjectStore.getState().loadCurrent();
     useConfigStore.getState().loadConfig();
     useConfigStore.getState().loadAgentList();
+    useConfigStore.getState().detectGit();
     useBoardStore.getState().loadBoard();
     useBoardStore.getState().loadBoardProfiles();
     useBacklogStore.getState().loadBacklog();

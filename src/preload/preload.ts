@@ -42,7 +42,9 @@ const api: ElectronAPI = {
     delete: (id) => ipcRenderer.invoke(IPC.PROJECT_DELETE, id),
     open: (id) => ipcRenderer.invoke(IPC.PROJECT_OPEN, id),
     getCurrent: () => ipcRenderer.invoke(IPC.PROJECT_GET_CURRENT),
-    openByPath: (path: string) => ipcRenderer.invoke(IPC.PROJECT_OPEN_BY_PATH, path),
+    openByPath: (path: string, overrides) => ipcRenderer.invoke(IPC.PROJECT_OPEN_BY_PATH, path, overrides),
+    probePath: (path: string) => ipcRenderer.invoke(IPC.PROJECT_PROBE_PATH, path),
+    ensureGit: (path: string) => ipcRenderer.invoke(IPC.PROJECT_ENSURE_GIT, path),
     searchEntries: (input) => ipcRenderer.invoke(IPC.PROJECT_SEARCH_ENTRIES, input),
     rename: (id: string, name: string) => ipcRenderer.invoke(IPC.PROJECT_RENAME, id, name),
     setDefaultAgent: (id: string, agentName: string) => ipcRenderer.invoke(IPC.PROJECT_SET_DEFAULT_AGENT, id, agentName),
@@ -326,7 +328,7 @@ const api: ElectronAPI = {
   },
 
   git: {
-    detect: () => ipcRenderer.invoke(IPC.GIT_DETECT),
+    detect: (forceRefresh?: boolean) => ipcRenderer.invoke(IPC.GIT_DETECT, forceRefresh),
     listBranches: () => ipcRenderer.invoke(IPC.GIT_LIST_BRANCHES),
     diffFiles: (input) => ipcRenderer.invoke(IPC.GIT_DIFF_FILES, input),
     fileContent: (input) => ipcRenderer.invoke(IPC.GIT_FILE_CONTENT, input),
@@ -345,7 +347,7 @@ const api: ElectronAPI = {
   },
 
   dialog: {
-    selectFolder: () => ipcRenderer.invoke(IPC.DIALOG_SELECT_FOLDER),
+    selectFolder: (options) => ipcRenderer.invoke(IPC.DIALOG_SELECT_FOLDER, options),
   },
 
   notifications: {

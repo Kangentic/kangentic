@@ -172,7 +172,8 @@ Native modules (`better-sqlite3`, `node-pty`, `sherpa-onnx-node`, `font-list`, `
 
 Flags:
 - `--port=<n>` -- override Vite port
-- `--ephemeral` -- isolated data directory, auto-cleaned on exit (used for worktree previews)
+- `--ephemeral` -- isolated data directory, auto-cleaned on exit (used for worktree previews). The data directory is wiped on every boot, so a previous (possibly crashed) preview's clones never persist.
+- `--fresh` -- ephemeral preview with NO project pre-cloned or auto-opened, so the app starts on the Welcome Screen. Use it to exercise the first-launch experience (pick a folder, land on the board, onboarding checklist). Implies the same wipe as `--ephemeral`; without it, two projects are pre-cloned from the worktree and Project 1 is opened.
 
 ### Production (`npm run build` / `scripts/build.js`)
 

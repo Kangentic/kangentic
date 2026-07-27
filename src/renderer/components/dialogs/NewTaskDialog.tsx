@@ -341,6 +341,7 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
           closeRef={dialogCloseRef}
           onHeaderDoubleClick={handleToggleMaximized}
           onCloseRequest={handleCloseAttempt}
+          testId="new-task-dialog"
           // The Advanced section's profile edit button opens the Board Manager
           // over this dialog; Escape then belongs to the manager alone.
           suppressEscape={boardManagerOpen}

@@ -163,15 +163,17 @@ export const ViewToggle = React.memo(function ViewToggle() {
       )}
 
       {activeView === 'board' ? (
-        <button
-          type="button"
-          onClick={() => openBoardManager(null, true)}
-          className="ml-auto flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md text-fg-muted hover:text-fg hover:bg-surface-hover/40 transition-colors"
-          data-testid="add-column-button"
-        >
-          <Plus size={16} />
-          <span>Add column</span>
-        </button>
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => openBoardManager(null, true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md text-fg-muted hover:text-fg hover:bg-surface-hover/40 transition-colors"
+            data-testid="add-column-button"
+          >
+            <Plus size={16} />
+            <span>Add column</span>
+          </button>
+        </div>
       ) : (
         <div className="ml-auto flex items-center gap-2">
           <button

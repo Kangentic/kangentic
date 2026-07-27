@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AppConfig, DeepPartial, AgentDetectionInfo, SerializedWorkspace } from '../../shared/types';
+import type { AppConfig, DeepPartial, AgentDetectionInfo, OnboardingBaseline, OnboardingStepKey, SerializedWorkspace } from '../../shared/types';
 import { DEFAULT_CONFIG } from '../../shared/types';
 import { deepMergeConfig } from '../../shared/object-utils';
 import { parseModelId } from '../../shared/model-id';
@@ -11,11 +11,22 @@ import { invalidateAllProjects } from './project-cache';
 // @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
 let lastSettingsTabHmr: string | null = import.meta.hot?.data?.lastSettingsTab ?? null;
 
+/** Onboarding steps ticked off this session, preserved across HMR (Pattern A).
+ *
+ *  This state is session-only by design, which means Pattern B cannot rescue it: there is no
+ *  main-process truth for `loadConfig()` to re-fetch. So a Fast Refresh of this module (or of
+ *  `shared/types.ts`, which it imports) rebuilt the store with an empty map and silently
+ *  un-ticked completed steps - including `taskDetailOpened`, step 5's ONLY signal. A dogfooder
+ *  editing this very feature would watch the checklist walk backwards. */
+// @ts-expect-error -- Vite handles import.meta.hot
+let onboardingStepsCompletedHmr: Record<string, OnboardingStepKey[]> = import.meta.hot?.data?.onboardingStepsCompleted ?? {};
+
 // @ts-expect-error -- Vite handles import.meta.hot
 if (import.meta.hot) {
   // @ts-expect-error -- Vite handles import.meta.hot
   import.meta.hot.dispose((data: Record<string, unknown>) => {
     data.lastSettingsTab = lastSettingsTabHmr;
+    data.onboardingStepsCompleted = onboardingStepsCompletedHmr;
   });
 }
 
@@ -36,6 +47,13 @@ interface ConfigStore {
   loading: boolean;
   loadConfig: () => Promise<void>;
   updateConfig: (partial: DeepPartial<AppConfig>) => Promise<void>;
+  /** Dismiss the onboarding checklist for a project (adds its id to `onboardedProjectIds`). */
+  markProjectOnboarded: (projectId: string) => void;
+  /** Record what a project's watched settings looked like before the user touched them, so
+   *  checklist steps 1 and 2 can tick on a real change rather than on a screen being opened.
+   *  No-op when a baseline already exists, so re-opening the checklist never re-baselines
+   *  (which would silently un-tick work the user already did). */
+  captureOnboardingBaseline: (projectId: string, baseline: OnboardingBaseline) => void;
   /** Persist the in-app window layout for a project into global config, keyed by
    *  project id and merged in via `config.set` (so it never clobbers other config).
    *  Decoupled from the Settings panel: the window-manager calls this during normal
@@ -62,10 +80,11 @@ interface ConfigStore {
 
   // -- Git detection --
   gitInfo: { found: boolean; path: string | null; version: string | null; meetsMinimum: boolean } | null;
-  detectGit: () => Promise<void>;
+  detectGit: (forceRefresh?: boolean) => Promise<void>;
 
   // -- Agent detection --
   agentList: AgentDetectionInfo[];
+  agentListLoaded: boolean;
   loadAgentList: (forceRefresh?: boolean) => Promise<void>;
 
   /** Record a model that's been seen for an agent (live usage event or override
@@ -99,6 +118,29 @@ interface ConfigStore {
    *  returns to the same section instead of resetting to the first tab. */
   lastSettingsTab: string | null;
   setLastSettingsTab: (tabId: string) => void;
+
+  // -- Onboarding checklist + walkthrough (ephemeral UI state, like settingsOpen) --
+  /** Whether the checklist dialog is on screen. Distinct from `onboardedProjectIds`:
+   *  that records dismissal, this records "is it currently showing". Reopening from the
+   *  title bar sets this without un-dismissing the project. */
+  onboardingChecklistOpen: boolean;
+  setOnboardingChecklistOpen: (open: boolean) => void;
+  /** The checklist step currently being spotlighted, or null when the walkthrough layer
+   *  is idle. Only ever set by the user clicking a checklist item - nothing auto-advances
+   *  into it, and any value here is cleared by Escape or by the step completing. */
+  walkthroughStep: OnboardingStepKey | null;
+  setWalkthroughStep: (step: OnboardingStepKey | null) => void;
+  /** Onboarding steps completed in a way the board and settings cannot evidence, keyed by
+   *  project. Two sources feed it: a task detail the user opened (step 5's signal is "a
+   *  window exists", true only while one is open, so reading it live would un-tick the step
+   *  the moment they closed the window they were told to open), and any step the user ticked
+   *  off with the walkthrough's "Next step".
+   *
+   *  OR-ed with the derived signals, never replacing them - a step still ticks on its own the
+   *  moment the real thing happens. Deliberately session-only: onboarding is a first-run flow
+   *  that retires itself on completion, so a mid-flow restart is not worth a config key. */
+  onboardingStepsCompleted: Record<string, OnboardingStepKey[]>;
+  markOnboardingStepCompleted: (projectId: string, step: OnboardingStepKey) => void;
 
   // -- Project Settings --
   projectSettingsPath: string | null;
@@ -177,11 +219,15 @@ export const useConfigStore = create<ConfigStore>((set, get) => {
     globalConfig: DEFAULT_CONFIG,
     appVersion: null,
     agentList: [],
+    agentListLoaded: false,
     gitInfo: null,
     loading: true,
     workspaceSeeded: false,
     settingsOpen: false,
     lastSettingsTab: lastSettingsTabHmr,
+    onboardingChecklistOpen: false,
+    walkthroughStep: null,
+    onboardingStepsCompleted: onboardingStepsCompletedHmr,
     projectSettingsPath: null,
     projectSettingsProjectName: null,
     projectSettingsInitialTab: null,
@@ -210,6 +256,23 @@ export const useConfigStore = create<ConfigStore>((set, get) => {
       }
     },
 
+    markProjectOnboarded: (projectId) => {
+      const existing = get().config.onboardedProjectIds ?? [];
+      if (existing.includes(projectId)) return;
+      get().updateConfig({ onboardedProjectIds: [...existing, projectId] });
+    },
+
+    captureOnboardingBaseline: (projectId, baseline) => {
+      // First write wins. A later capture would re-baseline against settings the user has
+      // ALREADY changed, which would un-tick steps 1 and 2 and lose real progress.
+      const existing = get().config.onboardingBaseline ?? {};
+      if (existing[projectId]) return;
+      // `onboardingBaseline` is a CONFIG_DICTIONARY_PATH, so this write REPLACES the map
+      // rather than merging into it - send every project's entry, not just this one, or
+      // the others are dropped. Same contract as saveWorkspaceForProject.
+      get().updateConfig({ onboardingBaseline: { ...existing, [projectId]: baseline } });
+    },
+
     saveWorkspaceForProject: (projectId, workspace) => {
       // Optimistically update the local config (both effective + global) so back-to-back
       // saves and a follow-on project-switch restore read the value just written rather
@@ -236,14 +299,14 @@ export const useConfigStore = create<ConfigStore>((set, get) => {
       set({ appVersion });
     },
 
-    detectGit: async () => {
-      const gitInfo = await window.electronAPI.git.detect();
+    detectGit: async (forceRefresh?: boolean) => {
+      const gitInfo = await window.electronAPI.git.detect(forceRefresh);
       set({ gitInfo });
     },
 
     loadAgentList: async (forceRefresh?: boolean) => {
       const agentList = await window.electronAPI.agents.list(forceRefresh);
-      set({ agentList });
+      set({ agentList, agentListLoaded: true });
 
       // Seed the discovered-models cache from `capabilities.models` so every
       // launch starts with at least the JSONL-walk result merged in. Only writes
@@ -316,6 +379,33 @@ export const useConfigStore = create<ConfigStore>((set, get) => {
       get().loadAgentList(true).catch(() => undefined).finally(() => {
         modelRescanInFlight = false;
         modelRescanLastAtMs = Date.now();
+      });
+    },
+
+    setOnboardingChecklistOpen: (open) => {
+      // Deliberately does NOT touch walkthroughStep. Clicking a step CLOSES the checklist
+      // (to get out of the way of the surface it just opened) and starts a spotlight, so
+      // clearing the step here would destroy the spotlight the click just asked for. The
+      // walkthrough is ended by Escape, its own skip control, the step completing, or its
+      // target disappearing - never by the list closing.
+      set({ onboardingChecklistOpen: open });
+    },
+
+    setWalkthroughStep: (step) => {
+      set({ walkthroughStep: step });
+    },
+
+    markOnboardingStepCompleted: (projectId, step) => {
+      set((state) => {
+        const existing = state.onboardingStepsCompleted[projectId] ?? [];
+        if (existing.includes(step)) return state;
+        // Dual-write the module mirror, same as setLastSettingsTab: it is what survives the
+        // Fast Refresh that rebuilds this store.
+        onboardingStepsCompletedHmr = {
+          ...state.onboardingStepsCompleted,
+          [projectId]: [...existing, step],
+        };
+        return { onboardingStepsCompleted: onboardingStepsCompletedHmr };
       });
     },
 

@@ -26,12 +26,17 @@ export interface BoardFilterSlice {
   boardSearchFocusNonce: number;
   /** Increments to request opening the New Task dialog (the task.create hotkey). */
   newTaskRequestNonce: number;
+  /** Increments to request closing that dialog again. The mirror of the open nonce, for
+   *  callers that opened it and now need it gone (the onboarding walkthrough's "Next step",
+   *  which has to clear the surface before it can bring the checklist back). */
+  newTaskDismissNonce: number;
   togglePriorityFilter: (value: number) => void;
   toggleLabelFilter: (label: string) => void;
   clearBoardFilters: () => void;
   setBoardSearchQuery: (query: string) => void;
   requestBoardSearchFocus: () => void;
   requestNewTask: () => void;
+  dismissNewTask: () => void;
 }
 
 export const createBoardFilterSlice: StateCreator<BoardStore, [], [], BoardFilterSlice> = (set) => ({
@@ -40,6 +45,7 @@ export const createBoardFilterSlice: StateCreator<BoardStore, [], [], BoardFilte
   boardSearchQuery: '',
   boardSearchFocusNonce: 0,
   newTaskRequestNonce: 0,
+  newTaskDismissNonce: 0,
 
   togglePriorityFilter: (value) => set((state) => {
     const next = new Set(state.priorityFilters);
@@ -61,5 +67,15 @@ export const createBoardFilterSlice: StateCreator<BoardStore, [], [], BoardFilte
 
   requestBoardSearchFocus: () => set((state) => ({ boardSearchFocusNonce: state.boardSearchFocusNonce + 1 })),
 
-  requestNewTask: () => set((state) => ({ newTaskRequestNonce: state.newTaskRequestNonce + 1 })),
+  // Each bump lands strictly PAST the other counter, so whichever was called last always
+  // holds the higher number. A plain +1 on each let them tie when both fired in the same tick
+  // ("close every surface, then open this one", which is how the onboarding walkthrough
+  // advances into the create-a-task step) and the tie read as closed.
+  requestNewTask: () => set((state) => ({
+    newTaskRequestNonce: Math.max(state.newTaskRequestNonce, state.newTaskDismissNonce) + 1,
+  })),
+
+  dismissNewTask: () => set((state) => ({
+    newTaskDismissNonce: Math.max(state.newTaskRequestNonce, state.newTaskDismissNonce) + 1,
+  })),
 });

@@ -478,7 +478,7 @@ export function TaskDetailBody({
     return (
       <>
         <div className="flex-1 flex items-center justify-center text-fg-disabled text-sm p-8">
-          No active session. Drag this task to a column with a transition to start one.
+          No active session. Drag this task into a column that starts an agent.
         </div>
         <PreSpawnContextBar taskId={task.id} />
       </>

@@ -203,8 +203,19 @@ const isE2ETest = process.env.NODE_ENV === 'test';
 let cachedPreviewTaskTitle: string | null | undefined;
 function getPreviewTaskTitle(): string | null {
   if (cachedPreviewTaskTitle === undefined) {
-    cachedPreviewTaskTitle =
-      __KANGENTIC_DEV__ && isEphemeral ? resolvePreviewTaskTitle(getCwdArg() ?? '') : null;
+    // `--cwd` is the usual source, but `/preview --fresh` deliberately omits it so the app
+    // opens on the Welcome Screen with no project - which used to drop the title pill and
+    // leave a fresh preview window unidentifiable next to the others. The app still RUNS
+    // from inside the worktree either way, so fall back to the process cwd and then the
+    // app path. Resolution is a pure path/DB lookup, so trying several costs nothing and
+    // each one independently returns null when it does not look like a worktree.
+    const worktreeCandidates = __KANGENTIC_DEV__ && isEphemeral
+      ? [getCwdArg(), process.cwd(), app.getAppPath()]
+      : [];
+    cachedPreviewTaskTitle = worktreeCandidates.reduce<string | null>(
+      (resolved, candidate) => resolved ?? (candidate ? resolvePreviewTaskTitle(candidate) : null),
+      null,
+    );
   }
   return cachedPreviewTaskTitle;
 }

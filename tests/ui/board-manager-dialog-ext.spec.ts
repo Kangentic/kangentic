@@ -184,8 +184,8 @@ test.describe('BoardManagerDialog extended', () => {
   // tooltip). Two branches:
   // (a) Role-pinned column (To Do): "Sessions don't run in To Do columns, so
   //     Agent doesn't apply." (and similar for Automation/Handoff).
-  // (b) Custom column with auto_spawn=false: "Turn on Auto-spawn in General to
-  //     enable Agent." (etc). In both, the section's fields are absent.
+  // (b) Custom column with auto_spawn=false: 'Turn on "Start an agent here" in
+  //     General to enable Agent.' (etc). In both, the section's fields are absent.
 
   test('To Do column collapses Agent/Automation/Handoff to inline explanations', async () => {
     await openManagerByHeader('To Do');
@@ -200,7 +200,7 @@ test.describe('BoardManagerDialog extended', () => {
     await expect(dialog.locator('[data-testid="column-session-target"]')).toHaveCount(0);
   });
 
-  test('auto_spawn-off column collapses the dependent sections with an Auto-spawn hint', async () => {
+  test('auto_spawn-off column collapses the dependent sections with a "Start an agent here" hint', async () => {
     // Create a custom column with auto_spawn=false to test the other branch.
     await page.evaluate(async () => {
       await window.electronAPI.swimlanes.create({
@@ -231,12 +231,13 @@ test.describe('BoardManagerDialog extended', () => {
     await openManagerByHeader('NoSpawnCol');
     const dialog = page.locator('[data-testid="board-manager-dialog"]');
 
-    // Auto-spawn leads the Agent section: the toggle is present (off), its agent
-    // fields are hidden, and the downstream sections point back to it.
-    await expect(dialog.locator('[role="switch"][aria-label="Auto-spawn"]')).toBeVisible();
+    // "Start an agent here" leads the Agent section: the toggle is present
+    // (off), its agent fields are hidden, and the downstream sections point
+    // back to it.
+    await expect(dialog.locator('[role="switch"][aria-label="Start an agent here"]')).toBeVisible();
     await expect(dialog.locator('[data-testid="column-agent-override"]')).toHaveCount(0);
-    await expect(dialog.getByText('Turn on Auto-spawn in the Agent section to enable Automation.')).toBeVisible();
-    await expect(dialog.getByText('Turn on Auto-spawn in the Agent section to enable Handoff.')).toBeVisible();
+    await expect(dialog.getByText('Turn on "Start an agent here" in the Agent section to enable Automation.')).toBeVisible();
+    await expect(dialog.getByText('Turn on "Start an agent here" in the Agent section to enable Handoff.')).toBeVisible();
 
     // Close before cleanup, then delete the test column.
     await closeManager();
@@ -247,22 +248,23 @@ test.describe('BoardManagerDialog extended', () => {
     });
   });
 
-  // ── Gap 4: Auto-spawn toggle expands / collapses sections in place ────────
+  // ── Gap 4: "Start an agent here" toggle expands / collapses sections in place ─
   //
-  // Auto-spawn leads the Agent section and gates the agent-behavior config. The
-  // one-scroll form renders every section at once; toggling Auto-spawn off hides
-  // the agent fields (the toggle itself stays) and collapses Automation/Handoff
-  // to their inline explanations; toggling it back on restores the fields.
+  // "Start an agent here" leads the Agent section and gates the agent-behavior
+  // config. The one-scroll form renders every section at once; toggling it off
+  // hides the agent fields (the toggle itself stays) and collapses
+  // Automation/Handoff to their inline explanations; toggling it back on
+  // restores the fields.
 
-  test('toggling Auto-spawn expands and collapses the dependent sections in place', async () => {
+  test('toggling "Start an agent here" expands and collapses the dependent sections in place', async () => {
     await openManagerByHeader('Code Review'); // auto_spawn=true
     const dialog = page.locator('[data-testid="board-manager-dialog"]');
 
-    // With Auto-spawn on, the Agent field is present and the Automation hint is absent.
+    // With it on, the Agent field is present and the Automation hint is absent.
     await expect(dialog.locator('[data-testid="column-agent-override"]')).toBeVisible();
-    await expect(dialog.getByText('Turn on Auto-spawn in the Agent section to enable Automation.')).toHaveCount(0);
+    await expect(dialog.getByText('Turn on "Start an agent here" in the Agent section to enable Automation.')).toHaveCount(0);
 
-    const autoSpawnSwitch = dialog.locator('[role="switch"][aria-label="Auto-spawn"]');
+    const autoSpawnSwitch = dialog.locator('[role="switch"][aria-label="Start an agent here"]');
     await expect(autoSpawnSwitch).toHaveAttribute('aria-checked', 'true');
     await autoSpawnSwitch.click();
     await expect(autoSpawnSwitch).toHaveAttribute('aria-checked', 'false');
@@ -270,7 +272,7 @@ test.describe('BoardManagerDialog extended', () => {
     // The agent fields unmount (the toggle stays) and the downstream hint appears.
     await expect(dialog.locator('[data-testid="column-agent-override"]')).toHaveCount(0);
     await expect(autoSpawnSwitch).toBeVisible();
-    await expect(dialog.getByText('Turn on Auto-spawn in the Agent section to enable Automation.')).toBeVisible();
+    await expect(dialog.getByText('Turn on "Start an agent here" in the Agent section to enable Automation.')).toBeVisible();
 
     // Toggle back on: the field returns (net no change, so the dialog stays clean).
     await autoSpawnSwitch.click();

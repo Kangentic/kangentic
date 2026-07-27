@@ -184,6 +184,18 @@
     return new Date().toISOString();
   }
 
+  /**
+   * Last path segment, either separator. The chained
+   * `split('/').pop() || split('\\').pop()` this replaces silently never reached its backslash
+   * branch: splitting a pure-Windows path on '/' yields a one-element array whose only member is
+   * the whole path, which is truthy. So a spec seeding a `C:\Users\dev\...` fixture path - the
+   * form cross-platform-parity.md tells tests to use - got the entire path back as the project
+   * name instead of the folder.
+   */
+  function basenameOf(inputPath) {
+    return String(inputPath).replace(/\\/g, '/').replace(/\/+$/, '').split('/').pop();
+  }
+
   function getAttachmentCount(taskId) {
     return attachments.filter(function (a) { return a.task_id === taskId; }).length;
   }
@@ -425,8 +437,8 @@
         // detects field mutations (e.g. default_agent changes after setDefaultAgent).
         return found ? Object.assign({}, found) : null;
       },
-      openByPath: async function (projectPath) {
-        var name = projectPath.split('/').pop() || projectPath.split('\\').pop() || 'project';
+      openByPath: async function (projectPath, overrides) {
+        var name = (overrides && overrides.name) || basenameOf(projectPath) || 'project';
         var existing = projects.find(function (p) { return p.path === projectPath; });
         if (existing) {
           currentProjectId = existing.id;
@@ -441,7 +453,7 @@
           name: name,
           path: projectPath,
           github_url: null,
-          default_agent: defaultAgentOverride || 'claude',
+          default_agent: (overrides && overrides.defaultAgent) || defaultAgentOverride || 'claude',
           default_model: null,
           default_effort: null,
           group_id: null,
@@ -465,6 +477,34 @@
           }
         }
         return project;
+      },
+      probePath: async function (projectPath) {
+        // Test hook: window.__mockProbePathOverrides merges over the defaults
+        // (e.g. { isGitRepo: false } to exercise the non-git-folder warning).
+        var overrides = window.__mockProbePathOverrides || {};
+        var name = basenameOf(projectPath) || 'project';
+        var existing = projects.find(function (p) { return p.path === projectPath; });
+        var defaults = {
+          exists: true,
+          isDirectory: true,
+          isGitRepo: true,
+          isInsideWorktree: false,
+          currentBranch: 'main',
+          suggestedName: name,
+          alreadyRegisteredProjectId: existing ? existing.id : null,
+        };
+        return Object.assign({}, defaults, overrides);
+      },
+      // Takes the folder path it ignores, matching the real signature the way `detect` and
+      // `selectFolder` do, so a spec can assert WHICH path git setup was attempted on.
+      ensureGit: async function (folderPath) {
+        // Test hook: window.__mockEnsureGitResult overrides the outcome, so a spec can
+        // exercise the "git could not be set up" warning without a real filesystem.
+        // Records calls so a spec can assert git setup was attempted at all.
+        window.__mockEnsureGitCalls = (window.__mockEnsureGitCalls || 0) + 1;
+        window.__mockEnsureGitLastPath = folderPath;
+        if (window.__mockEnsureGitResult) return window.__mockEnsureGitResult;
+        return { ok: true, created: true, error: null };
       },
       searchEntries: async function (input) {
         var normalizedQuery = normalizeEntryQuery(input.query);
@@ -2185,7 +2225,9 @@
     },
 
     git: {
-      detect: async function () {
+      // forceRefresh is accepted to match the real API surface but ignored:
+      // the mock always returns the fixture, fresh or cached alike.
+      detect: async function (_forceRefresh) {
         return { found: true, path: '/usr/bin/git', version: '2.43.0', meetsMinimum: true };
       },
       listBranches: async function () {
@@ -2344,7 +2386,10 @@
     },
 
     dialog: {
-      selectFolder: async function () {
+      // options is accepted to match the real API surface (title, message,
+      // buttonLabel, defaultPath) but ignored: the mock always returns the
+      // fixture path, dialog chrome or not.
+      selectFolder: async function (_options) {
         var override = window.__mockFolderPath;
         if (override) {
           window.__mockFolderPath = null;

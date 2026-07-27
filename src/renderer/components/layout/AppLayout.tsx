@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { TitleBar } from './TitleBar';
 import { StatusBar } from './StatusBar';
 import { ProjectSidebar } from '../sidebar/ProjectSidebar';
@@ -13,6 +13,11 @@ import { CommandTerminalLayer, MAX_COMMAND_TERMINALS, spawnAdditionalCommandTerm
 import { commandWindowManager } from '../../window-manager';
 import { SearchPalette } from '../search/SearchPalette';
 import { WelcomeScreen } from './WelcomeScreen';
+import { WelcomeChecklistDialog } from '../onboarding/WelcomeChecklistDialog';
+import { WalkthroughLayer } from '../onboarding/WalkthroughLayer';
+import { WALKTHROUGH_STEPS, resolveNextStep } from '../onboarding/walkthrough-steps';
+import { useWalkthroughActivation } from '../onboarding/useWalkthroughActivation';
+import { useOnboardingProgress } from '../../hooks/useOnboardingProgress';
 import { ProjectPathMissingDialog } from '../dialogs/ProjectPathMissingDialog';
 import { ReleaseNotesDialog } from '../dialogs/ReleaseNotesDialog';
 import { useConfigStore } from '../../stores/config-store';
@@ -20,7 +25,7 @@ import { useProjectStore } from '../../stores/project-store';
 import { useBoardStore } from '../../stores/board-store';
 import { useSessionStore } from '../../stores/session-store';
 import { ToastContainer } from './ToastContainer';
-import { WindowLayer } from '../../window-manager';
+import { WindowLayer, useWindowStore } from '../../window-manager';
 import { useSidebarResize, COLLAPSED_STRIP_WIDTH } from '../../hooks/useSidebarResize';
 import { useTerminalResize, COLLAPSED_HEIGHT } from '../../hooks/useTerminalResize';
 import { shouldForceCollapseTerminal } from '../../utils/terminal-force-collapse';
@@ -35,6 +40,7 @@ import { StatsPage } from '../stats/StatsPage';
 import { warmStatsDashboardOnIdle } from '../stats/LazyStatsDashboard';
 import { useUsageDashboardStore } from '../../stores/usage-dashboard-store';
 import { usePopOut } from '../../pop-out/usePopOut';
+import type { OnboardingStepKey } from '../../../shared/types';
 
 export function AppLayout() {
   const settingsOpen = useConfigStore((s) => s.settingsOpen);
@@ -48,6 +54,36 @@ export function AppLayout() {
   const hydrated = useProjectStore((s) => s.hydrated);
   const activeView = useBoardStore((s) => s.activeView);
   const requestBoardSearchFocus = useBoardStore((s) => s.requestBoardSearchFocus);
+  const onboardingChecklistOpen = useConfigStore((s) => s.onboardingChecklistOpen);
+  const setOnboardingChecklistOpen = useConfigStore((s) => s.setOnboardingChecklistOpen);
+  const onboardedProjectIds = useConfigStore((s) => s.config.onboardedProjectIds);
+  const walkthroughStep = useConfigStore((s) => s.walkthroughStep);
+  const setWalkthroughStep = useConfigStore((s) => s.setWalkthroughStep);
+  const boardManagerOpen = useBoardStore((s) => s.boardManagerOpen);
+  const markProjectOnboarded = useConfigStore((s) => s.markProjectOnboarded);
+  const markOnboardingStepCompleted = useConfigStore((s) => s.markOnboardingStepCompleted);
+  // Every window in the board window manager is a task-detail surface, so any open window
+  // means the user has opened a task. Stamped here, in the one place that already owns the
+  // onboarding effects, rather than inside useOnboardingProgress - a read hook that writes
+  // would fire from each of its several consumers.
+  const taskDetailWindowOpen = useWindowStore((s) => Object.keys(s.windows).length > 0);
+  const onboardingProgress = useOnboardingProgress();
+  const { startStep } = useWalkthroughActivation();
+  // The New Task dialog's open state lives in KanbanBoard, so the only signal available
+  // here is the dialog itself. Polled by the effect below via its test id.
+  const [newTaskDialogOpen, setNewTaskDialogOpen] = useState(false);
+  useEffect(() => {
+    if (!walkthroughStep) return;
+    let frameId: number | undefined;
+    const check = () => {
+      setNewTaskDialogOpen(!!document.querySelector('[data-testid="new-task-dialog"]'));
+      frameId = requestAnimationFrame(check);
+    };
+    frameId = requestAnimationFrame(check);
+    return () => {
+      if (frameId !== undefined) cancelAnimationFrame(frameId);
+    };
+  }, [walkthroughStep]);
 
   const sidebar = useSidebarResize(config);
   // The bottom panel steps aside (collapses) while any task-detail window is open;
@@ -124,6 +160,132 @@ export function AppLayout() {
   useKeybinding('task.create', () => useBoardStore.getState().requestNewTask(), {
     enabled: activeView === 'board' && !!currentProject,
   });
+
+  // Bring the checklist back once the user is done with the surface a step sent them to.
+  //
+  // Without this the flow simply ends: you click "Choose your defaults", change what you
+  // want, close Settings - and nothing brings you back, so there is no next step. Worse,
+  // dismissing the New Task dialog by clicking outside it used to leave a dimmed board
+  // with a ring and no way forward. The checklist returning IS the "next" affordance: it
+  // reappears with that step ticked and the following one obvious.
+  //
+  // Only fires for a step that actually opened something, and only after that something
+  // has been open and then closed - so it can never reopen on top of the surface it just
+  // sent the user to.
+  const returnStepRef = useRef<OnboardingStepKey | null>(null);
+  const surfaceWasOpenRef = useRef(false);
+  useEffect(() => {
+    if (!walkthroughStep) {
+      returnStepRef.current = null;
+      surfaceWasOpenRef.current = false;
+      return;
+    }
+    // Reset the memory on EVERY step change, not just on exit. "Next step" goes straight from
+    // one step to the next, and between closing the old surface and the new one mounting there
+    // is a frame where nothing is open - carrying the previous step's "a surface was open"
+    // across that gap made the checklist pop up mid-advance.
+    if (returnStepRef.current !== walkthroughStep) surfaceWasOpenRef.current = false;
+    returnStepRef.current = walkthroughStep;
+  }, [walkthroughStep]);
+
+  const activeStepDone = walkthroughStep ? onboardingProgress[walkthroughStep] : false;
+  useEffect(() => {
+    const step = returnStepRef.current;
+    if (!step || onboardingChecklistOpen) return;
+
+    // The surface THIS step sent the user to, and only that. Counting any open surface armed
+    // the return on a leftover one: advancing from the create-a-task step to the drag step
+    // closes the New Task dialog, and since that dialog is detected by polling, the step that
+    // opens nothing saw it as briefly open and then closed - and bounced back to the checklist
+    // mid-advance. The task-detail window is likewise scoped to the step that asks for it, so
+    // a window left open from earlier work does not block the return on every other step.
+    const stepOpensDialog = WALKTHROUGH_STEPS.some(
+      (candidate) => candidate.key === step && candidate.opensDialog,
+    );
+    const surfaceOpen = (stepOpensDialog && (settingsOpen || boardManagerOpen || newTaskDialogOpen))
+      || (step === 'taskDetailOpened' && taskDetailWindowOpen);
+
+    // DONE: carry straight on to the next step, exactly as the callout's Next button does.
+    // Doing the real thing is the strongest possible signal that the user is following the
+    // flow, so dropping them back on the list to find their own place in it is the last thing
+    // to do with it - creating a task used to land here, and step 4 then had to be clicked by
+    // hand. Not while the step's surface is still up, though: changing one default ticks
+    // step 1 instantly, and moving them on out of a Settings panel they are still working in
+    // would be worse than not moving them at all.
+    if (activeStepDone && !surfaceOpen) {
+      surfaceWasOpenRef.current = false;
+      returnStepRef.current = null;
+      const next = resolveNextStep(onboardingProgress, step);
+      if (next) {
+        startStep(next);
+        return;
+      }
+      // Nothing left. Same as Finish: clear up and get out of the way rather than putting a
+      // completed list on screen to be dismissed.
+      setWalkthroughStep(null);
+      return;
+    }
+
+    // BACKED OUT: closed the surface without doing the thing. That is not a completion, so
+    // the checklist comes back rather than pushing them forward.
+    if (surfaceOpen) {
+      surfaceWasOpenRef.current = true;
+      return;
+    }
+    if (!surfaceWasOpenRef.current) return;
+    surfaceWasOpenRef.current = false;
+    returnStepRef.current = null;
+    setWalkthroughStep(null);
+    setOnboardingChecklistOpen(true);
+  }, [
+    walkthroughStep, activeStepDone, settingsOpen, boardManagerOpen, newTaskDialogOpen,
+    taskDetailWindowOpen, onboardingChecklistOpen, setOnboardingChecklistOpen, setWalkthroughStep,
+    onboardingProgress, startStep,
+  ]);
+
+  // Stamp "this project has had a task detail open", the sticky signal step 5 reads. Live
+  // window state would un-tick the step the moment the window closed.
+  //
+  // Only a false -> true transition observed under the SAME project counts. A project switch
+  // tears the outgoing project's windows down asynchronously, so for a frame `currentProject`
+  // is already the destination while the window count still reflects the project we left -
+  // stamping there would tick step 5 for a project nobody has opened anything in, and since
+  // finishing all five retires onboarding, it could retire it outright. The cost is that a
+  // project whose detail windows RESTORE on arrival is not stamped by the restore alone,
+  // which errs the safe way: the tick returns the moment the user opens a task there.
+  const detailWindowWatchRef = useRef<{ projectId: string | null; open: boolean }>({ projectId: null, open: false });
+  useEffect(() => {
+    const projectId = currentProject?.id ?? null;
+    const previous = detailWindowWatchRef.current;
+    detailWindowWatchRef.current = { projectId, open: taskDetailWindowOpen };
+    if (previous.projectId !== projectId) return;
+    if (previous.open || !taskDetailWindowOpen || !projectId) return;
+    markOnboardingStepCompleted(projectId, 'taskDetailOpened');
+  }, [taskDetailWindowOpen, currentProject, markOnboardingStepCompleted]);
+
+  // Finishing all five retires onboarding for this project. Only an explicit dismissal
+  // writes `onboardedProjectIds` otherwise, so a user who completed the whole flow and
+  // simply carried on working would be met by the checklist again on the next launch.
+  useEffect(() => {
+    if (onboardingProgress.complete && currentProject) markProjectOnboarded(currentProject.id);
+  }, [onboardingProgress.complete, currentProject, markProjectOnboarded]);
+
+  // Show the onboarding checklist once per project, on first arrival.
+  //
+  // Two guards, each load-bearing. `onboardedProjectIds === undefined` means App.tsx's
+  // one-time backfill has not run yet, and opening before it does would flash the
+  // checklist at existing users on projects they have used for months. The session-scoped
+  // ref covers the other direction: clicking a step closes the dialog WITHOUT marking the
+  // project onboarded (the user is engaging, not dismissing), so without it this effect
+  // would immediately reopen the dialog over the screen it just sent them to.
+  const autoOpenedProjectIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!currentProject || onboardedProjectIds === undefined) return;
+    if (onboardedProjectIds.includes(currentProject.id)) return;
+    if (autoOpenedProjectIdsRef.current.has(currentProject.id)) return;
+    autoOpenedProjectIdsRef.current.add(currentProject.id);
+    setOnboardingChecklistOpen(true);
+  }, [currentProject, onboardedProjectIds, setOnboardingChecklistOpen]);
 
   return (
     <div className="h-screen flex flex-col bg-surface">
@@ -251,6 +413,8 @@ export function AppLayout() {
       {searchPalette.isOpen && <SearchPalette onClose={searchPalette.close} />}
       <ProjectPathMissingDialog />
       <ReleaseNotesDialog />
+      {onboardingChecklistOpen && <WelcomeChecklistDialog />}
+      <WalkthroughLayer />
       <ToastContainer />
       <DictationSurface />
       <WindowLayer />

@@ -38,6 +38,19 @@ All git-mutating operations (create, remove, branch delete, prune, checkout, ren
 
 When a removal fails because a process still pins the worktree, `removeWorktree` reaps orphaned processes whose command line points inside that worktree path (a zombie Electron/node left by an agent's E2E run or `/preview`) and retries once. This reap is lazy by design: a clean Done-move never runs the OS process scan, so dragging a task to Done pays no added cost; the scan fires only on the rare delete a held handle actually blocks. It is skipped under `NODE_ENV=test`, where the E2E leak janitor owns process sweeps instead.
 
+### When a worktree is NOT created
+
+`ensureTaskWorktree` (`src/main/ipc/helpers/task-git.ts`) returns without creating anything in
+these cases. In each, `task.worktree_path` stays null, so the agent's `cwd` falls back to the
+project path and the task runs unisolated in the main checkout.
+
+| Condition | Why |
+|-----------|-----|
+| `config.git.useWorktrees` is `false` | Worktrees are turned off for this project. |
+| The project is not a git repository | Nothing to branch from. |
+| The resolved agent's execution mode is `remote` | The agent runs against a server-side directory instead, so a local worktree would be unused. Resolution mirrors `resolveTargetAgent` exactly (task override, column profile, column override, project default, global fallback) - if the two disagree, a local agent spawns into the main checkout. |
+| The repository has **no commits** (`hasCommits` in `src/main/git/git-checks.ts`) | A freshly `git init`-ed repo has an unborn HEAD: the branch exists in name only, so `git worktree add` fails with `fatal: invalid reference: <branch>`. This is the state Kangentic produces itself when it initialises a repo for a folder that had none (see `ensureGitRepo`), and the user's next action is usually a task move. Worktrees start working on their own once there is a first commit. `ensureTaskBranchCheckout` skips for the same reason. |
+
 ### Creation Flow
 
 1. Create `.kangentic/worktrees/` directory
@@ -157,7 +170,7 @@ Task created (To Do)
   → No session, no worktree
 
 Task moved to active column (e.g., Planning)
-  → Create worktree (if enabled)
+  → Create worktree (unless skipped - see "When a worktree is NOT created")
   → Spawn agent: claude --session-id <uuid> "prompt"
   → Status: running
   → Bridge scripts write to session directory

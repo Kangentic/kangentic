@@ -54,7 +54,7 @@ test.describe('Agent Auth Warning - Welcome Screen', () => {
 
     const kimiCard = page.locator('[data-testid="welcome-agent-kimi"]');
     await expect(kimiCard).toBeVisible();
-    await expect(kimiCard).toHaveClass(/border-l-amber-500/);
+    await expect(kimiCard).toHaveClass(/border-l-attention/);
     await expect(kimiCard.getByText('Not signed in')).toBeVisible();
 
     const copyButton = page.locator('[data-testid="welcome-agent-kimi-copy-login"]');
@@ -86,11 +86,17 @@ test.describe('Agent Auth Warning - Welcome Screen', () => {
       authenticated: true,
     }));
 
+    // Every agent is found and none is signed out, so the setup panel starts
+    // collapsed behind the readiness line; expand it to reach the card.
+    await page.locator('[data-testid="welcome-setup-toggle"]').click();
+
     const kimiCard = page.locator('[data-testid="welcome-agent-kimi"]');
     await expect(kimiCard).toBeVisible();
-    await expect(kimiCard).toHaveClass(/border-l-green-500/);
-    await expect(kimiCard).not.toHaveClass(/border-l-amber-500/);
+    // Found + signed in is the expected state, so it carries no colored edge -
+    // only a state wanting attention does. The check icon is the found signal.
+    await expect(kimiCard).not.toHaveClass(/border-l-attention/);
     await expect(kimiCard.getByText('Not signed in')).not.toBeVisible();
+    await expect(kimiCard.getByText('v1.37.0')).toBeVisible();
   });
 
   test('Kimi card stays in default green state when authenticated is undefined (other agents)', async () => {
@@ -103,10 +109,14 @@ test.describe('Agent Auth Warning - Welcome Screen', () => {
       // authenticated intentionally omitted
     }));
 
+    // Every agent is found and none is signed out, so the setup panel starts
+    // collapsed behind the readiness line; expand it to reach the card.
+    await page.locator('[data-testid="welcome-setup-toggle"]').click();
+
     const kimiCard = page.locator('[data-testid="welcome-agent-kimi"]');
     await expect(kimiCard).toBeVisible();
     // No amber treatment when authenticated is undefined
-    await expect(kimiCard).not.toHaveClass(/border-l-amber-500/);
+    await expect(kimiCard).not.toHaveClass(/border-l-attention/);
     await expect(kimiCard.getByText('Not signed in')).not.toBeVisible();
   });
 });
@@ -129,7 +139,7 @@ test.describe('Agent Auth Warning - OpenCode Welcome Screen', () => {
 
     const opencodeCard = page.locator('[data-testid="welcome-agent-opencode"]');
     await expect(opencodeCard).toBeVisible();
-    await expect(opencodeCard).toHaveClass(/border-l-amber-500/);
+    await expect(opencodeCard).toHaveClass(/border-l-attention/);
     await expect(opencodeCard.getByText('Not signed in')).toBeVisible();
 
     const copyButton = page.locator('[data-testid="welcome-agent-opencode-copy-login"]');
@@ -161,11 +171,17 @@ test.describe('Agent Auth Warning - OpenCode Welcome Screen', () => {
       authenticated: true,
     }));
 
+    // Every agent is found and none is signed out, so the setup panel starts
+    // collapsed behind the readiness line; expand it to reach the card.
+    await page.locator('[data-testid="welcome-setup-toggle"]').click();
+
     const opencodeCard = page.locator('[data-testid="welcome-agent-opencode"]');
     await expect(opencodeCard).toBeVisible();
-    await expect(opencodeCard).toHaveClass(/border-l-green-500/);
-    await expect(opencodeCard).not.toHaveClass(/border-l-amber-500/);
+    // Found + signed in is the expected state, so it carries no colored edge -
+    // only a state wanting attention does. The check icon is the found signal.
+    await expect(opencodeCard).not.toHaveClass(/border-l-attention/);
     await expect(opencodeCard.getByText('Not signed in')).not.toBeVisible();
+    await expect(opencodeCard.getByText('v1.14.25')).toBeVisible();
   });
 
   test('OpenCode card stays in default state when authenticated is null (probe failed)', async () => {
@@ -180,9 +196,13 @@ test.describe('Agent Auth Warning - OpenCode Welcome Screen', () => {
       authenticated: null,
     }));
 
+    // Every agent is found and none is signed out, so the setup panel starts
+    // collapsed behind the readiness line; expand it to reach the card.
+    await page.locator('[data-testid="welcome-setup-toggle"]').click();
+
     const opencodeCard = page.locator('[data-testid="welcome-agent-opencode"]');
     await expect(opencodeCard).toBeVisible();
-    await expect(opencodeCard).not.toHaveClass(/border-l-amber-500/);
+    await expect(opencodeCard).not.toHaveClass(/border-l-attention/);
     await expect(opencodeCard.getByText('Not signed in')).not.toBeVisible();
   });
 
@@ -196,9 +216,13 @@ test.describe('Agent Auth Warning - OpenCode Welcome Screen', () => {
       // authenticated intentionally omitted
     }));
 
+    // Every agent is found and none is signed out, so the setup panel starts
+    // collapsed behind the readiness line; expand it to reach the card.
+    await page.locator('[data-testid="welcome-setup-toggle"]').click();
+
     const opencodeCard = page.locator('[data-testid="welcome-agent-opencode"]');
     await expect(opencodeCard).toBeVisible();
-    await expect(opencodeCard).not.toHaveClass(/border-l-amber-500/);
+    await expect(opencodeCard).not.toHaveClass(/border-l-attention/);
     await expect(opencodeCard.getByText('Not signed in')).not.toBeVisible();
   });
 });

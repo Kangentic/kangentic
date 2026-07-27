@@ -30,7 +30,7 @@
  */
 import { test, expect, chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady } from './helpers';
+import { waitForViteReady, dismissOnboardingChecklist } from './helpers';
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -75,6 +75,7 @@ async function openAgentSettingsTabAs(page: Page, agentId: string): Promise<void
   } else {
     await sidebarButton.click();
   }
+  await dismissOnboardingChecklist(page);
   await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
 
   // Switch the project default agent via the mock API, then resync the

@@ -18,11 +18,46 @@ const THEMED_MARK_ASSETS = [
   path.join(BRANDING_ROOT, 'assets', 'brandmark-mono-amber.svg'),
 ];
 const BRAND_MARK_COMPONENT = 'src/renderer/components/BrandMark.tsx';
+// The theme-tinted mark is for app chrome that sits on a themed surface. The
+// welcome screen deliberately uses the FULL-COLOR mark instead (see below), so
+// it is not in this list.
 const BRAND_MARK_IMPORTERS = [
   'src/renderer/components/layout/TitleBar.tsx',
-  'src/renderer/components/layout/WelcomeScreen.tsx',
-  'src/renderer/components/board/WelcomeOverlay.tsx',
 ];
+const COLOR_MARK_CONSUMER = 'src/renderer/components/layout/WelcomeScreen.tsx';
+
+// The Overseer mascot: consumed via the shipped animation contract
+// (assets/mascot/animations.css + animations.json), never hand-authored
+// timings (pixel-art-conventions.md). OverseerMascot.tsx supports a subset of
+// the package's sequences; this pins that subset's frames against the
+// installed package so a branding upgrade that renames/drops a frame file
+// fails here instead of shipping a broken <img>.
+const MASCOT_DIR = path.join(BRANDING_ROOT, 'assets', 'mascot');
+const MASCOT_CSS = path.join(MASCOT_DIR, 'animations.css');
+const MASCOT_JSON = path.join(MASCOT_DIR, 'animations.json');
+const MASCOT_COMPONENT = 'src/renderer/components/onboarding/OverseerMascot.tsx';
+const MASCOT_IMPORTERS = [
+  'src/renderer/components/layout/WelcomeScreen.tsx',
+  'src/renderer/components/onboarding/WelcomeChecklistDialog.tsx',
+];
+const SUPPORTED_SEQUENCES = ['wave-once', 'blink-loop'];
+
+interface MascotAnimationsJson {
+  frames: Record<string, { file: string }>;
+  sequences: Record<string, {
+    idle?: { frame: string };
+    clip: Array<{ frame: string }>;
+  }>;
+}
+
+/** Every frame key a sequence actually renders: clip poses plus its idle rest frame, if any. */
+function framesUsedBySequence(animations: MascotAnimationsJson, sequenceKey: string): string[] {
+  const sequence = animations.sequences[sequenceKey];
+  if (!sequence) throw new Error(`animations.json has no sequence "${sequenceKey}"`);
+  const frameKeys = new Set(sequence.clip.map((pose) => pose.frame));
+  if (sequence.idle) frameKeys.add(sequence.idle.frame);
+  return [...frameKeys];
+}
 
 // electron-builder.yml has five distinct icon sites that were repointed at the
 // @kangentic/branding desktop assets (extraResources' two `from:` entries, win.icon,
@@ -158,6 +193,86 @@ describe('@kangentic/branding desktop assets', () => {
     expect(
       notReferencing,
       `These renderer files should render the shared BrandMark component:\n${notReferencing.join('\n')}`,
+    ).toEqual([]);
+  });
+
+  it('the welcome screen consumes the full-color mark from the package', () => {
+    // The welcome screen is the app's identity moment and first launch defaults
+    // to the dark theme, so it uses the fixed-palette colored mark rather than
+    // the theme-tinted BrandMark. brandmark-small.svg (the F4k board glyph) is
+    // the right tier for a mark displayed this small - the card-K master fails
+    // structurally below ~128px (see the icon-drafting skill).
+    expect(
+      fs.existsSync(FAVICON_ASSET),
+      '@kangentic/branding is missing assets/brandmark-small.svg',
+    ).toBe(true);
+    const welcomeSource = fs.readFileSync(path.join(REPO_ROOT, COLOR_MARK_CONSUMER), 'utf-8');
+    expect(
+      welcomeSource.includes('@kangentic/branding/assets/brandmark-small.svg'),
+      `${COLOR_MARK_CONSUMER} should import the full-color mark from @kangentic/branding`,
+    ).toBe(true);
+  });
+});
+
+describe('Overseer mascot', () => {
+  it('ships the animation contract (animations.css + animations.json)', () => {
+    expect(fs.existsSync(MASCOT_CSS), '@kangentic/branding is missing assets/mascot/animations.css').toBe(true);
+    expect(fs.existsSync(MASCOT_JSON), '@kangentic/branding is missing assets/mascot/animations.json').toBe(true);
+  });
+
+  it('every frame animations.json names exists as a file in assets/mascot/', () => {
+    const animations: MascotAnimationsJson = JSON.parse(fs.readFileSync(MASCOT_JSON, 'utf-8'));
+    const missing = Object.entries(animations.frames)
+      .filter(([, frame]) => !fs.existsSync(path.join(MASCOT_DIR, frame.file)))
+      .map(([key, frame]) => `${key} -> ${frame.file}`);
+    expect(missing, `animations.json names frame files that do not exist:\n${missing.join('\n')}`).toEqual([]);
+  });
+
+  it('animations.json still declares every sequence OverseerMascot.tsx supports', () => {
+    const animations: MascotAnimationsJson = JSON.parse(fs.readFileSync(MASCOT_JSON, 'utf-8'));
+    const missing = SUPPORTED_SEQUENCES.filter((key) => !animations.sequences[key]);
+    expect(
+      missing,
+      `@kangentic/branding dropped sequence(s) OverseerMascot.tsx still supports:\n${missing.join('\n')}`,
+    ).toEqual([]);
+  });
+
+  it('OverseerMascot.tsx imports every frame its supported sequences use', () => {
+    const animations: MascotAnimationsJson = JSON.parse(fs.readFileSync(MASCOT_JSON, 'utf-8'));
+    const mascotSource = fs.readFileSync(path.join(REPO_ROOT, MASCOT_COMPONENT), 'utf-8');
+
+    const requiredFrameFiles = new Set<string>();
+    for (const sequenceKey of SUPPORTED_SEQUENCES) {
+      for (const frameKey of framesUsedBySequence(animations, sequenceKey)) {
+        requiredFrameFiles.add(animations.frames[frameKey].file);
+      }
+    }
+
+    const missingImports = [...requiredFrameFiles].filter(
+      (file) => !mascotSource.includes(`@kangentic/branding/assets/mascot/${file}`),
+    );
+    expect(
+      missingImports,
+      `${MASCOT_COMPONENT} is missing an import for frame(s) its supported sequences use:\n${missingImports.join('\n')}`,
+    ).toEqual([]);
+  });
+
+  it('OverseerMascot.tsx imports the shared animation stylesheet', () => {
+    const mascotSource = fs.readFileSync(path.join(REPO_ROOT, MASCOT_COMPONENT), 'utf-8');
+    expect(
+      mascotSource.includes('@kangentic/branding/assets/mascot/animations.css'),
+      `${MASCOT_COMPONENT} should import the shipped animations.css rather than hand-writing keyframes`,
+    ).toBe(true);
+  });
+
+  it('the welcome screen and Get started panel render the shared OverseerMascot component', () => {
+    const notReferencing = MASCOT_IMPORTERS.filter((relativePath) => {
+      const source = fs.readFileSync(path.join(REPO_ROOT, relativePath), 'utf-8');
+      return !source.includes('OverseerMascot');
+    });
+    expect(
+      notReferencing,
+      `These renderer files should render the shared OverseerMascot component:\n${notReferencing.join('\n')}`,
     ).toEqual([]);
   });
 });

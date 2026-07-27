@@ -104,7 +104,34 @@ export async function createProject(
     await sidebarButton.click();
   }
 
+  // There is no confirmation dialog: picking a folder creates the project and lands on
+  // the board directly (git is set up silently, the name is the folder basename, and the
+  // default agent is the walkthrough's first step). The onboarding checklist is the only
+  // thing between here and the board.
+  await dismissOnboardingChecklist(page);
   await waitForBoard(page);
+}
+
+/**
+ * Dismiss the onboarding checklist if it is open.
+ *
+ * A brand-new project auto-opens it, and it is a focus-trapping modal over the board whose
+ * backdrop intercepts pointer events - so any spec that creates a project and then touches
+ * the board must get past it first. "Skip for now" persists the dismissal, so it cannot
+ * reappear later in the same test.
+ *
+ * Call this after ANY project-creation flow, not just `createProject`: several specs drive
+ * the folder picker and Add project dialog inline.
+ */
+export async function dismissOnboardingChecklist(page: Page): Promise<void> {
+  const checklist = page.locator('[data-testid="onboarding-checklist"]');
+  // Short on purpose: this wait is also the not-coming path (a project already marked
+  // onboarded), and a long timeout there is paid silently by every such spec.
+  await checklist.waitFor({ state: 'visible', timeout: 1500 }).catch(() => {});
+  if (await checklist.isVisible().catch(() => false)) {
+    await page.locator('[data-testid="onboarding-skip"]').click();
+    await checklist.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {});
+  }
 }
 
 // Create a task via the UI in the To Do column (the only column with an "Add task" button).
