@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Check, CircleAlert, Copy, Loader2, Pencil, QrCode, Server, Smartphone, Trash2, X } from 'lucide-react';
+import { Check, CircleAlert, Copy, Loader2, Pencil, QrCode, Server, Smartphone, Trash2, WifiOff, X } from 'lucide-react';
 import QRCode from 'qrcode';
 import { formatKeyFingerprint } from '@kangentic/protocol/roster/fingerprint';
-import type { AppConfig, MobileBridgeTransportState, MobilePairedDevice, RemoteServerStatus } from '../../../../shared/types';
+import type { AppConfig, MobileDeviceConnectionState, MobilePairedDevice, RemoteServerStatus } from '../../../../shared/types';
 import { inferRelayMode, resolveRelayUrl, validateRelayUrl } from '../../../../shared/relay';
 import { formatDate } from '../../../lib/datetime';
 import { INPUT_CLASS, SectionHeader, Select, SettingRow, SettingToggleRow, useScopedUpdate } from '../shared';
@@ -12,10 +12,16 @@ import { ConfirmDialog } from '../../dialogs/ConfirmDialog';
 import { useMobileStore } from '../../../stores/mobile-store';
 
 /**
- * 'idle' means this device/aggregate has no session open yet (nothing to
- * report), so it renders nothing rather than a confusing "Disconnected".
+ * 'idle' means this device has no session open yet (nothing to report), so it
+ * renders nothing rather than a confusing "Disconnected".
+ *
+ * 'offline' and 'reconnecting' are deliberately distinct: 'reconnecting' means
+ * the relay link itself dropped and is backing off (fix the network), while
+ * 'offline' means the relay is healthy and the phone is simply not attached
+ * (open the phone). Offline is also the one steady state here, so it gets a
+ * static muted treatment rather than a spinner promising imminent resolution.
  */
-function connectionStateDisplay(state: MobileBridgeTransportState): { label: string; className: string; icon: ReactNode } | null {
+function connectionStateDisplay(state: MobileDeviceConnectionState): { label: string; className: string; icon: ReactNode } | null {
   switch (state) {
     case 'connected':
       return { label: 'Connected', className: 'text-green-400', icon: <Check size={12} /> };
@@ -23,6 +29,8 @@ function connectionStateDisplay(state: MobileBridgeTransportState): { label: str
       return { label: 'Connecting…', className: 'text-amber-400', icon: <Loader2 size={12} className="animate-spin" /> };
     case 'reconnecting':
       return { label: 'Reconnecting…', className: 'text-amber-400', icon: <Loader2 size={12} className="animate-spin" /> };
+    case 'offline':
+      return { label: 'Offline', className: 'text-fg-faint', icon: <WifiOff size={12} /> };
     case 'closed':
       return { label: 'Disconnected', className: 'text-danger', icon: <CircleAlert size={12} /> };
     case 'idle':

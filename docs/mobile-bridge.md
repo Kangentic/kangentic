@@ -200,6 +200,62 @@ Once a device is paired, `src/main/mobile-bridge/session/bridge-session.ts` mana
 
 `src/main/mobile-bridge/wire/session-frame.ts` (re-exported from the protocol package) tags every frame as either a `Handshake` frame (routed to the in-progress `HandshakeState`) or an `Application` frame (routed to the established secretstream pair), so handshake and application traffic can share one transport connection without ambiguity.
 
+### Per-device connection state
+
+Each row in the Mobile Devices settings tab reports `BridgeSession.connectionState`
+(`MobileDeviceConnectionState` in `src/shared/types.ts`), **not** the raw transport state. The
+transport alone cannot answer "is the phone there": the desktop's relay socket reads `connected`
+whenever the relay is up and the slot is dialable, with the phone powered off. So a badge driven
+by the transport shows a green "Connected" for a device that is gone.
+
+| Reported | Means |
+|---|---|
+| `idle` | No session open for this device yet. Renders no badge (not an error). |
+| `connecting` | The transport is up and the KK handshake is in flight. |
+| `connected` | The KK session is established: the phone answered, so it is genuinely attached. |
+| `offline` | The relay slot is healthy but no phone is attached to it. |
+| `reconnecting` | The relay link itself dropped and `RelayClient` is backing off. |
+| `closed` | The transport was closed. |
+
+`offline` and `reconnecting` are deliberately distinct: they call for opposite user actions (open
+the phone vs. fix the network). `offline` is a presence conclusion rather than a transport state,
+so it is **not** part of `MobileBridgeTransportState`, which must keep mirroring
+`@kangentic/protocol`'s `TransportState` exactly.
+
+Two guards keep the value honest without making it twitchy:
+
+- **A probe budget before `offline`.** Every handshake initiation doubles as a presence probe.
+  Silence for `PEER_PRESENCE_TIMEOUT_MS` (5s) spends one unit; only `PEER_PRESENCE_FAILURES_BEFORE_ABSENT`
+  (2) consecutive failures conclude the peer is absent, so one slow round trip never flashes
+  "Offline" on a live phone. An explicit goodbye (a `FrameTag.Final` frame) skips the budget. Once
+  absent, `PEER_PROBE_INTERVAL_MS` (15s) keeps probing so a returning phone is picked up in ~20s
+  rather than on the next rekey tick. The probe window is anchored to the start of an
+  unestablished episode and is **never restarted** by a later initiation: `HANDSHAKE_RETRY_MS`
+  (3s) re-initiates faster than the window expires, so a restartable window would let a relay
+  injecting garbage handshake frames hold `offline` permanently out of reach and pin the badge on
+  "Connecting..." forever.
+- **Application traffic proves presence.** Promotion is evidence-based the same way demotion is:
+  any frame the desktop can open came from the phone, since only it holds the matching send key,
+  so opening one restarts the probe budget. Without that, presence rested on the handshake alone,
+  and a single dropped initiation (a rekey is attempted every `REHANDSHAKE_INTERVAL_MS`, so a
+  lossy relay gets a fresh chance every two minutes) drained the budget while the phone, never
+  having learned a rekey was attempted, kept serving on streams the desktop was still decrypting.
+  That reported "Offline" for a demonstrably live device: the exact mirror of the stale green
+  "Connected" this whole state exists to remove.
+- **A hold before surfacing a blip.** The relay force-closes both peers when either drops, so an
+  ordinary phone reload costs a ~500ms reconnect plus a re-handshake. A known-good session keeps
+  reporting `connected` for `RECONNECT_GRACE_MS` (2s), spanning the reconnect *and* the
+  re-handshake, so the badge does not flicker `connected -> reconnecting -> connecting -> connected`
+  on every reload. A genuine outage outlasts the hold and correctly falls through.
+
+`MobileBridgeStatus.relayState` is the separate panel-wide aggregate over each session's
+*transport* state, with precedence `connected > connecting > reconnecting > closed`. It describes
+the relay link, so it deliberately stays transport-based. Because that precedence pins it at
+`connected` the moment any one device connects, the renderer's `mobile:stateChanged` notification
+is gated on a signature covering the aggregate **and** every device's own connection state -
+gating on the aggregate alone left a second device's row frozen on "Connecting..." while its phone
+was already serving data.
+
 ## Relay Transport
 
 `src/main/mobile-bridge/transport/relay-client.ts` is the desktop's **outbound-only** WebSocket client to a blind relay (self-hostable, or Kangentic's hosted instance). The relay forwards opaque ciphertext frames only - it authenticates nothing and reads nothing, because every frame is already Noise-encrypted (or, during pairing, is itself a Noise handshake message the relay cannot decrypt).

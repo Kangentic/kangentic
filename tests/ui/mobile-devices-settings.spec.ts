@@ -709,6 +709,62 @@ test.describe('Mobile Devices settings tab', () => {
     await closeSettings();
   });
 
+  test('shows the "Offline" connection state muted, distinct from a relay that is reconnecting', async () => {
+    await page.evaluate(() => {
+      (window as unknown as { __mockMobileDevices: MobilePairedDevice[] }).__mockMobileDevices = [
+        { deviceId: 'offline-device-1', displayName: 'Offline Device', capabilities: [], pairedAt: new Date().toISOString(), connectionState: 'offline' },
+      ];
+    });
+
+    await openMobileTab();
+
+    const indicator = page.locator('li', { hasText: 'Offline Device' }).getByTestId('mobile-device-connection');
+    await expect(indicator).toBeVisible();
+    // "The relay is fine, your phone is not attached" - a steady state, so it
+    // reads muted and static rather than borrowing "Reconnecting…"'s amber
+    // spinner, which means "the relay link dropped and is backing off".
+    await expect(indicator).toContainText('Offline');
+    await expect(indicator).toHaveClass(/text-fg-faint/);
+    await expect(indicator).not.toContainText('Reconnecting…');
+
+    await closeSettings();
+  });
+
+  test('a device that connects after the list was rendered updates its own badge, even while another device stays connected', async () => {
+    // The regression this whole change exists for. The main process used to
+    // notify only when the panel-wide AGGREGATE relay state moved, and
+    // precedence pins that at 'connected' the moment any one device connects -
+    // so a second device's own transitions never notified, and its row stayed
+    // frozen on "Connecting…" while the phone was already serving data.
+    await page.evaluate(() => {
+      (window as unknown as { __mockMobileDevices: MobilePairedDevice[] }).__mockMobileDevices = [
+        { deviceId: 'steady-device-1', displayName: 'Steady Device', capabilities: [], pairedAt: new Date().toISOString(), connectionState: 'connected' },
+        { deviceId: 'joining-device-1', displayName: 'Joining Device', capabilities: [], pairedAt: new Date().toISOString(), connectionState: 'connecting' },
+      ];
+    });
+
+    await openMobileTab();
+
+    const joining = page.locator('li', { hasText: /^Joining Device/ }).getByTestId('mobile-device-connection');
+    await expect(joining).toContainText('Connecting…');
+
+    // The freshly-paired device establishes. The first device never moves, so
+    // the aggregate is 'connected' before AND after.
+    await page.evaluate(() => {
+      const devices = (window as unknown as { __mockMobileDevices: MobilePairedDevice[] }).__mockMobileDevices;
+      const joiningDevice = devices.find((device) => device.deviceId === 'joining-device-1');
+      if (joiningDevice) joiningDevice.connectionState = 'connected';
+      (window as unknown as { __mockFireMobileStateChanged: () => void }).__mockFireMobileStateChanged();
+    });
+
+    await expect(joining).toContainText('Connected');
+    await expect(joining).not.toContainText('Connecting…');
+    // The steady device is undisturbed by the refetch.
+    await expect(page.locator('li', { hasText: /^Steady Device/ }).getByTestId('mobile-device-connection')).toContainText('Connected');
+
+    await closeSettings();
+  });
+
   test('renaming a device persists via renameDevice and updates the list', async () => {
     await openMobileTab();
     await pairDevice('Rename Target Device');

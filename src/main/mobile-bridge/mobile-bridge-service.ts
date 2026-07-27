@@ -14,7 +14,7 @@ import {
 } from '@kangentic/protocol';
 import { isGenuineEncryptionAvailable } from '../boards/shared/auth';
 import { validateRelayUrl } from '../../shared/relay';
-import type { MobileBridgeStatus, MobileBridgeTransportState } from '../../shared/types';
+import type { MobileBridgeStatus, MobileBridgeTransportState, MobileDeviceConnectionState } from '../../shared/types';
 import { DevQuickPair } from './dev-quick-pair';
 import { DiffWatcher } from '../git/diff-watcher';
 import { loadBridgeIdentity, loadOrCreateBridgeIdentity, type BridgeIdentity } from './identity';
@@ -59,8 +59,8 @@ export interface PairedDeviceSummary {
   displayName: string;
   capabilities: CapabilityVerb[];
   pairedAt: string;
-  /** Live, not persisted - per-device transport state, sourced from its open BridgeSession (or 'idle' if none is open yet). Replaces a panel-wide relay indicator with one that answers "is THIS device reachable". */
-  connectionState: MobileBridgeTransportState;
+  /** Live, not persisted - per-device connection state, sourced from its open BridgeSession (or 'idle' if none is open yet). Replaces a panel-wide relay indicator with one that answers "is THIS device reachable". */
+  connectionState: MobileDeviceConnectionState;
 }
 
 /**
@@ -114,8 +114,19 @@ export class MobileBridgeService extends EventEmitter {
   private pushNotifier: PushNotifier | null = null;
   /** Fires PushNotifier.notifyTaskStalled() when a task's spawn sits in-flight past the stall threshold. */
   private spawnStallWatcher: SpawnStallWatcher | null = null;
-  /** The aggregate relayState most recently emitted via 'stateChanged', so RELAY_STATE_EMIT_WINDOW_MS only re-emits on an actual value change, not on every transport flap. */
-  private lastEmittedRelayState: MobileBridgeTransportState | null = null;
+  /**
+   * The connection signature most recently emitted via 'stateChanged', so
+   * RELAY_STATE_EMIT_WINDOW_MS only re-emits on an actual value change, not on
+   * every transport flap.
+   *
+   * It covers the aggregate AND every device's own connection state, because
+   * 'stateChanged' tells the renderer to re-read both. Gating on the aggregate
+   * alone was the "Connecting... forever" bug: precedence pins the aggregate at
+   * 'connected' the moment ANY device connects, so a second device's own
+   * transitions never moved it, never notified, and left that row frozen at
+   * whatever the last fetch happened to see - stale in both directions.
+   */
+  private lastEmittedConnectionSignature: string | null = null;
   private relayStateEmitTimer: ReturnType<typeof setTimeout> | null = null;
   private disposed = false;
 
@@ -373,6 +384,11 @@ export class MobileBridgeService extends EventEmitter {
       this.subscriptionsByDevice.delete(deviceId);
     });
     session.on('transportState', () => this.scheduleRelayStateEmit());
+    // The per-device badge tracks establishment and peer presence, not just
+    // the transport, so it moves on edges 'transportState' never sees (a
+    // completed handshake, a spent presence probe, an expired reconnect
+    // hold). Scheduling from both is free - the signature check dedupes.
+    session.on('connectionState', () => this.scheduleRelayStateEmit());
   }
 
   /**
@@ -395,9 +411,22 @@ export class MobileBridgeService extends EventEmitter {
   }
 
   /**
-   * Coalesces bursts of per-session transport-state churn into at most one
+   * Everything a 'stateChanged' asks the renderer to re-read that can change
+   * without a deliberate roster mutation: the aggregate plus each device's own
+   * connection state. Device order is fixed by the map's insertion order being
+   * irrelevant here - the pairs are sorted - so the signature is stable.
+   */
+  private connectionSignature(): string {
+    const perDevice = [...this.sessions.entries()]
+      .map(([deviceId, session]) => `${deviceId}:${session.connectionState}`)
+      .sort();
+    return `${this.aggregateRelayState()}|${perDevice.join(',')}`;
+  }
+
+  /**
+   * Coalesces bursts of per-session connection churn into at most one
    * 'stateChanged' emission per RELAY_STATE_EMIT_WINDOW_MS, and only when
-   * the AGGREGATE actually changed - not a plain debounce (which would
+   * something actually changed - not a plain debounce (which would
    * reset on every flap and could delay delivery indefinitely under
    * sustained backoff churn), a throttle: the first change in a window
    * schedules a check at the end of that window, and further changes
@@ -407,16 +436,19 @@ export class MobileBridgeService extends EventEmitter {
     if (this.relayStateEmitTimer) return;
     this.relayStateEmitTimer = setTimeout(() => {
       this.relayStateEmitTimer = null;
-      if (this.aggregateRelayState() === this.lastEmittedRelayState) return;
-      this.emitStateChanged();
+      const signature = this.connectionSignature();
+      if (signature === this.lastEmittedConnectionSignature) return;
+      // Hand over the signature just computed rather than making
+      // emitStateChanged() rebuild an identical one.
+      this.emitStateChanged(signature);
     }, RELAY_STATE_EMIT_WINDOW_MS);
     this.relayStateEmitTimer.unref?.();
   }
 
   /**
    * The ONLY way this service emits 'stateChanged'. Rebaselines
-   * lastEmittedRelayState so the throttle above always compares against what
-   * the renderer was last actually told.
+   * lastEmittedConnectionSignature so the throttle above always compares
+   * against what the renderer was last actually told.
    *
    * A bare this.emit('stateChanged') leaves that baseline stale, and the
    * throttle then suppresses a later REAL transition as a no-op change. The
@@ -425,9 +457,20 @@ export class MobileBridgeService extends EventEmitter {
    * device B - when B reaches 'connected' the throttle compares 'connected'
    * against the stale 'connected', suppresses, and the indicator stays stuck
    * on "Connecting..." forever.
+   *
+   * Its direct callers (rename / revoke / capabilities / pairing confirmed /
+   * dev quick pair) reach this BYPASSING the throttle, and only rebaseline as
+   * a side effect - they may have their own preconditions, but none of them is
+   * the signature. The signature is a throttle input, not an emit precondition:
+   * it covers connection state, not displayName or capabilities, so routing
+   * those callers through scheduleRelayStateEmit() "for consistency" would
+   * silently swallow a rename.
+   *
+   * `signature` is an optimization only: the throttle passes the value it just
+   * computed. Omit it anywhere the current signature has not already been built.
    */
-  private emitStateChanged(): void {
-    this.lastEmittedRelayState = this.aggregateRelayState();
+  private emitStateChanged(signature?: string): void {
+    this.lastEmittedConnectionSignature = signature ?? this.connectionSignature();
     this.emit('stateChanged');
   }
 
@@ -489,7 +532,7 @@ export class MobileBridgeService extends EventEmitter {
       displayName: device.displayName,
       capabilities: device.capabilities,
       pairedAt: device.pairedAt,
-      connectionState: this.sessions.get(device.deviceId)?.transportState ?? 'idle',
+      connectionState: this.sessions.get(device.deviceId)?.connectionState ?? 'idle',
     }));
   }
 

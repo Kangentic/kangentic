@@ -131,6 +131,65 @@ describe('loadStatus / loadDevices', () => {
 
     expect(useMobileStore.getState().devices).toEqual(devices);
   });
+
+  // ---------------------------------------------------------------------
+  // Out-of-order-reply guard (latestDevicesRequestId / latestStatusRequestId)
+  //
+  // 'stateChanged' fires loadDevices()/loadStatus() unsequenced, so an older
+  // in-flight call can resolve AFTER a newer overlapping one. Without the
+  // requestId guard, whichever promise settles last wins regardless of which
+  // call it came from, silently reintroducing stale badge data. Each test
+  // below resolves the NEWER call first, then the OLDER call, and asserts
+  // the store keeps the newer result.
+  // ---------------------------------------------------------------------
+
+  it('loadDevices() keeps the newer reply when an older overlapping call resolves last', async () => {
+    let resolveOlderCall: ((devices: MobilePairedDevice[]) => void) | undefined;
+    let resolveNewerCall: ((devices: MobilePairedDevice[]) => void) | undefined;
+    listDevicesMock
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveOlderCall = resolve; }))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveNewerCall = resolve; }));
+
+    const olderDevices = [makeDevice({ deviceId: 'device-older' })];
+    const newerDevices = [makeDevice({ deviceId: 'device-newer' })];
+
+    const olderCall = useMobileStore.getState().loadDevices();
+    const newerCall = useMobileStore.getState().loadDevices();
+
+    // The NEWER call's reply lands first; the OLDER call's reply lands last.
+    // The store must keep the newer result, not be clobbered by the stale one.
+    resolveNewerCall?.(newerDevices);
+    await newerCall;
+    expect(useMobileStore.getState().devices).toEqual(newerDevices);
+
+    resolveOlderCall?.(olderDevices);
+    await olderCall;
+    expect(useMobileStore.getState().devices).toEqual(newerDevices);
+  });
+
+  it('loadStatus() keeps the newer reply when an older overlapping call resolves last', async () => {
+    let resolveOlderCall: ((status: MobileBridgeStatus) => void) | undefined;
+    let resolveNewerCall: ((status: MobileBridgeStatus) => void) | undefined;
+    getStatusMock
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveOlderCall = resolve; }))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveNewerCall = resolve; }));
+
+    const olderStatus = makeStatus({ pairedDeviceCount: 1 });
+    const newerStatus = makeStatus({ pairedDeviceCount: 2 });
+
+    const olderCall = useMobileStore.getState().loadStatus();
+    const newerCall = useMobileStore.getState().loadStatus();
+
+    // The NEWER call's reply lands first; the OLDER call's reply lands last.
+    // The store must keep the newer result, not be clobbered by the stale one.
+    resolveNewerCall?.(newerStatus);
+    await newerCall;
+    expect(useMobileStore.getState().status).toEqual(newerStatus);
+
+    resolveOlderCall?.(olderStatus);
+    await olderCall;
+    expect(useMobileStore.getState().status).toEqual(newerStatus);
+  });
 });
 
 // ---------------------------------------------------------------------------

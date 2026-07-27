@@ -28,6 +28,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 import type { RosterDeviceEntry, TransportState } from '@kangentic/protocol';
+import type { MobileDeviceConnectionState } from '../../../src/shared/types';
 
 vi.mock('electron', () => ({
   app: { isReady: () => true, whenReady: () => Promise.resolve() },
@@ -96,6 +97,12 @@ const createdSessions: FakeBridgeSession[] = [];
 class FakeBridgeSession extends EventEmitter {
   readonly deviceId: string;
   transportState: TransportState = 'connecting';
+  /**
+   * Mirrors the real getter's pre-handshake value: a session whose transport
+   * has connected but whose Noise KK session has not completed still reports
+   * 'connecting', because the phone has not proved it is attached yet.
+   */
+  connectionState: MobileDeviceConnectionState = 'connecting';
   start = vi.fn();
   dispose = vi.fn();
   sendMessage = vi.fn();
@@ -109,10 +116,28 @@ class FakeBridgeSession extends EventEmitter {
    * transportState getter reads, then emits 'transportState' - the same
    * order the real session uses so the service's aggregate always reflects
    * the newly-set value by the time its listener runs.
+   *
+   * A transport that is not 'connected' shows straight through to
+   * connectionState in the real getter, so it does here too; a transport that
+   * IS connected leaves connectionState alone, since only a completed
+   * handshake (setConnectionState below) can promote it to 'connected'.
    */
   setTransportState(state: TransportState): void {
     this.transportState = state;
+    if (state !== 'connected') this.connectionState = state;
     this.emit('transportState', state);
+    this.emit('connectionState');
+  }
+
+  /**
+   * Mirrors an establishment or peer-presence edge: connectionState moves with
+   * NO transport transition behind it (a completed handshake, a spent presence
+   * probe, an expired reconnect hold). These are exactly the edges the old
+   * aggregate-gated notification could not see.
+   */
+  setConnectionState(state: MobileDeviceConnectionState): void {
+    this.connectionState = state;
+    this.emit('connectionState');
   }
 }
 vi.mock('../../../src/main/mobile-bridge/session/bridge-session', () => ({
@@ -259,7 +284,7 @@ describe('MobileBridgeService.scheduleRelayStateEmit() throttle', () => {
     service.dispose();
   });
 
-  it('does not emit again when the aggregate has not actually changed', async () => {
+  it('does not emit again when nothing has actually changed', async () => {
     rosterDevices = [deviceA];
     const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
     const sessions = await openSessions(service);
@@ -275,6 +300,75 @@ describe('MobileBridgeService.scheduleRelayStateEmit() throttle', () => {
     await vi.advanceTimersByTimeAsync(500);
 
     expect(stateChanged).not.toHaveBeenCalled();
+
+    service.dispose();
+  });
+
+  it('emits when ONE device\'s own connection state changed even though the aggregate did not', async () => {
+    // The regression this whole change exists for. The notification used to be
+    // gated on aggregateRelayState() alone, and precedence pins that at
+    // 'connected' the moment ANY device connects - so a second device's own
+    // transitions never moved it, never notified, and left that row frozen on
+    // "Connecting..." while the phone was demonstrably serving data.
+    rosterDevices = [deviceA, deviceB];
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    const sessions = await openSessions(service);
+    const sessionA = sessions.get('device-A');
+    const sessionB = sessions.get('device-B');
+    if (!sessionA || !sessionB) throw new Error('both device sessions must be opened');
+
+    // A is fully up: transport connected AND handshake established. That alone
+    // pins the aggregate at 'connected' for the rest of the test.
+    sessionA.setTransportState('connected');
+    sessionA.setConnectionState('connected');
+    // B's transport is up too, but it is still handshaking, so its own row
+    // correctly reads 'connecting'.
+    sessionB.setTransportState('connected');
+    await vi.advanceTimersByTimeAsync(500);
+    expect(service.getStatus().relayState).toBe('connected');
+
+    const stateChanged = vi.fn();
+    service.on('stateChanged', stateChanged);
+
+    // B establishes. The aggregate is 'connected' before AND after, so the old
+    // gate swallowed this and the renderer never re-fetched.
+    sessionB.setConnectionState('connected');
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(stateChanged).toHaveBeenCalledTimes(1);
+    expect(service.listDevices().find((device) => device.deviceId === 'device-B')?.connectionState).toBe('connected');
+
+    service.dispose();
+  });
+
+  it('emits when one device drops while another stays connected (the same gap, mirrored)', async () => {
+    // The other direction of the same bug: a device going away while a healthy
+    // one holds the aggregate at 'connected' left a green "Connected" badge on
+    // a phone that was gone.
+    rosterDevices = [deviceA, deviceB];
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    const sessions = await openSessions(service);
+    const sessionA = sessions.get('device-A');
+    const sessionB = sessions.get('device-B');
+    if (!sessionA || !sessionB) throw new Error('both device sessions must be opened');
+
+    sessionA.setTransportState('connected');
+    sessionA.setConnectionState('connected');
+    sessionB.setTransportState('connected');
+    sessionB.setConnectionState('connected');
+    await vi.advanceTimersByTimeAsync(500);
+
+    const stateChanged = vi.fn();
+    service.on('stateChanged', stateChanged);
+
+    // B's phone went away: the relay slot is still dialable, so B's TRANSPORT
+    // stays 'connected' and the aggregate never moves - only B's presence did.
+    sessionB.setConnectionState('offline');
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(stateChanged).toHaveBeenCalledTimes(1);
+    expect(service.getStatus().relayState).toBe('connected');
+    expect(service.listDevices().find((device) => device.deviceId === 'device-B')?.connectionState).toBe('offline');
 
     service.dispose();
   });
@@ -318,9 +412,9 @@ describe('MobileBridgeService.emitStateChanged() rebaselines the throttle on eve
     // setDeviceCapabilities(), the pairing 'confirmed' handler, and
     // dev-quick-pair's onRosterChanged all emit 'stateChanged' directly,
     // bypassing scheduleRelayStateEmit()'s timer entirely. If any of those
-    // paths does not ALSO rebaseline lastEmittedRelayState (the bug this
-    // guards), the throttle's next real transition gets compared against a
-    // stale baseline and is silently swallowed.
+    // paths does not ALSO rebaseline lastEmittedConnectionSignature (the bug
+    // this guards), the throttle's next real transition gets compared against
+    // a stale baseline and is silently swallowed.
     rosterDevices = [deviceA];
     const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
     const sessions = await openSessions(service);
@@ -328,8 +422,8 @@ describe('MobileBridgeService.emitStateChanged() rebaselines the throttle on eve
     if (!sessionA) throw new Error('device-A session was not opened');
 
     // Baseline: A connects, the throttle's window elapses, and 'connected'
-    // is emitted (and captured as lastEmittedRelayState) through the normal
-    // scheduleRelayStateEmit() path.
+    // is emitted (and captured in lastEmittedConnectionSignature) through the
+    // normal scheduleRelayStateEmit() path.
     sessionA.setTransportState('connected');
     await vi.advanceTimersByTimeAsync(500);
     expect(service.getStatus().relayState).toBe('connected');
@@ -359,13 +453,41 @@ describe('MobileBridgeService.emitStateChanged() rebaselines the throttle on eve
     // compared this fresh 'connected' against that STALE, never-rebaselined
     // 'connected' and swallowed the emission, leaving the renderer's
     // indicator stuck forever. With the fix, revokeDevice()'s direct emit
-    // rebaselined lastEmittedRelayState to 'idle', so this transition is
-    // correctly recognized as a real change and emitted.
+    // rebaselined lastEmittedConnectionSignature to the 'idle' signature, so
+    // this transition is correctly recognized as a real change and emitted.
     sessionB.setTransportState('connected');
     await vi.advanceTimersByTimeAsync(500);
 
     expect(stateChanged).toHaveBeenCalledTimes(1);
     expect(service.getStatus().relayState).toBe('connected');
+
+    service.dispose();
+  });
+
+  it('a capability change still emits while every connection state sits unchanged', async () => {
+    // The direct-emit callers (rename / revoke / capabilities / pairing
+    // confirmed / dev quick pair) must stay UNCONDITIONAL. The throttle's
+    // signature covers connection state only, so routing them through
+    // scheduleRelayStateEmit() "for consistency" would compare a signature
+    // that cannot have moved and silently swallow the change. Capabilities
+    // stands in for the whole set here: it is a roster field the signature
+    // deliberately does not cover, and it is already stubbed above.
+    rosterDevices = [deviceA];
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    const sessions = await openSessions(service);
+    const sessionA = sessions.get('device-A');
+    if (!sessionA) throw new Error('device-A session was not opened');
+
+    sessionA.setTransportState('connected');
+    sessionA.setConnectionState('connected');
+    await vi.advanceTimersByTimeAsync(500);
+
+    const stateChanged = vi.fn();
+    service.on('stateChanged', stateChanged);
+
+    service.setDeviceCapabilities('device-A', ['read-board', 'read-session']);
+
+    expect(stateChanged).toHaveBeenCalledTimes(1);
 
     service.dispose();
   });

@@ -2739,6 +2739,18 @@ export interface MobileBridgeStatus {
 /** Mirrors @kangentic/protocol's TransportState - re-declared here (not re-exported) so src/shared/types.ts stays free of a protocol-package runtime dependency; only the string union shape needs to match. */
 export type MobileBridgeTransportState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'closed';
 
+/**
+ * What one paired device's row reports. Every transport state plus 'offline':
+ * the relay slot is up but no phone is attached to it (no live Noise KK
+ * session), which the transport alone cannot express - it reads 'connected'
+ * whenever the relay is reachable, phone powered off or not.
+ *
+ * 'offline' is a presence conclusion, NOT a transport state, so it is
+ * deliberately absent from the @kangentic/protocol mirror above; that union
+ * must keep matching the package exactly.
+ */
+export type MobileDeviceConnectionState = MobileBridgeTransportState | 'offline';
+
 export interface MobileStartPairingResult {
   /** The `kangentic-pair://...` URI to render as a QR code. */
   qrUri: string;
@@ -2752,8 +2764,8 @@ export interface MobilePairedDevice {
   capabilities: MobileCapabilityVerb[];
   /** ISO 8601. */
   pairedAt: string;
-  /** Live, not persisted - this device's own transport state, not the panel-wide aggregate. */
-  connectionState: MobileBridgeTransportState;
+  /** Live, not persisted - this device's own connection state (transport refined by whether the phone is actually attached), not the panel-wide aggregate. */
+  connectionState: MobileDeviceConnectionState;
 }
 
 export interface MobilePairingSasPayload {

@@ -9,6 +9,37 @@ import type {
 } from '../../shared/types';
 
 /**
+ * Identify the newest in-flight listDevices() / getStatus() so an older reply
+ * cannot clobber a newer one. 'stateChanged' fires loadStatus() and
+ * loadDevices() unsequenced, and the main process now notifies on every
+ * per-device connection change (not just when the panel-wide aggregate moves),
+ * so overlapping fetches are routine rather than exotic - and an out-of-order
+ * reply would reintroduce exactly the stale-badge symptom this store exists to
+ * avoid. Both loaders are guarded, so neither reads as protected merely by
+ * sitting next to one that is.
+ *
+ * Preserved across HMR (Pattern A), matching moveGeneration in
+ * board-store/task-slice.ts: it keeps the counters monotonic across a dev
+ * session rather than resetting to 0 on every Fast Refresh. It does NOT protect
+ * a reply already in flight when the module is replaced - that reply's own
+ * staleness check closes over the OLD module's binding, whatever this one seeds
+ * itself with.
+ */
+// @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
+let latestDevicesRequestId: number = import.meta.hot?.data?.latestDevicesRequestId ?? 0;
+// @ts-expect-error -- Vite handles import.meta.hot
+let latestStatusRequestId: number = import.meta.hot?.data?.latestStatusRequestId ?? 0;
+
+// @ts-expect-error -- Vite handles import.meta.hot
+if (import.meta.hot) {
+  // @ts-expect-error -- Vite handles import.meta.hot
+  import.meta.hot.dispose((data: Record<string, unknown>) => {
+    data.latestDevicesRequestId = latestDevicesRequestId;
+    data.latestStatusRequestId = latestStatusRequestId;
+  });
+}
+
+/**
  * Backs the Mobile Devices settings tab. Machine-global (not project-scoped),
  * matching the mobile bridge itself. Pairing push events (SAS, confirmed,
  * ended) are NOT subscribed here - the tab component owns that
@@ -49,12 +80,21 @@ export const useMobileStore = create<MobileStore>((set, get) => ({
   pairingEndedReason: null,
 
   loadStatus: async () => {
+    latestStatusRequestId += 1;
+    const requestId = latestStatusRequestId;
     const status = await window.electronAPI.mobile.getStatus();
+    // A newer fetch superseded this one while it was in flight.
+    if (requestId !== latestStatusRequestId) return;
     set({ status });
   },
 
   loadDevices: async () => {
+    latestDevicesRequestId += 1;
+    const requestId = latestDevicesRequestId;
     const devices = await window.electronAPI.mobile.listDevices();
+    // A newer fetch was issued while this one was in flight; its reply is the
+    // current truth, so drop this one rather than overwriting with older data.
+    if (requestId !== latestDevicesRequestId) return;
     set({ devices });
   },
 
