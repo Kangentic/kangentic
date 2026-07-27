@@ -91,6 +91,11 @@ const {
 
 vi.mock('node:child_process', () => ({
   spawn: mockSpawn,
+  // base-branch.ts (imported transitively via worktree-manager.ts) promisifies
+  // execFile at module load, so the mock must export it or the import graph
+  // throws. This file never calls ensureWorktree (only removeWorktree), so a
+  // bare stub is enough - nothing here ever invokes it.
+  execFile: vi.fn(),
 }));
 
 vi.mock('node:fs', () => ({
