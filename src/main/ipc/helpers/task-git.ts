@@ -43,12 +43,12 @@ function resolveWorktreeCheckAgentName(task: Task, context: IpcContext, projectP
 
 /**
  * Create a worktree for a task if needed and update the DB + task object in place.
- * No-ops when worktrees are disabled, the project isn't a git repo, or the
- * resolved agent's execution mode for this project is 'remote' (the agent runs
- * against a server-side directory instead - see `agent.execution` in AppConfig
- * and `ResolvedExecutionTarget`; `task.worktree_path` stays null so `cwd`
- * falls back to the project path, per transition-engine.ts).
- * Throws on worktree creation failure (e.g. duplicate branch).
+ * No-ops when worktrees are disabled, the project isn't a git repo, the repo has no commits yet
+ * (unborn HEAD), or the resolved agent's execution mode for this project is 'remote' (the agent
+ * runs against a server-side directory instead - see `agent.execution` in AppConfig and
+ * `ResolvedExecutionTarget`; `task.worktree_path` stays null so `cwd` falls back to the project
+ * path, per transition-engine.ts).
+ * Throws on worktree creation failure (e.g. duplicate branch, or an unresolvable base branch).
  */
 export async function ensureTaskWorktree(
   context: IpcContext,
@@ -63,13 +63,9 @@ export async function ensureTaskWorktree(
   const config = context.configManager.getEffectiveConfig(resolvedProjectPath);
   const agentName = resolveWorktreeCheckAgentName(task, context, resolvedProjectPath);
   if (config.agent.execution[agentName]?.mode === 'remote') return;
-  // A repo with no commits has nothing to branch from, so there is no worktree to create -
-  // `git worktree add` would fail with `fatal: invalid reference: <branch>` and take the whole
-  // move down with it. This is the state Kangentic itself produces when it initialises a repo
-  // for a folder that had none, and the user's very next action is usually a move. Running in
-  // the project directory is the honest answer (`worktree_path` stays null, so `cwd` falls back
-  // to the project path); worktrees start working on their own once there is a first commit.
-  if (!(await hasCommits(resolvedProjectPath))) return;
+  // No-commits and base-branch-resolution guards live inside
+  // WorktreeManager.ensureWorktree (via resolveWorktreeBase) so every caller - this one, the
+  // create_worktree transition action, MCP auto-spawn - gets identical behavior.
   const worktreeManager = new WorktreeManager(resolvedProjectPath);
   const result = await worktreeManager.withLock(
     () => worktreeManager.ensureWorktree(task, config.git, { onProgress: options?.onProgress, signal: options?.signal }),
@@ -107,9 +103,10 @@ export async function ensureTaskBranchCheckout(
   );
   // Nothing to check out either way, so stop before touching git at all.
   if (!usesCustomBranch && !task.base_branch) return;
-  // Same unborn-HEAD case as ensureTaskWorktree: with no commits there is no branch to fetch,
-  // create, or check out, and every git call below would fail on the ref. Deliberately AFTER
-  // the cheap guards - it shells out, and the common move has no branch work to do.
+  // Same unborn-HEAD case WorktreeManager.ensureWorktree guards for the worktree path: with no
+  // commits there is no branch to fetch, create, or check out, and every git call below would
+  // fail on the ref. Deliberately AFTER the cheap guards - it shells out, and the common move
+  // has no branch work to do.
   if (!(await hasCommits(projectPath))) return;
 
   // Custom branch name: fetch latest, create if needed, then checkout

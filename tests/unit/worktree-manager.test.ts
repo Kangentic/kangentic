@@ -117,8 +117,44 @@ const { mockSpawn, recordedSpawnCalls, spawnOverrides } = vi.hoisted(() => {
 vi.mock('node:child_process', () => ({
   execFileSync: vi.fn(),
   // git-checks.ts (imported by worktree-manager) promisifies execFile at
-  // module load, so the mock must export it or the import graph throws.
-  execFile: vi.fn(),
+  // module load, so the mock must export it or the import graph throws. It
+  // MUST invoke its callback: `hasCommits` and `resolveWorktreeBase`'s local
+  // ref checks (base-branch.ts) both promisify execFile and await it before
+  // `ensureWorktree` reaches `createWorktree` - a bare `vi.fn()` never settles
+  // that promise, so every ensureWorktree test hangs until the 5s timeout
+  // instead of failing with a readable assertion. `rev-parse --verify HEAD`
+  // (no `--quiet`) succeeds, matching mockProjectGit.raw's convention below
+  // that this is an already-committed repo. Every OTHER rev-parse fails EXCEPT
+  // `origin/<branch>` once a matching `git fetch origin <branch>` spawn call has
+  // already been recorded (resolveWorktreeBase re-verifies a fetched ref locally
+  // before trusting it as a startPoint - see base-branch.ts) - so a candidate
+  // only resolves here in the same order production code resolves it: never
+  // locally, only after an actual fetch, matching mockProjectGit.raw's
+  // "branch doesn't exist yet" convention and letting resolveWorktreeBase's
+  // fetch pass (driven by mockSpawn, which defaults to success) do the
+  // resolving - the same shape `fetchIfStale` already assumes throughout
+  // this file.
+  execFile: vi.fn((...callArgs: unknown[]) => {
+    const commandArgs = callArgs.find((arg): arg is readonly string[] => Array.isArray(arg));
+    const callback = callArgs.find((arg): arg is (error: Error | null, result: { stdout: string; stderr: string }) => void =>
+      typeof arg === 'function');
+    if (commandArgs?.[0] === 'rev-parse' && commandArgs.includes('HEAD') && !commandArgs.includes('--quiet')) {
+      callback?.(null, { stdout: 'abc1234\n', stderr: '' });
+      return;
+    }
+    if (commandArgs?.[0] === 'rev-parse' && commandArgs.includes('--quiet')) {
+      const ref = commandArgs[commandArgs.length - 1];
+      const branch = ref.startsWith('origin/') ? ref.slice('origin/'.length) : null;
+      const alreadyFetched = branch !== null && recordedSpawnCalls.some(
+        (call) => call.command === 'git' && call.args[0] === 'fetch' && call.args[2] === branch,
+      );
+      if (alreadyFetched) {
+        callback?.(null, { stdout: 'abc1234\n', stderr: '' });
+        return;
+      }
+    }
+    callback?.(new Error('fatal: not a valid object name'), { stdout: '', stderr: '' });
+  }),
   spawn: mockSpawn,
 }));
 

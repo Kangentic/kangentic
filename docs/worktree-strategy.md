@@ -21,14 +21,37 @@ Custom branch names (set per-task) use the custom name as the branch, with a slu
 
 ### Base Branch Resolution
 
-Checked in priority order:
+The configured base branch is checked in priority order:
 
 1. Task's `base_branch` field (per-task override)
 2. Action config's `baseBranch` (per-transition override)
 3. `kangentic.json` `defaultBaseBranch` (team-shared, overridable via `kangentic.local.json`)
 4. `config.git.defaultBaseBranch` (per-user fallback, defaults to `main`)
 
-If the remote branch exists, the worktree branches from `origin/<baseBranch>`. Otherwise falls back to the local branch.
+That configured value is then **verified against the repo's actual refs** by
+`resolveWorktreeBase` (`src/main/git/base-branch.ts`), called from
+`WorktreeManager.ensureWorktree` before `git worktree add` ever runs:
+
+- A **per-task `base_branch`** is a deliberate choice for that task and is tried alone. If it does
+  not resolve (locally, on origin, or after a fetch), worktree creation throws a written error
+  naming the branch rather than silently substituting a different one.
+- With **no per-task override**, `[configured default, 'main', 'master']` (deduped) are tried in
+  order. Most repos never configure `defaultBaseBranch`, so it is the hardcoded `'main'` - falling
+  through to `master` covers the common repo whose only branch is `master`, which otherwise failed
+  worktree creation with a raw `fatal: invalid reference: main`. If none of the candidates resolve
+  even after a fetch, worktree creation throws, listing the branches the repo actually has.
+
+When a fallback candidate wins (e.g. `master` for an unconfigured `main`), it is treated as the
+new default too, so the branch name stays unprefixed instead of being namespaced under the
+substitute (see Branch Naming above). An explicit per-task base is never substituted.
+
+**Known gap:** only source 1 (the task's `base_branch`) counts as "explicit". Sources 2 through 4,
+including a per-transition `create_worktree` action's `baseBranch`, are folded into
+`defaultBaseBranch` by `executeCreateWorktree` (`transition-engine.ts`) and therefore DO fall
+through to `main` / `master`. So an action configured with a base branch the repo does not have
+silently creates the worktree from `main` instead of failing, which is the substitution the
+per-task rule exists to prevent. Promoting it to an explicit base would also flip its branch
+naming from unprefixed to namespaced, so the fix is not mechanical.
 
 The chosen base branch is stored in the worktree's git config as `kangentic.baseBranch` so agents can read it without filesystem access.
 
@@ -41,32 +64,70 @@ When a removal fails because a process still pins the worktree, `removeWorktree`
 ### When a worktree is NOT created
 
 `ensureTaskWorktree` (`src/main/ipc/helpers/task-git.ts`) returns without creating anything in
-these cases. In each, `task.worktree_path` stays null, so the agent's `cwd` falls back to the
-project path and the task runs unisolated in the main checkout.
+most of these cases, leaving `task.worktree_path` null so the agent's `cwd` falls back to the
+project path and the task runs unisolated in the main checkout. The two `WorktreeManager`-internal
+guards at the top of the table are a partial exception - see the note in each row.
 
 | Condition | Why |
 |-----------|-----|
-| `config.git.useWorktrees` is `false` | Worktrees are turned off for this project. |
+| A worktree already exists at `task.worktree_path` and is genuinely present on disk | Idempotent short-circuit inside `WorktreeManager.ensureWorktree` - `worktree_path` stays exactly what it already was, not null. Recreating a live worktree would be wasted work. |
+| The project path itself is inside a worktree (`isInsideWorktree(this.projectPath)`) | Prevents nesting a worktree inside a worktree - a worktree checkout is never itself a valid parent for another `git worktree add`. |
+| `worktreesEnabled` is `false` (per-task `use_worktree` can override either direction) | Worktrees are turned off for this project by default. `task.use_worktree` is checked first when set (`worktree-manager.ts`'s `shouldUseWorktree`): a task can force worktree mode on in a project where it's off, or opt out where it's on. |
 | The project is not a git repository | Nothing to branch from. |
 | The resolved agent's execution mode is `remote` | The agent runs against a server-side directory instead, so a local worktree would be unused. Resolution mirrors `resolveTargetAgent` exactly (task override, column profile, column override, project default, global fallback) - if the two disagree, a local agent spawns into the main checkout. |
-| The repository has **no commits** (`hasCommits` in `src/main/git/git-checks.ts`) | A freshly `git init`-ed repo has an unborn HEAD: the branch exists in name only, so `git worktree add` fails with `fatal: invalid reference: <branch>`. This is the state Kangentic produces itself when it initialises a repo for a folder that had none (see `ensureGitRepo`), and the user's next action is usually a task move. Worktrees start working on their own once there is a first commit. `ensureTaskBranchCheckout` skips for the same reason. |
+| The repository has **no commits** (`hasCommits` in `src/main/git/git-checks.ts`) | A freshly `git init`-ed repo has an unborn HEAD: the branch exists in name only, so `git worktree add` fails with `fatal: invalid reference: <branch>`. This is the state Kangentic produces itself when it initialises a repo for a folder that had none (see `ensureGitRepo`), and the user's next action is usually a task move. Worktrees start working on their own once there is a first commit. |
+
+This guard lives inside `WorktreeManager.ensureWorktree` (via `resolveWorktreeBase`), not in
+`ensureTaskWorktree` itself, so the `create_worktree` transition action (which also calls
+`ensureWorktree`) gets the identical no-commits fallback. `ensureTaskBranchCheckout` keeps its own
+separate no-commits guard, since it does not go through `WorktreeManager.ensureWorktree`.
+
+### When worktree creation fails with a written error
+
+Two distinct failure modes raise an actionable `Error` rather than falling back silently. Where
+that error goes depends on the entry point:
+
+- **Task move** (`handleTaskMove` in `src/main/ipc/handlers/task-move.ts`) and **`SESSION_RESUME`**
+  wrap and re-throw it, so the user sees a toast reading `Worktree setup failed: <message>`.
+- **Task create, unarchive, backlog promote, MCP auto-spawn, and the `create_worktree` transition
+  action** catch it, log to console, and skip worktree creation, so there is no toast on those
+  paths today.
+- **`TASK_SWITCH_BRANCH`** (`src/main/ipc/handlers/task-branch.ts`) calls `ensureTaskWorktree`
+  uncaught, so the error propagates as a rejected `ipcMain.handle` promise - Electron forwards it
+  to the renderer's `invoke()` call, not a toast from this list, but however the branch-switch UI
+  surfaces a rejected mutation.
+
+The two failure modes:
+
+- **A stale directory** at the computed worktree path could not be removed and is not an empty,
+  reusable husk (see Creation Flow step 3) - `staleWorktreeError` in `worktree-manager.ts`.
+- **The base branch does not resolve**, even after the fallback chain and a fetch retry described
+  under Base Branch Resolution above - `describeUnresolvableBase` in `src/main/git/base-branch.ts`.
+  Distinguishes an explicit per-task base (names the branch, suggests picking a different one) from
+  an exhausted default chain (lists every candidate tried and points at Settings > Git).
+
+Both name what failed and what to do about it, rather than surfacing git's raw error text.
 
 ### Creation Flow
 
 1. Create `.kangentic/worktrees/` directory
-2. `git fetch origin <baseBranch>` (best-effort, falls back to local branch)
-3. `git worktree prune` (clean up stale metadata from previous failed cleanups)
-4. Clean up the stale worktree directory if it exists on disk. If removal fails because a process holds the directory as its current directory (Windows pinned-CWD) and the leftover is an empty husk, reuse it in place; if it is non-empty or cannot be inspected, fail with an actionable error naming the likely blocker (an open terminal or editor, the `/preview` dev server, or antivirus).
-5. Check if branch already exists (stale branch from failed cleanup, or custom branch)
-6. If branch exists: `git worktree add [--force] <worktreePath> <branchName>`
-7. If new branch: `git worktree add [--force] -b <branchName> <worktreePath> <startPoint>` (`--force` is added only when reusing an empty husk from step 4, to clear any stale `.git/worktrees/` registration whose directory still exists)
-8. On Windows: enable `core.longpaths` (see below)
-9. `git config kangentic.baseBranch <baseBranch>` (in worktree)
-10. Set up sparse-checkout (see below)
-11. Copy optional files from repo root (configured via `config.git.copyFiles`)
-12. Create `node_modules` junction/symlink to root repo's `node_modules` (skipped when `config.git.linkNodeModules` is `false`, so a worktree can own its own dependencies)
-13. Run the Post-Worktree Script if `config.git.initScript` is set (see below)
-14. Pre-populate `~/.claude.json` trust entry for the worktree path
+2. `git fetch origin <baseBranch>` (best-effort). The start point is `origin/<baseBranch>` only
+   when the fetch actually lands that ref; otherwise it falls back to the ref
+   `resolveWorktreeBase` already verified (`verifiedStartPoint`), which may itself be
+   `origin/<baseBranch>` for a base that was only ever fetched and never checked out locally.
+   A fetch exiting 0 is not proof the ref landed (a narrowed `remote.origin.fetch` refspec, or a
+   fetch that only populated `FETCH_HEAD`), so both call sites re-verify before trusting it.
+3. Clean up the stale worktree directory if it exists on disk. If removal fails because a process holds the directory as its current directory (Windows pinned-CWD) and the leftover is an empty husk, reuse it in place; if it is non-empty or cannot be inspected, fail with an actionable error naming the likely blocker (an open terminal or editor, the `/preview` dev server, or antivirus). (`git worktree prune` itself is NOT part of creation - it only runs on the removal path, `pruneWorktrees()`, and the debounced background prune.)
+4. Check if branch already exists (stale branch from failed cleanup, or custom branch)
+5. If branch exists: `git worktree add [--force] <worktreePath> <branchName>`
+6. If new branch: `git worktree add [--force] -b <branchName> <worktreePath> <startPoint>` (`--force` is added only when reusing an empty husk from step 3, to clear any stale `.git/worktrees/` registration whose directory still exists)
+7. On Windows: enable `core.longpaths` (see below)
+8. `git config kangentic.baseBranch <baseBranch>` (in worktree)
+9. Set up sparse-checkout (see below)
+10. Copy optional files from repo root (configured via `config.git.copyFiles`)
+11. Create `node_modules` junction/symlink to root repo's `node_modules` (skipped when `config.git.linkNodeModules` is `false`, so a worktree can own its own dependencies)
+12. Run the Post-Worktree Script if `config.git.initScript` is set (see below)
+13. Pre-populate `~/.claude.json` trust entry for the worktree path
 
 ### Windows Long Paths
 
@@ -280,7 +341,7 @@ Uses real temp files with mocked `os.homedir()`.
 
 **Stale branch recovery:**
 - `createWorktree` reuses auto-generated branch that already exists (no `-b` flag)
-- `createWorktree` prunes stale worktree metadata before checking branch
+- `createWorktree` does NOT inline `git worktree prune` (moved to the removal path and background prune - see Creation Flow above)
 - `createWorktree` cleans up stale directory before `git worktree add`
 - `pruneWorktrees` calls `git worktree prune`
 
@@ -301,6 +362,33 @@ Uses real temp files with mocked `os.homedir()`.
 - Returns empty array for bare output
 
 Uses vi.mock for `simple-git` and `node:fs`.
+
+### Base Branch Resolution (`worktree-base-branch.test.ts`)
+
+Runs the real `git` binary against temp directories (mirroring `ensure-git-repo.test.ts`) rather
+than mocking git, so the behavior pinned is what `git worktree add` actually does with each
+resolved ref.
+
+**`WorktreeManager.ensureWorktree`, end to end:**
+- Takes the byte-identical path when the base resolves normally (the additive-only invariant)
+- Falls back to `master` when the repo only has `master` and the default is the unconfigured `main`
+- Reproduces the identical worktree path on a Done round-trip after a default-chain substitution
+- Throws a written error naming the branch when an explicit per-task base does not exist
+- Throws and lists the repo's real branches when the default chain is fully exhausted
+- Resolves a base that exists only on origin and was never fetched (fetch retry)
+- Falls back to a verified `origin/<base>` start point when worktree creation's own fetch fails (the `verifiedStartPoint` seam)
+- Returns null (no-commits fallback) for an unborn HEAD, now enforced inside `ensureWorktree`
+- Regression pins for states that are already no-ops: detached HEAD, a bare repo, a broken `.git` file pointer
+
+**`resolveWorktreeBase` candidate order:**
+- Tries only the per-task base branch when set, never substituting main/master
+- Deduplicates the default chain when the configured default is already `master`
+- Marks `substitutedFor` null when the first candidate resolves (no fallback engaged)
+
+**`describeUnresolvableBase` message formatting:**
+- Names the branch and offers the fix for an explicit per-task base
+- Lists every attempted default-chain candidate and points at the settings fix
+- Formats a two-item attempted list without an Oxford comma before "or"
 
 ### Hook Manager (`hook-manager.test.ts`)
 
