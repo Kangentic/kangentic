@@ -140,6 +140,39 @@ describe('WorktreeManager.ensureWorktree - base branch resolution', () => {
     expect(result!.branchName).not.toContain('/');
   });
 
+  it('namespaces the branch under an explicit per-task base that differs from the configured default', async () => {
+    // Distinct from the master-only substitution test above: there `substitutedFor` is set
+    // and the resolved base COLLAPSES onto the default, so the branch stays unprefixed. Here
+    // the task's explicit base ('release/2.0') resolves on its own (`substitutedFor` is
+    // always null for an explicit, single-candidate resolution - see resolveWorktreeBase), so
+    // ensureWorktree must keep the ORIGINALLY CONFIGURED default ('main') rather than
+    // collapsing it to 'release/2.0', and computeAutoBranchName namespaces the branch name
+    // accordingly. This pins the `resolution.substitutedFor ? ... : (gitConfig.defaultBaseBranch...)`
+    // wiring in ensureWorktree: reducing it to just `resolution.baseBranch` would silently
+    // drop the namespace for every explicit-base task.
+    //
+    // Base branch name deliberately contains a slash ('release/2.0', flattened to
+    // 'release-2.0' by computeAutoBranchName) rather than a bare word like 'develop': a bare
+    // 'develop' base would make the auto branch name 'develop/<slug>-<id>', which real git
+    // rejects with a D/F ref conflict (`refs/heads/develop` already exists as a leaf ref, so
+    // `refs/heads/develop/<slug>-<id>` cannot be created under it) - a fixture artifact of
+    // this real-git test file, unrelated to the wiring under test.
+    const repo = tempRepoPath('explicit-namespaced');
+    initRepo(repo, 'main');
+    commit(repo, 'init');
+    run(repo, ['checkout', '-b', 'release/2.0']);
+    run(repo, ['checkout', 'main']);
+
+    const worktreeManager = new WorktreeManager(repo);
+    const task = makeTask({ id: 'task-mmmmmmmm', base_branch: 'release/2.0' });
+    const result = await worktreeManager.ensureWorktree(task, baseGitConfig({ defaultBaseBranch: 'main' }));
+
+    expect(result).not.toBeNull();
+    const configuredBase = run(result!.worktreePath, ['config', 'kangentic.baseBranch']).trim();
+    expect(configuredBase).toBe('release/2.0');
+    expect(result!.branchName.startsWith('release-2.0/')).toBe(true);
+  });
+
   it('throws a written error naming the branch when an explicit per-task base branch does not exist', async () => {
     const repo = tempRepoPath('explicit-missing');
     initRepo(repo, 'main');
@@ -152,6 +185,12 @@ describe('WorktreeManager.ensureWorktree - base branch resolution', () => {
       .rejects.toThrow(/base branch 'release-2\.0' does not exist/);
   });
 
+  // Explicit 20s timeout (default is 5s): this test does TWO full `ensureWorktree` calls
+  // (each shelling out to real git for fetch/worktree-add/sparse-checkout) plus a
+  // `removeWorktree` retry loop in between, roughly 3x the git work of any other test in
+  // this file. Observed to intermittently exceed the 5s default under CPU/disk contention
+  // (e.g. running alongside other real-git-spawning suites) even though it is well under
+  // 1s in isolation - a timing flake from real subprocess contention, not a logic issue.
   it('reproduces the identical worktree path on a Done round-trip after a default-chain substitution (master-only repo)', async () => {
     // The transcript-loss failure mode createWorktree's own comments care most about:
     // Claude keys its transcript by the cwd, so a substituted base (master for an
@@ -187,7 +226,7 @@ describe('WorktreeManager.ensureWorktree - base branch resolution', () => {
     expect(second).not.toBeNull();
     expect(second!.worktreePath).toBe(first!.worktreePath);
     expect(second!.branchName).toBe(first!.branchName);
-  });
+  }, 20000);
 
   it('throws and lists the repo\'s real branches when the default chain is fully exhausted', async () => {
     const repo = tempRepoPath('chain-exhausted');
@@ -317,6 +356,24 @@ describe('resolveWorktreeBase - candidate order', () => {
     if (resolution.kind === 'unresolvable') {
       expect(resolution.explicit).toBe(true);
       expect(resolution.attempted).toEqual(['main']);
+    }
+  });
+
+  it('treats an empty-string task base branch as "not set" (falls through to the default chain, not an explicit empty candidate)', async () => {
+    // `WorktreeManager.ensureWorktree` passes `task.base_branch ?? null` - a `??`, not a
+    // `||` - so an empty string (as opposed to null/undefined) survives that line unchanged.
+    // resolveWorktreeBase is the seam that must still catch it: `taskBaseBranch?.trim() ||
+    // null` collapses '' to null internally, so this stays a non-explicit default-chain
+    // resolution instead of an explicit, guaranteed-unresolvable '' candidate.
+    const repo = tempRepoPath('empty-string-base');
+    initRepo(repo, 'master');
+    commit(repo, 'init');
+
+    const resolution = await resolveWorktreeBase(repo, '', 'main');
+
+    expect(resolution).toMatchObject({ kind: 'resolved', baseBranch: 'master' });
+    if (resolution.kind === 'resolved') {
+      expect(resolution.substitutedFor).toBe('main');
     }
   });
 
