@@ -32,7 +32,17 @@ vi.mock('node:fs', () => ({
 
 vi.mock('node:child_process', () => ({
   exec: vi.fn(), // required by transitive import of exec-version
-  execFile: vi.fn(), // required by transitive import of claude-detector
+  // MUST invoke its callback. git-checks promisifies execFile (`hasCommits`), and
+  // `ensureTaskBranchCheckout` awaits it before doing any branch work - a bare `vi.fn()`
+  // never settles that promise, so every test reaching it hangs until the 5s timeout
+  // rather than failing with a readable assertion. Resolving empty means "this repo has
+  // commits", which is what every test below assumes.
+  execFile: vi.fn((...args: unknown[]) => {
+    const callback = args.find((arg) => typeof arg === 'function') as
+      | ((error: Error | null, result: { stdout: string; stderr: string }) => void)
+      | undefined;
+    callback?.(null, { stdout: '', stderr: '' });
+  }),
   execFileSync: vi.fn(),
 }));
 
