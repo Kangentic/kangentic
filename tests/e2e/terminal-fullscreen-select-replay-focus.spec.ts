@@ -217,9 +217,14 @@ test.describe('Fullscreen TUI select prompt - input/focus survives a scrollback 
     await page.waitForTimeout(FLUSH_SETTLE_MARGIN_MS);
 
     // Wait for the mock's initial fullscreen frame: option 0 highlighted.
+    // 30000 (not the suite's default 20000 CI-slow budget): this depends on
+    // mock-claude's spawn landing and its first PTY chunk surviving the
+    // PtyBufferManager flush under CI's contended, sharded xvfb runners -
+    // the same "compound, multi-hop" class as the launch-overlay wait below,
+    // and matches session-resume.spec.ts's 30000 for that class of wait.
     await expect
       .poll(() => scrollbackForTask(page, taskId), {
-        timeout: 15000,
+        timeout: 30000,
         message: 'Expected the fullscreen select prompt to render with option 1 highlighted',
       })
       .toContain(HIGHLIGHT_FIRST);
@@ -240,7 +245,15 @@ test.describe('Fullscreen TUI select prompt - input/focus survives a scrollback 
     // poll above. Wait for it to clear so the click isn't racing it -
     // otherwise Playwright's own click-retry loop absorbs the wait and can
     // exceed its 30s action timeout under CI's slower, contended runners.
-    await dialog.locator('[data-testid="launch-overlay"]').waitFor({ state: 'hidden', timeout: 15000 });
+    // 30000 (not the suite's default 20000 CI-slow budget): terminalReady
+    // (TerminalTab.tsx) flips only after the PTY chunk survives the fixed
+    // 16ms PtyBufferManager flush AND propagates through the session store
+    // into a React re-render of a freshly (re)mounted dialog - a compound,
+    // multi-hop wait, the same class session-resume.spec.ts budgets at
+    // 30000 for post-restart session re-establishment. This is the wait that
+    // timed out at 15000 on CI (contended 8-worker Linux/xvfb shard; passed
+    // in 2.7s locally uncontended), the flake this comment documents fixing.
+    await dialog.locator('[data-testid="launch-overlay"]').waitFor({ state: 'hidden', timeout: 30000 });
     await dialog.locator('.xterm').first().click();
     await expect
       .poll(() => page.evaluate(() => document.activeElement?.className ?? null), {
