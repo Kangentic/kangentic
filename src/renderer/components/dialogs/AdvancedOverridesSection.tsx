@@ -393,7 +393,7 @@ export function AdvancedOverridesSection({
                 on this wrapper rather than on the Combobox - the pencil's own
                 title wins over an ancestor's while hovering the button, so both
                 read correctly with no prop added to a shared control. */}
-            <div title={agentFieldTitle}>
+            <div title={agentFieldTitle} data-testid="task-agent-field">
               <label className="text-xs text-fg-muted mb-1 block">Agent</label>
               <div className="flex items-center gap-2">
                 <Combobox

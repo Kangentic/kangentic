@@ -117,6 +117,15 @@ test.describe('NewTaskDialog Advanced section', () => {
     await expect(agentInput).toBeDisabled();
     await expect(agentInput).toHaveAttribute('placeholder', 'Claude Code');
 
+    // Three-state tooltip on the field wrapper (agentFieldTitle): with exactly
+    // one agent detected this must be the "install another" copy, not the
+    // "none detected yet" copy the zero-agent fixture gets below - a single
+    // fixed string for both non-pickable states would be silently wrong here.
+    await expect(page.locator('[data-testid="task-agent-field"]')).toHaveAttribute(
+      'title',
+      'Only one agent CLI detected - install another to choose',
+    );
+
     // The pencil is the card's only route to Settings > Agent, so it stays live
     // even while the field beside it is locked.
     await expect(page.locator('[data-testid="task-agent-edit"]')).toBeEnabled();
@@ -605,6 +614,12 @@ test.describe('NewTaskDialog Advanced - Agent picker (multi-agent fixture)', () 
     // Two found agents, so this one is interactive (the single-agent fixture
     // renders the same field disabled).
     await expect(agentInput).toBeEnabled();
+    // The interactive branch of the three-state tooltip - distinct copy from
+    // both non-pickable states (single-agent and zero-agent fixtures).
+    await expect(multiPage.locator('[data-testid="task-agent-field"]')).toHaveAttribute(
+      'title',
+      'The agent CLI this task runs on',
+    );
     // The edit pencil rides the same row here as it does when the field is
     // locked - one place on every machine.
     await expect(multiPage.locator('[data-testid="task-agent-edit"]')).toBeEnabled();
@@ -680,6 +695,68 @@ test.describe('NewTaskDialog Advanced - Agent picker (multi-agent fixture)', () 
     const task = taskData.find((t: { title: string }) => t.title === 'No Agent Override Task');
     expect(task).toBeDefined();
     expect(task!.agent_override).toBeNull();
+  });
+});
+
+/**
+ * Zero agents detected: `canPickAgent` is false the same way it is with
+ * exactly one agent installed, but `agentFieldTitle`'s ternary in
+ * AdvancedOverridesSection has a THIRD branch for this case ("no agent CLI
+ * detected yet" vs "only one agent CLI detected"). Own browser instance,
+ * same recipe as the multi-agent block above: the override must be injected
+ * before the mock script runs, and every non-Claude agent already defaults
+ * to `found: false` in the fixture, so overriding Claude alone is enough to
+ * empty `availableAgents`.
+ */
+test.describe('NewTaskDialog Advanced - Agent picker (no agent detected fixture)', () => {
+  let noAgentBrowser: Browser;
+  let noAgentPage: Page;
+
+  test.beforeAll(async () => {
+    await waitForViteReady();
+    noAgentBrowser = await chromium.launch({ headless: true });
+    const context = await noAgentBrowser.newContext({ viewport: { width: 1920, height: 1080 } });
+    noAgentPage = await context.newPage();
+
+    await noAgentPage.addInitScript(() => {
+      (window as Record<string, unknown>).__mockAgentListOverrides = {
+        claude: { found: false, path: null, version: null },
+      };
+    });
+    await noAgentPage.addInitScript({ path: MOCK_SCRIPT });
+    await noAgentPage.goto(VITE_URL);
+    await noAgentPage.waitForLoadState('load');
+    await noAgentPage.waitForSelector('text=Kangentic', { timeout: 15000 });
+    await createProject(noAgentPage, `NoAgent ${Date.now()}`);
+  });
+
+  test.afterAll(async () => {
+    await noAgentBrowser?.close();
+  });
+
+  test('with no agent detected the Agent picker renders locked with "none detected" copy, distinct from the single-agent case', async () => {
+    const column = noAgentPage.locator('[data-swimlane-name="To Do"]');
+    await column.locator('text=Add task').click();
+    await noAgentPage.locator('input[placeholder="Task title"]').waitFor({ state: 'visible' });
+    await noAgentPage.locator('[data-testid="task-advanced-toggle"]').click();
+
+    // Same disabled treatment as the single-agent fixture (nothing to pick
+    // between either way), but the copy must differ - this is the state the
+    // single fixed "install another" string would silently mislabel.
+    const agentInput = noAgentPage.locator('input[data-testid="task-agent-override"]');
+    await expect(agentInput).toBeVisible();
+    await expect(agentInput).toBeDisabled();
+    await expect(noAgentPage.locator('[data-testid="task-agent-field"]')).toHaveAttribute(
+      'title',
+      'No agent CLI detected yet',
+    );
+
+    // The pencil is still the only route to Settings > Agent, so it stays
+    // live even with nothing installed - same as the single-agent case.
+    await expect(noAgentPage.locator('[data-testid="task-agent-edit"]')).toBeEnabled();
+
+    await noAgentPage.keyboard.press('Escape');
+    await noAgentPage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
   });
 });
 
