@@ -50,6 +50,27 @@ async function createProjectKeepingChecklist(page: Page, name: string): Promise<
   await waitForBoard(page);
 }
 
+/**
+ * Press Escape until the checklist comes back.
+ *
+ * A dialog is in the DOM (and so passes `toBeVisible`) one commit BEFORE React runs the
+ * passive effect that attaches its document keydown listener, so a single Escape can land in
+ * that gap and be dropped - reliably so on a loaded CI runner, where it stops being a flake
+ * and just fails.
+ *
+ * Each round CHECKS FIRST and only presses if the checklist is still absent. That ordering is
+ * the point: Escape is idempotent while the dialog is open, but once the checklist is back an
+ * extra press would dismiss it and fail the very thing being asserted.
+ */
+async function pressEscapeUntilChecklistReturns(page: Page): Promise<void> {
+  const checklist = page.locator('[data-testid="onboarding-checklist"]');
+  await expect.poll(async () => {
+    if (await checklist.count() > 0) return true;
+    await page.keyboard.press('Escape');
+    return await checklist.count() > 0;
+  }, { timeout: 10000 }).toBe(true);
+}
+
 /** Force a board-store resync after mutating the mock's data directly (the mock has no push). */
 async function resyncBoard(page: Page): Promise<void> {
   await page.evaluate(() => {
@@ -318,9 +339,9 @@ test.describe('Onboarding checklist', () => {
     await expect(page.locator('[data-testid="board-manager-dialog"]')).toBeVisible({ timeout: 5000 });
     await expect(page.locator('[data-testid="onboarding-checklist"]')).toBeHidden();
 
-    await page.keyboard.press('Escape');
+    await pressEscapeUntilChecklistReturns(page);
 
-    await expect(page.locator('[data-testid="onboarding-checklist"]')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('[data-testid="onboarding-checklist"]')).toBeVisible();
   });
 
   test('step 5 rings the task card once one is running', async () => {
@@ -478,9 +499,9 @@ test.describe('Onboarding checklist', () => {
     await page.locator('[data-testid="agent-permission-mode-option-plan"]').click();
     await page.keyboard.press('Escape');
     await expect(page.locator('[data-testid="board-manager-dialog"]')).toBeVisible({ timeout: 5000 });
-    await page.keyboard.press('Escape');
+    await pressEscapeUntilChecklistReturns(page);
 
-    await expect(page.locator('[data-testid="onboarding-checklist"]')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('[data-testid="onboarding-checklist"]')).toBeVisible();
     await expect(page.locator('[data-testid="onboarding-progress"]')).toHaveText('1 of 5 done');
   });
 
@@ -535,9 +556,9 @@ test.describe('Onboarding checklist', () => {
     await page.locator('[data-testid="onboarding-step-boardShaped"]').click();
     await expect(page.locator('[data-testid="board-manager-dialog"]')).toBeVisible({ timeout: 5000 });
 
-    await page.keyboard.press('Escape');
+    await pressEscapeUntilChecklistReturns(page);
 
-    await expect(page.locator('[data-testid="onboarding-checklist"]')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('[data-testid="onboarding-checklist"]')).toBeVisible();
     await expect(page.locator('[data-testid="onboarding-progress"]')).toHaveText('0 of 5 done');
   });
 
@@ -560,9 +581,9 @@ test.describe('Onboarding checklist', () => {
     // Pressing Escape before that would race the bug either way.
     await expect(page.locator('[data-testid="walkthrough-ring"]')).toBeVisible({ timeout: 5000 });
 
-    await page.keyboard.press('Escape');
+    await pressEscapeUntilChecklistReturns(page);
 
-    await expect(page.locator('[data-testid="onboarding-checklist"]')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('[data-testid="onboarding-checklist"]')).toBeVisible();
     await expect(page.locator('[data-testid="onboarding-progress"]')).toHaveText('0 of 5 done');
   });
 });
