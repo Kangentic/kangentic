@@ -159,6 +159,30 @@ export function buildHooks(
         extractToolId(['tool_use_id']),
         extractToolId(['tool_use_id'], { nested: 'tool_response' }),
         extractDetail(['shellId', 'shell_id', 'backgroundTaskId', 'bash_id'], { nested: 'tool_response' }),
+        // `Monitor` is a background-wait tool with the same lifecycle shape as
+        // a backgrounded Bash: PreToolUse fires, the tool returns a handle in
+        // ~300ms, PostToolUse fires, and the real wait continues for MINUTES
+        // (up to its `timeoutMs`). Untracked, the whole wait reads as idle -
+        // the board says "needs you" while the agent is still working.
+        //
+        // Its id field is `taskId` (`{taskId, timeoutMs, persistent}`), which
+        // matches none of the four candidates above. `taskId` is generic
+        // enough that a tool-blind extraction would repeat the Agent/Task
+        // mis-map recorded at the top of this comment, so it is scoped to
+        // Monitor.
+        //
+        // ORDER is load-bearing in both directions. It sits AFTER the shell-id
+        // extractor and still fires because extractDetail is
+        // first-extraction-wins and that extractor sources ONLY tool_response
+        // shell-id fields, which Monitor's response never carries - not
+        // because Monitor happens to be listed second. It sits BEFORE
+        // setTypeWhenDetailMatches, which classifies on the resolved detail.
+        //
+        // Monitor holders drain via the transcript tailer
+        // (background-shell-transcript.ts), which covers all three of its
+        // terminal shapes: `completed` (stream ended), `stopped`, and the
+        // status-less timeout marker.
+        extractDetail(['taskId'], { nested: 'tool_response', whenTool: 'Monitor' }),
         setTypeWhenDetailMatches('^[\\w-]{1,64}$', EventType.BackgroundShellStart)) }] },
     ],
     [H.PostToolUseFailure]: [

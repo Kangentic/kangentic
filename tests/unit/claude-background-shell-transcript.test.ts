@@ -295,4 +295,194 @@ describe('reportTerminatedBackgroundShells', () => {
 
     expect(result).toEqual(['bvqiw3a6s']);
   });
+
+  // --- Monitor holders and block scoping -------------------------------
+  //
+  // `Monitor` shares this notification wrapper, this id space, and the same
+  // tasks/<id>.output store with background shells, so it drains through the
+  // same resolver. It differs in two ways that these tests pin:
+  //   1. It emits NON-terminal notifications (one per event) while it waits.
+  //      Background shells never did, which is why the original whole-text
+  //      regex could get away with spanning line boundaries.
+  //   2. Its timeout is terminal but carries NO <status> element.
+
+  /** A Monitor progress delivery: terminal wrapper shape, non-terminal meaning. */
+  function monitorEventLine(taskId: string, eventText: string): string {
+    const content =
+      `<task-notification>\n<task-id>${taskId}</task-id>\n` +
+      `<summary>Monitor event: "Wait for the rig to come up"</summary>\n` +
+      `<event>${eventText}</event>\n</task-notification>`;
+    return JSON.stringify({
+      type: 'user',
+      message: { role: 'user', content },
+      sessionId: agentSessionId,
+      uuid: 'c1d2e3f4-5a6b-4c7d-8e9f-0a1b2c3d4e5f',
+      timestamp: '2026-07-27T16:39:34.074Z',
+    });
+  }
+
+  it('does not let a non-terminal block\'s task-id pair with a LATER block\'s status (cross-block bleed)', () => {
+    // THE BUG: the resolver scanned the whole tailed text with one lazy
+    // regex, so `<task-notification> ... <task-id>A ... <status>` could span
+    // the JSONL line boundary and bind A's id to a DIFFERENT block's terminal
+    // status. Latent while only background shells wrote here (they emit no
+    // non-terminal notification); Monitor emits one per event, making it
+    // reachable. Red before the block-scoping fix: returns the live Monitor's
+    // id and misses the shell that actually ended.
+    fs.writeFileSync(transcriptPath, '');
+    reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds: ['bmon1live', 'bshellaaa'] });
+
+    fs.appendFileSync(
+      transcriptPath,
+      `${monitorEventLine('bmon1live', '[metro] Waiting on http://localhost:8081')}\n${terminationLine('bshellaaa')}\n`,
+    );
+    const result = reportTerminatedBackgroundShells({
+      cwd,
+      agentSessionId,
+      shellIds: ['bmon1live', 'bshellaaa'],
+    });
+
+    expect(result).toEqual(['bshellaaa']);
+  });
+
+  it('never drains on a non-terminal Monitor event delivery alone', () => {
+    fs.writeFileSync(transcriptPath, '');
+    reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds: ['bmon1live'] });
+
+    fs.appendFileSync(transcriptPath, `${monitorEventLine('bmon1live', '[metro] Android Bundled 10123ms')}\n`);
+    const result = reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds: ['bmon1live'] });
+
+    expect(result).toEqual([]);
+  });
+
+  it('drains a Monitor that timed out, whose terminal block carries no <status> at all', () => {
+    // Monitor's timeout notification reuses the progress shape - <task-id> +
+    // <summary> + <event> - and its ONLY terminal marker is the bracketed
+    // phrase inside <event>. The event text below is captured verbatim from a
+    // real transcript, em-dash included: it is recorded data, not authored
+    // punctuation, and it proves the resolver's prefix match survives the real
+    // suffix rather than only a trimmed stand-in.
+    fs.writeFileSync(transcriptPath, '');
+    reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds: ['bunv416j8'] });
+
+    fs.appendFileSync(
+      transcriptPath,
+      `${monitorEventLine('bunv416j8', '[Monitor timed out — re-arm if needed.]')}\n`,
+    );
+    const result = reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds: ['bunv416j8'] });
+
+    expect(result).toEqual(['bunv416j8']);
+  });
+
+  it('treats status "stopped" as terminal', () => {
+    // Emitted when a Monitor or shell is stopped from the UI. It was absent
+    // from the terminal-status set, so those holders were never drained here.
+    fs.writeFileSync(transcriptPath, '');
+    reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds: ['bvqiw3a6s'] });
+
+    fs.appendFileSync(transcriptPath, `${terminationLine('bvqiw3a6s', 'stopped')}\n`);
+    const result = reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds: ['bvqiw3a6s'] });
+
+    expect(result).toEqual(['bvqiw3a6s']);
+  });
+
+  it('still refuses a non-terminal status, so a progress notification cannot drain a live holder', () => {
+    fs.writeFileSync(transcriptPath, '');
+    reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds: ['bvqiw3a6s'] });
+
+    fs.appendFileSync(transcriptPath, `${terminationLine('bvqiw3a6s', 'running')}\n`);
+    const result = reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds: ['bvqiw3a6s'] });
+
+    expect(result).toEqual([]);
+  });
+
+  it('drains EVERY tracked id named by one orphan-scan block, ignoring its internal marker id', () => {
+    // A new session emits a single block listing every holder the previous
+    // session left without a completion record, plus an `__orphan_summary__`
+    // scan marker. Only the first id was ever captured; the rest stayed
+    // pinned. The marker is filtered structurally - it is not in the tracked
+    // set - so returning all ids is safe.
+    const content =
+      `<task-notification>\n<task-id>b76wnhzwj</task-id>\n<task-id>bunv416j8</task-id>\n` +
+      `<task-id>__orphan_summary__</task-id>\n<status>stopped</status>\n` +
+      `<summary>2 background shell command task(s) from the previous session have no completion record.</summary>\n` +
+      `</task-notification>`;
+    const line = JSON.stringify({
+      type: 'user',
+      message: { role: 'user', content },
+      sessionId: agentSessionId,
+      uuid: 'd4e5f6a7-8b9c-4d0e-1f2a-3b4c5d6e7f80',
+      timestamp: '2026-07-27T18:02:53.607Z',
+    });
+
+    fs.writeFileSync(transcriptPath, '');
+    reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds: ['b76wnhzwj', 'bunv416j8'] });
+
+    fs.appendFileSync(transcriptPath, `${line}\n`);
+    const result = reportTerminatedBackgroundShells({
+      cwd,
+      agentSessionId,
+      shellIds: ['b76wnhzwj', 'bunv416j8'],
+    });
+
+    expect(result.sort()).toEqual(['b76wnhzwj', 'bunv416j8']);
+  });
+
+  it('bounds a block at the next opening tag when a wrapper is left unclosed', () => {
+    // Captured transcripts do contain back-to-back wrappers where the first is
+    // not closed. A plain lazy open-to-close match merges the two into one
+    // block, which would let the live Monitor's id inherit the shell's status.
+    fs.writeFileSync(transcriptPath, '');
+    reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds: ['bmon1live', 'bshellaaa'] });
+
+    const unclosedThenTerminal =
+      `<task-notification>\n<task-id>bmon1live</task-id>\n<event>[rig] still booting</event>\n` +
+      `<task-notification>\n<task-id>bshellaaa</task-id>\n<status>completed</status>\n</task-notification>`;
+    const line = JSON.stringify({
+      type: 'user',
+      message: { role: 'user', content: unclosedThenTerminal },
+      sessionId: agentSessionId,
+      uuid: 'e5f6a7b8-9c0d-4e1f-2a3b-4c5d6e7f8091',
+      timestamp: '2026-07-27T16:40:03.404Z',
+    });
+
+    fs.appendFileSync(transcriptPath, `${line}\n`);
+    const result = reportTerminatedBackgroundShells({
+      cwd,
+      agentSessionId,
+      shellIds: ['bmon1live', 'bshellaaa'],
+    });
+
+    expect(result).toEqual(['bshellaaa']);
+  });
+
+  it('requires the "[Monitor timed out" phrase to sit inside an <event> element - a live Monitor whose block merely quotes the phrase elsewhere is never drained', () => {
+    // The marker's whole purpose (comment on MONITOR_TIMEOUT_MARKER) is to
+    // stop a monitored log line that happens to quote the phrase from
+    // draining a LIVE holder. Here the phrase sits inside <summary>, quoting
+    // something the rig itself printed, while the block's own <event> carries
+    // unrelated live progress text - and there is no terminal <status>
+    // anywhere. Red if the <event> requirement is dropped from
+    // MONITOR_TIMEOUT_MARKER: the bare-phrase regex would match the
+    // <summary> text and drain a Monitor that is still running.
+    fs.writeFileSync(transcriptPath, '');
+    reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds: ['bmon1live'] });
+
+    const content =
+      `<task-notification>\n<task-id>bmon1live</task-id>\n` +
+      `<summary>Log line quoted verbatim from the rig: "[Monitor timed out at 09:14 UTC]"</summary>\n` +
+      `<event>[rig] still booting, waiting for health check</event>\n</task-notification>`;
+    const line = JSON.stringify({
+      type: 'user',
+      message: { role: 'user', content },
+      sessionId: agentSessionId,
+      uuid: 'f1a2b3c4-d5e6-4f70-8192-a3b4c5d6e7f8',
+      timestamp: '2026-07-27T16:41:12.000Z',
+    });
+
+    fs.appendFileSync(transcriptPath, `${line}\n`);
+    const result = reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds: ['bmon1live'] });
+
+    expect(result).toEqual([]);
+  });
 });

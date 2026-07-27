@@ -61,7 +61,21 @@ describe('hook-manager', () => {
         extractDetail(['shellId', 'shell_id', 'backgroundTaskId', 'bash_id'], { nested: 'tool_response' }),
       );
       expect(hooks.PostToolUse[0].hooks[0].command).toContain(
+        extractDetail(['taskId'], { nested: 'tool_response', whenTool: 'Monitor' }),
+      );
+      expect(hooks.PostToolUse[0].hooks[0].command).toContain(
         setTypeWhenDetailMatches('^[\\w-]{1,64}$', EventType.BackgroundShellStart),
+      );
+
+      // ORDER: both extractDetail directives must precede the id-shape remap,
+      // which classifies on the ALREADY-RESOLVED detail. A Monitor extraction
+      // placed after it would resolve a detail nothing ever reads, and the
+      // Monitor's wait would go untracked exactly as before the fix.
+      const postToolUseCommand = hooks.PostToolUse[0].hooks[0].command;
+      expect(
+        postToolUseCommand.indexOf(extractDetail(['taskId'], { nested: 'tool_response', whenTool: 'Monitor' })),
+      ).toBeLessThan(
+        postToolUseCommand.indexOf(setTypeWhenDetailMatches('^[\\w-]{1,64}$', EventType.BackgroundShellStart)),
       );
 
       // PostToolUseFailure: tool_end with a setTypeWhen directive for interrupts

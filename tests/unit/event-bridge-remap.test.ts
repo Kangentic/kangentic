@@ -27,6 +27,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { EventType } from '../../src/shared/types';
+import { buildHooks } from '../../src/main/agent/adapters/claude';
 import { extractTool, extractToolId, extractDetail, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches } from '../../src/main/agent/shared/directive-builders';
 
 const BRIDGE = path.resolve(__dirname, '../../src/main/agent/event-bridge.js');
@@ -63,6 +64,10 @@ afterEach(() => {
  *  same typed builders hook-manager.ts uses). */
 const PRETOOLUSE_DIRECTIVES = [
   extractTool('tool_name'),
+  // Correlation id for matching this start to its PostToolUse end. Top-level
+  // first (canonical Claude shape), nested fallback for CLI-version skew.
+  extractToolId(['tool_use_id']),
+  extractToolId(['tool_use_id'], { nested: 'tool_input' }),
   // shell_id first so KillBash + future shell-aware events surface
   // their identity. Falls through to file_path/command/etc otherwise.
   extractDetail(['shell_id', 'file_path', 'command', 'query', 'pattern', 'url', 'description'], { nested: 'tool_input' }),
@@ -82,8 +87,65 @@ const POSTTOOLUSE_DIRECTIVES = [
   extractToolId(['tool_use_id']),
   extractToolId(['tool_use_id'], { nested: 'tool_response' }),
   extractDetail(['shellId', 'shell_id', 'backgroundTaskId', 'bash_id'], { nested: 'tool_response' }),
+  // Monitor is a background-wait tool whose id field is `taskId`. Scoped to
+  // Monitor because `taskId` is generic enough that a tool-blind extraction
+  // would repeat the Agent-completion mis-map this file's T1 case guards.
+  extractDetail(['taskId'], { nested: 'tool_response', whenTool: 'Monitor' }),
   setTypeWhenDetailMatches('^[\\w-]{1,64}$', EventType.BackgroundShellStart),
 ];
+
+/**
+ * The directive tokens of a bridge command. `buildBridgeCommand` emits
+ * `node "<bridge>" "<events>" <eventType> <directive>...`, and the mock paths
+ * below carry no spaces, so everything past the first four tokens is a
+ * directive in wire order.
+ */
+function directivesOf(command: string): string[] {
+  return command.split(' ').slice(4);
+}
+
+describe('directive copies stay in sync with the real hook wiring', () => {
+  // The two directive arrays above are hand-copied from hook-manager.ts. That
+  // seam is the reason this whole suite can go green while exercising a stale
+  // directive list, so assert the copies against what buildHooks actually
+  // emits.
+  //
+  // The comparison is EXACT (ordered equality), not containment. A per-directive
+  // `toContain` loop only catches a directive that was removed or altered
+  // upstream; it is blind to one ADDED upstream and never mirrored here - which
+  // is precisely the change that introduced the Monitor extractor. Under
+  // containment the copy could silently drift into a stale subset while every
+  // T-numbered case below kept passing against it. Equality also pins ORDER,
+  // which is load-bearing: extractDetail is first-extraction-wins, and the
+  // extractors must precede the setTypeWhenDetailMatches that classifies on the
+  // resolved detail.
+  const realHooks = buildHooks('/mock/event-bridge.js', '/mock/events.jsonl', {});
+
+  it('PreToolUse copy matches the shipped directive set exactly, in order', () => {
+    const command = realHooks.PreToolUse[realHooks.PreToolUse.length - 1].hooks[0].command;
+    expect(directivesOf(command)).toEqual(PRETOOLUSE_DIRECTIVES);
+  });
+
+  it('PostToolUse copy matches the shipped directive set exactly, in order', () => {
+    const command = realHooks.PostToolUse[realHooks.PostToolUse.length - 1].hooks[0].command;
+    expect(directivesOf(command)).toEqual(POSTTOOLUSE_DIRECTIVES);
+  });
+
+  it('a tool-scoped extraction encodes as its own kind, so a stale bridge no-ops instead of extracting tool-blindly', () => {
+    // event-bridge.js is an unbundled external script and has shipped stale
+    // before. An older copy IGNORES an unknown payload field but REJECTS an
+    // unknown kind via its `default` arm. Encoding the scoped form as a plain
+    // `extractDetail` would therefore make a stale bridge extract `taskId` for
+    // EVERY tool - silently reviving the defect commit 4f0ec66f fixed. The
+    // separate kind turns that corruption into a harmless no-op.
+    const kindOf = (directive: string): string => directive.slice(0, directive.indexOf(':'));
+
+    expect(kindOf(extractDetail(['taskId'], { nested: 'tool_response', whenTool: 'Monitor' })))
+      .toBe('extractDetailWhenTool');
+    // Unscoped call sites are unchanged, so no existing directive is affected.
+    expect(kindOf(extractDetail(['shellId'], { nested: 'tool_response' }))).toBe('extractDetail');
+  });
+});
 
 describe('event-bridge background-shell events (PreToolUse)', () => {
   it('retypes tool_start to background_shell_start when tool_input.run_in_background is true', () => {
@@ -309,6 +371,112 @@ describe('event-bridge tool completions (PostToolUse)', () => {
     expect(emitted.tool).toBe('Bash');
     expect(emitted.detail).toBe('bjosycg6w');
     expect(emitted.toolId).toBe('toolu_01JLj1ZAx1vs4d1qbAP3J7t1');
+  });
+
+  it('T7: a Monitor launch promotes via tool_response.taskId, so its wait is a tracked hold', () => {
+    // Empirical shape from session 63927ff2 (transcript line 829): Monitor
+    // returns a handle in ~300ms and PostToolUse fires immediately, while the
+    // real wait continues for up to timeoutMs. Untracked, the whole wait read
+    // as idle - the board said "needs you" while the agent was still working.
+    // The id field is `taskId`, which matches none of the shell-id candidates.
+    const stdinContent = JSON.stringify({
+      tool_name: 'Monitor',
+      tool_input: { command: 'until grep -q "ready" ./rig.log; do sleep 2; done' },
+      tool_response: { taskId: 'bunv416j8', timeoutMs: 300000, persistent: false },
+      tool_use_id: 'toolu_015TCG837RMCTi9aoGaXNSP8',
+    });
+
+    runBridge(stdinContent, [outputFile, 'tool_end', ...POSTTOOLUSE_DIRECTIVES]);
+
+    const emitted = readEvent();
+    expect(emitted.type).toBe('background_shell_start');
+    expect(emitted.tool).toBe('Monitor');
+    expect(emitted.detail).toBe('bunv416j8');
+    // The toolId is what lets the engine close Monitor's still-pending
+    // foreground tool as it converts to a background holder.
+    expect(emitted.toolId).toBe('toolu_015TCG837RMCTi9aoGaXNSP8');
+  });
+
+  it('T8: a non-Monitor tool carrying an incidental tool_response.taskId stays tool_end', () => {
+    // The reason the taskId extraction is tool-scoped. `taskId` is a generic
+    // field name; a tool-blind extraction here would feed the id-shape remap
+    // and re-create the Agent-completion defect T1 guards, inflating bg-shell
+    // counts and pinning the session thinking.
+    const stdinContent = JSON.stringify({
+      tool_name: 'Agent',
+      tool_input: { description: 'Explore prompt template code', subagent_type: 'Explore' },
+      tool_response: { taskId: 'a1b2c3d4e', status: 'completed', content: '...summary...' },
+      tool_use_id: 'toolu_agent_taskid_1',
+    });
+
+    runBridge(stdinContent, [outputFile, 'tool_end', ...POSTTOOLUSE_DIRECTIVES]);
+
+    const emitted = readEvent();
+    expect(emitted.type).toBe('tool_end');
+    expect(emitted.detail).toBeUndefined();
+  });
+
+  it('T9: a Monitor whose tool_response has no taskId emits a plain tool_end, never a detail-less shell start', () => {
+    const stdinContent = JSON.stringify({
+      tool_name: 'Monitor',
+      tool_input: { command: 'until grep -q "ready" ./rig.log; do sleep 2; done' },
+      tool_response: { error: 'Monitor could not start' },
+      tool_use_id: 'toolu_monitor_nostart_1',
+    });
+
+    runBridge(stdinContent, [outputFile, 'tool_end', ...POSTTOOLUSE_DIRECTIVES]);
+
+    const emitted = readEvent();
+    expect(emitted.type).toBe('tool_end');
+    expect(emitted.detail).toBeUndefined();
+  });
+
+  it('T10: a Monitor tool_response carrying BOTH shellId and a different taskId resolves via the shell-id extractor (list-position tie-break is load-bearing)', () => {
+    // extractDetail is first-extraction-wins BY LIST POSITION: once one
+    // extractDetail directive sets event.detail, every later one (including
+    // the Monitor-scoped extractor) is a no-op. hook-manager.ts's comment on
+    // this chain is explicit that the shell-id extractor firing before the
+    // Monitor extractor is NOT what makes T7 safe day-to-day - a real
+    // Monitor tool_response never carries a shellId-shaped field, so the two
+    // extractors don't normally compete. This payload is synthetic
+    // specifically to force that collision and pin which one wins WHEN they
+    // do: list order is the tie-break. If the two extractDetail calls were
+    // ever swapped, this same payload would silently resolve to the taskId
+    // instead of the shellId.
+    const stdinContent = JSON.stringify({
+      tool_name: 'Monitor',
+      tool_input: { command: 'until grep -q "ready" ./rig.log; do sleep 2; done' },
+      tool_response: { shellId: 'bshellwin1x', taskId: 'btaskloser2x', timeoutMs: 300000 },
+      tool_use_id: 'toolu_monitor_dualid_1',
+    });
+
+    runBridge(stdinContent, [outputFile, 'tool_end', ...POSTTOOLUSE_DIRECTIVES]);
+
+    const emitted = readEvent();
+    // The type assertion documents the full emitted shape (matching T7's
+    // style) but does not itself discriminate the tie-break: 'btaskloser2x'
+    // also matches the shell-id-shaped pattern, so type stays
+    // background_shell_start either way. `detail` below is the assertion
+    // that actually distinguishes the two orders.
+    expect(emitted.type).toBe('background_shell_start');
+    expect(emitted.detail).toBe('bshellwin1x');
+  });
+
+  it('does not crash on empty stdin, even with the Monitor whenTool-scoped extractor live in the directive chain', () => {
+    // A hook can fire with empty or malformed (non-JSON) stdin - ctx stays
+    // null either way (see event-bridge.js's try/catch around JSON.parse).
+    // The Monitor extractor's whenTool guard reads ctx.tool_name; without the
+    // `!ctx ||` short-circuit that read throws on a null ctx, inside the
+    // directive loop, crashing the bridge before the event is ever written.
+    // This is now live on EVERY real PostToolUse invocation because the
+    // Monitor extractor is unconditionally in the shipped directive chain.
+    runBridge('', [outputFile, 'tool_end', ...POSTTOOLUSE_DIRECTIVES]);
+
+    const emitted = readEvent();
+    expect(emitted.type).toBe('tool_end');
+    expect(emitted.tool).toBeUndefined();
+    expect(emitted.toolId).toBeUndefined();
+    expect(emitted.detail).toBeUndefined();
   });
 
   it('captures the tool_use_id correlation from tool_response on PostToolUse', () => {

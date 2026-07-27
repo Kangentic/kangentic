@@ -2,15 +2,22 @@ import fs from 'node:fs';
 import { locateClaudeTranscriptFile } from './transcript-parser';
 
 /**
- * Definitive reclaim for a named background shell whose exit was never
+ * Definitive reclaim for a named background holder whose exit was never
  * hooked. Claude injects a `<task-notification>` user message when a
- * backgrounded shell reaches a terminal state, but delivers it as a
- * `queued_command` ATTACHMENT rather than a real user turn - so it never
- * fires the `UserPromptSubmit` hook (confirmed empirically against a real
- * incident transcript, task #386). The notification IS still appended to
- * Claude's durable session JSONL, so tailing that file for a TRACKED
- * shell's terminal notification is the reliable signal a hook drain can
- * never provide.
+ * backgrounded shell - or a `Monitor` task, which shares the same id space,
+ * the same `tasks/<id>.output` store, and the same notification wrapper -
+ * reaches a terminal state.
+ *
+ * When the CLI is MID-TURN it delivers that notification as a
+ * `queued_command` ATTACHMENT rather than a real user turn, so it fires no
+ * `UserPromptSubmit` hook (confirmed empirically against a real incident
+ * transcript, task #386). Mid-turn is exactly when a drain matters, so a hook
+ * drain is unreliable by construction. (It does arrive as a genuine
+ * `promptSource: "system"` user turn when the CLI is idle at delivery time -
+ * that is the case a hook would have caught, and the one that never needed
+ * catching.) The notification IS always appended to Claude's durable session
+ * JSONL, so tailing that file for a TRACKED holder's terminal notification is
+ * the reliable signal a hook drain can never provide.
  *
  * Matching captured ids against the caller's own tracked `shellIds` is what
  * makes an unrelated notification (a subagent/Task completion, delivered as
@@ -22,16 +29,71 @@ import { locateClaudeTranscriptFile } from './transcript-parser';
 const NOTIFICATION_ID_PATTERN = /^[\w-]{1,64}$/;
 
 /**
- * Matches a terminal `<task-notification>` block. Capture group 1 is the
- * `<task-id>`, which for a background shell equals the shell id that opened
- * it. Anchored on the wrapper AND a terminal `<status>` so a future
- * non-terminal (progress) notification never matches. `[\s\S]` spans
- * newlines without needing flags; the block appears JSON-escaped (literal
- * `\n`) inside one JSONL line, which `[\s\S]` also spans since the escape
- * sequence is still two raw characters in the line's text form.
+ * Splits the tailed text into individual `<task-notification>` blocks, so each
+ * one is judged terminal-or-not in ISOLATION. Capture group 1 is a block's
+ * inner text.
+ *
+ * A block ends at the EARLIER of its own closing tag or the next opening tag.
+ * Both halves of that are load-bearing:
+ *
+ *   - Scanning the whole tailed text at once (what this replaced) let a
+ *     NON-terminal block's `<task-id>` pair with a LATER block's `<status>`
+ *     across the JSONL line boundary and drain the wrong tracked shell. That
+ *     was latent only while non-terminal notifications did not exist; Monitor
+ *     emits one per event, so it is now reachable.
+ *   - A plain lazy open-to-close match would merge two neighbouring blocks
+ *     whenever a wrapper is duplicated or left unclosed, which real captured
+ *     transcripts do contain.
+ *
+ * `[\s\S]` spans newlines without needing flags; the block appears
+ * JSON-escaped (literal `\n`) inside one JSONL line, which `[\s\S]` also spans
+ * since the escape sequence is still two raw characters in the line's text
+ * form.
  */
-const TERMINAL_NOTIFICATION_PATTERN =
-  /<task-notification>[\s\S]*?<task-id>([\w-]{1,64})<\/task-id>[\s\S]*?<status>(?:completed|failed|killed|cancelled|aborted)<\/status>/g;
+const NOTIFICATION_BLOCK_PATTERN =
+  /<task-notification>([\s\S]*?)(?=<\/task-notification>|<task-notification>|$)/g;
+
+/**
+ * Every `<task-id>` inside one block. A notification may name SEVERAL: the
+ * orphan-scan block a new session emits for shells the previous one left
+ * behind lists each id plus an `__orphan_summary__:*` marker. Returning all of
+ * them is safe because `reportTerminatedBackgroundShells` filters to the
+ * caller's tracked set, which the marker can never be in.
+ */
+const TASK_ID_PATTERN = /<task-id>([\w-]{1,64})<\/task-id>/g;
+
+/** Any `<status>` element inside one block. */
+const STATUS_PATTERN = /<status>([\w-]{1,32})<\/status>/g;
+
+/**
+ * Terminal `<status>` values: the task is over and its holder may be drained.
+ * `running` is deliberately absent - it is a progress status, not a terminal
+ * one. `stopped` covers a Monitor or shell stopped from the UI and the
+ * orphan-scan notification described above; it was missing here, so those
+ * blocks were silently ignored.
+ */
+const TERMINAL_STATUSES: ReadonlySet<string> = new Set([
+  'completed',
+  'failed',
+  'killed',
+  'cancelled',
+  'aborted',
+  'stopped',
+]);
+
+/**
+ * A Monitor that reaches its `timeoutMs` is terminal but carries NO `<status>`
+ * element at all - this prefix inside `<event>` is its only marker. Monitor's
+ * non-terminal event deliveries use the identical wrapper with an arbitrary
+ * `<event>` payload, so this is the sole thing separating them; requiring the
+ * `<event>` tag keeps a monitored log line that happens to quote the phrase
+ * from draining a live holder.
+ *
+ * Matching the PREFIX rather than the whole sentence is deliberate: the real
+ * marker continues with a U+2014, which `tests/unit/no-em-dashes.test.ts`
+ * forbids anywhere in `src/`.
+ */
+const MONITOR_TIMEOUT_MARKER = /<event>\s*\[Monitor timed out/;
 
 interface TranscriptCursor {
   size: number;
@@ -62,12 +124,25 @@ function splitCompleteLines(buffer: Buffer): { completeLinesText: string; carry:
   };
 }
 
-/** Extract every id captured by a terminal `<task-notification>` in the given text. */
+/** Whether one notification block reports a terminal state. */
+function isTerminalBlock(block: string): boolean {
+  for (const match of block.matchAll(STATUS_PATTERN)) {
+    const status = match[1];
+    if (status !== undefined && TERMINAL_STATUSES.has(status)) return true;
+  }
+  return MONITOR_TIMEOUT_MARKER.test(block);
+}
+
+/** Extract every id named by a TERMINAL `<task-notification>` in the given text. */
 function extractTerminatedIds(text: string): string[] {
   const ids: string[] = [];
-  for (const match of text.matchAll(TERMINAL_NOTIFICATION_PATTERN)) {
-    const id = match[1];
-    if (id !== undefined) ids.push(id);
+  for (const blockMatch of text.matchAll(NOTIFICATION_BLOCK_PATTERN)) {
+    const block = blockMatch[1];
+    if (block === undefined || !isTerminalBlock(block)) continue;
+    for (const idMatch of block.matchAll(TASK_ID_PATTERN)) {
+      const id = idMatch[1];
+      if (id !== undefined) ids.push(id);
+    }
   }
   return ids;
 }

@@ -1,0 +1,7 @@
+{"ts":1785170389980,"type":"session_start"}
+{"ts":1785170390100,"type":"prompt"}
+{"ts":1785170395827,"type":"tool_start","tool":"Bash","toolId":"toolu_bash_relaunch","detail":"adb shell monkey -p com.example.app -c android.intent.category.LAUNCHER 1"}
+{"ts":1785170396495,"type":"tool_end","tool":"Bash","toolId":"toolu_bash_relaunch"}
+{"ts":1785170403109,"type":"tool_start","tool":"Monitor","toolId":"toolu_monitor_probe","detail":"until grep -q \"overseer-probe\" ./tasks/rig.output; do sleep 2; done"}
+{"ts":1785170403394,"type":"background_shell_start","tool":"Monitor","toolId":"toolu_monitor_probe","detail":"bunv416j8"}
+{"ts":1785170407734,"type":"idle"}

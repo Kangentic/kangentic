@@ -21,6 +21,12 @@
  *   extractTool                { field }             -> event.tool = ctx[field]
  *   extractToolId              { fields[], nested? } -> event.toolId = first non-null
  *   extractDetail              { fields[], nested? } -> event.detail = first non-null
+ *   extractDetailWhenTool      { fields[], nested?, whenTool }
+ *                                 -> same as extractDetail, but only when
+ *                                 ctx.tool_name === whenTool. A SEPARATE kind rather
+ *                                 than a flag on extractDetail so a stale copy of this
+ *                                 script rejects it via `default` instead of silently
+ *                                 ignoring the scoping and extracting for every tool.
  *   setDetail                  { value }            -> event.detail = value
  *   setTypeWhen                { whenTool?, nested?:[p,f], field?, equals, to }
  *                                 -> if (no whenTool or ctx.tool_name===whenTool) AND
@@ -137,8 +143,16 @@ process.stdin.on('end', () => {
         if (value !== undefined) event.toolId = value;
         break;
       }
+      // `extractDetailWhenTool` is the tool-scoped form. It is a SEPARATE kind
+      // rather than a flag on `extractDetail` so an older copy of this script
+      // rejects it via the `default` arm instead of silently ignoring the
+      // scoping and extracting for every tool. Both share this body; the guard
+      // is inert without a `whenTool` payload.
+      case 'extractDetailWhenTool':
       case 'extractDetail': {
         if (event.detail !== undefined) break;
+        // Optional tool scoping, same semantics as setTypeWhen's whenTool below.
+        if (payload.whenTool && (!ctx || ctx.tool_name !== payload.whenTool)) break;
         const container = payload.nested ? (ctx && ctx[payload.nested]) : ctx;
         const value = firstNonNull(container, payload.fields);
         if (value !== undefined) event.detail = value;

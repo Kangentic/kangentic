@@ -908,6 +908,76 @@ describe('ActivityEngine replay tests', () => {
     });
   });
 
+  describe('session-025-false-idle-monitor-untracked', () => {
+    // Modeled on the real false-idle incident (kangentic-mobile session
+    // 63927ff2, task #23): the board read IDLE while the Claude CLI's own
+    // footer in the same terminal said a Monitor was still running.
+    //
+    // Monitor is a background-wait tool. PreToolUse fires, the tool returns a
+    // handle in ~300ms, PostToolUse fires, and the real wait continues for up
+    // to its timeoutMs - 300s and 900s in that session. Structurally that is a
+    // backgrounded Bash, but the adapter never classified it as one, because
+    // Monitor's tool_response carries its id as `taskId` and the PostToolUse
+    // remap only recognized shellId / shell_id / backgroundTaskId / bash_id.
+    // So a 282ms foreground tool was all the engine ever saw, and the whole
+    // wait derived idle from turnActive=false, pendingTools=0, bgShells=0.
+    //
+    // This fixture is deliberately a CLEAN single-Monitor stream with no
+    // background shell present. The filed trace also had a live Metro shell
+    // that was drained early by a separate watcher-level defect, so replaying
+    // it verbatim would pin a two-defect interaction and leave a reader unable
+    // to tell which fix this guards.
+    const FIXTURE = 'session-025-false-idle-monitor-untracked.jsonl';
+
+    it('stays thinking for the whole Monitor wait, held by the Monitor task itself', () => {
+      const result = replay(loadFixture(FIXTURE));
+      expect(result.finalActivity).toBe('thinking');
+      expect(result.lastThinkingToIdleTrigger).toBeNull();
+      // The hold is the Monitor task, not a leftover turn or pending tool: the
+      // turn ENDED (Stop fired) and Monitor's foreground tool was closed by
+      // correlation id when it converted to a background holder.
+      expect(result.finalState.turnActive).toBe(false);
+      expect(result.finalState.pendingToolCount).toBe(0);
+      expect(result.finalState.subagentDepth).toBe(0);
+      expect(result.finalState.activeBackgroundShellIds).toEqual(['bunv416j8']);
+      // Named holder, so no anonymous slot was left dangling by the promotion.
+      expect(result.finalState.anonymousBackgroundShellCount).toBe(0);
+      expect(result.unmatchedBgShellEndCompensations).toBe(0);
+    });
+
+    it('false-idles for the entire wait if the Monitor start is dropped (mechanical red-green)', () => {
+      // Removing ONLY the background_shell_start reproduces the pre-fix event
+      // stream exactly: the adapter emitted a plain tool_end there, so the
+      // engine saw a 282ms foreground tool and nothing else.
+      const withoutMonitorHold = loadFixture(FIXTURE).filter(
+        (event) => event.type !== EventType.BackgroundShellStart,
+      );
+      const result = replay(withoutMonitorHold);
+      expect(result.finalActivity).toBe('idle');
+      expect(result.finalState.activeBackgroundShellIds).toEqual([]);
+    });
+
+    it('settles to idle once the Monitor reaches a terminal state (inverse preserved)', () => {
+      // The transcript drain reports the Monitor's terminal notification -
+      // completed, stopped, or timed out - and the watcher turns that into a
+      // background_shell_end for its id. Nothing about this fix keeps a
+      // finished Monitor pinned.
+      const events = loadFixture(FIXTURE);
+      const lastEvent = events[events.length - 1];
+      const result = replay([
+        ...events,
+        {
+          ts: lastEvent.ts + 300_000,
+          type: EventType.BackgroundShellEnd,
+          detail: 'bunv416j8',
+        },
+      ]);
+      expect(result.finalActivity).toBe('idle');
+      expect(result.finalState.activeBackgroundShellIds).toEqual([]);
+      expect(result.unmatchedBgShellEndCompensations).toBe(0);
+    });
+  });
+
   describe('cross-fixture invariants', () => {
     it('all fixtures produce a deterministic outcome (no flakiness)', () => {
       const fixtures = [
@@ -928,6 +998,7 @@ describe('ActivityEngine replay tests', () => {
         'session-018-parallel-subagent-false-idle.jsonl',
         'session-019-service-error-stuck-subagent.jsonl',
         'session-023-false-idle-server-error-retry.jsonl',
+        'session-025-false-idle-monitor-untracked.jsonl',
       ];
       for (const name of fixtures) {
         const events = loadFixture(name);

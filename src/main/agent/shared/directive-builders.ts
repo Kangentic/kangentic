@@ -44,10 +44,32 @@ export function extractToolId(fields: string[], options: { nested?: string } = {
 /**
  * Extract `event.detail` from the first non-null of `fields`, read from the
  * top-level stdin object or - when `nested` is given - from `ctx[nested]`.
+ *
+ * `whenTool` scopes the extraction to a single tool, with the same meaning it
+ * has on `TypeWhenRule`. Use it whenever the source field name is generic
+ * enough that another tool could carry it for an unrelated reason: a
+ * tool-blind extraction feeding a downstream type remap is exactly how every
+ * foreground Agent/Task completion was once mis-mapped to a background-shell
+ * event (commit 4f0ec66f).
  */
-export function extractDetail(fields: string[], options: { nested?: string } = {}): string {
+export function extractDetail(
+  fields: string[],
+  options: { nested?: string; whenTool?: string } = {},
+): string {
   if (fields.length === 0) throw new Error('extractDetail requires at least one field');
-  return encodeDirective('extractDetail', options.nested ? { fields, nested: options.nested } : { fields });
+  const payload: { fields: string[]; nested?: string; whenTool?: string } = { fields };
+  if (options.nested) payload.nested = options.nested;
+  if (options.whenTool) payload.whenTool = options.whenTool;
+  // A tool-scoped extraction encodes as its OWN kind so it FAILS CLOSED
+  // against a stale `event-bridge.js` copy. The bridge is an unbundled
+  // external script (external-scripts-parity.md) and has shipped stale before.
+  // An older bridge silently IGNORES an unknown payload field, so encoding
+  // this as a plain `extractDetail` would make it extract tool-blindly there -
+  // reviving the defect commit 4f0ec66f fixed, now silently and across every
+  // tool. An unknown KIND, by contrast, hits the bridge's `default` arm and is
+  // a logged no-op: the scoped extraction simply does not happen.
+  // Unscoped call sites keep byte-identical output.
+  return encodeDirective(options.whenTool ? 'extractDetailWhenTool' : 'extractDetail', payload);
 }
 
 /** Set `event.detail` to a fixed value (no stdin lookup). */
