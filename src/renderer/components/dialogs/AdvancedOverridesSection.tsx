@@ -217,7 +217,7 @@ export function AdvancedOverridesSection({
           aria-checked={selected}
           onClick={mode === 'profile' ? selectProfileMode : selectOverrideMode}
           data-testid={testId}
-          className="w-full flex items-start gap-2.5 px-3 py-2 text-left cursor-pointer"
+          className="w-full flex items-start gap-2.5 px-4 py-2.5 text-left cursor-pointer"
         >
           <span
             className={`mt-px h-3.5 w-3.5 shrink-0 rounded-full border flex items-center justify-center transition-colors ${
@@ -231,9 +231,19 @@ export function AdvancedOverridesSection({
             <span className="block text-xs text-fg-faint mt-0.5">{description}</span>
           </span>
         </button>
-        {/* pl-9 aligns the body with the card's LABEL, not its dot: px-3 (12) +
-            dot (14) + gap-2.5 (10). */}
-        {selected && <div className="px-3 pb-2.5 pl-9">{body}</div>}
+        {/* pl-10 aligns the body with the card's LABEL, not its dot: the header's
+            px-4 (16) + dot (14) + gap-2.5 (10).
+            The other three sides are the card's frame, and it is deliberately
+            looser than the form's own space-y-3 (12) rhythm: a bordered card
+            holding bordered controls needs more clearance than a bare labelled
+            field does. pt-1.5 (6) against the header's py-2.5 (10) bottom padding
+            puts 16px between the description and the first label, so the body
+            reads as the branch's contents rather than as part of the header
+            block. pr-4 and pb-4 keep the fields off the card's edge - at the
+            previous 12px the bottom-right corner was the tightest point on the
+            whole card, with the body indented 36px on the left but running to
+            within 12px of the border on the right. */}
+        {selected && <div className="pl-10 pr-4 pt-1.5 pb-4">{body}</div>}
       </div>
     );
   };
@@ -317,7 +327,13 @@ export function AdvancedOverridesSection({
             // "for the whole task".
             'Pinned for the whole task, ignoring column settings.',
             'task-advanced-toggle',
-            <div className="space-y-2" data-testid="task-advanced-section">
+            // space-y-3 matches the form these cards sit in (NewTaskDialog /
+            // TaskDetailEditForm). On space-y-2 the override fields stacked
+            // tighter than the plain labelled fields above them, so the card
+            // read as denser than the dialog even though it holds more. The
+            // radiogroup's own space-y-2 stays tighter on purpose: that gap is
+            // what makes the two cards read as one either/or.
+            <div className="space-y-3" data-testid="task-advanced-section">
             {showAgentPicker && (
               <div>
                 <label className="text-xs text-fg-muted mb-1 block">Agent</label>
