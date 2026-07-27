@@ -153,14 +153,16 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
   // mirroring the task detail dialog and command terminal). panel.close and
   // Escape both route through the dirty-changes guard. No ad-hoc keydown listener.
   useKeybinding('panel.maximize', handleToggleMaximized, { capture: true });
-  // Suppressed while the Board Manager is open over this dialog (opened from the
-  // Advanced section's profile edit button). This binding is capture-phase while
-  // BoardManagerDialog's Escape is a bubble-phase listener, so without the gate a
-  // single Escape meant to dismiss the manager would reach here first and raise
-  // the discard-changes confirm over a draft the user never tried to abandon.
-  // Mirrors how BoardManagerDialog suppresses its own Escape under a nested modal.
+  // Suppressed while a surface the Advanced section can spawn is open over this
+  // dialog: the Board Manager (profile edit button) or the Settings panel (agent
+  // edit button). This binding is capture-phase while both of those dismiss on a
+  // bubble-phase listener, so without the gate a single Escape meant for the
+  // surface on top would reach here first and raise the discard-changes confirm
+  // over a draft the user never tried to abandon. Mirrors how BoardManagerDialog
+  // suppresses its own Escape under a nested modal.
   const boardManagerOpen = useBoardStore((state) => state.boardManagerOpen);
-  useKeybinding('panel.close', closeWithAnimation, { capture: true, enabled: !boardManagerOpen });
+  const settingsOpen = useConfigStore((state) => state.settingsOpen);
+  useKeybinding('panel.close', closeWithAnimation, { capture: true, enabled: !boardManagerOpen && !settingsOpen });
 
   // Cleanup object URLs on unmount. Track the latest attachments in a ref so the
   // unmount-only cleanup revokes the CURRENT set: a [] dep captures the
@@ -342,9 +344,10 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
           onHeaderDoubleClick={handleToggleMaximized}
           onCloseRequest={handleCloseAttempt}
           testId="new-task-dialog"
-          // The Advanced section's profile edit button opens the Board Manager
-          // over this dialog; Escape then belongs to the manager alone.
-          suppressEscape={boardManagerOpen}
+          // The Advanced section's edit buttons open the Board Manager (profile)
+          // or Settings (agent) over this dialog; Escape then belongs to
+          // whichever of those is on top, alone.
+          suppressEscape={boardManagerOpen || settingsOpen}
           title="New Task"
           icon={<Plus size={14} className="text-fg-muted" />}
           headerRight={

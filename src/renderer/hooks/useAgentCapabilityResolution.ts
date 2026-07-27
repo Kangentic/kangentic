@@ -21,9 +21,10 @@ export interface AgentCapabilityResolution {
    *  itself is unchanged; callers that depend on identity should memoize. */
   availableAgents: AgentDetectionInfo[];
   /** True when there's more than one detected agent to pick between. The
-   *  Agent dropdown in the New Task / Edit dialogs uses this to hide
-   *  itself when there's nothing meaningful to choose. */
-  showAgentPicker: boolean;
+   *  Agent dropdown in the New Task / Edit dialogs always RENDERS; this
+   *  says whether it is interactive, so a single-agent machine shows the
+   *  field locked on the one agent it has rather than dropping the row. */
+  canPickAgent: boolean;
 }
 
 /**
@@ -40,7 +41,7 @@ export interface AgentCapabilityResolution {
  *
  * Pass `null` to opt out of capability lookup entirely (returns empty /
  * undefined fields but still surfaces `availableAgents` and
- * `showAgentPicker` for the dropdown).
+ * `canPickAgent` for the dropdown).
  */
 export function useAgentCapabilityResolution(effectiveAgent: string | null): AgentCapabilityResolution {
   const agentList = useConfigStore((state) => state.agentList);
@@ -57,7 +58,7 @@ export function useAgentCapabilityResolution(effectiveAgent: string | null): Age
     const effortLevels = info?.capabilities?.effortLevels ?? [];
     const supportsModelOverride = !!info?.capabilities?.supportsModelOverride;
     const availableAgents = agentList.filter((entry) => entry.found);
-    const showAgentPicker = availableAgents.length > 1;
-    return { info, models, effortLevels, supportsModelOverride, availableAgents, showAgentPicker };
+    const canPickAgent = availableAgents.length > 1;
+    return { info, models, effortLevels, supportsModelOverride, availableAgents, canPickAgent };
   }, [agentList, effectiveAgent, models]);
 }

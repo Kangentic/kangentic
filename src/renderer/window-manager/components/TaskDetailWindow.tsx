@@ -93,6 +93,7 @@ export function TaskDetailWindow({
   const shortcuts = useBoardStore((s) => s.shortcuts);
   const loadBoard = useBoardStore((s) => s.loadBoard);
   const boardManagerOpen = useBoardStore((s) => s.boardManagerOpen);
+  const settingsOpen = useConfigStore((s) => s.settingsOpen);
   const projectPath = useProjectStore((s) => s.currentProject?.path ?? null);
   const killSession = useSessionStore((s) => s.killSession);
   const suspendSession = useSessionStore((s) => s.suspendSession);
@@ -402,11 +403,12 @@ export function TaskDetailWindow({
   // xterm consumes the Ctrl-letter control chars). Gated on `isFocused` so only
   // the focused window reacts when several are open.
   useKeybinding('panel.maximize', handleToggleMaximized, { capture: true, enabled: isFocused });
-  // `!boardManagerOpen`: the edit form's profile picker can open the Board
-  // Manager over this window, and a single Escape meant for the manager must not
-  // also close the window (or raise its discard confirm) underneath. Gates the
-  // bubble-phase Escape listener below too.
-  useKeybinding('panel.close', closeWithGuard, { capture: true, enabled: isFocused && !boardManagerOpen });
+  // `!boardManagerOpen && !settingsOpen`: the edit form's Advanced section can
+  // open the Board Manager (profile pencil) or Settings (agent pencil) over this
+  // window, and a single Escape meant for that surface must not also close the
+  // window (or raise its discard confirm) underneath. Gates the bubble-phase
+  // Escape listener below too.
+  useKeybinding('panel.close', closeWithGuard, { capture: true, enabled: isFocused && !boardManagerOpen && !settingsOpen });
   // Close on a header click with the bound mouse button (default middle). Routed
   // through `closeWithGuard` so an unsaved edit still prompts to discard. The
   // `when` scopes the mouse path to THIS window's title bar; a keyboard rebind
@@ -435,14 +437,14 @@ export function TaskDetailWindow({
   // PTY, consumes Escape itself (reaching the agent's TUI) and this never sees
   // it; with the pointer elsewhere Escape bubbles here and closes.
   useEffect(() => {
-    if (!isFocused || boardManagerOpen) return;
+    if (!isFocused || boardManagerOpen || settingsOpen) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       closeWithGuard();
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isFocused, boardManagerOpen, closeWithGuard]);
+  }, [isFocused, boardManagerOpen, settingsOpen, closeWithGuard]);
 
   // Expose this window's guarded close to the central click-outside dismiss hook
   // (`useClickOutsideToClose`), so a board-background click routes through the

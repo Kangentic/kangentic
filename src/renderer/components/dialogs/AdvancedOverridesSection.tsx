@@ -31,6 +31,37 @@ interface AdvancedOverridesSectionProps {
   setProfileId: (value: string | null) => void;
 }
 
+interface EditPencilButtonProps {
+  onClick: () => void;
+  /** Used as both the hover tooltip and the accessible name. */
+  title: string;
+  testId: string;
+  disabled?: boolean;
+}
+
+/**
+ * The bordered pencil that sits to the right of a field and routes to wherever
+ * that field's defaults are authored. Both rows of this section carry one, and
+ * they must land at IDENTICAL geometry so the column of pencils reads as one
+ * affordance rather than two lookalikes. One component is what guarantees that;
+ * two copies of the same class string only promise it in a comment.
+ */
+function EditPencilButton({ onClick, title, testId, disabled = false }: EditPencilButtonProps) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      aria-label={title}
+      className="shrink-0 p-1.5 rounded border border-edge-input text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:text-fg-muted disabled:hover:bg-transparent"
+      data-testid={testId}
+    >
+      <Pencil size={14} />
+    </button>
+  );
+}
+
 /**
  * The "how this task runs" section, shared between New Task creation
  * (`NewTaskDialog`) and existing-task edit (`TaskDetailEditForm`).
@@ -84,14 +115,17 @@ interface AdvancedOverridesSectionProps {
  *     `resolveEffectivePermissionMode` in `spawn-preamble.ts`).
  *
  * Behaviour notes:
- *   - The Agent picker is hidden when only one agent is `found` (nothing
- *     meaningful to choose between).
+ *   - The Agent picker renders DISABLED, not hidden, when only one agent is
+ *     `found`. Same reasoning as the Profile select above it: a locked field
+ *     still names the agent this task will run on, and it keeps the edit
+ *     pencil beside it - the card's only route to Settings > Agent, where all
+ *     four of these defaults are set - in one place on every machine.
  *   - Changing the agent resets model + effort because the previous picks
  *     were valid for the previous agent's capability matrix.
- *   - The whole section is hidden when no capability surfaces are
- *     applicable (no agent picker, no model override support, no effort
- *     levels). Callers should still render this component and let it
- *     no-op via `null`.
+ *   - The whole section is hidden when the task has nothing to override at
+ *     all: no second agent to pick, no model override support, no effort
+ *     levels, and no permission modes. Callers should still render this
+ *     component and let it no-op via `null`.
  */
 export function AdvancedOverridesSection({
   swimlaneId,
@@ -115,6 +149,11 @@ export function AdvancedOverridesSection({
   const boardProfiles = useBoardStore((state) => state.boardProfiles);
   const openBoardManager = useBoardStore((state) => state.openBoardManager);
   const globalPermissionMode = useConfigStore((state) => state.config.agent.permissionMode);
+  // The three-arg PROJECT open, never `openSettingsToTab`: the Agent tab's
+  // Project Defaults are `scope: 'project'`, and `updateProjectOverride`
+  // returns early when `projectSettingsPath` is null, so the panel would open
+  // and silently drop the Permission write (.claude/rules/settings-tab-scope.md).
+  const openProjectSettings = useConfigStore((state) => state.openProjectSettings);
   // Effective-agent resolution for the New Task / Edit dialog: user pick
   // wins over the destination column's override, then the project default,
   // then the global default. This is the same chain `resolveTargetAgent`
@@ -129,14 +168,22 @@ export function AdvancedOverridesSection({
     effortLevels: advancedEffortOptions,
     supportsModelOverride: showModelPicker,
     availableAgents,
-    showAgentPicker,
+    canPickAgent,
   } = useAgentCapabilityResolution(effectiveAgent);
   const modelContextWindows = useModelContextWindows(effectiveAgent);
   const modelDisplayNames = useModelDisplayNames(effectiveAgent);
   const showEffortPicker = advancedEffortOptions.length > 0;
   const permissionOptions = effectiveAgentInfo?.permissions ?? DEFAULT_PERMISSIONS;
   const showPermissionPicker = permissionOptions.length > 0;
-  const showAdvancedSection = showAgentPicker || showModelPicker || showEffortPicker || showPermissionPicker;
+  // Whether this task has anything to override AT ALL. `canPickAgent` stays a
+  // term in this condition even though the Agent row now always renders inside
+  // the card: a permanently-locked field is not a reason to put the whole
+  // either/or on screen. The condition is inert as things stand - every adapter
+  // declares a non-empty `permissions` list and `DEFAULT_PERMISSIONS` backstops
+  // an agent missing from the detected list, so `showPermissionPicker` is always
+  // true and the `return null` below is unreachable. It holds the line for an
+  // adapter that exposes no surfaces at all.
+  const showAdvancedSection = canPickAgent || showModelPicker || showEffortPicker || showPermissionPicker;
 
   // Resolved values below the task tier - what each field would actually
   // spawn with if left on the inherit state. Shown as the BARE value in the
@@ -151,6 +198,16 @@ export function AdvancedOverridesSection({
   const fallbackPermissionLabel = getPermissionLabel(permissionOptions, fallbackPermission);
 
   const agentInheritLabel = fallbackAgentDisplayName;
+  // Three states, not two: `canPickAgent` is false both when exactly one agent
+  // is installed AND when none has been detected at all (`agentList` starts
+  // empty and fills in from an async probe, and a machine with no agent CLI
+  // never fills it), so one fixed "install another" string is wrong copy in the
+  // second case.
+  const agentFieldTitle = canPickAgent
+    ? 'The agent CLI this task runs on'
+    : availableAgents.length === 1
+      ? 'Only one agent CLI detected - install another to choose'
+      : 'No agent CLI detected yet';
   const modelInheritLabel = fallbackModelLabel ?? 'Agent default';
   const effortInheritLabel = fallbackEffort ?? 'Agent default';
   const permissionInheritLabel = fallbackPermissionLabel;
@@ -306,16 +363,11 @@ export function AdvancedOverridesSection({
                 not profiles exist - "create the first one" and "retune an
                 existing one" are the same trip. Pencil matches the board's own
                 edit-column button. */}
-            <button
-              type="button"
+            <EditPencilButton
               onClick={() => openBoardManager()}
               title="Edit profiles in Edit Columns"
-              aria-label="Edit profiles in Edit Columns"
-              className="shrink-0 p-1.5 rounded border border-edge-input text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors"
-              data-testid="task-profile-edit"
-            >
-              <Pencil size={14} />
-            </button>
+              testId="task-profile-edit"
+            />
           </div>,
         )}
 
@@ -334,19 +386,42 @@ export function AdvancedOverridesSection({
             // radiogroup's own space-y-2 stays tighter on purpose: that gap is
             // what makes the two cards read as one either/or.
             <div className="space-y-3" data-testid="task-advanced-section">
-            {showAgentPicker && (
-              <div>
-                <label className="text-xs text-fg-muted mb-1 block">Agent</label>
+            {/* Disabled rather than hidden with a single agent installed, the
+                same call the Profile select makes above: the field still names
+                what this task will run on, and the pencil beside it stays put
+                on every machine instead of moving row to row. The tooltip sits
+                on this wrapper rather than on the Combobox - the pencil's own
+                title wins over an ancestor's while hovering the button, so both
+                read correctly with no prop added to a shared control. */}
+            <div title={agentFieldTitle}>
+              <label className="text-xs text-fg-muted mb-1 block">Agent</label>
+              <div className="flex items-center gap-2">
                 <Combobox
                   value={agentOverride}
                   onChange={handleAgentChange}
                   options={availableAgents.map((entry) => ({ value: entry.name, label: entry.displayName ?? entry.name }))}
                   placeholder={agentInheritLabel}
                   placeholderVariant="muted"
+                  disabled={!canPickAgent}
+                  className="flex-1 min-w-0"
                   testId="task-agent-override"
                 />
+                {/* The card's only route to where all four of these fields get
+                    their defaults, and the same component as the profile pencil
+                    opposite it, so the two cannot drift apart. Project-scoped
+                    open (see openProjectSettings above). `WindowLayer` mounts
+                    OUTSIDE AppLayout's `currentProject` gate, so an edit form can
+                    outlive its project; disabling on that rather than no-opping
+                    in the handler keeps the button from looking live when the
+                    click would do nothing. */}
+                <EditPencilButton
+                  onClick={() => currentProject && openProjectSettings(currentProject.path, currentProject.name, 'agent')}
+                  title="Edit agent defaults in Settings"
+                  testId="task-agent-edit"
+                  disabled={!currentProject}
+                />
               </div>
-            )}
+            </div>
             {(showModelPicker || showEffortPicker) && (
               <div className="flex gap-3">
                 {showModelPicker && (

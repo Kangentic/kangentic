@@ -105,6 +105,134 @@ test.describe('NewTaskDialog Advanced section', () => {
     await page.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
   });
 
+  test('with one agent detected the Agent picker renders locked, beside an enabled edit button', async () => {
+    await openNewTaskDialog();
+    await page.locator('[data-testid="task-advanced-toggle"]').click();
+
+    // Disabled rather than hidden (the Profile select's treatment one card up):
+    // the field still names the agent this task will run on, and it keeps the
+    // edit pencil in the same place it occupies on a multi-agent machine.
+    const agentInput = page.locator('input[data-testid="task-agent-override"]');
+    await expect(agentInput).toBeVisible();
+    await expect(agentInput).toBeDisabled();
+    await expect(agentInput).toHaveAttribute('placeholder', 'Claude Code');
+
+    // The pencil is the card's only route to Settings > Agent, so it stays live
+    // even while the field beside it is locked.
+    await expect(page.locator('[data-testid="task-agent-edit"]')).toBeEnabled();
+
+    await closeDialog();
+  });
+
+  test('the agent edit button opens Settings on the Agent tab over the dialog, and Escape closes only that', async () => {
+    await openNewTaskDialog();
+    await page.locator('input[placeholder="Task title"]').fill('Draft Survives Settings');
+    await page.locator('[data-testid="task-advanced-toggle"]').click();
+
+    await page.locator('[data-testid="task-agent-edit"]').click();
+    const settingsPanel = page.locator('[data-testid="settings-panel"]');
+    await expect(settingsPanel).toBeVisible();
+    // The tab buttons carry no testid, so assert on the Agent tab's own
+    // section header - it holds the four defaults this card falls back to.
+    await expect(settingsPanel.locator('text=Project Defaults')).toBeVisible();
+
+    // The New Task dialog suppresses its own Escape while Settings is over it.
+    // Without that, this keypress would also reach the dialog and raise the
+    // discard confirm over a draft the user never tried to abandon.
+    await page.keyboard.press('Escape');
+    await expect(settingsPanel).toBeHidden();
+    await expect(page.locator('input[placeholder="Task title"]')).toHaveValue('Draft Survives Settings');
+    await expect(page.locator('button:has-text("Discard")')).toHaveCount(0);
+
+    // Two presses, not one: Settings closes through useOverlayPhase, so
+    // `settingsOpen` (and the suppression it drives) survives until the exit
+    // animation ends. The retrying assertion above is what makes this second
+    // press land after suppression lifts.
+    await page.keyboard.press('Escape');
+    await page.locator('button:has-text("Discard")').click();
+    await page.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
+  });
+
+  test('the agent edit button opens Settings scoped to THIS project, so a picked default actually persists', async () => {
+    // Distinct failure mode from the visibility test above: `openSettingsToTab`
+    // (the sibling action on config-store.ts) never sets `projectSettingsPath`,
+    // and `updateProjectOverride` returns early when that path is null - so
+    // swapping the pencil's call from `openProjectSettings` to
+    // `openSettingsToTab('agent')` would open the SAME-LOOKING Agent tab (the
+    // "Project Defaults" header above renders unconditionally from
+    // project-store's currentProject, not from projectSettingsPath) while
+    // silently dropping every write made from it. Permission Mode
+    // (agent.permissionMode, scope: 'project' in settings-registry.ts) is the
+    // concrete probe: prove the pick lands in THIS project's stored overrides,
+    // not just that the combobox's own on-screen value changed.
+    await openNewTaskDialog();
+    await page.locator('[data-testid="task-advanced-toggle"]').click();
+
+    await page.locator('[data-testid="task-agent-edit"]').click();
+    const settingsPanel = page.locator('[data-testid="settings-panel"]');
+    await expect(settingsPanel).toBeVisible();
+
+    const permissionInput = page.locator('input[data-testid="agent-permission-mode"]');
+    await selectCombobox(page, 'agent-permission-mode', 'plan');
+    await expect(permissionInput).toHaveValue('Plan (Read-Only)');
+
+    const persistedPermissionMode = await page.evaluate(async () => {
+      const stores = (window as unknown as {
+        __zustandStores?: { project: { getState: () => { currentProject: { path: string } | null } } };
+      }).__zustandStores;
+      const projectPath = stores?.project.getState().currentProject?.path;
+      if (!projectPath) throw new Error('No current project to read overrides for');
+      const overrides = await window.electronAPI.config.getProjectOverridesByPath(projectPath);
+      return (overrides as { agent?: { permissionMode?: string } } | null)?.agent?.permissionMode ?? null;
+    });
+    expect(persistedPermissionMode).toBe('plan');
+
+    // Reset to the fixture's original value before closing: the Permission
+    // picker test below (and the placeholderVariant block further down) both
+    // assert the Accept Edits global default resolves through, and a leaked
+    // project override here would make that read this project's now-pinned
+    // 'plan' instead.
+    await selectCombobox(page, 'agent-permission-mode', 'acceptEdits');
+    await expect(permissionInput).toHaveValue('Accept Edits');
+
+    await page.keyboard.press('Escape');
+    await expect(settingsPanel).toBeHidden();
+    await closeDialog();
+  });
+
+  test('the panel.close hotkey (Control+Shift+W) is suppressed while Settings is open over the dialog, same as Escape', async () => {
+    // Escape and panel.close are TWO SEPARATE mechanisms here: Escape is
+    // suppressed ad hoc inside BaseDialog via `suppressEscape` (covered above),
+    // while panel.close is the Mod+Shift+W keybinding bound directly on
+    // NewTaskDialog with its own `enabled: !boardManagerOpen && !settingsOpen`
+    // gate. Deleting just the `&& !settingsOpen` half of that gate would leave
+    // every Escape assertion in this file green while this combo still tore
+    // the dialog down (or worse, raised the discard confirm) out from under
+    // the Settings panel it opened.
+    await openNewTaskDialog();
+    await page.locator('input[placeholder="Task title"]').fill('Draft Survives Panel Close Hotkey');
+    await page.locator('[data-testid="task-advanced-toggle"]').click();
+
+    await page.locator('[data-testid="task-agent-edit"]').click();
+    const settingsPanel = page.locator('[data-testid="settings-panel"]');
+    await expect(settingsPanel).toBeVisible();
+
+    await page.keyboard.press('Control+Shift+W');
+
+    // With the listener correctly disabled, this keypress reaches nothing: the
+    // panel stays up, and the dialog underneath neither closes nor raises the
+    // discard confirm.
+    await expect(settingsPanel).toBeVisible();
+    await expect(page.locator('input[placeholder="Task title"]')).toHaveValue('Draft Survives Panel Close Hotkey');
+    await expect(page.locator('button:has-text("Discard")')).toHaveCount(0);
+
+    await page.keyboard.press('Escape');
+    await expect(settingsPanel).toBeHidden();
+    await page.keyboard.press('Escape');
+    await page.locator('button:has-text("Discard")').click();
+    await page.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
+  });
+
   test('expanding Advanced reveals model combobox and effort select with a resolved-default placeholder', async () => {
     await openNewTaskDialog();
 
@@ -319,6 +447,70 @@ test.describe('TaskDetailEditForm Advanced section (edit-mode overrides)', () =>
     expect(updated!.effort_override).toBe('medium');
   });
 
+  test('the agent edit button opens Settings over the task window, and Escape closes only that', async () => {
+    // The task-detail window has its OWN Escape gates (a capture-phase
+    // panel.close binding and a bubble-phase listener), separate from
+    // BaseDialog's suppressEscape, so the New Task coverage above does not
+    // reach this path.
+    await createTask(page, 'Window Draft Survives Settings');
+
+    await page.locator('text=Window Draft Survives Settings').first().click();
+    await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible' });
+    await page.locator('[data-testid="task-advanced-toggle"]').click();
+
+    await page.locator('[data-testid="task-agent-edit"]').click();
+    const settingsPanel = page.locator('[data-testid="settings-panel"]');
+    await expect(settingsPanel).toBeVisible();
+    await expect(settingsPanel.locator('text=Project Defaults')).toBeVisible();
+
+    await page.keyboard.press('Escape');
+    await expect(settingsPanel).toBeHidden();
+    // The window survived, still in edit mode with its run-mode choice intact.
+    await expect(page.locator('[data-testid="task-detail-dialog"]')).toBeVisible();
+    await expect(page.locator('[data-testid="task-advanced-section"]')).toBeVisible();
+    await expect(page.locator('button:has-text("Discard")')).toHaveCount(0);
+
+    await page.locator('button:has-text("Cancel")').click();
+    await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden' });
+  });
+
+  test('the panel.close hotkey (Control+Shift+W) is suppressed while Settings is open over the task window, same as Escape', async () => {
+    // TaskDetailWindow's OWN panel.close binding (capture-phase, `enabled:
+    // isFocused && !boardManagerOpen && !settingsOpen`) is a SEPARATE mechanism
+    // from the bubble-phase document Escape listener covered above - deleting
+    // just the `&& !settingsOpen` half of that gate would leave the Escape
+    // coverage green while this combo still tore the window down (or raised
+    // the discard confirm) out from under the Settings panel it opened.
+    await createTask(page, 'Window Draft Survives Panel Close Hotkey');
+
+    await page.locator('text=Window Draft Survives Panel Close Hotkey').first().click();
+    await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible' });
+    const titleInput = page.locator('input[placeholder="Task title"]');
+    await titleInput.fill('Window Draft Survives Panel Close Hotkey (edited)');
+    await page.locator('[data-testid="task-advanced-toggle"]').click();
+
+    await page.locator('[data-testid="task-agent-edit"]').click();
+    const settingsPanel = page.locator('[data-testid="settings-panel"]');
+    await expect(settingsPanel).toBeVisible();
+
+    await page.keyboard.press('Control+Shift+W');
+
+    // With the listener correctly disabled, this keypress reaches nothing: the
+    // panel stays up, and the window underneath neither closes nor raises the
+    // discard confirm.
+    await expect(settingsPanel).toBeVisible();
+    await expect(titleInput).toHaveValue('Window Draft Survives Panel Close Hotkey (edited)');
+    await expect(page.locator('button:has-text("Discard")')).toHaveCount(0);
+
+    await page.keyboard.press('Escape');
+    await expect(settingsPanel).toBeHidden();
+    await page.keyboard.press('Escape');
+    const confirmHeading = page.locator('h3:has-text("Discard unsaved changes?")');
+    await expect(confirmHeading).toBeVisible();
+    await page.locator('button:has-text("Discard")').click();
+    await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden' });
+  });
+
   test('clearing an override in edit mode persists the cleared value', async () => {
     // Seed via the UI flow with a model override set.
     const column = page.locator('[data-swimlane-name="To Do"]');
@@ -353,8 +545,9 @@ test.describe('TaskDetailEditForm Advanced section (edit-mode overrides)', () =>
 /**
  * Agent picker tests use their own browser instance with a multi-agent mock
  * fixture. The default fixture only has Claude `found: true`, so the picker
- * is hidden (nothing to choose between). Enabling Codex here gives us two
- * `found` agents, which surfaces the picker.
+ * renders locked (nothing to choose between - covered in the shared-page block
+ * above). Enabling Codex here gives us two `found` agents, which is what makes
+ * it interactive.
  */
 test.describe('NewTaskDialog Advanced - Agent picker (multi-agent fixture)', () => {
   let multiBrowser: Browser;
@@ -409,6 +602,12 @@ test.describe('NewTaskDialog Advanced - Agent picker (multi-agent fixture)', () 
 
     const agentInput = multiPage.locator('input[data-testid="task-agent-override"]');
     await expect(agentInput).toBeVisible();
+    // Two found agents, so this one is interactive (the single-agent fixture
+    // renders the same field disabled).
+    await expect(agentInput).toBeEnabled();
+    // The edit pencil rides the same row here as it does when the field is
+    // locked - one place on every machine.
+    await expect(multiPage.locator('[data-testid="task-agent-edit"]')).toBeEnabled();
 
     // No column or project agent override is set in this fixture, so the
     // inherit placeholder resolves to the app default (Claude Code), shown
@@ -1288,9 +1487,9 @@ test.describe('placeholderVariant: muted vs resolved', () => {
     // Model/Effort have no column or project default here, so their
     // fallback computation bottoms out with no concrete value: plain
     // "Agent default", muted. (Agent's inherit label always resolves to a
-    // concrete app default and is muted too, but the Agent field needs a
-    // multi-agent fixture to render at all; see the "Agent picker" describe
-    // block above.)
+    // concrete app default and is muted too; this single-agent fixture
+    // renders that field locked on it. Its interactive form is covered in
+    // the "Agent picker" describe block above.)
     await expect(taskModelInput).toHaveAttribute('placeholder', 'Agent default');
     await expect(taskEffortInput).toHaveAttribute('placeholder', 'Agent default');
     expect(await placeholderVariantOf(taskModelInput)).toBe('muted');

@@ -62,7 +62,7 @@ Choosing **Agent Override** reveals the per-task pins:
 
 | Field | Description |
 |-------|-------------|
-| **Agent** | Pick a specific agent CLI (Claude, Codex, etc.) for this task. Defaults to the destination column's agent override, then the project default. Hidden when only one agent is detected on the machine. |
+| **Agent** | Pick a specific agent CLI (Claude, Codex, etc.) for this task. Defaults to the destination column's agent override, then the project default. Locked (shown disabled, on the one agent it has) when only one agent is detected on the machine. The pencil beside it opens Settings > Agent, where all four of these fields get their project defaults. |
 | **Model** | Adapter-specific model identifier (e.g. `opus`, `sonnet`, `claude-opus-4-8`). The dropdown is fed by the shared model cache. For Claude, the list is populated both by scanning past session transcripts and by harvesting the CLI's own `/model` picker through a hidden background probe, so newly shipped models surface without first being used in a session. |
 | **Effort** | Adapter-specific reasoning tier (Claude: `low`, `medium`, `high`, `xhigh`, `max`). Only shown when the agent reports effort levels. |
 | **Permission** | Permission mode for this task. A column that forces Plan mode still wins while the task is in that column - that is a safety guarantee, not an ordinary default. |
