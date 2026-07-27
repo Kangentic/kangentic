@@ -2105,3 +2105,171 @@ test.describe('NewTaskDialog run-mode choice (profiles fixture)', () => {
     await defaultDialog.waitFor({ state: 'hidden', timeout: 5000 });
   });
 });
+
+test.describe('TaskDetailEditForm save gate: run_mode + pins omitted while a session is active', () => {
+  // Own launch (mirrors the "multi-agent fixture" / "profiles fixture" describes
+  // above): needs a task pre-seeded with a RUNNING session, which the shared
+  // `page` at the top of this file never has (createTask/openDialog here never
+  // spawn a real session).
+  let gatedBrowser: Browser;
+  let gatedPage: Page;
+
+  const RUN_ID = Date.now();
+  const PROJECT_ID = `proj-run-mode-gate-${RUN_ID}`;
+  const TASK_ID = `task-run-mode-gate-${RUN_ID}`;
+  const SESSION_ID = `sess-run-mode-gate-${RUN_ID}`;
+
+  test.beforeAll(async () => {
+    await waitForViteReady();
+    gatedBrowser = await chromium.launch({ headless: true });
+    const context = await gatedBrowser.newContext({ viewport: { width: 1920, height: 1080 } });
+    gatedPage = await context.newPage();
+
+    await gatedPage.addInitScript({ path: MOCK_SCRIPT });
+    // Seed a task that already carries a lifetime pin (model_override) and
+    // run_mode: 'agent_override', WITH a running session - the same
+    // { taskId, status: 'running' } shape context-bar-tool-breakdown.spec.ts
+    // uses to reach isSessionActive === true without a real PTY.
+    await gatedPage.addInitScript(`
+      window.__mockPreConfigure(function (state) {
+        var ts = new Date().toISOString();
+
+        state.projects.push({
+          id: '${PROJECT_ID}',
+          name: 'Run Mode Gate ${RUN_ID}',
+          path: '/mock/run-mode-gate-${RUN_ID}',
+          github_url: null,
+          default_agent: 'claude',
+          last_opened: ts,
+          created_at: ts,
+        });
+
+        var todoLaneId = null;
+        state.DEFAULT_SWIMLANES.forEach(function (template, index) {
+          var laneId = 'lane-rmg-' + template.name.toLowerCase().replace(/\\s+/g, '-') + '-${RUN_ID}';
+          if (template.role === 'todo') todoLaneId = laneId;
+          state.swimlanes.push(Object.assign({}, template, {
+            id: laneId,
+            position: index,
+            created_at: ts,
+          }));
+        });
+
+        state.sessions.push({
+          id: '${SESSION_ID}',
+          taskId: '${TASK_ID}',
+          projectId: '${PROJECT_ID}',
+          pid: 4242,
+          status: 'running',
+          shell: 'bash',
+          cwd: '/mock/run-mode-gate-${RUN_ID}',
+          startedAt: ts,
+          exitCode: null,
+          resuming: false,
+        });
+
+        state.tasks.push({
+          id: '${TASK_ID}',
+          title: 'Run Mode Gate Task',
+          description: 'Seeded with a running session and a lifetime pin.',
+          swimlane_id: todoLaneId,
+          position: 0,
+          agent: 'claude',
+          session_id: '${SESSION_ID}',
+          worktree_path: null,
+          branch_name: null,
+          pr_number: null,
+          pr_url: null,
+          base_branch: null,
+          use_worktree: null,
+          labels: [],
+          priority: 0,
+          agent_override: null,
+          model_override: 'opus',
+          effort_override: null,
+          permission_mode: null,
+          profile_id: null,
+          run_mode: 'agent_override',
+          auto_command: null,
+          attachment_count: 0,
+          archived_at: null,
+          detail_view_state: null,
+          created_at: ts,
+          updated_at: ts,
+        });
+
+        return { currentProjectId: '${PROJECT_ID}' };
+      });
+    `);
+
+    await gatedPage.goto(VITE_URL);
+    await gatedPage.waitForLoadState('load');
+    await gatedPage.waitForSelector('text=Kangentic', { timeout: 15000 });
+    await gatedPage.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+  });
+
+  test.afterAll(async () => {
+    await gatedBrowser?.close();
+  });
+
+  test('Save sends the title change but omits run_mode and every override pin from the update payload', async () => {
+    // A running session both (a) forces the dialog open in VIEW mode
+    // (TaskCard.tsx only sets initialEdit when displayState.kind === 'none')
+    // and (b) hides AdvancedOverridesSection from the edit form (the
+    // `!isSessionActive && !isArchived` gate in TaskDetailEditForm.tsx) -
+    // confirmed below via the run-mode control's absence.
+    const card = gatedPage.locator(`[data-task-id="${TASK_ID}"]`);
+    await card.waitFor({ state: 'visible', timeout: 10000 });
+    await card.click();
+
+    const dialog = gatedPage.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 5000 });
+
+    await dialog.locator('[title="Actions"]').click();
+    const editMenuItem = gatedPage
+      .locator('button:has-text("Edit")')
+      .filter({ has: gatedPage.locator('.lucide-pencil') });
+    await expect(editMenuItem).toBeVisible({ timeout: 5000 });
+    await editMenuItem.click();
+
+    const titleInput = gatedPage.locator('input[placeholder="Task title"]');
+    await titleInput.waitFor({ state: 'visible', timeout: 5000 });
+    // Confirms isSessionActive really is true for this task (not a fixture
+    // mistake): the run-mode control must not have re-appeared in edit mode.
+    await expect(dialog.locator('[data-testid="task-run-mode"]')).toHaveCount(0);
+
+    await titleInput.fill('Run Mode Gate Task (edited)');
+
+    // Reset the call log immediately before the save under test - this page
+    // is fresh (only this describe uses it), but resetting here keeps the
+    // assertion below independent of anything upstream in this test.
+    await gatedPage.evaluate(() => {
+      window.electronAPI.tasks.__updateCalls.length = 0;
+    });
+
+    await gatedPage.locator('button:has-text("Save")').click();
+
+    await expect
+      .poll(() => gatedPage.evaluate(() => window.electronAPI.tasks.__updateCalls.length), { timeout: 5000 })
+      .toBe(1);
+    const payload = await gatedPage.evaluate(() => window.electronAPI.tasks.__updateCalls[0]);
+
+    // Positive control: this is the save under test, not a stray earlier call.
+    expect(payload.title).toBe('Run Mode Gate Task (edited)');
+
+    // The regression this guards: run_mode rides INSIDE useTaskActions.ts's
+    // `overrideFields`, built only when `!isSessionActive && !isArchived`.
+    // The seeded task's model_override ('opus') and run_mode
+    // ('agent_override') are still live in the edit form's React state (it is
+    // seeded from the task row on mount, regardless of whether
+    // AdvancedOverridesSection ever rendered), so the only way to prove they
+    // were not SENT is the raw IPC payload - the persisted task would look
+    // identical afterward either way, since nothing changed those values.
+    for (const key of ['run_mode', 'model_override', 'agent_override', 'effort_override', 'permission_mode', 'profile_id']) {
+      expect(payload).not.toHaveProperty(key);
+    }
+
+    await dialog.locator('[data-testid="task-detail-close"]').click();
+    await dialog.waitFor({ state: 'hidden', timeout: 5000 });
+  });
+});

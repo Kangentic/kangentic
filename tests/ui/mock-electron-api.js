@@ -696,6 +696,10 @@
     },
 
     tasks: {
+      // Call log for test assertions; see the `update` hook below for what is
+      // captured. Reset between tests via
+      // window.electronAPI.tasks.__updateCalls.length = 0.
+      __updateCalls: [],
       list: async function () {
         // Fixture tasks tagged with a projectId are scoped to the current project
         // (mirrors the real per-project DBs, where switching projects swaps the
@@ -787,6 +791,18 @@
         // Read via window.__mockTaskUpdateCallCount.
         if (typeof window !== 'undefined') {
           window.__mockTaskUpdateCallCount = (window.__mockTaskUpdateCallCount || 0) + 1;
+        }
+
+        // Test hook: call log of the raw update payload, so a spec can assert
+        // which keys were (or were NOT) sent - e.g. that the override fields
+        // (agent_override/model_override/effort_override/permission_mode/
+        // profile_id/run_mode) are omitted entirely when the save gate hides
+        // them (active session / archived task), rather than merely sent with
+        // an unchanged value. A shallow copy is pushed so later mutation of
+        // `input` by the caller can't retroactively change a captured entry.
+        // Reset between tests via window.electronAPI.tasks.__updateCalls.length = 0.
+        if (typeof window !== 'undefined') {
+          window.electronAPI.tasks.__updateCalls.push(Object.assign({}, input));
         }
 
         // Test hook: make tasks.update() return a controlled promise so the test
