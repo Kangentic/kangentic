@@ -18,10 +18,20 @@
  * "near DROP: syntax error", that floor is why.
  *
  * Skips cleanly when better-sqlite3 cannot load under the test runner's Node
- * ABI (NODE_MODULE_VERSION mismatch under plain system Node); mirrors the probe
- * pattern in sent-session-message-migration.test.ts. Expected to SKIP on a
- * developer's local Windows machine (built for Electron's ABI) and RUN on CI
- * (built for plain Node) - a local green here is a skip, not coverage.
+ * ABI (NODE_MODULE_VERSION mismatch); mirrors the probe pattern in
+ * sent-session-message-migration.test.ts.
+ *
+ * IMPORTANT - this currently skips EVERYWHERE, CI included. That sibling file's
+ * header claims it runs on CI; as of the run for this file's PR that is not
+ * true of any better-sqlite3-gated suite (sent-session-message 13/13 skipped,
+ * activity-interval 6/7, usage-history 3/4, and this file 8/8). So a green
+ * unit tier is NOT evidence these assertions ran, and this suite is currently
+ * documentation plus a latent guard rather than live coverage.
+ *
+ * Until the CI ABI issue is fixed, verify a change to this migration by
+ * replaying `runProjectMigrations` against `node:sqlite` with a small shim
+ * (`exec` / `pragma` / `prepare` / `transaction`), which is how the backfill
+ * matrix below was actually confirmed.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
