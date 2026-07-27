@@ -120,8 +120,11 @@ Create a task on the board (default: the To Do column on the active board) or in
 | `permissionMode` | string | No | Permission mode to spawn this task with: `"default"`, `"plan"`, `"acceptEdits"`, `"dontAsk"`, `"bypassPermissions"`, or `"auto"`. Omit to resolve column override -> project default -> app default. |
 | `autoCommand` | string | No | Slash command to run once the agent spawns for this task (e.g. `"/code-review"`, `"/release"`). Overrides the destination column's `auto_command` for this task only. MCP-only - not surfaced in the New Task dialog. |
 | `profile` | string | No | Board Profile this task rides (name or id) - an alternate set of per-column agent/model/effort settings, applied as the task moves. Omit for "Default" (every column uses its own settings). See [kangentic_list_board_profiles](#kangentic_list_board_profiles). |
+| `runMode` | string | No | How the task gets its agent settings: `"column_settings"` (the default - follow each column as the task moves) or `"agent_override"` (pin agent/model/effort/permission for the task's whole life). Any of the four `*Override` params implies `"agent_override"`, so pass this only to choose override mode without pinning anything - fields left unset then resolve dynamically until the task first spawns, which locks all four. Passing a pin together with `"column_settings"` is rejected as a contradiction. |
 
-`profile` is **mutually exclusive** with `agentOverride` / `modelOverride` / `effortOverride` / `permissionMode`: a profile changes settings per column, those pin one value for the task's whole life. Passing both is rejected and nothing is created, rather than silently discarding one side (the repository enforces the same exclusivity on write). An unknown profile name is an error too - a typo must not quietly produce a task that looks tiered and runs on the plain board settings.
+`profile` is **mutually exclusive** with `agentOverride` / `modelOverride` / `effortOverride` / `permissionMode` / `runMode: "agent_override"`: a profile changes settings per column, those pin one value for the task's whole life. Passing both is rejected and nothing is created, rather than silently discarding one side (the repository enforces the same exclusivity on write). An unknown profile name is an error too - a typo must not quietly produce a task that looks tiered and runs on the plain board settings.
+
+The mirror case is rejected for the same reason: any of the four pins alongside `runMode: "column_settings"`. Setting a pin already *is* asking for override mode, so pairing it with the opposite mode is a contradiction the repository would resolve silently in the pin's favour, discarding the mode the caller named. `runMode: "column_settings"` with no pins, or alongside `profile`, is fine - those agree.
 
 If the target column has `auto_spawn` enabled, creating a task there will also spawn an agent session for it. Backlog items never auto-spawn.
 
@@ -360,14 +363,21 @@ Update a task's title, description (full replace, in-place find/replace edits, o
 | `effort` | string | No | Effort/reasoning level override for this task (e.g. `"xhigh"`). Pass empty string to clear. |
 | `permissionMode` | string | No | Permission mode override for this task: `"default"`, `"plan"`, `"acceptEdits"`, `"dontAsk"`, `"bypassPermissions"`, or `"auto"`. Pass empty string to clear. |
 | `profile` | string | No | Board Profile this task rides (name or id) - an alternate set of per-column agent/model/effort settings, applied as the task moves. Pass empty string to clear it back to "Default". See [Board Profiles](#board-profiles). |
+| `runMode` | string | No | How the task gets its agent settings: `"column_settings"` (follow each column, clearing the model/effort/permissionMode pins) or `"agent_override"` (pin them for the task's whole life, clearing the profile). Setting any pin implies `"agent_override"`, so pass this only to switch modes without pinning anything; setting a pin alongside `"column_settings"` is rejected as a contradiction (pass the pin as an empty string to clear it instead). Omit to leave the task's current mode alone. |
 | `attachments` | array | No | File attachments to ADD to the task: `[{ filePath: string, filename?: string }]`. Additive - existing attachments are kept, not replaced. Use `kangentic_remove_task_attachment` to remove one. |
 
 At least one updatable field is required.
 
-`profile` is **mutually exclusive** with `model` / `effort` / `permissionMode` (and the task's
-`agent_override`): setting a profile clears the pins and setting any pin clears the profile, so
-passing both in one call is rejected rather than silently discarding one side. An unknown profile
-name is an error, not a fall back to Default.
+`profile` is **mutually exclusive** with `model` / `effort` / `permissionMode` / `runMode:
+"agent_override"` (and the task's `agent_override`): setting a profile clears the pins and forces
+`runMode: "column_settings"`, and setting any pin clears the profile, so passing both in one call is
+rejected rather than silently discarding one side. An unknown profile name is an error, not a fall
+back to Default.
+
+The mirror case is rejected too: a pin alongside `runMode: "column_settings"`, since a pin already
+implies `"agent_override"`. The check is on truthiness, not presence, so the empty-string CLEAR
+sentinel still pairs legally with `"column_settings"` - clearing a pin and following the columns
+agree, and that is the natural way to write "stop pinning this and go back to the columns".
 
 ### kangentic_link_pr
 

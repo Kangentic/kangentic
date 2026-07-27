@@ -5,7 +5,7 @@ import { useBacklogStore } from '../../../stores/backlog-store';
 import { useSessionStore } from '../../../stores/session-store';
 import { useProjectStore } from '../../../stores/project-store';
 import { useToastStore } from '../../../stores/toast-store';
-import type { Task, Session, AgentCommand, Swimlane, PermissionMode } from '../../../../shared/types';
+import type { Task, Session, AgentCommand, Swimlane, PermissionMode, TaskRunMode } from '../../../../shared/types';
 import type { useBranchConfig } from './useBranchConfig';
 import type { useTaskProgress } from '../../../utils/task-progress';
 
@@ -44,6 +44,8 @@ export function useTaskActions(input: {
   permissionOverride: string;
   /** Board Profile the task rides, or null for Default. */
   profileId: string | null;
+  /** Which run-mode branch the edit form has selected (see `Task.run_mode`). */
+  runMode: TaskRunMode;
   setTitle: Dispatch<SetStateAction<string>>;
   setDescription: Dispatch<SetStateAction<string>>;
   setPrUrl: Dispatch<SetStateAction<string>>;
@@ -53,6 +55,8 @@ export function useTaskActions(input: {
   setModelOverride: Dispatch<SetStateAction<string>>;
   setEffortOverride: Dispatch<SetStateAction<string>>;
   setPermissionOverride: Dispatch<SetStateAction<string>>;
+  setProfileId: Dispatch<SetStateAction<string | null>>;
+  setRunMode: Dispatch<SetStateAction<TaskRunMode>>;
   setIsEditing: Dispatch<SetStateAction<boolean>>;
 
   // Branch config hook
@@ -229,6 +233,12 @@ export function useTaskActions(input: {
     input.setModelOverride(input.task.model_override ?? '');
     input.setEffortOverride(input.task.effort_override ?? '');
     input.setPermissionOverride(input.task.permission_mode ?? '');
+    // The run-mode branch and the profile pick live in the same host state as
+    // the four pins above and outlive the edit form's unmount, so cancel has to
+    // revert them too - otherwise re-entering edit shows the branch (or the
+    // profile) the user just abandoned.
+    input.setProfileId(input.task.profile_id ?? null);
+    input.setRunMode(input.task.run_mode);
     input.branchConfig.resetToTask();
     input.setIsEditing(false);
   };
@@ -275,6 +285,11 @@ export function useTaskActions(input: {
           // repository clears whichever side this write did not set, so both
           // must travel together or one silently wins.
           profile_id: input.profileId ?? null,
+          // Inside this object, not beside it: the whole block is skipped for an
+          // active session, which is the same condition that hides the run-mode
+          // control (TaskDetailEditForm). Sending it unconditionally would write
+          // a mode from a control the user was never shown.
+          run_mode: input.runMode,
         }
         : {};
 
@@ -294,7 +309,8 @@ export function useTaskActions(input: {
             || (input.modelOverride || null) !== input.task.model_override
             || (input.effortOverride || null) !== input.task.effort_override
             || (input.permissionOverride || null) !== input.task.permission_mode
-            || (input.profileId ?? null) !== input.task.profile_id) {
+            || (input.profileId ?? null) !== input.task.profile_id
+            || input.runMode !== input.task.run_mode) {
             await input.updateTask({
               id: input.task.id,
               title: input.title,

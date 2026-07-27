@@ -1148,6 +1148,43 @@ export function runProjectMigrations(db: Database.Database): void {
     db.exec('ALTER TABLE tasks ADD COLUMN profile_id TEXT DEFAULT NULL');
   }
 
+  // Migration: add per-task run_mode column. Which of the two dialog branches
+  // ("Column Settings" vs "Agent Override") the user chose, persisted instead of
+  // derived. It has to be stored, because "Agent Override with all four fields
+  // left on inherit" writes exactly the same five nulls as "Column Settings"
+  // while meaning the opposite: the first locks agent/model/effort/permission at
+  // first spawn, the second follows the columns forever. Deriving it silently
+  // dropped the user's choice on every save.
+  //
+  // The backfill reproduces the old `hasAnyOverrideSet` derivation exactly, so
+  // every existing row keeps its current behavior: any of the four pins set means
+  // the task was authored in override mode. auto_command is deliberately excluded
+  // (it is an MCP escape hatch, not an Advanced pin - see ADVANCED_PIN_FIELDS in
+  // task-repository.ts). The `profile_id IS NULL` clause is belt-and-braces: a
+  // profile task cannot carry a pin (TaskRepository has enforced that since
+  // profile_id shipped), so the clause changes no row today - but it makes the
+  // backfill correct by construction rather than by trusting an invariant
+  // enforced in another file, and a row claiming both a profile and override
+  // mode is exactly what the first-spawn lock must never see.
+  //
+  // ALTER + backfill run in ONE transaction because the guard above tests only
+  // for the column's existence. A crash between the two would leave the column
+  // present and the guard satisfied, so the backfill would never run again and
+  // every already-pinned task on that database would be stuck reporting
+  // 'column_settings' forever.
+  const hasTaskRunMode = (db.pragma('table_info(tasks)') as Array<{ name: string }>)
+    .some((column) => column.name === 'run_mode');
+  if (!hasTaskRunMode) {
+    const addRunModeTransaction = db.transaction(() => {
+      db.exec("ALTER TABLE tasks ADD COLUMN run_mode TEXT NOT NULL DEFAULT 'column_settings'");
+      db.exec(`UPDATE tasks SET run_mode = 'agent_override'
+        WHERE profile_id IS NULL
+          AND (agent_override IS NOT NULL OR model_override IS NOT NULL
+            OR effort_override IS NOT NULL OR permission_mode IS NOT NULL)`);
+    });
+    addRunModeTransaction();
+  }
+
   // Seed default swimlanes if empty (must run after all ALTER TABLE migrations)
   const laneCount = db.prepare('SELECT COUNT(*) as c FROM swimlanes').get() as { c: number };
   if (laneCount.c === 0) {

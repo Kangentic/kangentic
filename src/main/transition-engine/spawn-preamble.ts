@@ -29,18 +29,21 @@ export interface SpawnPreambleProjectDefaults {
  * Lock the Advanced (Agent / Model / Effort / Permission) overrides on a
  * task's very first ever spawn.
  *
- * A task that already carries at least one explicit override but leaves the
- * others on "inherit" gets ALL FOUR fields locked to the values the Advanced
- * tab displayed when the user configured it: task override -> the lane the
- * task lived in at config time (`settingsLane`) -> project default (global
- * permission mode for Permission). The DESTINATION column's settings never
- * leak into the locked contract - the user never saw them in the dialog. A
- * destination lane forcing `permission_mode: 'plan'` still wins at spawn
- * resolution (see `resolveEffectivePermissionMode` below); the locked
- * permission is what the task runs under everywhere else.
+ * A task authored in Agent Override mode (`run_mode === 'agent_override'`) gets
+ * ALL FOUR fields locked to the values the Advanced tab displayed when the user
+ * configured it: task override -> the lane the task lived in at config time
+ * (`settingsLane`) -> project default (global permission mode for Permission).
+ * The DESTINATION column's settings never leak into the locked contract - the
+ * user never saw them in the dialog. A destination lane forcing
+ * `permission_mode: 'plan'` still wins at spawn resolution (see
+ * `resolveEffectivePermissionMode` below); the locked permission is what the
+ * task runs under everywhere else.
  *
- * A task with NO overrides at all is untouched - it keeps following
- * column/project defaults for its whole life.
+ * The gate is the persisted MODE, not "does any pin happen to be set". Those
+ * differ in exactly one case, and it is the case the user cares about: Agent
+ * Override with all four fields left on inherit stores no pins at all, yet still
+ * means "lock these four to what I was shown". A task in Column Settings mode is
+ * untouched - it keeps following column/project defaults for its whole life.
  *
  * "First ever spawn" = no session record exists AND task.agent is still null.
  * task.agent is set once, at first successful spawn (see transition-engine.ts),
@@ -81,16 +84,14 @@ export function lockAdvancedOverridesOnFirstSpawn(options: {
   // to provide - Planning in Opus xhigh would silently become Merge in Opus
   // xhigh too.
   //
-  // The guard below already covers this, since a profile task carries none of
-  // the four pins (TaskRepository enforces the exclusivity). This states the
-  // intent explicitly so the behavior does not silently depend on that
-  // invariant holding somewhere else.
+  // The guard below already covers this, since a profile task is always in
+  // 'column_settings' mode (TaskRepository enforces the exclusivity). This
+  // states the intent explicitly so the behavior does not silently depend on
+  // that invariant holding somewhere else.
   if (task.profile_id) return;
 
   const isFirstEverSpawn = !hasSessionRecord && task.agent === null;
-  const hasAnyOverrideSet = task.agent_override !== null || task.model_override !== null
-    || task.effort_override !== null || task.permission_mode !== null;
-  if (!isFirstEverSpawn || !hasAnyOverrideSet) return;
+  if (!isFirstEverSpawn || task.run_mode !== 'agent_override') return;
 
   const lockedAgent = task.agent_override ?? settingsLane?.agent_override ?? project?.default_agent ?? DEFAULT_AGENT;
   const lockedModel = task.model_override ?? settingsLane?.model_override ?? project?.default_model ?? null;

@@ -82,6 +82,7 @@ Anchors are enumerable source-code structures that must be exhaustively listed i
 | Anchor | What to extract | Target doc |
 |--------|----------------|------------|
 | `PermissionMode` | Union variants | configuration.md, database.md |
+| `TaskRunMode` | Union variants | database.md |
 | `ActionType` | Union variants | transition-engine.md |
 | `SessionStatus` | Union variants | session-lifecycle.md |
 | `SessionRecordStatus` | Union variants | session-lifecycle.md, database.md |

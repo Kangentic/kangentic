@@ -41,17 +41,17 @@ export function ProfilePicker({ taskId }: { taskId: string }) {
     ? boardProfiles.find((profile) => profile.id === task.profile_id) ?? null
     : null;
 
-  // A task pinned to a direct override is in a different mode entirely: its
-  // agent/model/effort are fixed for its whole life, so no ladder applies.
-  const hasDirectOverride = task.agent_override !== null
-    || task.model_override !== null
-    || task.effort_override !== null
-    || task.permission_mode !== null;
+  // A task in Agent Override mode is in a different mode entirely: its
+  // agent/model/effort are fixed for its whole life, so no ladder applies. Read
+  // the stored mode rather than "is any field pinned" - a task can be in
+  // override mode with all four still on inherit until its first spawn locks
+  // them, and that task is Custom, not Default.
+  const isOverrideMode = task.run_mode === 'agent_override';
 
   let label: string;
   if (task.profile_id && !activeProfile) label = 'Profile unavailable';
   else if (activeProfile) label = activeProfile.name;
-  else if (hasDirectOverride) label = 'Custom';
+  else if (isOverrideMode) label = 'Custom';
   else label = 'Default';
 
   const options = [

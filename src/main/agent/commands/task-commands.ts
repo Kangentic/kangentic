@@ -11,7 +11,7 @@ import { handleCreateBacklogTask, BACKLOG_DESCRIPTION_MAX_LENGTH } from './backl
 import { resolveProfileSelector } from './profile-commands';
 import { linkPRForTask } from '../../pr/pr-linking';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
-import type { TaskUpdateInput, PermissionMode } from '../../../shared/types';
+import type { TaskUpdateInput, PermissionMode, TaskRunMode } from '../../../shared/types';
 
 export const TASK_DESCRIPTION_MAX_LENGTH = 50_000;
 
@@ -97,6 +97,7 @@ export const handleCreateTask: CommandHandler = (
   const permissionMode = params.permissionMode as PermissionMode | null;
   const autoCommand = params.autoCommand as string | null;
   const profileSelector = params.profile as string | null;
+  const runMode = params.runMode as TaskRunMode | null;
 
   // Observability for the "labels dropped on a large description" bug
   // (task #229). Logs what `labels` actually reached the handler. If it is
@@ -183,6 +184,7 @@ export const handleCreateTask: CommandHandler = (
     ...(permissionMode ? { permission_mode: permissionMode } : {}),
     ...(autoCommand ? { auto_command: autoCommand } : {}),
     ...(profileId ? { profile_id: profileId } : {}),
+    ...(runMode ? { run_mode: runMode } : {}),
   });
 
   // Persist label colors to config if any were provided
@@ -233,6 +235,7 @@ export const handleUpdateTask: CommandHandler = (
   const newEffort = params.effort as string | null | undefined;
   const newPermissionMode = params.permissionMode as PermissionMode | null | undefined;
   const newProfileSelector = params.profile as string | null | undefined;
+  const newRunMode = params.runMode as TaskRunMode | undefined;
   const newAttachments = params.attachments as Array<{ filePath: string; filename?: string }> | null;
 
   // Observability for the "labels dropped on a large description" bug
@@ -309,6 +312,10 @@ export const handleUpdateTask: CommandHandler = (
       updates.profile_id = resolvedProfile.profileId;
     }
   }
+  // No "clear" state: the mode is one of two values, so omitted simply means
+  // "leave it alone". A pin or profile in this same write still implies a mode
+  // via applyProfileExclusivity.
+  if (newRunMode !== undefined) updates.run_mode = newRunMode;
 
   const hasScalarChange = Object.keys(updates).length > 1;
   let updated = hasScalarChange ? taskRepo.update(updates as unknown as TaskUpdateInput) : task;
@@ -360,6 +367,7 @@ export const handleUpdateTask: CommandHandler = (
   if (newEffort !== undefined) changedFields.push('effort');
   if (newPermissionMode !== undefined) changedFields.push('permissionMode');
   if (newProfileSelector !== undefined) changedFields.push('profile');
+  if (newRunMode !== undefined) changedFields.push('runMode');
   if (attachmentsAdded > 0) changedFields.push('attachments');
 
   return {
@@ -381,6 +389,10 @@ export const handleUpdateTask: CommandHandler = (
       effortOverride: updated.effort_override,
       permissionMode: updated.permission_mode,
       profileId: updated.profile_id,
+      // Reported like its exclusivity siblings above: a pin or a profile in
+      // this write can flip the mode without the caller naming it, so the
+      // resulting mode has to be visible in the response.
+      runMode: updated.run_mode,
       ...(newAttachments !== null ? { attachmentCount: updated.attachment_count, attachmentsAdded } : {}),
     },
   };

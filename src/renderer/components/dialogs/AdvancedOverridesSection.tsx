@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { Pencil } from 'lucide-react';
 import { useBoardStore } from '../../stores/board-store';
@@ -7,17 +6,22 @@ import { useConfigStore } from '../../stores/config-store';
 import { useAgentCapabilityResolution } from '../../hooks/useAgentCapabilityResolution';
 import { useModelContextWindows, useModelDisplayNames } from '../../hooks/useKnownModels';
 import { DEFAULT_AGENT, DEFAULT_PERMISSIONS, getPermissionLabel } from '../../../shared/types';
+import type { TaskRunMode } from '../../../shared/types';
 import { modelRowLabel } from '../../utils/format-tokens';
 import { ModelCombobox } from './ModelCombobox';
 import { Combobox } from './Combobox';
 import { Select } from '../settings/shared';
 
-/** The two ways a task can get its agent settings. Exactly one is live at a time. */
-type RunMode = 'profile' | 'override';
-
 interface AdvancedOverridesSectionProps {
   /** Destination/current swimlane ID. Used to resolve the fallback agent (column.agent_override > project default) for capability lookup. */
   swimlaneId: string;
+  /**
+   * Which branch is live. Owned by the host dialog (and persisted as
+   * `Task.run_mode`) rather than held here, so the choice survives a save and
+   * participates in the host's dirty check.
+   */
+  runMode: TaskRunMode;
+  setRunMode: (value: TaskRunMode) => void;
   agentOverride: string;
   setAgentOverride: (value: string) => void;
   modelOverride: string;
@@ -86,9 +90,12 @@ function EditPencilButton({ onClick, title, testId, disabled = false }: EditPenc
  * say so: picking one branch clears the other's fields here, exactly as the
  * repository would on write.
  *
- * The mode is explicit state, NOT derived from "are any fields set". A user who
- * selects Agent Override and has not yet picked a value would otherwise snap
- * straight back to the Column Settings branch.
+ * The mode is explicit state, NOT derived from "are any fields set" - and it is
+ * PERSISTED (`Task.run_mode`), not just held for the life of one mount. A user
+ * who selects Agent Override and picks no value would otherwise snap straight
+ * back to the Column Settings branch: within a mount while typing, and across a
+ * save, because "override, everything inherited" and "column settings" store an
+ * identical set of nulls.
  *
  * Resolution + locking contract (Agent Override branch):
  *   - The inherit state (empty string) shows the concrete value it resolves
@@ -129,6 +136,8 @@ function EditPencilButton({ onClick, title, testId, disabled = false }: EditPenc
  */
 export function AdvancedOverridesSection({
   swimlaneId,
+  runMode,
+  setRunMode,
   agentOverride,
   setAgentOverride,
   modelOverride,
@@ -140,10 +149,6 @@ export function AdvancedOverridesSection({
   profileId,
   setProfileId,
 }: AdvancedOverridesSectionProps) {
-  // A lifetime pin already on the task means the task was authored in override
-  // mode, so open on that branch. Seeded once: see the "explicit state" note above.
-  const hasDirectPin = Boolean(agentOverride || modelOverride || effortOverride || permissionOverride);
-  const [runMode, setRunMode] = useState<RunMode>(hasDirectPin ? 'override' : 'profile');
   const currentProject = useProjectStore((state) => state.currentProject);
   const destinationSwimlane = useBoardStore((state) => state.swimlanes.find((lane) => lane.id === swimlaneId));
   const boardProfiles = useBoardStore((state) => state.boardProfiles);
@@ -226,7 +231,7 @@ export function AdvancedOverridesSection({
   const hasProfiles = boardProfiles.length > 0;
 
   const selectProfileMode = () => {
-    setRunMode('profile');
+    setRunMode('column_settings');
     // Exclusive with the lifetime pins - clear them here so the dialog shows the
     // same thing the repository will store (`applyProfileExclusivity`).
     setAgentOverride('');
@@ -236,7 +241,7 @@ export function AdvancedOverridesSection({
   };
 
   const selectOverrideMode = () => {
-    setRunMode('override');
+    setRunMode('agent_override');
     setProfileId(null);
   };
 
@@ -251,7 +256,7 @@ export function AdvancedOverridesSection({
    * child, because the branch's own selects and comboboxes cannot legally nest
    * inside a button.
    */
-  const modeCard = (mode: RunMode, label: string, description: string, testId: string, body: ReactNode) => {
+  const modeCard = (mode: TaskRunMode, label: string, description: string, testId: string, body: ReactNode) => {
     const selected = runMode === mode;
     return (
       // Selection is signalled NEUTRALLY - a raised fill and a slightly brighter
@@ -272,7 +277,7 @@ export function AdvancedOverridesSection({
           type="button"
           role="radio"
           aria-checked={selected}
-          onClick={mode === 'profile' ? selectProfileMode : selectOverrideMode}
+          onClick={mode === 'column_settings' ? selectProfileMode : selectOverrideMode}
           data-testid={testId}
           className="w-full flex items-start gap-2.5 px-4 py-2.5 text-left cursor-pointer"
         >
@@ -328,7 +333,7 @@ export function AdvancedOverridesSection({
             configured - and labelling the branch "Profile" made it read as
             though it were. */}
         {modeCard(
-          'profile',
+          'column_settings',
           'Column Settings',
           "Each column applies its own settings as the task moves.",
           'task-run-mode-profile',
@@ -372,7 +377,7 @@ export function AdvancedOverridesSection({
         )}
 
         {modeCard(
-          'override',
+          'agent_override',
           'Agent Override',
             // Declarative like the rest of the dialog, and parallel with the
             // other card on the axis that matters: "as the task moves" against

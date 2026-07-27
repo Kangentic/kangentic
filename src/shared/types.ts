@@ -266,6 +266,25 @@ export type PRState = 'open' | 'draft' | 'merged' | 'closed';
  */
 export type PRLinkStatus = 'linked' | 'unchanged' | 'not-found' | 'no-anchor' | 'resolver-unavailable' | 'transient-error';
 
+/**
+ * How a task gets its agent settings. Exactly one mode is live at a time, and
+ * the choice is explicit rather than derived from "are any pins set" - those
+ * are two different behaviours even when every field reads as inherited:
+ *
+ *   - `'column_settings'` - the task follows each column it moves through, for
+ *     its whole life. `profile_id` selects WHICH set of column settings applies
+ *     (null = the board as configured, non-null = that Board Profile's ladder).
+ *   - `'agent_override'` - agent / model / effort / permission are pinned for
+ *     the task. Fields left on inherit are still resolved dynamically until the
+ *     task's first ever spawn, which locks all four
+ *     (`lockAdvancedOverridesOnFirstSpawn`).
+ *
+ * Named for the two radio labels the New Task / Edit dialog shows, so the stored
+ * value and the control the user clicked read the same. Deriving the mode from
+ * the pins used to lose "Agent Override with everything inherited" on every save.
+ */
+export type TaskRunMode = 'column_settings' | 'agent_override';
+
 export interface Task {
   id: string;
   display_id: number;
@@ -309,16 +328,26 @@ export interface Task {
    * MUTUALLY EXCLUSIVE with the four Advanced pins (`agent_override`,
    * `model_override`, `effort_override`, `permission_mode`), enforced in
    * `TaskRepository`: a task either pins one set of values for its whole life OR
-   * rides a per-column ladder, never both. That exclusivity is load-bearing -
-   * because a profile task carries none of those four, `hasAnyOverrideSet` is
-   * false and `lockAdvancedOverridesOnFirstSpawn` no-ops, which is what stops the
-   * first-spawn lock from freezing the ladder at column 1.
+   * rides a per-column ladder, never both. Setting this therefore also forces
+   * `run_mode` to `'column_settings'` and clears all four pins, in the same
+   * write (`applyProfileExclusivity`). That exclusivity is load-bearing - a
+   * profile task never reaches `lockAdvancedOverridesOnFirstSpawn`, which is
+   * what stops the first-spawn lock from freezing the ladder at column 1.
    *
    * An id naming no known profile degrades to Default rather than throwing: the
    * profiles live in a checked-in file while this column lives in the local DB,
    * so a teammate deleting a profile must never wedge an in-flight task.
    */
   profile_id: string | null;
+  /**
+   * Which of the two run modes the user chose (see `TaskRunMode`). Persisted
+   * rather than derived, because "Agent Override with all four fields left on
+   * inherit" and "Column Settings" store an identical set of nulls, yet mean
+   * opposite things: the first locks all four at first spawn, the second never
+   * locks. Mutually exclusive with `profile_id` in the same sense the pins are -
+   * `'agent_override'` clears it, and setting it forces `'column_settings'`.
+   */
+  run_mode: TaskRunMode;
   attachment_count: number;
   /** Serialized `TaskDetailViewState` (JSON) persisting the task-detail dialog's layout across restarts. null until the user changes the layout once. */
   detail_view_state: string | null;
@@ -2856,6 +2885,8 @@ export interface TaskCreateInput {
   auto_command?: string | null;
   /** Board Profile to ride (see `Task.profile_id`). Setting this clears the four Advanced pins; they are mutually exclusive. */
   profile_id?: string | null;
+  /** Which run mode the task was authored in (see `Task.run_mode`). Omitted defaults to `'column_settings'`, except that pinning any of the four Advanced fields implies `'agent_override'`. */
+  run_mode?: TaskRunMode;
   /** External origin carried through when promoting an imported backlog item, so import dedup survives promotion. */
   externalId?: string;
   externalSource?: string;
@@ -2893,6 +2924,8 @@ export interface TaskUpdateInput {
   permission_mode?: PermissionMode | null;
   /** Board Profile to ride (see `Task.profile_id`). Setting this clears the four Advanced pins, and setting any of those four clears this. */
   profile_id?: string | null;
+  /** Which run mode the task runs in (see `Task.run_mode`). `'agent_override'` clears `profile_id`; `'column_settings'` clears the four pins. Omitted leaves the stored mode alone, unless a pin or profile in the same write implies one. */
+  run_mode?: TaskRunMode;
 }
 
 /** Result of `IPC.TASK_RESOLVE_PR` - the on-demand branch->PR resolver. */

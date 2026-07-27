@@ -96,6 +96,7 @@ function taskContentsMatch(previous: Task, next: Task): boolean {
     previous.head_sha !== next.head_sha ||
     previous.priority !== next.priority ||
     previous.attachment_count !== next.attachment_count ||
+    previous.run_mode !== next.run_mode ||
     previous.archived_at !== next.archived_at ||
     previous.created_at !== next.created_at ||
     previous.updated_at !== next.updated_at

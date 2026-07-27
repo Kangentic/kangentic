@@ -98,9 +98,15 @@ function createSqlTracker() {
   return { db, statements, setExistingRow: (row: TaskRow) => { existingRow = row; } };
 }
 
-/** A full DB row (labels pre-serialized) for seeding `getById` via `setExistingRow`. */
+/**
+ * A full DB row (labels pre-serialized) for seeding `getById` via
+ * `setExistingRow`. `run_mode` defaults to whatever the repository itself would
+ * have derived for the given pins, so a seeded row is always one the repository
+ * could actually have written; pass it explicitly to seed override mode with
+ * nothing pinned, the state pins cannot express.
+ */
 function makeTaskRow(overrides: Partial<TaskRow> = {}): TaskRow {
-  return {
+  const merged = {
     id: 'task-1',
     display_id: 1,
     title: 'Existing task',
@@ -134,7 +140,10 @@ function makeTaskRow(overrides: Partial<TaskRow> = {}): TaskRow {
     created_at: '2026-01-01T00:00:00.000Z',
     updated_at: '2026-01-01T00:00:00.000Z',
     ...overrides,
-  };
+  } as TaskRow;
+  const pinsAnyField = merged.agent_override !== null || merged.model_override !== null
+    || merged.effort_override !== null || merged.permission_mode !== null;
+  return { run_mode: pinsAnyField ? 'agent_override' : 'column_settings', ...merged };
 }
 
 describe('TaskRepository SQL contracts', () => {
@@ -360,6 +369,63 @@ describe('TaskRepository SQL contracts', () => {
         expect(task.effort_override).toBeNull();
         expect(task.permission_mode).toBeNull();
       });
+
+      it('defaults run_mode to column_settings', () => {
+        const task = repo.create({ title: 'T', description: '', swimlane_id: 'lane-1' });
+
+        expect(task.run_mode).toBe('column_settings');
+      });
+
+      it('run_mode agent_override with nothing pinned survives the create', () => {
+        // The whole reason the column exists: this row is byte-identical to a
+        // Column Settings task in every other field, so nothing but the mode
+        // can tell them apart.
+        const task = repo.create({
+          title: 'T', description: '', swimlane_id: 'lane-1', run_mode: 'agent_override',
+        });
+
+        expect(task.run_mode).toBe('agent_override');
+        expect(task.agent_override).toBeNull();
+        expect(task.model_override).toBeNull();
+        expect(task.effort_override).toBeNull();
+        expect(task.permission_mode).toBeNull();
+        expect(task.profile_id).toBeNull();
+      });
+
+      it('a pin implies run_mode agent_override without being asked', () => {
+        const task = repo.create({
+          title: 'T', description: '', swimlane_id: 'lane-1', effort_override: 'high',
+        });
+
+        expect(task.run_mode).toBe('agent_override');
+      });
+
+      it('a profile_id forces run_mode column_settings even when agent_override was requested', () => {
+        const task = repo.create({
+          title: 'T', description: '', swimlane_id: 'lane-1',
+          profile_id: 'profile-1', run_mode: 'agent_override',
+        });
+
+        expect(task.profile_id).toBe('profile-1');
+        expect(task.run_mode).toBe('column_settings');
+      });
+
+      it('persists run_mode in the INSERT statement, not just the returned object', () => {
+        // Mirrors the update() test below: the INSERT column list and its
+        // positional args are hand-enumerated, so a mode that only lives in
+        // the returned Task would look correct here and silently fall back
+        // to the schema DEFAULT 'column_settings' on the next read - every
+        // "Agent Override with nothing pinned" task would revert to Column
+        // Settings the moment the app restarts.
+        repo.create({
+          title: 'T', description: '', swimlane_id: 'lane-1', run_mode: 'agent_override',
+        });
+
+        const insertStatement = tracker.statements.find((statement) => statement.sql.includes('INSERT INTO tasks'));
+        expect(insertStatement).toBeDefined();
+        expect(insertStatement!.sql).toContain('run_mode');
+        expect(insertStatement!.args).toContain('agent_override');
+      });
     });
 
     describe('update()', () => {
@@ -391,13 +457,97 @@ describe('TaskRepository SQL contracts', () => {
         expect(updated.permission_mode).toBeNull();
       });
 
-      it('an unrelated field update leaves an existing profile_id and pins untouched', () => {
+      it('an unrelated field update leaves an existing profile_id, run_mode, and pins untouched', () => {
         tracker.setExistingRow(makeTaskRow({ profile_id: 'profile-1' }));
 
         const updated = repo.update({ id: 'task-1', title: 'Renamed' });
 
         expect(updated.title).toBe('Renamed');
         expect(updated.profile_id).toBe('profile-1');
+        expect(updated.run_mode).toBe('column_settings');
+      });
+
+      it('switching a bare task to agent_override persists the mode with no pins', () => {
+        // The repro: Edit Task on a task with nothing pinned, select Agent
+        // Override, change nothing else, Save. Before run_mode existed this
+        // wrote five nulls and reopened on Column Settings.
+        tracker.setExistingRow(makeTaskRow());
+
+        const updated = repo.update({
+          id: 'task-1',
+          agent_override: null,
+          model_override: null,
+          effort_override: null,
+          permission_mode: null,
+          profile_id: null,
+          run_mode: 'agent_override',
+        });
+
+        expect(updated.run_mode).toBe('agent_override');
+        expect(updated.agent_override).toBeNull();
+        expect(updated.model_override).toBeNull();
+        expect(updated.effort_override).toBeNull();
+        expect(updated.permission_mode).toBeNull();
+        expect(updated.profile_id).toBeNull();
+      });
+
+      it('run_mode agent_override detaches a task from its profile', () => {
+        tracker.setExistingRow(makeTaskRow({ profile_id: 'profile-1' }));
+
+        const updated = repo.update({ id: 'task-1', run_mode: 'agent_override' });
+
+        expect(updated.run_mode).toBe('agent_override');
+        expect(updated.profile_id).toBeNull();
+      });
+
+      it('run_mode column_settings clears the pins, mirroring the dialog branch', () => {
+        tracker.setExistingRow(makeTaskRow({
+          model_override: 'sonnet', effort_override: 'high',
+          agent_override: 'claude', permission_mode: 'default',
+        }));
+
+        const updated = repo.update({ id: 'task-1', run_mode: 'column_settings' });
+
+        expect(updated.run_mode).toBe('column_settings');
+        expect(updated.model_override).toBeNull();
+        expect(updated.effort_override).toBeNull();
+        expect(updated.agent_override).toBeNull();
+        expect(updated.permission_mode).toBeNull();
+      });
+
+      it('setting profile_id forces column_settings even when agent_override rides along', () => {
+        // A row claiming both a profile and override mode is the state the
+        // first-spawn lock would misread, so no write may produce one.
+        tracker.setExistingRow(makeTaskRow({ model_override: 'sonnet' }));
+
+        const updated = repo.update({
+          id: 'task-1', profile_id: 'profile-2', run_mode: 'agent_override',
+        });
+
+        expect(updated.profile_id).toBe('profile-2');
+        expect(updated.run_mode).toBe('column_settings');
+        expect(updated.model_override).toBeNull();
+      });
+
+      it('pinning a field flips a column-settings task to agent_override', () => {
+        tracker.setExistingRow(makeTaskRow());
+
+        const updated = repo.update({ id: 'task-1', model_override: 'sonnet' });
+
+        expect(updated.run_mode).toBe('agent_override');
+      });
+
+      it('persists run_mode in the UPDATE statement, not just the returned object', () => {
+        // The update SET list is hand-enumerated and already omits other
+        // columns, so a mode that only lives in the return value would look
+        // correct here and vanish on the next read.
+        tracker.setExistingRow(makeTaskRow());
+
+        repo.update({ id: 'task-1', run_mode: 'agent_override' });
+
+        const updateStatement = tracker.statements.find((statement) => statement.sql.includes('UPDATE tasks SET title'));
+        expect(updateStatement!.sql).toContain('run_mode = ?');
+        expect(updateStatement!.args).toContain('agent_override');
       });
     });
 
@@ -409,9 +559,13 @@ describe('TaskRepository SQL contracts', () => {
 
         const updateStatement = tracker.statements.find((s) => s.sql.includes('UPDATE tasks SET model_override'));
         expect(updateStatement).toBeDefined();
-        const [modelArg, , profileIdArg] = updateStatement!.args;
+        const [modelArg, , profileIdArg, runModeArg] = updateStatement!.args;
         expect(modelArg).toBe('opus');
         expect(profileIdArg).toBeNull();
+        // The derived mode has to reach the SET list too - a ContextBar pin
+        // that detached from the profile but left run_mode behind would leave
+        // the row claiming column settings while carrying a lifetime pin.
+        expect(runModeArg).toBe('agent_override');
       });
 
       it('clearing an override to null is not a pin and leaves profile_id intact', () => {
@@ -421,9 +575,12 @@ describe('TaskRepository SQL contracts', () => {
 
         const updateStatement = tracker.statements.find((s) => s.sql.includes('UPDATE tasks SET model_override'));
         expect(updateStatement).toBeDefined();
-        const [modelArg, , profileIdArg] = updateStatement!.args;
+        const [modelArg, , profileIdArg, runModeArg] = updateStatement!.args;
         expect(modelArg).toBeNull();
         expect(profileIdArg).toBe('profile-1');
+        // Not a pin means not a mode switch either: the seeded row's mode is
+        // written back unchanged rather than re-derived from the cleared value.
+        expect(runModeArg).toBe('agent_override');
       });
     });
   });

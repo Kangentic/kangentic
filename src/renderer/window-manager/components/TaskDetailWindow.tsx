@@ -46,7 +46,7 @@ import { useLayerStore } from '../context';
 import { registerWindowCloser, unregisterWindowCloser } from '../store/window-close-registry';
 import { classifySnapZone, nextSnap } from '../dnd/snap-zones';
 import type { SnapDirection } from '../dnd/snap-zones';
-import type { Task, ShortcutConfig } from '../../../shared/types';
+import type { Task, ShortcutConfig, TaskRunMode } from '../../../shared/types';
 
 interface TaskDetailWindowProps {
   task: Task;
@@ -125,6 +125,7 @@ export function TaskDetailWindow({
   const [effortOverride, setEffortOverride] = useState(task.effort_override ?? '');
   const [permissionOverride, setPermissionOverride] = useState(task.permission_mode ?? '');
   const [profileId, setProfileId] = useState<string | null>(task.profile_id ?? null);
+  const [runMode, setRunMode] = useState<TaskRunMode>(task.run_mode);
   const [isEditing, setIsEditing] = useState(!!initialEdit);
   const [descriptionPeekOpen, setDescriptionPeekOpen] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
@@ -162,6 +163,7 @@ export function TaskDetailWindow({
     effortOverride,
     permissionOverride,
     profileId,
+    runMode,
     setTitle,
     setDescription,
     setPrUrl,
@@ -171,6 +173,8 @@ export function TaskDetailWindow({
     setModelOverride,
     setEffortOverride,
     setPermissionOverride,
+    setProfileId,
+    setRunMode,
     setIsEditing,
     branchConfig,
     session: sessionState.session,
@@ -235,11 +239,12 @@ export function TaskDetailWindow({
     || effortOverride !== (task.effort_override ?? '')
     || permissionOverride !== (task.permission_mode ?? '')
     || profileId !== (task.profile_id ?? null)
+    || runMode !== task.run_mode
     || JSON.stringify(labels) !== JSON.stringify(task.labels ?? [])
     || branchConfig.baseBranch !== (task.base_branch || '')
     || branchConfig.customBranchName !== (task.branch_name || '')
     || branchConfig.useWorktree !== (task.use_worktree != null ? Boolean(task.use_worktree) : null)
-  ), [title, description, prUrl, priority, agentOverride, modelOverride, effortOverride, permissionOverride, profileId, labels, branchConfig.baseBranch, branchConfig.customBranchName, branchConfig.useWorktree, task]);
+  ), [title, description, prUrl, priority, agentOverride, modelOverride, effortOverride, permissionOverride, profileId, runMode, labels, branchConfig.baseBranch, branchConfig.customBranchName, branchConfig.useWorktree, task]);
 
   // Guard close gestures (header X, Escape, panel.close) while editing with
   // unsaved changes: ask before discarding. Returns true to let the caller
@@ -608,6 +613,8 @@ export function TaskDetailWindow({
                   permissionOverride={permissionOverride}
                   profileId={profileId}
                   setProfileId={setProfileId}
+                  runMode={runMode}
+                  setRunMode={setRunMode}
                   setPermissionOverride={setPermissionOverride}
                   attachments={attachments}
                   branchConfig={branchConfig}

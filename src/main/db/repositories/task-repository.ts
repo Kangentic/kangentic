@@ -20,25 +20,32 @@ function rowToTask(row: TaskRow): Task {
  * rides a Board Profile's per-column ladder - never both.
  *
  * `auto_command` is deliberately absent: it is an MCP-only escape hatch rather
- * than an Advanced pin, so a task may carry it alongside a profile. It is also
- * absent from `hasAnyOverrideSet` in spawn-preamble.ts, which is why an
- * MCP-set auto-command never trips the first-spawn lock.
+ * than an Advanced pin, so a task may carry it alongside a profile. It likewise
+ * never implies `run_mode: 'agent_override'`, which is why an MCP-set
+ * auto-command does not trip the first-spawn lock.
  */
 const ADVANCED_PIN_FIELDS = ['agent_override', 'model_override', 'effort_override', 'permission_mode'] as const;
 
 type AdvancedPinFields = Pick<Task, typeof ADVANCED_PIN_FIELDS[number]>;
-type ExclusiveFields = AdvancedPinFields & Pick<Task, 'profile_id'>;
+type ExclusiveFields = AdvancedPinFields & Pick<Task, 'profile_id' | 'run_mode'>;
+
+const CLEARED_PINS = {
+  agent_override: null,
+  model_override: null,
+  effort_override: null,
+  permission_mode: null,
+} as const;
 
 /**
- * Enforce profile-vs-pin mutual exclusivity, deciding by what the CALLER asked
- * for rather than by the merged result.
+ * Enforce profile-vs-pin mutual exclusivity and keep `run_mode` consistent with
+ * it, deciding by what the CALLER asked for rather than by the merged result.
  *
- * This is the single write-time chokepoint for the invariant, so IPC, MCP, and
- * every other caller inherit it rather than each remembering the rule. It is
- * load-bearing beyond tidiness: `lockAdvancedOverridesOnFirstSpawn` gates on
- * "does this task have any pin set", so a profile task that also carried a pin
- * would get all four frozen to its first column's values and its ladder would
- * silently flatten.
+ * This is the single write-time chokepoint for the invariant, so IPC, MCP, the
+ * mobile bridge, and every other caller inherit it rather than each remembering
+ * the rule. It is load-bearing beyond tidiness:
+ * `lockAdvancedOverridesOnFirstSpawn` fires on `run_mode === 'agent_override'`,
+ * so a profile task that also claimed override mode would get all four fields
+ * frozen to its first column's values and its ladder would silently flatten.
  *
  * `requested` must contain only the fields the caller explicitly provided
  * (`undefined` = untouched). Reading intent from `requested` rather than from the
@@ -46,16 +53,30 @@ type ExclusiveFields = AdvancedPinFields & Pick<Task, 'profile_id'>;
  * profile" do the obvious thing - switch it to Custom - instead of the merged
  * view seeing a non-null profile_id and throwing the new pin away.
  *
- * When one call sets both, the profile wins: selecting a profile is the more
- * specific intent, and it is how the UI expresses "switch this task off its
- * Custom pins onto a ladder".
+ * Precedence, highest first:
+ *   1. A profile assignment wins outright: it is the more specific intent, and
+ *      it is how the UI expresses "switch this task off its Custom pins onto a
+ *      ladder". It clears the pins AND forces `'column_settings'`.
+ *   2. Pinning any of the four, or asking for `'agent_override'` explicitly,
+ *      means override mode and detaches from the profile. The explicit mode
+ *      matters on its own: "Agent Override with everything left on inherit"
+ *      pins nothing, and is exactly the state the derived-mode approach lost.
+ *   3. Asking for `'column_settings'` clears the pins, mirroring what the
+ *      dialog's Column Settings card does locally.
+ * A write touching none of them leaves all three alone.
  */
 function applyProfileExclusivity(next: ExclusiveFields, requested: Partial<ExclusiveFields>): ExclusiveFields {
   if (requested.profile_id != null) {
-    return { ...next, agent_override: null, model_override: null, effort_override: null, permission_mode: null };
+    return { ...next, ...CLEARED_PINS, run_mode: 'column_settings' };
   }
   const pinsAnyField = ADVANCED_PIN_FIELDS.some((field) => requested[field] != null);
-  return pinsAnyField ? { ...next, profile_id: null } : next;
+  if (pinsAnyField || requested.run_mode === 'agent_override') {
+    return { ...next, profile_id: null, run_mode: 'agent_override' };
+  }
+  if (requested.run_mode === 'column_settings') {
+    return { ...next, ...CLEARED_PINS, run_mode: 'column_settings' };
+  }
+  return next;
 }
 
 export class TaskRepository {
@@ -137,6 +158,7 @@ export class TaskRepository {
       effort_override: input.effort_override ?? null,
       permission_mode: input.permission_mode ?? null,
       profile_id: input.profile_id ?? null,
+      run_mode: input.run_mode ?? 'column_settings',
     }, input);
 
     const task: Task = {
@@ -167,6 +189,7 @@ export class TaskRepository {
       permission_mode: exclusive.permission_mode,
       auto_command: input.auto_command ?? null,
       profile_id: exclusive.profile_id,
+      run_mode: exclusive.run_mode,
       attachment_count: 0,
       detail_view_state: null,
       archived_at: null,
@@ -175,9 +198,9 @@ export class TaskRepository {
     };
 
     this.db.prepare(`
-      INSERT INTO tasks (id, display_id, title, description, swimlane_id, position, agent, session_id, worktree_path, branch_name, pr_number, pr_url, pr_state, head_sha, external_id, external_source, external_url, base_branch, use_worktree, labels, priority, model_override, effort_override, agent_override, permission_mode, auto_command, profile_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(task.id, task.display_id, task.title, task.description, task.swimlane_id, task.position, task.agent, task.session_id, task.worktree_path, task.branch_name, task.pr_number, task.pr_url, task.pr_state, task.head_sha, task.external_id, task.external_source, task.external_url, task.base_branch, task.use_worktree, JSON.stringify(labels), task.priority, task.model_override, task.effort_override, task.agent_override, task.permission_mode, task.auto_command, task.profile_id, task.created_at, task.updated_at);
+      INSERT INTO tasks (id, display_id, title, description, swimlane_id, position, agent, session_id, worktree_path, branch_name, pr_number, pr_url, pr_state, head_sha, external_id, external_source, external_url, base_branch, use_worktree, labels, priority, model_override, effort_override, agent_override, permission_mode, auto_command, profile_id, run_mode, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(task.id, task.display_id, task.title, task.description, task.swimlane_id, task.position, task.agent, task.session_id, task.worktree_path, task.branch_name, task.pr_number, task.pr_url, task.pr_state, task.head_sha, task.external_id, task.external_source, task.external_url, task.base_branch, task.use_worktree, JSON.stringify(labels), task.priority, task.model_override, task.effort_override, task.agent_override, task.permission_mode, task.auto_command, task.profile_id, task.run_mode, task.created_at, task.updated_at);
 
     return task;
   }
@@ -197,9 +220,9 @@ export class TaskRepository {
     const updated: Task = { ...merged, ...applyProfileExclusivity(merged, input) };
 
     this.db.prepare(`
-      UPDATE tasks SET title = ?, description = ?, swimlane_id = ?, position = ?, agent = ?, session_id = ?, worktree_path = ?, branch_name = ?, pr_number = ?, pr_url = ?, pr_state = ?, head_sha = ?, base_branch = ?, use_worktree = ?, labels = ?, priority = ?, model_override = ?, effort_override = ?, agent_override = ?, permission_mode = ?, profile_id = ?, updated_at = ?
+      UPDATE tasks SET title = ?, description = ?, swimlane_id = ?, position = ?, agent = ?, session_id = ?, worktree_path = ?, branch_name = ?, pr_number = ?, pr_url = ?, pr_state = ?, head_sha = ?, base_branch = ?, use_worktree = ?, labels = ?, priority = ?, model_override = ?, effort_override = ?, agent_override = ?, permission_mode = ?, profile_id = ?, run_mode = ?, updated_at = ?
       WHERE id = ?
-    `).run(updated.title, updated.description, updated.swimlane_id, updated.position, updated.agent, updated.session_id, updated.worktree_path, updated.branch_name, updated.pr_number, updated.pr_url, updated.pr_state, updated.head_sha, updated.base_branch, updated.use_worktree, JSON.stringify(updated.labels), updated.priority, updated.model_override, updated.effort_override, updated.agent_override, updated.permission_mode, updated.profile_id, updated.updated_at, updated.id);
+    `).run(updated.title, updated.description, updated.swimlane_id, updated.position, updated.agent, updated.session_id, updated.worktree_path, updated.branch_name, updated.pr_number, updated.pr_url, updated.pr_state, updated.head_sha, updated.base_branch, updated.use_worktree, JSON.stringify(updated.labels), updated.priority, updated.model_override, updated.effort_override, updated.agent_override, updated.permission_mode, updated.profile_id, updated.run_mode, updated.updated_at, updated.id);
 
     return updated;
   }
@@ -210,8 +233,11 @@ export class TaskRepository {
    * Used by the ContextBar popover (`task:setRuntimeOverride` IPC) so that
    * we don't have to load the full task and re-write every column.
    *
-   * Pinning a value here is a pin like any other, so it clears `profile_id` via
-   * the same exclusivity rule. This DOES fire in practice: `ModelEffortPicker`
+   * Pinning a value here is a pin like any other, so it clears `profile_id` and
+   * switches `run_mode` to `'agent_override'` via the same exclusivity rule.
+   * Both columns are in the SET list below for that reason - deriving the mode
+   * and then not writing it would throw the switch away. This DOES fire in
+   * practice: `ModelEffortPicker`
    * (the ContextBar / PreSpawnContextBar model and effort pills) has no
    * awareness of `profile_id`, so picking a concrete model or effort on a task
    * riding a profile detaches it from the ladder here, with no confirmation in
@@ -230,8 +256,8 @@ export class TaskRepository {
       patch,
     );
     this.db.prepare(
-      'UPDATE tasks SET model_override = ?, effort_override = ?, profile_id = ?, updated_at = ? WHERE id = ?',
-    ).run(exclusive.model_override, exclusive.effort_override, exclusive.profile_id, new Date().toISOString(), taskId);
+      'UPDATE tasks SET model_override = ?, effort_override = ?, profile_id = ?, run_mode = ?, updated_at = ? WHERE id = ?',
+    ).run(exclusive.model_override, exclusive.effort_override, exclusive.profile_id, exclusive.run_mode, new Date().toISOString(), taskId);
   }
 
   /**

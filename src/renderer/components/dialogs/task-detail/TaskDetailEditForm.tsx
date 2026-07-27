@@ -14,7 +14,7 @@ import { useAllExistingLabels } from '../../../hooks/useAllExistingLabels';
 import type { AttachmentsState } from './useAttachments';
 import type { BranchConfigState } from './useBranchConfig';
 import { DEFAULT_PRIORITY_CONFIG } from '../../../../shared/types';
-import type { Task } from '../../../../shared/types';
+import type { Task, TaskRunMode } from '../../../../shared/types';
 
 interface TaskDetailEditFormProps {
   task: Task;
@@ -37,6 +37,8 @@ interface TaskDetailEditFormProps {
   permissionOverride: string;
   profileId: string | null;
   setProfileId: (value: string | null) => void;
+  runMode: TaskRunMode;
+  setRunMode: (value: TaskRunMode) => void;
   setPermissionOverride: (value: string) => void;
   attachments: AttachmentsState;
   branchConfig: BranchConfigState;
@@ -66,6 +68,8 @@ export function TaskDetailEditForm({
   permissionOverride,
   profileId,
   setProfileId,
+  runMode,
+  setRunMode,
   setPermissionOverride,
   attachments,
   branchConfig,
@@ -207,6 +211,8 @@ export function TaskDetailEditForm({
           permissionOverride={permissionOverride}
           profileId={profileId}
           setProfileId={setProfileId}
+          runMode={runMode}
+          setRunMode={setRunMode}
           setPermissionOverride={setPermissionOverride}
         />
       )}

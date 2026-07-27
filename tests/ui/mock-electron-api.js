@@ -756,6 +756,7 @@
           // profile-vs-pin exclusivity: a dialog that sent both would then show
           // up as a failure here instead of being silently corrected.
           profile_id: input.profile_id || null,
+          run_mode: input.run_mode || 'column_settings',
           auto_command: input.auto_command || null,
           attachment_count: 0,
           archived_at: null,
@@ -2506,6 +2507,17 @@
             use_worktree: null,
             labels: item.labels || [],
             priority: item.priority || 0,
+            agent_override: null,
+            model_override: null,
+            effort_override: null,
+            permission_mode: null,
+            auto_command: null,
+            profile_id: null,
+            // A promoted item has never been through the run-mode dialog, so it
+            // lands on the same default TaskRepository.create would write. Left
+            // undefined, the task-detail dialog would seed `runMode` from a
+            // missing field and neither radio would render checked.
+            run_mode: 'column_settings',
             attachment_count: 0,
             archived_at: null,
             detail_view_state: null,

@@ -33,6 +33,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     labels: [],
     priority: 0,
     attachment_count: 0,
+    run_mode: 'column_settings',
     archived_at: null,
     created_at: '2026-04-17T00:00:00.000Z',
     updated_at: '2026-04-17T00:00:00.000Z',
@@ -65,6 +66,15 @@ describe('applyStructuralSharing', () => {
   it('uses next reference when position changed (task was moved)', () => {
     const previous = makeTask({ position: 0 });
     const next = makeTask({ position: 3 });
+
+    const result = applyStructuralSharing([previous], [next]);
+
+    expect(result[0]).toBe(next);
+  });
+
+  it('uses next reference when run_mode differs (Column Settings vs Agent Override)', () => {
+    const previous = makeTask({ run_mode: 'column_settings' });
+    const next = makeTask({ run_mode: 'agent_override' });
 
     const result = applyStructuralSharing([previous], [next]);
 
@@ -160,8 +170,18 @@ describe('applyStructuralSharing', () => {
   // How to update when this fails: read the list of fields in
   // `src/renderer/stores/board-store/structural-sharing.ts` taskContentsMatch,
   // add the new field there, then update TASK_FIELD_COUNT below to match.
+  //
+  // Known limitation: this counts the LOCAL FIXTURE's keys, not the real
+  // `Task` interface's - `makeTask()` above already omits several required
+  // Task fields (profile_id, model_override, effort_override, agent_override,
+  // permission_mode, auto_command, detail_view_state, external_id,
+  // external_source, external_url) that `tsconfig.json` never typechecks
+  // (tests/** is outside its `include`), so the guard cannot fire for a field
+  // missing from the fixture itself, only for one present in the fixture but
+  // uncounted. Keep `run_mode` represented here so the guard is at least
+  // honest for this field.
   it('guards against Task-interface field drift', () => {
-    const TASK_FIELD_COUNT = 22; // keep in sync with taskContentsMatch
+    const TASK_FIELD_COUNT = 23; // keep in sync with taskContentsMatch
     const sample = makeTask();
     expect(Object.keys(sample)).toHaveLength(TASK_FIELD_COUNT);
   });

@@ -20,7 +20,7 @@ import { fetchGitBranches } from '../../utils/git-branches';
 import { isValidGitBranchName } from '../../../shared/git-utils';
 import { slugify, computeAutoBranchName } from '../../../shared/slugify';
 import { DEFAULT_PRIORITY_CONFIG } from '../../../shared/types';
-import type { PermissionMode } from '../../../shared/types';
+import type { PermissionMode, TaskRunMode } from '../../../shared/types';
 import { DescriptionEditor } from '../DescriptionEditor';
 import { MAX_ATTACHMENT_BYTES, MEDIA_TYPE_EXT, resolveMediaType, isImageMediaType, getFileTypeIcon, getExtension } from './attachment-utils';
 import { compressClipboardImage } from './image-compress';
@@ -122,8 +122,15 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
   const [effortOverride, setEffortOverride] = useState('');
   const [permissionOverride, setPermissionOverride] = useState('');
   const [profileId, setProfileId] = useState<string | null>(null);
+  // Which run-mode branch is selected. Persisted as `Task.run_mode`, so it is
+  // real form state here rather than local state inside AdvancedOverridesSection
+  // - which is also what lets `isDirty` below see it.
+  const [runMode, setRunMode] = useState<TaskRunMode>('column_settings');
 
-  const isDirty = title.trim() !== '' || description.trim() !== '' || customBranchName.trim() !== '' || attachments.length > 0 || labels.length > 0 || priority !== 0 || agentOverride !== '' || modelOverride !== '' || effortOverride !== '' || permissionOverride !== '';
+  // Every field the user can touch, including the two that pin nothing on their
+  // own: selecting Agent Override with all four inherited, or picking a Board
+  // Profile, is still work to lose, so Escape must prompt.
+  const isDirty = title.trim() !== '' || description.trim() !== '' || customBranchName.trim() !== '' || attachments.length > 0 || labels.length > 0 || priority !== 0 || agentOverride !== '' || modelOverride !== '' || effortOverride !== '' || permissionOverride !== '' || profileId !== null || runMode !== 'column_settings';
 
   // Guard close gestures (X, Escape, backdrop, Ctrl+Shift+W) so unsaved work is
   // not lost: when the form is dirty, ask before discarding. Returns true to let
@@ -311,7 +318,11 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
         ...(modelOverride ? { model_override: modelOverride } : {}),
         ...(effortOverride ? { effort_override: effortOverride } : {}),
         ...(permissionOverride ? { permission_mode: permissionOverride as PermissionMode } : {}),
-      ...(profileId ? { profile_id: profileId } : {}),
+        ...(profileId ? { profile_id: profileId } : {}),
+        // Always sent, never a conditional spread: 'column_settings' is a real
+        // choice, not an absent one, and it is the half of the pair that carries
+        // no pins to imply it.
+        run_mode: runMode,
         ...(attachments.length > 0 ? {
           pendingAttachments: attachments.map((attachment) => ({
             filename: attachment.filename,
@@ -511,6 +522,8 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
 
             <AdvancedOverridesSection
               swimlaneId={swimlaneId}
+              runMode={runMode}
+              setRunMode={setRunMode}
               agentOverride={agentOverride}
               setAgentOverride={setAgentOverride}
               modelOverride={modelOverride}

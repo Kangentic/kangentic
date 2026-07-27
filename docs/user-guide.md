@@ -71,6 +71,13 @@ A per-task pin **stays with the task across column moves** - column settings are
 carries its own override. Changing the Agent resets Model + Effort because the previous picks were
 valid for the previous agent's capability matrix.
 
+You can also choose Agent Override and pick nothing at all. Each field then shows, in the muted
+placeholder weight, the value it resolves to today, and keeps resolving live until the task spawns
+for the first time - at which point all four lock to the values the dialog was showing. That is the
+point of the branch: "whatever this task would run right now, pin exactly that." Because it stores
+no pins, the choice itself is what is saved, so the branch is still selected when you reopen the
+task.
+
 Agents can read and edit Board Profiles too, including across projects, which is the practical way
 to keep them in sync as models change ("update every profile's Opus 4.8 to Opus 5", "copy this
 board's Heavy profile into project X"). See

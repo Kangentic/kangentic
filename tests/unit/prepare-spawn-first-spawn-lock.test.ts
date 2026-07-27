@@ -60,8 +60,13 @@ import { prepareAgentSpawn } from '../../src/main/transition-engine/session-star
 const TASK_ID = 'task-startup-lock-001';
 const LANE_ID = 'lane-review';
 
+/**
+ * `run_mode` defaults to what the repository would have derived for the given
+ * pins (`applyProfileExclusivity`: any pin implies override mode), so a fixture
+ * is always a row the repository could actually have written.
+ */
 function makeTask(overrides: Partial<Task> = {}): Task {
-  return {
+  const merged = {
     id: TASK_ID,
     display_id: 1,
     title: 'Startup task',
@@ -88,6 +93,9 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     updated_at: '2025-01-01T00:00:00.000Z',
     ...overrides,
   } as Task;
+  const pinsAnyField = merged.agent_override !== null || merged.model_override !== null
+    || merged.effort_override !== null || merged.permission_mode !== null;
+  return { run_mode: pinsAnyField ? 'agent_override' : 'column_settings', ...merged } as Task;
 }
 
 function makeSwimlane(overrides: Partial<Swimlane> = {}): Swimlane {
@@ -199,7 +207,28 @@ describe('prepareAgentSpawn first-spawn override lock', () => {
     expect(result.ok).toBe(true);
   });
 
-  it('leaves a fully-inherit task untouched and flows the inheritance chain into the command', async () => {
+  it('locks a task in override mode with nothing pinned, on the startup path too', async () => {
+    // The startup chokepoint has to gate on the same persisted mode as the
+    // board one: override mode pins nothing until this lock runs, so a
+    // "does the task carry a pin" check would skip it here as well.
+    const task = makeTask({ run_mode: 'agent_override' });
+    const lane = makeSwimlane({ agent_override: 'codex', effort_override: 'low' });
+    const tasksUpdate = vi.fn();
+
+    const result = await runPrepare({ task, swimlane: lane, hasSessionRecord: false, tasksUpdate });
+
+    expect(tasksUpdate).toHaveBeenCalledWith({
+      id: TASK_ID,
+      agent_override: 'codex',
+      model_override: 'claude-opus-4-8',
+      effort_override: 'low',
+      permission_mode: 'acceptEdits',
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.agent).toBe('codex');
+  });
+
+  it('leaves a column-settings task untouched and flows the inheritance chain into the command', async () => {
     const task = makeTask();
     const tasksUpdate = vi.fn();
 

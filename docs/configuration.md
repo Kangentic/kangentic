@@ -237,10 +237,12 @@ one" is indistinguishable from "inherit", and a profile could only ever add pins
 
 A task's assignment lives in the per-project database (`tasks.profile_id`), not in config: the
 profile *definition* is team-shared, the *assignment* is per-task local runtime state. A task
-pointing at a profile a teammate deleted degrades to the columns' own settings and logs once.
+pointing at a profile a teammate deleted degrades to the columns' own settings and logs once. The
+same is true of `tasks.run_mode`, which records which of the dialog's two branches the task is on
+(see [Database > tasks table](database.md#tasks-table)).
 
-Profiles are mutually exclusive with the task's Advanced agent/model/effort/permission pins,
-enforced at write time in `TaskRepository`.
+Profiles are mutually exclusive with the task's Advanced agent/model/effort/permission pins and with
+`run_mode: 'agent_override'`, enforced at write time in `TaskRepository`.
 
 IPC channels are in the Board Config group: `boardConfig:getBoardProfiles`,
 `boardConfig:setBoardProfiles`, `boardConfig:boardProfilesChanged`. Agents can read and edit

@@ -129,6 +129,7 @@ Per-column session model (two orthogonal axes; see `src/shared/types.ts` and `do
 | permission_mode | TEXT | | NULL |
 | auto_command | TEXT | | NULL |
 | profile_id | TEXT | | NULL |
+| run_mode | TEXT | NOT NULL | 'column_settings' |
 | detail_view_state | TEXT | | NULL |
 | archived_at | TEXT | | NULL |
 | created_at | TEXT | NOT NULL | |
@@ -145,13 +146,25 @@ Default profile, so a board that has never used the feature needs no migration o
 pointing at a profile a teammate deleted degrades to Default and logs once, rather than wedging the
 task.
 
-`profile_id` and the four Advanced pins (`agent_override`, `model_override`, `effort_override`,
-`permission_mode`) are **mutually exclusive**, enforced at write time in `TaskRepository`
-(`applyProfileExclusivity`): setting the profile nulls all four, and setting any of the four nulls
-the profile. That exclusivity is what lets `lockAdvancedOverridesOnFirstSpawn` stay unchanged - a
-profile task has no pins, so the first-spawn lock never fires for it. `auto_command` is deliberately
-**not** in the exclusivity set: it is an MCP-only escape hatch, so a task may carry both a profile
-and its own auto-command.
+`run_mode` records which of the New Task / Edit dialog's two branches the user chose:
+`'column_settings'` (follow each column as the task moves; `profile_id` selects which set of column
+settings applies) or `'agent_override'` (pin agent/model/effort/permission for the task's whole
+life). It is stored rather than derived from "does the task carry a pin", because Agent Override with
+all four fields left on inherit writes exactly the same nulls as Column Settings while meaning the
+opposite - the first locks all four at first spawn, the second never locks. Deriving it silently
+dropped that choice on every save. The migration backfills `'agent_override'` for any row already
+carrying one of the four pins, reproducing the old derivation exactly, so upgraded boards behave
+identically.
+
+`profile_id`, `run_mode`, and the four Advanced pins (`agent_override`, `model_override`,
+`effort_override`, `permission_mode`) are **mutually exclusive**, enforced at write time in
+`TaskRepository` (`applyProfileExclusivity`): setting the profile nulls all four pins and forces
+`run_mode = 'column_settings'`; setting any of the four (or asking for `'agent_override'` directly)
+nulls the profile and sets `run_mode = 'agent_override'`. That exclusivity is what keeps
+`lockAdvancedOverridesOnFirstSpawn` correct - a profile task is never in override mode, so the
+first-spawn lock never fires for it. `auto_command` is deliberately **not** in the exclusivity set:
+it is an MCP-only escape hatch, so a task may carry both a profile and its own auto-command, and it
+never implies override mode.
 
 ### actions table
 
@@ -554,6 +567,7 @@ Grouped by feature. The numbering is for cross-reference only and does not refle
 50. **Durable activity-disposition-interval ledger (`session_activity_intervals`)** - creates the table plus its `idx_activity_intervals_task` / `idx_activity_intervals_session` / `idx_activity_intervals_started` / `idx_activity_intervals_open` indices. One row per continuous span a session spent in the `'active'` or `'idle'` `ActivityDisposition` bucket, written by `ActivityIntervalRecorder` the moment the activity engine commits a disposition-changing transition - symmetric by design (both dispositions recorded directly, not one derived as the inverse of the other). `started_at`/`ended_at` mirror `started_ms`/`ended_ms` as UTC ISO 8601, derived from the same value at write time. Deliberately has NO `sessions` DELETE cascade (same rationale as `conversation_turn_usage`): a durable ledger, so an interval outlives the session row that produced it. See the `session_activity_intervals table` section above. Idempotent `CREATE ... IF NOT EXISTS`.
 51. **Sent-message provenance (`session_messages_sent`)** - creates the table plus `idx_session_messages_sent_session_id`, recording every `kangentic_send_session_message` ATTEMPT (`delivered` / `queued` / `refused` / `failed`) against the session that received it. `session_id` cascades on `sessions` DELETE; the three `caller_*` columns are deliberately plain ids, not foreign keys, because a cross-project steer originates in another project's database. Followed by a guarded `ALTER TABLE ... ADD COLUMN error TEXT` so a database created by the intermediate (pre-`error`) shape picks the column up. Because the delivered message carries no in-band marker, these rows are the only record that a turn arrived through the tool rather than being typed. See the `session_messages_sent table` section above. Idempotent `CREATE ... IF NOT EXISTS` + `pragma table_info` guard.
 52. **`profile_id` column on tasks** - adds `profile_id TEXT DEFAULT NULL`, naming the Board Profile a task rides: a team-shared, named alternate set of per-column strategy settings applied as the task moves (see the `tasks table` section above and [Configuration > Board Profiles](configuration.md#board-profiles)). No foreign key and no backfill: profile *definitions* live in `kangentic.json` while this assignment is per-machine, and NULL already means the synthetic "Default" (every column uses its own settings), so an existing board needs no data migration and behaves byte-identically until a profile is created. Mutually exclusive with `agent_override` / `model_override` / `effort_override` / `permission_mode`, enforced in `TaskRepository`. Idempotent guarded `ALTER TABLE`.
+53. **`run_mode` column on tasks** - adds `run_mode TEXT NOT NULL DEFAULT 'column_settings'`, recording which of the New Task / Edit dialog's two branches the user chose (`'column_settings'` | `'agent_override'`, the `TaskRunMode` union). Previously the branch was derived on mount from "does the task carry any of the four Advanced pins", which cannot represent Agent Override with all four fields left on inherit: that saves the same five nulls as Column Settings, so the choice was dropped on every save and `lockAdvancedOverridesOnFirstSpawn` never fired. Backfills `'agent_override'` for any row where `agent_override`, `model_override`, `effort_override`, or `permission_mode` is non-NULL - exactly the old derivation, so upgraded boards behave identically; `auto_command` is excluded (not an Advanced pin) and profile tasks carry no pins, so both stay on `'column_settings'`. Joins the profile-vs-pin exclusivity set in `applyProfileExclusivity` (see the `tasks table` section above). Idempotent guarded `ALTER TABLE` + backfill `UPDATE`.
 
 ### Key Migrations (Global DB)
 

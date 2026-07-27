@@ -37,6 +37,21 @@ async function closeDialog() {
 }
 
 /**
+ * Close a New Task dialog whose form is DIRTY, clearing the discard confirm on
+ * the way out.
+ *
+ * Selecting the Agent Override branch is itself a change - it persists as
+ * `run_mode`, so the branch survives a save even with all four fields left on
+ * inherit - which means it counts toward `isDirty` and Escape prompts. Any test
+ * that expands Advanced therefore closes through here, not `closeDialog`.
+ */
+async function discardDialog(target: Page) {
+  await target.keyboard.press('Escape');
+  await target.locator('button:has-text("Discard")').click();
+  await target.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
+}
+
+/**
  * Open a closed-enumeration Combobox (Agent/Effort/Permission - see
  * src/renderer/components/dialogs/Combobox.tsx) and click a specific option
  * by its exact value (not label - Agent/Permission display a friendly label
@@ -283,7 +298,7 @@ test.describe('NewTaskDialog Advanced section', () => {
     expect(modelOptionTexts).toEqual(expect.arrayContaining(['opus', 'sonnet', 'haiku']));
     await modelRow.locator('button[title="Close dropdown"]').click();
 
-    await closeDialog();
+    await discardDialog(page);
   });
 
   test('Permission picker shows a bare, muted inherit placeholder with no clear button until a value is picked', async () => {
@@ -601,9 +616,11 @@ test.describe('NewTaskDialog Advanced - Agent picker (multi-agent fixture)', () 
     await multiPage.locator('[data-testid="task-advanced-toggle"]').click();
   }
 
+  // `openDialog` above always expands Advanced, so every dialog in this
+  // describe is dirty (the branch itself persists as run_mode) and closes
+  // through the discard confirm.
   async function closeDialog() {
-    await multiPage.keyboard.press('Escape');
-    await multiPage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
+    await discardDialog(multiPage);
   }
 
   test('Agent dropdown lists every found agent with a resolved-default option', async () => {
@@ -633,7 +650,9 @@ test.describe('NewTaskDialog Advanced - Agent picker (multi-agent fixture)', () 
     const optionTexts = await multiPage.locator('[data-combobox-option]').allTextContents();
     expect(optionTexts).toEqual(expect.arrayContaining(['Claude Code', 'Codex CLI']));
 
-    await multiPage.keyboard.press('Escape');
+    // One Escape, not two: the dialog's binding is capture-phase, so it reaches
+    // the dirty guard past the open dropdown and raises the confirm directly. A
+    // second Escape would dismiss that confirm instead of the dropdown.
     await closeDialog();
   });
 
@@ -828,9 +847,10 @@ test.describe('NewTaskDialog Advanced - grouped model dropdown (suffixed fixture
     await groupedPage.locator('[data-testid="task-advanced-toggle"]').click();
   }
 
+  // Same as the agent-picker describe: `openDialog` expands Advanced, so every
+  // dialog here is dirty and closes through the discard confirm.
   async function closeDialog() {
-    await groupedPage.keyboard.press('Escape');
-    await groupedPage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
+    await discardDialog(groupedPage);
   }
 
   test('collapses variants to one humanized row per current-generation model, demoting the superseded generation and the dated pin', async () => {
@@ -853,8 +873,9 @@ test.describe('NewTaskDialog Advanced - grouped model dropdown (suffixed fixture
     await expect(groupedPage.locator('[data-model-pinned-option]')).toHaveCount(0);
     await expect(groupedPage.locator('[title="claude-opus-4-7"]')).toHaveCount(0);
 
-    // Close the suggestion dropdown before dismissing the dialog.
-    await groupedPage.keyboard.press('Escape');
+    // One Escape, not two: the dialog's binding is capture-phase, so it reaches
+    // the dirty guard past the open dropdown and raises the confirm directly. A
+    // second Escape would dismiss that confirm instead of the dropdown.
     await closeDialog();
   });
 
@@ -1218,10 +1239,10 @@ test.describe('NewTaskDialog Advanced - context-window badge (telemetry-learned)
     const haikuRow = contextWindowPage.locator('[data-model-row]').filter({ hasText: 'haiku' });
     await expect(haikuRow.locator('[data-model-context-window]')).toHaveCount(0);
 
-    // Close the suggestion dropdown, then the dialog (nothing was edited, so
-    // this closes directly without the discard-confirm path).
-    await contextWindowPage.keyboard.press('Escape');
-    await contextWindowPage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
+    // The dialog's Escape binding is capture-phase, so one press reaches the
+    // dirty check past the open dropdown. Expanding Advanced selected the
+    // override branch, so that check now prompts.
+    await discardDialog(contextWindowPage);
   });
 });
 
@@ -1292,8 +1313,7 @@ test.describe('NewTaskDialog Advanced - context-window badge suppressed by a 1M 
     const haikuRow = suppressedPage.locator('[data-model-row]').filter({ hasText: 'claude-haiku-4-5' });
     await expect(haikuRow.locator('[data-model-context-window]')).toHaveText('200K');
 
-    await suppressedPage.keyboard.press('Escape');
-    await suppressedPage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
+    await discardDialog(suppressedPage);
   });
 });
 
@@ -1368,8 +1388,7 @@ test.describe('NewTaskDialog Advanced - context-window badge on a demoted supers
     const opus47Row = demotedBadgePage.locator('[data-model-row]').filter({ hasText: 'claude-opus-4-7' });
     await expect(opus47Row.locator('[data-model-context-window]')).toHaveText('200K');
 
-    await demotedBadgePage.keyboard.press('Escape');
-    await demotedBadgePage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
+    await discardDialog(demotedBadgePage);
   });
 });
 
@@ -1430,8 +1449,9 @@ test.describe('Combobox (Effort field) - typing filters, never auto-commits', ()
     await expect(effortInput).toHaveValue('');
     await expect(effortInput).toHaveAttribute('placeholder', 'Agent default');
 
-    await filterPage.keyboard.press('Escape');
-    await filterPage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
+    // No effort was committed, but expanding Advanced selected the override
+    // branch, which is itself persisted state - so the form is dirty.
+    await discardDialog(filterPage);
   });
 
   test('pressing Enter while the input itself is focused reverts without committing the typed text', async () => {
@@ -1446,8 +1466,7 @@ test.describe('Combobox (Effort field) - typing filters, never auto-commits', ()
     await expect(effortInput).toHaveValue('');
     await expect(effortInput).toHaveAttribute('placeholder', 'Agent default');
 
-    await filterPage.keyboard.press('Escape');
-    await filterPage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
+    await discardDialog(filterPage);
   });
 
   test('pressing Enter on a keyboard-focused option commits it, same as a mouse click', async () => {
@@ -1540,9 +1559,10 @@ test.describe('placeholderVariant: muted vs resolved', () => {
     await variantPage.locator('[data-testid="task-advanced-toggle"]').click();
   }
 
+  // `openNewTaskAdvanced` expands Advanced, which selects the override branch
+  // and so marks the form dirty even with nothing typed.
   async function closeNewTaskDialog() {
-    await variantPage.keyboard.press('Escape');
-    await variantPage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
+    await discardDialog(variantPage);
   }
 
   test('with no project default set, Settings > Agent Default Model/Effort and New Task Advanced Model/Effort are all muted', async () => {
@@ -1768,6 +1788,57 @@ test.describe('NewTaskDialog run-mode choice (profiles fixture)', () => {
     return saved!;
   }
 
+  /**
+   * Open a task's detail window in VIEW mode via the session store's
+   * setDetailTaskId, bypassing the forced-edit-mode a card click applies to
+   * a no-session task (TaskCard.tsx: `initialEdit: displayState.kind ===
+   * 'none'`). Two distinct callers need this:
+   *   - ProfilePicker only renders in the view-mode body (TaskDetailBody /
+   *     PreSpawnContextBar), never in the edit form.
+   *   - handleCancel's real revert branch requires `initialEdit` to be
+   *     false; a card-click-forced `initialEdit: true` makes it take the
+   *     early-return "just close" path instead (see the profile-revert test
+   *     below for why that matters).
+   */
+  async function openTaskDetailInViewMode(taskId: string) {
+    await profilePage.evaluate((id) => {
+      const stores = (window as unknown as {
+        __zustandStores?: {
+          session?: { getState: () => { setDetailTaskId: (taskId: string) => void } };
+        };
+      }).__zustandStores;
+      if (!stores?.session) throw new Error('session store not exposed on __zustandStores');
+      stores.session.getState().setDetailTaskId(id);
+    }, taskId);
+    const dialog = profilePage.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 5000 });
+    return dialog;
+  }
+
+  /**
+   * Enter edit mode on a VIEW-mode task-detail window via its Actions menu.
+   *
+   * Pairs with `openTaskDetailInViewMode`: together they are the only route to
+   * `handleCancel`'s real revert branch, since a card-click open sets
+   * `initialEdit: true` and Cancel then early-returns to a plain close.
+   *
+   * The Actions MENU portals outside the dialog subtree, so its items stay
+   * page-scoped (narrowed by the pencil icon) while the in-dialog controls are
+   * scoped to `dialog` - this describe shares one page, so an unscoped
+   * in-dialog locator can resolve against a sibling window and the click then
+   * lands nowhere. Waiting for the portalled item rather than clicking blind
+   * keeps the pair from racing the menu's state update under load.
+   */
+  async function enterEditModeVia(dialog: Locator) {
+    const editMenuItem = profilePage
+      .locator('button:has-text("Edit")')
+      .filter({ has: profilePage.locator('.lucide-pencil') });
+    await dialog.locator('[title="Actions"]').click();
+    await expect(editMenuItem).toBeVisible({ timeout: 5000 });
+    await editMenuItem.click();
+    await expect(dialog.locator('[data-testid="task-run-mode"]')).toBeVisible({ timeout: 5000 });
+  }
+
   test('switching an existing profile task to Agent Override saves the swap', async () => {
     await openDialog('Edit To Override Task');
     await profilePage.locator('[data-testid="task-profile-select"]').selectOption('profile-heavy');
@@ -1803,5 +1874,235 @@ test.describe('NewTaskDialog run-mode choice (profiles fixture)', () => {
     const saved = await saveAndRead('Edit To Profile Task');
     expect(saved.profile_id).toBe('profile-heavy');
     expect(saved.effort_override).toBeNull();
+  });
+
+  // The bug this column exists for. Every case above commits a concrete pin,
+  // which is what let the mode be inferred from the pins for so long: with all
+  // four left on inherit the row is identical to a Column Settings task, so
+  // only a persisted mode can carry the choice across a save.
+
+  test('creating in Agent Override with nothing picked persists the mode and no pins', async () => {
+    await openDialog('Override No Picks Task');
+    await profilePage.locator('[data-testid="task-advanced-toggle"]').click();
+    // Deliberately touch none of the four fields.
+
+    const created = await submitAndRead('Override No Picks Task');
+    expect(created.run_mode).toBe('agent_override');
+    expect(created.agent_override).toBeNull();
+    expect(created.model_override).toBeNull();
+    expect(created.effort_override).toBeNull();
+    expect(created.permission_mode).toBeNull();
+    expect(created.profile_id).toBeNull();
+
+    await openTaskDetail('Override No Picks Task');
+    await expect(profilePage.locator('[data-testid="task-advanced-toggle"]')).toBeChecked();
+    await expect(profilePage.locator('[data-testid="task-run-mode-profile"]')).not.toBeChecked();
+    await profilePage.locator('button:has-text("Cancel")').click();
+    await profilePage.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden' });
+  });
+
+  test('editing a bare task to Agent Override survives a reopen', async () => {
+    // The exact repro: a task with no pins, edited to Agent Override with
+    // nothing else changed, used to reopen on Column Settings / Default.
+    await openDialog('Edit Bare To Override Task');
+    await submitAndRead('Edit Bare To Override Task');
+
+    await openTaskDetail('Edit Bare To Override Task');
+    await expect(profilePage.locator('[data-testid="task-run-mode-profile"]')).toBeChecked();
+    await profilePage.locator('[data-testid="task-advanced-toggle"]').click();
+
+    const saved = await saveAndRead('Edit Bare To Override Task');
+    expect(saved.run_mode).toBe('agent_override');
+    expect(saved.effort_override).toBeNull();
+
+    await openTaskDetail('Edit Bare To Override Task');
+    await expect(profilePage.locator('[data-testid="task-advanced-toggle"]')).toBeChecked();
+    await profilePage.locator('button:has-text("Cancel")').click();
+    await profilePage.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden' });
+  });
+
+  test('cancelling an edit reverts the branch to the persisted mode', async () => {
+    // Opened in VIEW mode on purpose. A card click (`openTaskDetail`) on a
+    // no-session task sets `initialEdit: true` (TaskCard.tsx), and
+    // handleCancel's first branch is `if (initialEdit && !session) { onClose();
+    // return; }` - so Cancel would just close the window and the
+    // setRunMode/setProfileId revert lines would never run at all. Reopening
+    // then re-reads from the DB, which the abandoned edit never touched, so the
+    // assertion would pass no matter what those lines did.
+    await openDialog('Cancel Reverts Mode Task');
+    const created = await submitAndRead('Cancel Reverts Mode Task');
+
+    const dialog = await openTaskDetailInViewMode(created!.id);
+    const columnSettingsCard = dialog.locator('[data-testid="task-run-mode-profile"]');
+    const overrideCard = dialog.locator('[data-testid="task-advanced-toggle"]');
+    const cancelButton = dialog.locator('button:has-text("Cancel")');
+
+    await enterEditModeVia(dialog);
+    await expect(columnSettingsCard).toBeChecked();
+
+    // Switch to Agent Override, then abandon it.
+    await overrideCard.click();
+    await expect(overrideCard).toBeChecked();
+    await cancelButton.click();
+
+    // Left edit mode rather than closing - proof this reached the revert
+    // branch instead of the early-return.
+    await expect(dialog).toBeVisible();
+    await expect(overrideCard).toBeHidden({ timeout: 3000 });
+
+    // The branch lives in the WINDOW's state, which outlives the edit form, so
+    // an abandoned switch must not still be selected on re-entry.
+    await enterEditModeVia(dialog);
+    await expect(columnSettingsCard).toBeChecked();
+    await expect(overrideCard).not.toBeChecked();
+
+    await dialog.locator('[data-testid="task-detail-close"]').click();
+    await dialog.waitFor({ state: 'hidden', timeout: 5000 });
+  });
+
+  test('cancelling an edit reverts a changed profile to the persisted value, not merely to null', async () => {
+    // The sibling test above uses a BARE task (profile_id already null), so
+    // reverting it to null is indistinguishable from never having called
+    // input.setProfileId at all - deleting that line would leave it green.
+    // This pins the real case: a task riding a concrete profile, edited to a
+    // DIFFERENT profile, then cancelled.
+    await openDialog('Cancel Reverts Profile Task');
+    await profilePage.locator('[data-testid="task-profile-select"]').selectOption('profile-heavy');
+    const created = await submitAndRead('Cancel Reverts Profile Task');
+
+    // Open in VIEW mode via the store, not a card click: a no-session card
+    // click bakes `initialEdit: true` into the window, and handleCancel's
+    // early-return (`initialEdit && !session`) then just closes the window
+    // without ever reaching input.setProfileId - the DB is never written
+    // either way, so an abandoned edit and a real revert look identical.
+    // Opening with `initialEdit` false forces handleCancel through its
+    // actual revert branch instead.
+    const dialog = await openTaskDetailInViewMode(created!.id);
+
+    const profileSelect = dialog.locator('[data-testid="task-profile-select"]');
+    const cancelButton = dialog.locator('button:has-text("Cancel")');
+
+    await enterEditModeVia(dialog);
+    await expect(profileSelect).toHaveValue('profile-heavy');
+
+    // Switch the profile within edit, then Cancel WITHOUT saving.
+    await profileSelect.selectOption('profile-light');
+    await expect(cancelButton).toBeVisible();
+    await cancelButton.click();
+
+    // The window stays open (Cancel reverts to view mode; it does not
+    // close) - proof this did not take the early-return "just close" path.
+    await expect(dialog).toBeVisible();
+    // And it actually LEFT edit mode: the Advanced section only renders in the
+    // edit form, so its select disappearing is what proves handleCancel ran
+    // rather than the click missing. Window visibility alone cannot show this -
+    // the window is visible in both modes.
+    await expect(profileSelect).toBeHidden({ timeout: 3000 });
+
+    // Re-enter edit: the select must show the ORIGINAL profile-heavy, not
+    // the abandoned profile-light pick.
+    await enterEditModeVia(dialog);
+    await expect(profileSelect).toHaveValue('profile-heavy');
+
+    // The DB itself was never touched by the abandoned edit either.
+    const afterCancel = await profilePage.evaluate(async () => {
+      const list = await window.electronAPI.tasks.list();
+      return list.find((task: { title: string }) => task.title === 'Cancel Reverts Profile Task');
+    });
+    expect(afterCancel!.profile_id).toBe('profile-heavy');
+
+    await dialog.locator('[data-testid="task-detail-close"]').click();
+    await dialog.waitFor({ state: 'hidden', timeout: 5000 });
+  });
+
+  test('selecting Agent Override alone makes a fresh dialog dirty', async () => {
+    // Selecting the branch pins nothing, so without the mode in isDirty this
+    // Escape discarded the choice with no prompt at all.
+    await openDialog();
+    await profilePage.locator('[data-testid="task-advanced-toggle"]').click();
+
+    await profilePage.keyboard.press('Escape');
+    await profilePage.locator('button:has-text("Discard")').click();
+    await profilePage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
+  });
+
+  test('picking a profile alone makes a fresh dialog dirty', async () => {
+    await openDialog();
+    await profilePage.locator('[data-testid="task-profile-select"]').selectOption('profile-light');
+
+    await profilePage.keyboard.press('Escape');
+    await profilePage.locator('button:has-text("Discard")').click();
+    await profilePage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
+  });
+
+  test('switching only the run-mode branch makes the task-detail window dirty, so Escape prompts to discard', async () => {
+    // TaskDetailWindow has its OWN isEditDirty (distinct from NewTaskDialog's,
+    // which is covered by the two tests above), which gained
+    // `|| runMode !== task.run_mode`. Every existing run-mode test in this
+    // file clicks Save directly, which is never gated by isEditDirty -
+    // nothing pins that an UNGUARDED close (Escape) treats a runMode-only
+    // change as dirty too.
+    await openDialog('Escape Guards RunMode Task');
+    await submitAndRead('Escape Guards RunMode Task');
+
+    // A card click on this bare, no-session task opens directly into edit
+    // mode (kind === 'none') and focuses the window, so Escape reaches its
+    // bubble-phase close handler (TaskDetailWindow.tsx).
+    await openTaskDetail('Escape Guards RunMode Task');
+    // Captured once and reused below: an unscoped `[data-testid="task-detail-
+    // dialog"]` re-query risks a strict-mode multi-match if a sibling window
+    // from an earlier test were ever left open (same hazard the profile-revert
+    // test above scopes against).
+    const dialog = profilePage.locator('[data-testid="task-detail-dialog"]');
+
+    // Switch the branch; touch nothing else.
+    await profilePage.locator('[data-testid="task-advanced-toggle"]').click();
+
+    await profilePage.keyboard.press('Escape');
+    const confirmHeading = profilePage.locator('h3:has-text("Discard unsaved changes?")');
+    await expect(confirmHeading).toBeVisible({ timeout: 3000 });
+
+    // The window itself must still be mounted behind the confirm - Escape
+    // did not silently close it.
+    await expect(dialog).toBeVisible();
+
+    await profilePage.locator('button:has-text("Discard")').click();
+    await dialog.waitFor({ state: 'hidden', timeout: 3000 });
+  });
+
+  test('ProfilePicker pill reads Custom for an Agent-Override task with no pins, and Default for a Column-Settings task', async () => {
+    // ProfilePicker.tsx has no dedicated coverage anywhere in the suite. Its
+    // pill label is gated on `task.run_mode === 'agent_override'`
+    // (isOverrideMode), NOT on whether any of the four pins is set - the
+    // exact bug this whole feature exists to fix: an Agent-Override task
+    // with everything left on inherit must still read "Custom", not
+    // "Default". Reverting that gate to the old pins-based check would
+    // silently mislabel this exact task and produce zero test signal
+    // anywhere else in the suite.
+    await openDialog('Pill Override Task');
+    await profilePage.locator('[data-testid="task-advanced-toggle"]').click();
+    // Deliberately touch none of the four override fields.
+    const overrideTask = await submitAndRead('Pill Override Task');
+
+    await openDialog('Pill Default Task');
+    // Leave on Column Settings, no profile picked.
+    const defaultTask = await submitAndRead('Pill Default Task');
+
+    // ProfilePicker lives in TaskDetailBody/PreSpawnContextBar, which never
+    // renders in edit mode - open each task in VIEW mode via the store (a
+    // card click on a no-session task forces edit mode, see TaskCard.tsx).
+    const overrideDialog = await openTaskDetailInViewMode(overrideTask!.id);
+    const overridePill = overrideDialog.locator('[data-testid="context-bar-profile-trigger"]');
+    await expect(overridePill).toBeVisible();
+    await expect(overridePill).toContainText('Custom');
+    await overrideDialog.locator('[data-testid="task-detail-close"]').click();
+    await overrideDialog.waitFor({ state: 'hidden', timeout: 5000 });
+
+    const defaultDialog = await openTaskDetailInViewMode(defaultTask!.id);
+    const defaultPill = defaultDialog.locator('[data-testid="context-bar-profile-trigger"]');
+    await expect(defaultPill).toContainText('Default');
+    await expect(defaultPill).not.toContainText('Custom');
+    await defaultDialog.locator('[data-testid="task-detail-close"]').click();
+    await defaultDialog.waitFor({ state: 'hidden', timeout: 5000 });
   });
 });
