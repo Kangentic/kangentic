@@ -629,6 +629,42 @@ describe('BridgeSession.connectionState', () => {
     }
   });
 
+  it('a reconnect resets the probe budget, so a stale partial count cannot fast-track a fresh episode to "offline"', () => {
+    // onTransportState()'s 'connected' branch resets failedPresenceProbes to
+    // zero ("a fresh socket gets a fresh probe budget"). Without that reset, a
+    // probe failure from BEFORE a reconnect would carry over and combine with
+    // the first failure of the NEW episode to spend the two-probe budget in
+    // one shot - flashing "Offline" on a phone that is genuinely mid-reconnect,
+    // a full probe window (5s) earlier than the budget allows. No responder is
+    // ever attached, so peerPresence never reaches 'present' and no reconnect
+    // grace is armed - isolating this reset from that other hysteresis guard.
+    vi.useFakeTimers();
+    try {
+      const desktopIdentity = testIdentity();
+      const deviceStatic = generateX25519KeyPair();
+      const { desktop, setDesktopState } = createReconnectableLoopback();
+      const session = startSession(desktop, desktopIdentity, deviceStatic.publicKey);
+
+      // One probe of the original episode's budget is spent (1 of 2).
+      vi.advanceTimersByTime(5 * 1000);
+      expect(session.connectionState).toBe('connecting');
+
+      // The transport drops and comes back - a fresh episode.
+      setDesktopState('reconnecting');
+      setDesktopState('connected');
+
+      // A single probe failure in the FRESH episode must not be enough to
+      // reach 'offline' - it would be exactly enough only if the prior
+      // episode's one failure had carried over uncleared.
+      vi.advanceTimersByTime(5 * 1000);
+      expect(session.connectionState).toBe('connecting');
+
+      session.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('reports "offline" once the probe budget is spent, and announces it', () => {
     vi.useFakeTimers();
     try {
