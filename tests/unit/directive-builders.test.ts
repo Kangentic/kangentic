@@ -40,6 +40,15 @@ describe('directive builders - wire format contract', () => {
     ['extractToolId nested', extractToolId(['tool_use_id'], { nested: 'tool_response' }), 'extractToolId', { fields: ['tool_use_id'], nested: 'tool_response' }],
     ['extractDetail top-level', extractDetail(['message', 'notification']), 'extractDetail', { fields: ['message', 'notification'] }],
     ['extractDetail nested', extractDetail(['model'], { nested: 'llm_request' }), 'extractDetail', { fields: ['model'], nested: 'llm_request' }],
+    // `whenTool` scopes the extraction to one tool and, unlike `nested`, also
+    // flips the WIRE KIND (fail-closed against a stale bridge copy - see the
+    // comment on extractDetail in directive-builders.ts). This top-level-only
+    // (no `nested`) shape is exercised nowhere else in the repo: every other
+    // whenTool-scoped call site (hook-manager.ts's Monitor extractor) also
+    // passes `nested`, so only this contract test pins that `nested` is truly
+    // optional alongside `whenTool`.
+    ['extractDetail whenTool-only (no nested)', extractDetail(['taskId'], { whenTool: 'Monitor' }), 'extractDetailWhenTool', { fields: ['taskId'], whenTool: 'Monitor' }],
+    ['extractDetail nested + whenTool', extractDetail(['taskId'], { nested: 'tool_response', whenTool: 'Monitor' }), 'extractDetailWhenTool', { fields: ['taskId'], nested: 'tool_response', whenTool: 'Monitor' }],
     ['setDetail', setDetail('permission'), 'setDetail', { value: 'permission' }],
     ['setTypeWhen', setTypeWhen({ whenTool: 'Bash', nested: ['tool_input', 'run_in_background'], equals: 'true', to: EventType.BackgroundShellStart }), 'setTypeWhen', { whenTool: 'Bash', nested: ['tool_input', 'run_in_background'], equals: 'true', to: 'background_shell_start' }],
     ['setTypeWhenDetailContains', setTypeWhenDetailContains('waiting for your input', EventType.IdleHint), 'setTypeWhenDetailContains', { contains: 'waiting for your input', to: 'idle_hint' }],

@@ -386,6 +386,23 @@ describe('reportTerminatedBackgroundShells', () => {
     expect(result).toEqual(['bvqiw3a6s']);
   });
 
+  // This diff rewrote the terminal-status check from a regex alternation
+  // (?:completed|failed|killed|cancelled|aborted) into the TERMINAL_STATUSES
+  // Set, adding 'stopped'. Only 'completed' (via terminationLine's default)
+  // and 'stopped' (immediately above) are asserted elsewhere in this file - a
+  // dropped or misspelled Set entry for any of these four would silently
+  // leave that whole status class undrained (the same false-idle-forever
+  // failure class this file exists to guard), with nothing here to catch it.
+  it.each(['failed', 'killed', 'cancelled', 'aborted'])('treats status "%s" as terminal', (status) => {
+    fs.writeFileSync(transcriptPath, '');
+    reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds: ['bvqiw3a6s'] });
+
+    fs.appendFileSync(transcriptPath, `${terminationLine('bvqiw3a6s', status)}\n`);
+    const result = reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds: ['bvqiw3a6s'] });
+
+    expect(result).toEqual(['bvqiw3a6s']);
+  });
+
   it('still refuses a non-terminal status, so a progress notification cannot drain a live holder', () => {
     fs.writeFileSync(transcriptPath, '');
     reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds: ['bvqiw3a6s'] });
