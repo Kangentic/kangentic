@@ -317,4 +317,22 @@ describe('shouldConvertPastedHtml', () => {
 
     expect(shouldConvertPastedHtml(html)).toBe(false);
   });
+
+  it('converts uppercase tags, matching a pasted Word/Outlook fragment', () => {
+    const html = '<P>See <A HREF="https://example.com">the docs</A> for details.</P>';
+
+    expect(shouldConvertPastedHtml(html)).toBe(true);
+  });
+
+  it('does not false-positive on tags that merely start with a structural letter', () => {
+    // <article>, <button>, <input>, and <iframe> each begin with a letter the
+    // regex treats as structural (a, b, i) - the `\b` word boundary in
+    // STRUCTURAL_HTML_TAG_RE is what keeps them from matching. None of these
+    // tags lose anything if pasted as plain text, so a false positive here
+    // would send ordinary rich content through turndown for no reason.
+    expect(shouldConvertPastedHtml('<article>plain content</article>')).toBe(false);
+    expect(shouldConvertPastedHtml('<button>Click</button>')).toBe(false);
+    expect(shouldConvertPastedHtml('<input type="text" value="x">')).toBe(false);
+    expect(shouldConvertPastedHtml('<iframe src="https://example.com"></iframe>')).toBe(false);
+  });
 });

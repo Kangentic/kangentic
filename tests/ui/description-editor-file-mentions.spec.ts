@@ -61,6 +61,29 @@ async function dispatchHtmlPaste(target: Locator, html: string, plainText: strin
 }
 
 /**
+ * Dispatch a synthetic (untrusted) `keydown` for Mod+Shift+V on the given
+ * element, to arm DescriptionEditor's `pastePlainRef` without going through
+ * `page.keyboard.press`. A REAL, trusted Ctrl+Shift+V keypress is bound to
+ * Chromium's own "paste and match style" edit command, which fires its own
+ * native `paste` event (confirmed empirically: `isTrusted: true`, empty
+ * `clipboardData.types` under headless Chromium with no clipboard
+ * permission) - that event reaches `handlePaste` first and consumes
+ * (resets) the ref before a test's own synthetic paste dispatch ever runs,
+ * making the real key press unusable for testing this arm/consume pairing
+ * deterministically. A JS-constructed `KeyboardEvent` is untrusted and
+ * carries no such native side effect, while still reaching React's
+ * `onKeyDown` (delegated `addEventListener`, which does not filter on
+ * `isTrusted`) exactly like the file's own `dispatchHtmlPaste` above already
+ * relies on for `paste`.
+ */
+async function armPastePlainViaSyntheticKeydown(target: Locator): Promise<void> {
+  await target.evaluate((node) => {
+    const event = new KeyboardEvent('keydown', { key: 'v', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true });
+    node.dispatchEvent(event);
+  });
+}
+
+/**
  * Monkey-patches `HTMLTextAreaElement.prototype.setSelectionRange` on the
  * page to count calls, so a test can prove an async paste-conversion
  * callback actually ran before asserting on its result. `applyTextareaEdit`
@@ -142,6 +165,48 @@ test.describe('DescriptionEditor file mentions', () => {
     // Form is dirty (description filled) - Cancel shows "Discard unsaved
     // changes?" confirm. Dismiss via Discard so the dialog fully closes before
     // the next test opens it.
+    await page.locator('button:has-text("Cancel")').click();
+    await page.locator('button:has-text("Discard")').click();
+  });
+
+  test('a mention menu with many results stays inside the editor body instead of clipping off the top', async () => {
+    await openNewTaskDialog();
+
+    // "@r" matches every entry in the mock file list (see mock-electron-api.js's
+    // MOCK_PROJECT_ENTRIES), so the menu renders enough rows to exceed the
+    // editor's fixed 160px body - the scenario DescriptionMentionMenu's
+    // `max-h-[min(20rem,calc(100%-1.5rem))]` cap exists for. The menu is
+    // bottom-anchored and grows upward, so without that cap its top edge runs
+    // above the editor body's top edge and gets sliced by the body's own
+    // `overflow-hidden`.
+    const textarea = page.locator('[data-testid="task-description"]');
+    await textarea.fill('@r');
+
+    const menu = page.locator('[data-testid="description-mention-menu"]');
+    await expect(menu).toBeVisible();
+    // A floor, not an exact count: the point is only that enough rows render
+    // to overflow the 160px body (six rows at ~40px each already clears it
+    // with room to spare - the pre-fix overshoot measured 93px), not the
+    // precise size of MOCK_PROJECT_ENTRIES, which other mention tests are
+    // free to grow.
+    await expect
+      .poll(() => page.locator('[data-testid="description-mention-item"]').count())
+      .toBeGreaterThanOrEqual(6);
+
+    const geometry = await page.evaluate(() => {
+      const editorBody = document.querySelector('[data-testid="description-editor-body"]') as HTMLElement;
+      const mentionMenu = document.querySelector('[data-testid="description-mention-menu"]') as HTMLElement;
+      return {
+        editorTop: editorBody.getBoundingClientRect().top,
+        menuTop: mentionMenu.getBoundingClientRect().top,
+      };
+    });
+
+    // A tolerance, not a pixel-exact comparison (cross-platform-parity): the
+    // clipping bug this guards overshoots by several tens of pixels, not
+    // sub-pixel rounding noise, so a 1px floor is generous rather than fragile.
+    expect(geometry.menuTop).toBeGreaterThanOrEqual(geometry.editorTop - 1);
+
     await page.locator('button:has-text("Cancel")').click();
     await page.locator('button:has-text("Discard")').click();
   });
@@ -293,6 +358,70 @@ test.describe('DescriptionEditor file mentions', () => {
     await textarea.press('ControlOrMeta+a');
     await textarea.press('ControlOrMeta+k');
     await expect(textarea).toHaveValue('[hello world]()');
+
+    await page.locator('button:has-text("Cancel")').click();
+    await page.locator('button:has-text("Discard")').click();
+  });
+
+  test('Mod+Shift+V arms paste-as-plain, so the following paste skips HTML-to-markdown conversion', async () => {
+    await openNewTaskDialog();
+
+    const textarea = page.locator('[data-testid="task-description"]');
+    await textarea.click();
+    await textarea.pressSequentially('hello ');
+
+    // See armPastePlainViaSyntheticKeydown's doc comment: a real trusted
+    // Ctrl+Shift+V press fires Chromium's own native "paste and match style"
+    // paste event first, which would consume pastePlainRef before this
+    // test's own synthetic paste ever dispatches.
+    await armPastePlainViaSyntheticKeydown(textarea);
+    const defaultPrevented = await dispatchHtmlPaste(
+      textarea,
+      '<ul><li>one</li><li>two</li></ul>',
+      'one\ntwo',
+    );
+
+    // handlePaste reads and clears pastePlainRef before it ever inspects the
+    // clipboard, so the pastePlain branch returns before reaching
+    // shouldConvertPastedHtml - it never calls preventDefault, leaving the
+    // browser's native plain-text paste to run instead of turndown's
+    // conversion. (A synthetic, untrusted dispatchEvent cannot actually
+    // trigger that native paste - see "text/html with no structural tag..."
+    // above - so this asserts the gate itself, not the resulting value.)
+    expect(defaultPrevented).toBe(false);
+    await expect(textarea).toHaveValue('hello ');
+
+    await page.locator('button:has-text("Cancel")').click();
+    await page.locator('button:has-text("Discard")').click();
+  });
+
+  test('an ordinary keystroke after Mod+Shift+V drops the arm, so a later paste converts normally', async () => {
+    await openNewTaskDialog();
+
+    // Guards the disarm at handleTextareaKeyDown's "any other keystroke means
+    // the paste never arrived" branch: if a Mod+Shift+V arm were never
+    // dropped by an intervening keystroke, the NEXT ordinary paste (Mod+V or
+    // otherwise) would silently skip HTML conversion too. A bare letter key
+    // carries no Chromium accelerator (unlike Ctrl+Shift+V, see
+    // armPastePlainViaSyntheticKeydown's doc comment), so a real keystroke is
+    // safe to use here and also leaves the form dirty for the Discard teardown.
+    const textarea = page.locator('[data-testid="task-description"]');
+    await textarea.click();
+    await textarea.pressSequentially('hello ');
+
+    await armPastePlainViaSyntheticKeydown(textarea);
+    await textarea.press('x');
+
+    const defaultPrevented = await dispatchHtmlPaste(
+      textarea,
+      '<ul><li>one</li><li>two</li></ul>',
+      'one\ntwo',
+    );
+
+    // The arm was dropped by the intervening 'x' keystroke, so this paste
+    // takes the normal conversion path and DOES preventDefault.
+    expect(defaultPrevented).toBe(true);
+    await expect.poll(() => textarea.inputValue(), { timeout: 5000 }).toMatch(/[*-]\s+one/);
 
     await page.locator('button:has-text("Cancel")').click();
     await page.locator('button:has-text("Discard")').click();
