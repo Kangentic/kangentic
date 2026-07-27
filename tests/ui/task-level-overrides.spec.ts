@@ -145,7 +145,7 @@ test.describe('NewTaskDialog Advanced section', () => {
     // even while the field beside it is locked.
     await expect(page.locator('[data-testid="task-agent-edit"]')).toBeEnabled();
 
-    await closeDialog();
+    await discardDialog(page);
   });
 
   test('the agent edit button opens Settings on the Agent tab over the dialog, and Escape closes only that', async () => {
@@ -221,7 +221,7 @@ test.describe('NewTaskDialog Advanced section', () => {
 
     await page.keyboard.press('Escape');
     await expect(settingsPanel).toBeHidden();
-    await closeDialog();
+    await discardDialog(page);
   });
 
   test('the panel.close hotkey (Control+Shift+W) is suppressed while Settings is open over the dialog, same as Escape', async () => {
@@ -774,8 +774,7 @@ test.describe('NewTaskDialog Advanced - Agent picker (no agent detected fixture)
     // live even with nothing installed - same as the single-agent case.
     await expect(noAgentPage.locator('[data-testid="task-agent-edit"]')).toBeEnabled();
 
-    await noAgentPage.keyboard.press('Escape');
-    await noAgentPage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
+    await discardDialog(noAgentPage);
   });
 });
 
