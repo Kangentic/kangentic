@@ -8,14 +8,18 @@ Each task gets its own git worktree so agents work in isolation. Multiple agents
 
 ### Branch Naming
 
-Format: `{slug}-{taskId8}`
+Format: `{slug}-{taskId8}`, or `{flattenedBase}/{slug}-{taskId8}` when the resolved base branch
+differs from the effective default (`computeAutoBranchName` in `src/shared/slugify.ts`).
+`flattenedBase` is the base branch with any `/` replaced by `-` (e.g. `release/2.0` becomes
+`release-2.0`), so the auto-generated branch has at most one namespace segment.
 
 - `slug` - slugified task title (lowercase, hyphens, truncated)
 - `taskId8` - first 8 characters of the task UUID
 
-Example: `fix-auth-bug-a1b2c3d4`
+Examples: `fix-auth-bug-a1b2c3d4` (base equals the effective default); `release-2.0/fix-auth-bug-a1b2c3d4` (an explicit per-task base that differs from it).
 
-Worktree directory: `<project>/.kangentic/worktrees/{slug}-{taskId8}/`
+Worktree directory: `<project>/.kangentic/worktrees/{slug}-{taskId8}/` - always flat, even when the
+branch name is namespaced (the namespace prefix never reaches the folder name).
 
 Custom branch names (set per-task) use the custom name as the branch, with a slugified folder name: `{slugifiedCustom}-{taskId8}/`.
 
@@ -23,7 +27,8 @@ Custom branch names (set per-task) use the custom name as the branch, with a slu
 
 The configured base branch is checked in priority order:
 
-1. Task's `base_branch` field (per-task override)
+1. Task's `base_branch` field (per-task override). An empty string is treated as not set (falls
+   through to source 2), not as an explicit, guaranteed-unresolvable candidate.
 2. Action config's `baseBranch` (per-transition override)
 3. `kangentic.json` `defaultBaseBranch` (team-shared, overridable via `kangentic.local.json`)
 4. `config.git.defaultBaseBranch` (per-user fallback, defaults to `main`)
@@ -40,6 +45,11 @@ That configured value is then **verified against the repo's actual refs** by
   through to `master` covers the common repo whose only branch is `master`, which otherwise failed
   worktree creation with a raw `fatal: invalid reference: main`. If none of the candidates resolve
   even after a fetch, worktree creation throws, listing the branches the repo actually has.
+- A candidate's fetch reporting success is not, by itself, trusted: a narrowed
+  `remote.origin.fetch` refspec can exit 0 without ever writing `refs/remotes/origin/<branch>`.
+  `resolveWorktreeBase` re-verifies the ref locally after the fetch before accepting it - the
+  same re-verification `createWorktree`'s own `verifiedStartPoint` fallback relies on (see
+  Creation Flow below).
 
 When a fallback candidate wins (e.g. `master` for an unconfigured `main`), it is treated as the
 new default too, so the branch name stays unprefixed instead of being namespaced under the
@@ -100,11 +110,13 @@ that error goes depends on the entry point:
 The two failure modes:
 
 - **A stale directory** at the computed worktree path could not be removed and is not an empty,
-  reusable husk (see Creation Flow step 3) - `staleWorktreeError` in `worktree-manager.ts`.
+  reusable husk (see Creation Flow step 4) - `staleWorktreeError` in `worktree-manager.ts`.
 - **The base branch does not resolve**, even after the fallback chain and a fetch retry described
   under Base Branch Resolution above - `describeUnresolvableBase` in `src/main/git/base-branch.ts`.
   Distinguishes an explicit per-task base (names the branch, suggests picking a different one) from
-  an exhausted default chain (lists every candidate tried and points at Settings > Git).
+  an exhausted default chain (lists every candidate tried and points at Settings > Git). The listed
+  branches are capped at 10 (`MAX_LISTED_BRANCHES`) so a repo with hundreds of branches doesn't
+  produce an unreadable toast.
 
 Both name what failed and what to do about it, rather than surfacing git's raw error text.
 
@@ -117,10 +129,10 @@ Both name what failed and what to do about it, rather than surfacing git's raw e
    `origin/<baseBranch>` for a base that was only ever fetched and never checked out locally.
    A fetch exiting 0 is not proof the ref landed (a narrowed `remote.origin.fetch` refspec, or a
    fetch that only populated `FETCH_HEAD`), so both call sites re-verify before trusting it.
-3. Clean up the stale worktree directory if it exists on disk. If removal fails because a process holds the directory as its current directory (Windows pinned-CWD) and the leftover is an empty husk, reuse it in place; if it is non-empty or cannot be inspected, fail with an actionable error naming the likely blocker (an open terminal or editor, the `/preview` dev server, or antivirus). (`git worktree prune` itself is NOT part of creation - it only runs on the removal path, `pruneWorktrees()`, and the debounced background prune.)
-4. Check if branch already exists (stale branch from failed cleanup, or custom branch)
+3. Check if branch already exists (stale branch from failed cleanup, or custom branch)
+4. Clean up the stale worktree directory if it exists on disk. If removal fails because a process holds the directory as its current directory (Windows pinned-CWD) and the leftover is an empty husk, reuse it in place; if it is non-empty or cannot be inspected, fail with an actionable error naming the likely blocker (an open terminal or editor, the `/preview` dev server, or antivirus). (`git worktree prune` itself is NOT part of creation - it only runs on the removal path, `pruneWorktrees()`, and the debounced background prune.)
 5. If branch exists: `git worktree add [--force] <worktreePath> <branchName>`
-6. If new branch: `git worktree add [--force] -b <branchName> <worktreePath> <startPoint>` (`--force` is added only when reusing an empty husk from step 3, to clear any stale `.git/worktrees/` registration whose directory still exists)
+6. If new branch: `git worktree add [--force] -b <branchName> <worktreePath> <startPoint>` (`--force` is added only when reusing an empty husk from step 4, to clear any stale `.git/worktrees/` registration whose directory still exists)
 7. On Windows: enable `core.longpaths` (see below)
 8. `git config kangentic.baseBranch <baseBranch>` (in worktree)
 9. Set up sparse-checkout (see below)
@@ -372,8 +384,9 @@ resolved ref.
 **`WorktreeManager.ensureWorktree`, end to end:**
 - Takes the byte-identical path when the base resolves normally (the additive-only invariant)
 - Falls back to `master` when the repo only has `master` and the default is the unconfigured `main`
-- Reproduces the identical worktree path on a Done round-trip after a default-chain substitution
+- Namespaces the branch under an explicit per-task base that differs from the configured default
 - Throws a written error naming the branch when an explicit per-task base does not exist
+- Reproduces the identical worktree path on a Done round-trip after a default-chain substitution
 - Throws and lists the repo's real branches when the default chain is fully exhausted
 - Resolves a base that exists only on origin and was never fetched (fetch retry)
 - Falls back to a verified `origin/<base>` start point when worktree creation's own fetch fails (the `verifiedStartPoint` seam)
@@ -382,8 +395,17 @@ resolved ref.
 
 **`resolveWorktreeBase` candidate order:**
 - Tries only the per-task base branch when set, never substituting main/master
+- Treats an empty-string task base branch as "not set" (falls through to the default chain, not an explicit unresolvable candidate)
 - Deduplicates the default chain when the configured default is already `master`
 - Marks `substitutedFor` null when the first candidate resolves (no fallback engaged)
+- Substitutes a later default-chain candidate resolved only via the fetch pass (`substitutedFor` at an index greater than 0)
+
+**`resolveWorktreeBase` - listBranches truncation:**
+- Caps `availableBranches` at `MAX_LISTED_BRANCHES` (10) even when the repo has more
+
+**`resolveWorktreeBase` and `WorktreeManager.createWorktree` - narrowed refspec (fetch succeeds, ref never lands):**
+- `resolveWorktreeBase` does not trust a fetch that succeeds without landing the remote-tracking ref
+- `createWorktree` falls back to `verifiedStartPoint` instead of trusting a fetch that reports success without landing the ref
 
 **`describeUnresolvableBase` message formatting:**
 - Names the branch and offers the fix for an explicit per-task base
