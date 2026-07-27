@@ -12,7 +12,8 @@ import { useConfigStore } from '../../../stores/config-store';
 import { useProjectStore } from '../../../stores/project-store';
 import { QueuedPlaceholder } from './QueuedPlaceholder';
 import { taskHasDescriptionContent } from './description-content';
-import { AttachmentThumbnails } from './AttachmentThumbnails';
+import { AttachmentChipStrip } from '../AttachmentChipStrip';
+import { isImageMediaType } from '../attachment-utils';
 import type { AttachmentWithPreview } from './useAttachments';
 import { MarkdownRenderer } from '../../MarkdownRenderer';
 import type { Task, SessionDisplayState } from '../../../../shared/types';
@@ -76,7 +77,6 @@ interface TaskDetailBodyProps {
   savedAttachments: AttachmentWithPreview[];
   handlePreview: (attachment: AttachmentWithPreview) => void;
   handleOpenExternal: (attachment: AttachmentWithPreview) => void;
-  removeAttachment: (id: string) => void;
   handleToggle: () => void;
   changesOpen: boolean;
   projectPath: string;
@@ -103,7 +103,6 @@ export function TaskDetailBody({
   savedAttachments,
   handlePreview,
   handleOpenExternal,
-  removeAttachment,
   handleToggle,
   changesOpen,
   projectPath,
@@ -171,13 +170,12 @@ export function TaskDetailBody({
     </div>
   );
 
-  const thumbnailStrip = (
-    <AttachmentThumbnails
+  const attachmentStrip = (
+    <AttachmentChipStrip
       attachments={savedAttachments}
-      isEditing={false}
-      onPreview={handlePreview}
-      onOpenExternal={handleOpenExternal}
-      onRemove={removeAttachment}
+      onOpen={(attachment) =>
+        isImageMediaType(attachment.media_type) ? handlePreview(attachment) : handleOpenExternal(attachment)
+      }
     />
   );
 
@@ -189,11 +187,11 @@ export function TaskDetailBody({
         <MarkdownRenderer content={task.description} />
       )}
       {labelsAndPriorityRow}
-      {thumbnailStrip}
+      {attachmentStrip}
     </>
   );
 
-  // Description view mode with attachment thumbnails - the non-session, in-body
+  // Description view mode with the attachment chips - the non-session, in-body
   // view (no terminal to sit beside). During an active session the description
   // instead rides the right-panel split as descriptionPanelContent below.
   const descriptionBar = !isArchived && hasDescriptionContent && !hasSessionContext && (
@@ -457,7 +455,7 @@ export function TaskDetailBody({
                 <div className="px-4 py-4 space-y-2">
                   <MarkdownRenderer content={task.description} />
                   {labelsAndPriorityRow}
-                  {thumbnailStrip}
+                  {attachmentStrip}
                 </div>
               ) : (
                 <div className="flex items-center justify-center h-full text-fg-disabled text-sm p-8">

@@ -245,7 +245,8 @@ test.describe('Backlog View', () => {
     // synchronous paste event is processed by React - no fixed wait needed.
     const thumbnails = page.locator('[data-testid="attachment-thumbnails"]');
     await expect(thumbnails).toBeVisible({ timeout: 2000 });
-    await expect(page.locator('text=1 attachment')).toBeVisible();
+    // The strip has no "N attachments" caption - the chips are the count.
+    await expect(thumbnails.locator('[data-testid="attachment-chip"]')).toHaveCount(1);
 
     // Submit the form
     await page.locator('[data-testid="create-backlog-task-btn"]').click();

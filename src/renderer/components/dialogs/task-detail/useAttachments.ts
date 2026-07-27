@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useToastStore } from '../../../stores/toast-store';
-import { MAX_ATTACHMENT_BYTES, MEDIA_TYPE_EXT, resolveMediaType, isImageMediaType } from '../attachment-utils';
+import { MAX_ATTACHMENT_BYTES, MEDIA_TYPE_EXT, resolveMediaType, isImageMediaType, pastedAttachmentPrefix, reserveNextPastedIndex } from '../attachment-utils';
 import { compressClipboardImage } from '../image-compress';
 import type { TaskAttachment } from '../../../../shared/types';
 
@@ -13,7 +13,9 @@ export function useAttachments(taskId: string, updateAttachmentCount: (taskId: s
   const [previewAttachment, setPreviewAttachment] = useState<{ url: string; filename: string } | null>(null);
   const previewOpenRef = useRef(false);
   const [isDragOver, setIsDragOver] = useState(false);
-  const pendingPasteCount = useRef(0);
+  // Highest pasted-filename index handed out so far, per prefix. Monotonic on
+  // purpose - see reserveNextPastedIndex.
+  const issuedPastedIndex = useRef<Record<string, number>>({});
 
   // Load attachments on mount
   useEffect(() => {
@@ -114,24 +116,22 @@ export function useAttachments(taskId: string, updateAttachmentCount: (taskId: s
 
       event.preventDefault();
       const mediaType = resolveMediaType(file);
-      const isImage = isImageMediaType(mediaType);
-      const prefix = isImage ? 'pasted-image-' : 'pasted-file-';
+      const prefix = pastedAttachmentPrefix(mediaType);
       const extensionStart = file.name ? file.name.lastIndexOf('.') : -1;
       const fallbackExtension = MEDIA_TYPE_EXT[mediaType] || (extensionStart >= 0 ? file.name.slice(extensionStart) : '.bin');
-      const baseCount =
-        savedAttachments.filter((attachment) => attachment.filename.startsWith(prefix)).length +
-        pendingPasteCount.current;
-      pendingPasteCount.current += 1;
+      // Reserved synchronously so two fast pastes cannot claim the same index,
+      // then recorded in a high-water mark that is never decremented.
+      const pastedIndex = reserveNextPastedIndex(
+        prefix,
+        savedAttachments.map((attachment) => attachment.filename),
+        issuedPastedIndex.current[prefix] ?? 0,
+      );
+      issuedPastedIndex.current[prefix] = pastedIndex;
       void (async () => {
-        try {
-          const { file: outFile } = await compressClipboardImage(file);
-          const finalMediaType = resolveMediaType(outFile);
-          const finalExtension = MEDIA_TYPE_EXT[finalMediaType] ?? fallbackExtension;
-          const finalName = `${prefix}${baseCount + 1}${finalExtension}`;
-          await addFile(outFile, finalName);
-        } finally {
-          pendingPasteCount.current -= 1;
-        }
+        const { file: outFile } = await compressClipboardImage(file);
+        const finalMediaType = resolveMediaType(outFile);
+        const finalExtension = MEDIA_TYPE_EXT[finalMediaType] ?? fallbackExtension;
+        await addFile(outFile, `${prefix}${pastedIndex}${finalExtension}`);
       })();
     }
   }, [savedAttachments, addFile]);

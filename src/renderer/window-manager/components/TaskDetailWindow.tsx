@@ -672,7 +672,6 @@ export function TaskDetailWindow({
               savedAttachments={attachments.savedAttachments}
               handlePreview={attachments.handlePreview}
               handleOpenExternal={attachments.handleOpenExternal}
-              removeAttachment={attachments.removeAttachment}
               handleToggle={actions.handleToggle}
               changesOpen={changesOpen}
               projectPath={projectPath ?? ''}

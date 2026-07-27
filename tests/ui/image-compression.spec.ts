@@ -90,7 +90,7 @@ test.describe('Clipboard image compression', () => {
     });
 
     // Wait for the compressed thumbnail to appear in the dialog.
-    await expect(page.locator('text=1 attachment')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('[data-testid="attachment-chip"]')).toHaveCount(1, { timeout: 5000 });
 
     // Submit, then read the recorded attachment via the mock IPC.
     await page.locator('button[type="submit"]:has-text("Create")').click();
@@ -130,7 +130,7 @@ test.describe('Clipboard image compression', () => {
       }));
     });
 
-    await expect(page.locator('text=1 attachment')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('[data-testid="attachment-chip"]')).toHaveCount(1, { timeout: 5000 });
 
     await page.locator('button[type="submit"]:has-text("Create")').click();
     await expect(page.locator('input[placeholder="Task title"]')).not.toBeVisible();

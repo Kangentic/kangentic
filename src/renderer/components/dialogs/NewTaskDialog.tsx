@@ -22,7 +22,8 @@ import { slugify, computeAutoBranchName } from '../../../shared/slugify';
 import { DEFAULT_PRIORITY_CONFIG } from '../../../shared/types';
 import type { PermissionMode, TaskRunMode } from '../../../shared/types';
 import { DescriptionEditor } from '../DescriptionEditor';
-import { MAX_ATTACHMENT_BYTES, MEDIA_TYPE_EXT, resolveMediaType, isImageMediaType, getFileTypeIcon, getExtension } from './attachment-utils';
+import { AttachmentChipStrip } from './AttachmentChipStrip';
+import { MAX_ATTACHMENT_BYTES, MEDIA_TYPE_EXT, resolveMediaType, isImageMediaType, pastedAttachmentPrefix, reserveNextPastedIndex } from './attachment-utils';
 import { compressClipboardImage } from './image-compress';
 
 interface PendingAttachment {
@@ -111,7 +112,9 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
   const [isDragOver, setIsDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const nextIdRef = useRef(0);
-  const pendingPasteCount = useRef(0);
+  // Highest pasted-filename index handed out so far, per prefix. Monotonic on
+  // purpose - see reserveNextPastedIndex.
+  const issuedPastedIndex = useRef<Record<string, number>>({});
 
   // Per-task agent/model/effort overrides. Empty string means "use column
   // default" for that field. The Advanced section locks all three for the
@@ -252,24 +255,22 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
 
       event.preventDefault();
       const mediaType = resolveMediaType(file);
-      const isImage = isImageMediaType(mediaType);
-      const prefix = isImage ? 'pasted-image-' : 'pasted-file-';
+      const prefix = pastedAttachmentPrefix(mediaType);
       const extensionStart = file.name ? file.name.lastIndexOf('.') : -1;
       const fallbackExtension = MEDIA_TYPE_EXT[mediaType] || (extensionStart >= 0 ? file.name.slice(extensionStart) : '.bin');
-      const baseCount =
-        attachments.filter((attachment) => attachment.filename.startsWith(prefix)).length +
-        pendingPasteCount.current;
-      pendingPasteCount.current += 1;
+      // Reserved synchronously so two fast pastes cannot claim the same index,
+      // then recorded in a high-water mark that is never decremented.
+      const pastedIndex = reserveNextPastedIndex(
+        prefix,
+        attachments.map((attachment) => attachment.filename),
+        issuedPastedIndex.current[prefix] ?? 0,
+      );
+      issuedPastedIndex.current[prefix] = pastedIndex;
       void (async () => {
-        try {
-          const { file: outFile } = await compressClipboardImage(file);
-          const finalMediaType = resolveMediaType(outFile);
-          const finalExtension = MEDIA_TYPE_EXT[finalMediaType] ?? fallbackExtension;
-          const finalName = `${prefix}${baseCount + 1}${finalExtension}`;
-          await addFile(outFile, finalName);
-        } finally {
-          pendingPasteCount.current -= 1;
-        }
+        const { file: outFile } = await compressClipboardImage(file);
+        const finalMediaType = resolveMediaType(outFile);
+        const finalExtension = MEDIA_TYPE_EXT[finalMediaType] ?? fallbackExtension;
+        await addFile(outFile, `${prefix}${pastedIndex}${finalExtension}`);
       })();
     }
   }, [attachments, addFile]);
@@ -415,57 +416,13 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
               className="flex-1"
             />
 
-            {/* Thumbnail strip */}
-            {attachments.length > 0 && (
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-xs text-fg-faint">{attachments.length} attachment{attachments.length !== 1 ? 's' : ''}</span>
-                </div>
-                <div className="flex gap-2.5 overflow-x-auto pb-1" data-testid="attachment-thumbnails">
-                {attachments.map((attachment) => {
-                  const isImage = isImageMediaType(attachment.media_type);
-                  const FileTypeIcon = getFileTypeIcon(attachment.media_type);
-                  return (
-                    <div
-                      key={attachment.id}
-                      className="relative flex-shrink-0 w-24 h-24 rounded-md border border-edge-input overflow-hidden group cursor-pointer"
-                      onClick={() => isImage ? setPreviewAttachment(attachment) : undefined}
-                    >
-                      {isImage ? (
-                        <img
-                          src={attachment.previewUrl}
-                          alt={attachment.filename}
-                          className="w-full h-full object-cover"
-                        />
-                      ) : (
-                        <div className="w-full h-full bg-surface-secondary flex flex-col items-center justify-evenly px-1.5 py-2">
-                          <FileTypeIcon size={20} className="text-fg-muted shrink-0" />
-                          <span className="text-[10px] text-fg-muted text-center break-all line-clamp-2 w-full leading-tight">
-                            {attachment.filename}
-                          </span>
-                          <span className="bg-surface-raised border border-edge-input rounded px-1.5 py-0.5 text-[9px] font-medium text-fg-faint uppercase leading-none">
-                            {getExtension(attachment.filename).replace('.', '')}
-                          </span>
-                        </div>
-                      )}
-                      <button
-                        type="button"
-                        onClick={(buttonEvent) => { buttonEvent.stopPropagation(); removeAttachment(attachment.id); }}
-                        className="absolute top-0 right-0 p-1 bg-black/70 text-white rounded-bl opacity-0 group-hover:opacity-100 transition-opacity"
-                      >
-                        <X size={14} />
-                      </button>
-                      {isImage && (
-                        <div className="absolute bottom-0 left-0 right-0 bg-black/50 px-1 py-0.5 text-[9px] text-fg-tertiary truncate opacity-0 group-hover:opacity-100 transition-opacity">
-                          {attachment.filename}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-                </div>
-              </div>
-            )}
+            <AttachmentChipStrip
+              attachments={attachments}
+              onOpen={(attachment) => {
+                if (isImageMediaType(attachment.media_type)) setPreviewAttachment(attachment);
+              }}
+              onRemove={removeAttachment}
+            />
 
             <div className="flex gap-3">
               <div className="flex-1">
@@ -564,6 +521,7 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
         <div
           className="fixed inset-0 bg-black/80 flex flex-col items-center justify-center z-[60]"
           onClick={() => setPreviewAttachment(null)}
+          data-testid="attachment-preview-overlay"
         >
           <button
             className="absolute top-4 right-4 p-2 text-fg-muted hover:text-fg-secondary transition-colors"

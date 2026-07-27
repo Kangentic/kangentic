@@ -77,20 +77,24 @@ test.describe('New Task Dialog Layout', () => {
     await openNewTaskDialog();
     await expect(page.locator('text=Describe the task for the agent...')).toBeVisible();
     await expect(page.locator('text=Paste or drop files here')).toBeVisible();
+    // The empty state is where markdown support is advertised: the toggle says
+    // what the button does, this says what the box accepts.
+    await expect(page.locator('text=Markdown supported')).toBeVisible();
     // Placeholder disappears when user types
     const textarea = page.locator('textarea');
     await textarea.fill('hello');
     await expect(page.locator('text=Paste or drop files here')).not.toBeVisible();
+    await expect(page.locator('text=Markdown supported')).not.toBeVisible();
     // Form is dirty (text typed) - Cancel shows "Discard unsaved changes?" confirm.
     // Dismiss via Discard so the dialog fully closes before the next test opens it.
     await page.locator('button:has-text("Cancel")').click();
     await page.locator('button:has-text("Discard")').click();
   });
 
-  test('shows image count next to thumbnails', async () => {
+  test('names each pasted attachment on its own chip', async () => {
     await openNewTaskDialog();
 
-    // Paste an image to trigger the count label
+    // Paste an image to produce a chip
     await page.evaluate(() => {
       const textarea = document.querySelector('textarea');
       if (!textarea) return;
@@ -105,8 +109,13 @@ test.describe('New Task Dialog Layout', () => {
       textarea.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt }));
     });
 
-    await page.waitForTimeout(500);
-    await expect(page.locator('text=1 attachment')).toBeVisible();
+    // There is deliberately no "N attachments" caption - the chips are the
+    // count. What must stay visible is each attachment's own filename, since
+    // that plus the thumbnail is how a user tells pasted-image-1 from -2.
+    const chips = page.locator('[data-testid="attachment-chip"]');
+    await expect(chips).toHaveCount(1);
+    await expect(chips.first()).toContainText('.png');
+
     // Form is dirty (image attached) - Cancel shows "Discard unsaved changes?" confirm.
     // Dismiss via Discard so the dialog fully closes before the next describe block.
     await page.locator('button:has-text("Cancel")').click();
@@ -186,11 +195,9 @@ test.describe('Image Attachments', () => {
     const thumbnails = page.locator('[data-testid="attachment-thumbnails"]');
     await expect(thumbnails).toBeVisible();
 
-    // Hover over the thumbnail and click the X button
-    const thumb = thumbnails.locator('.group').first();
-    await thumb.hover();
-    const deleteBtn = thumb.locator('button');
-    await deleteBtn.click();
+    // The remove control is always visible now (no hover reveal), so this
+    // clicks it directly rather than hovering the tile first.
+    await thumbnails.locator('[data-testid="attachment-remove"]').first().click();
 
     // Thumbnails container should disappear (no attachments)
     await expect(thumbnails).not.toBeVisible();
@@ -198,6 +205,59 @@ test.describe('Image Attachments', () => {
     // After deleting the only attachment the form is clean (no title/description/
     // attachments) - Cancel closes directly without a ConfirmDialog.
     await page.locator('button:has-text("Cancel")').click();
+  });
+
+  test('two attachments each get their own chip, open independently, and remove independently', async () => {
+    await openNewTaskDialog();
+
+    // Two separate pastes, mirroring how a user actually accumulates
+    // attachments, so this also covers the pasted-image-N auto-naming that
+    // makes the two chips distinguishable.
+    for (const _pasteIndex of [0, 1]) {
+      await page.evaluate(() => {
+        const textarea = document.querySelector('textarea');
+        if (!textarea) return;
+        const base64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==';
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        const file = new File([new Blob([bytes], { type: 'image/png' })], 'shot.png', { type: 'image/png' });
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        textarea.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt }));
+      });
+    }
+
+    const chips = page.locator('[data-testid="attachment-chip"]');
+    await expect(chips).toHaveCount(2);
+
+    // Each chip carries its own thumbnail, which is what lets a user tell two
+    // pasted screenshots apart at a glance.
+    await expect(chips.first().locator('img')).toBeVisible();
+    await expect(chips.nth(1).locator('img')).toBeVisible();
+
+    // Distinct auto-generated names. This is the end-to-end guard on the paste
+    // numbering race: two pastes in quick succession both used to be saved as
+    // pasted-image-1.png, because the second read a stale attachment list after
+    // the first had already released its in-flight slot.
+    const firstName = (await chips.first().innerText()).trim();
+    const secondName = (await chips.nth(1).innerText()).trim();
+    expect(firstName).not.toBe(secondName);
+
+    // Clicking an image chip opens the full-size preview overlay.
+    const overlay = page.locator('[data-testid="attachment-preview-overlay"]');
+    await expect(overlay).toHaveCount(0);
+    await chips.first().locator('img').click();
+    await expect(overlay).toBeVisible();
+    await overlay.click();
+    await expect(overlay).toHaveCount(0);
+
+    // Removing one chip leaves the other untouched, so the two are independent.
+    await chips.first().locator('[data-testid="attachment-remove"]').click();
+    await expect(chips).toHaveCount(1);
+
+    await page.locator('button:has-text("Cancel")').click();
+    await page.locator('button:has-text("Discard")').click();
   });
 
   test('create task with attachments passes pendingAttachments', async () => {

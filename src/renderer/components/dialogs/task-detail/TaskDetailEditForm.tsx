@@ -7,7 +7,8 @@ import { LabelInput } from '../../LabelInput';
 import { DescriptionEditor } from '../../DescriptionEditor';
 import { NameFromPromptButton } from '../../NameFromPromptButton';
 import { AdvancedOverridesSection } from '../AdvancedOverridesSection';
-import { AttachmentThumbnails } from './AttachmentThumbnails';
+import { AttachmentChipStrip } from '../AttachmentChipStrip';
+import { isImageMediaType } from '../attachment-utils';
 import { useConfigStore } from '../../../stores/config-store';
 import { useProjectStore } from '../../../stores/project-store';
 import { useAllExistingLabels } from '../../../hooks/useAllExistingLabels';
@@ -115,11 +116,13 @@ export function TaskDetailEditForm({
         mentionSearchCwd={task.worktree_path ?? currentProject?.path ?? null}
         className="flex-1"
       />
-      <AttachmentThumbnails
+      <AttachmentChipStrip
         attachments={attachments.savedAttachments}
-        isEditing={true}
-        onPreview={attachments.handlePreview}
-        onOpenExternal={attachments.handleOpenExternal}
+        onOpen={(attachment) =>
+          isImageMediaType(attachment.media_type)
+            ? attachments.handlePreview(attachment)
+            : attachments.handleOpenExternal(attachment)
+        }
         onRemove={attachments.removeAttachment}
       />
       <div className="flex gap-3">

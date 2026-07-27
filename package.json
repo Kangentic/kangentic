@@ -65,6 +65,7 @@
     "@types/react": "^19.2.16",
     "@types/react-dom": "^19.2.3",
     "@types/remove-markdown": "^0.3.4",
+    "@types/turndown": "^5.0.6",
     "@types/uuid": "^10.0.0",
     "@types/which": "^3.0.4",
     "@types/ws": "^8.18.1",
@@ -133,6 +134,8 @@
     "remark-gfm": "^4.0.1",
     "remove-markdown": "^0.6.4",
     "sherpa-onnx-node": "^1.13.3",
-    "sqlite-vec": "^0.1.9"
+    "sqlite-vec": "^0.1.9",
+    "turndown": "^7.2.4",
+    "turndown-plugin-gfm": "^1.0.2"
   }
 }

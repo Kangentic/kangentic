@@ -26,7 +26,7 @@ the same array.
   preventDefault/stopPropagation.
 - **Combos are canonical** (`Mod+Shift+P` form; `Mod` = Cmd on macOS, Ctrl elsewhere; literal
   `Ctrl` only for terminal SIGINT). Default combos must already be normalized.
-- **Two narrow exceptions, each kept hand-written on purpose:**
+- **Three narrow exceptions, each kept hand-written on purpose:**
   - The embedded xterm clipboard/SIGINT handlers in `terminal-clipboard.ts` (they live inside
     xterm's own key pipeline, not a window listener). They are registered in `KEYBINDINGS` as
     display-only entries (`rebindable: false, terminalUnsafe: true`) so the panel lists them and
@@ -34,8 +34,19 @@ the same array.
   - Structural dialog keys (BaseDialog's Escape; BrowserPane's Esc-cancels-Inspect, which needs
     `stopImmediatePropagation` ordering). Escape is registered display-only and is not
     rebindable.
+  - The description editor's text-formatting combos (`description.bold` / `.italic` / `.link` /
+    `.pastePlain`, handled in `DescriptionEditor`'s own `onKeyDown`). They are decisions made
+    while already inspecting the keystroke, alongside bare Enter and Tab, against the textarea's
+    live selection - a window listener would have to re-derive all of that, and four separate
+    `useKeybinding` calls would each re-enter the same handler. Registered display-only
+    (`rebindable: false`) so the Hotkeys tab lists them.
 - **New shortcut = one registry entry + one `useKeybinding` call.** It then auto-appears in the
   Hotkeys settings tab and conflict detection with no further wiring.
+
+  Caveat for a display-only entry: `detectConflicts` resolves `rebindable` actions only, so a
+  non-rebindable combo is NOT a clash target - a user rebinding onto `Mod+B` is never warned. The
+  xterm entries dodge this via `terminalUnsafe`, which feeds the terminal-warn set from all of
+  `KEYBINDINGS`; the others rely on the Hotkeys listing alone.
 
 ## Enforcement (self-maintaining)
 

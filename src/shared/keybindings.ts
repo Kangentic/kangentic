@@ -235,6 +235,52 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
     rebindable: false,
     hidden: true,
   },
+  // Description editor formatting keys. Fixed (not rebindable): handled
+  // directly inside DescriptionEditor's keydown handler, not via
+  // useKeybinding, following terminal.copy's precedent for a combo a specific
+  // surface owns. Registered so the Hotkeys tab lists them, which is the only
+  // guarantee that buys: detectConflicts resolves rebindable actions only, so a
+  // later rebind landing on one of these combos is not flagged, and the listing
+  // is what a user has to read. `scope: 'dialog'` rather than 'task-dialog': the
+  // editor also mounts in the New Task and New Backlog Task dialogs, not just
+  // task detail.
+  {
+    id: 'description.bold',
+    label: 'Bold',
+    description: 'Wrap the selected description text in bold markdown. Fixed.',
+    group: 'General',
+    scope: 'dialog',
+    defaultCombo: 'Mod+B',
+    rebindable: false,
+  },
+  {
+    id: 'description.italic',
+    label: 'Italic',
+    description: 'Wrap the selected description text in italic markdown. Fixed.',
+    group: 'General',
+    scope: 'dialog',
+    defaultCombo: 'Mod+I',
+    rebindable: false,
+  },
+  {
+    id: 'description.link',
+    label: 'Link',
+    description: 'Wrap the selected description text in a markdown link. Fixed.',
+    group: 'General',
+    scope: 'dialog',
+    defaultCombo: 'Mod+K',
+    rebindable: false,
+  },
+  {
+    id: 'description.pastePlain',
+    label: 'Paste as Plain Text',
+    description: 'Paste into the description without converting pasted HTML to markdown. Fixed; not shown because the combo is a platform convention no app lets you rebind.',
+    group: 'General',
+    scope: 'dialog',
+    defaultCombo: 'Mod+Shift+V',
+    rebindable: false,
+    hidden: true,
+  },
 
   // ── Task Detail ──
   // Maximize / Close are the shared panel.* bindings: they act on whichever panel

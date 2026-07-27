@@ -6,5 +6,6 @@
   "lucide-react", "react-colorful",
   "zustand", "zustand/react/shallow",
   "monaco-editor", "monaco-editor/esm/vs/base/common/errors",
-  "recharts"
+  "recharts",
+  "turndown", "turndown-plugin-gfm"
 ]

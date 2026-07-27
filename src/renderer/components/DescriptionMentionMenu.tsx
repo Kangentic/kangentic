@@ -31,12 +31,19 @@ export function DescriptionMentionMenu({
   }, [activeIndex, items]);
 
   return (
+    // The menu is bottom-anchored inside the editor body, which clips its
+    // overflow. A fixed height therefore ran off the top of a short editor and
+    // sliced the first result in half. Capping at `calc(100% - 1.5rem)` (the
+    // body height minus this element's own bottom inset and a matching top
+    // gap) keeps it inside the box at any editor height, while the 20rem term
+    // stops it swallowing a tall maximized editor. The list scrolls within
+    // whatever height that leaves, and the active item is scrolled into view.
     <div
-      className="absolute inset-x-3 bottom-3 z-10 overflow-hidden rounded-md border border-edge-input bg-surface-raised shadow-xl overlay-popover-in"
+      className="absolute inset-x-3 bottom-3 z-10 flex flex-col max-h-[min(20rem,calc(100%-1.5rem))] overflow-hidden rounded-md border border-edge-input bg-surface-raised shadow-xl overlay-popover-in"
       style={{ transformOrigin: 'bottom center' }}
       data-testid="description-mention-menu"
     >
-      <div className="max-h-60 overflow-y-auto py-1">
+      <div className="min-h-0 flex-1 overflow-y-auto py-1">
         {items.length === 0 ? (
           <div className="px-3 py-2 text-xs text-fg-faint">
             <div className="flex items-center gap-2">
