@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
+import { OverlayPopover } from '../../OverlayPopover';
 import type { Swimlane } from '../../../../shared/types';
 
 /**
@@ -21,7 +22,13 @@ export function RestorePopover({
   onClose: () => void;
 }) {
   const popoverRef = useRef<HTMLDivElement>(null);
-  const { style: popoverStyle } = usePopoverPosition(triggerRef, popoverRef, true, { mode: 'dropdown' });
+  // Portal + fixed: this renders into a DataTable `<td>`, which is
+  // `overflow-hidden`, so an in-flow absolute popover was clipped to a single
+  // ~40px table row. The bulk-toolbar mount is clipped by the dialog's raw body.
+  const { style: popoverStyle } = usePopoverPosition(triggerRef, popoverRef, true, {
+    mode: 'dropdown',
+    strategy: 'fixed',
+  });
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -50,10 +57,14 @@ export function RestorePopover({
   const targets = swimlanes.filter((lane) => lane.role !== 'done' && !lane.is_archived && !lane.is_ghost);
 
   return (
-    <div
-      ref={popoverRef}
-      style={{ ...popoverStyle, transformOrigin: 'top center' }}
-      className="absolute z-50 bg-surface-raised border border-edge rounded-lg shadow-xl py-1 min-w-[160px] overlay-popover-in"
+    <OverlayPopover
+      open
+      popoverRef={popoverRef}
+      style={popoverStyle}
+      portal
+      transformOrigin="top center"
+      className="fixed z-[2147483646] bg-surface-raised border border-edge rounded-lg shadow-xl py-1 min-w-[160px]"
+      data-testid="restore-popover"
     >
       <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-fg-faint">
         Restore to
@@ -72,6 +83,6 @@ export function RestorePopover({
           {lane.name}
         </button>
       ))}
-    </div>
+    </OverlayPopover>
   );
 }

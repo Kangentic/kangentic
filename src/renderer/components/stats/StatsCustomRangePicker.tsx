@@ -69,7 +69,12 @@ export function StatsCustomRangePicker({ customWindow, onApply, onClear }: Stats
   const [toValue, setToValue] = useState<string>(() => monthValue(new Date()));
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
-  const { style: popoverStyle } = usePopoverPosition(triggerRef, popoverRef, open, { mode: 'dropdown' });
+  // Portal + fixed: in the popped-out Stats window this sits inside
+  // PopOutWindowFrame's `overflow-hidden`, which clipped the in-flow popover.
+  const { style: popoverStyle } = usePopoverPosition(triggerRef, popoverRef, open, {
+    mode: 'dropdown',
+    strategy: 'fixed',
+  });
   const monthOptions = buildMonthOptions();
 
   const openPicker = () => {
@@ -168,7 +173,8 @@ export function StatsCustomRangePicker({ customWindow, onApply, onClear }: Stats
         open={open}
         popoverRef={popoverRef}
         style={popoverStyle}
-        className="absolute z-50 bg-surface-raised border border-edge rounded-lg shadow-xl p-3 min-w-[220px]"
+        portal
+        className="fixed z-[2147483646] bg-surface-raised border border-edge rounded-lg shadow-xl p-3 min-w-[220px]"
       >
         <div className="flex flex-col gap-2">
           <label className="flex items-center justify-between gap-3 text-xs text-fg-secondary">

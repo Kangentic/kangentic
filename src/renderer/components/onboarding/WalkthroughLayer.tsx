@@ -32,17 +32,6 @@ interface Rect {
   height: number;
 }
 
-/**
- * Options of an open Combobox dropdown.
- *
- * These render inline at `z-50` inside their panel, NOT portaled above everything, so the
- * walkthrough scrim at `z-[70]` sits on top and blurs them. A step that asks the user to
- * choose a setting must not make the choices unreadable, so any open dropdown is folded
- * into the cutout. Keyed on the option elements rather than their container because only
- * the options carry a stable attribute.
- */
-const OPEN_DROPDOWN_SELECTOR = '[data-combobox-option]';
-
 /** Also the scrim's test id. Named so `openDialogRects` can exclude this overlay's own bands. */
 const WALKTHROUGH_LAYER_TEST_ID = 'walkthrough-layer';
 
@@ -104,14 +93,20 @@ function useTargetRect(selector: string | null): { rect: Rect | null; everFound:
 
     const measure = () => {
       // A step may name several elements (the four project-default controls are one
-      // region, not one field); the cutout is their union. An open dropdown joins that
-      // union so its options are never left unreadable behind the blur - but only once
-      // the step's own target is on screen, so an unrelated dropdown elsewhere in the app
-      // can never become the spotlight.
+      // region, not one field); the cutout is their union.
+      //
+      // An open Combobox dropdown used to be folded into this union. What that
+      // bought was a bigger RING, not readability: the blur bands sit at z-[46]
+      // (see the scrim comment below), already BELOW the z-50 panels and dialogs
+      // these controls live in, and the z-[70] layer above carries only the ring
+      // outline and the callout, neither of which blurs anything. The dropdowns now
+      // portal to document.body at z-[2147483646], so they clear every layer here
+      // outright, and because they portal through OverlayPopover they carry
+      // `data-dismissable-layer` - which is what `openDialogRects` already keys on
+      // to route the callout around them. Folding them into the cutout would now
+      // only over-expand the spotlight into empty space.
       const targetRects = measureAll(selector);
-      const nextRect = targetRects.length > 0
-        ? unionRects([...targetRects, ...measureAll(OPEN_DROPDOWN_SELECTOR)])
-        : null;
+      const nextRect = targetRects.length > 0 ? unionRects(targetRects) : null;
       if (!sameRect(currentRect, nextRect)) {
         currentRect = nextRect;
         setRect(nextRect);

@@ -526,7 +526,9 @@ test.describe('BoardManagerDialog extended', () => {
     const agentInput = dialog.locator('input[data-testid="column-agent-override"]');
     await expect(agentInput).toHaveAttribute('placeholder', 'Claude Code');
     await agentInput.click();
-    await dialog.locator('[data-testid="column-agent-override-option-claude"]').click();
+    // Page-scoped, not dialog-scoped: the combobox menu portals to document.body
+    // so it escapes the dialog's scroll clip, and is no longer a descendant.
+    await page.locator('[data-testid="column-agent-override-option-claude"]').click();
     await expect(agentInput).toHaveValue('Claude Code');
 
     await dialog.locator('[data-testid="board-manager-save"]').click();

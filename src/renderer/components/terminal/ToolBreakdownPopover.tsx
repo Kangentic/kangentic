@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Wrench } from 'lucide-react';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
+import { OverlayPopover } from '../OverlayPopover';
 import { ByToolTable } from '../shared/ByToolTable';
 import type { PerToolStat } from '../../../shared/types';
 
@@ -31,7 +32,16 @@ export function ToolBreakdownPopover({
 }) {
   const popoverRef = useRef<HTMLDivElement>(null);
   const [rows, setRows] = useState<PerToolStat[]>([]);
-  const { style: popoverStyle } = usePopoverPosition(triggerRef, popoverRef, true, { mode: 'dropdown', preferVertical: 'above' });
+  // Portal + fixed, matching ContextBarPopover. `fixed` alone is not enough
+  // here: the ContextBar's own container carries `[transform:translateZ(0)]`,
+  // which makes it a containing block for fixed descendants, so the popover has
+  // to leave the subtree entirely. `preferVertical: 'above'` stays - the bar is
+  // pinned to the bottom of its pane.
+  const { style: popoverStyle } = usePopoverPosition(triggerRef, popoverRef, true, {
+    mode: 'dropdown',
+    strategy: 'fixed',
+    preferVertical: 'above',
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -71,10 +81,13 @@ export function ToolBreakdownPopover({
   }, [onClose]);
 
   return (
-    <div
-      ref={popoverRef}
-      style={{ ...popoverStyle, transformOrigin: 'bottom center' }}
-      className="absolute z-50 bg-surface-raised border border-edge rounded-lg shadow-xl w-max max-w-[480px] max-h-[340px] overflow-y-auto overlay-popover-in"
+    <OverlayPopover
+      open
+      popoverRef={popoverRef}
+      style={popoverStyle}
+      portal
+      transformOrigin="bottom center"
+      className="fixed z-[2147483646] bg-surface-raised border border-edge rounded-lg shadow-xl w-max max-w-[480px] max-h-[340px] overflow-y-auto"
       data-testid={testId}
     >
       <div className="px-3 pt-2 pb-1 text-[11px] font-semibold uppercase tracking-wider text-fg-faint flex items-center gap-1.5">
@@ -86,6 +99,6 @@ export function ToolBreakdownPopover({
       ) : (
         <div className="px-3 py-3 text-xs text-fg-disabled whitespace-nowrap">No tool calls yet</div>
       )}
-    </div>
+    </OverlayPopover>
   );
 }

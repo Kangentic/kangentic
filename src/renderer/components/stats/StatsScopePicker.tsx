@@ -26,7 +26,12 @@ export function StatsScopePicker({ projects, activeProjectId, onSelectAll, onSel
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
-  const { style: popoverStyle } = usePopoverPosition(triggerRef, popoverRef, open, { mode: 'dropdown' });
+  // Portal + fixed: in the popped-out Stats window this sits inside
+  // PopOutWindowFrame's `overflow-hidden`, which clipped the in-flow popover.
+  const { style: popoverStyle } = usePopoverPosition(triggerRef, popoverRef, open, {
+    mode: 'dropdown',
+    strategy: 'fixed',
+  });
 
   // Close on click outside (capture so it wins over other handlers).
   useEffect(() => {
@@ -86,7 +91,8 @@ export function StatsScopePicker({ projects, activeProjectId, onSelectAll, onSel
         open={open}
         popoverRef={popoverRef}
         style={popoverStyle}
-        className="absolute z-50 bg-surface-raised border border-edge rounded-lg shadow-xl py-1 min-w-[180px]"
+        portal
+        className="fixed z-[2147483646] bg-surface-raised border border-edge rounded-lg shadow-xl py-1 min-w-[180px]"
       >
         <button
           type="button"

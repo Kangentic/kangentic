@@ -1,5 +1,7 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect, useMemo } from 'react';
 import { ChevronDown } from 'lucide-react';
+import { OverlayPopover } from '../OverlayPopover';
+import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 
 interface FontComboboxProps {
   value: string;
@@ -40,8 +42,10 @@ export function FontCombobox({
   // render; falling back to `value` on an empty string would snap the input
   // back to the stale font name mid-edit.
   const [filterText, setFilterText] = useState<string | null>(null);
+  const [triggerWidth, setTriggerWidth] = useState<number>();
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   const displayValue = isOpen && filterText !== null ? filterText : value;
   const searchQuery = (isOpen && filterText !== null ? filterText : '').toLowerCase();
@@ -51,9 +55,34 @@ export function FontCombobox({
   );
   const showSuggestions = isOpen && fonts.length > 0;
 
+  // Portaled to document.body (see render below), so measure and position against
+  // the visible field rather than relying on an in-flow absolute offset that would
+  // be clipped by an ancestor `overflow: hidden` / `overflow-y-auto` (the settings
+  // panel body scroller).
+  const { style: popoverStyle, placement } = usePopoverPosition(containerRef, menuRef, showSuggestions, {
+    mode: 'dropdown',
+    strategy: 'fixed',
+    preferVertical: 'below',
+    preferRight: false,
+  });
+
+  // The fixed-strategy popover lost the old `left-0 right-0` in-flow stretch, so
+  // the trigger width has to be measured and applied explicitly.
+  useLayoutEffect(() => {
+    if (showSuggestions && containerRef.current) {
+      setTriggerWidth(containerRef.current.getBoundingClientRect().width);
+    }
+  }, [showSuggestions]);
+
   useEffect(() => {
+    // The menu is portaled OUT of containerRef, so a click inside it must also
+    // count as "inside" - otherwise this capture-phase listener unmounts the
+    // option before its own click fires and the selection silently no-ops.
     const handleClickOutside = (event: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+      if (
+        containerRef.current && !containerRef.current.contains(event.target as Node) &&
+        (!menuRef.current || !menuRef.current.contains(event.target as Node))
+      ) {
         setIsOpen(false);
         setFilterText(null);
       }
@@ -103,13 +132,14 @@ export function FontCombobox({
     } else if (event.key === 'ArrowDown' && showSuggestions) {
       event.preventDefault();
       inputRef.current?.blur();
-      (containerRef.current?.querySelector(NAVIGABLE_SELECTOR) as HTMLButtonElement)?.focus();
+      // menuRef, not containerRef: the options live in a body portal now.
+      (menuRef.current?.querySelector(NAVIGABLE_SELECTOR) as HTMLButtonElement)?.focus();
     }
   };
 
   const focusAdjacentOption = (current: HTMLButtonElement, delta: number) => {
     const navigable = Array.from(
-      containerRef.current?.querySelectorAll<HTMLButtonElement>(NAVIGABLE_SELECTOR) ?? [],
+      menuRef.current?.querySelectorAll<HTMLButtonElement>(NAVIGABLE_SELECTOR) ?? [],
     );
     const currentIndex = navigable.indexOf(current);
     const next = navigable[currentIndex + delta];
@@ -164,31 +194,40 @@ export function FontCombobox({
         )}
       </div>
 
-      {showSuggestions && (
-        <div className="absolute top-full left-0 right-0 mt-1 bg-surface-raised border border-edge rounded shadow-lg z-50 max-h-48 overflow-y-auto py-1">
-          {filteredFonts.length > 0 ? (
-            filteredFonts.map((font) => (
-              <button
-                key={font}
-                type="button"
-                data-font-option
-                data-testid={`${testId}-option-${font}`}
-                onClick={() => handleSelectFont(font)}
-                onKeyDown={handleOptionKeyDown}
-                title={font}
-                style={{ fontFamily: font }}
-                className={`w-full text-left px-3 py-1.5 text-sm hover:bg-surface-hover focus:bg-surface-hover focus:outline-none transition-colors truncate ${
-                  font === value ? 'text-fg font-medium' : 'text-fg-muted'
-                }`}
-              >
-                {font}
-              </button>
-            ))
-          ) : (
-            <div className="px-3 py-2 text-xs text-fg-faint text-center">No fonts match "{filterText}"</div>
-          )}
-        </div>
-      )}
+      {/* Portaled to escape the settings panel body's overflow-y-auto scroller.
+          z-[2147483646] rather than z-50 because BaseDialog is itself z-50 and
+          this now renders as a sibling of it under <body>. */}
+      <OverlayPopover
+        open={showSuggestions}
+        popoverRef={menuRef}
+        style={{ ...popoverStyle, width: triggerWidth }}
+        portal
+        transformOrigin={placement.vertical === 'above' ? 'bottom center' : 'top center'}
+        className="fixed z-[2147483646] bg-surface-raised border border-edge rounded shadow-lg max-h-48 overflow-y-auto py-1"
+        data-testid={`${testId}-menu`}
+      >
+        {filteredFonts.length > 0 ? (
+          filteredFonts.map((font) => (
+            <button
+              key={font}
+              type="button"
+              data-font-option
+              data-testid={`${testId}-option-${font}`}
+              onClick={() => handleSelectFont(font)}
+              onKeyDown={handleOptionKeyDown}
+              title={font}
+              style={{ fontFamily: font }}
+              className={`w-full text-left px-3 py-1.5 text-sm hover:bg-surface-hover focus:bg-surface-hover focus:outline-none transition-colors truncate ${
+                font === value ? 'text-fg font-medium' : 'text-fg-muted'
+              }`}
+            >
+              {font}
+            </button>
+          ))
+        ) : (
+          <div className="px-3 py-2 text-xs text-fg-faint text-center">No fonts match "{filterText}"</div>
+        )}
+      </OverlayPopover>
     </div>
   );
 }

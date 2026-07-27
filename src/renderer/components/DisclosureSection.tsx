@@ -61,11 +61,12 @@ export function DisclosureSection({
     onOpenChange?.(next);
   };
 
-  // Outer container intentionally does NOT use `overflow-hidden` because
-  // descendants may render absolutely-positioned popovers (e.g. ModelCombobox
-  // suggestion list) that need to escape the card bounds. Rounded corners
-  // are applied to the trigger button when closed so its hover bg respects
-  // the curve without needing a clip on the parent.
+  // Outer container intentionally does NOT use `overflow-hidden`, so a
+  // descendant that positions itself in-flow can still escape the card bounds.
+  // (The comboboxes that motivated this now portal to document.body and are no
+  // longer affected either way.) Rounded corners are applied to the trigger
+  // button when closed so its hover bg respects the curve without needing a
+  // clip on the parent.
   return (
     <div className="rounded border border-edge-input bg-surface-raised/40">
       <button

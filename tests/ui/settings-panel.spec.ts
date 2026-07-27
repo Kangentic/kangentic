@@ -243,9 +243,9 @@ test.describe('Settings Panel', () => {
     const fontFamilyRow = page.locator('[data-testid="setting-row-terminal.fontFamily"]');
     const fontFamilyInput = fontFamilyRow.locator('[data-testid="terminal-font-family"]');
     await fontFamilyInput.click();
-    await expect(fontFamilyRow.getByTestId('terminal-font-family-option-Consolas')).toBeVisible();
+    await expect(page.getByTestId('terminal-font-family-option-Consolas')).toBeVisible();
 
-    await fontFamilyRow.getByTestId('terminal-font-family-option-Consolas').click();
+    await page.getByTestId('terminal-font-family-option-Consolas').click();
     await expect(fontFamilyInput).toHaveValue('Consolas');
     await expect.poll(async () => {
       const globalConfig = await page.evaluate(() => window.electronAPI.config.getGlobal());
@@ -290,7 +290,7 @@ test.describe('Settings Panel', () => {
 
     // Establish a known starting value before slowing the round trip.
     await fontFamilyInput.click();
-    await fontFamilyRow.getByTestId('terminal-font-family-option-Consolas').click();
+    await page.getByTestId('terminal-font-family-option-Consolas').click();
     await expect.poll(async () => {
       const globalConfig = await page.evaluate(() => window.electronAPI.config.getGlobal());
       return (globalConfig as { terminal: { fontFamily: string } }).terminal.fontFamily;
@@ -369,15 +369,15 @@ test.describe('Settings Panel', () => {
     // Consolas, Courier New, Fira Code, JetBrains Mono, Menlo. "Con" narrows
     // to Consolas only (case-insensitive substring match) - none of the other
     // five fonts contain "con".
-    await expect(fontFamilyRow.getByTestId('terminal-font-family-option-Consolas')).toBeVisible();
-    await expect(fontFamilyRow.getByTestId('terminal-font-family-option-Cascadia Code')).toHaveCount(0);
-    await expect(fontFamilyRow.getByTestId('terminal-font-family-option-Courier New')).toHaveCount(0);
-    await expect(fontFamilyRow.getByTestId('terminal-font-family-option-Fira Code')).toHaveCount(0);
-    await expect(fontFamilyRow.getByTestId('terminal-font-family-option-JetBrains Mono')).toHaveCount(0);
-    await expect(fontFamilyRow.getByTestId('terminal-font-family-option-Menlo')).toHaveCount(0);
+    await expect(page.getByTestId('terminal-font-family-option-Consolas')).toBeVisible();
+    await expect(page.getByTestId('terminal-font-family-option-Cascadia Code')).toHaveCount(0);
+    await expect(page.getByTestId('terminal-font-family-option-Courier New')).toHaveCount(0);
+    await expect(page.getByTestId('terminal-font-family-option-Fira Code')).toHaveCount(0);
+    await expect(page.getByTestId('terminal-font-family-option-JetBrains Mono')).toHaveCount(0);
+    await expect(page.getByTestId('terminal-font-family-option-Menlo')).toHaveCount(0);
 
     await fontFamilyInput.fill('zzzznomatch');
-    await expect(fontFamilyRow.getByText('No fonts match "zzzznomatch"')).toBeVisible();
+    await expect(page.getByText('No fonts match "zzzznomatch"')).toBeVisible();
 
     // Restore so later tests are unaffected.
     await fontFamilyInput.fill('Menlo, Consolas, "Courier New", monospace');
@@ -397,13 +397,13 @@ test.describe('Settings Panel', () => {
     const fontFamilyInput = fontFamilyRow.locator('[data-testid="terminal-font-family"]');
 
     await fontFamilyInput.click();
-    await expect(fontFamilyRow.getByTestId('terminal-font-family-option-Consolas')).toBeVisible();
+    await expect(page.getByTestId('terminal-font-family-option-Consolas')).toBeVisible();
 
     // Click something else within the panel, outside the combobox - the
     // capture-phase mousedown listener should close the dropdown.
     await page.locator('h2:has-text("Settings")').click();
 
-    await expect(fontFamilyRow.getByTestId('terminal-font-family-option-Consolas')).toHaveCount(0);
+    await expect(page.getByTestId('terminal-font-family-option-Consolas')).toHaveCount(0);
 
     await closeSettings();
   });
@@ -418,7 +418,7 @@ test.describe('Settings Panel', () => {
     await fontFamilyInput.click();
     // "Cascadia Code" is first in the mock font list, so it's the first
     // navigable suggestion.
-    const firstOption = fontFamilyRow.getByTestId('terminal-font-family-option-Cascadia Code');
+    const firstOption = page.getByTestId('terminal-font-family-option-Cascadia Code');
     await expect(firstOption).toBeVisible();
 
     await fontFamilyInput.press('ArrowDown');

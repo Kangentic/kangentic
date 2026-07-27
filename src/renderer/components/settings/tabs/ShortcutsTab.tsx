@@ -9,6 +9,8 @@ import { ICON_REGISTRY } from '../../../utils/swimlane-icons';
 import { useHmrGeneration } from '../../../utils/hmr-generation';
 import { SectionHeader, Select, INPUT_CLASS } from '../shared';
 import { Pill } from '../../Pill';
+import { OverlayPopover } from '../../OverlayPopover';
+import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
 import type { ShortcutConfig, ShortcutDisplay } from '../../../../shared/types';
 
 interface ShortcutEditState extends ShortcutConfig {
@@ -269,6 +271,16 @@ export function ShortcutsTab() {
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [iconPickerIndex, setIconPickerIndex] = useState<number | null>(null);
   const presetsRef = useRef<HTMLDivElement>(null);
+  const presetsMenuRef = useRef<HTMLDivElement>(null);
+
+  // Portal + fixed: the settings panel body is an overflow-y-auto scroller, so
+  // an in-flow absolute menu was clipped at its bottom edge.
+  const { style: presetsStyle, placement: presetsPlacement } = usePopoverPosition(
+    presetsRef,
+    presetsMenuRef,
+    showPresets,
+    { mode: 'dropdown', strategy: 'fixed', preferRight: false },
+  );
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -281,8 +293,14 @@ export function ShortcutsTab() {
   // Click-outside handler for presets dropdown (capture phase to beat scroll containers)
   useEffect(() => {
     if (!showPresets) return;
+    // The menu is portaled OUT of presetsRef, so a click inside it must also
+    // count as "inside" - otherwise this capture-phase listener unmounts the
+    // preset button before its own click fires.
     const handleClickOutside = (event: PointerEvent) => {
-      if (presetsRef.current && !presetsRef.current.contains(event.target as Node)) {
+      if (
+        presetsRef.current && !presetsRef.current.contains(event.target as Node) &&
+        (!presetsMenuRef.current || !presetsMenuRef.current.contains(event.target as Node))
+      ) {
         setShowPresets(false);
       }
     };
@@ -446,34 +464,40 @@ export function ShortcutsTab() {
             Presets
             <ChevronDown size={12} />
           </Pill>
-          {showPresets && (
-            <div className="absolute top-full left-0 mt-1 min-w-[200px] max-h-[320px] overflow-y-auto bg-surface-raised border border-edge-input rounded-md shadow-xl z-50 py-1">
-              {(() => {
-                let lastCategory = '';
-                return filteredPresets.map((preset, index) => {
-                  const PresetIcon = ICON_REGISTRY.get(preset.action.icon ?? 'zap') ?? Zap;
-                  const showHeader = preset.category !== lastCategory;
-                  lastCategory = preset.category;
-                  return (
-                    <React.Fragment key={`${preset.label}-${preset.platform ?? 'all'}-${index}`}>
-                      {showHeader && (
-                        <div className={`px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-fg-disabled ${index > 0 ? 'mt-1 border-t border-edge-input/50 pt-1.5' : ''}`}>
-                          {preset.category}
-                        </div>
-                      )}
-                      <button
-                        onClick={() => addAction(preset.action)}
-                        className="w-full text-left px-3 py-1.5 text-xs text-fg-tertiary hover:bg-surface-hover hover:text-fg transition-colors flex items-center gap-2"
-                      >
-                        <PresetIcon size={14} />
-                        {preset.label}
-                      </button>
-                    </React.Fragment>
-                  );
-                });
-              })()}
-            </div>
-          )}
+          <OverlayPopover
+            open={showPresets}
+            popoverRef={presetsMenuRef}
+            style={presetsStyle}
+            portal
+            transformOrigin={presetsPlacement.vertical === 'above' ? 'bottom left' : 'top left'}
+            className="fixed z-[2147483646] min-w-[200px] max-h-[320px] overflow-y-auto bg-surface-raised border border-edge-input rounded-md shadow-xl py-1"
+            data-testid="shortcut-presets-menu"
+          >
+            {(() => {
+              let lastCategory = '';
+              return filteredPresets.map((preset, index) => {
+                const PresetIcon = ICON_REGISTRY.get(preset.action.icon ?? 'zap') ?? Zap;
+                const showHeader = preset.category !== lastCategory;
+                lastCategory = preset.category;
+                return (
+                  <React.Fragment key={`${preset.label}-${preset.platform ?? 'all'}-${index}`}>
+                    {showHeader && (
+                      <div className={`px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-fg-disabled ${index > 0 ? 'mt-1 border-t border-edge-input/50 pt-1.5' : ''}`}>
+                        {preset.category}
+                      </div>
+                    )}
+                    <button
+                      onClick={() => addAction(preset.action)}
+                      className="w-full text-left px-3 py-1.5 text-xs text-fg-tertiary hover:bg-surface-hover hover:text-fg transition-colors flex items-center gap-2"
+                    >
+                      <PresetIcon size={14} />
+                      {preset.label}
+                    </button>
+                  </React.Fragment>
+                );
+              });
+            })()}
+          </OverlayPopover>
         </div>
       </div>
     </div>

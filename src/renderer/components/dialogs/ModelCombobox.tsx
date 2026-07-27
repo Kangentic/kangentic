@@ -1,7 +1,9 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect, useMemo } from 'react';
 import { ChevronDown, X } from 'lucide-react';
 import { groupModelIds, type ModelDisplayGroup } from '../../../shared/model-id';
 import { modelContextBadgeLabel, modelRowLabel } from '../../utils/format-tokens';
+import { OverlayPopover } from '../OverlayPopover';
+import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 
 interface ModelComboboxProps {
   value: string;
@@ -59,8 +61,10 @@ export function ModelCombobox({
   const [isOpen, setIsOpen] = useState(false);
   const [filterText, setFilterText] = useState('');
   const [pinnedExpanded, setPinnedExpanded] = useState(false);
+  const [triggerWidth, setTriggerWidth] = useState<number>();
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   // The committed value's friendly label (matches the dropdown rows and the
   // inherited-default placeholder, both of which already go through
@@ -119,6 +123,26 @@ export function ModelCombobox({
 
   const showSuggestions = isOpen && availableModels.length > 0;
 
+  // Portaled to document.body (see render below), so measure and position against
+  // the visible field rather than relying on an in-flow absolute offset that would
+  // be clipped by an ancestor `overflow: hidden` / `overflow-y-auto` (the
+  // task-detail edit scroller, the settings panel body, the board manager).
+  const { style: popoverStyle, placement } = usePopoverPosition(containerRef, menuRef, showSuggestions, {
+    mode: 'dropdown',
+    strategy: 'fixed',
+    preferVertical: 'below',
+    preferRight: false,
+  });
+
+  // The fixed-strategy popover lost the old `left-0 right-0` in-flow stretch, so
+  // the trigger width has to be measured and applied explicitly. Model often sits
+  // in a half-width column, which makes a missing width obvious.
+  useLayoutEffect(() => {
+    if (showSuggestions && containerRef.current) {
+      setTriggerWidth(containerRef.current.getBoundingClientRect().width);
+    }
+  }, [showSuggestions]);
+
   // Ids selectable from within the demoted section, so a task/column already
   // set to a superseded generation or a dated pin opens with the section
   // expanded instead of hiding the current selection behind a collapsed toggle.
@@ -147,10 +171,14 @@ export function ModelCombobox({
   }, [isOpen]);
 
   useEffect(() => {
+    // The menu is portaled OUT of containerRef, so a click inside it must also
+    // count as "inside" - otherwise this capture-phase listener unmounts the
+    // option before its own click fires and the selection silently no-ops.
     const handleClickOutside = (event: MouseEvent) => {
       if (
         containerRef.current &&
-        !containerRef.current.contains(event.target as Node)
+        !containerRef.current.contains(event.target as Node) &&
+        (!menuRef.current || !menuRef.current.contains(event.target as Node))
       ) {
         setIsOpen(false);
         setFilterText('');
@@ -218,14 +246,16 @@ export function ModelCombobox({
       setIsOpen(false);
       setFilterText('');
     } else if (e.key === 'ArrowDown' && showSuggestions) {
+      e.preventDefault();
       inputRef.current?.blur();
-      (containerRef.current?.querySelector(NAVIGABLE_SELECTOR) as HTMLButtonElement)?.focus();
+      // menuRef, not containerRef: the options live in a body portal now.
+      (menuRef.current?.querySelector(NAVIGABLE_SELECTOR) as HTMLButtonElement)?.focus();
     }
   };
 
   const focusAdjacentOption = (current: HTMLButtonElement, delta: number) => {
     const navigable = Array.from(
-      containerRef.current?.querySelectorAll<HTMLButtonElement>(NAVIGABLE_SELECTOR) ?? [],
+      menuRef.current?.querySelectorAll<HTMLButtonElement>(NAVIGABLE_SELECTOR) ?? [],
     );
     const currentIndex = navigable.indexOf(current);
     const next = navigable[currentIndex + delta];
@@ -251,6 +281,17 @@ export function ModelCombobox({
         e.preventDefault();
         chip.focus();
       }
+    } else if (e.key === 'Escape') {
+      // Collapse the menu and hand focus back to the input, matching Combobox /
+      // FontCombobox. NOTE: this does NOT keep the host dialog open. The event is
+      // not stopped, and a dialog's Escape listener is bubble-phase on `document`
+      // (BaseDialog.tsx), so it still fires and closes the dialog underneath -
+      // verified against the task-detail window. Stopping that would need
+      // `e.stopPropagation()` here and in the other two comboboxes, which is a
+      // deliberate change to what Escape means inside a dialog, not a local fix.
+      setIsOpen(false);
+      setFilterText('');
+      inputRef.current?.focus();
     }
   };
 
@@ -360,60 +401,70 @@ export function ModelCombobox({
         )}
       </div>
 
-      {showSuggestions && (
-        <div className="absolute top-full left-0 right-0 mt-1 bg-surface-raised border border-edge rounded shadow-lg z-50 max-h-48 overflow-y-auto">
-          {filteredGroups.length > 0 || filteredDemotedRows.length > 0 ? (
-            <div className="py-1">
-              {filteredGroups.map((group) => renderGroupRow(group, false))}
-              {filteredDemotedRows.length > 0 && (
-                <div className="border-t border-edge mt-1 pt-1">
-                  {/* During auto-expand (a query that matches only demoted rows)
-                      the section is forced open, so the toggle cannot collapse
-                      anything: hide the dead control rather than render it inert. */}
-                  {!autoExpandPinned && (
-                    <button
-                      type="button"
-                      data-model-pinned-toggle
-                      onClick={() => setPinnedExpanded((previous) => !previous)}
-                      onKeyDown={handleOptionKeyDown}
-                      className="w-full flex items-center gap-1 px-3 py-1.5 text-xs text-fg-faint hover:bg-surface-hover focus:bg-surface-hover focus:outline-none transition-colors"
-                    >
-                      <ChevronDown
-                        size={12}
-                        className={`transition-transform ${showPinnedExpanded ? '' : '-rotate-90'}`}
-                      />
-                      Older versions ({filteredDemotedRows.length})
-                    </button>
+      {/* Portaled to escape clipping ancestors (the task-detail window's
+          overflow-y-auto edit form, the settings panel body, the board manager
+          scroller). z-[2147483646] rather than z-50 because BaseDialog is
+          itself z-50 and this now renders as a sibling of it under <body>. */}
+      <OverlayPopover
+        open={showSuggestions}
+        popoverRef={menuRef}
+        style={{ ...popoverStyle, width: triggerWidth }}
+        portal
+        transformOrigin={placement.vertical === 'above' ? 'bottom center' : 'top center'}
+        className="fixed z-[2147483646] bg-surface-raised border border-edge rounded shadow-lg max-h-48 overflow-y-auto"
+        data-testid={`${testId}-menu`}
+      >
+        {filteredGroups.length > 0 || filteredDemotedRows.length > 0 ? (
+          <div className="py-1">
+            {filteredGroups.map((group) => renderGroupRow(group, false))}
+            {filteredDemotedRows.length > 0 && (
+              <div className="border-t border-edge mt-1 pt-1">
+                {/* During auto-expand (a query that matches only demoted rows)
+                    the section is forced open, so the toggle cannot collapse
+                    anything: hide the dead control rather than render it inert. */}
+                {!autoExpandPinned && (
+                  <button
+                    type="button"
+                    data-model-pinned-toggle
+                    onClick={() => setPinnedExpanded((previous) => !previous)}
+                    onKeyDown={handleOptionKeyDown}
+                    className="w-full flex items-center gap-1 px-3 py-1.5 text-xs text-fg-faint hover:bg-surface-hover focus:bg-surface-hover focus:outline-none transition-colors"
+                  >
+                    <ChevronDown
+                      size={12}
+                      className={`transition-transform ${showPinnedExpanded ? '' : '-rotate-90'}`}
+                    />
+                    Older versions ({filteredDemotedRows.length})
+                  </button>
+                )}
+                {showPinnedExpanded &&
+                  filteredDemotedRows.map((row) =>
+                    row.kind === 'group' ? (
+                      renderGroupRow(row.group, true)
+                    ) : (
+                      <button
+                        key={row.id}
+                        type="button"
+                        data-model-option
+                        data-model-pinned-option
+                        onClick={() => handleSelectModel(row.id)}
+                        onKeyDown={handleOptionKeyDown}
+                        title={row.id}
+                        className="w-full text-left pl-7 pr-3 py-1.5 text-sm text-fg-muted hover:bg-surface-hover focus:bg-surface-hover focus:outline-none transition-colors truncate"
+                      >
+                        {modelRowLabel(row.id, modelDisplayNames)}
+                      </button>
+                    ),
                   )}
-                  {showPinnedExpanded &&
-                    filteredDemotedRows.map((row) =>
-                      row.kind === 'group' ? (
-                        renderGroupRow(row.group, true)
-                      ) : (
-                        <button
-                          key={row.id}
-                          type="button"
-                          data-model-option
-                          data-model-pinned-option
-                          onClick={() => handleSelectModel(row.id)}
-                          onKeyDown={handleOptionKeyDown}
-                          title={row.id}
-                          className="w-full text-left pl-7 pr-3 py-1.5 text-sm text-fg-muted hover:bg-surface-hover focus:bg-surface-hover focus:outline-none transition-colors truncate"
-                        >
-                          {modelRowLabel(row.id, modelDisplayNames)}
-                        </button>
-                      ),
-                    )}
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="px-3 py-2 text-xs text-fg-faint text-center">
-              No models match "{filterText}"
-            </div>
-          )}
-        </div>
-      )}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="px-3 py-2 text-xs text-fg-faint text-center">
+            No models match "{filterText}"
+          </div>
+        )}
+      </OverlayPopover>
     </div>
   );
 }

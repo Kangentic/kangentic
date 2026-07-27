@@ -34,11 +34,14 @@ export function ImportPopover({ onOpenImportDialog }: ImportPopoverProps) {
   const popoverRef = useRef<HTMLDivElement>(null);
   const urlInputRef = useRef<HTMLInputElement>(null);
 
+  // Portal + fixed: the BacklogView empty-state mount sits inside the backlog
+  // content well's `overflow-hidden` (AppLayout), which clipped the in-flow
+  // absolute popover. The ViewToggle toolbar mount is unclipped either way.
   const { style } = usePopoverPosition(
     buttonRef as React.RefObject<HTMLElement>,
     popoverRef as React.RefObject<HTMLElement>,
     open,
-    { mode: 'dropdown' },
+    { mode: 'dropdown', strategy: 'fixed' },
   );
 
   // Load sources when popover opens
@@ -221,7 +224,8 @@ export function ImportPopover({ onOpenImportDialog }: ImportPopoverProps) {
         open={open}
         popoverRef={popoverRef}
         style={style}
-        className="absolute z-50 w-80 bg-surface border border-edge rounded-lg shadow-xl"
+        portal
+        className="fixed z-[2147483646] w-80 bg-surface border border-edge rounded-lg shadow-xl"
         data-testid="import-popover"
       >
           <div className="px-3 py-2 border-b border-edge">

@@ -123,6 +123,10 @@ export function ToolbarSearchFilter({
           open={showFilterPopover}
           popoverRef={filterPopoverRef}
           transformOrigin="top right"
+          // popover-inflow-ok: this renders only in the ViewToggle toolbar row,
+          // which sits ABOVE the board/backlog content wells (AppLayout's
+          // `flex-1 min-h-0 overflow-hidden`), so there is no clipping ancestor.
+          // Portal + fixed if this ever moves inside a scroller.
           className="absolute right-0 top-full mt-1 z-50 bg-surface-raised border border-edge rounded-lg shadow-xl py-2 w-[260px] max-h-[380px] overflow-y-auto"
         >
           <FilterPopover

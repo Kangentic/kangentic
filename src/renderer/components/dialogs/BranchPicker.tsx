@@ -46,30 +46,30 @@ export function BranchPicker({
   const [branches, setBranches] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState('');
+  const [triggerWidth, setTriggerWidth] = useState<number>();
   const containerRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  // The inline chip lives inside headers and dialogs that clip overflow, so its
-  // dropdown always portals + fixed to escape the clip (as the kebab fallback,
-  // hideTrigger / anchorRef, already does). Only the 'input' variant stays inline +
-  // absolute, because it stretches to its container's full width.
-  const usePortal = hideTrigger || anchorRef !== undefined || variant === 'chip';
+  // Every variant portals + fixed. The chip lives inside headers and dialogs that
+  // clip overflow; the 'input' variant lives in the Settings > Git panel, whose
+  // body is an overflow-y-auto scroller, so an in-flow absolute dropdown there
+  // was clipped exactly like the comboboxes were. It stretches to its container's
+  // full width via a measured `width` (below) rather than an in-flow left/right 0.
   const positionAnchor = anchorRef ?? containerRef;
   const { style: dropdownStyle } = usePopoverPosition(
     positionAnchor,
     dropdownRef,
     open,
-    usePortal
-      ? { mode: 'dropdown', strategy: 'fixed', preferRight: false }
-      : { mode: 'dropdown', preferRight: false },
+    { mode: 'dropdown', strategy: 'fixed', preferRight: false },
   );
 
-  // Input variant: override horizontal positioning to stretch full width
+  // Input variant: match the trigger's full width. A fixed-strategy popover is
+  // detached from the container, so `left-0 right-0` no longer stretches it.
   useLayoutEffect(() => {
-    if (!open || variant !== 'input' || !dropdownRef.current) return;
-    dropdownRef.current.style.left = '0';
-    dropdownRef.current.style.right = '0';
-  }, [open, variant]);
+    if (open && variant === 'input' && positionAnchor.current) {
+      setTriggerWidth(positionAnchor.current.getBoundingClientRect().width);
+    }
+  }, [open, variant, positionAnchor]);
 
   const displayBranch = value || defaultBranch || 'main';
 
@@ -222,12 +222,13 @@ export function BranchPicker({
       <OverlayPopover
         open={open}
         popoverRef={dropdownRef}
-        style={dropdownStyle}
-        portal={usePortal}
+        style={variant === 'input' ? { ...dropdownStyle, width: triggerWidth } : dropdownStyle}
+        portal
         transformOrigin="top left"
-        className={`${usePortal ? 'fixed z-[2147483646]' : 'absolute z-50'} bg-surface-raised border border-edge-input rounded-md shadow-xl overflow-hidden ${
-          variant === 'input' ? 'left-0 right-0' : 'w-64'
+        className={`fixed z-[2147483646] bg-surface-raised border border-edge-input rounded-md shadow-xl overflow-hidden ${
+          variant === 'input' ? '' : 'w-64'
         }`}
+        data-testid="branch-picker-dropdown"
       >
         {dropdownContent}
       </OverlayPopover>
