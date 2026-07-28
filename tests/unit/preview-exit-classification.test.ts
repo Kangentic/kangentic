@@ -168,6 +168,31 @@ describe('classifyPreviewExit', () => {
     });
     expect(verdict).toEqual({ status: 'clean', code: 0 });
   });
+
+  // A matching record is terminal and takes priority over BOTH processAlive
+  // and stopRequested - the function checks the record branch first and
+  // returns unconditionally from it. This matters beyond the ordinary
+  // wind-down race (dev.js writes the record, then exits, so processAlive
+  // usually catches up a poll later anyway): the module's own doc comment
+  // calls out that a hard-killed PID can be recycled by the OS for an
+  // unrelated process, which would read back as "still alive" indefinitely.
+  // Once a definitive record exists, the watcher must trust it rather than
+  // stall on that recycled PID's liveness.
+  it.each([
+    { exitCode: 0, expectedStatus: 'clean', expectedCode: 0 },
+    { exitCode: 1, expectedStatus: 'crashed', expectedCode: 2 },
+  ])(
+    'treats a matching record as authoritative even while liveness still reads alive (exitCode $exitCode)',
+    ({ exitCode, expectedStatus, expectedCode }) => {
+      const verdict = classifyPreviewExit({
+        record: { pid: 100, exitCode },
+        watchedPid: 100,
+        processAlive: true,
+        stopRequested: false,
+      });
+      expect(verdict).toEqual({ status: expectedStatus, code: expectedCode });
+    },
+  );
 });
 
 describe('writeExitRecord / readExitRecord / clearExitRecord (filesystem round trip)', () => {
