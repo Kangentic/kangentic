@@ -80,6 +80,33 @@ test.describe('Project Groups', () => {
     await expect(page.locator('text=FromBackgroundMenu').first()).toBeVisible();
   });
 
+  test('background menu "Add project" reaches the add-project flow and closes the menu', async () => {
+    // Neutralize the add-project pipeline the same way the footer-menu test
+    // does below, so it toasts-and-returns instead of opening a real project.
+    // The resulting error toast is the only externally-observable proof that
+    // this specific entry's onClick actually invoked onAddProject rather than
+    // just closing the menu - "New group" above already covers the sibling
+    // entry, so this test is scoped to the wiring the background menu adds.
+    await page.evaluate(() => {
+      (window as unknown as { __mockProbePathOverrides: Record<string, unknown> })
+        .__mockProbePathOverrides = { exists: false };
+    });
+
+    const projectList = page.getByTestId('sidebar-project-list');
+    const box = await projectList.boundingBox();
+    if (!box) throw new Error('Sidebar project list has no layout');
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height - 20, { button: 'right' });
+
+    const menu = page.getByTestId('sidebar-background-menu');
+    await expect(menu).toBeVisible();
+    await menu.getByTestId('sidebar-background-add-project').click();
+
+    await expect(page.getByTestId('sidebar-background-menu')).toHaveCount(0);
+    const errorToast = page.locator('[data-testid="toast"]')
+      .filter({ hasText: 'That folder could not be opened. It may have been moved or renamed.' });
+    await expect(errorToast).toBeVisible({ timeout: 5000 });
+  });
+
   test('right-clicking a project row does not open the background menu', async () => {
     // Rows stopPropagation their own context-menu event; the list container's
     // onContextMenu handler underneath must never also fire for a row click.
@@ -102,6 +129,25 @@ test.describe('Project Groups', () => {
     const groupMenu = page.locator('.fixed.bg-surface-raised').filter({ hasText: 'Move up' });
     await expect(groupMenu).toBeVisible();
     await expect(page.getByTestId('sidebar-background-menu')).toHaveCount(0);
+  });
+
+  test('right-clicking the inline group-name input does not open the background menu', async () => {
+    // The input lives inside the list container, so without its own
+    // stopPropagation the container's onContextMenu would preventDefault the
+    // event and swallow the text field's native Copy / Paste menu - the third
+    // sibling of the row/group-header guards above, and the only one that
+    // costs the user a working control if it regresses.
+    await clickNewGroup(page);
+    const input = page.locator('input[placeholder="Group name"]');
+    await expect(input).toBeVisible();
+
+    await input.click({ button: 'right' });
+
+    await expect(page.getByTestId('sidebar-background-menu')).toHaveCount(0);
+    // Guards the vacuous pass: if the right-click had blurred the input away
+    // instead of being stopped, the count assertion above would hold for the
+    // wrong reason.
+    await expect(input).toBeVisible();
   });
 
   test('Escape cancels group creation', async () => {
@@ -302,6 +348,30 @@ test.describe('Sidebar Footer Actions', () => {
     await expect(menu).toBeVisible();
 
     await page.getByTestId('sidebar-new-project-button').click();
+
+    // The popover stays mounted through its exit animation (see clickNewGroup above).
+    await menu.waitFor({ state: 'detached', timeout: 5000 });
+  });
+
+  test('Escape closes the footer caret menu', async () => {
+    await page.getByTestId('sidebar-footer-more-button').click();
+    const menu = page.getByTestId('sidebar-footer-menu');
+    await expect(menu).toBeVisible();
+
+    await page.keyboard.press('Escape');
+
+    // The popover stays mounted through its exit animation (see clickNewGroup above).
+    await menu.waitFor({ state: 'detached', timeout: 5000 });
+  });
+
+  test('clicking outside the footer caret menu closes it', async () => {
+    await page.getByTestId('sidebar-footer-more-button').click();
+    const menu = page.getByTestId('sidebar-footer-menu');
+    await expect(menu).toBeVisible();
+
+    // Far from both the portaled menu and the split-button container, mirroring
+    // the outside-click point the group context menu test below uses.
+    await page.mouse.click(900, 300);
 
     // The popover stays mounted through its exit animation (see clickNewGroup above).
     await menu.waitFor({ state: 'detached', timeout: 5000 });
