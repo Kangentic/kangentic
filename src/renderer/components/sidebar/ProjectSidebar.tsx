@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { useProjectStore } from '../../stores/project-store';
 import { useConfigStore } from '../../stores/config-store';
+import { useSessionStore } from '../../stores/session-store';
 import { useToastStore } from '../../stores/toast-store';
 import { useHmrGeneration } from '../../utils/hmr-generation';
 import { useFormattedCombo } from '../../hooks/useKeybinding';
@@ -178,6 +179,37 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
     reorderGroups(reordered.map((g) => g.id));
   }, [sortedGroups, reorderGroups]);
 
+  /**
+   * Jump to a project and reopen its Command Terminal layer, from the row's
+   * terminal indicator. Routes through the same one-shot flag the notification
+   * click path uses; `useCommandBar` consumes it once `currentProjectId` settles.
+   *
+   * The flag is armed only once the switch is CONFIRMED, not merely awaited.
+   * Awaiting alone is not enough: `openProject` also RESOLVES without switching
+   * (a moved or renamed folder is caught internally and routed to the "Locate
+   * Folder" dialog), and it re-throws every other failure. Arming on either path
+   * would let `useCommandBar`'s effect open the layer on the OUTGOING project.
+   * Re-reading the store afterwards covers all of those arms at once.
+   *
+   * Reads the current project from the store instead of closing over it so this
+   * callback stays referentially stable. It is passed to every memoized
+   * `ProjectListItem`, so a new identity on each project switch would defeat
+   * `memo` for the whole list.
+   */
+  const handleOpenCommandTerminals = useCallback(async (projectId: string) => {
+    if (useProjectStore.getState().currentProject?.id !== projectId) {
+      try {
+        await openProject(projectId);
+      } catch {
+        // The store surfaces its own failure (toast / missing-path dialog);
+        // there is nothing to open, so leave the flag disarmed.
+        return;
+      }
+      if (useProjectStore.getState().currentProject?.id !== projectId) return;
+    }
+    useSessionStore.getState().setPendingOpenCommandTerminal(true);
+  }, [openProject]);
+
   const handleContextMenu = useCallback((event: React.MouseEvent, project: Project) => {
     event.preventDefault();
     event.stopPropagation();
@@ -223,6 +255,7 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
         onContextMenu={handleContextMenu}
         onRename={handleRenameProject}
         onCancelRename={handleCancelRename}
+        onOpenCommandTerminals={handleOpenCommandTerminals}
       />
     );
   };

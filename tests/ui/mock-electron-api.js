@@ -407,7 +407,11 @@
           attachments = [];
         }
       },
+      // Call log for test assertions (mirrors clipboard.__writeTextCalls). Reset
+      // with window.electronAPI.projects.__openCalls.length = 0.
+      __openCalls: [],
       open: async function (id) {
+        window.electronAPI.projects.__openCalls.push(id);
         currentProjectId = id;
         // Create default swimlanes for this project if none exist
         if (swimlanes.length === 0) {

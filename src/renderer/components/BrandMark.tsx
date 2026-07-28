@@ -5,7 +5,7 @@ import brandMarkSvg from '@kangentic/branding/assets/brandmark-mono-amber.svg?ra
  * while the amber slit stays fixed - a themed lockup that reads as one unit with the wordmark
  * on every theme. Deliberate exception to the "use lucide, no inline SVGs" rule: this consumes
  * a shipped brand asset that must theme-tint and cannot be a lucide glyph (precedent:
- * CommandTerminalIcon in TitleBar.tsx). The `?raw` source is a trusted build-time package asset.
+ * command-bar/CommandTerminalIcon.tsx). The `?raw` source is a trusted build-time package asset.
  */
 export function BrandMark({ className = '' }: { className?: string }) {
   return (

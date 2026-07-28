@@ -600,8 +600,11 @@ test.describe('Project Session Scope', () => {
       const alphaRow = page.locator('[role="button"]:has-text("Project Alpha")');
 
       // The outer wrapper span with aria-label is NOT aria-hidden (the inner pairs are).
-      // We find it by the aria-label attribute pattern.
-      const countsWrapper = alphaRow.locator('[aria-label]').filter({ hasNotText: '' }).first();
+      // Targeted by its own testid rather than by DOM position: the row carries other
+      // aria-labelled controls (the kebab, the Command Terminal indicator), so a
+      // positional `[aria-label]` lookup silently re-points whenever the row's layout
+      // changes.
+      const countsWrapper = alphaRow.locator('[data-testid="sidebar-activity-counts"]');
       await expect(countsWrapper).toBeVisible();
       await expect(countsWrapper).toHaveAttribute('aria-label', /1 idle.*1 thinking|1 thinking.*1 idle/);
     } finally {

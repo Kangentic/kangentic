@@ -32,6 +32,7 @@ export const SidebarActivityCounts = React.memo(function SidebarActivityCounts({
     <span
       className={`flex-shrink-0 flex items-center gap-2 text-[11px] tabular-nums ${className ?? ''}`}
       aria-label={labelParts.join(', ')}
+      data-testid="sidebar-activity-counts"
     >
       {hasIdle && (
         <span className="flex items-center gap-1" aria-hidden>

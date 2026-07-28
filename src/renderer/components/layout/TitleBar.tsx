@@ -8,9 +8,9 @@ import { useUpdaterStore } from '../../stores/updater-store';
 import { useUsageDashboardStore } from '../../stores/usage-dashboard-store';
 import { warmStatsDashboard } from '../stats/LazyStatsDashboard';
 import { usePopOut } from '../../pop-out/usePopOut';
-import { selectCurrentProjectTransientSessionIds } from '../../stores/session-store/transient-session-slice';
+import { selectCommandTerminalSummary } from '../../stores/session-store/transient-session-slice';
+import { CommandTerminalIcon } from '../command-bar/CommandTerminalIcon';
 import { isWorktreePath } from '../../../shared/git-utils';
-import { requiresUserInteraction, isActive } from '../../../shared/activity-state';
 import { useFormattedCombo } from '../../hooks/useKeybinding';
 import { BrandMark } from '../BrandMark';
 
@@ -27,76 +27,6 @@ interface TitleBarProps {
   /** Whether another Command Terminal can be opened (below the cap). Disables
    *  the "New terminal" button without unmounting it. */
   canSpawnMoreTerminals?: boolean;
-}
-
-/**
- * The title-bar Command Terminal glyph: a custom terminal icon whose state lives
- * IN the glyph rather than in a separate corner badge. The stroke color is the
- * aggregate activity of the project's terminals (green while working / warm amber
- * when one needs you / muted rest, via the --kng-active / --kng-attention tokens),
- * and the working border MARCHES (a dash flows around the perimeter). The center
- * morphs from the shell prompt to a `+` when rendered for the "New terminal"
- * button, so that button reads as a terminal glyph (not a bare plus). 24 viewBox
- * at strokeWidth 2 to match the neighbouring lucide icons.
- */
-function CommandTerminalIcon({
-  tone,
-  showPlus = false,
-  testId = 'quick-session-icon',
-}: {
-  tone: 'rest' | 'thinking' | 'idle';
-  showPlus?: boolean;
-  testId?: string;
-}): React.ReactNode {
-  // `tone` is a derived PRESENTATIONAL union (rest | thinking | idle); the idle-vs-active
-  // bucketing already happened upstream via isActive / requiresUserInteraction when this
-  // tone was computed, so these are per-tone affordances, not a hand-rolled ActivityState bucket.
-  const isWorking = tone === 'thinking'; // activity-state-ok: presentational tone, not an ActivityState
-  const needsAttention = tone === 'idle'; // activity-state-ok: presentational tone, not an ActivityState
-  const colorClass = isWorking ? 'text-active' : needsAttention ? 'text-attention' : '';
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      width={20}
-      height={20}
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={colorClass}
-      data-testid={testId}
-      data-activity={tone}
-      data-plus={showPlus ? 'true' : 'false'}
-      aria-hidden="true"
-    >
-      {/* Terminal screen border. While an agent works it marches (a dash flows
-          around the perimeter); pathLength normalizes the dash math to 100. */}
-      <rect
-        x="3"
-        y="3"
-        width="18"
-        height="18"
-        rx="3"
-        pathLength={100}
-        strokeDasharray={isWorking ? '65 35' : undefined}
-        className={isWorking ? 'animate-march-border' : undefined}
-      />
-      {showPlus ? (
-        // The add affordance, centered in the terminal (replaces the prompt).
-        <>
-          <path d="M12 8.5 V15.5" />
-          <path d="M8.5 12 H15.5" />
-        </>
-      ) : (
-        // The shell prompt: chevron + caret line.
-        <>
-          <path d="M7.5 9.5 L10.5 12 L7.5 14.5" />
-          <path d="M12.5 14.5 H16.5" />
-        </>
-      )}
-    </svg>
-  );
 }
 
 export function TitleBar({
@@ -126,19 +56,13 @@ export function TitleBar({
 
   // Aggregate activity across THIS project's Command Terminal sessions, surfaced
   // as the title-bar terminal icon's COLOR (the same active/idle language as the
-  // task-detail / per-terminal controls, no separate dot). WORKING (active) wins:
-  // if any terminal is active the icon is active-green, else attention-amber if any needs you,
-  // else rest. Classified only via the shared helpers (activity-state rule).
-  const transientActivityTone = useSessionStore((state) => {
-    const ids = selectCurrentProjectTransientSessionIds(state.transientSessions, currentProject?.id ?? null);
-    let anyIdle = false;
-    for (const sessionId of ids) {
-      const activity = state.sessionActivity[sessionId];
-      if (isActive(activity)) return 'thinking';
-      if (requiresUserInteraction(activity)) anyIdle = true;
-    }
-    return anyIdle ? 'idle' : 'rest';
-  });
+  // task-detail / per-terminal controls, no separate dot). The shared selector is
+  // the same one each project sidebar row uses, so the title bar and the sidebar
+  // can never disagree about a project's terminal activity. Selecting the tone
+  // string (not the summary object) keeps Zustand's default Object.is equality.
+  const transientActivityTone = useSessionStore(
+    (state) => selectCommandTerminalSummary(state.sessions, state.sessionActivity, currentProject?.id ?? null).tone,
+  );
 
   // Tooltips read the live effective combo so they update when the user rebinds.
   const quickFindCombo = useFormattedCombo('search.togglePalette');

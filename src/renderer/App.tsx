@@ -487,10 +487,23 @@ export function App() {
         const alreadyActive = useProjectStore.getState().currentProject?.id === projectId;
         const isCommandTerminal = taskId === COMMAND_TERMINAL_NOTIFICATION_TASK_ID;
         if (isCommandTerminal) {
-          useSessionStore.getState().setPendingOpenCommandTerminal(true);
-          if (!alreadyActive) {
-            useProjectStore.getState().openProject(projectId);
+          if (alreadyActive) {
+            useSessionStore.getState().setPendingOpenCommandTerminal(true);
+            return;
           }
+          // Arm the flag only once the switch is CONFIRMED, the same contract the
+          // sidebar indicator follows (`ProjectSidebar.handleOpenCommandTerminals`).
+          // Setting it up front let `useCommandBar`'s effect fire while the OUTGOING
+          // project was still current, opening the layer on the wrong project until
+          // the close-on-project-change effect tore it back down. `openProject` also
+          // RESOLVES without switching (a moved or renamed folder routes to the
+          // "Locate Folder" dialog), so confirm rather than merely sequence.
+          useProjectStore.getState().openProject(projectId)
+            .then(() => {
+              if (useProjectStore.getState().currentProject?.id !== projectId) return;
+              useSessionStore.getState().setPendingOpenCommandTerminal(true);
+            })
+            .catch(() => {});
           return;
         }
         if (taskId && alreadyActive) {

@@ -566,6 +566,10 @@ If a project's folder is moved or renamed while Kangentic is closed, opening it 
 
 When an agent goes idle (waiting for input or stopped) on a non-active project, the sidebar shows a badge. This helps you notice when agents need attention across projects.
 
+### Command Terminal Indicator
+
+Command Terminals keep running when you hide the layer and when you switch projects, so a project you are not looking at can still be holding live terminals. Each project row shows a terminal glyph and a count when it has any, alongside the agent idle/thinking counts, colored the same way as the title-bar toggle: green while a terminal is working, amber when one is waiting on you, muted when it is just sitting there. It sits next to the agent idle/thinking counts rather than merging with them, since a Command Terminal is not a task agent. Click it to switch to that project and reopen its terminals. When the sidebar is collapsed, the rail shows the same state as a small dot on the project's initial.
+
 ### Notifications
 
 Desktop and toast notifications fire when an agent needs attention and the user can't already see it - either the window is minimized/unfocused, or a different project is active. Notification events: agent idle, permission-blocked idle (body shows "Needs permission"), session crash (non-zero exit), and plan-completion auto-moves. The task name is the title and the project name is the body. Clicking a desktop notification brings the window to the foreground, switches to the correct project, and opens the task detail dialog. The taskbar also flashes on Windows. A 10-second per-session cooldown prevents repeated desktop notifications from the same agent.

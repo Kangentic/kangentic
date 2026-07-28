@@ -243,6 +243,9 @@ export const useSessionStore = create<SessionStore>((set, get, api) => ({
   pendingCommandLabel: preservedPendingCommandLabel,
   spawnProgress: preservedSpawnProgress,
   _pendingOpenTaskId: null,
+  // hmr-safe: one-shot handoff, armed only across an async project switch; dropping
+  // it on a coincident HMR just skips an auto-open (re-click the indicator), no
+  // visible corruption. Same call as `_pendingOpenConversation` above.
   _pendingOpenCommandTerminal: false,
   setPendingOpenCommandTerminal: (value) => set({ _pendingOpenCommandTerminal: value }),
 

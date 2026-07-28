@@ -139,7 +139,26 @@ won't be found.
   stroke color is the aggregate activity of the project's terminals (active-green working /
   attention-amber needs-you / muted rest, via the central `--kng-active` / `--kng-attention`
   tokens) and the working border MARCHES (`@keyframes march-border` + a `pathLength`-normalized
-  stroke-dash). GEOMETRY is global but POPULATION is per-project: the window layout blob
+  stroke-dash). The toggle reflects only the CURRENT project, so the same glyph is mirrored
+  per project in the sidebar (`SidebarCommandTerminalIndicator` in each `ProjectListItem` row,
+  plus a plain tone dot on `CollapsedRail`'s 28px buttons, where an arc-bearing glyph would read
+  as broken). Both the toggle and the sidebar read one shared selector,
+  `selectCommandTerminalSummary` (`transient-session-slice.ts`), which derives count + tone from
+  the UNSCOPED `sessions` list (`transient && projectId && status === 'running'`) rather than the
+  `transientSessions` map: that map is renderer-owned window pairing whose hard-reload recovery
+  only re-pairs the current project, so a map-based count reads zero for every background project
+  after a reload. The sidebar indicator sits BESIDE the agent thinking/idle counts in the row's
+  right-aligned cluster, never merged into them (a Command Terminal is not a task agent). It always
+  prints its count, even at 1, so it forms an icon+digit pair matching the agent counts and the
+  three indicators stack into one tabular column down the list; a name-adjacent placement was tried
+  and reverted, because project names vary enough that the glyph landed at a different x on every
+  row. Clicking it switches to that project and reopens its layer via the same
+  `setPendingOpenCommandTerminal` flag the notification-click path uses, armed only once the switch
+  is CONFIRMED. Awaiting is not enough: `openProject` also RESOLVES without switching (a moved or
+  renamed folder routes to the "Locate Folder" dialog) and re-throws every other failure, so the
+  sidebar re-reads `currentProject` after the await and leaves the flag disarmed unless it landed.
+  Arming on those paths opens the layer on the OUTGOING project. GEOMETRY is global but
+  POPULATION is per-project: the window layout blob
   is shared, yet WHICH slots get windows is reconciled to the current project's live transient
   sessions on open (`reconcileCommandTerminalWindows` +
   `planCommandWindowReconciliation` in `command-window-reconcile.ts`). Project switching keeps every

@@ -1,5 +1,6 @@
 import { type StateCreator } from 'zustand';
-import type { Session, SessionInjectSettingsInput } from '../../../shared/types';
+import type { ActivityState, Session, SessionInjectSettingsInput } from '../../../shared/types';
+import { isActive, requiresUserInteraction } from '../../../shared/activity-state';
 import { useProjectStore } from '../project-store';
 import { useToastStore } from '../toast-store';
 import type { SessionStore } from './types';
@@ -30,8 +31,9 @@ export function transientKey(projectId: string, slot: string): string {
 }
 
 /** Every transient session id for a project, in map order. Drives the focused-set
- *  push (each visible terminal must be focused) and the title-bar activity color
- *  aggregate. */
+ *  push (each visible terminal must be focused). Activity aggregates do NOT use
+ *  this: they go through `selectCommandTerminalSummary` below, which reads the
+ *  sessions list so it stays correct for background projects after a reload. */
 export function selectCurrentProjectTransientSessionIds(
   transientSessions: Record<string, TransientSessionEntry>,
   projectId: string | null,
@@ -40,6 +42,58 @@ export function selectCurrentProjectTransientSessionIds(
   return Object.values(transientSessions)
     .filter((entry) => entry.projectId === projectId)
     .map((entry) => entry.sessionId);
+}
+
+/**
+ * Presentational tone for a project's Command Terminal aggregate. Derived, not an
+ * `ActivityState`: the idle-vs-active bucketing already happened via the shared
+ * classifiers when this was computed, so consumers may branch on it directly.
+ */
+export type CommandTerminalTone = 'rest' | 'thinking' | 'idle';
+
+export interface CommandTerminalSummary {
+  /** Live (running) Command Terminal PTYs the project owns right now. */
+  count: number;
+  tone: CommandTerminalTone;
+}
+
+const EMPTY_COMMAND_TERMINAL_SUMMARY: CommandTerminalSummary = { count: 0, tone: 'rest' };
+
+/**
+ * How many Command Terminals a project has running, and their aggregate activity
+ * tone. Drives the title-bar glyph and the per-project sidebar indicator.
+ *
+ * Reads the SESSIONS list rather than the `transientSessions` map on purpose. That
+ * map is renderer-owned window pairing, and its hard-reload recovery only re-pairs
+ * the CURRENT project's survivors (see `syncSessions`), so a map-based count would
+ * read zero for every background project after a reload. `session:list` is unscoped
+ * and every row carries `projectId` + `transient` stamped by main, so this stays
+ * correct cross-project and across reloads.
+ *
+ * WORKING wins: any active terminal makes the whole project read active, else
+ * attention if any needs you, else rest. Bucketed only through the shared
+ * classifiers (activity-state rule).
+ */
+export function selectCommandTerminalSummary(
+  sessions: readonly Session[],
+  sessionActivity: Record<string, ActivityState>,
+  projectId: string | null,
+): CommandTerminalSummary {
+  if (!projectId) return EMPTY_COMMAND_TERMINAL_SUMMARY;
+  let count = 0;
+  let anyActive = false;
+  let anyNeedsUser = false;
+  for (const session of sessions) {
+    if (!session.transient) continue;
+    if (session.status !== 'running') continue;
+    if (session.projectId !== projectId) continue;
+    count += 1;
+    const activity = sessionActivity[session.id];
+    if (isActive(activity)) anyActive = true;
+    else if (requiresUserInteraction(activity)) anyNeedsUser = true;
+  }
+  if (count === 0) return EMPTY_COMMAND_TERMINAL_SUMMARY;
+  return { count, tone: anyActive ? 'thinking' : anyNeedsUser ? 'idle' : 'rest' };
 }
 
 /** Shallow copy of `record` minus any key in `ids`. */

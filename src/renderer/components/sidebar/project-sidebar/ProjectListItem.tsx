@@ -4,7 +4,9 @@ import { CSS } from '@dnd-kit/utilities';
 import { useShallow } from 'zustand/react/shallow';
 import { MoreHorizontal } from 'lucide-react';
 import { SidebarActivityCounts } from './SidebarActivityCounts';
+import { SidebarCommandTerminalIndicator } from './SidebarCommandTerminalIndicator';
 import { useSessionStore } from '../../../stores/session-store';
+import { selectCommandTerminalSummary } from '../../../stores/session-store/transient-session-slice';
 import { requiresUserInteraction } from '../../../../shared/activity-state';
 import type { Project } from '../../../../shared/types';
 
@@ -17,6 +19,8 @@ export interface ProjectListItemProps {
   onContextMenu: (e: React.MouseEvent, project: Project) => void;
   onRename: (id: string, name: string) => void;
   onCancelRename: () => void;
+  /** Jump to this project and reopen its Command Terminal layer. */
+  onOpenCommandTerminals: (projectId: string) => void;
 }
 
 function ProjectListItemImpl({
@@ -28,16 +32,22 @@ function ProjectListItemImpl({
   onContextMenu,
   onRename,
   onCancelRename,
+  onOpenCommandTerminals,
 }: ProjectListItemProps) {
-  // Subscribe per-project to thinking/idle counts. Selector body iterates
-  // sessions on every store update, but useShallow on the {thinking, idle}
-  // result means this item only re-renders when ITS counts change - not on
-  // every activity transition for unrelated projects.
-  const { thinkingCount, idleCount } = useSessionStore(
+  // Subscribe per-project to agent thinking/idle counts AND the Command Terminal
+  // aggregate. Selector body iterates sessions on every store update, but useShallow
+  // on the result means this item only re-renders when ITS OWN values change - not on
+  // every activity transition for unrelated projects. Both live in ONE subscription
+  // for that reason; a second useSessionStore call would re-render the row on any
+  // store change the first selector happened to ignore.
+  const { thinkingCount, idleCount, terminalCount, terminalTone } = useSessionStore(
     useShallow((store) => {
       let thinkingSessionsCount = 0;
       let idleSessionsCount = 0;
       for (const session of store.sessions) {
+        // Transient (Command Terminal) sessions are deliberately excluded here and
+        // surfaced by their own indicator instead: a Command Terminal is not a task
+        // agent, and the two must stay readable side by side.
         if (session.status !== 'running' || session.transient) continue;
         if (session.projectId !== project.id) continue;
         if (requiresUserInteraction(store.sessionActivity[session.id])) {
@@ -46,7 +56,13 @@ function ProjectListItemImpl({
           thinkingSessionsCount += 1;
         }
       }
-      return { thinkingCount: thinkingSessionsCount, idleCount: idleSessionsCount };
+      const terminals = selectCommandTerminalSummary(store.sessions, store.sessionActivity, project.id);
+      return {
+        thinkingCount: thinkingSessionsCount,
+        idleCount: idleSessionsCount,
+        terminalCount: terminals.count,
+        terminalTone: terminals.tone,
+      };
     }),
   );
   const {
@@ -136,6 +152,19 @@ function ProjectListItemImpl({
           <span className="truncate font-medium flex-1 min-w-0">{project.name}</span>
         )}
         <SidebarActivityCounts thinkingCount={thinkingCount} idleCount={idleCount} />
+        {/* Stays in the right-aligned cluster rather than riding the project name.
+            Names vary from "kangentic" to "troy-web-operations-dashboard", so a
+            name-adjacent glyph lands at a different x on every row and cuts across
+            the tidy count column; right-aligned, all three indicators stack into one
+            tabular column. It also sits AFTER the counts so the envelope and spinner
+            stay `.first()` for the specs that resolve them positionally. */}
+        <SidebarCommandTerminalIndicator
+          projectId={project.id}
+          projectName={project.name}
+          count={terminalCount}
+          tone={terminalTone}
+          onOpen={onOpenCommandTerminals}
+        />
         <button
           type="button"
           onPointerDown={(e) => e.stopPropagation()}

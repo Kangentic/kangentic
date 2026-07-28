@@ -303,10 +303,15 @@ test.describe('CollapsedRail - colliding project initials', () => {
 
 // ─── Group 3: idle session, no activity icon ─────────────────────────────
 
-// Activity indicators are intentionally omitted from the collapsed rail: at the
-// rail's narrow column width the partial-arc Loader2 glyph reads as a broken
+// AGENT activity indicators are intentionally omitted from the collapsed rail: at
+// the rail's narrow column width the partial-arc Loader2 glyph reads as a broken
 // icon overflowing the project initial. The expanded sidebar still surfaces
 // thinking/idle counts via SidebarActivityCounts; the rail just shows initials.
+//
+// The rail DOES carry a Command Terminal presence dot (a plain span, no arc, so
+// the rationale above does not transfer). It is a separate signal with its own
+// testid, covered in sidebar-command-terminals.spec.ts; these assertions stay
+// scoped to `svg.*` so they keep meaning "no agent activity icon".
 
 test.describe('CollapsedRail - idle session, no activity icon', () => {
   let browser: Browser;
