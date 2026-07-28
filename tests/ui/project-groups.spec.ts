@@ -18,8 +18,22 @@ test.afterEach(async () => {
   await page.context().browser()?.close();
 });
 
+/**
+ * "New group" is a rare action and now sits behind the footer split button's
+ * caret, so the constantly-used "Add project" stands alone in the footer.
+ */
+async function clickNewGroup(page: Page): Promise<void> {
+  await page.getByTestId('sidebar-footer-more-button').click();
+  await page.getByTestId('sidebar-new-group-button').click();
+  // The popover stays mounted through its exit animation. Later assertions in
+  // this file locate context menus by `.fixed.bg-surface-raised`, which the
+  // closing footer menu also matches, so wait it out rather than leaving a
+  // second match behind for whichever test runs next.
+  await page.getByTestId('sidebar-footer-menu').waitFor({ state: 'detached', timeout: 5000 });
+}
+
 async function createGroup(page: Page, name: string): Promise<void> {
-  await page.locator('button[title="New group"]').click();
+  await clickNewGroup(page);
   const input = page.locator('input[placeholder="Group name"]');
   await expect(input).toBeVisible();
   await input.fill(name);
@@ -42,20 +56,67 @@ test.describe('Project Groups', () => {
     await expect(page.locator('text=Work').first()).toBeVisible();
   });
 
+  test('right-clicking the list background offers the create actions', async () => {
+    // That area used to fall through to Electron's native Copy / Paste menu,
+    // which offers nothing a project list can act on.
+    const projectList = page.getByTestId('sidebar-project-list');
+    const box = await projectList.boundingBox();
+    if (!box) throw new Error('Sidebar project list has no layout');
+    // Derived from the scrolling list container's OWN layout, not the
+    // sidebar's total height minus a hardcoded footer offset - the footer
+    // lives outside this container, so a footer height change can never move
+    // this point onto the footer or a project row.
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height - 20, { button: 'right' });
+
+    const menu = page.getByTestId('sidebar-background-menu');
+    await expect(menu).toBeVisible();
+    await expect(menu.getByTestId('sidebar-background-add-project')).toBeVisible();
+
+    await menu.getByTestId('sidebar-background-new-group').click();
+    const input = page.locator('input[placeholder="Group name"]');
+    await expect(input).toBeVisible();
+    await input.fill('FromBackgroundMenu');
+    await input.press('Enter');
+    await expect(page.locator('text=FromBackgroundMenu').first()).toBeVisible();
+  });
+
+  test('right-clicking a project row does not open the background menu', async () => {
+    // Rows stopPropagation their own context-menu event; the list container's
+    // onContextMenu handler underneath must never also fire for a row click.
+    await page.locator('.truncate.font-medium:text("Alpha")').click({ button: 'right' });
+
+    // Scoped by an item only ProjectContextMenu renders - both menus share
+    // the ".fixed.bg-surface-raised" shell, so a bare selector on that class
+    // would also match SidebarBackgroundMenu.
+    const projectMenu = page.locator('.fixed.bg-surface-raised').filter({ hasText: 'Open in Explorer' });
+    await expect(projectMenu).toBeVisible();
+    await expect(page.getByTestId('sidebar-background-menu')).toHaveCount(0);
+  });
+
+  test('right-clicking a group header does not open the background menu', async () => {
+    await createGroup(page, 'NoBackgroundLeak');
+    const groupHeader = page.locator('[data-testid^="project-group-"]');
+    await groupHeader.click({ button: 'right' });
+
+    // Scoped by an item only GroupContextMenu renders, for the same reason as above.
+    const groupMenu = page.locator('.fixed.bg-surface-raised').filter({ hasText: 'Move up' });
+    await expect(groupMenu).toBeVisible();
+    await expect(page.getByTestId('sidebar-background-menu')).toHaveCount(0);
+  });
+
   test('Escape cancels group creation', async () => {
-    await page.locator('button[title="New group"]').click();
+    await clickNewGroup(page);
     const input = page.locator('input[placeholder="Group name"]');
     await expect(input).toBeVisible();
     await input.press('Escape');
     await expect(input).toBeHidden();
   });
 
-  test('clicking Group button again cancels creation', async () => {
-    const groupButton = page.locator('button[title="New group"]');
-    await groupButton.click();
+  test('choosing New group again cancels creation', async () => {
+    await clickNewGroup(page);
     const input = page.locator('input[placeholder="Group name"]');
     await expect(input).toBeVisible();
-    await groupButton.click();
+    await clickNewGroup(page);
     await expect(input).toBeHidden();
   });
 
@@ -203,16 +264,60 @@ test.describe('Project Groups', () => {
   });
 });
 
+test.describe('Sidebar Footer Actions', () => {
+  test('footer caret menu stays inside the sidebar', async () => {
+    const sidebar = page.locator('.bg-surface-raised').first();
+    const sidebarBox = await sidebar.boundingBox();
+    if (!sidebarBox) throw new Error('Sidebar has no layout');
+
+    await page.getByTestId('sidebar-footer-more-button').click();
+    const menu = page.getByTestId('sidebar-footer-menu');
+    await expect(menu).toBeVisible();
+
+    const menuBox = await menu.boundingBox();
+    if (!menuBox) throw new Error('Footer menu has no layout');
+
+    // Before the fix, the default auto alignment left-aligned the menu to the
+    // caret (auto left-aligns any trigger in the viewport's left half, which
+    // the sidebar caret always is), so the menu hung off the sidebar's right
+    // edge and floated over the board. A couple of pixels of tolerance for
+    // cross-platform sub-pixel rounding (cross-platform-parity.md); not an
+    // exact-equality check.
+    expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(sidebarBox.x + sidebarBox.width + 2);
+  });
+
+  test('clicking Add project from the footer menu closes it', async () => {
+    // Neutralize the add-project flow so it toasts-and-returns instead of
+    // opening or creating a project. A real project open re-renders the
+    // sidebar for reasons unrelated to the fix under test, which could close
+    // the menu (or not) independent of the setMenuOpen(false) call this test
+    // is pinning.
+    await page.evaluate(() => {
+      (window as unknown as { __mockProbePathOverrides: Record<string, unknown> })
+        .__mockProbePathOverrides = { exists: false };
+    });
+
+    await page.getByTestId('sidebar-footer-more-button').click();
+    const menu = page.getByTestId('sidebar-footer-menu');
+    await expect(menu).toBeVisible();
+
+    await page.getByTestId('sidebar-new-project-button').click();
+
+    // The popover stays mounted through its exit animation (see clickNewGroup above).
+    await menu.waitFor({ state: 'detached', timeout: 5000 });
+  });
+});
+
 test.describe('GroupContextMenu - move up/down', () => {
   test('Move down reorders the group one position later', async () => {
     // Create two groups so we can move First down
-    await page.locator('button[title="New group"]').click();
+    await clickNewGroup(page);
     const input = page.locator('input[placeholder="Group name"]');
     await input.fill('First');
     await input.press('Enter');
     await expect(input).toBeHidden();
 
-    await page.locator('button[title="New group"]').click();
+    await clickNewGroup(page);
     const input2 = page.locator('input[placeholder="Group name"]');
     await input2.fill('Second');
     await input2.press('Enter');
@@ -236,13 +341,13 @@ test.describe('GroupContextMenu - move up/down', () => {
   });
 
   test('Move up reorders the group one position earlier', async () => {
-    await page.locator('button[title="New group"]').click();
+    await clickNewGroup(page);
     const input = page.locator('input[placeholder="Group name"]');
     await input.fill('GroupA');
     await input.press('Enter');
     await expect(input).toBeHidden();
 
-    await page.locator('button[title="New group"]').click();
+    await clickNewGroup(page);
     const input2 = page.locator('input[placeholder="Group name"]');
     await input2.fill('GroupB');
     await input2.press('Enter');
@@ -268,7 +373,7 @@ test.describe('GroupContextMenu - move up/down', () => {
   test('Move up is disabled when group is first', async () => {
     await createGroup(page, 'OnlyGroup');
 
-    // Right-click the only group -- Move up should be disabled
+    // Right-click the only group - Move up should be disabled
     const groupHeader = page.locator('[data-testid^="project-group-"]');
     await groupHeader.click({ button: 'right' });
     const contextMenu = page.locator('.fixed.bg-surface-raised');
@@ -280,7 +385,7 @@ test.describe('GroupContextMenu - move up/down', () => {
   test('Move down is disabled when group is last', async () => {
     await createGroup(page, 'LoneGroup');
 
-    // Right-click the only group -- Move down should be disabled
+    // Right-click the only group - Move down should be disabled
     const groupHeader = page.locator('[data-testid^="project-group-"]');
     await groupHeader.click({ button: 'right' });
     const contextMenu = page.locator('.fixed.bg-surface-raised');
