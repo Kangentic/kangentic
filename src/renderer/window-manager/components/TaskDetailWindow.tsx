@@ -30,6 +30,7 @@ import { useKeybinding } from '../../hooks/useKeybinding';
 import { PriorityBadge } from '../../components/backlog/PriorityBadge';
 import { ConfirmDialog } from '../../components/dialogs/ConfirmDialog';
 import { MaximizeToggleButton } from '../../components/dialogs/dialog-maximize';
+import { DialogFooterActions } from '../../components/dialogs/DialogFooterActions';
 import {
   TaskDetailHeader,
   TaskDetailEditForm,
@@ -624,36 +625,24 @@ export function TaskDetailWindow({
                 />
               </div>
               <div className="px-4 py-3 border-t border-edge flex-shrink-0">
-                <div className={`flex ${isInTodo ? 'justify-between' : 'justify-end'} items-center`}>
-                  {isInTodo && (
+                <DialogFooterActions
+                  onCancel={actions.handleCancel}
+                  onSubmit={actions.handleSave}
+                  submitLabel="Save"
+                  busyLabel="Saving..."
+                  busy={actions.saving}
+                  disabled={!!branchConfig.branchNameError}
+                  leading={isInTodo ? (
                     <button
+                      type="button"
                       onClick={() => skipDeleteConfirm ? actions.handleDelete(false) : actions.setConfirmDelete(true)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-fg-faint hover:text-red-400 hover:bg-red-400/10 rounded transition-colors"
+                      className="flex items-center gap-1.5 rounded px-3 py-1.5 text-xs text-fg-faint transition-colors hover:bg-danger/10 hover:text-danger"
                     >
                       <Trash2 size={14} />
                       Delete
                     </button>
-                  )}
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={actions.handleCancel}
-                      className="px-3 py-1.5 text-xs text-fg-muted hover:text-fg-secondary border border-edge-input hover:border-fg-faint rounded transition-colors"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={actions.handleSave}
-                      disabled={!!branchConfig.branchNameError || actions.saving}
-                      className={`px-3 py-1.5 text-xs rounded transition-colors ${
-                        branchConfig.branchNameError || actions.saving
-                          ? 'bg-accent-emphasis/50 text-accent-on/50 cursor-not-allowed'
-                          : 'bg-accent-emphasis hover:bg-accent text-accent-on'
-                      }`}
-                    >
-                      {actions.saving ? 'Saving...' : 'Save'}
-                    </button>
-                  </div>
-                </div>
+                  ) : undefined}
+                />
               </div>
             </>
           ) : (

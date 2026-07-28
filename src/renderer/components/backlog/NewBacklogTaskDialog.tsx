@@ -3,19 +3,16 @@ import { Plus, X } from 'lucide-react';
 import { BaseDialog } from '../dialogs/BaseDialog';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
 import { maximizedDialogLayout, MaximizeToggleButton } from '../dialogs/dialog-maximize';
-import { Select } from '../settings/shared';
-import { LabelInput } from '../LabelInput';
-import { useConfigStore } from '../../stores/config-store';
+import { PriorityLabelsRow } from '../dialogs/PriorityLabelsRow';
+import { DialogFooterActions } from '../dialogs/DialogFooterActions';
 import { useProjectStore } from '../../stores/project-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useToastStore } from '../../stores/toast-store';
-import { useAllExistingLabels } from '../../hooks/useAllExistingLabels';
 import { useKeybinding } from '../../hooks/useKeybinding';
 import { DescriptionEditor } from '../DescriptionEditor';
 import { AttachmentChipStrip } from '../dialogs/AttachmentChipStrip';
 import { MAX_ATTACHMENT_BYTES, MEDIA_TYPE_EXT, resolveMediaType, isImageMediaType, pastedAttachmentPrefix, reserveNextPastedIndex } from '../dialogs/attachment-utils';
 import { compressClipboardImage } from '../dialogs/image-compress';
-import { DEFAULT_PRIORITY_CONFIG } from '../../../shared/types';
 import type { BacklogTask, BacklogTaskCreateInput, BacklogTaskUpdateInput } from '../../../shared/types';
 
 interface PendingAttachment {
@@ -74,13 +71,6 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate }: 
   // Ref tracks current attachments for cleanup on unmount (avoids stale closure)
   const attachmentsRef = useRef<DisplayAttachment[]>([]);
   attachmentsRef.current = attachments;
-
-  const labelColors = useConfigStore((state) => state.config.backlog?.labelColors) ?? {};
-
-  // Read priority labels from config
-  const priorities = useConfigStore((state) => state.config.backlog?.priorities) ?? DEFAULT_PRIORITY_CONFIG;
-
-  const allExistingLabels = useAllExistingLabels();
 
   const isDirty = isEditMode
     ? title.trim() !== (editTask?.title ?? '') ||
@@ -332,23 +322,14 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate }: 
           closeHotkeyActionId="panel.close"
           testId="new-backlog-task-dialog"
           footer={
-            <div className="flex items-center justify-end gap-3">
-              <button
-                type="button"
-                onClick={onClose}
-                className="px-4 py-1.5 text-xs text-fg-muted hover:text-fg-secondary border border-edge-input hover:border-fg-faint rounded transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={!title.trim() || submitting}
-                className="px-4 py-1.5 text-xs bg-accent-emphasis hover:bg-accent text-accent-on rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                data-testid="create-backlog-task-btn"
-              >
-                {submitting ? (isEditMode ? 'Saving...' : 'Creating...') : (isEditMode ? 'Save' : 'Create')}
-              </button>
-            </div>
+            <DialogFooterActions
+              onCancel={onClose}
+              submitLabel={isEditMode ? 'Save' : 'Create'}
+              busyLabel={isEditMode ? 'Saving...' : 'Creating...'}
+              busy={submitting}
+              disabled={!title.trim()}
+              submitTestId="create-backlog-task-btn"
+            />
           }
         >
           <div
@@ -388,29 +369,13 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate }: 
               onRemove={removeAttachment}
             />
 
-            <div className="flex gap-3">
-              <div className="flex-1">
-                <label className="text-xs text-fg-muted mb-1 block">Priority</label>
-                <Select
-                  value={priority}
-                  onChange={(event) => setPriority(Number((event.target as HTMLSelectElement).value))}
-                  className="appearance-none bg-surface border border-edge-input rounded pl-3 pr-10 py-1.5 text-sm text-fg w-full focus:outline-none focus:border-accent"
-                  data-testid="backlog-task-priority"
-                >
-                  {priorities.map((priorityEntry, index) => (
-                    <option key={index} value={index}>{priorityEntry.label}</option>
-                  ))}
-                </Select>
-              </div>
-
-              <LabelInput
-                labels={labels}
-                setLabels={setLabels}
-                labelColors={labelColors}
-                allExistingLabels={allExistingLabels}
-                testId="backlog-task-labels"
-              />
-            </div>
+            <PriorityLabelsRow
+              priority={priority}
+              setPriority={setPriority}
+              labels={labels}
+              setLabels={setLabels}
+              testIdPrefix="backlog-task-"
+            />
 
             {/* Drag overlay */}
             {isDragOver && (

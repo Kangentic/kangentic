@@ -1,25 +1,22 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { Plus, X, Info } from 'lucide-react';
+import { Plus, X } from 'lucide-react';
 import { useBoardStore } from '../../stores/board-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useSessionStore } from '../../stores/session-store';
-import { useAllExistingLabels } from '../../hooks/useAllExistingLabels';
 import { useToastStore } from '../../stores/toast-store';
 import { useKeybinding } from '../../hooks/useKeybinding';
 import { NameFromPromptButton } from '../NameFromPromptButton';
 import { BaseDialog } from './BaseDialog';
 import { ConfirmDialog } from './ConfirmDialog';
 import { maximizedDialogLayout, MaximizeToggleButton } from './dialog-maximize';
-import { BranchPicker } from './BranchPicker';
-import { WorktreeChip } from './WorktreeChip';
+import { TaskBranchRow } from './TaskBranchRow';
+import { PriorityLabelsRow } from './PriorityLabelsRow';
+import { DialogFooterActions } from './DialogFooterActions';
 import { AdvancedOverridesSection } from './AdvancedOverridesSection';
-import { Select } from '../settings/shared';
-import { LabelInput } from '../LabelInput';
 import { fetchGitBranches } from '../../utils/git-branches';
 import { isValidGitBranchName } from '../../../shared/git-utils';
 import { slugify, computeAutoBranchName } from '../../../shared/slugify';
-import { DEFAULT_PRIORITY_CONFIG } from '../../../shared/types';
 import type { PermissionMode, TaskRunMode } from '../../../shared/types';
 import { DescriptionEditor } from '../DescriptionEditor';
 import { AttachmentChipStrip } from './AttachmentChipStrip';
@@ -48,8 +45,6 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
   const defaultBaseBranch = useConfigStore((s) => s.config.git.defaultBaseBranch);
   const worktreesEnabled = useConfigStore((s) => s.config.git.worktreesEnabled);
   const currentProject = useProjectStore((s) => s.currentProject);
-  const labelColors = useConfigStore((s) => s.config.backlog?.labelColors) ?? {};
-  const priorities = useConfigStore((s) => s.config.backlog?.priorities) ?? DEFAULT_PRIORITY_CONFIG;
   const isMaximized = useSessionStore((s) => s.maximizedTasks.has(NEW_TASK_ENTITY_ID));
   const toggleMaximized = useSessionStore((s) => s.toggleMaximized);
   const handleToggleMaximized = useCallback(() => toggleMaximized(NEW_TASK_ENTITY_ID), [toggleMaximized]);
@@ -105,7 +100,6 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
     }
     return <>Agent will work directly on {pill(effectiveBaseBranch)}</>;
   }, [customBranchName, branchExists, effectiveWorktree, effectiveBaseBranch]);
-  const allExistingLabels = useAllExistingLabels();
 
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [previewAttachment, setPreviewAttachment] = useState<PendingAttachment | null>(null);
@@ -372,22 +366,13 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
           bodyClassName="flex-1 flex flex-col"
           closeHotkeyActionId="panel.close"
           footer={
-            <div className="flex items-center justify-end gap-3">
-              <button
-                type="button"
-                onClick={closeWithAnimation}
-                className="px-4 py-1.5 text-xs text-fg-muted hover:text-fg-secondary border border-edge-input hover:border-fg-faint rounded transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={!!branchNameError || submitting}
-                className="px-4 py-1.5 text-xs bg-accent-emphasis hover:bg-accent text-accent-on rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {submitting ? 'Creating...' : 'Create'}
-              </button>
-            </div>
+            <DialogFooterActions
+              onCancel={closeWithAnimation}
+              submitLabel="Create"
+              busyLabel="Creating..."
+              busy={submitting}
+              disabled={!!branchNameError}
+            />
           }
         >
           <div
@@ -424,58 +409,26 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
               onRemove={removeAttachment}
             />
 
-            <div className="flex gap-3">
-              <div className="flex-1">
-                <label className="text-xs text-fg-muted mb-1 block">Priority</label>
-                <Select
-                  value={priority}
-                  onChange={(event) => setPriority(Number((event.target as HTMLSelectElement).value))}
-                  className="appearance-none bg-surface border border-edge-input rounded pl-3 pr-10 py-1.5 text-sm text-fg w-full focus:outline-none focus:border-accent"
-                  data-testid="task-priority"
-                >
-                  {priorities.map((priorityEntry, index) => (
-                    <option key={index} value={index}>{priorityEntry.label}</option>
-                  ))}
-                </Select>
-              </div>
-              <LabelInput
-                labels={labels}
-                setLabels={setLabels}
-                labelColors={labelColors}
-                allExistingLabels={allExistingLabels}
-                testId="task-labels"
-              />
-            </div>
+            <PriorityLabelsRow
+              priority={priority}
+              setPriority={setPriority}
+              labels={labels}
+              setLabels={setLabels}
+              testIdPrefix="task-"
+            />
 
-            <div>
-              {/* text-xs to match Priority / Labels / Profile. Was text-[10px],
-                  which is below the documented minimum and made this one label
-                  visibly smaller than every other in the dialog. */}
-              <label className="text-xs text-fg-muted mb-1 block">Branch</label>
-              <div className="flex items-center gap-2">
-                <input
-                  data-testid="custom-branch-name-input"
-                  type="text"
-                  placeholder={branchPlaceholder}
-                  value={customBranchName}
-                  onChange={(event) => setCustomBranchName(event.target.value)}
-                  className={`flex-1 min-w-0 bg-surface border rounded px-3 py-1.5 text-xs text-fg placeholder-fg-faint focus:outline-none ${
-                    branchNameError
-                      ? 'border-red-500 focus:border-red-500'
-                      : 'border-edge-input focus:border-accent'
-                  }`}
-                />
-                <span className="text-xs text-fg-disabled shrink-0">from</span>
-                <BranchPicker value={baseBranch} defaultBranch={defaultBaseBranch || 'main'} onChange={setBaseBranch} />
-                <div className="w-px h-5 bg-edge-input shrink-0" />
-                <WorktreeChip enabled={effectiveWorktree} onToggle={() => setUseWorktree(effectiveWorktree ? false : true)} />
-              </div>
-              {branchNameError ? (
-                <p className="text-xs text-red-500 mt-0.5">{branchNameError}</p>
-              ) : (
-                <span className="text-xs text-fg-disabled mt-1 flex items-center gap-1"><Info size={12} className="shrink-0" />{branchHint}</span>
-              )}
-            </div>
+            <TaskBranchRow
+              customBranchName={customBranchName}
+              setCustomBranchName={setCustomBranchName}
+              branchPlaceholder={branchPlaceholder}
+              branchNameError={branchNameError}
+              branchHint={branchHint}
+              baseBranch={baseBranch}
+              setBaseBranch={setBaseBranch}
+              defaultBaseBranch={defaultBaseBranch}
+              effectiveWorktree={effectiveWorktree}
+              setUseWorktree={setUseWorktree}
+            />
 
             <AdvancedOverridesSection
               swimlaneId={swimlaneId}

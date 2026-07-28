@@ -114,13 +114,17 @@ test.describe('Worktree Toggle', () => {
     await closeDialog();
   });
 
+  // The on/off state is read from aria-pressed, not from a styling class. The
+  // control used to signal "off" with `line-through` on an inner span, so these
+  // asserted on that class; a strikethrough reads as "deleted" rather than
+  // "off", so the state now lives on the attribute the control already needs for
+  // accessibility. Asserting programmatic state over pixels is also what
+  // .claude/rules/cross-platform-parity.md asks for.
   test('toggle defaults to enabled when global worktrees setting is ON', async () => {
     await openNewTaskDialog();
 
     const toggle = page.locator('[data-testid="worktree-toggle"]');
-    // Default config has worktreesEnabled: true -- chip should NOT have line-through
-    const span = toggle.locator('span');
-    await expect(span).not.toHaveClass(/line-through/);
+    await expect(toggle).toHaveAttribute('aria-pressed', 'true');
 
     await closeDialog();
   });
@@ -131,9 +135,7 @@ test.describe('Worktree Toggle', () => {
     const toggle = page.locator('[data-testid="worktree-toggle"]');
     await toggle.click();
 
-    // After toggling off, the span should have line-through styling
-    const span = toggle.locator('span');
-    await expect(span).toHaveClass(/line-through/);
+    await expect(toggle).toHaveAttribute('aria-pressed', 'false');
 
     await closeDialog();
   });
@@ -142,14 +144,11 @@ test.describe('Worktree Toggle', () => {
     await openNewTaskDialog();
 
     const toggle = page.locator('[data-testid="worktree-toggle"]');
-    // Toggle off
     await toggle.click();
-    const span = toggle.locator('span');
-    await expect(span).toHaveClass(/line-through/);
+    await expect(toggle).toHaveAttribute('aria-pressed', 'false');
 
-    // Toggle back on
     await toggle.click();
-    await expect(span).not.toHaveClass(/line-through/);
+    await expect(toggle).toHaveAttribute('aria-pressed', 'true');
 
     await closeDialog();
   });
@@ -212,6 +211,33 @@ test.describe('Worktree Toggle', () => {
 
     // Close by pressing Escape
     await page.keyboard.press('Escape');
+  });
+
+  // The edit form wires its own `effectiveWorktree` / `setUseWorktree` pair into
+  // TaskBranchRow, separately from the New Task dialog. Visibility alone (the
+  // test above) would still pass if that pair were mis-wired or handed a no-op
+  // handler, so this pins the state readout and the click.
+  test('task detail edit mode toggle reflects and flips worktree state', async () => {
+    const uniqueTitle = `Detail Toggle State ${Date.now()}`;
+    await createTask(page, uniqueTitle);
+
+    const taskCard = page.locator('[data-testid="swimlane"]').locator(`text=${uniqueTitle}`).first();
+    await taskCard.click();
+    const detailDialog = page.locator('[data-testid="task-detail-dialog"]');
+    await detailDialog.waitFor({ state: 'visible', timeout: 5000 });
+
+    // Global worktrees setting is ON in the default config, and the task has no
+    // explicit override, so the effective state starts enabled.
+    const toggle = detailDialog.locator('[data-testid="worktree-toggle"]');
+    await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+
+    // Toggling leaves the form dirty, so Escape raises the discard confirm.
+    await page.keyboard.press('Escape');
+    await page.locator('button:has-text("Discard")').click();
+    await detailDialog.waitFor({ state: 'hidden', timeout: 3000 });
   });
 });
 
@@ -360,6 +386,51 @@ test.describe('To Do Edit Branch Config', () => {
     // But BranchPicker should still be visible (simple chip mode for non-backlog)
     const branchChip = page.locator('[data-testid="branch-picker-chip"]');
     await expect(branchChip).toBeVisible();
+
+    await page.keyboard.press('Escape');
+  });
+
+  // Past To Do the branch NAME is fixed, so TaskBranchRow renders its second
+  // shape: the field is titled "Base branch" rather than "Branch", and the
+  // worktree segment appears only while the task has no worktree on disk. The
+  // sibling test above checks the name input is gone but asserts neither of
+  // those, so both would survive being inverted without it.
+  test('non-backlog task edit labels the field Base branch and keeps the worktree toggle', async () => {
+    const uniqueTitle = `Base Branch Shape ${Date.now()}`;
+    await createTask(page, uniqueTitle);
+
+    await page.evaluate(async (title) => {
+      const api = (window as any).electronAPI;
+      const stores = (window as any).__zustandStores;
+      const tasks = await api.tasks.list();
+      const task = tasks.find((t: { title: string }) => t.title === title);
+      const swimlanes = await api.swimlanes.list();
+      const planning = swimlanes.find((s: { name: string }) => s.name === 'Planning');
+      if (task && planning) {
+        await api.tasks.move({
+          taskId: task.id,
+          targetSwimlaneId: planning.id,
+          targetPosition: 0,
+        });
+        await stores.board.getState().loadBoard();
+      }
+    }, uniqueTitle);
+
+    const taskCard = page.locator('[data-swimlane-name="Planning"]').locator(`text=${uniqueTitle}`).first();
+    await expect(taskCard).toBeVisible({ timeout: 5000 });
+    await taskCard.click();
+    await page.locator('.fixed input[placeholder="Task title"]').waitFor({ state: 'visible' });
+
+    // "Base branch", not "Branch" - there is no editable branch name here. The
+    // exact match is what carries this: it fails if the label reverts to
+    // "Branch", so no page-wide negative assertion is needed alongside it.
+    await expect(page.getByText('Base branch', { exact: true })).toBeVisible();
+
+    // The task has no worktree_path yet, so the worktree segment still renders.
+    // NOTE: this pins the toggle's PRESENCE in the fixed-name shape, not the
+    // `showWorktree={!task.worktree_path}` condition itself - the mock never
+    // sets worktree_path, so the hidden arm stays unverified.
+    await expect(page.locator('[data-testid="worktree-toggle"]')).toBeVisible();
 
     await page.keyboard.press('Escape');
   });

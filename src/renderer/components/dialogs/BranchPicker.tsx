@@ -9,8 +9,12 @@ interface BranchPickerProps {
   value: string;
   defaultBranch: string;
   onChange: (branch: string) => void;
-  /** 'chip' = small pill (dialogs), 'input' = full-width field (settings) */
-  variant?: 'chip' | 'input';
+  /**
+   * 'chip' = small pill (the Command Terminal header's pill row)
+   * 'input' = full-width field (Settings > Git)
+   * 'segment' = flush segment inside a composed field (the task dialogs' Branch row)
+   */
+  variant?: 'chip' | 'input' | 'segment';
   className?: string;
   /** Controlled open state. When provided, the parent owns open/close (e.g. to
    *  re-open the picker from an overflow kebab after the chip has folded). */
@@ -152,6 +156,48 @@ export function BranchPicker({
     </Pill>
   );
 
+  // The base-branch segment of the composed Branch field. Flush (no radius, no
+  // border of its own - the field shell draws the dividers via `divide-x`) so the
+  // field reads as a single control, and width-capped: with no cap a long
+  // base-branch name pushed the branch-name input to its min-w-0 and collapsed
+  // the row. `truncate` keeps the full name in textContent, so assertions on the
+  // branch name still hold.
+  //
+  // Keeps the `branch-picker-chip` test id even though it is no longer a chip:
+  // four specs drive it, and renaming buys nothing.
+  //
+  // Three things carry "this is a button" now that the pill outline is gone, and
+  // all three are needed: a chevron (this opens a picker - the same signal
+  // `Combobox` and this component's own `input` variant use), a tinted
+  // background marking the segment zone as distinct from the text field beside
+  // it, and `cursor-pointer`. The cursor is not optional - Tailwind v4's
+  // preflight gives `button` `cursor: default`, and the `Pill` this replaced was
+  // adding `cursor-pointer` for us.
+  const segmentButton = (
+    <button
+      type="button"
+      onClick={() => setOpen(!open)}
+      // An INSET focus ring, not the default outline: the field shell is
+      // `overflow-hidden` (for its rounded corners) and this button is flush to
+      // its edge, so an outline is clipped on every side. Without the ring the
+      // shell's `focus-within:border-accent` lights up identically for the name
+      // input, this button, and the worktree toggle, so a keyboard user cannot
+      // tell which of the three has focus. Same pattern as `CompactToggleList`.
+      className={`flex w-full max-w-[170px] shrink-0 cursor-pointer items-center gap-1.5 bg-surface-hover/40 px-3 text-xs transition-colors hover:bg-surface-hover focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent ${
+        open ? 'text-accent-fg' : 'text-fg-secondary'
+      }`}
+      title={`Base branch: ${displayBranch}`}
+      data-testid="branch-picker-chip"
+    >
+      <GitBranch size={14} className="shrink-0" />
+      <span className="truncate">{displayBranch}</span>
+      <ChevronDown
+        size={12}
+        className={`shrink-0 text-fg-faint transition-transform ${open ? 'rotate-180' : ''}`}
+      />
+    </button>
+  );
+
   const inputButton = (
     <button
       type="button"
@@ -216,9 +262,21 @@ export function BranchPicker({
     </>
   );
 
+  // The segment wrapper is `flex shrink-0`, not `contents`: a display-contents
+  // box has an empty bounding rect, and `containerRef` is what the popover
+  // positions against. As a flex child of the field shell it still stretches to
+  // the shell's full height, which is the point of the segment.
+  const wrapperClass = hideTrigger
+    ? 'contents'
+    : variant === 'segment'
+      ? 'flex shrink-0 min-w-0'
+      : `relative ${variant === 'input' ? 'w-full' : 'inline-block'}`;
+
+  const trigger = variant === 'input' ? inputButton : variant === 'segment' ? segmentButton : chipButton;
+
   return (
-    <div className={hideTrigger ? 'contents' : `relative ${variant === 'input' ? 'w-full' : 'inline-block'}`} ref={containerRef}>
-      {!hideTrigger && (variant === 'input' ? inputButton : chipButton)}
+    <div className={wrapperClass} ref={containerRef}>
+      {!hideTrigger && trigger}
       <OverlayPopover
         open={open}
         popoverRef={dropdownRef}

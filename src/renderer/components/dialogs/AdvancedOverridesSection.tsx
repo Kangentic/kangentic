@@ -10,6 +10,7 @@ import type { TaskRunMode } from '../../../shared/types';
 import { modelRowLabel } from '../../utils/format-tokens';
 import { ModelCombobox } from './ModelCombobox';
 import { Combobox } from './Combobox';
+import { Field, FIELD_SELECT_CLASS } from '../Field';
 import { Select } from '../settings/shared';
 
 interface AdvancedOverridesSectionProps {
@@ -49,6 +50,11 @@ interface EditPencilButtonProps {
  * they must land at IDENTICAL geometry so the column of pencils reads as one
  * affordance rather than two lookalikes. One component is what guarantees that;
  * two copies of the same class string only promise it in a comment.
+ *
+ * Sized to an explicit 34px square rather than padding around the icon: it sits
+ * in an `items-center` row beside a Select and a Combobox, both of which are the
+ * dialog's 34px control height (see FIELD_CONTROL_CLASS), and the previous
+ * `p-1.5` left it 28px - visibly short against its own neighbour.
  */
 function EditPencilButton({ onClick, title, testId, disabled = false }: EditPencilButtonProps) {
   return (
@@ -58,7 +64,7 @@ function EditPencilButton({ onClick, title, testId, disabled = false }: EditPenc
       disabled={disabled}
       title={title}
       aria-label={title}
-      className="shrink-0 p-1.5 rounded border border-edge-input text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:text-fg-muted disabled:hover:bg-transparent"
+      className="inline-flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded border border-edge-input text-fg-muted transition-colors hover:bg-surface-hover hover:text-fg disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent disabled:hover:text-fg-muted"
       data-testid={testId}
     >
       <Pencil size={14} />
@@ -259,19 +265,29 @@ export function AdvancedOverridesSection({
   const modeCard = (mode: TaskRunMode, label: string, description: string, testId: string, body: ReactNode) => {
     const selected = runMode === mode;
     return (
-      // Selection is signalled NEUTRALLY - a raised fill and a slightly brighter
-      // edge - with the accent confined to the dot. An accent border round the
-      // whole card made this section shout over the fields above it, which it is
-      // no more important than.
+      // Selection is signalled NEUTRALLY - a fill and a slightly brighter edge -
+      // with the accent confined to the dot. An accent border round the whole
+      // card made this section shout over the fields above it, which it is no
+      // more important than.
       //
-      // The unselected card carries NO fill, only an outline. `bg-surface` is the
-      // token every input above uses (title, priority, branch), so filling it made
-      // an unselected option read as one more field to fill in rather than as the
-      // road not taken. Fill is what marks the live branch here.
+      // Selection is carried by THREE quiet signals stacked, not one loud one:
+      // the accent dot, a brighter border, and the label at full text weight
+      // against a muted one on the road not taken. The fill is only a wash
+      // (`/25`) on top of those.
+      //
+      // A full-strength `bg-surface-hover` was tried and is too much: this
+      // section is no more important than the fields above it, and a solid light
+      // block ran away with the bottom half of the dialog. But the fill cannot go
+      // to zero either - the ORIGINAL bug here was `bg-surface-raised`, which is
+      // the exact colour of the dialog body (BaseDialog), so neither state read
+      // as marked at all. `surface-hover` is the right token for the wash because
+      // its delta against surface-raised survives every one of the 11 themes,
+      // including light, where surface (#f5f5f4) sits only 5/255 from
+      // surface-raised (#fafaf9) and a `bg-surface` fill vanishes.
       <div
         className={`rounded border transition-colors ${selected
-          ? 'border-edge-input bg-surface-raised'
-          : 'border-edge hover:bg-surface-hover/50'}`}
+          ? 'border-edge-input bg-surface-hover/25'
+          : 'border-edge hover:border-edge-input hover:bg-surface-hover/15'}`}
       >
         <button
           type="button"
@@ -279,33 +295,41 @@ export function AdvancedOverridesSection({
           aria-checked={selected}
           onClick={mode === 'column_settings' ? selectProfileMode : selectOverrideMode}
           data-testid={testId}
-          className="w-full flex items-start gap-2.5 px-4 py-2.5 text-left cursor-pointer"
+          // Label and description on ONE line. Stacked, each header was ~56px and
+          // the pair ate as much height as the description editor itself, which
+          // inverted the importance hierarchy of a dialog whose job is writing a
+          // task. Both descriptions still render while unselected - that is what
+          // lets a user tell the branches apart without trying them - they just
+          // sit beside their label instead of under it.
+          className="w-full flex items-center gap-2.5 px-4 py-2 text-left cursor-pointer"
         >
           <span
-            className={`mt-px h-3.5 w-3.5 shrink-0 rounded-full border flex items-center justify-center transition-colors ${
+            className={`h-3.5 w-3.5 shrink-0 rounded-full border flex items-center justify-center transition-colors ${
               selected ? 'border-accent' : 'border-edge-input'
             }`}
           >
             {selected && <span className="h-1.5 w-1.5 rounded-full bg-accent" />}
           </span>
-          <span className="min-w-0">
-            <span className="block text-xs text-fg">{label}</span>
-            <span className="block text-xs text-fg-faint mt-0.5">{description}</span>
-          </span>
+          {/* The label's own weight is part of the selection signal: full text
+              colour on the live branch, muted on the other. That does more work
+              than fill can without adding any visual mass. */}
+          <span className={`text-xs shrink-0 ${selected ? 'text-fg' : 'text-fg-muted'}`}>{label}</span>
+          {/* Both strings fit side by side at the task-detail window's 650px
+              minimum width, so the truncate is a floor, not the normal case. */}
+          <span className={`text-xs min-w-0 truncate ${selected ? 'text-fg-faint' : 'text-fg-disabled'}`}>{description}</span>
         </button>
         {/* pl-10 aligns the body with the card's LABEL, not its dot: the header's
             px-4 (16) + dot (14) + gap-2.5 (10).
             The other three sides are the card's frame, and it is deliberately
             looser than the form's own space-y-3 (12) rhythm: a bordered card
             holding bordered controls needs more clearance than a bare labelled
-            field does. pt-1.5 (6) against the header's py-2.5 (10) bottom padding
-            puts 16px between the description and the first label, so the body
-            reads as the branch's contents rather than as part of the header
-            block. pr-4 and pb-4 keep the fields off the card's edge - at the
-            previous 12px the bottom-right corner was the tightest point on the
-            whole card, with the body indented 36px on the left but running to
-            within 12px of the border on the right. */}
-        {selected && <div className="pl-10 pr-4 pt-1.5 pb-4">{body}</div>}
+            field does. pt-2 (8) against the header's py-2 (8) bottom padding puts
+            16px between the header row and the first control, matching what the
+            two-line header used to leave. pr-4 and pb-4 keep the fields off the
+            card's edge - at the previous 12px the bottom-right corner was the
+            tightest point on the whole card, with the body indented 36px on the
+            left but running to within 12px of the border on the right. */}
+        {selected && <div className="pl-10 pr-4 pt-2 pb-4">{body}</div>}
       </div>
     );
   };
@@ -354,7 +378,7 @@ export function AdvancedOverridesSection({
                 ? 'An alternate set of per-column agent, model, and effort settings'
                 : 'No profiles yet - create one in Edit Columns'}
               onChange={(event) => setProfileId(event.target.value || null)}
-              className="appearance-none bg-surface border border-edge-input rounded pl-3 pr-10 py-1.5 text-sm text-fg w-full focus:outline-none focus:border-accent disabled:cursor-not-allowed"
+              className={FIELD_SELECT_CLASS}
               wrapperClassName="relative flex-1 min-w-0"
               data-testid="task-profile-select"
             >
@@ -399,39 +423,39 @@ export function AdvancedOverridesSection({
                 title wins over an ancestor's while hovering the button, so both
                 read correctly with no prop added to a shared control. */}
             <div title={agentFieldTitle} data-testid="task-agent-field">
-              <label className="text-xs text-fg-muted mb-1 block">Agent</label>
-              <div className="flex items-center gap-2">
-                <Combobox
-                  value={agentOverride}
-                  onChange={handleAgentChange}
-                  options={availableAgents.map((entry) => ({ value: entry.name, label: entry.displayName ?? entry.name }))}
-                  placeholder={agentInheritLabel}
-                  placeholderVariant="muted"
-                  disabled={!canPickAgent}
-                  className="flex-1 min-w-0"
-                  testId="task-agent-override"
-                />
-                {/* The card's only route to where all four of these fields get
-                    their defaults, and the same component as the profile pencil
-                    opposite it, so the two cannot drift apart. Project-scoped
-                    open (see openProjectSettings above). `WindowLayer` mounts
-                    OUTSIDE AppLayout's `currentProject` gate, so an edit form can
-                    outlive its project; disabling on that rather than no-opping
-                    in the handler keeps the button from looking live when the
-                    click would do nothing. */}
-                <EditPencilButton
-                  onClick={() => currentProject && openProjectSettings(currentProject.path, currentProject.name, 'agent')}
-                  title="Edit agent defaults in Settings"
-                  testId="task-agent-edit"
-                  disabled={!currentProject}
-                />
-              </div>
+              <Field label="Agent">
+                <div className="flex items-center gap-2">
+                  <Combobox
+                    value={agentOverride}
+                    onChange={handleAgentChange}
+                    options={availableAgents.map((entry) => ({ value: entry.name, label: entry.displayName ?? entry.name }))}
+                    placeholder={agentInheritLabel}
+                    placeholderVariant="muted"
+                    disabled={!canPickAgent}
+                    className="flex-1 min-w-0"
+                    testId="task-agent-override"
+                  />
+                  {/* The card's only route to where all four of these fields get
+                      their defaults, and the same component as the profile pencil
+                      opposite it, so the two cannot drift apart. Project-scoped
+                      open (see openProjectSettings above). `WindowLayer` mounts
+                      OUTSIDE AppLayout's `currentProject` gate, so an edit form can
+                      outlive its project; disabling on that rather than no-opping
+                      in the handler keeps the button from looking live when the
+                      click would do nothing. */}
+                  <EditPencilButton
+                    onClick={() => currentProject && openProjectSettings(currentProject.path, currentProject.name, 'agent')}
+                    title="Edit agent defaults in Settings"
+                    testId="task-agent-edit"
+                    disabled={!currentProject}
+                  />
+                </div>
+              </Field>
             </div>
             {(showModelPicker || showEffortPicker) && (
               <div className="flex gap-3">
                 {showModelPicker && (
-                  <div className="flex-1">
-                    <label className="text-xs text-fg-muted mb-1 block">Model</label>
+                  <Field label="Model" className="flex-1 min-w-0">
                     <ModelCombobox
                       value={modelOverride}
                       onChange={setModelOverride}
@@ -443,11 +467,10 @@ export function AdvancedOverridesSection({
                       contextWindows={modelContextWindows}
                       modelDisplayNames={modelDisplayNames}
                     />
-                  </div>
+                  </Field>
                 )}
                 {showEffortPicker && (
-                  <div className="flex-1">
-                    <label className="text-xs text-fg-muted mb-1 block">Effort</label>
+                  <Field label="Effort" className="flex-1 min-w-0">
                     <Combobox
                       value={effortOverride}
                       onChange={setEffortOverride}
@@ -456,13 +479,12 @@ export function AdvancedOverridesSection({
                       placeholderVariant="muted"
                       testId="task-effort-override"
                     />
-                  </div>
+                  </Field>
                 )}
               </div>
             )}
             {showPermissionPicker && (
-              <div>
-                <label className="text-xs text-fg-muted mb-1 block">Permission</label>
+              <Field label="Permission">
                 <Combobox
                   value={permissionOverride}
                   onChange={setPermissionOverride}
@@ -471,7 +493,7 @@ export function AdvancedOverridesSection({
                   placeholderVariant="muted"
                   testId="task-permission-override"
                 />
-              </div>
+              </Field>
             )}
           </div>,
         )}

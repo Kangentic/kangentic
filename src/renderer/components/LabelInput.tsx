@@ -95,11 +95,13 @@ export function LabelInput({ labels, setLabels, labelColors, allExistingLabels, 
   };
 
   return (
-    <div className="flex-1 relative">
-      <label className="text-xs text-fg-muted mb-1 block">Labels</label>
+    // No "Labels" <label> of its own: the caller wraps this in `Field`, which
+    // owns the label for every dialog field. Rendering one here too put two
+    // labels side by side in the same row at different font weights.
+    <div className="relative">
       <div
         ref={containerRef}
-        className="flex flex-wrap items-center gap-1 bg-surface border border-edge-input rounded px-2 py-1 min-h-[32px] focus-within:border-accent"
+        className="flex flex-wrap items-center gap-1 bg-surface border border-edge-input rounded px-2 py-1 min-h-[34px] focus-within:border-accent"
       >
         {labels.map((label) => {
           const color = labelColors[label];
@@ -137,7 +139,10 @@ export function LabelInput({ labels, setLabels, labelColors, allExistingLabels, 
           }}
           onKeyDown={handleLabelKeyDown}
           placeholder={labels.length === 0 ? 'Type to add...' : ''}
-          className="flex-1 min-w-[80px] bg-transparent text-xs text-fg placeholder-fg-faint outline-none py-0.5"
+          // text-sm matches the Priority select beside it, so an empty Labels
+          // field reads at the same size as its neighbour. The pills above stay
+          // text-xs - they are pills, sized like every other pill in the app.
+          className="flex-1 min-w-[80px] bg-transparent text-sm text-fg placeholder-fg-faint outline-none py-0.5"
           data-testid={testId}
         />
       </div>
