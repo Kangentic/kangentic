@@ -427,12 +427,68 @@ test.describe('To Do Edit Branch Config', () => {
     await expect(page.getByText('Base branch', { exact: true })).toBeVisible();
 
     // The task has no worktree_path yet, so the worktree segment still renders.
-    // NOTE: this pins the toggle's PRESENCE in the fixed-name shape, not the
-    // `showWorktree={!task.worktree_path}` condition itself - the mock never
-    // sets worktree_path, so the hidden arm stays unverified.
+    // The sibling test below covers the opposite arm, once worktree_path is set.
     await expect(page.locator('[data-testid="worktree-toggle"]')).toBeVisible();
 
     await page.keyboard.press('Escape');
+  });
+
+  // Closes the gap the test above leaves open: once the task has a
+  // worktree_path (a worktree already materialized on disk), the worktree
+  // segment must disappear entirely - offering to toggle a worktree that
+  // already exists doesn't make sense. This pins the
+  // `showWorktree={!task.worktree_path}` CALL SITE in TaskDetailEditForm, not
+  // just TaskBranchRow's internal `showWorktree` branch: a unit test that
+  // called `TaskBranchRow({ showWorktree: false })` directly would pass
+  // unchanged even if the call site computed the wrong boolean (e.g. inverted
+  // to `showWorktree={!!task.worktree_path}`).
+  test('non-backlog task edit hides the worktree toggle once the task has a worktree_path', async () => {
+    const uniqueTitle = `Worktree Path Hides Toggle ${Date.now()}`;
+    await createTask(page, uniqueTitle);
+
+    await page.evaluate(async (title) => {
+      const api = (window as any).electronAPI;
+      const stores = (window as any).__zustandStores;
+      const tasks = await api.tasks.list();
+      const task = tasks.find((t: { title: string }) => t.title === title);
+      const swimlanes = await api.swimlanes.list();
+      const planning = swimlanes.find((s: { name: string }) => s.name === 'Planning');
+      if (task && planning) {
+        await api.tasks.move({
+          taskId: task.id,
+          targetSwimlaneId: planning.id,
+          targetPosition: 0,
+        });
+        // Simulate a worktree that has already materialized on disk for this
+        // task (the real main process sets this once the worktree checkout
+        // completes; the mock never sets it on its own).
+        await api.tasks.update({
+          id: task.id,
+          worktree_path: '/mock/worktrees/' + task.id.slice(0, 8),
+        });
+        await stores.board.getState().loadBoard();
+      }
+    }, uniqueTitle);
+
+    const taskCard = page.locator('[data-swimlane-name="Planning"]').locator(`text=${uniqueTitle}`).first();
+    await expect(taskCard).toBeVisible({ timeout: 5000 });
+    await taskCard.click();
+    const detailDialog = page.locator('[data-testid="task-detail-dialog"]');
+    await detailDialog.waitFor({ state: 'visible', timeout: 5000 });
+
+    // Positive anchor: the branch row itself rendered. Without this, the
+    // negative assertion below would pass vacuously if the whole row failed
+    // to render or the form landed in a different mode.
+    await expect(detailDialog.locator('[data-testid="branch-picker-chip"]')).toBeVisible();
+
+    // The assertion this test exists for.
+    await expect(detailDialog.locator('[data-testid="worktree-toggle"]')).not.toBeVisible();
+
+    // No edits were made, so Escape closes directly (no discard confirm).
+    // Wait for the window to fully unmount so it can't leak into a later test
+    // in this shared-page suite (cross-platform-parity.md).
+    await page.keyboard.press('Escape');
+    await detailDialog.waitFor({ state: 'hidden', timeout: 3000 });
   });
 });
 
