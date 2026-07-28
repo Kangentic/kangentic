@@ -16,6 +16,8 @@ import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
 import { waitForViteReady } from './helpers';
+import { PROJECT_PATH_MISSING_PREFIX } from '../../src/shared/ipc-channels';
+import { COMMAND_TERMINAL_NOTIFICATION_TASK_ID } from '../../src/shared/notification-constants';
 
 // Each test launches its own browser/page, so the file can fan out across workers.
 test.describe.configure({ mode: 'parallel' });
@@ -394,6 +396,56 @@ test.describe('Sidebar Command Terminal indicator', () => {
     }
   });
 
+  test('a moved/renamed background project does not open the layer (openProject resolves without switching)', async () => {
+    // `openProject` catches a PROJECT_PATH_MISSING_PREFIX failure internally,
+    // routes to the "Locate Folder" dialog, and RESOLVES (does not re-throw) -
+    // WITHOUT switching currentProject. `handleOpenCommandTerminals` must
+    // re-read the store after the await rather than arm the pending-open flag
+    // on the bare await settling, or the layer opens on the OUTGOING project
+    // (Alpha) and has no project-change event left to close it.
+    const { browser, page } = await launchWithState(preConfig({
+      terminals: [{ project: PROJECT_B_ID, id: 'ct-b1', activity: 'idle' }],
+    }));
+
+    try {
+      await page.evaluate((prefix) => {
+        window.electronAPI.projects.__openCalls.length = 0;
+        window.electronAPI.projects.open = async function (id: string) {
+          window.electronAPI.projects.__openCalls.push(id);
+          throw new Error(prefix + '/mock/project-beta');
+        };
+      }, PROJECT_PATH_MISSING_PREFIX);
+
+      await page.locator(`[data-testid="project-terminals-${PROJECT_B_ID}"]`).click();
+
+      // Positive signal that the click actually drove the broken path: the
+      // "Locate Folder" dialog is the store's own reaction to the missing-path
+      // error, so waiting for it also gives handleOpenCommandTerminals's
+      // continuation (which resolves on the same promise chain) time to run.
+      await page.locator('[data-testid="project-path-missing-dialog"]').waitFor({ state: 'visible', timeout: 5000 });
+
+      // Proves the click actually exercised the broken-open path, not a no-op
+      // that would pass the assertions below for the wrong reason.
+      const openCalls = await page.evaluate(() => window.electronAPI.projects.__openCalls as string[]);
+      expect(openCalls).toEqual([PROJECT_B_ID]);
+
+      // Still on Alpha - the failed switch must not have moved us to Beta.
+      const currentProjectId = await page.evaluate(async () => {
+        const project = await window.electronAPI.projects.getCurrent();
+        return project?.id ?? null;
+      });
+      expect(currentProjectId).toBe(PROJECT_A_ID);
+
+      // Negative assertion (cannot poll for "never opens"; see anti-pattern 6):
+      // give any latent open() a fixed budget beyond the dialog wait above,
+      // then assert. "New terminal" renders only while the layer is open.
+      await page.waitForTimeout(300);
+      await expect(page.locator('[data-testid="quick-session-new-terminal"]')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('the sidebar renders the terminal icon at 14px, not the title bar\'s default 20px', async () => {
     // CommandTerminalIcon defaults size to 20 (the title bar toggle); the
     // sidebar passes size={14} explicitly. Pins that the prop is actually
@@ -596,6 +648,59 @@ test.describe('Collapsed rail Command Terminal dot', () => {
       const alphaButton = page.locator(`[data-testid="rail-project-${PROJECT_A_ID}"]`);
       await expect(alphaButton).toHaveAttribute('title', 'Project Alpha');
       await expect(alphaButton).toHaveAttribute('aria-label', /\(working\)/);
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+test.describe('Notification click reopen (App.tsx sibling of the sidebar indicator)', () => {
+  // App.tsx's `notifications.onClicked` handler follows the exact same
+  // confirm-the-switch contract as ProjectSidebar's `handleOpenCommandTerminals`
+  // (see that describe block above), for the Command Terminal notification's
+  // click target. This is not incidental duplicate coverage: it is a distinct
+  // call site with its own history of this exact bug. Pre-diff, this call site
+  // armed `setPendingOpenCommandTerminal(true)` BEFORE awaiting `openProject`,
+  // so a failed switch (moved/renamed project folder) still opened the layer on
+  // the outgoing project, with no project-change event left to close it again.
+  test('a moved/renamed project\'s Command Terminal notification does not open the layer', async () => {
+    const { browser, page } = await launchWithState(preConfig({
+      terminals: [{ project: PROJECT_B_ID, id: 'ct-b1', activity: 'idle' }],
+    }));
+
+    try {
+      await page.evaluate((prefix) => {
+        window.electronAPI.projects.__openCalls.length = 0;
+        window.electronAPI.projects.open = async function (id: string) {
+          window.electronAPI.projects.__openCalls.push(id);
+          throw new Error(prefix + '/mock/project-beta');
+        };
+      }, PROJECT_PATH_MISSING_PREFIX);
+
+      await page.evaluate(({ projectId, taskId }) => {
+        if (!window.__mockFireNotificationClicked) {
+          throw new Error('window.__mockFireNotificationClicked is not installed by the mock');
+        }
+        window.__mockFireNotificationClicked(projectId, taskId);
+      }, { projectId: PROJECT_B_ID, taskId: COMMAND_TERMINAL_NOTIFICATION_TASK_ID });
+
+      // Positive signal that the click actually drove the broken path (see the
+      // matching comment in the sidebar-indicator version of this test).
+      await page.locator('[data-testid="project-path-missing-dialog"]').waitFor({ state: 'visible', timeout: 5000 });
+
+      const openCalls = await page.evaluate(() => window.electronAPI.projects.__openCalls as string[]);
+      expect(openCalls).toEqual([PROJECT_B_ID]);
+
+      const currentProjectId = await page.evaluate(async () => {
+        const project = await window.electronAPI.projects.getCurrent();
+        return project?.id ?? null;
+      });
+      expect(currentProjectId).toBe(PROJECT_A_ID);
+
+      // Negative assertion (cannot poll for "never opens"; see anti-pattern 6):
+      // give any latent open() a fixed budget beyond the dialog wait above.
+      await page.waitForTimeout(300);
+      await expect(page.locator('[data-testid="quick-session-new-terminal"]')).toHaveCount(0);
     } finally {
       await browser.close();
     }

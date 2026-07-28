@@ -358,6 +358,21 @@
     listeners.forEach(function (fn) { fn(info); });
   };
 
+  // Notification-click test hook (App.tsx's `notifications.onClicked` handler,
+  // including the isCommandTerminal branch). Installed eagerly for the same
+  // reason as the update-downloaded hooks above. Unlike that hook, this one
+  // throws when fired with no listener registered: firing before App.tsx has
+  // mounted and subscribed would otherwise silently no-op into a confusing
+  // "nothing happened" failure downstream.
+  window.__mockNotificationClickListeners = [];
+  window.__mockFireNotificationClicked = function (projectId, taskId) {
+    var listeners = window.__mockNotificationClickListeners.slice();
+    if (listeners.length === 0) {
+      throw new Error('__mockFireNotificationClicked called with no onClicked listener registered');
+    }
+    listeners.forEach(function (fn) { fn(projectId, taskId); });
+  };
+
   window.electronAPI = {
     projects: {
       list: async function () {
@@ -3021,8 +3036,16 @@
 
     notifications: {
       show: noop,
-      onClicked: function () {
-        return noop;
+      onClicked: function (callback) {
+        // Tests fire the click push via `window.__mockFireNotificationClicked(projectId,
+        // taskId)`. The listener array and the fire hook itself are installed eagerly at
+        // mock-bootstrap time (see top of file), not lazily here.
+        window.__mockNotificationClickListeners.push(callback);
+        return function () {
+          var listeners = window.__mockNotificationClickListeners || [];
+          var idx = listeners.indexOf(callback);
+          if (idx >= 0) listeners.splice(idx, 1);
+        };
       },
     },
 

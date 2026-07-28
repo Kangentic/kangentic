@@ -34,6 +34,11 @@ declare global {
     __mockUpdateDownloadedListeners?: Array<(info: { version: string; releaseNotes: string }) => void>;
     /** Fires the update-downloaded push to every registered subscriber. Installed eagerly at mock-bootstrap time. */
     __mockFireUpdateDownloaded?: (info: { version: string; releaseNotes: string }) => void;
+
+    /** Subscribers registered via `notifications.onClicked`; fired by `__mockFireNotificationClicked`. */
+    __mockNotificationClickListeners?: Array<(projectId: string, taskId: string) => void>;
+    /** Fires the notification-clicked push to every registered subscriber. Installed eagerly at mock-bootstrap time; throws if no subscriber has registered yet. */
+    __mockFireNotificationClicked?: (projectId: string, taskId: string) => void;
   }
 }
 
