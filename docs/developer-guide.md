@@ -188,6 +188,8 @@ In worktrees, `dev.js` bypasses `vite.config.mts` and creates an inline Vite con
 
 `scripts/worktree-preview.js` creates a `node_modules` junction/symlink from the worktree to the repo root, then opens a native terminal running the dev server.
 
+`node scripts/worktree-preview.js --wait --port=<port>` blocks until that preview exits, then exits with a code that says why: `0` clean (terminal closed or `--stop`), `1` watcher usage/setup error, `2` crashed (dev server exited non-zero), `3` vanished (force-killed with no recorded exit). `dev.js`'s `cleanup()` writes a small `{ pid, exitCode }` record under `os.tmpdir()` (see `scripts/preview-exit-record.js`) as its first statement, since ephemeral mode removes the whole worktree `.kangentic/` directory on exit and nothing under the worktree would otherwise survive to tell the watcher how the server exited. The `/preview` skill runs this backgrounded by default so the harness delivers a task-notification when the preview exits.
+
 ## Testing
 
 Three tiers. Use the right one for the job.

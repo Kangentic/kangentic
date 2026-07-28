@@ -17,6 +17,7 @@ const { spawn, execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const net = require('net');
+const { readExitRecord, clearExitRecord, classifyPreviewExit, exitRecordPath } = require('./preview-exit-record');
 
 // ---------------------------------------------------------------------------
 // Worktree / root detection
@@ -357,6 +358,103 @@ function waitForPidFile(worktreeDir, port, timeoutMs = 30000) {
 }
 
 // ---------------------------------------------------------------------------
+// Blocking watch (--wait --port=N)
+// ---------------------------------------------------------------------------
+
+// How recent an exit record must be for --wait to adopt it when no live PID
+// file exists. Comfortably wider than waitForPidFile's 5s attach timeout, and
+// far narrower than the "leftover from an earlier session" case it rules out.
+const STALE_ATTACH_WINDOW_MS = 60000;
+
+const EXIT_MESSAGES = {
+  clean: (port) => `[preview] Port ${port}: exited cleanly.`,
+  crashed: (port) => `[preview] Port ${port}: crashed (non-zero exit). Check the preview terminal for details.`,
+  vanished: (port) => `[preview] Port ${port}: vanished (force-killed or the terminal was hard-closed) with no recorded exit.`,
+};
+
+/**
+ * Blocks until the preview on `port` exits, then exits this process with a
+ * reason-carrying code: 0 clean, 2 crashed, 3 vanished (see EXIT_MESSAGES).
+ * Companion to writeExitRecord in scripts/dev.js's cleanup(); that record
+ * is the only way to distinguish a crash from a clean exit once ephemeral
+ * cleanup has already removed the worktree's .kangentic/ directory.
+ *
+ * NOTE: a hard-killed PID can in principle be recycled by the OS for an
+ * unrelated process before this watcher notices; that would read back as
+ * "still running" indefinitely. Not mitigated: narrow and not worth the
+ * complexity of a start-time / argv fingerprint check here.
+ */
+async function waitForPreviewExit(worktreeDir, port) {
+  const pidFilePath = pidFilePathFor(worktreeDir, port);
+  const stopFilePath = stopFilePathFor(worktreeDir, port);
+
+  let watchedPid = await waitForPidFile(worktreeDir, port, 5000);
+  if (!watchedPid) {
+    // No live PID file. The ONLY legitimate reason to still proceed is that
+    // the preview exited during the few seconds between its launch and this
+    // watcher attaching, so its record is seconds old. An older record is a
+    // leftover from a previous session that nothing has cleared (only a
+    // launch or a watcher clears one), and adopting its pid as watchedPid
+    // would make the very next loop iteration match record.pid === watchedPid
+    // and report that ancient verdict instantly, instead of blocking as
+    // documented. Age-gate it rather than trusting any record we find.
+    const record = readExitRecord(worktreeDir, port);
+    let recordAgeMs = Infinity;
+    try {
+      recordAgeMs = Date.now() - fs.statSync(exitRecordPath(worktreeDir, port)).mtimeMs;
+    } catch {
+      // no record file: recordAgeMs stays Infinity and the guard below fires
+    }
+    if (!record || recordAgeMs > STALE_ATTACH_WINDOW_MS) {
+      console.error(`[preview] No preview running on port ${port} in this worktree.`);
+      process.exit(1);
+    }
+    watchedPid = record.pid;
+  }
+
+  console.log(`[preview] Watching port ${port} (PID ${watchedPid})...`);
+
+  let stopRequested = false;
+  let vanishedSince = null;
+
+  for (;;) {
+    const record = readExitRecord(worktreeDir, port);
+    if (fs.existsSync(stopFilePath)) stopRequested = true;
+
+    let pidFileMatches = false;
+    try {
+      pidFileMatches = parseInt(fs.readFileSync(pidFilePath, 'utf-8').trim(), 10) === watchedPid;
+    } catch {
+      pidFileMatches = false;
+    }
+    const processAlive = pidFileMatches && isProcessAlive(watchedPid);
+
+    const verdict = classifyPreviewExit({ record, watchedPid, processAlive, stopRequested });
+
+    if (verdict && verdict.status === 'vanished') {
+      // Give a late-arriving exit record (Windows fs-write latency) a ~1s
+      // grace window to turn this into 'clean' or 'crashed' before we
+      // commit. Classification runs fresh every iteration of this loop.
+      if (vanishedSince === null) {
+        vanishedSince = Date.now();
+      } else if (Date.now() - vanishedSince >= 1000) {
+        clearExitRecord(worktreeDir, port);
+        console.log(EXIT_MESSAGES.vanished(port));
+        process.exit(verdict.code);
+      }
+    } else if (verdict) {
+      clearExitRecord(worktreeDir, port);
+      console.log(EXIT_MESSAGES[verdict.status](port));
+      process.exit(verdict.code);
+    } else {
+      vanishedSince = null;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -364,6 +462,7 @@ async function main() {
   const worktreeDir = process.cwd();
   const isFresh = process.argv.includes('--fresh');
   const isStop = process.argv.includes('--stop');
+  const isWait = process.argv.includes('--wait');
   const portFlag = process.argv.find((arg) => arg.startsWith('--port='));
   const requestedPort = portFlag ? parseInt(portFlag.split('=')[1], 10) : null;
 
@@ -381,6 +480,21 @@ async function main() {
     return;
   }
 
+  if (isWait) {
+    if (!requestedPort) {
+      const ports = listRunningPreviewPorts(worktreeDir);
+      console.error(
+        '[preview] --wait requires --port=<port>.' +
+        (ports.length
+          ? ` Running previews in this worktree: ${ports.join(', ')}`
+          : ' No previews are currently running in this worktree.')
+      );
+      process.exit(1);
+    }
+    await waitForPreviewExit(worktreeDir, requestedPort);
+    return;
+  }
+
   console.log(`[preview] Root project: ${rootDir}`);
   console.log(`[preview] Worktree:     ${worktreeDir}`);
   if (isFresh) console.log('[preview] Fresh mode: launching without --cwd (Welcome Screen)');
@@ -389,6 +503,7 @@ async function main() {
 
   const port = await findAvailablePort(5174);
   removeStalePidFile(worktreeDir, port);
+  clearExitRecord(worktreeDir, port);
   const command = buildCommand(worktreeDir, port, { fresh: isFresh });
 
   console.log(`[preview] Opening preview terminal...`);
@@ -409,6 +524,7 @@ async function main() {
   } else {
     console.log('[preview]   PID:     unknown (dev server did not report one within 30s - check the terminal window)');
   }
+  console.log(`[preview]   Watch:   node scripts/worktree-preview.js --wait --port=${port}`);
 }
 
 main().catch((err) => {
