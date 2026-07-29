@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { getIsHmrReload } from '../utils/hmr-flag';
 
 /**
@@ -78,11 +78,28 @@ export function useOverlayPhase(
     skipEnter || (skipEnterOnHmr && getIsHmrReload()) ? 'visible' : 'entering',
   );
 
+  /**
+   * Set synchronously by `requestClose`, so it is readable the instant a close
+   * is asked for - before React has committed the `'exiting'` phase.
+   *
+   * Closing an overlay DURING its entrance animation queues two updates in the
+   * same fold: `requestClose`'s `'exiting'`, then the entrance animation's own
+   * genuine `animationend`. Without this flag that second handler unconditionally
+   * set `'visible'`, and being later in the fold it won - `'exiting'` was
+   * computed but never committed, nothing re-drove the exit (`closing` does not
+   * change again), and the overlay was left permanently stuck open while its
+   * owner's state already read closed. A ref rather than state because the race
+   * is one of commit ORDER, not staleness: a re-render would be too late.
+   */
+  const closeRequestedRef = useRef(false);
+
   const requestClose = useCallback(() => {
+    closeRequestedRef.current = true;
     setPhase((currentPhase) => (currentPhase === 'exiting' ? currentPhase : 'exiting'));
   }, []);
 
   const reset = useCallback(() => {
+    closeRequestedRef.current = false;
     setPhase('entering');
   }, []);
 
@@ -90,8 +107,13 @@ export function useOverlayPhase(
     (event: React.AnimationEvent) => {
       // Ignore animations bubbling up from descendants of the content element.
       if (event.target !== event.currentTarget) return;
-      if (phase === 'entering') setPhase('visible');
-      else if (phase === 'exiting') onClose();
+      // The exit branch is deliberately checked FIRST and is never gated on the
+      // flag: it is the only path to `onClose()`, so skipping it would strand
+      // the overlay mounted forever - stuck the opposite way.
+      if (phase === 'exiting') onClose();
+      // A close already asked for wins over the entrance finishing. Leaving the
+      // phase alone lets the pending `'exiting'` commit and play its exit.
+      else if (phase === 'entering' && !closeRequestedRef.current) setPhase('visible');
     },
     [phase, onClose],
   );
