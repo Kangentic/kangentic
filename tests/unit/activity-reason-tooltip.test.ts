@@ -5,11 +5,55 @@
  * unaffected.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { formatActivityReasonText } from '../../src/renderer/components/board/ActivityReasonTooltip';
+import {
+  formatActivityReasonText,
+  ActivityReasonTooltip,
+} from '../../src/renderer/components/board/ActivityReasonTooltip';
+import { ActivityMark } from '../../src/renderer/components/ActivityMark';
 import type { ActivityReason } from '../../src/shared/types';
 
 afterEach(() => {
   vi.useRealTimers();
+});
+
+interface ElementLike {
+  type: unknown;
+  props: Record<string, unknown>;
+}
+
+function isElementLike(node: unknown): node is ElementLike {
+  return typeof node === 'object' && node !== null && 'props' in node;
+}
+
+/**
+ * `ActivityReasonTooltip` renders unrendered (no reconciler in this project's vitest config -
+ * see activity-mark-render.test.ts for the established rationale), so the returned element's
+ * first child is the raw <ActivityMark mark="..." /> element, not yet invoked. The mark NAME
+ * this picks is exactly the branch-selection logic under test, so read it straight off that
+ * child's props instead of invoking through to the rendered <svg>'s data-mark (which would
+ * only re-prove what activity-mark-render.test.ts already covers for ActivityMark itself).
+ */
+function markPropOfFirstChild(output: unknown): string {
+  if (!isElementLike(output)) throw new Error('ActivityReasonTooltip did not return an element');
+  const children = output.props.children;
+  const markElement = Array.isArray(children) ? children[0] : children;
+  if (!isElementLike(markElement)) {
+    throw new Error('expected the first child to be an <ActivityMark /> element');
+  }
+  expect(markElement.type).toBe(ActivityMark);
+  return markElement.props.mark as string;
+}
+
+describe('ActivityReasonTooltip mark selection', () => {
+  it('idle renders the agent-idle mark (matches the TaskCard idle indicator)', () => {
+    const output = ActivityReasonTooltip({ reason: { kind: 'idle', since: Date.now() } });
+    expect(markPropOfFirstChild(output)).toBe('agent-idle');
+  });
+
+  it('turn-active renders the agent-working mark (matches the TaskCard thinking indicator)', () => {
+    const output = ActivityReasonTooltip({ reason: { kind: 'turn-active' } });
+    expect(markPropOfFirstChild(output)).toBe('agent-working');
+  });
 });
 
 describe('formatActivityReasonText', () => {
