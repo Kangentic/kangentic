@@ -249,25 +249,35 @@ test('label suggestion dropdown escapes the task-detail edit form and stays with
     // Width-match proof: the fixed-strategy popover lost the old `left-0
     // right-0` in-flow stretch, so LabelInput measures the bordered input
     // container (containerRef) via useLayoutEffect and applies it as an
-    // explicit `width` style on the portaled popover. Assert the two widths
-    // line up (both box-border, small tolerance per cross-platform-parity).
+    // explicit `width` style on the portaled popover. Compare LAYOUT widths
+    // (offsetWidth), not boundingBox()/getBoundingClientRect(): both of those
+    // report the ANIMATED rect, and OverlayPopover plays a scale-from-trigger
+    // entrance transform (`popover-in`, index.css) on every open, so a rect
+    // read right after toBeVisible() can land mid-animation and measure a
+    // visually-shrunk transformed box even though the underlying box-model
+    // width is already correct (CSS `transform` never affects layout).
+    // offsetWidth ignores transforms entirely, so it proves the same
+    // box-model width LabelInput's useLayoutEffect applies, without waiting
+    // out an animation - and it's an integer layout value, not a freshly
+    // measured float, so a small tolerance stays meaningful per
+    // cross-platform-parity (no pixel-exact / zero-tolerance assertions).
     const container = labelInput.locator('xpath=ancestor::div[contains(@class,"border-edge-input")][1]');
     await expect(container).toHaveCount(1);
-    const containerBox = await container.boundingBox();
-    expect(containerBox).not.toBeNull();
-    expect(containerBox!.width).toBeGreaterThan(0);
-    // OverlayPopover plays a scale-from-trigger entrance animation, so a
-    // boundingBox taken right after toBeVisible() can land mid-animation and
-    // read a visually-shrunk transformed rect even though the underlying
-    // layout width is already correct. Poll past the transform settle
-    // instead of a fixed wait (see anti-pattern 1 in the test-builder guide).
+    const initialContainerWidth = await container.evaluate((element) => (element as HTMLElement).offsetWidth);
+    expect(initialContainerWidth).toBeGreaterThan(0);
+    // Re-measure both elements on every poll iteration (never compare against
+    // a stale one-shot snapshot); a couple of quick retries cover the tick
+    // between the dropdown mounting and its width style landing.
     await expect
       .poll(
         async () => {
-          const currentBox = await dropdown.boundingBox();
-          return currentBox ? Math.abs(currentBox.width - containerBox!.width) : null;
+          const [dropdownWidth, containerWidth] = await Promise.all([
+            dropdown.evaluate((element) => (element as HTMLElement).offsetWidth),
+            container.evaluate((element) => (element as HTMLElement).offsetWidth),
+          ]);
+          return Math.abs(dropdownWidth - containerWidth);
         },
-        { timeout: 2000, intervals: [100, 200, 300] },
+        { timeout: 3000, intervals: [100, 200, 300] },
       )
       .toBeLessThan(2);
   } finally {
