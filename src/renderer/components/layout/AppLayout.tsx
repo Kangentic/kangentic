@@ -270,18 +270,49 @@ export function AppLayout() {
     if (onboardingProgress.complete && currentProject) markProjectOnboarded(currentProject.id);
   }, [onboardingProgress.complete, currentProject, markProjectOnboarded]);
 
-  // Show the onboarding checklist once per project, on first arrival.
+  // Show the onboarding checklist on the genuine first run of this INSTALL.
   //
-  // Two guards, each load-bearing. `onboardedProjectIds === undefined` means App.tsx's
-  // one-time backfill has not run yet, and opening before it does would flash the
-  // checklist at existing users on projects they have used for months. The session-scoped
-  // ref covers the other direction: clicking a step closes the dialog WITHOUT marking the
-  // project onboarded (the user is engaging, not dismissing), so without it this effect
-  // would immediately reopen the dialog over the screen it just sent them to.
+  // Precisely: while `onboardedProjectIds` is empty, at most once per project per session.
+  // "Once per install" is the intent rather than a hard invariant - a user who opens the
+  // checklist, clicks a step (which does NOT dismiss) and then adds a second project is still
+  // inside their first run and gets it there too. It stops for good once the list is non-empty.
+  //
+  // The walkthrough teaches the app, not a repo - every step ("Create a task", "Drag it to
+  // Planning", "Open the task") is app-generic - so the auto-open decision is install-scoped.
+  // It used to be keyed on `onboardedProjectIds.includes(...)`, which meant a newly added
+  // project, having a brand-new id, was by definition un-dismissed: adding a 17th project to
+  // an established install replayed the whole walkthrough.
+  //
+  // Emptiness of that same list is the install-scoped signal, and it is non-empty by exactly
+  // three routes, all of which mean "not a first run": App.tsx's one-time backfill finding at
+  // least one project the user already had, a real dismissal, or all five steps completed.
+  // The per-project `includes` check is gone rather than kept alongside this - it is strictly
+  // subsumed (a member implies a non-empty list), so leaving it would be dead code inviting a
+  // future reader to restore per-project scoping.
+  //
+  // Two guards remain, each load-bearing. `onboardedProjectIds === undefined` means the
+  // backfill has not run yet, and opening before it does would flash the checklist at existing
+  // users on projects they have used for months; it also covers cold start, where the backfill
+  // waits on `loadConfig()` and `loadProjects()` together (App.tsx) while `loadCurrent()` races
+  // ahead un-awaited, so `currentProject` can land first. The session-scoped ref covers the
+  // other direction: clicking a step closes the dialog WITHOUT marking the project onboarded
+  // (the user is engaging, not dismissing), so without it this effect would immediately reopen
+  // the dialog over the screen it just sent them to. It stays keyed by project id rather than
+  // collapsing to a plain boolean because the empty-list window is not necessarily one project
+  // long: while the list is still empty, arriving at a DIFFERENT project earns its own single
+  // auto-open, and a boolean would swallow it.
+  //
+  // Only config-backed, monotonic values belong here: the ref is a one-way latch, so a single
+  // frame reading a stale value latches irreversibly. `projects.length` is NOT such a value
+  // (App.tsx's --cwd auto-open sets `currentProject` before its `loadProjects()` resolves).
+  //
+  // Accepted trade-off: this forecloses a per-project "reset onboarding" (removing one id from
+  // a list that still holds others reads as retired). That is coherent with onboarding being
+  // install-scoped, and the dev-only title-bar button already reopens the checklist by hand.
   const autoOpenedProjectIdsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!currentProject || onboardedProjectIds === undefined) return;
-    if (onboardedProjectIds.includes(currentProject.id)) return;
+    if (onboardedProjectIds.length > 0) return;
     if (autoOpenedProjectIdsRef.current.has(currentProject.id)) return;
     autoOpenedProjectIdsRef.current.add(currentProject.id);
     setOnboardingChecklistOpen(true);

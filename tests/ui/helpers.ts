@@ -115,19 +115,45 @@ export async function createProject(
 /**
  * Dismiss the onboarding checklist if it is open.
  *
- * A brand-new project auto-opens it, and it is a focus-trapping modal over the board whose
- * backdrop intercepts pointer events - so any spec that creates a project and then touches
- * the board must get past it first. "Skip for now" persists the dismissal, so it cannot
- * reappear later in the same test.
+ * The FIRST project on a fresh install auto-opens it, and it is a focus-trapping modal over
+ * the board whose backdrop intercepts pointer events - so any spec that creates that project
+ * and then touches the board must get past it first. "Skip for now" persists the dismissal,
+ * so it cannot reappear later in the same test.
+ *
+ * Onboarding is install-scoped: the checklist auto-opens only while `onboardedProjectIds` is
+ * empty, so second-and-later projects never raise it.
+ *
+ * That "not coming" path is NEW, created by the same change that made the gate install-scoped.
+ * Before it, a second project had an id nobody had dismissed, so the checklist did open and
+ * this wait resolved fast. So the store check below is not recovered pre-existing waste - it
+ * keeps that gate change from regressing UI-suite time, by stopping every extra project in a
+ * multi-project spec (`project-groups`, `project-sidebar-search`, whose `beforeEach` creates
+ * two or three projects per test) from newly burning the full timeout.
+ *
+ * Asking the store beats shortening a timeout that has to stay generous on CI.
  *
  * Call this after ANY project-creation flow, not just `createProject`: several specs drive
  * the folder picker and Add project dialog inline.
  */
 export async function dismissOnboardingChecklist(page: Page): Promise<void> {
   const checklist = page.locator('[data-testid="onboarding-checklist"]');
-  // Short on purpose: this wait is also the not-coming path (a project already marked
-  // onboarded), and a long timeout there is paid silently by every such spec.
-  await checklist.waitFor({ state: 'visible', timeout: 1500 }).catch(() => {});
+  if (!(await checklist.isVisible().catch(() => false))) {
+    // `undefined` means App.tsx's backfill has not landed yet, so the checklist may still be
+    // on its way - wait in that case too. Any read failure falls back to waiting.
+    const mayStillOpen = await page
+      .evaluate(() => {
+        const stores = (window as unknown as {
+          __zustandStores?: {
+            config: { getState: () => { config: { onboardedProjectIds?: string[] } } };
+          };
+        }).__zustandStores;
+        const onboardedProjectIds = stores?.config.getState().config.onboardedProjectIds;
+        return !Array.isArray(onboardedProjectIds) || onboardedProjectIds.length === 0;
+      })
+      .catch(() => true);
+    if (!mayStillOpen) return;
+    await checklist.waitFor({ state: 'visible', timeout: 1500 }).catch(() => {});
+  }
   if (await checklist.isVisible().catch(() => false)) {
     await page.locator('[data-testid="onboarding-skip"]').click();
     await checklist.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {});

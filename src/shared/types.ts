@@ -1988,10 +1988,10 @@ export type OnboardingStepKey =
   | 'taskDetailOpened';
 
 /**
- * Snapshot of the settings the onboarding checklist watches, taken when a project is
- * added. Steps 1 and 2 tick when live state DIFFERS from this, so a user who opens
- * Settings or Board manager and closes it again gets no checkmark - only a real change
- * earns one.
+ * Snapshot of the settings the onboarding checklist watches, taken on first checklist
+ * OPEN (WelcomeChecklistDialog's mount effect is the only writer). Steps 1 and 2 tick when
+ * live state DIFFERS from this, so a user who opens Settings or Board manager and closes it
+ * again gets no checkmark - only a real change earns one.
  *
  * Note the four "defaults" a user picks do not live together: `default_agent` /
  * `default_model` / `default_effort` are columns on the project row, while
@@ -2286,14 +2286,29 @@ export interface AppConfig {
    *  memory keyed by project id, like `lastActiveTaskByProject`. `undefined` means the
    *  one-time upgrade backfill (App.tsx, on first hydration) has not run yet; `[]` means
    *  it has run and nothing is dismissed. The backfill seeds every project the user already
-   *  had open so existing users never see the checklist on projects they already use. */
+   *  had open so existing users never see the checklist on projects they already use.
+   *
+   *  EMPTINESS is the load-bearing signal, not membership: the checklist auto-opens only
+   *  while this list is empty. The walkthrough teaches the app rather than a repo, so it is
+   *  install-scoped - a newly added project has a brand-new id and would otherwise replay
+   *  the whole thing on an established install. The list becomes non-empty by exactly three
+   *  routes, all of which mean "not a first run": the backfill finding at least one existing
+   *  project, a real dismissal (WelcomeChecklistDialog), or all five steps completed
+   *  (AppLayout). Membership itself is now only a record of which projects were retired.
+   *
+   *  Distinct from the legacy `hasCompletedFirstRun`, which means first TASK creation - that
+   *  is step 3 of the walkthrough, so it would retire onboarding mid-flow. */
   onboardedProjectIds?: string[];
-  /** Per-project snapshot of the settings the onboarding checklist watches, taken when the
-   *  project is first added (or on first checklist open for a project that predates this
-   *  key). Steps 1 and 2 tick by comparing live state against this, so opening a settings
-   *  screen and closing it again ticks nothing - only a real change does. Keyed by project
-   *  id; listed in CONFIG_DICTIONARY_PATHS so per-project removal is not swallowed by the
-   *  deep merge. */
+  /** Per-project snapshot of the settings the onboarding checklist watches, captured on first
+   *  checklist OPEN. `WelcomeChecklistDialog`'s mount effect is the only writer, and AppLayout
+   *  mounts that dialog only while `onboardingChecklistOpen`, so adding a project does NOT
+   *  capture one: now that the auto-open gate is install-scoped (see `onboardedProjectIds`), a
+   *  second project has no baseline until the title-bar button opens the checklist there.
+   *  Steps 1 and 2 tick by comparing live state against this, so opening a settings screen and
+   *  closing it again ticks nothing - only a real change does. Both are guarded on
+   *  `baseline !== undefined`, so a baseline-less project reports them un-ticked rather than
+   *  spuriously complete. Keyed by project id; listed in CONFIG_DICTIONARY_PATHS so
+   *  per-project removal is not swallowed by the deep merge. */
   onboardingBaseline?: Record<string, OnboardingBaseline>;
   skipDeleteConfirm: boolean;
   skipBoardConfigConfirm: boolean;

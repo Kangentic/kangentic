@@ -133,11 +133,13 @@ export async function launchApp(options?: {
   //
   // onboardedProjectIds is deliberately NOT seeded, because it cannot be: E2E
   // creates its project through the app at runtime, so its id does not exist
-  // when this config is written. Every E2E project is therefore a genuinely new
-  // one and auto-opens the onboarding checklist. That is handled where it can
-  // be - createProject() calls dismissOnboardingChecklist() after its reload -
-  // rather than here, since a config seed cannot reference an id that does not
-  // exist yet.
+  // when this config is written. The list therefore starts empty, and the
+  // onboarding gate is install-scoped (it auto-opens only while the list is
+  // empty), so exactly the FIRST project created in a worker's dataDir raises
+  // the checklist - not every project, as this comment used to claim. That is
+  // handled where it can be - createProject() calls dismissOnboardingChecklist()
+  // after its reload - rather than here, since a config seed cannot reference an
+  // id that does not exist yet.
   //
   // Also suppress all desktop notifications + toasts so killing mock sessions
   // during tests (e.g. archive flows, exit handling) doesn't fire spurious
@@ -359,13 +361,20 @@ export async function createProject(page: Page, _name: string, projectPath: stri
 }
 
 /**
- * Dismiss the onboarding checklist a brand-new project auto-opens.
+ * Dismiss the onboarding checklist the first project on a fresh dataDir auto-opens.
  *
  * Required at this tier, not merely tidy: E2E creates its projects through the app at
  * runtime, so their ids cannot be pre-seeded into `onboardedProjectIds` when the config
- * file is written. Every E2E project is therefore genuinely new, and the checklist is a
- * focus-trapping modal whose backdrop swallows pointer events over the board. Skipping it
- * persists, so it cannot come back mid-test.
+ * file is written. The list starts empty, and the checklist is a focus-trapping modal whose
+ * backdrop swallows pointer events over the board. Skipping it persists, so it cannot come
+ * back mid-test.
+ *
+ * Onboarding is install-scoped (`AppLayout` gates the auto-open on the list being EMPTY, not
+ * on per-project membership), so only the first project in a worker's shared dataDir raises
+ * it. Every later call here is a not-coming path that pays the wait below for nothing. The UI
+ * tier avoids that by asking the config store first (`tests/ui/helpers.ts`); porting that here
+ * needs care, because `__zustandStores` is not reliably present in the E2E context - see the
+ * defensive skip in `session-rapid-moves.spec.ts`.
  */
 export async function dismissOnboardingChecklist(page: Page): Promise<void> {
   const checklist = page.locator('[data-testid="onboarding-checklist"]');

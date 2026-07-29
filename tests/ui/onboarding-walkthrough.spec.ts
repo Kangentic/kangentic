@@ -20,12 +20,9 @@ async function launch(): Promise<{ browser: Browser; page: Page }> {
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
   const page = await context.newPage();
-  // Opt back into onboarding: the mock suppresses the checklist for every project it
-  // creates so unrelated specs are not blocked by a modal. This suite is the one that
-  // wants it. Must run before the mock script, which reads the flag at project creation.
-  await page.addInitScript(() => {
-    (window as unknown as { __mockOnboardingEnabled: boolean }).__mockOnboardingEnabled = true;
-  });
+  // The mock's default config omits `onboardedProjectIds`, and the page starts with no
+  // projects, so App.tsx's backfill writes `[]` - an empty list, which is what lets the
+  // checklist auto-open for the first project created here.
   await page.addInitScript({ path: MOCK_SCRIPT });
   await page.goto(VITE_URL);
   await page.waitForLoadState('load');
@@ -102,7 +99,7 @@ test.describe('Onboarding checklist', () => {
     }
   });
 
-  test('does NOT open for a project the upgrade backfill already marked onboarded', async () => {
+  test('does NOT reopen after an explicit skip, even on a backfill-shaped rewrite', async () => {
     // The invariant the old panel's undo-button test protected, re-pointed at the
     // checklist. onboardedProjectIds is seeded by the one-time backfill as well as by an
     // explicit skip, so anything keyed on it must not resurface onboarding for existing
@@ -126,6 +123,30 @@ test.describe('Onboarding checklist', () => {
     });
 
     await expect(page.locator('[data-testid="onboarding-checklist"]')).toBeHidden();
+  });
+
+  test('does NOT open for a project added to an install that already has one', async () => {
+    // The reported regression: onboarding used to be keyed on per-project membership in
+    // onboardedProjectIds, so a newly added project - which by definition has an id nobody
+    // has dismissed - replayed the whole walkthrough. It teaches the app, not a repo.
+    ({ browser, page } = await launch());
+    await createProjectKeepingChecklist(page, 'walkthrough-established-first');
+    await page.locator('[data-testid="onboarding-skip"]').click();
+    await expect(page.locator('[data-testid="onboarding-checklist"]')).toBeHidden();
+
+    // A second, genuinely new project. Its id is a runtime uuid, so this asserts on the
+    // checklist itself and never on ids.
+    await createProjectKeepingChecklist(page, 'walkthrough-established-second');
+
+    // waitForBoard inside the helper is the positive anchor; asserting absence straight
+    // after the click would race the auto-open effect rather than prove it did not fire.
+    //
+    // The fixed settle window below is deliberate, not a missing conditional wait: there is
+    // no event that fires when an effect declines to open a dialog, so proving a negative
+    // costs real time. Same tool as the no-auto-dismiss and completed-flow assertions below.
+    await expect(page.locator('[data-testid="onboarding-checklist"]')).toHaveCount(0);
+    await page.waitForTimeout(1000);
+    await expect(page.locator('[data-testid="onboarding-checklist"]')).toHaveCount(0);
   });
 
   test('stays on screen with no auto-dismiss timer', async () => {
@@ -470,6 +491,9 @@ test.describe('Onboarding checklist', () => {
     });
     await waitForBoard(page);
 
+    // Opened by hand, not by arriving: onboarding is install-scoped, so this second project
+    // does not auto-open the checklist. The dev-only title-bar button bypasses that gate,
+    // which is what makes the per-project step state below still observable.
     await page.locator('[data-testid="get-started-button"]').click();
     await expect(page.locator('[data-testid="onboarding-checklist"]')).toBeVisible({ timeout: 5000 });
     await expect(page.locator('[data-testid="onboarding-step-taskDetailOpened"]'))
