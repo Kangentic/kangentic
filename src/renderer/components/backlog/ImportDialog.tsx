@@ -30,6 +30,63 @@ function sortByCreatedDesc(list: ExternalIssue[]): ExternalIssue[] {
   );
 }
 
+/** For project items, extract the linked issue number from the external URL if available. */
+function displayId(issue: ExternalIssue): string {
+  if (issue.externalSource === 'github_projects') {
+    const issueNumberMatch = /\/issues\/(\d+)$/.exec(issue.externalUrl);
+    if (issueNumberMatch) return `#${issueNumberMatch[1]}`;
+    return '';
+  }
+  return `#${issue.externalId}`;
+}
+
+// Lowercased searchable blob per issue, so a keystroke costs one substring scan per
+// row rather than rebuilding that blob for every row on every keystroke.
+// Keyed by object identity, which can never go stale: a streamed page appends
+// without recreating prior items, so it only builds haystacks for its new issues;
+// a refetch (state filter switch, Retry, Refresh) arrives over IPC as fresh objects,
+// so the old entries are garbage-collected with their issues and the new ones build
+// once.
+// hmr-safe: a lost cache is rebuilt on demand.
+const searchHaystackCache = new WeakMap<ExternalIssue, string>();
+
+/**
+ * The searchable text for one issue: exactly the fields `ImportIssueRow` prints, so
+ * every hit is explainable from the row itself. The ID comes from the same
+ * `displayId` the row renders, so what the user sees is what the search matches.
+ *
+ * `body` is deliberately EXCLUDED even though it is the richest field. No row renders
+ * it, so a body hit looks like a phantom match, and the damage is worst for the ID
+ * search this predicate exists to serve: issue bodies cross-reference each other by
+ * number constantly ("Fixed by #332", "Blocked by #123"), so including body made a
+ * number query return every issue that merely MENTIONS that number alongside the one
+ * that IS it.
+ *
+ * Also excluded, though the row does print them: the relative timestamp and the
+ * attachment count. Both render as formatted numbers, and matching digits against
+ * them would reintroduce the same numeric noise from the other direction.
+ *
+ * The `\n` separators keep a query from spanning two fields.
+ */
+function searchHaystack(issue: ExternalIssue): string {
+  const cached = searchHaystackCache.get(issue);
+  if (cached !== undefined) return cached;
+  const haystack = [
+    displayId(issue),
+    issue.title,
+    issue.workItemType ?? '',
+    // The row hides the placeholder 'unknown' state, so the search does too.
+    issue.state === 'unknown' ? '' : issue.state,
+    // Every label, not just the 4 the row shows before collapsing to "+N": the
+    // overflow count tells the user more exist, and the Label dropdown lists them all.
+    ...issue.labels,
+    // Matches the row's rendering, so both 'ryan' and '@ryan' hit.
+    issue.assignee ? `@${issue.assignee}` : '',
+  ].join('\n').toLowerCase();
+  searchHaystackCache.set(issue, haystack);
+  return haystack;
+}
+
 export function ImportDialog({ source, onClose }: ImportDialogProps) {
   const [issues, setIssues] = useState<ExternalIssue[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -187,7 +244,11 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
 
   // Defer the search input so typing stays responsive even with a large loaded set.
   const deferredFilterText = useDeferredValue(filterText);
-  const titleSearchLower = deferredFilterText.toLowerCase();
+  // Trimmed so a pasted ID still matches. Both '276' and the '#276' the row prints
+  // already match by plain substring, so dropping a LEADING '#' is what additionally
+  // lets an ID-style '#276' query hit a bare '276' in the title or body. Only the
+  // leading one: an internal '#' stays, so a query like 'c#' still means 'c#'.
+  const searchTermLower = deferredFilterText.trim().replace(/^#/, '').toLowerCase();
 
   // Client-side filtering over the full loaded set (pre-sorted by createdAt desc
   // on fetch). This recomputes on every streamed page, so a filter applied
@@ -195,14 +256,14 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
   const filteredIssues = useMemo(() => {
     return issues.filter((issue) => {
       if (hideImported && issue.alreadyImported) return false;
-      if (titleSearchLower && !issue.title.toLowerCase().includes(titleSearchLower)) return false;
+      if (searchTermLower && !searchHaystack(issue).includes(searchTermLower)) return false;
       if (filterStatuses.size > 0 && (!issue.state || !filterStatuses.has(issue.state))) return false;
       if (filterAssignees.size > 0 && (!issue.assignee || !filterAssignees.has(issue.assignee))) return false;
       if (filterTypes.size > 0 && (!issue.workItemType || !filterTypes.has(issue.workItemType))) return false;
       if (filterLabels.size > 0 && !issue.labels.some((label) => filterLabels.has(label))) return false;
       return true;
     });
-  }, [issues, titleSearchLower, filterStatuses, filterAssignees, filterTypes, filterLabels, hideImported]);
+  }, [issues, searchTermLower, filterStatuses, filterAssignees, filterTypes, filterLabels, hideImported]);
 
   const selectableIssues = useMemo(
     () => filteredIssues.filter((issue) => !issue.alreadyImported),
@@ -212,7 +273,10 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
     () => issues.length > 0 && issues.every((issue) => issue.alreadyImported),
     [issues],
   );
-  const hasActiveFilters = filterText !== '' || filterStatuses.size > 0 || filterAssignees.size > 0 || filterTypes.size > 0 || filterLabels.size > 0;
+  // Reads the normalized term, not the raw input: a query of only whitespace or a
+  // lone '#' narrows nothing, so it must not flip the footer to "N of M" or let the
+  // empty state claim a filter excluded everything when none did.
+  const hasActiveFilters = searchTermLower !== '' || filterStatuses.size > 0 || filterAssignees.size > 0 || filterTypes.size > 0 || filterLabels.size > 0;
 
   const virtualizer = useVirtualizer({
     count: filteredIssues.length,
@@ -413,7 +477,7 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
             type="text"
             value={filterText}
             onChange={(event) => setFilterText(event.target.value)}
-            placeholder="Filter by title..."
+            placeholder="Filter by ID, title, label, or assignee..."
             className="w-full bg-surface/50 border border-edge/50 rounded text-sm text-fg placeholder-fg-disabled pl-8 pr-3 py-1.5 outline-none focus:border-edge-input"
             data-testid="import-search"
           />
@@ -620,16 +684,6 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
 }
 
 // --- Individual issue row ---
-
-/** For project items, extract the linked issue number from the external URL if available. */
-function displayId(issue: ExternalIssue): string {
-  if (issue.externalSource === 'github_projects') {
-    const issueNumberMatch = /\/issues\/(\d+)$/.exec(issue.externalUrl);
-    if (issueNumberMatch) return `#${issueNumberMatch[1]}`;
-    return '';
-  }
-  return `#${issue.externalId}`;
-}
 
 const ImportIssueRow = React.memo(function ImportIssueRow({
   issue,

@@ -294,7 +294,8 @@ Click **Import** in the backlog toolbar to pull tasks from external project mana
 
 **Importing items:**
 1. Click a saved source to open the import dialog
-2. Browse items with filtering by title, type, status, assignee, and labels
+2. Browse items with filtering by ID, title, type, status, assignee, and labels (the search box
+   matches only what a row displays, so every hit is explainable from the row itself)
 3. Use the "Imported" toggle to hide already-imported items (on by default)
 4. Click anywhere on a row to select it (or use the checkbox)
 5. Click **Import (N)** to pull selected items into the backlog

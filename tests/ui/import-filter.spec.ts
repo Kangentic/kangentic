@@ -65,6 +65,40 @@
  *     ordering shifted between sequential fetches) is deduped to a single
  *     row instead of double-rendering it, and the footer's loaded count
  *     reflects the deduped total, not the raw sum of both pages' arrays.
+ *
+ * 16. The search box matches the ID the row prints, for a plain github_issues
+ *     source, with the leading '#', without it, and with surrounding whitespace
+ *     (the paste case). The seeded item's number appears nowhere in its title, so
+ *     a title-only predicate fails this.
+ *
+ * 17. The same, for a github_projects source, whose externalId is an opaque
+ *     project-item node id - the visible '#N' comes from the external URL. The
+ *     node id deliberately does not contain the number, so matching externalId
+ *     instead of the rendered ID still fails this one.
+ *
+ * 18. The search box matches the other fields the row prints - a label and an
+ *     assignee - so a hit is always explainable from the row.
+ *
+ * 18b. The search box does NOT match the issue description (body), which no row
+ *     renders. Guards the rule directly: issue bodies cross-reference each other
+ *     by number ("Fixed by #332"), so a body in the haystack made an ID search
+ *     return every issue MENTIONING a number alongside the one that IS it.
+ *
+ * 19. The '\n' field separators inside searchHaystack keep a query from
+ *     spanning two fields, at both boundaries (id/title and title/type): a
+ *     query that only forms a contiguous substring when two fields are
+ *     concatenated without a separator (e.g. '501z' spanning '#501' and
+ *     'zebra...', or 'designb' spanning '...redesign' and 'Bug') must match
+ *     nothing, while a query entirely within one field still matches.
+ *
+ * 20. The leading-'#' strip on the search term is anchored ('^#'), not
+ *     global: a literal internal '#' in the query (e.g. 'c#') must be
+ *     preserved rather than degrading to a bare letter that would over-match.
+ *
+ * 21. hasActiveFilters reads the normalized search term, not the raw input:
+ *     a query that normalizes to empty (a lone '#') must not flip the empty
+ *     state to the "filters excluded everything" branch when nothing was
+ *     actually excluded.
  */
 import { test, expect, type Page } from '@playwright/test';
 import { launchPage, createProject, collectPageErrors } from './helpers';
@@ -79,8 +113,12 @@ test.describe.configure({ mode: 'parallel' });
 
 function makeIssue(overrides: Partial<{
   externalId: string;
+  externalSource: string;
+  externalUrl: string;
   title: string;
+  body: string;
   state: string;
+  workItemType: string;
   assignee: string | null;
   labels: string[];
   createdAt: string;
@@ -88,12 +126,18 @@ function makeIssue(overrides: Partial<{
 }>) {
   return {
     externalId: overrides.externalId ?? 'issue-1',
-    externalUrl: `https://github.com/org/repo/issues/${overrides.externalId ?? '1'}`,
+    // A github_projects item's externalId is an opaque project-item node id, so the
+    // visible '#N' is parsed out of this URL instead. Overridable for that reason.
+    externalSource: overrides.externalSource ?? 'github_issues',
+    externalUrl: overrides.externalUrl ?? `https://github.com/org/repo/issues/${overrides.externalId ?? '1'}`,
     title: overrides.title ?? 'An issue',
-    body: '',
+    body: overrides.body ?? '',
     labels: overrides.labels ?? [],
     assignee: overrides.assignee ?? null,
     state: overrides.state ?? 'open',
+    // Empty by default, so the Type dropdown stays absent for every spec that
+    // does not opt in (the row and uniqueTypes both gate on truthiness).
+    workItemType: overrides.workItemType ?? '',
     createdAt: overrides.createdAt ?? new Date('2025-01-01').toISOString(),
     updatedAt: overrides.createdAt ?? new Date('2025-01-01').toISOString(),
     alreadyImported: overrides.alreadyImported ?? false,
@@ -130,11 +174,32 @@ async function seedGitHubSource(page: Page): Promise<void> {
 }
 
 /**
+ * Seed a GitHub Projects import source. Its items resolve their visible '#N' from
+ * the external URL rather than from externalId, which is the branch `displayId`
+ * takes for `github_projects`. Seeded on its own (never alongside the Issues
+ * source) so the popover's source label stays unambiguous for `getByText`.
+ */
+async function seedGitHubProjectsSource(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    (window as unknown as { __mockImportSourcesPreset?: unknown }).__mockImportSourcesPreset = [
+      {
+        id: 'gh-projects-src',
+        source: 'github_projects',
+        label: 'org/repo Roadmap Project',
+        repository: 'org/repo',
+        url: 'https://github.com/orgs/org/projects/7',
+        createdAt: new Date().toISOString(),
+      },
+    ];
+  });
+}
+
+/**
  * Open the import dialog by clicking the pre-seeded source in the backlog popover.
  * Returns when the dialog is visible and the first fetch has settled (loading
  * spinner gone).
  */
-async function openImportDialog(page: Page): Promise<void> {
+async function openImportDialog(page: Page, sourceLabel = 'org/repo GitHub Issues'): Promise<void> {
   // Navigate to backlog view
   await page.locator('[data-testid="view-toggle-backlog"]').click();
 
@@ -144,7 +209,7 @@ async function openImportDialog(page: Page): Promise<void> {
   await expect(page.locator('[data-testid="import-popover"]')).toBeVisible();
 
   // Click the pre-seeded source
-  await page.getByText('org/repo GitHub Issues').click();
+  await page.getByText(sourceLabel).click();
 
   // Wait for the dialog to appear
   await page.locator('[data-testid="import-dialog"]').waitFor({ state: 'visible', timeout: 8000 });
@@ -788,6 +853,356 @@ test.describe('ImportDialog - filter and streaming behaviour', () => {
     // The footer's loaded count reflects the deduped total (3 unique issues),
     // not the raw sum of both pages' issues arrays (4).
     await expect(page.locator('text=/3 of 3 items/')).toBeVisible();
+
+    await browser.close();
+  });
+
+  test('searching an issue number matches the ID the row prints, with or without the "#"', async () => {
+    const { browser, page } = await launchPage();
+
+    await seedGitHubSource(page);
+
+    // The target's number appears nowhere in its title or body, so it is reachable
+    // only through the '#276' the row renders. The sibling is the control: it proves
+    // the filter actually ran rather than simply listing everything.
+    await page.evaluate(
+      ([target, sibling]) => {
+        (window as unknown as { __mockImportFetchPreset?: unknown }).__mockImportFetchPreset = {
+          issues: [target, sibling],
+          totalCount: 2,
+          hasNextPage: false,
+        };
+      },
+      [
+        makeIssue({ externalId: '276', title: 'Stop a close during the entrance animation sticking open' }),
+        makeIssue({ externalId: '981', title: 'Unrelated sibling issue' }),
+      ],
+    );
+
+    await createProject(page, 'import-id-search-issues-test');
+    await openImportDialog(page);
+
+    await expect(page.locator('[data-testid="import-issue-276"]')).toBeVisible();
+    await expect(page.locator('[data-testid="import-issue-981"]')).toBeVisible();
+
+    // Bare number
+    await page.locator('[data-testid="import-search"]').fill('276');
+    await expect(page.locator('[data-testid="import-issue-276"]')).toBeVisible({ timeout: 3000 });
+    await expect(page.locator('[data-testid="import-issue-981"]')).toHaveCount(0, { timeout: 3000 });
+
+    // Same number as it is rendered, with the leading '#'
+    await page.locator('[data-testid="import-search"]').fill('#276');
+    await expect(page.locator('[data-testid="import-issue-276"]')).toBeVisible({ timeout: 3000 });
+    await expect(page.locator('[data-testid="import-issue-981"]')).toHaveCount(0, { timeout: 3000 });
+
+    // A pasted ID often carries surrounding whitespace, which the query trims off.
+    await page.locator('[data-testid="import-search"]').fill('  #276  ');
+    await expect(page.locator('[data-testid="import-issue-276"]')).toBeVisible({ timeout: 3000 });
+    await expect(page.locator('[data-testid="import-issue-981"]')).toHaveCount(0, { timeout: 3000 });
+
+    await browser.close();
+  });
+
+  test('searching a number on a github_projects source matches the URL-derived ID, not externalId', async () => {
+    const { browser, page } = await launchPage();
+
+    await seedGitHubProjectsSource(page);
+
+    // A project item's externalId is an opaque node id that does NOT contain the
+    // issue number - the '#512' the row prints is parsed out of externalUrl. The
+    // node ids below deliberately contain neither '512' nor '640', so a predicate
+    // matching externalId instead of the rendered ID fails this test.
+    await page.evaluate(
+      ([target, sibling]) => {
+        (window as unknown as { __mockImportFetchPreset?: unknown }).__mockImportFetchPreset = {
+          issues: [target, sibling],
+          totalCount: 2,
+          hasNextPage: false,
+        };
+      },
+      [
+        makeIssue({
+          externalId: 'PVTI_lADOAAAAAAB1c2zgABCDEF',
+          externalSource: 'github_projects',
+          externalUrl: 'https://github.com/org/repo/issues/512',
+          title: 'Project item whose number lives in the URL',
+        }),
+        makeIssue({
+          externalId: 'PVTI_lADOAAAAAAB1c2zgUVWXYZ',
+          externalSource: 'github_projects',
+          externalUrl: 'https://github.com/org/repo/issues/640',
+          title: 'Unrelated project item',
+        }),
+      ],
+    );
+
+    await createProject(page, 'import-id-search-projects-test');
+    await openImportDialog(page, 'org/repo Roadmap Project');
+
+    const targetRow = page.locator('[data-testid="import-issue-PVTI_lADOAAAAAAB1c2zgABCDEF"]');
+    const siblingRow = page.locator('[data-testid="import-issue-PVTI_lADOAAAAAAB1c2zgUVWXYZ"]');
+
+    await expect(targetRow).toBeVisible();
+    await expect(siblingRow).toBeVisible();
+
+    await page.locator('[data-testid="import-search"]').fill('512');
+    await expect(targetRow).toBeVisible({ timeout: 3000 });
+    await expect(siblingRow).toHaveCount(0, { timeout: 3000 });
+
+    await page.locator('[data-testid="import-search"]').fill('#512');
+    await expect(targetRow).toBeVisible({ timeout: 3000 });
+    await expect(siblingRow).toHaveCount(0, { timeout: 3000 });
+
+    await browser.close();
+  });
+
+  test('searching matches the other fields the row prints - a label and an assignee', async () => {
+    const { browser, page } = await launchPage();
+
+    await seedGitHubSource(page);
+
+    // Neither term appears in either row's ID or title, so each hit can only come
+    // from the label or the assignee - both of which the row renders.
+    await page.evaluate(
+      ([target, sibling]) => {
+        (window as unknown as { __mockImportFetchPreset?: unknown }).__mockImportFetchPreset = {
+          issues: [target, sibling],
+          totalCount: 2,
+          hasNextPage: false,
+        };
+      },
+      [
+        makeIssue({
+          externalId: '701',
+          title: 'Drag target keeps its position',
+          labels: ['regression'],
+          assignee: 'Ryan-Tuck',
+        }),
+        makeIssue({ externalId: '702', title: 'Unrelated sibling issue', labels: ['docs'], assignee: 'someone-else' }),
+      ],
+    );
+
+    await createProject(page, 'import-label-assignee-search-test');
+    await openImportDialog(page);
+
+    const targetRow = page.locator('[data-testid="import-issue-701"]');
+    const siblingRow = page.locator('[data-testid="import-issue-702"]');
+    await expect(targetRow).toBeVisible();
+    await expect(siblingRow).toBeVisible();
+
+    // Label
+    await page.locator('[data-testid="import-search"]').fill('regression');
+    await expect(targetRow).toBeVisible({ timeout: 3000 });
+    await expect(siblingRow).toHaveCount(0, { timeout: 3000 });
+
+    // Assignee, bare
+    await page.locator('[data-testid="import-search"]').fill('ryan-tuck');
+    await expect(targetRow).toBeVisible({ timeout: 3000 });
+    await expect(siblingRow).toHaveCount(0, { timeout: 3000 });
+
+    // Assignee, as the row renders it (with the '@')
+    await page.locator('[data-testid="import-search"]').fill('@ryan-tuck');
+    await expect(targetRow).toBeVisible({ timeout: 3000 });
+    await expect(siblingRow).toHaveCount(0, { timeout: 3000 });
+
+    await browser.close();
+  });
+
+  test('searching text that appears only in an issue description matches nothing', async () => {
+    const { browser, page } = await launchPage();
+
+    await seedGitHubSource(page);
+
+    // The body is NOT searchable: no row renders it, so a body hit would look like
+    // a phantom match. The realistic failure this guards is the cross-reference
+    // case - '#332' in a body is how issues cite each other, so a body-inclusive
+    // haystack made a number search return every issue that merely mentions it.
+    await page.evaluate(
+      ([crossReferencing, plainBody]) => {
+        (window as unknown as { __mockImportFetchPreset?: unknown }).__mockImportFetchPreset = {
+          issues: [crossReferencing, plainBody],
+          totalCount: 2,
+          hasNextPage: false,
+        };
+      },
+      [
+        makeIssue({
+          externalId: '335',
+          title: 'Creating a new task should open the task modal directly',
+          body: 'Fixed by #332.',
+        }),
+        makeIssue({
+          externalId: '336',
+          title: 'Unrelated sibling issue',
+          body: 'Mentions the swimlane reordering behaviour.',
+        }),
+      ],
+    );
+
+    await createProject(page, 'import-description-excluded-test');
+    await openImportDialog(page);
+
+    const crossReferencingRow = page.locator('[data-testid="import-issue-335"]');
+    const plainBodyRow = page.locator('[data-testid="import-issue-336"]');
+    await expect(crossReferencingRow).toBeVisible();
+    await expect(plainBodyRow).toBeVisible();
+
+    // '332' appears only inside #335's body, as a cross-reference. Nothing matches.
+    await page.locator('[data-testid="import-search"]').fill('332');
+    await expect(crossReferencingRow).toHaveCount(0, { timeout: 3000 });
+    await expect(plainBodyRow).toHaveCount(0, { timeout: 3000 });
+
+    // Ordinary body prose is unreachable too, not just a '#'-prefixed reference.
+    await page.locator('[data-testid="import-search"]').fill('swimlane');
+    await expect(crossReferencingRow).toHaveCount(0, { timeout: 3000 });
+    await expect(plainBodyRow).toHaveCount(0, { timeout: 3000 });
+
+    // The ID that IS the row still matches, so the row is reachable - this is not
+    // a vacuous "everything is filtered out" pass.
+    await page.locator('[data-testid="import-search"]').fill('335');
+    await expect(crossReferencingRow).toBeVisible({ timeout: 3000 });
+    await expect(plainBodyRow).toHaveCount(0, { timeout: 3000 });
+
+    await browser.close();
+  });
+
+  test('a query spanning two haystack fields (no separator) matches nothing, but a query within one field still matches', async () => {
+    const { browser, page } = await launchPage();
+
+    await seedGitHubSource(page);
+
+    // The target's rendered id is '#501', its title ends with 'redesign', and its
+    // work item type is 'Bug'. searchHaystack joins the row's fields with '\n', so
+    // a query spanning either boundary ('501' into 'zebra...', or 'redesign' into
+    // 'bug') only forms a contiguous substring if that separator is dropped - both
+    // boundaries are exercised below. The sibling never contains either spanning
+    // query through any field, so it is the control that proves the filter actually
+    // ran rather than everything matching.
+    await page.evaluate(
+      ([target, sibling]) => {
+        (window as unknown as { __mockImportFetchPreset?: unknown }).__mockImportFetchPreset = {
+          issues: [target, sibling],
+          totalCount: 2,
+          hasNextPage: false,
+        };
+      },
+      [
+        makeIssue({
+          externalId: '501',
+          title: 'Zebra crossing needs a redesign',
+          workItemType: 'Bug',
+        }),
+        makeIssue({ externalId: '999', title: 'Unrelated sibling issue' }),
+      ],
+    );
+
+    await createProject(page, 'import-id-search-separator-test');
+    await openImportDialog(page);
+
+    const targetRow = page.locator('[data-testid="import-issue-501"]');
+    const siblingRow = page.locator('[data-testid="import-issue-999"]');
+    await expect(targetRow).toBeVisible();
+    await expect(siblingRow).toBeVisible();
+
+    // A query spanning the id/title boundary ('501' + the 'z' from 'zebra')
+    // only forms a contiguous substring if the '\n' separator between fields
+    // is dropped. With the separator present, this must match nothing.
+    await page.locator('[data-testid="import-search"]').fill('501z');
+    await expect(targetRow).toHaveCount(0, { timeout: 3000 });
+    await expect(siblingRow).toHaveCount(0, { timeout: 3000 });
+
+    // A query entirely within the id field alone still matches the row - the
+    // separator only blocks a query from spanning fields, not from matching
+    // inside one.
+    await page.locator('[data-testid="import-search"]').fill('501');
+    await expect(targetRow).toBeVisible({ timeout: 3000 });
+    await expect(siblingRow).toHaveCount(0, { timeout: 3000 });
+
+    // Same guard at the title/type boundary: 'designb' spans 'redesign' and
+    // 'Bug', so it only forms a contiguous substring if that separator is
+    // dropped too. Run last, so this observes a real visible-to-absent
+    // transition from the prior '501' step rather than a vacuous "already
+    // absent" check.
+    await page.locator('[data-testid="import-search"]').fill('designb');
+    await expect(targetRow).toHaveCount(0, { timeout: 3000 });
+    await expect(siblingRow).toHaveCount(0, { timeout: 3000 });
+
+    await browser.close();
+  });
+
+  test('a literal internal "#" in the query is preserved, not globally stripped', async () => {
+    const { browser, page } = await launchPage();
+
+    await seedGitHubSource(page);
+
+    // The target's title contains a literal 'c#'; the sibling's title contains a
+    // bare 'c' (several times, via 'references'/'cache') but never 'c#'. Both
+    // externalIds are numeric, so neither row's id can contribute a 'c#' or stray
+    // 'c' hit - only the titles are exercised. Only a LEADING '#' should be
+    // stripped from the query; stripping every '#' would degrade 'c#' down to
+    // a bare 'c', which the sibling's title would then also match.
+    await page.evaluate(
+      ([target, sibling]) => {
+        (window as unknown as { __mockImportFetchPreset?: unknown }).__mockImportFetchPreset = {
+          issues: [target, sibling],
+          totalCount: 2,
+          hasNextPage: false,
+        };
+      },
+      [
+        makeIssue({
+          externalId: '601',
+          title: 'Cannot detect the c# compiler on PATH',
+        }),
+        makeIssue({
+          externalId: '602',
+          title: 'References the cache subsystem',
+        }),
+      ],
+    );
+
+    await createProject(page, 'import-hash-anchor-search-test');
+    await openImportDialog(page);
+
+    const targetRow = page.locator('[data-testid="import-issue-601"]');
+    const siblingRow = page.locator('[data-testid="import-issue-602"]');
+    await expect(targetRow).toBeVisible();
+    await expect(siblingRow).toBeVisible();
+
+    await page.locator('[data-testid="import-search"]').fill('c#');
+    await expect(targetRow).toBeVisible({ timeout: 3000 });
+    await expect(siblingRow).toHaveCount(0, { timeout: 3000 });
+
+    await browser.close();
+  });
+
+  test('a query that normalizes to empty (a lone "#") is not treated as an active filter', async () => {
+    const { browser, page } = await launchPage();
+
+    await seedGitHubSource(page);
+
+    await page.evaluate(() => {
+      (window as unknown as { __mockImportFetchPreset?: unknown }).__mockImportFetchPreset = {
+        issues: [],
+        totalCount: 0,
+        hasNextPage: false,
+      };
+    });
+
+    await createProject(page, 'import-empty-normalized-filter-test');
+    await openImportDialog(page);
+
+    // Baseline: no issues, no filters - the plain empty state.
+    await expect(page.getByText('No items found')).toBeVisible({ timeout: 3000 });
+
+    // A lone '#' normalizes to '' (the leading '#' is stripped, leaving
+    // nothing), so it must not flip the empty state to the "filters excluded
+    // everything" branch - nothing was actually excluded, since there was
+    // nothing to filter in the first place.
+    await page.locator('[data-testid="import-search"]').fill('#');
+    await expect(page.getByText('No items found')).toBeVisible({ timeout: 3000 });
+    await expect(page.locator('[data-testid="import-empty-state-message"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="import-clear-filters-btn"]')).toHaveCount(0);
 
     await browser.close();
   });
