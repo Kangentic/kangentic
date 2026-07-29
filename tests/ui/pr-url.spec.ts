@@ -36,9 +36,13 @@ const PROJECT_ID = 'proj-pr-url-test';
 const TASK_TODO_ID = 'task-pr-url-todo';
 const TASK_PLANNING_FILL_ID = 'task-pr-url-planning-fill';
 const TASK_PLANNING_CLEAR_ID = 'task-pr-url-planning-clear';
+const TASK_PLANNING_REPOINT_ID = 'task-pr-url-planning-repoint';
+
+const REPOINT_ORIGINAL_PR_URL = 'https://github.com/owner/repo/pull/50';
+const REPOINT_NEW_PR_URL = 'https://github.com/owner/repo/pull/77';
 
 /**
- * Launch a fresh headless page with a project and all three test tasks
+ * Launch a fresh headless page with a project and all four test tasks
  * pre-seeded into their target swimlanes.
  *
  * Seeding tasks directly into Planning avoids any UI-driven move, which would
@@ -49,6 +53,10 @@ const TASK_PLANNING_CLEAR_ID = 'task-pr-url-planning-clear';
  * - TASK_PLANNING_CLEAR_ID: placed in Planning already pre-seeded with
  *   pr_url='https://github.com/owner/repo/pull/99' and pr_number=99, so test 3
  *   does not depend on test 2 having saved anything.
+ * - TASK_PLANNING_REPOINT_ID: placed in Planning already pre-seeded with
+ *   pr_url=REPOINT_ORIGINAL_PR_URL, pr_number=50, AND a terminal pr_state of
+ *   'merged', so the re-point test starts from the same stranded shape as the
+ *   clear test but edits the URL to a DIFFERENT PR instead of clearing it.
  */
 async function launchWithSeededState(): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady(VITE_URL);
@@ -139,9 +147,13 @@ async function launchWithSeededState(): Promise<{ browser: Browser; page: Page }
         updated_at: ts,
       });
 
-      // Task 3: sits in Planning already bearing a PR URL and pr_number.
-      // This makes test 3 independent of test 2 - it does not need test 2 to
-      // have saved the value; the value is seeded here at page load.
+      // Task 3: sits in Planning already bearing a PR URL, pr_number, AND a
+      // terminal pr_state. This makes test 3 independent of test 2 - it does not
+      // need test 2 to have saved the value; the value is seeded here at page
+      // load. The 'merged' state is the load-bearing part: it is the shape a
+      // wrongly-linked task is stuck in, and clearing the URL must take the
+      // state with it (a stranded terminal state short-circuits every non-force
+      // resolve, so the task could never be re-resolved).
       state.tasks.push({
         id: '${TASK_PLANNING_CLEAR_ID}',
         title: 'PR URL Clear Task',
@@ -154,7 +166,36 @@ async function launchWithSeededState(): Promise<{ browser: Browser; page: Page }
         branch_name: null,
         pr_number: 99,
         pr_url: 'https://github.com/owner/repo/pull/99',
-        pr_state: null,
+        pr_state: 'merged',
+        base_branch: null,
+        use_worktree: 0,
+        labels: [],
+        priority: 0,
+        attachment_count: 0,
+        archived_at: null,
+        created_at: ts,
+        updated_at: ts,
+      });
+
+      // Task 4: sits in Planning already bearing a PR URL, pr_number, AND a
+      // terminal pr_state, same as the Clear task above - but this test edits
+      // the URL to point at a DIFFERENT PR instead of clearing it. The SET /
+      // re-point branch of buildPrFields is only reached when the field starts
+      // non-empty and ends non-empty with a NEW value; the Fill task (starts
+      // null) and the Clear task (ends empty) both miss it.
+      state.tasks.push({
+        id: '${TASK_PLANNING_REPOINT_ID}',
+        title: 'PR URL Repoint Task',
+        description: '',
+        swimlane_id: laneIds['Planning'],
+        position: 2,
+        agent: 'claude',
+        session_id: null,
+        worktree_path: null,
+        branch_name: null,
+        pr_number: 50,
+        pr_url: '${REPOINT_ORIGINAL_PR_URL}',
+        pr_state: 'merged',
         base_branch: null,
         use_worktree: 0,
         labels: [],
@@ -261,6 +302,81 @@ test.describe('PR URL in Edit Form', () => {
       await expect(
         clearTaskCard.locator('[data-testid="task-card-pr-link"]'),
       ).not.toBeVisible({ timeout: 5000 });
+
+      // All three PR fields must be nulled together. Clearing only pr_url and
+      // pr_number would leave the seeded pr_state:'merged' behind - the exact
+      // inconsistent row the linker forbids, and one whose terminal state makes
+      // every subsequent non-force resolve short-circuit, so the task can never
+      // recover from a wrong link.
+      const findClearCall = () => page.evaluate((taskId) => {
+        const calls = (window as unknown as {
+          electronAPI: { tasks: { __updateCalls: Array<Record<string, unknown>> } };
+        }).electronAPI.tasks.__updateCalls;
+        return calls.find((call) => call.id === taskId && call.pr_url === null) ?? null;
+      }, TASK_PLANNING_CLEAR_ID);
+
+      await expect.poll(findClearCall, { timeout: 5000 }).not.toBeNull();
+      expect(await findClearCall()).toMatchObject({ pr_url: null, pr_number: null, pr_state: null });
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('re-pointing PR URL to a different PR nulls the stale pr_state', async () => {
+    const { browser, page } = await launchWithSeededState();
+
+    try {
+      await page.locator('[data-swimlane-name="Planning"]').waitFor({ state: 'visible', timeout: 15000 });
+
+      // Click the task card seeded into Planning that ALREADY has pr_url,
+      // pr_number=50, AND pr_state='merged'. This is the shape a mislinked
+      // task is stuck in: a terminal state that short-circuits every
+      // non-force resolve until something clears it.
+      const planningColumn = page.locator('[data-swimlane-name="Planning"]');
+      await planningColumn.locator('text=PR URL Repoint Task').first().click();
+
+      // Wait for the task-detail window edit form to mount
+      await page.locator('input[placeholder="Task title"]').waitFor({ state: 'visible', timeout: 5000 });
+
+      // The PR URL field must already show the seeded value
+      const prUrlInput = page.locator('[data-testid="pr-url-input"]');
+      await expect(prUrlInput).toHaveValue(REPOINT_ORIGINAL_PR_URL, { timeout: 3000 });
+
+      // Edit to a DIFFERENT PR URL (not clearing it) and save. This is the
+      // SET / re-point branch of buildPrFields, not the CLEAR branch: the
+      // field starts non-empty and ends non-empty with a new value.
+      await prUrlInput.fill(REPOINT_NEW_PR_URL);
+      await page.locator('button:has-text("Save")').click();
+
+      // The card must now show the badge for the NEW PR number.
+      const repointTaskCard = planningColumn.locator(`[data-task-id="${TASK_PLANNING_REPOINT_ID}"]`);
+      const prBadge = repointTaskCard.locator('[data-testid="task-card-pr-link"]');
+      await expect(prBadge).toBeVisible({ timeout: 5000 });
+      await expect(prBadge).toHaveText('PR #77');
+
+      // The re-pointed pr_state must be nulled, exactly like the clear branch
+      // above. Leaving the seeded 'merged' behind would freeze the task on a
+      // PR it no longer points at: a stale terminal pr_state short-circuits
+      // every non-force resolve, so the next linker pass would never refill
+      // pr_state for the NEW PR. Filtered on pr_url (not pr_state) so the
+      // poll resolves even if pr_state comes back wrong - a wrong pr_state
+      // then fails the assertion below for the right reason, instead of the
+      // poll itself timing out.
+      const findRepointCall = () => page.evaluate(({ taskId, expectedPrUrl }) => {
+        const calls = (window as unknown as {
+          electronAPI: { tasks: { __updateCalls: Array<Record<string, unknown>> } };
+        }).electronAPI.tasks.__updateCalls;
+        return calls.find((call) => call.id === taskId && call.pr_url === expectedPrUrl) ?? null;
+      }, { taskId: TASK_PLANNING_REPOINT_ID, expectedPrUrl: REPOINT_NEW_PR_URL });
+
+      await expect.poll(findRepointCall, { timeout: 5000 }).not.toBeNull();
+      const capturedCall = await findRepointCall();
+      expect(capturedCall).toMatchObject({ pr_url: REPOINT_NEW_PR_URL, pr_number: 77 });
+      // Asserted separately (not folded into the toMatchObject above) so a
+      // deleted `pr_state: null,` in the SET branch of buildPrFields - which
+      // drops the key entirely rather than sending an explicit null - fails
+      // on a named field instead of a vaguer object-shape mismatch.
+      expect(capturedCall?.pr_state).toBeNull();
     } finally {
       await browser.close();
     }

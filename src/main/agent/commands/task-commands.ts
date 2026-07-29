@@ -78,6 +78,23 @@ export function computeUpdatedDescription(
   return { success: true, text };
 }
 
+/**
+ * The PR number a PR URL names, or null when the URL carries none.
+ *
+ * `pr_url` and `pr_number` must always name the SAME PR: the linker writes the
+ * three PR columns atomically, and Tier 1 of the confidence ladder treats
+ * `pr_number` as authoritative. A caller naturally passes `prUrl` alone (the URL
+ * already encodes the number), which would otherwise leave the OLD number in the
+ * row - the next non-force resolve then resolves that stale number and silently
+ * overwrites the URL back to the previous PR. Deriving it here keeps the two in
+ * agreement, and mirrors `buildPrFields` in the task-detail edit form, which has
+ * always derived the number from the URL the same way.
+ */
+function prNumberFromUrl(prUrl: string): number | null {
+  const prNumberMatch = prUrl.match(/\/pull\/(\d+)/);
+  return prNumberMatch ? parseInt(prNumberMatch[1], 10) : null;
+}
+
 export const handleCreateTask: CommandHandler = (
   params: Record<string, unknown>,
   context: CommandContext,
@@ -98,6 +115,10 @@ export const handleCreateTask: CommandHandler = (
   const autoCommand = params.autoCommand as string | null;
   const profileSelector = params.profile as string | null;
   const runMode = params.runMode as TaskRunMode | null;
+  // Normalized to null so an omitted key reads the same as the explicit `null`
+  // the MCP tool layer forwards - a direct handler call passes neither.
+  const prUrl = (params.prUrl as string | null | undefined) ?? null;
+  const prNumber = (params.prNumber as number | null | undefined) ?? null;
 
   // Observability for the "labels dropped on a large description" bug
   // (task #229). Logs what `labels` actually reached the handler. If it is
@@ -187,6 +208,26 @@ export const handleCreateTask: CommandHandler = (
     ...(runMode ? { run_mode: runMode } : {}),
   });
 
+  // A review task names the PR it is about up front, so the linker's pr_number
+  // tier resolves it (a PR URL in the DESCRIPTION is deliberately not an anchor -
+  // see the ladder comment in pr-linking.ts). Applied as a follow-up update
+  // rather than through TaskCreateInput on purpose: `TaskRepository.create`
+  // always writes the three PR columns null, and keeping that invariant means
+  // the create path has exactly one shape. pr_state stays null and the next
+  // resolve fills it in.
+  let createdTask = task;
+  if (prUrl !== null || prNumber !== null) {
+    // An explicit prNumber wins; otherwise derive it from the URL, so a caller
+    // passing prUrl alone still lands on Tier 1 instead of producing a row that
+    // shows a PR badge but has no anchor to ever resolve it.
+    const linkedPrNumber = prNumber !== null ? Number(prNumber) : prNumberFromUrl(String(prUrl));
+    createdTask = taskRepo.update({
+      id: task.id,
+      ...(prUrl !== null ? { pr_url: String(prUrl) } : {}),
+      ...(linkedPrNumber !== null ? { pr_number: linkedPrNumber } : {}),
+    });
+  }
+
   // Persist label colors to config if any were provided
   if (Object.keys(labelColorMap).length > 0) {
     context.onLabelColorsChanged(labelColorMap);
@@ -206,12 +247,12 @@ export const handleCreateTask: CommandHandler = (
     }
   }
 
-  context.onTaskCreated(task, targetSwimlane.name, targetSwimlane.id);
+  context.onTaskCreated(createdTask, targetSwimlane.name, targetSwimlane.id);
 
   return {
     success: true,
-    data: { taskId: task.id, displayId: task.display_id, title: task.title, column: targetSwimlane.name },
-    message: `Created task "${task.title}" in ${targetSwimlane.name} column (#${task.display_id}, id: ${task.id})`,
+    data: { taskId: createdTask.id, displayId: createdTask.display_id, title: createdTask.title, column: targetSwimlane.name },
+    message: `Created task "${createdTask.title}" in ${targetSwimlane.name} column (#${createdTask.display_id}, id: ${createdTask.id})`,
   };
 };
 
@@ -287,7 +328,17 @@ export const handleUpdateTask: CommandHandler = (
   }
 
   if (newPrUrl !== null) updates.pr_url = String(newPrUrl);
+  // An explicit prNumber wins; otherwise derive it from the URL. Writing the URL
+  // alone would leave the OLD number behind, and the next resolve would take that
+  // stale number as authoritative and revert the URL to the previous PR.
   if (newPrNumber !== null) updates.pr_number = Number(newPrNumber);
+  else if (newPrUrl !== null) updates.pr_number = prNumberFromUrl(String(newPrUrl));
+  // Re-pointing the link invalidates any state carried over from the old PR. The
+  // three fields must always agree (the linker writes them atomically), and a
+  // stale terminal `merged`/`closed` would otherwise short-circuit every
+  // non-force resolve, freezing the task on a PR it no longer points at. The
+  // next resolve refills it.
+  if (newPrUrl !== null || newPrNumber !== null) updates.pr_state = null;
   if (newAgent !== null) updates.agent = newAgent;
   if (newPriority !== null) updates.priority = Number(newPriority);
   if (newLabels !== null) updates.labels = newLabels;

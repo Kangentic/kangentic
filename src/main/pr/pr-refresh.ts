@@ -13,7 +13,6 @@
  */
 
 import { getProjectRepos } from '../ipc/helpers/project-repos';
-import { detectCanonicalPR } from './pr-registry';
 import { linkPR } from './pr-linking';
 import type { Task } from '../../shared/types';
 import type { IpcContext } from '../ipc/ipc-context';
@@ -26,18 +25,21 @@ import type { IpcContext } from '../ipc/ipc-context';
  *     live HEAD branch resolves the PR even after the agent renamed the branch.
  *     Only active tasks have a worktree (To Do clears it, Done reclaims it), so
  *     this stays a small bounded set, further bounded by the per-task 60s TTL and
- *     the global `gh` concurrency cap;
- *   - a PR URL anchor in the description.
- * Terminal merged/closed PRs never change and are skipped first. A task with none
- * of these has nothing to resolve. (`tasks.list()` already excludes archived
- * tasks.) `head_sha` is deliberately NOT an anchor here: nearly every historical
- * task carries one, so it would make the sweep unbounded.
+ *     the global `gh` concurrency cap.
+ * Terminal merged/closed PRs never change and are skipped first, as are tasks
+ * sitting in a To Do lane (To Do resets a task, so there is no PR to link there -
+ * the same gate `autoLinkPRForTask` applies to every implicit trigger). A task
+ * with none of these has nothing to resolve. (`tasks.list()` already excludes
+ * archived tasks.) `head_sha` is deliberately NOT an anchor here: nearly every
+ * historical task carries one, so it would make the sweep unbounded. Neither is a
+ * PR URL in the description - see the ladder comment in `pr-linking.ts` for why
+ * scraping prose stamped cited PRs onto unrelated tasks.
  */
-function isEligibleForRefresh(task: Task): boolean {
+function isEligibleForRefresh(task: Task, isTodoLane: boolean): boolean {
+  if (isTodoLane) return false;
   if (task.pr_state === 'merged' || task.pr_state === 'closed') return false;
   if (task.pr_number != null) return true;
-  if (task.worktree_path != null) return true;
-  return detectCanonicalPR(task.description ?? '') != null;
+  return task.worktree_path != null;
 }
 
 /**
@@ -51,8 +53,18 @@ function isEligibleForRefresh(task: Task): boolean {
 export async function refreshProjectPRs(context: IpcContext, projectId: string): Promise<void> {
   let eligible: Task[];
   try {
-    const { tasks } = getProjectRepos(context, projectId);
-    eligible = tasks.list().filter(isEligibleForRefresh);
+    const { tasks, swimlanes } = getProjectRepos(context, projectId);
+    // Resolve the To Do lanes once rather than per task - the sweep can run over
+    // every task on the board. Guarded separately from the task read: the lane
+    // gate is a filter, so losing it must degrade to "no lane is To Do" rather
+    // than take the whole sweep down with it.
+    let todoLaneIds: Set<string>;
+    try {
+      todoLaneIds = new Set(swimlanes.list().filter((lane) => lane.role === 'todo').map((lane) => lane.id));
+    } catch {
+      todoLaneIds = new Set();
+    }
+    eligible = tasks.list().filter((task) => isEligibleForRefresh(task, todoLaneIds.has(task.swimlane_id)));
   } catch {
     // Project DB unavailable (e.g. closed mid-switch) - nothing to refresh.
     return;

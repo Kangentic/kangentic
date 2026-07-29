@@ -1,6 +1,6 @@
 # PR Integration
 
-Kangentic links each task to its pull request and keeps that link fresh: it detects a PR from terminal scrollback or a task description, authoritatively resolves the PR's state through a hosting-provider CLI, and persists `pr_url` / `pr_number` / `pr_state` on the task so the board can show it. GitHub is the only provider wired today, but every provider is wrapped behind a common `PRConnector` interface so detection and resolution logic stays isolated to a single folder per platform.
+Kangentic links each task to its pull request and keeps that link fresh: it detects a PR from terminal scrollback, authoritatively resolves the PR's state through a hosting-provider CLI, and persists `pr_url` / `pr_number` / `pr_state` on the task so the board can show it. GitHub is the only provider wired today, but every provider is wrapped behind a common `PRConnector` interface so detection and resolution logic stays isolated to a single folder per platform.
 
 This doc covers the connector system, the confidence ladder that picks the strongest anchor, the background refresh sweep, and how to add a new hosting provider.
 
@@ -33,7 +33,6 @@ Every hosting provider implements this contract. The registry calls it without k
 | `name` | yes | Platform name for logging (e.g. `"GitHub"`). |
 | `matchesCommand(commandDetail)` | yes | Whether a Bash command detail looks like a PR command for this platform (drives activity flagging). |
 | `extract(scrollback)` | yes | Extract a PR URL + number from raw PTY scrollback text (no network). Returns the most recent match. |
-| `extractCanonical?(text)` | optional | Extract the single canonical PR from authored text (a task description), or null when the text names zero or several distinct PRs. Deliberately conservative so a description is never guessed at. |
 | `resolveForBranch?(repoCwd, branchName, baseBranch?)` | optional | Authoritatively resolve the PR for a branch via the platform API, run inside the repo/worktree at `repoCwd`. Returns null when no PR matches the head ref; throws `PRResolverUnavailableError` when the CLI is unavailable. |
 | `resolveByNumber?(repoCwd, prNumber)` | optional | Resolve a PR by its number, the most exact anchor and immune to branch renames. Used to refresh an already-linked PR's state. |
 | `resolveByCommit?(repoCwd, commitSha, branchHint?)` | optional | Resolve the PR associated with a commit SHA, an immutable anchor that survives worktree deletion and branch renames. `branchHint` disambiguates when a commit belongs to several PRs. |
@@ -49,7 +48,7 @@ The subsystem uses a consistent verb prefix across modules:
 
 ### `DetectedPR`
 
-Result of a no-network detection (`extract` / `extractCanonical`).
+Result of a no-network detection (`extract`).
 
 | Field | Required | Purpose |
 |-------|----------|---------|
@@ -96,7 +95,6 @@ const connectors: PRConnector[] = [
 |----------|---------|
 | `matchesPRCommand(commandDetail)` | True if any connector recognizes the Bash command as a PR command. |
 | `detectPR(scrollback)` | Try every connector's `extract` against scrollback; return the first match. |
-| `detectCanonicalPR(text)` | Return the single PR a task description names, via the first connector that finds an unambiguous match. |
 | `resolvePRForBranch(repoCwd, branchName, baseBranch?)` | First connector that supports `resolveForBranch` and returns a match. |
 | `resolvePRByNumber(repoCwd, prNumber)` | First connector that supports `resolveByNumber`. |
 | `resolvePRByCommit(repoCwd, commitSha, branchHint?)` | First connector that supports `resolveByCommit`. |
@@ -109,7 +107,7 @@ The registry also re-exports the contract types and both error classes, so consu
 
 `gitHubPRConnector` resolves PRs through the `gh` CLI and detects PR URLs from terminal output. It reuses the board importer's `gh` client (`GitHubImporter` from `boards/adapters/github-common/gh-client.ts`) so binary detection and auth plumbing are shared; a module-level singleton avoids re-probing `gh` per call.
 
-**Detection.** `extract` strips ANSI escape sequences from the tail of scrollback (a 4096-byte scan window) and matches `https://github.com/<owner>/<repo>/pull/<number>`, returning the last (most recent) match. It handles `gh pr create` stdout, `gh pr view` TTY and non-TTY output, and `gh pr view --json`. It deliberately does not match `git push`'s `/pull/new/<branch>` output (no numeric id) or `gh pr merge`'s `owner/repo#123` short form (no full URL). `extractCanonical` collects every distinct full PR URL in the text and returns a match only when there is exactly one.
+**Detection.** `extract` strips ANSI escape sequences from the tail of scrollback (a 4096-byte scan window) and matches `https://github.com/<owner>/<repo>/pull/<number>`, returning the last (most recent) match. It handles `gh pr create` stdout, `gh pr view` TTY and non-TTY output, and `gh pr view --json`. It deliberately does not match `git push`'s `/pull/new/<branch>` output (no numeric id) or `gh pr merge`'s `owner/repo#123` short form (no full URL). Detection runs against terminal scrollback only: there is deliberately no scraper for authored text such as a task description (see "The confidence ladder" below).
 
 **Resolution.** The three resolve methods call the shared `gh` client (`resolvePRByBranch`, `resolvePRByNumber`, `resolvePRByCommit`) and normalize the result:
 
@@ -131,13 +129,14 @@ The registry also re-exports the contract types and both error classes, so consu
 
 | Tier | Anchor | Why |
 |------|--------|-----|
-| 0 | Description PR URL | Authoritative for a code-review task, whose worktree sits on the base branch with no commits of its own, so the git tiers below would resolve the wrong PR. Resolved by number for fresh state; links url+number with unknown state if it cannot be confirmed, and never falls through to the git tiers. |
-| 1 | `pr_number` | Exact and branch-independent, best for refreshing an existing link's state. |
+| 1 | `pr_number` | Exact and branch-independent, best for refreshing an existing link's state. Also how a review task names the PR it is about. |
 | 2 | Worktree HEAD branch | The real branch while the task is actively worked. |
 | 3 | Commit SHA | Immutable, survives Done / worktree deletion and branch renames. Guarded by a commits-ahead-of-base check so a fresh worktree on base's tip does not link the last-merged PR. |
 | 4 | Stored slug branch | Weak last resort when there is no worktree. |
 
 A `PRResolverUnavailableError` from any tier propagates so the caller can degrade.
+
+**A PR URL in the task description is not an anchor.** Every tier above is git state or an explicitly stored number. Scraping the description was tried and removed: a URL cited as background ("this follows on from `<url>`") is textually identical to one naming the task's own PR, so the linker stamped a sibling task's PR onto unrelated tasks - and because that tier always produced a link, the confident-not-found clear could never fire, so the wrong link was permanent. A review task names its PR through the structured `pr_url` / `pr_number` fields (the task-detail edit form, `kangentic_create_task`'s `prUrl` / `prNumber`, or `kangentic_update_task`), which lands on Tier 1. The commits-ahead-of-base guard on Tier 3 independently covers the base-tip case the description tier was originally written for.
 
 ### Persist and degrade behavior
 
@@ -159,7 +158,7 @@ A `PRResolverUnavailableError` from any tier propagates so the caller can degrad
 
 `refreshProjectPRs` re-resolves every eligible task through the `linkPR` backbone (unchanged, non-force). This both refreshes an already-linked PR's state (so an off-app merge/close shows on the board) and discovers a PR for a still-unlinked task with a live worktree (e.g. an agent created the PR mid-session on a renamed branch and no other trigger caught it).
 
-A task is eligible when its PR can still change or be found: a non-terminal linked PR (`pr_number`), a live worktree (`worktree_path`), or a description PR anchor. Terminal `merged` / `closed` PRs are skipped first, and `head_sha` is deliberately not an anchor here (nearly every historical task has one, which would make the sweep unbounded). The sweep is sequential and best-effort: a per-task failure is swallowed, and the backbone's `onLinked` pushes `TASK_UPDATED_BY_AGENT` so cards update live.
+A task is eligible when its PR can still change or be found: a non-terminal linked PR (`pr_number`) or a live worktree (`worktree_path`). Terminal `merged` / `closed` PRs are skipped first, as are tasks in a To Do lane (To Do resets the task, so there is no PR to link there - the same gate `autoLinkPRForTask` applies to every implicit trigger). `head_sha` is deliberately not an anchor here (nearly every historical task has one, which would make the sweep unbounded), and neither is a PR URL in the description (see the ladder above). The sweep is sequential and best-effort: a per-task failure is swallowed, and the backbone's `onLinked` pushes `TASK_UPDATED_BY_AGENT` so cards update live.
 
 ### The scheduler
 
@@ -181,6 +180,10 @@ PR state lives on three columns of the per-project `tasks` table (`src/main/db/m
 | `pr_state` | TEXT | Normalized `PRState` (`open` / `draft` / `merged` / `closed`), null when no PR is linked or it predates state tracking. |
 
 The companion `head_sha` column stores the last-captured worktree HEAD commit as the immutable Tier-3 anchor.
+
+**The three PR columns always move together.** Every writer leaves all three agreeing: the linker (on link and on the confident-not-found clear) and the task-detail edit form (`buildPrFields` in `useTaskActions.ts`) write all three in one update; MCP `update_task` / `create_task` write `pr_url` + `pr_number` and null `pr_state` (on create it is already null from `TaskRepository.create`). Setting or clearing a URL without its state leaves the inconsistent row the linker forbids, and a stranded terminal `merged` / `closed` short-circuits every non-force resolve, so the task can never recover from a wrong link. A manual write leaves `pr_state` null and lets the next resolve fill it in.
+
+`pr_url` and `pr_number` must name the same PR, because Tier 1 treats `pr_number` as authoritative: a row whose URL was re-pointed while the old number survived resolves the old PR and silently reverts the URL. So every writer that accepts a URL derives the number from it when one is not supplied - `buildPrFields` in the renderer, `prNumberFromUrl` in the MCP handlers.
 
 ### IPC channel
 

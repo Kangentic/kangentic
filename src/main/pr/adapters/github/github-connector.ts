@@ -153,25 +153,6 @@ export const gitHubPRConnector: PRConnector = {
     return lastMatch;
   },
 
-  extractCanonical(text: string): DetectedPR | null {
-    if (!text) return null;
-
-    // Collect every distinct full PR URL the text mentions. Bare `#702` and
-    // `git log` "Merge pull request #702" lines never match (no full URL), so a
-    // base-branch merge-commit reference cannot be misread as the task's PR.
-    const byUrl = new Map<string, number>();
-    let match: RegExpExecArray | null;
-    GITHUB_PR_URL_PATTERN.lastIndex = 0;
-    while ((match = GITHUB_PR_URL_PATTERN.exec(text)) !== null) {
-      byUrl.set(match[0], parseInt(match[1], 10));
-    }
-
-    // Only an unambiguous single PR is canonical; zero or several -> don't guess.
-    if (byUrl.size !== 1) return null;
-    const [[url, prNumber]] = byUrl;
-    return { url, number: prNumber };
-  },
-
   async resolveForBranch(repoCwd: string, branchName: string, baseBranch?: string): Promise<ResolvedPR | null> {
     return viaGh(async () => {
       const items = await ghImporter.resolvePRByBranch(repoCwd, branchName);

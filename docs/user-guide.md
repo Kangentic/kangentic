@@ -185,7 +185,7 @@ Click a task card to open the detail dialog. From here you can:
   - **Edit** - switch to edit mode for title and description
   - **Open folder** - open the worktree or project directory in your file manager
   - **View conversation** - same as the header pill
-  - **View PR** - open the associated pull request. PR URLs are populated automatically when an agent runs `gh pr create` or `gh pr view` (GitHub), explicitly via the `kangentic_update_task` MCP tool (any platform), or manually through the PR URL field in edit mode. Also shown as a pill in the header bar and a clickable badge on the task card.
+  - **View PR** - open the associated pull request. PR URLs are populated automatically when an agent runs `gh pr create` or `gh pr view` (GitHub), explicitly via the `kangentic_create_task` / `kangentic_update_task` MCP tools (any platform), or manually through the PR URL field in edit mode. Those are the only ways to link a PR: writing a PR URL into the task description does not link it, so you can cite another task's PR as background without it being mistaken for this task's own. Also shown as a pill in the header bar and a clickable badge on the task card.
   - **Commands & Skills** - submenu of available Claude Code commands and skills (same as the header popover)
   - **Pause / Resume session** - manually suspend or resume the agent
   - **Move to** - submenu listing all other columns as move targets

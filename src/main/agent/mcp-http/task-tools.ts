@@ -78,11 +78,13 @@ export function registerTaskTools(
         autoCommand: z.string().max(4000).optional().describe('Slash command to run once the agent spawns for this task (e.g. "/code-review", "/release"). Overrides the destination column\'s auto_command for this task only. Not surfaced in the UI - MCP-only.'),
         profile: z.string().optional().describe('Board Profile this task rides (name or id) - an alternate set of per-column agent/model/effort settings, applied as the task moves. Mutually exclusive with the four *Override fields above: a profile changes per column, those pin one value for the task\'s whole life, so passing both is rejected. Omit for "Default" (every column uses its own settings). Use kangentic_list_board_profiles to see the board\'s profiles.'),
         runMode: RUN_MODE_SCHEMA.optional().describe('How this task gets its agent settings. "column_settings" (the default) follows each column the task moves through. "agent_override" pins agent/model/effort/permission for the task\'s whole life; any field you leave unset is resolved dynamically until the task first spawns, which then locks all four. Pass "agent_override" on its own to pin whatever the task would resolve to today. Passing any of the four *Override fields implies "agent_override", so you only need this to choose override mode without pinning anything - and pairing a pin with "column_settings" is rejected as a contradiction. Mutually exclusive with `profile`.'),
+        prUrl: z.string().url().optional().describe('Pull request URL this task is about (e.g. https://github.com/owner/repo/pull/123). Set this when filing a review task for an existing PR - it is what links the task to that PR. Writing the URL into `description` instead does NOT link it. Board tasks only - ignored for backlog.'),
+        prNumber: z.number().int().positive().optional().describe('Pull request number this task is about. Pass alongside `prUrl`. Board tasks only - ignored for backlog.'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ title, description, column, priority, labels, branchName, baseBranch, useWorktree, attachments, agentOverride, modelOverride, effortOverride, permissionMode, autoCommand, profile, runMode, project }) => withProject(resolver, project, (ctx, resolved) => {
+    async ({ title, description, column, priority, labels, branchName, baseBranch, useWorktree, attachments, agentOverride, modelOverride, effortOverride, permissionMode, autoCommand, profile, runMode, prUrl, prNumber, project }) => withProject(resolver, project, (ctx, resolved) => {
       // Rejected rather than silently resolved: the repository enforces
       // exclusivity by clearing whichever side the write did not set, so
       // accepting both would quietly discard half of what the caller asked for.
@@ -154,6 +156,8 @@ export function registerTaskTools(
         autoCommand: autoCommand ?? null,
         profile: profile ?? null,
         runMode: runMode ?? null,
+        prUrl: prUrl ?? null,
+        prNumber: prNumber ?? null,
       }, ctx, 'Failed to create task');
     }, { alwaysAnnotate: true }),
   );

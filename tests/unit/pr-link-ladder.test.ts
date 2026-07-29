@@ -24,7 +24,6 @@ const conn = vi.hoisted(() => ({
   byBranch: null as unknown,
   byCommit: null as unknown,
   detect: null as unknown,
-  canonical: null as unknown,
   calls: [] as string[],
   // Args the last call to each resolver received, so a test can assert which
   // branch/commit was queried (e.g. the live HEAD branch, not the stored slug).
@@ -63,7 +62,6 @@ vi.mock('../../src/main/pr/pr-registry', () => {
     resolvePRForBranch: make('byBranch'),
     resolvePRByCommit: make('byCommit'),
     detectPR: () => conn.detect ?? null,
-    detectCanonicalPR: () => conn.canonical ?? null,
   };
 });
 
@@ -96,7 +94,7 @@ function depsFor(task: Task, opts: { updateSpy?: ReturnType<typeof vi.fn>; force
 const resolved = (number: number, state = 'open') => ({ url: `u${number}`, number, state });
 
 beforeEach(() => {
-  conn.byNumber = null; conn.byBranch = null; conn.byCommit = null; conn.detect = null; conn.canonical = null; conn.calls = []; conn.lastArgs = {};
+  conn.byNumber = null; conn.byBranch = null; conn.byCommit = null; conn.detect = null; conn.calls = []; conn.lastArgs = {};
   git.branch = 'real-branch'; git.sha = 'sha-current'; git.aheadCount = '1';
 });
 
@@ -227,60 +225,109 @@ describe('linkPRForTask confidence ladder', () => {
   });
 });
 
-describe('linkPRForTask description anchor (tier 0)', () => {
-  it('tier 0: a PR URL in the description wins over the develop-tip commit anchor', async () => {
-    conn.canonical = { url: 'https://github.com/o/r/pull/708', number: 708 };
-    conn.byNumber = resolved(708, 'open');
-    conn.byCommit = resolved(702, 'merged'); // what the develop-tip merge commit would resolve to
-    const task = makeTask({ head_sha: 'develop-tip', description: 'Reviews https://github.com/o/r/pull/708' });
+/**
+ * A PR URL in the task DESCRIPTION is not an anchor. A URL cited as background
+ * ("this follows on from <url>") is textually identical to one naming the task's
+ * own PR, so scraping prose stamped citations onto unrelated tasks. A review task
+ * names its PR through the structured pr_url / pr_number fields instead, which
+ * lands on Tier 1.
+ *
+ * `CITED_PR_URL` is deliberately a real, well-formed PR URL: the point of each
+ * case is that the linker sees it and still ignores it.
+ */
+describe('linkPRForTask description PR URLs are never an anchor', () => {
+  const CITED_PR_URL = 'https://github.com/o/r/pull/9';
+  const CITING_DESCRIPTION = `Follows on from the previous task, branch \`own-the-icons-e1547bbf\`, PR ${CITED_PR_URL}.`;
+
+  it('the code-review shape resolves by pr_number, not by the base-tip commit', async () => {
+    // The shape tier 0 was originally written for: a review worktree branched
+    // from base with no commits of its own, so its HEAD is base's tip. The
+    // commits-ahead-of-base guard now blocks the commit tier there, and the PR
+    // the task is reviewing is named by pr_number rather than scraped from prose.
+    git.aheadCount = '0';
+    git.branch = 'code-review-32-1dbcebe5';
+    conn.byNumber = resolved(32, 'open');
+    conn.byCommit = resolved(702, 'merged'); // what base's tip would have magneted onto
+    const task = makeTask({
+      pr_number: 32,
+      branch_name: 'code-review-32-1dbcebe5',
+      head_sha: 'base-tip',
+      description: `Review ${CITED_PR_URL}`,
+    });
     const result = await linkPRForTask(task.id, depsFor(task));
-    expect(result.task?.pr_number).toBe(708);
+    expect(result.task?.pr_number).toBe(32);
     expect(result.task?.pr_state).toBe('open');
     expect(conn.calls).not.toContain('byCommit');
-    expect(conn.calls).not.toContain('byBranch');
   });
 
-  it('tier 0 self-heals an already-mislinked task (pr_number flips on the next resolve)', async () => {
-    conn.canonical = { url: 'https://github.com/o/r/pull/706', number: 706 };
-    conn.byNumber = resolved(706, 'open');
-    const task = makeTask({ pr_number: 702, pr_url: 'u702', pr_state: 'merged', head_sha: 'develop-tip' });
-    const result = await linkPRForTask(task.id, depsFor(task));
-    expect(result.status).toBe('linked');
-    expect(result.task?.pr_number).toBe(706);
-    expect(result.task?.pr_state).toBe('open');
+  it('regression: a cited PR URL with no git state is no-anchor, not a link', async () => {
+    // The mislink this rule exists for: a task that was never started, citing a
+    // sibling task's PR as background. No pr_number, branch, head_sha, or
+    // worktree - nothing to resolve from, whatever the description mentions.
+    const updateSpy = vi.fn();
+    const task = makeTask({
+      pr_number: null, branch_name: null, head_sha: null, worktree_path: null,
+      description: CITING_DESCRIPTION,
+    });
+    const result = await linkPRForTask(task.id, depsFor(task, { updateSpy }));
+    expect(result.status).toBe('no-anchor');
+    expect(result.task?.pr_number).toBeNull();
+    expect(result.task?.pr_url).toBeNull();
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(conn.calls).toEqual([]); // the resolver was never consulted
   });
 
-  it('tier 0 links url+number with unknown state when the named PR cannot be confirmed', async () => {
-    conn.canonical = { url: 'https://github.com/o/r/pull/708', number: 708 };
-    conn.byNumber = null; // gh ran cleanly but matched nothing
-    conn.byCommit = resolved(702, 'merged');
-    const task = makeTask({ head_sha: 'develop-tip' });
+  it('recovery: an already-mislinked task is cleared once its git anchors find no PR', async () => {
+    // The stuck row the mislink leaves behind: pr_number/url/state all pointing
+    // at the cited PR. With the description inert, every tier returns null, so
+    // the confident-not-found clear finally fires and all three fields go null.
+    conn.byNumber = null;   // the cited PR is not this task's, and the number no longer resolves for it
+    conn.byBranch = null;   // no PR exists for this task's own branch
+    const updateSpy = vi.fn((patch: Partial<Task>) => patch as Task);
+    const task = makeTask({
+      pr_number: 9, pr_url: CITED_PR_URL, pr_state: 'merged',
+      branch_name: 're-review-the-icons-bf9efd2b',
+      description: CITING_DESCRIPTION,
+    });
+    const result = await linkPRForTask(task.id, depsFor(task, { updateSpy }));
+    expect(result.status).toBe('not-found');
+    expect(updateSpy).toHaveBeenCalledWith(expect.objectContaining({ pr_number: null, pr_url: null, pr_state: null }));
+  });
+
+  it('a manually-set pr_number is cleared when it cannot be confirmed, even with a URL in the description', async () => {
+    // Deliberate consequence of the description being inert: a stored number that
+    // resolves to nothing is a broken link and is cleared, rather than being
+    // silently re-supplied from prose. This is the one case where the failure
+    // mode is a badge that disappears rather than one that never appears.
+    git.aheadCount = '0'; // review shape: commit tier blocked
+    conn.byNumber = null; // gh ran cleanly and matched nothing
+    conn.byBranch = null;
+    const task = makeTask({
+      pr_number: 9, pr_url: CITED_PR_URL, pr_state: 'open',
+      head_sha: 'base-tip',
+      description: CITING_DESCRIPTION,
+    });
     const result = await linkPRForTask(task.id, depsFor(task));
-    expect(result.task?.pr_number).toBe(708);
+    expect(result.status).toBe('not-found');
+    expect(result.task?.pr_number).toBeNull();
+    expect(result.task?.pr_url).toBeNull();
     expect(result.task?.pr_state).toBeNull();
-    expect(conn.calls).not.toContain('byCommit');
   });
 
-  it('tier 0 degrades to the scraper when the resolver is unavailable (error propagates, not swallowed)', async () => {
-    conn.canonical = { url: 'https://github.com/o/r/pull/708', number: 708 };
-    conn.byNumber = new PRResolverUnavailableError('gh CLI not found'); // gh down on the Tier 0 lookup
-    conn.byCommit = resolved(702, 'merged'); // the wrong PR the commit tier would have linked
-    const task = makeTask({ head_sha: 'develop-tip' });
-    const result = await linkPRForTask(task.id, depsFor(task)); // no getScrollback -> nothing to scrape
+  it('degrades rather than clearing when the resolver is unavailable', async () => {
+    // A degraded resolve must never be mistaken for a confident not-found: the
+    // existing link survives, and the description is not consulted as a fallback.
+    conn.byNumber = new PRResolverUnavailableError('gh CLI not found');
+    const updateSpy = vi.fn();
+    const task = makeTask({
+      pr_number: 60, pr_url: 'u60', pr_state: 'open',
+      worktree_path: null, description: CITING_DESCRIPTION,
+    });
+    const result = await linkPRForTask(task.id, depsFor(task, { updateSpy })); // no getScrollback -> nothing to scrape
     expect(result.status).toBe('resolver-unavailable');
     expect(result.message).toMatch(/gh/i);
-    expect(conn.calls).not.toContain('byCommit'); // never fell through to the wrong git tiers
-  });
-
-  it('tier 0: a description PR URL is itself an anchor when the task has no git state', async () => {
-    conn.canonical = { url: 'https://github.com/o/r/pull/708', number: 708 };
-    conn.byNumber = resolved(708, 'open');
-    // No pr_number, branch, head_sha, or worktree - the old guard would no-anchor bail here.
-    const task = makeTask({ pr_number: null, branch_name: null, head_sha: null, worktree_path: null });
-    const result = await linkPRForTask(task.id, depsFor(task));
-    expect(result.status).toBe('linked');
-    expect(result.task?.pr_number).toBe(708);
-    expect(result.task?.pr_state).toBe('open');
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(result.task?.pr_number).toBe(60);
   });
 });
 

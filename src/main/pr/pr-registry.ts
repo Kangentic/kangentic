@@ -4,7 +4,6 @@
  *
  *   matchesPRCommand(detail)  - flag a Bash command as a PR command (activity)
  *   detectPR(scrollback)      - extract a PR URL from terminal scrollback
- *   detectCanonicalPR(text)   - extract the single PR a task description names
  *   resolvePR*(...)           - authoritative provider lookups (CLI / API)
  *
  * To add a provider: implement the `PRConnector` contract under
@@ -37,21 +36,6 @@ export function matchesPRCommand(commandDetail: string): boolean {
 export function detectPR(scrollback: string): DetectedPR | null {
   for (const connector of connectors) {
     const result = connector.extract(scrollback);
-    if (result) return result;
-  }
-  return null;
-}
-
-/**
- * Extract a single canonical PR reference from authored text (a task
- * description) via the first connector that recognizes exactly one PR. Returns
- * null when no connector finds an unambiguous match - so a description that
- * names several PRs, or none, is never guessed at.
- */
-export function detectCanonicalPR(text: string): DetectedPR | null {
-  for (const connector of connectors) {
-    if (!connector.extractCanonical) continue;
-    const result = connector.extractCanonical(text);
     if (result) return result;
   }
   return null;

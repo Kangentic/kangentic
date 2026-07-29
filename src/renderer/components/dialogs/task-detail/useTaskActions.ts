@@ -243,15 +243,26 @@ export function useTaskActions(input: {
     input.setIsEditing(false);
   };
 
-  /** Build pr_url/pr_number fields if the PR URL changed. */
-  const buildPrUrlFields = (): Pick<Parameters<typeof input.updateTask>[0], 'pr_url' | 'pr_number'> => {
+  /**
+   * Build the pr_url/pr_number/pr_state fields if the PR URL changed. All three
+   * move together, exactly as the linker writes them: leaving a stale `pr_state`
+   * behind produces the inconsistent row the linker forbids, and a terminal
+   * `merged`/`closed` value short-circuits every non-force resolve, freezing the
+   * task on a PR it no longer points at. The state is nulled on both branches
+   * (cleared and re-pointed) and refilled by the next resolve.
+   */
+  const buildPrFields = (): Pick<Parameters<typeof input.updateTask>[0], 'pr_url' | 'pr_number' | 'pr_state'> => {
     const trimmedPrUrl = input.prUrl.trim();
     if (trimmedPrUrl === (input.task.pr_url ?? '')) return {};
     if (trimmedPrUrl) {
       const prNumberMatch = trimmedPrUrl.match(/\/pull\/(\d+)/);
-      return { pr_url: trimmedPrUrl, pr_number: prNumberMatch ? parseInt(prNumberMatch[1], 10) : null };
+      return {
+        pr_url: trimmedPrUrl,
+        pr_number: prNumberMatch ? parseInt(prNumberMatch[1], 10) : null,
+        pr_state: null,
+      };
     }
-    return { pr_url: null, pr_number: null };
+    return { pr_url: null, pr_number: null, pr_state: null };
   };
 
   const executeSave = async (
@@ -268,7 +279,7 @@ export function useTaskActions(input: {
     setSaving(true);
     try {
       const needsSwitchBranch = (input.task.worktree_path && branchChanged) || enablingWorktree;
-      const prUrlFields = buildPrUrlFields();
+      const prFields = buildPrFields();
 
       // Per-task overrides: empty string in the form maps to null in the DB.
       // Always include them in the payload (even when unchanged) so a user
@@ -302,7 +313,7 @@ export function useTaskActions(input: {
           }, useProjectStore.getState().currentProject?.id ?? null);
           if (input.title !== input.task.title
             || input.description !== input.task.description
-            || prUrlFields.pr_url !== undefined
+            || prFields.pr_url !== undefined
             || JSON.stringify(input.labels) !== JSON.stringify(input.task.labels ?? [])
             || input.priority !== (input.task.priority ?? 0)
             || (input.agentOverride || null) !== input.task.agent_override
@@ -317,7 +328,7 @@ export function useTaskActions(input: {
               description: input.description,
               labels: input.labels,
               priority: input.priority,
-              ...prUrlFields,
+              ...prFields,
               ...overrideFields,
             });
           }
@@ -337,7 +348,7 @@ export function useTaskActions(input: {
           description: input.description,
           labels: input.labels,
           priority: input.priority,
-          ...prUrlFields,
+          ...prFields,
           ...overrideFields,
         };
 

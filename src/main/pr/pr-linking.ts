@@ -7,10 +7,8 @@ import {
   resolvePRByNumber,
   resolvePRByCommit,
   detectPR,
-  detectCanonicalPR,
   PRResolverUnavailableError,
   PRResolverTransientError,
-  type DetectedPR,
 } from './pr-registry';
 import type { TaskRepository } from '../db/repositories/task-repository';
 import type { Task, PRState, PRLinkStatus, TaskUpdateInput } from '../../shared/types';
@@ -57,21 +55,29 @@ export interface PRLinkDeps {
 
 /**
  * A PR linked to a task: the subset of `ResolvedPR` the linker persists. `state`
- * is nullable here (unlike `ResolvedPR.state`) because the Tier 0 description
- * anchor links url+number even when the PR's state cannot be confirmed.
+ * is nullable here (unlike `ResolvedPR.state`) because the scrollback degradation
+ * fallback links url+number even when the PR's state cannot be confirmed.
  */
 type LinkedPR = { url: string; number: number; state: PRState | null };
 
 /**
  * The confidence ladder - resolve a task's PR via the strongest available anchor
  * first, short-circuiting on the first hit:
- *   0. description PR URL -> authoritative: the only anchor that knows a
- *      code-review task's PR, whose worktree sits on the base branch
  *   1. pr_number  -> exact, branch-independent (best for refreshing state)
  *   2. worktree HEAD branch -> the real branch while actively worked
  *   3. commit SHA -> immutable, survives Done/worktree deletion and renames
  *   4. stored slug branch -> weak last resort when there is no worktree
  * A `PRResolverUnavailableError` from any tier propagates so the caller degrades.
+ *
+ * Every anchor is git state or an explicitly stored number. A PR URL written into
+ * the task DESCRIPTION is deliberately not an anchor: a URL cited as background
+ * ("this follows on from <that PR's url>") is textually identical to one naming
+ * the task's own PR, so scraping prose stamped citations onto unrelated tasks -
+ * and because that tier always produced a link, the confident-not-found clear
+ * below could never fire, making the wrong link permanent. A review task
+ * names its PR through the structured `pr_url` / `pr_number` fields instead (the
+ * task-detail edit form, `kangentic_create_task`, or `kangentic_update_task`),
+ * which lands on Tier 1.
  */
 async function resolvePRViaLadder(args: {
   task: Task;
@@ -80,22 +86,8 @@ async function resolvePRViaLadder(args: {
   branch: string | null;
   effectiveSha: string | null;
   baseBranch: string;
-  descriptionPR: DetectedPR | null;
 }): Promise<LinkedPR | null> {
-  const { task, cwd, projectPath, branch, effectiveSha, baseBranch, descriptionPR } = args;
-
-  // Tier 0: a single PR URL written into the task description is authoritative.
-  // A code-review worktree is branched from the base branch with no commits of
-  // its own, so the branch/commit anchors below resolve the base branch's own
-  // merge commit (e.g. `Merge pull request #702`), not the PR being reviewed.
-  // The description is the only place that names the right PR. Resolve by number
-  // for fresh state, but never fall through to the structurally-wrong git tiers
-  // once the description has named a PR - link url+number with unknown state if
-  // it cannot be confirmed.
-  if (descriptionPR) {
-    const byDescription = await resolvePRByNumber(cwd, descriptionPR.number);
-    return byDescription ?? { url: descriptionPR.url, number: descriptionPR.number, state: null };
-  }
+  const { task, cwd, projectPath, branch, effectiveSha, baseBranch } = args;
 
   if (task.pr_number != null) {
     const byNumber = await resolvePRByNumber(cwd, task.pr_number);
@@ -172,10 +164,10 @@ export async function linkPRForTask(taskId: string, deps: PRLinkDeps): Promise<P
     const effectiveSha = freshSha ?? task.head_sha;
     const baseBranch = task.base_branch ?? deps.defaultBaseBranch ?? 'main';
 
-    // Nothing to resolve from at all. A PR URL in the description is itself an
-    // anchor (Tier 0), so a task with no git state still resolves from it.
-    const descriptionPR = detectCanonicalPR(task.description ?? '');
-    if (!cwd || (task.pr_number == null && !branch && !effectiveSha && descriptionPR == null)) {
+    // Nothing to resolve from at all. Mirrors `autoLinkPRForTask`'s gate: a task
+    // with no stored number and no git state has no anchor, whatever its
+    // description happens to mention.
+    if (!cwd || (task.pr_number == null && !branch && !effectiveSha)) {
       // Still persist a freshly-read SHA if we have one (rare: detached HEAD worktree).
       if (freshSha && freshSha !== task.head_sha) {
         return { status: 'no-anchor', task: deps.tasks.update({ id: task.id, head_sha: freshSha }) };
@@ -191,7 +183,7 @@ export async function linkPRForTask(taskId: string, deps: PRLinkDeps): Promise<P
     let degradeMessage: string | undefined;
 
     try {
-      const resolved = await resolvePRViaLadder({ task, cwd, projectPath: deps.projectPath, branch, effectiveSha, baseBranch, descriptionPR });
+      const resolved = await resolvePRViaLadder({ task, cwd, projectPath: deps.projectPath, branch, effectiveSha, baseBranch });
       if (resolved) next = { url: resolved.url, number: resolved.number, state: resolved.state };
     } catch (error) {
       if (error instanceof PRResolverUnavailableError || error instanceof PRResolverTransientError) {
