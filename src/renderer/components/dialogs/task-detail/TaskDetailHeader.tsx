@@ -1,10 +1,11 @@
 import { useState, useRef, useMemo, useEffect, type ReactNode } from 'react';
 import { useCopyDisplayId } from './useCopyDisplayId';
-import { X, Trash2, Pencil, Loader2, Circle, FolderGit2, FolderGit, GitPullRequest, GitCompare, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, Clock, SquareChevronRight, Zap, Archive, Inbox, Copy, Check, Globe, RefreshCw, PictureInPicture2, MessageSquare, AlignLeft } from 'lucide-react';
+import { X, Trash2, Pencil, Loader2, FolderGit2, FolderGit, GitPullRequest, GitCompare, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, Clock, SquareChevronRight, Zap, Archive, Inbox, Copy, Check, Globe, RefreshCw, PictureInPicture2, MessageSquare, AlignLeft } from 'lucide-react';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
 import { useFormattedCombo } from '../../../hooks/useKeybinding';
 import { getSwimlaneIcon } from '../../../utils/swimlane-icons';
 import { ICON_REGISTRY } from '../../../utils/swimlane-icons';
+import { ActivityMark } from '../../ActivityMark';
 import { HeaderActionButton } from '../../HeaderActionButton';
 import { IsolatedBadge } from '../../IsolatedBadge';
 import { KebabMenu, KebabMenuItem, KebabMenuDivider } from '../../KebabMenu';
@@ -19,22 +20,6 @@ import { captureTerminalScrollback } from '../../../utils/terminal-capture-regis
 import type { Task, AgentCommand, ShortcutConfig, Swimlane } from '../../../../shared/types';
 import { type TilePreset } from '../../../window-manager/tiling/presets';
 import { WindowLayoutMenu } from '../WindowLayoutMenu';
-
-/**
- * The centered pause: two short, thin upright bars overlaid on the ring.
- * Drawn as solid `bg-*` bars (not the stroked lucide `Pause`, which renders
- * ragged at this size) and sized to match the CirclePause proportions, so the
- * bars stay crisp and the icon reads cleanly at ~20px. `colorClass` is a
- * `bg-*` utility matching the ring (attention for idle, active for working).
- */
-function PauseBars({ colorClass }: { colorClass: string }): ReactNode {
-  return (
-    <span data-testid="pause-bars" className="col-start-1 row-start-1 flex items-center gap-[2px]">
-      <span className={`w-[2px] h-[8px] rounded-full ${colorClass}`} />
-      <span className={`w-[2px] h-[8px] rounded-full ${colorClass}`} />
-    </span>
-  );
-}
 
 /**
  * The pause/resume button glyph. The pause stays centered and visible for a
@@ -64,27 +49,22 @@ function PauseButtonIcon({
 }): ReactNode {
   if (toggling) return <Loader2 size={18} className="animate-spin" />;
 
-  // Active: the SAME Circle as idle (identical radius/size - lucide's Loader2 is
-  // radius 9 vs Circle's 10, which rendered ~10% smaller) but active-green, spinning,
-  // and dashed so the spin reads as a loading arc. The pause shares the grid cell
-  // (place-items-center) so it sits dead-center in the 20px ring.
-  if (isThinking) {
+  // Active and idle/permission share one packaged mark, differing only by color and motion
+  // (a marching dash vs a static ring), so the two states read as one visual language.
+  //
+  // Rendered at 20 in a 20px box, which is a pixel-for-pixel match for the lucide Circle +
+  // hand-drawn bars this replaced: the packaged control ring is r=10 on a 20-unit ink box, so
+  // 20 * (2*10+2)/24 draws the same 18.33px outer diameter, and its bars come out 2.0 x 8.0
+  // with a 2.0 gap against the old fixed 2 x 8 / 2. No size compensation is needed - and none
+  // should be reintroduced, since ring and bars are now one SVG that scales together.
+  if (isThinking || isIdle) {
     return (
-      <span className="grid place-items-center">
-        <Circle size={20} className="col-start-1 row-start-1 text-active animate-spin [stroke-dasharray:47_16]" />
-        <PauseBars colorClass="bg-active" />
-      </span>
-    );
-  }
-
-  // Idle/permission: the same ring + pause as active, but an attention static ring
-  // (a full circle, no spin) so the two states share one visual language and
-  // differ only by color and motion.
-  if (isIdle) {
-    return (
-      <span className="grid place-items-center">
-        <Circle size={20} className="col-start-1 row-start-1 text-attention" />
-        <PauseBars colorClass="bg-attention" />
+      <span className="grid place-items-center w-5 h-5">
+        <ActivityMark
+          mark={isThinking ? 'control-pause-working' : 'control-pause-idle'}
+          size={20}
+          className={isThinking ? 'text-active' : 'text-attention'}
+        />
       </span>
     );
   }

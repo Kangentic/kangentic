@@ -642,6 +642,10 @@ test.describe('Command Terminal', () => {
         // The icon should reflect that, whether or not the bar is open.
         // Poll to allow the activity store to hydrate.
         await expect(icon).toHaveAttribute('data-activity', 'idle', { timeout: 5000 });
+        // Needs-you renders the static geometry. The branding set ships no `-rest` mark by
+        // design (rest is the `-idle` geometry in a muted tone), so both the 'idle' and 'rest'
+        // tones land on terminal-idle and only the color differs - pin that here.
+        await expect(icon).toHaveAttribute('data-mark', 'terminal-idle');
 
         // Open overlay and close it - session stays alive
         await sharedPage.keyboard.press('Control+Shift+P');
@@ -1140,11 +1144,17 @@ test.describe('Command Terminal', () => {
         const toggleIcon = page.getByTestId('quick-session-icon');
         await expect(toggleIcon).toHaveAttribute('data-activity', 'thinking', { timeout: 3000 });
         await expect(toggleIcon).toHaveClass(/text-active/);
+        // Tone and geometry must agree. CommandTerminalIcon maps tone -> mark itself, so without
+        // this pairing a 'thinking' tone could render the static mark (or vice versa) and every
+        // data-activity and data-mark assertion elsewhere would still pass.
+        await expect(toggleIcon).toHaveAttribute('data-mark', 'terminal-working');
 
         // The "New terminal" icon must stay uncolored and report 'rest' regardless.
         const newTerminalIcon = page.getByTestId('quick-session-new-terminal-icon');
         await expect(newTerminalIcon).toHaveAttribute('data-activity', 'rest');
         await expect(newTerminalIcon).toHaveAttribute('data-plus', 'true');
+        // showPlus wins over tone: the action mark, which never marches.
+        await expect(newTerminalIcon).toHaveAttribute('data-mark', 'terminal-new');
         await expect(newTerminalIcon).not.toHaveClass(/text-active/);
         await expect(newTerminalIcon).not.toHaveClass(/text-attention/);
       } finally {
@@ -1957,9 +1967,13 @@ test.describe('Command Terminal', () => {
   // Stop activity ring - the Stop button in CommandTerminalWindow carries the
   // same ring affordance as the task-detail pause button, but with a stop square
   // instead of pause bars. Three ring states:
-  //   thinking (isActive)          -> spinning active Circle + active stop-square
-  //   idle/permission (requiresUI) -> static attention Circle + attention stop-square
-  //   no session / not running     -> plain CircleStop, no stop-square
+  //   thinking (isActive)          -> the control-stop-working mark, tinted text-active
+  //   idle/permission (requiresUI) -> the control-stop-idle mark, tinted text-attention
+  //   no session / not running     -> plain lucide CircleStop, no mark at all
+  //
+  // Ring and square are ONE packaged @kangentic/branding mark, so `data-mark` carries both
+  // "a ring is showing" and "which state it is": there is no separate stop-square element to
+  // assert, and no animate-spin class (the working mark marches via .kng-march instead).
   //
   // Each test uses a deterministic spawnTransient override (known session id) so
   // page.evaluate can call updateActivity + markFirstOutput on that exact id
@@ -2047,10 +2061,10 @@ test.describe('Command Terminal', () => {
       // We assert the activity-specific state in each individual test instead.
     }
 
-    test('thinking activity shows spinning active ring and active stop-square', async () => {
+    test('thinking activity shows the marching active stop ring', async () => {
       // Derives expected behavior from the contract in CommandTerminalWindow.tsx:
       //   isThinking = sessionRunning && isActive(activity)
-      //   -> spinning Circle with text-active animate-spin, plus StopSquare bg-active
+      //   -> the control-stop-working mark, tinted text-active
       const { browser, page } = await launchWithState(
         ringBasePreConfig() + deterministicSpawn
       );
@@ -2071,32 +2085,24 @@ test.describe('Command Terminal', () => {
 
         const stopButton = page.getByTestId('command-bar-terminate-button');
 
-        // stop-square must be present (the StopSquare inner span inside the ring)
-        await expect(stopButton.getByTestId('stop-square')).toBeVisible({ timeout: 3000 });
+        // The working mark: ring + stop square in one SVG, tinted active-green.
+        const ring = stopButton.locator('[data-mark="control-stop-working"]');
+        await expect(ring).toBeVisible({ timeout: 3000 });
+        await expect(ring).toHaveClass(/text-active/);
 
-        // The stop-square inner span carries bg-active for thinking
-        const squareInner = stopButton.getByTestId('stop-square').locator('span');
-        await expect(squareInner).toHaveClass(/bg-active/);
-
-        // The animated active ring (Circle svg) must also be present
-        // lucide-circle is the CSS class Lucide attaches to the Circle component
-        await expect(stopButton.locator('.lucide-circle')).toBeVisible();
-        const ringCircle = stopButton.locator('.lucide-circle');
-        await expect(ringCircle).toHaveClass(/text-active/);
-        await expect(ringCircle).toHaveClass(/animate-spin/);
-
-        // The plain rest-state icon (CircleStop) must NOT be present when thinking
+        // Neither the idle ring nor the plain rest-state icon may be present when thinking.
+        await expect(stopButton.locator('[data-mark="control-stop-idle"]')).toHaveCount(0);
         await expect(stopButton.locator('.lucide-circle-stop')).toHaveCount(0);
       } finally {
         await browser.close();
       }
     });
 
-    test('idle activity shows static attention ring and attention stop-square', async () => {
+    test('idle activity shows the static attention stop ring', async () => {
       // Derives expected behavior from the contract in CommandTerminalWindow.tsx:
       //   isIdle = sessionRunning && requiresUserInteraction(activity)
       //   requiresUserInteraction('idle') = true (ACTIVITY_DISPOSITION idle -> 'idle')
-      //   -> static Circle with text-attention (no animate-spin), plus StopSquare bg-attention
+      //   -> the control-stop-idle mark, tinted text-attention, with no march
       const { browser, page } = await launchWithState(
         ringBasePreConfig() + deterministicSpawn
       );
@@ -2117,20 +2123,14 @@ test.describe('Command Terminal', () => {
 
         const stopButton = page.getByTestId('command-bar-terminate-button');
 
-        // stop-square must be present for idle state
-        await expect(stopButton.getByTestId('stop-square')).toBeVisible({ timeout: 3000 });
+        // The idle mark: ring + stop square in one SVG, tinted attention-amber.
+        const ring = stopButton.locator('[data-mark="control-stop-idle"]');
+        await expect(ring).toBeVisible({ timeout: 3000 });
+        await expect(ring).toHaveClass(/text-attention/);
 
-        // The stop-square inner span carries bg-attention for idle
-        const squareInner = stopButton.getByTestId('stop-square').locator('span');
-        await expect(squareInner).toHaveClass(/bg-attention/);
-
-        // The static attention ring (Circle svg) must be present and NOT spinning
-        await expect(stopButton.locator('.lucide-circle')).toBeVisible();
-        const ringCircle = stopButton.locator('.lucide-circle');
-        await expect(ringCircle).toHaveClass(/text-attention/);
-        // Idle ring is static: no animate-spin class
-        const ringClass = await ringCircle.getAttribute('class');
-        expect(ringClass).not.toContain('animate-spin');
+        // Idle is static. The marching variant is a DIFFERENT mark, so its absence is the
+        // assertion - there is no motion class to check on the idle one.
+        await expect(stopButton.locator('[data-mark="control-stop-working"]')).toHaveCount(0);
 
         // The plain rest-state icon (CircleStop) must NOT be present when idle
         await expect(stopButton.locator('.lucide-circle-stop')).toHaveCount(0);
@@ -2164,18 +2164,12 @@ test.describe('Command Terminal', () => {
 
         const stopButton = page.getByTestId('command-bar-terminate-button');
 
-        // stop-square must be present for permission state
-        await expect(stopButton.getByTestId('stop-square')).toBeVisible({ timeout: 3000 });
-
-        // The stop-square inner span carries bg-attention for permission (same as idle)
-        const squareInner = stopButton.getByTestId('stop-square').locator('span');
-        await expect(squareInner).toHaveClass(/bg-attention/);
-
-        // Static attention ring (no spin) - permission maps to idle disposition
-        await expect(stopButton.locator('.lucide-circle')).toBeVisible();
-        const ringClass = await stopButton.locator('.lucide-circle').getAttribute('class');
-        expect(ringClass).toContain('text-attention');
-        expect(ringClass).not.toContain('animate-spin');
+        // Static attention ring - permission maps to the idle disposition, so it renders the
+        // SAME mark as idle, not the marching one.
+        const ring = stopButton.locator('[data-mark="control-stop-idle"]');
+        await expect(ring).toBeVisible({ timeout: 3000 });
+        await expect(ring).toHaveClass(/text-attention/);
+        await expect(stopButton.locator('[data-mark="control-stop-working"]')).toHaveCount(0);
 
         // No plain CircleStop for permission state
         await expect(stopButton.locator('.lucide-circle-stop')).toHaveCount(0);
@@ -2184,7 +2178,7 @@ test.describe('Command Terminal', () => {
       }
     });
 
-    test('no active session shows plain CircleStop (no stop-square, no ring)', async () => {
+    test('no active session shows plain CircleStop (no activity mark at all)', async () => {
       // When the session has not yet started (terminalReady=false, so sessionRunning=false),
       // or activity is undefined, StopButtonIcon renders the rest-state <CircleStop>.
       // This test opens the overlay WITHOUT calling markFirstOutput, so terminalReady
@@ -2210,11 +2204,11 @@ test.describe('Command Terminal', () => {
         // Plain rest-state icon must be present
         await expect(stopButton.locator('.lucide-circle-stop')).toBeVisible({ timeout: 3000 });
 
-        // No ring (no stop-square, no spinning/static Circle ring)
+        // No activity mark of either state.
         // Intentional fixed wait: we cannot poll for non-occurrence.
         // 800ms is enough for any pending microtask queue to flush.
         await page.waitForTimeout(800);
-        await expect(stopButton.getByTestId('stop-square')).toHaveCount(0);
+        await expect(stopButton.locator('[data-mark^="control-stop-"]')).toHaveCount(0);
       } finally {
         await browser.close();
       }

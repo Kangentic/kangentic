@@ -298,6 +298,20 @@ test.describe('Sidebar Command Terminal indicator', () => {
       // ...while the terminal indicator sits beside it with its own tone.
       const indicator = alphaRow.locator(`[data-testid="project-terminals-${PROJECT_A_ID}"]`);
       await expect(indicator).toHaveAttribute('data-activity', 'thinking');
+
+      // The agent counts and the terminal indicator are separate components that size
+      // themselves independently, so pin that they AGREE: a row with one glyph at 15 and its
+      // neighbour at 14 goes visibly ragged, and nothing else would catch it. Asserted as a
+      // relationship rather than a literal, so a deliberate resize only has to move both.
+      const agentMark = alphaRow.locator('[data-mark="agent-idle"]');
+      await expect(agentMark).toBeVisible();
+      const agentMarkSize = await agentMark.getAttribute('width');
+      expect(agentMarkSize).toBeTruthy();
+      const terminalIcon = alphaRow.locator(`[data-testid="project-terminal-icon-${PROJECT_A_ID}"]`);
+      expect(
+        await terminalIcon.getAttribute('width'),
+        'the sidebar agent marks and the terminal glyph must render at the same size',
+      ).toBe(agentMarkSize);
     } finally {
       await browser.close();
     }
@@ -446,18 +460,20 @@ test.describe('Sidebar Command Terminal indicator', () => {
     }
   });
 
-  test('the sidebar renders the terminal icon at 14px, not the title bar\'s default 20px', async () => {
+  test('the sidebar renders the terminal icon at 15px, not the title bar\'s default 20px', async () => {
     // CommandTerminalIcon defaults size to 20 (the title bar toggle); the
-    // sidebar passes size={14} explicitly. Pins that the prop is actually
-    // threaded through rather than the icon silently rendering at the default.
+    // sidebar passes size={15} explicitly. Pins that the prop is actually
+    // threaded through rather than the icon silently rendering at the default,
+    // and that it stays in step with SidebarActivityCounts' row size so the
+    // three indicators keep forming one tabular column.
     const { browser, page } = await launchWithState(preConfig({
       terminals: [{ project: PROJECT_A_ID, id: 'ct-a1', activity: 'idle' }],
     }));
 
     try {
       const icon = page.locator(`[data-testid="project-terminal-icon-${PROJECT_A_ID}"]`);
-      await expect(icon).toHaveAttribute('width', '14');
-      await expect(icon).toHaveAttribute('height', '14');
+      await expect(icon).toHaveAttribute('width', '15');
+      await expect(icon).toHaveAttribute('height', '15');
     } finally {
       await browser.close();
     }

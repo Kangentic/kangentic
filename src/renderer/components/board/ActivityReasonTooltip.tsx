@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
-import { Wrench, Users, Terminal, Lock, Loader2, Mail } from 'lucide-react';
+import { Wrench, Users, Terminal, Lock } from 'lucide-react';
+import { ActivityMark } from '../ActivityMark';
 import { formatDurationBetween } from '../../lib/datetime';
 import type { ActivityReason } from '../../../shared/types';
 
@@ -40,20 +41,22 @@ export function formatActivityReasonText(reason: ActivityReason): string {
  * for the current activity state. Used as the body of a hover
  * tooltip on the TaskCard's activity indicator.
  *
- * Lucide icons map directly to reason kinds:
+ * Icons map directly to reason kinds. The two that describe agent activity itself come from
+ * the shared branding set (so they match the TaskCard indicator exactly); the rest name a
+ * specific cause and have no counterpart there, so they stay lucide:
+ *   idle             - ActivityMark 'agent-idle'    (matches the TaskCard idle indicator)
+ *   turn-active      - ActivityMark 'agent-working' (matches the TaskCard thinking indicator)
  *   tool             - Wrench
  *   subagent         - Users
  *   background-shell - Terminal
  *   permission       - Lock
- *   turn-active      - Loader2 (spinning)
- *   idle             - Mail (matches the existing TaskCard idle icon)
  */
 export function ActivityReasonTooltip({ reason }: { reason: ActivityReason }): ReactNode {
   switch (reason.kind) {
     case 'idle':
       return (
         <span className="inline-flex items-center gap-1.5 text-xs text-fg-faint">
-          <Mail size={12} className="text-attention" />
+          <ActivityMark mark="agent-idle" size={12} className="text-attention" />
           <span>Idle for {formatDurationBetween(reason.since, Date.now())}</span>
         </span>
       );
@@ -93,7 +96,7 @@ export function ActivityReasonTooltip({ reason }: { reason: ActivityReason }): R
     case 'turn-active':
       return (
         <span className="inline-flex items-center gap-1.5 text-xs text-fg-faint">
-          <Loader2 size={12} className="text-active animate-spin" />
+          <ActivityMark mark="agent-working" size={12} className="text-active" />
           <span>Thinking</span>
         </span>
       );

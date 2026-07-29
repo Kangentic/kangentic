@@ -138,8 +138,11 @@ won't be found.
   settings, or the OS window controls - only this pair's own position moves. The toggle glyph's
   stroke color is the aggregate activity of the project's terminals (active-green working /
   attention-amber needs-you / muted rest, via the central `--kng-active` / `--kng-attention`
-  tokens) and the working border MARCHES (`@keyframes march-border` + a `pathLength`-normalized
-  stroke-dash). The toggle reflects only the CURRENT project, so the same glyph is mirrored
+  tokens) and the working border MARCHES (`.kng-march` + a `pathLength`-normalized stroke-dash,
+  both shipped with the mark). The glyph itself is no longer hand-authored: `CommandTerminalIcon`
+  is a thin wrapper over `components/ActivityMark.tsx`, which renders the `terminal-idle` /
+  `terminal-working` / `terminal-new` marks from `@kangentic/branding`. See the Activity marks
+  section below. The toggle reflects only the CURRENT project, so the same glyph is mirrored
   per project in the sidebar (`SidebarCommandTerminalIndicator` in each `ProjectListItem` row,
   plus a plain tone dot on `CollapsedRail`'s 28px buttons, where an arc-bearing glyph would read
   as broken). Both the toggle and the sidebar read one shared selector,
@@ -170,6 +173,36 @@ won't be found.
   `useEnsureCommandWindow` for the app-restart blob-restore path), because a carried-over window
   committed into the store would otherwise spawn a fresh PTY under the wrong project before a
   bridge-effect reconcile could close it.
+- **Activity marks** - The nine glyphs that express agent/terminal activity are owned upstream in
+  `@kangentic/branding` (`assets/activity/`), NOT hand-authored here, so desktop, web, and mobile
+  cannot drift. `components/ActivityMark.tsx` is the only consumer: it imports each mark with
+  `?raw`, strips the packaged `<svg>` wrapper, and injects the inner markup into a `<g>` under a
+  React-authored root. That root shape is load-bearing and must not become `BrandMark`'s wrapper-
+  `<span>` form: React forbids `children` next to `dangerouslySetInnerHTML` on one element, and
+  `TaskCard` passes a `<title>` child for its hover tooltip. Marks are `currentColor` only, so the
+  CALL SITE supplies `text-active` / `text-attention` / `text-fg-muted` - never hardcode a hex,
+  since `--kng-active` / `--kng-attention` are desktop-only values that mobile and web
+  deliberately diverge from. There is no `-rest` mark: rest is the `-idle` geometry in a muted
+  tone. `data-rest` on the root is the reduced-motion strategy (`static` / `keep-dash` /
+  `drop-dash`), NOT a tone; test selectors key off `data-mark`. The set's grid is a WIDTH
+  KEYLINE, not a square ink box: each mark fills its slot's width and takes the height its form
+  needs (width is the advance that shifts a row; height is absorbed by `align-items: center`).
+  Two keylines, one per role - 18 for indicators, 20 for controls. Size floors are 12 for
+  indicators and 16 for controls, which is why `TerminalPanel`'s 8px session dot stays lucide.
+  The two control marks render at size 20: their r=10 ring draws 18.33px, a pixel match for the
+  lucide `Circle` they replaced. Upstream geometry has already moved twice (2.5.0 squared the
+  envelope to 18x18 and shrank the controls to r=9; 2.6.0 reversed both), so
+  `tests/unit/activity-mark.test.ts` pins the r=10 control ring, the r=9 agent ring, and the
+  envelope's 18 x 14.4 box as the guard against a silent upstream reshape. The envelope's height
+  is load-bearing beyond legibility: a card swaps idle for working IN PLACE, and at 18x18 the
+  envelope enclosed 26% more than the ring, so the indicator visibly grew on every state change.
+  At 14.4 the two are within 0.5%, which holds only while `agent-working` stays r=9. Indicators
+  render at 15 (`TaskCard` and both sidebar components), NOT the 14 the lucide glyphs used: the
+  branding envelope is 18 wide where lucide's `Mail` was 20, so a same-number swap silently
+  shrinks it ~10%. 15 restores the drawn size production shipped. Move the sidebar's two
+  indicator components together or the row goes ragged. lucide stays everywhere
+  else (140+ files), and `utils/swimlane-icons.tsx` needs its whole glyph map
+  because column icon names are persisted as kebab-case strings in the DB.
 - **Settings tab separator** - Each tab in `SETTINGS_TABS` (`settings-tabs.ts`) declares a
   `category`. `'project'` tabs (General, Theme, Agent, Git, Browser, Shortcuts) are per-project
   settings, saved to `.kangentic/config.json`, and hidden when no project is selected.

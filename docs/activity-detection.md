@@ -117,7 +117,12 @@ The renderer uses it to show elapsed wait time ("Idle for 12m") in the TaskCard 
 (`formatActivityReasonText` / `ActivityReasonTooltip` in
 `src/renderer/components/board/ActivityReasonTooltip.tsx`).
 
-The renderer uses `reason.kind` to pick a Lucide icon (Wrench / Users / Terminal / Lock / Loader2 / Mail) and inline label for the TaskCard hover tooltip.
+The renderer uses `reason.kind` to pick an icon and inline label for the TaskCard hover tooltip. The
+two kinds that describe agent activity itself render the shared `@kangentic/branding` activity marks
+via `ActivityMark`, so they match the TaskCard indicator exactly (`idle` -> `agent-idle`,
+`turn-active` -> `agent-working`); the kinds that name a specific cause have no counterpart in that
+set and stay Lucide (`tool` -> Wrench, `subagent` -> Users, `background-shell` -> Terminal,
+`permission` -> Lock).
 
 ### Durable activity-interval history
 

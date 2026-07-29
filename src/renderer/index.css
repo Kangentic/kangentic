@@ -393,17 +393,11 @@
   z-index: 0;
 }
 
-/* Command Terminal activity: a dash marches around the terminal icon's own
-   square border while an agent is working (the square-fitting counterpart to the
-   circular spinner used by the task-detail / Stop buttons). `pathLength="100"` on
-   the rect normalizes the rounded-square perimeter to 100 units, so the dash math
-   is geometry-independent. */
-@keyframes march-border {
-  to { stroke-dashoffset: -100; }
-}
-.animate-march-border {
-  animation: march-border 1.4s linear infinite;
-}
+/* The activity marks' marching-border animation used to live here as
+   `@keyframes march-border` / `.animate-march-border`. It now ships with the marks themselves,
+   in `@kangentic/branding/assets/activity/activity.css` (`kng-activity-march` / `.kng-march`,
+   same 1.4s linear dashoffset), imported by `components/ActivityMark.tsx` - so the keyframe
+   and the geometry it animates can no longer drift apart. */
 
 /* xterm: fill parent height so scrollbar is flush with bottom edge.
    xterm.js creates a .xterm child div that is content-sized (rows * cellHeight)

@@ -1,24 +1,26 @@
 import React from 'react';
+import { ActivityMark, type ActivityMarkName } from '../ActivityMark';
 import type { CommandTerminalTone } from '../../stores/session-store/transient-session-slice';
 
 /**
- * The Command Terminal glyph: a custom terminal icon whose state lives IN the
- * glyph rather than in a separate corner badge. The stroke color is the aggregate
- * activity of a project's terminals (green while working / warm amber when one
- * needs you / muted rest, via the --kng-active / --kng-attention tokens), and the
- * working border MARCHES (a dash flows around the perimeter). The center morphs
- * from the shell prompt to a `+` when rendered for the "New terminal" button, so
- * that button reads as a terminal glyph (not a bare plus). 24 viewBox at
- * strokeWidth 2 to match the neighbouring lucide icons.
+ * The Command Terminal glyph: a terminal icon whose state lives IN the glyph rather than in a
+ * separate corner badge. The stroke color is the aggregate activity of a project's terminals
+ * (green while working / warm amber when one needs you / muted rest, via the --kng-active /
+ * --kng-attention tokens), and the working border MARCHES (a dash flows around the perimeter).
+ * The center morphs from the shell prompt to a `+` when rendered for the "New terminal" button,
+ * so that button reads as a terminal glyph (not a bare plus).
  *
- * A deliberate inline-SVG exception to the lucide-only icon convention
- * (`ui-conventions.md`): no lucide glyph carries a marching activity border, and
- * the prompt/plus morph is specific to this control.
+ * One of the three files `ui-conventions.md` exempts from the lucide-only / no-inline-SVG rule,
+ * and the only one that holds the exemption second-hand: it draws nothing itself, it wraps
+ * `ActivityMark`. The geometry comes from `@kangentic/branding`'s `terminal-*` marks.
+ * It was previously hand-authored here and was byte-identical to the packaged art (same rect,
+ * chevron, plus, and `65 35` dash), which is exactly the duplication the shared set exists to
+ * remove. This component stays as the app-facing wrapper because it owns the tone -> mark
+ * mapping and the `data-activity` / `data-plus` test contract.
  *
- * Shared by the title bar (20px, the project-wide toggle) and the project sidebar
- * (14px, per project row). Callers outside the title bar MUST pass their own
- * `testId`: the default belongs to the title-bar toggle, and reusing it would make
- * that button's test locators ambiguous.
+ * Shared by the title bar (20px, the project-wide toggle) and the project sidebar (14px, per
+ * project row). Callers outside the title bar MUST pass their own `testId`: the default belongs
+ * to the title-bar toggle, and reusing it would make that button's test locators ambiguous.
  */
 export function CommandTerminalIcon({
   tone,
@@ -37,47 +39,24 @@ export function CommandTerminalIcon({
   const isWorking = tone === 'thinking'; // activity-state-ok: presentational tone, not an ActivityState
   const needsAttention = tone === 'idle'; // activity-state-ok: presentational tone, not an ActivityState
   const colorClass = isWorking ? 'text-active' : needsAttention ? 'text-attention' : '';
+
+  // `showPlus` wins: the "New terminal" button is an ACTION, so it never marches. Rest and
+  // needs-you share the `terminal-idle` geometry and differ only in tone, which is why the
+  // packaged set ships no separate `-rest` mark.
+  const mark: ActivityMarkName = showPlus
+    ? 'terminal-new'
+    : isWorking
+      ? 'terminal-working'
+      : 'terminal-idle';
+
   return (
-    <svg
-      viewBox="0 0 24 24"
-      width={size}
-      height={size}
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
+    <ActivityMark
+      mark={mark}
+      size={size}
       className={colorClass}
       data-testid={testId}
       data-activity={tone}
       data-plus={showPlus ? 'true' : 'false'}
-      aria-hidden="true"
-    >
-      {/* Terminal screen border. While an agent works it marches (a dash flows
-          around the perimeter); pathLength normalizes the dash math to 100. */}
-      <rect
-        x="3"
-        y="3"
-        width="18"
-        height="18"
-        rx="3"
-        pathLength={100}
-        strokeDasharray={isWorking ? '65 35' : undefined}
-        className={isWorking ? 'animate-march-border' : undefined}
-      />
-      {showPlus ? (
-        // The add affordance, centered in the terminal (replaces the prompt).
-        <>
-          <path d="M12 8.5 V15.5" />
-          <path d="M8.5 12 H15.5" />
-        </>
-      ) : (
-        // The shell prompt: chevron + caret line.
-        <>
-          <path d="M7.5 9.5 L10.5 12 L7.5 14.5" />
-          <path d="M12.5 14.5 H16.5" />
-        </>
-      )}
-    </svg>
+    />
   );
 }

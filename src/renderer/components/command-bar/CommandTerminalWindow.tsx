@@ -19,7 +19,8 @@
 
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Circle, CircleStop, FolderOpen, FolderGit, GitBranch, GitCompare, Loader2, Maximize2, Minimize2, PictureInPicture2, SquareChevronRight, Zap } from 'lucide-react';
+import { CircleStop, FolderOpen, FolderGit, GitBranch, GitCompare, Loader2, Maximize2, Minimize2, PictureInPicture2, SquareChevronRight, Zap } from 'lucide-react';
+import { ActivityMark } from '../ActivityMark';
 import { BranchPicker } from '../dialogs/BranchPicker';
 import { LaunchOverlay } from '../LaunchOverlay';
 import { HeaderActionButton } from '../HeaderActionButton';
@@ -52,41 +53,26 @@ import { PanelErrorBoundary } from '../PanelErrorBoundary';
 const ChangesPanel = lazy(() => import('../dialogs/task-detail/changes/ChangesPanel').then((module) => ({ default: module.ChangesPanel })));
 
 /**
- * The centered stop glyph: one small rounded square, sized + colored to sit dead
- * center in the 20px activity ring (the stop counterpart to task-detail's
- * `PauseBars`). `colorClass` is a `bg-*` matching the ring.
- */
-function StopSquare({ colorClass }: { colorClass: string }): ReactNode {
-  return (
-    <span data-testid="stop-square" className="col-start-1 row-start-1 flex items-center justify-center">
-      <span className={`w-[8px] h-[8px] rounded-[2px] ${colorClass}`} />
-    </span>
-  );
-}
-
-/**
- * The Stop button glyph, carrying the same activity ring the task-detail header
- * folds into its pause button (`PauseButtonIcon`), but with a STOP square centered
- * instead of pause bars - the command terminal stops (kills the PTY); it never
- * pauses. Activity is encoded by the surrounding ring:
- *   - thinking (agent working): a spinning active ring around the stop square.
+ * The Stop button glyph, carrying the same activity ring the task-detail header folds into its
+ * pause button (`PauseButtonIcon`), but with a STOP square centered instead of pause bars - the
+ * command terminal stops (kills the PTY); it never pauses. Activity is encoded by the ring:
+ *   - thinking (agent working): a marching active ring around the stop square.
  *   - idle/permission (needs you): a static attention ring around the stop square.
  *   - not yet running / no activity: the plain red CircleStop (rest state).
+ *
+ * Ring and square are one packaged mark, so the hand-computed `47 16` dash that used to be
+ * duplicated here and in `TaskDetailHeader` is gone. See `PauseButtonIcon` for why 20 is the
+ * size that reproduces the old glyph exactly.
  */
 function StopButtonIcon({ isThinking, isIdle }: { isThinking: boolean; isIdle: boolean }): ReactNode {
-  if (isThinking) {
+  if (isThinking || isIdle) {
     return (
-      <span className="grid place-items-center">
-        <Circle size={20} className="col-start-1 row-start-1 text-active animate-spin [stroke-dasharray:47_16]" />
-        <StopSquare colorClass="bg-active" />
-      </span>
-    );
-  }
-  if (isIdle) {
-    return (
-      <span className="grid place-items-center">
-        <Circle size={20} className="col-start-1 row-start-1 text-attention" />
-        <StopSquare colorClass="bg-attention" />
+      <span className="grid place-items-center w-5 h-5">
+        <ActivityMark
+          mark={isThinking ? 'control-stop-working' : 'control-stop-idle'}
+          size={20}
+          className={isThinking ? 'text-active' : 'text-attention'}
+        />
       </span>
     );
   }

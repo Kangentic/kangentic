@@ -1,5 +1,5 @@
 import React from 'react';
-import { Loader2, Mail } from 'lucide-react';
+import { ActivityMark } from '../../ActivityMark';
 
 export interface SidebarActivityCountsProps {
   thinkingCount: number;
@@ -18,10 +18,14 @@ export const SidebarActivityCounts = React.memo(function SidebarActivityCounts({
   const hasIdle = idleCount > 0;
   if (!hasThinking && !hasIdle) return null;
 
-  // Match the row's sibling icons (project name text, kebab) and the task-card
-  // indicator at 14px: the lucide Mail/Loader2 glyphs smear at 11-12px because the
-  // 2px stroke scales down to a sub-pixel hairline.
-  const iconSize = size === 'group' ? 12 : 14;
+  // 15, the same size `TaskCard` renders these two marks at - one mark, one meaning, one size.
+  // Not 14, which is what the lucide glyphs used: the branding envelope is 18 wide where
+  // lucide's Mail was 20, so a same-number swap silently shrank it ~10%. 15 restores the drawn
+  // size production actually shipped (11.25 x 9.0px against the old 11.67 x 9.33).
+  //
+  // 12 is the floor: below it the 2px stroke scales to a sub-pixel hairline and smears, which
+  // is why the branding set declares `floors.indicator = 12`.
+  const iconSize = size === 'group' ? 12 : 15;
   const labelParts: string[] = [];
   if (hasIdle) labelParts.push(`${idleCount} idle`);
   if (hasThinking) labelParts.push(`${thinkingCount} thinking`);
@@ -36,7 +40,7 @@ export const SidebarActivityCounts = React.memo(function SidebarActivityCounts({
     >
       {hasIdle && (
         <span className="flex items-center gap-1" aria-hidden>
-          <Mail size={iconSize} className="text-attention flex-shrink-0" />
+          <ActivityMark mark="agent-idle" size={iconSize} className="text-attention flex-shrink-0" />
           <span
             className="flex items-center justify-center min-w-[1ch] font-semibold text-attention"
             style={countBoxStyle}
@@ -47,7 +51,7 @@ export const SidebarActivityCounts = React.memo(function SidebarActivityCounts({
       )}
       {hasThinking && (
         <span className="flex items-center gap-1" aria-hidden>
-          <Loader2 size={iconSize} className="text-active animate-spin flex-shrink-0" />
+          <ActivityMark mark="agent-working" size={iconSize} className="text-active flex-shrink-0" />
           <span
             className="flex items-center justify-center min-w-[1ch] font-semibold text-active"
             style={countBoxStyle}

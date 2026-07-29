@@ -15,9 +15,11 @@ declare module '*?url' {
   export default url;
 }
 
-// Vite `?raw` suffix: inlines the referenced file's contents as a string. Used
-// to load the AudioWorklet processor source and register it via a Blob URL,
-// which `audioWorklet.addModule` supports reliably across platforms.
+// Vite `?raw` suffix: inlines the referenced file's contents as a string. Three uses:
+// the AudioWorklet processor source, registered via a Blob URL because
+// `audioWorklet.addModule` supports that reliably across platforms; and the branding
+// brandmark (`BrandMark.tsx`) and activity marks (`ActivityMark.tsx`), inlined so their
+// strokes inherit `currentColor` instead of being opaque `<img>` pixels.
 declare module '*?raw' {
   const content: string;
   export default content;

@@ -79,10 +79,12 @@ export const SidebarCommandTerminalIndicator = React.memo(function SidebarComman
       data-activity={tone}
       data-count={count}
     >
-      <CommandTerminalIcon size={14} tone={tone} testId={`project-terminal-icon-${projectId}`} />
+      {/* 15 to match SidebarActivityCounts' row size, so all three indicators stay one
+          tabular column. Change both together or the row goes ragged. */}
+      <CommandTerminalIcon size={15} tone={tone} testId={`project-terminal-icon-${projectId}`} />
       {/* The count always prints, even at 1. Suppressing it left a lone glyph in a row
           of icon+digit pairs, where it read as a count that had lost its number. */}
-      <span className="flex items-center justify-center min-w-[1ch] font-semibold" style={{ height: 14 }}>
+      <span className="flex items-center justify-center min-w-[1ch] font-semibold" style={{ height: 15 }}>
         {count}
       </span>
     </button>

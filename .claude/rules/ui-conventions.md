@@ -10,7 +10,13 @@ chrome unless these are stated.
 
 ## The rule
 
-- **Icons:** use Lucide React icons. No inline SVGs.
+- **Icons:** use Lucide React icons. No inline SVGs. Exactly three files are exempt, each
+  consuming a shipped `@kangentic/branding` asset that cannot be a lucide glyph:
+  `components/BrandMark.tsx` (the brandmark lockup), `components/ActivityMark.tsx` (the nine
+  activity marks, shared with the website and mobile app), and
+  `components/command-bar/CommandTerminalIcon.tsx` (a wrapper over `ActivityMark`). Each carries
+  a comment naming this rule. Adding a fourth needs the same justification, not a silent inline
+  `<svg>`.
 - **Dropdowns:** use the shared `Select` component from
   `src/renderer/components/settings/shared.tsx`, never a raw `<select>` with inline classes.
   The shared component renders `appearance-none` with a custom ChevronDown for correct spacing.
@@ -45,6 +51,10 @@ chrome unless these are stated.
   rule's `src/renderer/**` auto-load; the copy convention on adapter files
   (`src/main/agent/adapters/**`) is caught by the always-on conventions finder instead, which runs
   regardless of which files changed.
+- **Test (inline-SVG allowlist only):** `tests/unit/branding-assets.test.ts` asserts which
+  branding asset each of the three exempt files imports, so the allowlist above is anchored to
+  real imports rather than being a fourth list that drifts. It does not detect a NEW inline
+  `<svg>` elsewhere; that stays review-caught.
 - No dedicated mechanical test yet. Candidate future checks: a scan for raw `<select>` and for
   `text-[10px]` (or smaller) under `src/renderer/`; a scan of `SETTINGS_REGISTRY` label/description
   fields for raw hex / byte-code literals (`0x`, `\x`, `\u`, `U+`).

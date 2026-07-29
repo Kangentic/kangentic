@@ -2,7 +2,7 @@ import React, { useCallback, useMemo, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Loader2, CirclePause, Mail, Paperclip, Trash2 } from 'lucide-react';
+import { Loader2, CirclePause, Paperclip, Trash2 } from 'lucide-react';
 import { formatRelativeTime } from '../../lib/datetime';
 import { TaskChangesDialog } from '../dialogs/TaskChangesDialog';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
@@ -17,6 +17,7 @@ import { useTaskProgress } from '../../utils/task-progress';
 import { isContextWindowKnown, contextWindowDisplayPercent } from '../../utils/format-tokens';
 import { requiresUserInteraction, isActive } from '../../../shared/activity-state';
 import { getProgressColor } from '../../utils/progress-color';
+import { ActivityMark } from '../ActivityMark';
 import { LabelPills } from '../Pill';
 import { PrLink } from '../PrLink';
 import type { Task } from '../../../shared/types';
@@ -276,22 +277,24 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
       >
         <div className="flex items-center gap-1.5">
           {isIdle && (
-            <Mail
-              size={14}
+            <ActivityMark
+              mark="agent-idle"
+              size={15}
               className="text-attention shrink-0"
               aria-label={activityReason ? formatActivityReasonText(activityReason) : 'Idle'}
             >
               {activityReason && <title>{formatActivityReasonText(activityReason)}</title>}
-            </Mail>
+            </ActivityMark>
           )}
           {isThinking && (
-            <Loader2
-              size={14}
-              className="text-active animate-spin shrink-0"
+            <ActivityMark
+              mark="agent-working"
+              size={15}
+              className="text-active shrink-0"
               aria-label={activityReason ? formatActivityReasonText(activityReason) : 'Thinking'}
             >
               {activityReason && <title>{formatActivityReasonText(activityReason)}</title>}
-            </Loader2>
+            </ActivityMark>
           )}
           <div className="text-sm text-fg font-medium truncate flex-1 min-w-0">{task.title}</div>
           {displayIdBadge}
