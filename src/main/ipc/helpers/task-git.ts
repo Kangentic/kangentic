@@ -55,12 +55,15 @@ export class BranchCheckoutBlockedError extends Error {
     readonly directory: string,
     readonly blockingTaskId: string,
     readonly blockingTaskTitle: string | null,
+    readonly blockerKind: 'task' | 'command-terminal' = 'task',
   ) {
-    const blocker = blockingTaskTitle ? `"${blockingTaskTitle}"` : `task ${blockingTaskId.slice(0, 8)}`;
-    super(
-      `Cannot switch branches in ${directory}: ${blocker} is already running an agent there. `
-      + 'Stop that task, or enable worktree mode so each task gets its own checkout.',
-    );
+    const blocker = blockerKind === 'command-terminal'
+      ? 'a Command Terminal'
+      : (blockingTaskTitle ? `"${blockingTaskTitle}"` : `task ${blockingTaskId.slice(0, 8)}`);
+    const remedy = blockerKind === 'command-terminal'
+      ? 'Close that terminal, or enable worktree mode so each task gets its own checkout.'
+      : 'Stop that task, or enable worktree mode so each task gets its own checkout.';
+    super(`Cannot switch branches in ${directory}: ${blocker} is already running an agent there. ${remedy}`);
     this.name = 'BranchCheckoutBlockedError';
   }
 }
@@ -81,6 +84,12 @@ function isSameDirectory(first: string, second: string): boolean {
  * agent actually is, whereas re-reading the task row is an indirection that can
  * disagree with reality. Queued sessions count, because the session manager
  * stamps `cwd` on the queued placeholder before the PTY exists.
+ *
+ * A Command Terminal counts too, deliberately. It spawns a real agent with
+ * `cwd = projectRoot` (`handlers/transient-sessions.ts`), so checking out under
+ * it changes files under a live agent exactly as a task would. The previous
+ * guard missed this because it resolved each session's `taskId` to a task row
+ * and a transient id resolves to nothing, so it silently skipped them.
  */
 function assertNoOtherAgentInDirectory(
   context: IpcContext,
@@ -93,6 +102,10 @@ function assertNoOtherAgentInDirectory(
     && Boolean(session.cwd)
     && isSameDirectory(session.cwd, directory));
   if (!occupant) return;
+
+  if (occupant.transient) {
+    throw new BranchCheckoutBlockedError(directory, occupant.taskId, null, 'command-terminal');
+  }
 
   let blockingTitle: string | null = null;
   try {

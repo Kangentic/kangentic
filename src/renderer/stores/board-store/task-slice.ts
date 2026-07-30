@@ -6,6 +6,7 @@ import { useSessionStore } from '../session-store';
 import { useToastStore } from '../toast-store';
 import { useProjectStore } from '../project-store';
 import { invalidateProject } from '../project-cache';
+import { describeIpcError } from '../../lib/ipc-error';
 import { applyStructuralSharing } from './structural-sharing';
 import { fetchArchivedReconcile } from './archived-tasks-slice';
 import type { BoardStore } from './types';
@@ -398,7 +399,7 @@ export const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set
         await get().loadBoard();
       }
       useToastStore.getState().addToast({
-        message: `Failed to move task: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        message: `Failed to move task: ${describeIpcError(err)}`,
         variant: 'error',
       });
       return { ok: false };

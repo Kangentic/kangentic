@@ -184,6 +184,30 @@ describe('ensureTaskBranchCheckout occupancy guard', () => {
     }
   });
 
+  /**
+   * A Command Terminal spawns a real agent with `cwd = projectRoot`
+   * (`handlers/transient-sessions.ts`), so it holds the directory exactly as a
+   * task does. The old guard missed it: it resolved each session's taskId to a
+   * task row, and a transient id resolves to nothing, so those sessions were
+   * silently skipped.
+   */
+  it('blocks on an open Command Terminal, and says so rather than naming a task', async () => {
+    const task = makeTask({ base_branch: 'develop' });
+    const context = {
+      sessionManager: {
+        listSessions: () => [
+          { taskId: 'transient-abc', status: 'running', cwd: PROJECT_PATH, transient: true },
+        ],
+      },
+      currentProjectId: null,
+      projectRepo: { list: () => [] },
+    } as unknown as IpcContext;
+
+    await expect(ensureTaskBranchCheckout(context, task, PROJECT_PATH))
+      .rejects.toThrow(/Command Terminal/);
+    expect(checkoutBranchMock).not.toHaveBeenCalled();
+  });
+
   it('names the blocking task in the message so the user knows what to stop', async () => {
     const task = makeTask({ base_branch: 'develop' });
     const context = {
