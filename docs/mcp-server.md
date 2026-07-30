@@ -275,7 +275,7 @@ Resolve the task that corresponds to the current working directory and/or git br
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `cwd` | string | No | Absolute working directory path. The tool extracts the worktree slug from `.kangentic/worktrees/<slug>` and matches against `tasks.worktree_path`. |
+| `cwd` | string | No | Absolute working directory path. The tool extracts the worktree folder name from `.kangentic/worktrees/<folder>` and matches against `tasks.worktree_path`. |
 | `branch` | string | No | Current git branch name. Exact (case-insensitive) match against `tasks.branch_name`. |
 
 At least one parameter is required. Returns the same task fields as `kangentic_find_task` (id, displayId, title, description, column, branchName, baseBranch, worktreePath, prNumber, prUrl, useWorktree, status). Returns `data: null` when no match is found, a single task object when one matches, or an array when multiple tasks match.

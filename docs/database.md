@@ -629,8 +629,11 @@ Operates on a per-project DB.
 | `list(swimlaneId?)` | Active (non-archived) tasks, optionally filtered by swimlane. Includes `attachment_count` via LEFT JOIN on `task_attachments`. |
 | `getById(id)` | Single task by ID (includes `attachment_count`) |
 | `getBySessionId(sessionId)` | Find the active (non-archived) task that owns a given PTY session |
-| `create(input)` | Insert at the end of the target swimlane (next position) |
+| `create(input)` | Insert at the end of the target swimlane (next position). Transactional: allocates a monotonic `display_id` from `project_meta` in the same transaction as the INSERT |
 | `update(input)` | Partial update -- only provided fields are changed |
+| `recordWorktree(id, path, branch, folder)` | Transactional write of `worktree_path`, `branch_name` and the write-once `worktree_folder` together. Separate statements would leave a crash window where the path is set and the folder is not, which a later Done move would turn into permanent loss |
+| `setWorktreeFolder(id, folder)` | Record the worktree's directory name. Write-once: guarded on `worktree_folder IS NULL`, so a task's worktree can never be relocated by a later write |
+| `recoverLegacyWorktreeFolder(taskId, worktreesRoot)` | For a pre-numeric-scheme task whose `worktree_path` was already cleared by a Done move, recover and persist its original directory name from the newest `sessions.cwd`. Accepts only a direct child of `worktreesRoot`, so a project that is itself checked out at a worktree path cannot claim the enclosing worktree's name |
 | `move(input)` | Transactional move: shift positions in old and new swimlanes, update task |
 | `archive(id)` | Set `archived_at` to now (soft-delete for Done column) |
 | `unarchive(id, targetSwimlaneId, position)` | Clear `archived_at`, move to target swimlane and position |

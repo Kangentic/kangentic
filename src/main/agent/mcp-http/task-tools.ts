@@ -352,9 +352,9 @@ export function registerTaskTools(
   server.registerTool(
     'kangentic_get_current_task',
     {
-      description: 'Resolve the Kangentic task that corresponds to the current working directory and/or git branch. Use this at the start of work in a worktree to confirm which task you are operating on (e.g. before commits, PRs, or merge-back). Pass the agent\'s CWD and/or current branch name. Matches against tasks.worktree_path (full path or .kangentic/worktrees/<slug> segment) and tasks.branch_name. Returns the same shape as kangentic_find_task.',
+      description: 'Resolve the Kangentic task that corresponds to the current working directory and/or git branch. Use this at the start of work in a worktree to confirm which task you are operating on (e.g. before commits, PRs, or merge-back). Pass the agent\'s CWD and/or current branch name. Matches against tasks.worktree_path (full path or .kangentic/worktrees/<folder> segment) and tasks.branch_name. Returns the same shape as kangentic_find_task.',
       inputSchema: z.object({
-        cwd: z.string().optional().describe('Absolute working directory path. The tool extracts the worktree slug from .kangentic/worktrees/<slug> and matches against tasks.worktree_path.'),
+        cwd: z.string().optional().describe('Absolute working directory path. The tool extracts the worktree folder name from .kangentic/worktrees/<folder> and matches against tasks.worktree_path.'),
         branch: z.string().optional().describe('Current git branch name. Exact (case-insensitive) match against tasks.branch_name.'),
       }),
       annotations: READ_ONLY_ANNOTATIONS,
