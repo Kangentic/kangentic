@@ -50,6 +50,17 @@ export interface CoreSessionSlice {
    *  owners). Was a single scalar (`dialogSessionId`) when only one modal could
    *  be open; an array now that windows are modeless and stack. */
   dialogSessionIds: string[];
+  /** Task ids whose detail is open in ANOTHER renderer (the detached Agent Monitor,
+   *  or the main window as seen from a pop-out). Pushed by main, which is the only
+   *  side that can see across renderers; already filtered to exclude our own.
+   *
+   *  `dialogSessionIds` answers "does a window in THIS renderer own the terminal",
+   *  which is the right question for the focused set (we are the ones who would
+   *  render the bytes). This answers the different question the bottom panel asks:
+   *  "does a terminal exist for this session anywhere at all". Conflating them
+   *  either let the panel mount a second xterm on a live PTY, or made main stream
+   *  bytes to a renderer with nothing to paint them into. */
+  remoteDetailTaskIds: string[];
   /** Destination project id captured at the FIRST frame of a project switch when that
    *  project has persisted detail windows (read synchronously from
    *  `config.workspaceByProject` before the deferred cold-path workspace restore runs). The

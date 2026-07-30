@@ -24,7 +24,15 @@ export function TaskContextMenu({
   onArchive,
   onDelete,
   onClose,
+  leading,
+  testId = 'task-context-menu',
 }: {
+  /** Root `data-testid`, so each host can address its own instance. */
+  testId?: string;
+  /** Extra item(s) above the copy-id row, with a divider after. The Agent Monitor
+   *  puts "Open on board" here so it can reuse this whole menu rather than
+   *  maintaining a second, thinner one that drifts from the board's. */
+  leading?: React.ReactNode;
   position: { x: number; y: number };
   task: Task;
   swimlanes: Swimlane[];
@@ -70,7 +78,14 @@ export function TaskContextMenu({
       className="fixed z-50 bg-surface-raised border border-edge rounded-lg shadow-xl py-1 min-w-[180px] overlay-popover-in"
       style={{ ...menuStyle, transformOrigin: 'top left' }}
       data-dismissable-layer
+      data-testid={testId}
     >
+      {leading && (
+        <>
+          {leading}
+          <div className="border-t border-edge my-1" />
+        </>
+      )}
       <button
         type="button"
         onClick={() => {

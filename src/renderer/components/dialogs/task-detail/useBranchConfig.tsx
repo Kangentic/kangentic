@@ -1,13 +1,14 @@
 import { useState, useEffect, useMemo } from 'react';
-import { useConfigStore } from '../../../stores/config-store';
+import { useTaskDetailHost } from './task-detail-host';
 import { fetchGitBranches } from '../../../utils/git-branches';
 import { isValidGitBranchName } from '../../../../shared/git-utils';
 import { slugify, computeAutoBranchName } from '../../../../shared/slugify';
 import type { Task } from '../../../../shared/types';
 
 export function useBranchConfig(task: Task, title: string, isInTodo: boolean) {
-  const worktreesEnabled = useConfigStore((s) => s.config.git.worktreesEnabled);
-  const defaultBaseBranch = useConfigStore((s) => s.config.git.defaultBaseBranch);
+  // Git settings of the HOSTING project: a worktree for a background project's
+  // task must branch from that project's default base, not the open board's.
+  const { config: { worktreesEnabled, defaultBaseBranch } } = useTaskDetailHost();
 
   const [baseBranch, setBaseBranch] = useState(task.base_branch || '');
   const [customBranchName, setCustomBranchName] = useState(task.branch_name || '');

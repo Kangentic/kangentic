@@ -1,5 +1,6 @@
 import { findSafeStartIndex } from './scrollback-utils';
 import { HeadlessFrameBuffer } from './headless-frame';
+import { traceTerminal, type RepaintSettleReason } from '../terminal-trace';
 
 const MAX_SCROLLBACK = 512 * 1024; // 512KB per session
 /**
@@ -162,6 +163,13 @@ function updateModeState(state: ModeState, text: string): void {
   }
 }
 
+/**
+ * Full-screen erase. The marker a fullscreen TUI emits when it redraws its whole
+ * frame, which is therefore both "where the TUI took over" (first occurrence) and
+ * "where the current frame begins" (last occurrence).
+ */
+const FULL_FRAME_CLEAR = '\x1b[2J';
+
 function buildDecPrivateModePrefix(activeModes: Set<number>): string {
   if (activeModes.size === 0) return '';
   const sortedModes = Array.from(activeModes).sort((first, second) => first - second);
@@ -194,6 +202,11 @@ interface BufferState {
    *  repaint, so settling requires marker AND quiesce (see the constants doc
    *  above). Cleared together with pendingRepaintAt. */
   pendingRepaintStacked: boolean;
+  /** The settle already in flight for `pendingRepaintAt`, so concurrent
+   *  samplers of the SAME resize share one wait instead of racing two.
+   *  Stamped with the resize it is anchored to; a newer resize gets its own.
+   *  Cleared by whichever wait created it, once that wait resolves. */
+  repaintSettle: { stamp: number; promise: Promise<void> } | null;
   /** Timestamp (Date.now()) of the most recent onData, or null before any data.
    *  Used by waitForResizeRepaint to detect that the SIGWINCH repaint has
    *  landed (data after the resize stamp) and then quiesced. */
@@ -268,6 +281,7 @@ export class PtyBufferManager {
       pendingRepaintAt: null,
       pendingRepaintScrollbackLength: null,
       pendingRepaintStacked: false,
+      repaintSettle: null,
       lastDataAt: null,
       tuiStartIndex: previousScrollback ? 0 : -1,
       // Start empty/false even on carry-over: the new process re-emits its own modes.
@@ -386,6 +400,9 @@ export class PtyBufferManager {
     state.headless.resize(cols, rows);
 
     const colsChanged = cols !== state.lastCols;
+    if (colsChanged) {
+      traceTerminal(sessionId, 'pty-resize', { fromCols: state.lastCols, toCols: cols, rows });
+    }
     state.lastCols = cols;
     if (colsChanged) {
       // A width change on top of a still-pending repaint means two repaints
@@ -413,23 +430,59 @@ export class PtyBufferManager {
    */
   async waitForResizeRepaint(sessionId: string): Promise<void> {
     const state = this.buffers.get(sessionId);
-    if (!state || state.pendingRepaintAt === null) return;
+    if (!state || state.pendingRepaintAt === null) {
+      traceTerminal(sessionId, 'settle', { reason: 'not-armed' satisfies RepaintSettleReason });
+      return;
+    }
 
     const stamp = state.pendingRepaintAt;
+
+    // A second sampler for the SAME resize JOINS the wait already in flight
+    // rather than starting its own. Two independent waits cannot both work:
+    // whichever settles first calls clearPendingRepaint, which nulls
+    // pendingRepaintScrollbackLength - and that field is the early-settle
+    // predicate's scan offset, re-read on every poll. The loser's
+    // markerSampleSafe is then false forever, so it cannot early-settle at all
+    // and rides REPAINT_MAX_WAIT_MS out, turning a ~20ms open into a ~420ms
+    // one. Not a rare race: measured live, 24 of 24 deadline settles in one
+    // trace ring were this, each preceded by a marker settle for the same
+    // resize. Concurrent samplers are ordinary - a bottom-panel tab and a
+    // detail window both mount for one session during a handover, and dev
+    // StrictMode double-mounts every terminal.
+    //
+    // Joining is also the CORRECT semantic, not just the fast one: "the
+    // repaint following resize S" is one event, so every sampler waiting on S
+    // should see the same answer. A newer resize does not join - it re-stamps
+    // pendingRepaintAt, so its waiter takes a fresh wait for its own repaint.
+    const settleInFlight = state.repaintSettle;
+    if (settleInFlight !== null && settleInFlight.stamp === stamp) {
+      traceTerminal(sessionId, 'settle', { reason: 'joined' satisfies RepaintSettleReason });
+      return settleInFlight.promise;
+    }
+
     const entryTime = Date.now();
 
     // A stamp older than STALE means the repaint has long since landed (or
     // never will) - clear it and sample now rather than wait pointlessly.
     if (entryTime - stamp > REPAINT_STALE_MS) {
       clearPendingRepaint(state);
+      traceTerminal(sessionId, 'settle', {
+        reason: 'stale-stamp' satisfies RepaintSettleReason,
+        ageMs: entryTime - stamp,
+        lastCols: state.lastCols,
+      });
       return;
     }
 
     // Gate on the TUI clear marker via a direct scan (NOT tuiStartIndex, which
     // cannot distinguish "marker absent" from "marker at index 0"). No marker
     // means no full-screen repaint to wait for.
-    if (!state.scrollback.includes('\x1b[2J')) {
+    if (!state.scrollback.includes(FULL_FRAME_CLEAR)) {
       clearPendingRepaint(state);
+      traceTerminal(sessionId, 'settle', {
+        reason: 'no-tui-marker' satisfies RepaintSettleReason,
+        lastCols: state.lastCols,
+      });
       return;
     }
 
@@ -437,7 +490,7 @@ export class PtyBufferManager {
     // gone quiet, or the deadline (measured from wait entry, so re-resizes
     // during a window drag cannot push it out indefinitely) is reached.
     const deadline = entryTime + REPAINT_MAX_WAIT_MS;
-    await new Promise<void>((resolve) => {
+    const settlePromise = new Promise<void>((resolve) => {
       const poll = (): void => {
         const current = this.buffers.get(sessionId);
         // Session torn down mid-wait (killed): stop waiting.
@@ -456,23 +509,59 @@ export class PtyBufferManager {
         // width. Marker-less repaints fall through to the quiesce/deadline
         // fallbacks below.
         const scanOffset = current.pendingRepaintScrollbackLength;
+        // The marker must mean "the whole frame was redrawn". Only a full-screen
+        // ERASE means that. A bare cursor-home used to count here and it is the
+        // reason opening a task detail flickered: a fullscreen TUI emits
+        // cursor-home for ordinary partial updates (a spinner tick, redrawing one
+        // line), so the first routine byte after the resize satisfied the settle
+        // and getScrollback sampled the PRE-resize frame. The user then saw that
+        // stale frame - drawn wide, wrapped into the narrower window - before the
+        // held live bytes replaced it with the real repaint. Measured on a live
+        // Claude session: 169 cursor-homes to 56 full-screen clears in one 512KB
+        // ring, so the false marker outnumbered the true one 3:1.
+        //
+        // A TUI that repaints without erasing has no marker to key on and settles
+        // via quiesce below instead, which is correct if slower - the previous
+        // behavior traded correctness for that latency on EVERY session.
         const markerSampleSafe =
           scanOffset !== null &&
           !current.synchronizedOpen &&
-          (current.scrollback.indexOf('\x1b[2J', scanOffset) !== -1 ||
-            current.scrollback.indexOf('\x1b[H', scanOffset) !== -1);
+          current.scrollback.indexOf(FULL_FRAME_CLEAR, scanOffset) !== -1;
+        // `>=`, not `>`: a repaint that lands in the SAME millisecond as the
+        // resize is still a post-resize repaint. With `>` it was invisible to the
+        // quiesce path, so a marker-less agent fell through to the full deadline.
         const quiesced =
           current.lastDataAt !== null &&
-          current.lastDataAt > stamp &&
+          current.lastDataAt >= stamp &&
           now - current.lastDataAt >= REPAINT_QUIESCE_MS;
-        // Stacked resizes: the first post-resize marker may belong to the
-        // PREVIOUS width's repaint, so require the marker AND quiesce (both
-        // repaints landed and stopped) before sampling. A single resize keeps
-        // the fast marker-or-quiesce settle.
+        // A quiesce ALONE cannot stand in for the repaint on a session we already
+        // know is a fullscreen TUI (this wait only arms when the scrollback shows
+        // a full-screen clear). "Some bytes arrived, then it went quiet for 50ms"
+        // is satisfied by a spinner tick followed by an ordinary lull, and that is
+        // the other half of the flicker: with the false cursor-home marker removed,
+        // the quiesce path still settled on the tick and sampled the pre-resize
+        // frame. The erase marker is the only byte sequence that actually means
+        // "the frame was redrawn", so for a TUI it is required, bounded by the
+        // deadline below so a genuinely missing repaint can still never hang.
+        //
+        // Stacked resizes additionally require quiesce: the first post-resize
+        // erase can be the PREVIOUS width's repaint arriving late, so both must
+        // have landed and stopped.
         const settled = current.pendingRepaintStacked
           ? markerSampleSafe && quiesced
-          : markerSampleSafe || quiesced;
+          : markerSampleSafe;
         if (settled || now >= deadline) {
+          traceTerminal(sessionId, 'settle', {
+            reason: (settled
+              ? (current.pendingRepaintStacked ? 'marker-and-quiesce' : 'marker')
+              : 'deadline') satisfies RepaintSettleReason,
+            waitedMs: now - entryTime,
+            // The width the bytes about to be sampled were DRAWN at. If this is
+            // not the width the renderer just fitted to, the replay is a stale
+            // frame and the user will see it corrected.
+            lastColsAtSample: current.lastCols,
+            stacked: current.pendingRepaintStacked,
+          });
           // Only clear the stamp this wait was anchored to. A second
           // width-changing resize during this wait re-stamps pendingRepaintAt
           // to a newer value for a not-yet-settled repaint; nulling it
@@ -489,6 +578,43 @@ export class PtyBufferManager {
       };
       setTimeout(poll, REPAINT_POLL_MS);
     });
+
+    // Publish before awaiting, so a sampler that arrives mid-wait can join.
+    state.repaintSettle = { stamp, promise: settlePromise };
+    try {
+      await settlePromise;
+    } finally {
+      // Only retract our own entry. A newer resize during this wait installs
+      // its own settle; clearing unconditionally would strand that one's
+      // joiners into the private wait this fix exists to remove.
+      const current = this.buffers.get(sessionId);
+      if (current?.repaintSettle?.stamp === stamp) current.repaintSettle = null;
+    }
+  }
+
+  /**
+   * The width this session's PTY was last resized to, as the buffer manager saw
+   * it, plus whether a post-resize repaint is still outstanding.
+   *
+   * Dev diagnostics only. `lastCols` is the width the bytes currently in the
+   * scrollback were DRAWN at, which is the number you need to explain a terminal
+   * whose content does not match its grid - the divergence is invisible from the
+   * renderer, which only knows its own xterm's width.
+   */
+  getDimensionState(sessionId: string): {
+    lastCols: number;
+    pendingRepaintAt: number | null;
+    pendingRepaintStacked: boolean;
+    inAltScreen: boolean;
+  } | null {
+    const state = this.buffers.get(sessionId);
+    if (!state) return null;
+    return {
+      lastCols: state.lastCols,
+      pendingRepaintAt: state.pendingRepaintAt,
+      pendingRepaintStacked: state.pendingRepaintStacked,
+      inAltScreen: state.inAltScreen,
+    };
   }
 
   getScrollback(sessionId: string): string {
@@ -508,13 +634,34 @@ export class PtyBufferManager {
     // [2J, so their shell command stays in scrollback.
     // Cache the index so subsequent reads don't re-scan.
     if (state.tuiStartIndex === -1) {
-      const clearIdx = scrollback.indexOf('\x1b[2J');
+      const clearIdx = scrollback.indexOf(FULL_FRAME_CLEAR);
       state.tuiStartIndex = clearIdx > 0 ? clearIdx : 0;
     }
     if (state.tuiStartIndex > 0) {
       scrollback = scrollback.slice(state.tuiStartIndex);
     }
 
+    // DO NOT trim the replay to the last full-screen clear.
+    //
+    // It is tempting: in the alt buffer there is no user-visible scrollback, so a
+    // clear-screen looks like a safe replay boundary, and slicing there cuts a
+    // 512KB ring to ~1.5KB. It was tried and REVERTED - it produced a
+    // permanently black terminal on a fast open/close/reopen.
+    //
+    // A raw byte replay is not a frame snapshot. A fullscreen TUI does not redraw
+    // every cell after every clear: write-once static cells keep their content
+    // from earlier bytes, which is exactly why the mobile seed path uses the
+    // headless PARSED grid (`getSerializedFrame`) instead of this byte replay -
+    // see the note on BufferState.headless. Slicing at the last clear discards
+    // those cells, and when the sample lands at or just after a clear (likely on a
+    // rapid reopen, where the settle rides its deadline mid-repaint) the replay is
+    // a clear with nothing after it: black, until something happens to force a
+    // full redraw.
+    //
+    // If the replay cost is worth attacking, the safe shape is a PARSED-grid
+    // snapshot like `getSerializedFrame`, which reconstructs the screen rather
+    // than betting that the bytes after some marker are sufficient to draw it.
+    //
     // The in-memory buffer is trimmed on hysteresis (onData lets it grow to
     // SCROLLBACK_TRIM_THRESHOLD before slicing, to amortize the O(n) trim off
     // the hot path), so it can transiently exceed MAX_SCROLLBACK. Bound the

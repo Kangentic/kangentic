@@ -249,6 +249,15 @@ export class BoardConfigManager {
     return config?.defaultBaseBranch;
   }
 
+  /**
+   * The team-shared default base branch of a project that is NOT the active one,
+   * for the Agent Monitor's cross-project task detail (its branch picker must
+   * offer that project's default, not the open board's).
+   */
+  getDefaultBaseBranchForPath(projectPath: string): string | undefined {
+    return this.getEffectiveConfigForPath(projectPath)?.defaultBaseBranch;
+  }
+
   setDefaultBaseBranch(value: string): void {
     if (!this.activeProjectPath) return;
     // Invalidate up front so every exit path below (content-match early
@@ -383,9 +392,19 @@ export class BoardConfigManager {
 
   getShortcuts(): (ShortcutConfig & { source: 'team' | 'local' })[] {
     if (!this.activeProjectPath) return [];
+    return this.getShortcutsForPath(this.activeProjectPath);
+  }
 
-    const team = this.loadTeamConfig();
-    const local = this.loadLocalOverrides();
+  /**
+   * The same merge for a project that is NOT the active one, mirroring the
+   * `*ForPath` reads above. Needed by the Agent Monitor, which hosts a task
+   * detail (and therefore its header's custom shortcut pills) for a project
+   * whose board is not open. Parameterised rather than copied so the team/local
+   * precedence has exactly one implementation.
+   */
+  getShortcutsForPath(projectPath: string): (ShortcutConfig & { source: 'team' | 'local' })[] {
+    const team = this.loadTeamConfigForPath(projectPath);
+    const local = this.loadLocalOverridesForPath(projectPath);
 
     const result: (ShortcutConfig & { source: 'team' | 'local' })[] = [];
     const localOverrideIds = new Set<string>();

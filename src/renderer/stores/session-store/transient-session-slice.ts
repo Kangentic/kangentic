@@ -131,6 +131,14 @@ export interface TransientSessionSlice {
   commandBarVisible: boolean;
   setCommandBarVisible: (visible: boolean) => void;
 
+  /** Bumped to ask the mounted command bar to hide itself. The open/closed state
+   *  is React state inside `useCommandBar`, so a non-React caller (the Agent
+   *  Monitor's deep-link) has no handle on it; a nonce is how this codebase asks
+   *  a mounted surface to do something from the outside (`requestBoardSearchFocus`).
+   *  Hiding keeps every Command Terminal PTY alive, exactly like the toggle. */
+  commandBarHideNonce: number;
+  requestHideCommandBar: () => void;
+
   /** Per-(project, slot) transient session tracking, keyed by `transientKey()`.
    *  Each Command Terminal window owns one entry. */
   transientSessions: Record<string, TransientSessionEntry>;
@@ -180,6 +188,9 @@ export function createTransientSessionSlice(preserved: {
   return (set, get) => ({
     commandBarVisible: false,
     setCommandBarVisible: (visible) => set({ commandBarVisible: visible }),
+
+    commandBarHideNonce: 0,
+    requestHideCommandBar: () => set((state) => ({ commandBarHideNonce: state.commandBarHideNonce + 1 })),
 
     transientSessions: preserved?.transientSessions ?? {},
 

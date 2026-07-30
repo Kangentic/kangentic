@@ -269,7 +269,7 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
   // clickable child must carry `cursor-pointer` or `data-no-dismiss`, or a click on it
   // will also dismiss.
   return (
-    <div className="w-full h-full bg-surface-raised flex flex-col flex-shrink-0" data-dismiss-surface>
+    <div className="w-full h-full bg-surface-raised flex flex-col flex-shrink-0" data-dismiss-surface="board">
       <div className="px-3 pt-3 pb-2 border-b border-edge space-y-2">
         <div className="flex items-center gap-2">
           {onToggleSidebar && (

@@ -41,6 +41,8 @@ import { getProcessMetrics } from '../../main/diagnostics/process-metrics';
 import { getEventLoopLagReport } from '../../main/diagnostics/event-loop-lag';
 import { ROTATED_FILE_SUFFIX } from '../../main/diagnostics/async-file-queue';
 import type { SessionManager } from '../../main/pty/session-manager';
+import { readTerminalTrace } from '../../main/pty/terminal-trace';
+import { detailOwnerRegistry } from '../../main/ipc/handlers/task-detail-ownership';
 
 /**
  * Localhost-only HTTP inspection bridge. Bound to a random port via
@@ -155,6 +157,10 @@ async function handleRequest(
 
   if (route === 'GET /pty-pipeline') {
     return respondPtyPipeline(options, response);
+  }
+
+  if (route === 'GET /terminal-state') {
+    return respondTerminalState(options, response);
   }
 
   if (route === 'GET /logs') {
@@ -555,6 +561,95 @@ function respondPtyPipeline(
 // Renderer state (Runtime.evaluate'd window globals)
 // ---------------------------------------------------------------------------
 
+/**
+ * Terminal state: every layer's idea of a terminal's size, joined into one
+ * answer, plus the invariants that follow from comparing them.
+ *
+ * This exists because the interesting terminal failures live in the GAP between
+ * the processes. Main knows the PTY's grid; the renderer knows its xterm's grid;
+ * neither compares them, and when they drift nothing recovers (xterm re-sends
+ * dimensions only when its own size changes, so a mismatch has no path back and
+ * the terminal stays wrapped or clipped until resized by hand). Diagnosing it
+ * from one side meant reading `.xterm-screen` pixel widths off screenshots.
+ *
+ * Deliberately one route rather than several narrow ones: new terminal
+ * diagnostics extend this payload instead of adding endpoints and tools.
+ */
+async function respondTerminalState(
+  options: InspectionServerOptions,
+  response: http.ServerResponse,
+): Promise<void> {
+  const sessionManager = options.getSessionManager();
+  if (!sessionManager) {
+    return respondError(response, 503, 'no-session-manager', 'Session manager is not available.');
+  }
+  const window = options.getMainWindow();
+  if (!window) {
+    return respondError(response, 503, 'no-main-window', 'Main window is not available yet.');
+  }
+
+  const main = sessionManager.getTerminalDimensions();
+  const evaluated = await runtimeEvaluate(
+    window,
+    `(() => {
+      const readGrids = window.__kangenticTerminalGrids;
+      const readTrace = window.__kangenticTerminalTrace;
+      if (typeof readGrids !== 'function') return null;
+      try {
+        return {
+          grids: readGrids(),
+          trace: typeof readTrace === 'function' ? readTrace() : [],
+        };
+      } catch (error) { return { error: String(error) }; }
+    })()`,
+  );
+  if (evaluated.error) {
+    return respondError(response, 500, 'evaluate-failed', evaluated.error);
+  }
+  const evaluatedValue = (evaluated.value ?? {}) as { grids?: unknown; trace?: unknown };
+  const grids = Array.isArray(evaluatedValue.grids) ? evaluatedValue.grids : [];
+  const rendererTrace = Array.isArray(evaluatedValue.trace) ? evaluatedValue.trace : [];
+
+  // Join on sessionId and derive the comparisons that matter. `ptyMatchesGrid`
+  // false with `gridOverflowPx` 0 is the unrecoverable divergence: the renderer's
+  // fit agrees with its container, so xterm will never re-send, so the PTY stays
+  // at the wrong width forever.
+  const terminals = grids.map((grid) => {
+    const row = grid as Record<string, unknown>;
+    const sessionId = typeof row.sessionId === 'string' ? row.sessionId : null;
+    const mainRow = sessionId ? main.find((candidate) => candidate.sessionId === sessionId) : undefined;
+    const gridCols = typeof row.cols === 'number' ? row.cols : null;
+    return {
+      ...row,
+      pty: mainRow ?? null,
+      ptyMatchesGrid:
+        mainRow && gridCols !== null && mainRow.ptyCols !== null ? mainRow.ptyCols === gridCols : null,
+      colsDrift:
+        mainRow && gridCols !== null && mainRow.ptyCols !== null ? mainRow.ptyCols - gridCols : null,
+    };
+  });
+
+  respondJson(response, 200, {
+    ts: new Date().toISOString(),
+    terminals,
+    // Sessions main knows about that no mounted xterm is showing. Expected for a
+    // background session; suspicious for one the user is looking at.
+    unmountedSessions: main
+      .filter((row) => !grids.some((grid) => (grid as Record<string, unknown>).sessionId === row.sessionId))
+      .map((row) => row),
+    pipeline: sessionManager.getPipelineStats(),
+    // Both processes' lifecycle events on ONE timeline. The terminal bugs worth
+    // debugging are orderings - which of resize / repaint / sample / replay-write
+    // happened first - and that is only visible merged.
+    trace: [...readTerminalTrace(), ...rendererTrace]
+      .sort((first, second) => {
+        const firstTs = (first as { ts?: number }).ts ?? 0;
+        const secondTs = (second as { ts?: number }).ts ?? 0;
+        return firstTs - secondTs;
+      }),
+  });
+}
+
 async function respondRendererState(
   options: InspectionServerOptions,
   response: http.ServerResponse,
@@ -606,6 +701,19 @@ async function respondStoreState(
   if (!store) {
     return respondError(response, 400, 'missing-store', 'store query parameter is required.');
   }
+
+  // MAIN-side namespaces, answered without touching the renderer.
+  //
+  // Not every piece of state a bug lives in is a Zustand store. Task-detail
+  // ownership is arbitrated in main and was observable ONLY by calling
+  // `resolveOpen` through its IPC handler - which focuses a window and can mount
+  // one, so looking at it changed it. Exposed through this same abstract reader
+  // (rather than a new tool) so `store_state` stays the one way to read state by
+  // name.
+  if (store === 'detailOwners') {
+    return respondJson(response, 200, { store, value: detailOwnerRegistry.snapshot() });
+  }
+
   const requestedPath = url.searchParams.get('path') ?? '';
   const window = options.getMainWindow();
   if (!window) {

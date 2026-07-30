@@ -75,6 +75,24 @@ export interface ManagedSession {
 }
 
 /**
+ * Narrow read-only projection of a registry entry, for main-process consumers
+ * that need a field the `Session` IPC DTO does not carry (today: `agentName`,
+ * for the cross-project Agent Monitor). Deliberately excludes every runtime
+ * handle so this cannot become a back door to the pty.
+ */
+export interface ManagedSessionSummary {
+  id: string;
+  taskId: string;
+  projectId: string;
+  status: SessionStatus;
+  startedAt: string;
+  exitCode: number | null;
+  agentName: string | null;
+  isolatedSwimlaneId: string | null;
+  transient: boolean;
+}
+
+/**
  * Project a live ManagedSession into the Session DTO shape sent over
  * IPC. Omits runtime-only fields (pty handle, agentParser, stream
  * parser, adapter attachment) and resolves the pid from the current
@@ -251,6 +269,28 @@ export class SessionRegistry {
 
   listSessions(): Session[] {
     return Array.from(this.sessions.values(), toSession);
+  }
+
+  /**
+   * Registry rows for the cross-project Agent Monitor. Distinct from
+   * `listSessions()` because the monitor needs `agentName`, which is
+   * deliberately NOT on the `Session` DTO (it is a diagnostic field, and
+   * widening the DTO would ripple through every existing consumer). Returns a
+   * narrow projection rather than `ManagedSession` so callers still cannot
+   * reach the pty handle, parsers, or adapter attachment.
+   */
+  listManagedSummaries(): ManagedSessionSummary[] {
+    return Array.from(this.sessions.values(), (session) => ({
+      id: session.id,
+      taskId: session.taskId,
+      projectId: session.projectId,
+      status: session.status,
+      startedAt: session.startedAt,
+      exitCode: session.exitCode,
+      agentName: session.agentName ?? null,
+      isolatedSwimlaneId: session.isolatedSwimlaneId ?? null,
+      transient: session.transient,
+    }));
   }
 
   /** Lightweight counts without allocating mapped Session objects. */

@@ -25,6 +25,35 @@ const TEST_DATA_ROOT = path.join(__dirname, '..', '.test-data', `worker-${proces
  * Keyed on process.pid so concurrent workers never share a path.
  * Removes stale data from previous runs, then recreates the directory.
  */
+/**
+ * Resolve a mock agent CLI path for the CURRENT platform.
+ *
+ * Always use this instead of joining a fixture path by hand. On Windows a bare
+ * `.js` file is not executable: when node-pty spawns it, the shell has no
+ * association for `.js` and Windows pops the "Select an app to open this .js file"
+ * dialog instead of running anything. The agent then never starts, so the session
+ * has no PTY and produces no output - and a spec asserting on "no output" can pass
+ * for entirely the wrong reason while the developer's screen fills with modal
+ * dialogs, one per run.
+ *
+ * Every mock in `tests/fixtures` ships a `.cmd` sibling that shells out to node for
+ * exactly this reason. `tests/unit/e2e-mock-cli-platform.test.ts` fails any spec
+ * that hand-rolls the path without the win32 branch.
+ *
+ * @param mockName Fixture basename with no extension, e.g. `mock-claude`.
+ */
+export function resolveMockAgentPath(mockName: string): string {
+  const fixturesDir = path.join(__dirname, '..', 'fixtures');
+  if (process.platform === 'win32') {
+    return path.join(fixturesDir, `${mockName}.cmd`);
+  }
+  const jsPath = path.join(fixturesDir, `${mockName}.js`);
+  // POSIX needs the executable bit for the shebang to be honoured; harmless to
+  // re-apply on every run.
+  fs.chmodSync(jsPath, 0o755);
+  return jsPath;
+}
+
 export function getTestDataDir(suiteName: string): string {
   const dir = path.join(TEST_DATA_ROOT, suiteName);
   // Remove stale data (global DB, configs) from previous runs

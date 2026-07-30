@@ -29,16 +29,21 @@ import { WindowLayer, useWindowStore } from '../../window-manager';
 import { useSidebarResize, COLLAPSED_STRIP_WIDTH } from '../../hooks/useSidebarResize';
 import { useTerminalResize, COLLAPSED_HEIGHT } from '../../hooks/useTerminalResize';
 import { shouldForceCollapseTerminal } from '../../utils/terminal-force-collapse';
+import { derivePanelSessions } from '../../utils/panel-sessions';
 import { useCommandBar } from '../../hooks/useCommandBar';
 import { useSearchPalette } from '../../hooks/useSearchPalette';
 import { useViewToggle } from '../../hooks/useViewToggle';
 import { useFocusedSessionsSync } from '../../hooks/useFocusedSessionsSync';
+import { useRemoteDetailOwnersSync } from '../../hooks/useRemoteDetailOwnersSync';
+import { useMonitorDetailOwnership } from '../monitor/useMonitorDetailOwnership';
 import { useDictation } from '../../hooks/useDictation';
 import { DictationSurface } from '../dictation/DictationSurface';
 import { useKeybinding } from '../../hooks/useKeybinding';
 import { StatsPage } from '../stats/StatsPage';
+import { MonitorPage } from '../monitor/MonitorPage';
 import { warmStatsDashboardOnIdle } from '../stats/LazyStatsDashboard';
 import { useUsageDashboardStore } from '../../stores/usage-dashboard-store';
+import { useMonitorStore } from '../../stores/monitor-store';
 import { usePopOut } from '../../pop-out/usePopOut';
 import type { OnboardingStepKey } from '../../../shared/types';
 
@@ -46,6 +51,8 @@ export function AppLayout() {
   const settingsOpen = useConfigStore((s) => s.settingsOpen);
   const statsOpen = useUsageDashboardStore((s) => s.statsOpen);
   const statsPopOut = usePopOut('stats', {});
+  const monitorOpen = useMonitorStore((s) => s.monitorOpen);
+  const monitorPopOut = usePopOut('monitor', {});
   const setSettingsOpen = useConfigStore((s) => s.setSettingsOpen);
   const openProjectSettings = useConfigStore((s) => s.openProjectSettings);
   const config = useConfigStore((s) => s.config);
@@ -86,19 +93,40 @@ export function AppLayout() {
   }, [walkthroughStep]);
 
   const sidebar = useSidebarResize(config);
-  // The bottom panel steps aside (collapses) while any task-detail window is open;
-  // the two are mutually exclusive terminal surfaces. `pendingDetailWindowsProjectId` keeps it
-  // collapsed from the first frame of a project switch when the destination project will restore
-  // detail windows, so it never flashes expanded while `dialogSessionIds` is transiently empty
-  // during the async workspace restore (see utils/terminal-force-collapse.ts).
-  const dialogSessionIds = useSessionStore((s) => s.dialogSessionIds);
-  const pendingDetailWindowsProjectId = useSessionStore((s) => s.pendingDetailWindowsProjectId);
-  const detailWindowsOpen = shouldForceCollapseTerminal({
-    dialogSessionIds,
-    pendingDetailWindowsProjectId,
-    currentProjectId: currentProject?.id ?? null,
+  // The bottom panel drops a task's tab whenever its detail is open (a board window, the in-app
+  // Agent Monitor, or the detached monitor), and collapses once no tab is left - see
+  // `derivePanelSessions` / `shouldForceCollapseTerminal`. Derived inside ONE selector returning a
+  // boolean so `Object.is` gates this root's re-render: subscribing to the session list itself
+  // would re-render the whole app on every activity push.
+  const currentProjectId = currentProject?.id ?? null;
+  const everyTerminalDetached = useSessionStore((s) => {
+    const panelSessions = derivePanelSessions({
+      sessions: s.sessions,
+      currentProjectId,
+      dialogSessionIds: s.dialogSessionIds,
+      remoteDetailTaskIds: s.remoteDetailTaskIds,
+    });
+    return shouldForceCollapseTerminal({
+      activeSessionCount: panelSessions.active.length,
+      visibleSessionCount: panelSessions.visible.length,
+      pendingDetailWindowsProjectId: s.pendingDetailWindowsProjectId,
+      currentProjectId,
+    });
   });
-  const terminal = useTerminalResize(config, detailWindowsOpen, currentProject?.id ?? null);
+  // Releasing that arm is a restore step, not a user action. A project whose restored
+  // detail windows leave OTHER sessions behind now ends up expanded rather than
+  // collapsed, so without this the panel would slide open a second or two after
+  // arrival - motion on a restore path. Folding the arm into the switch key makes
+  // `useTerminalResize` suppress the height transition for its settle window, so the
+  // panel snaps to its steady state instead (.claude/rules/restore-no-animation-replay.md).
+  const detailWindowRestorePending = useSessionStore(
+    (s) => s.pendingDetailWindowsProjectId !== null && s.pendingDetailWindowsProjectId === currentProjectId,
+  );
+  const terminal = useTerminalResize(
+    config,
+    everyTerminalDetached,
+    `${currentProjectId ?? 'none'}:${detailWindowRestorePending ? 'restoring' : 'settled'}`,
+  );
   const commandBar = useCommandBar();
   // Destructured for the callback's dep list: `open`/`close` are stable, `isOpen` changes;
   // depending on the fresh `commandBar` object would rebuild the callback every render.
@@ -125,7 +153,14 @@ export function AppLayout() {
   }, [activeView, requestBoardSearchFocus]);
   const searchPalette = useSearchPalette({ onPlainFindKey: handlePlainFindKey });
   useViewToggle();
-  useFocusedSessionsSync();
+  // `terminal.showContent` is what actually gates whether TerminalPanel mounts a
+  // TerminalTab, so it is the honest answer to "is there an xterm to receive bytes".
+  useFocusedSessionsSync(terminal.showContent);
+  useRemoteDetailOwnersSync();
+  // The monitor's ownership half, mounted here rather than in `MonitorDetailLayer`
+  // because that layer unmounts whenever the monitor is closed or detached while its
+  // window store survives - see `useMonitorDetailOwnership`.
+  useMonitorDetailOwnership();
   useDictation();
 
   // Idle-warm the lazy stats chunk (recharts) once per session, off the
@@ -146,6 +181,30 @@ export function AppLayout() {
     if (statsPopOut.isOpen) useUsageDashboardStore.getState().close();
   }, [statsPopOut.isOpen]);
 
+  // Same contract for the agent monitor's pop-out.
+  useEffect(() => {
+    if (monitorPopOut.isOpen) useMonitorStore.getState().close();
+  }, [monitorPopOut.isOpen]);
+
+  // The monitor and the stats dashboard are both full-bleed overlays sharing one
+  // z-slot, so they are mutually exclusive with EACH OTHER as well: opening one
+  // closes the other rather than stacking two full-screen surfaces.
+  useEffect(() => {
+    if (monitorOpen) useUsageDashboardStore.getState().close();
+  }, [monitorOpen]);
+
+  // ...and with the Command Terminal layer, which sits ABOVE both of them in the
+  // ladder (45 vs 42). Without this the monitor opens UNDERNEATH the terminal and
+  // its backdrop: the surface is there but covered, and its rows are unclickable,
+  // which reads as the Command Terminal refusing to go away. Hiding keeps every
+  // Command Terminal PTY alive, so reopening the layer reattaches them.
+  useEffect(() => {
+    if (monitorOpen) useSessionStore.getState().requestHideCommandBar();
+  }, [monitorOpen]);
+  useEffect(() => {
+    if (statsOpen) useMonitorStore.getState().close();
+  }, [statsOpen]);
+
   // App-level shortcuts wired here, where the layout owns the relevant state and
   // resize controllers. Combos come from the central keybinding registry.
   // Settings toggle mirrors the title-bar gear's behavior.
@@ -155,6 +214,7 @@ export function AppLayout() {
     else setSettingsOpen(true);
   });
   useKeybinding('stats.toggle', () => (statsPopOut.isOpen ? statsPopOut.focus() : useUsageDashboardStore.getState().toggle()));
+  useKeybinding('monitor.toggle', () => (monitorPopOut.isOpen ? monitorPopOut.focus() : useMonitorStore.getState().toggle()));
   useKeybinding('view.toggleSidebar', () => sidebar.toggle());
   useKeybinding('view.toggleTerminalPanel', () => terminal.onToggleCollapse());
   useKeybinding('task.create', () => useBoardStore.getState().requestNewTask(), {
@@ -439,6 +499,7 @@ export function AppLayout() {
 
       {config.statusBarVisible !== false && <StatusBar />}
       {statsOpen && !statsPopOut.isOpen && <StatsPage />}
+      {monitorOpen && !monitorPopOut.isOpen && <MonitorPage />}
       {settingsOpen && <SettingsPanel />}
       {commandBar.isOpen && <CommandTerminalLayer onHide={commandBar.close} />}
       {searchPalette.isOpen && <SearchPalette onClose={searchPalette.close} />}

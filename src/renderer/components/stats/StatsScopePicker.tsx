@@ -2,15 +2,25 @@ import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown } from 'lucide-react';
 import { OverlayPopover } from '../OverlayPopover';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
-import type { Project } from '../../../shared/types';
+
+/** Only the fields the picker renders. Widened from the full `Project` so the
+ *  Agent Monitor can pass the (id, name) pairs it derives from its own rows. */
+export interface ScopePickerProject {
+  id: string;
+  name: string;
+}
 
 interface StatsScopePickerProps {
   /** Every registered project (viewable without switching the app). */
-  projects: Project[];
+  projects: ScopePickerProject[];
   /** The effectively-viewed project id; null = All Projects. */
   activeProjectId: string | null;
   onSelectAll: () => void;
   onSelectProject: (projectId: string) => void;
+  /** Label for the "no filter" row. The monitor says "All projects"; the usage
+   *  dashboard says "All Projects" because it is an aggregation MODE there. */
+  allLabel?: string;
+  testId?: string;
 }
 
 /**
@@ -22,7 +32,10 @@ interface StatsScopePickerProps {
  * Built on the same OverlayPopover pattern as the app's other pickers; rows
  * can grow into multi-project checkboxes later without changing the shell.
  */
-export function StatsScopePicker({ projects, activeProjectId, onSelectAll, onSelectProject }: StatsScopePickerProps) {
+export function StatsScopePicker({
+  projects, activeProjectId, onSelectAll, onSelectProject,
+  allLabel = 'All Projects', testId = 'stats-scope-trigger',
+}: StatsScopePickerProps) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -66,7 +79,7 @@ export function StatsScopePicker({ projects, activeProjectId, onSelectAll, onSel
   const activeProject = activeProjectId
     ? projects.find((project) => project.id === activeProjectId)
     : null;
-  const label = activeProjectId ? activeProject?.name ?? 'Project' : 'All Projects';
+  const label = activeProjectId ? activeProject?.name ?? 'Project' : allLabel;
 
   const select = (apply: () => void) => {
     apply();
@@ -82,7 +95,7 @@ export function StatsScopePicker({ projects, activeProjectId, onSelectAll, onSel
         className="flex items-center gap-1.5 bg-accent/15 border border-accent/40 rounded-full pl-3 pr-2.5 py-1 text-sm font-semibold text-fg cursor-pointer hover:bg-accent/25 focus:outline-none focus:border-accent transition-colors"
         title="Choose which project's usage to view"
         aria-label="Project scope"
-        data-testid="stats-scope-trigger"
+        data-testid={testId}
       >
         {label}
         <ChevronDown size={14} className="text-fg-muted" />
@@ -100,7 +113,7 @@ export function StatsScopePicker({ projects, activeProjectId, onSelectAll, onSel
           className="w-full px-3 py-1.5 text-xs text-fg-secondary text-left hover:bg-surface-hover/40 flex items-center justify-between gap-3"
           data-testid="stats-scope-option-all"
         >
-          All Projects
+          {allLabel}
           {activeProjectId === null && <Check size={12} className="text-accent flex-shrink-0" />}
         </button>
         <div className="h-px bg-edge/60 my-1" aria-hidden />

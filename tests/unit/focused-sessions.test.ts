@@ -3,7 +3,8 @@
  * useFocusedSessionsSync. Covers the full decision matrix:
  *
  *   deriveFocusedSessionIds:
- *     - dialog open (dialog takes priority, panel session excluded)
+ *     - window sessions and the panel session are focused TOGETHER (the panel
+ *       sheds only the detached tabs, so both surfaces hold live terminals)
  *     - board view + panel visible + panel session
  *     - board view + panel hidden
  *     - board view + panel visible + no panel session
@@ -19,6 +20,8 @@
  *     - no idle session - falls back to first running session
  *     - no running sessions - returns null
  *     - transient sessions are excluded from candidate pool
+ *     - detached sessions (owned by a detail window) are excluded too, both as
+ *       the active id and as a fallback candidate
  */
 import { describe, it, expect } from 'vitest';
 import {
@@ -87,7 +90,11 @@ describe('deriveFocusedSessionIds', () => {
     expect(result).toEqual([]);
   });
 
-  it('returns dialog session only when dialog is open', () => {
+  it('focuses the window session AND the panel session together', () => {
+    // The panel sheds only the tabs whose detail is open, so it keeps a live
+    // terminal for another session while a window drives this one. Both have a
+    // mounted xterm, so both must be focused. This used to be an else-branch,
+    // which would now leave the panel's own terminal silent.
     const result = deriveFocusedSessionIds(
       makeFocusedInput({
         dialogSessionIds: ['sess-dialog'],
@@ -96,31 +103,42 @@ describe('deriveFocusedSessionIds', () => {
         terminalPanelVisible: true,
       }),
     );
-    expect(result).toEqual(['sess-dialog']);
+    expect(result).toEqual(['sess-dialog', 'sess-panel']);
   });
 
-  it('excludes panel session when dialog is open (dialog takes priority)', () => {
+  it('does not duplicate a panel session a window already owns', () => {
     const result = deriveFocusedSessionIds(
       makeFocusedInput({
+        dialogSessionIds: ['sess-shared'],
+        panelSessionId: 'sess-shared',
+      }),
+    );
+    expect(result).toEqual(['sess-shared']);
+  });
+
+  it('still excludes the panel session on the backlog view while a window is open', () => {
+    const result = deriveFocusedSessionIds(
+      makeFocusedInput({
+        activeView: 'backlog',
         dialogSessionIds: ['sess-dialog'],
         panelSessionId: 'sess-panel',
       }),
     );
-    expect(result).not.toContain('sess-panel');
+    expect(result).toEqual(['sess-dialog']);
   });
 
   it('focuses every window-owned session when multiple detail windows are open', () => {
     // Multi-window: each open window owns a session, and ALL must be in the
     // focused set or the main process suppresses that window's PTY output. The
-    // panel session is excluded (the panel steps aside while windows are open).
+    // panel's own session joins them, since the panel keeps whatever tabs the
+    // windows did not take.
     const result = deriveFocusedSessionIds(
       makeFocusedInput({
         dialogSessionIds: ['sess-a', 'sess-b'],
         panelSessionId: 'sess-panel',
       }),
     );
-    expect(result).toEqual(['sess-a', 'sess-b']);
-    expect(result).not.toContain('sess-panel');
+    expect(result).toEqual(['sess-a', 'sess-b', 'sess-panel']);
   });
 
   it('returns panel session on board view with panel visible', () => {
@@ -458,5 +476,109 @@ describe('derivePanelSessionId', () => {
       }),
     );
     expect(result).toBeNull();
+  });
+
+  // ── detached sessions (a task-detail window hosts the terminal) ──
+
+  it('falls through to another tab when the ACTIVE session is detached to a window', () => {
+    // The panel has no tab for a detached session, so it renders the fallback -
+    // and this must name the same one, or main streams bytes to the terminal that
+    // is gone and starves the one now on screen.
+    const detached = makeSession({ id: 'sess-detached', projectId: 'proj-default' });
+    const remaining = makeSession({ id: 'sess-remaining', projectId: 'proj-default' });
+    const result = derivePanelSessionId(
+      makePanelInput({
+        activeSessionId: 'sess-detached',
+        sessions: [detached, remaining],
+        currentProjectId: 'proj-default',
+        ownedSessionIds: new Set(['sess-detached']),
+      }),
+    );
+    expect(result).toBe('sess-remaining');
+  });
+
+  it('never falls back TO a detached session', () => {
+    const detached = makeSession({ id: 'sess-detached', projectId: 'proj-default' });
+    const result = derivePanelSessionId(
+      makePanelInput({
+        activeSessionId: 'sess-stale',
+        sessions: [detached],
+        currentProjectId: 'proj-default',
+        ownedSessionIds: new Set(['sess-detached']),
+      }),
+    );
+    expect(result).toBeNull();
+  });
+
+  it('does not prefer a detached idle session over a visible thinking one', () => {
+    const detachedIdle = makeSession({ id: 'sess-detached', projectId: 'proj-default' });
+    const visibleThinking = makeSession({ id: 'sess-visible', projectId: 'proj-default' });
+    const result = derivePanelSessionId(
+      makePanelInput({
+        activeSessionId: 'sess-stale',
+        sessions: [visibleThinking, detachedIdle],
+        currentProjectId: 'proj-default',
+        sessionActivity: { 'sess-visible': 'thinking', 'sess-detached': 'idle' },
+        ownedSessionIds: new Set(['sess-detached']),
+      }),
+    );
+    expect(result).toBe('sess-visible');
+  });
+
+  // ── a collapsed panel mounts no xterm ──
+
+  it('returns null when the panel is collapsed, so nothing is focused with no xterm to ack', () => {
+    // Measured live: a collapsed panel still had its session focused, so main streamed
+    // bytes that nothing acknowledged (~6KB stranded in-flight). At
+    // BACKPRESSURE_HIGH_WATER (1MiB) that pauses the PTY and the agent stalls.
+    const session = makeSession({ id: 'sess-a', projectId: 'proj-default' });
+    const result = derivePanelSessionId(
+      makePanelInput({
+        activeSessionId: 'sess-a',
+        sessions: [session],
+        currentProjectId: 'proj-default',
+        panelShowsTerminal: false,
+      }),
+    );
+    expect(result).toBeNull();
+  });
+
+  it('resolves normally once the panel is expanded again', () => {
+    const session = makeSession({ id: 'sess-a', projectId: 'proj-default' });
+    const result = derivePanelSessionId(
+      makePanelInput({
+        activeSessionId: 'sess-a',
+        sessions: [session],
+        currentProjectId: 'proj-default',
+        panelShowsTerminal: true,
+      }),
+    );
+    expect(result).toBe('sess-a');
+  });
+
+  it('treats an omitted panelShowsTerminal as mounted, so other callers are unaffected', () => {
+    // TerminalPanel resolves its ACTIVE TAB through this same function and must keep
+    // working while collapsed - the tab strip is still on screen.
+    const session = makeSession({ id: 'sess-a', projectId: 'proj-default' });
+    const result = derivePanelSessionId(
+      makePanelInput({
+        activeSessionId: 'sess-a',
+        sessions: [session],
+        currentProjectId: 'proj-default',
+      }),
+    );
+    expect(result).toBe('sess-a');
+  });
+
+  it('behaves as before when ownedSessionIds is omitted', () => {
+    const session = makeSession({ id: 'sess-a', projectId: 'proj-default' });
+    const result = derivePanelSessionId(
+      makePanelInput({
+        activeSessionId: 'sess-a',
+        sessions: [session],
+        currentProjectId: 'proj-default',
+      }),
+    );
+    expect(result).toBe('sess-a');
   });
 });

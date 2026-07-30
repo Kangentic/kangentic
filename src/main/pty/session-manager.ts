@@ -1,5 +1,12 @@
 import { EventEmitter } from 'node:events';
 import { v4 as uuidv4 } from 'uuid';
+
+/**
+ * Renderer key used when a caller does not identify itself (headless callers, and
+ * tests that drive `setFocusedSessions` directly). Real renderers key on their
+ * webContents id, which is never negative.
+ */
+export const SHARED_RENDERER_ID = -1;
 import { resolveDebugDumpDir } from '../diagnostics/debug-dump-resolver';
 import { ShellResolver } from './spawn/shell-resolver';
 import { SessionQueue } from './session-queue';
@@ -17,7 +24,7 @@ import { FirstOutputTracker } from './lifecycle/first-output-tracker';
 import { disposeAdapterAttachment, removeAdapterHooks } from './lifecycle/adapter-lifecycle';
 import { safeKillPty } from './lifecycle/pty-kill';
 import { DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS, performSpawn } from './lifecycle/session-spawn-flow';
-import { SessionRegistry, toSession, filterCacheByProject, type ManagedSession } from './session-registry';
+import { SessionRegistry, toSession, filterCacheByProject, type ManagedSession, type ManagedSessionSummary } from './session-registry';
 import { createWriteQueue, type WriteQueue } from './write-queue';
 import { BackpressureController } from './buffer/backpressure-controller';
 import { isShuttingDown } from '../shutdown-state';
@@ -68,6 +75,13 @@ export class SessionManager extends EventEmitter {
    * unfiltered 'data-tap' event is the focus-independent seam.
    */
   private focusedSessionIds = new Set<string>();
+  /**
+   * Per-renderer visible sets, unioned into `focusedSessionIds` above. The union
+   * is what gates emitting at all; the individual sets are the ROUTING TABLE for
+   * which renderer each session's bytes belong to (a session is hosted by exactly
+   * one renderer, because the task-detail owner registry says so).
+   */
+  private focusedByRenderer = new Map<number, Set<string>>();
   /**
    * Per-session FIFO write queue. Every `write()` call appends to the same
    * buffer and is drained by a single loop that yields via setImmediate
@@ -371,9 +385,23 @@ export class SessionManager extends EventEmitter {
     this.transcriptWriter?.finalizeAll();
   }
 
-  /** Set which sessions are currently visible (terminal panel + command bar overlay). */
-  setFocusedSessions(sessionIds: string[]): void {
-    this.focusedSessionIds = new Set(sessionIds);
+  /**
+   * Set which sessions a RENDERER currently has visible (terminal panel, command
+   * bar overlay, task-detail windows).
+   *
+   * Keyed by renderer, not global, because more than one renderer can host a
+   * terminal: the detached Agent Monitor is its own window with its own visible
+   * set. A single shared set meant last-writer-wins, so two renderers publishing
+   * focus would silently starve each other's terminals of PTY data.
+   *
+   * The emit gate stays the UNION (`isSessionFocused`), so nothing about when
+   * data is produced changes; what the per-renderer split buys is knowing WHERE
+   * to send it.
+   */
+  setFocusedSessions(sessionIds: string[], rendererId = SHARED_RENDERER_ID): void {
+    if (sessionIds.length === 0) this.focusedByRenderer.delete(rendererId);
+    else this.focusedByRenderer.set(rendererId, new Set(sessionIds));
+    this.recomputeFocusedUnion();
     // The emit set just changed, so prior in-flight accounting is stale (a
     // session leaving the focused set would otherwise stay paused forever
     // because the renderer no longer acks its data). Resume every paused PTY
@@ -412,9 +440,38 @@ export class SessionManager extends EventEmitter {
     this.telemetry.notifyUserInterrupt(sessionId);
   }
 
-  /** Return the set of currently focused session IDs. */
+  /** Return the union of every renderer's focused session IDs. */
   getFocusedSessions(): Set<string> {
     return this.focusedSessionIds;
+  }
+
+  /**
+   * The renderers that currently have this session visible. The IPC layer sends
+   * that session's data to exactly these, instead of blanket-sending to the main
+   * window - which is both correct for a detached host and strictly less IPC
+   * than before for everyone else.
+   */
+  getRenderersFocusedOn(sessionId: string): number[] {
+    const renderers: number[] = [];
+    for (const [rendererId, sessionIds] of this.focusedByRenderer) {
+      if (sessionIds.has(sessionId)) renderers.push(rendererId);
+    }
+    return renderers;
+  }
+
+  /** Drop a renderer's focus set when its window goes away. */
+  clearFocusedSessionsFor(rendererId: number): void {
+    if (!this.focusedByRenderer.delete(rendererId)) return;
+    this.recomputeFocusedUnion();
+    this.backpressure.reset();
+  }
+
+  private recomputeFocusedUnion(): void {
+    const union = new Set<string>();
+    for (const sessionIds of this.focusedByRenderer.values()) {
+      for (const sessionId of sessionIds) union.add(sessionId);
+    }
+    this.focusedSessionIds = union;
   }
 
   setShell(shell: string | null): void {
@@ -932,12 +989,73 @@ export class SessionManager extends EventEmitter {
     return stats;
   }
 
+  /**
+   * Dev diagnostics: every dimension MAIN knows for each session's terminal.
+   *
+   * The renderer can only see its own xterm's grid, so a PTY whose width has
+   * drifted from the grid showing it is invisible from there - and that
+   * divergence is exactly the failure where a terminal opens with its content
+   * wrapped or clipped and no refit ever corrects it (xterm only re-sends
+   * dimensions when ITS OWN size changes, so a mismatch has no path back).
+   *
+   * `ptyCols` is the live node-pty grid. `lastCols` is the width the bytes now in
+   * the scrollback were drawn at. `lastDesktopDimensions` is the size the desktop
+   * last asked for, and `pendingResize` a size stashed for a session with no PTY
+   * yet. Comparing them against the renderer's grid (see the `dims` section of
+   * the terminal-state route) localizes a drift to a specific layer instead of
+   * leaving it to be inferred from pixels.
+   */
+  getTerminalDimensions(): Array<{
+    sessionId: string;
+    taskId: string;
+    status: string;
+    ptyCols: number | null;
+    ptyRows: number | null;
+    lastCols: number | null;
+    lastDesktopCols: number | null;
+    lastDesktopRows: number | null;
+    pendingResizeCols: number | null;
+    pendingResizeRows: number | null;
+    pendingRepaintAt: number | null;
+    pendingRepaintStacked: boolean;
+    inAltScreen: boolean;
+  }> {
+    const rows = [];
+    for (const session of this.registry.values()) {
+      const buffer = this.bufferManager.getDimensionState(session.id);
+      const desktop = this.lastDesktopDimensions.get(session.id) ?? null;
+      const pending = this.pendingResizes.get(session.id) ?? null;
+      rows.push({
+        sessionId: session.id,
+        taskId: session.taskId,
+        status: session.status,
+        ptyCols: session.pty?.cols ?? null,
+        ptyRows: session.pty?.rows ?? null,
+        lastCols: buffer?.lastCols ?? null,
+        lastDesktopCols: desktop?.cols ?? null,
+        lastDesktopRows: desktop?.rows ?? null,
+        pendingResizeCols: pending?.cols ?? null,
+        pendingResizeRows: pending?.rows ?? null,
+        pendingRepaintAt: buffer?.pendingRepaintAt ?? null,
+        pendingRepaintStacked: buffer?.pendingRepaintStacked ?? false,
+        inAltScreen: buffer?.inAltScreen ?? false,
+      });
+    }
+    return rows;
+  }
+
   getSession(sessionId: string): Session | undefined {
     return this.registry.getSession(sessionId);
   }
 
   listSessions(): Session[] {
     return this.registry.listSessions();
+  }
+
+  /** Registry rows carrying `agentName`, for the cross-project Agent Monitor.
+   *  See SessionRegistry.listManagedSummaries for why this is separate from listSessions. */
+  listManagedSummaries(): ManagedSessionSummary[] {
+    return this.registry.listManagedSummaries();
   }
 
   /** Return cached usage data for all sessions (survives renderer reloads). */

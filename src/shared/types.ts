@@ -2029,6 +2029,189 @@ export interface OnboardingBaseline {
   swimlaneSignature: string;
 }
 
+// ============================================================================
+// Agent Monitor - the cross-project aggregate view.
+//
+// Machine-global by nature: it spans every registered project, so nothing here
+// is project-scoped. The rows are assembled in the main process
+// (src/main/monitor/monitor-aggregator.ts) by joining the process-global session
+// registry + activity/event caches against each owning project's DB.
+// ============================================================================
+
+/**
+ * The attention bucket a row falls into. Derived ONLY via `requiresUserInteraction()`
+ * / `isActive()` from `src/shared/activity-state.ts` - never by comparing an
+ * `ActivityState` to a literal (enforced by
+ * `tests/unit/activity-state-classification.test.ts`).
+ */
+export type MonitorStateBucket = 'needs-you' | 'working' | 'idle' | 'finished';
+
+/**
+ * How the monitor arranges its rows. `cards` reflows by container width.
+ *
+ * All three name a FORM, not a density - `list` was briefly "compact", which
+ * described how tight it was rather than what it is, and read oddly beside two
+ * options that name shapes.
+ */
+export type MonitorLayout = 'cards' | 'table' | 'list';
+/**
+ * How rows are sectioned. Always one or the other - there is no "ungrouped"
+ * choice, because a segmented control sitting with nothing selected reads as
+ * broken, and neither section scheme is expensive enough to want off.
+ *
+ * ('flat' still exists as an INTERNAL grouping mode for the table layout, which
+ * cannot interleave section headers into a <table>; it is simply not a value the
+ * user can select or that is ever persisted.)
+ */
+export type MonitorGroupBy = 'state' | 'project';
+/**
+ * Row order WITHIN a section. Just the two time directions.
+ *
+ * Attention-first ordering is not a sort option because it is structural: rows
+ * are always grouped, and the Status grouping emits Idle before Active before
+ * Paused. An "Idle first" sort on top of that ordered idle rows within the Idle
+ * section, which is no ordering at all. (Sorting BY project was dropped for the
+ * same reason - it duplicated grouping by project.)
+ */
+export type MonitorSort = 'longest-running' | 'recently-started';
+
+/** One live or recently-finished agent session, resolved across projects. */
+export interface MonitorSessionRow {
+  sessionId: string;
+  projectId: string;
+  projectName: string;
+  taskId: string;
+  taskTitle: string;
+  /** Raw task description. Rendered through `stripMarkdown` + line-clamp, exactly
+   *  as the board card does, so the monitor card reads as the same object. */
+  taskDescription: string | null;
+  /** The task's #N ticket number; null when the task row could not be resolved. */
+  displayId: number | null;
+  /** Swimlane (column) name the task currently sits in. */
+  columnName: string;
+  labels: string[];
+  prUrl: string | null;
+  prNumber: number | null;
+  prState: PRState | null;
+  /** Adapter name captured at spawn (e.g. "claude"). Null for a pre-adapter session. */
+  agentName: string | null;
+  /** The model the session was actually spawned/resumed/switched with. Null = agent default. */
+  modelDisplayName: string | null;
+  /** Reasoning effort the session was actually spawned/resumed/switched with
+   *  (`applied_effort`). Null = the agent's own default, or an agent with no
+   *  effort concept. */
+  effort: string | null;
+  /** Permission mode the session was spawned under. Null for agents that manage
+   *  autonomy in their own TUI rather than via a spawn flag. */
+  permissionMode: string | null;
+  startedAt: string;
+  /** UTC ISO exit time from the owning project's `sessions` row; null while live. */
+  exitedAt: string | null;
+  status: SessionStatus;
+  activity: ActivityState | null;
+  activityReason: ActivityReason | null;
+  /** Last telemetry event, rendered as the row's "doing now" line. */
+  lastEvent: SessionEvent | null;
+  /** Context-window usage 0-100, or null when the window size is unknown. */
+  contextPercent: number | null;
+  isolated: boolean;
+  /**
+   * A Command Terminal (transient) session rather than a task agent.
+   *
+   * The monitor is the ONLY surface that can show these: they have no board card
+   * because they have no task, and the Command Terminal layer only shows the
+   * project you currently have open. Their `taskId` is a synthetic key, so they
+   * carry no title / ticket / column / labels.
+   */
+  isCommandTerminal: boolean;
+}
+
+export interface MonitorSnapshot {
+  rows: MonitorSessionRow[];
+  /** UTC ISO stamp of when main assembled this snapshot. */
+  generatedAt: string;
+}
+
+/**
+ * Everything the task-detail surface needs about the PROJECT a task belongs to,
+ * for a host that is not that project's board.
+ *
+ * Mirrors `TaskDetailHostValue`'s data half (the renderer adds the mutation
+ * callbacks). On the board these values come from the board / config / project
+ * stores; the Agent Monitor fetches this instead, because those stores hold the
+ * open project and its rows can belong to any of them.
+ */
+/**
+ * Where main decided a task detail should open. Mirrors `DetailDestination` in
+ * src/main/task-detail/detail-owner-registry.ts, which owns the rules.
+ */
+/** Which surface hosts a task detail. Both can live in the main window. */
+export type TaskDetailHost = 'board' | 'monitor';
+
+export interface TaskDetailOwner {
+  webContentsId: number;
+  host: TaskDetailHost;
+}
+
+export type TaskDetailDestination =
+  /** The requester already holds it; its window was focused, nothing remounts. */
+  | { kind: 'focused-existing'; owner: TaskDetailOwner }
+  /** The requester mounts it; `closedElsewhere` names the surface that gave it up. */
+  | { kind: 'open-here'; owner: TaskDetailOwner; closedElsewhere: TaskDetailOwner | null };
+
+/**
+ * A task detail open in a DIFFERENT renderer than the one receiving it.
+ *
+ * Carries no `webContentsId` on purpose: main has already filtered the list per
+ * recipient, so every entry means "not mine". Handing the renderer ids would only
+ * let a caller re-derive the comparison and get the direction backwards.
+ */
+export interface TaskDetailRemoteOwner {
+  projectId: string;
+  taskId: string;
+}
+
+export interface TaskDetailBundle {
+  task: Task;
+  projectId: string;
+  projectName: string;
+  projectPath: string;
+  defaultAgent: string | null;
+  swimlanes: Swimlane[];
+  shortcuts: (ShortcutConfig & { source: 'team' | 'local' })[];
+  config: {
+    labelColors: Record<string, string>;
+    defaultBaseBranch: string;
+    worktreesEnabled: boolean;
+    browserEnabled: boolean;
+  };
+}
+
+/**
+ * The user's persisted monitor view. Stored as one blob on the global AppConfig and
+ * shared by the in-app overlay and the detached pop-out, so "their preferred view"
+ * is a single preference rather than one per host.
+ */
+export interface MonitorView {
+  layout: MonitorLayout;
+  groupBy: MonitorGroupBy;
+  sort: MonitorSort;
+  /**
+   * Show only sessions with a live agent - the Idle and Active buckets - hiding
+   * Paused and Recently finished.
+   *
+   * Named `liveOnly`, not `hideIdle`: it never hid the Idle bucket (those are
+   * agents waiting on YOU, the last thing to hide), and "inactive" collided with
+   * the Active/Idle vocabulary the rest of the view speaks.
+   */
+  liveOnly: boolean;
+  /** Empty = every project. */
+  projectFilter: string[];
+  /** Empty = every state. */
+  stateFilter: MonitorStateBucket[];
+  textFilter: string;
+}
+
 export interface AppConfig {
   theme: ThemeMode;
   sidebarVisible: boolean;
@@ -2045,6 +2228,11 @@ export interface AppConfig {
   diffCollapseUnchanged: boolean; // fold away large unchanged regions, showing only changed hunks
   diffFileSort: 'name' | 'status' | 'size'; // Changes panel file ordering
   diffFlatList: boolean; // Changes panel file list: flat full-path list vs nested directory tree
+
+  /** Persisted Agent Monitor view. Global-only: the monitor spans every project, so a
+   *  per-project override would be meaningless. Written debounced on every change (not
+   *  on close) so the view survives a quit or crash, not just an orderly close. */
+  monitor: MonitorView;
 
   terminal: {
     shell: string | null; // null = auto-detect. Global-only: applies across every project.
@@ -2375,6 +2563,19 @@ export interface AppConfig {
    *  Null until a layout is first saved. See
    *  src/renderer/components/command-bar/ + window-manager/persistence/. */
   commandTerminalWorkspace: SerializedWorkspace | null;
+  /** GLOBAL in-app layout for the Agent Monitor's task-detail window layer: which
+   *  details are open over the monitor and how they are arranged. One blob, not
+   *  keyed by project, because the monitor is cross-project by design (its windows
+   *  are anchored by `projectId:taskId`).
+   *
+   *  Unlike the other two layers this one has to cross a RENDERER boundary: the
+   *  monitor can be hosted in the main window or in its own pop-out, and each has
+   *  its own copy of the module-singleton window store, so the blob is the only
+   *  thing that can carry an open detail between them. Nothing is mounted while
+   *  the monitor is closed - the layout is restored on next open.
+   *
+   *  Null until a layout is first saved. See src/renderer/components/monitor/. */
+  monitorWorkspace: SerializedWorkspace | null;
   /** Persisted union of every model ID we've ever seen for each agent: the
    *  result of the static/JSONL `discoverCapabilities()` walk, plus any model
    *  that has appeared on a live session's usage stream (Claude reports model
@@ -2455,6 +2656,27 @@ export const DEFAULT_CONFIG: AppConfig = {
   diffCollapseUnchanged: false,
   diffFileSort: 'name',
   diffFlatList: false,
+  monitor: {
+    layout: 'cards',
+    // Grouped by PROJECT out of the box. This view exists because agents are
+    // spread across projects, so "whose agents are these" is the question a user
+    // arrives with, and project sections answer it before they touch a control.
+    // Grouping by state is the deliberate second choice, for when the question is
+    // "what needs me" instead.
+    //
+    // Either way the sections are LABELLED, which is what makes a card moving
+    // between them legible. Suppressing that movement was tried first and made
+    // the ordering dishonest (a working agent could sit above one that needed
+    // you); positions are still held stable for anything short of a section
+    // change. Note that attention-first ordering is a property of STATE grouping
+    // (BUCKET_ORDER), so it applies once the user picks Status.
+    groupBy: 'project',
+    sort: 'longest-running',
+    liveOnly: false,
+    projectFilter: [],
+    stateFilter: [],
+    textFilter: '',
+  },
   terminal: {
     shell: null,
     fontFamily: 'Menlo, Consolas, "Courier New", monospace',
@@ -2555,6 +2777,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   lastActiveTaskByProject: {},
   workspaceByProject: {},
   commandTerminalWorkspace: null,
+  monitorWorkspace: null,
   discoveredModelsByAgent: {},
   discoveredContextWindowsByAgent: {},
   hotkeyOverrides: {},
@@ -4345,6 +4568,76 @@ export interface ElectronAPI {
   };
 
   // Mobile Bridge -- machine-global (like config), not project-scoped.
+  /** Agent Monitor. Machine-global: no channel here takes a projectId, because the
+   *  snapshot deliberately spans every registered project. */
+  monitor: {
+    /** Full cross-project snapshot. Cheap: in-memory caches plus one warm DB read per
+     *  project (not per session). */
+    getSnapshot: () => Promise<MonitorSnapshot>;
+    /** Ask MAIN to reveal a task in the main window. Used by the detached monitor,
+     *  whose own stores cannot reach the board. */
+    revealTask: (projectId: string, taskId: string) => Promise<void>;
+    /** Everything the task-detail surface needs about a task's OWN project, so a
+     *  host that is not that project's board can render it. Null when the project
+     *  or task is gone (a race with a delete), so the caller closes rather than
+     *  renders a husk. */
+    getTaskDetail: (projectId: string, taskId: string) => Promise<TaskDetailBundle | null>;
+    /** Fired when the snapshot's DB-resident half changes (session spawned/exited, task
+     *  retitled or moved). Live activity does NOT come through here - it rides the
+     *  existing unbuffered SESSION_ACTIVITY push and is patched into rows in place. */
+    onChanged: (callback: (snapshot: MonitorSnapshot) => void) => () => void;
+  };
+
+  /**
+   * Task-detail ownership: which renderer hosts which task's detail.
+   *
+   * Machine-global arbitration, not a task mutation. Main is the only place that
+   * can answer, because a pop-out is a separate renderer with its own stores and
+   * neither host can see the other's open windows. The two rules it enforces are
+   * documented in src/main/task-detail/detail-owner-registry.ts.
+   */
+  taskDetailOwnership: {
+    /** Ask where this task's detail should open. Main focuses the target window,
+     *  and pushes `onOpenHere` to it unless it is already open. */
+    requestOpen: (
+      projectId: string,
+      taskId: string,
+      host: TaskDetailHost,
+    ) => Promise<TaskDetailDestination>;
+    /**
+     * Report the COMPLETE set of task details this surface currently has mounted,
+     * derived from its window store.
+     *
+     * There is deliberately no `claim` / `release` pair: incremental bookkeeping
+     * could lose a release and strand a claim, leaving the task permanently
+     * unopenable. A full-set report is self-repairing, and removing the incremental
+     * calls from this surface makes reintroducing them a compile error.
+     */
+    syncOwned: (
+      host: TaskDetailHost,
+      entries: ReadonlyArray<{ projectId: string; taskId: string }>,
+    ) => void;
+    /** Main asking a surface in this renderer to mount a task detail. */
+    onOpenHere: (
+      callback: (projectId: string, taskId: string, host: TaskDetailHost) => void,
+    ) => () => void;
+    /** Main asking a surface in this renderer to let go, because another took it. */
+    onCloseHere: (
+      callback: (projectId: string, taskId: string, host: TaskDetailHost) => void,
+    ) => () => void;
+    /**
+     * The details held by OTHER renderers, pushed whenever ownership changes.
+     *
+     * Terminal ownership is "one xterm per PTY", and before this the bottom panel
+     * could only see its own renderer's detail windows - so a detail hosted in the
+     * detached Agent Monitor left the main window free to mount a second xterm on
+     * the same live PTY. Already filtered to exclude this renderer's own claims.
+     */
+    onRemoteOwnersChanged: (
+      callback: (owners: TaskDetailRemoteOwner[]) => void,
+    ) => () => void;
+  };
+
   mobile: {
     getStatus: () => Promise<MobileBridgeStatus>;
     startPairing: () => Promise<MobileStartPairingResult>;

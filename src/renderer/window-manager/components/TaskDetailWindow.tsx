@@ -21,10 +21,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Check, Copy, Pencil, Trash2, X } from 'lucide-react';
-import { useBoardStore } from '../../stores/board-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useConfigStore } from '../../stores/config-store';
-import { useProjectStore } from '../../stores/project-store';
 import { resolveShortcutCommand } from '../../../shared/template-vars';
 import { useKeybinding } from '../../hooks/useKeybinding';
 import { PriorityBadge } from '../../components/backlog/PriorityBadge';
@@ -42,6 +40,7 @@ import {
   useTaskSessionState,
   useTaskActions,
   taskHasDescriptionContent,
+  useTaskDetailHost,
 } from '../../components/dialogs/task-detail';
 import { useLayerStore } from '../context';
 import { registerWindowCloser, unregisterWindowCloser } from '../store/window-close-registry';
@@ -84,25 +83,24 @@ export function TaskDetailWindow({
   titleBarPointerDown,
   requestClose,
 }: TaskDetailWindowProps) {
-  const updateTask = useBoardStore((s) => s.updateTask);
-  const deleteTask = useBoardStore((s) => s.deleteTask);
-  const moveTask = useBoardStore((s) => s.moveTask);
-  const unarchiveTask = useBoardStore((s) => s.unarchiveTask);
-  const archiveTask = useBoardStore((s) => s.archiveTask);
-  const updateAttachmentCount = useBoardStore((s) => s.updateAttachmentCount);
-  const swimlanes = useBoardStore((s) => s.swimlanes);
-  const shortcuts = useBoardStore((s) => s.shortcuts);
-  const loadBoard = useBoardStore((s) => s.loadBoard);
-  const boardManagerOpen = useBoardStore((s) => s.boardManagerOpen);
-  const settingsOpen = useConfigStore((s) => s.settingsOpen);
-  const projectPath = useProjectStore((s) => s.currentProject?.path ?? null);
+  // Everything project-scoped comes from the HOST, so this window renders the
+  // same whether the board mounted it for the open project or the Agent Monitor
+  // mounted it for a task in another one.
+  const {
+    projectPath,
+    swimlanes,
+    shortcuts,
+    updateTask,
+    updateAttachmentCount,
+    config: { browserEnabled },
+    shortcutsSuppressed,
+  } = useTaskDetailHost();
   const killSession = useSessionStore((s) => s.killSession);
   const suspendSession = useSessionStore((s) => s.suspendSession);
   const resumeSession = useSessionStore((s) => s.resumeSession);
   const pendingCommandLabel = useSessionStore((s) => s.pendingCommandLabel[task.id] ?? null);
   const skipDeleteConfirm = useConfigStore((s) => s.config.skipDeleteConfirm);
   const updateConfig = useConfigStore((s) => s.updateConfig);
-  const browserEnabledConfig = useConfigStore((s) => s.config.browser?.enabled);
 
   const useStore = useLayerStore();
   const toggleMaximizeWindow = useStore((s) => s.toggleMaximizeWindow);
@@ -187,12 +185,6 @@ export function TaskDetailWindow({
     isArchived,
     isInTodo: isInTodo ?? false,
     swimlanes,
-    updateTask,
-    deleteTask,
-    moveTask,
-    unarchiveTask,
-    archiveTask,
-    loadBoard,
     killSession,
     suspendSession,
     resumeSession,
@@ -338,7 +330,6 @@ export function TaskDetailWindow({
     toggleChangesOpen(task.id);
   }, [browserOpen, changesOpen, descriptionPeekOpen, toggleBrowserOpen, toggleChangesOpen, task.id]);
 
-  const browserEnabled = browserEnabledConfig !== false;
   const canShowBrowser = browserEnabled
     && !!sessionState.session?.id
     && sessionState.displayState.kind !== 'queued'
@@ -409,12 +400,13 @@ export function TaskDetailWindow({
   // xterm consumes the Ctrl-letter control chars). Gated on `isFocused` so only
   // the focused window reacts when several are open.
   useKeybinding('panel.maximize', handleToggleMaximized, { capture: true, enabled: isFocused });
-  // `!boardManagerOpen && !settingsOpen`: the edit form's Advanced section can
-  // open the Board Manager (profile pencil) or Settings (agent pencil) over this
-  // window, and a single Escape meant for that surface must not also close the
-  // window (or raise its discard confirm) underneath. Gates the bubble-phase
-  // Escape listener below too.
-  useKeybinding('panel.close', closeWithGuard, { capture: true, enabled: isFocused && !boardManagerOpen && !settingsOpen });
+  // `!shortcutsSuppressed`: the edit form's Advanced section can open the Board
+  // Manager (profile pencil) or Settings (agent pencil) over this window, and a
+  // single Escape meant for that surface must not also close the window (or raise
+  // its discard confirm) underneath. WHICH surfaces those are is the host's
+  // knowledge, so it answers the question. Gates the bubble-phase Escape listener
+  // below too.
+  useKeybinding('panel.close', closeWithGuard, { capture: true, enabled: isFocused && !shortcutsSuppressed });
   // Close on a header click with the bound mouse button (default middle). Routed
   // through `closeWithGuard` so an unsaved edit still prompts to discard. The
   // `when` scopes the mouse path to THIS window's title bar; a keyboard rebind
@@ -443,14 +435,14 @@ export function TaskDetailWindow({
   // PTY, consumes Escape itself (reaching the agent's TUI) and this never sees
   // it; with the pointer elsewhere Escape bubbles here and closes.
   useEffect(() => {
-    if (!isFocused || boardManagerOpen || settingsOpen) return;
+    if (!isFocused || shortcutsSuppressed) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       closeWithGuard();
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isFocused, boardManagerOpen, settingsOpen, closeWithGuard]);
+  }, [isFocused, shortcutsSuppressed, closeWithGuard]);
 
   // Expose this window's guarded close to the central click-outside dismiss hook
   // (`useClickOutsideToClose`), so a board-background click routes through the

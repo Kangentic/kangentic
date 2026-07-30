@@ -43,6 +43,8 @@ import { registerTranscriptHandlers } from './handlers/transcripts';
 import { registerMobileBridgeHandlers } from './handlers/mobile-bridge';
 import { registerUsageStatsHandlers } from './handlers/usage-stats';
 import { registerPopOutHandlers } from './handlers/pop-out';
+import { registerMonitorHandlers } from './handlers/monitor';
+import { registerTaskDetailOwnershipHandlers } from './handlers/task-detail-ownership';
 import { retrievalService } from '../retrieval/retrieval-service';
 import { MobileBridgeService } from '../mobile-bridge/mobile-bridge-service';
 import { BoardEventBus } from '../mobile-bridge/board-event-bus';
@@ -228,6 +230,8 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   registerUsageStatsHandlers(context);
   registerSystemHandlers(context);
   registerMobileBridgeHandlers(context);
+  registerMonitorHandlers(context);
+  registerTaskDetailOwnershipHandlers();
   registerPopOutHandlers(context);
 
   // Start the central embedding engine's background drain loop at boot, not

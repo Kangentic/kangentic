@@ -1,8 +1,20 @@
 import { useEffect, useRef } from 'react';
 import { useConfigStore } from '../../stores/config-store';
-import { useWindowStore } from '../store/window-store';
+import { useLayerStore } from '../context';
 import { resolveLightDismissTargets } from '../light-dismiss/resolve-targets';
 import { requestWindowClose } from '../store/window-close-registry';
+
+/**
+ * Which layer's dead space a `[data-dismiss-surface]` belongs to.
+ *
+ * Light dismiss is per-LAYER, because the layers stack: the Agent Monitor is a
+ * full-bleed overlay ABOVE the board, so a click on the monitor's empty space is
+ * not a click on the board underneath it. Scoping the surfaces is what lets each
+ * layer's hook instance answer only for its own clicks - the monitor's windows
+ * close on a monitor click, the board's on a board click, and neither reaches
+ * through the other.
+ */
+export type DismissScope = 'board' | 'monitor';
 
 /** Pointer travel (px) above which a press is a drag, not a click, so a text
  *  selection or board pan that releases on empty board never dismisses. Matches
@@ -30,14 +42,18 @@ interface PendingPress {
   dismissableLayerWasOpen: boolean;
 }
 
-/** True for a clean press on dead (non-action) space within a MARKED app-shell
- *  surface (`[data-dismiss-surface]`): the board columns, the toolbar, the project
- *  sidebar, and the status bar carry it. (The app title bar is deliberately NOT a
+/** True for a clean press on dead (non-action) space within a MARKED surface
+ *  belonging to THIS layer (`[data-dismiss-surface="<scope>"]`). The board's
+ *  surfaces are the board columns, the toolbar, the project sidebar and the status
+ *  bar; the monitor's is its row scroller. (The app title bar is deliberately NOT a
  *  surface: it is the OS window-drag region, which swallows clicks to move the window
  *  before the renderer sees them.) Requiring the marker is what keeps OVERLAYS off the
  *  dismiss surface: the settings panel, the command/search
  *  palettes, and any modal backdrop sit ABOVE the shell and are NOT marked, so a click
- *  on them (or on a backdrop to dismiss them) never closes the window beneath. The
+ *  on them (or on a backdrop to dismiss them) never closes the window beneath. Requiring
+ *  the marker to name THIS layer is what keeps the layers off each other: the monitor
+ *  overlay covers the board, so an unscoped match let a click on the monitor also
+ *  dismiss the board's windows behind it. The
  *  terminal panel (`TerminalPanel.tsx`) marks itself CONDITIONALLY: it is a dismiss
  *  surface whenever no live xterm pane is mounted (empty state, collapsed strip,
  *  Activity tab, or a session owned by a window), and unmarked only while a live
@@ -47,22 +63,26 @@ interface PendingPress {
  *  header strip + its drag handle), or anything showing a pointer cursor (`cursor` is
  *  inherited, so a child of a clickable element reports `pointer` too, auto-excluding
  *  clickable `<div>`s like project rows and group headers with no per-element marker). */
-function isDismissibleDeadArea(target: EventTarget | null): boolean {
+function isDismissibleDeadArea(target: EventTarget | null, scope: DismissScope): boolean {
   if (!(target instanceof Element)) return false;
-  if (target.closest('#window-layer-root')) return false; // a task-detail window frame (portaled popovers also self-exclude via the layer guard)
+  // Any layer's window frame (portaled popovers self-exclude via the same guard).
+  // Matched by marker, not by host id, so a new layer is covered on creation.
+  if (target.closest('[data-window-layer-root]')) return false;
   if (target.closest('[data-task-id]')) return false; // a task card (opens/focuses itself)
   if (target.closest(EXCLUDED_CONTROL_SELECTOR)) return false; // a real control or a [data-no-dismiss] element
   // Bail out before the (style-flushing) getComputedStyle read when the click is
-  // outside every marked surface, which is the common case (task windows, menus,
-  // anywhere else): only within a marked app-shell surface can a click dismiss.
-  if (!target.closest('[data-dismiss-surface]')) return false;
+  // outside this layer's marked surfaces, which is the common case (task windows,
+  // menus, another layer's surface, anywhere else).
+  if (!target.closest(`[data-dismiss-surface="${scope}"]`)) return false;
   return window.getComputedStyle(target).cursor !== 'pointer'; // dead space, unless it shows an action (pointer) cursor
 }
 
 /**
- * Click-outside (light-dismiss) for modeless task-detail windows. Mounted once in
- * `WindowLayer`. A clean click on dead space anywhere in the app shell (everywhere
- * but a live terminal pane and action controls) closes open windows per the user's
+ * Click-outside (light-dismiss) for modeless task-detail windows. Mounted once per
+ * LAYER, inside that layer's provider, so it closes that layer's windows: the board's
+ * instance answers for clicks on the app shell, the Agent Monitor's for clicks on the
+ * monitor. A clean click on dead space in this layer's own surfaces (everywhere but a
+ * live terminal pane and action controls) closes its open windows per the user's
  * `windowLightDismiss` policy, routed through each window's unsaved-edits guard (the
  * close registry). The session/PTY is untouched: closing only releases the
  * dialog-session claim, so the terminal returns to the bottom panel and reopening
@@ -75,15 +95,16 @@ function isDismissibleDeadArea(target: EventTarget | null): boolean {
  * self-closes synchronously on its own capture-phase mousedown (React 19 flushes
  * discrete events), so by pointerup it would already be gone.
  */
-export function useClickOutsideToClose(): void {
+export function useClickOutsideToClose(scope: DismissScope): void {
   const policy = useConfigStore((state) => state.config.windowLightDismiss);
+  const useStore = useLayerStore();
   const pendingRef = useRef<PendingPress | null>(null);
 
   useEffect(() => {
     if (policy === 'off') return;
 
     const handlePointerDown = (event: PointerEvent) => {
-      if (event.button !== 0 || !isDismissibleDeadArea(event.target)) {
+      if (event.button !== 0 || !isDismissibleDeadArea(event.target, scope)) {
         pendingRef.current = null;
         return;
       }
@@ -101,9 +122,9 @@ export function useClickOutsideToClose(): void {
       if (!pending || event.pointerId !== pending.pointerId || pending.dismissableLayerWasOpen) return;
       if (Math.abs(event.clientX - pending.startX) >= CLEAN_CLICK_MAX_PX) return;
       if (Math.abs(event.clientY - pending.startY) >= CLEAN_CLICK_MAX_PX) return;
-      if (!isDismissibleDeadArea(event.target)) return;
+      if (!isDismissibleDeadArea(event.target, scope)) return;
 
-      const { windows, focusedWindowId } = useWindowStore.getState();
+      const { windows, focusedWindowId } = useStore.getState();
       for (const windowId of resolveLightDismissTargets(policy, windows, focusedWindowId)) {
         requestWindowClose(windowId);
       }
@@ -121,5 +142,5 @@ export function useClickOutsideToClose(): void {
       document.removeEventListener('pointerup', handlePointerUp);
       document.removeEventListener('pointercancel', handlePointerCancel);
     };
-  }, [policy]);
+  }, [policy, scope, useStore]);
 }

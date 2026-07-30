@@ -130,6 +130,14 @@ export function useTerminalResize(
       if (switchSnapTimerRef.current) {
         clearTimeout(switchSnapTimerRef.current);
         switchSnapTimerRef.current = null;
+        // Lift the suppression along with the timer that would have lifted it.
+        // Clearing the timer alone strands `suppressTransition` at true if the
+        // effect is torn down mid-window and re-runs with an unchanged key (the
+        // guard above returns early, so nothing re-arms) - and a stuck
+        // suppression drops the height-transition class, so the expand path
+        // waits for a `transitionend` that can never fire and the panel stays
+        // blank. Seen live during a Fast Refresh that changed the key's shape.
+        setSuppressTransition(false);
       }
     };
   }, [switchKey]);

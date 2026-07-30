@@ -26,7 +26,7 @@ export interface SurfaceDescriptor<K extends PopOutKind = PopOutKind> {
    *  (Pattern B, scoped to this window since App.tsx's handler never runs here). */
   hmrResync: () => void;
   /** The in-app surface this pop-out is mutually exclusive with. */
-  inAppSurface: 'stats-overlay' | 'task-changes' | 'browser-pane';
+  inAppSurface: 'stats-overlay' | 'task-changes' | 'browser-pane' | 'monitor-overlay';
 }
 
 // Heterogeneous registry: each entry is fully typed via SurfaceDescriptor<K> at its

@@ -6,7 +6,6 @@ import { useConfigStore } from '../../stores/config-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useBoardStore } from '../../stores/board-store';
 import { LaunchOverlay } from '../LaunchOverlay';
-import { getIsHmrReload } from '../../utils/hmr-flag';
 import { useTerminalOverlay } from '../../utils/task-progress';
 import { useTerminalRefit } from '../../hooks/useTerminalRefit';
 
@@ -80,6 +79,10 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
   // an overlay hides the raw command line and suppressDataRef prevents
   // PTY output from accumulating in xterm behind the overlay.
   const [terminalReady, setTerminalReady] = useState(() => hasFirstOutput || hasUsage);
+  // The same predicate the state is seeded from, kept in a ref so the init effect's
+  // cleanup can consult it without re-running on every output/usage change.
+  const hasOutputRef = useRef(hasFirstOutput || hasUsage);
+  hasOutputRef.current = hasFirstOutput || hasUsage;
 
   // For an already-running session, terminalReady starts true so the
   // LaunchOverlay never shows - which used to leave the whole mount-time
@@ -145,10 +148,19 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
     return () => {
       observer?.disconnect();
       initialized.current = false;
-      // On HMR, don't reset terminalReady - the store still has firstOutput/usage
-      // data, so the shimmer overlay is unnecessary. Resetting it causes a visible
-      // single-frame flash before the overlay-lifting effect restores it.
-      if (!getIsHmrReload()) {
+      // Reset ONLY when the overlay would genuinely be wanted on the next mount, i.e.
+      // a session that has not produced anything yet. If the store still holds
+      // firstOutput/usage for this session, resetting re-shows "Starting agent..." for
+      // an agent that has been running for minutes, and the lifting effect then clears
+      // it a frame later - a visible flash.
+      //
+      // This was previously guarded on `getIsHmrReload()` alone, which named the right
+      // reason ("the store still has firstOutput/usage data") but only covered the HMR
+      // path. StrictMode's mount -> unmount -> remount runs this cleanup on EVERY dev
+      // open, which is the flash reported on opening an already-running task. Traced:
+      // seeded `ready true`, cleanup set it false, one render at false, then true
+      // again. Keying on the data itself covers both paths and matches the seed.
+      if (!hasOutputRef.current) {
         setTerminalReady(false);
       }
     };

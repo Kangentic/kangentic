@@ -341,6 +341,7 @@ session; rules with one load when you touch matching files. Each rule names its 
 - `linux-package-dependencies.md` - rpm dependencies are soname capabilities, never package names, since RPM package names differ per distro (`electron-builder.yml`).
 - `task-template-vars-parity.md` - the 10 auto_command / spawn_agent promptTemplate keywords are declared once in `TASK_TEMPLATE_VARS` and drive the resolver map, UI chips, and docs tables (`src/shared/task-template-vars.ts`, `src/main/agent/shared/task-template-resolvers.ts`, `src/renderer/components/dialogs/BoardManagerDialog.tsx`).
 - `settings-tab-scope.md` - a setting's tab must match its persistence scope; a project-scoped setting in a system tab silently drops its write with no project open (`src/renderer/components/settings/settings-registry.ts`, `settings-tabs.ts`, `tabs/**`).
+- `derived-detail-ownership.md` - task-detail ownership is reported as a host's COMPLETE mounted set and reconciled, never accumulated from claim/release; the reporter mounts where it outlives the window store (`src/main/task-detail/**`, `src/renderer/window-manager/bridge/**`, `src/renderer/components/monitor/**`).
 
 **Local overrides:** there is no per-rule local file. Put machine-specific instruction
 overrides in a gitignored `CLAUDE.local.md` at the project root.

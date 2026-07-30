@@ -254,10 +254,12 @@ Sessions are resumable on next launch via `--resume <agent_session_id>` from the
 
 - Each PTY session spawns exactly one Claude Code CLI process.
 - The bottom panel and the modeless task-detail windows share that process, one xterm per session at a time.
-- `dialogSessionIds: string[]` in `SessionStore` lists every session owned by an open task-detail window. It replaced the scalar `dialogSessionId` once task detail became modeless and windows can stack.
-- When a window claims a session: the panel unmounts that session's xterm instance.
-- When the window releases it: the panel recreates xterm from the PTY scrollback buffer.
+- `dialogSessionIds: string[]` in `SessionStore` lists every session owned by an open task-detail window, in ANY window-manager layer (board, Command Terminal, Agent Monitor). It replaced the scalar `dialogSessionId` once task detail became modeless and windows can stack. It is one array per renderer, so `useWindowSessionClaims` reconciles it across all layers at once.
+- When a window claims a session: the panel unmounts that session's xterm instance AND drops its tab, so a detached task leaves no tab that would select an empty pane. The panel keeps every other tab live; it collapses only once no tab is left (`derivePanelSessions` + `shouldForceCollapseTerminal`).
+- When the window releases it: the tab returns, still selected, and the panel recreates xterm from the PTY scrollback buffer.
 - This prevents duplicate xterm instances from sending conflicting resize calls.
+- Both surfaces can therefore hold a live terminal at once, so `deriveFocusedSessionIds` focuses the window-owned sessions AND the panel's own session; anything with a mounted xterm must be in that set or the main process suppresses its PTY output.
+- The converse also holds: anything with NO mounted xterm must be OUT of that set. A collapsed panel renders no `TerminalTab`, so `derivePanelSessionId` returns null for it (`panelShowsTerminal`, threaded from `useTerminalResize`'s `showContent`). Otherwise main streams bytes nothing can acknowledge, and a chatty agent eventually trips backpressure (`BACKPRESSURE_HIGH_WATER`) and has its PTY paused. Output produced while collapsed accumulates in main's scrollback ring and is replayed when the panel expands and the terminal remounts.
 
 ## Project-Scoped Session State
 
@@ -294,6 +296,28 @@ The handoff is transparent to the user - the task card shows spawn progress phas
 - PTY `onData` accumulates into a per-session buffer.
 - A 16ms flush interval (~60fps) emits buffered data via IPC `session:data`.
 - A 512KB scrollback ring buffer per session supports terminal restoration.
+- **Do not trim the replay to the last full-screen clear.** Tried and reverted: it cut a 512KB ring
+  to ~1.5KB but produced a permanently black terminal on a fast open/close/reopen. A raw byte
+  replay is not a frame snapshot - a fullscreen TUI leaves write-once static cells undrawn after a
+  clear (the reason the mobile seed uses the headless PARSED grid, `getSerializedFrame`, instead of
+  this byte replay). Slicing at the last clear discards those cells, and a sample landing at or just
+  after a clear replays a clear with nothing after it. If the replay cost is worth attacking, the
+  safe shape is a parsed-grid snapshot, not a byte-offset heuristic.
+- **One grid width per mount (deterministic fit).** `proposeDimensions` (`src/renderer/addons/fit-addon.ts`)
+  is a pure function of container geometry. It must not read anything that can change while a
+  terminal is mounting, because every distinct column count costs a PTY resize and a full agent
+  repaint the user watches land. The rule exists because the fit used to reclaim the scrollbar
+  gutter whenever the alternate screen buffer was active: the scrollback replay writes the TUI's
+  alt-screen enter mid-mount, so the mount fit and the post-replay refit disagreed by two columns on
+  every open (always, under Claude Code's `/tui fullscreen`). That produced the "opens mis-sized,
+  then refits" flash, and its stacked-repaint race intermittently left the terminal black with
+  correct dimensions. xterm's own stylesheet sets `.xterm-viewport { overflow-y: scroll }`, so the
+  gutter is reserved in the alt buffer too; it is now MEASURED (`offsetWidth - clientWidth`) rather
+  than assumed, which is both correct and constant across buffer modes. The old hardcoded 14px
+  against the real 8px gutter was the actual cause of the empty right-hand strip that the
+  alt-buffer reclaim was mistakenly written to fix. Gated by
+  `tests/e2e/terminal-fit-invariant.spec.ts` (one distinct grid width per open, and the grid never
+  wider than its viewport) and `tests/unit/fit-addon.test.ts`.
 - **Repaint-settled scrollback sampling.** A session spawns at a default 120x30; on a cold launch
   an auto-resumed PTY sits at that size until a card opens and the renderer fits it wider. When a
   width-changing resize fires, a full-screen agent TUI repaints its frame asynchronously in
@@ -308,9 +332,14 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   width change while the previous repaint is still pending, e.g. rapidly closing and reopening a
   task detail ping-pongs the PTY between the dialog and bottom-panel widths) disable the
   marker-only settle - the first marker may be the previous width's late repaint - and require
-  marker AND quiesce, falling back to the ceiling while streaming. A resize that arrives before the
-  PTY exists (the renderer mounts before the auto-resume spawn lands) is stashed and applied at
-  spawn, so the PTY starts at the fitted size and no corrective resize is needed.
+  marker AND quiesce, falling back to the ceiling while streaming. Concurrent samplers of the SAME
+  resize (a bottom-panel tab and a detail window overlapping during a handover; in dev, StrictMode's
+  double mount) share ONE wait: the second joins the first rather than starting its own. Two
+  independent waits could not both work, because the first to settle clears the pending-repaint
+  state that the other's early-settle scan offset points at, so the loser could never settle early
+  and rode the full ceiling out - a deterministic ~415ms added to that open. A resize that arrives
+  before the PTY exists (the renderer mounts before the auto-resume spawn lands) is stashed and
+  applied at spawn, so the PTY starts at the fitted size and no corrective resize is needed.
 - **DEC private mode and alt-screen re-assert on replay.** `xterm.reset()` on the renderer wipes
   every DEC private mode xterm is tracking, and the original mode-set bytes usually scroll out of
   the 512KB scrollback window on a long-running session. `PtyBufferManager` tracks DEC private
@@ -330,6 +359,17 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   drop-and-ack (its window can span the whole agent startup). A generation-aware `afterWrite` and a
   bounded watchdog timer additionally guard against a stale or stuck replay leaving
   `scrollbackPendingRef` true indefinitely, which would otherwise drop all live output forever.
+- **A replay never leaves the terminal both blank and held.** Two rules keep an aborted replay from
+  becoming a permanently black terminal. First, `reloadScrollback` clears the terminal immediately
+  before writing the new frame, not before fetching it: clearing first opened a window in which only
+  a SUCCESSFUL replay ever repainted, so any abort (a newer generation, a rejected read) left the
+  grid empty with every byte still sitting in the main-process ring and an idle agent with no reason
+  to send more. The last good frame now stays on screen until the new one replaces it. Second, the
+  stuck-replay watchdog RECOVERS (re-issues the replay once, at the already-synced width) rather
+  than only unblocking the queue, since unblocking a queue does not repaint a cleared grid. The
+  replay lifecycle is traced (`replay-start` / `-write` / `-abort` / `-done` / `-error` /
+  `-watchdog`, each with its generation) and surfaces in `kangentic_devtools_terminal_state`, so an
+  abandoned replay is readable directly instead of inferred from a missing later event.
 - **Replay veil for a warm mount.** For an already-running session, `TerminalTab`'s launch overlay
   never shows (`terminalReady` starts true), so the whole mount-time fit -> replay -> refit ->
   held-byte-flush sequence used to paint live, occasionally as a visible flash. `TerminalTab` now

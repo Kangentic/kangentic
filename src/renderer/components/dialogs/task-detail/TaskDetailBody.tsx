@@ -8,8 +8,7 @@ import { SessionSummaryPanel } from '../SessionSummaryPanel';
 import { BrowserPane } from '../../browser/BrowserPane';
 import { PriorityBadge } from '../../backlog/PriorityBadge';
 import { LabelPills } from '../../Pill';
-import { useConfigStore } from '../../../stores/config-store';
-import { useProjectStore } from '../../../stores/project-store';
+import { useTaskDetailHost } from './task-detail-host';
 import { QueuedPlaceholder } from './QueuedPlaceholder';
 import { taskHasDescriptionContent } from './description-content';
 import { AttachmentChipStrip } from '../AttachmentChipStrip';
@@ -112,13 +111,16 @@ export function TaskDetailBody({
   browserOpen,
   descriptionPeekOpen = false,
 }: TaskDetailBodyProps) {
-  const labelColors = useConfigStore((state) => state.config.backlog?.labelColors) ?? {};
-  const defaultBaseBranch = useConfigStore((state) => state.config.git.defaultBaseBranch);
-  // Default-agent tasks leave `task.agent` null; fall back to the project's
-  // default agent so the ContextBar picker can resolve capabilities (mirrors
-  // CommandBarOverlay). Non-null `task.agent` wins inside ContextBar.
-  const projectDefaultAgent = useProjectStore((state) => state.currentProject?.default_agent ?? null);
-  const projectId = useProjectStore((state) => state.currentProject?.id ?? '');
+  // Project-scoped values come from the HOST, never from the open board: this
+  // surface can be hosted by the Agent Monitor for a task in another project.
+  // Default-agent tasks leave `task.agent` null; falling back to the hosting
+  // project's default agent lets the ContextBar picker resolve capabilities
+  // (mirrors CommandBarOverlay). Non-null `task.agent` wins inside ContextBar.
+  const {
+    projectId,
+    defaultAgent: projectDefaultAgent,
+    config: { labelColors, defaultBaseBranch },
+  } = useTaskDetailHost();
   const browserPopOut = usePopOut('browser', { taskId: task.id, projectId });
   const changesPopOut = usePopOut('changes', { taskId: task.id, projectId });
   const changesViewMode = useSessionStore((state) => state.changesViewMode[task.id] ?? 'split');

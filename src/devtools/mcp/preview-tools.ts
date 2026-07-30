@@ -518,6 +518,20 @@ export function registerDevtoolsPreviewTools(server: McpServer): void {
       toolResult(await callBridge({ method: 'GET', path: '/pty-pipeline', instanceId })),
   );
 
+  server.registerTool(
+    'kangentic_devtools_terminal_state',
+    {
+      description:
+        'Every layer\'s view of each live terminal, joined: the PTY grid main holds (ptyCols/ptyRows, the width the buffered bytes were DRAWN at, plus any stashed/desktop dimensions and whether a post-resize repaint is outstanding), each mounted xterm\'s grid and container geometry (cols/rows, host, viewport clientWidth vs offsetWidth, rendered screen size, wrapped-line count) and which surface hosts it, plus the derived invariants ptyMatchesGrid / colsDrift / gridOverflowPx. Use for any terminal that looks mis-sized, clipped, wrapped, blank, or frozen: a PTY whose width has drifted from the grid showing it cannot self-correct (xterm re-sends dimensions only when its OWN size changes), and that gap is invisible from either process alone. Also reports sessions main knows about that no xterm is mounted for, and the pty-pipeline backpressure stats. Dev-only.',
+      inputSchema: z.object({
+        instanceId: z.string().optional().describe(INSTANCE_ARG_DESCRIPTION),
+      }),
+      annotations: READ_ONLY_ANNOTATIONS,
+    },
+    async ({ instanceId }) =>
+      toolResult(await callBridge({ method: 'GET', path: '/terminal-state', instanceId })),
+  );
+
   // ── Visual / DOM ─────────────────────────────────────────────────────
   server.registerTool(
     'kangentic_devtools_screenshot',

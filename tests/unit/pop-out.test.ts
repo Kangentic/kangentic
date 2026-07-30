@@ -7,11 +7,51 @@
  * collapse to a single key.
  */
 import { describe, it, expect } from 'vitest';
-import { popOutInstanceKey, isPopOutKind } from '../../src/shared/pop-out';
+import { popOutInstanceKey, isPopOutKind, POP_OUT_SURFACES, POPOUT_KINDS } from '../../src/shared/pop-out';
+import { IPC } from '../../src/shared/ipc-channels';
 
 describe('popOutInstanceKey', () => {
   it('collapses the global "stats" surface to its bare kind, ignoring any params', () => {
     expect(popOutInstanceKey('stats', {})).toBe('stats');
+  });
+
+  it('collapses the global "monitor" surface to its bare kind', () => {
+    expect(popOutInstanceKey('monitor', {})).toBe('monitor');
+  });
+
+  /**
+   * The specific regression this guards: the global branch used to be a hardcoded
+   * `kind === 'stats'` check, so a SECOND global surface fell through to the
+   * task-params branch and keyed as `monitor:undefined:undefined`. That key still
+   * looks plausible and is stable, so the window would open and track - it would
+   * simply never match the renderer's own lookup. Assert every declared global
+   * surface collapses, rather than spot-checking the two that exist today.
+   */
+  it('every global-scope surface collapses to its bare kind', () => {
+    const globalKinds = POPOUT_KINDS.filter((kind) => POP_OUT_SURFACES[kind].scope === 'global');
+    expect(globalKinds.length).toBeGreaterThan(1);
+    for (const kind of globalKinds) {
+      expect(popOutInstanceKey(kind, {} as never)).toBe(kind);
+    }
+  });
+});
+
+describe('POP_OUT_SURFACES fan-out declarations', () => {
+  /**
+   * A channel a surface subscribes to but does not declare here is dropped
+   * SILENTLY for pop-out windows (windowsForChannel filters on this list), so the
+   * detached surface just never updates. These pin the monitor's two live wires.
+   */
+  it('the monitor declares the channels its surface subscribes to', () => {
+    const channels = POP_OUT_SURFACES.monitor.channels;
+    expect(channels).toContain(IPC.MONITOR_CHANGED);
+    expect(channels).toContain(IPC.SESSION_ACTIVITY);
+    expect(channels).toContain(IPC.CONFIG_CHANGED);
+  });
+
+  it('the monitor is a global surface with no task params', () => {
+    expect(POP_OUT_SURFACES.monitor.scope).toBe('global');
+    expect(POP_OUT_SURFACES.monitor.needsWebview).toBe(false);
   });
 
   it('keys a task-scoped "changes" surface by kind:projectId:taskId', () => {

@@ -179,7 +179,20 @@ describe('PtyBufferManager', () => {
       return manager;
     }
 
-    it('defers sampling until a marker-less post-resize repaint lands and quiesces', async () => {
+    it('does NOT settle on a marker-less update plus a lull (it is not a repaint)', async () => {
+      // REVERSED expectation, deliberately. This used to assert that any bytes
+      // after the resize plus a 50ms lull counted as "the repaint landed", and
+      // that heuristic is the open-a-task-detail flicker: a fullscreen TUI emits
+      // ordinary partial updates (a spinner tick, one redrawn line) and then goes
+      // quiet, which is indistinguishable from a redraw under that rule. The
+      // sample was therefore taken BEFORE the real repaint, so the first thing
+      // painted was the pre-resize frame - drawn wide, wrapped into the narrower
+      // window - and the held live bytes then replaced it. See
+      // tests/unit/repaint-settle-marker.test.ts for the harness that isolates it.
+      //
+      // For a session this wait has already identified as a fullscreen TUI, only a
+      // full-screen ERASE means the frame was redrawn. Everything else rides the
+      // deadline.
       vi.useFakeTimers();
       const manager = armWidthChange();
 
@@ -188,26 +201,20 @@ describe('PtyBufferManager', () => {
         settled = true;
       });
 
-      // No repaint yet: the settle is still pending.
       await vi.advanceTimersByTimeAsync(16);
       expect(settled).toBe(false);
 
-      // The SIGWINCH repaint lands WITHOUT a full-frame marker (no \x1b[2J or
-      // \x1b[H), so the marker-based early settle does not apply and the wait
-      // falls back to the quiesce heuristic. (A marker-bearing repaint settles
-      // immediately - covered by the streaming early-settle test below.)
-      manager.onData(SESSION, 'repaint at 190 cols');
-
-      // Data just arrived: not yet quiesced.
-      await vi.advanceTimersByTimeAsync(16);
+      // A partial update with no erase, then silence well past the old 50ms
+      // quiesce window. Previously this settled; now it must not.
+      manager.onData(SESSION, 'partial update, no erase');
+      await vi.advanceTimersByTimeAsync(96);
       expect(settled).toBe(false);
 
-      // Quiesce window elapses -> the settle resolves.
-      await vi.advanceTimersByTimeAsync(80);
+      // The genuine repaint erases the screen, and that settles it.
+      manager.onData(SESSION, '\x1b[2Jrepaint at 190 cols');
+      await vi.advanceTimersByTimeAsync(16);
       await waitPromise;
       expect(settled).toBe(true);
-
-      // The sample now includes the fitted-width repaint, not just the stale frame.
       expect(manager.getScrollback(SESSION)).toContain('repaint at 190 cols');
 
       vi.useRealTimers();
@@ -244,7 +251,18 @@ describe('PtyBufferManager', () => {
       vi.useRealTimers();
     });
 
-    it('settles early when a streaming session lands a post-resize BARE cursor-home marker (\\x1b[H, no \\x1b[2J)', async () => {
+    it('does NOT settle on a BARE cursor-home (\\x1b[H is a partial update, not a repaint)', async () => {
+      // REVERSED expectation, deliberately - this test previously asserted the
+      // behavior that caused the flicker. A bare \x1b[H was accepted as proof of a
+      // full-frame repaint, but a fullscreen TUI emits cursor-home constantly for
+      // partial updates: measured on a live Claude session, 169 cursor-homes to 56
+      // full-screen clears in one 512KB ring. So the FIRST routine byte after the
+      // resize satisfied the settle, getScrollback sampled the pre-resize frame,
+      // and the user saw that stale wide frame before the held live bytes replaced
+      // it with the real repaint.
+      //
+      // The accelerator survives for the marker that actually means it (\x1b[2J,
+      // covered above); only this false positive is removed.
       vi.useFakeTimers();
       const manager = armWidthChange();
 
@@ -253,20 +271,17 @@ describe('PtyBufferManager', () => {
         settled = true;
       });
 
-      // Marker-free streaming: bytes keep arriving so the quiesce heuristic
-      // can never fire.
       manager.onData(SESSION, 'streaming output without a marker');
       await vi.advanceTimersByTimeAsync(16);
       expect(settled).toBe(false);
-      manager.onData(SESSION, 'more streaming output');
+
+      // A bare cursor-home mid-stream. Previously this settled the wait here.
+      manager.onData(SESSION, '\x1b[Hpartial update at the old width');
       await vi.advanceTimersByTimeAsync(16);
       expect(settled).toBe(false);
 
-      // The SIGWINCH repaint lands mid-stream with a BARE cursor-home
-      // (\x1b[H, no \x1b[2J clear anywhere in the post-resize bytes): the
-      // wait settles on the next poll via the \x1b[H arm of the marker
-      // check, same as the \x1b[2J case above.
-      manager.onData(SESSION, '\x1b[Hrepaint at 190 cols');
+      // The genuine repaint erases first, and only that settles it.
+      manager.onData(SESSION, '\x1b[2Jrepaint at 190 cols');
       await vi.advanceTimersByTimeAsync(16);
       await waitPromise;
       expect(settled).toBe(true);

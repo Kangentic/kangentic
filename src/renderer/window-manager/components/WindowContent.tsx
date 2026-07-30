@@ -16,6 +16,7 @@ import { Loader2 } from 'lucide-react';
 import { useBoardStore } from '../../stores/board-store';
 import { PanelErrorBoundary } from '../../components/PanelErrorBoundary';
 import { WindowTitleBar } from './WindowTitleBar';
+import { useWindowManager } from '../context';
 import { TaskDetailWindow } from './TaskDetailWindow';
 import { ConversationWindow } from './ConversationWindow';
 import type { ManagedWindow } from '../store/types';
@@ -84,8 +85,34 @@ export function WindowContent({
   />;
 }
 
-/** Task-detail content: resolve the task from the board store by anchor. */
-function TaskDetailContent({
+/**
+ * Task-detail content, dispatched to the LAYER. A layer that supplies
+ * `renderTaskDetail` (the Agent Monitor, whose windows can belong to any project)
+ * resolves its own task; the board layer omits it and falls through to the board
+ * store below. The branch is on the layer, not the window, because what differs
+ * is whose data a window reads.
+ */
+function TaskDetailContent(props: WindowContentProps) {
+  const { layer } = useWindowManager();
+  if (!layer.renderTaskDetail) return <BoardTaskDetailContent {...props} />;
+  return (
+    <>
+      {layer.renderTaskDetail({
+        anchor: props.managedWindow.anchor,
+        windowId: props.managedWindow.id,
+        title: props.managedWindow.title,
+        isFocused: props.isFocused,
+        isMaximized: props.isMaximized,
+        initialEdit: props.managedWindow.initialEdit,
+        titleBarPointerDown: props.titleBarPointerDown,
+        requestClose: props.requestClose,
+      })}
+    </>
+  );
+}
+
+/** The BOARD layer's task-detail content: resolve the task from the board store. */
+function BoardTaskDetailContent({
   managedWindow,
   isFocused,
   isMaximized,

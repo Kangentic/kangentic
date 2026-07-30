@@ -3,6 +3,7 @@ import { useBoardStore } from '../../renderer/stores/board-store';
 import { useConfigStore } from '../../renderer/stores/config-store';
 import { useDictationStore } from '../../renderer/stores/dictation-store';
 import { useMobileStore } from '../../renderer/stores/mobile-store';
+import { useMonitorStore } from '../../renderer/stores/monitor-store';
 import { usePopOutStore } from '../../renderer/stores/pop-out-store';
 import { useProjectStore } from '../../renderer/stores/project-store';
 import { useSessionStore } from '../../renderer/stores/session-store';
@@ -71,6 +72,7 @@ const PREVIEW_STORES: Record<string, ReadableStore> = {
   config: useConfigStore,
   dictation: useDictationStore,
   mobile: useMobileStore,
+  monitor: useMonitorStore,
   // Quoted because the file stem is kebab-case (pop-out-store.ts); the
   // completeness test matches the key to the filename stem.
   'pop-out': usePopOutStore,

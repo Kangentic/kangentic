@@ -8,7 +8,7 @@ import { NameFromPromptButton } from '../../NameFromPromptButton';
 import { AdvancedOverridesSection } from '../AdvancedOverridesSection';
 import { AttachmentChipStrip } from '../AttachmentChipStrip';
 import { isImageMediaType } from '../attachment-utils';
-import { useProjectStore } from '../../../stores/project-store';
+import { useTaskDetailHost } from './task-detail-host';
 import type { AttachmentsState } from './useAttachments';
 import type { BranchConfigState } from './useBranchConfig';
 import type { Task, TaskRunMode } from '../../../../shared/types';
@@ -76,7 +76,9 @@ export function TaskDetailEditForm({
 }: TaskDetailEditFormProps) {
   const titleInputRef = useRef<HTMLInputElement>(null);
 
-  const currentProject = useProjectStore((state) => state.currentProject);
+  // The HOSTING project's path, not the open board's: an @-mention search must
+  // look inside the project the task actually belongs to.
+  const { projectPath } = useTaskDetailHost();
 
   // Focus title input on mount
   useEffect(() => {
@@ -106,7 +108,7 @@ export function TaskDetailEditForm({
         onChange={setDescription}
         onPaste={attachments.handleAttachmentPaste}
         testId="task-description"
-        mentionSearchCwd={task.worktree_path ?? currentProject?.path ?? null}
+        mentionSearchCwd={task.worktree_path ?? projectPath ?? null}
         className="flex-1"
       />
       <AttachmentChipStrip

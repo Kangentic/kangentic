@@ -140,6 +140,8 @@ The bottom panel shows terminal output for running sessions.
 
 Each running session gets a tab. Click a tab to switch between sessions. The active tab is highlighted. Double-click a tab to open the corresponding task detail dialog.
 
+Opening a task's detail moves its terminal out of the panel, so that tab disappears while the detail is open - on the board and in the [Agent Monitor](#agent-monitor) alike. The other tabs stay where they are. Close the detail and the tab comes back, still selected. When the last tab goes, the panel collapses to its thin strip.
+
 Tab indicators show session state at a glance:
 - **Green spinner** - agent is actively working
 - **Amber dot** - agent is idle (waiting for input). Pulses on tabs that have not been viewed since going idle.
@@ -175,7 +177,7 @@ Click a task card to open the detail dialog. From here you can:
 - View and manage attachments of any file type (drag-and-drop files onto the dialog, or paste from clipboard)
 - Right-click an attachment thumbnail to copy the image to clipboard
 - Click any attachment thumbnail to open a full-size preview modal (press Escape to close)
-- See the full terminal output (takes ownership from the bottom panel while open)
+- See the full terminal output (takes the terminal from the bottom panel, whose tab for this task disappears while the detail is open)
 - View session status, usage stats, and model info
 - Pause or resume the agent session using the circular play/pause button in the header
 - Run shortcuts from the header bar (configurable pills that launch external tools)
@@ -208,7 +210,7 @@ The panel persists its expanded/collapsed state, selected file, selected commit,
 
 The Changes panel is available for all tasks, whether or not worktrees are enabled. It uses `git merge-base` to show only branch-specific changes, excluding upstream commits.
 
-When the dialog is open, it claims the terminal session. The bottom panel releases it. When you close the dialog, the bottom panel reclaims the session.
+When the dialog is open, it claims the terminal session and the bottom panel drops that task's tab. Any other running session keeps its tab and its live terminal; the panel only collapses once nothing is left in it. Closing the dialog returns the tab, still selected.
 
 ### Browser Pane
 
@@ -687,6 +689,29 @@ Open the usage dashboard from the chart icon in the title bar or with `Mod+Shift
 
 Totals are read from the durable usage ledgers, so they survive task and session deletion. The selected range and scope persist across app restarts (one global value shared across all projects).
 
+## Agent Monitor
+
+Open the monitor from the activity icon in the title bar or with `Mod+Shift+M`. It answers "what are all my agents doing right now?" in one place, across **every** registered project rather than just the one whose board is open. The title-bar icon itself is the ambient signal: green while any agent anywhere is working, amber the moment one starts waiting on you.
+
+Each session shows its owning project and column, the task title and ticket number, live activity state, agent, model, effort and permission mode, how long it has been running, and what the agent is doing right now. Four tiles across the top count what needs you, what is active, what is paused, and how many projects have something live.
+
+Command Terminals (`Mod+Shift+P`) appear here too, marked with a terminal glyph. They are the one thing the board cannot show you - they belong to no task, so before now a Command Terminal left running in another project was invisible.
+
+You choose how it looks, and the choice is remembered (including across a restart):
+
+- **Layout** - cards (which reflow into 2 or 3 columns as the window widens), a dense sortable table, or a one-line-per-session list.
+- **Grouping** - by status (Idle / Active / Paused / Recently finished) or by project. Rows are always sectioned, which is what keeps anything waiting on you at the top without you having to sort for it.
+- **Sort** - Oldest or Newest, applied within each section. The table layout sorts by its own column headers instead.
+- **Filters** - a text filter across title, project, column, agent, model, ticket number and labels, plus a "Live only" toggle that drops paused and recently finished sessions.
+
+Clicking a row opens that task's full detail - terminal included - **in the monitor**, so several agents across several projects can be watched and driven from one surface without leaving for another project's board. Right-click a row and choose **Open on board** for the old behavior. A task's detail is only ever open in one place: opening it somewhere else moves it rather than making a second copy, and its tab leaves the bottom panel while it is open.
+
+The pop-out button detaches the monitor into its own window, which is the intended way to keep it on a second monitor. The detached window lays out by its own width, so it stays readable narrow while the in-app view fills a wide screen.
+
+Whatever you have open in the monitor follows it. Detaching carries your open details into the pop-out, closing the pop-out hands them back to the in-app monitor, and the arrangement survives a restart - the same way board and Command Terminal layouts do. Nothing stays running in the background: closing the monitor unmounts its terminals (the agents keep working, and their tabs return to the bottom panel), and reopening it restores what you had.
+
+Two things are deliberately left out of that restore, because the monitor is for watching agents that are still working: a task you have since opened on the board stays where it is rather than being pulled back in, and a detail whose agent has finished is not reopened. You can still click a finished session's row to look at it; it just will not come back on its own.
+
 ## Keyboard Shortcuts
 
 Every shortcut is declared in a central registry and is **rebindable** under Settings > Hotkeys, where it can be bound to a key chord or a mouse button (middle or side buttons). Hotkeys also flags conflicts and combos already claimed by the OS or another app. `Mod` below is Cmd on macOS and Ctrl on every other platform.
@@ -695,6 +720,7 @@ General:
 
 - **Mod+Shift+S** - Toggle the settings panel
 - **Mod+Shift+U** - Toggle the Usage Stats dashboard
+- **Mod+Shift+M** - Toggle the Agent Monitor (every running agent, across all projects)
 - **Mod+Shift+B** - Switch between Board and Backlog view
 - **Mod+Shift+E** - Toggle the project sidebar
 - **Mod+Shift+J** - Toggle the bottom terminal panel

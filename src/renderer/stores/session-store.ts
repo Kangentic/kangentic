@@ -224,6 +224,7 @@ export const useSessionStore = create<SessionStore>((set, get, api) => ({
   detailTaskId: null,
   detailTaskInitialEdit: false,
   dialogSessionIds: [],
+  remoteDetailTaskIds: [],
   pendingDetailWindowsProjectId: null,
   scrollToEventKey: null,
   conversationSessionId: preservedConversationSessionId,

@@ -215,13 +215,12 @@ test.describe('task-detail window entrance animation suppression on restore', ()
     }
   });
 
-  test('a freshly opened window is left without the skip-enter flag (keeps its entrance)', async () => {
+  test('a freshly opened TERMINAL window also paints flat (fit correctness beats motion)', async () => {
     const { browser, page } = await launch();
     try {
       await seedBoardStoreTask(page);
 
-      // Card-click path: setDetailTaskId -> useTaskDetailWindowBridge -> openWindow, which does
-      // NOT set skipEnterAnimation.
+      // Card-click path: setDetailTaskId -> useTaskDetailWindowBridge -> openWindow.
       await page.evaluate((taskId) => {
         const stores = (window as unknown as { __zustandStores?: ZustandStores }).__zustandStores;
         if (!stores) throw new Error('window.__zustandStores not exposed');
@@ -231,9 +230,15 @@ test.describe('task-detail window entrance animation suppression on restore', ()
       const freshFrame = page.locator('[data-testid^="window-frame-"]').first();
       await freshFrame.waitFor({ state: 'attached', timeout: 5000 });
 
-      // Programmatic state: the open path leaves the flag unset, so the window animates in
-      // (the suppression is scoped to restored windows only).
-      await expect.poll(() => readSkipEnterFlags(page), { timeout: 5000 }).toEqual([false]);
+      // A task-detail window HOSTS A TERMINAL, so it opens flat even on a fresh
+      // user open - not only on restore. The entrance is a `scale()` transform,
+      // which does not change the border box (ResizeObserver stays silent) but
+      // does change `getBoundingClientRect()`, which is what xterm's FitAddon
+      // measures. A fit landing mid-animation computes `cols`/`rows` from a
+      // shrunken box and is never corrected, leaving a terminal that overflows
+      // and looks frozen until the window is resized by hand. Correctness beats
+      // motion on any surface that spawns a terminal.
+      await expect.poll(() => readSkipEnterFlags(page), { timeout: 5000 }).toEqual([true]);
     } finally {
       await browser.close();
     }

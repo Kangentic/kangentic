@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { flushSync } from 'react-dom';
-import { useBoardStore } from '../../../stores/board-store';
 import { useBacklogStore } from '../../../stores/backlog-store';
 import { useSessionStore } from '../../../stores/session-store';
-import { useProjectStore } from '../../../stores/project-store';
 import { useToastStore } from '../../../stores/toast-store';
+import { useTaskDetailHost } from './task-detail-host';
 import type { Task, Session, AgentCommand, Swimlane, PermissionMode, TaskRunMode } from '../../../../shared/types';
 import type { useBranchConfig } from './useBranchConfig';
 import type { useTaskProgress } from '../../../utils/task-progress';
@@ -75,19 +74,18 @@ export function useTaskActions(input: {
   isInTodo: boolean;
   swimlanes: Swimlane[];
 
-  // Store bindings (passed in so the hook doesn't re-subscribe redundantly)
-  updateTask: ReturnType<typeof useBoardStore.getState>['updateTask'];
-  deleteTask: ReturnType<typeof useBoardStore.getState>['deleteTask'];
-  moveTask: ReturnType<typeof useBoardStore.getState>['moveTask'];
-  unarchiveTask: ReturnType<typeof useBoardStore.getState>['unarchiveTask'];
-  archiveTask: ReturnType<typeof useBoardStore.getState>['archiveTask'];
-  loadBoard: ReturnType<typeof useBoardStore.getState>['loadBoard'];
+  // Store bindings (passed in so the hook doesn't re-subscribe redundantly).
+  // The task-scoped mutations are NOT here: they come from the host context, so
+  // they resolve against the hosted task's project rather than the open board's.
   killSession: ReturnType<typeof useSessionStore.getState>['killSession'];
   suspendSession: ReturnType<typeof useSessionStore.getState>['suspendSession'];
   resumeSession: ReturnType<typeof useSessionStore.getState>['resumeSession'];
   skipDeleteConfirm: boolean;
   updateConfig: (partial: { skipDeleteConfirm?: boolean }) => void;
 }) {
+  // Every project-scoped read and write goes through the host, so this hook works
+  // unchanged whether its task belongs to the open board or to another project.
+  const host = useTaskDetailHost();
   const [pendingAction, setPendingAction] = useState<null | 'pausing' | 'resuming'>(null);
   const toggling = pendingAction !== null;
   const [saving, setSaving] = useState(false);
@@ -128,7 +126,7 @@ export function useTaskActions(input: {
           });
         }
       }
-      await input.loadBoard();
+      await host.refresh();
       // pendingAction is cleared by the effect below once the session store
       // actually reflects the target state.
     } catch (err) {
@@ -168,7 +166,7 @@ export function useTaskActions(input: {
       await useSessionStore.getState().resetSession(input.task.id);
       setResumeFailed(false);
       setResumeError('');
-      await input.loadBoard();
+      await host.refresh();
     } catch (err) {
       console.error('Reset session failed:', err);
       useToastStore.getState().addToast({
@@ -185,7 +183,7 @@ export function useTaskActions(input: {
       useSessionStore.getState().setPendingCommandLabel(input.task.id, command.displayName);
       await input.suspendSession(input.task.id);
       await input.resumeSession(input.task.id, command.displayName);
-      await input.loadBoard();
+      await host.refresh();
     } catch (error) {
       console.error('Command invocation failed:', error);
       useSessionStore.getState().clearPendingCommandLabel(input.task.id);
@@ -193,7 +191,7 @@ export function useTaskActions(input: {
         message: `Failed to invoke ${command.displayName}`,
         variant: 'warning',
       });
-      await input.loadBoard().catch(() => {});
+      await host.refresh().catch(() => {});
       setPendingAction(null);
     }
   };
@@ -202,15 +200,13 @@ export function useTaskActions(input: {
     const targetName = input.swimlanes.find((candidate) => candidate.id === targetSwimlaneId)?.name ?? 'column';
     if (input.isArchived) {
       input.onClose();
-      await input.unarchiveTask({ id: input.task.id, targetSwimlaneId });
+      await host.unarchiveTask({ id: input.task.id, targetSwimlaneId });
     } else {
-      const laneTasks = useBoardStore.getState().tasks.filter(
-        (candidate) => candidate.swimlane_id === targetSwimlaneId,
-      );
-      await input.moveTask({ taskId: input.task.id, targetSwimlaneId, targetPosition: laneTasks.length }, false, useProjectStore.getState().currentProject?.id ?? null);
+      const laneTasks = host.laneTasks(targetSwimlaneId);
+      await host.moveTask({ taskId: input.task.id, targetSwimlaneId, targetPosition: laneTasks.length }, false);
       // If a confirmation dialog was triggered, moveTask returns early without
       // moving. Don't close the detail dialog or show a toast in that case.
-      if (useBoardStore.getState().pendingMoveConfirm) return;
+      if (host.isMoveConfirmPending()) return;
       input.onClose();
     }
     useToastStore.getState().addToast({
@@ -251,7 +247,7 @@ export function useTaskActions(input: {
    * task on a PR it no longer points at. The state is nulled on both branches
    * (cleared and re-pointed) and refilled by the next resolve.
    */
-  const buildPrFields = (): Pick<Parameters<typeof input.updateTask>[0], 'pr_url' | 'pr_number' | 'pr_state'> => {
+  const buildPrFields = (): Pick<Parameters<typeof host.updateTask>[0], 'pr_url' | 'pr_number' | 'pr_state'> => {
     const trimmedPrUrl = input.prUrl.trim();
     if (trimmedPrUrl === (input.task.pr_url ?? '')) return {};
     if (trimmedPrUrl) {
@@ -310,7 +306,7 @@ export function useTaskActions(input: {
             taskId: input.task.id,
             newBaseBranch: trimmedBranch,
             enableWorktree: enablingWorktree || undefined,
-          }, useProjectStore.getState().currentProject?.id ?? null);
+          }, host.projectId || null);
           if (input.title !== input.task.title
             || input.description !== input.task.description
             || prFields.pr_url !== undefined
@@ -322,7 +318,7 @@ export function useTaskActions(input: {
             || (input.permissionOverride || null) !== input.task.permission_mode
             || (input.profileId ?? null) !== input.task.profile_id
             || input.runMode !== input.task.run_mode) {
-            await input.updateTask({
+            await host.updateTask({
               id: input.task.id,
               title: input.title,
               description: input.description,
@@ -332,7 +328,7 @@ export function useTaskActions(input: {
               ...overrideFields,
             });
           }
-          await useBoardStore.getState().loadBoard();
+          await host.refresh();
         } catch (error) {
           console.error('switchBranch failed:', error);
           useToastStore.getState().addToast({
@@ -342,7 +338,7 @@ export function useTaskActions(input: {
           return;
         }
       } else {
-        const payload: Parameters<typeof input.updateTask>[0] = {
+        const payload: Parameters<typeof host.updateTask>[0] = {
           id: input.task.id,
           title: input.title,
           description: input.description,
@@ -366,7 +362,7 @@ export function useTaskActions(input: {
             payload.branch_name = trimmedCustomBranch || null;
           }
         }
-        await input.updateTask(payload);
+        await host.updateTask(payload);
       }
 
       if (!input.session) {
@@ -428,11 +424,9 @@ export function useTaskActions(input: {
     flushSync(() => {
       input.onClose();
     });
-    input.archiveTask(taskId);
-    const laneTasks = useBoardStore.getState().tasks.filter(
-      (candidate) => candidate.swimlane_id === doneLane.id,
-    );
-    await window.electronAPI.tasks.move({ taskId, targetSwimlaneId: doneLane.id, targetPosition: laneTasks.length }, useProjectStore.getState().currentProject?.id ?? null);
+    host.archiveTask(taskId);
+    const laneTasks = host.laneTasks(doneLane.id);
+    await window.electronAPI.tasks.move({ taskId, targetSwimlaneId: doneLane.id, targetPosition: laneTasks.length }, host.projectId || null);
     useToastStore.getState().addToast({
       message: `Archived "${taskTitle}"`,
       variant: 'info',
@@ -446,7 +440,7 @@ export function useTaskActions(input: {
     if (input.session) {
       await input.killSession(input.session.id);
     }
-    await input.deleteTask(input.task.id);
+    await host.deleteTask(input.task.id);
     useToastStore.getState().addToast({
       message: `Deleted task "${taskTitle}"`,
       variant: 'info',

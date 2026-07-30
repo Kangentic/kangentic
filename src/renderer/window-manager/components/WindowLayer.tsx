@@ -20,14 +20,18 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useBoardStore } from '../../stores/board-store';
+import { BoardTaskDetailHost } from '../../components/dialogs/task-detail';
 import { boardWindowManager } from '../store/window-store';
 import type { WindowManager } from '../store/window-store';
-import { WindowManagerProvider, useLayerStore, useSnapPreviewController } from '../context';
+import { WindowManagerProvider, useWindowManager, useSnapPreviewController } from '../context';
+import { markLayerMounted } from '../store/layer-mount-registry';
 import type { WindowManagerLayerOptions } from '../context';
 import { DEFAULT_MIN_WIDTH_PX, DEFAULT_MIN_HEIGHT_PX } from '../dnd/useWindowResize';
 import { useTaskDetailWindowBridge } from '../bridge/useTaskDetailWindowBridge';
 import { useConversationWindowBridge } from '../bridge/useConversationWindowBridge';
 import { useWindowSessionClaims } from '../bridge/useWindowSessionClaims';
+import { useDetailOwnershipSync } from '../bridge/useDetailOwnershipSync';
+import { useProjectStore } from '../../stores/project-store';
 import { useWindowAutoCloseOnDone } from '../bridge/useWindowAutoCloseOnDone';
 import { useWindowFocusReconcile } from '../bridge/useWindowFocusReconcile';
 import { useWorkspacePersistence } from '../bridge/useWorkspacePersistence';
@@ -57,9 +61,20 @@ const ALL_FOOTPRINT_EDGES: FootprintEdge[] = ['left', 'right', 'top', 'bottom'];
 
 function getPortalHost(hostId: string): HTMLElement {
   const existing = document.getElementById(hostId);
-  if (existing) return existing;
+  // Stamped on BOTH paths, not just creation: the host is created once and reused
+  // forever (StrictMode double-invoke, HMR remounts), so marking only the creation
+  // path would leave a pre-existing host unmarked after a Fast Refresh and silently
+  // turn every window frame back into light-dismiss dead space.
+  if (existing) {
+    existing.setAttribute('data-window-layer-root', '');
+    return existing;
+  }
   const host = document.createElement('div');
   host.id = hostId;
+  // Layer-agnostic marker: light dismiss must never treat ANY layer's window frame
+  // as dead space, and matching a marker rather than a list of host ids means a new
+  // layer is covered the moment it mounts.
+  host.setAttribute('data-window-layer-root', '');
   document.body.appendChild(host);
   return host;
 }
@@ -94,7 +109,14 @@ function WindowManagerSurface({
   const hostRef = useRef<HTMLElement | null>(null);
   if (!hostRef.current) hostRef.current = getPortalHost(portalHostId);
 
-  const useStore = useLayerStore();
+  const { manager } = useWindowManager();
+  const useStore = manager.store;
+
+  // Publish this layer's mount state. Renderer-global state derived from windows
+  // (`dialogSessionIds`) must not count a layer whose surface is gone: the store
+  // outlives the subtree by design, but the xterms do not. The monitor's layer is
+  // the one that actually unmounts (it lives inside MonitorPage).
+  useEffect(() => markLayerMounted(manager), [manager]);
   const [containerSize, setContainerSize] = useState<ContainerSize>({ width: 0, height: 0 });
   const windows = useStore((state) => state.windows);
   const tileTree = useStore((state) => state.tileTree);
@@ -223,11 +245,46 @@ function BoardBridges(): null {
   useTaskDetailWindowBridge();
   useConversationWindowBridge();
   useWindowSessionClaims();
+  useBoardDetailOwnership();
   useWindowAutoCloseOnDone();
   useWindowFocusReconcile();
   useWorkspacePersistence();
-  useClickOutsideToClose();
+  useClickOutsideToClose('board');
   return null;
+}
+
+/**
+ * Report the board layer's task-detail ownership to main, derived from its windows.
+ *
+ * The board's anchor is a bare taskId, so the project comes from the open project -
+ * which is sound because this layer only ever hosts the open project's tasks
+ * (`openWindowFor` parks and switches rather than mounting a foreign task). Two
+ * guards make that safe rather than merely usually-right:
+ *
+ * - **Abstain when there is no project.** Reporting an empty set would tell main to
+ *   drop every board claim; sending nothing leaves main's last-known state, which the
+ *   next report corrects.
+ * - **Only report anchors the board store actually holds.** During a project switch
+ *   `currentProject` flips before the new tasks land, so an unfiltered report could
+ *   pair project B with a window for a task in A. Triggering on the BOARD store (not
+ *   the project store) means both have already moved together, and the filter drops
+ *   anything left over.
+ */
+function useBoardDetailOwnership(): void {
+  useDetailOwnershipSync({
+    manager: boardWindowManager,
+    host: 'board',
+    ready: () => useProjectStore.getState().currentProject?.id != null,
+    anchorToDetail: (anchor) => {
+      const projectId = useProjectStore.getState().currentProject?.id;
+      if (!projectId) return null;
+      const board = useBoardStore.getState();
+      const known = board.tasks.some((task) => task.id === anchor)
+        || board.archivedTasks.some((task) => task.id === anchor);
+      return known ? { projectId, taskId: anchor } : null;
+    },
+    extraTriggers: [useBoardStore],
+  });
 }
 
 const BOARD_LAYER_OPTIONS: WindowManagerLayerOptions = {
@@ -255,13 +312,21 @@ export function WindowLayer() {
   const overlayClassName =
     activeView === 'board' ? BOARD_OVERLAY_BASE_CLASS : `${BOARD_OVERLAY_BASE_CLASS} invisible`;
   return (
-    <WindowManagerLayer
-      manager={boardWindowManager}
-      layer={BOARD_LAYER_OPTIONS}
-      portalHostId="window-layer-root"
-      overlayTestId="window-overlay"
-      overlayClassName={overlayClassName}
-      bridges={<BoardBridges />}
-    />
+    // The task-detail surface reads every project-scoped value from this host
+    // rather than from ambient `currentProject` / board state, so a second layer
+    // can host the same surface for a task in a DIFFERENT project. Wrapping out
+    // here (not inside the generic layer) is what keeps that per-layer: React
+    // context propagates through `createPortal`, so the portaled frames below
+    // still see it.
+    <BoardTaskDetailHost>
+      <WindowManagerLayer
+        manager={boardWindowManager}
+        layer={BOARD_LAYER_OPTIONS}
+        portalHostId="window-layer-root"
+        overlayTestId="window-overlay"
+        overlayClassName={overlayClassName}
+        bridges={<BoardBridges />}
+      />
+    </BoardTaskDetailHost>
   );
 }

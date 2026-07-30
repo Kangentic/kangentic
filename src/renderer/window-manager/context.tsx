@@ -17,6 +17,32 @@ import type { SnapPreviewController } from './dnd/snap-preview-controller';
 export interface WindowManagerLayerOptions {
   /** Pixel floor for a MANUALLY resized window in this layer. */
   minSize: { width: number; height: number };
+  /**
+   * How this layer turns a task-detail window into rendered content.
+   *
+   * Omitted by the board layer, which resolves its task from the board store
+   * because its windows always belong to the open project. The Agent Monitor's
+   * layer supplies one, because ITS windows can belong to any project and must
+   * resolve through a per-project bundle plus its own host context instead.
+   *
+   * A hook on the layer rather than a `kind` branch inside `WindowContent`: the
+   * difference is whose data a window reads, which is a property of the layer,
+   * not of the window.
+   */
+  renderTaskDetail?: (input: TaskDetailRenderInput) => ReactNode;
+}
+
+/** What a layer's `renderTaskDetail` receives. Mirrors WindowContent's props. */
+export interface TaskDetailRenderInput {
+  /** The window's durable anchor. Board: a taskId. Monitor: `projectId:taskId`. */
+  anchor: string;
+  windowId: string;
+  title: string;
+  isFocused: boolean;
+  isMaximized: boolean;
+  initialEdit?: boolean;
+  titleBarPointerDown: (event: React.PointerEvent) => void;
+  requestClose: () => void;
 }
 
 export interface WindowManagerContextValue {

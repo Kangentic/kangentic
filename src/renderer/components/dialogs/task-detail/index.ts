@@ -8,5 +8,8 @@ export { useCopyDisplayId } from './useCopyDisplayId';
 export { useTaskSessionState } from './useTaskSessionState';
 export { useTaskActions } from './useTaskActions';
 export { taskHasDescriptionContent } from './description-content';
+export { TaskDetailHostProvider, useTaskDetailHost } from './task-detail-host';
+export { BoardTaskDetailHost } from './BoardTaskDetailHost';
 export type { AttachmentWithPreview, AttachmentsState } from './useAttachments';
 export type { BranchConfigState } from './useBranchConfig';
+export type { TaskDetailHostValue, TaskDetailHostConfig } from './task-detail-host';

@@ -33,6 +33,7 @@ import { buildPresetTree, presetHalfGeometry } from '../tiling/presets';
 import type { TilePreset } from '../tiling/presets';
 import { serializeWorkspace as toSerializedWorkspace, deserializeWorkspace } from '../persistence/workspace';
 import { findWindowTreeViolations } from './tree-invariants';
+import { monitorAnchorToTaskId } from './monitor-anchor';
 import type { SerializedWorkspace } from '../../../shared/types';
 
 /** The whole overlay: the default tiling footprint (edge-snap pairs fill it). */
@@ -258,6 +259,17 @@ export interface WindowManagerStoreOptions {
   /** The content kind windows in this instance host (the default for openWindow
    *  and the kind stamped on restored windows). */
   kind: WindowContentKind;
+  /**
+   * Extract the taskId from a task-detail window's `anchor`. Defaults to
+   * identity, which is correct for the board (it anchors BY taskId).
+   *
+   * The monitor anchors by `projectId:taskId`, so it supplies a decoder. This is
+   * an option rather than a branch at each call site because the consumers are
+   * renderer-GLOBAL (`dialogSessionIds`, the terminal-visibility plan): they walk
+   * every layer's windows and must resolve each one's session without knowing
+   * which layer produced it. See `store/monitor-anchor.ts`.
+   */
+  anchorToTaskId?: (anchor: string) => string;
 }
 
 /** A built window-manager instance: the bound store hook + its layer options. */
@@ -851,7 +863,10 @@ const HMR_DATA: Record<string, WindowManager> | undefined = import.meta.hot?.dat
  *  on a later Fast Refresh the prior evaluation already wrote the instances into
  *  `import.meta.hot.data` (the block at the bottom of this module), so they are
  *  recovered here. That write MUST stay after these `resolveInstance` calls. */
-function resolveInstance(key: 'boardWindowManager' | 'commandWindowManager', options: WindowManagerStoreOptions): WindowManager {
+function resolveInstance(
+  key: 'boardWindowManager' | 'commandWindowManager' | 'monitorWindowManager',
+  options: WindowManagerStoreOptions,
+): WindowManager {
   return HMR_DATA?.[key] ?? createWindowManagerStore(options);
 }
 
@@ -867,6 +882,35 @@ export const commandWindowManager = resolveInstance('commandWindowManager', {
   kind: 'command-terminal',
 });
 
+/**
+ * The Agent Monitor's task-detail layer. Task-detail windows again, but hosted
+ * over the monitor rather than the board, and NOT per-project: a monitor row can
+ * belong to any project, so this layer's windows are keyed only by task and its
+ * layout is never persisted per-project the way the board's is.
+ */
+export const monitorWindowManager = resolveInstance('monitorWindowManager', {
+  idPrefix: 'mon',
+  kind: 'task-detail',
+  anchorToTaskId: monitorAnchorToTaskId,
+});
+
+/**
+ * Every window-manager instance in this renderer.
+ *
+ * Some state the layers feed is renderer-GLOBAL rather than per-layer - notably
+ * `session-store.dialogSessionIds`, the set of sessions owned by an open detail
+ * window, which the bottom terminal panel reads to decide whether to render its
+ * own xterm. A reconciler that walked only ONE layer's windows would treat the
+ * other layers' claims as stale and erase them, putting a second xterm on a live
+ * PTY. Consumers of that kind iterate THIS list, so a fourth layer is covered the
+ * day it is added.
+ */
+export const allWindowManagers: readonly WindowManager[] = [
+  boardWindowManager,
+  commandWindowManager,
+  monitorWindowManager,
+];
+
 /** Back-compat: the board instance's bound store hook. Existing engine consumers
  *  (index.ts, bridges, restore-workspace, the "Open in Window" entry points) keep
  *  importing this singleton and operate on the board layer unchanged. */
@@ -878,6 +922,8 @@ if (import.meta.hot) {
   import.meta.hot.data.boardWindowManager = boardWindowManager;
   // @ts-expect-error -- Vite handles import.meta.hot
   import.meta.hot.data.commandWindowManager = commandWindowManager;
+  // @ts-expect-error -- Vite handles import.meta.hot
+  import.meta.hot.data.monitorWindowManager = monitorWindowManager;
   // Self-accept: editing this module forces a clean reload rather than handing a
   // second store instance to part of an already-mounted tree (Pattern E).
   // @ts-expect-error -- Vite handles import.meta.hot

@@ -299,7 +299,148 @@ if (process.env.MOCK_CLAUDE_BACKGROUND_BASH === '1' && sessionId && !settingsPat
 // buffer, must not go unnoticed).
 const FULLSCREEN_SELECT_OPTIONS = ['First option', 'Second option', 'Third option'];
 
-if (process.env.MOCK_CLAUDE_FULLSCREEN_SELECT === '1') {
+// Fullscreen TUI that REPAINTS ON RESIZE, for the terminal fit/handoff harness.
+//
+// The other branches of this mock cannot reproduce the terminal's most-reported
+// visual bugs (opens mis-sized then "refits"; sometimes stays mis-sized) because
+// those bugs are a race between a PTY resize, the agent's ASYNCHRONOUS repaint,
+// and the renderer's scrollback replay. A mock that never repaints has no race, so
+// an E2E harness against it passes while the real app flickers - which is exactly
+// what happened: the DOM-only fit harness went green against plain mock-claude and
+// proved nothing about real Claude.
+//
+// This branch behaves like Claude's real renderer in the three ways that matter:
+//
+//   1. It owns the whole screen (alt buffer, cursor hidden), so its frames land in
+//      the same xterm buffer and replay path a real TUI uses.
+//   2. It repaints on SIGWINCH (Node surfaces ConPTY resizes as stdout 'resize'
+//      too, so this works on Windows), bracketed in a DEC 2026 synchronized frame
+//      and prefixed with a full-screen erase - the marker the repaint-settle keys on.
+//   3. The repaint is DELAYED (MOCK_CLAUDE_TUI_REPAINT_DELAY_MS, default 80ms).
+//      This is the load-bearing detail: an instant repaint would land before the
+//      renderer samples scrollback and hide the very ordering bug under test.
+//
+// Every frame draws a RULER line exactly as wide as the current grid, ending in a
+// sentinel. If the PTY and the xterm grid disagree, that line wraps and the
+// sentinel moves off its row - a width mismatch made visible in the content
+// itself rather than inferred from pixel arithmetic.
+//
+// MOCK_CLAUDE_RESIZE_LOG=<path> appends one `<cols>x<rows>` line per observed
+// resize. That is how a test counts how many PTY widths a single detail-open
+// produced: two means the mount fitted twice, so the agent repainted twice and the
+// user saw the second one land. The log is the bridge-free detector for that,
+// which matters because the devtools inspection route is tree-shaken out of the
+// production builds CI runs.
+if (process.env.MOCK_CLAUDE_TUI_REPAINT === '1') {
+  const fs = require('node:fs');
+  const repaintDelayMs = parseInt(process.env.MOCK_CLAUDE_TUI_REPAINT_DELAY_MS || '80', 10);
+  const resizeLogPath = process.env.MOCK_CLAUDE_RESIZE_LOG || null;
+  let repaintTimer = null;
+  let frameCount = 0;
+
+  const currentCols = () => process.stdout.columns || 80;
+  const currentRows = () => process.stdout.rows || 24;
+
+  const drawFrame = () => {
+    const cols = currentCols();
+    const rows = currentRows();
+    frameCount += 1;
+    const sentinel = '#END';
+    // Exactly `cols` wide: fills the row with no wrap when the grid agrees with
+    // the PTY, and wraps the sentinel onto the next row when it does not.
+    const ruler = ('RULER-' + cols + '-').padEnd(cols - sentinel.length, '.') + sentinel;
+
+    let out = '\x1b[?2026h'; // synchronized frame begin
+    out += '\x1b[2J'; // full-screen erase: the repaint marker
+    out += '\x1b[1;1HMOCK TUI FRAME ' + frameCount + ' cols=' + cols + ' rows=' + rows;
+    out += '\x1b[2;1H' + ruler;
+    out += '\x1b[3;1Hauto mode on (mock banner)';
+    for (let row = 4; row <= Math.min(rows, 12); row++) {
+      out += '\x1b[' + row + ';1Hline ' + row + ' at width ' + cols;
+    }
+    out += '\x1b[?2026l'; // synchronized frame end
+    process.stdout.write(out);
+  };
+
+  // Enter the alt screen and hide the cursor. Hiding it is also Kangentic's
+  // first-output heuristic for Claude, so without it the launch overlay never
+  // lifts and the terminal stays behind the shimmer.
+  process.stdout.write('\x1b[?1049h\x1b[?25l');
+  drawFrame();
+
+  // Announce that the fixture is LIVE, with the geometry it booted at. A harness
+  // has to wait for this before it can count resizes: the mock is a grandchild of
+  // the PTY (shell, then node), so it can take several hundred ms to start, and a
+  // test that measures sooner sees an empty log and the fixture's first frame
+  // already at the final width - indistinguishable from "the app never resized
+  // the PTY", which is how a run went vacuously green. Written to the same log so
+  // no second channel (or DOM read of a WebGL-rendered grid) is needed.
+  if (resizeLogPath) {
+    try {
+      fs.appendFileSync(resizeLogPath, 'start:' + currentCols() + 'x' + currentRows() + '\n');
+    } catch {
+      /* a missing log dir must not kill the session */
+    }
+  }
+
+  const onResizeObserved = () => {
+    if (resizeLogPath) {
+      try {
+        fs.appendFileSync(resizeLogPath, currentCols() + 'x' + currentRows() + '\n');
+      } catch {
+        /* a missing log dir must not kill the session */
+      }
+    }
+    // Delayed and coalesced, like a real agent that has to be scheduled before it
+    // can re-measure and redraw.
+    if (repaintTimer) clearTimeout(repaintTimer);
+    repaintTimer = setTimeout(drawFrame, repaintDelayMs);
+  };
+
+  // KNOWN PLATFORM LIMIT, measured: on Windows this fixture never observes a
+  // resize at all. ConPTY delivers no SIGWINCH equivalent to a grandchild process
+  // (this mock runs under a shell, under the pseudoconsole), and node's cached
+  // `process.stdout.columns` is therefore never refreshed - it stays frozen at
+  // whatever the geometry was when the process booted. Two runs proved it: one
+  // booted at 157 columns and one at the 200-column spawn default, and BOTH logged
+  // zero resizes while xterm's grid demonstrably changed.
+  //
+  // So on Windows the resize log is empty by construction and a test must NOT use
+  // it as an oracle - that is what let two harness runs pass vacuously. The resize
+  // count a test needs is observable from the renderer instead (xterm writes its
+  // grid size into `.xterm-screen`'s inline style, which is real DOM in every
+  // build); see tests/e2e/terminal-fit-invariant.spec.ts. On Linux, where CI runs
+  // the gate, the event below fires and the log is a useful failure diagnostic,
+  // though nothing asserts on it. The `start:` line above is the portable
+  // "fixture is alive" signal on every platform.
+  //
+  // A geometry POLL used to sit here as a supposed portable fallback. It was dead
+  // code on both platforms: useless on Windows (the value it samples is frozen)
+  // and redundant on Linux (the event fires), while ticking 40x/sec inside the
+  // process under measurement. Removed rather than left as reassuring ballast.
+  //
+  // Deliberately NOT solved by having the fixture ask the terminal for its size
+  // (`\x1b[999;999H\x1b[6n`): that needs a probe every few tens of ms, and the
+  // constant output drip would keep the PTY from ever going quiet, which is an
+  // input to the repaint-settle logic under test. A harness must not perturb the
+  // thing it measures.
+  process.stdout.on('resize', onResizeObserved);
+
+  if (process.stdin.isTTY) process.stdin.setRawMode(true);
+  const timeout = setTimeout(() => process.exit(0), 120000);
+  const shutdown = () => {
+    clearTimeout(timeout);
+    if (repaintTimer) clearTimeout(repaintTimer);
+    process.exit(0);
+  };
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (data) => {
+    if (data.includes('/exit')) shutdown();
+  });
+  process.stdin.resume();
+} else if (process.env.MOCK_CLAUDE_FULLSCREEN_SELECT === '1') {
   let selectedIndex = 0;
 
   const cursorTo = (row, col) => '\x1b[' + row + ';' + col + 'H';

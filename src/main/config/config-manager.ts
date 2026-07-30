@@ -8,9 +8,11 @@ import { deepMerge, deepMergeConfig } from '../../shared/object-utils';
 /** Dotted paths in AppConfig that must be REPLACED wholesale on a partial update
  *  (not deep-merged), so key/window deletion and a full-blob reset both work. This
  *  covers true `Record<string, ...>` dictionaries (where merge would leak deleted
- *  keys) AND renderer-authoritative layout blobs (`commandTerminalWorkspace`) the
- *  renderer always writes in full. Every other typed-struct field gets MERGE
- *  semantics. Update this list when adding such a field to AppConfig. */
+ *  keys) AND renderer-authoritative layout blobs (`commandTerminalWorkspace`,
+ *  `monitorWorkspace`) the renderer always writes in full - closing a window has to
+ *  actually shrink the persisted array, which a merge would not do. Every other
+ *  typed-struct field gets MERGE semantics. Update this list when adding such a field
+ *  to AppConfig. */
 const CONFIG_DICTIONARY_PATHS = [
   'backlog.labelColors',
   'agent.cliPaths',
@@ -20,6 +22,7 @@ const CONFIG_DICTIONARY_PATHS = [
   'hotkeyOverrides',
   'workspaceByProject',
   'commandTerminalWorkspace',
+  'monitorWorkspace',
   'popOutBounds',
   'terminal.colors',
   'onboardingBaseline',

@@ -69,6 +69,15 @@ interface ConfigStore {
   saveCommandTerminalWorkspace: (workspace: SerializedWorkspace) => void;
   /** Synchronous sibling of saveCommandTerminalWorkspace for the quit/unload flush. */
   flushCommandTerminalWorkspace: (workspace: SerializedWorkspace) => void;
+  /** Persist the GLOBAL Agent Monitor detail layout. Same shape as the command-terminal
+   *  pair; written by whichever host currently has the monitor's layer mounted (the
+   *  in-app overlay or the pop-out - never both, they are mutually exclusive), which is
+   *  what lets an open detail cross the renderer boundary between them. */
+  saveMonitorWorkspace: (workspace: SerializedWorkspace) => void;
+  /** Synchronous sibling of saveMonitorWorkspace. Load-bearing beyond the quit path here:
+   *  it also runs when the monitor's layer unmounts (close / detach), which is the moment
+   *  the OTHER host is about to read the blob. */
+  flushMonitorWorkspace: (workspace: SerializedWorkspace) => void;
   /** Internal: whether workspaceByProject has been seeded from disk yet. After the first
    *  config fetch the renderer owns the layout map, so later fetches preserve it instead of
    *  letting a stale disk read clobber an in-flight save. Resets with the store on HMR. */
@@ -178,6 +187,13 @@ export const useConfigStore = create<ConfigStore>((set, get) => {
     // at least as fresh as a later disk read, so preserve them across a refetch.
     const workspaceByProject = get().globalConfig.workspaceByProject ?? {};
     const commandTerminalWorkspace = get().globalConfig.commandTerminalWorkspace ?? null;
+    // `monitorWorkspace` is deliberately NOT preserved here, unlike its two siblings.
+    // It is the only layout blob with a writer in ANOTHER renderer: the monitor's
+    // pop-out saves it, and the main window then has to READ that write back. Treating
+    // this window's copy as authoritative would keep its own stale value (usually null)
+    // and make the pop-out's layout invisible here - which is the entire handoff. A
+    // fresh disk read is exactly what the reader wants, and the writer's optimistic
+    // apply keeps its own copy current in the meantime.
     return {
       config: { ...fetched.config, workspaceByProject, commandTerminalWorkspace },
       globalConfig: { ...fetched.globalConfig, workspaceByProject, commandTerminalWorkspace },
@@ -206,6 +222,16 @@ export const useConfigStore = create<ConfigStore>((set, get) => {
     set((state) => ({
       config: { ...state.config, commandTerminalWorkspace: workspace },
       globalConfig: { ...state.globalConfig, commandTerminalWorkspace: workspace },
+    }));
+    return workspace;
+  };
+
+  /** Same optimistic apply for the monitor's detail layout, so a read that follows a
+   *  save in this renderer sees what was just written. */
+  const applyMonitorWorkspaceOptimistic = (workspace: SerializedWorkspace): SerializedWorkspace => {
+    set((state) => ({
+      config: { ...state.config, monitorWorkspace: workspace },
+      globalConfig: { ...state.globalConfig, monitorWorkspace: workspace },
     }));
     return workspace;
   };
@@ -288,6 +314,16 @@ export const useConfigStore = create<ConfigStore>((set, get) => {
 
     flushCommandTerminalWorkspace: (workspace) => {
       window.electronAPI.config.setSync({ commandTerminalWorkspace: applyCommandWorkspaceOptimistic(workspace) });
+    },
+
+    saveMonitorWorkspace: (workspace) => {
+      window.electronAPI.config.set({ monitorWorkspace: applyMonitorWorkspaceOptimistic(workspace) });
+    },
+
+    flushMonitorWorkspace: (workspace) => {
+      // Synchronous on purpose: this also runs when the monitor's layer unmounts
+      // (close or detach), and the other host may read the blob immediately after.
+      window.electronAPI.config.setSync({ monitorWorkspace: applyMonitorWorkspaceOptimistic(workspace) });
     },
 
     loadAppVersion: async () => {

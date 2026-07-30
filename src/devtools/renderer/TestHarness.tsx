@@ -28,6 +28,10 @@ import { useUsageDashboardStore } from '../../renderer/stores/usage-dashboard-st
  *  worker (a multi-minute soak test, not an instant no-op), in the same
  *  ballpark as a real one-time model-switch backfill, while staying well
  *  short of a full multi-hour history backfill. */
+/** The app title bar's height (`top-10`). It is an OS drag region, so the panel
+ *  must never be draggable into it - see handleDragPointerMove. */
+const TITLE_BAR_HEIGHT_PX = 40;
+
 const EMBEDDING_BACKLOG_SEED_COUNT = 3000;
 
 /** Turns written per click of "Seed Large Conversation": large enough to
@@ -149,7 +153,8 @@ export function TestHarness() {
   // same fixed spot on the left edge. Dragging is header-handle-only so the
   // buttons stay plainly clickable; pointer capture keeps the drag alive when
   // the cursor outruns the handle, and the position clamps to the viewport so
-  // the panel cannot be lost offscreen.
+  // the panel cannot be lost offscreen - INCLUDING under the title bar, which is
+  // an OS drag region that would otherwise strand the panel permanently.
   const panelRef = useRef<HTMLDivElement>(null);
   const dragOffsetRef = useRef<{ dx: number; dy: number } | null>(null);
   const [draggedPosition, setDraggedPosition] = useState<{ x: number; y: number } | null>(null);
@@ -168,7 +173,14 @@ export function TestHarness() {
     const panel = panelRef.current;
     if (!dragOffset || !panel) return;
     const x = Math.min(Math.max(event.clientX - dragOffset.dx, 0), Math.max(window.innerWidth - panel.offsetWidth, 0));
-    const y = Math.min(Math.max(event.clientY - dragOffset.dy, 0), Math.max(window.innerHeight - panel.offsetHeight, 0));
+    // Floor at the title bar, not 0. The app's title bar is an OS drag region
+    // (`-webkit-app-region: drag`), so a panel dragged up into it becomes
+    // un-draggable: its own handle's pointerdown is consumed by the window move
+    // instead, and the panel is stranded there for good with no way back.
+    const y = Math.min(
+      Math.max(event.clientY - dragOffset.dy, TITLE_BAR_HEIGHT_PX),
+      Math.max(window.innerHeight - panel.offsetHeight, TITLE_BAR_HEIGHT_PX),
+    );
     setDraggedPosition({ x, y });
   };
 
@@ -370,7 +382,13 @@ export function TestHarness() {
       className={`fixed z-[2147483600] flex flex-col gap-1.5 rounded-lg border border-edge bg-surface-raised/95 p-1.5 shadow-2xl backdrop-blur ${
         draggedPosition ? '' : 'left-6 top-1/2 -translate-y-1/2'
       }`}
-      style={draggedPosition ? { left: draggedPosition.x, top: draggedPosition.y } : undefined}
+      // Belt to the clamp's braces: even if the panel ends up overlapping an OS
+      // drag region, its own surface stays interactive rather than becoming a
+      // window-move handle.
+      style={{
+        WebkitAppRegion: 'no-drag',
+        ...(draggedPosition ? { left: draggedPosition.x, top: draggedPosition.y } : {}),
+      } as React.CSSProperties}
       data-testid="dev-test-harness"
     >
       <span

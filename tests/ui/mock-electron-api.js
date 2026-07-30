@@ -159,6 +159,7 @@
     hotkeyOverrides: {},
     workspaceByProject: {},
     commandTerminalWorkspace: null,
+    monitorWorkspace: null,
     hasCompletedFirstRun: true,
     lastSeenReleaseNotesVersion: '',
     skipDeleteConfirm: false,
@@ -1994,6 +1995,10 @@
         if (partial && Object.prototype.hasOwnProperty.call(partial, 'commandTerminalWorkspace')) {
           config.commandTerminalWorkspace = partial.commandTerminalWorkspace;
         }
+        // monitorWorkspace is the same kind of blob, for the Agent Monitor's detail layer.
+        if (partial && Object.prototype.hasOwnProperty.call(partial, 'monitorWorkspace')) {
+          config.monitorWorkspace = partial.monitorWorkspace;
+        }
         // terminal.colors is a nested dictionary-style map (CONFIG_DICTIONARY_PATHS:
         // 'terminal.colors'): the real save REPLACES it wholesale so resetting a
         // single color slot (deleting its key) actually takes effect.
@@ -2013,6 +2018,9 @@
         }
         if (partial && Object.prototype.hasOwnProperty.call(partial, 'commandTerminalWorkspace')) {
           config.commandTerminalWorkspace = partial.commandTerminalWorkspace;
+        }
+        if (partial && Object.prototype.hasOwnProperty.call(partial, 'monitorWorkspace')) {
+          config.monitorWorkspace = partial.monitorWorkspace;
         }
         if (partial && partial.terminal && Object.prototype.hasOwnProperty.call(partial.terminal, 'colors')) {
           config.terminal.colors = Object.assign({}, partial.terminal.colors);
@@ -2262,6 +2270,106 @@
     handoffs: {
       list: async function (_taskId) {
         return [];
+      },
+    },
+
+    // Task-detail ownership. There is exactly ONE renderer under test, so the
+    // board-vs-pop-out routing rule always resolves to "open here"; what this mock
+    // genuinely exercises is the never-open-twice rule and the claim/release
+    // lifecycle. `__owners` is exposed so a spec can assert ownership directly.
+    taskDetailOwnership: {
+      // key -> { host }. Mirrors main's DetailOwnerRegistry closely enough to
+      // exercise the real rule: the requester wins, and the previous holder is
+      // told to close. `__owners` is exposed so a spec can assert ownership.
+      __owners: {},
+      requestOpen: function (projectId, taskId, host) {
+        var key = projectId + ':' + taskId;
+        var owners = window.electronAPI.taskDetailOwnership.__owners;
+        var existing = owners[key] || null;
+        if (existing && existing.host === host) {
+          return Promise.resolve({
+            kind: 'focused-existing',
+            owner: { webContentsId: 1, host: host },
+          });
+        }
+        if (existing) {
+          var closers = (window.__mockDetailCloseHereListeners || []).slice();
+          for (var c = 0; c < closers.length; c++) closers[c](projectId, taskId, existing.host);
+        }
+        var listeners = (window.__mockDetailOpenHereListeners || []).slice();
+        for (var i = 0; i < listeners.length; i++) listeners[i](projectId, taskId, host);
+        return Promise.resolve({
+          kind: 'open-here',
+          owner: { webContentsId: 1, host: host },
+          closedElsewhere: existing,
+        });
+      },
+      // Ownership is DERIVED: a host reports the COMPLETE set of details it has
+      // mounted and main reconciles to match, so a lost message cannot strand a
+      // claim. Mirrors `DetailOwnerRegistry.syncOwned`, including the two asymmetric
+      // halves that make a handover converge in either order:
+      //   - remove only keys THIS host owns (a stale report cannot erase the new
+      //     owner's key);
+      //   - an add may displace another host, which is then told to close.
+      // Single renderer here, so the host alone is the scope.
+      syncOwned: function (host, entries) {
+        var owners = window.electronAPI.taskDetailOwnership.__owners;
+        var reported = {};
+        var index;
+        for (index = 0; index < entries.length; index++) {
+          reported[entries[index].projectId + ':' + entries[index].taskId] = true;
+        }
+
+        var key;
+        for (key in owners) {
+          if (!Object.prototype.hasOwnProperty.call(owners, key)) continue;
+          if (owners[key].host !== host) continue;
+          if (reported[key]) continue;
+          delete owners[key];
+        }
+
+        for (index = 0; index < entries.length; index++) {
+          var entry = entries[index];
+          key = entry.projectId + ':' + entry.taskId;
+          var previous = owners[key] || null;
+          if (previous && previous.host === host) continue;
+          owners[key] = { webContentsId: 1, host: host };
+          if (!previous) continue;
+          var closers = (window.__mockDetailCloseHereListeners || []).slice();
+          for (var c = 0; c < closers.length; c++) {
+            closers[c](entry.projectId, entry.taskId, previous.host);
+          }
+        }
+      },
+      onOpenHere: function (callback) {
+        if (!window.__mockDetailOpenHereListeners) window.__mockDetailOpenHereListeners = [];
+        window.__mockDetailOpenHereListeners.push(callback);
+        return function () {
+          var listeners = window.__mockDetailOpenHereListeners || [];
+          var index = listeners.indexOf(callback);
+          if (index >= 0) listeners.splice(index, 1);
+        };
+      },
+      onCloseHere: function (callback) {
+        if (!window.__mockDetailCloseHereListeners) window.__mockDetailCloseHereListeners = [];
+        window.__mockDetailCloseHereListeners.push(callback);
+        return function () {
+          var listeners = window.__mockDetailCloseHereListeners || [];
+          var index = listeners.indexOf(callback);
+          if (index >= 0) listeners.splice(index, 1);
+        };
+      },
+      // Details held by ANOTHER renderer. The mock is a single renderer, so real
+      // ownership here is never remote; a test simulates a detached monitor via
+      // window.__mockSetRemoteDetailOwners([{ projectId, taskId }]).
+      onRemoteOwnersChanged: function (callback) {
+        if (!window.__mockDetailRemoteOwnerListeners) window.__mockDetailRemoteOwnerListeners = [];
+        window.__mockDetailRemoteOwnerListeners.push(callback);
+        return function () {
+          var listeners = window.__mockDetailRemoteOwnerListeners || [];
+          var index = listeners.indexOf(callback);
+          if (index >= 0) listeners.splice(index, 1);
+        };
       },
     },
 
@@ -3119,6 +3227,74 @@
       descriptor: null,
     },
 
+    // Agent Monitor. Machine-global: no projectId, by design.
+    // Seed rows from a spec with:
+    //   window.__mockMonitorRows = [ { sessionId: 's1', projectId: 'p1', ... } ];
+    // and push an update with window.__mockFireMonitorChanged(rows).
+    monitor: {
+      getSnapshot: function () {
+        return Promise.resolve({
+          rows: window.__mockMonitorRows || [],
+          generatedAt: '2026-01-01T00:00:00.000Z',
+        });
+      },
+      // Call log for assertions: the detached monitor routes clicks through here.
+      __revealCalls: [],
+      revealTask: function (projectId, taskId) {
+        window.electronAPI.monitor.__revealCalls.push({ projectId: projectId, taskId: taskId });
+        return Promise.resolve();
+      },
+      // The project-scoped half of a task detail, for a host that is not that
+      // project's board. Resolves from the SAME seeded state the rest of the mock
+      // uses, so a monitor-hosted detail sees exactly what the board would - a
+      // spec cannot accidentally prove the surface works against invented data.
+      getTaskDetail: function (projectId, taskId) {
+        var project = null;
+        for (var p = 0; p < projects.length; p++) {
+          if (projects[p].id === projectId) { project = projects[p]; break; }
+        }
+        var task = null;
+        for (var t = 0; t < tasks.length; t++) {
+          if (tasks[t].id === taskId) { task = tasks[t]; break; }
+        }
+        if (!project || !task) return Promise.resolve(null);
+        return Promise.resolve({
+          task: task,
+          projectId: projectId,
+          projectName: project.name,
+          projectPath: project.path,
+          defaultAgent: project.default_agent || null,
+          swimlanes: swimlanes.slice(),
+          // Matches boardConfig.getShortcuts() above, so the monitor-hosted
+          // detail and the board-hosted one agree on custom shortcuts.
+          shortcuts: [],
+          config: {
+            labelColors: (config.backlog && config.backlog.labelColors) || {},
+            defaultBaseBranch: config.git.defaultBaseBranch,
+            worktreesEnabled: config.git.worktreesEnabled,
+            browserEnabled: !(config.browser && config.browser.enabled === false),
+          },
+        });
+      },
+      onChanged: function (callback) {
+        if (!window.__mockMonitorChangedListeners) window.__mockMonitorChangedListeners = [];
+        window.__mockMonitorChangedListeners.push(callback);
+        if (!window.__mockFireMonitorChanged) {
+          window.__mockFireMonitorChanged = function (rows) {
+            window.__mockMonitorRows = rows;
+            var snapshot = { rows: rows, generatedAt: new Date().toISOString() };
+            var listeners = (window.__mockMonitorChangedListeners || []).slice();
+            for (var i = 0; i < listeners.length; i++) { listeners[i](snapshot); }
+          };
+        }
+        return function () {
+          var listeners = window.__mockMonitorChangedListeners || [];
+          var index = listeners.indexOf(callback);
+          if (index >= 0) listeners.splice(index, 1);
+        };
+      },
+    },
+
     clipboard: {
       readImage: function () { return Promise.resolve('/tmp/kangentic-clipboard/pasted-image-1234567890.png'); },
       // Call log for test assertions. Reset with window.electronAPI.clipboard.__writeTextCalls.length = 0.
@@ -3297,6 +3473,18 @@
    * shape the real popOut:changed push delivers. This hook is only for
    * asserting which verb a trigger (title-bar button, PopOutButton) called.
    */
+  /**
+   * Test hook: simulate a task detail being hosted in a DIFFERENT renderer (the
+   * detached Agent Monitor). Real main filters this per recipient and pushes it;
+   * the mock is one renderer, so a test drives it directly.
+   *
+   * Pass `[{ projectId, taskId }]` to claim, `[]` to hand it back.
+   */
+  window.__mockSetRemoteDetailOwners = function (owners) {
+    var listeners = (window.__mockDetailRemoteOwnerListeners || []).slice();
+    for (var i = 0; i < listeners.length; i++) listeners[i](owners);
+  };
+
   window.__mockPopOut = {
     reset: function () {
       popOutCalls = [];
@@ -3324,6 +3512,11 @@
       eventCache: eventCache,
       summaryCache: summaryCache,
       projectConfigs: projectConfigs,
+      // The GLOBAL app config object, mutable in place. Seeds a starting value for a
+      // key the renderer reads back (e.g. a persisted window layout blob). Safe to
+      // mutate here because set()/setSync() only reassign `config` later, and get()
+      // returns whatever the current reference holds.
+      config: config,
       uuid: uuid,
       now: now,
       DEFAULT_SWIMLANES: DEFAULT_SWIMLANES,

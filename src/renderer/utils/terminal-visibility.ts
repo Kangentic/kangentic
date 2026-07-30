@@ -119,9 +119,9 @@ export function planTerminalVisibility(input: TerminalVisibilityInput): Terminal
 
   const webglAttachSessionIds: string[] = [];
   // The panel session is force-attached first, but only when it is not parked.
-  // derivePanelSessionId is window-blind and can resolve to a session a
-  // task-detail window already owns, and that window may be parked or occluded.
-  // Attaching a parked session would keep its off-view WebGL context live,
+  // derivePanelSessionId now resolves over the panel's visible tabs, so it no
+  // longer names a session a task-detail window owns; this guard stays because
+  // attaching a parked session would keep its off-view WebGL context live,
   // wasting a budget slot and contradicting "parked terminals are always
   // suspended" - so a parked panel session falls through to the suspend set.
   if (input.panelSessionId !== null && !parkedSessionIds.includes(input.panelSessionId)) {

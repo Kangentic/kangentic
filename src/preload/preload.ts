@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '../shared/ipc-channels';
-import type { ElectronAPI, NotificationInput, Project, Session, SessionUsage, ActivityState, ActivityReason, SessionEvent, UpdateDownloadedInfo, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload } from '../shared/types';
+import type { ElectronAPI, NotificationInput, Project, Session, SessionUsage, ActivityState, ActivityReason, SessionEvent, UpdateDownloadedInfo, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner } from '../shared/types';
 import { POPOUT_ARG_PREFIX } from '../shared/pop-out';
 import type { PopOutDescriptor, PopOutKind, PopOutParamsByKind } from '../shared/pop-out';
 import { installConsoleCapture } from './diagnostics/console-capture';
@@ -389,6 +389,58 @@ const api: ElectronAPI = {
       return () => ipcRenderer.removeListener(IPC.POPOUT_CHANGED, handler);
     },
     descriptor: popOutDescriptor,
+  },
+
+  // Agent Monitor. Machine-global: no projectId is forwarded, because the snapshot
+  // spans every registered project by design.
+  monitor: {
+    getSnapshot: () => ipcRenderer.invoke(IPC.MONITOR_GET_SNAPSHOT),
+    revealTask: (projectId, taskId) => ipcRenderer.invoke(IPC.MONITOR_REVEAL_TASK, projectId, taskId),
+    // Explicit projectId, unlike the rest of this group: this one read IS
+    // project-scoped (it is the monitor asking about ONE row's own project).
+    getTaskDetail: (projectId, taskId) =>
+      ipcRenderer.invoke(IPC.MONITOR_GET_TASK_DETAIL, projectId, taskId),
+    onChanged: (callback: (snapshot: MonitorSnapshot) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, snapshot: MonitorSnapshot) => callback(snapshot);
+      ipcRenderer.on(IPC.MONITOR_CHANGED, handler);
+      return () => ipcRenderer.removeListener(IPC.MONITOR_CHANGED, handler);
+    },
+  },
+
+  // Task-detail ownership. Machine-global arbitration of WHICH RENDERER hosts a
+  // task's detail; mutates no task, so it is outside the project-scoped mutation set.
+  taskDetailOwnership: {
+    requestOpen: (projectId, taskId, host) =>
+      ipcRenderer.invoke(IPC.DETAIL_REQUEST_OPEN, projectId, taskId, host),
+    syncOwned: (host, entries) => ipcRenderer.send(IPC.DETAIL_SYNC_OWNED, host, entries),
+    onOpenHere: (callback) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        projectId: string,
+        taskId: string,
+        host: TaskDetailHost,
+      ) => callback(projectId, taskId, host);
+      ipcRenderer.on(IPC.DETAIL_OPEN_HERE, handler);
+      return () => ipcRenderer.removeListener(IPC.DETAIL_OPEN_HERE, handler);
+    },
+    onCloseHere: (callback) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        projectId: string,
+        taskId: string,
+        host: TaskDetailHost,
+      ) => callback(projectId, taskId, host);
+      ipcRenderer.on(IPC.DETAIL_CLOSE_HERE, handler);
+      return () => ipcRenderer.removeListener(IPC.DETAIL_CLOSE_HERE, handler);
+    },
+    onRemoteOwnersChanged: (callback) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        owners: TaskDetailRemoteOwner[],
+      ) => callback(owners);
+      ipcRenderer.on(IPC.DETAIL_REMOTE_OWNERS, handler);
+      return () => ipcRenderer.removeListener(IPC.DETAIL_REMOTE_OWNERS, handler);
+    },
   },
 
   analytics: {

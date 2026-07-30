@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useProjectStore } from '../stores/project-store';
 import { useSessionStore } from '../stores/session-store';
 import { useToastStore } from '../stores/toast-store';
@@ -31,6 +31,7 @@ export function useCommandBar() {
   const [isOpen, setIsOpen] = useState(hmrCommandBarOpen);
   const currentProjectId = useProjectStore((s) => s.currentProject?.id);
   const pendingOpenCommandTerminal = useSessionStore((s) => s._pendingOpenCommandTerminal);
+  const hideNonce = useSessionStore((s) => s.commandBarHideNonce);
 
   // Keep module-scoped tracker in sync for HMR dispose()
   useEffect(() => {
@@ -79,6 +80,17 @@ export function useCommandBar() {
     useSessionStore.getState().setPendingOpenCommandTerminal(false);
     open();
   }, [pendingOpenCommandTerminal, currentProjectId, open]);
+
+  // Honour an outside request to hide the layer (the Agent Monitor deep-linking to
+  // a task). Skipping the initial value keeps a mount from closing a layer that
+  // HMR just preserved. Hiding leaves every Command Terminal PTY running, the same
+  // as the title-bar toggle.
+  const seenHideNonce = useRef(hideNonce);
+  useEffect(() => {
+    if (hideNonce === seenHideNonce.current) return;
+    seenHideNonce.current = hideNonce;
+    setIsOpen(false);
+  }, [hideNonce]);
 
   useKeybinding('commandBar.toggle', () => {
     if (isOpen) close();

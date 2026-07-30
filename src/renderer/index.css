@@ -420,8 +420,10 @@
 /* Terminal scrollbar visibility: the global thumb color (--kng-edge, #3f3f46) is
    nearly invisible against the terminal's near-black default background, so the
    scrollbar reads as missing. Use a brighter translucent thumb so it is
-   discoverable. Width is left at the global 8px so the fit-addon's
-   DEFAULT_SCROLLBAR_WIDTH assumption holds. */
+   discoverable. Width is left at the global 8px: the fit addon MEASURES the
+   reserved gutter off the viewport rather than assuming it, and only falls back
+   to a constant (FALLBACK_SCROLLBAR_WIDTH, pinned to the 8px above by
+   tests/unit/fit-addon.test.ts) before the viewport has been laid out. */
 .xterm .xterm-viewport::-webkit-scrollbar-thumb {
   background: rgba(228, 228, 231, 0.28);
   border-radius: 4px;

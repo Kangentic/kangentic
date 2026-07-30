@@ -10,6 +10,7 @@ import { isBoardDragActive, onBoardDragEnd } from '../lib/session-update-coalesc
 import { isTerminalParked, onTerminalReveal } from '../utils/parked-terminals';
 import { noteTerminalFocus } from '../utils/dictation-target';
 import { registerTerminalCapture, unregisterTerminalCapture, type TerminalCaptureReader } from '../utils/terminal-capture-registry';
+import { registerDevtoolsTerminal, traceTerminalRenderer } from '../utils/terminal-grid-registry';
 import type { TerminalColorOverrides } from '../../shared/types';
 import '@xterm/xterm/css/xterm.css';
 
@@ -24,6 +25,13 @@ const PTY_RESIZE_DEBOUNCE_MS = 200;
  *  Comfortably above a healthy replay (repaint-settle caps at 400ms, plus a
  *  512KB chunked write) and far below a pathological hang. */
 const SCROLLBACK_WATCHDOG_MS = 5000;
+
+/** How many times a stuck replay may be re-issued before the watchdog gives up
+ *  and only unblocks the queue. One is enough for the real failure (a replay
+ *  abandoned by a generation race), and a hard cap means a session whose
+ *  scrollback read genuinely never resolves cannot spin. Reset by every replay
+ *  that completes, so a healthy terminal always has its recovery available. */
+const MAX_STUCK_REPLAY_RECOVERIES = 1;
 
 /** Live xterm scrollback cap (lines), applied to every session terminal.
  *  Every terminal (re)creation - mount, tab/window switch, resize,
@@ -51,6 +59,19 @@ if (import.meta.hot) {
 // for a session-less (transient) terminal; resetting it on HMR at worst reuses
 // a key for a terminal that has since disposed its report entry.
 let transientRendererKeyCounter = 0;
+
+/**
+ * De-duplicating concurrent `getScrollback` calls was TRIED and REVERTED - do not
+ * re-add it without new measurements.
+ *
+ * A detail open mounts the terminal twice (StrictMode), and each mount fetches the
+ * scrollback, so sharing one in-flight promise looks like free savings. Measured
+ * live, it made the open SLOWER: the FIRST mount's fetch is the one that pays
+ * main's repaint-settle wait, while the second mount's own fetch is cheap precisely
+ * because the resize has already settled by then. Sharing forces the second mount
+ * to wait on the expensive first fetch instead of issuing its own cheap one
+ * (mount-to-paint went from ~78ms to ~103ms on a 522KB session).
+ */
 function nextTransientRendererKey(): number {
   transientRendererKeyCounter += 1;
   return transientRendererKeyCounter;
@@ -190,6 +211,13 @@ export function useTerminal(options: UseTerminalOptions) {
    *  new one clears any prior timer, so at most one is ever live - the one
    *  for the most recently started replay. */
   const scrollbackWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Set once reloadScrollback is defined further down, so the watchdog (armed
+   *  from initTerminal, which is declared above it) can re-issue a replay
+   *  without a circular declaration. */
+  const reloadScrollbackRef = useRef<((reloadOptions?: { skipResize?: boolean; skipFocus?: boolean }) => void) | null>(null);
+  /** Stuck-replay recoveries spent since the last replay that completed
+   *  (see MAX_STUCK_REPLAY_RECOVERIES). */
+  const stuckReplayRecoveriesRef = useRef(0);
   /** Resumes the incoming-write queue's held drain (set by the queue effect
    *  below). Used by the watchdog to flush replay-held live bytes when a
    *  stuck replay is force-cleared. */
@@ -204,6 +232,7 @@ export function useTerminal(options: UseTerminalOptions) {
   const writeBatcherRef = useRef<WriteBatcher | null>(null);
   /** Tears down the WebGL renderer attachment (cancels retries, disposes addon). */
   const disposeWebglRef = useRef<(() => void) | null>(null);
+  const unregisterDevtoolsTerminalRef = useRef<(() => void) | null>(null);
   /** This terminal's key in the WebGL renderer report, so the font-family
    *  effect can force a fresh glyph rasterization after a live font change
    *  (see terminal-webgl.ts's notifyFontChanged). */
@@ -240,6 +269,45 @@ export function useTerminal(options: UseTerminalOptions) {
     if (shouldKickIncomingQueue) incomingResumeRef.current?.();
     onScrollbackSettledRef.current?.();
   }, []);
+
+  /** Trace one step of a replay's lifecycle. Every entry carries its generation,
+   *  because an abort is always "a newer generation started" and the two numbers
+   *  are the whole story - without them a replay that died is visible only as the
+   *  ABSENCE of a later event, which is how the stuck-black-terminal state stayed
+   *  unreadable. Low frequency (a handful per mount), so it is always on. */
+  const traceReplay = useCallback((event: string, detail: Record<string, unknown>) => {
+    traceTerminalRenderer(options.sessionId ?? null, event, detail);
+  }, [options.sessionId]);
+
+  /** Arm the stuck-replay backstop for `generation`, replacing any prior timer so
+   *  at most one is live (the newest replay's).
+   *
+   *  Clearing the pending flag is not enough on its own. A replay that dies after
+   *  the terminal was cleared leaves a BLANK grid while all of its bytes sit in
+   *  the main-process ring, and an idle agent has no reason to send more - so the
+   *  terminal stays black indefinitely with nothing left to trigger a repaint.
+   *  That is the state the devtools trace caught: correct dimensions, PTY and grid
+   *  in agreement, zero non-empty lines, 77KB waiting in the ring. So the watchdog
+   *  RECOVERS (re-issues the replay) rather than only unblocking the queue. */
+  const armScrollbackWatchdog = useCallback((trigger: 'mount' | 'reload', generation: number) => {
+    if (scrollbackWatchdogRef.current) clearTimeout(scrollbackWatchdogRef.current);
+    scrollbackWatchdogRef.current = setTimeout(() => {
+      scrollbackWatchdogRef.current = null;
+      if (scrollbackGenerationRef.current !== generation || !scrollbackPendingRef.current) return;
+      // Invalidate the generation so a merely-delayed (not dropped) afterWrite or
+      // catch for this replay bails at its generation guard instead of re-running
+      // fit / scroll / focus after we already force-recovered.
+      scrollbackGenerationRef.current += 1;
+      settleScrollback(true);
+      const canRecover = stuckReplayRecoveriesRef.current < MAX_STUCK_REPLAY_RECOVERIES;
+      traceReplay('replay-watchdog', { trigger, generation, recovering: canRecover });
+      if (!canRecover) return;
+      stuckReplayRecoveriesRef.current += 1;
+      // skipResize: the PTY is already at the grid's width, so a recovery must not
+      // send another SIGWINCH and start a fresh repaint round of its own.
+      reloadScrollbackRef.current?.({ skipResize: true, skipFocus: true });
+    }, SCROLLBACK_WATCHDOG_MS);
+  }, [settleScrollback, traceReplay]);
 
   // Dev-only host-contract tripwire (compiled out of production, where
   // import.meta.env.DEV is statically false). Registered before any effect the
@@ -350,6 +418,12 @@ export function useTerminal(options: UseTerminalOptions) {
     xtermRef.current = terminal;
     fitAddonRef.current = fitAddon;
 
+    // Make this terminal's grid visible to the devtools, so a devtools call can
+    // put it next to main's PTY dimensions. A PTY/grid mismatch has no recovery
+    // path (xterm re-sends dimensions only when its OWN size changes), and
+    // without this the two halves were never comparable from one place.
+    unregisterDevtoolsTerminalRef.current = registerDevtoolsTerminal(terminal, options.sessionId ?? null);
+
     // Send user input to PTY (via the microtask-batched queue above).
     if (options.sessionId) {
       terminal.onData(batcher.schedule);
@@ -361,6 +435,7 @@ export function useTerminal(options: UseTerminalOptions) {
         if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current);
         resizeTimerRef.current = setTimeout(() => {
           resizeTimerRef.current = null;
+          traceTerminalRenderer(sid, 'resize-request', { cols, rows, origin: 'debounced-onResize' });
           window.electronAPI.sessions.resize(sid, cols, rows);
         }, PTY_RESIZE_DEBOUNCE_MS);
       });
@@ -372,21 +447,27 @@ export function useTerminal(options: UseTerminalOptions) {
       scrollbackPendingRef.current = true;
       const scrollbackGeneration = ++scrollbackGenerationRef.current;
       const suppressScrollback = suppressDataRef.current;
-      if (scrollbackWatchdogRef.current) clearTimeout(scrollbackWatchdogRef.current);
-      scrollbackWatchdogRef.current = setTimeout(() => {
-        scrollbackWatchdogRef.current = null;
-        if (scrollbackGenerationRef.current === scrollbackGeneration && scrollbackPendingRef.current) {
-          // Invalidate the generation so a merely-delayed (not dropped) afterWrite
-          // or catch for this replay bails at its generation guard instead of
-          // re-running fit / scroll / focus after we already force-recovered.
-          scrollbackGenerationRef.current += 1;
-          settleScrollback(true);
-        }
-      }, SCROLLBACK_WATCHDOG_MS);
+      traceReplay('replay-start', { trigger: 'mount', generation: scrollbackGeneration, suppressed: suppressScrollback });
+      armScrollbackWatchdog('mount', scrollbackGeneration);
 
       // Fit immediately to calculate actual container cols/rows
+      const colsBeforeFit = terminal.cols;
       fitAddon.fit();
       const { cols, rows } = terminal;
+      // The container geometry this fit was computed against, recorded next to its
+      // result. A second fit later producing a DIFFERENT cols is what forces an
+      // extra PTY resize (and so an extra agent repaint) on a mount; comparing the
+      // container widths across the two says whether the layout moved or the fit
+      // math changed under it.
+      traceTerminalRenderer(options.sessionId, 'fit', {
+        phase: 'initial',
+        colsBefore: colsBeforeFit,
+        cols,
+        rows,
+        hostWidth: terminal.element?.parentElement?.getBoundingClientRect().width ?? null,
+        viewportClientWidth:
+          (terminal.element?.querySelector('.xterm-viewport') as HTMLElement | null)?.clientWidth ?? null,
+      });
 
       // Parallel IPCs: resize forwards SIGWINCH on main; getScrollback is a
       // pure in-memory read. Firing them together is safe because main
@@ -408,25 +489,55 @@ export function useTerminal(options: UseTerminalOptions) {
           // (and the watchdog it armed), so this stale resolve must not touch
           // either - clearing them here would open the drop/hold gate early
           // for the newer replay still in flight.
-          if (scrollbackGenerationRef.current !== scrollbackGeneration) return;
+          if (scrollbackGenerationRef.current !== scrollbackGeneration) {
+            traceReplay('replay-abort', {
+              trigger: 'mount', generation: scrollbackGeneration,
+              current: scrollbackGenerationRef.current, at: 'resolve',
+            });
+            return;
+          }
 
           const afterWrite = () => {
             // A newer replay may have started (and armed its own watchdog,
             // which already canceled ours) while this chunked write was in
             // flight; abandon so we don't clobber its pending/fit/focus.
-            if (scrollbackGenerationRef.current !== scrollbackGeneration) return;
+            if (scrollbackGenerationRef.current !== scrollbackGeneration) {
+              traceReplay('replay-abort', {
+                trigger: 'mount', generation: scrollbackGeneration,
+                current: scrollbackGenerationRef.current, at: 'after-write',
+              });
+              return;
+            }
             if (scrollbackWatchdogRef.current) {
               clearTimeout(scrollbackWatchdogRef.current);
               scrollbackWatchdogRef.current = null;
             }
             // Re-fit to handle any layout shifts during the async gap
             if (fitAddonRef.current) {
+              const colsBeforeRefit = xtermRef.current?.cols ?? null;
               fitAddonRef.current.fit();
+              const colsAfterRefit = xtermRef.current?.cols ?? null;
+              traceTerminalRenderer(options.sessionId, 'fit', {
+                phase: 'after-replay',
+                colsBefore: colsBeforeRefit,
+                cols: colsAfterRefit,
+                // A change here means the mount needed TWO PTY widths, so the agent
+                // repaints twice and the user sees the second one land.
+                changed: colsBeforeRefit !== colsAfterRefit,
+                hostWidth: xtermRef.current?.element?.parentElement?.getBoundingClientRect().width ?? null,
+                viewportClientWidth:
+                  (xtermRef.current?.element?.querySelector('.xterm-viewport') as HTMLElement | null)
+                    ?.clientWidth ?? null,
+              });
             }
             // Restore saved scroll position (HMR) or pin to bottom (cold start)
             if (xtermRef.current) {
               isAtBottomRef.current = restoreScrollPosition(xtermRef.current, options.sessionId);
             }
+            // A completed replay means the terminal is healthy, so the next stuck
+            // one gets a fresh recovery budget.
+            stuckReplayRecoveriesRef.current = 0;
+            traceReplay('replay-done', { trigger: 'mount', generation: scrollbackGeneration, cols: xtermRef.current?.cols ?? null });
             // Flush any live bytes the incoming queue held during the replay
             // (see shouldHold in the queue effect below) now that the replay
             // frame is fully painted, so they apply strictly after it.
@@ -445,12 +556,20 @@ export function useTerminal(options: UseTerminalOptions) {
             // shouldAbort: a newer replay (reveal catch-up, reloadScrollback) may
             // start and bump the generation while this chunked write is still
             // draining; abandon rather than write a stale frame over the new one.
+            traceReplay('replay-write', { trigger: 'mount', generation: scrollbackGeneration, bytes: scrollback.length });
             writeChunkedToTerminal(
               xtermRef.current,
               stripOsc52Sequences(scrollback),
               afterWrite,
               undefined,
-              () => scrollbackGenerationRef.current !== scrollbackGeneration,
+              () => {
+                if (scrollbackGenerationRef.current === scrollbackGeneration) return false;
+                traceReplay('replay-abort', {
+                  trigger: 'mount', generation: scrollbackGeneration,
+                  current: scrollbackGenerationRef.current, at: 'chunk',
+                });
+                return true;
+              },
             );
           } else {
             afterWrite();
@@ -460,6 +579,7 @@ export function useTerminal(options: UseTerminalOptions) {
           // IPC may reject if session was killed during the async gap.
           // Unblock onData so the terminal isn't permanently silenced.
           if (scrollbackGenerationRef.current !== scrollbackGeneration) return;
+          traceReplay('replay-error', { trigger: 'mount', generation: scrollbackGeneration });
           if (scrollbackWatchdogRef.current) {
             clearTimeout(scrollbackWatchdogRef.current);
             scrollbackWatchdogRef.current = null;
@@ -470,7 +590,7 @@ export function useTerminal(options: UseTerminalOptions) {
       // No session -- just fit immediately
       fitAddon.fit();
     }
-  }, [options.sessionId, options.fontFamily, options.fontSize, options.cursorStyle, customBackground, customForeground, customCursor, options.shellName, options.releaseEscapeWhenPointerOutside, settleScrollback]);
+  }, [options.sessionId, options.fontFamily, options.fontSize, options.cursorStyle, customBackground, customForeground, customCursor, options.shellName, options.releaseEscapeWhenPointerOutside, settleScrollback, armScrollbackWatchdog, traceReplay]);
 
   // Set up data listener. Inbound PTY data flows through a bounded queue that
   // writes capped slices paced by xterm.write's completion callback, yielding
@@ -582,6 +702,8 @@ export function useTerminal(options: UseTerminalOptions) {
       // before disposing the terminal it is attached to.
       disposeWebglRef.current?.();
       disposeWebglRef.current = null;
+      unregisterDevtoolsTerminalRef.current?.();
+      unregisterDevtoolsTerminalRef.current = null;
       rendererKeyRef.current = null;
       lastAppliedFontRef.current = null;
       xtermRef.current?.dispose();
@@ -746,23 +868,33 @@ export function useTerminal(options: UseTerminalOptions) {
   // many windows at once, and N terminals must not fight over focus (and a
   // quiet arrival should not move focus at all - restore-no-animation-replay).
   const reloadScrollback = useCallback((reloadOptions?: { skipResize?: boolean; skipFocus?: boolean }) => {
-    if (!options.sessionId || !xtermRef.current || !fitAddonRef.current) return;
+    if (!options.sessionId || !xtermRef.current || !fitAddonRef.current) {
+      // Traced, not silent. Callers treat this as a harmless no-op ("the terminal
+      // has not initialized yet, the mount-time replay will paint instead"), and
+      // for the reveal / overlay-lift callers that is true. It is NOT true for the
+      // watchdog's recovery: if the stuck replay's terminal has since been
+      // disposed, the recovery lands here and does nothing, which would otherwise
+      // look identical in the trace to a recovery that ran and worked.
+      traceReplay('replay-skipped', {
+        trigger: 'reload',
+        reason: !options.sessionId ? 'no-session' : 'no-terminal',
+      });
+      return;
+    }
     const skipResize = reloadOptions?.skipResize ?? false;
     const skipFocus = reloadOptions?.skipFocus ?? false;
     scrollbackPendingRef.current = true;
     const scrollbackGeneration = ++scrollbackGenerationRef.current;
-    if (scrollbackWatchdogRef.current) clearTimeout(scrollbackWatchdogRef.current);
-    scrollbackWatchdogRef.current = setTimeout(() => {
-      scrollbackWatchdogRef.current = null;
-      if (scrollbackGenerationRef.current === scrollbackGeneration && scrollbackPendingRef.current) {
-        // Invalidate the generation so a merely-delayed (not dropped) afterWrite
-        // or catch for this replay bails at its generation guard instead of
-        // re-running fit / scroll / focus after we already force-recovered.
-        scrollbackGenerationRef.current += 1;
-        settleScrollback(true);
-      }
-    }, SCROLLBACK_WATCHDOG_MS);
-    xtermRef.current.reset();
+    traceReplay('replay-start', { trigger: 'reload', generation: scrollbackGeneration, skipResize });
+    armScrollbackWatchdog('reload', scrollbackGeneration);
+
+    // NOT reset here. Clearing the terminal before the async fetch opens a window
+    // in which the grid is blank and only a SUCCESSFUL replay ever repaints it, so
+    // any abort (a newer generation, a rejected read) leaves a permanently black
+    // terminal - the reported bug. The reset now happens immediately before the
+    // write, in the same synchronous beat, which keeps the old-content-must-not-
+    // duplicate guarantee while leaving the last good frame on screen until the
+    // new one is ready to replace it.
 
     // Resize-first: fit to container, then sync PTY dimensions before
     // fetching scrollback (clears stale buffer if cols changed). When
@@ -789,13 +921,25 @@ export function useTerminal(options: UseTerminalOptions) {
         // (and the watchdog it armed), so this stale resolve must not touch
         // either - clearing them here would open the drop/hold gate early
         // for the newer replay still in flight.
-        if (scrollbackGenerationRef.current !== scrollbackGeneration) return;
+        if (scrollbackGenerationRef.current !== scrollbackGeneration) {
+          traceReplay('replay-abort', {
+            trigger: 'reload', generation: scrollbackGeneration,
+            current: scrollbackGenerationRef.current, at: 'resolve',
+          });
+          return;
+        }
 
         const afterWrite = () => {
           // A newer replay may have started (and armed its own watchdog,
           // which already canceled ours) while this chunked write was in
           // flight; abandon so we don't clobber its pending/fit/focus.
-          if (scrollbackGenerationRef.current !== scrollbackGeneration) return;
+          if (scrollbackGenerationRef.current !== scrollbackGeneration) {
+            traceReplay('replay-abort', {
+              trigger: 'reload', generation: scrollbackGeneration,
+              current: scrollbackGenerationRef.current, at: 'after-write',
+            });
+            return;
+          }
           if (scrollbackWatchdogRef.current) {
             clearTimeout(scrollbackWatchdogRef.current);
             scrollbackWatchdogRef.current = null;
@@ -805,6 +949,8 @@ export function useTerminal(options: UseTerminalOptions) {
           if (xtermRef.current) {
             isAtBottomRef.current = restoreScrollPosition(xtermRef.current, options.sessionId);
           }
+          stuckReplayRecoveriesRef.current = 0;
+          traceReplay('replay-done', { trigger: 'reload', generation: scrollbackGeneration, cols: xtermRef.current?.cols ?? null });
           // Flush any live bytes the incoming queue held during the reload
           // (see shouldHold in the queue effect below) now that the replay
           // frame is fully painted, so they apply strictly after it.
@@ -819,6 +965,13 @@ export function useTerminal(options: UseTerminalOptions) {
           }
         };
         if (scrollback && xtermRef.current) {
+          // Clear the old frame HERE, not before the fetch: the reset and the
+          // write that repopulates it are now one synchronous beat, so there is
+          // no state in which the terminal has been emptied and nothing is
+          // guaranteed to refill it. Skipped entirely when there is nothing to
+          // write (below), which is what makes a failed read non-destructive.
+          xtermRef.current.reset();
+          traceReplay('replay-write', { trigger: 'reload', generation: scrollbackGeneration, bytes: scrollback.length });
           // Chunked so a 512KB replay (tab/window switch, resize) doesn't parse
           // in one synchronous write that stalls the renderer mid-drag.
           // Strip OSC 52 so replaying recorded output never clobbers the live clipboard.
@@ -828,7 +981,14 @@ export function useTerminal(options: UseTerminalOptions) {
             stripOsc52Sequences(scrollback),
             afterWrite,
             undefined,
-            () => scrollbackGenerationRef.current !== scrollbackGeneration,
+            () => {
+              if (scrollbackGenerationRef.current === scrollbackGeneration) return false;
+              traceReplay('replay-abort', {
+                trigger: 'reload', generation: scrollbackGeneration,
+                current: scrollbackGenerationRef.current, at: 'chunk',
+              });
+              return true;
+            },
           );
         } else {
           afterWrite();
@@ -836,15 +996,22 @@ export function useTerminal(options: UseTerminalOptions) {
       })
       .catch(() => {
         // IPC may reject if session was killed during the async gap.
-        // Unblock onData so the terminal isn't permanently silenced.
+        // Unblock onData so the terminal isn't permanently silenced. The
+        // terminal is untouched (nothing was reset), so it keeps showing its
+        // last good frame rather than going black on a failed read.
         if (scrollbackGenerationRef.current !== scrollbackGeneration) return;
+        traceReplay('replay-error', { trigger: 'reload', generation: scrollbackGeneration });
         if (scrollbackWatchdogRef.current) {
           clearTimeout(scrollbackWatchdogRef.current);
           scrollbackWatchdogRef.current = null;
         }
         settleScrollback(false);
       });
-  }, [options.sessionId, settleScrollback]);
+  }, [options.sessionId, settleScrollback, armScrollbackWatchdog, traceReplay]);
+
+  // Let the watchdog (armed from initTerminal, declared above this callback)
+  // re-issue a stuck replay without a circular declaration.
+  reloadScrollbackRef.current = reloadScrollback;
 
   // Reveal catch-up: when this session's terminal transitions parked ->
   // visible, repaint from scrollback. While parked, main dropped the session's

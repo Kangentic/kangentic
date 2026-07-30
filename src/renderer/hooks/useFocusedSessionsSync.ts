@@ -4,6 +4,7 @@ import { useBoardStore } from '../stores/board-store';
 import { useConfigStore } from '../stores/config-store';
 import { useProjectStore } from '../stores/project-store';
 import { deriveFocusedSessionIds, derivePanelSessionId } from '../utils/focused-sessions';
+import { derivePanelSessions } from '../utils/panel-sessions';
 import { selectCurrentProjectTransientSessionIds, transientKey } from '../stores/session-store/transient-session-slice';
 import { boardWindowManager, commandWindowManager } from '../window-manager/store/window-store';
 import {
@@ -54,11 +55,19 @@ import {
  * (utils/focused-sessions.ts, utils/terminal-visibility.ts) for unit
  * testability.
  */
-export function useFocusedSessionsSync(): void {
+/**
+ * @param panelShowsTerminal whether the bottom panel currently has its terminal
+ *   content mounted. Comes from `useTerminalResize`'s `showContent`, which is local
+ *   React state rather than a store, so it has to be threaded in from `AppLayout`.
+ *   A collapsed panel mounts no xterm, and a session nobody renders must not be
+ *   focused - main would stream bytes with nothing to ack them.
+ */
+export function useFocusedSessionsSync(panelShowsTerminal: boolean): void {
   const activeView = useBoardStore((s) => s.activeView);
   const terminalPanelVisible = useConfigStore((s) => s.config.terminalPanelVisible);
   const currentProjectId = useProjectStore((s) => s.currentProject?.id ?? null);
   const dialogSessionIds = useSessionStore((s) => s.dialogSessionIds);
+  const remoteDetailTaskIds = useSessionStore((s) => s.remoteDetailTaskIds);
   const commandBarVisible = useSessionStore((s) => s.commandBarVisible);
   // A stable, comma-joined key of the current project's transient session ids:
   // the selector returns a fresh array each call, so joining to a primitive lets
@@ -96,12 +105,25 @@ export function useFocusedSessionsSync(): void {
   // but Zustand's Object.is comparison on the string|null result means the
   // hook only re-renders when the resolved id actually changes. This avoids
   // re-rendering AppLayout on every sessionActivity push.
+  //
+  // Resolved over the panel's VISIBLE tabs, which is what it actually mounts: a
+  // detached task has no tab, so opening a detail for the active one makes the
+  // panel fall back to another session. Deriving this window-blind would keep
+  // naming the detached one, and main would stream bytes to a terminal that is
+  // not there while the newly shown one never receives its output.
   const panelSessionId = useSessionStore((s) =>
     derivePanelSessionId({
       activeSessionId: s.activeSessionId,
       sessions: s.sessions,
       currentProjectId,
       sessionActivity: s.sessionActivity,
+      ownedSessionIds: derivePanelSessions({
+        sessions: s.sessions,
+        currentProjectId,
+        dialogSessionIds: s.dialogSessionIds,
+        remoteDetailTaskIds: s.remoteDetailTaskIds,
+      }).owned,
+      panelShowsTerminal,
     }),
   );
 
@@ -175,6 +197,17 @@ export function useFocusedSessionsSync(): void {
     // resumes emitting, THEN swap the WebGL attachments.
     syncParkedTerminals(parkedSessionIds);
 
+    // Sessions a detail window in ANOTHER renderer owns. Resolved from task ids
+    // here because that is the only cross-renderer name main can publish: session
+    // ids are looked up per renderer from its own session list.
+    const remotelyOwnedSessionIds = new Set<string>();
+    if (remoteDetailTaskIds.length > 0) {
+      const remoteTasks = new Set(remoteDetailTaskIds);
+      for (const session of sessions) {
+        if (remoteTasks.has(session.taskId)) remotelyOwnedSessionIds.add(session.id);
+      }
+    }
+
     const focusedIds = deriveFocusedSessionIds({
       activeView,
       terminalPanelVisible,
@@ -183,6 +216,7 @@ export function useFocusedSessionsSync(): void {
       commandBarVisible,
       transientSessionIds: transientSessionIdsKey ? transientSessionIdsKey.split(',') : [],
       parkedSessionIds,
+      remotelyOwnedSessionIds,
     });
     window.electronAPI.sessions.setFocused(focusedIds);
 
@@ -196,6 +230,7 @@ export function useFocusedSessionsSync(): void {
     terminalPanelVisible,
     panelSessionId,
     dialogSessionIds,
+    remoteDetailTaskIds,
     commandBarVisible,
     transientSessionIdsKey,
     boardWindowsKey,

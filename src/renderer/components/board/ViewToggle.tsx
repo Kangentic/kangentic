@@ -85,7 +85,7 @@ export const ViewToggle = React.memo(function ViewToggle() {
   // actions (real controls / pointer cursor). A new clickable child must carry
   // `cursor-pointer` or `data-no-dismiss`, or a click on it will also dismiss.
   return (
-    <div className="flex items-center px-4 pt-2 pb-2 border-b border-edge" data-testid="view-toggle" data-dismiss-surface>
+    <div className="flex items-center px-4 pt-2 pb-2 border-b border-edge" data-testid="view-toggle" data-dismiss-surface="board">
       <div className="flex items-center gap-0.5 bg-surface/50 rounded-lg p-0.5 border border-edge/30">
         <button
           type="button"

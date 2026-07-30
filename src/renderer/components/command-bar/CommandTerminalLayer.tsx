@@ -69,10 +69,11 @@ function nextFreeSlot(usedSlots: Set<string>): string | null {
  *  Placement is dock-into-last: reconciliation-opened windows cannot recover
  *  their old rect from the global blob (the saver persists continuously, so once
  *  a slot's window is trimmed in one project its geometry is gone), so appending
- *  left-to-right is the pragmatic answer, matching multi-terminal spawn. Pass
- *  `skipEnterAnimation` for a programmatic restore (a project-switch reconcile)
- *  so the window paints flat; a plain user spawn omits it and keeps the entrance. */
-function openCommandTerminalWindowInSlot(slot: string, options?: { skipEnterAnimation?: boolean }): void {
+ *  left-to-right is the pragmatic answer, matching multi-terminal spawn.
+ *
+ *  Every Command Terminal window opens FLAT, whether spawned by the user or by a
+ *  project-switch reconcile, so there is no per-caller animation choice to make. */
+function openCommandTerminalWindowInSlot(slot: string): void {
   const store = commandWindowManager.store;
   const existingWindows = Object.values(store.getState().windows);
 
@@ -88,7 +89,13 @@ function openCommandTerminalWindowInSlot(slot: string, options?: { skipEnterAnim
     anchor: slot,
     sessionId: null,
     title: COMMAND_WINDOW_TITLE,
-    ...(options?.skipEnterAnimation ? { skipEnterAnimation: true } : {}),
+    // Always flat, not just on restore. A terminal-hosting window must never
+    // animate in: the entrance is a `scale()` transform, which does NOT change
+    // the border box (so ResizeObserver stays silent) but DOES change
+    // `getBoundingClientRect()`, which is what xterm's FitAddon measures. A fit
+    // that lands mid-animation computes `cols` from a shrunken box and is never
+    // corrected, leaving a terminal that overflows and looks frozen.
+    skipEnterAnimation: true,
   });
 
   if (dockTarget) {
@@ -121,7 +128,6 @@ export function spawnAdditionalCommandTerminal(): boolean {
   const slot = nextFreeSlot(usedSlots);
   if (!slot) return false;
 
-  // A user-created terminal keeps its entrance animation.
   openCommandTerminalWindowInSlot(slot);
   return true;
 }
@@ -164,7 +170,7 @@ export function reconcileCommandTerminalWindows(options?: { skipWhenEmpty?: bool
   });
 
   for (const windowId of plan.closeWindowIds) store.getState().closeWindow(windowId);
-  for (const slot of plan.openSlots) openCommandTerminalWindowInSlot(slot, { skipEnterAnimation: true });
+  for (const slot of plan.openSlots) openCommandTerminalWindowInSlot(slot);
 }
 
 /** Ensure the command layer has its windows once mounted. Runs once per mount.
@@ -201,6 +207,8 @@ function useEnsureCommandWindow(): void {
         anchor: COMMAND_SLOT_ID,
         sessionId: null,
         title: COMMAND_WINDOW_TITLE,
+        // Flat, for the same fit-correctness reason as the spawn path above.
+        skipEnterAnimation: true,
       });
     }
   }, []);

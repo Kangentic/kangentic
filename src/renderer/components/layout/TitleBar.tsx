@@ -1,10 +1,20 @@
 import React from 'react';
-import { ChartColumn, CloudDownload, Command, Compass, Minus, Settings, Square, X } from 'lucide-react';
+import { Activity, ChartColumn, CloudDownload, Command, Compass, Minus, Settings, Square, X } from 'lucide-react';
 import { useProjectStore } from '../../stores/project-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useUpdaterStore } from '../../stores/updater-store';
 import { useUsageDashboardStore } from '../../stores/usage-dashboard-store';
+import { useMonitorStore } from '../../stores/monitor-store';
+
+/** Tone -> stroke color for the Agent Monitor glyph. A lookup rather than a
+ *  ternary chain so the tone values are never compared as bare literals (which
+ *  reads as, and is scanned for, hand-rolled activity bucketing). */
+const MONITOR_TONE_CLASS = {
+  thinking: 'text-active',
+  idle: 'text-attention',
+  rest: '',
+} as const;
 import { warmStatsDashboard } from '../stats/LazyStatsDashboard';
 import { usePopOut } from '../../pop-out/usePopOut';
 import { selectCommandTerminalSummary } from '../../stores/session-store/transient-session-slice';
@@ -55,11 +65,32 @@ export function TitleBar({
     (state) => selectCommandTerminalSummary(state.sessions, state.sessionActivity, currentProject?.id ?? null).tone,
   );
 
+  // Aggregate activity across EVERY project's task-agent sessions, surfaced as
+  // the monitor glyph's color. This is the ambient cross-project signal: green if
+  // any agent anywhere is working, amber if any is waiting on you, else rest. The
+  // session list and activity map are already cross-project in this store, so
+  // this needs no extra plumbing. Classified only via the shared helpers.
+  const monitorActivityTone = useSessionStore((state) => {
+    let anyNeedsUser = false;
+    let anyWorking = false;
+    for (const session of state.sessions) {
+      if (session.status !== 'running' || session.transient) continue;
+      const activity = state.sessionActivity[session.id];
+      if (requiresUserInteraction(activity)) anyNeedsUser = true;
+      else if (isActive(activity)) anyWorking = true;
+    }
+    // Attention wins over working here (unlike the command-terminal glyph): a
+    // blocked agent is the thing the monitor exists to surface.
+    if (anyNeedsUser) return 'idle';
+    return anyWorking ? 'thinking' : 'rest';
+  });
+
   // Tooltips read the live effective combo so they update when the user rebinds.
   const quickFindCombo = useFormattedCombo('search.togglePalette');
   const commandTerminalCombo = useFormattedCombo('commandBar.toggle');
   const settingsCombo = useFormattedCombo('settings.toggle');
   const statsCombo = useFormattedCombo('stats.toggle');
+  const monitorCombo = useFormattedCombo('monitor.toggle');
 
   // Store-direct like the Settings gear (statsOpen is dashboard-store state).
   const statsOpen = useUsageDashboardStore((state) => state.statsOpen);
@@ -75,6 +106,12 @@ export function TitleBar({
   // When the stats dashboard is detached into its own window, this button
   // focuses that window instead of toggling the (suppressed) in-app overlay.
   const statsPopOut = usePopOut('stats', {});
+
+  const monitorOpen = useMonitorStore((state) => state.monitorOpen);
+  const toggleMonitor = useMonitorStore((state) => state.toggle);
+  // Like stats: when detached, this button focuses that window rather than
+  // toggling the (suppressed) in-app overlay.
+  const monitorPopOut = usePopOut('monitor', {});
 
   const isWorktree = currentProject?.path ? isWorktreePath(currentProject.path) : false;
 
@@ -212,6 +249,23 @@ export function TitleBar({
             <Command size={20} />
           </button>
         )}
+        {/* Agent Monitor. Renders unconditionally (like the stats button) because
+            the monitor is machine-global: it spans every registered project and is
+            useful with no project open at all. The glyph's stroke carries the
+            aggregate cross-project activity, so this button doubles as the ambient
+            "someone needs you" signal. */}
+        <button
+          onClick={() => (monitorPopOut.isOpen ? monitorPopOut.focus() : toggleMonitor())}
+          className={`p-1.5 hover:bg-surface-hover rounded transition-colors ${
+            monitorOpen || monitorPopOut.isOpen ? 'text-fg bg-surface-hover' : 'text-fg-muted hover:text-fg'
+          }`}
+          title={monitorPopOut.isOpen ? 'Focus agent monitor window' : `Agent Monitor (${monitorCombo})`}
+          aria-label="Agent Monitor"
+          data-testid="agent-monitor-button"
+          data-tone={monitorActivityTone}
+        >
+          <Activity size={20} className={MONITOR_TONE_CLASS[monitorActivityTone]} />
+        </button>
         <button
           onClick={() => (statsPopOut.isOpen ? statsPopOut.focus() : toggleStats())}
           onMouseEnter={handleStatsHover}

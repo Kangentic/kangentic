@@ -16,8 +16,8 @@ import { useToastStore } from '../../stores/toast-store';
 import { useTaskProgress } from '../../utils/task-progress';
 import { isContextWindowKnown, contextWindowDisplayPercent } from '../../utils/format-tokens';
 import { requiresUserInteraction, isActive } from '../../../shared/activity-state';
-import { getProgressColor } from '../../utils/progress-color';
 import { ActivityMark } from '../ActivityMark';
+import { ContextUsageFooter } from './ContextUsageFooter';
 import { LabelPills } from '../Pill';
 import { PrLink } from '../PrLink';
 import type { Task } from '../../../shared/types';
@@ -370,26 +370,13 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
                     usage.contextWindow.usedPercentage ?? 0,
                   )
                 : 0;
-              const progressColor = getProgressColor(pct);
+              // Shared with the Agent Monitor's card so the two footers cannot drift.
               return (
-                <div
-                  className="mt-2 pt-2 border-t border-edge"
-                  data-testid="usage-bar"
-                  data-context-window={windowKnown ? undefined : 'unknown'}
-                >
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-xs text-fg-faint truncate">
-                      {resolvedModelName}
-                    </span>
-                    <span className="text-xs text-fg-faint">{pct}%</span>
-                  </div>
-                  <div className="w-full h-1 bg-surface-hover rounded-full overflow-hidden">
-                    <div
-                      className="h-full rounded-full transition-all duration-300"
-                      style={{ width: `${Math.min(pct, 100)}%`, backgroundColor: progressColor }}
-                    />
-                  </div>
-                </div>
+                <ContextUsageFooter
+                  modelName={resolvedModelName}
+                  percent={pct}
+                  windowKnown={windowKnown}
+                />
               );
             }
             case 'preparing':

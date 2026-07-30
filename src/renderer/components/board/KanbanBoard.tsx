@@ -364,7 +364,7 @@ export function KanbanBoard() {
           this element, so they are never treated as a dismiss surface. Any clickable
           child added here must carry `cursor-pointer` or `data-no-dismiss`, or a
           click on it will also dismiss a window. */}
-      <div className="flex-1 overflow-x-auto overflow-y-hidden p-4" data-dismiss-surface>
+      <div className="flex-1 overflow-x-auto overflow-y-hidden p-4" data-dismiss-surface="board">
       <DndContext
         key={hmrGeneration}
         sensors={sensors}

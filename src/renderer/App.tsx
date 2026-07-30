@@ -12,11 +12,13 @@ import { useBacklogStore } from './stores/backlog-store';
 import { useToastStore } from './stores/toast-store';
 import { useUpdaterStore } from './stores/updater-store';
 import { useUsageDashboardStore } from './stores/usage-dashboard-store';
+import { useMonitorStore } from './stores/monitor-store';
 import { usePopOutStore } from './stores/pop-out-store';
 import { useProjectSwitchEffect } from './hooks/useProjectSwitchEffect';
 import { useAgentDrivenInvalidation } from './hooks/useAgentDrivenInvalidation';
 import { invalidateProject } from './stores/project-cache';
 import { resolveAutoFocusTarget } from './utils/auto-focus';
+import { derivePanelSessions } from './utils/panel-sessions';
 import { COMMAND_TERMINAL_NOTIFICATION_TASK_ID } from '../shared/notification-constants';
 import { bumpHmrGeneration } from './utils/hmr-generation';
 import { clearSnapPreviewDom } from './window-manager';
@@ -75,6 +77,9 @@ export function App() {
         const allProjectIds = useProjectStore.getState().projects.map((project) => project.id);
         updateConfig({ onboardedProjectIds: allProjectIds });
       }
+      // Seed the monitor's persisted view once config is on hand, so reopening it
+      // (or relaunching the app) restores the layout/grouping/filters as left.
+      useMonitorStore.getState().hydrateView(config.monitor);
     });
 
     // Measure after first paint via requestAnimationFrame
@@ -406,6 +411,20 @@ export function App() {
       }));
     }
 
+    // Agent monitor: snapshot pushes for the DB-resident half of a row (a session
+    // spawned or exited, an agent retitled or moved a task). Live activity does
+    // NOT come through here - it rides the unbuffered SESSION_ACTIVITY push above
+    // and is patched onto rows in place.
+    const monitorApi = window.electronAPI?.monitor;
+    if (monitorApi?.onChanged) {
+      cleanups.push(monitorApi.onChanged((snapshot) => {
+        // Applied unconditionally, not gated on the monitor being open: the
+        // snapshot is cheap to hold, and this keeps a reopen instant instead of
+        // showing a stale frame while the refetch lands.
+        useMonitorStore.getState().applySnapshot(snapshot);
+      }));
+    }
+
     // Session activity state (thinking/idle)
     // ALWAYS update activity (sidebar badges need cross-project data),
     // but only run auto-focus for current project.
@@ -417,6 +436,11 @@ export function App() {
         // one thunk preserves that read-after-write.
         enqueueSessionUpdate(() => {
           updateActivity(sessionId, state, reason);
+
+          // Patch the monitor's matching row in place. This is why the monitor
+          // needs no polling: SESSION_ACTIVITY is already unbuffered and
+          // cross-project, so a state change reaches the row with no round trip.
+          useMonitorStore.getState().applyActivity(sessionId, state, reason ?? null);
 
           const activeProjectId = useProjectStore.getState().currentProject?.id;
           const isCurrentProject = !projectId || !activeProjectId || projectId === activeProjectId;
@@ -433,7 +457,15 @@ export function App() {
               sessionId,
               newState: state,
               currentActiveSessionId: sessionStore.activeSessionId,
-              dialogSessionIds: sessionStore.dialogSessionIds,
+              // Both owner sources, not just this renderer's windows: a detail hosted in
+              // the detached monitor has no tab here either, and making it the active tab
+              // is how the panel ends up selecting a session it renders nothing for.
+              ownedSessionIds: derivePanelSessions({
+                sessions: sessionStore.sessions,
+                currentProjectId: activeProjectId ?? null,
+                dialogSessionIds: sessionStore.dialogSessionIds,
+                remoteDetailTaskIds: sessionStore.remoteDetailTaskIds,
+              }).owned,
               sessionActivity: sessionStore.sessionActivity,
               sessions: projectSessions,
             });
@@ -506,6 +538,13 @@ export function App() {
             .catch(() => {});
           return;
         }
+        // The Command Terminal layer is top-layered over the board, so opening a
+        // task detail underneath it leaves the user looking at a terminal they did
+        // not ask for. A cross-project click closes the layer anyway (close-on-
+        // project-switch); this covers the same-project case. Every PTY stays alive.
+        // Also the path the DETACHED monitor takes: its row click routes through
+        // main and re-emits here, so pop-out and in-app behave identically.
+        useSessionStore.getState().requestHideCommandBar();
         if (taskId && alreadyActive) {
           useSessionStore.getState().setDetailTaskId(taskId);
         } else {
@@ -724,6 +763,11 @@ if (import.meta.hot) {
     // Usage dashboard Pattern B: refetch the composite payload from
     // main-process truth (no-ops while the dashboard is closed).
     useUsageDashboardStore.getState().loadDashboardStats();
+    // Agent monitor Pattern B: refetch the cross-project snapshot from
+    // main-process truth (no-ops while the monitor is closed).
+    if (useMonitorStore.getState().monitorOpen) {
+      void useMonitorStore.getState().loadSnapshot();
+    }
     // Pop-out windows Pattern B: re-hydrate which surfaces are currently detached.
     usePopOutStore.getState().loadOpen();
     useSessionStore.getState().syncSessions().then((applied) => {

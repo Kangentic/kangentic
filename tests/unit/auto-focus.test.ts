@@ -16,7 +16,7 @@ describe('resolveAutoFocusTarget', () => {
         sessionId: 'A',
         newState: 'idle',
         currentActiveSessionId: ACTIVITY_TAB,
-        dialogSessionIds: [],
+        ownedSessionIds: new Set(),
         sessionActivity: { A: 'idle' },
         sessions: [makeSession('A')],
       })).toBeNull();
@@ -27,46 +27,62 @@ describe('resolveAutoFocusTarget', () => {
         sessionId: 'A',
         newState: 'thinking',
         currentActiveSessionId: ACTIVITY_TAB,
-        dialogSessionIds: [],
+        ownedSessionIds: new Set(),
         sessionActivity: { A: 'thinking' },
         sessions: [makeSession('A')],
       })).toBeNull();
     });
   });
 
-  // ── A task-detail window is open ──
-  describe('when a task-detail window is open', () => {
-    it('returns null when a session goes idle and a window is open', () => {
+  // ── Sessions detached to a task-detail window ──
+  describe('when a session is detached to a task-detail window', () => {
+    it('never switches TO a detached session - the panel has no tab for it', () => {
       expect(resolveAutoFocusTarget({
         sessionId: 'B',
         newState: 'idle',
         currentActiveSessionId: 'A',
-        dialogSessionIds: ['C'],
+        ownedSessionIds: new Set(['B']),
         sessionActivity: { A: 'thinking', B: 'idle' },
-        sessions: [makeSession('A'), makeSession('B'), makeSession('C')],
+        sessions: [makeSession('A'), makeSession('B')],
       })).toBeNull();
     });
 
-    it('returns null when the viewed session goes thinking and a window is open', () => {
+    it('still switches among the tabs a window did NOT take', () => {
+      // The panel keeps its remaining tabs now instead of stepping aside entirely,
+      // so an unrelated open window must not disable auto-focus for them.
+      expect(resolveAutoFocusTarget({
+        sessionId: 'B',
+        newState: 'idle',
+        currentActiveSessionId: 'A',
+        ownedSessionIds: new Set(['C']),
+        sessionActivity: { A: 'thinking', B: 'idle' },
+        sessions: [makeSession('A'), makeSession('B'), makeSession('C')],
+      })).toBe('B');
+    });
+
+    it('switches away when the viewed session goes thinking, skipping detached candidates', () => {
       expect(resolveAutoFocusTarget({
         sessionId: 'A',
         newState: 'thinking',
         currentActiveSessionId: 'A',
-        dialogSessionIds: ['A'],
-        sessionActivity: { A: 'thinking', B: 'idle' },
-        sessions: [makeSession('A'), makeSession('B')],
-      })).toBeNull();
+        ownedSessionIds: new Set(['B']),
+        sessionActivity: { A: 'thinking', B: 'idle', C: 'idle' },
+        sessions: [makeSession('A'), makeSession('B'), makeSession('C')],
+      })).toBe('C');
     });
 
-    it('returns null when multiple windows are open', () => {
+    it('does not treat a DETACHED paused session as "already viewing a paused one"', () => {
+      // The stored active id can still name a detached session (the panel deliberately
+      // keeps it pointed there so the tab returns selected), but the user is not
+      // looking at it, so an idle session elsewhere should still pull focus.
       expect(resolveAutoFocusTarget({
         sessionId: 'B',
         newState: 'idle',
         currentActiveSessionId: 'A',
-        dialogSessionIds: ['A', 'B'],
-        sessionActivity: { A: 'thinking', B: 'idle' },
+        ownedSessionIds: new Set(['A']),
+        sessionActivity: { A: 'idle', B: 'idle' },
         sessions: [makeSession('A'), makeSession('B')],
-      })).toBeNull();
+      })).toBe('B');
     });
   });
 
@@ -77,7 +93,7 @@ describe('resolveAutoFocusTarget', () => {
         sessionId: 'B',
         newState: 'idle',
         currentActiveSessionId: 'A',
-        dialogSessionIds: [],
+        ownedSessionIds: new Set(),
         sessionActivity: { A: 'thinking', B: 'idle' },
         sessions: [makeSession('A'), makeSession('B')],
       })).toBe('B');
@@ -88,7 +104,7 @@ describe('resolveAutoFocusTarget', () => {
         sessionId: 'A',
         newState: 'idle',
         currentActiveSessionId: null,
-        dialogSessionIds: [],
+        ownedSessionIds: new Set(),
         sessionActivity: { A: 'idle' },
         sessions: [makeSession('A')],
       })).toBe('A');
@@ -99,7 +115,7 @@ describe('resolveAutoFocusTarget', () => {
         sessionId: 'B',
         newState: 'idle',
         currentActiveSessionId: 'A',
-        dialogSessionIds: [],
+        ownedSessionIds: new Set(),
         sessionActivity: { A: 'idle', B: 'idle' },
         sessions: [makeSession('A'), makeSession('B')],
       })).toBeNull();
@@ -110,7 +126,7 @@ describe('resolveAutoFocusTarget', () => {
         sessionId: 'A',
         newState: 'idle',
         currentActiveSessionId: 'A',
-        dialogSessionIds: [],
+        ownedSessionIds: new Set(),
         sessionActivity: { A: 'idle' },
         sessions: [makeSession('A')],
       })).toBeNull();
@@ -121,7 +137,7 @@ describe('resolveAutoFocusTarget', () => {
         sessionId: 'B',
         newState: 'idle',
         currentActiveSessionId: 'A',
-        dialogSessionIds: [],
+        ownedSessionIds: new Set(),
         sessionActivity: { A: 'idle', B: 'idle' },
         sessions: [makeSession('A', 'exited'), makeSession('B')],
       })).toBe('B');
@@ -132,7 +148,7 @@ describe('resolveAutoFocusTarget', () => {
         sessionId: 'B',
         newState: 'idle',
         currentActiveSessionId: 'A',
-        dialogSessionIds: [],
+        ownedSessionIds: new Set(),
         sessionActivity: { A: 'idle', B: 'idle' },
         sessions: [makeSession('A', 'suspended'), makeSession('B')],
       })).toBe('B');
@@ -146,7 +162,7 @@ describe('resolveAutoFocusTarget', () => {
         sessionId: 'A',
         newState: 'thinking',
         currentActiveSessionId: 'A',
-        dialogSessionIds: [],
+        ownedSessionIds: new Set(),
         sessionActivity: { A: 'thinking', B: 'idle' },
         sessions: [makeSession('A'), makeSession('B')],
       })).toBe('B');
@@ -157,7 +173,7 @@ describe('resolveAutoFocusTarget', () => {
         sessionId: 'A',
         newState: 'thinking',
         currentActiveSessionId: 'A',
-        dialogSessionIds: [],
+        ownedSessionIds: new Set(),
         sessionActivity: { A: 'thinking', B: 'thinking' },
         sessions: [makeSession('A'), makeSession('B')],
       })).toBeNull();
@@ -168,7 +184,7 @@ describe('resolveAutoFocusTarget', () => {
         sessionId: 'A',
         newState: 'thinking',
         currentActiveSessionId: 'A',
-        dialogSessionIds: [],
+        ownedSessionIds: new Set(),
         sessionActivity: { A: 'thinking' },
         sessions: [makeSession('A')],
       })).toBeNull();
@@ -179,7 +195,7 @@ describe('resolveAutoFocusTarget', () => {
         sessionId: 'B',
         newState: 'thinking',
         currentActiveSessionId: 'A',
-        dialogSessionIds: [],
+        ownedSessionIds: new Set(),
         sessionActivity: { A: 'idle', B: 'thinking' },
         sessions: [makeSession('A'), makeSession('B')],
       })).toBeNull();
@@ -190,7 +206,7 @@ describe('resolveAutoFocusTarget', () => {
         sessionId: 'A',
         newState: 'thinking',
         currentActiveSessionId: 'A',
-        dialogSessionIds: [],
+        ownedSessionIds: new Set(),
         sessionActivity: { A: 'thinking', B: 'idle', C: 'idle' },
         sessions: [makeSession('A'), makeSession('B', 'exited'), makeSession('C')],
       })).toBe('C');
@@ -201,7 +217,7 @@ describe('resolveAutoFocusTarget', () => {
         sessionId: 'A',
         newState: 'thinking',
         currentActiveSessionId: 'A',
-        dialogSessionIds: [],
+        ownedSessionIds: new Set(),
         sessionActivity: { A: 'thinking', B: 'idle', C: 'idle' },
         sessions: [makeSession('A'), makeSession('B', 'queued'), makeSession('C')],
       })).toBe('C');
@@ -215,7 +231,7 @@ describe('resolveAutoFocusTarget', () => {
         sessionId: 'B',
         newState: 'permission',
         currentActiveSessionId: 'A',
-        dialogSessionIds: [],
+        ownedSessionIds: new Set(),
         sessionActivity: { A: 'thinking', B: 'permission' },
         sessions: [makeSession('A'), makeSession('B')],
       })).toBe('B');
@@ -226,7 +242,7 @@ describe('resolveAutoFocusTarget', () => {
         sessionId: 'B',
         newState: 'idle',
         currentActiveSessionId: 'A',
-        dialogSessionIds: [],
+        ownedSessionIds: new Set(),
         sessionActivity: { A: 'permission', B: 'idle' },
         sessions: [makeSession('A'), makeSession('B')],
       })).toBeNull();
@@ -237,7 +253,7 @@ describe('resolveAutoFocusTarget', () => {
         sessionId: 'A',
         newState: 'thinking',
         currentActiveSessionId: 'A',
-        dialogSessionIds: [],
+        ownedSessionIds: new Set(),
         sessionActivity: { A: 'thinking', B: 'permission' },
         sessions: [makeSession('A'), makeSession('B')],
       })).toBe('B');

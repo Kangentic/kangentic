@@ -239,6 +239,56 @@ export const IPC = {
   MOBILE_PAIRING_ENDED: 'mobile:pairingEnded',
   MOBILE_STATE_CHANGED: 'mobile:stateChanged',
 
+  // Agent Monitor -- machine-global (like mobile bridge), NOT project-scoped. The monitor
+  // aggregates live sessions across EVERY registered project, so these channels deliberately
+  // take no trailing projectId and are outside the project-scoped-ipc mutation set. They are
+  // also deliberately named outside the TASK_/SESSION_ prefixes so the parity test's channel
+  // classification does not claim them. See src/main/monitor/monitor-aggregator.ts.
+  // The view preference itself is NOT a monitor channel: it rides the existing global
+  // config merge (`config.set`), so there is one persistence path, not two.
+  MONITOR_GET_SNAPSHOT: 'monitor:getSnapshot',
+  MONITOR_CHANGED: 'monitor:changed',
+  // Reveal a task in the MAIN window. Needed because the detached monitor is its
+  // own renderer with its own stores, so it cannot open a task by setting local
+  // state - the request has to travel through main.
+  MONITOR_REVEAL_TASK: 'monitor:revealTask',
+  // Everything the task-detail surface needs about a task's OWN project, for a
+  // host that is not that project's board. One bundle rather than stamping five
+  // read channels with a projectId - see src/main/monitor/task-detail-bundle.ts.
+  MONITOR_GET_TASK_DETAIL: 'monitor:getTaskDetail',
+
+  // Task-detail ownership -- machine-global, and deliberately outside the TASK_ prefix
+  // so the project-scoped-ipc parity test does not classify these as task mutations.
+  // They mutate no task; they arbitrate WHICH RENDERER hosts a task's detail, which is
+  // knowledge only main has (a pop-out is a separate renderer with its own stores).
+  // See src/main/task-detail/detail-owner-registry.ts for the two rules.
+  /** Ask main where this task's detail should open. Main focuses or routes. */
+  DETAIL_REQUEST_OPEN: 'detail:requestOpen',
+  /** Main tells a surface to mount this task's detail. */
+  DETAIL_OPEN_HERE: 'detail:openHere',
+  /** Main tells the PREVIOUS holder to let go, because another surface took it. */
+  DETAIL_CLOSE_HERE: 'detail:closeHere',
+  /**
+   * A host reports the COMPLETE set of task details it currently has mounted.
+   *
+   * Replaces a claim/release pair. Ownership is derived from what a surface
+   * actually has, so a lost or out-of-order message cannot strand a claim - which
+   * used to make a task permanently unopenable (`focused-existing` for a window
+   * that no longer existed). Main reconciles per `(webContentsId, host)`; see
+   * `DetailOwnerRegistry.syncOwned`.
+   */
+  DETAIL_SYNC_OWNED: 'detail:syncOwned',
+  /**
+   * Main tells each renderer which task details are held by a DIFFERENT renderer.
+   *
+   * Terminal ownership ("one xterm per PTY") was renderer-local: a renderer knew
+   * about its own detail windows and nothing else. A detail hosted in the detached
+   * Agent Monitor is a separate renderer, so the main window's bottom panel could
+   * not tell the session was already on screen elsewhere and mounted a second
+   * xterm on the same PTY. Only main knows both sides, so it publishes.
+   */
+  DETAIL_REMOTE_OWNERS: 'detail:remoteOwners',
+
   // Backlog
   BACKLOG_LIST: 'backlog:list',
   BACKLOG_CREATE: 'backlog:create',

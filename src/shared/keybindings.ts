@@ -110,6 +110,15 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
     rebindable: true,
   },
   {
+    id: 'monitor.toggle',
+    label: 'Toggle Agent Monitor',
+    description: 'Open or close the cross-project view of every running agent.',
+    group: 'General',
+    scope: 'global',
+    defaultCombo: 'Mod+Shift+M',
+    rebindable: true,
+  },
+  {
     id: 'view.toggleBoardBacklog',
     label: 'Switch Board / Backlog',
     description: 'Toggle between the board and the backlog view.',

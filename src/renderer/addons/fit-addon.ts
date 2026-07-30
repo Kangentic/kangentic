@@ -20,7 +20,11 @@ export interface ITerminalDimensions {
 
 const MINIMUM_COLS = 2;
 const MINIMUM_ROWS = 1;
-const DEFAULT_SCROLLBAR_WIDTH = 14;
+/** Scrollbar gutter assumed only before `.xterm-viewport` has been laid out, so
+ *  `offsetWidth - clientWidth` cannot be measured yet. Matches the global
+ *  `::-webkit-scrollbar` width in `index.css` (the width the browser actually
+ *  reserves); `tests/unit/fit-addon.test.ts` pins the two together. */
+export const FALLBACK_SCROLLBAR_WIDTH = 8;
 
 export class FitAddon implements ITerminalAddon {
   private _terminal: Terminal | undefined;
@@ -63,16 +67,7 @@ export class FitAddon implements ITerminalAddon {
       return undefined;
     }
 
-    // Reserve room for the scrollbar so it never overlaps the last column - EXCEPT
-    // when the alternate screen buffer is active (a fullscreen TUI like Claude's
-    // `/tui fullscreen`, vim, or htop). The alt buffer is exactly viewport-sized
-    // and has no scrollbar, so reserving width there just leaves an empty strip on
-    // the right; reclaim it for the grid instead. Re-evaluated on every fit, so the
-    // column count follows the buffer mode on the next resize.
-    const inAltBuffer = this._terminal.buffer?.active?.type === 'alternate';
-    const scrollbarWidth = (this._terminal.options.scrollback === 0 || inAltBuffer)
-      ? 0
-      : (this._terminal.options.overviewRuler?.width ?? DEFAULT_SCROLLBAR_WIDTH);
+    const scrollbarWidth = this._measureScrollbarGutter();
 
     const parentStyle = window.getComputedStyle(this._terminal.element.parentElement);
     const parentHeight = parseInt(parentStyle.getPropertyValue('height'));
@@ -102,5 +97,43 @@ export class FitAddon implements ITerminalAddon {
       cols: Math.max(MINIMUM_COLS, Math.floor(availableWidth / cellWidth)),
       rows: Math.max(MINIMUM_ROWS, Math.floor(availableHeight / cellHeight)),
     };
+  }
+
+  /**
+   * The width the browser reserves for the vertical scrollbar, measured off the
+   * DOM rather than assumed.
+   *
+   * xterm's own stylesheet sets `.xterm-viewport { overflow-y: scroll }`, so that
+   * gutter is reserved unconditionally: in the alternate screen buffer too, and
+   * whether or not there is anything to scroll. Measuring it is what makes a fit
+   * DETERMINISTIC, which is the property that matters here - the same container
+   * must always produce the same column count, because every distinct column
+   * count costs a PTY resize and a full agent repaint.
+   *
+   * This replaced an alternate-buffer special case that reclaimed the whole
+   * gutter, on the premise that a fullscreen TUI has no scrollbar. It has one,
+   * and the branch caused two bugs:
+   *
+   * - The buffer mode flips from `normal` to `alternate` DURING a mount, the
+   *   moment the scrollback replay writes the TUI's alt-screen enter. So the
+   *   mount fit and the post-replay refit disagreed by two columns on every
+   *   open, handing the PTY two widths and making the user watch the agent's
+   *   second repaint land. Under Claude Code's `/tui fullscreen` that is every
+   *   session, every time.
+   * - Reclaiming a gutter the DOM still reserves pushed the grid past the
+   *   visible viewport, clipping the right-hand column.
+   *
+   * The empty strip that reclaim was written to fix was real, but its cause was
+   * a mismatch, not the buffer mode: reserving a hardcoded 14px against an
+   * 8px gutter leaves 12px blank. Reserving the measured width closes it
+   * properly.
+   *
+   * Do not reintroduce a buffer-mode branch, or any other input that can change
+   * after mount - that is precisely what makes a fit non-deterministic.
+   */
+  private _measureScrollbarGutter(): number {
+    const viewport = this._terminal?.element?.querySelector('.xterm-viewport') as HTMLElement | null;
+    if (!viewport || viewport.offsetWidth === 0) return FALLBACK_SCROLLBAR_WIDTH;
+    return Math.max(0, viewport.offsetWidth - viewport.clientWidth);
   }
 }

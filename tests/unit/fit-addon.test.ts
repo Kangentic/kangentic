@@ -1,48 +1,76 @@
 /**
- * Unit coverage for FitAddon.proposeDimensions() -- alt-buffer scrollbar reclaim.
+ * Unit coverage for FitAddon.proposeDimensions().
+ *
+ * The load-bearing property is DETERMINISM: the same container must always
+ * propose the same column count. Every distinct column count a mount produces
+ * costs a PTY resize and a full agent repaint, and a fit whose result depends on
+ * state that changes DURING a mount hands the PTY two widths.
+ *
+ * That is not hypothetical. proposeDimensions used to reclaim the scrollbar
+ * gutter whenever the alternate screen buffer was active, on the premise that a
+ * fullscreen TUI has no scrollbar. Two consequences, both observed live:
+ *
+ *   - The buffer mode flips normal -> alternate mid-mount, the moment the
+ *     scrollback replay writes the TUI's alt-screen enter. So the mount fit and
+ *     the post-replay refit disagreed by two columns on EVERY open (always, under
+ *     Claude Code's `/tui fullscreen`), and the user watched the agent's second
+ *     repaint land.
+ *   - xterm's own stylesheet sets `.xterm-viewport { overflow-y: scroll }`, so the
+ *     gutter is reserved in the alternate buffer too. Reclaiming it pushed the
+ *     grid past the visible viewport and clipped the right-hand column.
+ *
+ * The gutter is now MEASURED off the viewport, which is both correct and
+ * constant across buffer modes. The first two describes below are the regression
+ * guards for that; restoring either branch turns them red.
  *
  * proposeDimensions() touches:
- *   _terminal.element / .parentElement  (plain objects stubbed below)
- *   _terminal.options.scrollback / overviewRuler?.width
- *   _terminal.buffer?.active?.type  ('normal' | 'alternate')
- *   _terminal._core._renderService.dimensions.css.cell  (private xterm API, plain object)
+ *   _terminal.element / .parentElement / .querySelector('.xterm-viewport')
+ *   _terminal._core._renderService.dimensions.css.cell  (private xterm API)
  *   window.getComputedStyle  (mocked via vi.stubGlobal; jsdom not required)
  *
- * No DOM environment needed: every dependency is a plain-object stub or a
- * vi.stubGlobal('window', ...) mock. All three cases are fully deterministic.
- *
  * Geometry used across all cases:
- *   parentWidth = 800, parentHeight = 600, padding = 0 on terminal element
+ *   parentWidth = 800, parentHeight = 600, padding = 0 on the terminal element
  *   cellWidth = 8, cellHeight = 16
- *   DEFAULT_SCROLLBAR_WIDTH = 14  (matches the constant in fit-addon.ts)
- *
- * Column derivation:
- *   scrollbarWidth = 0  -> cols = floor(800 / 8) = 100
- *   scrollbarWidth = 14 -> cols = floor((800 - 14) / 8) = floor(786 / 8) = 98
+ *   viewport offsetWidth = 800, clientWidth = 792  ->  measured gutter = 8
+ *   cols = floor((800 - 8) / 8) = 99
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 import type { Terminal } from '@xterm/xterm';
-import { FitAddon } from '../../src/renderer/addons/fit-addon';
+import { FitAddon, FALLBACK_SCROLLBAR_WIDTH } from '../../src/renderer/addons/fit-addon';
 
 // ---------------------------------------------------------------------------
 // Minimal stubs
 // ---------------------------------------------------------------------------
 
+const CELL_WIDTH = 8;
+const PARENT_WIDTH = 800;
+
+interface ViewportStub {
+  offsetWidth: number;
+  clientWidth: number;
+}
+
 /** Pair of parent/element objects that satisfy proposeDimensions()'s early-exit
- *  checks without any real DOM. parentElement is non-null (truthy), so the
- *  guard `!_terminal.element.parentElement` passes. */
-function makeElements() {
+ *  checks without any real DOM. parentElement is non-null (truthy), so the guard
+ *  `!_terminal.element.parentElement` passes, and querySelector answers with the
+ *  viewport stub the gutter is measured from. */
+function makeElements(viewport: ViewportStub | null = { offsetWidth: 800, clientWidth: 792 }) {
   const parentEl = {};
-  const elementEl = { parentElement: parentEl };
+  const elementEl = {
+    parentElement: parentEl,
+    querySelector: (selector: string) => (selector === '.xterm-viewport' ? viewport : null),
+  };
   return { parentEl, elementEl };
 }
 
 /** Build a minimal Terminal-shaped stub. The private _core path uses `as any`
  *  in the source, so a plain object satisfies it without type gymnastics. */
 function makeTerminalStub(
-  elementEl: { parentElement: object },
-  bufferType: 'normal' | 'alternate',
-  scrollback: number,
+  elementEl: object,
+  bufferType: 'normal' | 'alternate' = 'normal',
+  scrollback = 1000,
 ): Terminal {
   return {
     element: elementEl,
@@ -50,23 +78,20 @@ function makeTerminalStub(
     buffer: { active: { type: bufferType } },
     _core: {
       _renderService: {
-        dimensions: { css: { cell: { width: 8, height: 16 } } },
+        dimensions: { css: { cell: { width: CELL_WIDTH, height: 16 } } },
       },
     },
   } as unknown as Terminal;
 }
 
-// ---------------------------------------------------------------------------
-// Shared mock-window setup -- returns controlled geometry for both the parent
-// element (800x600) and the terminal element (zero padding).
-// ---------------------------------------------------------------------------
-
+/** Returns controlled geometry for both the parent element (800x600) and the
+ *  terminal element (zero padding). */
 function makeWindowStub(parentEl: object) {
   return {
     getComputedStyle: (element: unknown) => ({
       getPropertyValue: (prop: string): string => {
         if (element === parentEl) {
-          if (prop === 'width') return '800';
+          if (prop === 'width') return String(PARENT_WIDTH);
           if (prop === 'height') return '600';
         }
         // terminal element -- all padding values are 0
@@ -117,16 +142,22 @@ function makeNaNWindowStub(parentEl: object, dimension: 'width' | 'height' | 'bo
   };
 }
 
+function proposeFor(terminal: Terminal): { cols: number; rows: number } {
+  const fitAddon = new FitAddon();
+  fitAddon.activate(terminal);
+  const dims = fitAddon.proposeDimensions();
+  expect(dims).toBeDefined();
+  return dims!;
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('FitAddon.proposeDimensions -- alt-buffer scrollbar reclaim', () => {
-  let fitAddon: FitAddon;
+describe('FitAddon.proposeDimensions -- deterministic for a fixed container', () => {
   const { parentEl, elementEl } = makeElements();
 
   beforeEach(() => {
-    fitAddon = new FitAddon();
     vi.stubGlobal('window', makeWindowStub(parentEl));
   });
 
@@ -134,37 +165,94 @@ describe('FitAddon.proposeDimensions -- alt-buffer scrollbar reclaim', () => {
     vi.unstubAllGlobals();
   });
 
-  it('normal buffer with scrollback reserves the scrollbar column (baseline behavior)', () => {
-    // scrollback > 0 and type === 'normal': scrollbarWidth = DEFAULT_SCROLLBAR_WIDTH (14).
-    // availableWidth = 800 - 14 = 786 -> cols = floor(786 / 8) = 98.
-    // Verifies pre-existing behavior is not disturbed by the alt-buffer change.
-    const terminal = makeTerminalStub(elementEl, 'normal', 1000);
-    fitAddon.activate(terminal);
-    const dims = fitAddon.proposeDimensions();
-    expect(dims).toBeDefined();
-    expect(dims!.cols).toBe(98);
+  it('proposes the same columns in the normal and alternate screen buffers', () => {
+    // THE regression guard. The buffer mode flips mid-mount when the scrollback
+    // replay writes the TUI's alt-screen enter, so a buffer-mode-dependent fit
+    // gives a mount two different widths and the PTY two SIGWINCH repaints.
+    //
+    // RED: restoring `|| inAltBuffer` to the scrollbar condition makes the
+    // alternate case 100 against the normal case's 99.
+    const normal = proposeFor(makeTerminalStub(elementEl, 'normal'));
+    const alternate = proposeFor(makeTerminalStub(elementEl, 'alternate'));
+    expect(alternate.cols).toBe(normal.cols);
+    expect(alternate.rows).toBe(normal.rows);
   });
 
-  it('alternate buffer reclaims the scrollbar column regardless of scrollback', () => {
-    // buffer.active.type === 'alternate': inAltBuffer = true -> scrollbarWidth = 0.
-    // availableWidth = 800 -> cols = floor(800 / 8) = 100.
-    // RED: reverting `|| inAltBuffer` from the condition makes scrollbarWidth = 14,
-    //      so cols = 98 and this assertion fails, pinning the fix.
-    const terminal = makeTerminalStub(elementEl, 'alternate', 1000);
-    fitAddon.activate(terminal);
-    const dims = fitAddon.proposeDimensions();
-    expect(dims).toBeDefined();
-    expect(dims!.cols).toBe(100);
+  it('proposes the same columns whether or not scrollback is enabled', () => {
+    // `scrollback === 0` used to reclaim the gutter too. It is just as wrong:
+    // overflow-y is `scroll`, so the gutter is reserved regardless.
+    //
+    // RED: restoring the `options.scrollback === 0` branch makes this 100 vs 99.
+    const withScrollback = proposeFor(makeTerminalStub(elementEl, 'normal', 1000));
+    const withoutScrollback = proposeFor(makeTerminalStub(elementEl, 'normal', 0));
+    expect(withoutScrollback.cols).toBe(withScrollback.cols);
   });
 
-  it('normal buffer with scrollback=0 also reclaims the scrollbar (prior behavior unchanged)', () => {
-    // The scrollback === 0 branch pre-dated the alt-buffer change. Verify it still gives
-    // scrollbarWidth = 0 -> cols = 100 after our edit.
-    const terminal = makeTerminalStub(elementEl, 'normal', 0);
-    fitAddon.activate(terminal);
-    const dims = fitAddon.proposeDimensions();
-    expect(dims).toBeDefined();
-    expect(dims!.cols).toBe(100);
+  it('reserves exactly the measured gutter (800 - 8) / 8 = 99 columns', () => {
+    expect(proposeFor(makeTerminalStub(elementEl)).cols).toBe(99);
+  });
+});
+
+describe('FitAddon.proposeDimensions -- the grid fits inside the visible viewport', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('measures the gutter off the viewport rather than assuming a width', () => {
+    // A wider gutter must cost a column. RED: any hardcoded reserve makes both
+    // cases agree, which is how a 14px assumption against an 8px gutter left a
+    // 12px empty strip on the right (the symptom the alt-buffer reclaim was
+    // mistakenly written to fix).
+    const thin = makeElements({ offsetWidth: 800, clientWidth: 792 });
+    vi.stubGlobal('window', makeWindowStub(thin.parentEl));
+    expect(proposeFor(makeTerminalStub(thin.elementEl)).cols).toBe(99);
+
+    const thick = makeElements({ offsetWidth: 800, clientWidth: 780 });
+    vi.stubGlobal('window', makeWindowStub(thick.parentEl));
+    expect(proposeFor(makeTerminalStub(thick.elementEl)).cols).toBe(97);
+  });
+
+  it('never proposes a grid wider than the viewport can show', () => {
+    // The invariant the old reclaim violated: it produced a grid 2px past the
+    // visible viewport, clipping the last column with no recovery path (xterm
+    // re-emits a resize only when its OWN size changes). Asserted across a range
+    // of gutters so it holds for whatever the platform reserves.
+    for (const clientWidth of [800, 792, 786, 780, 774]) {
+      const { parentEl, elementEl } = makeElements({ offsetWidth: 800, clientWidth });
+      vi.stubGlobal('window', makeWindowStub(parentEl));
+      const { cols } = proposeFor(makeTerminalStub(elementEl));
+      expect(cols * CELL_WIDTH).toBeLessThanOrEqual(clientWidth);
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('falls back to the constant before the viewport has been laid out', () => {
+    // Pre-layout the viewport reports 0/0, and `offsetWidth - clientWidth` would
+    // measure a 0 gutter and overflow. A missing viewport takes the same path.
+    for (const viewport of [{ offsetWidth: 0, clientWidth: 0 }, null]) {
+      const { parentEl, elementEl } = makeElements(viewport);
+      vi.stubGlobal('window', makeWindowStub(parentEl));
+      const { cols } = proposeFor(makeTerminalStub(elementEl));
+      expect(cols).toBe(Math.floor((PARENT_WIDTH - FALLBACK_SCROLLBAR_WIDTH) / CELL_WIDTH));
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('keeps the fallback constant equal to the scrollbar width index.css sets', () => {
+    // The fallback is only reached pre-layout, so nothing else would notice it
+    // drifting from the CSS. Parity here means changing the global scrollbar
+    // width cannot silently leave the pre-layout fit wrong.
+    const css = fs.readFileSync(
+      path.resolve(__dirname, '../../src/renderer/index.css'),
+      'utf-8',
+    );
+    const globalRule = css.match(/^::-webkit-scrollbar\s*\{[^}]*?width:\s*(\d+)px/m);
+    expect(
+      globalRule,
+      'Could not find the global `::-webkit-scrollbar { width: Npx }` rule in '
+      + 'index.css. If the selector moved, update this test and FALLBACK_SCROLLBAR_WIDTH together.',
+    ).not.toBeNull();
+    expect(Number(globalRule![1])).toBe(FALLBACK_SCROLLBAR_WIDTH);
   });
 });
 
@@ -188,28 +276,25 @@ describe('FitAddon.proposeDimensions -- collapsed container bails instead of cla
 
   it('returns undefined when the parent width is 0', () => {
     vi.stubGlobal('window', makeCollapsedWindowStub(parentEl, 'width'));
-    const terminal = makeTerminalStub(elementEl, 'normal', 1000);
-    fitAddon.activate(terminal);
+    fitAddon.activate(makeTerminalStub(elementEl));
     expect(fitAddon.proposeDimensions()).toBeUndefined();
   });
 
   it('returns undefined when the parent height is 0', () => {
     vi.stubGlobal('window', makeCollapsedWindowStub(parentEl, 'height'));
-    const terminal = makeTerminalStub(elementEl, 'normal', 1000);
-    fitAddon.activate(terminal);
+    fitAddon.activate(makeTerminalStub(elementEl));
     expect(fitAddon.proposeDimensions()).toBeUndefined();
   });
 
   it('returns undefined when both dimensions are 0', () => {
     vi.stubGlobal('window', makeCollapsedWindowStub(parentEl, 'both'));
-    const terminal = makeTerminalStub(elementEl, 'normal', 1000);
-    fitAddon.activate(terminal);
+    fitAddon.activate(makeTerminalStub(elementEl));
     expect(fitAddon.proposeDimensions()).toBeUndefined();
   });
 
   it('fit() no-ops (never calls terminal.resize) against a collapsed container', () => {
     vi.stubGlobal('window', makeCollapsedWindowStub(parentEl, 'both'));
-    const terminal = makeTerminalStub(elementEl, 'normal', 1000);
+    const terminal = makeTerminalStub(elementEl);
     const resize = vi.fn();
     (terminal as unknown as { resize: typeof resize }).resize = resize;
     fitAddon.activate(terminal);
@@ -221,7 +306,7 @@ describe('FitAddon.proposeDimensions -- collapsed container bails instead of cla
 describe('FitAddon.proposeDimensions -- NaN parent box bails instead of clamping', () => {
   // A real-world collapsed/mid-transition container does not necessarily
   // report '0' from getComputedStyle - it can report '' or 'auto', which
-  // parseInt turns into NaN, not 0. The guard at fit-addon.ts:88 is written
+  // parseInt turns into NaN, not 0. The guard in fit-addon.ts is written
   // as `!(parentWidth > 0) || !(parentHeight > 0)` specifically because that
   // form also rejects NaN (any comparison against NaN is false). An
   // equivalent-looking `parentWidth === 0 || parentHeight === 0` rewrite
@@ -251,22 +336,19 @@ describe('FitAddon.proposeDimensions -- NaN parent box bails instead of clamping
 
   it('returns undefined when the parent width computed style is NaN (e.g. \'\')', () => {
     vi.stubGlobal('window', makeNaNWindowStub(parentEl, 'width'));
-    const terminal = makeTerminalStub(elementEl, 'normal', 1000);
-    fitAddon.activate(terminal);
+    fitAddon.activate(makeTerminalStub(elementEl));
     expect(fitAddon.proposeDimensions()).toBeUndefined();
   });
 
   it('returns undefined when the parent height computed style is NaN (e.g. \'\')', () => {
     vi.stubGlobal('window', makeNaNWindowStub(parentEl, 'height'));
-    const terminal = makeTerminalStub(elementEl, 'normal', 1000);
-    fitAddon.activate(terminal);
+    fitAddon.activate(makeTerminalStub(elementEl));
     expect(fitAddon.proposeDimensions()).toBeUndefined();
   });
 
   it('returns undefined when both parent dimensions are NaN', () => {
     vi.stubGlobal('window', makeNaNWindowStub(parentEl, 'both'));
-    const terminal = makeTerminalStub(elementEl, 'normal', 1000);
-    fitAddon.activate(terminal);
+    fitAddon.activate(makeTerminalStub(elementEl));
     expect(fitAddon.proposeDimensions()).toBeUndefined();
   });
 });

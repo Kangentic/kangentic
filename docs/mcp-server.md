@@ -804,11 +804,11 @@ Cookie isolation is per worktree (`persist:kngbrowser-<hash(worktreePath)>`) so 
 
 ## Dev-only tool surface (`kangentic_devtools_*`)
 
-When `developer.previewInspectionServer` is enabled in dev builds (the toggle is excluded from production binaries via `__KANGENTIC_DEV__` esbuild dead-code elimination), 28 additional `kangentic_devtools_*` tools are registered against the same MCP server. They wrap a localhost-only HTTP inspection bridge that powers agent-driven UI inspection and interaction. Implementation lives in `src/devtools/mcp/preview-tools.ts` (build-excluded from production).
+When `developer.previewInspectionServer` is enabled in dev builds (the toggle is excluded from production binaries via `__KANGENTIC_DEV__` esbuild dead-code elimination), 31 additional `kangentic_devtools_*` tools are registered against the same MCP server. They wrap a localhost-only HTTP inspection bridge that powers agent-driven UI inspection and interaction. Implementation lives in `src/devtools/mcp/preview-tools.ts` (build-excluded from production).
 
 Tool categories:
 - **Discovery:** `list_instances` - enumerate running preview instances by lockfile
-- **State:** `engine_state`, `renderer_state`, `store_state` - live ActivityStatsSnapshot, the fixed Zustand snapshot, and arbitrary store reads by name plus dot/bracket path
+- **State:** `engine_state`, `renderer_state`, `store_state` - live ActivityStatsSnapshot, the fixed Zustand snapshot, and arbitrary store reads by name plus dot/bracket path. `store_state` also answers MAIN-side namespaces that are not Zustand stores: `detailOwners` returns the task-detail ownership map plus its recent mutation history (claim / release / release-ignored / release-all / resolve). That one exists because ownership was otherwise observable only by calling `requestOpen`, which focuses and can mount a window - probing changed what was being measured
 - **Visual / DOM:** `screenshot`, `screenshot_element`, `query_dom`, `query_all`, `computed_style`, `bounding_box`, `bounding_box_all`, `accessibility_tree`, `mutations` - the `_all` variants measure every matching element in one call
 - **React:** `react_query`, `react_tree`, `react_recent_renders` - fiber walker via `__REACT_DEVTOOLS_GLOBAL_HOOK__`
 - **Console:** `console` - CDP `Console.messageAdded` ring buffer (separate from product `tail_logs`)
@@ -816,6 +816,7 @@ Tool categories:
 - **Eval:** `eval` - evaluate a JavaScript expression and return its serialized value; gated by `developer.previewEvalEnabled`
 - **Cross-instance:** `run_command` - run a product MCP command inside a specific preview instance
 - **Sessions:** `pty_input`, `inject_session_event`, `capture_trace` - `inject_session_event` and `pty_input` raw bytes are gated additionally by `developer.previewEvalEnabled`
+- **Terminal:** `pty_pipeline`, `terminal_state` - `pty_pipeline` reports per-session backpressure (pending / in-flight bytes, paused, scrollback size). `terminal_state` is the cross-process join: every mounted xterm's grid and pixel geometry next to that session's PTY dimensions, with `ptyMatchesGrid` / `colsDrift` / `gridOverflowPx` derived, plus the main and renderer lifecycle traces merged by timestamp (fits, PTY resizes, repaint-settle decisions, replay start / write / abort / done). Neither process can see a grid-vs-PTY mismatch or a replay ordering bug alone, which is why this is one call rather than two
 
 These tools are excluded from production builds at compile time and have no effect in shipped binaries.
 

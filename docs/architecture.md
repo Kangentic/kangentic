@@ -221,6 +221,15 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 |---------|---------|---------|
 | `usage:getDashboardStats` | invoke | Composite usage-statistics payload for the dashboard (KPIs, bucketed token/cost time series, by-model / by-agent breakdowns), for one project or rolled up across every registered project, over the Live/Today/Week/Month/All Time ranges. Sources from the append-only `usage_history` + `conversation_turn_usage` ledgers so totals survive task deletion, bulk-archive, and revert-to-backlog; also merges in-flight sessions from the live `SessionManager` on top (skipped for a day drill or custom window, which are pure ledger accounting) so the SESSIONS KPI and Live view are not undercounted. Read-only; the explicit scope argument carries the project id. |
 
+### Agent Monitor (3 channels)
+Machine-global, like the Mobile Bridge channels: the monitor aggregates live sessions across
+**every** registered project, so neither channel takes a trailing `projectId`.
+| Channel | Pattern | Purpose |
+|---------|---------|---------|
+| `monitor:getSnapshot` | invoke | Cross-project snapshot of every live and recently-finished agent session: owning project, task title / ticket number / column, activity state and reason, agent, model, runtime, last event, and context-window usage. Built by joining the process-global session registry and activity/event/usage caches against each owning project's DB (one warm read per project, not per session). Read-only. |
+| `monitor:revealTask` | invoke | Ask main to reveal a task in the MAIN window (switching project if needed) and focus it. Used by the DETACHED monitor, which is its own renderer with its own stores and so cannot open a task by setting local state. Re-emits the existing `notification:clicked` push so there is one reveal path, not two. |
+| `monitor:changed` | on | Fanned to every window (main + open pop-outs) when the DB-resident half of a row changes (a session spawned or exited, or an agent retitled/moved a task), debounced at 250ms. Live activity does NOT come through here - it rides the unbuffered `session:activity` push and is patched onto rows in place, so a state change needs no round trip. |
+
 ### Config (10 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
@@ -625,7 +634,7 @@ State: `tasks`, `swimlanes`, `archivedTasks`, `loading`, `completingTask`, `comp
 
 State: `sessions`, `activeSessionId`, `openTaskId`, `dialogSessionIds`, `sessionUsage`, `sessionActivity`, `sessionEvents`
 
-- **Terminal ownership handoff** -- `dialogSessionIds` (a string array) lists every session owned by an open task-detail window, so the bottom panel never renders an xterm for a session a window already owns (one xterm per PTY). It replaced the scalar `dialogSessionId` once task detail became modeless and multiple windows can stack. When a window claims a session, the panel unmounts that session's xterm; on release, the panel recreates from scrollback.
+- **Terminal ownership handoff** -- `dialogSessionIds` (a string array) lists every session owned by an open task-detail window, so the bottom panel never renders an xterm for a session a window already owns (one xterm per PTY). It replaced the scalar `dialogSessionId` once task detail became modeless and multiple windows can stack. When a window claims a session, the panel unmounts that session's xterm; on release, the panel recreates from scrollback. The array is renderer-GLOBAL, not per-layer: `useWindowSessionClaims` reconciles it across every window-manager instance in the renderer (`allWindowManagers` -- board, Command Terminal, Agent Monitor), resolving each window's taskId through its manager's `anchorToTaskId` since the board anchors by taskId and the monitor by `projectId:taskId`. A reconciler that walked one layer would treat the other layers' claims as stale and erase them, putting a second xterm on a live PTY.
 - **HMR store re-sync** -- The `vite:afterUpdate` handler in `App.tsx` re-fetches all IPC-backed stores (project, config, board, session) after Vite HMR replaces modules, preventing stores from reverting to defaults. A unit test (`hmr-resync.test.ts`) enforces that new stores are included. Usage and events are scoped to the current project; activity is fetched unscoped so sidebar badges work across all projects.
 - **Project switch cleanup** -- On project switch, `activeSessionId`, `dialogSessionIds`, `openTaskId`, `sessionUsage`, and `sessionEvents` are cleared before re-syncing. A generation counter invalidates in-flight syncs from the previous project. `sessionActivity` and `sessions` are preserved for sidebar badge rendering. After sync completes, any `_pendingOpenTaskId` (set by notification click) is applied and cleared.
 - **Event capping** -- max 500 events per session to bound DOM size in ActivityLog.
@@ -718,7 +727,7 @@ On project open (`src/main/transition-engine/session-startup/`):
 - **Resize debouncing** -- PTY resize calls debounced at 200ms, suppressed during panel drag
 - **Repaint-settled scrollback** - after a width-changing resize, `getScrollback` waits for the agent TUI's async repaint to land before sampling, so a restored terminal never replays a stale narrow frame; while the agent is actively streaming (never quiesces) the wait settles early on the post-resize repaint marker instead of burning the max-wait ceiling (see [session-lifecycle](session-lifecycle.md))
 - **Activity log** -- plain DOM list instead of xterm. Events flow through JSONL files, not terminal output.
-- **Terminal ownership handoff** -- one xterm instance per session at a time prevents duplicate resize calls that corrupt TUI output
+- **Terminal ownership handoff** -- one xterm instance per session at a time prevents duplicate resize calls that corrupt TUI output. Enforced ACROSS renderers, not just within one: main pushes `detail:remoteOwners` (per-recipient, own claims filtered out) so the bottom panel yields its terminal to a detail hosted in the detached Agent Monitor. Without it the panel and the pop-out each mounted an xterm on the same PTY and fitted it to two different widths.
 - **Output batching** -- 16ms flush interval prevents per-character IPC overhead
 - **Scrollback cap** -- 512KB prevents unbounded memory growth
 

@@ -18,6 +18,7 @@ import type { UsageDashboardStats, UsageStatsScopeKind, UsageTimePeriod } from '
 import { useSessionStore } from '../../stores/session-store';
 import { useLiveUsageAggregate } from '../../hooks/useLiveUsageAggregate';
 import { useValuePulse } from '../../hooks/useValuePulse';
+import { CompactTile } from './CompactTile';
 import { formatTokenCount } from '../../utils/format-tokens';
 import { formatCost, formatDuration } from '../../utils/format-session';
 import { KngSparkline } from './charts/KngSparkline';
@@ -104,56 +105,6 @@ function HeroTile({
       <HeroContextLine sub={sub} delta={delta} baseline={deltaBaseline} />
       <div className="flex-1 min-h-8 mt-1.5">
         <KngSparkline points={spark} colorVar={sparkColorVar} className="h-full w-full" animate={animate} />
-      </div>
-    </div>
-  );
-}
-
-/** Neutral signed delta for the secondary strip: the +/- sign carries the
- *  direction (no redundant arrow glyph), muted (activity metrics, not spend),
- *  with the comparison window in the tooltip. */
-function CompactDelta({ delta, baseline }: { delta: number | null; baseline: string }) {
-  if (delta === null || baseline === '') return null;
-  return (
-    <span className="text-[11px] text-fg-muted tabular-nums flex-shrink-0" title={baseline}>
-      {`${delta >= 0 ? '+' : ''}${Math.round(delta * 100)}%`}
-    </span>
-  );
-}
-
-interface CompactTileProps {
-  label: string;
-  icon: ReactNode;
-  value: string;
-  /** Optional styled rendering of `value` (same text content - `value` still
-   *  drives the change pulse and the testid's text). */
-  valueNode?: ReactNode;
-  sub?: string;
-  title?: string;
-  delta?: number | null;
-  deltaBaseline?: string;
-  resetKey: string;
-  testId: string;
-}
-
-/** One card of the secondary stats row: the same chrome as the hero tiles
- *  (and every other surface on the page), just smaller. The icon is a
- *  vertically-centered anchor spanning BOTH text rows, so label and value
- *  share one left edge with nothing floating beside them. */
-function CompactTile({ label, icon, value, valueNode, sub, title, delta = null, deltaBaseline = '', resetKey, testId }: CompactTileProps) {
-  const pulseRef = useValuePulse(value, { resetKey });
-  return (
-    <div className="bg-surface-raised border border-edge rounded-lg px-3 py-2.5 min-w-0 flex items-center gap-2.5" data-testid={testId} title={title}>
-      <span className="flex-shrink-0 text-fg-muted" aria-hidden>{icon}</span>
-      <div className="flex-1 min-w-0">
-        <div className="text-[11px] uppercase tracking-wider text-fg-muted truncate">{label}</div>
-        {/* Two clean columns: value anchored left, quiet signed delta at the
-            cell's far edge - a straight line to scan down the strip. */}
-        <div className="flex items-baseline justify-between gap-1.5 mt-0.5 min-w-0">
-          <span ref={pulseRef} className="text-sm font-semibold text-fg tabular-nums truncate" data-testid={`${testId}-value`}>{valueNode ?? value}</span>
-          <CompactDelta delta={delta} baseline={deltaBaseline} />
-        </div>
-        {sub && <div className="text-[11px] text-fg-muted tabular-nums truncate">{sub}</div>}
       </div>
     </div>
   );
