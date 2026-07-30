@@ -178,11 +178,11 @@ test.describe('NewTaskDialog Advanced section', () => {
   });
 
   test('the agent edit button opens Settings scoped to THIS project, so a picked default actually persists', async () => {
-    // Distinct failure mode from the visibility test above: `openSettingsToTab`
-    // (the sibling action on config-store.ts) never sets `projectSettingsPath`,
-    // and `updateProjectOverride` returns early when that path is null - so
-    // swapping the pencil's call from `openProjectSettings` to
-    // `openSettingsToTab('agent')` would open the SAME-LOOKING Agent tab (the
+    // Distinct failure mode from the visibility test above: opening the panel to
+    // a tab WITHOUT a project path (setting only `settingsOpen` +
+    // `projectSettingsInitialTab`) leaves `projectSettingsPath` null, and
+    // `updateProjectOverride` returns early when that path is null - so a pencil
+    // that opened the Agent tab that way would show the SAME-LOOKING tab (the
     // "Project Defaults" header above renders unconditionally from
     // project-store's currentProject, not from projectSettingsPath) while
     // silently dropping every write made from it. Permission Mode

@@ -160,10 +160,11 @@ export function AdvancedOverridesSection({
   const boardProfiles = useBoardStore((state) => state.boardProfiles);
   const openBoardManager = useBoardStore((state) => state.openBoardManager);
   const globalPermissionMode = useConfigStore((state) => state.config.agent.permissionMode);
-  // The three-arg PROJECT open, never `openSettingsToTab`: the Agent tab's
+  // The three-arg PROJECT open, never a bare open-to-tab: the Agent tab's
   // Project Defaults are `scope: 'project'`, and `updateProjectOverride`
-  // returns early when `projectSettingsPath` is null, so the panel would open
-  // and silently drop the Permission write (.claude/rules/settings-tab-scope.md).
+  // returns early when `projectSettingsPath` is null, so a panel opened
+  // without a project path would silently drop the Permission write
+  // (.claude/rules/settings-tab-scope.md).
   const openProjectSettings = useConfigStore((state) => state.openProjectSettings);
   // Effective-agent resolution for the New Task / Edit dialog: user pick
   // wins over the destination column's override, then the project default,

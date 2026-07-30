@@ -337,7 +337,7 @@ config-only (driven by the Mode preset + Live/Refinement model dropdowns).
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `dictation.enabled` | boolean | `false` | Master on/off. Shows the mic button and enables push-to-talk. (Transcription section row.) |
+| `dictation.enabled` | boolean | `false` | Master on/off. Enables push-to-talk. (Transcription section row.) |
 | `dictation.language` | string (BCP-47) | `'en'` | Spoken language. The Live/Refinement model dropdowns narrow to models that support it; non-English uses the multilingual Whisper builds. (Transcription section row.) |
 | `dictation.punctuation` | boolean | `true` | Add punctuation + capitalization to the committed text. (Transcription section row.) |
 | `dictation.autoSubmit` | boolean | `true` | Press Enter automatically after inserting (via the paste engine's settle -> Enter -> evidence path), or leave the text in the input for review. (Input section row.) |

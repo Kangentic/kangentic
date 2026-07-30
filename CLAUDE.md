@@ -128,13 +128,13 @@ won't be found.
   of any existing terminal - a fresh terminal has no activity to reflect. A thin divider (matching
   the one before the Windows min/max/close controls) sits right after "New terminal", so it reads
   as a transient action distinct from the permanent icon cluster to its right (toggle, Quick Find,
-  mic, stats, settings); the divider mounts/unmounts together with the button so it never leaves
+  stats, settings); the divider mounts/unmounts together with the button so it never leaves
   an orphan line when the layer is closed. This pair is the LEFT-MOST icons in the title bar's
   right-aligned button row (before Quick Find), deliberately: that row is right-anchored (a
   `flex-1` spacer eats the space to its left), so an element's on-screen distance from the window
   edge is fixed by whatever comes AFTER it, never before it. Keeping "New terminal" + the divider
   + the toggle first means the conditionally-mounted "New terminal" button
-  appearing/disappearing as the layer opens/closes never shifts Quick Find, the mic, stats,
+  appearing/disappearing as the layer opens/closes never shifts Quick Find, stats,
   settings, or the OS window controls - only this pair's own position moves. The toggle glyph's
   stroke color is the aggregate activity of the project's terminals (active-green working /
   attention-amber needs-you / muted rest, via the central `--kng-active` / `--kng-attention`

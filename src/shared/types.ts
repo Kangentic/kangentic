@@ -2224,7 +2224,7 @@ export interface AppConfig {
    * by the `dictation.pushToTalk` keybinding-registry id.
    */
   dictation?: {
-    /** Master toggle: show the mic button and enable push-to-talk. Default false. */
+    /** Master toggle: enable push-to-talk dictation. Default false. */
     enabled?: boolean;
     /** Engine selection. `auto` tiers by detected hardware. Default `auto`. */
     engineMode?: DictationEngineMode;

@@ -1,8 +1,7 @@
 import React from 'react';
-import { ChartColumn, CloudDownload, Command, Compass, Mic, Minus, Settings, Square, X } from 'lucide-react';
+import { ChartColumn, CloudDownload, Command, Compass, Minus, Settings, Square, X } from 'lucide-react';
 import { useProjectStore } from '../../stores/project-store';
 import { useConfigStore } from '../../stores/config-store';
-import { useDictationStore } from '../../stores/dictation-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useUpdaterStore } from '../../stores/updater-store';
 import { useUsageDashboardStore } from '../../stores/usage-dashboard-store';
@@ -42,17 +41,9 @@ export function TitleBar({
   const setOnboardingChecklistOpen = useConfigStore((s) => s.setOnboardingChecklistOpen);
   const setSettingsOpen = useConfigStore((s) => s.setSettingsOpen);
   const openProjectSettings = useConfigStore((s) => s.openProjectSettings);
-  const openSettingsToTab = useConfigStore((s) => s.openSettingsToTab);
 
   const pendingUpdate = useUpdaterStore((s) => s.pendingUpdate);
   const openUpdateModal = useUpdaterStore((s) => s.openModal);
-
-  // Voice dictation mic button: shown only when dictation is enabled; its color
-  // reflects whether a push-to-talk session is live (active token), matching the
-  // command-terminal glyph's activity language.
-  const dictationEnabled = useConfigStore((s) => s.globalConfig.dictation?.enabled ?? false);
-  const dictationStatus = useDictationStore((s) => s.status);
-  const dictationActive = dictationStatus === 'recording' || dictationStatus === 'finalizing';
 
   // Aggregate activity across THIS project's Command Terminal sessions, surfaced
   // as the title-bar terminal icon's COLOR (the same active/idle language as the
@@ -94,16 +85,6 @@ export function TitleBar({
       openProjectSettings(currentProject.path, currentProject.name);
     } else {
       setSettingsOpen(true);
-    }
-  };
-
-  // Push-to-talk is the primary trigger; clicking the mic opens settings directly
-  // to the Dictation tab (works with or without a project, since it is global).
-  const handleMicClick = () => {
-    if (currentProject) {
-      openProjectSettings(currentProject.path, currentProject.name, 'dictation');
-    } else {
-      openSettingsToTab('dictation');
     }
   };
 
@@ -178,7 +159,7 @@ export function TitleBar({
             position is fixed by whatever comes AFTER it, not before it. Keeping
             this pair first means the conditional "New terminal" button
             mounting/unmounting as the layer opens/closes never shifts Quick
-            Find / mic / stats / settings / the window controls - only this
+            Find / stats / settings / the window controls - only this
             pair's own position moves. "New terminal" sits to the LEFT of the
             toggle (reads outward from the toggle as the layer gains a spawn
             affordance) and reuses the same terminal glyph with the center `+`
@@ -229,19 +210,6 @@ export function TitleBar({
             data-testid="open-search-button"
           >
             <Command size={20} />
-          </button>
-        )}
-        {dictationEnabled && (
-          <button
-            onClick={handleMicClick}
-            className={`p-1.5 hover:bg-surface-hover rounded transition-colors ${
-              dictationActive ? 'text-active' : 'text-fg-muted hover:text-fg'
-            }`}
-            title={dictationActive ? 'Listening...' : 'Voice dictation'}
-            aria-label={dictationActive ? 'Listening' : 'Voice dictation'}
-            data-testid="dictation-mic-button"
-          >
-            <Mic size={20} />
           </button>
         )}
         <button
