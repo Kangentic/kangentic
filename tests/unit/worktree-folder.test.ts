@@ -116,10 +116,34 @@ describe('windows path-length diagnosis', () => {
         'ENAMETOOLONG: name too long, open ...',
         'error: unable to create file: Filename too long',
         'The filename or extension is too long.',
+        // Both captured verbatim from a failing React Native Android build.
+        'ninja: error: Stat(EnrichedMarkdownTextSpec_autolinked_build/CMakeFiles/'
+        + 'react_codegen_EnrichedMarkdownTextSpec.dir/C_/Users/dev/proj/node_modules/'
+        + 'react-native-enriched-markdown/android/generated/jni/react/renderer/components/'
+        + 'EnrichedMarkdownTextSpec/ComponentDescriptors.cpp.o): Filename longer than 260 characters',
+        "ninja: error: manifest 'build.ninja' still dirty after 100 tries",
+      ]) {
+        expect(describeWorktreePathLengthCause(DEEP_PATH, new Error(message))).toContain('ran out of path');
+      }
+    });
+  });
+
+  /**
+   * CMake's object-path policy warning is NOT a path-length failure signal.
+   *
+   * Measured 2026-07-30 on a React Native Android build: this text appeared 402
+   * times in a build whose real failure was ninja's manifest loop, and 0 times
+   * in a build that still failed after CMAKE_OBJECT_PATH_MAX was raised to 1000.
+   * The build routinely survives it, so matching it attributes an unrelated
+   * failure to path length.
+   */
+  it('stays silent on the CMake object-path warning, which builds survive', () => {
+    onWindows(() => {
+      for (const message of [
         'has 195 characters. The maximum full path to an object file is 250 characters (CMAKE_OBJECT_PATH_MAX)',
         'Object file RNScreens.cpp.o cannot be safely placed under this directory',
       ]) {
-        expect(describeWorktreePathLengthCause(DEEP_PATH, new Error(message))).toContain('ran out of path');
+        expect(describeWorktreePathLengthCause(DEEP_PATH, new Error(message))).toBeNull();
       }
     });
   });

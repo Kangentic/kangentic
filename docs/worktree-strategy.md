@@ -34,7 +34,11 @@ it would be recreated in.
 
 How much that matters in practice is measured in
 [cross-platform.md](cross-platform.md#windows-max_path-is-mostly-not-the-wall-people-expect), which
-also records why there is no path-length warning and no configurable worktree root.
+also records why there is no path-length warning and no configurable worktree root. In short: a
+shorter root does help a native Windows toolchain, but it can never be a guarantee, because
+Kangentic controls neither the project's own location nor how deep a build runs beneath it. The
+naming change is worth making on its own merits (stability, see below); treat the path saving as a
+bonus rather than a fix.
 
 #### The folder is chosen once and never changes
 

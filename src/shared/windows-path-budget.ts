@@ -14,6 +14,12 @@
  * disproves them, so they are gone. What remains is recognition after the fact:
  * when a worktree operation has ALREADY failed, say whether the error looks like
  * a path-length error, so the user is not left reading raw git output.
+ *
+ * The failure that does bind on Windows is not the worktree path being long in
+ * itself. It is a tool composing a path from the worktree and hitting MAX_PATH
+ * on the composed string. Shortening the worktree root buys room; it cannot be
+ * a guarantee, because Kangentic controls neither the project's own location nor
+ * how deep a toolchain builds beneath it.
  */
 
 /** Windows MAX_PATH, including the terminating NUL. Kept for message text only. */
@@ -25,15 +31,25 @@ export const WINDOWS_MAX_PATH = 260;
  *
  * - `ENAMETOOLONG` is the POSIX-style errno libuv surfaces.
  * - "filename or extension is too long" is the Win32 message (error 206).
- * - The two CMake strings are its object-path policy check, which is not an OS
- *   limit and fires well before one.
+ * - "filename longer than 260 characters" is ninja's own stat failure.
+ * - "still dirty after" is ninja giving up regenerating its manifest. It reads
+ *   like a build-graph problem and names no path, but the cause is a required
+ *   output that ninja stats through a `..` from the build directory: Windows
+ *   applies MAX_PATH to the composed string BEFORE collapsing the `..`, so the
+ *   stat fails on a file that exists, the generator re-runs, and it loops.
+ *
+ * CMake's `CMAKE_OBJECT_PATH_MAX` strings are deliberately NOT here. Measured
+ * on 2026-07-30 against a React Native Android build: they fired 402 times on a
+ * build whose actual failure was the ninja loop above, and 0 times on a build
+ * that still failed after the CMake limit was raised. They are a policy warning
+ * the build routinely survives, so matching them mislabels the cause.
  */
 const PATH_LENGTH_ERROR_SIGNATURES = [
   'enametoolong',
   'filename or extension is too long',
   'filename too long',
-  'cmake_object_path_max',
-  'cannot be safely placed',
+  'filename longer than',
+  "manifest 'build.ninja' still dirty after",
 ];
 
 /** Every message in the `cause` chain, so a wrapped error still matches. */

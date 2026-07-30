@@ -148,24 +148,51 @@ Node, the JVM and Git route around MAX_PATH with the `\\?\` prefix, so they are 
 registry setting and unaffected by depth at these scales. **A length-based warning would have fired
 on that healthy tree and told the user nothing true.**
 
-### The limit that does bind is CMake's, and it is a policy, not the OS
+### The limit that does bind is still MAX_PATH, applied to a string you never see
 
-The one thing that failed in that worktree was the native compile, against CMake's
-`CMAKE_OBJECT_PATH_MAX`. That defaults to 250 on Windows and is a check CMake applies to its own
-object paths; it is unrelated to `MAX_PATH` and fires well below it.
+The one thing that failed in that worktree was the native compile. It is tempting to blame CMake's
+`CMAKE_OBJECT_PATH_MAX` (250 on Windows), because that warning floods the log. Measurement says
+otherwise: raising it to 1000 took the warnings from **402 to zero and the build failed
+identically**, so it is a policy warning the build routinely survives, not the cause.
 
-CMake's MD5 shortening **adapts to the checkout root length**, so the depth it produces is not a
-constant that can be added to a root length:
+The real mechanism is MAX_PATH applied to a composed path that never appears in any log:
 
-| Checkout | Root | Longest object path (relative) | Absolute | Objects built |
-|---|---|---|---|---|
-| `C:\kw` | 5 | 242 | 248 | 460 |
-| The project at its normal location | 48 | 230 | **279** | 569 |
-| Kangentic worktree, pre-numeric scheme | 98 | n/a | n/a | **0** |
+```
+ninja explain: output ../prefab/arm64-v8a/prefab/lib/aarch64-linux-android/cmake/
+               ReactAndroid/ReactAndroidConfig.cmake of phony edge with no inputs doesn't exist
+```
 
-Note the middle row: that build succeeded at object paths of 279, past both MAX_PATH and CMake's
-250. So neither number is a clean threshold, and the practical limit for a given project can only be
-found by building it.
+That file exists. Its normalized absolute path is 254 characters. But ninja stats it **relative to
+the build directory**, and Windows measures the composed string *before* collapsing the `..`:
+
+| | |
+|---|---|
+| build directory | 170 |
+| relative path | 96 |
+| **what Windows actually resolves** | **267** |
+| normalized path that exists on disk | 254 |
+
+The stat fails, ninja concludes a required output is missing, re-runs the generator, and loops until
+`ninja: error: manifest 'build.ninja' still dirty after 100 tries` - a message that names no path, no
+limit, and no file.
+
+A second, independent case appears once the first is cleared: CMake hashes leading components of an
+object name to fit its own limit, but when even the hashed floor exceeds that limit it gives up and
+emits the **full** unshortened name (395 characters, where the floor would have been 254), and ninja
+reports `Filename longer than 260 characters`.
+
+Both are MAX_PATH, and both scale with the checkout root, which is why a short root works:
+
+| Checkout | Root | Native build |
+|---|---|---|
+| `C:\kw` | 5 | builds |
+| The project at its normal location | 48 | builds |
+| Kangentic worktree, numeric scheme | 73 | fails |
+| Kangentic worktree, pre-numeric scheme | 98 | fails |
+
+The practical limit for a given project can only be found by building it, and it moves with the
+toolchain: the binding module here was whichever one had the deepest build directory combined with
+the longest prefab dependency name.
 
 ### What Kangentic does about it
 
@@ -177,22 +204,32 @@ plus a short number); see
 There is deliberately **no path-length threshold, no proactive warning, and no configurable worktree
 root**. A length check fires on length rather than on the presence of a native toolchain, so it warns
 the majority about a failure they will never see, and it cannot observe the case that actually breaks
-(a CMake object-path overflow surfaces inside Gradle, in the agent's terminal). A short worktree root
-would not fix that case either.
+(the overflow surfaces inside Gradle, in the agent's terminal).
+
+A short worktree root **does** help, as the table above shows, but it can never be a guarantee:
+Kangentic controls neither where the user's project lives nor how deep a toolchain builds beneath it.
+Bounding its own contribution is the honest limit of what it can promise.
 
 `src/shared/windows-path-budget.ts` therefore holds no reserves. It recognizes a path-length failure
 **after** one has happened, from the error text (`ENAMETOOLONG`, "filename or extension is too long",
-`CMAKE_OBJECT_PATH_MAX`, "cannot be safely placed"), matching through a wrapped `cause` chain, and
-`describeWorktreePathLengthCause` appends an explanation so the user is not left reading raw git
-output. It is a no-op off Windows.
+"Filename longer than", "manifest 'build.ninja' still dirty after"), matching through a wrapped
+`cause` chain, and `describeWorktreePathLengthCause` appends an explanation so the user is not left
+reading raw git output. It is a no-op off Windows.
 
-A project whose native toolchain genuinely cannot fit has to live at a shorter path; that is what
-short-path checkouts like `C:\kw` are for, and it is a property of the project's location rather than
-of Kangentic.
+The CMake `CMAKE_OBJECT_PATH_MAX` strings are deliberately **not** in that list. They are a policy
+warning builds routinely survive: measured, they fired 402 times on a build that failed for the ninja
+reason above, and zero times on a build that still failed after the limit was raised.
+
+A project whose native toolchain genuinely cannot fit has two options, and the second is usually
+better. It can live at a shorter path, which is a property of the project's location rather than of
+Kangentic. Or it can point the toolchain's build output somewhere short: Android's
+`externalNativeBuild.cmake.buildStagingDirectory`, for instance, moves `.cxx` out of the source tree
+and takes checkout depth out of the calculation entirely, which fixes the case at **any** depth
+rather than buying a fixed number of characters.
 
 Note that Node resolves through the worktree's `node_modules` junction using the pre-resolution
-path, so the 142-character reserve applies to the worktree path even though the junction target
-lives at the project root.
+path, so a tool inside a worktree sees the worktree path even though the junction target lives at
+the project root. A junction is not a way around any of this.
 
 ## WSL Support
 
