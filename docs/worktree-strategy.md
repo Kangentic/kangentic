@@ -137,6 +137,25 @@ This guard lives inside `WorktreeManager.ensureWorktree` (via `resolveWorktreeBa
 `ensureWorktree`) gets the identical no-commits fallback. `ensureTaskBranchCheckout` keeps its own
 separate no-commits guard, since it does not go through `WorktreeManager.ensureWorktree`.
 
+#### Sharing one checkout is guarded, not prevented
+
+Every task that does not get a worktree runs in the same directory, the project path. Kangentic does
+not stop two agents from working there at once, but it does refuse to **change the branch** under a
+live one: `ensureTaskBranchCheckout` throws `BranchCheckoutBlockedError` when another task has a
+running or queued session whose `cwd` is that directory.
+
+The check lives in that function rather than in a caller, deliberately. It previously sat in
+`task-move.ts` keyed on `task.base_branch`, while the decision to check out is keyed on
+`usesCustomBranch || base_branch`, so a task with a custom branch and no base branch checked out with
+the guard never running. Co-locating the guard with the checkout makes that class of drift
+impossible, and running it inside the per-project git queue (which already wraps the checkout) makes
+the probe atomic against every other checkout on the project without adding a third lock.
+
+Where the error goes depends on the entry point, exactly as worktree failures do. A task **move**
+surfaces it as a toast. Create, promote, unarchive and MCP auto-spawn deliberately keep the task and
+skip only the spawn, so they emit `task:spawnBlocked` and the renderer toasts it, naming the blocking
+task. Without that push, "created and silently not spawned" looked identical to success.
+
 ### When worktree creation fails with a written error
 
 Two distinct failure modes raise an actionable `Error` rather than falling back silently. Where

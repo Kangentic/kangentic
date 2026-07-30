@@ -491,7 +491,11 @@ export async function autoSpawnForTask(
         await ensureTaskBranchCheckout(context, fullTask, projectPath);
       } catch (checkoutError) {
         console.error('[MCP auto-spawn] Branch checkout failed:', checkoutError);
-        notifyBranchCheckoutBlocked(context, fullTask, checkoutError);
+        // The explicit projectId, never the ambient current one: MCP auto-spawn
+        // targets whichever project the tool named, which is often not the
+        // focused one. Falling back to `context.currentProjectId` would stamp
+        // the notice with the wrong project, and the renderer filters on it.
+        notifyBranchCheckoutBlocked(context, fullTask, checkoutError, projectId);
         return;
       }
 

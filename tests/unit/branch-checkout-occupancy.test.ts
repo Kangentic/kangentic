@@ -12,6 +12,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import path from 'node:path';
 
+/**
+ * The two locks are stubbed as pass-throughs here so these tests isolate the
+ * guard. That is only sound because the REAL per-project git queue is already
+ * pinned to propagate a rejecting callback out to its caller, in
+ * `worktree-manager.test.ts` ("a failing operation rejects", "a thrown
+ * high-priority op does not wedge the runner"). If that ever stopped holding,
+ * the guard would throw into a queue that swallowed it and these tests would
+ * still pass, so the two files are load-bearing together.
+ */
 const ensureWorktreeMock = vi.fn();
 const checkoutBranchMock = vi.fn();
 const withGitLockMock = vi.fn(async (_projectPath: string, body: () => Promise<void>) => body());
