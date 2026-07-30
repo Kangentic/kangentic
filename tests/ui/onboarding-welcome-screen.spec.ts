@@ -10,13 +10,27 @@ test.describe.configure({ mode: 'parallel' });
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
 
+interface LaunchMotionOptions {
+  /** Emulate the OS-level `prefers-reduced-motion: reduce` preference. */
+  reducedMotion?: boolean;
+  /** Add `.no-motion` to `<html>` before React paints, which is what the app's
+   *  Animations-off setting does (`config-store.ts`). Set the class directly
+   *  rather than seeding `animationsEnabled: false`: that subscription fires
+   *  only on a CHANGE, so a pre-seeded false never toggles the class on. */
+  noMotionClass?: boolean;
+}
+
 async function launchWithOverrides(
   overrides: Record<string, unknown>,
   configOverrides?: Record<string, unknown>,
+  motion?: LaunchMotionOptions,
 ): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady(VITE_URL);
   const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
+  const context = await browser.newContext({
+    viewport: { width: 1920, height: 1080 },
+    ...(motion?.reducedMotion ? { reducedMotion: 'reduce' as const } : {}),
+  });
   const page = await context.newPage();
   await page.addInitScript((args: { agents: Record<string, unknown>; config: Record<string, unknown> | null }) => {
     (window as unknown as { __mockAgentListOverrides: Record<string, unknown> }).__mockAgentListOverrides = args.agents;
@@ -24,6 +38,18 @@ async function launchWithOverrides(
       (window as unknown as { __mockConfigOverrides: Record<string, unknown> }).__mockConfigOverrides = args.config;
     }
   }, { agents: overrides, config: configOverrides ?? null });
+  if (motion?.noMotionClass) {
+    await page.addInitScript(() => {
+      // Applied twice on purpose. DOMContentLoaded is the reliable pass, because an init script
+      // runs at document-start where `documentElement` may not exist yet; it still lands before
+      // the mascot's first paint, since React's initial commit is scheduled asynchronously and
+      // runs after that event even though the deferred module script executes before it. The
+      // immediate pass just removes the dependency on that ordering.
+      const applyNoMotion = () => document.documentElement?.classList.add('no-motion');
+      applyNoMotion();
+      document.addEventListener('DOMContentLoaded', applyNoMotion);
+    });
+  }
   await page.addInitScript({ path: MOCK_SCRIPT });
   await page.goto(VITE_URL);
   await page.waitForLoadState('load');
@@ -110,6 +136,56 @@ test.describe('Welcome screen readiness', () => {
     await expect(mascot.locator('.overseer-frame--rest')).toHaveCount(1);
     await expect(mascot.locator('.overseer-frame--blink')).toHaveCount(1);
     await expect(mascot.locator('.overseer-frame--wave')).toHaveCount(1);
+  });
+
+  // The mount set comes from each sequence's `mountFrames` in the branding package, which is NOT
+  // the set its `clip` plays: a sequence rests on `restFrame` when it ends and under reduced
+  // motion even when the clip never names that frame. Mount only the played poses and the mascot
+  // renders NOTHING once motion is off, because `.overseer-frame` is `visibility: hidden` by
+  // default and only `.overseer-frame--rest` unhides. These two tests are the guard: they assert
+  // the rest frame is actually VISIBLE (Playwright honors `visibility: hidden`), which is what a
+  // mount-set regression would break. Upstream shipped this bug twice, so pin both motion paths -
+  // they are not equivalent (`.no-motion` zeroes `animation-duration`; the media query sets
+  // `animation: none`).
+  test('with the Animations setting off, the mascot rests on the canonical frame', async () => {
+    ({ browser, page } = await launchWithOverrides({}, undefined, { noMotionClass: true }));
+
+    const mascot = page.getByRole('img', { name: 'Pixel-art Kangentic mascot' });
+    await expect(mascot).toBeVisible();
+    await expect(mascot.locator('.overseer-frame--rest')).toBeVisible();
+
+    // The intro is a one-shot whose animationend still fires at 0s, so it must have handed off
+    // rather than leaving the hero frozen mid-wave.
+    await expect.poll(
+      async () => mascot.getAttribute('class'),
+      { timeout: 5000 },
+    ).toContain('overseer--blink-loop');
+    await expect(mascot.locator('.overseer-frame--rest')).toBeVisible();
+
+    // Prove the setting is actually in force, or this test cannot go red for its own premise: the
+    // 600ms intro hands off well inside the poll above and the rest frame is visible for most of
+    // both cycles, so every assertion so far passes identically on the normal animated path.
+    // blink-loop's rest track reads '3.807s' there.
+    const restFrameDuration = await mascot.locator('.overseer-frame--rest')
+      .evaluate((element) => getComputedStyle(element).animationDuration);
+    expect(
+      restFrameDuration,
+      '.no-motion never took effect, so this test was exercising the normal animated path',
+    ).toBe('0s');
+  });
+
+  test('under prefers-reduced-motion, the mascot rests on the canonical frame', async () => {
+    ({ browser, page } = await launchWithOverrides({}, undefined, { reducedMotion: true }));
+
+    const mascot = page.getByRole('img', { name: 'Pixel-art Kangentic mascot' });
+    await expect(mascot).toBeVisible();
+    // The packaged CSS sets `animation: none` here, so no animationend ever fires and the intro
+    // never hands off. Resting is reached by doing nothing, which is the correct rendering.
+    await expect(mascot.locator('.overseer-frame--rest')).toBeVisible();
+    // Count first: `toBeHidden` also passes for an ABSENT element, so on its own it would survive
+    // the very mount-set regression these two tests exist to catch.
+    await expect(mascot.locator('.overseer-frame--wave')).toHaveCount(1);
+    await expect(mascot.locator('.overseer-frame--wave')).toBeHidden();
   });
 
   test('the app version renders as a pill, not near-invisible micro text', async () => {

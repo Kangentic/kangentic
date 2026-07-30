@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import animations from '@kangentic/branding/assets/mascot/animations.json';
 import overseerRestUrl from '@kangentic/branding/assets/mascot/overseer.svg?url';
 import overseerBlinkUrl from '@kangentic/branding/assets/mascot/overseer-blink.svg?url';
 import overseerWaveUrl from '@kangentic/branding/assets/mascot/overseer-wave.svg?url';
@@ -15,12 +16,65 @@ const FRAME_URLS: Record<string, string> = {
   wave: overseerWaveUrl,
 };
 
-/** Which frames each sequence needs mounted, per animations.json. */
-const SEQUENCE_FRAMES: Record<OverseerSequence, string[]> = {
-  none: ['rest'],
-  'wave-once': ['rest', 'wave'],
-  'blink-loop': ['rest', 'blink'],
-};
+/**
+ * The frame KEYS this component can render. Exported for `tests/unit/branding-assets.test.ts`,
+ * read from the real map rather than a hand-copied twin (as `ActivityMark`'s mark list is).
+ *
+ * `mountFramesFor` silently DROPS a name with no `FRAME_URLS` entry, so a branding release that
+ * renamed a key while shipping the same file (`rest` -> `idle`, still `overseer.svg`) would filter
+ * every frame out and render an empty div. That test's file-name check cannot see a key rename,
+ * because the file it looks for is still imported; comparing key sets can.
+ */
+export const RENDERABLE_FRAME_KEYS = Object.keys(FRAME_URLS);
+
+/**
+ * The shipped contract, re-declared so the wide inferred JSON type is not indexed directly.
+ *
+ * `sequences` is PARTIAL on purpose, for the same reason `ActivityMark`'s `marks` is: this is
+ * package data crossing the TypeScript boundary, so a total `Record` would be a claim the type
+ * system cannot check. A branding release that renamed a sequence would still typecheck, and the
+ * `?? []` below is the runtime floor. `tests/unit/branding-assets.test.ts` fails CI on that drift.
+ *
+ * Exported because `mountFramesFor` takes it as a parameter, so the tests can build fabricated
+ * contracts for the drift cases the installed package never produces.
+ */
+export interface MascotAnimations {
+  restFrame: string;
+  sequences: Partial<Record<OverseerSequence, { mountFrames?: string[] }>>;
+}
+
+const CONTRACT = animations as unknown as MascotAnimations;
+
+/**
+ * Every frame div the given sequences need MOUNTED, read from the package's `mountFrames`.
+ *
+ * `mountFrames` is not `clip`: `clip` is what to PLAY, `mountFrames` is what to MOUNT. A sequence
+ * rests on `restFrame` when it ends and under reduced motion even when its clip never names that
+ * frame, so deriving the set from the clip mounts too little. Upstream's own example: `running-loop`
+ * plays step-a and step-b but mounts step-a, step-b and rest, and mounting only the played pair
+ * renders nothing at all once motion is off.
+ *
+ * `restFrame` is unioned in unconditionally rather than trusted to appear in every sequence's
+ * `mountFrames`, because the base `.overseer-frame--rest { visibility: visible }` rule needs that
+ * div to exist for the mascot to render at all.
+ *
+ * Names with no `FRAME_URLS` entry are dropped: this component imports only the frames its three
+ * supported sequences use, so an upstream addition must not render `<img src={undefined}>`.
+ *
+ * Takes the contract as a parameter rather than closing over `CONTRACT` so the three drift branches
+ * above (rest unioned in, unknown name dropped, sequence absent) can be pinned against fabricated
+ * contracts in `tests/unit/overseer-mascot-frames.test.ts`. None of them fires against the
+ * installed package, so without that they would read as untested defensive code.
+ */
+export function mountFramesFor(contract: MascotAnimations, sequences: OverseerSequence[]): string[] {
+  const frameKeys = new Set<string>([contract.restFrame]);
+  for (const sequenceKey of sequences) {
+    for (const frameKey of contract.sequences[sequenceKey]?.mountFrames ?? []) {
+      frameKeys.add(frameKey);
+    }
+  }
+  return [...frameKeys].filter((frameKey) => frameKey in FRAME_URLS);
+}
 
 export interface OverseerMascotProps {
   /** Integer multiple of the 18x12 pixel grid. Width-only; height derives
@@ -38,7 +92,8 @@ export interface OverseerMascotProps {
  * Renders the Overseer mascot via the shipped @kangentic/branding animation
  * contract (assets/mascot/animations.css + animations.json). No hand-written
  * keyframes or durations - pixel-art-conventions.md forbids re-authoring the
- * timings a consumer imports.
+ * timings a consumer imports - and no hand-written frame list either: the mount
+ * set comes from each sequence's `mountFrames` (see `mountFramesFor`).
  *
  * The intro -> sequence handoff is driven by `animationend`, never a timer, so
  * the one-shot's duration stays owned by the package. Per motion-craft, JS here
@@ -69,10 +124,7 @@ export function OverseerMascot({ scale, sequence = 'none', intro, className = ''
   // Mount the union of both sequences' frames so the handoff never remounts an
   // <img> mid-animation. A frame the active sequence does not name simply keeps
   // the base `.overseer-frame` visibility:hidden.
-  const mountedFrames = [...new Set([
-    ...SEQUENCE_FRAMES[sequence],
-    ...(intro ? SEQUENCE_FRAMES[intro] : []),
-  ])];
+  const mountedFrames = mountFramesFor(CONTRACT, intro ? [sequence, intro] : [sequence]);
 
   const sequenceClass = activeSequence === 'none' ? '' : `overseer--${activeSequence}`;
 

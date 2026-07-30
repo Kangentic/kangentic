@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { ACTIVITY_MARK_NAMES } from '../../src/renderer/components/ActivityMark';
+import { RENDERABLE_FRAME_KEYS } from '../../src/renderer/components/onboarding/OverseerMascot';
 
 // Desktop icons are consumed directly from node_modules/@kangentic/branding (see
 // electron-builder.yml and src/main/window-utils.ts resolveIconPath) instead of a hand-placed
@@ -29,8 +30,9 @@ const COLOR_MARK_CONSUMER = 'src/renderer/components/layout/WelcomeScreen.tsx';
 
 // The Overseer mascot: consumed via the shipped animation contract
 // (assets/mascot/animations.css + animations.json), never hand-authored
-// timings (pixel-art-conventions.md). OverseerMascot.tsx supports a subset of
-// the package's sequences; this pins that subset's frames against the
+// timings (pixel-art-conventions.md) and never a hand-authored frame list.
+// OverseerMascot.tsx supports a subset of the package's sequences and mounts
+// each one's declared `mountFrames`; this pins that subset against the
 // installed package so a branding upgrade that renames/drops a frame file
 // fails here instead of shipping a broken <img>.
 const MASCOT_DIR = path.join(BRANDING_ROOT, 'assets', 'mascot');
@@ -41,7 +43,17 @@ const MASCOT_IMPORTERS = [
   'src/renderer/components/layout/WelcomeScreen.tsx',
   'src/renderer/components/onboarding/WelcomeChecklistDialog.tsx',
 ];
-const SUPPORTED_SEQUENCES = ['wave-once', 'blink-loop'];
+// 'none' is included: OverseerMascot's default `sequence`, and a real entry in animations.json
+// (mountFrames ['rest']). Leaving it out let the one sequence the component falls back to go
+// unchecked by the frame-import test below.
+const SUPPORTED_SEQUENCES = ['none', 'wave-once', 'blink-loop'];
+// Which of those the PACKAGE must keep declaring. 'none' is deliberately absent: it is the
+// component's own default meaning "no animation", and `mountFramesFor` falls back to restFrame when
+// a sequence is missing, so upstream dropping that degenerate entry (`clip: []`) cannot break the
+// mascot. Requiring it would redden CI on a package change with no consumer impact. The two
+// ANIMATED sequences are different - losing one leaves the mascot frozen on its first frame.
+// Derived, not a second hand-maintained list: a fourth supported sequence must be required too.
+const REQUIRED_SEQUENCES = SUPPORTED_SEQUENCES.filter((key) => key !== 'none');
 
 // The activity marks: the nine glyphs that express agent/terminal activity, consumed via the
 // shipped contract (assets/activity/activity.css + activity.json) rather than hand-authored
@@ -81,20 +93,29 @@ interface ActivityContractJson {
 }
 
 interface MascotAnimationsJson {
+  restFrame: string;
   frames: Record<string, { file: string }>;
-  sequences: Record<string, {
-    idle?: { frame: string };
-    clip: Array<{ frame: string }>;
-  }>;
+  sequences: Record<string, { mountFrames?: string[] }>;
 }
 
-/** Every frame key a sequence actually renders: clip poses plus its idle rest frame, if any. */
+/**
+ * Every frame key a sequence needs MOUNTED: mirrors OverseerMascot's `mountFramesFor` exactly -
+ * the declared `mountFrames`, with `restFrame` unioned in unconditionally.
+ *
+ * This used to be derived as "clip poses plus the idle rest frame", which was only ACCIDENTALLY
+ * right for the three sequences the component supports. `clip` is what to PLAY; `mountFrames` is
+ * what to MOUNT, and a sequence rests on `restFrame` when it ends and under reduced motion even
+ * when its clip never names that frame. `running-loop` is the counterexample: clip+idle derives
+ * step-a and step-b, misses rest, and a component mounting only that pair renders nothing at all
+ * with motion off - while this test certified the set as complete. Read the declared contract.
+ *
+ * Deliberately tolerant of a missing sequence or absent `mountFrames`, exactly as the component is.
+ * The dedicated mountFrames test below is what fails on that drift, with a better message than a
+ * throw from inside this helper.
+ */
 function framesUsedBySequence(animations: MascotAnimationsJson, sequenceKey: string): string[] {
-  const sequence = animations.sequences[sequenceKey];
-  if (!sequence) throw new Error(`animations.json has no sequence "${sequenceKey}"`);
-  const frameKeys = new Set(sequence.clip.map((pose) => pose.frame));
-  if (sequence.idle) frameKeys.add(sequence.idle.frame);
-  return [...frameKeys];
+  const mountFrames = animations.sequences[sequenceKey]?.mountFrames ?? [];
+  return [...new Set([...mountFrames, animations.restFrame])];
 }
 
 // electron-builder.yml has five distinct icon sites that were repointed at the
@@ -107,7 +128,7 @@ function framesUsedBySequence(animations: MascotAnimationsJson, sequenceKey: str
 // that site's test.
 const BRANDING_DESKTOP_PREFIX = 'node_modules/@kangentic/branding/resources/desktop/';
 
-/** Extract the full indented body of a top-level YAML key (e.g. "win", "mac", "linux") --
+/** Extract the full indented body of a top-level YAML key (e.g. "win", "mac", "linux"):
  *  every line following "<key>:\n" up to (not including) the next unindented line. */
 function extractTopLevelBlock(yamlSource: string, topLevelKey: string): string {
   const match = yamlSource.match(new RegExp(`\\n${topLevelKey}:\\n((?:[ \\t].*\\n?)*)`));
@@ -266,12 +287,67 @@ describe('Overseer mascot', () => {
     expect(missing, `animations.json names frame files that do not exist:\n${missing.join('\n')}`).toEqual([]);
   });
 
-  it('animations.json still declares every sequence OverseerMascot.tsx supports', () => {
+  it('animations.json still declares every animated sequence OverseerMascot.tsx plays', () => {
     const animations: MascotAnimationsJson = JSON.parse(fs.readFileSync(MASCOT_JSON, 'utf-8'));
-    const missing = SUPPORTED_SEQUENCES.filter((key) => !animations.sequences[key]);
+    const missing = REQUIRED_SEQUENCES.filter((key) => !animations.sequences[key]);
     expect(
       missing,
-      `@kangentic/branding dropped sequence(s) OverseerMascot.tsx still supports:\n${missing.join('\n')}`,
+      `@kangentic/branding dropped animated sequence(s) OverseerMascot.tsx still plays; the mascot would freeze on its first frame:\n${missing.join('\n')}`,
+    ).toEqual([]);
+  });
+
+  it('every sequence declares a non-empty mountFrames', () => {
+    // `mountFrames` is what OverseerMascot mounts (branding 2.7.0+). A sequence that lost it would
+    // fall back to restFrame alone and silently mount too little, so fail here instead. Checked
+    // across EVERY sequence, not just the supported three, because the next sequence the component
+    // adopts must already be safe to read.
+    const animations: MascotAnimationsJson = JSON.parse(fs.readFileSync(MASCOT_JSON, 'utf-8'));
+    const withoutMountFrames = Object.entries(animations.sequences)
+      .filter(([, sequence]) => !sequence.mountFrames?.length)
+      .map(([key]) => key);
+    expect(
+      withoutMountFrames,
+      `animations.json sequence(s) declare no mountFrames; OverseerMascot reads it to decide what to mount:\n${withoutMountFrames.join('\n')}`,
+    ).toEqual([]);
+    expect(animations.restFrame, 'animations.json must name a restFrame').toBeTruthy();
+  });
+
+  it('the shipped mascot CSS fills no animation, in either the longhand or the shorthand', () => {
+    // Load-bearing for the app's Animations-off toggle, which zeroes `animation-duration` rather
+    // than setting `animation: none` (see index.css `.no-motion`). A FILLED zero-duration animation
+    // snaps to its 100% keyframe instead of resting on the canonical frame, so the mascot would
+    // freeze mid-wave with motion off. Every track carries an explicit terminal keyframe instead.
+    // OverseerMascot's docblock states this assumption; this is the check behind it.
+    //
+    // BOTH forms are checked. The shipped CSS writes its tracks as the `animation:` shorthand, so a
+    // fill regression would most likely arrive as `... step-end 1 forwards`, which never contains
+    // the longhand property name. Comments are stripped first: the double-arm-wave prose contains
+    // the word "both", which would otherwise false-positive.
+    const mascotCss = fs.readFileSync(MASCOT_CSS, 'utf-8');
+    const declarations = mascotCss.replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(
+      /animation-fill-mode/.test(declarations),
+      'assets/mascot/animations.css now sets animation-fill-mode; with Animations off (.no-motion zeroes animation-duration) a filled animation snaps to its 100% keyframe instead of resting on the canonical frame',
+    ).toBe(false);
+    expect(
+      /animation:[^;}]*\b(?:forwards|backwards|both)\b/.test(declarations),
+      'assets/mascot/animations.css now passes a fill-mode keyword in an `animation:` shorthand; same freeze-on-the-100%-keyframe consequence as the longhand above',
+    ).toBe(false);
+  });
+
+  it('every frame key the supported sequences mount is one OverseerMascot can render', () => {
+    // The file-name check below cannot see a KEY rename: upstream could rename `rest` to `idle`
+    // while still shipping overseer.svg, the import would still be there, and that test would stay
+    // green. `mountFramesFor` filters on the key, so the renamed frame would be dropped and the
+    // default `sequence='none'` would mount NOTHING - a blank div, no crash, no error. Compare the
+    // key sets instead, reading the component's own map rather than a hand-copied twin.
+    const animations: MascotAnimationsJson = JSON.parse(fs.readFileSync(MASCOT_JSON, 'utf-8'));
+    const unrenderable = [...new Set(
+      SUPPORTED_SEQUENCES.flatMap((sequenceKey) => framesUsedBySequence(animations, sequenceKey)),
+    )].filter((frameKey) => !RENDERABLE_FRAME_KEYS.includes(frameKey));
+    expect(
+      unrenderable,
+      `animations.json names frame key(s) ${MASCOT_COMPONENT}'s FRAME_URLS does not declare; mountFramesFor drops them silently, so the mascot renders an empty div:\n${unrenderable.join('\n')}`,
     ).toEqual([]);
   });
 
@@ -279,13 +355,18 @@ describe('Overseer mascot', () => {
     const animations: MascotAnimationsJson = JSON.parse(fs.readFileSync(MASCOT_JSON, 'utf-8'));
     const mascotSource = fs.readFileSync(path.join(REPO_ROOT, MASCOT_COMPONENT), 'utf-8');
 
-    const requiredFrameFiles = new Set<string>();
-    for (const sequenceKey of SUPPORTED_SEQUENCES) {
-      for (const frameKey of framesUsedBySequence(animations, sequenceKey)) {
-        requiredFrameFiles.add(animations.frames[frameKey].file);
-      }
-    }
+    const requiredFrameKeys = [...new Set(
+      SUPPORTED_SEQUENCES.flatMap((sequenceKey) => framesUsedBySequence(animations, sequenceKey)),
+    )];
+    // Assert the keys resolve BEFORE indexing `frames`, so an upstream `mountFrames` entry naming a
+    // frame the package no longer declares fails with this message instead of a raw TypeError.
+    const undeclared = requiredFrameKeys.filter((frameKey) => !animations.frames[frameKey]);
+    expect(
+      undeclared,
+      `animations.json mounts frame key(s) it does not declare under "frames":\n${undeclared.join('\n')}`,
+    ).toEqual([]);
 
+    const requiredFrameFiles = new Set(requiredFrameKeys.map((frameKey) => animations.frames[frameKey].file));
     const missingImports = [...requiredFrameFiles].filter(
       (file) => !mascotSource.includes(`@kangentic/branding/assets/mascot/${file}`),
     );
