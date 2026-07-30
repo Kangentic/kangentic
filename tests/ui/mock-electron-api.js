@@ -1348,9 +1348,39 @@
         throw new Error('Swimlane not found: ' + input.id);
       },
       delete: async function (id) {
+        var doomed = swimlanes.find(function (s) {
+          return s.id === id;
+        });
         swimlanes = swimlanes.filter(function (s) {
           return s.id !== id;
         });
+        // Mirror the real handler's side effect: SWIMLANE_DELETE also prunes the
+        // deleted column out of the Board Profiles (entries keyed by its uuid, and
+        // any planExitTarget naming it). Without this the mock and production
+        // diverge in BEHAVIOR, not just storage, so a spec asserting on
+        // getBoardProfiles() after a delete would answer the wrong question.
+        // Deliberately re-implemented rather than importing the shared pruner:
+        // this file is plain JS evaluated in the page, with no bundler.
+        if (doomed) {
+          var doomedName = String(doomed.name || '').trim().toLowerCase();
+          mockBoardProfiles = mockBoardProfiles.map(function (profile) {
+            var nextColumns = {};
+            Object.keys(profile.columns || {}).forEach(function (swimlaneId) {
+              if (swimlaneId === id) return;
+              var entry = profile.columns[swimlaneId];
+              if (entry && typeof entry === 'object'
+                && typeof entry.planExitTarget === 'string'
+                && entry.planExitTarget.trim().toLowerCase() === doomedName) {
+                var rest = Object.assign({}, entry);
+                delete rest.planExitTarget;
+                nextColumns[swimlaneId] = rest;
+                return;
+              }
+              nextColumns[swimlaneId] = entry;
+            });
+            return Object.assign({}, profile, { columns: nextColumns });
+          });
+        }
       },
       reorder: async function (ids) {
         ids.forEach(function (id, i) {

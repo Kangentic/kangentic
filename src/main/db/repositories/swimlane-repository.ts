@@ -29,6 +29,34 @@ interface SwimlaneRow {
   description: string | null;
 }
 
+/**
+ * Delete a swimlane row and every DB reference that points at it, atomically.
+ *
+ * Three call sites need exactly this trio and used to each carry their own copy:
+ * `SwimlaneRepository.delete`, `SwimlaneRepository.deleteEmptyGhosts`, and the
+ * board-config reconciler (`apply-config.ts`), which deliberately bypasses
+ * `delete()`'s guards so it can drop role-bearing lanes. Any fourth caller (the
+ * MCP `delete_column` handler) would have forked it again, which is how a
+ * reference gets missed.
+ *
+ * Deliberately NOT cleaned: `sessions.isolated_swimlane_id`. Null there MEANS
+ * "main session" (see `SessionRepository.getLatestForTaskByTypeAndIsolation`), so
+ * nulling a stale value would promote an isolated record into the main slot and
+ * collide in the resume dedup key; deleting the rows would lose transcript
+ * history. A stale id is inert - nothing ever matches a swimlane that is gone.
+ *
+ * Guards (role column, non-empty) belong to the CALLER, not here.
+ */
+export function deleteSwimlaneRowWithReferences(db: Database.Database, id: string): void {
+  const tx = db.transaction(() => {
+    db.prepare('DELETE FROM swimlane_transitions WHERE from_swimlane_id = ? OR to_swimlane_id = ?').run(id, id);
+    // Clear dangling plan_exit_target_id references
+    db.prepare('UPDATE swimlanes SET plan_exit_target_id = NULL WHERE plan_exit_target_id = ?').run(id);
+    db.prepare('DELETE FROM swimlanes WHERE id = ?').run(id);
+  });
+  tx();
+}
+
 export class SwimlaneRepository {
   constructor(private db: Database.Database) {}
 
@@ -162,10 +190,7 @@ export class SwimlaneRepository {
     if (taskCount.c > 0) {
       throw new Error('Cannot delete swimlane with tasks. Move or delete tasks first.');
     }
-    this.db.prepare('DELETE FROM swimlane_transitions WHERE from_swimlane_id = ? OR to_swimlane_id = ?').run(id, id);
-    // Clear dangling plan_exit_target_id references
-    this.db.prepare('UPDATE swimlanes SET plan_exit_target_id = NULL WHERE plan_exit_target_id = ?').run(id);
-    this.db.prepare('DELETE FROM swimlanes WHERE id = ?').run(id);
+    deleteSwimlaneRowWithReferences(this.db, id);
   }
 
   /** Mark a swimlane as a ghost column (removed from team config but has tasks). */
@@ -180,9 +205,7 @@ export class SwimlaneRepository {
     for (const ghost of ghosts) {
       const taskCount = this.db.prepare('SELECT COUNT(*) as c FROM tasks WHERE swimlane_id = ?').get(ghost.id) as { c: number };
       if (taskCount.c === 0) {
-        this.db.prepare('DELETE FROM swimlane_transitions WHERE from_swimlane_id = ? OR to_swimlane_id = ?').run(ghost.id, ghost.id);
-        this.db.prepare('UPDATE swimlanes SET plan_exit_target_id = NULL WHERE plan_exit_target_id = ?').run(ghost.id);
-        this.db.prepare('DELETE FROM swimlanes WHERE id = ?').run(ghost.id);
+        deleteSwimlaneRowWithReferences(this.db, ghost.id);
         removed++;
       }
     }

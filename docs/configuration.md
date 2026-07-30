@@ -438,13 +438,71 @@ Kangentic supports shareable board configuration via JSON files in the project r
 
 When both files exist, `kangentic.local.json` is merged over `kangentic.json` by matching columns, actions, and transitions by ID. Unmatched local entries are appended.
 
-### Auto-Export
+### Board Config Sync (kangentic.json)
 
-Every time a project is opened, Kangentic writes the current database state to `kangentic.json` in the project root. This ensures the team always has a current file to commit. If the file already exists and matches the DB state, no write occurs.
+**The sync is bidirectional, and the two directions do not fire on the same events.** Getting
+this backwards is the single easiest mistake to make here, so it is spelled out before the
+mechanics: editing `kangentic.json` by hand IS a real way to change the board, and it is a
+*different* removal path from the UI or MCP with *different* rules.
+
+**Database -> file (export).** Unconditional and automatic. Every swimlane, action, and
+transition mutation triggers a debounced write-back, and opening a project writes one too, so the
+team always has a current file to commit. If the file already matches the DB state, no write
+occurs.
+
+**File -> database (apply).** Gated, but it happens more often than the banner suggests:
+
+1. **On project open**, if `kangentic.json` exists, Kangentic applies it to the database
+   **before** the export above. On a conflict the file wins. There is no banner and no prompt on
+   this path.
+2. **On an external edit while the project is open**, the file watcher raises a reconciliation
+   banner (or applies silently when `skipBoardConfigConfirm` is set).
+
+The open-time apply is why a hand-edited `kangentic.json` sticks: the app is not merely writing
+to the file, it reads it back as the source of truth for column identity every time the project
+loads. It is also why a column deleted through the UI or `kangentic_delete_column` must update
+the file in the same operation. If it did not, the next open would re-create the column from the
+stale file entry, reusing its original UUID, with nothing logged.
+
+**Removing a column by editing the file is softer than deleting it.** The DB, MCP, and UI paths
+all *refuse* to delete a column that still holds tasks. The file path does not: it **ghosts** a
+non-empty column instead (see Reconciliation below) and hard-deletes an empty one. Pick the file
+path when you want a column retired without first emptying it.
+
+**But the file path does not clean up Board Profiles.** Deleting a column through the UI or
+`kangentic_delete_column` also prunes that column out of every profile: the uuid-keyed entry in
+`profiles[].columns`, and any `planExitTarget` naming it. Removing the column by hand-editing the
+file (or letting an emptied ghost be reaped) does not - those entries are left pointing at a
+column that no longer exists. They are inert rather than harmful - strategy resolution looks an
+entry up by the *live* column's uuid, so a key no column has is simply never read - but they
+accumulate, and a hand-editor reading the file will wonder. The asymmetry is
+deliberate: the serializer cannot tell a *deleted* column apart from one a teammate has and you
+do not, and it preserves the latter on purpose. If you retire a column by editing the file, drop
+its `profiles[].columns` entries in the same edit.
+
+**Two gotchas worth knowing:**
+
+- A hand-written config whose columns carry **no `id` fields is additive only** - it can add and
+  update columns but never removes one. Removal requires at least one config column with an `id`.
+  Write-back then serializes the real UUIDs for future reconciliation.
+- If `kangentic.json` is **unparseable or invalid**, the apply is skipped entirely - but the export
+  still runs and **overwrites the file from the database**. How much you lose depends on which
+  kind of broken it is:
+  - **Unparseable** (bad JSON) loses the keys the database has no column for: `shortcuts`,
+    `profiles`, and `defaultBaseBranch`. The export carries those across from the previous file
+    contents, so a file it cannot read is a file it cannot carry anything across from.
+  - **Parseable but invalid** (missing `version`, zero columns, two columns sharing a name) keeps
+    all three. The board still loads from the database and the columns in the file are ignored,
+    but the export re-reads the file to preserve those keys, and reading them succeeded.
+
+  Either way the column layout in the file is discarded, so validate a hand edit before opening the
+  project.
 
 ### File Watching and Reconciliation
 
 Kangentic watches both `kangentic.json` and `kangentic.local.json` for changes. When a change is detected (e.g., a teammate pulls a new version), a reconciliation banner appears in the UI. The user can apply the changes or dismiss the banner. If `skipBoardConfigConfirm` is enabled, changes are applied automatically without the banner.
+
+The same matching rules below also run unprompted on project open, per the sync section above.
 
 Reconciliation matches columns by `id`:
 - **Matched columns** are updated with the new properties (name, color, icon, etc.)

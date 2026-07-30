@@ -187,8 +187,14 @@ export function useAgentDrivenInvalidation(): void {
         } else {
           invalidateProject(updatedByAgentProjectId);
         }
+        // Deliberately kind-agnostic. This one channel carries every column
+        // mutation an agent can make - create, update, AND delete - so naming a
+        // specific verb makes the toast lie two thirds of the time. "updated"
+        // was actively wrong for a delete: it named a column that no longer
+        // exists. Say what the payload actually tells us. Distinguishing the
+        // three would mean threading a discriminator through the channel.
         useToastStore.getState().addToast({
-          message: `Column updated by agent: "${swimlaneName}"`,
+          message: `Column changed by agent: "${swimlaneName}"`,
           variant: 'info',
         });
       }));

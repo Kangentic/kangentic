@@ -122,6 +122,18 @@ describe('isOrderChanged', () => {
   it('returns false on a length mismatch (a pending create/delete, not a reorder)', () => {
     expect(isOrderChanged(['todo', 'mid'], originals)).toBe(false);
   });
+
+  // Staged deletion: the removed lane is gone from laneOrder but still present
+  // in `originals` (the row is not deleted until Save). Passing the staged ids
+  // keeps the baseline aligned so a genuine reorder is still visible; the
+  // default-argument cases above cover callers that pass nothing.
+  it('ignores a staged delete rather than bailing out on the length mismatch', () => {
+    expect(isOrderChanged(['todo', 'done'], originals, new Set(['mid']))).toBe(false);
+  });
+
+  it('still detects a reorder while a delete is staged', () => {
+    expect(isOrderChanged(['done', 'todo'], originals, new Set(['mid']))).toBe(true);
+  });
 });
 
 describe('reconcileLaneOrder', () => {
@@ -177,6 +189,19 @@ describe('reconcileLaneOrder', () => {
   it('keeps unsaved new drafts in place while preserving a local reorder', () => {
     const localOrder = ['todo', 'new:x', 'mid', 'done'];
     expect(reconcileLaneOrder(localOrder, lanes, true)).toEqual(['todo', 'new:x', 'mid', 'done']);
+  });
+
+  // A staged delete is the one removal the store snapshot cannot express: the
+  // lane is still in `swimlanes` because nothing is persisted until Save, so
+  // both branches would re-insert it and silently undo the removal.
+  it('does not re-insert a staged delete when adopting store order', () => {
+    expect(reconcileLaneOrder(['todo', 'done'], lanes, false, new Set(['mid'])))
+      .toEqual(['todo', 'done']);
+  });
+
+  it('does not re-insert a staged delete while preserving a local reorder', () => {
+    expect(reconcileLaneOrder(['done', 'todo'], lanes, true, new Set(['mid'])))
+      .toEqual(['done', 'todo']);
   });
 
   it('appends a never-seen store id at the END when there is no Done lane (preserve path)', () => {

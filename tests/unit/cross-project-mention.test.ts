@@ -45,6 +45,7 @@ function makeContext(): CommandContext {
     onTaskDeleted: vi.fn(),
     onTaskMove: vi.fn(),
     onSwimlaneUpdated: vi.fn(),
+    onSwimlaneDeleted: vi.fn(),
     onBacklogChanged: vi.fn(),
     onLabelColorsChanged: vi.fn(),
   };

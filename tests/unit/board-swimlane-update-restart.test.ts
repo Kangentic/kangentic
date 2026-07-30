@@ -1,7 +1,8 @@
 /**
- * Unit tests for the SWIMLANE_UPDATE IPC handler in board.ts.
+ * Unit tests for the SWIMLANE_UPDATE and SWIMLANE_DELETE IPC handlers in board.ts.
  *
- * Focuses on the two branches introduced by the model-change restart feature:
+ * SWIMLANE_UPDATE focuses on the two branches introduced by the model-change
+ * restart feature:
  *
  *   1. MODEL change (prepareInjectionPlan returns needsRestartForModel: true)
  *      -> restartSessionForSettingsChange is called fire-and-forget inside
@@ -17,8 +18,16 @@
  * the async side-effect via vi.waitFor, which is the canonical pattern for
  * assertions on fire-and-forget async callbacks.
  *
+ * SWIMLANE_DELETE focuses on Board Profile pruning: profiles live in
+ * kangentic.json with no FK, so nothing in the DB layer reaches a `columns[uuid]`
+ * delta or a `planExitTarget` naming the deleted column. The handler prunes them
+ * via `pruneDeletedColumnFromProfiles`, and the ORDER matters - the prune must
+ * write `setBoardProfiles` before `triggerWriteBack` re-serializes the on-disk
+ * file, or the write-back carries the stale (unpruned) profiles straight back out.
+ *
  * Pattern: capture the function registered via ipcMain.handle(IPC.SWIMLANE_UPDATE)
- * and invoke it directly - same approach as task-runtime-override-handler.test.ts.
+ * (or IPC.SWIMLANE_DELETE) and invoke it directly - same approach as
+ * task-runtime-override-handler.test.ts.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -605,5 +614,88 @@ describe('SWIMLANE_UPDATE handler - restart-on-model and effort live-inject bran
     }, { timeout: 2000 });
 
     expect(context.mainWindow.webContents.send).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SWIMLANE_DELETE - Board Profile pruning, and its ordering vs the write-back
+// ---------------------------------------------------------------------------
+
+describe('SWIMLANE_DELETE handler - Board Profile pruning', () => {
+  let context: MockContext;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    hoisted.restartSessionForSettingsChange.mockReset();
+    hoisted.restartSessionForSettingsChange.mockResolvedValue({ ok: true });
+    hoisted.prepareInjectionPlan.mockReset();
+    hoisted.prepareInjectionPlan.mockReturnValue(null);
+    capturedHandlers.clear();
+
+    context = createMockContext();
+    registerBoardHandlers(context as never);
+  });
+
+  function callSwimlaneDelete(id: string): unknown {
+    const handler = capturedHandlers.get(IPC.SWIMLANE_DELETE);
+    if (!handler) throw new Error(`Handler for ${IPC.SWIMLANE_DELETE} was not registered`);
+    return handler(null, id);
+  }
+
+  it('prunes both a columns[uuid] delta and a planExitTarget naming the deleted column, and writes profiles BEFORE the kangentic.json write-back', () => {
+    const doomedSwimlane = createSwimlaneBefore({ id: 'lane-doomed', name: 'Brand Review' });
+    // buildProjectRepos's second/third args (update result, tasks-in-lane) are not
+    // read by the delete path - only swimlanes.getById and swimlanes.delete are.
+    const repos = buildProjectRepos(doomedSwimlane, doomedSwimlane, []);
+    mockGetProjectRepos.mockReturnValue(repos);
+
+    context.boardConfigManager.getBoardProfiles.mockReturnValue([
+      {
+        id: 'profile-1',
+        name: 'Heavy',
+        columns: {
+          'lane-doomed': { modelOverride: 'opus' },
+          'lane-planning': { planExitTarget: 'Brand Review' },
+        },
+      },
+    ]);
+
+    callSwimlaneDelete('lane-doomed');
+
+    expect(repos.swimlanes.delete).toHaveBeenCalledWith('lane-doomed');
+    expect(context.boardConfigManager.setBoardProfiles).toHaveBeenCalledTimes(1);
+    const [writtenProfiles] = context.boardConfigManager.setBoardProfiles.mock.calls[0];
+    expect(writtenProfiles[0].columns).not.toHaveProperty('lane-doomed');
+    expect(writtenProfiles[0].columns['lane-planning']).not.toHaveProperty('planExitTarget');
+
+    // Revert proof (a): deleting the `if (doomed) { pruneDeletedColumnFromProfiles(...) }`
+    // block in board.ts reds this assertion - setBoardProfiles is never called.
+    expect(context.boardConfigManager.writeBack).toHaveBeenCalledTimes(1);
+
+    // ORDERING - a test that only checked "both were called" would NOT go red if
+    // the order flipped, and flipping it re-serializes the stale (unpruned)
+    // profiles from the on-disk file straight back out.
+    // Revert proof (b): moving the prune block to AFTER triggerWriteBack(context)
+    // reds only this assertion, leaving the two above green.
+    const setBoardProfilesOrder = context.boardConfigManager.setBoardProfiles.mock.invocationCallOrder[0];
+    const writeBackOrder = context.boardConfigManager.writeBack.mock.invocationCallOrder[0];
+    expect(setBoardProfilesOrder).toBeLessThan(writeBackOrder);
+  });
+
+  it('does not write profiles when nothing referenced the deleted column', () => {
+    const doomedSwimlane = createSwimlaneBefore({ id: 'lane-doomed', name: 'Brand Review' });
+    const repos = buildProjectRepos(doomedSwimlane, doomedSwimlane, []);
+    mockGetProjectRepos.mockReturnValue(repos);
+
+    // A profile exists, but references a DIFFERENT lane - exercises the "computed
+    // a diff, decided not to write" path, not just an empty-profiles short-circuit.
+    context.boardConfigManager.getBoardProfiles.mockReturnValue([
+      { id: 'profile-1', name: 'Heavy', columns: { 'other-lane': { modelOverride: 'opus' } } },
+    ]);
+
+    callSwimlaneDelete('lane-doomed');
+
+    expect(context.boardConfigManager.setBoardProfiles).not.toHaveBeenCalled();
+    expect(context.boardConfigManager.writeBack).toHaveBeenCalledTimes(1);
   });
 });

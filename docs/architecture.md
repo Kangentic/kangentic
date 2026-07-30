@@ -243,8 +243,8 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `boardConfig:exists` | invoke | Check if `kangentic.json` exists for the active project |
-| `boardConfig:export` | invoke | Export current board state to `kangentic.json` (auto-runs on project open) |
-| `boardConfig:apply` | invoke | Apply pending config file changes (reconcile file into DB) |
+| `boardConfig:export` | invoke | Export current board state to `kangentic.json` (auto-runs on project open, AFTER the open-time apply below) |
+| `boardConfig:apply` | invoke | Apply pending config file changes (reconcile file into DB). The same apply also runs unprompted on project open when the file exists, before the export - see [Board Config Sync](configuration.md#board-config-sync-kangenticjson) |
 | `boardConfig:changed` | on | Event: `kangentic.json` or `kangentic.local.json` changed on disk |
 | `boardConfig:getBoardProfiles` | invoke | Get the board's Board Profiles (see [Configuration](configuration.md#board-profiles)) |
 | `boardConfig:setBoardProfiles` | invoke | Replace the board's Board Profiles (team-scoped) |

@@ -519,6 +519,8 @@ Kangentic can export your board layout to a `kangentic.json` file in the project
 
 When you open a project, Kangentic automatically writes `kangentic.json` with the current board state. Commit and push this file. When teammates pull it, Kangentic detects the change and shows a banner offering to apply the new configuration.
 
+The sync runs both ways. Opening a project also reads an existing `kangentic.json` back INTO your database first, before that write - so editing the file by hand is a genuine way to change the board, not just a record of it. That read happens with no banner and no prompt, and the file wins where the two disagree. See [Board Config Sync](configuration.md#board-config-sync-kangenticjson) for the full rules, including the one case where an invalid file gets silently overwritten from the database.
+
 ### Personal Overrides
 
 Create a `kangentic.local.json` in the project root for personal customizations (column colors, icons, extra columns). This file is auto-added to `.gitignore` and merges on top of the team config.

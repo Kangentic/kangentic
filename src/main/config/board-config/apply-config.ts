@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
-import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
+import { SwimlaneRepository, deleteSwimlaneRowWithReferences } from '../../db/repositories/swimlane-repository';
 import { ActionRepository } from '../../db/repositories/action-repository';
 import { getProjectDb } from '../../db/database';
 import type { BoardConfig, SwimlaneRole } from '../../../shared/types';
@@ -171,9 +171,9 @@ export function applyBoardConfigToDb(
         if (taskCount.c > 0) {
           swimlaneRepo.setGhost(existing.id, true);
         } else {
-          db.prepare('DELETE FROM swimlane_transitions WHERE from_swimlane_id = ? OR to_swimlane_id = ?').run(existing.id, existing.id);
-          db.prepare('UPDATE swimlanes SET plan_exit_target_id = NULL WHERE plan_exit_target_id = ?').run(existing.id);
-          db.prepare('DELETE FROM swimlanes WHERE id = ?').run(existing.id);
+          // Bypasses swimlaneRepo.delete() on purpose: that refuses role-bearing
+          // lanes, and the config is allowed to drop one.
+          deleteSwimlaneRowWithReferences(db, existing.id);
         }
       }
     }
