@@ -114,6 +114,7 @@ function createMockContext(db: ReturnType<typeof createMockDb>): CommandContext 
     onTaskDeleted: vi.fn(),
     onTaskMove: vi.fn().mockResolvedValue(undefined),
     onSwimlaneUpdated: vi.fn(),
+    onSwimlaneDeleted: vi.fn(),
     onBacklogChanged: vi.fn(),
     onLabelColorsChanged: vi.fn(),
   };

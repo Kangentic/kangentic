@@ -86,6 +86,7 @@ function createContext(profiles: BoardProfile[], options: { taskCount?: number }
     onTaskDeleted: vi.fn(),
     onTaskMove: vi.fn().mockResolvedValue(undefined),
     onSwimlaneUpdated: vi.fn(),
+    onSwimlaneDeleted: vi.fn(),
     onBacklogChanged: vi.fn(),
     onLabelColorsChanged: vi.fn(),
   } satisfies CommandContext;

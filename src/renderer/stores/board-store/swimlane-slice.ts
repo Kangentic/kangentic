@@ -67,6 +67,13 @@ export const createSwimlaneSlice: StateCreator<BoardStore, [], [], SwimlaneSlice
   deleteSwimlane: async (id) => {
     await window.electronAPI.swimlanes.delete(id);
     set((s) => ({ swimlanes: s.swimlanes.filter((l) => l.id !== id) }));
+    // The main-process delete also PRUNES this column out of the on-disk Board
+    // Profiles, so our cached copy is stale the moment the IPC resolves. Re-read
+    // it: the Column Manager snapshots `boardProfiles` at mount and writes the
+    // whole array back on save, so a stale snapshot would restore the dangling
+    // entry the delete just removed. The agent-driven path self-heals via
+    // loadBoard(); this direct path had nothing refreshing it.
+    await get().loadBoardProfiles();
   },
 
   reorderSwimlanes: async (ids) => {

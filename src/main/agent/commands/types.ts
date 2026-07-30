@@ -27,7 +27,17 @@ export interface CommandContext {
   onTaskUpdated: (task: Task) => void;
   onTaskDeleted: (task: Task) => void;
   onTaskMove: (input: { taskId: string; targetSwimlaneId: string; targetPosition: number }) => Promise<void>;
+  /** Also used for a newly CREATED column: both mean "this board's columns changed". */
   onSwimlaneUpdated: (swimlane: Swimlane) => void;
+  /**
+   * A column was deleted. Separate from `onSwimlaneUpdated` only because the
+   * caller passes a pre-delete snapshot of a row that no longer exists.
+   *
+   * Like the update callback, the implementation MUST write back to
+   * `kangentic.json`: the file re-seeds the DB on project open, so a delete that
+   * skips the write-back is silently undone the next time the project is opened.
+   */
+  onSwimlaneDeleted: (swimlane: Swimlane) => void;
   onBacklogChanged: () => void;
   onLabelColorsChanged: (colors: Record<string, string>) => void;
 }

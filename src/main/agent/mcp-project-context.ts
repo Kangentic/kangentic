@@ -147,6 +147,20 @@ export function buildCommandContextForProject(
       ipcContext.boardConfigManager.writeBackForProject(projectId, projectPath);
     },
 
+    onSwimlaneDeleted: (swimlane) => {
+      // Reuses SWIMLANE_UPDATED_BY_AGENT rather than adding a delete channel:
+      // the renderer's only consumer (useAgentDrivenInvalidation) treats it as
+      // "this project's columns changed, re-read them", which is exactly right
+      // for a delete.
+      sendToRenderer(ipcContext.mainWindow, IPC.SWIMLANE_UPDATED_BY_AGENT, swimlane.id, swimlane.name, projectId);
+      ipcContext.boardEvents.emitBoardChanged({ projectId, change: 'swimlane-updated', ids: [swimlane.id] });
+      // Load-bearing, not just for teammates: kangentic.json re-seeds the DB on
+      // project open (applyConfigOnOpen runs before the export), so without this
+      // the deleted column is re-created from the stale file entry - with the
+      // same uuid - the next time the project is opened.
+      ipcContext.boardConfigManager.writeBackForProject(projectId, projectPath);
+    },
+
     onBacklogChanged: () => {
       sendToRenderer(ipcContext.mainWindow, IPC.BACKLOG_CHANGED_BY_AGENT, projectId);
       ipcContext.boardEvents.emitBoardChanged({ projectId, change: 'backlog-changed', ids: [] });

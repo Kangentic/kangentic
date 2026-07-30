@@ -592,6 +592,62 @@ export function registerTaskTools(
     }, ctx, 'Failed to update column')),
   );
 
+  // --- kangentic_create_column ---
+  server.registerTool(
+    'kangentic_create_column',
+    {
+      description: 'Add a new swimlane (column) to the Kangentic board. By default it lands just before Done, which is where a new workflow stage almost always belongs. Column names must be unique (case-insensitive). Roles are structural and cannot be set: To Do and Done already exist on every board. Pass `project` to add a column to a different project.',
+      inputSchema: z.object({
+        name: z.string().max(100).describe('Column name, unique on this board (case-insensitive).'),
+        description: z.string().max(1000).optional().describe('Free-form description of the column\'s purpose, shown as a header tooltip and shared with the team via kangentic.json.'),
+        color: z.string().optional().describe('Hex color (e.g. "#71717a"). Defaults to blue.'),
+        icon: z.string().optional().describe('Lucide icon name.'),
+        autoSpawn: z.boolean().optional().describe('Whether moving a task into this column auto-spawns an agent. Defaults to true.'),
+        autoCommand: z.string().max(4000).optional().describe('Slash command template injected when an agent spawns in this column (e.g. "/review --strict").'),
+        agentOverride: z.string().optional().describe('Force a specific agent for this column (e.g. "codex"). Omit to use the project default.'),
+        modelOverride: z.string().max(200).optional().describe('Adapter-specific model identifier passed at spawn time (e.g. Claude "opus", "sonnet"). Omit to inherit the agent default.'),
+        effortOverride: z.string().max(50).optional().describe('Adapter-specific effort/reasoning level passed at spawn time (e.g. Claude "low", "high", "xhigh"). Omit to inherit the agent default.'),
+        permissionMode: PERMISSION_MODE_SCHEMA.optional().describe('Permission mode for agents spawned in this column. Omit to use the project default.'),
+        handoffContext: z.boolean().optional().describe('Enable multi-agent handoff context preservation when entering this column.'),
+        planExitTargetColumn: z.string().optional().describe('Column to auto-move the task to when an agent in plan mode exits planning.'),
+        position: z.number().int().min(0).optional().describe('Zero-based slot to insert at, shifting later columns right. Omit for the default placement just before Done.'),
+        project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
+      }),
+      annotations: MUTATING_ANNOTATIONS,
+    },
+    async ({ name, description, color, icon, autoSpawn, autoCommand, agentOverride, modelOverride, effortOverride, permissionMode, handoffContext, planExitTargetColumn, position, project }) => withProject(resolver, project, (ctx) => callHandler('create_column', {
+      name,
+      description,
+      color,
+      icon,
+      autoSpawn,
+      autoCommand,
+      agentOverride,
+      modelOverride,
+      effortOverride,
+      permissionMode,
+      handoffContext,
+      planExitTargetColumn,
+      position,
+    }, ctx, 'Failed to create column'), { alwaysAnnotate: true }),
+  );
+
+  // --- kangentic_delete_column ---
+  server.registerTool(
+    'kangentic_delete_column',
+    {
+      description: 'Delete a swimlane (column) from the Kangentic board. Refused in two cases, deliberately: a column that still holds tasks (move them with kangentic_move_task first - this tool never touches a task), and a role column (To Do / Done), which the board depends on. Everything pointing at the deleted column is cleaned up in the same operation: lane transitions, other columns\' plan-exit targets, and Board Profile entries. The response reports what was cleaned. Pass `project` to delete a column from a different project.',
+      inputSchema: z.object({
+        column: z.string().describe('Column name to delete (case-insensitive, e.g. "Brand Review").'),
+        project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
+      }),
+      annotations: MUTATING_ANNOTATIONS,
+    },
+    async ({ column, project }) => withProject(resolver, project, (ctx) => callHandler('delete_column', {
+      column,
+    }, ctx, 'Failed to delete column'), { alwaysAnnotate: true }),
+  );
+
   // --- kangentic_delete_task ---
   server.registerTool(
     'kangentic_delete_task',

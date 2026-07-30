@@ -64,6 +64,7 @@ function makeContext(): CommandContext {
     onTaskDeleted: vi.fn(),
     onTaskMove: vi.fn(async () => {}),
     onSwimlaneUpdated: vi.fn(),
+    onSwimlaneDeleted: vi.fn(),
   };
 }
 

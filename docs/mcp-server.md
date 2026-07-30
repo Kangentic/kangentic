@@ -26,7 +26,7 @@ Claude Code agent calls MCP tool (e.g. kangentic_create_task)
 | Component | File | Purpose |
 |-----------|------|---------|
 | MCP HTTP Server | `src/main/agent/mcp-http-server.ts` | In-process Node `http` server using `@modelcontextprotocol/sdk` Streamable HTTP transport. Binds 127.0.0.1 by default (configurable via `mcpServer.bindAddress`), random `:0` port, random per-launch token validated via `X-Kangentic-Token`. See [Network Access](#network-access). |
-| Task Tools | `src/main/agent/mcp-http/task-tools.ts` | Board/task/column mutations + related reads (`kangentic_create_task`, `kangentic_move_task`, `kangentic_update_task`, `kangentic_link_pr`, `kangentic_update_column`, `kangentic_delete_task`, `kangentic_list_columns`, `kangentic_find_task`, `kangentic_get_current_task`, etc.). |
+| Task Tools | `src/main/agent/mcp-http/task-tools.ts` | Board/task/column mutations + related reads (`kangentic_create_task`, `kangentic_move_task`, `kangentic_update_task`, `kangentic_link_pr`, `kangentic_update_column`, `kangentic_create_column`, `kangentic_delete_column`, `kangentic_delete_task`, `kangentic_list_columns`, `kangentic_find_task`, `kangentic_get_current_task`, etc.). |
 | Profile Tools | `src/main/agent/mcp-http/profile-tools.ts` | Board Profile read + authoring (`kangentic_list_board_profiles`, `kangentic_create_board_profile`, `kangentic_update_board_profile`, `kangentic_delete_board_profile`). Entries are keyed by column NAME so a profile can be copied between projects; see [Board Profiles](#board-profiles). |
 | Session Tools | `src/main/agent/mcp-http/session-tools.ts` | Session inspection, backlog, read-only SQL (`kangentic_list_sessions`, `kangentic_get_transcript`, `kangentic_get_session_files`, `kangentic_get_session_events`, `kangentic_get_activity_intervals`, `kangentic_query_db`, `kangentic_list_backlog`, etc.). |
 | Steering Tools | `src/main/agent/mcp-http/steering-tools.ts` | The write side of the session surface (`kangentic_send_session_message`) plus its debugging read (`kangentic_get_session_messages_sent`). Kept out of `session-tools.ts` because the send needs live main-process singletons (SessionManager, TerminalSubmit) that `CommandContext` does not carry. |
@@ -438,6 +438,52 @@ Update a swimlane (column) configuration. Use `kangentic_get_column_detail` to i
 
 At least one updatable field is required.
 
+### kangentic_create_column
+
+Add a new swimlane (column) to the board. Column names must be unique (case-insensitive) across
+every lane, including the archived Done lane.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | Yes | Column name, unique on this board (max 100 chars) |
+| `description` | string | No | Free-form column purpose shown as a header tooltip and shared via `kangentic.json` (max 1000 chars) |
+| `color` | string | No | Hex color (e.g. `"#71717a"`). Defaults to blue. |
+| `icon` | string | No | Lucide icon name |
+| `autoSpawn` | boolean | No | Whether moving a task into this column auto-spawns an agent. Defaults to `true`. |
+| `autoCommand` | string | No | Slash command template injected on agent spawn (e.g. `"/review --strict"`) |
+| `agentOverride` | string | No | Force a specific agent for this column. Omit to use the project default. |
+| `modelOverride` | string | No | Adapter-specific model identifier passed at spawn time (e.g. Claude `"opus"`, `"sonnet"`) |
+| `effortOverride` | string | No | Adapter-specific effort/reasoning level (e.g. Claude `"low"`, `"high"`, `"xhigh"`) |
+| `permissionMode` | string | No | One of: `default`, `plan`, `acceptEdits`, `dontAsk`, `bypassPermissions`, `auto` |
+| `handoffContext` | boolean | No | Enable multi-agent handoff context preservation when entering this column |
+| `planExitTargetColumn` | string | No | Column to auto-move the task to when an agent in plan mode exits planning |
+| `position` | number | No | Zero-based slot to insert at, shifting later columns right. Omit for the default placement just before Done. |
+
+Roles are structural and cannot be set: every board already has its To Do and Done columns.
+
+### kangentic_delete_column
+
+Delete a swimlane (column) from the board. Refused in two cases, deliberately:
+
+- **The column still holds tasks.** Move them with `kangentic_move_task` (or delete them) first.
+  This tool never touches a task: bulk-moving or orphaning them is a far larger action than the
+  caller asked for.
+- **The column is a role column** (To Do / Done). The board depends on both. Rename one instead if
+  you only want different wording.
+
+Everything that pointed at the column is cleaned up in the same operation: lane transitions,
+other columns' `planExitTargetColumn` values, Board Profile entries keyed to it, and any profile
+`planExitTarget` naming it. The response reports the counts. The committed `kangentic.json` mirror
+is rewritten too, which is load-bearing rather than cosmetic - see
+[Board Config Sync](configuration.md#board-config-sync-kangenticjson): the file re-seeds the
+database on project open, so a delete that left the file alone would be undone on the next open.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `column` | string | Yes | Column name to delete (case-insensitive) |
+
+This cannot be undone.
+
 ### kangentic_delete_task
 
 Permanently delete a task from the board. Removes the task, its attachments, and session records. The associated worktree and branch may also be cleaned up. This cannot be undone.
@@ -822,7 +868,8 @@ The committed `.claude/settings.json` `mcp__kangentic` entry remains for humans 
 - **Runaway-loop safeguard** - task creations are capped at a fixed 500 per app launch, enforced atomically by the shared `TaskCounter`. This is an internal circuit breaker against a looping agent, not a user-tunable knob; the count resets on restart.
 - **Input validation** - Zod schemas enforce title (200 chars) and description (50000 chars for tasks; 10000 chars for backlog item descriptions) limits at the protocol level, and the command handlers validate again. A backlog item created via `kangentic_create_task` shares the task 50000-char Zod schema, so `handleCreateTask` enforces the 10000 backlog cap itself and rejects an over-cap backlog description rather than truncating it.
 - **Column safety** - `kangentic_create_task` defaults to the To Do column; creating in an auto_spawn column intentionally triggers agent spawn. `kangentic_move_task_to_project` follows the same rule on the destination board: landing in an auto_spawn `column` there spawns an agent.
-- **Destructive operations are explicit** - `kangentic_delete_task`, `kangentic_delete_backlog_item`, `kangentic_remove_task_attachment`, `kangentic_move_task`, and `kangentic_move_task_to_project` mutate the board. Agents must invoke them by name; there is no implicit fallback.
+- **Destructive operations are explicit** - `kangentic_delete_task`, `kangentic_delete_backlog_item`, `kangentic_delete_column`, `kangentic_remove_task_attachment`, `kangentic_move_task`, and `kangentic_move_task_to_project` mutate the board. Agents must invoke them by name; there is no implicit fallback.
+- **Column deletion never touches a task** - `kangentic_delete_column` refuses a column that still holds tasks, and refuses a role column (To Do / Done). Emptying a column is the caller's explicit, separate step; there is no `force` or bulk-move escape hatch.
 - **Cross-project relocation is scoped to To Do** - `kangentic_move_task_to_project` refuses to relocate a task outside the To Do column, since only a To Do task is guaranteed to have no live session or worktree that would be stranded in the source project's repo.
 - **Honest mutating annotations** - mutating tools carry `readOnlyHint: false`, so the plan-mode auto-approval surface is exactly the read-only set. Deletes, moves, and creates always prompt while planning, even though the auto-allow injection pre-approves them in default mode.
 

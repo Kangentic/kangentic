@@ -5,6 +5,7 @@ import { ipcMain, shell } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import { getProjectRepos } from '../helpers';
 import { applyProfileToLane, findTaskProfile } from '../../transition-engine/column-strategy';
+import { pruneDeletedColumnFromProfiles } from '../../config/board-config/prune-profile-references';
 import { propagateStrategyToLiveSessions, propagateBoardProfileChange } from './strategy-propagation';
 import { runWithProjectLogContext } from '../../diagnostics/project-log-context';
 import type { BoardProfile, ShortcutConfig } from '../../../shared/types';
@@ -118,7 +119,22 @@ export function registerBoardHandlers(context: IpcContext): void {
 
   ipcMain.handle(IPC.SWIMLANE_DELETE, (_, id) => {
     const { swimlanes } = getProjectRepos(context);
+    // Snapshot before the delete: pruning profiles needs the name, which is gone
+    // from the DB once the row is.
+    const swimlaneToDelete = swimlanes.getById(id);
     swimlanes.delete(id);
+    // Board Profiles live in kangentic.json with no FK, so nothing else clears a
+    // delta keyed to this column or a planExitTarget naming it. Must run BEFORE
+    // the write-back, which carries `profiles` across from the on-disk file.
+    if (swimlaneToDelete) {
+      pruneDeletedColumnFromProfiles(
+        {
+          getBoardProfiles: () => context.boardConfigManager.getBoardProfiles(),
+          setBoardProfiles: (profiles) => context.boardConfigManager.setBoardProfiles(profiles),
+        },
+        { columnId: swimlaneToDelete.id, columnName: swimlaneToDelete.name },
+      );
+    }
     triggerWriteBack(context);
   });
 

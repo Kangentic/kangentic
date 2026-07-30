@@ -44,6 +44,7 @@ import {
 import { ProfileBar } from './board-manager/ProfileBar';
 import { ProfileNameDialog } from './board-manager/ProfileNameDialog';
 import { TASK_TEMPLATE_VARS } from '../../../shared/task-template-vars';
+import { pruneProfileReferencesForColumn } from '../../../shared/board-profile-references';
 
 /** Sentinel entity id keying this dialog's maximize flag in the session store. */
 const BOARD_MANAGER_ENTITY_ID = 'board-manager-dialog';
@@ -176,6 +177,15 @@ export function carryUnmappedEntryKeys(existing: BoardProfileEntry | undefined):
   return carried as BoardProfileEntry;
 }
 
+/**
+ * Shared empty set backing the three predicates' optional `pendingDeleteIds`
+ * argument, so the default is one allocation rather than a fresh set per call.
+ * Every call site inside this component passes the real set explicitly, so no
+ * `useMemo` dependency array relies on this identity today; the default exists
+ * for the exported predicates' other callers and their tests.
+ */
+const EMPTY_ID_SET: ReadonlySet<string> = new Set<string>();
+
 export function isDirty(draft: Swimlane, original: Swimlane | undefined): boolean {
   if (!original) return true;
   return JSON.stringify(draft) !== JSON.stringify(original);
@@ -210,8 +220,16 @@ export function reconcileLaneOrder(
   previousOrder: string[],
   swimlanes: Swimlane[],
   hasLocalReorder: boolean,
+  pendingDeleteIds: ReadonlySet<string> = EMPTY_ID_SET,
 ): string[] {
-  const sorted = [...swimlanes].sort((a, b) => a.position - b.position).map((lane) => lane.id);
+  // Staged deletions are filtered out of the STORE snapshot, not just the
+  // previous order: a column pending deletion is still in `swimlanes` (nothing
+  // has been persisted yet), so both branches below would otherwise re-insert
+  // it on the next store update and silently undo the removal.
+  const sorted = [...swimlanes]
+    .filter((lane) => !pendingDeleteIds.has(lane.id))
+    .sort((a, b) => a.position - b.position)
+    .map((lane) => lane.id);
   if (!hasLocalReorder) {
     const newIds = previousOrder.filter((id) => id.startsWith(NEW_DRAFT_PREFIX));
     if (newIds.length === 0) return sorted;
@@ -244,10 +262,18 @@ export function reconcileLaneOrder(
  * state). Unsaved `new:` drafts are ignored. Shared by `isOrderChanged` (the
  * dirty gate) and the footer's affected-column summary so the two never drift.
  */
-export function getReorderedColumnIds(laneOrder: string[], originals: Record<string, Swimlane>): Set<string> {
+export function getReorderedColumnIds(
+  laneOrder: string[],
+  originals: Record<string, Swimlane>,
+  pendingDeleteIds: ReadonlySet<string> = EMPTY_ID_SET,
+): Set<string> {
   const moved = new Set<string>();
   const persistedOrder = laneOrder.filter((id) => !isNewDraftId(id));
+  // Staged deletions are dropped from the baseline too, so the length check
+  // below still lines up and a genuine reorder is still detected while a delete
+  // is pending. Without this the bailout swallows both.
   const originalOrder = Object.values(originals)
+    .filter((lane) => !pendingDeleteIds.has(lane.id))
     .sort((a, b) => a.position - b.position)
     .map((lane) => lane.id);
   if (persistedOrder.length !== originalOrder.length) return moved;
@@ -263,8 +289,12 @@ export function getReorderedColumnIds(laneOrder: string[], originals: Record<str
  * handled by the create-then-reorder path on save). Gates the reorder IPC call
  * in handleSave and the footer's modified-column summary.
  */
-export function isOrderChanged(laneOrder: string[], originals: Record<string, Swimlane>): boolean {
-  return getReorderedColumnIds(laneOrder, originals).size > 0;
+export function isOrderChanged(
+  laneOrder: string[],
+  originals: Record<string, Swimlane>,
+  pendingDeleteIds: ReadonlySet<string> = EMPTY_ID_SET,
+): boolean {
+  return getReorderedColumnIds(laneOrder, originals, pendingDeleteIds).size > 0;
 }
 
 export function buildUpdateInput(draft: Swimlane, original: Swimlane): SwimlaneUpdateInput {
@@ -552,6 +582,13 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   const [newDraftIds, setNewDraftIds] = useState<Set<string>>(initialState.newDraftIds);
   const [laneOrder, setLaneOrder] = useState<string[]>(initialState.laneOrder);
   const [activeId, setActiveId] = useState<string>(initialState.activeId);
+  // Persisted columns the user removed but has not saved yet. Deletion used to
+  // fire its IPC immediately, which made it the one structural edit in this
+  // dialog that Save and Cancel did not govern - the form never went dirty, and
+  // Cancel could not undo it. Staging it here puts it on the same footing as an
+  // add, a reorder, or any field edit. Their `originals` entries are KEPT so the
+  // save path can still name them and a discard restores them for free.
+  const [pendingDeleteIds, setPendingDeleteIds] = useState<Set<string>>(() => new Set<string>());
 
   // Set once the user drags a rail row. Tells the store-sync effect to preserve
   // the local order instead of re-sorting from store positions. Never cleared
@@ -582,8 +619,10 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   // store-sync effect runs (effects fire in declaration order).
   const originalsRef = useRef(originals);
   const draftsRef = useRef(drafts);
+  const pendingDeleteIdsRef = useRef(pendingDeleteIds);
   useEffect(() => { originalsRef.current = originals; });
   useEffect(() => { draftsRef.current = drafts; });
+  useEffect(() => { pendingDeleteIdsRef.current = pendingDeleteIds; });
 
   // ── Sync from store ────────────────────────────────────────────────
   // When the store updates (other UI edits a column, or a column is created
@@ -598,6 +637,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   useEffect(() => {
     const previousOriginals = originalsRef.current;
     const previousDrafts = draftsRef.current;
+    const stagedDeletes = pendingDeleteIdsRef.current;
 
     const nextOriginals: Record<string, Swimlane> = {};
     for (const lane of swimlanes) nextOriginals[lane.id] = lane;
@@ -605,6 +645,10 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
 
     const nextDrafts: Record<string, Swimlane> = { ...previousDrafts };
     for (const lane of swimlanes) {
+      // A staged delete removed this lane's draft, but the row is still in the
+      // store (nothing is persisted until Save), so `!previousDraft` below would
+      // read as "never seen" and re-add it, resurrecting the removal.
+      if (stagedDeletes.has(lane.id)) continue;
       const previousDraft = previousDrafts[lane.id];
       const wasDirty = previousDraft ? isDirty(previousDraft, previousOriginals[lane.id]) : false;
       if (!previousDraft || !wasDirty) {
@@ -618,7 +662,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     }
     setDrafts(nextDrafts);
 
-    setLaneOrder((previousOrder) => reconcileLaneOrder(previousOrder, swimlanes, hasLocalReorderRef.current));
+    setLaneOrder((previousOrder) => reconcileLaneOrder(previousOrder, swimlanes, hasLocalReorderRef.current, stagedDeletes));
   }, [swimlanes]);
 
   // ── Refresh agent capabilities ─────────────────────────────────────
@@ -731,14 +775,17 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     () => laneOrder.filter((id) => newDraftIds.has(id) || isDirty(drafts[id], originals[id])),
     [drafts, originals, laneOrder, newDraftIds],
   );
-  const orderDirty = useMemo(() => isOrderChanged(laneOrder, originals), [laneOrder, originals]);
+  const orderDirty = useMemo(
+    () => isOrderChanged(laneOrder, originals, pendingDeleteIds),
+    [laneOrder, originals, pendingDeleteIds],
+  );
   // Whole-object compare, matching how column dirtiness is tracked. Covers
   // create, rename, duplicate, delete, and any per-column delta edit in one go.
   const profilesDirty = useMemo(
     () => JSON.stringify(profileDrafts) !== JSON.stringify(profileOriginals),
     [profileDrafts, profileOriginals],
   );
-  const hasDirty = dirtyIds.length > 0 || orderDirty || profilesDirty;
+  const hasDirty = dirtyIds.length > 0 || orderDirty || profilesDirty || pendingDeleteIds.size > 0;
 
   // Rows for the left rail. The inline override hints (agent / isolated) are
   // suppressed for role-pinned To Do / Done columns, where they never apply.
@@ -928,7 +975,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     // `profileDrafts`, never in `drafts`, so a profile-only change leaves the
     // three column checks false. Without it this early return closed the dialog
     // before the profile write below ever ran, silently discarding the edit.
-    if (creates.length === 0 && updates.length === 0 && !orderDirty && !profilesDirty) {
+    if (creates.length === 0 && updates.length === 0 && !orderDirty && !profilesDirty && pendingDeleteIds.size === 0) {
       onClose();
       return;
     }
@@ -942,7 +989,55 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     // contains the migrated temp id.
     let savedUpdates = 0;
     let savedCreates = 0;
+    let savedDeletes = 0;
     let firstError: Error | null = null;
+    // The profile list the trailing whole-array write will send. Tracked as a
+    // local, not read off `profileDrafts`, because the delete loop below prunes
+    // it and a setState is not visible to this same closure.
+    let profilesToSave = profileDrafts;
+
+    // Deletes run FIRST, and before the reorder below, so the final order we
+    // send contains only ids the DB still has. Each id that succeeds leaves
+    // `pendingDeleteIds`; ones that fail stay staged so the user can fix the
+    // cause (a task moved in behind them) and re-save just those.
+    for (const id of pendingDeleteIds) {
+      const deletedColumnName = originals[id]?.name ?? 'column';
+      try {
+        await deleteSwimlane(id);
+        setPendingDeleteIds((previous) => {
+          if (!previous.has(id)) return previous;
+          const next = new Set(previous);
+          next.delete(id);
+          return next;
+        });
+        setOriginals((previous) => {
+          const next = { ...previous };
+          delete next[id];
+          return next;
+        });
+        // The main process prunes the ON-DISK profiles as part of the delete,
+        // but `profileDrafts` is a mount-time snapshot that gets written back
+        // WHOLE below. Without pruning it too, saving a delete together with any
+        // profile edit re-writes the stale entry straight over that pruning and
+        // the dangling reference survives. The local drives this save; the two
+        // setStates keep the dialog honest if a later step fails and it stays
+        // open for a retry.
+        const prune = (list: BoardProfile[]) => pruneProfileReferencesForColumn(
+          list,
+          { columnId: id, columnName: deletedColumnName },
+        ).profiles;
+        profilesToSave = prune(profilesToSave);
+        setProfileDrafts(prune);
+        setProfileOriginals(prune);
+        savedDeletes += 1;
+      } catch (error) {
+        if (!firstError) {
+          firstError = error instanceof Error
+            ? new Error(`Could not delete "${deletedColumnName}": ${error.message}`)
+            : new Error(`Could not delete "${deletedColumnName}"`);
+        }
+      }
+    }
 
     // Updates run in parallel; we materialise each result into local state
     // regardless of which other updates fail, via Promise.allSettled. We
@@ -1026,7 +1121,15 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     // to reorder, but only for ids that exist in the DB now. Temp ids of creates
     // that failed (or were skipped after a failure above) are filtered out so we
     // don't ask the IPC to reorder ids it has never seen.
-    if (savedCreates > 0 || orderDirty) {
+    // `savedDeletes` is in the gate so a delete-only save still renumbers: the
+    // survivors would otherwise keep their old positions and read 0,1,3,4.
+    //
+    // This still runs when a delete FAILED above, and `finalOrder` omits that
+    // lane (staging pulled it from laneOrder), so the lane keeps a stale
+    // position. Left alone deliberately: render sorts by position, the next
+    // successful save or config apply renumbers everything by index, and the
+    // dialog stays open on the error path with the delete still staged.
+    if (savedCreates > 0 || savedDeletes > 0 || orderDirty) {
       try {
         const finalOrder = laneOrder
           .map((id) => idMap.get(id) ?? id)
@@ -1040,8 +1143,9 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     }
 
     if (firstError) {
-      const partialNote = (savedUpdates + savedCreates) > 0
-        ? ` (saved ${savedUpdates + savedCreates} column${(savedUpdates + savedCreates) > 1 ? 's' : ''} before failing)`
+      const savedTotal = savedUpdates + savedCreates + savedDeletes;
+      const partialNote = savedTotal > 0
+        ? ` (saved ${savedTotal} column${savedTotal > 1 ? 's' : ''} before failing)`
         : '';
       useToastStore.getState().addToast({
         message: `${firstError.message}${partialNote}`,
@@ -1057,14 +1161,19 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     // DB representation, so this array IS the source of truth. A hand-written
     // profile the user never touched round-trips unchanged, and one keyed to a
     // column this machine does not have is preserved rather than dropped.
+    // `profilesToSave` rather than `profileDrafts`: a staged column delete prunes
+    // that column out of the list above, and this whole-array write would
+    // otherwise restore it. When nothing here is dirty we do not write at all,
+    // which is correct - the delete path already pruned the on-disk copy.
     if (profilesDirty) {
-      await saveBoardProfiles(profileDrafts);
-      setProfileOriginals(structuredClone(profileDrafts) as BoardProfile[]);
+      await saveBoardProfiles(profilesToSave);
+      setProfileOriginals(structuredClone(profilesToSave) as BoardProfile[]);
     }
 
     const parts: string[] = [];
     if (savedUpdates > 0) parts.push(`Saved ${savedUpdates} column${savedUpdates > 1 ? 's' : ''}`);
     if (savedCreates > 0) parts.push(`created ${savedCreates} column${savedCreates > 1 ? 's' : ''}`);
+    if (savedDeletes > 0) parts.push(`${parts.length === 0 ? 'Deleted' : 'deleted'} ${savedDeletes} column${savedDeletes > 1 ? 's' : ''}`);
     if (orderDirty) parts.push(parts.length === 0 ? 'Updated column order' : 'updated column order');
     if (profilesDirty) parts.push(parts.length === 0 ? 'Saved profiles' : 'saved profiles');
     useToastStore.getState().addToast({
@@ -1072,7 +1181,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
       variant: 'info',
     });
     onClose();
-  }, [saving, laneOrder, drafts, originals, newDraftIds, orderDirty, profilesDirty, profileDrafts, saveBoardProfiles, updateSwimlane, createSwimlane, reorderSwimlanes, onClose]);
+  }, [saving, laneOrder, drafts, originals, newDraftIds, pendingDeleteIds, orderDirty, profilesDirty, profileDrafts, saveBoardProfiles, updateSwimlane, createSwimlane, deleteSwimlane, reorderSwimlanes, onClose]);
 
   // Cmd/Ctrl+S to save, via the central keybinding registry. Document-level,
   // bubble phase, preventDefault only - matching the original listener.
@@ -1149,40 +1258,32 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     removeDraftLocally(activeId);
   }, [isNewDraft, activeId, removeDraftLocally]);
 
-  const handleDeletePersisted = useCallback(async () => {
+  // Stages the removal; the IPC runs in handleSave alongside the creates and
+  // updates. The task-count guard stays here so the refusal is immediate rather
+  // than surfacing minutes later at save time; the repository re-checks it, so
+  // this is feedback, not the authority. `originals[id]` is deliberately left in
+  // place - the save path reads the name from it, and Cancel restores the column
+  // by simply dropping the staged id.
+  const handleDeletePersisted = useCallback(() => {
     setConfirmDeleteId(null);
     const id = activeId;
     if (!id || newDraftIds.has(id)) return;
+    const name = drafts[id]?.name ?? 'column';
     const taskCount = tasks.filter((task) => task.swimlane_id === id).length;
     if (taskCount > 0) {
-      const name = drafts[id]?.name ?? 'column';
       useToastStore.getState().addToast({
         message: `Cannot delete "${name}". Move or delete all ${taskCount} task${taskCount > 1 ? 's' : ''} first.`,
         variant: 'error',
       });
       return;
     }
-    try {
-      const name = drafts[id]?.name ?? 'column';
-      await deleteSwimlane(id);
-      useToastStore.getState().addToast({
-        message: `Deleted column "${name}"`,
-        variant: 'info',
-      });
-      removeDraftLocally(id);
-      // Drop the original entry too.
-      setOriginals((previous) => {
-        const next = { ...previous };
-        delete next[id];
-        return next;
-      });
-    } catch (error) {
-      useToastStore.getState().addToast({
-        message: error instanceof Error ? error.message : 'Failed to delete column',
-        variant: 'error',
-      });
-    }
-  }, [activeId, newDraftIds, tasks, drafts, deleteSwimlane, removeDraftLocally]);
+    removeDraftLocally(id);
+    setPendingDeleteIds((previous) => new Set(previous).add(id));
+    useToastStore.getState().addToast({
+      message: `"${name}" will be removed when you save.`,
+      variant: 'info',
+    });
+  }, [activeId, newDraftIds, tasks, drafts, removeDraftLocally]);
 
   // ── Rendering ─────────────────────────────────────────────────────
   if (!isOverview && !draft) {
@@ -1191,10 +1292,12 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   }
 
   // A single count of affected columns: those with field edits or a pending
-  // create, plus any whose position changed from a reorder. The user just wants
-  // "how many columns will change", not an order-vs-options breakdown.
+  // create, plus any whose position changed from a reorder, plus any staged for
+  // deletion. The user just wants "how many columns will change", not an
+  // order-vs-options breakdown.
   const affectedIds = new Set(dirtyIds);
-  for (const movedId of getReorderedColumnIds(laneOrder, originals)) affectedIds.add(movedId);
+  for (const movedId of getReorderedColumnIds(laneOrder, originals, pendingDeleteIds)) affectedIds.add(movedId);
+  for (const deletedId of pendingDeleteIds) affectedIds.add(deletedId);
   const affectedCount = affectedIds.size;
   const dirtySummary = affectedCount > 0 ? `${affectedCount} column${affectedCount === 1 ? '' : 's'} modified` : '';
 
@@ -1813,7 +1916,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
           </>}
           confirmLabel="Delete"
           variant="danger"
-          onConfirm={() => void handleDeletePersisted()}
+          onConfirm={handleDeletePersisted}
           onCancel={() => setConfirmDeleteId(null)}
         />
       )}
@@ -1839,9 +1942,31 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                   </ul>
                 </>
               )}
+              {pendingDeleteIds.size > 0 && (
+                <>
+                  <p>{dirtyIds.length > 0 ? 'These columns are staged for removal and will be kept:' : 'These columns are staged for removal. Discarding keeps them:'}</p>
+                  <ul className="space-y-1" data-testid="board-manager-staged-removals">
+                    {[...pendingDeleteIds].map((id) => (
+                      <li key={id} className="flex items-baseline gap-2">
+                        <span className="text-fg-faint">•</span>
+                        <span className="font-medium text-fg-secondary">{originals[id]?.name?.trim() || 'Untitled column'}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
               {orderDirty && (
                 <p className="text-fg-secondary">
                   {dirtyIds.length > 0 ? 'Column order changes will also be discarded.' : 'Your column order changes will be discarded.'}
+                </p>
+              )}
+              {/* Profile edits live in profileDrafts, never in `drafts`, so without
+                  this line a profile-only cancel showed an empty confirm body. */}
+              {profilesDirty && (
+                <p className="text-fg-secondary">
+                  {dirtyIds.length > 0 || pendingDeleteIds.size > 0 || orderDirty
+                    ? 'Board Profile changes will also be discarded.'
+                    : 'Your Board Profile changes will be discarded.'}
                 </p>
               )}
             </div>

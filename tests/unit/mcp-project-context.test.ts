@@ -257,6 +257,43 @@ describe('buildCommandContextForProject - onSwimlaneUpdated write-back', () => {
 
     expect(writeBackForProject).not.toHaveBeenCalled();
   });
+
+  // onSwimlaneDeleted carries the SAME obligation, for a sharper reason than
+  // update's. kangentic.json re-seeds the database on project open
+  // (applyConfigOnOpen runs before the export), so a delete that skips the
+  // write-back leaves the column listed in the file WITH its id - and the next
+  // project open re-creates it, same uuid, nothing logged. The delete looks like
+  // it worked until you restart.
+  //
+  // This is unit-tested rather than exercised in a /preview because
+  // writeBackForProject short-circuits on `isEphemeral`, and an ephemeral
+  // preview is exactly what /preview runs.
+
+  it('writes back on delete too, or the next project open resurrects the column', () => {
+    const { ipcContext, writeBackForProject } = makeWriteBackContext();
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
+
+    context!.onSwimlaneDeleted(fakeSwimlane());
+
+    expect(writeBackForProject).toHaveBeenCalledTimes(1);
+    expect(writeBackForProject).toHaveBeenCalledWith(DEFAULT_ID, PROJECT_PATH);
+  });
+
+  it('notifies the renderer on delete via the shared columns-changed channel', () => {
+    const { ipcContext, send, emitBoardChanged } = makeWriteBackContext();
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
+
+    context!.onSwimlaneDeleted(fakeSwimlane());
+
+    // Reuses SWIMLANE_UPDATED_BY_AGENT deliberately: the renderer's only
+    // consumer treats it as "this project's columns changed, re-read them".
+    expect(send).toHaveBeenCalledWith(
+      'SWIMLANE_UPDATED_BY_AGENT', 'lane-1', 'To Do', DEFAULT_ID,
+    );
+    expect(emitBoardChanged).toHaveBeenCalledWith({
+      projectId: DEFAULT_ID, change: 'swimlane-updated', ids: ['lane-1'],
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -67,6 +67,8 @@ export const MCP_TOOL_MANIFEST: McpToolManifestEntry[] = [
   { name: 'kangentic_list_columns', label: 'List Columns', blurb: 'see every board column with its task counts', category: 'board' },
   { name: 'kangentic_get_column_detail', label: 'Column Detail', blurb: 'automation, permission mode, and config for a column', category: 'board' },
   { name: 'kangentic_update_column', label: 'Update Column', blurb: 'rename, recolor, and configure a column automation', category: 'board' },
+  { name: 'kangentic_create_column', label: 'Create Column', blurb: 'add a board column, placed before Done by default', category: 'board' },
+  { name: 'kangentic_delete_column', label: 'Delete Column', blurb: 'remove an empty, non-role column and every reference to it', category: 'board' },
   { name: 'kangentic_list_board_profiles', label: 'List Board Profiles', blurb: 'see the board\'s named per-column agent/model/effort presets', category: 'board' },
   { name: 'kangentic_create_board_profile', label: 'Create Board Profile', blurb: 'add a named preset of per-column agent/model/effort settings', category: 'board' },
   { name: 'kangentic_update_board_profile', label: 'Update Board Profile', blurb: 'rename a profile or retune its per-column settings, across projects', category: 'board' },

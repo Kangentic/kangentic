@@ -1,5 +1,6 @@
 /**
- * Unit tests for SwimlaneRepository.description round-trip through real SQLite.
+ * Unit tests for SwimlaneRepository.description round-trip through real SQLite,
+ * plus deleteEmptyGhosts() reference cleanup.
  *
  * Pins four behaviors added by the add-description-fiel branch:
  *   1. create({ name, description }) then getById()/list() returns the description
@@ -13,6 +14,14 @@
  *      add a duplicate description column (the pragma guard fires and skips the
  *      ALTER TABLE; without it SQLite would throw "table swimlanes already has
  *      column description").
+ *
+ * Also pins deleteEmptyGhosts(), which the column-deletion work refactored to
+ * call the shared deleteSwimlaneRowWithReferences() helper instead of carrying
+ * its own copy of the transitions/plan_exit_target_id/row-delete trio. Nothing
+ * previously exercised that method's real cleanup behavior - the one existing
+ * reference (board-config-parity.test.ts) mocks it out entirely
+ * (`deleteEmptyGhosts = vi.fn(() => 0)`) - so the refactor could have silently
+ * dropped a step with no test catching it.
  *
  * Uses a real in-memory better-sqlite3 DB (':memory:') so the actual SQLite
  * engine validates INSERT/UPDATE column counts and argument alignment. No
@@ -142,6 +151,82 @@ describe.runIf(CAN_RUN)('SwimlaneRepository - description column round-trip', ()
 
     const fromGetById = repository.getById(createdSwimlane.id);
     expect(fromGetById?.description).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// deleteEmptyGhosts() reference cleanup.
+//
+// Caveat shared with every real-SQLite test in this file: this in-memory DB
+// does not set `PRAGMA foreign_keys = ON` the way production's getProjectDb
+// does, so these tests pin the CLEANUP OUTCOME (rows and references end up
+// correct), not the delete ordering inside deleteSwimlaneRowWithReferences.
+// ---------------------------------------------------------------------------
+
+describe.runIf(CAN_RUN)('SwimlaneRepository.deleteEmptyGhosts', () => {
+  let db: InstanceType<typeof DatabaseType>;
+  let repository: SwimlaneRepository;
+
+  beforeEach(() => {
+    if (!Database) return;
+    db = new Database(':memory:');
+    runProjectMigrations(db);
+    repository = new SwimlaneRepository(db);
+  });
+
+  afterEach(() => {
+    db?.close();
+  });
+
+  it('removes an empty ghost, nulls a survivor\'s plan_exit_target_id pointing at it, and deletes its transitions', () => {
+    // The discriminating setup: the INBOUND reference must come from a
+    // SURVIVING lane, not the ghost's own outbound plan_exit_target_id (that
+    // dies with the row regardless, so it proves nothing about the cleanup
+    // step). Red trigger: change deleteSwimlaneRowWithReferences to skip the
+    // `UPDATE swimlanes SET plan_exit_target_id = NULL` step - the survivor's
+    // reference below would stay dangling.
+    const ghost = repository.create({ name: 'Old Review', is_ghost: true });
+    const survivor = repository.create({ name: 'Planner' });
+    repository.update({ id: survivor.id, plan_exit_target_id: ghost.id });
+
+    db.prepare("INSERT INTO actions (id, name, type, config_json, created_at) VALUES (?, ?, ?, ?, ?)")
+      .run('action-1', 'Ping', 'webhook', '{}', '2026-01-01T00:00:00.000Z');
+    db.prepare('INSERT INTO swimlane_transitions (id, from_swimlane_id, to_swimlane_id, action_id, execution_order) VALUES (?, ?, ?, ?, ?)')
+      .run('transition-1', '*', ghost.id, 'action-1', 0);
+
+    const removedCount = repository.deleteEmptyGhosts();
+
+    expect(removedCount).toBe(1);
+    expect(repository.getById(ghost.id)).toBeUndefined();
+    expect(repository.getById(survivor.id)?.plan_exit_target_id).toBeNull();
+    const remainingTransitions = db
+      .prepare('SELECT COUNT(*) as count FROM swimlane_transitions WHERE from_swimlane_id = ? OR to_swimlane_id = ?')
+      .get(ghost.id, ghost.id) as { count: number };
+    expect(remainingTransitions.count).toBe(0);
+  });
+
+  it('leaves a ghost with tasks alone: not deleted, references intact, not counted as removed', () => {
+    const ghostWithTask = repository.create({ name: 'Old Review', is_ghost: true });
+    const survivor = repository.create({ name: 'Planner' });
+    repository.update({ id: survivor.id, plan_exit_target_id: ghostWithTask.id });
+    db.prepare(
+      'INSERT INTO tasks (id, title, swimlane_id, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+    ).run('task-1', 'A task', ghostWithTask.id, 0, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+
+    const removedCount = repository.deleteEmptyGhosts();
+
+    expect(removedCount).toBe(0);
+    expect(repository.getById(ghostWithTask.id)).toBeDefined();
+    expect(repository.getById(survivor.id)?.plan_exit_target_id).toBe(ghostWithTask.id);
+  });
+
+  it('a non-ghost lane with 0 tasks is left untouched', () => {
+    const nonGhost = repository.create({ name: 'Active Column' });
+
+    const removedCount = repository.deleteEmptyGhosts();
+
+    expect(removedCount).toBe(0);
+    expect(repository.getById(nonGhost.id)).toBeDefined();
   });
 });
 
