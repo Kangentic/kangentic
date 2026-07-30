@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { Activity } from 'lucide-react';
+import { SquareActivity } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import type { MonitorSessionRow } from '../../../shared/types';
 import { COMMAND_TERMINAL_NOTIFICATION_TASK_ID } from '../../../shared/notification-constants';
@@ -408,7 +408,10 @@ function EmptyState({ hasRows }: { hasRows: boolean }) {
       className="flex flex-col items-center justify-center py-16 text-fg-faint gap-4"
       data-testid="monitor-empty"
     >
-      <Activity size={48} strokeWidth={1} />
+      {/* The feature's identity glyph at illustration scale, thin-stroked so it
+          reads as a watermark. Deliberately not a branding activity mark: this is
+          the EMPTY state, and every mark means a live agent state. */}
+      <SquareActivity size={48} strokeWidth={1} />
       <div className="text-center">
         <div className="text-lg font-medium text-fg-muted">No agents running</div>
         <div className="text-sm mt-1">

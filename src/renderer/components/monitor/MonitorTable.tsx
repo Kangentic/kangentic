@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
-import { Loader2, Mail, CirclePause, Check, SquareTerminal } from 'lucide-react';
+import { CirclePause, Check, SquareTerminal } from 'lucide-react';
 import type { MonitorSessionRow } from '../../../shared/types';
+import { ActivityMark } from '../ActivityMark';
 import { DataTable, type DataTableColumn } from '../DataTable';
 import { ElapsedTime } from '../terminal/ElapsedTime';
 import { formatActivityReasonText } from '../board/ActivityReasonTooltip';
@@ -24,8 +25,10 @@ import { BUCKET_LABELS, bucketOf, formatMonitorStatus, isWorking, needsUser } fr
 
 function StateCell({ row }: { row: MonitorSessionRow }) {
   const title = row.activityReason ? formatActivityReasonText(row.activityReason) : BUCKET_LABELS[bucketOf(row)];
-  if (needsUser(row)) return <Mail size={14} className="text-attention" aria-label={title} />;
-  if (isWorking(row)) return <Loader2 size={14} className="text-active animate-spin" aria-label={title} />;
+  // The two ACTIVITY states use the shared branding marks, the same vocabulary a
+  // board card shows; only the non-activity states (finished, paused) stay lucide.
+  if (needsUser(row)) return <ActivityMark mark="agent-idle" size={15} className="text-attention" aria-label={title} />;
+  if (isWorking(row)) return <ActivityMark mark="agent-working" size={15} className="text-active" aria-label={title} />;
   if (row.status === 'exited') return <Check size={14} className="text-fg-disabled" aria-label="Finished" />;
   return <CirclePause size={14} className="text-fg-faint" aria-label="Paused" />;
 }

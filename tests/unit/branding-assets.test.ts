@@ -77,6 +77,18 @@ const ACTIVITY_MARK_CONSUMERS = [
   'src/renderer/components/command-bar/CommandTerminalIcon.tsx',
   'src/renderer/components/command-bar/CommandTerminalWindow.tsx',
   'src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx',
+  // The Agent Monitor shows the same agent activity as a board card, on three
+  // surfaces. Its non-activity states (finished, paused) stay lucide: the branding
+  // set ships no indicator mark for those, and `control-pause-*` is a CONTROL on
+  // the 20 keyline, not an indicator on the 18.
+  //
+  // The places the monitor names ITSELF (the title-bar toggle, the panel header,
+  // the empty state) are deliberately NOT on this list. Every mark means a live
+  // agent STATE, so an identity glyph drawn from the set claims the surface is
+  // idle; those three use a plain lucide icon instead.
+  'src/renderer/components/monitor/MonitorTable.tsx',
+  'src/renderer/components/monitor/MonitorCard.tsx',
+  'src/renderer/components/monitor/MonitorSummaryCards.tsx',
 ];
 // `ui-conventions.md` exempts exactly these three files from "use lucide, no inline SVGs", each
 // because it consumes a shipped branding asset. Anchoring the allowlist to real imports keeps the

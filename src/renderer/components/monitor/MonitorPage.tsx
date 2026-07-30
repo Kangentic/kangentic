@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Activity, X } from 'lucide-react';
+import { SquareActivity, X } from 'lucide-react';
 import { useOverlayPhase } from '../../hooks/useOverlayPhase';
 import { useConfigStore } from '../../stores/config-store';
 import { useMonitorStore } from '../../stores/monitor-store';
@@ -102,7 +102,10 @@ export function MonitorPage() {
             </button>
           }
         >
-          <Activity size={18} className="text-fg-muted flex-shrink-0" aria-hidden />
+          {/* The feature's identity glyph, matching the title-bar toggle. Not a
+              branding activity mark: those all mean a STATE, so one here would read
+              as "this monitor is idle" rather than naming the surface. */}
+          <SquareActivity size={18} className="text-fg-muted flex-shrink-0" aria-hidden />
           <h1 className="text-sm font-semibold text-fg">Agent Monitor</h1>
         </DetachableSurfaceHeader>
 

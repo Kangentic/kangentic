@@ -1,5 +1,6 @@
 import React from 'react';
-import { Loader2, Mail, CirclePause, Check, SquareTerminal } from 'lucide-react';
+import { CirclePause, Check, SquareTerminal } from 'lucide-react';
+import { ActivityMark } from '../ActivityMark';
 import type { MonitorSessionRow } from '../../../shared/types';
 import { LabelPills, Pill } from '../Pill';
 import { PrLink } from '../PrLink';
@@ -45,11 +46,13 @@ interface MonitorCardProps {
 function StateGlyph({ row }: { row: MonitorSessionRow }) {
   const title = row.activityReason ? formatActivityReasonText(row.activityReason) : undefined;
 
+  // The two ACTIVITY states use the shared branding marks, the same vocabulary a
+  // board card shows; only the non-activity states (finished, paused) stay lucide.
   if (needsUser(row)) {
-    return <Mail size={14} className="text-attention shrink-0" aria-label={title ?? 'Needs you'} />;
+    return <ActivityMark mark="agent-idle" size={15} className="text-attention shrink-0" aria-label={title ?? 'Needs you'} />;
   }
   if (isWorking(row)) {
-    return <Loader2 size={14} className="text-active animate-spin shrink-0" aria-label={title ?? 'Working'} />;
+    return <ActivityMark mark="agent-working" size={15} className="text-active shrink-0" aria-label={title ?? 'Working'} />;
   }
   if (row.status === 'exited') {
     return <Check size={14} className="text-fg-disabled shrink-0" aria-label="Finished" />;

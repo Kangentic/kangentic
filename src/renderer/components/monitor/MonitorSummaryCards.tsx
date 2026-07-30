@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
-import { Mail, Loader2, CirclePause, FolderGit2 } from 'lucide-react';
+import { CirclePause, FolderGit2 } from 'lucide-react';
+import { ActivityMark } from '../ActivityMark';
 import type { MonitorSessionRow } from '../../../shared/types';
 import { useValuePulse } from '../../hooks/useValuePulse';
 import { formatRelativeTime } from '../../lib/datetime';
@@ -87,7 +88,7 @@ export function MonitorSummaryCards({ rows }: { rows: MonitorSessionRow[] }) {
           the sidebar dots and board cards speak. */}
       <SummaryTile
         label="Idle"
-        icon={<Mail size={14} />}
+        icon={<ActivityMark mark="agent-idle" size={15} />}
         value={counts['needs-you']}
         // The count alone always prompts "for how long?"; answer it here.
         sub={oldestNeedsYouSince === null ? undefined : `longest since ${formatRelativeTime(oldestNeedsYouSince)}`}
@@ -97,7 +98,17 @@ export function MonitorSummaryCards({ rows }: { rows: MonitorSessionRow[] }) {
       />
       <SummaryTile
         label="Active"
-        icon={<Loader2 size={14} className={counts.working > 0 ? 'animate-spin' : ''} />}
+        // The working mark marches by default (`.kng-march` in the branding CSS).
+        // At zero there is nothing in flight to animate, so freeze the dash rather
+        // than have an idle machine's chrome keep moving. Same conditional the
+        // lucide spinner this replaced used.
+        icon={(
+          <ActivityMark
+            mark="agent-working"
+            size={15}
+            className={counts.working > 0 ? '' : '[&_.kng-march]:[animation:none]'}
+          />
+        )}
         value={counts.working}
         // At zero the tile would otherwise sit under a blank line, which reads as
         // missing data rather than as a quiet machine. "last active 18 minutes ago"
