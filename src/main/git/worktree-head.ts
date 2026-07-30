@@ -71,3 +71,64 @@ export async function hasCommitsAheadOfBase(repoCwd: string, baseBranch: string,
     }
   });
 }
+
+/**
+ * Whether `sha` is already CONTAINED in `ref` - the inverse question to
+ * {@link hasCommitsAheadOfBase}, asked about someone else's branch. `rev-list
+ * --count <ref>..<sha>` is 0 exactly when every commit reachable from `sha` is
+ * already reachable from `ref`.
+ *
+ * TRI-STATE, unlike `hasCommitsAheadOfBase`. `null` means "cannot tell" (the ref
+ * is not present locally, the object is missing, the ref is option-shaped and so
+ * refused, or git errored) so the caller
+ * can fall back to whatever rule it used before instead of reading a git failure
+ * as an answer. A two-value contract would force an unfetched ref to mean either
+ * "reject every candidate" (a badge silently disappears) or "accept every
+ * candidate" (the mislink this helper exists to prevent).
+ *
+ * Prefers `origin/<ref>` over the bare local `<ref>`, matching every other base
+ * comparison in this folder (branch-summary.ts, commit-graph.ts,
+ * local-only-commits.ts, diff-service.ts). Callers ask about a branch name that
+ * lives on the REMOTE, and a local branch that is BEHIND origin reports commits
+ * ahead that the remote already contains - failing open in exactly the direction
+ * that matters. A `ref` that already carries a remote prefix produces
+ * `origin/origin/<ref>`, which simply throws and falls through to the bare form:
+ * that is the intended handling, not an oversight.
+ *
+ * Queued through the global read cap (`viaGitRead`), same as the helpers above.
+ */
+export async function isShaContainedInRef(repoCwd: string, ref: string, sha: string): Promise<boolean | null> {
+  // `ref` is remote-controlled: it arrives as `baseRefName` off the GitHub REST
+  // payload, and git permits a leading dash (`git check-ref-format
+  // refs/heads/-x` exits 0). The bare-ref fallback below would then hand git an
+  // argv token STARTING with `-`, which `rev-list` parses as an option rather
+  // than a revision: `--output=<path>..<sha>` creates and truncates that file as
+  // this process's user. A `--` separator cannot fix it (in `rev-list`, `--`
+  // separates revisions from pathspecs), so reject an option-shaped ref outright.
+  // No legitimate branch name starts with a dash.
+  if (!ref || !sha || ref.startsWith('-')) return null;
+  return viaGitRead(async () => {
+    try {
+      const git = simpleGit(repoCwd);
+      for (const candidateRef of [`origin/${ref}`, ref]) {
+        let commitCountOutput: string;
+        try {
+          commitCountOutput = (await git.raw(['rev-list', '--count', `${candidateRef}..${sha}`])).trim();
+        } catch {
+          // This ref form does not resolve here (never fetched, or no remote) - try the next.
+          continue;
+        }
+        const aheadCount = Number.parseInt(commitCountOutput, 10);
+        return Number.isNaN(aheadCount) ? null : aheadCount === 0;
+      }
+      return null;
+    } catch {
+      // `simpleGit()` itself throws when repoCwd is not an existing directory (a
+      // relocated project, a reclaimed worktree). The outer try keeps the
+      // never-answers-with-a-failure contract INSIDE the queued job, as
+      // git-read-queue.ts requires: a rejection here would surface to
+      // pr-linking.ts as a non-PRResolver error, which clears the task's PR link.
+      return null;
+    }
+  });
+}

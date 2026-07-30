@@ -20,6 +20,40 @@ const state = vi.hoisted(() => ({
   lastCwd: undefined as string | undefined,
 }));
 
+/**
+ * `resolveByCommit` probes local git to reject a candidate PR whose own base
+ * already contains the commit. Stub that probe so the connector never shells out
+ * to a real git in these tests: a resolver unit test that depends on the machine's
+ * git state is green locally and arbitrary on CI (.claude/rules/cross-platform-parity.md).
+ *
+ * Keys are `<baseRefName>..<sha>`; an unset key yields `null` (undetermined),
+ * which is the production fall-back-to-the-hint-rule path, so every pre-existing
+ * case keeps its original behavior with no per-test setup.
+ *
+ * The stub itself is a `vi.fn()`, not a plain async function, so tests can assert
+ * call count and arguments - this is what makes the per-base-ref memoization
+ * (`containmentByBaseRef` in dropCandidatesSharingBaseHistory) and the
+ * empty-base-ref shortcut observable; a plain function makes both silently
+ * unfalsifiable, since the containment Map alone yields the same answer whether
+ * the caller probes once or once per candidate.
+ */
+const gitRefs = vi.hoisted(() => {
+  const containment = new Map<string, boolean | null>();
+  const isShaContainedInRef = vi.fn(async (_repoCwd: string, ref: string, sha: string) =>
+    containment.get(`${ref}..${sha}`) ?? null);
+  return { containment, isShaContainedInRef };
+});
+
+// Spread the real module so the three exports this test does not stub
+// (readWorktreeHead, readWorktreeHeadUnqueued, hasCommitsAheadOfBase) stay live.
+// A flat factory would leave them `undefined`, which costs nothing today but
+// breaks confusingly the first time ladder-level coverage grows into this file:
+// pr-linking.ts imports two of them from this same path.
+vi.mock('../../src/main/git/worktree-head', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/git/worktree-head')>()),
+  isShaContainedInRef: gitRefs.isShaContainedInRef,
+}));
+
 vi.mock('which', () => ({
   default: async () => {
     if (state.whichResult instanceof Error) throw state.whichResult;
@@ -270,6 +304,8 @@ describe('GitHubImporter.resolvePRByCommit (REST normalization)', () => {
 describe('connector resolveByNumber / resolveByCommit + error translation', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    gitRefs.containment.clear();
+    gitRefs.isShaContainedInRef.mockClear();
   });
 
   it('resolveByNumber maps the gh item to a ResolvedPR', async () => {
@@ -330,15 +366,21 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
     expect((await gitHubPRConnector.resolveByCommit!('/r', 'sha', 'feat'))?.number).toBe(2);
   });
 
-  it('resolveByCommit returns the single PR even if the hint does not match (unambiguous)', async () => {
+  it('resolveByCommit returns the single PR when containment is undetermined and the hint does not match', async () => {
     vi.spyOn(GitHubImporter.prototype, 'resolvePRByCommit').mockResolvedValue([
       pr({ number: 5, headRefName: 'renamed-real-branch' }),
     ]);
     // Done-task case: stored slug != real branch, but a single PR for the commit is unambiguous.
-    // This is intentional and must stay: the magnet bug (a fresh worktree linking the last-merged
-    // PR by commit) is prevented upstream by the linker's commits-ahead-of-base guard, which never
-    // reaches this resolver for a branchless worktree - not by rejecting a single non-matching PR here.
+    // With no containment entry the git probe is undetermined (the candidate's base ref was never
+    // fetched locally), so the base-history filter abstains and this lenient hint path decides.
+    // It is intentional and must stay: rejecting a single non-matching PR here would break the
+    // renamed-branch case tier 3 exists for. The magnet bug is prevented by the base-history
+    // filter below and the linker's commits-ahead-of-base guard, not by tightening the hint.
     expect((await gitHubPRConnector.resolveByCommit!('/r', 'sha', 'stale-slug'))?.number).toBe(5);
+    // The probe DID run and abstained (no map entry yields null). Asserting that,
+    // rather than that the map is empty, is what pins the path: it is the
+    // abstention, not a skipped probe, that hands the decision to the hint rule.
+    expect(gitRefs.isShaContainedInRef).toHaveBeenCalledWith('/r', 'main', 'sha');
   });
 
   it('resolveByCommit drops a candidate whose merge commit IS the resolved-from commit (base-tip magnet)', async () => {
@@ -375,6 +417,117 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
     ]);
     const result = await gitHubPRConnector.resolveByCommit!('/r', resolvedFromSha);
     expect(result?.number).toBe(500);
+  });
+
+  it('resolveByCommit drops an open sibling PR whose own base already contains the commit', async () => {
+    // The reported mislink: a task worktree with zero commits of its own sits on
+    // the tip of feature/estimation, and an unrelated open PR branched from that
+    // same tip, so its head branch contains the commit as inherited base history.
+    // The mergeCommitOid filter does not catch it (that PR is open and unmerged)
+    // and the lone surviving candidate slips past the lenient hint path, so the
+    // per-candidate base-history check is the only thing that can reject it.
+    const baseTipSha = '13c8f483';
+    gitRefs.containment.set(`feature/estimation..${baseTipSha}`, true);
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByCommit').mockResolvedValue([
+      pr({ number: 380, state: 'OPEN', headRefName: 'chore/update-mcp-sdk', baseRefName: 'feature/estimation' }),
+    ]);
+    expect(
+      await gitHubPRConnector.resolveByCommit!('/r', baseTipSha, 'mcp-identityserver-c-e81ecf03'),
+    ).toBeNull();
+  });
+
+  it('resolveByCommit drops a CLOSED sibling PR whose own base already contains the commit', async () => {
+    // Same mislink as the OPEN case above, but for a CLOSED candidate. Only OPEN
+    // (dropped) and MERGED (exempt) are exercised elsewhere: a plausible future
+    // regression - widening the exemption from `item.state === 'MERGED'` to
+    // `item.state === 'MERGED' || item.state === 'CLOSED'` - would pass every
+    // other test in this file while reopening this exact mislink for a closed
+    // sibling. Red-green: fails (resolves the sibling instead of null) under
+    // that widened guard.
+    const baseTipSha = '13c8f483';
+    gitRefs.containment.set(`feature/estimation..${baseTipSha}`, true);
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByCommit').mockResolvedValue([
+      pr({ number: 380, state: 'CLOSED', headRefName: 'chore/update-mcp-sdk', baseRefName: 'feature/estimation' }),
+    ]);
+    expect(
+      await gitHubPRConnector.resolveByCommit!('/r', baseTipSha, 'mcp-identityserver-c-e81ecf03'),
+    ).toBeNull();
+  });
+
+  it('resolveByCommit keeps a PR whose head is ahead of its base, even on a renamed branch', async () => {
+    // The other half of the contract: the renamed-branch case tier 3 exists for.
+    // A real PR head always has at least one commit its base does not, so a
+    // non-matching branch hint must not cost the task its badge.
+    gitRefs.containment.set('feature/estimation..own-work', false);
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByCommit').mockResolvedValue([
+      pr({ number: 5, state: 'OPEN', headRefName: 'renamed-real-branch', baseRefName: 'feature/estimation' }),
+    ]);
+    expect(
+      (await gitHubPRConnector.resolveByCommit!('/r', 'own-work', 'stale-slug'))?.number,
+    ).toBe(5);
+  });
+
+  it('resolveByCommit keeps a MERGED candidate whose base contains the commit (own merged PR)', async () => {
+    // A merged PR's own commits ARE in its base afterwards, so containment cannot
+    // tell "this task's work, now merged" from "inherited base history". Rejecting
+    // would clear a correct link for a task on a non-default base whose PR landed
+    // via a real merge commit. The merged shape is covered by mergeCommitOid.
+    gitRefs.containment.set('feature/estimation..merged-head', true);
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByCommit').mockResolvedValue([
+      pr({ number: 77, state: 'MERGED', headRefName: 'feat', baseRefName: 'feature/estimation', mergeCommitOid: 'other-sha' }),
+    ]);
+    const result = await gitHubPRConnector.resolveByCommit!('/r', 'merged-head', 'feat');
+    expect(result?.number).toBe(77);
+    expect(result?.state).toBe('merged');
+  });
+
+  it('resolveByCommit keeps a candidate with an empty base ref (undetermined, never a malformed range)', async () => {
+    // gh-client's normalizeCommitPull defaults a missing base.ref to ''.
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByCommit').mockResolvedValue([
+      pr({ number: 12, state: 'OPEN', headRefName: 'feat', baseRefName: '' }),
+    ]);
+    expect((await gitHubPRConnector.resolveByCommit!('/r', 'sha', 'feat'))?.number).toBe(12);
+    // The `!item.baseRefName` shortcut must skip the git probe entirely for an
+    // empty base ref. Without this assertion the test above still passes even if
+    // the shortcut is deleted, because the unset map key `..sha` also yields null
+    // (undetermined), which the disambiguate/hint path also keeps. Red-green:
+    // fails if the shortcut is removed, since the probe would then actually run.
+    expect(gitRefs.isShaContainedInRef).not.toHaveBeenCalled();
+  });
+
+  it('resolveByCommit - multi-candidate: drops the base-contained sibling and keeps the real PR', async () => {
+    // The sibling would win outright: it is OPEN, more recently updated, and no
+    // branch hint is passed to break the tie by name. Only the base-history
+    // filter separates them.
+    gitRefs.containment.set('feature/estimation..own-work', false);
+    gitRefs.containment.set('develop..own-work', true);
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByCommit').mockResolvedValue([
+      pr({ number: 380, state: 'OPEN', updatedAt: '2026-05-01T00:00:00Z', headRefName: 'chore/sibling', baseRefName: 'develop' }),
+      pr({ number: 500, state: 'OPEN', updatedAt: '2026-01-01T00:00:00Z', headRefName: 'renamed-real-branch', baseRefName: 'feature/estimation' }),
+    ]);
+    expect((await gitHubPRConnector.resolveByCommit!('/r', 'own-work'))?.number).toBe(500);
+  });
+
+  it('resolveByCommit memoizes containment per base ref: one probe for two candidates sharing a baseRefName', async () => {
+    // Two OPEN candidates share baseRefName 'develop' and both sit on develop's
+    // tip, so both are dropped as inherited base history, leaving no survivor
+    // (`toBeNull()` documents that drop outcome, but is true regardless of
+    // memoization - the containment Map answers the same either way). The
+    // memoization itself is pinned ONLY by the call-count assertion below:
+    // red-green: fails (2 calls instead of 1) if the per-base-ref memoization
+    // (`containmentByBaseRef` in dropCandidatesSharingBaseHistory) is ever
+    // deleted in favor of probing once per candidate.
+    gitRefs.containment.set('develop..shared-sha', true);
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByCommit').mockResolvedValue([
+      pr({ number: 1, state: 'OPEN', headRefName: 'feat-a', baseRefName: 'develop' }),
+      pr({ number: 2, state: 'OPEN', headRefName: 'feat-b', baseRefName: 'develop' }),
+    ]);
+
+    const result = await gitHubPRConnector.resolveByCommit!('/r', 'shared-sha');
+
+    expect(result).toBeNull();
+    expect(gitRefs.isShaContainedInRef).toHaveBeenCalledTimes(1);
+    expect(gitRefs.isShaContainedInRef).toHaveBeenCalledWith('/r', 'develop', 'shared-sha');
   });
 
   it('registry resolvePRByNumber / resolvePRByCommit delegate to the connector', async () => {
