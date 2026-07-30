@@ -92,7 +92,9 @@ function baseGitConfig(overrides: Partial<{
 function makeTask(overrides: Partial<{
   id: string;
   title: string;
+  display_id: number;
   worktree_path: string | null;
+  worktree_folder: string | null;
   branch_name: string | null;
   base_branch: string | null;
   use_worktree: number | null;
@@ -100,7 +102,11 @@ function makeTask(overrides: Partial<{
   return {
     id: 'task-00000001',
     title: 'Fix the thing',
+    // Names the worktree DIRECTORY. Tests here assert branch names, not folder
+    // names, so any positive integer does.
+    display_id: 7,
     worktree_path: null,
+    worktree_folder: null,
     branch_name: null,
     base_branch: null,
     use_worktree: null,

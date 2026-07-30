@@ -23,6 +23,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     agent: null,
     session_id: null,
     worktree_path: null,
+    worktree_folder: null,
     branch_name: null,
     pr_number: null,
     pr_url: null,
@@ -181,7 +182,7 @@ describe('applyStructuralSharing', () => {
   // uncounted. Keep `run_mode` represented here so the guard is at least
   // honest for this field.
   it('guards against Task-interface field drift', () => {
-    const TASK_FIELD_COUNT = 23; // keep in sync with taskContentsMatch
+    const TASK_FIELD_COUNT = 24; // keep in sync with taskContentsMatch
     const sample = makeTask();
     expect(Object.keys(sample)).toHaveLength(TASK_FIELD_COUNT);
   });

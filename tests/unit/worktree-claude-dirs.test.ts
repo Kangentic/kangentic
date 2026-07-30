@@ -35,6 +35,11 @@ function wtGit(worktreePath: string, args: string): string {
   }).trim();
 }
 
+/** The minimal task shape createWorktree needs. display_id names the directory. */
+function worktreeTask(id: string, title: string, displayId = 7) {
+  return { id, title, display_id: displayId };
+}
+
 /** Create a file relative to tmpDir, creating parent dirs as needed. */
 function writeFile(relPath: string, content: string): void {
   const abs = path.join(tmpDir, relPath);
@@ -88,8 +93,7 @@ describe('Worktree .claude/ directory handling (sparse-checkout)', () => {
 
   it('.claude/commands/ excluded, .claude/skills/ and .claude/agents/ present in worktree', async () => {
     const mgr = new WorktreeManager(tmpDir);
-    const { worktreePath } = await mgr.createWorktree(
-      TASK_ID, TASK_TITLE, 'main',
+    const { worktreePath } = await mgr.createWorktree(worktreeTask(TASK_ID, TASK_TITLE), 'main',
     );
 
     // .claude/ directory should exist (settings present from git)
@@ -106,8 +110,7 @@ describe('Worktree .claude/ directory handling (sparse-checkout)', () => {
 
   it('sparse-checkout keeps git status clean', async () => {
     const mgr = new WorktreeManager(tmpDir);
-    const { worktreePath } = await mgr.createWorktree(
-      TASK_ID, TASK_TITLE, 'main',
+    const { worktreePath } = await mgr.createWorktree(worktreeTask(TASK_ID, TASK_TITLE), 'main',
     );
 
     // git status should be completely clean -- no deletions reported
@@ -117,8 +120,7 @@ describe('Worktree .claude/ directory handling (sparse-checkout)', () => {
 
   it('sparse-checkout survives simulated rebase', async () => {
     const mgr = new WorktreeManager(tmpDir);
-    const { worktreePath } = await mgr.createWorktree(
-      TASK_ID, TASK_TITLE, 'main',
+    const { worktreePath } = await mgr.createWorktree(worktreeTask(TASK_ID, TASK_TITLE), 'main',
     );
 
     // Create a commit in the worktree
@@ -150,8 +152,7 @@ describe('Worktree .claude/ directory handling (sparse-checkout)', () => {
 
   it('staged changes preserved across worktree creation', async () => {
     const mgr = new WorktreeManager(tmpDir);
-    const { worktreePath } = await mgr.createWorktree(
-      TASK_ID, TASK_TITLE, 'main',
+    const { worktreePath } = await mgr.createWorktree(worktreeTask(TASK_ID, TASK_TITLE), 'main',
     );
 
     // Create and stage a new file in the worktree
@@ -171,8 +172,7 @@ describe('Worktree .claude/ directory handling (sparse-checkout)', () => {
     git('commit -m "add config"');
 
     const mgr = new WorktreeManager(tmpDir);
-    const { worktreePath } = await mgr.createWorktree(
-      TASK_ID, TASK_TITLE, 'main',
+    const { worktreePath } = await mgr.createWorktree(worktreeTask(TASK_ID, TASK_TITLE), 'main',
       ['config/env.example'],
     );
 
@@ -184,8 +184,7 @@ describe('Worktree .claude/ directory handling (sparse-checkout)', () => {
 
   it('.claude/ copyFiles entries are skipped by copy loop', async () => {
     const mgr = new WorktreeManager(tmpDir);
-    const { worktreePath } = await mgr.createWorktree(
-      TASK_ID, TASK_TITLE, 'main',
+    const { worktreePath } = await mgr.createWorktree(worktreeTask(TASK_ID, TASK_TITLE), 'main',
       ['.claude/settings.local.json'],
     );
 

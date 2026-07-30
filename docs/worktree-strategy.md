@@ -18,10 +18,50 @@ differs from the effective default (`computeAutoBranchName` in `src/shared/slugi
 
 Examples: `fix-auth-bug-a1b2c3d4` (base equals the effective default); `release-2.0/fix-auth-bug-a1b2c3d4` (an explicit per-task base that differs from it).
 
-Worktree directory: `<project>/.kangentic/worktrees/{slug}-{taskId8}/` - always flat, even when the
-branch name is namespaced (the namespace prefix never reaches the folder name).
+Custom branch names (set per-task) are used as the branch verbatim.
 
-Custom branch names (set per-task) use the custom name as the branch, with a slugified folder name: `{slugifiedCustom}-{taskId8}/`.
+### Worktree Directory Naming
+
+Worktree directory: `<project>/.kangentic/worktrees/{display_id}/` - always flat, and named for the
+task's `display_id` (the `#N` shown on its card), independent of the branch.
+
+The directory used to be `{slug}-{taskId8}`, which spent 49 characters of Windows' 260-character
+`MAX_PATH` on Kangentic's own scheme before any toolchain added anything, with the title-derived
+slug as the larger, unbounded half. The numeric name drops that to about 4. It is also strictly
+more stable: the old name was derived from the task title, so renaming a task changed the folder it
+would be recreated in.
+
+#### The folder is chosen once and never changes
+
+`tasks.worktree_folder` records the directory name for the life of the task.
+
+- Non-null: used verbatim. This covers every worktree created before the numeric scheme, which
+  keeps its legacy `{slug}-{taskId8}` name. Nothing on disk is ever renamed or relocated.
+- Null: the folder is `String(display_id)`, and the caller persists it via
+  `TaskRepository.recordWorktree`, which writes path, branch and folder in one transaction.
+- Invariant: whenever `worktree_path` is non-null,
+  `path.basename(worktree_path) === worktree_folder`.
+
+This is load-bearing rather than cosmetic. Moving a task to Done nulls `worktree_path`, so moving it
+back out is a **fresh creation**. If it landed at a different path, the agent's transcript would be
+orphaned (Claude keys it by a slug of the cwd, so `--resume` reports "No conversation found") and
+the worktree's browser cookie jar would be dropped (`browserPartitionForWorktree` hashes the path).
+
+For a task that predates the column and has already been through Done, both `worktree_path` and
+`worktree_folder` are null. `TaskRepository.recoverLegacyWorktreeFolder` recovers the original name
+from the task's most recent `sessions.cwd`, accepting it only when it is a **direct child of that
+project's own worktrees root**. The anchor matters: Kangentic can be opened *at* a worktree path, so
+a project root can itself contain `.kangentic/worktrees/`, and a bare marker search would hand a
+task that never had a worktree the enclosing worktree's name - permanently, since the column is
+write-once. The migration deliberately does not attempt this, because it receives only the database
+handle and has no project path to anchor against.
+
+Parsers that read a folder name (the `/preview` title resolver, the window title, `get_current_task`)
+accept both the numeric and the legacy shape.
+
+Numeric folders are unique per project, not globally: everything here is project-scoped (per-project
+database, per-project worktrees directory). `display_id` never recycles, so a deleted task's number
+is never handed to a new task that could then adopt its leftover directory.
 
 ### Base Branch Resolution
 
@@ -143,7 +183,7 @@ Both name what failed and what to do about it, rather than surfacing git's raw e
 
 ### Windows Long Paths
 
-On Windows, projects with deeply nested file paths (e.g. .NET migrations, `node_modules` trees) can exceed the default 260-character path limit when checked out into a worktree under `.kangentic/worktrees/<slug>/`. This causes `git worktree add` and subsequent git operations to fail with "Filename too long" errors.
+On Windows, projects with deeply nested file paths (e.g. .NET migrations, `node_modules` trees) can exceed the default 260-character path limit when checked out into a worktree under `.kangentic/worktrees/<n>/`. This causes `git worktree add` and subsequent git operations to fail with "Filename too long" errors.
 
 Kangentic enables `core.longpaths` in two places:
 
@@ -151,6 +191,11 @@ Kangentic enables `core.longpaths` in two places:
 2. **Worktree local config** - after creation, `git config core.longpaths true` is set in the worktree's local config so all subsequent operations (sparse-checkout, agent commits, merges) also use extended-length paths.
 
 This setting uses the `\\?\` extended-length path prefix on Windows. macOS and Linux have 1024-4096 byte `PATH_MAX` limits and are unaffected - the setting is only applied on `process.platform === 'win32'`.
+
+`core.longpaths` covers git itself. It does nothing for the toolchains that run *inside* the
+worktree, which is what the numeric folder name above is for. See
+[cross-platform.md](cross-platform.md#windows-max_path-and-build-toolchains) for the measured
+budget, and for why a worktree scheme cannot fix the worst case on its own.
 
 ## node_modules Linking and the Post-Worktree Script
 

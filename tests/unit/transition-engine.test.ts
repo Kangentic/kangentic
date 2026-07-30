@@ -78,6 +78,10 @@ function makeSessionRepo() {
 function makeTaskRepo() {
   return {
     update: vi.fn(),
+    recordWorktree: vi.fn(),
+    // No legacy folder to recover: these tasks were never created under the old
+    // `<slug>-<shortId>` scheme, so they take their display_id.
+    recoverLegacyWorktreeFolder: vi.fn(() => null),
   };
 }
 
@@ -516,8 +520,9 @@ describe('TransitionEngine - create_worktree action threads signal + progress', 
   beforeEach(() => {
     vi.clearAllMocks();
     worktreeManagerMock.ensureWorktree.mockResolvedValue({
-      worktreePath: '/some/project/.kangentic/worktrees/fix-login-flow-task-abc',
+      worktreePath: '/some/project/.kangentic/worktrees/460',
       branchName: 'kangentic/fix-login-flow',
+      worktreeFolder: '460',
     });
   });
 
@@ -546,12 +551,14 @@ describe('TransitionEngine - create_worktree action threads signal + progress', 
     expect(options.signal).toBe(controller.signal);
     expect(options.onProgress).toBe(onProgress);
 
-    // Success path persists the new worktree path + branch back onto the task.
-    expect(taskRepo.update).toHaveBeenCalledWith({
-      id: task.id,
-      worktree_path: '/some/project/.kangentic/worktrees/fix-login-flow-task-abc',
-      branch_name: 'kangentic/fix-login-flow',
-    });
+    // Success path persists path, branch, and the write-once folder name
+    // together, in one transaction.
+    expect(taskRepo.recordWorktree).toHaveBeenCalledWith(
+      task.id,
+      '/some/project/.kangentic/worktrees/460',
+      'kangentic/fix-login-flow',
+      '460',
+    );
   });
 
   it('passes undefined signal/progress when the caller supplies none', async () => {

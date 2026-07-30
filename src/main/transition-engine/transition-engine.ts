@@ -9,6 +9,7 @@ import { interpolateTemplate, resolveTaskTemplateVars } from '../agent/shared';
 import { resolveExecutionTarget } from '../agent/shared/execution-target';
 import { resolveLaunchOptions } from '../agent/shared/launch-options';
 import { WorktreeManager, prepareWorktreeForRemoval, GitQueuePriority } from '../git/worktree-manager';
+import { prepareWorktreeFolder } from '../git/task-worktree-folder';
 import { agentRegistry } from '../agent/agent-registry';
 import { appendCallerSession } from '../agent/mcp-http/caller-url';
 import { retireRecord, markRecordSuspended } from './session-lifecycle';
@@ -459,6 +460,11 @@ export class TransitionEngine {
     const appConfig = this.getConfig();
     if (!appConfig.projectPath) return;
 
+    // Recover the pre-numeric-scheme folder for a legacy task whose worktree_path
+    // was already cleared by a Done move, so it returns to its original path
+    // rather than being relocated. See TaskRepository.recoverLegacyWorktreeFolder.
+    prepareWorktreeFolder(task, this.taskRepo, appConfig.projectPath);
+
     const wm = new WorktreeManager(appConfig.projectPath);
     const gitConfig = {
       ...appConfig.gitConfig,
@@ -477,11 +483,7 @@ export class TransitionEngine {
     );
     if (!result) return;
 
-    this.taskRepo.update({
-      id: task.id,
-      worktree_path: result.worktreePath,
-      branch_name: result.branchName,
-    });
+    this.taskRepo.recordWorktree(task.id, result.worktreePath, result.branchName, result.worktreeFolder);
   }
 
   private async executeCleanupWorktree(task: Task): Promise<void> {

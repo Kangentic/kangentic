@@ -1,12 +1,11 @@
 import fs from 'node:fs';
-import path from 'node:path';
 import { ipcMain } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { UsageHistoryRepository } from '../../db/repositories/usage-history-repository';
 import { captureGitChurn, resolveDefaultBaseBranch } from './git-stats-capture';
 import { WorktreeManager, type GitWaitProgress } from '../../git/worktree-manager';
-import { slugify } from '../../../shared/slugify';
+import { candidateWorktreePathsFor, legacyAutoBranchNameFor } from '../../git/task-worktree-folder';
 import { getProjectDb } from '../../db/database';
 import {
   getProjectRepos,
@@ -843,13 +842,20 @@ export async function handleTaskMove(
         if (resolvedProjectPath) {
           try {
             const worktreeManager = new WorktreeManager(resolvedProjectPath);
-            const expectedSlug = slugify(task.title) || 'task';
-            const expectedFolder = `${expectedSlug}-${task.id.slice(0, 8)}`;
-            const expectedPath = path.join(resolvedProjectPath, '.kangentic', 'worktrees', expectedFolder);
-            const expectedBranch = task.branch_name || expectedFolder;
+            // Creation just failed, possibly before the DB write landed, so no
+            // single field is trustworthy here. Probe every directory this task
+            // could plausibly own: the stored path, the folder it is pinned to,
+            // the numeric name a fresh creation would pick, and the legacy
+            // title-derived name from before the numeric scheme.
+            const candidateWorktreePaths = candidateWorktreePathsFor(task, resolvedProjectPath);
+            // The BRANCH is derived independently of the folder. Folders are
+            // numeric now, so falling back to the folder name here would try to
+            // delete a branch literally called "460".
+            const expectedBranch = task.branch_name || legacyAutoBranchNameFor(task);
 
             await worktreeManager.withLock(async () => {
-              if (fs.existsSync(expectedPath)) {
+              for (const expectedPath of candidateWorktreePaths) {
+                if (!fs.existsSync(expectedPath)) continue;
                 await worktreeManager.removeWorktree(expectedPath);
                 // removeWorktree doesn't throw on failure - verify it actually worked
                 if (fs.existsSync(expectedPath)) {

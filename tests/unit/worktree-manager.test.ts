@@ -171,8 +171,22 @@ import { WorktreeManager, GitQueuePriority } from '../../src/main/git/worktree-m
 import { isGitRepo, isInsideWorktree, isKangenticWorktree } from '../../src/main/git/git-checks';
 import { clearFetchCache } from '../../src/main/git/fetch-throttle';
 import { linkNodeModules } from '../../src/main/git/node-modules-link';
+import { worktreeFolderFromPath } from '../../src/shared/worktree-folder';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
+
+/**
+ * The minimal task shape `createWorktree` needs. `display_id` is what names the
+ * worktree DIRECTORY, so any test asserting a folder name passes an explicit
+ * one; the default is arbitrary and only has to be a positive integer.
+ */
+function worktreeTask(
+  id: string,
+  title: string,
+  overrides: { display_id?: number; worktree_folder?: string | null; worktree_path?: string | null } = {},
+) {
+  return { id, title, display_id: 7, ...overrides };
+}
 
 /** Set up mocks so createWorktree succeeds and reaches sparse-checkout / copyFiles. */
 function setupCreateWorktreeMocks() {
@@ -209,7 +223,7 @@ describe('WorktreeManager -- sparse-checkout', () => {
     setupCreateWorktreeMocks();
 
     const mgr = new WorktreeManager('/project');
-    await mgr.createWorktree('abcd1234-0000', 'Test task');
+    await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'));
 
     // Verify sparse-checkout init was called
     expect(mockWorktreeGit.raw).toHaveBeenCalledWith([
@@ -227,7 +241,7 @@ describe('WorktreeManager -- sparse-checkout', () => {
     setupCreateWorktreeMocks();
 
     const mgr = new WorktreeManager('/project');
-    await mgr.createWorktree('abcd1234-0000', 'Test task', 'main', ['README.md']);
+    await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'), 'main', ['README.md']);
 
     // Find the call order indices
     const calls = mockWorktreeGit.raw.mock.calls;
@@ -250,7 +264,7 @@ describe('WorktreeManager -- sparse-checkout', () => {
     setupCreateWorktreeMocks();
 
     const mgr = new WorktreeManager('/project');
-    await mgr.createWorktree('abcd1234-0000', 'Test task', 'main', [
+    await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'), 'main', [
       '.claude/settings.local.json',
       '.claude\\commands\\review.md',
       'README.md',
@@ -268,7 +282,7 @@ describe('WorktreeManager -- sparse-checkout', () => {
     setupCreateWorktreeMocks();
 
     const mgr = new WorktreeManager('/project');
-    await mgr.createWorktree('abcd1234-0000', 'Test task', 'main', [
+    await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'), 'main', [
       '.claude/settings.local.json',
     ]);
 
@@ -284,7 +298,7 @@ describe('WorktreeManager -- sparse-checkout', () => {
     setupCreateWorktreeMocks();
 
     const mgr = new WorktreeManager('/project');
-    await mgr.createWorktree('abcd1234-0000', 'Test task');
+    await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'));
 
     // rmSync should not be called for .claude dirs (sparse-checkout handles exclusion)
     const rmCalls = vi.mocked(fs.rmSync).mock.calls.filter(
@@ -307,7 +321,7 @@ describe('WorktreeManager -- initScript and node_modules linking', () => {
 
   it('runs the initScript in the new worktree after creation', async () => {
     const mgr = new WorktreeManager('/project');
-    await mgr.createWorktree('abcd1234-0000', 'Test task', 'main', [], null, {
+    await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'), 'main', [], null, {
       initScript: 'echo setup',
     });
 
@@ -323,13 +337,13 @@ describe('WorktreeManager -- initScript and node_modules linking', () => {
 
     const mgr = new WorktreeManager('/project');
     await expect(
-      mgr.createWorktree('abcd1234-0000', 'Test task', 'main', [], null, { initScript: 'failing-script' }),
+      mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'), 'main', [], null, { initScript: 'failing-script' }),
     ).rejects.toThrow(/boom/);
   });
 
   it('skips the initScript when it is empty or whitespace', async () => {
     const mgr = new WorktreeManager('/project');
-    await mgr.createWorktree('abcd1234-0000', 'Test task', 'main', [], null, { initScript: '   ' });
+    await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'), 'main', [], null, { initScript: '   ' });
 
     // Only git spawns (fetch); no shell command spawned for the blank script.
     const nonGitSpawns = recordedSpawnCalls.filter((call) => call.command !== 'git');
@@ -338,21 +352,21 @@ describe('WorktreeManager -- initScript and node_modules linking', () => {
 
   it('links node_modules by default (option omitted)', async () => {
     const mgr = new WorktreeManager('/project');
-    await mgr.createWorktree('abcd1234-0000', 'Test task');
+    await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'));
 
     expect(vi.mocked(linkNodeModules)).toHaveBeenCalledTimes(1);
   });
 
   it('links node_modules when linkNodeModules is true', async () => {
     const mgr = new WorktreeManager('/project');
-    await mgr.createWorktree('abcd1234-0000', 'Test task', 'main', [], null, { linkNodeModules: true });
+    await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'), 'main', [], null, { linkNodeModules: true });
 
     expect(vi.mocked(linkNodeModules)).toHaveBeenCalledTimes(1);
   });
 
   it('does NOT link node_modules when linkNodeModules is false', async () => {
     const mgr = new WorktreeManager('/project');
-    await mgr.createWorktree('abcd1234-0000', 'Test task', 'main', [], null, { linkNodeModules: false });
+    await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'), 'main', [], null, { linkNodeModules: false });
 
     expect(vi.mocked(linkNodeModules)).not.toHaveBeenCalled();
   });
@@ -383,9 +397,7 @@ describe('WorktreeManager -- initScript and node_modules linking', () => {
     const controller = new AbortController();
     const mgr = new WorktreeManager('/project');
 
-    const creationPromise = mgr.createWorktree(
-      'abcd1234-0000',
-      'Test task',
+    const creationPromise = mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'),
       'main',
       [],
       null,
@@ -438,7 +450,7 @@ describe('WorktreeManager -- fetch and base branch', () => {
     mockWorktreeGit.raw.mockResolvedValue('');
 
     const mgr = new WorktreeManager('/project');
-    await mgr.createWorktree('abcd1234-0000', 'Fetch test', 'develop');
+    await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Fetch test'), 'develop');
 
     // Fetch now goes through child_process.spawn (runGitWithTimeout), not git.raw
     const fetchSpawn = recordedSpawnCalls.find(
@@ -473,7 +485,7 @@ describe('WorktreeManager -- fetch and base branch', () => {
     });
 
     const mgr = new WorktreeManager('/project');
-    await mgr.createWorktree('abcd1234-0000', 'No remote test', 'main');
+    await mgr.createWorktree(worktreeTask('abcd1234-0000', 'No remote test'), 'main');
 
     // worktree add should use local 'main' (not 'origin/main')
     const worktreeAddCall = mockProjectGit.raw.mock.calls.find(
@@ -494,7 +506,7 @@ describe('WorktreeManager -- fetch and base branch', () => {
     mockWorktreeGit.raw.mockResolvedValue('');
 
     const mgr = new WorktreeManager('/project');
-    await mgr.createWorktree('abcd1234-0000', 'Config test', 'develop');
+    await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Config test'), 'develop');
 
     expect(mockWorktreeGit.raw).toHaveBeenCalledWith([
       'config', 'kangentic.baseBranch', 'develop',
@@ -521,7 +533,7 @@ describe('WorktreeManager -- fetch and base branch', () => {
     const mgr = new WorktreeManager('/project');
 
     // Should not throw
-    const result = await mgr.createWorktree('abcd1234-0000', 'Config fail test');
+    const result = await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Config fail test'));
     expect(result.worktreePath).toBeDefined();
     expect(result.branchName).toBeDefined();
   });
@@ -786,7 +798,7 @@ describe('WorktreeManager -- ensureWorktree', () => {
     vi.mocked(fs.statSync).mockReturnValue({ isFile: () => true } as ReturnType<typeof fs.statSync>);
     const mgr = new WorktreeManager('/project');
     const result = await mgr.ensureWorktree(
-      { id: 'abcd1234', title: 'Test', worktree_path: '/existing' },
+      { id: 'abcd1234', title: 'Test', display_id: 7, worktree_path: '/existing' },
       gitConfig,
     );
     expect(result).toBeNull();
@@ -801,15 +813,15 @@ describe('WorktreeManager -- ensureWorktree', () => {
     const mgr = new WorktreeManager('/project');
     const createSpy = vi
       .spyOn(mgr, 'createWorktree')
-      .mockResolvedValue({ worktreePath: '/project/.kangentic/worktrees/test-abcd1234', branchName: 'test-abcd1234' });
+      .mockResolvedValue({ worktreePath: '/project/.kangentic/worktrees/test-abcd1234', branchName: 'test-abcd1234', worktreeFolder: 'test-abcd1234' });
 
     const result = await mgr.ensureWorktree(
-      { id: 'abcd1234', title: 'Test', worktree_path: '/project/.kangentic/worktrees/test-abcd1234' },
+      { id: 'abcd1234', title: 'Test', display_id: 7, worktree_path: '/project/.kangentic/worktrees/test-abcd1234' },
       gitConfig,
     );
 
     expect(createSpy).toHaveBeenCalled();
-    expect(result).toEqual({ worktreePath: '/project/.kangentic/worktrees/test-abcd1234', branchName: 'test-abcd1234' });
+    expect(result).toEqual({ worktreePath: '/project/.kangentic/worktrees/test-abcd1234', branchName: 'test-abcd1234', worktreeFolder: 'test-abcd1234' });
   });
 
   it('falls through to createWorktree when worktree_path is set but the directory is missing', async () => {
@@ -820,10 +832,10 @@ describe('WorktreeManager -- ensureWorktree', () => {
     const mgr = new WorktreeManager('/project');
     const createSpy = vi
       .spyOn(mgr, 'createWorktree')
-      .mockResolvedValue({ worktreePath: '/project/.kangentic/worktrees/test-abcd1234', branchName: 'test-abcd1234' });
+      .mockResolvedValue({ worktreePath: '/project/.kangentic/worktrees/test-abcd1234', branchName: 'test-abcd1234', worktreeFolder: 'test-abcd1234' });
 
     const result = await mgr.ensureWorktree(
-      { id: 'abcd1234', title: 'Test', worktree_path: '/project/.kangentic/worktrees/missing-worktree' },
+      { id: 'abcd1234', title: 'Test', display_id: 7, worktree_path: '/project/.kangentic/worktrees/missing-worktree' },
       gitConfig,
     );
 
@@ -834,7 +846,7 @@ describe('WorktreeManager -- ensureWorktree', () => {
   it('returns null when worktreesEnabled is false', async () => {
     const mgr = new WorktreeManager('/project');
     const result = await mgr.ensureWorktree(
-      { id: 'abcd1234', title: 'Test', worktree_path: null },
+      { id: 'abcd1234', title: 'Test', display_id: 7, worktree_path: null },
       { ...gitConfig, worktreesEnabled: false },
     );
     expect(result).toBeNull();
@@ -845,7 +857,7 @@ describe('WorktreeManager -- ensureWorktree', () => {
 
     const mgr = new WorktreeManager('/project');
     const result = await mgr.ensureWorktree(
-      { id: 'abcd1234', title: 'Test', worktree_path: null },
+      { id: 'abcd1234', title: 'Test', display_id: 7, worktree_path: null },
       gitConfig,
     );
     expect(result).toBeNull();
@@ -858,7 +870,7 @@ describe('WorktreeManager -- ensureWorktree', () => {
 
     const mgr = new WorktreeManager('/project');
     const result = await mgr.ensureWorktree(
-      { id: 'abcd1234', title: 'Test', worktree_path: null },
+      { id: 'abcd1234', title: 'Test', display_id: 7, worktree_path: null },
       gitConfig,
     );
     expect(result).toBeNull();
@@ -869,7 +881,7 @@ describe('WorktreeManager -- ensureWorktree', () => {
     // statSync throws (not a worktree file), existsSync true (is git repo)
     const mgr = new WorktreeManager('/project');
     const result = await mgr.ensureWorktree(
-      { id: 'abcd1234', title: 'Test', worktree_path: null, base_branch: 'develop' },
+      { id: 'abcd1234', title: 'Test', display_id: 7, worktree_path: null, base_branch: 'develop' },
       gitConfig,
     );
 
@@ -945,7 +957,7 @@ describe('WorktreeManager -- stale branch recovery', () => {
     });
 
     const mgr = new WorktreeManager('/project');
-    const result = await mgr.createWorktree('abcd1234-0000', 'Test task');
+    const result = await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'));
 
     expect(result.branchName).toBe('test-task-abcd1234');
 
@@ -956,11 +968,11 @@ describe('WorktreeManager -- stale branch recovery', () => {
     expect(worktreeAddCall).toBeDefined();
     const worktreeAddArgs = worktreeAddCall![0];
     const worktreeIndex = worktreeAddArgs.indexOf('worktree');
-    expect(worktreeAddArgs.slice(worktreeIndex)).toEqual([
-      'worktree', 'add',
-      expect.stringContaining('test-task-abcd1234'),
-      'test-task-abcd1234',
-    ]);
+    // The DIRECTORY is the display_id; the BRANCH stays title-derived.
+    expect(worktreeAddArgs.slice(worktreeIndex, worktreeIndex + 2)).toEqual(['worktree', 'add']);
+    expect(worktreeFolderFromPath(worktreeAddArgs[worktreeIndex + 2])).toBe('7');
+    expect(worktreeAddArgs[worktreeIndex + 3]).toBe('test-task-abcd1234');
+    expect(worktreeAddArgs).toHaveLength(worktreeIndex + 4);
     // Should NOT contain -b flag
     expect(worktreeAddArgs).not.toContain('-b');
   });
@@ -977,7 +989,7 @@ describe('WorktreeManager -- stale branch recovery', () => {
     });
 
     const mgr = new WorktreeManager('/project');
-    await mgr.createWorktree('abcd1234-0000', 'Test task');
+    await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'));
 
     // Prune should NOT be called inline during createWorktree
     // (it's been moved to background via scheduleBackgroundPrune)
@@ -1003,14 +1015,14 @@ describe('WorktreeManager -- stale branch recovery', () => {
     });
 
     const mgr = new WorktreeManager('/project');
-    await mgr.createWorktree('abcd1234-0000', 'Test task');
+    await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'));
 
     // removeWorktree should have been spawned with git worktree remove --force
     const removeCall = recordedSpawnCalls.find(
       (call) => call.args[0] === 'worktree' && call.args[1] === 'remove' && call.args[3] === '--force',
     );
     expect(removeCall).toBeDefined();
-    expect(String(removeCall!.args[2])).toContain('test-task-abcd1234');
+    expect(worktreeFolderFromPath(String(removeCall!.args[2]))).toBe('7');
   });
 
   it('reuses an empty husk with --force when the stale directory cannot be removed', async () => {
@@ -1025,7 +1037,7 @@ describe('WorktreeManager -- stale branch recovery', () => {
     const mgr = new WorktreeManager('/project');
     vi.spyOn(mgr, 'removeWorktree').mockResolvedValue(false);
 
-    const result = await mgr.createWorktree('abcd1234-0000', 'Test task');
+    const result = await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'));
 
     expect(result.branchName).toBe('test-task-abcd1234');
     const worktreeAddCall = mockProjectGit.raw.mock.calls.find(
@@ -1035,11 +1047,10 @@ describe('WorktreeManager -- stale branch recovery', () => {
     const worktreeAddArgs = worktreeAddCall![0];
     const worktreeIndex = worktreeAddArgs.indexOf('worktree');
     // Existing-branch arm + --force, no -b flag.
-    expect(worktreeAddArgs.slice(worktreeIndex)).toEqual([
-      'worktree', 'add', '--force',
-      expect.stringContaining('test-task-abcd1234'),
-      'test-task-abcd1234',
-    ]);
+    expect(worktreeAddArgs.slice(worktreeIndex, worktreeIndex + 3)).toEqual(['worktree', 'add', '--force']);
+    expect(worktreeFolderFromPath(worktreeAddArgs[worktreeIndex + 3])).toBe('7');
+    expect(worktreeAddArgs[worktreeIndex + 4]).toBe('test-task-abcd1234');
+    expect(worktreeAddArgs).not.toContain('-b');
   });
 
   it('throws an actionable error when a non-empty stale directory cannot be removed', async () => {
@@ -1051,7 +1062,7 @@ describe('WorktreeManager -- stale branch recovery', () => {
     const mgr = new WorktreeManager('/project');
     vi.spyOn(mgr, 'removeWorktree').mockResolvedValue(false);
 
-    await expect(mgr.createWorktree('abcd1234-0000', 'Test task')).rejects.toThrow(/preview/);
+    await expect(mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'))).rejects.toThrow(/preview/);
 
     // No worktree add should have been attempted for a genuinely-stuck dir.
     const worktreeAddCall = mockProjectGit.raw.mock.calls.find(
@@ -1069,7 +1080,7 @@ describe('WorktreeManager -- stale branch recovery', () => {
     const mgr = new WorktreeManager('/project');
     vi.spyOn(mgr, 'removeWorktree').mockResolvedValue(false);
 
-    await expect(mgr.createWorktree('abcd1234-0000', 'Test task')).rejects.toThrow(/could not be removed/);
+    await expect(mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'))).rejects.toThrow(/could not be removed/);
   });
 
   it('pruneWorktrees spawns "git worktree prune"', async () => {
@@ -1090,9 +1101,12 @@ describe('WorktreeManager -- stale branch recovery', () => {
 // Regression guard for the silent session-loss bug: a task taken To Do ->
 // (worked for hours) -> Done -> back onto the board MUST recreate its worktree
 // at the IDENTICAL path. Claude keys its transcript by cwd, so a path change
-// makes `--resume` look under the wrong slug ("No conversation found"). The
-// original bug doubled the `-<shortId>` suffix because move-out re-slugified
-// the preserved auto-generated branch name (which already ends in -<shortId>).
+// makes `--resume` look under the wrong slug ("No conversation found").
+//
+// Moving to Done nulls worktree_path, so the move back out is a FRESH creation.
+// `worktree_folder` is what carries the original directory name across that gap.
+// Two shapes must both survive: a legacy `<slug>-<shortId>` folder from before
+// the numeric scheme, and a numeric one. Neither is ever renamed on disk.
 
 describe('WorktreeManager -- folder-name stability across Done round-trip', () => {
   beforeEach(() => {
@@ -1103,62 +1117,105 @@ describe('WorktreeManager -- folder-name stability across Done round-trip', () =
     setupCreateWorktreeMocks();
   });
 
-  it('recreation with the preserved auto-generated branch reproduces the original folder (no doubled suffix)', async () => {
+  it('a legacy folder survives the round-trip instead of being renumbered', async () => {
     const mgr = new WorktreeManager('/project');
     const taskId = '4e41b16b-8092-423c-a379-4627bc31b1b2';
     const title = 'DNS Setup';
 
-    // First creation (from To Do): no branch_name yet.
-    const first = await mgr.createWorktree(taskId, title);
-    expect(first.branchName).toBe('dns-setup-4e41b16b');
-    expect(first.worktreePath.endsWith('dns-setup-4e41b16b')).toBe(true);
+    // A task created before the numeric scheme: its pinned folder is the old
+    // title-derived name, and worktree_path was cleared by the Done move.
+    const legacy = worktreeTask(taskId, title, {
+      display_id: 460,
+      worktree_folder: 'dns-setup-4e41b16b',
+    });
 
-    // Move to Done deletes the directory but preserves branch_name; move-out
-    // feeds that branch back as customBranchName.
-    const second = await mgr.createWorktree(taskId, title, 'main', [], first.branchName);
+    // Move-out feeds the preserved branch_name back as customBranchName.
+    const result = await mgr.createWorktree(legacy, 'main', [], 'dns-setup-4e41b16b');
 
-    expect(second.worktreePath).toBe(first.worktreePath);
-    expect(second.branchName).toBe(first.branchName);
-    // The exact regression: a doubled -<shortId> suffix must never appear.
-    expect(second.worktreePath).not.toContain('4e41b16b-4e41b16b');
+    expect(result.worktreeFolder).toBe('dns-setup-4e41b16b');
+    expect(result.worktreePath.endsWith('dns-setup-4e41b16b')).toBe(true);
+    // The whole point: it must NOT be relocated to the numeric folder.
+    expect(result.worktreePath).not.toContain('460');
   });
 
-  it('round-trips remain stable on repeated Done cycles', async () => {
+  it('recovers the legacy folder from worktree_path when the column was never backfilled', async () => {
+    const mgr = new WorktreeManager('/project');
+    const taskId = '4e41b16b-8092-423c-a379-4627bc31b1b2';
+
+    const result = await mgr.createWorktree(
+      worktreeTask(taskId, 'DNS Setup', {
+        display_id: 460,
+        worktree_path: '/project/.kangentic/worktrees/dns-setup-4e41b16b',
+      }),
+    );
+
+    expect(result.worktreeFolder).toBe('dns-setup-4e41b16b');
+  });
+
+  it('a new task uses its display_id and keeps it across repeated Done cycles', async () => {
     const mgr = new WorktreeManager('/project');
     const taskId = 'abcd1234-0000-0000-0000-000000000000';
     const title = 'Fix Login Bug';
 
-    const first = await mgr.createWorktree(taskId, title);
-    const second = await mgr.createWorktree(taskId, title, 'main', [], first.branchName);
-    const third = await mgr.createWorktree(taskId, title, 'main', [], second.branchName);
+    const first = await mgr.createWorktree(worktreeTask(taskId, title, { display_id: 460 }));
+    expect(first.worktreeFolder).toBe('460');
+    expect(first.branchName).toBe('fix-login-bug-abcd1234');
+
+    // Each subsequent creation is fed back the pinned folder, as the real
+    // callers do once they have persisted it.
+    const pinned = worktreeTask(taskId, title, { display_id: 460, worktree_folder: first.worktreeFolder });
+    const second = await mgr.createWorktree(pinned, 'main', [], first.branchName);
+    const third = await mgr.createWorktree(pinned, 'main', [], second.branchName);
 
     expect(second.worktreePath).toBe(first.worktreePath);
     expect(third.worktreePath).toBe(first.worktreePath);
   });
 
-  it('namespaced auto branch (non-default base) still reproduces the title-derived folder', async () => {
-    const mgr = new WorktreeManager('/project');
-    const taskId = 'deadbeef-0000-0000-0000-000000000000';
-    const title = 'Fix Login';
-    // Auto branch created off a non-default base is namespaced.
-    const branchName = 'bugfix-x/fix-login-deadbeef';
-
-    const result = await mgr.createWorktree(taskId, title, 'main', [], branchName);
-
-    expect(result.worktreePath.endsWith('fix-login-deadbeef')).toBe(true);
-    expect(result.worktreePath).not.toContain('deadbeef-deadbeef');
-  });
-
-  it('genuinely custom branch names stay branch-derived (unchanged behavior)', async () => {
+  it('a renamed title changes the branch but never the folder', async () => {
     const mgr = new WorktreeManager('/project');
     const taskId = 'abcd1234-0000-0000-0000-000000000000';
 
-    const result = await mgr.createWorktree(taskId, 'Some Title', 'main', [], 'feature/login');
+    const first = await mgr.createWorktree(worktreeTask(taskId, 'Fix Login Bug', { display_id: 12 }));
+    const afterRename = await mgr.createWorktree(
+      worktreeTask(taskId, 'Something Else Entirely', { display_id: 12, worktree_folder: first.worktreeFolder }),
+    );
+
+    expect(afterRename.worktreePath).toBe(first.worktreePath);
+    expect(afterRename.branchName).not.toBe(first.branchName);
+  });
+
+  it('the branch stays title-derived and namespaced while the folder stays numeric', async () => {
+    const mgr = new WorktreeManager('/project');
+
+    const result = await mgr.createWorktree(
+      worktreeTask('deadbeef-0000-0000-0000-000000000000', 'Fix Login', { display_id: 88 }),
+      'bugfix-x',
+    );
+
+    expect(result.branchName).toBe('bugfix-x/fix-login-deadbeef');
+    expect(result.worktreeFolder).toBe('88');
+  });
+
+  it('a custom branch name is used verbatim and does not name the folder', async () => {
+    const mgr = new WorktreeManager('/project');
+
+    const result = await mgr.createWorktree(
+      worktreeTask('abcd1234-0000-0000-0000-000000000000', 'Some Title', { display_id: 9 }),
+      'main',
+      [],
+      'feature/login',
+    );
 
     expect(result.branchName).toBe('feature/login');
-    // Folder derived from the custom branch, not the title. Custom branches do
-    // not embed the shortId, so they are already stable across round-trips.
-    expect(result.worktreePath.endsWith('feature-login-abcd1234')).toBe(true);
+    expect(result.worktreeFolder).toBe('9');
+  });
+
+  it('refuses to create a worktree for a task with no usable display_id', async () => {
+    const mgr = new WorktreeManager('/project');
+
+    await expect(
+      mgr.createWorktree({ id: 'abcd1234-0000', title: 'Broken', display_id: 0 }),
+    ).rejects.toThrow(/not a positive integer/);
   });
 });
 

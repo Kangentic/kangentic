@@ -20,7 +20,7 @@ import os from 'node:os';
 const mockState = vi.hoisted(() => ({
   configDir: '',
   projectsRows: [] as Array<{ id: string; path: string }>,
-  tasksRows: [] as Array<{ id: string; title: string; worktree_path: string | null }>,
+  tasksRows: [] as Array<{ id: string; title: string; display_id?: number; worktree_path: string | null }>,
 }));
 
 vi.mock('../../src/main/config/paths', async () => {
@@ -40,6 +40,9 @@ vi.mock('better-sqlite3', () => {
       return [];
     }
     get(boundArg?: unknown) {
+      if (this.sql.includes('FROM tasks') && this.sql.includes('display_id = ?')) {
+        return mockState.tasksRows.find((task) => task.display_id === boundArg);
+      }
       if (this.sql.includes('FROM tasks') && this.sql.includes('LIKE')) {
         const prefix = String(boundArg).replace(/%$/, '');
         return mockState.tasksRows.find((task) => task.id.startsWith(prefix));
@@ -98,6 +101,28 @@ describe('resolvePreviewTaskTitle', () => {
     expect(resolvePreviewTaskTitle(worktreePath(`improve-preview-dev-${SHORT_ID}`))).toBe(
       'Improve /preview dev UX',
     );
+  });
+
+  // Current worktree folders are the task's display_id. Legacy `<slug>-<shortId>`
+  // folders are never renamed on disk, so both shapes have to resolve.
+  it('resolves the title by display_id from a numeric worktree folder', () => {
+    mockState.projectsRows = [{ id: PROJECT_ID, path: projectRoot }];
+    mockState.tasksRows = [
+      { id: TASK_ID, title: 'Improve /preview dev UX', display_id: 460, worktree_path: null },
+    ];
+    touchDbFiles(true, true);
+
+    expect(resolvePreviewTaskTitle(worktreePath('460'))).toBe('Improve /preview dev UX');
+  });
+
+  it('returns null for a numeric folder with no matching display_id', () => {
+    mockState.projectsRows = [{ id: PROJECT_ID, path: projectRoot }];
+    mockState.tasksRows = [
+      { id: TASK_ID, title: 'Improve /preview dev UX', display_id: 460, worktree_path: null },
+    ];
+    touchDbFiles(true, true);
+
+    expect(resolvePreviewTaskTitle(worktreePath('999'))).toBeNull();
   });
 
   it('falls back to matching the stored worktree_path when the id prefix misses', () => {

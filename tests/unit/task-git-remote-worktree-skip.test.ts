@@ -18,6 +18,7 @@
  * `checkoutBranch()` were called.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import path from 'node:path';
 import { ensureTaskWorktree, ensureTaskBranchCheckout } from '../../src/main/ipc/helpers/task-git';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import type { Task, AppConfig, Project } from '../../src/shared/types';
@@ -110,7 +111,7 @@ describe('ensureTaskWorktree - remote execution skip', () => {
     const context = makeContext(makeConfig());
     const task = makeTask({ agent_override: 'opencode' });
 
-    await ensureTaskWorktree(context, task, { update: vi.fn(), getById: vi.fn().mockReturnValue(task) } as never, '/project');
+    await ensureTaskWorktree(context, task, makeTaskRepoStub(task) as never, '/project');
 
     expect(ensureWorktreeMock).toHaveBeenCalledTimes(1);
   });
@@ -119,7 +120,7 @@ describe('ensureTaskWorktree - remote execution skip', () => {
     const context = makeContext(makeConfig({ execution: { opencode: { mode: 'remote', workingDirectory: '/srv/project' } } }));
     const task = makeTask({ agent_override: 'opencode' });
 
-    await ensureTaskWorktree(context, task, { update: vi.fn(), getById: vi.fn().mockReturnValue(task) } as never, '/project');
+    await ensureTaskWorktree(context, task, makeTaskRepoStub(task) as never, '/project');
 
     expect(ensureWorktreeMock).not.toHaveBeenCalled();
   });
@@ -131,7 +132,7 @@ describe('ensureTaskWorktree - remote execution skip', () => {
     );
     const task = makeTask({ agent_override: null });
 
-    await ensureTaskWorktree(context, task, { update: vi.fn(), getById: vi.fn().mockReturnValue(task) } as never, '/project');
+    await ensureTaskWorktree(context, task, makeTaskRepoStub(task) as never, '/project');
 
     expect(ensureWorktreeMock).not.toHaveBeenCalled();
   });
@@ -140,7 +141,7 @@ describe('ensureTaskWorktree - remote execution skip', () => {
     const context = makeContext(makeConfig({ execution: { opencode: { mode: 'remote', workingDirectory: '/srv/project' } } }));
     const task = makeTask({ agent_override: 'claude' });
 
-    await ensureTaskWorktree(context, task, { update: vi.fn(), getById: vi.fn().mockReturnValue(task) } as never, '/project');
+    await ensureTaskWorktree(context, task, makeTaskRepoStub(task) as never, '/project');
 
     expect(ensureWorktreeMock).toHaveBeenCalledTimes(1);
   });
@@ -149,11 +150,27 @@ describe('ensureTaskWorktree - remote execution skip', () => {
     const context = makeContext(makeConfig({ execution: { opencode: { mode: 'local', workingDirectory: null } } }));
     const task = makeTask({ agent_override: 'opencode' });
 
-    await ensureTaskWorktree(context, task, { update: vi.fn(), getById: vi.fn().mockReturnValue(task) } as never, '/project');
+    await ensureTaskWorktree(context, task, makeTaskRepoStub(task) as never, '/project');
 
     expect(ensureWorktreeMock).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * The slice of TaskRepository `ensureTaskWorktree` touches: the legacy-folder
+ * recovery it runs before creating, and the transactional write afterwards.
+ * `recoverLegacyWorktreeFolder` returns null here - these tasks were never
+ * created under the old `<slug>-<shortId>` scheme.
+ */
+function makeTaskRepoStub(task: unknown, overrides: Record<string, unknown> = {}) {
+  return {
+    update: vi.fn(),
+    getById: vi.fn().mockReturnValue(task),
+    recordWorktree: vi.fn(),
+    recoverLegacyWorktreeFolder: vi.fn(() => null),
+    ...overrides,
+  };
+}
 
 describe('ensureTaskWorktree - ensureWorktree result passthrough', () => {
   beforeEach(() => {
@@ -175,17 +192,56 @@ describe('ensureTaskWorktree - ensureWorktree result passthrough', () => {
     const context = makeContext(makeConfig());
     const task = makeTask();
     const originalTask = { ...task };
-    const updateMock = vi.fn();
+    const recordMock = vi.fn();
 
     await ensureTaskWorktree(
       context,
       task,
-      { update: updateMock, getById: vi.fn().mockReturnValue(task) } as never,
+      makeTaskRepoStub(task, { recordWorktree: recordMock }) as never,
       '/project',
     );
 
-    expect(updateMock).not.toHaveBeenCalled();
+    expect(recordMock).not.toHaveBeenCalled();
     expect(task).toEqual(originalTask);
+  });
+
+  /**
+   * The regression `worktree_folder` exists to prevent. A Done move nulls
+   * `worktree_path`, so moving back out is a FRESH creation with no record of
+   * where the task used to live. Without recovery, a task created before the
+   * numeric scheme would be rebuilt at a different path, orphaning its agent
+   * transcript (keyed by a slug of the cwd) and its browser cookie jar.
+   */
+  it('recovers a legacy folder from session history before creating, and hands it to ensureWorktree', async () => {
+    ensureWorktreeMock.mockResolvedValueOnce(null);
+    const context = makeContext(makeConfig());
+    const task = makeTask({ worktree_path: null, worktree_folder: null });
+    const repo = makeTaskRepoStub(task, {
+      recoverLegacyWorktreeFolder: vi.fn(() => 'dns-setup-4e41b16b'),
+    });
+
+    await ensureTaskWorktree(context, task, repo as never, '/project');
+
+    expect(repo.recoverLegacyWorktreeFolder).toHaveBeenCalledWith(
+      task.id,
+      path.join('/project', '.kangentic', 'worktrees'),
+    );
+    expect(ensureWorktreeMock).toHaveBeenCalledWith(
+      expect.objectContaining({ worktree_folder: 'dns-setup-4e41b16b' }),
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it('does not look for a legacy folder when the task already knows its own', async () => {
+    ensureWorktreeMock.mockResolvedValueOnce(null);
+    const context = makeContext(makeConfig());
+    const task = makeTask({ worktree_path: null, worktree_folder: '460' });
+    const repo = makeTaskRepoStub(task);
+
+    await ensureTaskWorktree(context, task, repo as never, '/project');
+
+    expect(repo.recoverLegacyWorktreeFolder).not.toHaveBeenCalled();
   });
 
   it('propagates an ensureWorktree rejection (no try/catch inside ensureTaskWorktree)', async () => {
@@ -198,7 +254,7 @@ describe('ensureTaskWorktree - ensureWorktree result passthrough', () => {
       ensureTaskWorktree(
         context,
         task,
-        { update: vi.fn(), getById: vi.fn().mockReturnValue(task) } as never,
+        makeTaskRepoStub(task) as never,
         '/project',
       ),
     ).rejects.toThrow("Cannot create worktree: this task's base branch 'release-2.0' does not exist");

@@ -135,7 +135,6 @@ vi.mock('../../src/main/git/fetch-throttle', () => ({
 
 vi.mock('../../src/shared/slugify', () => ({
   slugify: vi.fn((s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 20)),
-  computeSlugBudget: vi.fn(() => 20),
   computeAutoBranchName: vi.fn(
     (_base: string, _default: string, slug: string, shortId: string) => `${slug}-${shortId}`,
   ),

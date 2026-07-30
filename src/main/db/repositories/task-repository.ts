@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import type Database from 'better-sqlite3';
 import type { Task, TaskCreateInput, TaskUpdateInput, TaskMoveInput, ArchivedTasksPreview } from '../../../shared/types';
+import { worktreeFolderUnderRoot } from '../../../shared/worktree-folder';
 
 /** Raw row from SQLite - labels stored as JSON string. */
 interface TaskRow extends Omit<Task, 'labels'> {
@@ -137,7 +138,97 @@ export class TaskRepository {
     return row ? rowToTask(row) : undefined;
   }
 
+  /**
+   * Allocate the next display_id. MONOTONIC: the high-water mark in
+   * `project_meta` only moves forward, so deleting the highest-numbered task
+   * never hands its number to the next one created. That matters because a
+   * task's worktree directory is named after its display_id, and a recycled
+   * number could adopt a leftover directory belonging to the deleted task.
+   *
+   * `MAX(display_id)` stays in the calculation so the counter self-heals if the
+   * meta row is lost or the database is restored from an older copy.
+   *
+   * Callers must already be inside a transaction.
+   */
+  private allocateDisplayId(): number {
+    const storedHighWater = this.db
+      .prepare("SELECT value FROM project_meta WHERE key = 'display_id_high_water'")
+      .get() as { value: string } | undefined;
+    const parsedHighWater = storedHighWater ? Number.parseInt(storedHighWater.value, 10) : 0;
+    const highWater = Number.isFinite(parsedHighWater) ? parsedHighWater : 0;
+
+    const maxDisplayId = this.db
+      .prepare('SELECT COALESCE(MAX(display_id), 0) as max FROM tasks')
+      .get() as { max: number };
+
+    const displayId = Math.max(highWater, maxDisplayId.max) + 1;
+    this.db.prepare(`INSERT INTO project_meta (key, value) VALUES ('display_id_high_water', ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(String(displayId));
+    return displayId;
+  }
+
+  /**
+   * Record a task's worktree directory name. Write-once: the `worktree_folder IS
+   * NULL` guard means a second call with a different value is a no-op, so a
+   * task's worktree can never be relocated by a later write. See the JSDoc on
+   * `Task.worktree_folder`.
+   */
+  setWorktreeFolder(id: string, folder: string): void {
+    this.db
+      .prepare('UPDATE tasks SET worktree_folder = ? WHERE id = ? AND worktree_folder IS NULL')
+      .run(folder, id);
+  }
+
+  /**
+   * Persist a freshly created worktree: its path, its branch, and the directory
+   * name that must never change again.
+   *
+   * Atomic on purpose. Written as two statements, a crash in between would leave
+   * `worktree_path` set with `worktree_folder` still null; the
+   * `basename(worktree_path)` fallback would mask that until the task reached
+   * Done, which nulls the path and would lose the folder permanently.
+   */
+  recordWorktree(id: string, worktreePath: string, branchName: string, worktreeFolder: string): void {
+    this.db.transaction(() => {
+      this.update({ id, worktree_path: worktreePath, branch_name: branchName });
+      this.setWorktreeFolder(id, worktreeFolder);
+    })();
+  }
+
+  /**
+   * Recover, and persist, the worktree directory name a task used BEFORE the
+   * numeric scheme, for a task whose `worktree_path` has already been cleared.
+   * Returns null when there is nothing to recover, in which case the task takes
+   * the numeric name on its next creation.
+   *
+   * This exists because a Done move nulls `worktree_path`, so a pre-existing
+   * task moved back out is a fresh creation with no record of where it used to
+   * live. `sessions.cwd` is that record: it holds the exact historical worktree
+   * path for every task that ever ran an agent, and survives Done cleanup (the
+   * only `DELETE FROM sessions` is `deleteByTaskId`, called from full-reset
+   * paths whose tasks correctly fall through to the numeric name here).
+   *
+   * The `worktreesRoot` anchor is what makes this safe. Kangentic can be opened
+   * AT a worktree path (an opened worktree, or a /preview ephemeral project), in
+   * which case the project root itself contains `.kangentic/worktrees/` and a
+   * bare marker search would hand a task that never had a worktree the enclosing
+   * worktree's folder name - permanently, since the column is write-once. Only a
+   * direct child of this project's own worktrees root counts.
+   */
+  recoverLegacyWorktreeFolder(taskId: string, worktreesRoot: string): string | null {
+    const latestSession = this.db
+      .prepare('SELECT cwd FROM sessions WHERE task_id = ? ORDER BY started_at DESC LIMIT 1')
+      .get(taskId) as { cwd: string } | undefined;
+    const folder = worktreeFolderUnderRoot(worktreesRoot, latestSession?.cwd);
+    if (folder) this.setWorktreeFolder(taskId, folder);
+    return folder;
+  }
+
   create(input: TaskCreateInput): Task {
+    return this.db.transaction(() => this.createWithinTransaction(input))();
+  }
+
+  private createWithinTransaction(input: TaskCreateInput): Task {
     const now = new Date().toISOString();
     const createdAt = input.createdAt ?? now;
     const id = uuidv4();
@@ -145,9 +236,7 @@ export class TaskRepository {
     const maxPos = this.db.prepare('SELECT COALESCE(MAX(position), -1) as max FROM tasks WHERE swimlane_id = ?').get(input.swimlane_id) as { max: number };
     const position = maxPos.max + 1;
 
-    // Get next display_id (auto-incrementing human-readable ID)
-    const maxDisplayId = this.db.prepare('SELECT COALESCE(MAX(display_id), 0) as max FROM tasks').get() as { max: number };
-    const displayId = maxDisplayId.max + 1;
+    const displayId = this.allocateDisplayId();
 
     const labels = input.labels ?? [];
     const priority = input.priority ?? 0;
@@ -171,6 +260,7 @@ export class TaskRepository {
       agent: null,
       session_id: null,
       worktree_path: null,
+      worktree_folder: null,
       branch_name: input.customBranchName?.trim() || null,
       pr_number: null,
       pr_url: null,

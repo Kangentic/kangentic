@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
 import { seedDefaultSwimlanes, seedDefaultActions } from './default-data';
 import { migrateSpawnAgentConfig } from './spawn-agent-config-migration';
+import { worktreeFolderFromPath } from '../../../shared/worktree-folder';
 
 export function runProjectMigrations(db: Database.Database): void {
   db.exec(`
@@ -504,6 +505,46 @@ export function runProjectMigrations(db: Database.Database): void {
     });
     backfillTransaction();
     db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_display_id ON tasks(display_id)');
+  }
+
+  // Migration: monotonic display_id high-water mark.
+  //
+  // display_id used to be allocated as MAX(display_id) + 1, but `delete()` is a
+  // hard DELETE, so removing the highest-numbered task handed its number to the
+  // next one created. Since a task's worktree directory is now named after its
+  // display_id, a recycled number could adopt a leftover directory belonging to
+  // the deleted task. The counter only ever moves forward.
+  db.exec('CREATE TABLE IF NOT EXISTS project_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
+  db.exec(`INSERT OR IGNORE INTO project_meta (key, value)
+    SELECT 'display_id_high_water', CAST(COALESCE(MAX(display_id), 0) AS TEXT) FROM tasks`);
+
+  // Migration: add worktree_folder - the write-once directory name for a task's
+  // worktree. Backfilled ONLY from worktree_path, which is unambiguous.
+  //
+  // Deliberately NOT backfilled from sessions.cwd here. runProjectMigrations
+  // receives only the database handle; the project path lives in the global DB,
+  // so this migration has no anchor to tell a task's own worktree cwd apart from
+  // a project that is itself registered AT a worktree path (an opened worktree,
+  // or a /preview ephemeral project). In that case a task that never had a
+  // worktree has a session cwd equal to the project root, which already contains
+  // the marker, and a bare marker search would write a permanently wrong value
+  // into a write-once column. That recovery happens at use time instead, where
+  // the project path is available - see recoverLegacyWorktreeFolder.
+  const hasWorktreeFolderColumn = (db.pragma('table_info(tasks)') as Array<{ name: string }>)
+    .some((col) => col.name === 'worktree_folder');
+  if (!hasWorktreeFolderColumn) {
+    db.exec('ALTER TABLE tasks ADD COLUMN worktree_folder TEXT DEFAULT NULL');
+    const tasksWithWorktree = db
+      .prepare('SELECT id, worktree_path FROM tasks WHERE worktree_path IS NOT NULL')
+      .all() as Array<{ id: string; worktree_path: string }>;
+    const updateWorktreeFolder = db.prepare('UPDATE tasks SET worktree_folder = ? WHERE id = ?');
+    const backfillFolders = db.transaction(() => {
+      for (const task of tasksWithWorktree) {
+        const folderName = worktreeFolderFromPath(task.worktree_path);
+        if (folderName) updateWorktreeFolder.run(folderName, task.id);
+      }
+    });
+    backfillFolders();
   }
 
   // --- Add labels and priority columns to tasks ---

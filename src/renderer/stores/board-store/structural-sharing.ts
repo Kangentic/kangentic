@@ -87,6 +87,7 @@ function taskContentsMatch(previous: Task, next: Task): boolean {
     previous.agent !== next.agent ||
     previous.session_id !== next.session_id ||
     previous.worktree_path !== next.worktree_path ||
+    previous.worktree_folder !== next.worktree_folder ||
     previous.branch_name !== next.branch_name ||
     previous.base_branch !== next.base_branch ||
     previous.use_worktree !== next.use_worktree ||

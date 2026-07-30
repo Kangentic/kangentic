@@ -57,14 +57,18 @@ import { cleanupStaleResources, cleanupStaleResourcesAsync, pruneOrphanedWorktre
 interface MockTask {
   id: string;
   title: string;
+  display_id: number;
   worktree_path: string | null;
+  worktree_folder: string | null;
   branch_name: string | null;
   session_id: string | null;
 }
 
 function createMockTask(overrides: Partial<MockTask> & { id: string; title: string }): MockTask {
   return {
+    display_id: 7,
     worktree_path: null,
+    worktree_folder: null,
     branch_name: null,
     session_id: null,
     ...overrides,
@@ -289,6 +293,54 @@ describe('cleanupStaleResources', () => {
 
     // DB update NOT called (no stale DB fields to clear)
     expect(taskRepo.update).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Worktree DIRECTORIES are named for the task's display_id, but BRANCHES stay
+   * title-derived. This pass used to derive the branch from the folder name,
+   * which after that split would have it hunting for a branch literally called
+   * "460" and silently cleaning nothing - inside a best-effort try/catch, so no
+   * error would ever surface.
+   */
+  it('cleans a numeric worktree directory while still targeting the title-derived branch', async () => {
+    const task = createMockTask({
+      id: 'eeee5555-0000-0000-0000-000000000000',
+      title: 'Add dark mode',
+      display_id: 460,
+      worktree_folder: '460',
+    });
+    const { swimlaneRepo, taskRepo, sessionRepo, sessionManager } = createMockRepos([task]);
+
+    const numericPath = '/home/dev/my-project/.kangentic/worktrees/460';
+    mockExistsSync.mockImplementation((pathArg: string) => pathArg === numericPath);
+    setupExecFile((cmd: string, args: string[]) => {
+      if (cmd === 'git' && args[0] === 'rev-parse' && args[2] === 'add-dark-mode-eeee5555') {
+        return; // the title-derived branch exists
+      }
+      throw new Error('not found');
+    });
+
+    await cleanupStaleResources(
+      projectPath,
+      taskRepo as never,
+      swimlaneRepo as never,
+      sessionRepo as never,
+      sessionManager as never,
+    );
+
+    expect(mockExecFile).toHaveBeenCalledWith(
+      'git',
+      ['worktree', 'remove', '--force', numericPath],
+      { cwd: projectPath },
+      expect.any(Function),
+    );
+    expect(mockExecFile).toHaveBeenCalledWith(
+      'git', ['branch', '-D', 'add-dark-mode-eeee5555'], { cwd: projectPath }, expect.any(Function),
+    );
+    // Never the folder name.
+    expect(mockExecFile).not.toHaveBeenCalledWith(
+      'git', ['branch', '-D', '460'], { cwd: projectPath }, expect.any(Function),
+    );
   });
 
   it('handles session removal failure gracefully', async () => {

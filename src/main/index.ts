@@ -745,7 +745,13 @@ const createWindow = () => {
     if (cwd && mainWindow) {
       const worktreeMatch = cwd.replace(/\\/g, '/').match(/\.kangentic\/worktrees\/([^/]+)/);
       if (worktreeMatch) {
-        mainWindow.setTitle(`Kangentic - ${worktreeMatch[1]}`);
+        // Current worktree folders are the task's display_id; folders created
+        // before that scheme keep their `<slug>-<shortId>` name. Prefix the
+        // numeric form so the taskbar reads "Kangentic - #460" rather than a
+        // bare number that looks like a window index.
+        const folderName = worktreeMatch[1];
+        const label = /^\d+$/.test(folderName) ? `#${folderName}` : folderName;
+        mainWindow.setTitle(`Kangentic - ${label}`);
       }
     }
 

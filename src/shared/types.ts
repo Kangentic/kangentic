@@ -295,6 +295,22 @@ export interface Task {
   agent: string | null;
   session_id: string | null;
   worktree_path: string | null;
+  /**
+   * The directory NAME (not path) of this task's worktree, chosen exactly once
+   * and never changed. New tasks get `String(display_id)`; tasks that predate
+   * that scheme keep their legacy `<slug>-<taskId8>` name, so nothing on disk is
+   * ever renamed or relocated.
+   *
+   * This exists because a Done move nulls `worktree_path`, which makes the move
+   * back out a fresh creation. Without a durable record, a pre-existing task
+   * would be recreated under the new scheme at a different path, orphaning its
+   * agent transcript (keyed by a slug of the cwd) and its browser cookie jar
+   * (keyed by a hash of the path). See `WorktreeManager.createWorktree`.
+   *
+   * Invariant: whenever `worktree_path` is non-null,
+   * `path.basename(worktree_path) === worktree_folder`.
+   */
+  worktree_folder: string | null;
   branch_name: string | null;
   pr_number: number | null;
   pr_url: string | null;

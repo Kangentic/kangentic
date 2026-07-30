@@ -12,28 +12,6 @@ export function slugify(text: string, maxLen = 20): string {
 }
 
 /**
- * Compute max slug length to keep worktree paths under Windows MAX_PATH (260).
- * On non-Windows platforms this is not called - the static default (20) is used.
- *
- * Budget = 260 - projectPath - ".kangentic/worktrees/" - "-{shortId}" - reserve
- * Capped at 20 (readable) and floored at 0 (hash-only fallback).
- */
-export function computeSlugBudget(projectPath: string): number {
-  const WINDOWS_MAX_PATH = 260;
-  const WORKTREE_PREFIX_LENGTH = '.kangentic/worktrees/'.length; // 21
-  const SHORT_ID_SUFFIX_LENGTH = 9; // '-' + 8-char hash
-  const RESERVED_FOR_BUILD_OUTPUT = 80;
-
-  const available = WINDOWS_MAX_PATH
-    - projectPath.length
-    - WORKTREE_PREFIX_LENGTH
-    - SHORT_ID_SUFFIX_LENGTH
-    - RESERVED_FOR_BUILD_OUTPUT;
-
-  return Math.max(0, Math.min(available, 20));
-}
-
-/**
  * Compose the auto-generated branch name. When branching off a non-default
  * base, the base is encoded as a namespace prefix (with any '/' flattened to
  * '-') so `git branch` / GitHub branch lists group work by base.

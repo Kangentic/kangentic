@@ -5,10 +5,14 @@
  *
  * The preview clones run a fresh seeded board DB, so the original task is NOT in
  * any database the preview process opens. We recover it from the REAL
- * (non-ephemeral) parent project DB: the worktree path encodes the task UUID
- * prefix (`<slug>-<shortId>`, where shortId = taskId.slice(0, 8)), and
+ * (non-ephemeral) parent project DB, keyed off the worktree's folder name, and
  * getPlatformConfigDir() points at the real config dir even when
  * KANGENTIC_DATA_DIR redirects everything else to the ephemeral data dir.
+ *
+ * Two folder shapes exist and both must resolve. Current worktrees are named for
+ * the task's `display_id` (`460`); worktrees created before that scheme keep
+ * their `<slug>-<shortId>` name, where shortId = taskId.slice(0, 8). Nothing on
+ * disk was ever renamed, so the legacy form is not going away.
  *
  * Best-effort: any miss (no DB, no matching project/task, locked file) returns
  * null and the header simply falls back to "Project N".
@@ -48,16 +52,20 @@ export function resolvePreviewTaskTitle(worktreePath: string): string | null {
 
     const parentRoot = normalizedWorktree.slice(0, markerIndex);
     const folderName = normalizedWorktree.slice(markerIndex + WORKTREE_MARKER.length).split('/')[0];
-    // Worktree folders are `${slug}-${shortId}`, where shortId = taskId.slice(0, 8).
+    // Numeric folder = the task's display_id. Legacy folder = `${slug}-${shortId}`.
+    const displayId = /^\d+$/.test(folderName) ? Number.parseInt(folderName, 10) : null;
     const shortIdMatch = folderName.match(/-([0-9a-f]{8})$/);
-    if (!shortIdMatch) return null;
-    const shortId = shortIdMatch[1];
+    if (displayId === null && !shortIdMatch) return null;
 
     const configDir = getPlatformConfigDir();
     const projectId = findProjectId(path.join(configDir, 'index.db'), parentRoot);
     if (!projectId) return null;
 
-    return findTaskTitle(path.join(configDir, 'projects', `${projectId}.db`), shortId, worktreePath);
+    return findTaskTitle(
+      path.join(configDir, 'projects', `${projectId}.db`),
+      { displayId, shortId: shortIdMatch?.[1] ?? null },
+      worktreePath,
+    );
   } catch {
     return null;
   }
@@ -76,18 +84,30 @@ function findProjectId(globalDbPath: string, parentRoot: string): string | null 
   }
 }
 
-/** Look up the task title by UUID prefix (primary) or stored worktree path (fallback). */
-function findTaskTitle(projectDbPath: string, shortId: string, worktreePath: string): string | null {
+/** Look up the task title by display_id or UUID prefix (primary) or stored worktree path (fallback). */
+function findTaskTitle(
+  projectDbPath: string,
+  folderKey: { displayId: number | null; shortId: string | null },
+  worktreePath: string,
+): string | null {
   if (!fs.existsSync(projectDbPath)) return null;
   const db = new Database(projectDbPath, { readonly: true, fileMustExist: true });
   try {
+    if (folderKey.displayId !== null) {
+      const taskByDisplayId = db.prepare('SELECT title FROM tasks WHERE display_id = ? LIMIT 1')
+        .get(folderKey.displayId) as { title: string } | undefined;
+      if (taskByDisplayId?.title) return taskByDisplayId.title;
+    }
+
     // shortId is 8 hex chars containing no LIKE metacharacters, so the trailing `%` is the
     // only wildcard and needs no escaping. A UUIDv4 prefix collision within one project is
     // astronomically unlikely; LIMIT 1 takes the first match.
-    const taskByIdPrefix = db.prepare('SELECT title FROM tasks WHERE id LIKE ? LIMIT 1').get(`${shortId}%`) as
-      | { title: string }
-      | undefined;
-    if (taskByIdPrefix?.title) return taskByIdPrefix.title;
+    if (folderKey.shortId) {
+      const taskByIdPrefix = db.prepare('SELECT title FROM tasks WHERE id LIKE ? LIMIT 1').get(`${folderKey.shortId}%`) as
+        | { title: string }
+        | undefined;
+      if (taskByIdPrefix?.title) return taskByIdPrefix.title;
+    }
 
     const rows = db
       .prepare('SELECT title, worktree_path FROM tasks WHERE worktree_path IS NOT NULL')

@@ -292,6 +292,10 @@ export const handleGetCurrentTask: CommandHandler = (
   const cwdNormalized = cwdRaw ? normalizePath(cwdRaw) : null;
   const branchLower = branchRaw ? branchRaw.toLowerCase() : null;
 
+  // The worktree folder name, used only as a lenient fallback below (the primary
+  // match is full-path equality against task.worktree_path). Folder names are the
+  // task's display_id now and `<slug>-<shortId>` for worktrees created before
+  // that; both work here, because the fallback compares the whole final segment.
   let slug: string | null = null;
   if (cwdNormalized) {
     const slugMatch = cwdNormalized.match(/(?:^|\/)\.kangentic\/worktrees\/([^/]+)/);
