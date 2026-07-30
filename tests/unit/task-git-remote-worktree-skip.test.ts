@@ -94,6 +94,12 @@ function makeContext(config: AppConfig, projects: Project[] = []): IpcContext {
     projectRepo: {
       list: vi.fn().mockReturnValue(projects),
     },
+    // No live agents anywhere, so the checkout-occupancy guard inside
+    // ensureTaskBranchCheckout is satisfied. That guard is covered by
+    // branch-checkout-occupancy.test.ts.
+    sessionManager: {
+      listSessions: vi.fn().mockReturnValue([]),
+    },
   } as unknown as IpcContext;
 }
 
@@ -275,7 +281,7 @@ describe('ensureTaskBranchCheckout - hasCommits guard', () => {
     hasCommitsMock.mockResolvedValue(false);
     const task = makeTask({ worktree_path: null, branch_name: null, base_branch: 'main' });
 
-    await ensureTaskBranchCheckout(task, '/project');
+    await ensureTaskBranchCheckout(makeContext(makeConfig()), task, '/project');
 
     expect(checkoutBranchMock).not.toHaveBeenCalled();
     expect(withLockMock).not.toHaveBeenCalled();
@@ -287,7 +293,7 @@ describe('ensureTaskBranchCheckout - hasCommits guard', () => {
     hasCommitsMock.mockResolvedValue(true);
     const task = makeTask({ worktree_path: null, branch_name: null, base_branch: 'main' });
 
-    await ensureTaskBranchCheckout(task, '/project');
+    await ensureTaskBranchCheckout(makeContext(makeConfig()), task, '/project');
 
     expect(checkoutBranchMock).toHaveBeenCalledWith('main');
   });

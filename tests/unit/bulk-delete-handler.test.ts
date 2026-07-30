@@ -124,6 +124,7 @@ vi.mock('../../src/main/ipc/helpers', () => ({
   cleanupTaskResources: (...args: unknown[]) => mockCleanupTaskResources(...args),
   ensureTaskWorktree: (...args: unknown[]) => mockEnsureTaskWorktree(...args),
   ensureTaskBranchCheckout: (...args: unknown[]) => mockEnsureTaskBranchCheckout(...args),
+  notifyBranchCheckoutBlocked: () => {},
   createTransitionEngine: (...args: unknown[]) => mockCreateTransitionEngine(...args),
   interpolateTemplate: vi.fn((template: string) => template),
 }));
@@ -148,7 +149,6 @@ vi.mock('../../src/main/ipc/handlers/task-branch', () => ({
 // task-move
 vi.mock('../../src/main/ipc/handlers/task-move', () => ({
   handleTaskMove: vi.fn(async () => {}),
-  guardActiveNonWorktreeSessions: vi.fn(),
 }));
 
 // config manager stubs (used by TASK_UPDATE path, not bulk delete, but needed for module load)

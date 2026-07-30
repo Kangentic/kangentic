@@ -6,13 +6,13 @@ import {
   getProjectRepos,
   ensureTaskWorktree,
   ensureTaskBranchCheckout,
+  notifyBranchCheckoutBlocked,
   createTransitionEngine,
   spawnAgent,
 } from '../helpers';
 import { resolveProjectContext } from '../helpers/project-repos';
 import { applyProfileToLane } from '../../transition-engine/column-strategy';
 import { loadTaskProfile } from '../helpers/task-profile';
-import { guardActiveNonWorktreeSessions } from './task-move';
 import { withTaskLock } from '../task-lifecycle-lock';
 import type { IpcContext } from '../ipc-context';
 
@@ -67,10 +67,10 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
       // Checkout the task's branch in the main repo (non-worktree tasks only).
       // If checkout fails, the task is still unarchived but no agent is spawned.
       try {
-        guardActiveNonWorktreeSessions(context, task, tasks);
-        await ensureTaskBranchCheckout(task, resolvedProjectPath);
+        await ensureTaskBranchCheckout(context, task, resolvedProjectPath);
       } catch (checkoutError) {
         console.error('[TASK_UNARCHIVE] Branch checkout failed:', checkoutError);
+        notifyBranchCheckoutBlocked(context, task, checkoutError, resolvedProjectId);
         return tasks.getById(input.id);
       }
 
@@ -144,10 +144,10 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
         // Checkout the task's branch in the main repo (non-worktree tasks only).
         // Catch per-task so one failure doesn't block the entire batch.
         try {
-          guardActiveNonWorktreeSessions(context, task, tasks);
-          await ensureTaskBranchCheckout(task, resolvedProjectPath);
+          await ensureTaskBranchCheckout(context, task, resolvedProjectPath);
         } catch (checkoutError) {
           console.error(`[TASK_BULK_UNARCHIVE] Branch checkout failed for task ${id.slice(0, 8)}:`, checkoutError);
+          notifyBranchCheckoutBlocked(context, task, checkoutError, resolvedProjectId);
           return;
         }
 

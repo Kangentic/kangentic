@@ -1,10 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { worktreeFolderFromPath, worktreeFolderUnderRoot } from '../../src/shared/worktree-folder';
 import {
-  worktreePathHeadroom,
   describeWorktreePathLengthCause,
-  WINDOWS_MAX_PATH,
-  ORDINARY_TOOLING_RESERVE,
+  isPathLengthError,
 } from '../../src/shared/windows-path-budget';
 
 /**
@@ -85,37 +83,68 @@ describe('worktreeFolderUnderRoot', () => {
   });
 });
 
-describe('windows path budget', () => {
-  it('leaves room for a relative path plus its separator', () => {
-    const worktreePath = 'C:\\kw';
-    expect(worktreePathHeadroom(worktreePath)).toBe(WINDOWS_MAX_PATH - worktreePath.length - 1);
-  });
+/**
+ * Path length is recognized from ERROR EVIDENCE, never predicted from a length
+ * threshold. Measurement is why: inside a 98-character worktree of a React
+ * Native project, 1,958 files exceeded MAX_PATH and `npm install`, `expo
+ * prebuild` and Gradle all succeeded. A length-triggered warning would have
+ * fired on that healthy tree, and could not observe the one thing that did fail.
+ */
+describe('windows path-length diagnosis', () => {
+  const DEEP_PATH = `C:\\${'x'.repeat(200)}`;
 
-  it('explains a failure only when headroom is genuinely short', () => {
+  function onWindows<T>(body: () => T): T {
     const originalPlatform = process.platform;
     Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
     try {
-      // A normal project leaves ample room, so nothing is added to the error.
-      expect(describeWorktreePathLengthCause('C:\\Users\\dev\\projects\\myapp\\.kangentic\\worktrees\\460'))
-        .toBeNull();
+      return body();
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+    }
+  }
 
-      // Deep enough that an npm install would start failing.
-      const deepPath = `C:\\${'x'.repeat(WINDOWS_MAX_PATH - ORDINARY_TOOLING_RESERVE)}`;
-      const explanation = describeWorktreePathLengthCause(deepPath);
-      expect(explanation).toContain('characters');
-      expect(explanation).toContain(String(WINDOWS_MAX_PATH));
+  it('says nothing about a deep path when the error is unrelated', () => {
+    onWindows(() => {
+      const unrelated = new Error('fatal: could not lock config file .git/config: File exists');
+      expect(describeWorktreePathLengthCause(DEEP_PATH, unrelated)).toBeNull();
+    });
+  });
+
+  it('recognizes the signatures a tool emits when it runs out of path', () => {
+    onWindows(() => {
+      for (const message of [
+        'ENAMETOOLONG: name too long, open ...',
+        'error: unable to create file: Filename too long',
+        'The filename or extension is too long.',
+        'has 195 characters. The maximum full path to an object file is 250 characters (CMAKE_OBJECT_PATH_MAX)',
+        'Object file RNScreens.cpp.o cannot be safely placed under this directory',
+      ]) {
+        expect(describeWorktreePathLengthCause(DEEP_PATH, new Error(message))).toContain('ran out of path');
+      }
+    });
+  });
+
+  it('matches through a wrapped cause, so an enriched error still resolves', () => {
+    onWindows(() => {
+      const wrapped = new Error('Worktree setup failed', { cause: new Error('ENAMETOOLONG') });
+      expect(describeWorktreePathLengthCause(DEEP_PATH, wrapped)).not.toBeNull();
+    });
+  });
+
+  it('is a no-op off Windows, where PATH_MAX is 1024 or more', () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+    try {
+      expect(describeWorktreePathLengthCause(`/${'x'.repeat(400)}`, new Error('ENAMETOOLONG')))
+        .toBeNull();
     } finally {
       Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
     }
   });
 
-  it('never explains anything off Windows, where MAX_PATH does not apply', () => {
-    const originalPlatform = process.platform;
-    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
-    try {
-      expect(describeWorktreePathLengthCause(`/${'x'.repeat(400)}`)).toBeNull();
-    } finally {
-      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
-    }
+  it('exposes the raw predicate for callers that only need the verdict', () => {
+    expect(isPathLengthError(new Error('ENAMETOOLONG'))).toBe(true);
+    expect(isPathLengthError(new Error('permission denied'))).toBe(false);
+    expect(isPathLengthError(undefined)).toBe(false);
   });
 });

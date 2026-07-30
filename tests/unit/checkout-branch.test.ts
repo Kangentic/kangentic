@@ -1,9 +1,9 @@
 /**
- * Unit tests for WorktreeManager.checkoutBranch() and the
- * ensureTaskBranchCheckout / guardActiveNonWorktreeSessions helpers.
+ * Unit tests for WorktreeManager.checkoutBranch() and ensureTaskBranchCheckout.
  *
- * These functions handle branch checkout for non-worktree tasks,
- * with guards for dirty repos and concurrent non-worktree sessions.
+ * These functions handle branch checkout for non-worktree tasks, with a guard
+ * for dirty repos. The separate guard against checking out underneath another
+ * task's live agent lives in branch-checkout-occupancy.test.ts.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -63,6 +63,19 @@ import { WorktreeManager } from '../../src/main/git/worktree-manager';
 import { ensureTaskBranchCheckout } from '../../src/main/ipc/helpers';
 import { clearFetchCache } from '../../src/main/git/fetch-throttle';
 import type { Task } from '../../src/shared/types';
+import type { IpcContext } from '../../src/main/ipc/ipc-context';
+
+/**
+ * A context with no live agents anywhere, so the occupancy guard inside
+ * ensureTaskBranchCheckout is satisfied and these tests keep exercising the
+ * branch-resolution logic they were written for. The guard itself is covered by
+ * branch-checkout-occupancy.test.ts.
+ */
+const idleContext = {
+  sessionManager: { listSessions: () => [] },
+  currentProjectId: null,
+  projectRepo: { list: () => [] },
+} as unknown as IpcContext;
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -99,14 +112,45 @@ describe('WorktreeManager.checkoutBranch', () => {
     vi.clearAllMocks();
   });
 
-  it('no-ops when already on the target branch', async () => {
+  it('skips the checkout when already on the target branch, but still verifies the tree', async () => {
+    // The dirty check runs FIRST now, so every successful return means "on this
+    // branch, no uncommitted tracked changes". It used to return before checking
+    // anything, handing callers a guarantee it had not established, on what is
+    // the common path (a repeat move of a task already on its branch).
     mockGit.revparse.mockResolvedValue('feature/my-branch\n');
+    mockGit.status.mockResolvedValue({ files: [] });
 
     const manager = new WorktreeManager('/project');
     await manager.checkoutBranch('feature/my-branch');
 
-    expect(mockGit.status).not.toHaveBeenCalled();
+    expect(mockGit.status).toHaveBeenCalled();
     expect(mockGit.checkout).not.toHaveBeenCalled();
+  });
+
+  it('rejects a dirty tree even when already on the target branch', async () => {
+    mockGit.revparse.mockResolvedValue('feature/my-branch\n');
+    mockGit.status.mockResolvedValue({
+      files: [{ path: 'src/index.ts', index: 'M', working_dir: ' ' }],
+    });
+
+    const manager = new WorktreeManager('/project');
+    await expect(manager.checkoutBranch('feature/my-branch'))
+      .rejects.toThrow(/uncommitted changes/);
+  });
+
+  it('still ignores untracked and ignored files, which git checkout preserves', async () => {
+    // Rejecting these would block every project with a node_modules or build
+    // directory, which is most of them.
+    mockGit.revparse.mockResolvedValue('main\n');
+    mockGit.status.mockResolvedValue({
+      files: [{ path: 'build/output.o', index: '?', working_dir: '?' }],
+    });
+    mockGit.checkout.mockResolvedValue(undefined);
+
+    const manager = new WorktreeManager('/project');
+    await manager.checkoutBranch('develop');
+
+    expect(mockGit.checkout).toHaveBeenCalledWith('develop');
   });
 
   it('checks out the branch when repo is clean', async () => {
@@ -222,7 +266,7 @@ describe('ensureTaskBranchCheckout', () => {
 
   it('skips when projectPath is null', async () => {
     const task = makeTask({ base_branch: 'develop' });
-    await ensureTaskBranchCheckout(task, null);
+    await ensureTaskBranchCheckout(idleContext, task, null);
 
     expect(mockGit.revparse).not.toHaveBeenCalled();
   });
@@ -230,7 +274,7 @@ describe('ensureTaskBranchCheckout', () => {
   it('skips when task has a worktree_path', async () => {
     vi.mocked(fs.existsSync).mockReturnValue(true);
     const task = makeTask({ base_branch: 'develop', worktree_path: '/project/.kangentic/worktrees/test' });
-    await ensureTaskBranchCheckout(task, '/project');
+    await ensureTaskBranchCheckout(idleContext, task, '/project');
 
     expect(mockGit.revparse).not.toHaveBeenCalled();
   });
@@ -238,7 +282,7 @@ describe('ensureTaskBranchCheckout', () => {
   it('skips when task has no base_branch', async () => {
     vi.mocked(fs.existsSync).mockReturnValue(true);
     const task = makeTask({ base_branch: null });
-    await ensureTaskBranchCheckout(task, '/project');
+    await ensureTaskBranchCheckout(idleContext, task, '/project');
 
     expect(mockGit.revparse).not.toHaveBeenCalled();
   });
@@ -246,7 +290,7 @@ describe('ensureTaskBranchCheckout', () => {
   it('skips when project is not a git repo', async () => {
     vi.mocked(fs.existsSync).mockReturnValue(false);
     const task = makeTask({ base_branch: 'develop' });
-    await ensureTaskBranchCheckout(task, '/project');
+    await ensureTaskBranchCheckout(idleContext, task, '/project');
 
     expect(mockGit.revparse).not.toHaveBeenCalled();
   });
@@ -258,7 +302,7 @@ describe('ensureTaskBranchCheckout', () => {
     mockGit.checkout.mockResolvedValue(undefined);
 
     const task = makeTask({ base_branch: 'develop' });
-    await ensureTaskBranchCheckout(task, '/project');
+    await ensureTaskBranchCheckout(idleContext, task, '/project');
 
     expect(mockGit.checkout).toHaveBeenCalledWith('develop');
   });
@@ -273,7 +317,7 @@ describe('ensureTaskBranchCheckout', () => {
     // Auto-generated branch matches the pattern: slugify('Test task') + '-' + taskId.slice(0,8)
     // slugify('Test task') = 'test-task', taskId starts with 'task-123' so shortId = 'task-123'
     const task = makeTask({ branch_name: 'test-task-task-123', base_branch: 'main' });
-    await ensureTaskBranchCheckout(task, '/project');
+    await ensureTaskBranchCheckout(idleContext, task, '/project');
 
     // Should NOT call raw (custom branch path), should fall through to base_branch checkout
     expect(mockGit.raw).not.toHaveBeenCalled();
@@ -305,7 +349,7 @@ describe('ensureTaskBranchCheckout - custom branch name', () => {
     mockGit.raw.mockResolvedValue('');
 
     const task = makeTask({ branch_name: 'maint/59294', base_branch: 'develop' });
-    await ensureTaskBranchCheckout(task, '/project');
+    await ensureTaskBranchCheckout(idleContext, task, '/project');
 
     // Fetch now goes through runGitWithTimeout (spawn) instead of git.raw
     expect(mockRunGitWithTimeout).toHaveBeenCalledWith(
@@ -321,7 +365,7 @@ describe('ensureTaskBranchCheckout - custom branch name', () => {
     mockGit.raw.mockResolvedValue('');
 
     const task = makeTask({ branch_name: 'maint/59294', base_branch: 'develop' });
-    await ensureTaskBranchCheckout(task, '/project');
+    await ensureTaskBranchCheckout(idleContext, task, '/project');
 
     // Should checkout the custom branch, not base_branch
     expect(mockGit.checkout).toHaveBeenCalledWith('maint/59294');
@@ -351,7 +395,7 @@ describe('ensureTaskBranchCheckout - custom branch name', () => {
     });
 
     const task = makeTask({ branch_name: 'maint/59294', base_branch: 'develop' });
-    await ensureTaskBranchCheckout(task, '/project');
+    await ensureTaskBranchCheckout(idleContext, task, '/project');
 
     // Should create from remote tracking branch
     expect(mockGit.raw).toHaveBeenCalledWith(['branch', 'maint/59294', 'origin/maint/59294']);
@@ -377,7 +421,7 @@ describe('ensureTaskBranchCheckout - custom branch name', () => {
     });
 
     const task = makeTask({ branch_name: 'maint/59294', base_branch: 'develop' });
-    await ensureTaskBranchCheckout(task, '/project');
+    await ensureTaskBranchCheckout(idleContext, task, '/project');
 
     // Should create from base_branch
     expect(mockGit.raw).toHaveBeenCalledWith(['branch', 'maint/59294', 'develop']);
@@ -394,7 +438,7 @@ describe('ensureTaskBranchCheckout - custom branch name', () => {
     });
 
     const task = makeTask({ branch_name: 'hotfix/urgent', base_branch: null });
-    await ensureTaskBranchCheckout(task, '/project');
+    await ensureTaskBranchCheckout(idleContext, task, '/project');
 
     // Should default to 'main' as the base
     expect(mockGit.raw).toHaveBeenCalledWith(['branch', 'hotfix/urgent', 'main']);
@@ -412,7 +456,7 @@ describe('ensureTaskBranchCheckout - custom branch name', () => {
     });
 
     const task = makeTask({ branch_name: 'feature/offline', base_branch: 'main' });
-    await ensureTaskBranchCheckout(task, '/project');
+    await ensureTaskBranchCheckout(idleContext, task, '/project');
 
     expect(mockRunGitWithTimeout).toHaveBeenCalledWith(
       '/project',
@@ -426,7 +470,7 @@ describe('ensureTaskBranchCheckout - custom branch name', () => {
   it('skips custom branch path when task has no branch_name', async () => {
     setupCheckoutMocks();
     const task = makeTask({ branch_name: null, base_branch: 'develop' });
-    await ensureTaskBranchCheckout(task, '/project');
+    await ensureTaskBranchCheckout(idleContext, task, '/project');
 
     // Should use base_branch checkout path, not custom branch path
     expect(mockGit.raw).not.toHaveBeenCalled();
@@ -436,7 +480,7 @@ describe('ensureTaskBranchCheckout - custom branch name', () => {
   it('skips entirely when task has no branch_name and no base_branch', async () => {
     vi.mocked(fs.existsSync).mockReturnValue(true);
     const task = makeTask({ branch_name: null, base_branch: null });
-    await ensureTaskBranchCheckout(task, '/project');
+    await ensureTaskBranchCheckout(idleContext, task, '/project');
 
     expect(mockGit.raw).not.toHaveBeenCalled();
     expect(mockGit.checkout).not.toHaveBeenCalled();

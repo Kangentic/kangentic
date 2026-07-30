@@ -11,6 +11,7 @@ import {
   getProjectRepos,
   ensureTaskWorktree,
   ensureTaskBranchCheckout,
+  notifyBranchCheckoutBlocked,
   createTransitionEngine,
   cleanupTaskResources,
   spawnAgent,
@@ -18,7 +19,6 @@ import {
 import { resolveProjectContext } from '../helpers/project-repos';
 import { applyProfileToLane } from '../../transition-engine/column-strategy';
 import { loadTaskProfile } from '../helpers/task-profile';
-import { guardActiveNonWorktreeSessions } from './task-move';
 import { withTaskLock } from '../task-lifecycle-lock';
 import type { IpcContext } from '../ipc-context';
 import type { TaskBulkDeleteFailure, TaskBulkDeleteResult, TaskBulkDeleteProgress, TaskDetailViewState } from '../../../shared/types';
@@ -127,10 +127,10 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
         // Checkout the task's branch in the main repo (non-worktree tasks only).
         // If checkout fails, the task is still created but no agent is spawned.
         try {
-          guardActiveNonWorktreeSessions(context, task, tasks);
-          await ensureTaskBranchCheckout(task, projectPath);
+          await ensureTaskBranchCheckout(context, task, projectPath);
         } catch (checkoutError) {
           console.error('[TASK_CREATE] Branch checkout failed:', checkoutError);
+          notifyBranchCheckoutBlocked(context, task, checkoutError, projectId);
           return;
         }
 

@@ -130,37 +130,65 @@ Electron fuses enabled for production builds:
 
 Git worktrees live under `.kangentic/worktrees/<n>/`, which can push deeply nested file paths past Windows' default 260-character limit. Kangentic enables `core.longpaths=true` on Windows during worktree creation (both as a per-command flag for `git worktree add` and as a persistent config in the worktree's local git config). This activates the `\\?\` extended-length path prefix, allowing paths up to 32,767 characters. macOS and Linux are unaffected (1024-4096 byte `PATH_MAX`). See [Worktree Strategy](worktree-strategy.md#windows-long-paths) for details.
 
-## Windows MAX_PATH and build toolchains
+## Windows MAX_PATH is mostly not the wall people expect
 
-`core.longpaths` only covers git. The toolchains that run *inside* a worktree - npm, node-gyp, CMake,
-the Android NDK, Rust - are not long-path aware, so what matters is how many of the 260 characters
-the worktree path leaves for them.
+It is tempting to treat 260 as a hard ceiling for everything inside a worktree. Measurement says
+otherwise. Taken on 2026-07-30 inside a 98-character Kangentic worktree of a React Native / Expo
+project, with `node_modules` a real directory rather than a junction:
 
-`src/shared/windows-path-budget.ts` holds the measured reserves. They are measurements, not
-estimates:
+| | |
+|---|---|
+| Files | 75,133 |
+| Longest absolute path | **337** |
+| Files already over MAX_PATH (260) | **1,958** |
+| `npm install`, `expo prebuild`, Gradle | all completed |
+| `LongPathsEnabled` | `0` |
 
-| Tier | Deepest path relative to the checkout root | Measured against |
-|---|---|---|
-| Source tree | 91 | this repository |
-| `node_modules` | 142 | this repository, 39,571 files |
-| React Native Android (CMake/NDK) | 242 | a completed release build |
+Node, the JVM and Git route around MAX_PATH with the `\\?\` prefix, so they are unaffected by the
+registry setting and unaffected by depth at these scales. **A length-based warning would have fired
+on that healthy tree and told the user nothing true.**
 
-The React Native figure is the floor **after** CMake's own MD5 path shortening, not a starting
-point, and CMake compares the full object path against a 250-character `CMAKE_OBJECT_PATH_MAX`. So
-such a build needs the worktree path itself to be about 7 characters, which no worktree naming
-scheme can deliver. A project with a native toolchain that deep has to live at a short path; that is
-what short-path checkouts like `C:\kw` exist for.
+### The limit that does bind is CMake's, and it is a policy, not the OS
 
-What Kangentic controls is its own overhead, and the numeric worktree folder reduces it from 49
-characters to about 4. That is enough for node-gyp, Rust, and less extreme CMake projects.
+The one thing that failed in that worktree was the native compile, against CMake's
+`CMAKE_OBJECT_PATH_MAX`. That defaults to 250 on Windows and is a check CMake applies to its own
+object paths; it is unrelated to `MAX_PATH` and fires well below it.
 
-There is deliberately **no proactive warning and no configurable worktree root**. A path-length check
-fires on path length rather than on the presence of a native toolchain, so it would warn most users
-about a failure that will never reach them, and it cannot observe the worst case anyway (a CMake
-object-path overflow surfaces inside Gradle, in the agent's terminal). Instead,
-`describeWorktreePathLengthCause` appends an explanation to a worktree failure that has *already*
-happened, when headroom is genuinely short. `worktreePathHeadroom` accounts for the separator; both
-are no-ops off Windows.
+CMake's MD5 shortening **adapts to the checkout root length**, so the depth it produces is not a
+constant that can be added to a root length:
+
+| Checkout | Root | Longest object path (relative) | Absolute | Objects built |
+|---|---|---|---|---|
+| `C:\kw` | 5 | 242 | 248 | 460 |
+| The project at its normal location | 48 | 230 | **279** | 569 |
+| Kangentic worktree, pre-numeric scheme | 98 | n/a | n/a | **0** |
+
+Note the middle row: that build succeeded at object paths of 279, past both MAX_PATH and CMake's
+250. So neither number is a clean threshold, and the practical limit for a given project can only be
+found by building it.
+
+### What Kangentic does about it
+
+It keeps its own overhead small and bounded, and otherwise stays out of the way. The numeric worktree
+folder took Kangentic's contribution from about 49 characters to about 24 (`\.kangentic\worktrees\`
+plus a short number); see
+[Worktree Directory Naming](worktree-strategy.md#worktree-directory-naming).
+
+There is deliberately **no path-length threshold, no proactive warning, and no configurable worktree
+root**. A length check fires on length rather than on the presence of a native toolchain, so it warns
+the majority about a failure they will never see, and it cannot observe the case that actually breaks
+(a CMake object-path overflow surfaces inside Gradle, in the agent's terminal). A short worktree root
+would not fix that case either.
+
+`src/shared/windows-path-budget.ts` therefore holds no reserves. It recognizes a path-length failure
+**after** one has happened, from the error text (`ENAMETOOLONG`, "filename or extension is too long",
+`CMAKE_OBJECT_PATH_MAX`, "cannot be safely placed"), matching through a wrapped `cause` chain, and
+`describeWorktreePathLengthCause` appends an explanation so the user is not left reading raw git
+output. It is a no-op off Windows.
+
+A project whose native toolchain genuinely cannot fit has to live at a shorter path; that is what
+short-path checkouts like `C:\kw` are for, and it is a property of the project's location rather than
+of Kangentic.
 
 Note that Node resolves through the worktree's `node_modules` junction using the pre-resolution
 path, so the 142-character reserve applies to the worktree path even though the junction target

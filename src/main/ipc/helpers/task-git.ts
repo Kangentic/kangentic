@@ -1,4 +1,6 @@
+import path from 'node:path';
 import simpleGit from 'simple-git';
+import { IPC } from '../../../shared/ipc-channels';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { WorktreeManager, type GitWaitProgress } from '../../git/worktree-manager';
 import { prepareWorktreeFolder } from '../../git/task-worktree-folder';
@@ -40,6 +42,92 @@ function resolveWorktreeCheckAgentName(task: Task, context: IpcContext, projectP
     if (lane?.agent_override) return lane.agent_override;
   }
   return project?.default_agent ?? DEFAULT_AGENT;
+}
+
+/**
+ * Thrown when a branch checkout would change the working tree under another
+ * task's live agent. Typed so the callers that deliberately do not fail the
+ * whole operation (create, unarchive, promote) can still tell the user why no
+ * agent started, instead of logging to a console nobody is reading.
+ */
+export class BranchCheckoutBlockedError extends Error {
+  constructor(
+    readonly directory: string,
+    readonly blockingTaskId: string,
+    readonly blockingTaskTitle: string | null,
+  ) {
+    const blocker = blockingTaskTitle ? `"${blockingTaskTitle}"` : `task ${blockingTaskId.slice(0, 8)}`;
+    super(
+      `Cannot switch branches in ${directory}: ${blocker} is already running an agent there. `
+      + 'Stop that task, or enable worktree mode so each task gets its own checkout.',
+    );
+    this.name = 'BranchCheckoutBlockedError';
+  }
+}
+
+/** True when two paths denote the same directory, comparing the way the platform does. */
+function isSameDirectory(first: string, second: string): boolean {
+  try {
+    return path.relative(path.resolve(first), path.resolve(second)) === '';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Refuse to touch a working directory that another task's agent is live in.
+ *
+ * Keyed on `Session.cwd`, not on `task.worktree_path`: the cwd is where the
+ * agent actually is, whereas re-reading the task row is an indirection that can
+ * disagree with reality. Queued sessions count, because the session manager
+ * stamps `cwd` on the queued placeholder before the PTY exists.
+ */
+function assertNoOtherAgentInDirectory(
+  context: IpcContext,
+  taskId: string,
+  directory: string,
+): void {
+  const occupant = context.sessionManager.listSessions().find((session) =>
+    session.taskId !== taskId
+    && (session.status === 'running' || session.status === 'queued')
+    && Boolean(session.cwd)
+    && isSameDirectory(session.cwd, directory));
+  if (!occupant) return;
+
+  let blockingTitle: string | null = null;
+  try {
+    blockingTitle = getProjectRepos(context).tasks.getById(occupant.taskId)?.title ?? null;
+  } catch {
+    // Naming the blocker is a nicety; never let it turn into the failure.
+  }
+  throw new BranchCheckoutBlockedError(directory, occupant.taskId, blockingTitle);
+}
+
+/**
+ * Tell the user their task was created but its agent did not start.
+ *
+ * The create / promote / unarchive / MCP-auto-spawn paths deliberately do not
+ * fail the whole operation when the checkout is blocked: the task really was
+ * created. But "created and silently not spawned" is indistinguishable from
+ * "created and spawned", so a console line is not good enough. Only
+ * `BranchCheckoutBlockedError` is surfaced; anything else stays a log line,
+ * since an arbitrary git failure has no user-actionable message.
+ */
+export function notifyBranchCheckoutBlocked(
+  context: IpcContext,
+  task: Task,
+  error: unknown,
+  projectId?: string | null,
+): void {
+  if (!(error instanceof BranchCheckoutBlockedError)) return;
+  if (!context.mainWindow || context.mainWindow.isDestroyed()) return;
+  context.mainWindow.webContents.send(
+    IPC.TASK_SPAWN_BLOCKED,
+    task.id,
+    task.title,
+    error.message,
+    projectId ?? context.currentProjectId ?? undefined,
+  );
 }
 
 /**
@@ -93,8 +181,18 @@ export async function ensureTaskWorktree(
  * No-ops when: no project path, task uses a worktree, not a git repo,
  * or task has neither a custom branch_name nor a base_branch.
  * Throws on dirty repo or checkout failure so the caller can block agent spawn.
+ *
+ * Also throws `BranchCheckoutBlockedError` when another task already has a live
+ * agent in the directory about to be checked out. That check lives HERE, beside
+ * the checkout it protects, rather than in a caller: it used to sit in
+ * `task-move.ts` keyed on `task.base_branch`, while the decision to check out is
+ * keyed on `usesCustomBranch || base_branch`. A task with a custom branch and no
+ * base branch therefore checked out with the guard never running, changing the
+ * working tree under someone else's agent. Co-locating them makes that class of
+ * drift impossible.
  */
 export async function ensureTaskBranchCheckout(
+  context: IpcContext,
   task: Task,
   projectPath?: string | null,
   options?: { signal?: AbortSignal; onProgress?: (phase: string) => void; onWaitProgress?: (info: GitWaitProgress) => void },
@@ -118,6 +216,12 @@ export async function ensureTaskBranchCheckout(
   // Custom branch name: fetch latest, create if needed, then checkout
   if (usesCustomBranch) {
     await WorktreeManager.withGitLock(projectPath, async () => {
+      // Inside the per-project git queue, so the probe and the checkout are
+      // atomic against every other checkout on this project. That is why no new
+      // directory-scoped lock is needed: a third lock ordering alongside
+      // withTaskLock (per-task, deliberately parallel across tasks) and
+      // projectQueues would be a deadlock surface.
+      assertNoOtherAgentInDirectory(context, task.id, projectPath);
       const git = simpleGit(projectPath);
 
       // Emit 'fetching' once the job actually starts (after any queue wait) so
@@ -169,6 +273,7 @@ export async function ensureTaskBranchCheckout(
 
   const worktreeManager = new WorktreeManager(projectPath);
   await worktreeManager.withLock(async () => {
+    assertNoOtherAgentInDirectory(context, task.id, projectPath);
     // Once the job actually starts (after any queue wait), flip the card from
     // the "Waiting..." label to an active label for the duration of the checkout.
     options?.onProgress?.('switching-branch');

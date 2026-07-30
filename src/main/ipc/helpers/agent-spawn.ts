@@ -20,7 +20,7 @@ import { resolveIsolatedSwimlaneId, resolveForceFresh } from '../../transition-e
 import { resolveEffectiveAutoCommand, applyProfileToLane } from '../../transition-engine/column-strategy';
 import { loadTaskProfile } from './task-profile';
 import { emitSpawnProgress, createProgressCallback } from '../../transition-engine/spawn-progress';
-import { ensureTaskWorktree, ensureTaskBranchCheckout } from './task-git';
+import { ensureTaskWorktree, ensureTaskBranchCheckout, notifyBranchCheckoutBlocked } from './task-git';
 import { getProjectRepos } from './project-repos';
 import { withTaskLock } from '../task-lifecycle-lock';
 import { runWithProjectLogContext } from '../../diagnostics/project-log-context';
@@ -481,27 +481,18 @@ export async function autoSpawnForTask(
         return;
       }
 
-      // Checkout branch for non-worktree tasks (may fail if another session is active)
-      if (fullTask.base_branch && !fullTask.worktree_path) {
-        try {
-          // Inlined from guardActiveNonWorktreeSessions to avoid circular import with task-move.ts
-          const activeSessions = context.sessionManager.listSessions()
-            .filter(session => session.taskId !== fullTask.id && (session.status === 'running' || session.status === 'queued'));
-          const otherNonWorktreeSessions = activeSessions.filter(session => {
-            const otherTask = tasks.getById(session.taskId);
-            return otherTask && !otherTask.worktree_path;
-          });
-          if (otherNonWorktreeSessions.length > 0) {
-            throw new Error(
-              `Cannot switch to branch '${fullTask.base_branch}': another task is running in the main repo. `
-              + `Enable worktree mode for branch isolation.`
-            );
-          }
-          await ensureTaskBranchCheckout(fullTask, projectPath);
-        } catch (checkoutError) {
-          console.error('[MCP auto-spawn] Branch checkout failed:', checkoutError);
-          return;
-        }
+      // Checkout the task's branch for non-worktree tasks. ensureTaskBranchCheckout
+      // decides for itself whether there is anything to check out, and refuses to
+      // touch a directory another task's agent is live in. The occupancy check
+      // used to be inlined here "to avoid circular import with task-move.ts";
+      // that cycle never existed from task-git.ts, and the copy had drifted from
+      // the original in exactly the way that let a custom-branch task through.
+      try {
+        await ensureTaskBranchCheckout(context, fullTask, projectPath);
+      } catch (checkoutError) {
+        console.error('[MCP auto-spawn] Branch checkout failed:', checkoutError);
+        notifyBranchCheckoutBlocked(context, fullTask, checkoutError);
+        return;
       }
 
       const sessionRepo = new SessionRepository(db);

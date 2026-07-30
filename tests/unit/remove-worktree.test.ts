@@ -109,12 +109,19 @@ vi.mock('node:fs', () => ({
   },
 }));
 
-vi.mock('node:path', () => ({
-  default: {
-    join: (...segments: string[]) => segments.join('/'),
-    dirname: (p: string) => p.split('/').slice(0, -1).join('/'),
-  },
-}));
+// Keep the real path module underneath, so `resolve` / `relative` / `parse`
+// (used by the removal-root invariant) behave correctly, while still forcing
+// join and dirname to forward slashes for these fixtures.
+vi.mock('node:path', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:path')>();
+  return {
+    default: {
+      ...actual.default,
+      join: (...segments: string[]) => segments.join('/'),
+      dirname: (p: string) => p.split('/').slice(0, -1).join('/'),
+    },
+  };
+});
 
 vi.mock('../../src/main/git/node-modules-link', () => ({
   linkNodeModules: vi.fn(),

@@ -66,11 +66,11 @@ vi.mock('../../src/main/ipc/helpers', () => ({
   })),
   ensureTaskWorktree: vi.fn(async () => ({ worktreePath: '/tmp', checkoutError: undefined })),
   ensureTaskBranchCheckout: vi.fn(),
+  notifyBranchCheckoutBlocked: vi.fn(),
   createTransitionEngine: vi.fn(() => ({ run: vi.fn(async () => ({})) })),
   cleanupTaskResources: vi.fn(async () => {}),
 }));
 vi.mock('../../src/main/ipc/handlers/task-move', () => ({
-  guardActiveNonWorktreeSessions: vi.fn(),
 }));
 vi.mock('../../src/main/agent/shared', () => ({
   interpolateTemplate: vi.fn((tpl: string) => tpl),

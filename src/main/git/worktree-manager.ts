@@ -3,11 +3,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { slugify, computeAutoBranchName } from '../../shared/slugify';
 import { worktreeFolderFromPath } from '../../shared/worktree-folder';
-import {
-  describeWorktreePathLengthCause,
-  worktreePathHeadroom,
-  DEEP_NATIVE_BUILD_RESERVE,
-} from '../../shared/windows-path-budget';
+import { describeWorktreePathLengthCause } from '../../shared/windows-path-budget';
 import { isGitRepo, isInsideWorktree } from './git-checks';
 import { resolveWorktreeBase, describeUnresolvableBase, refResolvesLocally } from './base-branch';
 import { linkNodeModules, removeNodeModulesPath } from './node-modules-link';
@@ -118,9 +114,42 @@ const BACKGROUND_PRUNE_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
  */
 function withPathLengthCause(error: unknown, worktreePath: string): Error {
   const wrapped = error instanceof Error ? error : new Error(String(error));
-  const cause = describeWorktreePathLengthCause(worktreePath);
+  const cause = describeWorktreePathLengthCause(worktreePath, wrapped);
   if (!cause) return wrapped;
   return new Error(`${wrapped.message} ${cause}`, { cause: wrapped });
+}
+
+/**
+ * Refuse to recursively delete anything that is not a worktree directory of this
+ * project.
+ *
+ * `removeWorktree` runs a retried recursive removal that is deliberately
+ * aggressive about Windows file locks, on a path that is COMPUTED (from a stored
+ * column, a display_id, or a legacy slug). A bug anywhere in that derivation - a
+ * null folder name, a failed `path.join`, a `..` inside a task title - would
+ * point that machinery at a directory nobody meant to delete. The cost of this
+ * check is one string comparison; the cost of not having it is unbounded.
+ */
+export function assertRemovableWorktreePath(projectPath: string, worktreePath: string): void {
+  const resolved = path.resolve(worktreePath);
+  if (path.parse(resolved).root === resolved) {
+    throw new Error(`Refusing to remove a filesystem root as a worktree: ${resolved}`);
+  }
+  const worktreesRoot = path.resolve(projectPath, '.kangentic', 'worktrees');
+  const relative = path.relative(worktreesRoot, resolved);
+  // Exactly one segment below the worktrees root: not the root itself, not an
+  // ancestor (`..`), not a grandchild, and not on another drive (`path.relative`
+  // returns an absolute path when there is no relative route).
+  const isDirectChild = relative !== ''
+    && !relative.startsWith('..')
+    && !path.isAbsolute(relative)
+    && !relative.includes(path.sep)
+    && !relative.includes('/');
+  if (!isDirectChild) {
+    throw new Error(
+      `Refusing to remove ${resolved}: it is not a direct child of ${worktreesRoot}.`,
+    );
+  }
 }
 
 function staleWorktreeError(worktreePath: string, reason: 'not-empty' | 'unreadable'): string {
@@ -560,20 +589,6 @@ export class WorktreeManager {
 
     const worktreePath = path.join(this.projectPath, '.kangentic', 'worktrees', folderName);
 
-    // Diagnostic only, and only where MAX_PATH exists. The callers that swallow
-    // worktree errors (create, promote, unarchive, MCP auto-spawn) leave no
-    // other trace, and a build failure caused by path length surfaces hours
-    // later inside a toolchain Kangentic cannot see.
-    if (process.platform === 'win32') {
-      const headroom = worktreePathHeadroom(worktreePath);
-      if (headroom < DEEP_NATIVE_BUILD_RESERVE) {
-        console.warn(
-          `[WORKTREE] ${worktreePath} leaves ${headroom} characters of MAX_PATH headroom; `
-          + `a heavy native toolchain (CMake/NDK) needs about ${DEEP_NATIVE_BUILD_RESERVE}.`,
-        );
-      }
-    }
-
     // Ensure worktrees dir exists
     const worktreesDir = path.join(this.projectPath, '.kangentic', 'worktrees');
     try {
@@ -831,6 +846,7 @@ export class WorktreeManager {
     worktreePath: string,
     options?: { timeoutMs?: number; removalProfile?: WorktreeRemovalProfile },
   ): Promise<boolean> {
+    assertRemovableWorktreePath(this.projectPath, worktreePath);
     if (!fs.existsSync(worktreePath)) return true;
 
     const timeoutMs = options?.timeoutMs ?? GIT_REMOVAL_TIMEOUT_MS;
@@ -951,11 +967,19 @@ export class WorktreeManager {
   /**
    * Checkout a branch in the main repo for non-worktree tasks.
    * Throws if the working tree is dirty or the branch doesn't exist.
+   *
+   * The dirty check runs even when the branch is ALREADY current, so the
+   * postcondition is uniform: every successful return means "on this branch,
+   * with no uncommitted tracked changes". It previously returned early on a
+   * same-branch call, which is the common case (a repeat move of a task already
+   * on its branch), so callers were reading a guarantee the function had not
+   * established.
+   *
+   * Untracked and ignored files are deliberately not counted. `git checkout`
+   * preserves them, so rejecting them would block every project with a
+   * `node_modules` or a `build/` directory.
    */
   async checkoutBranch(branchName: string): Promise<void> {
-    const currentBranch = (await this.git.revparse(['--abbrev-ref', 'HEAD'])).trim();
-    if (currentBranch === branchName) return;
-
     const status = await this.git.status();
     const trackedChanges = status.files.filter(
       file => file.index !== '?' && file.working_dir !== '?',
@@ -966,6 +990,9 @@ export class WorktreeManager {
         + `Commit or stash your changes, or enable worktree mode for this task.`
       );
     }
+
+    const currentBranch = (await this.git.revparse(['--abbrev-ref', 'HEAD'])).trim();
+    if (currentBranch === branchName) return;
 
     await this.git.checkout(branchName);
   }

@@ -1,63 +1,78 @@
 /**
- * How much of Windows' MAX_PATH a worktree leaves for the tools that run inside
- * it.
+ * Recognizing a path-length failure on Windows.
  *
- * This is used ONLY to explain a failure that has already happened, never to
- * predict one. A path-length check fires on path length rather than on the
- * presence of a native toolchain, so warning up front would tell most users
- * about a failure that will never reach them. It also could not catch the worst
- * case anyway: a CMake object-path overflow surfaces inside Gradle, in the
- * agent's terminal, which Kangentic never observes.
+ * This module deliberately holds no length threshold, because measurement says
+ * there is not one worth acting on. Inside a 98-character Kangentic worktree of
+ * a React Native project (75,133 files, longest absolute path 337), **1,958
+ * files already exceeded MAX_PATH (260)** and `npm install`, `expo prebuild` and
+ * Gradle all completed, on a machine with `LongPathsEnabled` set to `0`. Node,
+ * the JVM and Git route around MAX_PATH with the `\\?\` prefix, so a length
+ * check fires on healthy projects and predicts nothing.
  *
- * The reserves below are measured, not estimated. See docs/cross-platform.md.
+ * An earlier version of this file carried two reserves and a proactive warning.
+ * Both reserves were derived rather than observed, and the evidence above
+ * disproves them, so they are gone. What remains is recognition after the fact:
+ * when a worktree operation has ALREADY failed, say whether the error looks like
+ * a path-length error, so the user is not left reading raw git output.
  */
 
-/** Windows MAX_PATH, including the terminating NUL. */
+/** Windows MAX_PATH, including the terminating NUL. Kept for message text only. */
 export const WINDOWS_MAX_PATH = 260;
 
 /**
- * Deepest path measured relative to a checkout root under an npm `node_modules`
- * tree (this repository, 39,571 files). Below this, ordinary install and
- * typecheck operations start failing.
+ * Error text that means a tool ran out of path. Matched case-insensitively
+ * against the message of a failure that has already happened.
  *
- * This is the right reserve even though a Kangentic worktree's `node_modules` is
- * a junction to the project root's: Node resolves through a junction using the
- * pre-resolution path, so the worktree path is what counts against the limit.
+ * - `ENAMETOOLONG` is the POSIX-style errno libuv surfaces.
+ * - "filename or extension is too long" is the Win32 message (error 206).
+ * - The two CMake strings are its object-path policy check, which is not an OS
+ *   limit and fires well before one.
  */
-export const ORDINARY_TOOLING_RESERVE = 142;
+const PATH_LENGTH_ERROR_SIGNATURES = [
+  'enametoolong',
+  'filename or extension is too long',
+  'filename too long',
+  'cmake_object_path_max',
+  'cannot be safely placed',
+];
 
-/**
- * Deepest object path measured relative to a checkout root for a React Native
- * Android (CMake/NDK) build, after CMake's own MD5 path shortening. The heaviest
- * toolchain measured; node-gyp, Rust and .NET need considerably less.
- *
- * A worktree with less headroom than this cannot host such a build no matter
- * what Kangentic names its directories, which is why there is no setting for it.
- */
-export const DEEP_NATIVE_BUILD_RESERVE = 242;
+/** Every message in the `cause` chain, so a wrapped error still matches. */
+function errorMessageChain(error: unknown): string {
+  const messages: string[] = [];
+  let current: unknown = error;
+  for (let depth = 0; depth < 8 && current; depth++) {
+    if (current instanceof Error) {
+      messages.push(current.message);
+      current = current.cause;
+      continue;
+    }
+    messages.push(String(current));
+    break;
+  }
+  return messages.join('\n').toLowerCase();
+}
 
-/**
- * Characters left for a relative path inside `worktreePath` before MAX_PATH is
- * reached. Accounts for the separator that joins the two.
- */
-export function worktreePathHeadroom(worktreePath: string): number {
-  return WINDOWS_MAX_PATH - worktreePath.length - 1;
+/** True when a failure's text indicates a tool ran out of path. */
+export function isPathLengthError(error: unknown): boolean {
+  const haystack = errorMessageChain(error);
+  return PATH_LENGTH_ERROR_SIGNATURES.some((signature) => haystack.includes(signature));
 }
 
 /**
- * A sentence to append to a worktree failure that path length plausibly caused,
- * or null when length is not a plausible cause.
+ * A sentence to append to a worktree failure that path length actually caused,
+ * or null when the error says otherwise.
  *
- * Returns null off Windows (other platforms have a 1024 to 4096 byte PATH_MAX)
- * and whenever there is enough headroom for ordinary tooling, so this can never
- * put a misleading explanation on an unrelated error.
+ * Gated on EVIDENCE, not on length. It cannot false-positive on a project with
+ * no path problem, and it stays silent off Windows, where PATH_MAX is 1024 or
+ * more and none of these signatures can arise from length.
  */
-export function describeWorktreePathLengthCause(worktreePath: string): string | null {
+export function describeWorktreePathLengthCause(
+  worktreePath: string,
+  error: unknown,
+): string | null {
   if (process.platform !== 'win32') return null;
-  const headroom = worktreePathHeadroom(worktreePath);
-  if (headroom >= ORDINARY_TOOLING_RESERVE) return null;
-  return `This worktree path is ${worktreePath.length} characters, leaving ${headroom} of `
-    + `Windows' ${WINDOWS_MAX_PATH}-character limit for files inside it. Tools need about `
-    + `${ORDINARY_TOOLING_RESERVE} for an npm install, so path length is the likely cause. `
-    + `Moving the project to a shorter path fixes it.`;
+  if (!isPathLengthError(error)) return null;
+  return `A tool ran out of path inside ${worktreePath} (${worktreePath.length} characters of `
+    + `Windows' ${WINDOWS_MAX_PATH}-character limit are used before it starts). Moving the project `
+    + 'to a shorter location gives every tool inside it more room.';
 }

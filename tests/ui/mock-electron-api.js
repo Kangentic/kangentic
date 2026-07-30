@@ -1018,6 +1018,18 @@
       onAutoMoved: function () {
         return noop;
       },
+      onSpawnBlocked: function (callback) {
+        // Tests fire this via window.__mockFireTaskSpawnBlocked(taskId, title, message, projectId).
+        if (!window.__mockTaskSpawnBlockedListeners) window.__mockTaskSpawnBlockedListeners = [];
+        window.__mockTaskSpawnBlockedListeners.push(callback);
+        if (!window.__mockFireTaskSpawnBlocked) {
+          window.__mockFireTaskSpawnBlocked = function (taskId, taskTitle, message, projectId) {
+            var listeners = (window.__mockTaskSpawnBlockedListeners || []).slice();
+            listeners.forEach(function (listener) { listener(taskId, taskTitle, message, projectId); });
+          };
+        }
+        return noop;
+      },
       onCreatedByAgent: function (callback) {
         // Tests can fire this via window.__mockFireTaskCreatedByAgent(taskId, title, column, projectId).
         if (!window.__mockTaskCreatedListeners) window.__mockTaskCreatedListeners = [];

@@ -39,34 +39,6 @@ import { loadTaskProfile } from '../helpers/task-profile';
 import type { Task, Swimlane, SessionRecord } from '../../../shared/types';
 
 /**
- * Guard: before checking out a branch in the main repo, verify no other
- * non-worktree task has an active PTY session. Checking out would change
- * the filesystem under a running agent.
- */
-export function guardActiveNonWorktreeSessions(
-  context: IpcContext,
-  task: Task,
-  tasks: ReturnType<typeof getProjectRepos>['tasks'],
-): void {
-  if (!task.base_branch || task.worktree_path) return;
-
-  const activeSessions = context.sessionManager.listSessions()
-    .filter(session => session.taskId !== task.id && (session.status === 'running' || session.status === 'queued'));
-
-  const otherNonWorktreeSessions = activeSessions.filter(session => {
-    const otherTask = tasks.getById(session.taskId);
-    return otherTask && !otherTask.worktree_path;
-  });
-
-  if (otherNonWorktreeSessions.length > 0) {
-    throw new Error(
-      `Cannot switch to branch '${task.base_branch}': another task is running in the main repo. `
-      + `Enable worktree mode for branch isolation.`
-    );
-  }
-}
-
-/**
  * Per-task AbortController to cancel in-flight moves when a newer move
  * supersedes the current one. Prevents orphaned sessions from spawning
  * when the user quickly moves a task back before the async spawn completes.
@@ -883,10 +855,10 @@ export async function handleTaskMove(
 
       // Checkout the task's branch in the main repo (non-worktree tasks only).
       // Intentionally unguarded: if checkout fails, the error propagates to
-      // the outer catch which also handles AbortError cleanup.
-      const { tasks: tasksCheckout } = getProjectRepos(context, resolvedProjectId);
-      guardActiveNonWorktreeSessions(context, task, tasksCheckout);
-      await ensureTaskBranchCheckout(task, resolvedProjectPath, { signal, onProgress, onWaitProgress });
+      // the outer catch which also handles AbortError cleanup. That includes
+      // BranchCheckoutBlockedError, which reaches the user as a toast here, so
+      // this is the one call site that needs no notifyBranchCheckoutBlocked.
+      await ensureTaskBranchCheckout(context, task, resolvedProjectPath, { signal, onProgress, onWaitProgress });
 
       // === Phase 3 (locked, short) ===
       // CAS-check invariants before spawning. If a newer move ran during our

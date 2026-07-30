@@ -101,6 +101,12 @@ const api: ElectronAPI = {
       ipcRenderer.on(IPC.TASK_AUTO_MOVED, handler);
       return () => ipcRenderer.removeListener(IPC.TASK_AUTO_MOVED, handler);
     },
+    onSpawnBlocked: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, taskId: string, taskTitle: string, message: string, projectId?: string) =>
+        callback(taskId, taskTitle, message, projectId);
+      ipcRenderer.on(IPC.TASK_SPAWN_BLOCKED, handler);
+      return () => ipcRenderer.removeListener(IPC.TASK_SPAWN_BLOCKED, handler);
+    },
     onCreatedByAgent: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, taskId: string, taskTitle: string, columnName: string, projectId?: string) =>
         callback(taskId, taskTitle, columnName, projectId);

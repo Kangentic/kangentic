@@ -135,9 +135,8 @@ vi.mock('../../src/main/db/repositories/session-repository', () => ({
   },
 }));
 
-// task-move only used for guardActiveNonWorktreeSessions - keep it a noop.
+// task-move is pulled in transitively; keep it a noop.
 vi.mock('../../src/main/ipc/handlers/task-move', () => ({
-  guardActiveNonWorktreeSessions: vi.fn(),
 }));
 
 // boards: registerBacklogHandlers calls registerAsanaIpcHandlers and the
@@ -174,6 +173,7 @@ vi.mock('../../src/main/ipc/helpers', () => ({
   getProjectRepos: (...args: unknown[]) => mockGetProjectRepos(...args),
   ensureTaskWorktree: (...args: unknown[]) => mockEnsureTaskWorktree(...args),
   ensureTaskBranchCheckout: (...args: unknown[]) => mockEnsureTaskBranchCheckout(...args),
+  notifyBranchCheckoutBlocked: () => {},
   spawnAgent: (...args: unknown[]) => mockSpawnAgent(...args),
   createTransitionEngine: (...args: unknown[]) => mockCreateTransitionEngine(...args),
   cleanupTaskResources: (...args: unknown[]) => mockCleanupTaskResources(...args),

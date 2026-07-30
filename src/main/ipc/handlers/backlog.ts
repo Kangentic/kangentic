@@ -11,8 +11,7 @@ import { ActionRepository } from '../../db/repositories/action-repository';
 import { AttachmentRepository } from '../../db/repositories/attachment-repository';
 import { BacklogAttachmentRepository } from '../../db/repositories/backlog-attachment-repository';
 import { SessionRepository } from '../../db/repositories/session-repository';
-import { cleanupTaskResources, createTransitionEngine, getProjectRepos, ensureTaskWorktree, ensureTaskBranchCheckout, spawnAgent } from '../helpers';
-import { guardActiveNonWorktreeSessions } from './task-move';
+import { cleanupTaskResources, createTransitionEngine, getProjectRepos, ensureTaskWorktree, ensureTaskBranchCheckout, notifyBranchCheckoutBlocked, spawnAgent } from '../helpers';
 import { isAbortError } from '../../../shared/abort-utils';
 import { withTaskLock } from '../task-lifecycle-lock';
 import type { IpcContext } from '../ipc-context';
@@ -200,11 +199,11 @@ export function registerBacklogHandlers(context: IpcContext): void {
                 }
 
                 try {
-                  guardActiveNonWorktreeSessions(context, task, tasks);
-                  await ensureTaskBranchCheckout(task, projectPath, { signal });
+                  await ensureTaskBranchCheckout(context, task, projectPath, { signal });
                 } catch (checkoutError) {
                   if (isAbortError(checkoutError)) throw checkoutError;
                   console.error('[BACKLOG_PROMOTE] Branch checkout failed:', checkoutError);
+                  notifyBranchCheckoutBlocked(context, task, checkoutError, projectId);
                   return;
                 }
 

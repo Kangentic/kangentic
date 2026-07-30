@@ -25,11 +25,16 @@ Custom branch names (set per-task) are used as the branch verbatim.
 Worktree directory: `<project>/.kangentic/worktrees/{display_id}/` - always flat, and named for the
 task's `display_id` (the `#N` shown on its card), independent of the branch.
 
-The directory used to be `{slug}-{taskId8}`, which spent 49 characters of Windows' 260-character
-`MAX_PATH` on Kangentic's own scheme before any toolchain added anything, with the title-derived
-slug as the larger, unbounded half. The numeric name drops that to about 4. It is also strictly
-more stable: the old name was derived from the task title, so renaming a task changed the folder it
-would be recreated in.
+The directory used to be `{slug}-{taskId8}`. Kangentic's own contribution to the path was therefore
+about 49 characters (`\.kangentic\worktrees\` plus a folder name of up to 28), with the
+title-derived slug as the larger and unbounded half. The numeric name takes that to about 24: the
+`\.kangentic\worktrees\` prefix remains, and only the folder name shrank. It is also strictly more
+stable, because the old name was derived from the task title, so renaming a task changed the folder
+it would be recreated in.
+
+How much that matters in practice is measured in
+[cross-platform.md](cross-platform.md#windows-max_path-is-mostly-not-the-wall-people-expect), which
+also records why there is no path-length warning and no configurable worktree root.
 
 #### The folder is chosen once and never changes
 
@@ -192,10 +197,12 @@ Kangentic enables `core.longpaths` in two places:
 
 This setting uses the `\\?\` extended-length path prefix on Windows. macOS and Linux have 1024-4096 byte `PATH_MAX` limits and are unaffected - the setting is only applied on `process.platform === 'win32'`.
 
-`core.longpaths` covers git itself. It does nothing for the toolchains that run *inside* the
-worktree, which is what the numeric folder name above is for. See
-[cross-platform.md](cross-platform.md#windows-max_path-and-build-toolchains) for the measured
-budget, and for why a worktree scheme cannot fix the worst case on its own.
+`core.longpaths` covers git itself. Node and the JVM handle long paths on their own (measurement:
+1,958 files past MAX_PATH in a real worktree, with `npm install` and Gradle both succeeding), so the
+toolchains that run inside a worktree are largely unaffected too. See
+[cross-platform.md](cross-platform.md#windows-max_path-is-mostly-not-the-wall-people-expect) for the
+measurements and for the one limit that does bind, which is CMake's own object-path policy rather
+than the operating system.
 
 ## node_modules Linking and the Post-Worktree Script
 

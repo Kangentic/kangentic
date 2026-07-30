@@ -159,13 +159,13 @@ vi.mock('../../src/main/db/repositories/session-repository', () => ({
 }));
 
 vi.mock('../../src/main/ipc/handlers/task-move', () => ({
-  guardActiveNonWorktreeSessions: vi.fn(),
 }));
 
 vi.mock('../../src/main/ipc/helpers', () => ({
   getProjectRepos: vi.fn(),
   ensureTaskWorktree: vi.fn(async () => {}),
   ensureTaskBranchCheckout: vi.fn(async () => {}),
+  notifyBranchCheckoutBlocked: vi.fn(),
   spawnAgent: vi.fn(async () => {}),
   createTransitionEngine: vi.fn(),
   cleanupTaskResources: vi.fn(async () => {}),

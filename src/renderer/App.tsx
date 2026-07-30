@@ -571,6 +571,23 @@ export function App() {
       }));
     }
 
+    // The task was created / promoted / unarchived, but its agent could not
+    // start because another task's agent is live in the same checkout. Those
+    // paths deliberately keep the task, so without this the result is
+    // indistinguishable from a healthy spawn. Current project only: the message
+    // names a task the user cannot see from another project.
+    if (tasks?.onSpawnBlocked) {
+      cleanups.push(tasks.onSpawnBlocked((_taskId, taskTitle, message, blockedProjectId) => {
+        const activeProjectId = useProjectStore.getState().currentProject?.id;
+        if (blockedProjectId && blockedProjectId !== activeProjectId) return;
+        useToastStore.getState().addToast({
+          message: `"${taskTitle}" was created but its agent did not start. ${message}`,
+          variant: 'warning',
+          duration: 12000,
+        });
+      }));
+    }
+
     // Task auto-moved (plan exit → next column)
     if (tasks?.onAutoMoved) {
       cleanups.push(tasks.onAutoMoved((autoMovedTaskId, _targetSwimlaneId, taskTitle, autoMoveProjectId) => {
