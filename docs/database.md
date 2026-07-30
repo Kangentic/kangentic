@@ -625,7 +625,7 @@ Operates on a per-project DB.
 |--------|-------------|
 | `list()` | All swimlanes ordered by position ASC. Maps integer columns to booleans (`is_archived`, `auto_spawn`). |
 | `getById(id)` | Single swimlane by ID |
-| `create(input)` | Insert before the `done` column (if any), otherwise at the end. Shifts positions of existing columns. |
+| `create(input)` | Insert before the `done` column (if any), otherwise at the end, shifting existing columns right. An explicit `position` is taken raw with no shift -- the caller (e.g. `handleCreateColumn`) is responsible for making room. |
 | `update(input)` | Partial update -- only provided fields are changed |
 | `reorder(ids)` | Set positions from ordered array. Enforces constraints: todo must be position 0, custom columns (role=null) cannot be position 0. |
 | `delete(id)` | Delete a custom column. System columns (`todo`, `done`) cannot be deleted. Columns with tasks cannot be deleted. Also cleans up related transitions and dangling `plan_exit_target_id` references. |

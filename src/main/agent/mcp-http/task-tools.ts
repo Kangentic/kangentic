@@ -610,7 +610,7 @@ export function registerTaskTools(
         permissionMode: PERMISSION_MODE_SCHEMA.optional().describe('Permission mode for agents spawned in this column. Omit to use the project default.'),
         handoffContext: z.boolean().optional().describe('Enable multi-agent handoff context preservation when entering this column.'),
         planExitTargetColumn: z.string().optional().describe('Column to auto-move the task to when an agent in plan mode exits planning.'),
-        position: z.number().int().min(0).optional().describe('Zero-based slot to insert at, shifting later columns right. Omit for the default placement just before Done.'),
+        position: z.number().int().min(0).optional().describe('Zero-based ordinal slot among the board\'s columns (not a raw stored position); later columns shift right. Clamped between the role columns: a value below the lowest legal slot lands immediately after To Do, and a value at or past Done lands immediately before Done, never after it. Omit for the default placement just before Done.'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
       annotations: MUTATING_ANNOTATIONS,

@@ -457,7 +457,7 @@ every lane, including the archived Done lane.
 | `permissionMode` | string | No | One of: `default`, `plan`, `acceptEdits`, `dontAsk`, `bypassPermissions`, `auto` |
 | `handoffContext` | boolean | No | Enable multi-agent handoff context preservation when entering this column |
 | `planExitTargetColumn` | string | No | Column to auto-move the task to when an agent in plan mode exits planning |
-| `position` | number | No | Zero-based slot to insert at, shifting later columns right. Omit for the default placement just before Done. |
+| `position` | number | No | Zero-based ordinal slot among the board's columns (not a raw stored `position`); later columns shift right. Clamped between the role columns: a value below the lowest legal slot lands immediately after To Do (so `position: 0` does not come first), and a value at or past Done lands immediately before Done, never after it. Omit for the default placement just before Done. |
 
 Roles are structural and cannot be set: every board already has its To Do and Done columns.
 
