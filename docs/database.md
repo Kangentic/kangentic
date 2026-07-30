@@ -111,6 +111,7 @@ Per-column session model (two orthogonal axes; see `src/shared/types.ts` and `do
 | agent | TEXT | | NULL |
 | session_id | TEXT | | NULL |
 | worktree_path | TEXT | | NULL |
+| worktree_folder | TEXT | | NULL |
 | branch_name | TEXT | | NULL |
 | pr_number | INTEGER | | NULL |
 | pr_url | TEXT | | NULL |
@@ -136,6 +137,13 @@ Per-column session model (two orthogonal axes; see `src/shared/types.ts` and `do
 | updated_at | TEXT | NOT NULL | |
 
 Indexes: `idx_tasks_swimlane_position` on (swimlane_id, position), `idx_tasks_display_id` on (display_id) UNIQUE, `idx_tasks_session_id` on (session_id), `idx_tasks_external` on (external_source, external_id).
+
+`worktree_folder` is the DIRECTORY NAME of the task's worktree, written once and never rewritten
+(`TaskRepository.setWorktreeFolder` guards on `worktree_folder IS NULL`). New tasks get
+`String(display_id)`; tasks predating that scheme keep their legacy `<slug>-<taskId8>` name. Whenever
+`worktree_path` is non-null, `basename(worktree_path)` equals it. See
+[Worktree Strategy](worktree-strategy.md#worktree-directory-naming) for why the name has to be
+stored rather than recomputed.
 
 `profile_id` names a Board Profile - a team-shared, named alternate set of per-column strategy
 settings the task rides as it moves (see [Configuration > Board Profiles](configuration.md#board-profiles)).
@@ -453,6 +461,17 @@ Key/value bookkeeping for the memory index. Holds `chunker_version`; a mismatch 
 | key | TEXT | PRIMARY KEY |
 | value | TEXT | NOT NULL |
 
+### project_meta table
+
+Key/value bookkeeping for the project itself, distinct from `memory_meta` (which is scoped to the retrieval index). Holds `display_id_high_water`: the monotonic ceiling for `tasks.display_id` allocation.
+
+`TaskRepository.create` allocates `max(storedHighWater, MAX(display_id)) + 1`. The stored counter is what makes numbering non-recycling: `delete()` is a hard `DELETE`, so a plain `MAX(display_id) + 1` handed a deleted task's number to the next one created. Since a worktree directory is named for its task's `display_id`, a recycled number could adopt the deleted task's leftover directory. Keeping `MAX(display_id)` in the calculation lets the counter self-heal if the row is lost or the database is restored from an older copy.
+
+| Column | Type | Constraints |
+|--------|------|-------------|
+| key | TEXT | PRIMARY KEY |
+| value | TEXT | NOT NULL |
+
 ### conversation_turn_usage table
 
 Durable per-turn token-usage ledger. One row per assistant turn that reported usage, written by `ConversationIndexer` from the parsed transcript at index time so it persists after the agent prunes its native JSONL (unlike the in-transcript `usage` field, which is re-derived on each parse). Counts are kept as raw components so cost analysis can weight fresh input against the cheaper cache reads. Read via `ConversationUsageStore` (`getForTask` / `getForSession` / `getForTurns`, plus `getGroupedUsageSince`, the UTC-bucketed project-wide read behind the usage dashboard's burn-rate and token-trend charts - 5-minute buckets for the Live period, 15-minute otherwise, bucket-only output so the payload is O(active buckets) rather than O(sessions x buckets); each bucket carries a SQL-computed `allocatedCostUsd` (per-turn shares of each owning session's `usage_history` cost), windowed by the same `session_started_at` bounds the dashboard's other reads use).
@@ -570,6 +589,8 @@ Grouped by feature. The numbering is for cross-reference only and does not refle
 51. **Sent-message provenance (`session_messages_sent`)** - creates the table plus `idx_session_messages_sent_session_id`, recording every `kangentic_send_session_message` ATTEMPT (`delivered` / `queued` / `refused` / `failed`) against the session that received it. `session_id` cascades on `sessions` DELETE; the three `caller_*` columns are deliberately plain ids, not foreign keys, because a cross-project steer originates in another project's database. Followed by a guarded `ALTER TABLE ... ADD COLUMN error TEXT` so a database created by the intermediate (pre-`error`) shape picks the column up. Because the delivered message carries no in-band marker, these rows are the only record that a turn arrived through the tool rather than being typed. See the `session_messages_sent table` section above. Idempotent `CREATE ... IF NOT EXISTS` + `pragma table_info` guard.
 52. **`profile_id` column on tasks** - adds `profile_id TEXT DEFAULT NULL`, naming the Board Profile a task rides: a team-shared, named alternate set of per-column strategy settings applied as the task moves (see the `tasks table` section above and [Configuration > Board Profiles](configuration.md#board-profiles)). No foreign key and no backfill: profile *definitions* live in `kangentic.json` while this assignment is per-machine, and NULL already means the synthetic "Default" (every column uses its own settings), so an existing board needs no data migration and behaves byte-identically until a profile is created. Mutually exclusive with `agent_override` / `model_override` / `effort_override` / `permission_mode`, enforced in `TaskRepository`. Idempotent guarded `ALTER TABLE`.
 53. **`run_mode` column on tasks** - adds `run_mode TEXT NOT NULL DEFAULT 'column_settings'`, recording which of the New Task / Edit dialog's two branches the user chose (`'column_settings'` | `'agent_override'`, the `TaskRunMode` union). Previously the branch was derived on mount from "does the task carry any of the four Advanced pins", which cannot represent Agent Override with all four fields left on inherit: that saves the same five nulls as Column Settings, so the choice was dropped on every save and `lockAdvancedOverridesOnFirstSpawn` never fired. Backfills `'agent_override'` for any row where `agent_override`, `model_override`, `effort_override`, or `permission_mode` is non-NULL **and** `profile_id IS NULL` - exactly the old derivation, so upgraded boards behave identically; `auto_command` is excluded (not an Advanced pin) and profile tasks carry no pins, so both stay on `'column_settings'`. The `profile_id IS NULL` clause changes no row today (the repository has enforced profile-vs-pin exclusivity since `profile_id` shipped) but makes the backfill correct by construction rather than by trusting that invariant. Joins the profile-vs-pin exclusivity set in `applyProfileExclusivity` (see the `tasks table` section above). Idempotent guarded `ALTER TABLE` + backfill `UPDATE`, both inside a single `db.transaction()`: the guard tests only for the column's existence, so a crash between the two statements would leave the column present, the guard satisfied, and the backfill never run again.
+54. **Monotonic `display_id` high-water mark (`project_meta`)** - creates the key/value `project_meta` table and seeds `display_id_high_water` from `COALESCE(MAX(display_id), 0)`. `TaskRepository.create` now allocates `max(storedHighWater, MAX(display_id)) + 1` inside a transaction instead of the bare `MAX(display_id) + 1`. Numbers previously recycled: `delete()` is a hard `DELETE`, so removing the highest-numbered task handed its number straight to the next task created. That became a correctness problem once worktree directories were named after `display_id`, because a recycled number could adopt the deleted task's leftover directory. `MAX(display_id)` stays in the calculation so the counter self-heals if the row is lost or the database is restored from an older copy. `CREATE TABLE IF NOT EXISTS` + `INSERT OR IGNORE`, so a re-run never clobbers an advanced counter.
+55. **`worktree_folder` column on tasks** - adds `worktree_folder TEXT DEFAULT NULL`, the write-once directory NAME of a task's worktree, and backfills it from `basename(worktree_path)` for every task that has one. New worktrees are named for the task's `display_id`; worktrees created before that keep their legacy `<slug>-<taskId8>` name, so nothing on disk is renamed or relocated. The column is what makes "new worktrees only" true: moving to Done nulls `worktree_path`, so moving back out is a **fresh creation**, and without a durable record a pre-existing task would be rebuilt at a different path - orphaning its agent transcript (Claude keys it by a slug of the cwd, so `--resume` reports "No conversation found") and dropping its browser cookie jar (`browserPartitionForWorktree` hashes the path). Deliberately **not** backfilled from `sessions.cwd`: `runProjectMigrations` receives only the database handle, and without the project path it cannot tell a task's own worktree cwd apart from a project that is itself checked out at a worktree path (an opened worktree, or a `/preview` ephemeral project), where a bare marker search would write a permanently wrong value into a write-once column. That case is recovered at use time instead by `TaskRepository.recoverLegacyWorktreeFolder`, which anchors on the project's own worktrees root. Idempotent guarded `ALTER TABLE` + backfill inside `db.transaction()`.
 
 ### Key Migrations (Global DB)
 

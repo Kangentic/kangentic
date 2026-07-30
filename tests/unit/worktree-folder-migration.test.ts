@@ -32,6 +32,12 @@ const describeWithSqlite = sqlite ? describe : describe.skip;
  * Adapt node:sqlite's DatabaseSync to the slice of better-sqlite3's surface the
  * migrations and repositories use. `prepare` is already identical; only `pragma`
  * and `transaction` need translating.
+ *
+ * CAVEAT: `transaction` here is raw BEGIN/COMMIT, so unlike better-sqlite3's
+ * savepoint-based version it does NOT nest. Nothing nests today (`create` and
+ * `recordWorktree` are both leaf transactions), but a future nested call would
+ * fail with "cannot start a transaction within a transaction" in tests only,
+ * which is a confusing thing to debug cold. Switch to SAVEPOINT if that happens.
  */
 function adaptDatabase(database: InstanceType<SqliteModule['DatabaseSync']>): DatabaseType.Database {
   const adapter = {
