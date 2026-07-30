@@ -1028,7 +1028,15 @@
             listeners.forEach(function (listener) { listener(taskId, taskTitle, message, projectId); });
           };
         }
-        return noop;
+        // A REAL unsubscribe, matching the preload bridge. App.tsx pushes this
+        // onto its cleanups array, so returning a noop would leave the unmounted
+        // component's handler registered and fire a duplicate toast after any
+        // remount, HMR update or project switch.
+        return function () {
+          var listeners = window.__mockTaskSpawnBlockedListeners || [];
+          var index = listeners.indexOf(callback);
+          if (index !== -1) listeners.splice(index, 1);
+        };
       },
       onCreatedByAgent: function (callback) {
         // Tests can fire this via window.__mockFireTaskCreatedByAgent(taskId, title, column, projectId).
