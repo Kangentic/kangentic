@@ -186,6 +186,18 @@ test.describe('Welcome screen readiness', () => {
     // the very mount-set regression these two tests exist to catch.
     await expect(mascot.locator('.overseer-frame--wave')).toHaveCount(1);
     await expect(mascot.locator('.overseer-frame--wave')).toBeHidden();
+
+    // Prove the emulation is actually in force, mirroring the `.no-motion` test above: without
+    // this, every assertion so far also passes on the normal animated path, since blink-loop
+    // rests on this same frame between blinks and wave-once ends on it too. The packaged CSS
+    // reduced-motion query sets `animation: none` (not just a zeroed duration, which is
+    // `.no-motion`'s distinct mechanism), so `animationName` reads the literal string 'none'.
+    const restFrameAnimationName = await mascot.locator('.overseer-frame--rest')
+      .evaluate((element) => getComputedStyle(element).animationName);
+    expect(
+      restFrameAnimationName,
+      'prefers-reduced-motion emulation never took effect, so this test was exercising the normal animated path',
+    ).toBe('none');
   });
 
   test('the app version renders as a pill, not near-invisible micro text', async () => {
