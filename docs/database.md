@@ -240,7 +240,7 @@ Valid session_type values: `claude_agent`, `codex_agent`, `gemini_agent`, `qwen_
 
 Valid status values: `running`, `queued`, `suspended`, `exited`, `orphaned`.
 
-Valid suspended_by values: `user` (explicit pause button), `system` (shutdown, task move, idle timeout), or `NULL` (legacy records, treated as `system`).
+Valid suspended_by values: `user` (explicit pause button), `system` (shutdown, task move, idle timeout, or a column/Board Profile edit turning `auto_spawn` off via `reconcileAutoSpawnChange`), or `NULL` (legacy records, treated as `system`).
 
 `isolated_swimlane_id`: NULL = the task's main session; a swimlane id = the separate, context-isolated session belonging to that `isolated`-strategy column. Lets one task hold multiple independently-resumable sessions (see `docs/session-lifecycle.md` "Isolated Sessions").
 

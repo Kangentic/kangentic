@@ -47,6 +47,7 @@ The in-memory `SessionStatus` does not include `orphaned` (that is a DB-only con
 | `queued` | `running` | Concurrency slot opens, `SessionQueue` promotes |
 | `queued` | `exited` | Session killed while still queued |
 | `running` | `suspended` | Task moved to Done or `auto_spawn=false` column |
+| `running` | `suspended` | A column or Board Profile edit flips `auto_spawn` to false while the task is already sitting there, with no move at all (`reconcileAutoSpawnChange`, `suspended_by='system'`) |
 | `running` | `exited` | Task moved to To Do (full cleanup via `cleanupTaskSession`) |
 | `running` | `exited` | Process exits naturally or is killed |
 | `running` | `orphaned` | App crashes, leftover `running` DB record found on next launch |
