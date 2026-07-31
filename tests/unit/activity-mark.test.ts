@@ -61,25 +61,50 @@ describe('innerMarkup', () => {
     expect(innerMarkup(readMark('agent-working'))).toContain('r="9"');
   });
 
-  it('draws the needs-you envelope in landscape, not square', () => {
-    // Branding 2.5.0 squared the envelope to 18x18 and it stopped reading as an envelope on the
-    // board (it looked like a photo placeholder); 2.6.0 restored 18 x 14.4, a uniform 0.9 scale
-    // of the reference Mail glyph. That single change fixes three things at once, which is why
-    // the height is pinned here rather than left to the grid contract:
-    //   1. aspect 1.25, the proportion people actually read as mail;
-    //   2. the flap vertex angle, which scaling preserves - 2.5.0's square box had dragged it
-    //      to 108.8 degrees against the 120.4 reference, a second defect on the same glyph;
-    //   3. area parity with agent-working, which is the one that matters most on a task card.
+  it('keeps the needs-you envelope on the 18 x 16 box its edges are hinted to', () => {
+    // Branding has reshaped this mark three times, so pin the box rather than trusting the grid
+    // contract: 2.5.0 squared it to 18x18 (it read as a photo placeholder on a board card),
+    // 2.6.0 restored 18 x 14.4 as a uniform 0.9 scale of the reference Mail glyph, and 2.7.1
+    // moved it to 18 x 16 so its y edges sit on the integer lattice at 4 / 20.
     //
-    // (3) is easy to miss: the card swaps idle for working IN PLACE, so what the eye judges is
-    // apparent size, not outline length. The square envelope enclosed 321 units against the
-    // ring's 254 (+26%), so an agent going idle made the indicator visibly grow. At 18 x 14.4
-    // it encloses 256 (+0.5%) - the envelope is shorter, but a circle leaves its corners empty,
-    // so the two land within half a percent. That parity falls out of the aspect fix; it holds
-    // only while agent-working stays r=9, which the assertion above pins.
+    // What 2.7.1 bought: stroke 2 on a 24 grid is fractional at every size in the 12-16
+    // indicator band, so no coordinate puts both stroke edges on a pixel boundary - an integer
+    // coordinate just lands closest. Measured upstream at devicePixelRatio 1, the ring and the
+    // terminal chip both scored 1.92 softness (what any icon-library glyph on an 18 box scores)
+    // while the envelope on y 4.8 / 19.2 was the single outlier at 1.95. The 20 x 16 glyph this
+    // set replaced already sat on y 4 / 20; the 0.9 scale that restored the flap moved it off.
+    //
+    // What it cost, accepted upstream rather than argued away, and NOT to be "fixed" here:
+    //   1. aspect drops from 1.25 to 1.125. The judgement that this reads squat beside the ring
+    //      was outweighed, not overturned.
+    //   2. enclosed area goes from +0.5% to +11.8% against agent-working's ring (284.6 units
+    //      against 254). This is the legible one: a card swaps idle for working IN PLACE, so
+    //      what the eye judges is apparent size, not outline length - at 18x18's +26% the
+    //      indicator visibly grew on every state change. +11.8% was checked on a rendered
+    //      idle/working swap strip before being accepted. The r=9 pin above is what keeps that
+    //      measured figure meaningful; it is no longer a parity guarantee.
+    //
+    // The flap survives both moves intact at 120.4 degrees, because upstream pins a target
+    // angle rather than flap ratios - ratios are fractions of the box, so they do not carry an
+    // angle onto a box of a different aspect.
     const inner = innerMarkup(readMark('agent-idle'));
     expect(inner, 'agent-idle must stay 18 wide so it holds the indicator keyline').toContain('width="18"');
-    expect(inner, 'agent-idle must stay 14.4 tall (aspect 1.25); 18 reads as a square photo icon').toContain('height="14.4"');
+    expect(
+      inner,
+      'agent-idle must stay 16 tall: 18 x 16 puts its y edges on the integer lattice at 4 / 20, '
+      + 'a deliberate hinting trade against aspect and area parity - do not restore 14.4',
+    ).toContain('height="16"');
+    // The box is only half the mark. 2.7.1 moved the flap too (2.7.0 drew M3 7.5 L12 12.6566
+    // L21 7.5), and it is the flap that carries the 120.4 degree vertex the note above claims
+    // survived: atan(9 / 5.1566) * 2, from the vertex out to each flap endpoint. Pinning the box
+    // alone would pass a reshape that kept 18 x 16 and re-angled the flap, which is the one
+    // defect 2.5.0 shipped. terminal-working and terminal-new pin their paths for the same
+    // reason.
+    expect(
+      inner,
+      'agent-idle flap moved: the vertex offset is what holds the 120.4 degree angle across a '
+      + 'box change, so re-derive the angle before re-pinning this path',
+    ).toContain('d="M3 7 L12 12.1566 L21 7"');
   });
 
   it('keeps the control glyph as a sibling of the marching group, not inside it', () => {

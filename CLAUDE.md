@@ -190,20 +190,22 @@ won't be found.
   Two keylines, one per role - 18 for indicators, 20 for controls. Size floors are 12 for
   indicators and 16 for controls, which is why `TerminalPanel`'s 8px session dot stays lucide.
   The two control marks render at size 20: their r=10 ring draws 18.33px, a pixel match for the
-  lucide `Circle` they replaced. Upstream geometry has already moved twice (2.5.0 squared the
-  envelope to 18x18 and shrank the controls to r=9; 2.6.0 reversed both), so
+  lucide `Circle` they replaced. Upstream geometry has already moved three times (2.5.0 squared
+  the envelope to 18x18 and shrank the controls to r=9; 2.6.0 reversed both to 18 x 14.4; 2.7.1
+  moved the envelope to 18 x 16 so its y edges sit on the integer lattice at 4 / 20), so
   `tests/unit/activity-mark.test.ts` pins the r=10 control ring, the r=9 agent ring, and the
-  envelope's 18 x 14.4 box as the guard against a silent upstream reshape. The envelope's height
-  is load-bearing beyond legibility: a card swaps idle for working IN PLACE, and at 18x18 the
-  envelope enclosed 26% more than the ring, so the indicator visibly grew on every state change.
-  At 14.4 the two are within 0.5%, which holds only while `agent-working` stays r=9. Indicators
-  render at 16 (`TaskCard` and both sidebar components), NOT the 14 the lucide glyphs used: the
-  branding envelope is 18 wide where lucide's `Mail` was 20, so a same-number swap silently
-  shrinks it ~10%. 15 restored the drawn size production shipped; 16 is a deliberate one-step
-  legibility bump on top of that. Move the sidebar's two indicator components together or the
-  row goes ragged. lucide stays everywhere
-  else (140+ files), and `utils/swimlane-icons.tsx` needs its whole glyph map
-  because column icon names are persisted as kebab-case strings in the DB.
+  envelope's 18 x 16 box as the guard against a silent upstream reshape. The envelope's height
+  is load-bearing beyond legibility: a card swaps idle for working IN PLACE, so what the eye
+  judges is apparent size, and at 18x18 the envelope enclosed 26% more than the ring and visibly
+  grew on every state change. 18 x 14.4 held that to +0.5%; 18 x 16 gives that parity up at
+  +11.8% (284.6 units against the r=9 ring's 254), accepted upstream as the price of the hinting
+  fix and checked on a rendered idle/working swap strip. Indicators render at 16 (`TaskCard` and
+  both sidebar components), NOT the 14 the lucide glyphs used: the branding envelope is 18 wide
+  where lucide's `Mail` was 20, so a same-number swap silently shrinks it ~10%. 15 restored the
+  drawn size production shipped; 16 is a deliberate one-step legibility bump on top of that.
+  Move the sidebar's two indicator components together or the row goes ragged. lucide stays
+  everywhere else (140+ files), and `utils/swimlane-icons.tsx` needs its whole glyph map because
+  column icon names are persisted as kebab-case strings in the DB.
 - **Settings tab separator** - Each tab in `SETTINGS_TABS` (`settings-tabs.ts`) declares a
   `category`. `'project'` tabs (General, Theme, Agent, Git, Browser, Shortcuts) are per-project
   settings, saved to `.kangentic/config.json`, and hidden when no project is selected.

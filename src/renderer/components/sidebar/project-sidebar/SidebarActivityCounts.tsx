@@ -21,9 +21,12 @@ export const SidebarActivityCounts = React.memo(function SidebarActivityCounts({
   // 16, the same size `TaskCard` renders these two marks at - one mark, one meaning, one size.
   // Not 14, which is what the lucide glyphs used: the branding envelope is 18 wide where
   // lucide's Mail was 20, so a same-number swap silently shrank it ~10%. 15 restored the drawn
-  // size production shipped (11.25 x 9.0px against the old 11.67 x 9.33); 16 is a deliberate
-  // one-step bump on top of that for legibility. Keep in step with TaskCard's mark and
-  // SidebarCommandTerminalIndicator - the three indicators form one tabular column.
+  // WIDTH production shipped (11.25px against the old 11.67); width is the advance that aligns
+  // the row and height is absorbed by centring, which is why the keyline is a width. Height has
+  // since moved anyway: branding 2.7.1's 18 x 16 envelope draws 10.0px tall at 15, where
+  // 18 x 14.4 drew 9.0 against lucide's 9.33. 16 is a deliberate one-step bump on top of that
+  // for legibility. Keep in step with TaskCard's mark and SidebarCommandTerminalIndicator - the
+  // three indicators form one tabular column.
   //
   // 12 is the floor: below it the 2px stroke scales to a sub-pixel hairline and smears, which
   // is why the branding set declares `floors.indicator = 12`.
