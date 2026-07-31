@@ -17,6 +17,9 @@
  * - adoptAnonymousBackgroundShells (Subsystem G resume entry point)
  * - getStatsSnapshot (Subsystem E debug surface)
  * - dispose() idempotent + clears timers
+ * - markIdleAuthoritative's dispose / no-state guards (positive path, the
+ *   not-sticky watchdog reset, and the not-idle no-op are exercised through
+ *   the real engine via session-telemetry-activity-decisions.test.ts, not here)
  *
  * Tests construct ActivityEngine with explicit options to keep timers
  * tight (vs the production 5min/45s defaults). Production code never
@@ -2976,6 +2979,7 @@ describe('ActivityEngine', () => {
         engine.markPtyOutput(SESSION_ID);
         engine.markBackgroundShellEnded(SESSION_ID, 'x');
         engine.adoptAnonymousBackgroundShells(SESSION_ID, 1);
+        engine.markIdleAuthoritative(SESSION_ID);
         engine.processEvent(SESSION_ID, event(EventType.Prompt));
       }).not.toThrow();
       // dispose() cleared the state map and nothing recreated it.
@@ -2988,6 +2992,10 @@ describe('ActivityEngine', () => {
         engine.markBackgroundShellsAlive('ghost');
         engine.markPtyOutput('ghost');
         engine.markBackgroundShellEnded('ghost', 'shell');
+        // A respawn still queued behind SessionQueue has no engine state yet
+        // (initSession runs only in performSpawn), so this must not throw and,
+        // unlike processEvent's getOrCreateState, must NOT materialize state.
+        engine.markIdleAuthoritative('ghost');
       }).not.toThrow();
       expect(engine.getState('ghost')).toBeUndefined();
     });
