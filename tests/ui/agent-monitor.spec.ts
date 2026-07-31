@@ -214,16 +214,30 @@ test.describe('agent monitor', () => {
     try {
       const overlay = page.locator('[data-testid="monitor-page"]');
 
+      const subscriptionCounts = () =>
+        page.evaluate(() => {
+          const monitorMock = (window as unknown as {
+            electronAPI: { monitor: { __subscribeCalls: number; __unsubscribeCalls: number } };
+          }).electronAPI.monitor;
+          return { subscribes: monitorMock.__subscribeCalls, unsubscribes: monitorMock.__unsubscribeCalls };
+        });
+
       await page.keyboard.press('Control+Shift+M');
       await overlay.waitFor({ state: 'visible', timeout: 10000 });
+      // Opening registers the renderer as a live monitor consumer; main only
+      // builds and pushes snapshots while some renderer is subscribed.
+      await expect.poll(async () => (await subscriptionCounts()).subscribes).toBe(1);
 
       await page.locator('[data-testid="monitor-close"]').click();
       await overlay.waitFor({ state: 'hidden', timeout: 10000 });
+      await expect.poll(async () => (await subscriptionCounts()).unsubscribes).toBe(1);
 
       await page.locator('[data-testid="agent-monitor-button"]').click();
       await overlay.waitFor({ state: 'visible', timeout: 10000 });
+      await expect.poll(async () => (await subscriptionCounts()).subscribes).toBe(2);
       await page.keyboard.press('Escape');
       await overlay.waitFor({ state: 'hidden', timeout: 10000 });
+      await expect.poll(async () => (await subscriptionCounts()).unsubscribes).toBe(2);
     } finally {
       await browser.close();
     }
@@ -588,6 +602,71 @@ test.describe('agent monitor', () => {
         () => page.evaluate(() => window.__zustandStores?.session?.getState().dialogSessionIds ?? []),
         { timeout: 10000 },
       ).toEqual([]);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  /**
+   * `MonitorTaskDetailHost` refetches its bundle on `snapshotGeneration`, not on
+   * the store's `rows` identity - `applyActivity` replaces `rows` on EVERY
+   * cross-project activity tick, so keying the effect on `rows` fired a
+   * `getTaskDetail` round trip per tick for as long as a detail stayed open.
+   * `sess-other-project` is chosen deliberately: it is a session the seeded
+   * snapshot already tracks (so `applyActivity` actually replaces `rows`,
+   * proving the tick applied), and it belongs to a DIFFERENT task than the one
+   * whose detail is open, so this is a genuinely unrelated tick.
+   */
+  test('a monitor task detail does not refetch its bundle per activity tick', async () => {
+    const { browser, page } = await launchWithState(monitorPreConfig());
+    try {
+      await openMonitor(page);
+      await page.locator('[data-session-id="sess-working"] [data-testid="monitor-card-title"]').click();
+      await expect.poll(() => ownerHosts(page), { timeout: 10000 })
+        .toHaveProperty(`${PROJECT_A}:task-a`, 'monitor');
+      await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible', timeout: 10000 });
+
+      const getTaskDetailCalls = () => page.evaluate(() => (window as unknown as {
+        electronAPI: { monitor: { __getTaskDetailCalls: number } };
+      }).electronAPI.monitor.__getTaskDetailCalls);
+
+      // StrictMode double-invokes the mount effect in dev, so the initial fetch
+      // can still be settling right after the dialog appears. Poll for the call
+      // count to stop growing before recording the baseline (mirrors the
+      // scrollback-stability pattern for a settling async count).
+      let lastCount = -1;
+      await expect.poll(async () => {
+        const current = await getTaskDetailCalls();
+        const stable = current === lastCount && current > 0;
+        lastCount = current;
+        return stable;
+      }, { timeout: 5000, intervals: [200, 200, 200, 200, 200] }).toBe(true);
+      const initialCalls = lastCount;
+
+      // Fire several activity pushes for a DIFFERENT session that IS present in
+      // the seeded snapshot. `applyActivity` drops an unknown session id without
+      // touching `rows` at all, so a tick for an untracked session would pass
+      // vacuously even against the buggy `rows`-keyed effect - `sess-other-project`
+      // avoids that.
+      for (let tick = 0; tick < 5; tick += 1) {
+        await page.evaluate(() => {
+          (window as unknown as {
+            __mockFireActivity: (
+              id: string, state: string, reason: unknown, projectId: string, taskId: string,
+            ) => void;
+          }).__mockFireActivity(
+            'sess-other-project', 'permission', { kind: 'permission', since: Date.now() },
+            'proj-monitor-b', 'task-b',
+          );
+        });
+      }
+
+      // Confirm the ticks actually applied (rows array replaced) before trusting
+      // the non-occurrence assertion below: sess-other-project moves into the
+      // needs-you bucket, which the summary tile counts across every project.
+      await expect(page.locator('[data-testid="monitor-summary-needs-you-value"]')).toHaveText('1');
+
+      expect(await getTaskDetailCalls()).toBe(initialCalls);
     } finally {
       await browser.close();
     }

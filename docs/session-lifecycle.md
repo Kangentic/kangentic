@@ -335,7 +335,10 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   marker-only settle - the first marker may be the previous width's late repaint - and require
   marker AND quiesce, falling back to the ceiling while streaming. Concurrent samplers of the SAME
   resize (a bottom-panel tab and a detail window overlapping during a handover; in dev, StrictMode's
-  double mount) share ONE wait: the second joins the first rather than starting its own. Two
+  double mount of a Command Terminal window - TerminalTab itself now defers its init by one
+  animation frame, which lets StrictMode's synchronous unmount cancel the first scheduled init, so
+  its pair collapses to a single fetch) share ONE wait: the second joins the first rather than
+  starting its own. Two
   independent waits could not both work, because the first to settle clears the pending-repaint
   state that the other's early-settle scan offset points at, so the loser could never settle early
   and rode the full ceiling out - a deterministic ~415ms added to that open. A resize that arrives

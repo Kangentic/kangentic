@@ -115,38 +115,56 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
 
   const initialized = useRef(false);
 
-  // Init terminal once the container has real pixel dimensions.
+  // Init terminal once the container has real pixel dimensions, deferred by one
+  // frame: the commit that mounts this pane already pays the panel subtree
+  // render, and folding the xterm construction (open + WebGL context + fit,
+  // ~10ms) into that same task produced a 40-60ms pointer-thread stall when a
+  // spawning session's pane mounted mid-drag (task #468). The deferral is
+  // pixel-invisible - the replay veil / LaunchOverlay cover the pane from the
+  // first frame, and the container div paints the terminal background either
+  // way. It also makes StrictMode's mount -> unmount -> remount construct ONE
+  // terminal instead of two: the first mount's cleanup cancels its scheduled
+  // init before it ever runs. This is NOT the reverted drag-end deferral: the
+  // init lands on the very next frame, before the active effect's FIT_DELAY_MS
+  // corrective fit, so the fit sequence is unchanged.
   // The cleanup resets initialized so React StrictMode's
   // mount→unmount→remount cycle re-creates the terminal properly.
   useEffect(() => {
     const el = terminalRef.current;
     if (!el) return;
 
-    // Try to init immediately if container already has dimensions
-    const tryInit = () => {
-      if (initialized.current) return;
-      if (el.offsetWidth > 0 && el.offsetHeight > 0) {
-        initTerminal();
-        initialized.current = true;
-      }
-    };
+    let initRafId: number | null = null;
 
-    tryInit();
-
-    // If container didn't have dimensions yet, watch for them
-    let observer: ResizeObserver | null = null;
-    if (!initialized.current) {
-      observer = new ResizeObserver(() => {
-        tryInit();
-        if (initialized.current) {
-          observer?.disconnect();
+    // Init on the next frame if the container has dimensions by then
+    const scheduleInit = () => {
+      if (initialized.current || initRafId !== null) return;
+      initRafId = requestAnimationFrame(() => {
+        initRafId = null;
+        if (initialized.current) return;
+        if (el.offsetWidth > 0 && el.offsetHeight > 0) {
+          initTerminal();
+          initialized.current = true;
+          observer.disconnect();
         }
       });
-      observer.observe(el);
-    }
+    };
+
+    // If the container has no dimensions yet (a display:none tab), the rAF
+    // above no-ops and this observer re-schedules when dimensions arrive.
+    const observer: ResizeObserver = new ResizeObserver(() => {
+      if (initialized.current) {
+        observer.disconnect();
+        return;
+      }
+      scheduleInit();
+    });
+    observer.observe(el);
+
+    scheduleInit();
 
     return () => {
-      observer?.disconnect();
+      if (initRafId !== null) cancelAnimationFrame(initRafId);
+      observer.disconnect();
       initialized.current = false;
       // Reset ONLY when the overlay would genuinely be wanted on the next mount, i.e.
       // a session that has not produced anything yet. If the store still holds

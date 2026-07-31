@@ -146,13 +146,14 @@ test.describe('Activity marks', () => {
     // every measured rect inside it is uniformly smaller than its layout size.
     const { browser, page } = await launch('thinking');
     try {
-      // 15, not 14: the branding envelope is 18 wide where lucide's Mail was 20, so keeping the
-      // old number would have shrunk the drawn mark ~10% against what production shipped.
+      // 16, not 14: the branding envelope is 18 wide where lucide's Mail was 20, so keeping the
+      // old number would have shrunk the drawn mark ~10% against what production shipped; 15
+      // restored that size and 16 is a deliberate one-step legibility bump on top.
       const cardMark = page.locator(`[data-task-id="${TASK_ID}"] [data-mark="agent-working"]`);
       await expect(cardMark).toBeVisible({ timeout: 15000 });
       await expect
         .poll(() => cardMark.evaluate((node) => getComputedStyle(node).width))
-        .toBe('15px');
+        .toBe('16px');
 
       await page.locator('text=Mark Test Task').first().click();
       const dialog = page.locator('[data-testid="task-detail-dialog"]');
@@ -189,11 +190,11 @@ test.describe('Activity marks', () => {
       await expect(mark).toBeVisible({ timeout: 15000 });
       await expect(mark).toHaveAttribute('data-rest', 'static');
       await expect(mark.locator('.kng-march')).toHaveCount(0);
-      // The idle branch carries its own `size={15}` literal in TaskCard, separate from the
+      // The idle branch carries its own `size={16}` literal in TaskCard, separate from the
       // thinking branch the size test above measures, so it can regress on its own.
       await expect
         .poll(() => mark.evaluate((node) => getComputedStyle(node).width))
-        .toBe('15px');
+        .toBe('16px');
     } finally {
       await browser.close();
     }

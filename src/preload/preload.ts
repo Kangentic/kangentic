@@ -395,6 +395,8 @@ const api: ElectronAPI = {
   // spans every registered project by design.
   monitor: {
     getSnapshot: () => ipcRenderer.invoke(IPC.MONITOR_GET_SNAPSHOT),
+    subscribe: () => ipcRenderer.invoke(IPC.MONITOR_SUBSCRIBE),
+    unsubscribe: () => ipcRenderer.invoke(IPC.MONITOR_UNSUBSCRIBE),
     revealTask: (projectId, taskId) => ipcRenderer.invoke(IPC.MONITOR_REVEAL_TASK, projectId, taskId),
     // Explicit projectId, unlike the rest of this group: this one read IS
     // project-scoped (it is the monitor asking about ONE row's own project).

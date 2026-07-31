@@ -14,6 +14,7 @@
  *   - There is no timer. Elapsed time ticks client-side.
  */
 import { ipcMain } from 'electron';
+import type { WebContents } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import { broadcast } from '../../pop-out/window-broadcast';
 import { buildMonitorSnapshot } from '../../monitor/monitor-aggregator';
@@ -30,7 +31,50 @@ const MONITOR_PUSH_DEBOUNCE_MS = 250;
 export function registerMonitorHandlers(context: IpcContext): void {
   let pushTimer: ReturnType<typeof setTimeout> | null = null;
 
-  ipcMain.handle(IPC.MONITOR_GET_SNAPSHOT, () => {
+  /**
+   * Renderers with a live monitor mounted, keyed by webContents id. The push
+   * pipeline below builds and broadcasts snapshots only while this set is
+   * non-empty, so with no monitor open anywhere a session event costs no
+   * snapshot build, no serialization, and no renderer deserialization (#464
+   * finding 2; measured 112KB -> 19.6KB earlier, this removes the residual
+   * per-event build entirely).
+   */
+  const subscribers = new Set<number>();
+  /** Senders whose lifecycle hooks are currently armed, so repeated
+   *  subscribe/unsubscribe cycles from one renderer never stack listeners. */
+  const hookedSenders = new Set<number>();
+
+  const hookSenderLifecycle = (sender: WebContents): void => {
+    if (hookedSenders.has(sender.id)) return;
+    hookedSenders.add(sender.id);
+    const senderId = sender.id;
+    const dropSubscription = (): void => {
+      subscribers.delete(senderId);
+    };
+    // Same teardown trio as task-detail-ownership.ts: a closed window, a crashed
+    // renderer, and a hard reload all invalidate the renderer-side listener
+    // without an unsubscribe call. The reload case matters most in dev - the
+    // webContents survives with the same id, so without the navigation hook a
+    // Ctrl+R with the monitor open would leave main pushing snapshots to a page
+    // that no longer listens. In-page HMR does not navigate, so a dev session
+    // keeps its subscription. Same-document (hash / history) navigations do not
+    // tear the page down and are ignored. Registered with `on`, not `once`, and
+    // the sender stays in `hookedSenders` across reloads (the webContents
+    // survives), so a re-subscribe after a reload never stacks a second
+    // listener; only real teardown unhooks.
+    sender.on('did-start-navigation', (details) => {
+      if (!details.isMainFrame || details.isSameDocument) return;
+      dropSubscription();
+    });
+    const dropOnTeardown = (): void => {
+      dropSubscription();
+      hookedSenders.delete(senderId);
+    };
+    sender.once('destroyed', dropOnTeardown);
+    sender.once('render-process-gone', dropOnTeardown);
+  };
+
+  const buildSnapshotSafe = () => {
     try {
       return buildMonitorSnapshot(context);
     } catch (error) {
@@ -42,6 +86,20 @@ export function registerMonitorHandlers(context: IpcContext): void {
       console.error('[monitor] Failed to build snapshot for fetch:', error);
       return { rows: [], generatedAt: new Date().toISOString() };
     }
+  };
+
+  ipcMain.handle(IPC.MONITOR_GET_SNAPSHOT, () => buildSnapshotSafe());
+
+  ipcMain.handle(IPC.MONITOR_SUBSCRIBE, (event) => {
+    subscribers.add(event.sender.id);
+    hookSenderLifecycle(event.sender);
+    // One round trip: registering and seeding are the same call, so a mounting
+    // monitor cannot race the next push for its first frame of data.
+    return buildSnapshotSafe();
+  });
+
+  ipcMain.handle(IPC.MONITOR_UNSUBSCRIBE, (event) => {
+    subscribers.delete(event.sender.id);
   });
 
   /**
@@ -76,9 +134,15 @@ export function registerMonitorHandlers(context: IpcContext): void {
   });
 
   const schedulePush = (): void => {
+    // No monitor mounted anywhere: skip the whole pipeline. Checked again when
+    // the debounce fires, because the last subscriber can vanish inside the
+    // window. A monitor that mounts BETWEEN events needs no catch-up push -
+    // subscribing returned it a fresh snapshot.
+    if (subscribers.size === 0) return;
     if (pushTimer) return;
     pushTimer = setTimeout(() => {
       pushTimer = null;
+      if (subscribers.size === 0) return;
       if (context.mainWindow.isDestroyed()) return;
       try {
         // broadcast (not webContents.send) so a detached monitor window receives

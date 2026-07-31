@@ -24,11 +24,13 @@ import { DEFAULT_CONFIG } from '../../src/shared/types';
 
 const configSetMock = vi.fn<(patch: Partial<AppConfig>) => Promise<void>>();
 const getSnapshotMock = vi.fn();
+const subscribeMock = vi.fn();
+const unsubscribeMock = vi.fn();
 
 (globalThis as Record<string, unknown>).window = {
   electronAPI: {
     config: { set: configSetMock },
-    monitor: { getSnapshot: getSnapshotMock },
+    monitor: { getSnapshot: getSnapshotMock, subscribe: subscribeMock, unsubscribe: unsubscribeMock },
   },
 };
 
@@ -76,7 +78,13 @@ describe('monitor-store', () => {
     vi.clearAllMocks();
     vi.useRealTimers();
     configSetMock.mockResolvedValue(undefined);
-    useMonitorStore.setState({ view: DEFAULT_CONFIG.monitor, rows: [], loaded: false });
+    useMonitorStore.setState({
+      view: DEFAULT_CONFIG.monitor,
+      rows: [],
+      loaded: false,
+      monitorOpen: false,
+      snapshotGeneration: 0,
+    });
   });
 
   describe('hydrateView', () => {
@@ -304,6 +312,61 @@ describe('monitor-store', () => {
       useMonitorStore.setState({ rows });
       useMonitorStore.getState().applyActivity('unknown', 'idle', null);
       expect(useMonitorStore.getState().rows).toBe(rows);
+    });
+  });
+
+  describe('snapshotGeneration', () => {
+    // MonitorTaskDetailHost keys its bundle refetch on this counter. The
+    // contract that stops the getTaskDetail amplification: only a snapshot that
+    // actually changed the rows moves it; an activity patch never does, no
+    // matter how many arrive.
+    it('bumps when a snapshot changes the rows', () => {
+      const before = useMonitorStore.getState().snapshotGeneration;
+      useMonitorStore.getState().applySnapshot({ rows: [makeRow({ sessionId: 'a' })], generatedAt: 'x' });
+      expect(useMonitorStore.getState().snapshotGeneration).toBe(before + 1);
+    });
+
+    it('does not bump on an equivalent (no-op) snapshot', () => {
+      useMonitorStore.getState().applySnapshot({ rows: [makeRow({ sessionId: 'a' })], generatedAt: 'x' });
+      const before = useMonitorStore.getState().snapshotGeneration;
+      useMonitorStore.getState().applySnapshot({ rows: [makeRow({ sessionId: 'a' })], generatedAt: 'y' });
+      expect(useMonitorStore.getState().snapshotGeneration).toBe(before);
+    });
+
+    it('never bumps on applyActivity, however many ticks arrive', () => {
+      useMonitorStore.getState().applySnapshot({
+        rows: [makeRow({ sessionId: 'a' }), makeRow({ sessionId: 'b' })],
+        generatedAt: 'x',
+      });
+      const before = useMonitorStore.getState().snapshotGeneration;
+      for (let tick = 0; tick < 25; tick += 1) {
+        useMonitorStore.getState().applyActivity(tick % 2 === 0 ? 'a' : 'b', 'idle', null);
+        useMonitorStore.getState().applyActivity(tick % 2 === 0 ? 'a' : 'b', 'thinking', null);
+      }
+      expect(useMonitorStore.getState().snapshotGeneration).toBe(before);
+    });
+  });
+
+  describe('attach / detach (monitor:subscribe handshake)', () => {
+    it('attach seeds the rows from the snapshot the subscription returns', async () => {
+      subscribeMock.mockResolvedValue({ rows: [makeRow({ sessionId: 'a' })], generatedAt: 'x' });
+      await useMonitorStore.getState().attach();
+      expect(subscribeMock).toHaveBeenCalledTimes(1);
+      expect(useMonitorStore.getState().rows.map((row) => row.sessionId)).toEqual(['a']);
+      expect(useMonitorStore.getState().loaded).toBe(true);
+      expect(useMonitorStore.getState().loading).toBe(false);
+    });
+
+    it('open attaches and close detaches', async () => {
+      subscribeMock.mockResolvedValue({ rows: [], generatedAt: 'x' });
+      unsubscribeMock.mockResolvedValue(undefined);
+      useMonitorStore.getState().open();
+      expect(useMonitorStore.getState().monitorOpen).toBe(true);
+      expect(subscribeMock).toHaveBeenCalledTimes(1);
+      useMonitorStore.getState().close();
+      expect(useMonitorStore.getState().monitorOpen).toBe(false);
+      expect(unsubscribeMock).toHaveBeenCalledTimes(1);
+      await Promise.resolve();
     });
   });
 });

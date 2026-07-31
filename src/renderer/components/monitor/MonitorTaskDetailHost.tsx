@@ -44,16 +44,19 @@ export function MonitorTaskDetailHost({
   onUnavailable,
 }: MonitorTaskDetailHostProps) {
   const [bundle, setBundle] = useState<TaskDetailBundle | null>(null);
-  // Any monitor change can also mean this task changed (retitled, moved column),
-  // so the bundle refetches on the same signal the rows do rather than polling.
-  const monitorRows = useMonitorStore((state) => state.rows);
+  // Any SNAPSHOT change can also mean this task changed (retitled, moved
+  // column), so the bundle refetches on the snapshot generation rather than
+  // polling. Deliberately NOT the `rows` identity: an activity tick on ANY
+  // tracked session (in any project) replaces the rows array, so keying on it
+  // fired a `getTaskDetail` round trip per cross-project activity tick for as
+  // long as a detail was open. The generation only moves when the DB-resident
+  // half of some row actually changed.
+  const snapshotGeneration = useMonitorStore((state) => state.snapshotGeneration);
   const settingsOpen = useConfigStore((state) => state.settingsOpen);
 
-  /** Bumped per fetch so a slow response cannot overwrite a newer one. Any
-   *  monitor row change re-fires the effect below, and an activity tick on ANY
-   *  tracked session (in any project) gives `rows` a new reference, so several
-   *  `getTaskDetail` calls are routinely in flight at once and can resolve out of
-   *  order. Without this, the older reply wins and the detail shows stale data. */
+  /** Bumped per fetch so a slow response cannot overwrite a newer one: a
+   *  snapshot push can re-fire the effect below while an earlier fetch is
+   *  still in flight, and the older reply must not win over the newer one. */
   const requestGenerationRef = useRef(0);
 
   const refresh = useCallback(async () => {
@@ -78,7 +81,7 @@ export function MonitorTaskDetailHost({
     // Invalidate this fetch on unmount / re-fire, so a reply that lands after the
     // host has moved to another task cannot call setBundle or onUnavailable.
     return () => { requestGenerationRef.current += 1; };
-  }, [refresh, monitorRows]);
+  }, [refresh, snapshotGeneration]);
 
   const value = useMemo<TaskDetailHostValue | null>(() => {
     if (!bundle) return null;

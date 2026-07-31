@@ -2,10 +2,13 @@
  * Agent Monitor store: the cross-project aggregate view's open/closed state, its
  * rows, and the user's persisted view preference.
  *
- * Two data paths, deliberately:
- *   - `loadSnapshot()` pulls the full cross-project snapshot from main. Cheap, but
- *     it is a round trip, so it is debounced and only fires when the DB-resident
- *     half of a row can have changed.
+ * Three data paths, deliberately:
+ *   - `attach()` / `detach()` bracket an open monitor. Attach registers this
+ *     renderer with main - which builds and pushes MONITOR_CHANGED only while at
+ *     least one renderer is subscribed - and seeds the rows from the snapshot
+ *     the handshake returns, so opening is one round trip.
+ *   - `loadSnapshot()` pulls the full cross-project snapshot from main without
+ *     touching the subscription (the board-driven refetch and the HMR resync).
  *   - `applyActivity()` patches a single row in place from the SESSION_ACTIVITY
  *     push, which already flows unbuffered and cross-project. This is the common
  *     case (an agent starting to wait on you) and it costs no round trip at all.
@@ -28,6 +31,12 @@ const VIEW_PERSIST_DEBOUNCE_MS = 400;
 interface MonitorState {
   monitorOpen: boolean;
   rows: MonitorSessionRow[];
+  /** Bumped only when a SNAPSHOT actually changed the rows (never by an
+   *  `applyActivity` patch). Consumers that must refetch when the DB-resident
+   *  half of a row may have changed (MonitorTaskDetailHost's bundle) key on
+   *  this instead of the `rows` identity, which every cross-project activity
+   *  tick replaces. */
+  snapshotGeneration: number;
   /** True until the first snapshot lands, so the body can show a cold-load skeleton. */
   loading: boolean;
   loaded: boolean;
@@ -36,6 +45,14 @@ interface MonitorState {
   open: () => void;
   close: () => void;
   toggle: () => void;
+  /** Register this renderer as a live monitor consumer with main and seed the
+   *  rows from the snapshot the subscription handshake returns. Main only
+   *  builds/pushes MONITOR_CHANGED while a subscriber exists, so this is what
+   *  turns the push pipeline on. */
+  attach: () => Promise<void>;
+  /** Counterpart of attach; turns main's push pipeline back off for this
+   *  renderer. Window close and hard reload are handled by main itself. */
+  detach: () => void;
   loadSnapshot: () => Promise<void>;
   applySnapshot: (snapshot: MonitorSnapshot) => void;
   applyActivity: (sessionId: string, activity: ActivityState, reason: ActivityReason | null) => void;
@@ -50,38 +67,80 @@ function createMonitorStore() {
   let inFlight: Promise<void> | null = import.meta.hot?.data?.monitorInFlight ?? null;
   // @ts-expect-error -- Vite handles import.meta.hot
   let persistTimer: ReturnType<typeof setTimeout> | null = import.meta.hot?.data?.monitorPersistTimer ?? null;
+  /** Orders the two fetch-and-apply paths (attach's subscribe, loadSnapshot's
+   *  getSnapshot), which are NOT deduped against each other - attach must always
+   *  reach main to register the subscription. A reply applies only while it is
+   *  still the newest fetch, so an older reply cannot overwrite a newer snapshot
+   *  or double-bump `snapshotGeneration`. Pushes bypass this deliberately: they
+   *  carry the newest build, and the next push heals any transient skew. */
+  // @ts-expect-error -- Vite handles import.meta.hot
+  let fetchOrdinal: number = import.meta.hot?.data?.monitorFetchOrdinal ?? 0;
 
   // @ts-expect-error -- Vite handles import.meta.hot
   import.meta.hot?.dispose((data: Record<string, unknown>) => {
     data.monitorInFlight = inFlight;
     data.monitorPersistTimer = persistTimer;
+    data.monitorFetchOrdinal = fetchOrdinal;
   });
 
   const store = create<MonitorState>((set, get) => ({
     monitorOpen: false,
     rows: [],
+    snapshotGeneration: 0,
     loading: false,
     loaded: false,
     view: DEFAULT_CONFIG.monitor,
 
     open: () => {
       set({ monitorOpen: true });
-      void get().loadSnapshot();
+      void get().attach();
     },
-    close: () => set({ monitorOpen: false }),
+    close: () => {
+      set({ monitorOpen: false });
+      get().detach();
+    },
     toggle: () => (get().monitorOpen ? get().close() : get().open()),
 
+    attach: async () => {
+      const monitorApi = window.electronAPI?.monitor;
+      if (!monitorApi?.subscribe) return;
+      const ordinal = ++fetchOrdinal;
+      if (!get().loaded) set({ loading: true });
+      try {
+        const snapshot = await monitorApi.subscribe();
+        if (ordinal === fetchOrdinal) get().applySnapshot(snapshot);
+      } catch (error) {
+        // Sticky by design: pushes are gated on the subscription, so no
+        // MONITOR_CHANGED arrives to self-heal a failed handshake - closing and
+        // reopening the monitor re-runs it. Not worth a retry loop for a local
+        // ipcRenderer.invoke that only fails once the app is tearing down.
+        console.error('[monitor] Failed to subscribe:', error);
+      } finally {
+        set({ loading: false });
+      }
+    },
+
+    detach: () => {
+      void window.electronAPI?.monitor?.unsubscribe?.().catch((error) => {
+        console.error('[monitor] Failed to unsubscribe:', error);
+      });
+    },
+
     loadSnapshot: async () => {
-      // Dedupe concurrent callers (open + a push arriving together) onto one round trip.
+      // Dedupe concurrent loadSnapshot callers (a board-change refetch and an
+      // HMR resync arriving together) onto one round trip. attach() deliberately
+      // does NOT route through this gate - it must always reach main to register
+      // the subscription - so `fetchOrdinal` orders the two paths instead.
       if (inFlight) return inFlight;
       const monitorApi = window.electronAPI?.monitor;
       if (!monitorApi) return;
 
+      const ordinal = ++fetchOrdinal;
       if (!get().loaded) set({ loading: true });
       const request = (async () => {
         try {
           const snapshot = await monitorApi.getSnapshot();
-          get().applySnapshot(snapshot);
+          if (ordinal === fetchOrdinal) get().applySnapshot(snapshot);
         } catch (error) {
           console.error('[monitor] Failed to load snapshot:', error);
         } finally {
@@ -105,7 +164,7 @@ function createMonitorStore() {
     applySnapshot: (snapshot) => set((state) => {
       const rows = reconcileMonitorRows(state.rows, snapshot.rows);
       if (rows === state.rows && state.loaded) return state;
-      return { rows, loaded: true };
+      return { rows, loaded: true, snapshotGeneration: state.snapshotGeneration + 1 };
     }),
 
     /**

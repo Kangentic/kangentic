@@ -317,6 +317,28 @@ test.describe('Sidebar Command Terminal indicator', () => {
     }
   });
 
+  test('the row-size agent activity mark renders at 16px, not the group branch\'s 12px', async () => {
+    // Pins SidebarActivityCounts' `iconSize = size === 'group' ? 12 : 16` for the
+    // default 'row' branch (ProjectListItem never passes `size`). The neighbouring
+    // "read side by side" test above only checks the two glyphs AGREE on a size;
+    // this pins the literal drawn size, since nothing else in the UI tier measures
+    // it. Scoped to Alpha's row specifically, so a future fixture giving Beta its
+    // own counts cannot turn this into a strict-mode violation.
+    const { browser, page } = await launchWithState(preConfig({ agentIdleOnAlpha: true }));
+
+    try {
+      const mark = page.locator(`[data-testid="project-row-${PROJECT_A_ID}"] [data-testid="sidebar-activity-counts"] [data-mark="agent-idle"]`);
+      await expect(mark).toBeVisible();
+      // Computed style, not the `width` attribute: pins what the browser actually
+      // draws, matching the pattern activity-marks.spec.ts uses for TaskCard.
+      await expect
+        .poll(() => mark.evaluate((node) => getComputedStyle(node).width))
+        .toBe('16px');
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('clicking a background project\'s indicator switches project and opens the layer', async () => {
     const { browser, page } = await launchWithState(preConfig({
       terminals: [{ project: PROJECT_B_ID, id: 'ct-b1', activity: 'idle' }],
@@ -460,9 +482,9 @@ test.describe('Sidebar Command Terminal indicator', () => {
     }
   });
 
-  test('the sidebar renders the terminal icon at 15px, not the title bar\'s default 20px', async () => {
+  test('the sidebar renders the terminal icon at 16px, not the title bar\'s default 20px', async () => {
     // CommandTerminalIcon defaults size to 20 (the title bar toggle); the
-    // sidebar passes size={15} explicitly. Pins that the prop is actually
+    // sidebar passes size={16} explicitly. Pins that the prop is actually
     // threaded through rather than the icon silently rendering at the default,
     // and that it stays in step with SidebarActivityCounts' row size so the
     // three indicators keep forming one tabular column.
@@ -472,8 +494,8 @@ test.describe('Sidebar Command Terminal indicator', () => {
 
     try {
       const icon = page.locator(`[data-testid="project-terminal-icon-${PROJECT_A_ID}"]`);
-      await expect(icon).toHaveAttribute('width', '15');
-      await expect(icon).toHaveAttribute('height', '15');
+      await expect(icon).toHaveAttribute('width', '16');
+      await expect(icon).toHaveAttribute('height', '16');
     } finally {
       await browser.close();
     }

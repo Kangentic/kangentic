@@ -248,6 +248,13 @@ export const IPC = {
   // config merge (`config.set`), so there is one persistence path, not two.
   MONITOR_GET_SNAPSHOT: 'monitor:getSnapshot',
   MONITOR_CHANGED: 'monitor:changed',
+  // Subscription handshake for MONITOR_CHANGED. Main builds and pushes the
+  // cross-project snapshot only while at least one renderer is subscribed;
+  // with no monitor mounted anywhere, every session event skips the snapshot
+  // build entirely. Subscribe returns a fresh snapshot so mounting is one
+  // round trip, not subscribe-then-fetch.
+  MONITOR_SUBSCRIBE: 'monitor:subscribe',
+  MONITOR_UNSUBSCRIBE: 'monitor:unsubscribe',
   // Reveal a task in the MAIN window. Needed because the detached monitor is its
   // own renderer with its own stores, so it cannot open a task by setting local
   // state - the request has to travel through main.

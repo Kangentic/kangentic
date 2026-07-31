@@ -197,10 +197,11 @@ won't be found.
   is load-bearing beyond legibility: a card swaps idle for working IN PLACE, and at 18x18 the
   envelope enclosed 26% more than the ring, so the indicator visibly grew on every state change.
   At 14.4 the two are within 0.5%, which holds only while `agent-working` stays r=9. Indicators
-  render at 15 (`TaskCard` and both sidebar components), NOT the 14 the lucide glyphs used: the
+  render at 16 (`TaskCard` and both sidebar components), NOT the 14 the lucide glyphs used: the
   branding envelope is 18 wide where lucide's `Mail` was 20, so a same-number swap silently
-  shrinks it ~10%. 15 restores the drawn size production shipped. Move the sidebar's two
-  indicator components together or the row goes ragged. lucide stays everywhere
+  shrinks it ~10%. 15 restored the drawn size production shipped; 16 is a deliberate one-step
+  legibility bump on top of that. Move the sidebar's two indicator components together or the
+  row goes ragged. lucide stays everywhere
   else (140+ files), and `utils/swimlane-icons.tsx` needs its whole glyph map
   because column icon names are persisted as kebab-case strings in the DB.
 - **Settings tab separator** - Each tab in `SETTINGS_TABS` (`settings-tabs.ts`) declares a

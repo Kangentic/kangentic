@@ -3267,6 +3267,20 @@
           generatedAt: '2026-01-01T00:00:00.000Z',
         });
       },
+      // Subscription handshake (monitor:subscribe / monitor:unsubscribe). The
+      // mock has no push pipeline to gate, so subscribe just returns the same
+      // seeded snapshot getSnapshot serves; the call log lets a spec assert the
+      // monitor registered/unregistered itself.
+      __subscribeCalls: 0,
+      __unsubscribeCalls: 0,
+      subscribe: function () {
+        window.electronAPI.monitor.__subscribeCalls += 1;
+        return window.electronAPI.monitor.getSnapshot();
+      },
+      unsubscribe: function () {
+        window.electronAPI.monitor.__unsubscribeCalls += 1;
+        return Promise.resolve();
+      },
       // Call log for assertions: the detached monitor routes clicks through here.
       __revealCalls: [],
       revealTask: function (projectId, taskId) {
@@ -3277,7 +3291,11 @@
       // project's board. Resolves from the SAME seeded state the rest of the mock
       // uses, so a monitor-hosted detail sees exactly what the board would - a
       // spec cannot accidentally prove the surface works against invented data.
+      // Call log for test assertions (mirrors __subscribeCalls): pins that a
+      // detail refetches on a real snapshot change but NOT on every activity tick.
+      __getTaskDetailCalls: 0,
       getTaskDetail: function (projectId, taskId) {
+        window.electronAPI.monitor.__getTaskDetailCalls += 1;
         var project = null;
         for (var p = 0; p < projects.length; p++) {
           if (projects[p].id === projectId) { project = projects[p]; break; }

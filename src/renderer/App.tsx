@@ -419,9 +419,12 @@ export function App() {
     const monitorApi = window.electronAPI?.monitor;
     if (monitorApi?.onChanged) {
       cleanups.push(monitorApi.onChanged((snapshot) => {
-        // Applied unconditionally, not gated on the monitor being open: the
-        // snapshot is cheap to hold, and this keeps a reopen instant instead of
-        // showing a stale frame while the refetch lands.
+        // Applied unconditionally, not gated on the monitor being open. Main
+        // only pushes while SOME renderer is subscribed (monitor:subscribe), so
+        // with every monitor closed nothing arrives here at all; when the
+        // pop-out is the subscriber, applying the broadcast keeps this window's
+        // cache warm too. Reopen freshness does not depend on this: attach()
+        // seeds from the snapshot the subscription handshake returns.
         useMonitorStore.getState().applySnapshot(snapshot);
       }));
     }

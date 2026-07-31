@@ -318,7 +318,7 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
           {(isIdle || isThinking) && (
             <ActivityMark
               mark={isThinking ? 'agent-working' : 'agent-idle'}
-              size={15}
+              size={16}
               className={`${isThinking ? 'text-active' : 'text-attention'} shrink-0`}
               aria-label={
                 activityReason

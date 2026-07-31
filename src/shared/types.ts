@@ -4634,6 +4634,14 @@ export interface ElectronAPI {
      *  250ms, so this is cheap in practice - but it is not the O(projects) it was
      *  once described as, and a project with many concurrent agents pays per agent. */
     getSnapshot: () => Promise<MonitorSnapshot>;
+    /** Register this renderer as a live monitor consumer and get a fresh snapshot
+     *  back. Main only builds and pushes MONITOR_CHANGED snapshots while at least
+     *  one renderer is subscribed, so an unmounted monitor costs no per-event
+     *  snapshot builds. Main drops the subscription itself when the renderer
+     *  navigates or is destroyed. */
+    subscribe: () => Promise<MonitorSnapshot>;
+    /** Explicit counterpart of subscribe, called when the monitor closes. */
+    unsubscribe: () => Promise<void>;
     /** Ask MAIN to reveal a task in the main window. Used by the detached monitor,
      *  whose own stores cannot reach the board. */
     revealTask: (projectId: string, taskId: string) => Promise<void>;
