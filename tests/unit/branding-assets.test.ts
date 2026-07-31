@@ -470,7 +470,7 @@ describe('activity marks', () => {
 
   it('pins the size floors the call sites are written against', () => {
     // SidebarActivityCounts' group rows render at 12 (the indicator floor exactly), TaskCard and
-    // the sidebar project rows at 15, and the pause/stop controls at 20. If upstream raises a
+    // the sidebar project rows at 16, and the pause/stop controls at 20. If upstream raises a
     // floor, those call sites need revisiting - the 12px group row has no headroom at all.
     const contract: ActivityContractJson = JSON.parse(fs.readFileSync(ACTIVITY_JSON, 'utf-8'));
     expect(contract.floors.indicator, 'indicator floor changed; recheck the 12px sidebar group size').toBe(12);

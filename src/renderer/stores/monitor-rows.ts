@@ -1,9 +1,10 @@
 /**
  * Row-identity reconciliation for the Agent Monitor snapshot.
  *
- * `MONITOR_CHANGED` is pushed unconditionally (debounced 250ms) whenever a session
- * is spawned, changes status, or exits, and the payload crosses the IPC boundary by
- * structured clone. That means EVERY row object is a fresh identity on every push,
+ * `MONITOR_CHANGED` is pushed (debounced 250ms, and only while some renderer holds
+ * a live `monitor:subscribe` registration) whenever a session is spawned, changes
+ * status, or exits, and the payload crosses the IPC boundary by structured clone.
+ * That means EVERY row object is a fresh identity on every push,
  * even when nothing about it changed. Applied naively, that is a guaranteed store
  * write on a 250ms cadence for as long as session events flow, and with the monitor
  * open it cascades: the body's `useShallow` selector fails, the `units` memo
