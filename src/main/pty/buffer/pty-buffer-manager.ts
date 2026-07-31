@@ -5,10 +5,15 @@ import { traceTerminal, type RepaintSettleReason } from '../terminal-trace';
 const MAX_SCROLLBACK = 512 * 1024; // 512KB per session
 /**
  * Fallback grid rows for the headless parser when a caller omits the geometry.
- * Only the production spawn path (session-spawn-flow) and resize path
- * (session-manager) supply real dimensions; this default keeps the parser
- * usable for callers that do not (matching DEFAULT_PTY_ROWS). Rows never affect
- * scrollback or col-change tracking, so a stale default is harmless.
+ * The spawn path (session-spawn-flow) and resize path (session-manager) supply
+ * real dimensions; the spawn-FAILURE path (spawn-failure-handler) omits rows,
+ * which is safe only because a failed session has no PTY, so
+ * SessionManager.resize early-returns before onResize could read the stale
+ * default (matching DEFAULT_PTY_ROWS). Rows feed the repaint-settle's
+ * row-change detection (see onResize), so an omitted-rows call after a
+ * real-rows call reads as a spurious row change - onResize's sole production
+ * caller (SessionManager.resize) always passes real rows, and tests that
+ * exercise the settle must pass rows explicitly on every call.
  */
 const DEFAULT_HEADLESS_ROWS = 30;
 /**
@@ -34,39 +39,49 @@ const MAX_BYTES_PER_FLUSH = 256 * 1024;
 /**
  * Repaint-settle window for getScrollback (see waitForResizeRepaint).
  *
- * When the terminal width changes, a full-screen agent TUI (Claude, Codex)
- * repaints its frame asynchronously in response to SIGWINCH. A getScrollback
- * that samples the buffer in the gap between the resize and that repaint would
- * replay a frame laid out for the OLD width - the stale-frame bug this settle
- * closes. So getScrollback waits for the repaint bytes to land and quiesce
- * before sampling, bounded so a missing repaint can never hang the read.
+ * When the terminal geometry changes (cols OR rows), a full-screen agent TUI
+ * (Claude, Codex) repaints its frame asynchronously in response to SIGWINCH. A
+ * getScrollback that samples the buffer in the gap between the resize and that
+ * repaint would replay a frame laid out for the OLD geometry - the stale-frame
+ * bug this settle closes. So getScrollback waits for the repaint bytes to land
+ * and quiesce before sampling, bounded so a missing repaint can never hang the
+ * read. Width armed this settle first; rows-only changes (a bottom-panel height
+ * drag, a vertical-only window resize) arm it too, since measured live
+ * (2026-07-31, real Claude CLI in a preview, 12/12 trials idle and streaming):
+ * the unarmed sample beat the SIGWINCH repaint every time and replayed the
+ * old-row-count frame, and the rows repaint landed 21-122ms after the resize
+ * ALWAYS carrying a full \x1b[2J erase, so the marker below settles it early
+ * instead of riding the MAX_WAIT deadline.
  *
  * An actively streaming session never quiesces, so the wait also settles EARLY
  * the moment a full-frame repaint marker lands in the bytes appended AFTER the
  * resize. The marker is the \x1b[2J erase ONLY. \x1b[H cursor-home was tried and
  * removed: TUIs emit it for ordinary partial updates (a live session showed 169
  * cursor-homes to 56 erases), so it settled on a spinner tick and sampled the
- * pre-resize frame. Offset-tracked via
- * pendingRepaintScrollbackLength), provided no synchronized-output frame (DEC
- * 2026) is still open - that flag aligns the sample to a frame boundary.
- * Without the early settle, a streaming session always burned the full
- * MAX_WAIT and then sampled mid/pre-repaint anyway.
+ * pre-resize frame. The scan is offset-tracked via
+ * pendingRepaintScrollbackLength, and the marker only counts while no
+ * synchronized-output frame (DEC 2026) is open - that flag aligns the sample to
+ * a frame boundary. Without the early settle, a streaming session always burned
+ * the full MAX_WAIT and then sampled mid/pre-repaint anyway.
  *
- * STACKED resizes (a second width change while the previous repaint is still
+ * STACKED resizes (a second geometry change while the previous repaint is still
  * pending - e.g. rapidly closing and reopening a task detail ping-pongs the
  * PTY between the dialog and bottom-panel widths) disable the marker-only
- * early settle: the first post-resize marker can be the PREVIOUS width's
- * repaint arriving late, and sampling on it replays a stale-width frame that
+ * early settle: the first post-resize marker can be the PREVIOUS geometry's
+ * repaint arriving late, and sampling on it replays a stale frame that
  * the real repaint then visibly corrects. When pendingRepaintStacked is set,
  * settling requires the marker AND a quiesce (both repaints landed and
- * stopped), falling back to the MAX_WAIT deadline while streaming.
+ * stopped), falling back to the MAX_WAIT deadline while streaming. An arm
+ * older than MAX_WAIT does not stack the next one: its repaint has landed or
+ * never will (this settle itself stops waiting at MAX_WAIT), so an unconsumed
+ * old arm - a height drag nothing sampled after - must not slow the next open.
  *
  *  - QUIESCE: no new data for this long counts as "the repaint has landed".
  *    ~3 flush ticks (16ms each), long enough to bridge a multi-chunk redraw.
  *    Required IN ADDITION to the marker on a stacked resize; it is NOT a
  *    standalone fallback, because "some bytes, then quiet" is satisfied by a
  *    spinner tick. A marker-less repaint rides the MAX_WAIT deadline instead.
- *  - MAX_WAIT: hard ceiling from wait entry. A width change with no repaint
+ *  - MAX_WAIT: hard ceiling from wait entry. A geometry change with no repaint
  *    (or a genuinely slow one) adds at most this to a first paint.
  *  - STALE: a pending-repaint stamp older than this is treated as settled - the
  *    repaint has long since landed, so sample immediately.
@@ -190,22 +205,26 @@ interface BufferState {
   flushScheduled: boolean;
   scrollback: string;
   lastCols: number;
-  /** Timestamp (Date.now()) of the most recent width-changing resize, or null
-   *  when none is pending. Set by onResize when cols change; consumed and
-   *  cleared by waitForResizeRepaint once the post-resize repaint has settled.
-   *  Drives the repaint-settle in getScrollback. */
+  /** The row count the bytes currently in the scrollback were drawn for,
+   *  mirroring lastCols. Feeds onResize's row-change detection, which arms the
+   *  repaint settle exactly like a width change (see the constants doc above). */
+  lastRows: number;
+  /** Timestamp (Date.now()) of the most recent geometry-changing resize, or
+   *  null when none is pending. Set by onResize when cols or rows change;
+   *  consumed and cleared by waitForResizeRepaint once the post-resize repaint
+   *  has settled. Drives the repaint-settle in getScrollback. */
   pendingRepaintAt: number | null;
-  /** scrollback.length at the moment of the pending width-changing resize, or
-   *  null when none is pending. Lets waitForResizeRepaint scan only the bytes
-   *  appended AFTER the resize for a full-frame repaint marker (early settle
-   *  while the session streams). Adjusted downward when the scrollback is
-   *  trimmed mid-wait; cleared together with pendingRepaintAt. */
+  /** scrollback.length at the moment of the pending geometry-changing resize,
+   *  or null when none is pending. Lets waitForResizeRepaint scan only the
+   *  bytes appended AFTER the resize for a full-frame repaint marker (early
+   *  settle while the session streams). Adjusted downward when the scrollback
+   *  is trimmed mid-wait; cleared together with pendingRepaintAt. */
   pendingRepaintScrollbackLength: number | null;
-  /** True when the pending width change landed while a PREVIOUS repaint was
+  /** True when the pending geometry change landed while a PREVIOUS repaint was
    *  still unconsumed (rapid resize ping-pong). Disables the marker-only
-   *  early settle for this wait: the next marker may be the previous width's
-   *  repaint, so settling requires marker AND quiesce (see the constants doc
-   *  above). Cleared together with pendingRepaintAt. */
+   *  early settle for this wait: the next marker may be the previous
+   *  geometry's repaint, so settling requires marker AND quiesce (see the
+   *  constants doc above). Cleared together with pendingRepaintAt. */
   pendingRepaintStacked: boolean;
   /** The settle already in flight for `pendingRepaintAt`, so concurrent
    *  samplers of the SAME resize share one wait instead of racing two.
@@ -283,6 +302,7 @@ export class PtyBufferManager {
       flushScheduled: false,
       scrollback: previousScrollback,
       lastCols: initialCols,
+      lastRows: initialRows,
       pendingRepaintAt: null,
       pendingRepaintScrollbackLength: null,
       pendingRepaintStacked: false,
@@ -382,56 +402,84 @@ export class PtyBufferManager {
   /**
    * Record a resize and report whether the column width changed from the last
    * known width. The session is seeded (initSession) with the actual spawn
-   * cols, so the first renderer resize truthfully reports the 120-to-fitted
-   * width change on a cold launch - the signal the repaint-settle keys on.
+   * geometry, so the first renderer resize truthfully reports the
+   * 120x30-to-fitted change on a cold launch - the signal the repaint-settle
+   * keys on.
    *
-   * A width change stamps pendingRepaintAt: a full-screen agent TUI repaints
-   * asynchronously in response to the SIGWINCH this resize triggers, and
-   * getScrollback must wait for that repaint before sampling (see
-   * waitForResizeRepaint). onResize itself does not touch scrollback; a stale
-   * "must not clear on the first resize" guard used to swallow this signal and
-   * has been removed (nothing consumes it to clear anything).
+   * A geometry change (cols OR rows) stamps pendingRepaintAt: a full-screen
+   * agent TUI repaints asynchronously in response to the SIGWINCH this resize
+   * triggers, and getScrollback must wait for that repaint before sampling (see
+   * waitForResizeRepaint). Rows arm the settle since the 2026-07-31 live
+   * measurement (see the constants doc above): a rows-only resize's unarmed
+   * sample replayed the old-row-count frame 12/12 times, and the repaint always
+   * carried the \x1b[2J marker, so arming costs ~25-125ms, not the deadline.
+   * onResize itself does not touch scrollback; a stale "must not clear on the
+   * first resize" guard used to swallow this signal and has been removed.
    *
-   * `rows` is used only to keep the headless parser's grid matched to the PTY
-   * (col-change tracking and the repaint-settle key on width alone); it
-   * defaults for callers that do not track rows.
+   * The RETURN VALUE stays colsChanged: it is reporting, not arming. It crosses
+   * the IPC boundary (where the renderer deliberately ignores it) and the
+   * mobile wire (InteractiveTerminalResponsePayload in @kangentic/protocol,
+   * a separately released shape), and nothing consumes a rows flag - so arming
+   * widened without widening the report.
+   *
+   * `rows` defaults for callers that do not track rows, which makes an
+   * omitted-rows call after a real-rows call read as a spurious row change.
+   * Production always passes real rows (SessionManager.resize clamps and
+   * forwards both dims), so that is reachable only from tests - which must
+   * pass rows explicitly on every call when exercising the settle.
    */
   onResize(sessionId: string, cols: number, rows: number = DEFAULT_HEADLESS_ROWS): boolean {
     const state = this.buffers.get(sessionId);
     if (!state) return false;
 
-    // Keep the headless parser's grid matched to the PTY on EVERY resize (rows
-    // included), so a serialized frame always reflows to the current geometry.
+    // Keep the headless parser's grid matched to the PTY on EVERY resize, so a
+    // serialized frame always reflows to the current geometry.
     state.headless.resize(cols, rows);
 
     const colsChanged = cols !== state.lastCols;
-    if (colsChanged) {
-      traceTerminal(sessionId, 'pty-resize', { fromCols: state.lastCols, toCols: cols, rows });
+    const rowsChanged = rows !== state.lastRows;
+    if (colsChanged || rowsChanged) {
+      traceTerminal(sessionId, 'pty-resize', {
+        fromCols: state.lastCols,
+        toCols: cols,
+        fromRows: state.lastRows,
+        toRows: rows,
+      });
     }
     state.lastCols = cols;
-    if (colsChanged) {
-      // A width change on top of a still-pending repaint means two repaints
-      // are (or may be) in flight; mark the wait so it cannot early-settle on
-      // the first (possibly previous-width) marker.
-      state.pendingRepaintStacked = state.pendingRepaintAt !== null;
-      state.pendingRepaintAt = Date.now();
+    state.lastRows = rows;
+    if (colsChanged || rowsChanged) {
+      const now = Date.now();
+      // A geometry change on top of a still-pending RECENT repaint means two
+      // repaints are (or may be) in flight; mark the wait so it cannot
+      // early-settle on the first (possibly previous-geometry) marker. Recency
+      // matters: past REPAINT_MAX_WAIT_MS the previous repaint has landed or
+      // never will (the settle itself stops waiting for it then), so an older
+      // arm is just one nothing sampled - e.g. a bottom-panel height drag with
+      // no replay after it. Counting it as "in flight" upgraded the NEXT
+      // settle to marker-and-quiesce, and a streaming session never quiesces,
+      // so an ordinary drag-then-open rode the full deadline instead of
+      // settling on the marker.
+      state.pendingRepaintStacked =
+        state.pendingRepaintAt !== null && now - state.pendingRepaintAt < REPAINT_MAX_WAIT_MS;
+      state.pendingRepaintAt = now;
       state.pendingRepaintScrollbackLength = state.scrollback.length;
     }
     return colsChanged;
   }
 
   /**
-   * Wait until the async repaint that follows a width-changing resize has
+   * Wait until the async repaint that follows a geometry-changing resize has
    * landed in the buffer and quiesced, so a getScrollback taken right after a
-   * resize replays the frame at the NEW width instead of a stale one. Awaited
-   * by SessionManager.getScrollback before it samples.
+   * resize replays the frame at the NEW geometry instead of a stale one.
+   * Awaited by SessionManager.getScrollback before it samples.
    *
-   * No-op (resolves immediately) unless a fresh width change is pending AND the
-   * session's scrollback shows a full-screen TUI (a \x1b[2J clear). Plain-shell
-   * sessions and agents whose TUI never clears the screen have no SIGWINCH
-   * repaint to wait for, so they keep sampling immediately - the pre-existing
-   * behavior. Bounded by REPAINT_MAX_WAIT_MS from wait entry so a missing or
-   * slow repaint can only delay a first paint, never hang the read.
+   * No-op (resolves immediately) unless a fresh geometry change is pending AND
+   * the session's scrollback shows a full-screen TUI (a \x1b[2J clear).
+   * Plain-shell sessions and agents whose TUI never clears the screen have no
+   * SIGWINCH repaint to wait for, so they keep sampling immediately - the
+   * pre-existing behavior. Bounded by REPAINT_MAX_WAIT_MS from wait entry so a
+   * missing or slow repaint can only delay a first paint, never hang the read.
    */
   async waitForResizeRepaint(sessionId: string): Promise<void> {
     const state = this.buffers.get(sessionId);
@@ -475,6 +523,7 @@ export class PtyBufferManager {
         reason: 'stale-stamp' satisfies RepaintSettleReason,
         ageMs: entryTime - stamp,
         lastCols: state.lastCols,
+        lastRows: state.lastRows,
       });
       return;
     }
@@ -487,6 +536,7 @@ export class PtyBufferManager {
       traceTerminal(sessionId, 'settle', {
         reason: 'no-tui-marker' satisfies RepaintSettleReason,
         lastCols: state.lastCols,
+        lastRows: state.lastRows,
       });
       return;
     }
@@ -505,14 +555,10 @@ export class PtyBufferManager {
         }
         const now = Date.now();
         // Early settle for a STREAMING session (which never quiesces): the
-        // bytes appended after the resize contain a full-frame repaint marker
-        // (\x1b[2J clear or BARE \x1b[H cursor-home; indexOf with the literal
-        // \x1b[H cannot false-match a parameterized \x1b[1;1H, and only the
-        // bare form accelerates the settle - a parameterized home falls
-        // through like a marker-less repaint) and no synchronized-output
-        // frame is open, so the sample lands on a frame boundary at the NEW
-        // width. Marker-less repaints fall through to the quiesce/deadline
-        // fallbacks below.
+        // bytes appended after the resize contain the full-frame repaint
+        // marker and no synchronized-output frame is open, so the sample lands
+        // on a frame boundary at the NEW geometry. Marker-less repaints fall
+        // through to the deadline below.
         const scanOffset = current.pendingRepaintScrollbackLength;
         // The marker must mean "the whole frame was redrawn". Only a full-screen
         // ERASE means that. A bare cursor-home used to count here and it is the
@@ -554,8 +600,8 @@ export class PtyBufferManager {
         // deadline below so a genuinely missing repaint can still never hang.
         //
         // Stacked resizes additionally require quiesce: the first post-resize
-        // erase can be the PREVIOUS width's repaint arriving late, so both must
-        // have landed and stopped.
+        // erase can be the PREVIOUS geometry's repaint arriving late, so both
+        // must have landed and stopped.
         const settled = current.pendingRepaintStacked
           ? markerSampleSafe && quiesced
           : markerSampleSafe;
@@ -565,14 +611,15 @@ export class PtyBufferManager {
               ? (current.pendingRepaintStacked ? 'marker-and-quiesce' : 'marker')
               : 'deadline') satisfies RepaintSettleReason,
             waitedMs: now - entryTime,
-            // The width the bytes about to be sampled were DRAWN at. If this is
-            // not the width the renderer just fitted to, the replay is a stale
-            // frame and the user will see it corrected.
+            // The geometry the bytes about to be sampled were DRAWN at. If it
+            // is not the geometry the renderer just fitted to, the replay is a
+            // stale frame and the user will see it corrected.
             lastColsAtSample: current.lastCols,
+            lastRowsAtSample: current.lastRows,
             stacked: current.pendingRepaintStacked,
           });
           // Only clear the stamp this wait was anchored to. A second
-          // width-changing resize during this wait re-stamps pendingRepaintAt
+          // geometry-changing resize during this wait re-stamps pendingRepaintAt
           // to a newer value for a not-yet-settled repaint; nulling it
           // unconditionally would let the next getScrollback skip the wait and
           // sample that newer repaint stale. Leave a newer stamp in place so it
@@ -602,16 +649,17 @@ export class PtyBufferManager {
   }
 
   /**
-   * The width this session's PTY was last resized to, as the buffer manager saw
-   * it, plus whether a post-resize repaint is still outstanding.
+   * The geometry this session's PTY was last resized to, as the buffer manager
+   * saw it, plus whether a post-resize repaint is still outstanding.
    *
-   * Dev diagnostics only. `lastCols` is the width the bytes currently in the
-   * scrollback were DRAWN at, which is the number you need to explain a terminal
-   * whose content does not match its grid - the divergence is invisible from the
-   * renderer, which only knows its own xterm's width.
+   * Dev diagnostics only. `lastCols`/`lastRows` are the geometry the bytes
+   * currently in the scrollback were DRAWN at, which is the number you need to
+   * explain a terminal whose content does not match its grid - the divergence
+   * is invisible from the renderer, which only knows its own xterm's size.
    */
   getDimensionState(sessionId: string): {
     lastCols: number;
+    lastRows: number;
     pendingRepaintAt: number | null;
     pendingRepaintStacked: boolean;
     inAltScreen: boolean;
@@ -620,6 +668,7 @@ export class PtyBufferManager {
     if (!state) return null;
     return {
       lastCols: state.lastCols,
+      lastRows: state.lastRows,
       pendingRepaintAt: state.pendingRepaintAt,
       pendingRepaintStacked: state.pendingRepaintStacked,
       inAltScreen: state.inAltScreen,

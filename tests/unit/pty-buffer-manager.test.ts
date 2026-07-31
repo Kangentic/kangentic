@@ -64,7 +64,7 @@ describe('PtyBufferManager', () => {
 
       manager.onData(SESSION, 'some data');
 
-      // Resize with same cols (e.g. rows-only change)
+      // Same-geometry resize (cols and rows both unchanged)
       const colsChanged = manager.onResize(SESSION, 80);
       expect(colsChanged).toBe(false);
 
@@ -143,17 +143,31 @@ describe('PtyBufferManager', () => {
       expect(manager.getScrollback(SESSION)).toContain('live data');
     });
 
-    it('reports colsChanged=false on a same-width resize (rows-only change)', () => {
+    it('reports colsChanged=false on a genuine rows-only resize (return is reporting, arming is separate)', () => {
       const onFlush = vi.fn();
       const manager = new PtyBufferManager({ onFlush });
-      manager.initSession(SESSION, 'previous session output', 120);
-      manager.onResize(SESSION, 120);
+      manager.initSession(SESSION, 'previous session output', 120, 30);
+      manager.onResize(SESSION, 120, 30);
       manager.onData(SESSION, ' plus new data');
 
-      const colsChanged = manager.onResize(SESSION, 120);
+      // A rows-only change arms the repaint settle but the RETURN VALUE stays
+      // colsChanged: it crosses the IPC boundary and the mobile wire, where
+      // nothing consumes a rows flag.
+      const colsChanged = manager.onResize(SESSION, 120, 50);
       expect(colsChanged).toBe(false);
+      expect(manager.getDimensionState(SESSION)?.pendingRepaintAt).not.toBeNull();
       expect(manager.getScrollback(SESSION)).toContain('previous session output');
       expect(manager.getScrollback(SESSION)).toContain('plus new data');
+    });
+
+    it('tracks lastRows through init and resize (dev diagnostics)', () => {
+      const onFlush = vi.fn();
+      const manager = new PtyBufferManager({ onFlush });
+      manager.initSession(SESSION, '', 120, 24);
+      expect(manager.getDimensionState(SESSION)?.lastRows).toBe(24);
+
+      manager.onResize(SESSION, 120, 40);
+      expect(manager.getDimensionState(SESSION)?.lastRows).toBe(40);
     });
 
     it('fresh session seeded at spawn width reports no change on a matching resize', () => {
@@ -169,13 +183,25 @@ describe('PtyBufferManager', () => {
 
   describe('waitForResizeRepaint (repaint-settle before sampling)', () => {
     // Build the precondition the settle keys on: a full-screen TUI frame (with a
-    // \x1b[2J clear) in the buffer, then a width change that stamps the pending
-    // repaint. Returns the manager so each test drives the settle from there.
+    // \x1b[2J clear) in the buffer, then a geometry change that stamps the
+    // pending repaint. Rows are passed explicitly on every call (the defaulted
+    // rows param would otherwise read as a spurious row change - see the
+    // onResize doc). Returns the manager so each test drives the settle.
     function armWidthChange(tui = true): PtyBufferManager {
       const manager = new PtyBufferManager({ onFlush: vi.fn() });
-      manager.initSession(SESSION, '', 120);
+      manager.initSession(SESSION, '', 120, 30);
       manager.onData(SESSION, tui ? '\x1b[2Jold frame at 120 cols' : 'plain shell output');
-      expect(manager.onResize(SESSION, 190)).toBe(true);
+      expect(manager.onResize(SESSION, 190, 30)).toBe(true);
+      return manager;
+    }
+
+    // Same shape armed by a ROWS-ONLY change: cols stay 120, rows 30 -> 50.
+    // onResize returns false (the report stays colsChanged) while arming.
+    function armRowsChange(tui = true): PtyBufferManager {
+      const manager = new PtyBufferManager({ onFlush: vi.fn() });
+      manager.initSession(SESSION, '', 120, 30);
+      manager.onData(SESSION, tui ? '\x1b[2Jold frame at 30 rows' : 'plain shell output');
+      expect(manager.onResize(SESSION, 120, 50)).toBe(false);
       return manager;
     }
 
@@ -539,16 +565,184 @@ describe('PtyBufferManager', () => {
       vi.useRealTimers();
     });
 
-    it('does not arm a wait when the width did not change', async () => {
+    it('does not arm a wait when the geometry did not change', async () => {
       vi.useFakeTimers();
       const manager = new PtyBufferManager({ onFlush: vi.fn() });
-      manager.initSession(SESSION, '', 120);
-      manager.onData(SESSION, '\x1b[2Jframe at 120 cols');
-      // Same-width resize: colsChanged false, no pending repaint stamped.
-      expect(manager.onResize(SESSION, 120)).toBe(false);
+      manager.initSession(SESSION, '', 120, 30);
+      manager.onData(SESSION, '\x1b[2Jframe at 120x30');
+      // Same cols AND rows: nothing changed, no pending repaint stamped.
+      expect(manager.onResize(SESSION, 120, 30)).toBe(false);
 
       // No pending repaint -> short-circuits with no timers.
       await manager.waitForResizeRepaint(SESSION);
+
+      vi.useRealTimers();
+    });
+
+    it('a rows-only resize arms the settle: the old-row-count frame is not sampled early', async () => {
+      // The bug this pins (measured live 2026-07-31, 12/12 trials): a rows-only
+      // resize left the settle unarmed, so getScrollback sampled ~1ms after the
+      // resize and replayed the frame laid out for the OLD row count. The
+      // repaint always arrived 21-122ms later carrying a full \x1b[2J erase, so
+      // arming lets the marker settle the wait early.
+      vi.useFakeTimers();
+      const manager = armRowsChange();
+
+      let settled = false;
+      const waitPromise = manager.waitForResizeRepaint(SESSION).then(() => {
+        settled = true;
+      });
+
+      // Unarmed, this would have resolved immediately; armed, it waits.
+      await vi.advanceTimersByTimeAsync(16);
+      expect(settled).toBe(false);
+
+      // The rows repaint lands with the erase marker: early settle.
+      manager.onData(SESSION, '\x1b[2Jrepaint at 50 rows');
+      await vi.advanceTimersByTimeAsync(16);
+      await waitPromise;
+      expect(settled).toBe(true);
+      expect(manager.getScrollback(SESSION)).toContain('repaint at 50 rows');
+
+      vi.useRealTimers();
+    });
+
+    it('a rows-only arm on a plain-shell session still samples immediately (no TUI marker)', async () => {
+      vi.useFakeTimers();
+      const manager = armRowsChange(false);
+
+      // Discriminating precondition: the rows-only change actually armed the
+      // settle. Without this, a reverted arming path would pass this test
+      // vacuously (nothing to clear means "resolves immediately" either way).
+      expect(manager.getDimensionState(SESSION)?.pendingRepaintAt).not.toBeNull();
+
+      // No \x1b[2J anywhere in the scrollback -> no SIGWINCH repaint to wait
+      // for; the wait clears the arm and resolves without timers.
+      await manager.waitForResizeRepaint(SESSION);
+
+      // The no-tui-marker path must have cleared the arm.
+      expect(manager.getDimensionState(SESSION)?.pendingRepaintAt).toBeNull();
+
+      vi.useRealTimers();
+    });
+
+    it('a rows-only arm with no post-resize marker rides the max-wait ceiling, not an early sample', async () => {
+      // Mirrors "resolves at the max-wait ceiling when no repaint ever
+      // arrives" (armWidthChange), but for a ROWS-ONLY arm: proves the
+      // deadline path is reachable from a rows change too, not just the
+      // early-settle-on-marker path already covered above.
+      vi.useFakeTimers();
+      const manager = armRowsChange(); // TUI session, rows-only 30 -> 50
+
+      let settled = false;
+      const waitPromise = manager.waitForResizeRepaint(SESSION).then(() => {
+        settled = true;
+      });
+
+      // No marker ever follows the resize. Just short of the 400ms ceiling:
+      // still unsettled.
+      await vi.advanceTimersByTimeAsync(399);
+      expect(settled).toBe(false);
+
+      // The ceiling (400ms from entry) is reached: resolves without a repaint.
+      await vi.advanceTimersByTimeAsync(1);
+      await waitPromise;
+      expect(settled).toBe(true);
+
+      vi.useRealTimers();
+    });
+
+    it('a rows change stacked on a pending cols repaint requires marker AND quiesce', async () => {
+      vi.useFakeTimers();
+      const manager = armWidthChange(); // 120x30 -> 190x30 stamps the first pending repaint
+      // A rows-only change lands before the width repaint arrived: two
+      // repaints are now (or may be) in flight, so the wait is stacked.
+      expect(manager.onResize(SESSION, 190, 50)).toBe(false);
+
+      let settled = false;
+      const waitPromise = manager.waitForResizeRepaint(SESSION).then(() => {
+        settled = true;
+      });
+
+      // The FIRST geometry's repaint arrives late: marker alone must not
+      // settle a stacked wait.
+      manager.onData(SESSION, '\x1b[2Jrepaint at 190x30 (stale rows)');
+      await vi.advanceTimersByTimeAsync(16);
+      expect(settled).toBe(false);
+
+      // The correct-geometry repaint lands and data quiesces: settles.
+      manager.onData(SESSION, '\x1b[2Jrepaint at 190x50');
+      await vi.advanceTimersByTimeAsync(96);
+      await waitPromise;
+      expect(settled).toBe(true);
+      expect(manager.getScrollback(SESSION)).toContain('repaint at 190x50');
+
+      vi.useRealTimers();
+    });
+
+    it('a cols change stacked on a pending rows repaint requires marker AND quiesce', async () => {
+      vi.useFakeTimers();
+      const manager = armRowsChange(); // 120x30 -> 120x50 stamps the first pending repaint
+      expect(manager.onResize(SESSION, 190, 50)).toBe(true);
+
+      let settled = false;
+      const waitPromise = manager.waitForResizeRepaint(SESSION).then(() => {
+        settled = true;
+      });
+
+      manager.onData(SESSION, '\x1b[2Jrepaint at 120x50 (stale cols)');
+      await vi.advanceTimersByTimeAsync(16);
+      expect(settled).toBe(false);
+
+      manager.onData(SESSION, '\x1b[2Jrepaint at 190x50');
+      await vi.advanceTimersByTimeAsync(96);
+      await waitPromise;
+      expect(settled).toBe(true);
+
+      vi.useRealTimers();
+    });
+
+    it('an omitted rows argument after a real-rows resize reads as a row change (test-only trap)', () => {
+      // rows defaults to DEFAULT_HEADLESS_ROWS (30). Production always passes
+      // real rows (SessionManager.resize), so this path is reachable only from
+      // tests - pinned here so the behavior is documented rather than
+      // rediscovered: an omitted rows after rows=50 reads 50 -> 30 and arms.
+      const manager = new PtyBufferManager({ onFlush: vi.fn() });
+      manager.initSession(SESSION, '', 120, 30);
+      manager.onData(SESSION, '\x1b[2Jframe');
+      expect(manager.onResize(SESSION, 120, 50)).toBe(false);
+      expect(manager.getDimensionState(SESSION)?.pendingRepaintAt).not.toBeNull();
+
+      // Omitting rows now reads as 50 -> 30: it re-arms, stacked on the first.
+      expect(manager.onResize(SESSION, 120)).toBe(false);
+      expect(manager.getDimensionState(SESSION)?.pendingRepaintStacked).toBe(true);
+      expect(manager.getDimensionState(SESSION)?.lastRows).toBe(30);
+    });
+
+    it('an unconsumed arm older than REPAINT_MAX_WAIT_MS does not stack the next resize', () => {
+      // Age-gates the stacked flag: an arm nothing ever sampled (a bottom-panel
+      // height drag with no replay after it) must not slow the NEXT unrelated
+      // resize down to marker-and-quiesce. The sibling "fresh arm still
+      // stacks" case is pinned above (immediate re-resize -> stacked true);
+      // this test is the complementary stale case.
+      vi.useFakeTimers();
+      const manager = new PtyBufferManager({ onFlush: vi.fn() });
+      manager.initSession(SESSION, '', 120, 30);
+      manager.onData(SESSION, '\x1b[2Jframe');
+
+      // First geometry change stamps pendingRepaintAt. Nothing ever consumes
+      // it (no waitForResizeRepaint call).
+      expect(manager.onResize(SESSION, 120, 50)).toBe(false);
+      expect(manager.getDimensionState(SESSION)?.pendingRepaintAt).not.toBeNull();
+
+      // Advance well past REPAINT_MAX_WAIT_MS (400ms) with the arm still
+      // unconsumed: its repaint has landed or never will by now.
+      vi.advanceTimersByTime(500);
+
+      // A second, unrelated geometry change lands. The stale arm must NOT
+      // mark it stacked.
+      expect(manager.onResize(SESSION, 190, 50)).toBe(true);
+      expect(manager.getDimensionState(SESSION)?.pendingRepaintStacked).toBe(false);
 
       vi.useRealTimers();
     });

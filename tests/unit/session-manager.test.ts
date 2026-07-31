@@ -214,6 +214,86 @@ describe('Scrollback clearing on resize', () => {
     expect(scrollback).toContain('hello world');
   });
 
+  it('a rows-only resize arms the repaint settle (arming widens; the report stays colsChanged)', async () => {
+    const { session, feedData } = await spawnSession();
+
+    // A fullscreen TUI frame so the settle's TUI gate holds.
+    feedData('\x1b[2Jframe at 120x30');
+
+    const result = manager.resize(session.id, 120, 50);
+    // The wire/IPC report is unchanged - colsChanged only, exact shape.
+    expect(result).toEqual({ colsChanged: false });
+
+    // But the settle armed on the rows change, visible via the diagnostics row.
+    const dimensions = manager.getTerminalDimensions().find((row) => row.sessionId === session.id);
+    expect(dimensions?.pendingRepaintAt).not.toBeNull();
+    expect(dimensions?.lastRows).toBe(50);
+
+    // The rows repaint lands with the erase marker; the settled sample has it.
+    feedData('\x1b[2Jrepaint at 120x50');
+    const scrollback = await manager.getScrollback(session.id);
+    expect(scrollback).toContain('repaint at 120x50');
+  });
+
+  it('getScrollback skips the repaint-settle wait once the PTY is gone (killed before sampling)', async () => {
+    const { session, feedData } = await spawnSession();
+
+    // A fullscreen TUI frame so the settle's TUI-marker gate holds.
+    feedData('\x1b[2Jframe at 120x30');
+
+    // A rows-only resize arms the settle. No repaint marker ever follows, so
+    // an AWAITED settle here would ride the full REPAINT_MAX_WAIT_MS (400ms)
+    // deadline - confirm it actually armed before killing.
+    manager.resize(session.id, 120, 50);
+    const dimensionsBeforeKill = manager.getTerminalDimensions().find((row) => row.sessionId === session.id);
+    expect(dimensionsBeforeKill?.pendingRepaintAt).not.toBeNull();
+
+    // kill() nulls session.pty (unlike remove(), it does NOT clear the
+    // buffer manager's per-session state), so the pending-repaint stamp
+    // survives in the buffer manager, but the session has no live PTY that
+    // could ever deliver the repaint SIGWINCH triggers.
+    manager.kill(session.id);
+    spawnedSessionId = null; // already torn down; afterEach must not re-suspend it
+
+    const startedAt = Date.now();
+    const scrollback = await manager.getScrollback(session.id);
+    const elapsedMs = Date.now() - startedAt;
+
+    expect(scrollback).toContain('frame at 120x30');
+    // Reverting the live-PTY guard measured 418ms here (rides the full 400ms
+    // REPAINT_MAX_WAIT_MS deadline with no post-resize marker ever arriving).
+    // 300ms keeps a CI-safe margin below that measured red while staying well
+    // above the skipped-wait green path (native microtask time).
+    expect(elapsedMs).toBeLessThan(300);
+  });
+
+  it('getSerializedFrame skips the repaint-settle wait once the PTY is gone (killed before sampling)', async () => {
+    const { session, feedData } = await spawnSession();
+
+    // A fullscreen TUI frame so the settle's TUI-marker gate holds.
+    feedData('\x1b[2Jframe at 120x30');
+
+    // A rows-only resize arms the settle. No repaint marker ever follows, so
+    // an AWAITED settle here would ride the full REPAINT_MAX_WAIT_MS (400ms)
+    // deadline - confirm it actually armed before killing.
+    manager.resize(session.id, 120, 50);
+    const dimensionsBeforeKill = manager.getTerminalDimensions().find((row) => row.sessionId === session.id);
+    expect(dimensionsBeforeKill?.pendingRepaintAt).not.toBeNull();
+
+    // Same guard as getScrollback (see the sibling test above), applied to
+    // getSerializedFrame's own live-PTY check.
+    manager.kill(session.id);
+    spawnedSessionId = null; // already torn down; afterEach must not re-suspend it
+
+    const startedAt = Date.now();
+    const serializedFrame = await manager.getSerializedFrame(session.id);
+    const elapsedMs = Date.now() - startedAt;
+
+    expect(serializedFrame).toContain('frame at 120x30');
+    // Same CI-safe margin as the getScrollback sibling above.
+    expect(elapsedMs).toBeLessThan(300);
+  });
+
   it('preserves scrollback when cols change (no write-time clearing)', async () => {
     const { session, feedData } = await spawnSession();
 

@@ -96,7 +96,7 @@ export class SessionManager extends EventEmitter {
    * spawn landed, or while the session was queued/suspended awaiting spawn).
    * performSpawn consumes this so the PTY spawns at the real fitted size
    * instead of the 120x30 default, so no post-spawn corrective resize (and its
-   * stale-width repaint window) is needed. Keyed by session id, independent of
+   * stale-geometry repaint window) is needed. Keyed by session id, independent of
    * the registry so it survives the registry.delete during a respawn. Consumed
    * at spawn (takePendingResize) or dropped on kill.
    */
@@ -670,7 +670,7 @@ export class SessionManager extends EventEmitter {
       // renderer mounts and fits before the main-process spawn lands), or arrive
       // while a session is queued/suspended awaiting (re)spawn. Stash the dims so
       // performSpawn spawns the PTY at the real size instead of the default,
-      // closing the stale-width race at the source. Never stash for an
+      // closing the stale-geometry race at the source. Never stash for an
       // exited/killed session - it is not coming back, and xterm never re-sends
       // unchanged dims, so a resurrected 120x30 would stick forever.
       if (session && (session.status === 'queued' || session.status === 'suspended')) {
@@ -939,11 +939,17 @@ export class SessionManager extends EventEmitter {
   }
 
   async getScrollback(sessionId: string): Promise<string> {
-    // If a width-changing resize just fired, wait for the agent TUI's async
+    // If a geometry-changing resize just fired, wait for the agent TUI's async
     // repaint to land before sampling, so the replay shows the frame at the
-    // fitted width rather than the stale pre-resize one. No-op for sessions
-    // with no pending width change (see PtyBufferManager.waitForResizeRepaint).
-    await this.bufferManager.waitForResizeRepaint(sessionId);
+    // fitted geometry rather than the stale pre-resize one. No-op for sessions
+    // with no pending geometry change (see PtyBufferManager.waitForResizeRepaint).
+    // Skipped entirely when the session has no live PTY (suspended/killed, or
+    // queued pre-spawn): no process means no SIGWINCH repaint can ever arrive,
+    // so a wait armed just before teardown would only burn its deadline against
+    // a repaint that cannot come.
+    if (this.registry.get(sessionId)?.pty) {
+      await this.bufferManager.waitForResizeRepaint(sessionId);
+    }
     return this.bufferManager.getScrollback(sessionId);
   }
 
@@ -955,11 +961,14 @@ export class SessionManager extends EventEmitter {
    * whose drawing bytes have aged out of the byte window.
    *
    * Preserves the same repaint settle as getScrollback (awaits
-   * waitForResizeRepaint) so the grid is never serialized mid-repaint at a
-   * stale width. Desktop consumers keep using getScrollback unchanged.
+   * waitForResizeRepaint, and like getScrollback skips it when no live PTY can
+   * deliver a repaint) so the grid is never serialized mid-repaint at a stale
+   * geometry. Desktop consumers keep using getScrollback unchanged.
    */
   async getSerializedFrame(sessionId: string): Promise<string> {
-    await this.bufferManager.waitForResizeRepaint(sessionId);
+    if (this.registry.get(sessionId)?.pty) {
+      await this.bufferManager.waitForResizeRepaint(sessionId);
+    }
     return this.bufferManager.getSerializedFrame(sessionId);
   }
 
@@ -1010,17 +1019,18 @@ export class SessionManager extends EventEmitter {
   /**
    * Dev diagnostics: every dimension MAIN knows for each session's terminal.
    *
-   * The renderer can only see its own xterm's grid, so a PTY whose width has
+   * The renderer can only see its own xterm's grid, so a PTY whose geometry has
    * drifted from the grid showing it is invisible from there - and that
    * divergence is exactly the failure where a terminal opens with its content
    * wrapped or clipped and no refit ever corrects it (xterm only re-sends
    * dimensions when ITS OWN size changes, so a mismatch has no path back).
    *
-   * `ptyCols` is the live node-pty grid. `lastCols` is the width the bytes now in
-   * the scrollback were drawn at. `lastDesktopDimensions` is the size the desktop
-   * last asked for, and `pendingResize` a size stashed for a session with no PTY
-   * yet. Comparing them against the renderer's grid (see the `dims` section of
-   * the terminal-state route) localizes a drift to a specific layer instead of
+   * `ptyCols`/`ptyRows` is the live node-pty grid. `lastCols`/`lastRows` is the
+   * geometry the bytes now in the scrollback were drawn at.
+   * `lastDesktopDimensions` is the size the desktop last asked for, and
+   * `pendingResize` a size stashed for a session with no PTY yet. Comparing
+   * them against the renderer's grid (see the `dims` section of the
+   * terminal-state route) localizes a drift to a specific layer instead of
    * leaving it to be inferred from pixels.
    */
   getTerminalDimensions(): Array<{
@@ -1030,6 +1040,7 @@ export class SessionManager extends EventEmitter {
     ptyCols: number | null;
     ptyRows: number | null;
     lastCols: number | null;
+    lastRows: number | null;
     lastDesktopCols: number | null;
     lastDesktopRows: number | null;
     pendingResizeCols: number | null;
@@ -1050,6 +1061,7 @@ export class SessionManager extends EventEmitter {
         ptyCols: session.pty?.cols ?? null,
         ptyRows: session.pty?.rows ?? null,
         lastCols: buffer?.lastCols ?? null,
+        lastRows: buffer?.lastRows ?? null,
         lastDesktopCols: desktop?.cols ?? null,
         lastDesktopRows: desktop?.rows ?? null,
         pendingResizeCols: pending?.cols ?? null,

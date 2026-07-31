@@ -323,19 +323,32 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   wider than its viewport) and `tests/unit/fit-addon.test.ts`.
 - **Repaint-settled scrollback sampling.** A session spawns at a default 120x30; on a cold launch
   an auto-resumed PTY sits at that size until a card opens and the renderer fits it wider. When a
-  width-changing resize fires, a full-screen agent TUI repaints its frame asynchronously in
-  response to SIGWINCH. So `getScrollback` waits for that repaint to land and quiesce before
-  sampling (`PtyBufferManager.waitForResizeRepaint`), so a terminal restored right after a resize
-  replays the frame at the fitted width instead of a stale narrow one. The wait arms only when the
-  scrollback shows a TUI (a `\x1b[2J` clear) and is bounded by a max-wait ceiling, so a missing or
+  geometry-changing resize fires (cols OR rows), a full-screen agent TUI repaints its frame
+  asynchronously in response to SIGWINCH. So `getScrollback` waits for that repaint to land and
+  quiesce before sampling (`PtyBufferManager.waitForResizeRepaint`), so a terminal restored right
+  after a resize replays the frame at the fitted geometry instead of a stale one. Width armed the
+  settle first; rows-only changes (a bottom-panel height drag, a vertical-only window resize) arm
+  it too since a 2026-07-31 live measurement: 12/12 trials sampled the old-row-count frame before
+  the repaint, and the rows repaint always arrived 21-122ms later carrying a full `\x1b[2J` erase,
+  so the marker settles the wait early rather than riding the ceiling. (The resize IPC's
+  `colsChanged` report is unchanged - arming widened internally; nothing on the renderer or the
+  mobile wire consumes a rows flag.) The wait arms only when the
+  scrollback shows a TUI (a `\x1b[2J` clear), is skipped entirely when the session has no live PTY
+  (a suspended, killed, or pre-spawn session can never receive a SIGWINCH repaint, so the wait
+  would only burn its deadline), and is bounded by a max-wait ceiling, so a missing or
   slow repaint can only delay a first paint, never hang the read. An actively streaming session
-  never quiesces, so the wait also settles EARLY the moment a full-frame repaint marker (`\x1b[2J`
-  or `\x1b[H`) lands in the bytes appended after the resize, outside any open synchronized-output
-  frame - instead of burning the whole ceiling and sampling mid-repaint. STACKED resizes (a second
-  width change while the previous repaint is still pending, e.g. rapidly closing and reopening a
-  task detail ping-pongs the PTY between the dialog and bottom-panel widths) disable the
-  marker-only settle - the first marker may be the previous width's late repaint - and require
-  marker AND quiesce, falling back to the ceiling while streaming. Concurrent samplers of the SAME
+  never quiesces, so the wait also settles EARLY the moment a full-frame repaint marker lands in
+  the bytes appended after the resize, outside any open synchronized-output frame - instead of
+  burning the whole ceiling and sampling mid-repaint. The marker is the `\x1b[2J` erase ONLY: a
+  bare `\x1b[H` cursor-home was tried and reverted, since TUIs emit it for ordinary partial
+  updates (a live session showed 169 cursor-homes to 56 erases). STACKED resizes (a second
+  geometry change while a RECENT previous repaint is still pending, e.g. rapidly closing and
+  reopening a task detail ping-pongs the PTY between the dialog and bottom-panel widths) disable
+  the marker-only settle - the first marker may be the previous geometry's late repaint - and
+  require marker AND quiesce, falling back to the ceiling while streaming. An arm older than the
+  400ms ceiling does not stack the next one: by then its repaint has landed or never will (the
+  settle itself stops waiting at that ceiling), so an unconsumed old arm - a height drag nothing
+  sampled after - cannot slow the next open. Concurrent samplers of the SAME
   resize (a bottom-panel tab and a detail window overlapping during a handover; in dev, StrictMode's
   double mount of a Command Terminal window - TerminalTab itself now defers its init by one
   animation frame, which lets StrictMode's synchronous unmount cancel the first scheduled init, so

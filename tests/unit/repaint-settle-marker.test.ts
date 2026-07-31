@@ -113,6 +113,50 @@ describe('repaint settle: what the user sees first on a panel -> window handoff'
     expect(waited).toBeLessThan(200);
   });
 
+  it('waits for the repaint on a ROWS-only handoff (bottom-panel height vs detail-window height)', async () => {
+    // Same pipeline, vertical axis: the PTY has been running at the bottom
+    // panel's short height, and the detail window fits the same width but many
+    // more rows. Measured live (2026-07-31, 12/12 trials): the unarmed settle
+    // sampled the old-row-count frame ~1ms after the resize every time, and the
+    // rows repaint always arrived 21-122ms later carrying a full \x1b[2J erase.
+    const PANEL_ROWS = 10;
+    const WINDOW_ROWS = 34;
+    const frameAtRows = (rows: number, tag: string): string => `${CLEAR}\x1b[${rows};1H${tag}`;
+
+    const manager = new PtyBufferManager({ onFlush: vi.fn() });
+    manager.initSession(SESSION, '', PANEL_COLS, PANEL_ROWS);
+    manager.onResize(SESSION, PANEL_COLS, PANEL_ROWS);
+    manager.onData(SESSION, frameAtRows(PANEL_ROWS, 'DRAWN-AT-PANEL-HEIGHT'));
+
+    // The handoff: same width, new height. The report stays colsChanged=false;
+    // the settle arms anyway.
+    expect(manager.onResize(SESSION, PANEL_COLS, WINDOW_ROWS)).toBe(false);
+
+    // A routine partial update lands first, then the genuine rows repaint.
+    manager.onData(SESSION, CURSOR_HOME);
+    const settle = manager.waitForResizeRepaint(SESSION);
+    const repaintTimer = setTimeout(
+      () => manager.onData(SESSION, frameAtRows(WINDOW_ROWS, 'DRAWN-AT-WINDOW-HEIGHT')),
+      100,
+    );
+
+    const startedAt = Date.now();
+    await settle;
+    const waited = Date.now() - startedAt;
+    const sample = manager.getScrollback(SESSION);
+    clearTimeout(repaintTimer);
+
+    expect(
+      sample,
+      'getScrollback settled before the rows repaint and sampled the frame laid '
+      + 'out for the old row count - the input box lands mid-screen until the '
+      + 'held live bytes correct it.',
+    ).toContain('DRAWN-AT-WINDOW-HEIGHT');
+    // Generous bound (CI timing varies): the marker settles the wait, it must
+    // not ride the 400ms deadline.
+    expect(waited).toBeLessThan(300);
+  });
+
   it('is bounded by the deadline when the repaint never comes', async () => {
     // A TUI that never re-erases has no trustworthy signal, so the wait rides its
     // deadline rather than settling on an ordinary partial update. This is the
