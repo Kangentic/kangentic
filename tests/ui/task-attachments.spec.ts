@@ -77,14 +77,15 @@ test.describe('New Task Dialog Layout', () => {
     await openNewTaskDialog();
     await expect(page.locator('text=Describe the task for the agent...')).toBeVisible();
     await expect(page.locator('text=Paste or drop files here')).toBeVisible();
-    // The empty state is where markdown support is advertised: the toggle says
-    // what the button does, this says what the box accepts.
-    await expect(page.locator('text=Markdown supported')).toBeVisible();
+    // The empty state carries no markdown hint. That line was cut on purpose -
+    // the Preview toggle is the affordance, and a standing label restating it in
+    // a constantly-opened dialog reads as overbearing. Asserted as an absence so
+    // a well-meaning restore fails here rather than shipping.
+    await expect(page.locator('text=Markdown supported')).toHaveCount(0);
     // Placeholder disappears when user types
     const textarea = page.locator('textarea');
     await textarea.fill('hello');
     await expect(page.locator('text=Paste or drop files here')).not.toBeVisible();
-    await expect(page.locator('text=Markdown supported')).not.toBeVisible();
     // Form is dirty (text typed) - Cancel shows "Discard unsaved changes?" confirm.
     // Dismiss via Discard so the dialog fully closes before the next test opens it.
     await page.locator('button:has-text("Cancel")').click();
