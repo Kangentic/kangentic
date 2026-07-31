@@ -43,6 +43,19 @@ vi.mock('../../src/main/diagnostics/ipc-recorder', () => ({
   recordPush: vi.fn(),
 }));
 
+// strategy-propagation.ts pulls in a large transitive chain (SessionRepository,
+// agent-registry, injection-plan, column-strategy, session-reconcile,
+// auto-spawn-reconcile, ipc/task-lifecycle-lock) that this file has no reason
+// to load for real - the onSwimlaneUpdated gate below only needs to prove
+// mcp-project-context.ts calls these three with the right arguments, not that
+// they do the right thing internally (that is strategy-propagation.test.ts's
+// and auto-spawn-reconcile.test.ts's job).
+vi.mock('../../src/main/ipc/handlers/strategy-propagation', () => ({
+  propagateBoardProfileChange: vi.fn(),
+  propagateStrategyToLiveSessions: vi.fn(),
+  buildColumnStrategyChanges: vi.fn(() => []),
+}));
+
 // RequestResolver is imported by mcp-project-context and called with `new`.
 // Track constructor calls via a hoisted spy variable that the test body can
 // inspect after each call.
@@ -57,6 +70,10 @@ vi.mock('../../src/main/agent/mcp-http/project-resolver', () => {
 });
 
 import { createRequestResolver, buildCommandContextForProject } from '../../src/main/agent/mcp-project-context';
+import {
+  propagateStrategyToLiveSessions,
+  buildColumnStrategyChanges,
+} from '../../src/main/ipc/handlers/strategy-propagation';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import type { Project, Swimlane } from '../../src/shared/types';
 
@@ -368,5 +385,85 @@ describe('buildCommandContextForProject - consolidated board-changed bus fan-out
     context.onBacklogChanged();
 
     expect(emitBoardChanged).toHaveBeenCalledWith({ projectId: DEFAULT_ID, change: 'backlog-changed', ids: [] });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// onSwimlaneUpdated - strategy propagation gate
+//
+// An MCP update_column edit must reach live sessions (model/effort injection,
+// the auto_spawn reconcile) exactly as a human column edit does - but only
+// when there is a previous row to diff against (a create-column path has none)
+// and only when the edited project is the one currently focused (a background
+// project's tasks pick the new column config up when they next spawn, rather
+// than having this reconcile spawn/suspend agents in a checkout nobody is
+// looking at).
+// ---------------------------------------------------------------------------
+
+describe('buildCommandContextForProject - onSwimlaneUpdated strategy propagation gate', () => {
+  const PROJECT_PATH = '/projects/example';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function makeGateContext(currentProjectId: string | undefined) {
+    const project = makeProject({ id: DEFAULT_ID, path: PROJECT_PATH });
+    const ipcContext = {
+      projectRepo: { getById: vi.fn(() => project), list: vi.fn(() => [project]) },
+      mainWindow: { isDestroyed: () => false, webContents: { send: vi.fn() } },
+      boardConfigManager: { writeBackForProject: vi.fn() },
+      boardEvents: { emitBoardChanged: vi.fn() },
+      currentProjectId,
+    } as unknown as IpcContext;
+    return { ipcContext };
+  }
+
+  // onSwimlaneUpdated only reads id + name off the swimlane for its own
+  // renderer push; the propagation gate reads the whole row via `previous`.
+  const nextSwimlane = (): Swimlane => ({ id: 'lane-1', name: 'To Do' }) as unknown as Swimlane;
+  const previousSwimlane = (): Swimlane => ({ id: 'lane-1', name: 'Backlog' }) as unknown as Swimlane;
+
+  it('propagates when a previous row is supplied and the project matches the active one', () => {
+    const { ipcContext } = makeGateContext(DEFAULT_ID);
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
+    expect(context).not.toBeNull();
+    const markerChanges = [{ marker: 'column-strategy-changes' }] as never;
+    vi.mocked(buildColumnStrategyChanges).mockReturnValue(markerChanges);
+
+    context!.onSwimlaneUpdated(nextSwimlane(), previousSwimlane());
+
+    expect(buildColumnStrategyChanges).toHaveBeenCalledWith({
+      context: ipcContext,
+      projectId: DEFAULT_ID,
+      before: previousSwimlane(),
+      after: nextSwimlane(),
+    });
+    expect(propagateStrategyToLiveSessions).toHaveBeenCalledTimes(1);
+    expect(propagateStrategyToLiveSessions).toHaveBeenCalledWith(
+      ipcContext, 'MCP_UPDATE_COLUMN', markerChanges, DEFAULT_ID,
+    );
+  });
+
+  it('does not propagate when the project does not match the active one', () => {
+    const { ipcContext } = makeGateContext('some-other-project-id');
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
+    expect(context).not.toBeNull();
+
+    context!.onSwimlaneUpdated(nextSwimlane(), previousSwimlane());
+
+    expect(propagateStrategyToLiveSessions).not.toHaveBeenCalled();
+    expect(buildColumnStrategyChanges).not.toHaveBeenCalled();
+  });
+
+  it('does not propagate when there is no previous row (create-column path)', () => {
+    const { ipcContext } = makeGateContext(DEFAULT_ID);
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
+    expect(context).not.toBeNull();
+
+    context!.onSwimlaneUpdated(nextSwimlane());
+
+    expect(propagateStrategyToLiveSessions).not.toHaveBeenCalled();
+    expect(buildColumnStrategyChanges).not.toHaveBeenCalled();
   });
 });
