@@ -523,12 +523,13 @@ export function useTerminal(options: UseTerminalOptions) {
       // Parallel IPCs: resize forwards SIGWINCH on main; getScrollback is a
       // pure in-memory read. Firing them together is safe because main
       // preserves per-renderer IPC order and the resize handler is synchronous,
-      // so main records the width change before getScrollback runs. When cols
-      // changed, main's getScrollback waits for the agent TUI's async SIGWINCH
-      // repaint to land before sampling (PtyBufferManager.waitForResizeRepaint),
-      // so the replay is at the fitted width - no stale frame, no compensating
-      // resize needed here. The colsChanged field of the resize result is
-      // therefore intentionally unused by the renderer.
+      // so main records the geometry change before getScrollback runs. When the
+      // geometry (cols or rows) changed, main's getScrollback waits for the
+      // agent TUI's async SIGWINCH repaint to land before sampling
+      // (PtyBufferManager.waitForResizeRepaint), so the replay is at the fitted
+      // geometry - no stale frame, no compensating resize needed here. The
+      // colsChanged field of the resize result is therefore intentionally
+      // unused by the renderer.
       const resizePromise = window.electronAPI.sessions.resize(sid, cols, rows);
       const scrollbackPromise = suppressScrollback
         ? Promise.resolve<string | null>(null)
@@ -973,9 +974,10 @@ export function useTerminal(options: UseTerminalOptions) {
     const sessionId = options.sessionId;
 
     // Parallel IPCs: same shape as initTerminal's mount-time path. Resize
-    // forwards SIGWINCH on main; getScrollback is an in-memory read. When cols
-    // changed, main waits for the agent TUI's repaint to settle before sampling
-    // (see the initTerminal note), so the reload lands the fitted-width frame.
+    // forwards SIGWINCH on main; getScrollback is an in-memory read. When the
+    // geometry (cols or rows) changed, main waits for the agent TUI's repaint to
+    // settle before sampling (see the initTerminal note), so the reload lands
+    // the frame drawn at the fitted geometry.
     // skipResize sends no SIGWINCH: the window manager calls it once resizing
     // has already settled, so there is nothing to wait for.
     const resizePromise = skipResize
