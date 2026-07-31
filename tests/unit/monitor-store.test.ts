@@ -369,4 +369,60 @@ describe('monitor-store', () => {
       await Promise.resolve();
     });
   });
+
+  describe('fetchOrdinal (attach vs loadSnapshot race)', () => {
+    // attach() and loadSnapshot() are NOT deduped against each other - attach
+    // must always reach main to register the subscription, even while a
+    // loadSnapshot is in flight. `fetchOrdinal` is the module-scope counter
+    // that orders the two instead: a reply applies only while it is still the
+    // newest outstanding fetch. Without it, whichever round trip happens to
+    // land LAST wins even if it was issued first, so a slow attach() reply
+    // arriving after a fast loadSnapshot() reply (or vice versa) would
+    // clobber the newer rows and double-bump snapshotGeneration.
+    it('a stale attach() reply landing after a newer loadSnapshot() reply does not apply', async () => {
+      let resolveSubscribe: (snapshot: { rows: MonitorSessionRow[]; generatedAt: string }) => void = () => {};
+      subscribeMock.mockImplementation(() => new Promise((resolve) => { resolveSubscribe = resolve; }));
+      getSnapshotMock.mockResolvedValue({
+        rows: [makeRow({ sessionId: 'from-loadSnapshot' })],
+        generatedAt: 'y',
+      });
+
+      // attach() issues its subscribe first, but it does not resolve yet.
+      const attachPromise = useMonitorStore.getState().attach();
+      // loadSnapshot() issues and resolves second, so it is the newest fetch.
+      await useMonitorStore.getState().loadSnapshot();
+      expect(useMonitorStore.getState().rows.map((row) => row.sessionId)).toEqual(['from-loadSnapshot']);
+      const generationAfterLoadSnapshot = useMonitorStore.getState().snapshotGeneration;
+
+      // The stale subscribe now resolves with different rows.
+      resolveSubscribe({ rows: [makeRow({ sessionId: 'from-stale-attach' })], generatedAt: 'x' });
+      await attachPromise;
+
+      expect(useMonitorStore.getState().rows.map((row) => row.sessionId)).toEqual(['from-loadSnapshot']);
+      expect(useMonitorStore.getState().snapshotGeneration).toBe(generationAfterLoadSnapshot);
+    });
+
+    it('a stale loadSnapshot() reply landing after a newer attach() reply does not apply', async () => {
+      let resolveGetSnapshot: (snapshot: { rows: MonitorSessionRow[]; generatedAt: string }) => void = () => {};
+      getSnapshotMock.mockImplementation(() => new Promise((resolve) => { resolveGetSnapshot = resolve; }));
+      subscribeMock.mockResolvedValue({
+        rows: [makeRow({ sessionId: 'from-attach' })],
+        generatedAt: 'y',
+      });
+
+      // loadSnapshot() issues its getSnapshot first, but it does not resolve yet.
+      const loadSnapshotPromise = useMonitorStore.getState().loadSnapshot();
+      // attach() issues and resolves second, so it is the newest fetch.
+      await useMonitorStore.getState().attach();
+      expect(useMonitorStore.getState().rows.map((row) => row.sessionId)).toEqual(['from-attach']);
+      const generationAfterAttach = useMonitorStore.getState().snapshotGeneration;
+
+      // The stale getSnapshot now resolves with different rows.
+      resolveGetSnapshot({ rows: [makeRow({ sessionId: 'from-stale-loadSnapshot' })], generatedAt: 'x' });
+      await loadSnapshotPromise;
+
+      expect(useMonitorStore.getState().rows.map((row) => row.sessionId)).toEqual(['from-attach']);
+      expect(useMonitorStore.getState().snapshotGeneration).toBe(generationAfterAttach);
+    });
+  });
 });
