@@ -153,6 +153,13 @@ test.describe('Changes panel: per-file history popover', () => {
     // 15000ms for real margin, leaving the purely-synchronous steps (menu
     // open/close, which is a plain right-click -> setState -> render with no
     // IPC) at their original tighter budgets.
+    //
+    // That pass widened the file-tree ROW (below) but left the file-tree
+    // CONTAINER's own wait at 8000ms, even though it sits earlier in the very
+    // same async chain this comment describes and therefore carries strictly
+    // MORE of it (dialog open animation + toggle click + diffFiles + render).
+    // It duly flaked on CI at exactly that line (failed at 8s, passed on
+    // retry). Both now use the same 15000ms budget.
     test.slow();
     const card = page.locator('[data-swimlane-name="Code Review"]').locator('text=File History Task').first();
     await card.click();
@@ -164,7 +171,7 @@ test.describe('Changes panel: per-file history popover', () => {
     if (!(await fileTree.isVisible())) {
       await page.locator('[data-testid="changes-toggle"]').click();
     }
-    await fileTree.waitFor({ state: 'visible', timeout: 8000 });
+    await fileTree.waitFor({ state: 'visible', timeout: 15000 });
 
     const fileRow = fileTree.getByRole('button', { name: /index\.ts/ });
     await fileRow.waitFor({ state: 'visible', timeout: 15000 });
