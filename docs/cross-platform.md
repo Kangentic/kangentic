@@ -212,9 +212,9 @@ Bounding its own contribution is the honest limit of what it can promise.
 
 `src/shared/windows-path-budget.ts` therefore holds no reserves. It recognizes a path-length failure
 **after** one has happened, from the error text (`ENAMETOOLONG`, "filename or extension is too long",
-"Filename longer than", "manifest 'build.ninja' still dirty after"), matching through a wrapped
-`cause` chain, and `describeWorktreePathLengthCause` appends an explanation so the user is not left
-reading raw git output. It is a no-op off Windows.
+"Filename too long", "Filename longer than", "manifest 'build.ninja' still dirty after"), matching
+through a wrapped `cause` chain, and `describeWorktreePathLengthCause` appends an explanation so the
+user is not left reading raw git output. It is a no-op off Windows.
 
 The CMake `CMAKE_OBJECT_PATH_MAX` strings are deliberately **not** in that list. They are a policy
 warning builds routinely survive: measured, they fired 402 times on a build that failed for the ninja

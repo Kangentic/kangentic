@@ -31,6 +31,8 @@ export const WINDOWS_MAX_PATH = 260;
  *
  * - `ENAMETOOLONG` is the POSIX-style errno libuv surfaces.
  * - "filename or extension is too long" is the Win32 message (error 206).
+ * - "filename too long" is git's own wording, e.g. `error: unable to create
+ *   file <path>: Filename too long`.
  * - "filename longer than 260 characters" is ninja's own stat failure.
  * - "still dirty after" is ninja giving up regenerating its manifest. It reads
  *   like a build-graph problem and names no path, but the cause is a required
