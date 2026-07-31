@@ -95,6 +95,36 @@ function prNumberFromUrl(prUrl: string): number | null {
   return prNumberMatch ? parseInt(prNumberMatch[1], 10) : null;
 }
 
+/**
+ * Resolve a just-written PR link so its state lands immediately, instead of
+ * waiting for the background sweep or the next auto-link trigger (both non-force,
+ * so both are subject to the 60s per-task throttle - exactly the window a
+ * PR-creating flow lands in). Without this, `create_task` / `update_task` leave
+ * `pr_state` null and the board card shows a bare PR pill with no state chip.
+ *
+ * Fire-and-forget: `linkPRForTask` takes the task lock itself, and its `onLinked`
+ * routes through `context.onTaskUpdated`, which pushes TASK_UPDATED_BY_AGENT and
+ * a board-changed event (see `mcp-project-context.ts`), so the card repaints
+ * without the tool call awaiting a `gh` round-trip. `preserveLinkOnNotFound`
+ * because a resolve fired BY a link write must never undo that write; an
+ * explicit `link_pr` deliberately does not set it.
+ */
+function scheduleLinkTimeResolve(
+  taskId: string,
+  taskRepo: TaskRepository,
+  context: CommandContext,
+): void {
+  void linkPRForTask(taskId, {
+    tasks: taskRepo,
+    projectPath: context.getProjectPath(),
+    force: true,
+    preserveLinkOnNotFound: true,
+    onLinked: (linked) => context.onTaskUpdated(linked),
+  }).catch((error) => {
+    console.error(`[pr-linking] link-time resolve failed for task ${taskId.slice(0, 8)}:`, error);
+  });
+}
+
 export const handleCreateTask: CommandHandler = (
   params: Record<string, unknown>,
   context: CommandContext,
@@ -213,9 +243,10 @@ export const handleCreateTask: CommandHandler = (
   // see the ladder comment in pr-linking.ts). Applied as a follow-up update
   // rather than through TaskCreateInput on purpose: `TaskRepository.create`
   // always writes the three PR columns null, and keeping that invariant means
-  // the create path has exactly one shape. pr_state stays null and the next
-  // resolve fills it in.
+  // the create path has exactly one shape. pr_state stays null here and the
+  // link-time resolve fired after `onTaskCreated` below fills it in.
   let createdTask = task;
+  let linksPR = false;
   if (prUrl !== null || prNumber !== null) {
     // An explicit prNumber wins; otherwise derive it from the URL, so a caller
     // passing prUrl alone still lands on Tier 1 instead of producing a row that
@@ -226,6 +257,7 @@ export const handleCreateTask: CommandHandler = (
       ...(prUrl !== null ? { pr_url: String(prUrl) } : {}),
       ...(linkedPrNumber !== null ? { pr_number: linkedPrNumber } : {}),
     });
+    linksPR = (prUrl !== null && String(prUrl).trim() !== '') || Number.isFinite(linkedPrNumber);
   }
 
   // Persist label colors to config if any were provided
@@ -249,6 +281,11 @@ export const handleCreateTask: CommandHandler = (
 
   context.onTaskCreated(createdTask, targetSwimlane.name, targetSwimlane.id);
 
+  // After `onTaskCreated`, not inside the PR block above: `onTaskCreated` kicks
+  // `autoSpawnForTask`, which takes the same per-task lock the resolve does, so
+  // resolving first would park the spawn behind a `gh` round-trip.
+  if (linksPR) scheduleLinkTimeResolve(createdTask.id, taskRepo, context);
+
   return {
     success: true,
     data: { taskId: createdTask.id, displayId: createdTask.display_id, title: createdTask.title, column: targetSwimlane.name },
@@ -265,8 +302,13 @@ export const handleUpdateTask: CommandHandler = (
   const newDescription = params.description as string | null;
   const newDescriptionEdits = (params.descriptionEdits ?? null) as DescriptionEdit[] | null;
   const newAppendDescription = (params.appendDescription ?? null) as string | null;
-  const newPrUrl = params.prUrl as string | null;
-  const newPrNumber = params.prNumber as number | null;
+  // Normalized to null so an omitted key reads the same as the explicit `null`
+  // the MCP tool layer forwards, matching handleCreateTask. Without it a caller
+  // that passes neither key (a direct handler call, or a mobile-bridge payload
+  // that omits them) writes the literal string 'undefined' into pr_url and NaN
+  // into pr_number, since `undefined !== null` passes the gates below.
+  const newPrUrl = (params.prUrl as string | null | undefined) ?? null;
+  const newPrNumber = (params.prNumber as number | null | undefined) ?? null;
   const newAgent = params.agent as string | null;
   const newPriority = params.priority as number | null;
   const newLabels = params.labels as string[] | null;
@@ -337,7 +379,7 @@ export const handleUpdateTask: CommandHandler = (
   // three fields must always agree (the linker writes them atomically), and a
   // stale terminal `merged`/`closed` would otherwise short-circuit every
   // non-force resolve, freezing the task on a PR it no longer points at. The
-  // next resolve refills it.
+  // link-time resolve fired after `onTaskUpdated` below refills it.
   if (newPrUrl !== null || newPrNumber !== null) updates.pr_state = null;
   if (newAgent !== null) updates.agent = newAgent;
   if (newPriority !== null) updates.priority = Number(newPriority);
@@ -403,6 +445,18 @@ export const handleUpdateTask: CommandHandler = (
   }
 
   context.onTaskUpdated(updated);
+
+  // Gated on what THIS call wrote, not on the post-write row: `updated` falls
+  // back to the untouched task when nothing scalar changed, so reading its
+  // fields would make a title-only edit on an already-linked task re-resolve.
+  // The trim also rejects an empty prUrl, which the `!== null` gate above lets
+  // through, and `isFinite` rejects the NaN a non-numeric `prNumber` produces
+  // (the mobile bridge hands raw wire params to the handler, unlike the MCP
+  // tool layer, whose zod schema has already validated a positive int).
+  const linkedUrl = typeof updates.pr_url === 'string' ? updates.pr_url.trim() : '';
+  if (linkedUrl !== '' || Number.isFinite(updates.pr_number)) {
+    scheduleLinkTimeResolve(updated.id, taskRepo, context);
+  }
 
   const changedFields: string[] = [];
   if (newTitle !== null) changedFields.push('title');

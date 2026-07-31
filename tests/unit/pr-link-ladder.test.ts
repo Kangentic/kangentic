@@ -37,9 +37,13 @@ vi.mock('simple-git', () => ({
   }),
 }));
 
-// The core never calls getProjectRepos; mock it so importing pr-linking doesn't
-// pull in the DB/electron chain.
-vi.mock('../../src/main/ipc/helpers/project-repos', () => ({ getProjectRepos: () => ({}) }));
+// linkPRForTask never calls getProjectRepos, but linkPR (the IPC wrapper) does,
+// to resolve the task repo before delegating to linkPRForTask. Mock it so
+// importing pr-linking doesn't pull in the DB/electron chain, and make the
+// return value swappable per test (via `repos.value`) so the linkPR tests below
+// can hand it a real-enough tasks repo instead of the empty ladder-tests default.
+const repos = vi.hoisted(() => ({ value: {} as unknown }));
+vi.mock('../../src/main/ipc/helpers/project-repos', () => ({ getProjectRepos: () => repos.value }));
 
 vi.mock('../../src/main/pr/pr-registry', () => {
   class PRResolverUnavailableError extends Error {
@@ -65,8 +69,9 @@ vi.mock('../../src/main/pr/pr-registry', () => {
   };
 });
 
-import { linkPRForTask } from '../../src/main/pr/pr-linking';
+import { linkPRForTask, linkPR } from '../../src/main/pr/pr-linking';
 import { PRResolverUnavailableError, PRResolverTransientError } from '../../src/main/pr/pr-registry';
+import type { IpcContext } from '../../src/main/ipc/ipc-context';
 
 let idCounter = 0;
 function makeTask(overrides: Partial<Task> = {}): Task {
@@ -81,13 +86,17 @@ function makeTask(overrides: Partial<Task> = {}): Task {
   };
 }
 
-function depsFor(task: Task, opts: { updateSpy?: ReturnType<typeof vi.fn>; force?: boolean } = {}) {
+function depsFor(
+  task: Task,
+  opts: { updateSpy?: ReturnType<typeof vi.fn>; force?: boolean; preserveLinkOnNotFound?: boolean } = {},
+) {
   const update = opts.updateSpy ?? vi.fn((patch: Partial<Task>) => { Object.assign(task, patch); return { ...task }; });
   return {
     tasks: { getById: () => task, update } as never,
     projectPath: '/repo',
     onLinked: vi.fn(),
     force: opts.force ?? true, // ladder tests bypass the throttle unless they're testing it
+    preserveLinkOnNotFound: opts.preserveLinkOnNotFound,
   };
 }
 
@@ -96,6 +105,7 @@ const resolved = (number: number, state = 'open') => ({ url: `u${number}`, numbe
 beforeEach(() => {
   conn.byNumber = null; conn.byBranch = null; conn.byCommit = null; conn.detect = null; conn.calls = []; conn.lastArgs = {};
   git.branch = 'real-branch'; git.sha = 'sha-current'; git.aheadCount = '1';
+  repos.value = {}; // no state leaks into the ladder tests, which never touch getProjectRepos
 });
 
 describe('linkPRForTask confidence ladder', () => {
@@ -186,6 +196,24 @@ describe('linkPRForTask confidence ladder', () => {
     expect(updateSpy).toHaveBeenCalledWith(expect.objectContaining({ pr_number: null, pr_url: null, pr_state: null }));
     expect(deps.onLinked).toHaveBeenCalledWith(expect.objectContaining({ pr_number: null }));
     expect(result.task?.pr_number).toBeNull();
+  });
+
+  it('preserveLinkOnNotFound: a link-time resolve never clears the write that fired it', async () => {
+    // The counterpart to the clear above. A link-time resolve exists to FILL IN
+    // the state of a link that was just written; if the URL names a PR this repo
+    // cannot resolve (typo, cross-repo, private), clearing here would delete what
+    // the user typed in the same breath as the save. The link stays with a null
+    // state, and the non-force sweep clears it on a later pass if it is bogus.
+    conn.byNumber = null;
+    const updateSpy = vi.fn((patch: Partial<Task>) => patch as Task);
+    const task = makeTask({ pr_number: 240, pr_url: 'u240', pr_state: null, worktree_path: null, head_sha: null, branch_name: null });
+    const deps = depsFor(task, { updateSpy, preserveLinkOnNotFound: true });
+    const result = await linkPRForTask(task.id, deps);
+    expect(result.status).toBe('not-found');
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(deps.onLinked).not.toHaveBeenCalled();
+    expect(result.task?.pr_number).toBe(240);
+    expect(result.task?.pr_url).toBe('u240');
   });
 
   it('write-only-on-change: returns unchanged and does not write when the PR is already current', async () => {
@@ -358,5 +386,70 @@ describe('linkPRForTask throttle (auto triggers only)', () => {
     const second = await linkPRForTask(task.id, depsFor(task, { force: false }));
     expect(second.status).toBe('unchanged');
     expect(conn.calls.length).toBe(callsAfterFirst); // no new resolver calls
+  });
+});
+
+/**
+ * `linkPR` is the IPC-side wrapper every real caller (TASK_UPDATE's link-time
+ * resolve, the kebab refresh, MCP link_pr) goes through. Every other test in
+ * this file calls `linkPRForTask` directly, so a forwarding bug where the
+ * wrapper resolves the project/task but drops an option on its way to the
+ * backbone would ship with the whole suite green. These two tests exercise the
+ * real `linkPR` and assert the EFFECT (does the link survive), not just that a
+ * property was passed along, so a dropped `preserveLinkOnNotFound` forward is
+ * caught by an actual wrong write, not a mock-call inspection that could pass
+ * against a stub that never clears for unrelated reasons.
+ */
+describe('linkPR (IPC wrapper): preserveLinkOnNotFound reaches the backbone', () => {
+  function contextFor(task: Task, updateSpy: ReturnType<typeof vi.fn>): IpcContext {
+    repos.value = { tasks: { getById: () => task, update: updateSpy } as never };
+    return {
+      currentProjectId: 'proj-1',
+      projectRepo: { getById: () => ({ id: 'proj-1', path: '/repo' }) },
+      configManager: { getEffectiveConfig: () => ({ git: { defaultBaseBranch: 'main' } }) },
+      mainWindow: { isDestroyed: () => false, webContents: { send: vi.fn() } },
+      boardEvents: { emitBoardChanged: vi.fn() },
+      sessionManager: { getSessionProjectId: () => null },
+    } as never;
+  }
+
+  it('preserveLinkOnNotFound: the wrapper does not clear the write that fired it', async () => {
+    // Mirrors the linkPRForTask-level test above (line ~195), but through the
+    // real linkPR wrapper: the resolver cleanly matches nothing, and no other
+    // tier can fire (no worktree, no sha, no branch), so the only question is
+    // whether the option survived the project/task resolution on its way in.
+    conn.byNumber = null;
+    const updateSpy = vi.fn((patch: Partial<Task>) => patch as Task);
+    const task = makeTask({
+      pr_number: 240, pr_url: 'u240', pr_state: null,
+      worktree_path: null, head_sha: null, branch_name: null,
+    });
+    const context = contextFor(task, updateSpy);
+
+    const result = await linkPR(context, { projectId: 'proj-1', taskId: task.id, force: true, preserveLinkOnNotFound: true });
+
+    expect(result.status).toBe('not-found');
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(result.task?.pr_number).toBe(240);
+    expect(result.task?.pr_url).toBe('u240');
+  });
+
+  it('without preserveLinkOnNotFound the wrapper still clears (proves the assertion above is not vacuous)', async () => {
+    // Same setup, option omitted. If this ever stopped clearing too, the test
+    // above would pass for the wrong reason (a stub/wrapper that never clears
+    // regardless of the option), so this negative case is load-bearing.
+    conn.byNumber = null;
+    const updateSpy = vi.fn((patch: Partial<Task>) => patch as Task);
+    const task = makeTask({
+      pr_number: 240, pr_url: 'u240', pr_state: null,
+      worktree_path: null, head_sha: null, branch_name: null,
+    });
+    const context = contextFor(task, updateSpy);
+
+    const result = await linkPR(context, { projectId: 'proj-1', taskId: task.id, force: true });
+
+    expect(result.status).toBe('not-found');
+    expect(updateSpy).toHaveBeenCalledWith(expect.objectContaining({ pr_number: null, pr_url: null, pr_state: null }));
+    expect(result.task?.pr_number).toBeNull();
   });
 });

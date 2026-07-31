@@ -124,7 +124,7 @@ Create a task on the board (default: the To Do column on the active board) or in
 | `prUrl` | string | No | Pull request URL this task is about (e.g. `https://github.com/owner/repo/pull/123`). Board tasks only. |
 | `prNumber` | number | No | Pull request number this task is about. This is the field the linker actually anchors on (Tier 1); it is derived from `prUrl` when omitted, so passing the URL alone is enough for a standard `/pull/<n>` URL. Board tasks only. |
 
-**Filing a review task:** `prUrl` / `prNumber` are how a task names the PR it is about, and they are what links it. Writing the URL into `description` instead does **not** link it - the linker's anchors are git state and the stored `pr_number` only, never authored prose (see [PR Integration](pr-integration.md#the-confidence-ladder)). Both are applied as a follow-up update immediately after the row is created, so `pr_state` starts null and the next resolve fills in the live PR state.
+**Filing a review task:** `prUrl` / `prNumber` are how a task names the PR it is about, and they are what links it. Writing the URL into `description` instead does **not** link it - the linker's anchors are git state and the stored `pr_number` only, never authored prose (see [PR Integration](pr-integration.md#the-confidence-ladder)). Both are applied as a follow-up update immediately after the row is created, so `pr_state` starts null; a forced resolve fires right after the write and fills in the live PR state, so the card shows its state chip without waiting for the background sweep.
 
 `profile` is **mutually exclusive** with `agentOverride` / `modelOverride` / `effortOverride` / `permissionMode` / `runMode: "agent_override"`: a profile changes settings per column, those pin one value for the task's whole life. Passing both is rejected and nothing is created, rather than silently discarding one side (the repository enforces the same exclusivity on write). An unknown profile name is an error too - a typo must not quietly produce a task that looks tiered and runs on the plain board settings.
 
@@ -357,7 +357,7 @@ Update a task's title, description (full replace, in-place find/replace edits, o
 | `descriptionEdits` | array | No | Ordered exact-string replacements applied to the current description, like the file `Edit` tool: `[{ find: string, replace: string }]` (1-100 edits; each `find`/`replace` up to 50000 chars). Each `find` must be present and unique in the text as it stands after prior edits in the list, or the whole call fails and nothing is written. Mutually exclusive with `description`; may combine with `appendDescription` (edits apply first). |
 | `appendDescription` | string | No | Text appended to the end of the current description, exactly as given (no separator inserted, max 50000 chars). Mutually exclusive with `description`; may combine with `descriptionEdits` (edits apply first, then this append). |
 | `prUrl` | string | No | Pull request URL (e.g. `https://github.com/owner/repo/pull/123`). This is what links the task to a PR; a URL written into `description` does not. |
-| `prNumber` | number | No | Pull request number. The field the linker anchors on (Tier 1); derived from `prUrl` when omitted, so a URL-only write can never strand the previous PR's number. A number-only write leaves `pr_url` until the next resolve re-points it, which is harmless: the resolve follows the number you gave. |
+| `prNumber` | number | No | Pull request number. The field the linker anchors on (Tier 1); derived from `prUrl` when omitted, so a URL-only write can never strand the previous PR's number. A number-only write leaves `pr_url` until the immediate link-time resolve re-points it, which is harmless: the resolve follows the number you gave. |
 | `agent` | string | No | Agent name to assign (e.g. `"claude"`, `"codex"`). Empty string clears. |
 | `priority` | number | No | Task priority 0-4 (0=none, 4=highest) |
 | `labels` | string[] | No | Replace the task's label list. Pass `[]` to clear. |
@@ -372,7 +372,7 @@ Update a task's title, description (full replace, in-place find/replace edits, o
 
 At least one updatable field is required.
 
-Setting `prUrl` or `prNumber` also clears the task's stored PR state, so the three PR columns never disagree. The next resolve fills the state back in from the PR itself. See [PR Integration](pr-integration.md#where-pr-state-is-persisted).
+Setting `prUrl` or `prNumber` also clears the task's stored PR state, so the three PR columns never disagree; a forced resolve fires immediately after the write and fills the state back in from the PR itself, so the card shows its state chip without waiting for the background sweep. See [PR Integration](pr-integration.md#where-pr-state-is-persisted).
 
 `profile` is **mutually exclusive** with `model` / `effort` / `permissionMode` / `runMode:
 "agent_override"` (and the task's `agent_override`): setting a profile clears the pins and forces

@@ -32,12 +32,14 @@ const {
   mockTaskRepoGetById,
   mockTaskRepoGetByDisplayId,
   mockResolveColumn,
+  mockLinkPRForTask,
 } = vi.hoisted(() => ({
   mockTaskRepoCreate: vi.fn(),
   mockTaskRepoUpdate: vi.fn(),
   mockTaskRepoGetById: vi.fn(),
   mockTaskRepoGetByDisplayId: vi.fn(),
   mockResolveColumn: vi.fn(),
+  mockLinkPRForTask: vi.fn(),
 }));
 
 vi.mock('../../src/main/db/repositories/task-repository', () => ({
@@ -81,14 +83,14 @@ vi.mock('../../src/main/db/repositories/backlog-repository', () => ({
   BacklogRepository: class {},
 }));
 vi.mock('../../src/main/pr/pr-linking', () => ({
-  linkPRForTask: vi.fn(),
+  linkPRForTask: mockLinkPRForTask,
 }));
 
 // ---------------------------------------------------------------------------
 // Import under test (after all mocks are registered)
 // ---------------------------------------------------------------------------
 
-import { handleCreateTask, handleUpdateTask } from '../../src/main/agent/commands/task-commands';
+import { handleCreateTask, handleUpdateTask, handleLinkPr } from '../../src/main/agent/commands/task-commands';
 import type { CommandContext } from '../../src/main/agent/commands/types';
 
 // ---------------------------------------------------------------------------
@@ -157,8 +159,23 @@ function updateTaskParams(overrides: Record<string, unknown> = {}): Record<strin
   };
 }
 
+/**
+ * Let the fire-and-forget resolve settle before the test ends. The spy itself
+ * records synchronously (`scheduleLinkTimeResolve` calls it inline), so the
+ * called/not-called assertions do not need this - what needs it is the attached
+ * `.catch()`, which runs a microtask later. Without the flush a rejecting
+ * resolve settles after teardown, which is how a passing test still leaks a
+ * stray rejection into the next one.
+ */
+async function flushLinkTimeResolve(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  // Must resolve, not return undefined: the handlers call `.catch(...)` on it.
+  mockLinkPRForTask.mockResolvedValue({ status: 'unchanged', task: null });
   mockResolveColumn.mockReturnValue({ swimlane: { id: 'lane-1', name: 'Code Review' } });
   mockTaskRepoCreate.mockReturnValue({ id: 'task-uuid-1', display_id: 7, title: 'Review PR #98' });
   mockTaskRepoUpdate.mockImplementation((patch: Record<string, unknown>) => ({
@@ -314,5 +331,150 @@ describe('handleUpdateTask PR fields', () => {
 
     const patch = mockTaskRepoUpdate.mock.calls[0][0] as Record<string, unknown>;
     expect(patch).not.toHaveProperty('pr_state');
+  });
+
+  it('treats omitted PR keys the same as the explicit nulls the tool layer forwards', () => {
+    // The MCP tool always forwards `?? null`, but a direct handler call and a
+    // mobile-bridge payload can omit the keys entirely. `undefined !== null`, so
+    // reading them raw wrote the literal string 'undefined' into pr_url and
+    // Number(undefined) - NaN - into pr_number, clobbering a real link. Mirrors
+    // the same normalization handleCreateTask has always had.
+    handleUpdateTask({ taskId: 'task-uuid-1', title: 'Renamed' }, makeContext());
+
+    const patch = mockTaskRepoUpdate.mock.calls[0][0] as Record<string, unknown>;
+    expect(patch).not.toHaveProperty('pr_url');
+    expect(patch).not.toHaveProperty('pr_number');
+    expect(patch).not.toHaveProperty('pr_state');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Link-time resolve - the write leaves pr_state null on purpose, so something
+// has to refill it before the sweep or the card shows a stateless PR pill.
+// ---------------------------------------------------------------------------
+
+describe('link-time PR resolve', () => {
+  it('resolves right after update_task writes a link, forced past the throttle', async () => {
+    // Non-force would be swallowed by the 60s per-task coalesce, which is
+    // exactly the window a PR-creating flow lands in (a move or idle trigger
+    // just armed it). preserveLinkOnNotFound so the resolve cannot undo the
+    // write that triggered it.
+    handleUpdateTask(updateTaskParams({ prUrl: REVIEWED_PR_URL }), makeContext());
+    await flushLinkTimeResolve();
+
+    expect(mockLinkPRForTask).toHaveBeenCalledWith(
+      'task-uuid-1',
+      expect.objectContaining({ force: true, preserveLinkOnNotFound: true }),
+    );
+  });
+
+  it('resolves right after create_task writes a link', async () => {
+    handleCreateTask(createTaskParams({ prUrl: REVIEWED_PR_URL, prNumber: 98 }), makeContext());
+    await flushLinkTimeResolve();
+
+    expect(mockLinkPRForTask).toHaveBeenCalledWith(
+      'task-uuid-1',
+      expect.objectContaining({ force: true, preserveLinkOnNotFound: true }),
+    );
+  });
+
+  it('resolves after the create notification, so auto-spawn is not parked behind a gh call', async () => {
+    // onTaskCreated kicks autoSpawnForTask, which takes the same per-task lock
+    // linkPRForTask does. Resolving first would hold the spawn for a full gh
+    // round-trip.
+    const order: string[] = [];
+    const context = makeContext({ onTaskCreated: vi.fn(() => { order.push('onTaskCreated'); }) });
+    mockLinkPRForTask.mockImplementation(async () => {
+      order.push('linkPRForTask');
+      return { status: 'unchanged', task: null };
+    });
+
+    handleCreateTask(createTaskParams({ prUrl: REVIEWED_PR_URL }), context);
+    await flushLinkTimeResolve();
+
+    expect(order).toEqual(['onTaskCreated', 'linkPRForTask']);
+  });
+
+  it('keeps the write and succeeds when the resolver is unavailable', async () => {
+    // gh missing / unauthenticated must never fail the tool call or clear the
+    // link: the row keeps pr_url + pr_number with pr_state null, exactly as the
+    // write left it, and a later sweep fills the state in.
+    mockLinkPRForTask.mockRejectedValue(new Error('gh not found'));
+
+    const response = handleUpdateTask(updateTaskParams({ prUrl: REVIEWED_PR_URL }), makeContext());
+    await flushLinkTimeResolve();
+
+    expect(response.success).toBe(true);
+    expect(mockTaskRepoUpdate).toHaveBeenCalledTimes(1);
+    expect(mockTaskRepoUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ pr_url: REVIEWED_PR_URL, pr_number: 98, pr_state: null }),
+    );
+  });
+
+  it('does not resolve on an update that leaves the PR fields alone', async () => {
+    handleUpdateTask(updateTaskParams({ title: 'Renamed' }), makeContext());
+    await flushLinkTimeResolve();
+
+    expect(mockLinkPRForTask).not.toHaveBeenCalled();
+  });
+
+  it('does not resolve on a create with no PR fields', async () => {
+    handleCreateTask(createTaskParams(), makeContext());
+    await flushLinkTimeResolve();
+
+    expect(mockLinkPRForTask).not.toHaveBeenCalled();
+  });
+
+  it('does not resolve when the PR URL is empty, which writes no usable anchor', async () => {
+    // `prUrl: ''` passes the handler's `!== null` gate but names no PR, so a
+    // resolve would have nothing to anchor on and would fall through to the
+    // branch/commit tiers.
+    handleUpdateTask(updateTaskParams({ prUrl: '' }), makeContext());
+    await flushLinkTimeResolve();
+
+    expect(mockLinkPRForTask).not.toHaveBeenCalled();
+  });
+
+  it('does not resolve on a create with an empty PR URL either', async () => {
+    // The create path carries its own copy of the gate, so the update-path test
+    // above cannot cover it: `prUrl: ''` clears `!== null` there too, and only
+    // the `.trim() !== ''` half of `linksPR` keeps a create with no real anchor
+    // from firing a forced resolve.
+    handleCreateTask(createTaskParams({ prUrl: '' }), makeContext());
+    await flushLinkTimeResolve();
+
+    expect(mockLinkPRForTask).not.toHaveBeenCalled();
+  });
+
+  it('leaves link_pr clearing a stale link, since it is an explicit refresh', async () => {
+    // The suppression is scoped to resolves fired BY a write. An explicit
+    // "resolve now" must still clear a link that resolves to nothing.
+    await handleLinkPr({ taskId: 'task-uuid-1' }, makeContext());
+
+    expect(mockLinkPRForTask).toHaveBeenCalledWith(
+      'task-uuid-1',
+      expect.not.objectContaining({ preserveLinkOnNotFound: true }),
+    );
+  });
+
+  it('does not resolve on update when prNumber is non-numeric and no prUrl anchors it', async () => {
+    // The MCP tool's zod schema already validates a positive int, but this
+    // handler is also reachable from the mobile bridge, which hands it raw
+    // wire params with no validation. `Number('not-a-number')` is NaN, and
+    // `Number.isFinite` is what keeps that NaN from firing a pointless forced
+    // resolve (it would fall through to the ladder's branch/commit tiers with
+    // nothing useful to anchor on).
+    handleUpdateTask(updateTaskParams({ prNumber: 'not-a-number' }), makeContext());
+    await flushLinkTimeResolve();
+
+    expect(mockLinkPRForTask).not.toHaveBeenCalled();
+  });
+
+  it('does not resolve on create when prNumber is non-numeric and no prUrl anchors it', async () => {
+    // Same guard, create path's own copy of it (`Number.isFinite(linkedPrNumber)`).
+    handleCreateTask(createTaskParams({ prNumber: 'not-a-number' }), makeContext());
+    await flushLinkTimeResolve();
+
+    expect(mockLinkPRForTask).not.toHaveBeenCalled();
   });
 });

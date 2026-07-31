@@ -51,6 +51,16 @@ export interface PRLinkDeps {
    * actions (kebab refresh, MCP link_pr) where a fresh check is always wanted.
    */
   force?: boolean;
+  /**
+   * Suppress the confident-not-found clear. Set by link-time triggers, whose
+   * whole job is to fill in the state for a link that was JUST written: a
+   * resolve fired BY a write must never undo that write. A URL that resolves to
+   * nothing here (typo, cross-repo, private) keeps its pill with no state chip,
+   * exactly as it did before link-time resolving existed, and the non-force
+   * background sweep still clears it on a later pass. An explicit "resolve now"
+   * (kebab refresh, MCP link_pr) leaves this unset so it can still clear.
+   */
+  preserveLinkOnNotFound?: boolean;
 }
 
 /**
@@ -217,9 +227,11 @@ export async function linkPRForTask(taskId: string, deps: PRLinkDeps): Promise<P
     // degrade) and matched no PR, yet the task still carries a link. Clear it so
     // a stale `merged` (or any orphaned link) never lingers - pr_number, pr_url,
     // and pr_state always agree, written atomically in the same update below. A
-    // degraded resolve never clears (the link is preserved, as before).
+    // degraded resolve never clears (the link is preserved, as before), and
+    // neither does a link-time resolve (`preserveLinkOnNotFound`), which would
+    // otherwise undo the very write that triggered it.
     const hadLink = task.pr_number != null || task.pr_url != null || task.pr_state != null;
-    const prCleared = next == null && !degradeStatus && hadLink;
+    const prCleared = next == null && !degradeStatus && hadLink && !deps.preserveLinkOnNotFound;
     if (prCleared) {
       patch.pr_url = null;
       patch.pr_number = null;
@@ -258,6 +270,8 @@ interface LinkPROptions {
   scrollback?: string;
   /** Bypass the TTL coalesce + terminal-skip (explicit user/agent refresh). */
   force?: boolean;
+  /** Keep a link the resolver could not match (see `PRLinkDeps`). */
+  preserveLinkOnNotFound?: boolean;
 }
 
 /**
@@ -299,6 +313,7 @@ export async function linkPR(context: IpcContext, options: LinkPROptions): Promi
     projectPath,
     defaultBaseBranch,
     force: options.force,
+    preserveLinkOnNotFound: options.preserveLinkOnNotFound,
     getScrollback: options.scrollback != null ? () => options.scrollback : undefined,
     onLinked: (linked) => {
       if (!context.mainWindow.isDestroyed()) {
