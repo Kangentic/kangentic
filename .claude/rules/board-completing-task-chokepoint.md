@@ -89,8 +89,14 @@ dropping. See `src/renderer/stores/board-store/lane-pins.ts`.
   `completingTaskIds` or `lanePins`; it also asserts `KanbanBoard` reads both, so the scan cannot
   pass vacuously after a rename. `tests/unit/board-lane-pin-lifecycle.test.ts` covers the pin drop
   rule as a pure-function table (including the bounce-back-to-origin case that a lane-only rule
-  would leak) and statically fails any board-store slice that applies a task payload without
-  going through `applyTaskListPayload`. Runs in CI via `npm run test:unit`.
+  would leak) and statically fails any board-store file that fetches `electronAPI.tasks.list()`
+  without reconciling through `applyTaskListPayload` (anchored on the IPC call, not on
+  `applyStructuralSharing`, because a bare `set({ tasks })` skips both).
+  `tests/unit/lane-pin-slice.test.ts` covers the slice ACTIONS the pure-function table
+  deliberately does not touch: `dropTaskLanePin`'s ownership check (a stale expected lane must
+  leave a newer pin for the same task intact) and the `EMPTY_LANE_PINS` identity that keeps
+  `tasksPerLane`'s memo from invalidating on every store write. Runs in CI via
+  `npm run test:unit`.
 - **Test (behavioral):** `tests/ui/move-to-done-reload-no-source-flash.spec.ts` drags a task to
   Done, fires a `loadBoard()` mid-flight, and asserts the card never reappears in its source
   lane (parametrized across multiple source columns). It goes red the moment the chokepoint
@@ -102,6 +108,16 @@ dropping. See `src/renderer/stores/board-store/lane-pins.ts`.
   `.drag-overlay` or a `.flying-card` (no blank window), and the task is not archived before the
   probe resolves (the persistence gate). It goes red if `setCompletingTask` moves back after the
   probe, or if persistence stops being gated.
+
+  For the `lanePins` guard, `tests/ui/move-stale-reload-no-lane-flash.spec.ts` is the equivalent
+  end-to-end regression: it freezes a `tasks.list()` payload from BEFORE the move's write, holds
+  the move IPC open, delivers the stale payload mid-flight, and samples every frame from the drop
+  onward. Two properties make it non-vacuous, and both must be preserved if it is ever rewritten.
+  The mock's hold snapshots the payload AT CALL TIME (`__mockHoldNextTaskList`), because a hold
+  that recomputed lazily on release would report the post-write board and pass against the buggy
+  code; and the assertion samples frames rather than checking the settled state, because the
+  move's own reload corrects the clobber a moment later, so a settled-state check passes while
+  the user still sees the card jump. It goes red the moment `tasksPerLane` stops reading the pin.
 - **Review:** `/code-review` flags per-lane completing-task filtering on board changes.
 
 ## Scope
