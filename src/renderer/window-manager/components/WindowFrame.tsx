@@ -8,7 +8,7 @@
  * bar drags it; geometry is fractional, projected to pixels against the overlay.
  */
 
-import { useEffect, useLayoutEffect, useRef } from 'react';
+import { memo, useEffect, useLayoutEffect, useRef } from 'react';
 import type { RefObject } from 'react';
 import { useOverlayPhase } from '../../hooks/useOverlayPhase';
 import type { ContainerSize, PixelRect } from '../store/geometry';
@@ -32,7 +32,7 @@ interface WindowFrameProps {
 
 const MAXIMIZED_GEOMETRY = { x: 0, y: 0, w: 1, h: 1 };
 
-export function WindowFrame({ managedWindow, containerSize, overlayRef, tiledRect }: WindowFrameProps) {
+function WindowFrameInner({ managedWindow, containerSize, overlayRef, tiledRect }: WindowFrameProps) {
   const frameRef = useRef<HTMLDivElement>(null);
   const useStore = useLayerStore();
   const focusWindow = useStore((state) => state.focusWindow);
@@ -162,3 +162,15 @@ export function WindowFrame({ managedWindow, containerSize, overlayRef, tiledRec
     </div>
   );
 }
+
+/**
+ * Memoized: `WindowLayer` maps over the whole `windows` record, and every store
+ * write replaces that record identity - opening or closing one window, focusing
+ * one, or committing a single frame of a drag. `openWindow` / `closeWindow` spread
+ * the record rather than rebuilding its members, so an untouched window keeps its
+ * object identity and its frame can skip the render entirely. Without this, one
+ * open re-ran this whole subtree (WindowContent -> TaskDetailWindow ->
+ * TaskDetailBody -> TerminalTab, each with its own store selectors) for EVERY open
+ * window, so the cost of opening a detail grew with how many were already open.
+ */
+export const WindowFrame = memo(WindowFrameInner);

@@ -112,3 +112,90 @@ describe('innerMarkup', () => {
     expect(inner).not.toContain('kng-march');
   });
 });
+
+/**
+ * The marching indicator must run smoothly for as long as an agent is working. It kept
+ * visibly resetting, which read as the board freezing or choking.
+ *
+ * Two independent causes, each guarded below:
+ *
+ *  1. `TaskCard` rendered the idle and working marks as two SIBLING conditional slots.
+ *     React reconciles unkeyed children positionally, so an idle/thinking flip was a
+ *     delete at one index plus a create at the other - unmounting the <svg>, re-injecting
+ *     `MARK_INNER`, and restarting the dash from zero.
+ *  2. `.kng-march` lives on a node inside `dangerouslySetInnerHTML`, so it has no React
+ *     fiber. Anything that rebuilds or merely MOVES that node (Chromium restarts CSS
+ *     animations on detach/reattach) hands it a fresh animation starting at zero.
+ *
+ * (1) is fixed structurally. (2) cannot be, so the animation is anchored to the document
+ * timeline, making its phase a pure function of time - a rebuilt node resumes where the
+ * surviving ones are, and every mark marches in lockstep.
+ *
+ * The lucide spinner these replaced hid this for free: a rotating circle looks identical at
+ * every phase. The dashed ring does not, which is why the restarts only became visible when
+ * the marks landed.
+ */
+describe('marching indicator smoothness', () => {
+  // Strip comments: both files deliberately DESCRIBE the retired two-slot shape so the next
+  // reader knows why it changed, and a naive scan would match that prose and fail.
+  const readSource = (relativePath: string): string =>
+    fs.readFileSync(path.join(REPO_ROOT, relativePath), 'utf-8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('//'))
+      .join('\n');
+
+  const activityCss = fs.readFileSync(path.join(ACTIVITY_DIR, 'activity.css'), 'utf-8');
+  const taskCard = readSource('src/renderer/components/board/TaskCard.tsx');
+  const activityMark = readSource('src/renderer/components/ActivityMark.tsx');
+
+  it('the packaged march is an infinite linear loop', () => {
+    // Timeline anchoring only makes sense for a loop with a constant period. A finite or
+    // eased march would put anchored marks permanently out of phase with each other.
+    const march = /\.kng-march\s*\{\s*animation:\s*kng-activity-march\s+(\d+)ms\s+linear\s+infinite/
+      .exec(activityCss);
+    expect(
+      march,
+      'upstream changed the .kng-march animation shorthand. It must stay `<duration>ms linear '
+      + 'infinite` for document-timeline anchoring to keep every mark in phase.',
+    ).not.toBeNull();
+    expect(Number(march?.[1])).toBeGreaterThan(0);
+  });
+
+  it('reduced motion drops the animation entirely, so there is nothing to anchor', () => {
+    // `anchorMarchToTimeline` relies on getAnimations() being empty here rather than on a
+    // reduced-motion branch of its own.
+    expect(activityCss).toMatch(/prefers-reduced-motion[\s\S]*\.kng-march[^}]*animation:\s*none/);
+  });
+
+  it('TaskCard renders the activity mark in ONE slot, not two conditional siblings', () => {
+    const hasIdleSlot = /\{isIdle\s*&&\s*\(?\s*<ActivityMark/.test(taskCard);
+    const hasThinkingSlot = /\{isThinking\s*&&\s*\(?\s*<ActivityMark/.test(taskCard);
+    expect(
+      hasIdleSlot || hasThinkingSlot,
+      'TaskCard is back to per-state conditional <ActivityMark> slots. React reconciles them '
+      + 'positionally, so every idle/thinking flip unmounts one and mounts the other, '
+      + 'restarting the march from zero. Render one slot with a computed `mark` instead.',
+    ).toBe(false);
+
+    // Exactly one render site, and its mark is computed rather than literal.
+    expect(taskCard.match(/<ActivityMark/g) ?? []).toHaveLength(1);
+    expect(taskCard).toMatch(/mark=\{isThinking \? 'agent-working' : 'agent-idle'\}/);
+  });
+
+  it('ActivityMark anchors the march to the document timeline before paint', () => {
+    expect(
+      activityMark.includes('startTime = 0'),
+      'ActivityMark no longer re-bases the march onto the document timeline. Without it a '
+      + 'rebuilt or moved node starts its dash at zero and the indicator visibly resets.',
+    ).toBe(true);
+
+    // A layout effect, so the phase is corrected before the frame is painted; a plain effect
+    // would show one frame of the reset.
+    expect(activityMark).toMatch(/useLayoutEffect\(\(\) => \{\s*anchorMarchToTimeline/);
+
+    // No dependency array: a DOM move or a re-injection can hand us a fresh animation
+    // without `mark` changing, and the anchor is idempotent so running it is free.
+    expect(activityMark).not.toMatch(/anchorMarchToTimeline\(markGroupRef\.current\);\s*\}, \[/);
+  });
+});

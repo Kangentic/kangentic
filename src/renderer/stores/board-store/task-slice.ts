@@ -3,6 +3,7 @@ import { arrayMove } from '@dnd-kit/sortable';
 import type { Task, TaskCreateInput, TaskUpdateInput, TaskMoveInput, TaskSetRuntimeOverrideResult } from '../../../shared/types';
 import { useConfigStore } from '../config-store';
 import { useSessionStore } from '../session-store';
+import { withoutSessionsForTasks } from '../session-store/session-index';
 import { useToastStore } from '../toast-store';
 import { useProjectStore } from '../project-store';
 import { invalidateProject } from '../project-cache';
@@ -174,9 +175,7 @@ export const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set
     // Drop the in-memory record alongside the task. Sessions are NOT restored
     // on rollback - the PTY is gone either way; user can re-spawn if the task
     // pops back.
-    useSessionStore.setState((s) => ({
-      sessions: s.sessions.filter((session) => session.taskId !== id),
-    }));
+    useSessionStore.setState((s) => withoutSessionsForTasks(s.sessions, id));
 
     try {
       await window.electronAPI.tasks.delete(id, useProjectStore.getState().currentProject?.id ?? null);
@@ -319,7 +318,7 @@ export const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set
         const { [input.taskId]: _removedProgress, ...nextSpawnProgress } = state.spawnProgress;
         const { [input.taskId]: _removedLabel, ...nextPendingCommandLabel } = state.pendingCommandLabel;
         return {
-          sessions: state.sessions.filter((session) => session.taskId !== input.taskId),
+          ...withoutSessionsForTasks(state.sessions, input.taskId),
           spawnProgress: nextSpawnProgress,
           pendingCommandLabel: nextPendingCommandLabel,
         };

@@ -68,7 +68,28 @@ async function fireSpawnProgress(taskId: string, label: string | null): Promise<
   }, { taskId, label });
 }
 
-test('spawn-progress updates are deferred during an active board drag and flushed on drop', async () => {
+/**
+ * Session pushes must keep applying to OTHER cards while a board drag is in flight.
+ *
+ * This used to assert the opposite - that the update was withheld until the drop -
+ * because the gate parked every session push for the length of the gesture. That
+ * froze every agent's indicator and context bar on the board while the user dragged
+ * an unrelated card, which reads as the app hanging. Agents are independent of a
+ * board gesture; their reporting has to survive it.
+ *
+ * The hold was justified by a claim that a re-render forces dnd-kit to re-measure on
+ * the pointer-move thread. It does not: droppables register in a `useEffect(...,
+ * [id])` and the default measuring strategy is WhileDragging, not Always. What DOES
+ * disturb a drag is a card changing HEIGHT, because dnd-kit's ResizeObserver runs
+ * only while dragging and re-measures every card below the resized one. That is
+ * prevented at the source instead - TaskCard's running-state spinner is structurally
+ * identical to its resolved context footer, so a spawn resolving cannot grow a card.
+ *
+ * The spawning card is deliberately a DIFFERENT card from the dragged one: that is
+ * the case dnd-kit's `updateMeasurementsFor: itemsAfterCurrentSortable` cascade
+ * would hit.
+ */
+test('spawn-progress updates apply to another card DURING an active board drag', async () => {
   const dragTaskId = await getTaskIdByTitle(DRAG_TASK);
   const spawningTaskId = await getTaskIdByTitle(SPAWNING_TASK);
 
@@ -92,21 +113,33 @@ test('spawn-progress updates are deferred during an active board drag and flushe
   await expect(page.locator('.drag-overlay').filter({ hasText: DRAG_TASK }))
     .toBeVisible({ timeout: 2000 });
 
+  // Measure the spawning card's height while the drag is live. If applying the
+  // update grew it, dnd-kit would re-measure every card below it in the lane - the
+  // one thing that genuinely disturbs a drag.
+  const spawningCard = page.locator(`[data-task-id="${spawningTaskId}"]`);
+  const heightBefore = (await spawningCard.boundingBox())?.height ?? 0;
+  expect(heightBefore).toBeGreaterThan(0);
+
   // While the drag is active, push a NEW spawn-progress label for the other task.
   await fireSpawnProgress(spawningTaskId, 'Starting agent...');
 
-  // It must be HELD: the session store still shows the pre-drag label. The fixed
-  // wait gives any erroneously-scheduled microtask flush time to run, so this
-  // asserts the absence of an update rather than racing it.
-  await page.waitForTimeout(200);
-  expect(await readSpawnProgress(spawningTaskId)).toBe('Creating worktree...');
+  // It must APPLY, without waiting for the drop.
+  await expect.poll(() => readSpawnProgress(spawningTaskId), { timeout: 2000 })
+    .toBe('Starting agent...');
 
-  // Release the drag. endBoardDrag() flushes synchronously at the top of
-  // handleDragEnd, so the held update applies.
+  // ...and the card must not have changed height doing so. Tolerance rather than an
+  // exact match: font metrics and sub-pixel rounding differ between local Windows
+  // and CI's headless Linux.
+  const heightDuring = (await spawningCard.boundingBox())?.height ?? 0;
+  expect(Math.abs(heightDuring - heightBefore)).toBeLessThanOrEqual(1);
+
+  // The drag is still live and unaffected.
+  await expect(page.locator('.drag-overlay').filter({ hasText: DRAG_TASK })).toBeVisible();
+
   await page.mouse.up();
   await page.locator('.drag-overlay').filter({ hasText: DRAG_TASK })
     .waitFor({ state: 'detached', timeout: 2000 }).catch(() => {});
 
-  await expect.poll(() => readSpawnProgress(spawningTaskId), { timeout: 2000 })
-    .toBe('Starting agent...');
+  // Still correct after the drop.
+  expect(await readSpawnProgress(spawningTaskId)).toBe('Starting agent...');
 });

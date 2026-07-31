@@ -32,6 +32,37 @@ interface TaskCardProps {
   onDelete?: (taskId: string) => void;
 }
 
+/**
+ * The card's bottom bar, in the ONE shape every populated state shares: a label row,
+ * `mb-1.5`, and an `h-1` track - structurally identical to `ContextUsageFooter`.
+ *
+ * Height is the thing that matters here. dnd-kit runs a ResizeObserver that is live
+ * only while a drag is in flight, and `useSortable` asks it to re-measure every card
+ * BELOW a resized one in the lane. So a card that grows as its agent spawns stalls
+ * the pointer for a frame - which showed up as a brief hitch right at the moment
+ * "Creating worktree..." gave way to a live agent. Rendering the same skeleton for
+ * preparing, queued, suspended and running means that transition costs no layout at
+ * all, which is what lets session updates apply during a drag instead of being
+ * frozen until the drop.
+ *
+ * The track is inert here (an empty groove); only the running state fills it, via
+ * `ContextUsageFooter`.
+ */
+function CardStatusBar({
+  children, testId, title,
+}: { children: React.ReactNode; testId: string; title?: string }) {
+  return (
+    <div className="mt-2 pt-2 border-t border-edge" data-testid={testId}>
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="text-xs text-fg-faint flex items-center gap-1 min-w-0" title={title}>
+          {children}
+        </span>
+      </div>
+      <div className="w-full h-1 bg-surface-hover rounded-full overflow-hidden" />
+    </div>
+  );
+}
+
 const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete }: TaskCardProps) {
   // A single `useShallow`-gated selector replaces four individual subscriptions.
   // Scaling: 100 cards × 4 subs each = 400 selector invocations per session-store
@@ -276,22 +307,24 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
         } ${isDragOverlay ? 'shadow-xl' : ''}`}
       >
         <div className="flex items-center gap-1.5">
-          {isIdle && (
+          {/* ONE slot, not two conditional siblings.
+              These were `{isIdle && <ActivityMark .../>}{isThinking && <ActivityMark .../>}`,
+              which React reconciles positionally: idle owned child index 0 and working index 1,
+              so every idle<->thinking flip was a delete at one index plus a create at the other.
+              That unmounted the whole <svg>, re-injected `MARK_INNER` into a fresh <g>, and
+              restarted the `.kng-march` dash from zero - the indicator visibly "resetting"
+              rather than marching. One slot lets React reuse the fiber, so a working->working
+              update never touches the DOM and only a genuine state change re-injects. */}
+          {(isIdle || isThinking) && (
             <ActivityMark
-              mark="agent-idle"
+              mark={isThinking ? 'agent-working' : 'agent-idle'}
               size={15}
-              className="text-attention shrink-0"
-              aria-label={activityReason ? formatActivityReasonText(activityReason) : 'Idle'}
-            >
-              {activityReason && <title>{formatActivityReasonText(activityReason)}</title>}
-            </ActivityMark>
-          )}
-          {isThinking && (
-            <ActivityMark
-              mark="agent-working"
-              size={15}
-              className="text-active shrink-0"
-              aria-label={activityReason ? formatActivityReasonText(activityReason) : 'Thinking'}
+              className={`${isThinking ? 'text-active' : 'text-attention'} shrink-0`}
+              aria-label={
+                activityReason
+                  ? formatActivityReasonText(activityReason)
+                  : isThinking ? 'Thinking' : 'Idle'
+              }
             >
               {activityReason && <title>{formatActivityReasonText(activityReason)}</title>}
             </ActivityMark>
@@ -342,12 +375,10 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
               if (!resolvedModelName) {
                 const spinnerLabel = isResuming ? 'Resuming agent...' : 'Starting agent...';
                 return (
-                  <div className="mt-2 pt-2 border-t border-edge" data-testid="usage-bar">
-                    <span className="text-xs text-fg-faint flex items-center gap-1">
-                      <Loader2 size={12} className="animate-spin" />
-                      {spinnerLabel}
-                    </span>
-                  </div>
+                  <CardStatusBar testId="usage-bar">
+                    <Loader2 size={12} className="animate-spin shrink-0" />
+                    <span className="truncate">{spinnerLabel}</span>
+                  </CardStatusBar>
                 );
               }
               // Always render the full bar layout (model + percent + track) once
@@ -382,30 +413,24 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
             case 'preparing':
             case 'initializing':
               return (
-                <div className="mt-2 pt-2 border-t border-edge" data-testid="status-bar">
-                  <span className="text-xs text-fg-faint flex items-center gap-1 min-w-0" title={displayState.label}>
-                    <Loader2 size={12} className="animate-spin shrink-0" />
-                    <span className="truncate">{displayState.label}</span>
-                  </span>
-                </div>
+                <CardStatusBar testId="status-bar" title={displayState.label}>
+                  <Loader2 size={12} className="animate-spin shrink-0" />
+                  <span className="truncate">{displayState.label}</span>
+                </CardStatusBar>
               );
             case 'queued':
               return (
-                <div className="mt-2 pt-2 border-t border-edge" data-testid="status-bar">
-                  <span className="text-xs text-fg-faint flex items-center gap-1">
-                    <Loader2 size={12} className="animate-spin" />
-                    Queued...
-                  </span>
-                </div>
+                <CardStatusBar testId="status-bar">
+                  <Loader2 size={12} className="animate-spin shrink-0" />
+                  Queued...
+                </CardStatusBar>
               );
             case 'suspended':
               return (
-                <div className="mt-2 pt-2 border-t border-edge" data-testid="status-bar">
-                  <span className="text-xs text-fg-faint flex items-center gap-1">
-                    <CirclePause size={12} />
-                    Paused
-                  </span>
-                </div>
+                <CardStatusBar testId="status-bar">
+                  <CirclePause size={12} className="shrink-0" />
+                  Paused
+                </CardStatusBar>
               );
             case 'none':
             case 'exited':

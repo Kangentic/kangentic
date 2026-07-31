@@ -105,6 +105,40 @@ const MARK_INNER: Record<ActivityMarkName, string> = Object.fromEntries(
   ACTIVITY_MARK_NAMES.map((name) => [name, innerMarkup(RAW_MARKS[name])]),
 ) as Record<ActivityMarkName, string>;
 
+/**
+ * Anchor every marching mark to the document timeline so the animation's phase is a
+ * pure function of time rather than of when its DOM node happened to be created.
+ *
+ * The march lives on a node inside `dangerouslySetInnerHTML`, so it has no React
+ * fiber: anything that rebuilds or re-inserts that node gives it a brand-new
+ * animation starting at zero, and the 75/25 dashed ring snaps its gap back to 12
+ * o'clock. That is highly legible - it reads as the indicator freezing or choking.
+ * The lucide spinner this replaced never showed it, because a rotating circle looks
+ * identical at every phase, which is why the restarts only became visible when the
+ * marks landed.
+ *
+ * Setting `startTime = 0` re-bases the animation onto the document timeline origin,
+ * making its phase `documentTime % period` for EVERY mark. Two consequences, both
+ * wanted: a rebuilt node resumes exactly where the surviving ones are (so a restart
+ * is undetectable), and all marks on screen march in lockstep, which reads as
+ * deliberate rather than as N independent spinners.
+ *
+ * Idempotent by construction - re-applying always computes the same anchor - so it
+ * is safe to run on any render.
+ */
+function anchorMarchToTimeline(host: SVGGElement | null): void {
+  if (!host) return;
+  const marching = host.querySelector('.kng-march');
+  // `getAnimations` is unavailable in jsdom and absent under reduced motion (the
+  // packaged CSS drops the animation entirely), where there is nothing to anchor.
+  if (!marching || typeof marching.getAnimations !== 'function') return;
+  for (const animation of marching.getAnimations()) {
+    // Only write on drift: assigning startTime unconditionally on every render
+    // would be a needless style mutation on every card, every frame.
+    if (animation.startTime !== 0) animation.startTime = 0;
+  }
+}
+
 export interface ActivityMarkProps extends React.SVGProps<SVGSVGElement> {
   mark: ActivityMarkName;
   /** Rendered width and height in px. Floors: 12 for indicators, 16 for controls. */
@@ -139,6 +173,17 @@ export function ActivityMark({
   // Decorative by default; a call site that names the mark (aria-label) or supplies a <title>
   // child is exposing it to assistive tech, so it must not also be aria-hidden.
   const isLabelled = rest['aria-label'] !== undefined || children !== undefined;
+
+  const markGroupRef = React.useRef<SVGGElement>(null);
+  // Layout effect, not an effect: this runs after React has injected the markup but
+  // BEFORE paint, so a rebuilt node is already in phase on the frame it appears and
+  // the reset is never shown. No dependency array on purpose - a DOM move or a
+  // re-injection can hand us a fresh animation without changing `mark`, and
+  // `anchorMarchToTimeline` no-ops when the anchor is already correct.
+  React.useLayoutEffect(() => {
+    anchorMarchToTimeline(markGroupRef.current);
+  });
+
   return (
     <svg
       viewBox="0 0 24 24"
@@ -155,7 +200,7 @@ export function ActivityMark({
       role={isLabelled ? 'img' : undefined}
       aria-hidden={isLabelled ? undefined : true}
     >
-      <g dangerouslySetInnerHTML={{ __html: MARK_INNER[mark] }} />
+      <g ref={markGroupRef} dangerouslySetInnerHTML={{ __html: MARK_INNER[mark] }} />
       {children}
     </svg>
   );

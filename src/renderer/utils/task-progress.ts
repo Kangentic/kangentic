@@ -104,9 +104,19 @@ export function getTaskProgress(inputs: {
 export function useTaskProgress(taskId: string, sessionId: string | undefined): SessionDisplayState {
   const taskSession = useSessionStore(
     useCallback(
-      (s: ReturnType<typeof useSessionStore.getState>) =>
-        sessionId ? s.sessions.find((session) => session.id === sessionId) : undefined,
-      [sessionId],
+      (s: ReturnType<typeof useSessionStore.getState>) => {
+        if (!sessionId) return undefined;
+        // Every board card runs this selector on every session-store write, so the
+        // linear scan below was O(cards x sessions) per activity push. The task
+        // index answers the same question in one lookup for the normal case (the
+        // caller's session IS the task's current session, which is how TaskCard
+        // resolves it); the scan stays as the fallback for a caller asking about
+        // some other session.
+        const indexed = s._sessionByTaskId.get(taskId);
+        if (indexed && indexed.id === sessionId) return indexed;
+        return s.sessions.find((session) => session.id === sessionId);
+      },
+      [sessionId, taskId],
     ),
   );
   const usage = useSessionStore(

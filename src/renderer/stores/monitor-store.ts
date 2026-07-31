@@ -19,6 +19,7 @@ import type {
   ActivityReason,
 } from '../../shared/types';
 import { DEFAULT_CONFIG } from '../../shared/types';
+import { reconcileMonitorRows } from './monitor-rows';
 
 /** Coalescing window for view-preference writes, so dragging a filter is one save. */
 const VIEW_PERSIST_DEBOUNCE_MS = 400;
@@ -92,7 +93,20 @@ function createMonitorStore() {
       return request;
     },
 
-    applySnapshot: (snapshot) => set({ rows: snapshot.rows, loaded: true }),
+    /**
+     * Merge rather than assign. Every row arrives as a fresh object (structured
+     * clone across IPC) even when nothing changed, and the push is unconditional,
+     * so assigning would re-render every card on a 250ms cadence for as long as
+     * session events flow. `reconcileMonitorRows` hands back the previous array
+     * when the snapshot is equivalent; returning `state` untouched then makes this
+     * a genuine no-op, since zustand skips the notify when the updater returns the
+     * same state object.
+     */
+    applySnapshot: (snapshot) => set((state) => {
+      const rows = reconcileMonitorRows(state.rows, snapshot.rows);
+      if (rows === state.rows && state.loaded) return state;
+      return { rows, loaded: true };
+    }),
 
     /**
      * Patch one row's live state without a refetch. The snapshot is the authority

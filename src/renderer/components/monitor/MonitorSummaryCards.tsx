@@ -1,3 +1,4 @@
+import { memo, useMemo } from 'react';
 import type { ReactNode } from 'react';
 import { CirclePause, FolderGit2 } from 'lucide-react';
 import { ActivityMark } from '../ActivityMark';
@@ -79,8 +80,14 @@ function SummaryTile({ label, icon, value, sub, title, testId, tone }: SummaryTi
   );
 }
 
-export function MonitorSummaryCards({ rows }: { rows: MonitorSessionRow[] }) {
-  const { counts, projectCount, oldestNeedsYouSince, workingProjectCount, lastActiveAt } = summarize(rows);
+function MonitorSummaryCardsInner({ rows }: { rows: MonitorSessionRow[] }) {
+  // `summarize` is a full pass over every row with two Set allocations, and this
+  // component re-renders with its parent - including for parent state that has
+  // nothing to do with rows (the grid's column count on resize, the row context
+  // menu opening). Memoized on `rows`, whose identity is now stable across an
+  // unchanged snapshot push.
+  const { counts, projectCount, oldestNeedsYouSince, workingProjectCount, lastActiveAt } =
+    useMemo(() => summarize(rows), [rows]);
 
   return (
     <div className="flex flex-wrap gap-2 px-4 pt-3" data-testid="monitor-summary">
@@ -143,3 +150,7 @@ export function MonitorSummaryCards({ rows }: { rows: MonitorSessionRow[] }) {
     </div>
   );
 }
+
+// Memoized on `rows`: MonitorBody re-renders for its own resize and menu state,
+// neither of which changes the summary.
+export const MonitorSummaryCards = memo(MonitorSummaryCardsInner);

@@ -154,6 +154,137 @@ describe('monitor-store', () => {
     });
   });
 
+  describe('applySnapshot', () => {
+    /**
+     * The push is unconditional and every row arrives as a fresh object (structured
+     * clone across IPC), so assigning the incoming array would re-render the whole
+     * monitor on a 250ms cadence for as long as session events flow. These pin the
+     * merge that makes an equivalent push cost nothing.
+     */
+    it('keeps the array and every row identity when nothing changed', () => {
+      const initial = [makeRow({ sessionId: 'a' }), makeRow({ sessionId: 'b' })];
+      useMonitorStore.getState().applySnapshot({ rows: initial, generatedAt: 'x' });
+      const held = useMonitorStore.getState().rows;
+
+      // A structurally identical snapshot, freshly allocated as IPC would deliver it.
+      useMonitorStore.getState().applySnapshot({
+        rows: [makeRow({ sessionId: 'a' }), makeRow({ sessionId: 'b' })],
+        generatedAt: 'y',
+      });
+
+      expect(useMonitorStore.getState().rows).toBe(held);
+    });
+
+    it('does not notify subscribers on an equivalent push', () => {
+      useMonitorStore.getState().applySnapshot({
+        rows: [makeRow({ sessionId: 'a' })],
+        generatedAt: 'x',
+      });
+
+      const listener = vi.fn();
+      const unsubscribe = useMonitorStore.subscribe(listener);
+      useMonitorStore.getState().applySnapshot({
+        rows: [makeRow({ sessionId: 'a' })],
+        generatedAt: 'y',
+      });
+      unsubscribe();
+
+      expect(listener).not.toHaveBeenCalled();
+    });
+
+    it('reuses the unchanged rows and replaces only the one that moved', () => {
+      useMonitorStore.getState().applySnapshot({
+        rows: [makeRow({ sessionId: 'a' }), makeRow({ sessionId: 'b' })],
+        generatedAt: 'x',
+      });
+      const held = useMonitorStore.getState().rows;
+
+      useMonitorStore.getState().applySnapshot({
+        rows: [makeRow({ sessionId: 'a' }), makeRow({ sessionId: 'b', activity: 'idle' })],
+        generatedAt: 'y',
+      });
+
+      const next = useMonitorStore.getState().rows;
+      expect(next).not.toBe(held);
+      expect(next[0]).toBe(held[0]);
+      expect(next[1]).not.toBe(held[1]);
+      expect(next[1].activity).toBe('idle');
+    });
+
+    it('treats a reorder as a change even though both rows are reused', () => {
+      useMonitorStore.getState().applySnapshot({
+        rows: [makeRow({ sessionId: 'a' }), makeRow({ sessionId: 'b' })],
+        generatedAt: 'x',
+      });
+      const held = useMonitorStore.getState().rows;
+
+      useMonitorStore.getState().applySnapshot({
+        rows: [makeRow({ sessionId: 'b' }), makeRow({ sessionId: 'a' })],
+        generatedAt: 'y',
+      });
+
+      const next = useMonitorStore.getState().rows;
+      expect(next).not.toBe(held);
+      expect(next.map((row) => row.sessionId)).toEqual(['b', 'a']);
+      expect(next[0]).toBe(held[1]);
+    });
+
+    it('reuses a row whose nested values are equal but freshly allocated', () => {
+      // Structured clone rebuilds the nested objects too, so a shallow compare
+      // would see labels / activityReason / lastEvent differ on every push and
+      // never reuse anything.
+      const nested = () => makeRow({
+        sessionId: 'a',
+        labels: ['ui', 'perf'],
+        activityReason: { kind: 'tool', pendingCount: 1, currentTool: 'Bash' },
+        lastEvent: { type: 'tool_start', detail: 'npm test' },
+      });
+      useMonitorStore.getState().applySnapshot({ rows: [nested()], generatedAt: 'x' });
+      const held = useMonitorStore.getState().rows;
+
+      useMonitorStore.getState().applySnapshot({ rows: [nested()], generatedAt: 'y' });
+
+      expect(useMonitorStore.getState().rows).toBe(held);
+    });
+
+    it('replaces a row when a nested value actually changed', () => {
+      useMonitorStore.getState().applySnapshot({
+        rows: [makeRow({ sessionId: 'a', labels: ['ui'] })],
+        generatedAt: 'x',
+      });
+      const held = useMonitorStore.getState().rows;
+
+      useMonitorStore.getState().applySnapshot({
+        rows: [makeRow({ sessionId: 'a', labels: ['ui', 'perf'] })],
+        generatedAt: 'y',
+      });
+
+      const next = useMonitorStore.getState().rows;
+      expect(next).not.toBe(held);
+      expect(next[0].labels).toEqual(['ui', 'perf']);
+    });
+
+    it('marks loaded on the first snapshot even when it is empty', () => {
+      // Both arrays are empty, so the merge returns the previous reference; the
+      // cold-load skeleton still has to be dismissed.
+      expect(useMonitorStore.getState().loaded).toBe(false);
+      useMonitorStore.getState().applySnapshot({ rows: [], generatedAt: 'x' });
+      expect(useMonitorStore.getState().loaded).toBe(true);
+    });
+
+    it('drops a row that disappeared from the snapshot', () => {
+      useMonitorStore.getState().applySnapshot({
+        rows: [makeRow({ sessionId: 'a' }), makeRow({ sessionId: 'b' })],
+        generatedAt: 'x',
+      });
+      useMonitorStore.getState().applySnapshot({
+        rows: [makeRow({ sessionId: 'a' })],
+        generatedAt: 'y',
+      });
+      expect(useMonitorStore.getState().rows.map((row) => row.sessionId)).toEqual(['a']);
+    });
+  });
+
   describe('applyActivity', () => {
     it('patches the matching row in place without a refetch', () => {
       useMonitorStore.setState({ rows: [makeRow({ sessionId: 'a' }), makeRow({ sessionId: 'b' })] });

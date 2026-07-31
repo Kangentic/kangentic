@@ -1,6 +1,7 @@
 import { type StateCreator } from 'zustand';
 import type { Task, TaskUnarchiveInput, TaskBulkDeleteProgress } from '../../../shared/types';
 import { useSessionStore } from '../session-store';
+import { withoutSessionsForTasks } from '../session-store/session-index';
 import { useToastStore } from '../toast-store';
 import { useProjectStore } from '../project-store';
 import { applyStructuralSharing } from './structural-sharing';
@@ -233,9 +234,7 @@ export const createArchivedTasksSlice: StateCreator<BoardStore, [], [], Archived
     try {
       await window.electronAPI.tasks.delete(id, useProjectStore.getState().currentProject?.id ?? null);
       // Also clean up sessions in session store
-      useSessionStore.setState((s) => ({
-        sessions: s.sessions.filter((session) => session.taskId !== id),
-      }));
+      useSessionStore.setState((s) => withoutSessionsForTasks(s.sessions, id));
     } catch (err) {
       // Revert optimistic removal so stale tasks don't reappear on next load
       set({ archivedTasks: prevArchived, archivedTotalCount: prevArchivedTotalCount });
@@ -273,9 +272,7 @@ export const createArchivedTasksSlice: StateCreator<BoardStore, [], [], Archived
       // Always clear sessions for fully-deleted tasks. Partial-failure tasks
       // still had their DB row deleted (cleanup just left worktree files
       // behind), so dropping the session is correct either way.
-      useSessionStore.setState((state) => ({
-        sessions: state.sessions.filter((session) => !idSet.has(session.taskId)),
-      }));
+      useSessionStore.setState((state) => withoutSessionsForTasks(state.sessions, idSet));
 
       if (result.failures.length > 0) {
         // Partial success: keep the successfully deleted tasks removed from

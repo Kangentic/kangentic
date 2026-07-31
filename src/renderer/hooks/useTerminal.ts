@@ -6,7 +6,7 @@ import { copySelectionToClipboard, enableTerminalClipboard, stripOsc52Sequences 
 import { createTerminalLinkHandler } from '../utils/terminal-link-handler';
 import { createWriteBatcher, type WriteBatcher } from '../utils/write-batcher';
 import { createIncomingWriteQueue, writeChunkedToTerminal } from '../utils/incoming-write-queue';
-import { isBoardDragActive, onBoardDragEnd } from '../lib/session-update-coalescer';
+import { onBoardDragEnd } from '../lib/session-update-coalescer';
 import { isTerminalParked, onTerminalReveal } from '../utils/parked-terminals';
 import { noteTerminalFocus } from '../utils/dictation-target';
 import { registerTerminalCapture, unregisterTerminalCapture, type TerminalCaptureReader } from '../utils/terminal-capture-registry';
@@ -459,7 +459,10 @@ export function useTerminal(options: UseTerminalOptions) {
       // extra PTY resize (and so an extra agent repaint) on a mount; comparing the
       // container widths across the two says whether the layout moved or the fit
       // math changed under it.
-      traceTerminalRenderer(options.sessionId, 'fit', {
+      // Thunked: these are layout reads taken right after `fit()` wrote to the DOM,
+      // so building them eagerly forces a synchronous reflow on every mount even in
+      // production, where the trace is compiled out.
+      traceTerminalRenderer(options.sessionId, 'fit', () => ({
         phase: 'initial',
         colsBefore: colsBeforeFit,
         cols,
@@ -467,7 +470,7 @@ export function useTerminal(options: UseTerminalOptions) {
         hostWidth: terminal.element?.parentElement?.getBoundingClientRect().width ?? null,
         viewportClientWidth:
           (terminal.element?.querySelector('.xterm-viewport') as HTMLElement | null)?.clientWidth ?? null,
-      });
+      }));
 
       // Parallel IPCs: resize forwards SIGWINCH on main; getScrollback is a
       // pure in-memory read. Firing them together is safe because main
@@ -517,7 +520,9 @@ export function useTerminal(options: UseTerminalOptions) {
               const colsBeforeRefit = xtermRef.current?.cols ?? null;
               fitAddonRef.current.fit();
               const colsAfterRefit = xtermRef.current?.cols ?? null;
-              traceTerminalRenderer(options.sessionId, 'fit', {
+              // Thunked for the same reason as the initial fit above: layout reads
+              // taken directly after a write, on a path that runs in production.
+              traceTerminalRenderer(options.sessionId, 'fit', () => ({
                 phase: 'after-replay',
                 colsBefore: colsBeforeRefit,
                 cols: colsAfterRefit,
@@ -528,7 +533,7 @@ export function useTerminal(options: UseTerminalOptions) {
                 viewportClientWidth:
                   (xtermRef.current?.element?.querySelector('.xterm-viewport') as HTMLElement | null)
                     ?.clientWidth ?? null,
-              });
+              }));
             }
             // Restore saved scroll position (HMR) or pin to bottom (cold start)
             if (xtermRef.current) {
@@ -621,7 +626,18 @@ export function useTerminal(options: UseTerminalOptions) {
       // highlight in a fullscreen TUI. Held bytes are retained and resumed via
       // kick() on drag end, at the end of afterWrite, or by the stuck-replay
       // watchdog.
-      shouldHold: () => isBoardDragActive() || scrollbackPendingRef.current,
+      // Deliberately NOT gated on a board drag any more. `TerminalPanel` is a SIBLING
+      // of `KanbanBoard`, outside the <DndContext> subtree, and xterm writes to its own
+      // canvas without producing a single React render - so holding here never
+      // prevented a re-render, a resize, or a dnd-kit re-measure. It only bought raw
+      // main-thread time, which the queue already bounds by pacing 64KB slices on
+      // xterm's write callback.
+      //
+      // It was also actively harmful: the hold acks nothing, so a drag paused the PTY
+      // at the source and `kick()` dumped the whole accumulated burst on drop - landing
+      // exactly on the optimistic move, the FlyingCard and persistCompletion. Streaming
+      // steadily through the drag is both smoother and cheaper than stall-then-burst.
+      shouldHold: () => scrollbackPendingRef.current,
       ack: (bytes) => window.electronAPI.sessions.ackData(sessionId, bytes),
     });
     incomingResumeRef.current = () => queue.kick();

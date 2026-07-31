@@ -23,11 +23,13 @@
  */
 import type { IpcContext } from '../ipc/ipc-context';
 import type {
+  MonitorLastEvent,
   MonitorSessionRow,
   MonitorSnapshot,
   SessionEvent,
   SessionUsage,
 } from '../../shared/types';
+import { MONITOR_DESCRIPTION_EXCERPT_LIMIT } from '../../shared/types';
 import { getProjectDb } from '../db/database';
 import { SessionRepository } from '../db/repositories/session-repository';
 import { getProjectRepos } from '../ipc/helpers/project-repos';
@@ -107,10 +109,30 @@ function resolveContextPercent(usage: SessionUsage | undefined): number | null {
   return Math.min(100, Math.max(0, Math.round(usedPercentage)));
 }
 
-/** The most recent telemetry event, which becomes the row's "doing now" line. */
-function lastEventOf(events: SessionEvent[] | undefined): SessionEvent | null {
+/**
+ * The most recent telemetry event, which becomes the row's "doing now" line.
+ *
+ * Projected down to the two fields the row needs. The full `SessionEvent` also
+ * carries correlation ids and per-tool telemetry, none of which the monitor
+ * renders, and this row is re-sent to every subscriber on every push.
+ */
+function lastEventOf(events: SessionEvent[] | undefined): MonitorLastEvent | null {
   if (!events || events.length === 0) return null;
-  return events[events.length - 1];
+  const event = events[events.length - 1];
+  return { type: event.type, detail: event.detail ?? null };
+}
+
+/**
+ * Cap a task description to what the card can actually show.
+ *
+ * Descriptions run to several KB of markdown and the card clamps to three lines,
+ * so the tail was crossing the IPC boundary on every push to be thrown away by
+ * the renderer. The full text stays available through `monitor:getTaskDetail`.
+ */
+function descriptionExcerpt(description: string | null | undefined): string | null {
+  if (!description) return null;
+  if (description.length <= MONITOR_DESCRIPTION_EXCERPT_LIMIT) return description;
+  return description.slice(0, MONITOR_DESCRIPTION_EXCERPT_LIMIT);
 }
 
 /**
@@ -173,7 +195,7 @@ export function buildMonitorSnapshot(context: IpcContext): MonitorSnapshot {
       projectName: project.projectName,
       taskId: managed.taskId,
       taskTitle: task?.title ?? 'Command Terminal',
-      taskDescription: task?.description ?? null,
+      taskDescription: descriptionExcerpt(task?.description),
       displayId: task?.display_id ?? null,
       columnName: task ? project.swimlaneNames.get(task.swimlane_id) ?? '' : '',
       labels: task?.labels ?? [],

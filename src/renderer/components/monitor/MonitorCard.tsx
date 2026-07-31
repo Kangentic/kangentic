@@ -83,6 +83,15 @@ function MonitorCardInner({
 }: MonitorCardProps) {
   const activityLine = formatMonitorStatus(row);
 
+  // `stripMarkdown` is a regex pass over the whole excerpt. The row object is
+  // replaced whenever anything on it changes (an activity patch, a snapshot that
+  // moved one field), so without this the strip re-ran on every such render for
+  // text that had not changed.
+  const description = React.useMemo(
+    () => (row.taskDescription ? stripMarkdown(row.taskDescription) : null),
+    [row.taskDescription],
+  );
+
   // Scoped with `currentTarget.contains()`: the card is itself a role="button",
   // and a nested interactive element's own menu must win over this one.
   const handleContextMenu = (event: React.MouseEvent) => {
@@ -189,8 +198,8 @@ function MonitorCardInner({
         </div>
       )}
 
-      {row.taskDescription && (
-        <div className="text-xs text-fg-faint mt-1 line-clamp-3">{stripMarkdown(row.taskDescription)}</div>
+      {description && (
+        <div className="text-xs text-fg-faint mt-1 line-clamp-3">{description}</div>
       )}
 
       <div className="mt-1.5">

@@ -85,12 +85,75 @@ export function useWindowSessionClaims(): void {
       if (!inSync) useSessionStore.setState({ dialogSessionIds: ownedSessionIds });
     };
 
+    /**
+     * The claim-relevant shape of the window layers: which layers are mounted and
+     * which task-detail anchors they hold. Deliberately excludes geometry, focus,
+     * and z-order, none of which can change which session is claimed.
+     *
+     * O(windows), and no `sessions` scan - that is the whole point of computing it
+     * before deciding whether to reconcile. Anchors are ids (a task uuid, or
+     * `projectId:taskId`) and prefixes are fixed literals, so neither can contain
+     * the delimiters.
+     */
+    const windowSetFingerprint = (): string => {
+      const parts: string[] = [];
+      for (const manager of allWindowManagers) {
+        if (!isLayerMounted(manager)) continue;
+        parts.push(manager.options.idPrefix);
+        for (const managedWindow of Object.values(manager.store.getState().windows)) {
+          if (managedWindow.kind !== 'task-detail') continue;
+          parts.push(managedWindow.anchor);
+        }
+      }
+      return parts.join('|');
+    };
+
+    let lastWindowFingerprint = windowSetFingerprint();
+
+    /**
+     * A window store fires on every committed frame of a drag or resize, and
+     * geometry never changes the claim set, so an ungated reconcile ran the full
+     * cross-layer O(windows x sessions) scan on the pointer-move thread. Bail on an
+     * unchanged fingerprint instead - the same derive-then-compare gate
+     * `useDetailOwnershipSync` uses for its own window-store subscription.
+     */
+    const reconcileOnWindowChange = (): void => {
+      const fingerprint = windowSetFingerprint();
+      if (fingerprint === lastWindowFingerprint) return;
+      lastWindowFingerprint = fingerprint;
+      reconcile();
+    };
+
     reconcile();
-    const unsubscribes = allWindowManagers.map((manager) => manager.store.subscribe(reconcile));
-    unsubscribes.push(useSessionStore.subscribe(reconcile));
+    const unsubscribes = allWindowManagers.map((manager) =>
+      manager.store.subscribe(reconcileOnWindowChange),
+    );
+    /**
+     * Only `sessions` (which session a window's anchor resolves to) and
+     * `dialogSessionIds` (the value being reconciled, and the thing this effect
+     * exists to self-heal) can change the answer. Every high-frequency session
+     * write - usage reports, activity states, telemetry events, first output -
+     * lands on a sibling record map and leaves both identities alone, so without
+     * this gate the full scan ran several times a second per running agent.
+     */
+    unsubscribes.push(
+      useSessionStore.subscribe((state, previous) => {
+        if (
+          state.sessions === previous.sessions &&
+          state.dialogSessionIds === previous.dialogSessionIds
+        ) {
+          return;
+        }
+        reconcile();
+      }),
+    );
     // A layer mounting or unmounting changes the claim set without changing any
-    // store, so it needs its own trigger.
-    unsubscribes.push(subscribeLayerMounts(reconcile));
+    // store, so it needs its own trigger. It also moves the fingerprint, so
+    // rebaseline here or the next window-store event replays this reconcile.
+    unsubscribes.push(subscribeLayerMounts(() => {
+      lastWindowFingerprint = windowSetFingerprint();
+      reconcile();
+    }));
     return () => { for (const unsubscribe of unsubscribes) unsubscribe(); };
   }, []);
 }

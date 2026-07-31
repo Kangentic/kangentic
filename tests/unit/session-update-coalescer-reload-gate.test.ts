@@ -100,13 +100,20 @@ describe('enqueueReload - reload gate', () => {
     expect(configReload).toHaveBeenCalledTimes(1);
   });
 
-  it('flushes held reloads alongside held session-update thunks on drag end', () => {
+  it('applies a session update DURING a drag while still holding the reload', () => {
+    // The gate is deliberately asymmetric. A session push (activity, status, spawn
+    // progress) re-renders one card and cannot change its height, so it applies
+    // immediately - freezing it meant every agent's indicator on the board stopped
+    // reporting until the drop, which reads as the app hanging. A reload replaces the
+    // sortable item set itself: `SortableContext` compares `items` as id strings by
+    // value, so a mid-gesture reconcile re-measures the lane AND disables transforms,
+    // snapping displaced cards. That one stays held.
     const sessionThunk = vi.fn();
     const reload = vi.fn();
     beginBoardDrag();
     enqueueSessionUpdate(sessionThunk);
     enqueueReload('board', reload);
-    expect(sessionThunk).not.toHaveBeenCalled();
+    expect(sessionThunk).toHaveBeenCalledTimes(1);
     expect(reload).not.toHaveBeenCalled();
 
     endBoardDrag();

@@ -2101,14 +2101,45 @@ export type MonitorGroupBy = 'state' | 'project';
 export type MonitorSort = 'longest-running' | 'recently-started';
 
 /** One live or recently-finished agent session, resolved across projects. */
+/**
+ * How much of a task description a monitor row carries.
+ *
+ * The card renders it `line-clamp-3`, so only the first three lines are ever
+ * visible. The cap is sized to comfortably exceed that at the widest card the grid
+ * produces, with headroom because `stripMarkdown` only ever shortens the text it is
+ * given. Everything past it is invisible weight on a payload that is re-sent to
+ * every subscriber on every push.
+ */
+export const MONITOR_DESCRIPTION_EXCERPT_LIMIT = 600;
+
+/**
+ * The subset of `SessionEvent` a monitor row carries.
+ *
+ * The row is re-sent on every snapshot push, and the renderer reads only the detail
+ * line, so the correlation ids and per-tool telemetry on the full event were pure
+ * payload. Kept as a named shape rather than a bare string so the "doing now" line
+ * can be formatted by event kind without widening the row again.
+ */
+export interface MonitorLastEvent {
+  type: EventType;
+  /** The rendered "doing now" line. See `SessionEvent.detail` for what it holds. */
+  detail: string | null;
+}
+
 export interface MonitorSessionRow {
   sessionId: string;
   projectId: string;
   projectName: string;
   taskId: string;
   taskTitle: string;
-  /** Raw task description. Rendered through `stripMarkdown` + line-clamp, exactly
-   *  as the board card does, so the monitor card reads as the same object. */
+  /** Task description EXCERPT, capped at `MONITOR_DESCRIPTION_EXCERPT_LIMIT` by the
+   *  aggregator. Rendered through `stripMarkdown` + line-clamp, exactly as the board
+   *  card does, so the monitor card reads as the same object.
+   *
+   *  Deliberately not the full text: this row is re-sent to every subscriber on
+   *  every debounced snapshot push, and task descriptions run to several KB of
+   *  markdown, so shipping them whole made each push pay for text no surface can
+   *  display. `monitor.getTaskDetail` serves the complete description on demand. */
   taskDescription: string | null;
   /** The task's #N ticket number; null when the task row could not be resolved. */
   displayId: number | null;
@@ -2136,7 +2167,7 @@ export interface MonitorSessionRow {
   activity: ActivityState | null;
   activityReason: ActivityReason | null;
   /** Last telemetry event, rendered as the row's "doing now" line. */
-  lastEvent: SessionEvent | null;
+  lastEvent: MonitorLastEvent | null;
   /** Context-window usage 0-100, or null when the window size is unknown. */
   contextPercent: number | null;
   isolated: boolean;

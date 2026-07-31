@@ -150,12 +150,14 @@ export function flushDragGateOnWindowBlur(): void {
 
 function flush(): void {
   flushScheduled = false;
-  // A microtask scheduled just before the drag began must not apply updates
-  // mid-drag. endBoardDrag() clears dragActive and flushes directly.
-  if (dragActive) return;
 
   const store = useSessionStore.getState();
 
+  // Usage and activity-log events apply even mid-drag. Neither can change a card's
+  // HEIGHT, which is the only thing that disturbs a drag: dnd-kit's ResizeObserver
+  // is live only while dragging and re-measures the whole tail of a lane when a card
+  // resizes. Freezing them instead froze every context bar on the board for the
+  // length of the gesture, which is far more disruptive than the render it avoided.
   if (pendingUsage.size > 0) {
     const usageCopy = new Map(pendingUsage);
     pendingUsage.clear();
@@ -167,6 +169,17 @@ function flush(): void {
     pendingEvents.length = 0;
     store.batchAddEvents(eventsCopy);
   }
+
+  // Everything below stays parked for the drag. Thunks can mount the context footer
+  // on a spawn (a real height change), and reloads can change the sortable item set
+  // itself - `SortableContext` compares `items` as id strings by value, so a
+  // mid-gesture reconcile re-measures the lane AND disables transforms, snapping
+  // displaced cards. `endBoardDrag()` clears the flag and calls flush() directly.
+  //
+  // Parking thunks is all-or-nothing on purpose: they flush in arrival order, which
+  // is what keeps lifecycle ordering correct (`upsertSession` clears
+  // `spawnProgress[taskId]`). Letting some through mid-drag could invert that order.
+  if (dragActive) return;
 
   if (pendingThunks.length > 0) {
     const thunksCopy = [...pendingThunks];
@@ -184,8 +197,18 @@ function flush(): void {
 }
 
 function schedule(): void {
-  // Held while a board drag is active; flushed by endBoardDrag().
-  if (dragActive || flushScheduled) return;
+  // NOT held during a board drag. Usage and activity-log events cannot disturb a
+  // drag: `TaskCard` never subscribes to `events` at all, and the usage path only
+  // moves the context bar's width and percent text inside a footer whose layout is
+  // deliberately always rendered (see TaskCard's "card height is STABLE" note), so
+  // no card changes height. Height is what actually matters here - dnd-kit's
+  // ResizeObserver is live only while dragging and re-measures the whole tail of a
+  // lane when a card resizes; a plain re-render never triggers it, because
+  // droppables register in a `useEffect(..., [id])` and the default measuring
+  // strategy is WhileDragging, not Always.
+  //
+  // The microtask coalescing below is the load-bearing half and stays.
+  if (flushScheduled) return;
   flushScheduled = true;
   queueMicrotask(flush);
 }
@@ -203,18 +226,29 @@ export function enqueueEvent(sessionId: string, event: SessionEvent): void {
 }
 
 /**
- * Run a side-effect-bearing session push. When no board drag is active it runs
- * immediately, preserving the pre-existing synchronous, in-order behavior (and
- * keeping intermediate states like spawn-progress phases visible). While a drag
- * is active it is held as a whole-body thunk and flushed, in arrival order, on
- * drag end - which keeps read-after-write (the handler reads getState() after
- * its own write) and lifecycle ordering correct.
+ * Run a side-effect-bearing session push (activity, status, spawn progress, first
+ * output). Runs immediately, preserving synchronous in-order behavior and keeping
+ * intermediate states like spawn-progress phases visible.
+ *
+ * These used to be parked for the duration of a board drag, which froze every
+ * card's activity indicator until the drop - agents are independent of a board
+ * gesture, so a card that stops reporting while you drag an unrelated task reads as
+ * the app hanging. The hold was justified by a claim that a re-render "forces
+ * dnd-kit to re-measure on the pointer-move thread", which is not how dnd-kit
+ * works: droppables register in a `useEffect(..., [id])` and the default measuring
+ * strategy is WhileDragging, so a re-render re-measures nothing.
+ *
+ * What DOES disturb a drag is a card changing HEIGHT, because dnd-kit runs a
+ * ResizeObserver while dragging that re-measures every card below the one that
+ * resized. That is now prevented at the source: the activity mark is height-neutral
+ * by construction, and TaskCard's running-state spinner is structurally identical
+ * to `ContextUsageFooter`, so a resolving model name no longer grows the card.
+ *
+ * `pendingThunks` and the drain in `flush()` are retained: `endBoardDrag()` still
+ * flushes anything parked by an older code path, and the buffer is the documented
+ * mechanism for reintroducing a hold if one is ever needed again.
  */
 export function enqueueSessionUpdate(thunk: () => void): void {
-  if (dragActive) {
-    pendingThunks.push(thunk);
-    return;
-  }
   thunk();
 }
 
@@ -231,7 +265,9 @@ export function enqueueSessionUpdate(thunk: () => void): void {
  */
 export function enqueueReload(key: ReloadKey, thunk: () => void): void {
   if (dragActive) {
-    console.debug('[reload-gate] parked reload', key, '(drag active, flushes on drag end)');
+    if (__KANGENTIC_DEV__) {
+      console.debug('[reload-gate] parked reload', key, '(drag active, flushes on drag end)');
+    }
     pendingReloads.set(key, thunk);
     return;
   }
@@ -240,7 +276,7 @@ export function enqueueReload(key: ReloadKey, thunk: () => void): void {
 
 /** Mark the start of a board drag. While active, all queued updates are held. */
 export function beginBoardDrag(): void {
-  console.debug('[reload-gate] begin board drag');
+  if (__KANGENTIC_DEV__) console.debug('[reload-gate] begin board drag');
   dragActive = true;
   // Arm the stuck-gate backstop and listen for a focus-stealing blur that
   // would swallow the drag's pointerup. Both clear in endBoardDrag.
@@ -268,7 +304,9 @@ export function beginBoardDrag(): void {
  * the watchdog or a blur flush may call it before the real drag end does.
  */
 export function endBoardDrag(): void {
-  console.debug('[reload-gate] end board drag, held reloads:', pendingReloads.size);
+  if (__KANGENTIC_DEV__) {
+    console.debug('[reload-gate] end board drag, held reloads:', pendingReloads.size);
+  }
   clearDragGateWatchdog();
   if (typeof window !== 'undefined') {
     window.removeEventListener('blur', flushDragGateOnWindowBlur);

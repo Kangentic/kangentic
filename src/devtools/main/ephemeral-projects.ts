@@ -66,6 +66,86 @@ export async function checkoutTeamConfig(cloneDir: string): Promise<void> {
 }
 
 /**
+ * The model + effort every preview column runs at.
+ *
+ * A preview clone inherits the REAL board's committed `kangentic.json`, which sets
+ * per-column overrides like `claude-opus-5` / `xhigh`. That is correct for the
+ * actual board and wrong for a throwaway preview: agents spawned while testing a
+ * UI change bill the developer's subscription at the most expensive tier they own,
+ * and a preview exists to exercise the app, not to do the work well. Forcing the
+ * cheapest tier makes agent-driven preview testing effectively free.
+ */
+// The model FAMILY, not a pinned release id. `model_override` is documented as a
+// free-form, adapter-specific identifier (`opus`, `sonnet`), and the agent CLI
+// resolves the family to whatever the current release is - so this cannot rot the
+// way `claude-haiku-4-5-20251001` would the moment a new Haiku ships.
+const PREVIEW_MODEL = 'haiku';
+const PREVIEW_EFFORT = 'low';
+
+/**
+ * What an `auto` column becomes in a preview.
+ *
+ * `auto` is not offered on the cheap tier, so a column carrying it would fail to
+ * spawn against `PREVIEW_MODEL`. `acceptEdits` is the closest still-autonomous mode
+ * (and the app's own `DEFAULT_PERMISSION`), so a preview agent keeps running
+ * unattended. Only `auto` is rewritten: `plan` is a distinct workflow with a
+ * `planExitTarget`, not an autonomy level, and rewriting it would break the
+ * plan-exit hand-off the Planning column exists for.
+ */
+const PREVIEW_PERMISSION_MODE = 'acceptEdits';
+const REPLACED_PERMISSION_MODE = 'auto';
+
+interface PreviewTeamConfig {
+  columns?: { id?: string; permissionMode?: string }[];
+}
+
+/**
+ * Point every preview column at the cheap tier by writing the clone's LOCAL board
+ * override (`kangentic.local.json`), which merges over the committed team config
+ * per column by id.
+ *
+ * The local file, not the team file. Editing the checked-out `kangentic.json` was
+ * tried and is wrong twice over: `fillPreviewClone` later runs `git reset --hard
+ * HEAD`, which reverts the edit (so the columns quietly go back to Opus), and that
+ * revert is a real content change on a watched file, so the board raises its
+ * "Board configuration changed - apply?" prompt on every preview boot. The local
+ * override is untracked, so `reset --hard` leaves it alone and the tracked file
+ * stays byte-identical to HEAD, keeping the post-fill watch event the no-op
+ * `checkoutTeamConfig` intends.
+ *
+ * Written before the project is registered, so it is on disk ahead of the first
+ * board open and no watcher exists yet to fire on its creation. Best-effort: a
+ * repo with no committed config keeps the agent defaults, which is already cheap.
+ */
+export async function forcePreviewCheapModels(cloneDir: string): Promise<void> {
+  const teamPath = path.join(cloneDir, 'kangentic.json');
+  const localPath = path.join(cloneDir, 'kangentic.local.json');
+  try {
+    if (!fs.existsSync(teamPath)) return;
+    const team = JSON.parse(fs.readFileSync(teamPath, 'utf-8')) as PreviewTeamConfig;
+    if (!Array.isArray(team.columns)) return;
+    // Match by id: a local column whose id is absent from the team config is
+    // treated as a NEW column and inserted, which would duplicate the board.
+    const columns = team.columns
+      .filter((column): column is { id: string; permissionMode?: string } => typeof column.id === 'string')
+      .map((column) => ({
+        id: column.id,
+        modelOverride: PREVIEW_MODEL,
+        effortOverride: PREVIEW_EFFORT,
+        // Only rewrite `auto`; leave `plan` (and anything else) alone. Omitting the
+        // key entirely lets the team value through the per-column merge.
+        ...(column.permissionMode === REPLACED_PERMISSION_MODE
+          ? { permissionMode: PREVIEW_PERMISSION_MODE }
+          : {}),
+      }));
+    if (columns.length === 0) return;
+    fs.writeFileSync(localPath, `${JSON.stringify({ version: 1, columns }, null, 2)}\n`);
+  } catch (overrideError) {
+    console.warn(`[DEV] Preview cheap-model override failed for ${cloneDir}:`, overrideError);
+  }
+}
+
+/**
  * Clone the worktree into an isolated preview project ("Project N") and register
  * it. FAST: `--no-checkout` copies only the hardlinked .git (~instant), so the
  * working tree is empty until fillPreviewClone() runs - except kangentic.json, which
@@ -91,7 +171,19 @@ export async function createPreviewClone(context: IpcContext, worktreePath: stri
   // open instead of being ghosted by the late, post-task reconciliation. Runs on the adopt
   // path too (the pre-clone is also --no-checkout). The slow full-tree checkout stays deferred.
   await checkoutTeamConfig(cloneDir);
-  const project = context.projectRepo.create({ name: projectName, path: cloneDir, default_agent: DEFAULT_AGENT });
+  // Immediately after the checkout and BEFORE the DB is seeded / the board opens,
+  // so the columns reconcile straight to the cheap tier rather than briefly
+  // adopting the committed Opus/xhigh values.
+  await forcePreviewCheapModels(cloneDir);
+  const project = context.projectRepo.create({
+    name: projectName,
+    path: cloneDir,
+    default_agent: DEFAULT_AGENT,
+    // The project-level floor, covering columns that carry no override of their
+    // own (To Do, Done) and any column added during a preview session.
+    default_model: PREVIEW_MODEL,
+    default_effort: PREVIEW_EFFORT,
+  });
   // Initialize the project DB (tables + default swimlanes) so it shows a real board.
   getProjectDb(project.id);
   // Pre-seed agent trust for the brand-new clone path BEFORE the board opens and any

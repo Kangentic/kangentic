@@ -71,13 +71,30 @@ const TRACE_RING_SIZE = 300;
 // visible history.
 const traceRing: RendererTraceEvent[] = [];
 
+/**
+ * `detail` may be a thunk, and MUST be one when building it costs anything.
+ *
+ * The dev gate below is inside the function, so a plain object argument is
+ * constructed by the caller before the call - in production too, where this whole
+ * function is a no-op. Two call sites in `useTerminal` were measuring the terminal
+ * (`getBoundingClientRect`, `.xterm-viewport` `clientWidth`) immediately after
+ * `fitAddon.fit()` wrote to the DOM, so every terminal mount in every build paid a
+ * forced synchronous reflow to populate a ring buffer that production never keeps.
+ * Passing a thunk defers that read behind the gate.
+ */
 export function traceTerminalRenderer(
   sessionId: string | null,
   event: string,
-  detail?: Record<string, unknown>,
+  detail?: Record<string, unknown> | (() => Record<string, unknown>),
 ): void {
   if (!__KANGENTIC_DEV__) return;
-  traceRing.push({ ts: Date.now(), source: 'renderer', sessionId, event, detail });
+  traceRing.push({
+    ts: Date.now(),
+    source: 'renderer',
+    sessionId,
+    event,
+    detail: typeof detail === 'function' ? detail() : detail,
+  });
   while (traceRing.length > TRACE_RING_SIZE) traceRing.shift();
 }
 
