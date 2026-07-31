@@ -12,6 +12,9 @@
  *   - `applyActivity()` patches a single row in place from the SESSION_ACTIVITY
  *     push, which already flows unbuffered and cross-project. This is the common
  *     case (an agent starting to wait on you) and it costs no round trip at all.
+ *   - `applyPeeks()` does the same for live terminal output (MONITOR_PEEK). Unlike
+ *     the other two this stream is subscribe-gated, because it is the only one
+ *     with a standing cost in main; see useMonitorPeekSubscription.
  */
 import { create } from 'zustand';
 import type {
@@ -26,6 +29,13 @@ import { reconcileMonitorRows } from './monitor-rows';
 
 /** Coalescing window for view-preference writes, so dragging a filter is one save. */
 const VIEW_PERSIST_DEBOUNCE_MS = 400;
+
+/** Value equality for a peek. At most a handful of short strings. */
+function peekTextEqual(left: readonly string[], right: readonly string[]): boolean {
+  if (left === right) return true;
+  if (left.length !== right.length) return false;
+  return left.every((line, index) => line === right[index]);
+}
 
 
 interface MonitorState {
@@ -56,6 +66,8 @@ interface MonitorState {
   loadSnapshot: () => Promise<void>;
   applySnapshot: (snapshot: MonitorSnapshot) => void;
   applyActivity: (sessionId: string, activity: ActivityState, reason: ActivityReason | null) => void;
+  /** Batch of changed output peeks from MONITOR_PEEK, keyed by session id. */
+  applyPeeks: (peeks: Record<string, string[]>) => void;
   setView: (patch: Partial<MonitorView>) => void;
   hydrateView: (view: Partial<MonitorView> | undefined) => void;
 }
@@ -179,6 +191,35 @@ function createMonitorStore() {
       const next = [...state.rows];
       next[index] = { ...next[index], activity, activityReason: reason };
       return { rows: next };
+    }),
+
+    /**
+     * Patch live output peeks onto their rows, same contract as `applyActivity`:
+     * the snapshot decides WHICH sessions exist, so a peek for an unknown session
+     * is dropped rather than synthesizing a row.
+     *
+     * Arrives as a batch because main coalesces a sampling tick into one push.
+     * Returning `state` untouched when nothing matched keeps a push for
+     * sessions this renderer does not show (main broadcasts to every subscribed
+     * monitor) from re-rendering the list.
+     */
+    applyPeeks: (peeks) => set((state) => {
+      let next: MonitorSessionRow[] | null = null;
+      for (const [sessionId, lines] of Object.entries(peeks)) {
+        const index = state.rows.findIndex((row) => row.sessionId === sessionId);
+        if (index === -1) continue;
+        const current = next ? next[index] : state.rows[index];
+        // Skip a push that says nothing new. Main change-gates per TRACKER, not
+        // per renderer, so a second monitor window receives the other's
+        // subscribe-time seed as a full re-send of text it already has. Without
+        // this every one of those rows gets a new object identity, which defeats
+        // `React.memo` on the cards and re-runs the filter/sort/group memo for a
+        // frame that renders identically.
+        if (peekTextEqual(current.outputPeek, lines)) continue;
+        if (!next) next = [...state.rows];
+        next[index] = { ...next[index], outputPeek: lines };
+      }
+      return next ? { rows: next } : state;
     }),
 
     /**

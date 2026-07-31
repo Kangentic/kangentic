@@ -2102,17 +2102,6 @@ export type MonitorSort = 'longest-running' | 'recently-started';
 
 /** One live or recently-finished agent session, resolved across projects. */
 /**
- * How much of a task description a monitor row carries.
- *
- * The card renders it `line-clamp-3`, so only the first three lines are ever
- * visible. The cap is sized to comfortably exceed that at the widest card the grid
- * produces, with headroom because `stripMarkdown` only ever shortens the text it is
- * given. Everything past it is invisible weight on a payload that is re-sent to
- * every subscriber on every push.
- */
-export const MONITOR_DESCRIPTION_EXCERPT_LIMIT = 600;
-
-/**
  * The subset of `SessionEvent` a monitor row carries.
  *
  * The row is re-sent on every snapshot push, and the renderer reads only the detail
@@ -2132,19 +2121,41 @@ export interface MonitorSessionRow {
   projectName: string;
   taskId: string;
   taskTitle: string;
-  /** Task description EXCERPT, capped at `MONITOR_DESCRIPTION_EXCERPT_LIMIT` by the
-   *  aggregator. Rendered through `stripMarkdown` + line-clamp, exactly as the board
-   *  card does, so the monitor card reads as the same object.
+  /**
+   * The last few meaningful rendered lines of this session's terminal.
    *
-   *  Deliberately not the full text: this row is re-sent to every subscriber on
-   *  every debounced snapshot push, and task descriptions run to several KB of
-   *  markdown, so shipping them whole made each push pay for text no surface can
-   *  display. `monitor.getTaskDetail` serves the complete description on demand. */
-  taskDescription: string | null;
+   * This REPLACED the task-description excerpt the card used to show. A
+   * description is the same text every time you look at it and says nothing about
+   * what the agent is doing now, which is the one question this screen exists to
+   * answer; it also left a Command Terminal's card blank, since a terminal has no
+   * task. The peek is live, varies per session, and is the same for both kinds of
+   * row. `monitor.getTaskDetail` still serves the full description on demand for
+   * the detail view.
+   *
+   * Seeded here so a snapshot is self-consistent (and so an idle session that
+   * never emits still has one), then patched in place between snapshots by the
+   * MONITOR_PEEK push. Extraction rule: `src/main/pty/buffer/output-peek.ts`.
+   */
+  outputPeek: string[];
   /** The task's #N ticket number; null when the task row could not be resolved. */
   displayId: number | null;
-  /** Swimlane (column) name the task currently sits in. */
+  /** Swimlane (column) name the task currently sits in. Empty for a Command
+   *  Terminal, which is not on the board at all. */
   columnName: string;
+  /**
+   * Branch a Command Terminal is working on. Null for a task agent.
+   *
+   * The card's eyebrow is a breadcrumb answering "where is this session
+   * working". For a task that is its column; a terminal has none, which left the
+   * slot blank and the title sitting under a gap. The branch is the honest
+   * analogue: it is a location rather than a label, and it is what the Command
+   * Terminal's own window header shows via its branch picker.
+   *
+   * Deliberately NOT populated for task agents even though a worktree-backed task
+   * has a branch too. Its column is the more useful breadcrumb there, and the
+   * eyebrow only has room for one.
+   */
+  commandTerminalBranch: string | null;
   labels: string[];
   prUrl: string | null;
   prNumber: number | null;
@@ -3891,6 +3902,14 @@ export interface SpawnSessionInput {
   resuming?: boolean;
   /** True for ephemeral command terminal sessions. */
   transient?: boolean;
+  /** For a transient session, the renderer's durable Command Terminal window slot
+   *  (`slot-1`, ...). Recorded so the Agent Monitor names the terminal exactly as
+   *  its own window title bar does. See src/shared/command-terminal-name.ts. */
+  commandTerminalSlot?: string | null;
+  /** For a transient session, the branch it was actually spawned on (the RESOLVED
+   *  branch, after any checkout fallback). Recorded so the monitor can tell you
+   *  where a terminal is working, the way a task row names its column. */
+  commandTerminalBranch?: string | null;
   /** Agent-specific parser for status/event output. Falls back to ClaudeStatusParser if omitted. */
   agentParser?: AgentParser;
   /** Human-readable agent name for diagnostic logs (e.g. "claude", "gemini").
@@ -3926,6 +3945,11 @@ export interface SpawnSessionInput {
 
 export interface SpawnTransientSessionInput {
   projectId: string;
+  /** The window's durable slot id (`slot-1`, `slot-2`, ...). Slots are allocated by
+   *  the renderer's Command Terminal layer, so main cannot derive this; it is sent
+   *  purely so the Agent Monitor can name the terminal the same way its window
+   *  does. Optional so an older caller still spawns, just unnumbered. */
+  slot?: string;
   /** Branch to checkout before spawning. If omitted, uses the project's default base branch. */
   branch?: string;
   /** See `SpawnSessionInput.cols`/`rows` - the same seed-the-real-grid escape hatch. */
@@ -4654,6 +4678,14 @@ export interface ElectronAPI {
      *  retitled or moved). Live activity does NOT come through here - it rides the
      *  existing unbuffered SESSION_ACTIVITY push and is patched into rows in place. */
     onChanged: (callback: (snapshot: MonitorSnapshot) => void) => () => void;
+    /** Start or stop the live output-peek stream for THIS renderer. Subscribe-gated
+     *  because it is the one monitor push with a standing cost in main (a PTY
+     *  output listener plus a sampling timer); a closed monitor costs nothing. */
+    setPeekSubscribed: (subscribed: boolean) => Promise<void>;
+    /** Changed output peeks, keyed by session id. Only sessions whose visible text
+     *  actually changed are sent, so a repainting TUI whose content is unchanged
+     *  produces no traffic. Patched onto rows in place, like activity. */
+    onPeek: (callback: (peeks: Record<string, string[]>) => void) => () => void;
   };
 
   /**

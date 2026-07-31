@@ -407,6 +407,13 @@ const api: ElectronAPI = {
       ipcRenderer.on(IPC.MONITOR_CHANGED, handler);
       return () => ipcRenderer.removeListener(IPC.MONITOR_CHANGED, handler);
     },
+    setPeekSubscribed: (subscribed: boolean) =>
+      ipcRenderer.invoke(IPC.MONITOR_SET_PEEK_SUBSCRIBED, subscribed),
+    onPeek: (callback: (peeks: Record<string, string[]>) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, peeks: Record<string, string[]>) => callback(peeks);
+      ipcRenderer.on(IPC.MONITOR_PEEK, handler);
+      return () => ipcRenderer.removeListener(IPC.MONITOR_PEEK, handler);
+    },
   },
 
   // Task-detail ownership. Machine-global arbitration of WHICH RENDERER hosts a

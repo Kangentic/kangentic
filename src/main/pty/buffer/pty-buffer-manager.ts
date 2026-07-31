@@ -1,8 +1,16 @@
 import { findSafeStartIndex } from './scrollback-utils';
 import { HeadlessFrameBuffer } from './headless-frame';
+import { collectPeekLines, PEEK_LINE_COUNT } from './output-peek';
 import { traceTerminal, type RepaintSettleReason } from '../terminal-trace';
 
 const MAX_SCROLLBACK = 512 * 1024; // 512KB per session
+/**
+ * Already-scrolled rows the output peek reads above the viewport. Covers the
+ * case where the cursor sits near the top of a freshly-scrolled viewport and the
+ * lines worth showing have just passed above it. Small on purpose: the peek
+ * scans upward only until it has collected its handful of lines.
+ */
+const PEEK_SCROLLBACK_LOOKBACK_ROWS = 12;
 /**
  * Fallback grid rows for the headless parser when a caller omits the geometry.
  * The spawn path (session-spawn-flow) and resize path (session-manager) supply
@@ -775,6 +783,37 @@ export class PtyBufferManager {
     const state = this.buffers.get(sessionId);
     if (!state) return '';
     return state.headless.serialize();
+  }
+
+  /**
+   * The last few meaningful rendered lines, for the Agent Monitor's output peek.
+   * Empty array for an unknown session.
+   *
+   * SYNCHRONOUS, and reads the PARSED grid rather than the byte ring. Both
+   * matter. Sync keeps it callable from a sampling timer without the 400ms
+   * repaint-settle wait that `SessionManager.getSerializedFrame` takes; parsed
+   * keeps it correct for a fullscreen TUI, whose raw byte tail is repaint
+   * sequences rather than readable text (see the reverted slice-at-last-clear
+   * note on getScrollback above).
+   *
+   * The line-selection rule lives in `output-peek.ts`, designed against captured
+   * real grids; this method only supplies the rows.
+   */
+  getOutputPeek(sessionId: string, count: number = PEEK_LINE_COUNT): string[] {
+    const state = this.buffers.get(sessionId);
+    if (!state) return [];
+    const headless = state.headless;
+    // Reads row by row rather than snapshotting the viewport, so the walk can
+    // stop as soon as it has enough lines instead of always reading to the
+    // floor. On a dense TUI grid that still touches most rows above the cursor
+    // (see the count pinned in tests/unit/output-peek.test.ts); the win is
+    // largest on a mostly-blank grid.
+    return collectPeekLines(
+      (row) => headless.lineAt(row),
+      headless.cursorRow(),
+      count,
+      headless.peekFloorRow(PEEK_SCROLLBACK_LOOKBACK_ROWS),
+    );
   }
 
   removeSession(sessionId: string): void {

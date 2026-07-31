@@ -40,12 +40,18 @@ describe('POP_OUT_SURFACES fan-out declarations', () => {
   /**
    * A channel a surface subscribes to but does not declare here is dropped
    * SILENTLY for pop-out windows (windowsForChannel filters on this list), so the
-   * detached surface just never updates. These pin the monitor's two live wires.
+   * detached surface just never updates. These pin the monitor's three live
+   * wires - MONITOR_PEEK included, even though (unlike the other two) it is
+   * subscribe-gated rather than an unconditional push: the detached window
+   * subscribes on its own behalf, so main is already fanning to it by the time
+   * rows exist, and dropping this line would silently freeze every card's
+   * output peek in a detached monitor.
    */
   it('the monitor declares the channels its surface subscribes to', () => {
     const channels = POP_OUT_SURFACES.monitor.channels;
     expect(channels).toContain(IPC.MONITOR_CHANGED);
     expect(channels).toContain(IPC.SESSION_ACTIVITY);
+    expect(channels).toContain(IPC.MONITOR_PEEK);
     expect(channels).toContain(IPC.CONFIG_CHANGED);
   });
 

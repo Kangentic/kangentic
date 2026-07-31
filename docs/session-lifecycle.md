@@ -359,6 +359,13 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   and rode the full ceiling out - a deterministic ~415ms added to that open. A resize that arrives
   before the PTY exists (the renderer mounts before the auto-resume spawn lands) is stashed and
   applied at spawn, so the PTY starts at the fitted size and no corrective resize is needed.
+  One reader deliberately OPTS OUT of this settle: `SessionManager.getOutputPeek`, which backs the
+  Agent Monitor's live output peek. The settle exists so a captured frame becomes the terminal the
+  user then looks at; a peek is a few throwaway lines resampled twice a second, so a mid-repaint
+  sample self-corrects on the next tick, while awaiting the settle would cost up to the ceiling on
+  every sample and force a synchronous read to become async. It reads the parsed grid row by row
+  (`HeadlessFrameBuffer.cursorRow` / `lineAt`) rather than serializing a frame, and the line
+  selection lives in `src/main/pty/buffer/output-peek.ts`.
 - **DEC private mode and alt-screen re-assert on replay.** `xterm.reset()` on the renderer wipes
   every DEC private mode xterm is tracking, and the original mode-set bytes usually scroll out of
   the 512KB scrollback window on a long-running session. `PtyBufferManager` tracks DEC private

@@ -115,6 +115,11 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
       statusOutputPath,
       eventsOutputPath,
       transient: true,
+      commandTerminalSlot: input.slot ?? null,
+      // The RESOLVED branch, not `input.branch`: the checkout above falls back to
+      // whatever is actually checked out when the requested branch cannot be
+      // switched to, and the monitor must report where the terminal really is.
+      commandTerminalBranch: branch,
       agentParser: adapter,
       agentName: adapter.name,
       exitSequence: adapter.getExitSequence?.() ?? ['\x03'],

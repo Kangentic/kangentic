@@ -14,7 +14,7 @@ import { getProgressColor } from '../../utils/progress-color';
  * carries the same clamped value), so this component stays presentational.
  */
 export function ContextUsageFooter({
-  modelName, percent, windowKnown = true, testId = 'usage-bar', className = '',
+  modelName, percent, windowKnown = true, testId = 'usage-bar', className = '', divider = true,
 }: {
   /** Human model name (e.g. "Opus 5"). Never the raw model id - users don't read those. */
   modelName: string;
@@ -23,11 +23,27 @@ export function ContextUsageFooter({
   windowKnown?: boolean;
   testId?: string;
   className?: string;
+  /**
+   * Draw the rule above the footer. Defaults on, which is what the board's
+   * TaskCard needs: nothing else there marks where its content ends.
+   *
+   * The monitor card turns it off. Its peek sits in a shaded well whose own
+   * bottom edge already closes the content region, so the rule became a second,
+   * weaker boundary saying the same thing - and on a card with no label pills the
+   * two land within a few pixels of each other. A prop rather than a fork of this
+   * component, because the whole point of sharing it is that the two footers
+   * cannot drift apart on the things that matter (tone, spacing, the track).
+   */
+  divider?: boolean;
 }) {
   const clamped = Math.min(Math.max(percent, 0), 100);
+  // `pt-2` exists to clear the RULE, so it goes with it. Left in, a divider-less
+  // footer sat 16px below the content above it while every other gap on the card
+  // is 6-8px, which read as a missing element rather than as breathing room.
+  const spacing = divider ? 'mt-2 pt-2 border-t border-edge' : 'mt-2';
   return (
     <div
-      className={`mt-2 pt-2 border-t border-edge ${className}`}
+      className={`${spacing} ${className}`}
       data-testid={testId}
       data-context-window={windowKnown ? undefined : 'unknown'}
     >

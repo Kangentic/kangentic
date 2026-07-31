@@ -42,6 +42,7 @@ import { useToastStore } from '../../stores/toast-store';
 import { resolveShortcutCommand } from '../../../shared/template-vars';
 import { ICON_REGISTRY } from '../../utils/swimlane-icons';
 import { resolveProjectRoot } from '../../../shared/git-utils';
+import { commandTerminalTitle } from '../../../shared/command-terminal-name';
 import { isActive, requiresUserInteraction } from '../../../shared/activity-state';
 import { getIsHmrReload } from '../../utils/hmr-flag';
 import { useLayerStore } from '../../window-manager';
@@ -186,6 +187,12 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
   const transientLabel = useSessionStore((state) =>
     projectId ? state.transientSessions[transientKey(projectId, slot)]?.label ?? null : null,
   );
+  // The auto-derived label (summarized from the first prompt) wins when it
+  // exists; until then the slot number is what makes two terminals tellable
+  // apart, since every other fact in this header (agent, model, branch, cwd) is
+  // identical across a project's terminals by construction. `commandTerminalTitle`
+  // is shared with the Agent Monitor so both surfaces print the same name.
+  const windowTitle = transientLabel ?? commandTerminalTitle(slot);
 
   // Spawn this slot's transient session on mount, or reattach to an existing one
   // (the PTY survives a layer hide, so reopening reattaches instead of
@@ -390,10 +397,10 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
           <span
             ref={titleSpanRef}
             className="text-base font-semibold text-fg truncate"
-            title={transientLabel ?? 'Command Terminal'}
+            title={windowTitle}
             data-testid="command-bar-label"
           >
-            {transientLabel ?? 'Command Terminal'}
+            {windowTitle}
           </span>
         </div>
 

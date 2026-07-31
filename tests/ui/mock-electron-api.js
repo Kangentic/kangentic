@@ -3340,6 +3340,30 @@
           if (index >= 0) listeners.splice(index, 1);
         };
       },
+      // Live output peek. Subscribe-gated in production, so the call log lets a
+      // spec assert that a mounted monitor subscribes and an unmounted one stops
+      // (the property that keeps main from watching PTY output for nobody).
+      __peekSubscribeCalls: [],
+      setPeekSubscribed: function (subscribed) {
+        window.electronAPI.monitor.__peekSubscribeCalls.push(subscribed);
+        return Promise.resolve();
+      },
+      // Push peeks from a spec with window.__mockFireMonitorPeek({ 's1': ['line'] }).
+      onPeek: function (callback) {
+        if (!window.__mockMonitorPeekListeners) window.__mockMonitorPeekListeners = [];
+        window.__mockMonitorPeekListeners.push(callback);
+        if (!window.__mockFireMonitorPeek) {
+          window.__mockFireMonitorPeek = function (peeks) {
+            var listeners = (window.__mockMonitorPeekListeners || []).slice();
+            for (var i = 0; i < listeners.length; i++) { listeners[i](peeks); }
+          };
+        }
+        return function () {
+          var listeners = window.__mockMonitorPeekListeners || [];
+          var index = listeners.indexOf(callback);
+          if (index >= 0) listeners.splice(index, 1);
+        };
+      },
     },
 
     clipboard: {

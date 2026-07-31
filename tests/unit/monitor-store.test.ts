@@ -13,7 +13,9 @@
  *  - setView merges rather than replaces, and persists through the GLOBAL config
  *    merge (which is what makes the view survive a crash, not only a clean close),
  *  - applyActivity patches a known row in place and DROPS a push for a session
- *    the snapshot has not carried yet.
+ *    the snapshot has not carried yet,
+ *  - applyPeeks does the same for a BATCH of live output peeks, and preserves the
+ *    rows array identity when a push names no session this renderer shows.
  *
  * window.electronAPI is stubbed globally before importing the store, mirroring
  * mobile-store.test.ts's pattern for a Node (non-jsdom) test environment.
@@ -49,9 +51,10 @@ function makeRow(overrides: Partial<MonitorSessionRow> = {}): MonitorSessionRow 
     projectName: 'kangentic',
     taskId: 'task-1',
     taskTitle: 'Fix PTY capture race',
-    taskDescription: null,
+    outputPeek: [],
     displayId: 142,
     columnName: 'Tests',
+    commandTerminalBranch: null,
     labels: [],
     prUrl: null,
     prNumber: null,
@@ -423,6 +426,66 @@ describe('monitor-store', () => {
 
       expect(useMonitorStore.getState().rows.map((row) => row.sessionId)).toEqual(['from-attach']);
       expect(useMonitorStore.getState().snapshotGeneration).toBe(generationAfterAttach);
+    });
+  });
+
+  describe('applyPeeks', () => {
+    it('patches several rows from one batch without a refetch', () => {
+      // Main coalesces a sampling tick into one push, so a batch routinely
+      // carries more than one session.
+      useMonitorStore.setState({ rows: [makeRow({ sessionId: 'a' }), makeRow({ sessionId: 'b' })] });
+      useMonitorStore.getState().applyPeeks({ a: ['first'], b: ['second', 'third'] });
+
+      const { rows } = useMonitorStore.getState();
+      expect(rows[0].outputPeek).toEqual(['first']);
+      expect(rows[1].outputPeek).toEqual(['second', 'third']);
+      expect(getSnapshotMock).not.toHaveBeenCalled();
+    });
+
+    it('patches only the sessions it names, leaving the rest untouched', () => {
+      useMonitorStore.setState({
+        rows: [makeRow({ sessionId: 'a', outputPeek: ['keep me'] }), makeRow({ sessionId: 'b' })],
+      });
+      useMonitorStore.getState().applyPeeks({ b: ['changed'] });
+
+      const { rows } = useMonitorStore.getState();
+      expect(rows[0].outputPeek).toEqual(['keep me']);
+      expect(rows[1].outputPeek).toEqual(['changed']);
+    });
+
+    it('returns the SAME rows array when a push repeats what the row already has', () => {
+      // Main change-gates per TRACKER, not per renderer, so a second monitor
+      // window receives the other's subscribe-time seed as a full re-send. Taking
+      // it would hand every row a new identity, defeating React.memo on the cards
+      // and re-running the filter/sort/group memo to render an identical frame.
+      const rows = [makeRow({ sessionId: 'a', outputPeek: ['same', 'lines'] })];
+      useMonitorStore.setState({ rows });
+      useMonitorStore.getState().applyPeeks({ a: ['same', 'lines'] });
+      expect(useMonitorStore.getState().rows).toBe(rows);
+    });
+
+    it('still applies a partial batch when only some entries are new', () => {
+      useMonitorStore.setState({
+        rows: [
+          makeRow({ sessionId: 'a', outputPeek: ['unchanged'] }),
+          makeRow({ sessionId: 'b', outputPeek: ['stale'] }),
+        ],
+      });
+      useMonitorStore.getState().applyPeeks({ a: ['unchanged'], b: ['fresh'] });
+
+      const { rows } = useMonitorStore.getState();
+      expect(rows[0].outputPeek).toEqual(['unchanged']);
+      expect(rows[1].outputPeek).toEqual(['fresh']);
+    });
+
+    it('returns the SAME rows array when nothing matched', () => {
+      // Main broadcasts to every subscribed monitor, so a push can legitimately
+      // name sessions this renderer does not show. Returning a new array would
+      // re-render the whole list for a batch that changed nothing here.
+      const rows = [makeRow({ sessionId: 'a' })];
+      useMonitorStore.setState({ rows });
+      useMonitorStore.getState().applyPeeks({ unknown: ['line'] });
+      expect(useMonitorStore.getState().rows).toBe(rows);
     });
   });
 });

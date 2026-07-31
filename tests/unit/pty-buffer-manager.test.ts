@@ -1418,4 +1418,67 @@ describe('PtyBufferManager', () => {
       expect(await manager.getSerializedFrame('nonexistent')).toBe('');
     });
   });
+
+  describe('getOutputPeek (live PTY-grid-to-peek wiring)', () => {
+    // Real timers, mirroring the getSerializedFrame block above: the headless
+    // parser drains its write buffer on a macrotask. getOutputPeek itself is
+    // deliberately SYNCHRONOUS and does not flush (see its doc comment on
+    // PtyBufferManager) - in production it self-heals on the next 500ms sample
+    // tick - so each test below forces the flush via getSerializedFrame (the
+    // only public path to HeadlessFrameBuffer's private flush()) and discards
+    // the serialized string. That is not a copy-paste mistake: it is the same
+    // flush barrier the getSerializedFrame tests above rely on, reused here
+    // because both methods read the SAME underlying headless parser instance.
+    it('returns the real parsed-grid tail lines after feeding text through onData', async () => {
+      const { manager } = createManager();
+
+      manager.onData(SESSION, 'alpha\r\nbravo\r\ncharlie\r\n');
+      await manager.getSerializedFrame(SESSION);
+
+      expect(manager.getOutputPeek(SESSION)).toEqual(['alpha', 'bravo', 'charlie']);
+
+      manager.removeSession(SESSION);
+    });
+
+    it('excludes the trailing prompt line the cursor currently sits on', async () => {
+      const { manager } = createManager();
+
+      manager.onData(SESSION, 'alpha\r\nbravo\r\ncharlie\r\nPS C:\\project> ');
+      await manager.getSerializedFrame(SESSION);
+
+      const peek = manager.getOutputPeek(SESSION);
+      expect(peek).toEqual(['alpha', 'bravo', 'charlie']);
+      expect(peek.join('\n')).not.toContain('PS C:');
+
+      manager.removeSession(SESSION);
+    });
+
+    it('honors an explicit count, keeping the newest lines', async () => {
+      const { manager } = createManager();
+
+      manager.onData(SESSION, 'alpha\r\nbravo\r\ncharlie\r\ndelta\r\n');
+      await manager.getSerializedFrame(SESSION);
+
+      expect(manager.getOutputPeek(SESSION, 2)).toEqual(['charlie', 'delta']);
+
+      manager.removeSession(SESSION);
+    });
+
+    it('returns [] for a session that has produced no output yet', async () => {
+      const { manager } = createManager();
+
+      await manager.getSerializedFrame(SESSION);
+      expect(manager.getOutputPeek(SESSION)).toEqual([]);
+
+      manager.removeSession(SESSION);
+    });
+
+    it('returns [] for a session id the manager has never heard of', () => {
+      const { manager } = createManager();
+
+      expect(manager.getOutputPeek('nonexistent-session')).toEqual([]);
+
+      manager.removeSession(SESSION);
+    });
+  });
 });

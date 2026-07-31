@@ -29,7 +29,7 @@ import type {
   SessionEvent,
   SessionUsage,
 } from '../../shared/types';
-import { MONITOR_DESCRIPTION_EXCERPT_LIMIT } from '../../shared/types';
+import { commandTerminalTitle } from '../../shared/command-terminal-name';
 import { getProjectDb } from '../db/database';
 import { SessionRepository } from '../db/repositories/session-repository';
 import { getProjectRepos } from '../ipc/helpers/project-repos';
@@ -123,19 +123,6 @@ function lastEventOf(events: SessionEvent[] | undefined): MonitorLastEvent | nul
 }
 
 /**
- * Cap a task description to what the card can actually show.
- *
- * Descriptions run to several KB of markdown and the card clamps to three lines,
- * so the tail was crossing the IPC boundary on every push to be thrown away by
- * the renderer. The full text stays available through `monitor:getTaskDetail`.
- */
-function descriptionExcerpt(description: string | null | undefined): string | null {
-  if (!description) return null;
-  if (description.length <= MONITOR_DESCRIPTION_EXCERPT_LIMIT) return description;
-  return description.slice(0, MONITOR_DESCRIPTION_EXCERPT_LIMIT);
-}
-
-/**
  * Build the full cross-project snapshot. Synchronous by design: every read is
  * either an in-memory cache or an indexed lookup against an already-open DB
  * handle, so there is no await to serialize against a concurrent board mutation.
@@ -194,10 +181,15 @@ export function buildMonitorSnapshot(context: IpcContext): MonitorSnapshot {
       projectId: managed.projectId,
       projectName: project.projectName,
       taskId: managed.taskId,
-      taskTitle: task?.title ?? 'Command Terminal',
-      taskDescription: descriptionExcerpt(task?.description),
+      taskTitle: task?.title ?? commandTerminalTitle(managed.commandTerminalSlot),
+      // Seeded on every snapshot so the row is self-consistent and an idle session
+      // that never emits still shows something. Live updates between snapshots
+      // ride MONITOR_PEEK. A synchronous O(rows) grid read, negligible next to the
+      // two indexed DB lookups this loop already does per session.
+      outputPeek: sessionManager.getOutputPeek(managed.id),
       displayId: task?.display_id ?? null,
       columnName: task ? project.swimlaneNames.get(task.swimlane_id) ?? '' : '',
+      commandTerminalBranch: managed.commandTerminalBranch,
       labels: task?.labels ?? [],
       prUrl: task?.pr_url ?? null,
       prNumber: task?.pr_number ?? null,

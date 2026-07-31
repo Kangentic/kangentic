@@ -15,6 +15,7 @@ import { CountBadge } from '../CountBadge';
 import { MonitorTable } from './MonitorTable';
 import { MonitorRowContextMenu } from './MonitorRowContextMenu';
 import { requestMonitorDetail } from './MonitorDetailLayer';
+import { useMonitorPeekSubscription } from './useMonitorPeekSubscription';
 import { bucketOf, filterRows, groupRows, sortRows, toRenderUnits } from './monitor-view-model';
 
 /**
@@ -67,6 +68,11 @@ export function MonitorBody() {
   );
   const setView = useMonitorStore((state) => state.setView);
   const closeMonitor = useMonitorStore((state) => state.close);
+
+  // Live terminal output for every row, for as long as this body is mounted.
+  // Mounted HERE rather than in the page shell so both hosts (in-app overlay and
+  // detached window) get it from the one component they share.
+  useMonitorPeekSubscription();
 
   // Memoized so LabelPills' own React.memo is not defeated by a fresh object
   // identity on every render (the trap TaskCard documents).
@@ -352,6 +358,13 @@ export function MonitorBody() {
                          3-column template applied made that card occupy a third
                          of the width and stranded ~1900px of empty space beside
                          it on a wide screen. */
+                      /* Cards STRETCH to the row height (the grid default). Letting
+                         them size to content instead was tried and reverted: ragged
+                         bottom edges across a row read as untidy, and the footer's
+                         context bars stopped forming a scannable line. The
+                         whitespace that stretching used to bank above the footer is
+                         gone anyway, because the peek well now grows to absorb it
+                         (see OutputPeek). */
                       <div
                         className={`grid gap-2 pb-2 ${view.layout === 'cards'
                           ? 'grid-cols-1 @[850px]:grid-cols-2 @[1300px]:grid-cols-3 @[1750px]:grid-cols-4 @[2200px]:grid-cols-5'

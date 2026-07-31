@@ -199,6 +199,10 @@ export function createTransientSessionSlice(preserved: {
       if (!currentProject) throw new Error('No project is currently open');
       const result = await window.electronAPI.sessions.spawnTransient({
         projectId: currentProject.id,
+        // Slots are allocated here, so main cannot derive one. It is forwarded
+        // purely so the Agent Monitor names this terminal the same way its own
+        // window title bar does.
+        slot,
         branch,
         cols: grid?.cols,
         rows: grid?.rows,

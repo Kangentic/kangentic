@@ -32,11 +32,11 @@ import { useKeybinding } from '../../hooks/useKeybinding';
 import { getIsHmrReload } from '../../utils/hmr-flag';
 import { CommandTerminalLayerProvider } from './command-terminal-context';
 import { planCommandWindowReconciliation } from './command-window-reconcile';
+import { commandTerminalTitle } from '../../../shared/command-terminal-name';
 
 /** The single command-terminal slot anchor (Phase 1 is one window; Phase 2 adds
  *  more slots). The on-disk layout is anchored by this stable id, not a task. */
 const COMMAND_SLOT_ID = 'slot-1';
-const COMMAND_WINDOW_TITLE = 'Command Terminal';
 
 /** A constant sentinel project id: the command layout is GLOBAL, so the shared
  *  saver (which keys by project) always persists. */
@@ -88,7 +88,7 @@ function openCommandTerminalWindowInSlot(slot: string): void {
     kind: 'command-terminal',
     anchor: slot,
     sessionId: null,
-    title: COMMAND_WINDOW_TITLE,
+    title: commandTerminalTitle(slot),
     // Always flat, not just on restore. A terminal-hosting window must never
     // animate in: the entrance is a `scale()` transform, which does NOT change
     // the border box (so ResizeObserver stays silent) but DOES change
@@ -206,7 +206,7 @@ function useEnsureCommandWindow(): void {
         kind: 'command-terminal',
         anchor: COMMAND_SLOT_ID,
         sessionId: null,
-        title: COMMAND_WINDOW_TITLE,
+        title: commandTerminalTitle(COMMAND_SLOT_ID),
         // Flat, for the same fit-correctness reason as the spawn path above.
         skipEnterAnimation: true,
       });

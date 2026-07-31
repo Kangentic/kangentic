@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { CirclePause, Check, SquareTerminal } from 'lucide-react';
+import { CirclePause, Check } from 'lucide-react';
 import type { MonitorSessionRow } from '../../../shared/types';
 import { ActivityMark } from '../ActivityMark';
 import { DataTable, type DataTableColumn } from '../DataTable';
@@ -29,13 +29,28 @@ function StateCell({ row }: { row: MonitorSessionRow }) {
   // Switch on the BUCKET, not a second derivation. `bucketOf` already decides
   // which section and summary count this row lands in, and re-deriving the glyph
   // from `isWorking` disagreed with it: a running session that has not reported
-  // activity yet (a freshly spawned agent, or a Command Terminal, which has no
-  // activity engine at all) buckets as `working` but fails `isActive`, so it was
-  // counted under Active while its own row drew the paused glyph.
+  // activity yet buckets as `working` but fails `isActive`, so it was counted
+  // under Active while its own row drew the paused glyph.
   // The two ACTIVITY states use the shared branding marks, the same vocabulary a
   // board card shows; only the non-activity states (finished, paused) stay lucide.
-  if (bucket === 'needs-you') return <ActivityMark mark="agent-idle" size={15} className="text-attention" aria-label={title} />;
-  if (bucket === 'working') return <ActivityMark mark="agent-working" size={15} className="text-active" aria-label={title} />;
+  if (bucket === 'needs-you' || bucket === 'working') {
+    const needsYou = bucket === 'needs-you';
+    // Terminal marks for a Command Terminal, mirroring MonitorCard: this glyph is
+    // what distinguishes a terminal from a task agent, so it replaced the separate
+    // lucide SquareTerminal that used to sit in the Task cell. One computed slot,
+    // never conditional siblings (see MonitorCard's StateGlyph for why).
+    const mark = row.isCommandTerminal
+      ? (needsYou ? 'terminal-idle' : 'terminal-working')
+      : (needsYou ? 'agent-idle' : 'agent-working');
+    return (
+      <ActivityMark
+        mark={mark}
+        size={15}
+        className={needsYou ? 'text-attention' : 'text-active'}
+        aria-label={title}
+      />
+    );
+  }
   if (bucket === 'finished') return <Check size={14} className="text-fg-disabled" aria-label="Finished" />;
   return <CirclePause size={14} className="text-fg-faint" aria-label="Paused" />;
 }
@@ -69,9 +84,6 @@ export function MonitorTable({
       sortValue: (row) => row.taskTitle,
       render: (row) => (
         <span className="flex items-center gap-1.5 min-w-0">
-          {row.isCommandTerminal && (
-            <SquareTerminal size={13} className="shrink-0 text-fg-muted" aria-hidden />
-          )}
           {row.displayId !== null && (
             <span className="shrink-0 font-mono text-xs text-fg-muted">#{row.displayId}</span>
           )}

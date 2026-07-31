@@ -135,6 +135,10 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
       // Activity is patched into rows in place without a refetch, so the detached
       // window needs it directly - it never round-trips through the main window.
       IPC.SESSION_ACTIVITY,
+      // The output peek is patched in place for the same reason. Unlike the
+      // pushes above it is subscribe-gated, and this window subscribes on its own
+      // behalf, so main is already fanning to it by the time rows exist.
+      IPC.MONITOR_PEEK,
       IPC.SESSION_STATUS,
       IPC.SESSION_EXIT,
       IPC.CONFIG_CHANGED,

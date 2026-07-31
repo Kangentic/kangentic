@@ -16,6 +16,7 @@
  */
 
 import type { SessionStatus } from '../../../shared/types';
+import { commandTerminalSlotNumber } from '../../../shared/command-terminal-name';
 
 /** A window's identity for reconciliation: its store id and its durable slot
  *  anchor (`slot-N`). Structural so a real `ManagedWindow` maps in cheaply. */
@@ -49,11 +50,11 @@ export interface CommandWindowReconcilePlan {
   openSlots: string[];
 }
 
-/** Parse the numeric suffix of a `slot-N` id for ordering; unparseable ids sort
- *  last (stable, deterministic). */
+/** Numeric suffix of a `slot-N` id for ordering; unparseable ids sort last
+ *  (stable, deterministic). Parsing itself is shared with the title formatter so
+ *  there is one definition of what a slot id looks like. */
 function slotNumber(slot: string): number {
-  const match = /^slot-(\d+)$/.exec(slot);
-  return match ? Number(match[1]) : Number.POSITIVE_INFINITY;
+  return commandTerminalSlotNumber(slot) ?? Number.POSITIVE_INFINITY;
 }
 
 /** Plan the per-project window reconciliation. See the module header for intent.

@@ -660,6 +660,7 @@ The Command Terminal provides quick, ephemeral access to Claude Code without cre
 - Spawns Claude Code at the project root on the configured default base branch
 - It opens as a **window** over a slight backdrop blur: drag it by the header, resize it from any edge or corner, maximize / restore it (double-click the header or use the maximize button), and snap it to a screen half or full screen (Windows-style). The layout (size, position, maximized state) **persists globally** across all projects and app restarts.
 - **Run more than one at once.** While the layer is open, a second terminal icon (with a `+` in its center) appears in the title bar just to the left of the main terminal icon - click it to open another terminal (up to four); it disables once you hit the cap. New terminals split into the current window's footprint (side by side, keeping the size you set) so you can keep two ad-hoc tasks cooking and glance between them; drag the seam to rebalance, or maximize one to focus it.
+- **Each window is numbered.** A terminal titles itself `Command Terminal 1`, `Command Terminal 2`, and so on, from its durable window slot - so two side-by-side terminals are tellable apart, and the number stays put when a sibling opens or closes. The same title identifies that terminal on its Agent Monitor row. Once you send a first prompt, the title becomes a short auto-derived name for what you asked instead.
 - **Layout controls (same as task windows).** The header's tile-layout button offers one-click snap (left / right / top / bottom) and tilings (columns / grid). When a terminal is tiled, a **pop-out** button floats it back out of the tile group. The title always wins the header's space: the quick-action pills (Commands, Project, Changes, shortcuts) fold into the `...` menu as the window narrows.
 - The **branch picker** in the header lets you switch branches - selecting a new branch kills that terminal's session and respawns it on the selected branch
 - A shimmer overlay shows while Claude Code initializes, then lifts to reveal the clean TUI
@@ -695,7 +696,9 @@ Open the monitor from the activity icon in the title bar or with `Mod+Shift+M`. 
 
 Each session shows its owning project and column, the task title and ticket number, live activity state, agent, model, effort and permission mode, how long it has been running, and what the agent is doing right now. Four tiles across the top count what needs you, what is active, what is paused, and how many projects have something live.
 
-Command Terminals (`Mod+Shift+P`) appear here too, marked with a terminal glyph. They are the one thing the board cannot show you - they belong to no task, so before now a Command Terminal left running in another project was invisible.
+Every card also carries a **live output peek**: the last few rendered lines of that session's terminal, in a shaded panel where a task description would otherwise sit. It updates in place as the agent works (at most twice a second, and only when the visible text actually changes), so you can see what a session is saying without opening it. The panel is a fixed height, so a card never resizes as messages land.
+
+Command Terminals (`Mod+Shift+P`) appear here too. They are the one thing the board cannot show you - they belong to no task, so before now a Command Terminal left running in another project was invisible. Each is titled `Command Terminal N` (matching the number on its own window), draws a terminal-shaped activity glyph rather than the agent one, and names the **branch** it is working on where a task card names its column.
 
 You choose how it looks, and the choice is remembered (including across a restart):
 

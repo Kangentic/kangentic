@@ -59,6 +59,52 @@ export class HeadlessFrameBuffer {
   }
 
   /**
+   * SYNCHRONOUS, per-row grid access for the Agent Monitor's output peek.
+   *
+   * Deliberately NOT `serialize()`. That builds a self-contained replay frame of
+   * the whole grid plus `SERIALIZED_SCROLLBACK_LINES` of history and is `async`,
+   * both of which are wrong here: the peek wants a handful of plain-text rows,
+   * sampled on a timer, from a synchronous context.
+   *
+   * Exposed one row at a time rather than as a snapshot array so the caller reads
+   * only what it uses. The peek walks up from the cursor and stops as soon as it
+   * has enough lines, so materializing the viewport would spend an `xterm`
+   * cell-walk and a string allocation on rows nobody looks at, for every session
+   * that produced output, twice a second.
+   *
+   * Unlike `serialize()` these do NOT flush first, so they can read a grid that
+   * is one macrotask behind the newest chunk (see `flush`). That is deliberate:
+   * the peek is sampled on a repeating timer and self-heals on the next tick, so
+   * paying a flush barrier per sample would buy nothing. Do not "fix" it by
+   * making these async.
+   */
+
+  /** Absolute buffer row the cursor sits on. */
+  cursorRow(): number {
+    const buffer = this.terminal.buffer.active;
+    return buffer.baseY + buffer.cursorY;
+  }
+
+  /**
+   * Lowest absolute row a peek should look at, bounding the walk on a grid that
+   * is mostly blank.
+   *
+   * @param lookbackRows Already-scrolled rows to allow ABOVE the viewport, for
+   *   the case where the cursor sits near the top of a freshly-scrolled viewport
+   *   and the interesting output has just passed above it.
+   */
+  peekFloorRow(lookbackRows: number): number {
+    const buffer = this.terminal.buffer.active;
+    return Math.max(0, buffer.baseY - Math.max(0, Math.floor(lookbackRows)));
+  }
+
+  /** Plain text of one absolute buffer row; empty string when the row is gone. */
+  lineAt(row: number): string {
+    const line = this.terminal.buffer.active.getLine(row);
+    return line ? line.translateToString(true) : '';
+  }
+
+  /**
    * Drain the write buffer. xterm parses a normal `write()` asynchronously (it
    * schedules the parse on a macrotask, not synchronously), so serializing
    * right after the last `write()` would snapshot a STALE grid. A zero-length

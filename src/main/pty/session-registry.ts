@@ -32,6 +32,31 @@ export interface ManagedSession {
   exitCode: number | null;
   resuming: boolean;
   transient: boolean;
+  /**
+   * For a transient (Command Terminal) session, the renderer's durable window
+   * SLOT id (`slot-1`, `slot-2`, ...). Undefined for task agents.
+   *
+   * Main has no way to derive this: slots are allocated by the Command Terminal
+   * window layer, so the renderer sends it at spawn. It exists here purely so the
+   * Agent Monitor can NAME a terminal the same way its own window title bar does.
+   * Deriving a monitor-side ordinal instead (say, by startedAt) produces a number
+   * that disagrees with the window as soon as a terminal is closed and its slot
+   * reused. See src/shared/command-terminal-name.ts.
+   */
+  commandTerminalSlot?: string | null;
+  /**
+   * For a transient session, the branch it was spawned on (the RESOLVED branch
+   * after any checkout fallback, not what the caller asked for). Undefined for
+   * task agents.
+   *
+   * Resolved once, at spawn. Switching THIS terminal's branch kills and respawns
+   * its PTY, so that path stays accurate - but Command Terminals all share the
+   * project's one working tree, so a SIBLING terminal spawning on another branch
+   * (or anyone running `git checkout` in the project root) moves this session's
+   * HEAD without updating this value. Treat it as "where this terminal started",
+   * not a live read of HEAD.
+   */
+  commandTerminalBranch?: string | null;
   /** Swimlane this session is isolated to (null = main session). Drives the Main/Isolated badge. */
   isolatedSwimlaneId?: string | null;
   /** Agent-reported session ID (the value passed to `--resume`). Known at
@@ -90,6 +115,13 @@ export interface ManagedSessionSummary {
   agentName: string | null;
   isolatedSwimlaneId: string | null;
   transient: boolean;
+  /** Command Terminal window slot (`slot-N`), so the monitor names a terminal the
+   *  same way its window does. Null for task agents and for a transient spawned
+   *  without one. */
+  commandTerminalSlot: string | null;
+  /** Branch a Command Terminal is running on, for the monitor card's eyebrow.
+   *  Null for task agents. */
+  commandTerminalBranch: string | null;
 }
 
 /**
@@ -290,6 +322,8 @@ export class SessionRegistry {
       agentName: session.agentName ?? null,
       isolatedSwimlaneId: session.isolatedSwimlaneId ?? null,
       transient: session.transient,
+      commandTerminalSlot: session.commandTerminalSlot ?? null,
+      commandTerminalBranch: session.commandTerminalBranch ?? null,
     }));
   }
 

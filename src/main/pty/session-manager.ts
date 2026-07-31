@@ -540,6 +540,8 @@ export class SessionManager extends EventEmitter {
         exitCode: null,
         resuming: input.resuming ?? false,
         transient: input.transient ?? false,
+        commandTerminalSlot: input.commandTerminalSlot ?? null,
+        commandTerminalBranch: input.commandTerminalBranch ?? null,
         isolatedSwimlaneId: input.isolatedSwimlaneId,
         exitSequence: input.exitSequence ?? ['\x03'],
         agentParser: input.agentParser,
@@ -970,6 +972,21 @@ export class SessionManager extends EventEmitter {
       await this.bufferManager.waitForResizeRepaint(sessionId);
     }
     return this.bufferManager.getSerializedFrame(sessionId);
+  }
+
+  /**
+   * The Agent Monitor's output peek: the last few meaningful rendered lines.
+   *
+   * Deliberately does NOT await `waitForResizeRepaint`, unlike the two readers
+   * above. That settle exists so a REPLAY is never captured mid-repaint at a
+   * stale width, which matters when the captured frame becomes the terminal the
+   * user then looks at. The peek is a few lines of throwaway text resampled on a
+   * timer, so a mid-repaint sample self-corrects on the next tick, while awaiting
+   * the settle would make every sample cost up to REPAINT_MAX_WAIT_MS and force
+   * this synchronous read to become async for no benefit.
+   */
+  getOutputPeek(sessionId: string): string[] {
+    return this.bufferManager.getOutputPeek(sessionId);
   }
 
   /**

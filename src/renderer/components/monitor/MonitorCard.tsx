@@ -1,5 +1,5 @@
 import React from 'react';
-import { CirclePause, Check, SquareTerminal } from 'lucide-react';
+import { CirclePause, Check, GitBranch } from 'lucide-react';
 import { ActivityMark } from '../ActivityMark';
 import type { MonitorSessionRow } from '../../../shared/types';
 import { LabelPills, Pill } from '../Pill';
@@ -8,24 +8,25 @@ import { ElapsedTime } from '../terminal/ElapsedTime';
 import { ContextUsageFooter } from '../board/ContextUsageFooter';
 import { formatActivityReasonText } from '../board/ActivityReasonTooltip';
 import { agentDisplayName } from '../../utils/agent-display-name';
-import { stripMarkdown } from '../../utils/strip-markdown';
 import { bucketOf, formatMonitorStatus, needsUser } from './monitor-view-model';
 
 /**
  * One agent session, rendered as the board's task card.
  *
- * This is deliberately a near-copy of TaskCard's anatomy - same title row (state
- * glyph, bold title, monospace ticket number), same PrLink, same
- * stripMarkdown + line-clamp description, same LabelPills, and the SAME footer
- * component (ContextUsageFooter, shared with TaskCard so they cannot drift). A
- * user arriving here should recognise the object immediately rather than learn a
- * second card.
+ * Deliberately close to TaskCard's anatomy - same title row (state glyph, bold
+ * title, monospace ticket number), same PrLink, same LabelPills, and the SAME
+ * footer component (ContextUsageFooter, shared with TaskCard so they cannot
+ * drift). A user arriving here should recognise the object immediately rather
+ * than learn a second card.
  *
- * Two additions the board card has no need for, both kept at the edges so the
- * familiar middle is untouched:
+ * Three departures from the board card, each earning its place:
  *   - an eyebrow line naming the owning project and column (the cross-project bit)
  *   - the live activity line ("Idle for 5m - Claude is waiting for your input")
- *     directly above the footer, which is what this view exists to surface.
+ *     as a right-aligned eyebrow pill, which is what this view exists to surface
+ *   - a live OUTPUT PEEK where the board card shows its task description. This is
+ *     the deliberate divergence: a description reads the same every time you look
+ *     at it, and a Command Terminal has none at all, so the slot was static for
+ *     task rows and empty for terminal rows. See `OutputPeek` below.
  */
 
 interface MonitorCardProps {
@@ -50,16 +51,34 @@ function StateGlyph({ row }: { row: MonitorSessionRow }) {
   // Switch on the BUCKET, not a second derivation. `bucketOf` already decides
   // which section and summary count this row lands in, and re-deriving the glyph
   // from `isWorking` disagreed with it: a running session that has not reported
-  // activity yet (a freshly spawned agent, or a Command Terminal, which has no
-  // activity engine at all) buckets as `working` but fails `isActive`, so it was
-  // counted under Active while its own card drew the paused glyph.
+  // activity yet buckets as `working` but fails `isActive`, so it was counted
+  // under Active while its own card drew the paused glyph.
   // The two ACTIVITY states use the shared branding marks, the same vocabulary a
   // board card shows; only the non-activity states (finished, paused) stay lucide.
-  if (bucket === 'needs-you') {
-    return <ActivityMark mark="agent-idle" size={15} className="text-attention shrink-0" aria-label={title ?? 'Needs you'} />;
-  }
-  if (bucket === 'working') {
-    return <ActivityMark mark="agent-working" size={15} className="text-active shrink-0" aria-label={title ?? 'Working'} />;
+  if (bucket === 'needs-you' || bucket === 'working') {
+    const needsYou = bucket === 'needs-you';
+    // A Command Terminal speaks the terminal marks, the identity it already wears
+    // in the title bar and the sidebar. That is now the ONLY thing separating it
+    // from a task agent in this card's body, since both show live terminal text;
+    // it replaces (rather than joins) the lucide SquareTerminal that used to sit
+    // beside the title, because one glyph carrying state AND identity beats two.
+    // Safe to swap: the terminal marks share the agent marks' 18-wide indicator
+    // keyline and 12px floor, so the title's x position does not move.
+    const mark = row.isCommandTerminal
+      ? (needsYou ? 'terminal-idle' : 'terminal-working')
+      : (needsYou ? 'agent-idle' : 'agent-working');
+    // ONE render site with a computed `mark`, never a conditional pair of
+    // siblings: React reconciles siblings positionally, so an idle/working flip
+    // would unmount one and mount the other, restarting the march from zero
+    // (the lesson pinned for TaskCard in tests/unit/activity-mark.test.ts).
+    return (
+      <ActivityMark
+        mark={mark}
+        size={15}
+        className={`${needsYou ? 'text-attention' : 'text-active'} shrink-0`}
+        aria-label={title ?? (needsYou ? 'Needs you' : 'Working')}
+      />
+    );
   }
   if (bucket === 'finished') {
     return <Check size={14} className="text-fg-disabled shrink-0" aria-label="Finished" />;
@@ -73,6 +92,81 @@ function StateGlyph({ row }: { row: MonitorSessionRow }) {
   );
 }
 
+/**
+ * The live tail of this session's terminal, in the slot the task description used
+ * to occupy.
+ *
+ * A description is the same text every time you look at it and says nothing about
+ * what the agent is doing NOW, which is the question this screen exists to answer.
+ * It also left a Command Terminal's card empty, since a terminal has no task. The
+ * peek is live, differs per session, and is the same idea for both row kinds.
+ *
+ * `whitespace-pre` rather than `truncate`: terminal output is column-aligned, and
+ * HTML would otherwise collapse the leading indentation that carries its shape.
+ *
+ * Toned `text-fg-muted`, not the `text-fg-faint` the task description used. That
+ * dimmer tone was right for secondary text; this is the card's PRIMARY content
+ * (the reason to look at the card at all) and read as a footnote beneath its own
+ * title at monospace sizes.
+ *
+ * The shaded well is deliberate, and it replaced an unstyled first attempt. Left
+ * bare, monospace machine output butted straight into the 14px semibold title
+ * with nothing marking the transition, so the two typefaces clashed and the peek
+ * read as a subtitle rather than as a different KIND of thing. A recessed panel
+ * says "this region is the terminal, not the card" without a frame or a rule, and
+ * the tone comes from `surface-hover` so it tracks all eleven themes rather than
+ * pinning a hue that only works on dark.
+ *
+ * The well is a FIXED height, not a content-sized or growing one. Both of the
+ * alternatives were tried and are worse:
+ *
+ *   - Sized to content, the card grew and shrank every time a message landed. A
+ *     grid of them visibly jittered as sessions streamed, which is far more
+ *     distracting than any amount of dead space.
+ *   - Grown to fill the card (`flex-1`), one card's long output made its whole
+ *     row taller, so quiet neighbours inherited a big empty well.
+ *
+ * Fixed removes both: the card's height no longer depends on what the terminal
+ * happens to be saying. Three rows normally, two when label pills also need
+ * space, so the card lands on roughly the same total height either way.
+ *
+ * Lines are TRIMMED to what fits before rendering rather than overflowed into a
+ * clip. That is what allows top alignment: clipping a top-aligned box would drop
+ * the NEWEST lines, which are the only ones worth showing. `slice(-rows)` drops
+ * the oldest instead, and `overflow-hidden` then only guards against a font or
+ * zoom change, never against normal content.
+ */
+const PEEK_ROWS_WITH_LABELS = 2;
+/**
+ * Four, not three, because the row a peek line replaces is not the same height as
+ * the one it gives up. A label block costs about 28px (pills plus their margin)
+ * while a peek row costs 16, so trading labels for a SINGLE extra row left an
+ * unlabelled card roughly 12px short of its labelled neighbours and banked the
+ * difference as a gap above the footer. Two extra rows overshoots by about 4px
+ * instead, which is the closer fit and small enough to disappear.
+ */
+const PEEK_ROWS_WITHOUT_LABELS = 4;
+
+/** `leading-4` (16px per row) is what makes these exact. Keep them in step. */
+const PEEK_HEIGHT_CLASS: Record<number, string> = { 2: 'h-8', 3: 'h-12', 4: 'h-16' };
+
+function OutputPeek({ lines, rows }: { lines: string[]; rows: number }) {
+  if (lines.length === 0) return null;
+  return (
+    <div
+      className="mt-2 rounded bg-surface-hover/50 px-2 py-1.5 font-mono text-xs leading-4 text-fg-muted"
+      data-testid="monitor-card-peek"
+      data-rows={rows}
+    >
+      <div className={`overflow-hidden ${PEEK_HEIGHT_CLASS[rows] ?? 'h-12'}`}>
+        {lines.slice(-rows).map((line, index) => (
+          <div key={index} className="whitespace-pre overflow-hidden text-ellipsis">{line}</div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function MonitorCardInner({
   row,
   labelColors,
@@ -82,15 +176,6 @@ function MonitorCardInner({
   hideProject = false,
 }: MonitorCardProps) {
   const activityLine = formatMonitorStatus(row);
-
-  // `stripMarkdown` is a regex pass over the whole excerpt. The row object is
-  // replaced whenever anything on it changes (an activity patch, a snapshot that
-  // moved one field), so without this the strip re-ran on every such render for
-  // text that had not changed.
-  const description = React.useMemo(
-    () => (row.taskDescription ? stripMarkdown(row.taskDescription) : null),
-    [row.taskDescription],
-  );
 
   // Scoped with `currentTarget.contains()`: the card is itself a role="button",
   // and a nested interactive element's own menu must win over this one.
@@ -155,7 +240,19 @@ function MonitorCardInner({
           instead of hunting the bottom edge of each card. */}
       <div className="flex items-center gap-1.5 min-w-0 text-[11px] text-fg-muted mb-1" data-testid="monitor-card-origin">
         {!hideProject && <span className="truncate min-w-0">{row.projectName}</span>}
-        {row.columnName && (
+        {/* One slot, one question: where is this session working? A task answers
+            with its column; a Command Terminal has none, so it answers with its
+            branch. Leaving it blank put the terminal's title under an empty row,
+            which read as a rendering fault next to its neighbours. The glyph is
+            what keeps a branch called "main" from being mistaken for a column
+            called "main". */}
+        {row.isCommandTerminal ? row.commandTerminalBranch && (
+          <>
+            {!hideProject && <span className="text-fg-disabled shrink-0">/</span>}
+            <GitBranch size={11} className="shrink-0" aria-hidden />
+            <span className="truncate min-w-0" data-testid="monitor-card-branch">{row.commandTerminalBranch}</span>
+          </>
+        ) : row.columnName && (
           <>
             {!hideProject && <span className="text-fg-disabled shrink-0">/</span>}
             <span className="truncate min-w-0">{row.columnName}</span>
@@ -176,12 +273,10 @@ function MonitorCardInner({
       </div>
 
       {/* Title row - identical to TaskCard's. A Command Terminal has no task, so
-          it gets the terminal glyph and its name in place of a title + ticket. */}
+          its numbered name stands in for a title + ticket, and its terminal-shaped
+          state glyph is what marks it as not-a-task. */}
       <div className="flex items-center gap-1.5">
         <StateGlyph row={row} />
-        {row.isCommandTerminal && (
-          <SquareTerminal size={14} className="text-fg-muted shrink-0" aria-hidden />
-        )}
         <div className="text-sm text-fg font-medium truncate flex-1 min-w-0" data-testid="monitor-card-title">
           {row.taskTitle}
         </div>
@@ -198,23 +293,33 @@ function MonitorCardInner({
         </div>
       )}
 
-      {description && (
-        <div className="text-xs text-fg-faint mt-1 line-clamp-3">{description}</div>
+      <OutputPeek
+        lines={row.outputPeek}
+        rows={row.labels.length > 0 ? PEEK_ROWS_WITH_LABELS : PEEK_ROWS_WITHOUT_LABELS}
+      />
+
+      {row.labels.length > 0 && (
+        <div className="mt-1.5">
+          <LabelPills labels={row.labels} labelColors={labelColors} />
+        </div>
       )}
 
-      <div className="mt-1.5">
-        <LabelPills labels={row.labels} labelColors={labelColors} />
-      </div>
-
-      {/* Pins the footer to the card's bottom edge so a grid of cards with
-          different description lengths still has its context bars aligned. */}
+      {/* Every element above is a fixed height (titles and the eyebrow truncate
+          rather than wrap, and the peek no longer grows), so this absorbs only the
+          small residual between a labelled card and an unlabelled one and keeps
+          the footers on one line across the row. */}
       <div className="flex-1" />
 
-      {/* The board card's own footer component, not a copy of it. */}
+      {/* The board card's own footer component, not a copy of it. Its rule is off
+          here: the peek's shaded well already closes the content region, and on a
+          card with no label pills the well's bottom edge and the rule land within
+          a few pixels of each other. The board card keeps the rule, having no
+          well of its own to do that job. */}
       <ContextUsageFooter
         modelName={row.modelDisplayName ?? agentDisplayName(row.agentName)}
         percent={row.contextPercent ?? 0}
         windowKnown={row.contextPercent !== null}
+        divider={false}
         testId="monitor-card-usage"
       />
     </div>

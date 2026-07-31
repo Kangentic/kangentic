@@ -604,9 +604,11 @@ test.describe('Command Terminal', () => {
         // Press Ctrl+Shift+P
         await sharedPage.keyboard.press('Control+Shift+P');
 
-        // Command bar should appear
+        // Command bar should appear. The title carries the window's durable slot
+        // number so two terminals are tellable apart, hence "Command Terminal 1"
+        // rather than the bare name for the first slot.
         await expect(sharedPage.getByTestId('command-terminal-window')).toBeVisible();
-        await expect(sharedPage.getByText('Command Terminal', { exact: true })).toBeVisible();
+        await expect(sharedPage.getByTestId('command-bar-label')).toHaveText('Command Terminal 1');
       });
 
       test('Ctrl+Shift+P toggles the command bar closed', async () => {
@@ -1022,6 +1024,34 @@ test.describe('Command Terminal', () => {
         const windows = page.getByTestId('command-terminal-window');
         await expect(windows.nth(0)).toBeVisible();
         await expect(windows.nth(1)).toBeVisible();
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('two terminals carry distinct, slot-numbered titles', async () => {
+      // The defect this fixes: two tiled Command Terminals had byte-identical
+      // title bars, and every other fact in that header (agent, model, branch,
+      // cwd) is identical across a project's terminals by construction, so the
+      // slot number is the only thing that can tell them apart.
+      const { browser, page } = await launchWithState(multiTerminalPreConfig());
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+        await expect(page.getByTestId('command-bar-label')).toHaveText('Command Terminal 1');
+
+        await page.getByTestId('quick-session-new-terminal').click();
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
+
+        // Assert the SET, not each index: window order is the engine's business,
+        // and pinning it here would make this test fail on an unrelated tiling
+        // change while still not proving the titles differ.
+        const titles = await page.getByTestId('command-bar-label').allTextContents();
+        expect(titles).toHaveLength(2);
+        expect(new Set(titles).size).toBe(2);
+        expect([...titles].sort()).toEqual(['Command Terminal 1', 'Command Terminal 2']);
       } finally {
         await browser.close();
       }

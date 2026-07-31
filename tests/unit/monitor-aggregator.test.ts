@@ -40,7 +40,7 @@ import type {
   SessionUsage,
   Task,
 } from '../../src/shared/types';
-import { EventType, MONITOR_DESCRIPTION_EXCERPT_LIMIT } from '../../src/shared/types';
+import { EventType } from '../../src/shared/types';
 import type { ManagedSessionSummary } from '../../src/main/pty/session-registry';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 
@@ -195,6 +195,8 @@ function makeManagedSummary(overrides: {
   agentName?: string | null;
   isolatedSwimlaneId?: string | null;
   transient?: boolean;
+  commandTerminalSlot?: string | null;
+  commandTerminalBranch?: string | null;
 }): ManagedSessionSummary {
   return {
     id: overrides.id,
@@ -206,6 +208,8 @@ function makeManagedSummary(overrides: {
     agentName: overrides.agentName ?? 'claude',
     isolatedSwimlaneId: overrides.isolatedSwimlaneId ?? null,
     transient: overrides.transient ?? false,
+    commandTerminalSlot: overrides.commandTerminalSlot ?? null,
+    commandTerminalBranch: overrides.commandTerminalBranch ?? null,
   };
 }
 
@@ -254,6 +258,12 @@ function makeContext(
       getActivityReasonsCache: vi.fn((): Record<string, ActivityReason> => ({})),
       getEventsCache: vi.fn((): Record<string, SessionEvent[]> => eventsBySessionId),
       getUsageCache: vi.fn((): Record<string, SessionUsage> => ({})),
+      // The peek is read per session while building a row. Stubbed empty here;
+      // the extraction rule itself is covered against captured real grids in
+      // tests/unit/output-peek.test.ts. Without this the aggregator's per-session
+      // guard swallows a TypeError and silently drops EVERY row, which is what
+      // the row-count assertions throughout this file would then report.
+      getOutputPeek: vi.fn((): string[] => []),
     },
   } as unknown as IpcContext;
 }
@@ -351,9 +361,11 @@ describe('buildMonitorSnapshot', () => {
       makeManagedSummary({
         id: 'session-ct-1',
         projectId: 'project-a',
-        taskId: 'command-terminal:project-a:slot-1',
+        taskId: 'command-terminal:project-a:slot-2',
         transient: true,
         status: 'running',
+        commandTerminalSlot: 'slot-2',
+        commandTerminalBranch: 'feature/peek',
       }),
     ];
     const context = makeContext(summaries);
@@ -367,18 +379,39 @@ describe('buildMonitorSnapshot', () => {
     expectNoUndefinedFields(row);
 
     expect(row.isCommandTerminal).toBe(true);
-    expect(row.taskId).toBe('command-terminal:project-a:slot-1');
-    // Exact synthetic values monitor-aggregator.ts assigns when `task` is
-    // undefined (task?.x ?? <default>), read from the source rather than
-    // assumed:
-    expect(row.taskTitle).toBe('Command Terminal');
-    expect(row.taskDescription).toBeNull();
+    expect(row.taskId).toBe('command-terminal:project-a:slot-2');
+    // The number comes from the renderer's durable window SLOT, so this row reads
+    // exactly the way that terminal's own window title bar does. Two terminals
+    // were previously both "Command Terminal" here and in the window.
+    expect(row.taskTitle).toBe('Command Terminal 2');
     expect(row.displayId).toBeNull();
+    // No column (it is not on the board); the branch is the eyebrow's answer to
+    // "where is this session working" instead.
     expect(row.columnName).toBe('');
+    expect(row.commandTerminalBranch).toBe('feature/peek');
     expect(row.labels).toEqual([]);
     expect(row.prUrl).toBeNull();
     expect(row.prNumber).toBeNull();
     expect(row.prState).toBeNull();
+  });
+
+  it('falls back to the unnumbered name for a transient session with no slot', () => {
+    // Main learns the slot from the renderer at spawn, so a session spawned by a
+    // path that sends none must still name itself rather than print "NaN".
+    registerHealthyProject('project-a');
+    const context = makeContext([
+      makeManagedSummary({
+        id: 'session-ct-noslot',
+        projectId: 'project-a',
+        taskId: 'command-terminal:project-a:unknown',
+        transient: true,
+        status: 'running',
+      }),
+    ]);
+
+    const snapshot = buildMonitorSnapshot(context);
+
+    expect(snapshot.rows[0].taskTitle).toBe('Command Terminal');
   });
 
   it('drops a non-transient session whose task row is gone (deleted while the session lives)', () => {
@@ -539,67 +572,59 @@ describe('buildMonitorSnapshot', () => {
   });
 
   // =========================================================================
-  // descriptionExcerpt (private helper, exercised via row.taskDescription)
+  // outputPeek (seeded per row; replaced the task-description excerpt)
   // =========================================================================
 
-  describe('descriptionExcerpt (row.taskDescription trimming)', () => {
-    it('caps a task description longer than MONITOR_DESCRIPTION_EXCERPT_LIMIT to exactly that length', () => {
-      const longDescription = 'x'.repeat(MONITOR_DESCRIPTION_EXCERPT_LIMIT + 50);
+  describe('outputPeek (row seeding)', () => {
+    it('seeds every row from the session manager, keyed by that session', () => {
+      // Seeded on the snapshot (not only pushed live) so a row is self-consistent
+      // the moment it appears, and so an IDLE session that never emits still has
+      // something to show. Keyed per session id, because getting that wrong would
+      // paint one terminal's output onto another's card.
       registerHealthyProject('project-a', {
-        tasksById: new Map([
-          ['task-long-desc', makeTask('task-long-desc', { description: longDescription })],
-        ]),
+        tasksById: new Map([['task-1', makeTask('task-1')], ['task-2', makeTask('task-2')]]),
       });
       const summaries = [
-        makeManagedSummary({ id: 'session-long-desc', projectId: 'project-a', taskId: 'task-long-desc' }),
+        makeManagedSummary({ id: 'session-1', projectId: 'project-a', taskId: 'task-1' }),
+        makeManagedSummary({ id: 'session-2', projectId: 'project-a', taskId: 'task-2' }),
       ];
       const context = makeContext(summaries);
+      const peeksBySession: Record<string, string[]> = {
+        'session-1': ['running tests', 'all green'],
+        'session-2': ['reading src/main/index.ts'],
+      };
+      (context.sessionManager.getOutputPeek as unknown as ReturnType<typeof vi.fn>)
+        .mockImplementation((sessionId: string) => peeksBySession[sessionId] ?? []);
 
       const snapshot = buildMonitorSnapshot(context);
 
-      expect(snapshot.rows).toHaveLength(1);
-      const row = snapshot.rows[0];
-      // Length alone would pass even if the wrong slice were taken (e.g. the
-      // tail instead of the head), so also assert against the exact prefix.
-      expect(row.taskDescription).toHaveLength(MONITOR_DESCRIPTION_EXCERPT_LIMIT);
-      expect(row.taskDescription).toBe(longDescription.slice(0, MONITOR_DESCRIPTION_EXCERPT_LIMIT));
+      const rowsById = new Map(snapshot.rows.map((row) => [row.sessionId, row]));
+      expect(rowsById.get('session-1')?.outputPeek).toEqual(['running tests', 'all green']);
+      expect(rowsById.get('session-2')?.outputPeek).toEqual(['reading src/main/index.ts']);
     });
 
-    it('leaves a description at or under the limit unchanged', () => {
-      const shortDescription = 'Short task description well under the excerpt limit.';
-      registerHealthyProject('project-a', {
-        tasksById: new Map([
-          ['task-short-desc', makeTask('task-short-desc', { description: shortDescription })],
-        ]),
-      });
-      const summaries = [
-        makeManagedSummary({ id: 'session-short-desc', projectId: 'project-a', taskId: 'task-short-desc' }),
-      ];
-      const context = makeContext(summaries);
+    it('carries an empty array (never undefined) for a session with nothing to show', () => {
+      // The renderer maps over this unconditionally, so undefined would throw
+      // rather than render an empty card.
+      registerHealthyProject('project-a', { tasksById: new Map([['task-1', makeTask('task-1')]]) });
+      const context = makeContext([
+        makeManagedSummary({ id: 'session-1', projectId: 'project-a', taskId: 'task-1' }),
+      ]);
 
       const snapshot = buildMonitorSnapshot(context);
 
-      expect(snapshot.rows[0].taskDescription).toBe(shortDescription);
+      expect(snapshot.rows[0].outputPeek).toEqual([]);
     });
 
-    it('treats an empty-string description as null, matching the null/undefined (no-task) case', () => {
-      // The Command Terminal test above already pins the `task === undefined`
-      // side of "null/undefined stays null" (row.taskDescription is null with
-      // no task at all). This pins the other side: a real task whose
-      // description is the empty string is equally falsy and also renders null.
-      registerHealthyProject('project-a', {
-        tasksById: new Map([
-          ['task-empty-desc', makeTask('task-empty-desc', { description: '' })],
-        ]),
-      });
-      const summaries = [
-        makeManagedSummary({ id: 'session-empty-desc', projectId: 'project-a', taskId: 'task-empty-desc' }),
-      ];
-      const context = makeContext(summaries);
+    it('leaves commandTerminalBranch null for a task agent', () => {
+      // A worktree-backed task has a branch too, but its COLUMN is the more
+      // useful breadcrumb and the eyebrow only has room for one.
+      registerHealthyProject('project-a', { tasksById: new Map([['task-1', makeTask('task-1')]]) });
+      const context = makeContext([
+        makeManagedSummary({ id: 'session-1', projectId: 'project-a', taskId: 'task-1' }),
+      ]);
 
-      const snapshot = buildMonitorSnapshot(context);
-
-      expect(snapshot.rows[0].taskDescription).toBeNull();
+      expect(buildMonitorSnapshot(context).rows[0].commandTerminalBranch).toBeNull();
     });
   });
 

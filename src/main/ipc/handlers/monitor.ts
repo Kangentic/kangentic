@@ -18,6 +18,7 @@ import type { WebContents } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import { broadcast } from '../../pop-out/window-broadcast';
 import { buildMonitorSnapshot } from '../../monitor/monitor-aggregator';
+import { MonitorPeekTracker } from '../../monitor/monitor-peek-tracker';
 import { buildTaskDetailBundle } from '../../monitor/task-detail-bundle';
 import type { IpcContext } from '../ipc-context';
 
@@ -160,4 +161,76 @@ export function registerMonitorHandlers(context: IpcContext): void {
   context.sessionManager.on('session-changed', schedulePush);
   context.sessionManager.on('exit', schedulePush);
   context.boardEvents.onBoardChanged(schedulePush);
+
+  /**
+   * The live output peek. Broadcast (not `webContents.send`) for the same reason
+   * MONITOR_CHANGED is: a detached monitor is its own renderer and subscribes on
+   * its own behalf, so it must receive these directly.
+   */
+  const peekTracker = new MonitorPeekTracker({
+    sessionManager: context.sessionManager,
+    emit: (peeks) => {
+      if (context.mainWindow.isDestroyed()) return;
+      broadcast(context.mainWindow, IPC.MONITOR_PEEK, peeks);
+    },
+  });
+
+  /** Renderers whose peek teardown is already wired, so repeated subscribes do
+   *  not stack duplicate listeners. The monitor overlay mounts and unmounts on
+   *  every open/close, so without this a long dogfooding session accumulates one
+   *  `destroyed` listener per open on the same long-lived webContents. Mirrors
+   *  `focusTeardownWatched` in handlers/sessions.ts. */
+  const peekTeardownWatched = new Set<number>();
+
+  /**
+   * Subscribe-gated, unlike every other monitor push. The peek is the one stream
+   * with a standing cost (a PTY output listener plus a sampling timer), so main
+   * only pays it while a monitor is actually on screen.
+   *
+   * Keyed by the SENDER's id rather than a bare boolean: the main window and a
+   * detached monitor window subscribe independently, and the listener's lifetime
+   * follows the union. The renderer sends its own unsubscribe on unmount; the
+   * three hooks below cover every way it can go away without getting to.
+   */
+  ipcMain.handle(IPC.MONITOR_SET_PEEK_SUBSCRIBED, (event, subscribed: boolean) => {
+    const sender = event.sender;
+    const rendererId = sender.id;
+    if (!subscribed) {
+      peekTracker.unsubscribe(rendererId);
+      return;
+    }
+    peekTracker.subscribe(rendererId);
+    if (peekTeardownWatched.has(rendererId)) return;
+    peekTeardownWatched.add(rendererId);
+
+    /**
+     * A RELOAD is the case that bites, and it is not a teardown.
+     *
+     * `destroyed` never fires for one: the webContents survives with the SAME id,
+     * so the tracker keeps the subscription while the fresh page comes up with no
+     * memory of it. The renderer cannot self-correct either - `monitorOpen` boots
+     * false, so `MonitorBody` never remounts to send its unsubscribe. Main would
+     * then keep the PTY output listener and the 500ms sampler running forever for
+     * a window that is not listening, permanently defeating the cost bound this
+     * channel is subscribe-gated to enforce. Reachable in one click: the monitor
+     * is wrapped in `PanelErrorBoundary`, whose Reload calls `location.reload()`.
+     *
+     * Registered with `on`, not `once` - a renderer can reload any number of
+     * times - and `peekTeardownWatched` is what keeps that from stacking
+     * listeners. Mirrors handlers/task-detail-ownership.ts.
+     */
+    sender.on('did-start-navigation', (details) => {
+      if (!details.isMainFrame || details.isSameDocument) return;
+      peekTracker.unsubscribe(rendererId);
+    });
+
+    // `render-process-gone` as well as `destroyed`: a crashed renderer never
+    // fires `destroyed`, and would otherwise hold the stream open for nobody.
+    const forget = (): void => {
+      peekTracker.unsubscribe(rendererId);
+      peekTeardownWatched.delete(rendererId);
+    };
+    sender.once('destroyed', forget);
+    sender.once('render-process-gone', forget);
+  });
 }

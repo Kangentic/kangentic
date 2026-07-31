@@ -263,6 +263,15 @@ export const IPC = {
   // host that is not that project's board. One bundle rather than stamping five
   // read channels with a projectId - see src/main/monitor/task-detail-bundle.ts.
   MONITOR_GET_TASK_DETAIL: 'monitor:getTaskDetail',
+  // Live "recent output peek": the last few rendered terminal lines per session,
+  // patched onto rows in place. Deliberately NOT part of the snapshot - terminal
+  // output is not one of the DB-resident changes that rebuilds it, so a peek
+  // carried there would sit frozen. See src/main/monitor/monitor-peek-tracker.ts.
+  MONITOR_PEEK: 'monitor:peek',
+  // Explicit subscribe, because the peek is the one monitor stream with a real
+  // standing cost. Main attaches its PTY output listener only while at least one
+  // monitor surface is subscribed, so a closed monitor costs nothing.
+  MONITOR_SET_PEEK_SUBSCRIBED: 'monitor:setPeekSubscribed',
 
   // Task-detail ownership - machine-global, and deliberately outside the TASK_ prefix
   // so the project-scoped-ipc parity test does not classify these as task mutations.

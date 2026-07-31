@@ -115,9 +115,18 @@ function monitorPreConfig(): string {
 
     window.__mockMonitorRows = [
       {
+        // The one labelled row in the fixture. Every other row here has
+        // labels: [], which meant only PEEK_ROWS_WITHOUT_LABELS (the 4-row
+        // well) and the unconditional label block ever rendered - the
+        // narrower 2-row well and the now-conditional LabelPills block
+        // (row.labels.length > 0 && ...) went unexercised. Put on
+        // sess-working rather than a new row: a new row would shift every
+        // count-based assertion in this file (cards/tableRows/liveOnly
+        // counts), while adding a label to an existing row changes nothing
+        // any other test checks.
         sessionId: 'sess-working', projectId: '${PROJECT_A}', projectName: 'Monitor Alpha',
-        taskId: 'task-a', taskTitle: 'Fix PTY capture race', taskDescription: 'A race in the capture pipeline.', displayId: 142,
-        columnName: 'Tests', labels: [], prUrl: null, prNumber: null, prState: null,
+        taskId: 'task-a', taskTitle: 'Fix PTY capture race', outputPeek: ['npm run typecheck', 'no errors'], displayId: 142,
+        columnName: 'Tests', commandTerminalBranch: null, labels: ['bug'], prUrl: null, prNumber: null, prState: null,
         agentName: 'claude', modelDisplayName: 'Opus 5', effort: 'xhigh', permissionMode: 'plan',
         startedAt: '2026-01-01T00:00:00.000Z', exitedAt: null,
         status: 'running', activity: 'thinking', activityReason: null,
@@ -125,8 +134,8 @@ function monitorPreConfig(): string {
       },
       {
         sessionId: 'sess-other-project', projectId: '${PROJECT_B}', projectName: 'Monitor Beta',
-        taskId: 'task-b', taskTitle: 'Landing copy pass', taskDescription: null, displayId: 7,
-        columnName: 'Doing', labels: [], prUrl: null, prNumber: null, prState: null,
+        taskId: 'task-b', taskTitle: 'Landing copy pass', outputPeek: [], displayId: 7,
+        columnName: 'Doing', commandTerminalBranch: null, labels: [], prUrl: null, prNumber: null, prState: null,
         agentName: 'claude', modelDisplayName: 'Sonnet 5', effort: 'medium', permissionMode: 'auto',
         startedAt: '2026-01-01T00:02:00.000Z', exitedAt: null,
         status: 'running', activity: 'thinking', activityReason: null,
@@ -134,19 +143,21 @@ function monitorPreConfig(): string {
       },
       {
         sessionId: 'sess-paused', projectId: '${PROJECT_A}', projectName: 'Monitor Alpha',
-        taskId: 'task-c', taskTitle: 'Paused work', taskDescription: null, displayId: 9,
-        columnName: 'To Do', labels: [], prUrl: null, prNumber: null, prState: null,
+        taskId: 'task-c', taskTitle: 'Paused work', outputPeek: [], displayId: 9,
+        columnName: 'To Do', commandTerminalBranch: null, labels: [], prUrl: null, prNumber: null, prState: null,
         agentName: 'claude', modelDisplayName: null, effort: null, permissionMode: null,
         startedAt: '2026-01-01T00:03:00.000Z', exitedAt: null,
         status: 'suspended', activity: null, activityReason: null,
         lastEvent: null, contextPercent: null, isolated: false, isCommandTerminal: false
       },
       {
-        // A Command Terminal: no task, so no title / ticket / column / labels.
-        // The monitor is the only surface that can show these at all.
+        // A Command Terminal: no task, so no ticket / column / labels, and its
+        // title is the slot-numbered name main assigns. The monitor is the only
+        // surface that can show these at all.
         sessionId: 'sess-command-terminal', projectId: '${PROJECT_B}', projectName: 'Monitor Beta',
-        taskId: 'transient-1', taskTitle: 'Command Terminal', taskDescription: null, displayId: null,
-        columnName: '', labels: [], prUrl: null, prNumber: null, prState: null,
+        taskId: 'transient-1', taskTitle: 'Command Terminal 2',
+        outputPeek: ['git status', 'nothing to commit'], displayId: null,
+        columnName: '', commandTerminalBranch: 'main', labels: [], prUrl: null, prNumber: null, prState: null,
         agentName: 'claude', modelDisplayName: 'Opus 5', effort: null, permissionMode: null,
         startedAt: '2026-01-01T00:04:00.000Z', exitedAt: null,
         status: 'running', activity: 'thinking', activityReason: null,
@@ -201,9 +212,212 @@ test.describe('agent monitor', () => {
 
       // Command Terminals appear here and ONLY here: they have no task, so no
       // board card, and the Command Terminal layer only shows the open project.
+      // The title carries its slot number so two terminals are tellable apart.
       await expect(
         page.locator('[data-session-id="sess-command-terminal"] [data-testid="monitor-card-title"]'),
-      ).toHaveText('Command Terminal');
+      ).toHaveText('Command Terminal 2');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('every card shows live terminal output, and a terminal reads as a terminal', async () => {
+    const { browser, page } = await launchWithState(monitorPreConfig());
+    try {
+      await openMonitor(page);
+
+      // The peek replaced the static task-description excerpt, and it applies to
+      // BOTH row kinds - that uniformity is the point. A task agent shows it...
+      await expect(
+        page.locator('[data-session-id="sess-working"] [data-testid="monitor-card-peek"]'),
+      ).toContainText('npm run typecheck');
+      // ...and so does a Command Terminal, whose card was previously empty
+      // because a terminal has no description to show.
+      await expect(
+        page.locator('[data-session-id="sess-command-terminal"] [data-testid="monitor-card-peek"]'),
+      ).toContainText('nothing to commit');
+
+      // With both kinds showing terminal text, the state glyph is what separates
+      // them. `data-mark` is the branding mark's own test contract.
+      await expect(
+        page.locator('[data-session-id="sess-working"] svg[data-mark]'),
+      ).toHaveAttribute('data-mark', 'agent-working');
+      await expect(
+        page.locator('[data-session-id="sess-command-terminal"] svg[data-mark]'),
+      ).toHaveAttribute('data-mark', 'terminal-working');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a Command Terminal names its branch where a task names its column', async () => {
+    // The eyebrow answers one question on both card kinds: where is this session
+    // working. Leaving it blank for a terminal put the title under an empty row,
+    // which reads as a rendering fault beside a task card that fills it.
+    const { browser, page } = await launchWithState(monitorPreConfig());
+    try {
+      await openMonitor(page);
+
+      const terminalOrigin = page.locator('[data-session-id="sess-command-terminal"] [data-testid="monitor-card-origin"]');
+      await expect(terminalOrigin.locator('[data-testid="monitor-card-branch"]')).toHaveText('main');
+
+      // A task agent keeps its column and grows no branch, so the slot never
+      // shows two different things on one card.
+      const taskOrigin = page.locator('[data-session-id="sess-working"] [data-testid="monitor-card-origin"]');
+      await expect(taskOrigin).toContainText('Tests');
+      await expect(taskOrigin.locator('[data-testid="monitor-card-branch"]')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a live peek push patches one card without refetching the snapshot', async () => {
+    const { browser, page } = await launchWithState(monitorPreConfig());
+    try {
+      await openMonitor(page);
+
+      // Asserts the STATE (currently subscribed), not the call sequence:
+      // StrictMode double-invokes the mount effect, so the log legitimately
+      // reads [true, false, true] and pinning that would test React, not us.
+      const lastSubscribeCall = () => page.evaluate(() => {
+        const calls = (window.electronAPI.monitor as unknown as { __peekSubscribeCalls: boolean[] })
+          .__peekSubscribeCalls;
+        return calls.length === 0 ? null : calls[calls.length - 1];
+      });
+      await expect.poll(lastSubscribeCall).toBe(true);
+
+      await page.evaluate(() => window.__mockFireMonitorPeek({
+        'sess-working': ['npm test', '42 passed'],
+      }));
+
+      await expect(
+        page.locator('[data-session-id="sess-working"] [data-testid="monitor-card-peek"]'),
+      ).toContainText('42 passed');
+      // Untouched sessions keep what they had; a batch names only what changed.
+      await expect(
+        page.locator('[data-session-id="sess-command-terminal"] [data-testid="monitor-card-peek"]'),
+      ).toContainText('nothing to commit');
+
+      // The cost gate: closing the monitor must unsubscribe, or main keeps a PTY
+      // output listener and a sampling timer running for nobody.
+      await page.keyboard.press('Escape');
+      await page.locator('[data-testid="monitor-page"]').waitFor({ state: 'hidden', timeout: 10000 });
+      await expect.poll(lastSubscribeCall).toBe(false);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the peek keeps a fixed height as output arrives, so cards never resize', async () => {
+    // The defect this guards: the well used to size to its content, so every
+    // message that landed grew or shrank the card and a grid of streaming
+    // sessions visibly jittered. Height must not depend on what the terminal
+    // happens to be saying.
+    const { browser, page } = await launchWithState(monitorPreConfig());
+    try {
+      await openMonitor(page);
+
+      const peek = page.locator('[data-session-id="sess-command-terminal"] [data-testid="monitor-card-peek"]');
+      const card = page.locator('[data-session-id="sess-command-terminal"]');
+      await expect(peek).toBeVisible();
+      const before = await peek.boundingBox();
+      const cardBefore = await card.boundingBox();
+
+      // One line, then three: the extremes of what a session can report.
+      await page.evaluate(() => window.__mockFireMonitorPeek({ 'sess-command-terminal': ['one line only'] }));
+      await expect(peek).toContainText('one line only');
+      const afterShrink = await peek.boundingBox();
+
+      await page.evaluate(() => window.__mockFireMonitorPeek({
+        'sess-command-terminal': ['alpha', 'bravo', 'charlie'],
+      }));
+      await expect(peek).toContainText('charlie');
+      const afterGrow = await peek.boundingBox();
+      const cardAfter = await card.boundingBox();
+
+      // A tolerance rather than exact equality: font metrics and sub-pixel
+      // rounding differ between local Windows and CI's headless Linux.
+      expect(Math.abs((afterShrink?.height ?? 0) - (before?.height ?? 0))).toBeLessThanOrEqual(1);
+      expect(Math.abs((afterGrow?.height ?? 0) - (before?.height ?? 0))).toBeLessThanOrEqual(1);
+      expect(Math.abs((cardAfter?.height ?? 0) - (cardBefore?.height ?? 0))).toBeLessThanOrEqual(1);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a peek longer than the card shows keeps the NEWEST lines', async () => {
+    // The well is top-aligned, so it cannot rely on clipping to drop the excess:
+    // clipping a top-aligned box removes the bottom, which is the newest output.
+    // The card trims with `slice(-rows)` instead, dropping the oldest.
+    const { browser, page } = await launchWithState(monitorPreConfig());
+    try {
+      await openMonitor(page);
+
+      const peek = page.locator('[data-session-id="sess-command-terminal"] [data-testid="monitor-card-peek"]');
+      await page.evaluate(() => window.__mockFireMonitorPeek({
+        'sess-command-terminal': ['oldest line', 'middle line', 'newest line'],
+      }));
+
+      await expect(peek).toContainText('newest line');
+      // No labels on this row, so it gets the wider form and all three fit.
+      await expect(peek).toHaveAttribute('data-rows', '4');
+      await expect(peek).toContainText('oldest line');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a labelled row gets the narrower two-row peek, and its labels still render beside it', async () => {
+    // sess-working is the fixture's one labelled row (see the comment on its
+    // seed). Everything else here has labels: [], so PEEK_ROWS_WITH_LABELS
+    // and the conditional LabelPills block (`row.labels.length > 0 && ...`)
+    // never ran before this test - a revert of either would go unnoticed.
+    const { browser, page } = await launchWithState(monitorPreConfig());
+    try {
+      await openMonitor(page);
+
+      const card = page.locator('[data-session-id="sess-working"]');
+      await expect(card.locator('[data-testid="monitor-card-peek"]')).toHaveAttribute('data-rows', '2');
+      await expect(card.getByText('bug', { exact: true })).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a session with no captured output renders no peek well at all', async () => {
+    // `OutputPeek` returns null when `lines.length === 0`. sess-paused and
+    // sess-other-project both seed outputPeek: [] and exercise that early
+    // return on every run, but nothing asserted its effect - a regression to
+    // an empty, visible well would have gone unnoticed.
+    const { browser, page } = await launchWithState(monitorPreConfig());
+    try {
+      await openMonitor(page);
+
+      await expect(page.locator('[data-session-id="sess-paused"] [data-testid="monitor-card-peek"]')).toHaveCount(0);
+      await expect(
+        page.locator('[data-session-id="sess-other-project"] [data-testid="monitor-card-peek"]'),
+      ).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the monitor card footer draws no rule above it, unlike the board card default', async () => {
+    // ContextUsageFooter's `divider` prop defaults to true (the board card's
+    // rule); MonitorCard passes divider={false} because its peek well already
+    // closes the content region above the footer. Nothing asserted that
+    // before this - reverting the prop passed silently. The board-card
+    // default (divider omitted, so `border-t` present) is proven by
+    // tests/ui/task-card-context-window.spec.ts's usageBar locator, which
+    // already renders that exact footer; adding the complementary assertion
+    // there is out of scope for this file.
+    const { browser, page } = await launchWithState(monitorPreConfig());
+    try {
+      await openMonitor(page);
+
+      const footer = page.locator('[data-session-id="sess-working"] [data-testid="monitor-card-usage"]');
+      await expect(footer).toBeVisible();
+      await expect(footer).not.toHaveClass(/border-t/);
     } finally {
       await browser.close();
     }
