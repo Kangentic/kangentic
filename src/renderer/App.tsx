@@ -14,6 +14,7 @@ import { useUpdaterStore } from './stores/updater-store';
 import { useUsageDashboardStore } from './stores/usage-dashboard-store';
 import { useMonitorStore } from './stores/monitor-store';
 import { usePopOutStore } from './stores/pop-out-store';
+import { useDictationStore } from './stores/dictation-store';
 import { useProjectSwitchEffect } from './hooks/useProjectSwitchEffect';
 import { useAgentDrivenInvalidation } from './hooks/useAgentDrivenInvalidation';
 import { invalidateProject } from './stores/project-cache';
@@ -800,5 +801,6 @@ if (import.meta.env.DEV) {
     commandWindow: commandWindowManager.store,
     usageDashboard: useUsageDashboardStore,
     popOut: usePopOutStore,
+    dictation: useDictationStore,
   };
 }

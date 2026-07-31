@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react';
 import { Download, Mic, RotateCcw } from 'lucide-react';
 import { useDictationStore } from '../../stores/dictation-store';
+import { useConfigStore } from '../../stores/config-store';
 import { useOverlayPhase } from '../../hooks/useOverlayPhase';
 import { useFocusedTerminalRect } from '../../hooks/useFocusedTerminalRect';
 import { dictationPopupActions } from '../../hooks/useDictation';
@@ -45,16 +46,31 @@ function LiveDictationChipContent() {
   const downloadPercent = downloading && modelProgress.totalBytes > 0
     ? Math.min(100, Math.round((modelProgress.downloadedBytes / modelProgress.totalBytes) * 100))
     : 0;
+  // Whether releasing push-to-talk submits the text or just leaves it in the
+  // input. It is the one thing the terminal itself cannot show you, which is why
+  // it earns the space the old "(typing into the terminal)" hint used to take.
+  const autoSubmit = useConfigStore((state) => state.globalConfig.dictation?.autoSubmit ?? true);
+
+  // Capturing with nowhere to put the text. Its own state, not a suffix: the
+  // words go nowhere, so saying "Listening" in the live tone would be a lie.
+  const noTarget = !targetSessionId && (recording || status === 'finalizing');
 
   const label = error
     ? error
     : downloading
       ? `Preparing model... ${downloadPercent}%`
-      : recording
-        ? 'Listening (typing into the terminal)'
-        : status === 'finalizing'
-          ? 'Inserting...'
-          : 'Dictation';
+      : noTarget
+        ? 'No terminal focused'
+        : recording
+          ? 'Listening'
+          : status === 'finalizing'
+            ? (autoSubmit ? 'Sending...' : 'Inserting...')
+            : 'Dictation';
+
+  // Trailing hint, separated by spacing and a muted tone rather than a glyph.
+  const hint = recording && !noTarget
+    ? (autoSubmit ? 'Release to send' : 'Release to insert')
+    : null;
 
   return (
     <div
@@ -63,33 +79,52 @@ function LiveDictationChipContent() {
       data-testid="dictation-live-chip"
     >
       <div
-        className={`flex items-center gap-2 rounded-full border border-edge bg-surface px-3 py-1.5 shadow-lg ${contentClassName}`}
+        // The min width holds the chip steady across state changes. When anchored
+        // to a focused terminal it is centred with translate(-50%) (see
+        // anchoredStyle above), so a label that shrinks (Listening -> Sending...)
+        // would otherwise snap the whole chip narrower and re-centre it under the
+        // user's cursor at the exact moment they release the key.
+        className={`flex min-w-[min(17rem,80vw)] items-center gap-2 rounded-full border border-edge bg-surface px-3 py-1.5 shadow-lg ${contentClassName}`}
         onAnimationEnd={onAnimationEnd}
       >
         <span className="relative flex items-center justify-center">
           {downloading ? (
             <Download size={14} className="text-accent" />
           ) : (
-            <Mic size={14} className={recording ? 'text-accent' : 'text-fg-muted'} />
+            <Mic size={14} className={status === 'error' ? 'text-danger' : 'text-fg-muted'} />
           )}
+          {/* The dot, not the glyph, carries the live-capture signal: `active` is
+              the one state token every theme leaves alone, and keeping the mic
+              muted is what lets the dot read as a light ON the glyph rather than
+              part of it. Tinting both the same color is what this replaced. */}
           {recording && (
-            <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-accent animate-pulse" />
+            <span
+              className={`absolute -right-1 -top-1 h-2 w-2 rounded-full animate-pulse ${
+                noTarget ? 'bg-attention' : 'bg-active'
+              }`}
+              data-testid="dictation-recording-dot"
+              data-tone={noTarget ? 'attention' : 'active'}
+            />
           )}
         </span>
         <span className="max-w-[280px] truncate text-xs text-fg-secondary">{label}</span>
-        {!targetSessionId && status !== 'error' && (
-          <span className="text-xs text-fg-faint">(no terminal)</span>
-        )}
+        {hint && <span className="truncate text-xs text-fg-faint">{hint}</span>}
         {!downloading && (
-          <button
-            type="button"
-            onClick={() => dictationPopupActions.clear()}
-            className="ml-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-fg-muted hover:bg-surface-hover hover:text-fg"
-            data-testid="dictation-live-clear"
-            title="Clear and start over"
-          >
-            <RotateCcw size={12} /> Clear
-          </button>
+          <>
+            {/* Pushes Clear to the trailing edge, so the copy stays left-aligned
+                while the chip holds its min width. */}
+            <span className="flex-1" aria-hidden />
+            <div className="w-px h-4 bg-edge mx-1" aria-hidden />
+            <button
+              type="button"
+              onClick={() => dictationPopupActions.clear()}
+              className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-xs text-fg-muted hover:bg-surface-hover hover:text-fg"
+              data-testid="dictation-live-clear"
+              title="Clear and start over"
+            >
+              <RotateCcw size={12} /> Clear
+            </button>
+          </>
         )}
       </div>
     </div>

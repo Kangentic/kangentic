@@ -597,17 +597,28 @@
 }
 
 /* Honor the OS-level reduced-motion preference (distinct from the in-app
-   Appearance toggle above). Stop the infinite Done-hover spin and the idle
-   pulse, and collapse the completed-card grow-in to a near-instant fade.
-   grow-in keeps a 1ms duration (not `animation: none`) so its `animationend`
-   still fires and DoneSwimlane clears recentlyArchivedId. The drag-to-Done fly
-   is inline-styled, so it reads this preference in JS (see FlyingCard). */
+   Appearance toggle above). Stop the infinite Done-hover spin and every ambient
+   pulse (the card idle pulse and Tailwind's stock one alike), and collapse the
+   completed-card grow-in to a near-instant fade. grow-in keeps a 1ms duration
+   (not `animation: none`) so its `animationend` still fires and DoneSwimlane
+   clears recentlyArchivedId. The drag-to-Done fly is inline-styled, so it reads
+   this preference in JS (see FlyingCard). */
 @media (prefers-reduced-motion: reduce) {
   .drop-zone-active::before {
     animation: none;
   }
 
   .animate-pulse-subtle::before {
+    animation: none;
+  }
+
+  /* Tailwind's stock pulse. Every consumer is an ambient status indicator: the
+     dictation recording dot, TerminalPanel's unseen-attention dot, WindowFrame's
+     focus hairline, QueuedPlaceholder's waiting clock, and the loading skeletons.
+     All of it is infinite, so nothing can be listening for an `animationend` (an
+     infinite animation never fires one) and it is safe to stop dead rather than
+     shrink the way the overlay phases below must. */
+  .animate-pulse {
     animation: none;
   }
 
