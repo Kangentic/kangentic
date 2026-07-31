@@ -18,6 +18,13 @@
  *     `archivedTasks` / `archivedTotalCount` or latch `archivedFullyLoaded`
  *     true for B.
  *
+ *  C. `bulkUnarchiveTasks` session eviction, scoped to a `role === 'todo'`
+ *     target lane. Restoring into To Do tears the suspended session down on
+ *     the backend, and the renderer must drop it optimistically too (see
+ *     `tests/ui/unarchive-to-todo-no-paused-row.spec.ts` for the singular
+ *     `unarchiveTask` path's end-to-end coverage of the same mechanism) - a
+ *     restore into any OTHER lane must not touch sessions at all.
+ *
  * The slice is a Zustand `StateCreator` - a plain function of (set, get,
  * api). We drive it directly via a minimal in-memory harness (the same
  * pattern used by `board-manager-slice.test.ts` and
@@ -67,6 +74,7 @@ const tasksApi = {
 // stores and the stubbed window.
 import { createArchivedTasksSlice } from '../../src/renderer/stores/board-store/archived-tasks-slice';
 import type { ArchivedTasksSlice } from '../../src/renderer/stores/board-store/archived-tasks-slice';
+import { EMPTY_LANE_PINS, type LanePin } from '../../src/renderer/stores/board-store/lane-pins';
 
 // ---------------------------------------------------------------------------
 // Fixture builders
@@ -108,11 +116,12 @@ function makeTask(overrides: Partial<Task> & Pick<Task, 'id'>): Task {
 
 // ---------------------------------------------------------------------------
 // Slice harness - constructs the slice with a closure-backed set/get, plus
-// the sibling `tasks` / `swimlanes` fields the slice reads via `get()` from
-// other board-store slices in the real app.
+// the sibling `tasks` / `swimlanes` / `lanePins` fields the slice reads (and,
+// for `lanePins`, reconciles via `applyTaskListPayload`) from other
+// board-store slices in the real app.
 // ---------------------------------------------------------------------------
 
-type HarnessState = ArchivedTasksSlice & { tasks: Task[]; swimlanes: Swimlane[] };
+type HarnessState = ArchivedTasksSlice & { tasks: Task[]; swimlanes: Swimlane[]; lanePins: ReadonlyMap<string, LanePin> };
 
 function buildHarness(initial: Partial<HarnessState> = {}): {
   getState: () => HarnessState;
@@ -136,6 +145,7 @@ function buildHarness(initial: Partial<HarnessState> = {}): {
   state = {
     tasks: [],
     swimlanes: [],
+    lanePins: EMPTY_LANE_PINS,
     ...slice,
     ...initial,
   };
@@ -312,6 +322,69 @@ describe('bulkUnarchiveTasks', () => {
     const state = getState();
     expect(state.archivedTasks).toEqual([held]);
     expect(state.archivedTotalCount).toBe(6);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// bulkUnarchiveTasks - session eviction for a To Do target, and the
+// applyTaskListPayload switch (see the module header for both mechanisms;
+// this is the bulk path's own coverage - the singular unarchiveTask path is
+// covered end-to-end by tests/ui/unarchive-to-todo-no-paused-row.spec.ts, but
+// that spec has no bulk equivalent).
+// ---------------------------------------------------------------------------
+
+function makeSwimlane(id: string, role: Swimlane['role']): Swimlane {
+  return { id, role } as Swimlane;
+}
+
+describe('bulkUnarchiveTasks - session eviction scoped to a To Do target', () => {
+  it("evicts sessions for EVERY restored task id when the target lane is role 'todo'", async () => {
+    tasksApi.bulkUnarchive.mockResolvedValueOnce(undefined);
+    tasksApi.list.mockResolvedValueOnce([]);
+    const held1 = makeTask({ id: 'task-1' });
+    const held2 = makeTask({ id: 'task-2' });
+    const { getState } = buildHarness({
+      archivedTasks: [held1, held2],
+      archivedTotalCount: 2,
+      swimlanes: [makeSwimlane('lane-todo', 'todo')],
+    });
+
+    await getState().bulkUnarchiveTasks(['task-1', 'task-2'], 'lane-todo');
+
+    // The slice hands `useSessionStore.setState` an updater rather than
+    // mutating state directly (real `set` semantics); the mock is a no-op, so
+    // apply the captured updater ourselves against a seeded session list to
+    // observe what it WOULD have evicted.
+    expect(useSessionStore.setState).toHaveBeenCalledTimes(1);
+    const evictionUpdater = useSessionStore.setState.mock.calls[0][0] as (
+      state: { sessions: Array<{ id: string; taskId: string }> },
+    ) => { sessions: Array<{ id: string; taskId: string }> };
+    const seededSessions = [
+      { id: 'sess-1', taskId: 'task-1' },
+      { id: 'sess-2', taskId: 'task-2' },
+      { id: 'sess-3', taskId: 'other-task' },
+    ];
+    const result = evictionUpdater({ sessions: seededSessions });
+    // Both restored tasks' sessions are dropped; the unrelated task's survives.
+    expect(result.sessions.map((session) => session.id)).toEqual(['sess-3']);
+  });
+
+  it("does NOT evict any session when the target lane is not role 'todo' (e.g. an auto-spawn column)", async () => {
+    tasksApi.bulkUnarchive.mockResolvedValueOnce(undefined);
+    tasksApi.list.mockResolvedValueOnce([]);
+    const held = makeTask({ id: 'task-1' });
+    const { getState } = buildHarness({
+      archivedTasks: [held],
+      archivedTotalCount: 1,
+      swimlanes: [makeSwimlane('lane-executing', null)],
+    });
+
+    await getState().bulkUnarchiveTasks(['task-1'], 'lane-executing');
+
+    // bulkUnarchiveTasks has exactly one useSessionStore.setState call site
+    // (the role==='todo' eviction), so "not called at all" is the correct
+    // negative assertion for a restore into a non-todo lane.
+    expect(useSessionStore.setState).not.toHaveBeenCalled();
   });
 });
 

@@ -203,3 +203,65 @@ describe('every task-list payload site reconciles lane pins', () => {
     ).toEqual([]);
   });
 });
+
+/**
+ * `useProjectSwitchEffect.ts` clears `lanePins` with a direct
+ * `useBoardStore.setState({ ..., lanePins: EMPTY_LANE_PINS, ... })` on all
+ * three of its board-resetting paths (warm-cache restore, cold load, and
+ * project-closed) rather than through `applyTaskListPayload` - a lane pin is
+ * transient in-flight state for ONE project's board and must never survive a
+ * switch, and unlike the payload-application sites above there is no server
+ * response to reconcile against here, so the explicit literal is the only
+ * mechanism. This is a static, not behavioral, check: every reachable path
+ * INTO a warm or cold switch has already cleared `lanePins` on the way OUT
+ * (see the three call sites' own comments), so there is no observable
+ * before/after state to drive a UI spec through - each call site is a
+ * standalone literal, and this scan is what proves the literal is actually
+ * there instead of a future refactor silently dropping the key from one
+ * `useBoardStore.setState({...})` object while leaving the other two intact.
+ */
+describe('useProjectSwitchEffect.ts clears lanePins on every board-resetting path', () => {
+  const REPO_ROOT = path.resolve(__dirname, '../..');
+
+  it('every useBoardStore.setState({...}) call includes lanePins', () => {
+    const filePath = path.join(REPO_ROOT, 'src/renderer/hooks/useProjectSwitchEffect.ts');
+    const source = fs.readFileSync(filePath, 'utf-8');
+    const callPattern = /useBoardStore\.setState\(\{/g;
+    const offenders: string[] = [];
+    let callCount = 0;
+    let match: RegExpExecArray | null;
+    while ((match = callPattern.exec(source)) !== null) {
+      callCount += 1;
+      // Walk forward from the call's opening brace, matching braces until
+      // balanced, to extract the full (possibly multi-line) object literal
+      // regardless of its indentation or field count.
+      const openBraceIndex = match.index + match[0].length - 1;
+      let depth = 0;
+      let closeBraceIndex = openBraceIndex;
+      for (let index = openBraceIndex; index < source.length; index += 1) {
+        if (source[index] === '{') depth += 1;
+        else if (source[index] === '}') {
+          depth -= 1;
+          if (depth === 0) { closeBraceIndex = index; break; }
+        }
+      }
+      const block = source.slice(openBraceIndex, closeBraceIndex + 1);
+      if (!block.includes('lanePins')) {
+        const lineNumber = source.slice(0, match.index).split('\n').length;
+        offenders.push(`useProjectSwitchEffect.ts:${lineNumber}`);
+      }
+    }
+    // Sanity floor so a rename of useBoardStore or setState (or the effect
+    // losing a path entirely) cannot pass this scan vacuously by matching
+    // zero call sites - the warm, cold, and project-closed paths are each
+    // their own useBoardStore.setState({...}) call today.
+    expect(callCount).toBeGreaterThanOrEqual(3);
+    expect(
+      offenders,
+      `Every useBoardStore.setState({...}) in useProjectSwitchEffect.ts resets per-project board ` +
+        `state on a project switch and must clear lanePins (EMPTY_LANE_PINS): a lane pin is ` +
+        `transient in-flight state for ONE project's board and must never survive to the next ` +
+        `one.\nOffenders:\n${offenders.join('\n')}`,
+    ).toEqual([]);
+  });
+});
