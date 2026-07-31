@@ -179,6 +179,45 @@ describeWithSqlite('display_id allocation is monotonic', () => {
 
     expect(createTask(tasks, database, 'Next').display_id).toBe(existing.display_id + 1);
   });
+
+  /**
+   * Every other case in this describe block seeds tasks THROUGH the migrated
+   * schema, so `MAX(display_id)` is always NULL -> 0 by the time the counter
+   * seed runs. That never exercises the real upgrade path: an existing user's
+   * populated database migrating for the FIRST time, where the seed's
+   * `MAX(display_id)` must pick up the pre-existing rows. Rebuild that shape by
+   * inserting tasks directly, then dropping `project_meta` (created and seeded
+   * once already, inside `migratedDatabase()`) so the seed statement runs again
+   * against a populated `tasks` table.
+   */
+  it('seeds the high-water mark from a populated database on first migration, not just an empty one', () => {
+    const database = migratedDatabase();
+    const laneId = anyLaneId(database);
+    const preExistingTaskCount = 5;
+
+    database.exec('DROP TABLE project_meta');
+    const insertTask = database.prepare(`INSERT INTO tasks
+      (id, display_id, title, description, swimlane_id, position, labels, created_at, updated_at)
+      VALUES (?, ?, ?, '', ?, 0, '[]', '2026-07-30T00:00:00.000Z', '2026-07-30T00:00:00.000Z')`);
+    for (let displayId = 1; displayId <= preExistingTaskCount; displayId += 1) {
+      insertTask.run(`pre-existing-${displayId}`, displayId, `Pre-existing task ${displayId}`, laneId);
+    }
+
+    runProjectMigrations(database);
+
+    const highWaterRow = database
+      .prepare("SELECT value FROM project_meta WHERE key = 'display_id_high_water'")
+      .get() as { value: string } | undefined;
+    expect(highWaterRow?.value).toBe(String(preExistingTaskCount));
+
+    // Deleting the HIGHEST-numbered pre-existing task must not free its number
+    // for reuse - the exact bug this feature exists to prevent (a recycled
+    // number adopting the deleted task's leftover worktree directory).
+    const tasks = new TaskRepository(database);
+    tasks.delete(`pre-existing-${preExistingTaskCount}`);
+    const next = createTask(tasks, database, 'Next after delete');
+    expect(next.display_id).toBe(preExistingTaskCount + 1);
+  });
 });
 
 describeWithSqlite('recoverLegacyWorktreeFolder', () => {

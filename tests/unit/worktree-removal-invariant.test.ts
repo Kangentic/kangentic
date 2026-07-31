@@ -21,7 +21,10 @@ describe('assertRemovableWorktreePath', () => {
   });
 
   it('refuses a filesystem root', () => {
-    expect(() => assertRemovableWorktreePath(PROJECT, path.parse(PROJECT).root))
+    // Resolve first: PROJECT is a Windows-shaped literal, so on Linux CI it is a
+    // RELATIVE path whose `root` is the empty string. Resolving against cwd
+    // yields a real root on both platforms ('C:\\' on Windows, '/' elsewhere).
+    expect(() => assertRemovableWorktreePath(PROJECT, path.parse(path.resolve(PROJECT)).root))
       .toThrow(/filesystem root/);
   });
 

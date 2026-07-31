@@ -828,8 +828,20 @@ export async function handleTaskMove(
             await worktreeManager.withLock(async () => {
               for (const expectedPath of candidateWorktreePaths) {
                 if (!fs.existsSync(expectedPath)) continue;
-                await worktreeManager.removeWorktree(expectedPath);
-                // removeWorktree doesn't throw on failure - verify it actually worked
+                // Per candidate, because removeWorktree THROWS for a path
+                // outside this project's worktrees root (the raw stored
+                // worktree_path is one candidate, and it is probed first). A
+                // throw that escaped this loop would skip the remaining
+                // candidates AND the prune / removeBranch below, leaving exactly
+                // the stale state this block exists to clear.
+                try {
+                  await worktreeManager.removeWorktree(expectedPath);
+                } catch (removalError) {
+                  console.warn(`[TASK_MOVE] Skipped stale worktree candidate ${expectedPath}:`, removalError);
+                  continue;
+                }
+                // A removal that merely FAILS returns false rather than throwing,
+                // so verify on disk.
                 if (fs.existsSync(expectedPath)) {
                   console.warn(`[TASK_MOVE] Could not remove stale worktree directory (file handles may still be held): ${expectedPath}`);
                 } else {

@@ -304,10 +304,28 @@ export async function retryFailedDoneCleanups(
       // Background best-effort: low priority so a user-initiated spawn jumps
       // ahead, and fail-fast so one stuck removal can't hold the queue for 15s.
       // A false return is logged below and deferred to the next project open.
-      const removed = await worktreeManager.withLock(
-        () => worktreeManager.removeWorktree(current.worktree_path!, { timeoutMs: 3000, removalProfile: 'fast' }),
-        { priority: GitQueuePriority.BACKGROUND, label: `retry-remove-worktree:${task.id.slice(0, 8)}` },
-      );
+      //
+      // removeWorktree has TWO failure modes, not one: it returns false when the
+      // directory is held, and it THROWS when the stored path is not a direct
+      // child of this project's worktrees root (assertRemovableWorktreePath).
+      // The throw must be caught per task. This loop is the only removeWorktree
+      // caller with no per-iteration guard, so an unhandled throw here would
+      // propagate out of withTaskLock and abandon every REMAINING Done task in
+      // the pass, not just the one with the bad row.
+      let removed = false;
+      try {
+        removed = await worktreeManager.withLock(
+          () => worktreeManager.removeWorktree(current.worktree_path!, { timeoutMs: 3000, removalProfile: 'fast' }),
+          { priority: GitQueuePriority.BACKGROUND, label: `retry-remove-worktree:${task.id.slice(0, 8)}` },
+        );
+      } catch (removalError) {
+        console.warn(
+          `[RESOURCE_CLEANUP] Retry pass refused to remove worktree for `
+          + `"${task.title}" (${task.id.slice(0, 8)}) at ${current.worktree_path}:`,
+          removalError,
+        );
+        return 'failed';
+      }
       if (!removed) {
         console.warn(
           `[RESOURCE_CLEANUP] Retry pass could not remove worktree for `

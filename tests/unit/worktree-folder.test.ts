@@ -63,6 +63,36 @@ describe('worktreeFolderUnderRoot', () => {
   });
 
   /**
+   * `comparablePath` case-folds on win32 only, and this is the only test that
+   * exercises that branch with an actual case difference. It works on any CI OS
+   * because these helpers are pure string manipulation that never touch
+   * `node:path` - unlike `isSameDirectory`, whose win32 semantics come from the
+   * path module bound at process start and so cannot be spoofed this way.
+   */
+  it('folds case on Windows, where the filesystem does, and nowhere else', () => {
+    const originalPlatform = process.platform;
+    const mixedCaseRoot = 'C:\\Project\\.kangentic\\worktrees';
+    const differentlyCasedChild = 'c:\\project\\.KANGENTIC\\Worktrees\\460';
+
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    try {
+      // The ORIGINAL-case segment comes back, not the folded one.
+      expect(worktreeFolderUnderRoot(mixedCaseRoot, differentlyCasedChild)).toBe('460');
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+    }
+
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+    try {
+      // Off Windows these are two different directories, and claiming the folder
+      // would write a permanently wrong value into a write-once column.
+      expect(worktreeFolderUnderRoot(mixedCaseRoot, differentlyCasedChild)).toBeNull();
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+    }
+  });
+
+  /**
    * The reason this helper takes a root at all. Kangentic can be opened AT a
    * worktree path (an opened worktree, or a /preview ephemeral project), so the
    * project root itself contains the `.kangentic/worktrees/` marker. A bare

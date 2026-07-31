@@ -138,6 +138,25 @@ describe('WorktreeManager.checkoutBranch', () => {
       .rejects.toThrow(/uncommitted changes/);
   });
 
+  it('does not claim to be switching branches when it is already on the target', async () => {
+    // The dirty check now runs on the same-branch path too, which made a message
+    // written for the switching case reachable when nothing is being switched.
+    mockGit.status.mockResolvedValue({
+      files: [{ path: 'src/index.ts', index: 'M', working_dir: ' ' }],
+    });
+
+    const manager = new WorktreeManager('/project');
+
+    mockGit.revparse.mockResolvedValue('feature/my-branch\n');
+    await expect(manager.checkoutBranch('feature/my-branch'))
+      .rejects.toThrow(/Cannot start work on 'feature\/my-branch'/);
+
+    // A genuine switch still says so.
+    mockGit.revparse.mockResolvedValue('main\n');
+    await expect(manager.checkoutBranch('feature/my-branch'))
+      .rejects.toThrow(/Cannot switch to branch 'feature\/my-branch'/);
+  });
+
   it('still ignores untracked and ignored files, which git checkout preserves', async () => {
     // Rejecting these would block every project with a node_modules or build
     // directory, which is most of them.

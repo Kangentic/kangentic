@@ -74,14 +74,14 @@ async function launch(): Promise<{ browser: Browser; page: Page }> {
   return { browser, page };
 }
 
-function fireSpawnBlocked(page: Page, projectId: string) {
+function fireSpawnBlocked(page: Page, projectId: string, taskTitle = 'Task B') {
   return page.evaluate(
-    ([message, targetProjectId]) => {
+    ([message, targetProjectId, title]) => {
       (window as unknown as {
         __mockFireTaskSpawnBlocked: (taskId: string, taskTitle: string, message: string, projectId: string) => void;
-      }).__mockFireTaskSpawnBlocked('task-blocked-1', 'Task B', message, targetProjectId);
+      }).__mockFireTaskSpawnBlocked(`task-blocked-${title}`, title, message, targetProjectId);
     },
-    [BLOCK_MESSAGE, projectId] as const,
+    [BLOCK_MESSAGE, projectId, taskTitle] as const,
   );
 }
 
@@ -93,7 +93,7 @@ test.describe('task:spawnBlocked push', () => {
 
       // The task name matters: the user is looking at a board where the task
       // exists and looks normal, so the toast has to say which one did not start.
-      const toast = page.locator('text=/Task B.*was created but its agent did not start/');
+      const toast = page.locator('text=/Task B.*did not start its agent/');
       await expect(toast).toBeVisible({ timeout: 5000 });
       await expect(page.locator('text=/is already running an agent there/')).toBeVisible();
     } finally {
@@ -107,10 +107,17 @@ test.describe('task:spawnBlocked push', () => {
       // MCP auto-spawn targets whichever project the tool named, so this push
       // routinely arrives for a project the user is not looking at. Its message
       // names a task on another board, so showing it here would be noise.
-      await fireSpawnBlocked(page, OTHER_PROJECT_ID);
-      await page.waitForTimeout(800);
+      await fireSpawnBlocked(page, OTHER_PROJECT_ID, 'Background Task');
 
-      await expect(page.locator('text=/was created but its agent did not start/')).toHaveCount(0);
+      // Then fire one for the CURRENT project and wait for it. Both pushes cross
+      // the same channel in order, so once the second has rendered the first has
+      // definitively been handled and dropped. That is the signal a bare
+      // waitForTimeout only guesses at, and it does not get slower under CI load.
+      await fireSpawnBlocked(page, CURRENT_PROJECT_ID, 'Foreground Task');
+      await expect(page.locator('text=/Foreground Task.*did not start its agent/'))
+        .toBeVisible({ timeout: 5000 });
+
+      await expect(page.locator('text=/Background Task/')).toHaveCount(0);
     } finally {
       await browser.close();
     }
@@ -127,7 +134,7 @@ test.describe('task:spawnBlocked push', () => {
         }).__mockFireTaskSpawnBlocked('task-blocked-2', 'Task C', message, undefined);
       }, BLOCK_MESSAGE);
 
-      await expect(page.locator('text=/Task C.*was created but its agent did not start/'))
+      await expect(page.locator('text=/Task C.*did not start its agent/'))
         .toBeVisible({ timeout: 5000 });
     } finally {
       await browser.close();

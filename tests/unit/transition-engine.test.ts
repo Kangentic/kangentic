@@ -75,10 +75,30 @@ function makeSessionRepo() {
   };
 }
 
+interface StoredWorktreeFields {
+  worktree_path: string;
+  branch_name: string;
+  worktree_folder: string;
+}
+
 function makeTaskRepo() {
+  // Models the one thing executeCreateWorktree depends on beyond a bare spy: a
+  // write followed by a read-back. The engine refreshes the in-memory task from
+  // getById after recordWorktree, because executeTransition hands the SAME task
+  // object to every later action in the chain.
+  const storedTasks = new Map<string, StoredWorktreeFields>();
   return {
     update: vi.fn(),
-    recordWorktree: vi.fn(),
+    recordWorktree: vi.fn(
+      (taskId: string, worktreePath: string, branchName: string, worktreeFolder: string) => {
+        storedTasks.set(taskId, {
+          worktree_path: worktreePath,
+          branch_name: branchName,
+          worktree_folder: worktreeFolder,
+        });
+      },
+    ),
+    getById: vi.fn((taskId: string) => storedTasks.get(taskId)),
     // No legacy folder to recover: these tasks were never created under the old
     // `<slug>-<shortId>` scheme, so they take their display_id.
     recoverLegacyWorktreeFolder: vi.fn(() => null),
@@ -559,6 +579,13 @@ describe('TransitionEngine - create_worktree action threads signal + progress', 
       'kangentic/fix-login-flow',
       '460',
     );
+
+    // And the IN-MEMORY task is refreshed from the row, not just the DB.
+    // executeTransition passes this same object to every later action, so a
+    // `create_worktree` followed by `spawn_agent` would otherwise compute its
+    // cwd from a null worktree_path and run the agent in the main checkout.
+    expect(task.worktree_path).toBe('/some/project/.kangentic/worktrees/460');
+    expect(task.worktree_folder).toBe('460');
   });
 
   it('passes undefined signal/progress when the caller supplies none', async () => {

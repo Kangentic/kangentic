@@ -533,18 +533,24 @@ export function runProjectMigrations(db: Database.Database): void {
   const hasWorktreeFolderColumn = (db.pragma('table_info(tasks)') as Array<{ name: string }>)
     .some((col) => col.name === 'worktree_folder');
   if (!hasWorktreeFolderColumn) {
-    db.exec('ALTER TABLE tasks ADD COLUMN worktree_folder TEXT DEFAULT NULL');
-    const tasksWithWorktree = db
-      .prepare('SELECT id, worktree_path FROM tasks WHERE worktree_path IS NOT NULL')
-      .all() as Array<{ id: string; worktree_path: string }>;
-    const updateWorktreeFolder = db.prepare('UPDATE tasks SET worktree_folder = ? WHERE id = ?');
-    const backfillFolders = db.transaction(() => {
+    // ALTER + backfill run in ONE transaction because the guard above tests only
+    // for the column's existence. A crash between the two would leave the column
+    // present and the guard satisfied, so the backfill would never run again -
+    // and the column is write-once, so a task whose worktree_path is later nulled
+    // by a Done move would lose its folder name permanently. Same reasoning, and
+    // the same shape, as the run_mode migration further down this file.
+    const addWorktreeFolderTransaction = db.transaction(() => {
+      db.exec('ALTER TABLE tasks ADD COLUMN worktree_folder TEXT DEFAULT NULL');
+      const tasksWithWorktree = db
+        .prepare('SELECT id, worktree_path FROM tasks WHERE worktree_path IS NOT NULL')
+        .all() as Array<{ id: string; worktree_path: string }>;
+      const updateWorktreeFolder = db.prepare('UPDATE tasks SET worktree_folder = ? WHERE id = ?');
       for (const task of tasksWithWorktree) {
         const folderName = worktreeFolderFromPath(task.worktree_path);
         if (folderName) updateWorktreeFolder.run(folderName, task.id);
       }
     });
-    backfillFolders();
+    addWorktreeFolderTransaction();
   }
 
   // --- Add labels and priority columns to tasks ---

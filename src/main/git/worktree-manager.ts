@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import { slugify, computeAutoBranchName } from '../../shared/slugify';
 import { worktreeFolderFromPath } from '../../shared/worktree-folder';
 import { describeWorktreePathLengthCause } from '../../shared/windows-path-budget';
+import { worktreesRootFor } from './task-worktree-folder';
 import { isGitRepo, isInsideWorktree } from './git-checks';
 import { resolveWorktreeBase, describeUnresolvableBase, refResolvesLocally } from './base-branch';
 import { linkNodeModules, removeNodeModulesPath } from './node-modules-link';
@@ -135,7 +136,7 @@ export function assertRemovableWorktreePath(projectPath: string, worktreePath: s
   if (path.parse(resolved).root === resolved) {
     throw new Error(`Refusing to remove a filesystem root as a worktree: ${resolved}`);
   }
-  const worktreesRoot = path.resolve(projectPath, '.kangentic', 'worktrees');
+  const worktreesRoot = path.resolve(worktreesRootFor(projectPath));
   const relative = path.relative(worktreesRoot, resolved);
   // Exactly one segment below the worktrees root: not the root itself, not an
   // ancestor (`..`), not a grandchild, and not on another drive (`path.relative`
@@ -587,10 +588,10 @@ export class WorktreeManager {
         shortId,
       );
 
-    const worktreePath = path.join(this.projectPath, '.kangentic', 'worktrees', folderName);
+    const worktreesDir = worktreesRootFor(this.projectPath);
+    const worktreePath = path.join(worktreesDir, folderName);
 
     // Ensure worktrees dir exists
-    const worktreesDir = path.join(this.projectPath, '.kangentic', 'worktrees');
     try {
       await fs.promises.mkdir(worktreesDir, { recursive: true });
     } catch (err) {
@@ -980,18 +981,24 @@ export class WorktreeManager {
    * `node_modules` or a `build/` directory.
    */
   async checkoutBranch(branchName: string): Promise<void> {
+    // HEAD is read before the dirty check only so the message can tell the truth.
+    // The check itself still runs in both cases, which is the uniform
+    // postcondition described above.
+    const currentBranch = (await this.git.revparse(['--abbrev-ref', 'HEAD'])).trim();
     const status = await this.git.status();
     const trackedChanges = status.files.filter(
       file => file.index !== '?' && file.working_dir !== '?',
     );
     if (trackedChanges.length > 0) {
       throw new Error(
-        `Cannot switch to branch '${branchName}': you have uncommitted changes. `
-        + `Commit or stash your changes, or enable worktree mode for this task.`
+        currentBranch === branchName
+          ? `Cannot start work on '${branchName}': the main repo has uncommitted changes. `
+            + 'Commit or stash them, or enable worktree mode for this task.'
+          : `Cannot switch to branch '${branchName}': you have uncommitted changes. `
+            + 'Commit or stash your changes, or enable worktree mode for this task.',
       );
     }
 
-    const currentBranch = (await this.git.revparse(['--abbrev-ref', 'HEAD'])).trim();
     if (currentBranch === branchName) return;
 
     await this.git.checkout(branchName);

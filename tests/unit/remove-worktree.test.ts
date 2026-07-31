@@ -359,6 +359,33 @@ describe('WorktreeManager.removeWorktree', () => {
     expect(result).toBe(true);
     expect(mockReapProcessesForWorktree).not.toHaveBeenCalled();
   });
+
+  // Wired-guard test: `assertRemovableWorktreePath` is `removeWorktree`'s FIRST
+  // statement, before the retried, Windows-lock-aggressive recursive delete
+  // ever starts. Every other test in this file always passes WORKTREE_PATH, a
+  // valid direct child of the worktrees root, so none of them would notice if
+  // the guard call were ever deleted from `removeWorktree`. This is the only
+  // one that would.
+  //
+  // The bad path is a GRANDCHILD of the worktrees root (two segments below
+  // it), which fails the direct-child check on both Windows and POSIX: after
+  // the real (unmocked) `path.resolve`/`path.relative`, the relative route
+  // between the root and this candidate contains a separator either way, so
+  // this does not depend on which platform's `path` semantics are bound at
+  // import time.
+  it('rejects a path that is not a direct child of the worktrees root, before attempting any removal', async () => {
+    const grandchildWorktreePath = `${PROJECT_PATH}/.kangentic/worktrees/460/src`;
+
+    await expect(manager.removeWorktree(grandchildWorktreePath)).rejects.toThrow(/direct child/);
+
+    // The dangerous machinery must never start - not even the existence check
+    // that gates the happy-path short-circuit.
+    expect(mockExistsSync).not.toHaveBeenCalled();
+    expect(mockSpawn).not.toHaveBeenCalled();
+    expect(mockFsRm).not.toHaveBeenCalled();
+    expect(mockRemoveWithRetry).not.toHaveBeenCalled();
+    expect(mockRemoveNodeModulesPath).not.toHaveBeenCalled();
+  });
 });
 
 // The reap is gated on NODE_ENV !== 'test' (E2E owns its own janitor sweep), so

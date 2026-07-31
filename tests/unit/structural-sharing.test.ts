@@ -73,6 +73,15 @@ describe('applyStructuralSharing', () => {
     expect(result[0]).toBe(next);
   });
 
+  it('uses next reference when worktree_folder changed', () => {
+    const previous = makeTask({ worktree_folder: null });
+    const next = makeTask({ worktree_folder: '460' });
+
+    const result = applyStructuralSharing([previous], [next]);
+
+    expect(result[0]).toBe(next);
+  });
+
   it('uses next reference when run_mode differs (Column Settings vs Agent Override)', () => {
     const previous = makeTask({ run_mode: 'column_settings' });
     const next = makeTask({ run_mode: 'agent_override' });

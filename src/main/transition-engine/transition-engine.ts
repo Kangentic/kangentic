@@ -484,6 +484,14 @@ export class TransitionEngine {
     if (!result) return;
 
     this.taskRepo.recordWorktree(task.id, result.worktreePath, result.branchName, result.worktreeFolder);
+    // Refresh the in-memory task, as ensureTaskWorktree does after the same
+    // write. executeTransition hands ONE task object to every action in the
+    // chain with no re-read between them, so a `create_worktree` followed by
+    // `spawn_agent` would otherwise spawn with `task.worktree_path` still null
+    // and run the agent unisolated in the main checkout. `prepareWorktreeFolder`
+    // above already mutates `worktree_folder` in place, which makes a stale
+    // `worktree_path` on the same object harder to notice, not easier.
+    Object.assign(task, this.taskRepo.getById(task.id));
   }
 
   private async executeCleanupWorktree(task: Task): Promise<void> {

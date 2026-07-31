@@ -581,7 +581,11 @@ export function App() {
         const activeProjectId = useProjectStore.getState().currentProject?.id;
         if (blockedProjectId && blockedProjectId !== activeProjectId) return;
         useToastStore.getState().addToast({
-          message: `"${taskTitle}" was created but its agent did not start. ${message}`,
+          // Deliberately verb-free about how the task got here. This same event
+          // fires from create, promote, unarchive and MCP auto-spawn, and only
+          // the first of those created anything - "was created" would be a lie
+          // on three of the four paths.
+          message: `"${taskTitle}" did not start its agent. ${message}`,
           variant: 'warning',
           duration: 12000,
         });

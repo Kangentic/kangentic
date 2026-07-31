@@ -120,7 +120,7 @@ describe('ensureTaskBranchCheckout occupancy guard', () => {
       .rejects.toBeInstanceOf(BranchCheckoutBlockedError);
   });
 
-  it('allows the checkout when the only live session is the taskitself', async () => {
+  it('allows the checkout when the only live session is the task itself', async () => {
     const task = makeTask({ base_branch: 'develop' });
     const context = makeContext([
       { taskId: task.id, status: 'running', cwd: PROJECT_PATH },
@@ -167,10 +167,17 @@ describe('ensureTaskBranchCheckout occupancy guard', () => {
     expect(checkoutBranchMock).not.toHaveBeenCalled();
   });
 
-  it('treats separator and drive-case differences as the same directory on Windows', async () => {
-    const originalPlatform = process.platform;
-    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
-    try {
+  /**
+   * Windows-only by necessity, not by preference. `isSameDirectory` compares via
+   * `path.relative`, and it is `path.win32.relative` that case-folds and treats
+   * `\` as a separator. That behaviour comes from the `path` module bound at
+   * import time, so spoofing `process.platform` does NOT produce it: on Linux
+   * these two strings resolve to two genuinely different directories and the
+   * guard correctly does not fire. Run it where the semantics actually exist.
+   */
+  it.runIf(process.platform === 'win32')(
+    'treats separator and drive-case differences as the same directory on Windows',
+    async () => {
       const task = makeTask({ base_branch: 'develop' });
       // Same directory, written the way a PTY cwd often comes back.
       const context = makeContext([
@@ -179,10 +186,8 @@ describe('ensureTaskBranchCheckout occupancy guard', () => {
 
       await expect(ensureTaskBranchCheckout(context, task, 'C:\\Users\\dev\\proj'))
         .rejects.toBeInstanceOf(BranchCheckoutBlockedError);
-    } finally {
-      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
-    }
-  });
+    },
+  );
 
   /**
    * A Command Terminal spawns a real agent with `cwd = projectRoot`
