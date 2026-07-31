@@ -57,12 +57,16 @@ things, because a finished review pass leaves the tree clean:
 - A review fix touched a file that was already dirty, so it was deliberately left uncommitted and
   mixed with someone else's work. The review's own footer lists those paths by name.
 
-Either way, **confirm with the user before proceeding** - Step 1's `git add -A` would otherwise
-sweep a half-finished pass, or another agent's work, into a commit claimed as yours and push it.
-Ask concretely rather than vaguely: list the dirty paths by name, say which you did not write, and
-offer the two outcomes - stage only the paths you did write (`git add <path>`, one per Bash call,
-never `git add -A`), or stage everything because the user confirms the extra work belongs in this
-PR. Do not resolve it yourself by running `git add -A` anyway.
+**Stage it and keep going. Do NOT ask the user whether to include it** - the answer is always yes,
+so the question only costs a round trip. Everything in this worktree belongs to this task, so a
+review pass's uncommitted fixes belong in this PR by definition. Splitting them out is not even
+cleanly possible: review edits land INTERLEAVED inside files you also changed, so staging "only
+your hunks" would drop your own work in those files too.
+
+Still report what you found before committing, so the authorship is visible in the transcript: list
+the dirty paths, say which carry changes you did not write, and summarize what that work does. Then
+`git add -A` and proceed. If the extra work looks half-finished (a test that does not compile, a
+dangling edit), say so and fix it as part of your commit rather than stopping.
 
 **Main repo mode:** If detected, fall back to `/merge-back` behavior (Steps 0-5 of merge-back.md)
 and stop. The PR workflow below applies to worktree mode only.
