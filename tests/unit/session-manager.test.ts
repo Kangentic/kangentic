@@ -2451,3 +2451,113 @@ describe('findLiveSessionByTaskId delegate', () => {
     expect(result).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// 17. Per-renderer focus scoping (setFocusedSessions / clearFocusedSessionsFor)
+// ---------------------------------------------------------------------------
+
+describe('Per-renderer focus scoping', () => {
+  // More than one renderer can publish a focused-session set (the main window
+  // via useFocusedSessionsSync, a detached Agent Monitor window publishing its
+  // own). setFocusedSessions and clearFocusedSessionsFor must only release
+  // backpressure accounting for sessions the CALLING renderer actually
+  // affected - never another renderer's sessions, and never a session another
+  // renderer still has focused. Both used to be blanket operations
+  // (`backpressure.reset()` / an unconditional release loop) that were safe
+  // only with a single publisher.
+  let manager: SessionManager;
+  let spawnedSessionIds: string[] = [];
+
+  beforeEach(() => {
+    manager = new SessionManager();
+    spawnedSessionIds = [];
+  });
+
+  afterEach(async () => {
+    manager.killAll();
+    spawnedSessionIds = [];
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+
+  async function spawnSession(taskId: string) {
+    const mock = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
+    const session = await manager.spawn({ taskId, command: '', cwd: tmpDir });
+    spawnedSessionIds.push(session.id);
+    return { session, ...mock };
+  }
+
+  /** Bytes emitted-but-unacknowledged for a session, via the public pipeline-stats seam. */
+  function inFlightBytesFor(sessionId: string): number {
+    const stats = manager.getPipelineStats();
+    return stats.find((row) => row.sessionId === sessionId)?.inFlightBytes ?? 0;
+  }
+
+  it('setFocusedSessions releases only the calling renderer\'s own affected sessions', async () => {
+    const RENDERER_1 = 1;
+    const RENDERER_2 = 2;
+    const { session: sessionA, feedData: feedA } = await spawnSession('task-scope-a');
+    const { session: sessionB, feedData: feedB } = await spawnSession('task-scope-b');
+
+    manager.setFocusedSessions([sessionA.id], RENDERER_1);
+    manager.setFocusedSessions([sessionB.id], RENDERER_2);
+
+    feedA('hello-a');
+    feedB('hello-b');
+    // Let the 16ms flush window land both emissions before reading inFlight.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    // Sanity: both sessions actually accumulated in-flight accounting, or the
+    // assertions below would pass vacuously.
+    expect(inFlightBytesFor(sessionA.id)).toBeGreaterThan(0);
+    expect(inFlightBytesFor(sessionB.id)).toBeGreaterThan(0);
+
+    // Renderer 2 changes its OWN focus away from session B. Session B was in
+    // renderer 2's affected set (previous ∪ new), so it is released. Session A
+    // was never in renderer 2's set and must be left alone.
+    manager.setFocusedSessions([], RENDERER_2);
+
+    expect(inFlightBytesFor(sessionB.id)).toBe(0);
+    expect(inFlightBytesFor(sessionA.id)).toBeGreaterThan(0);
+  });
+
+  it('clearFocusedSessionsFor releases only sessions no other renderer still has focused', async () => {
+    const RENDERER_1 = 1;
+    const RENDERER_2 = 2;
+    const { session: sessionA, feedData: feedA } = await spawnSession('task-scope-c');
+    const { session: sessionB, feedData: feedB } = await spawnSession('task-scope-d');
+
+    // Renderer 1 has both sessions visible; renderer 2 also has session B
+    // (e.g. the same terminal shown in a detached monitor window).
+    manager.setFocusedSessions([sessionA.id, sessionB.id], RENDERER_1);
+    manager.setFocusedSessions([sessionB.id], RENDERER_2);
+
+    feedA('hello-a');
+    feedB('hello-b');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(inFlightBytesFor(sessionA.id)).toBeGreaterThan(0);
+    expect(inFlightBytesFor(sessionB.id)).toBeGreaterThan(0);
+
+    // Renderer 1's window closes. Session A had no other consumer, so its
+    // accounting is released. Session B is still held by renderer 2 and must
+    // keep its in-flight accounting intact.
+    manager.clearFocusedSessionsFor(RENDERER_1);
+
+    expect(inFlightBytesFor(sessionA.id)).toBe(0);
+    expect(inFlightBytesFor(sessionB.id)).toBeGreaterThan(0);
+  });
+
+  it('getRenderersFocusedOn reports every renderer currently showing a session', async () => {
+    const RENDERER_1 = 1;
+    const RENDERER_2 = 2;
+    const { session: sessionA } = await spawnSession('task-scope-e');
+    const { session: sessionB } = await spawnSession('task-scope-f');
+
+    manager.setFocusedSessions([sessionA.id, sessionB.id], RENDERER_1);
+    manager.setFocusedSessions([sessionB.id], RENDERER_2);
+
+    expect(manager.getRenderersFocusedOn(sessionA.id)).toEqual([RENDERER_1]);
+    expect(manager.getRenderersFocusedOn(sessionB.id).slice().sort()).toEqual([RENDERER_1, RENDERER_2]);
+  });
+});
