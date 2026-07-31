@@ -1,6 +1,6 @@
 ---
 description: Create a PR and drive its CI checks to all-green (auto-fixing code and de-flaking/rewriting tests), then stop. Never merges. This is the Tests column skill. Use /merge-pull-request to merge a green PR.
-allowed-tools: Read, Glob, Grep, Edit, Write, Bash(git:*), Bash(npm:*), Bash(gh:*), Agent
+allowed-tools: Read, Glob, Grep, Edit, Write, Bash(git:*), Bash(npm:*), Bash(npx:*), Bash(gh:*), Agent
 argument-hint: [commit message]
 ---
 
@@ -42,6 +42,27 @@ All git commands below run from the **current working directory** - never use `c
    this skill drives PR checks over `gh` and a long monitor loop must not start unauthenticated.
 
 Report the mode, branch name, source branch, and working tree status before proceeding.
+
+**Expect a commit you did not author.** Upstream of this column, the **Code Review** column runs
+`/code-review` as a separate agent in the SAME worktree (`isolated` isolates the conversation, not
+the filesystem), and it auto-fixes findings, adds tests, and commits that pass itself. So a
+`fix(review):` / `refactor(review):` / `test(review):` commit on the branch is expected, not a
+mistake. Leave it alone: do not squash it, reword it, or fold it into your own message - its
+separate authorship is the point.
+
+**And if the tree is dirty with changes you did not write**, that now means one of exactly two
+things, because a finished review pass leaves the tree clean:
+
+- The review pass is **still running**. Its commit has not landed yet.
+- A review fix touched a file that was already dirty, so it was deliberately left uncommitted and
+  mixed with someone else's work. The review's own footer lists those paths by name.
+
+Either way, **confirm with the user before proceeding** - Step 1's `git add -A` would otherwise
+sweep a half-finished pass, or another agent's work, into a commit claimed as yours and push it.
+Ask concretely rather than vaguely: list the dirty paths by name, say which you did not write, and
+offer the two outcomes - stage only the paths you did write (`git add <path>`, one per Bash call,
+never `git add -A`), or stage everything because the user confirms the extra work belongs in this
+PR. Do not resolve it yourself by running `git add -A` anyway.
 
 **Main repo mode:** If detected, fall back to `/merge-back` behavior (Steps 0-5 of merge-back.md)
 and stop. The PR workflow below applies to worktree mode only.
@@ -113,7 +134,13 @@ If there are uncommitted changes (non-empty `git status --porcelain` output):
    **Never write to `.git/`** - in worktrees `.git` is a file, not a directory.
    **Never use `$(...)` or backtick command substitution** - triggers a safety prompt.
 
-If the working tree is clean, skip to Step 1.5.
+If the working tree is clean, there is nothing to stage - but **do not skip item 3.** A clean tree
+usually means the Code Review pass already committed its own work (see the Pre-flight note), and
+that commit can touch doc anchors nothing has audited yet: in one real case it changed
+`src/main/db/migrations/project-schema.ts` and `src/main/ipc/handlers/task-move.ts`, both glob
+anchors. So run item 3 against the **branch diff** instead of the uncommitted set
+(`git diff --name-only origin/<sourceBranch>...HEAD`), commit any doc fixes it produces with a `docs:`
+message, and then go to Step 1.5.
 
 ## Step 1.5 - Compute the clean PUBLIC branch name (never rename the local branch)
 
@@ -131,6 +158,10 @@ mismatch is a non-issue once Step 5b links the number.
 Compute `<branch>`, the clean public name. The local HEAD is the push SOURCE and is never touched:
 
 1. `<type>` = the conventional prefix of the Step 1 commit message (`feat`, `fix`, `chore`, ...).
+   If Step 1 created NO commit (a clean tree whose item 3 found no doc gap - now the common case,
+   since the Code Review pass commits its own work and leaves the tree clean), there is no Step 1
+   message to read: take the prefix of the most recent commit that is NOT a `*(review)` commit, and
+   if there is none, default to `chore`.
 2. `<desc>` = a clean kebab slug of the work. Resolve the task with `kangentic_get_current_task`
    (pass the worktree cwd + the local branch) and slugify its TITLE: lowercase, words joined by
    single hyphens, drop filler ("build", "the", "a", "add", "support for"), drop any trailing
@@ -182,6 +213,29 @@ Write any missing tests for the new functionality BEFORE the PR is created, so C
 Keep this proportional: a clean no-op on a thin or trivial diff is the expected outcome, so the
 Tests column stays fast.
 
+**Re-run any tests the Code Review pass added.** Those files went green when `/code-review` wrote
+them, but against the tree as it stood **then** - and Step 3 has since rebased onto a source branch
+that may well have moved.
+
+Find them in the review commit rather than in the working tree; the pass committed itself, so they
+are not sitting there untracked. Two Bash calls:
+
+1. `git log --format=%H --grep="(review)" origin/<sourceBranch>..HEAD` to get the review commit(s). Keep
+   the quotes; unquoted parentheses are a shell syntax error.
+2. `git show --name-only --format= <sha>` and take the `tests/` paths. Use `--format=` rather than
+   adding `--stat`: it suppresses the commit header so the output is bare paths, ready to pass
+   straight to a scoped test run.
+
+Then re-run each, scoped to the file itself:
+
+- `npx vitest run tests/unit/<file>.test.ts`
+- `npx playwright test tests/ui/<file>.spec.ts`
+
+Only unit and UI files exist (`/code-review` flags E2E coverage holes rather than writing them), so
+this is cheap. **Keep it scoped** - a scoped run of an added test file is explicitly allowed, but
+`npm run test:unit` or a bare `npx vitest run` is a full-tier run this skill must not do. Fix a
+failure here rather than spending a Step 7 round on it.
+
 ## Step 4 - Push the Branch
 
 Run: `git push origin HEAD:<branch> --force-with-lease`
@@ -192,7 +246,9 @@ fails because someone else pushed to the branch, report it and stop - never bare
 ## Step 5 - Create the Pull Request
 
 1. **Determine PR title:** the first line of the most recent commit. If there are several commits
-   since the source branch, combine them into one concise title.
+   since the source branch, combine them into one concise title. **Skip any `*(review)` commit** when
+   deriving the title - it describes the audit pass, not the change the PR is for, and it is routinely
+   the newest commit on the branch.
 2. **Determine PR body:** write a rich, reviewer-facing body and save it to `.kangentic/PR_BODY.tmp`
    with the Write tool (avoids shell escaping). Mirror the section order of
    `.github/pull_request_template.md` so skill-created PRs match UI-created ones:
@@ -286,13 +342,25 @@ For each round:
      non-trivial test fixes to a `test-builder` agent. Cross-platform parity
      (`.claude/rules/cross-platform-parity.md`) is the usual cause of a test that is green locally
      on Windows but red on CI's Linux runner.
+   - **Review-added test gone stale** (the failing test came from the Code Review pass): it passed
+     when `/code-review` wrote it, but against the pre-rebase base. A failure is more likely drift
+     from the moved base than a regression in your own code, so read what it asserts before
+     changing production code to satisfy it. If Step 3.5 already re-ran it green, this is not the
+     explanation and it is a real regression.
    - **Flaky test** (passed on retry, or intermittent across shards/runs): do NOT accept it.
      Delegate to `test-builder` to rewrite it deterministically (replace fixed waits with conditional
      polls, disambiguate selectors, etc.). If it is genuinely unsalvageable, remove it with an
      explicit justification in the commit body. Leave NO flaky tests behind.
-3. Commit the fixes (conventional message via `.kangentic/COMMIT_MSG.tmp`), then push:
+3. **Re-check doc anchors when a fix touched one.** Step 1 item 3 audited anchors, but it ran before
+   this loop, so a fix committed here can touch an anchor nothing has audited. If any file you just
+   edited matches the canonical anchor list in `.claude/skills/sync-docs/SKILL.md` Step 2, spawn a
+   `doc-auditor` on those files and fix any gap inline before committing. Do it HERE: this push is
+   happening anyway, so it costs no extra CI round, whereas leaving the gap for
+   `/merge-pull-request` to find makes that skill push a `docs:` commit at merge time and wait out a
+   second full CI run.
+4. Commit the fixes (conventional message via `.kangentic/COMMIT_MSG.tmp`), then push:
    `git push origin HEAD:<branch> --force-with-lease`.
-4. Return to Step 6 to re-monitor.
+5. Return to Step 6 to re-monitor.
 
 ## Step 8 - Report (success)
 

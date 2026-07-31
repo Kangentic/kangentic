@@ -1,5 +1,5 @@
 ---
-description: Review git changes for quality and conventions via parallel reviewer subagents synthesized in the main agent (auto-fixes findings and fills red-green test-coverage holes by default)
+description: Review git changes for quality and conventions via parallel reviewer subagents synthesized in the main agent (auto-fixes findings, fills red-green test-coverage holes, and commits that pass locally by default)
 allowed-tools: Read, Glob, Grep, Edit, Write, Bash(git:*), Bash(npm:*), Bash(npx:*), Agent
 argument-hint: [base-ref] [review-only]
 ---
@@ -10,11 +10,11 @@ Review the changes that make up this branch's work - commits on the branch **plu
 
 ## Modes
 
-- **Default** (`/code-review`) - review, then immediately apply every safely-fixable finding, re-run typecheck, and report `Changes Applied` + `Skipped (with reason)`.
+- **Default** (`/code-review`) - review, then immediately apply every safely-fixable finding, re-run typecheck, commit this pass's own work locally (never pushed), and report `Changes Applied` + `Skipped (with reason)`.
 - **Review-only** (`/code-review review-only`) - findings table + Verdict footer only, no edits applied.
 
 The skill reads `$ARGUMENTS`, which may carry up to two independent tokens in any order:
-- `review-only` - skip the Apply Phase and Re-typecheck steps and emit the legacy Verdict footer instead of the Changes/Skipped report.
+- `review-only` - skip the Apply Phase, Re-typecheck, and commit steps (it writes nothing at all) and emit the legacy Verdict footer instead of the Changes/Skipped report.
 - a **base ref** (any token that is not `review-only`, e.g. `origin/main`, `develop`, or a commit SHA) - overrides the auto-detected base branch the diff is scoped against (see Step 3). Mirrors `claude ultrareview origin/main`. A base ref is diff-*scoping* metadata, not author intent - it never tells the reviewer what the change was "supposed" to do (see "Reviewer independence").
 
 **User-provided arguments (if any):** $ARGUMENTS
@@ -45,10 +45,17 @@ The skill is a thin driver that runs in the main loop. All commands below run fr
    - **Uncommitted (staged + unstaged):** `git diff HEAD` and `git diff HEAD --stat` (`git diff HEAD` captures index + working tree in one command).
    - **Untracked new files:** `git ls-files --others --exclude-standard`. No diff shows these, but they are part of the change - `Read` each listed file in full and append it to `diffText` as a synthetic added-file block (`+++ b/<path>` header followed by the full contents) so the finders see it.
    If the committed diff, the uncommitted diff, **and** the untracked list are all empty, emit "No changes to review." and stop. Otherwise `diffText` = committed diff + uncommitted diff + the synthetic untracked blocks, and `changedFiles` = the deduped union of file paths across the committed `--stat`, the uncommitted `--stat`, and the untracked list. Also compute the compact **signature delta** from the diff alone (the integration finder consumes it; see "## Finders").
+
+   **Record `preexistingDirty`** = the union of `git diff HEAD --name-only` and the untracked list: everything already dirty before this pass touched anything. Step 8 subtracts it to decide what it may commit. This is deliberately **narrower than `changedFiles`**, which also includes the committed-vs-base paths - conflating the two makes Step 8's set difference empty, so nothing would ever commit.
+
+   **Use `--name-only`, never the `--stat` paths, for this set.** `--stat` abbreviates a long path to fit its column budget (`src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx`, already in this repo at 83 chars, renders as `.../sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx`). Step 8 compares against `git diff HEAD --name-only`, which never truncates, so a `--stat`-derived entry would fail to string-match its own full path, drop out of the subtraction, and get committed - the precise outcome this design exists to prevent. Keep the `--stat` capture for the human-readable summary only.
+
+   **Persist it immediately, do not just remember it.** Write the list (one path per line) to `.kangentic/REVIEW_PREEXISTING_DIRTY.tmp` with the `Write` tool as soon as you compute it. Step 8 is many steps, a five-subagent fan-out, and a whole Apply Phase later, so this value has to survive a context compaction in between. If it does not survive, the set difference silently UNDER-counts and Step 8 commits the task agent's unfinished work - the exact outcome this design exists to prevent. `.kangentic/` is gitignored, so the file never stages itself and needs no cleanup.
 5. **Fan out reviewer subagents (the `Agent` tool, ALL in ONE message so they run concurrently).** Every finder is a **read-only** subagent in its own fresh context window; only the driver (main loop) mutates the working tree, in the Apply Phase. Give each finder the diff (or, when it is very large, the Step 4 gather commands so it reproduces the diff itself) plus the changed-file list, and instruct it to read the full changed files for surrounding context. See "## Finders" for the exact set, the gates, the per-finder criteria, and the required return shape. The universal dimension finders always run; the domain auditors run only when their changed-file glob matches.
 6. **Synthesize + verify (main agent).** Collect every finder's findings. For each, **verify it against the actual code** - read the cited `file:line`, confirm the issue is real, and refute (drop) anything the code does not substantiate or that cannot be stated falsifiably (judge the code, not assumed intent). Dedup findings the same issue surfaced from multiple dimensions (e.g. an `any` flagged by both correctness and conventions), keeping the highest severity and clearest recommendation. Fold in the pre-flight signals: Step 1 type errors as Critical rows; a Step 2 vitest failure as a Critical row with the assertion message verbatim. Sort by severity. If a finder returned nothing usable (it errored or came back empty), note the dropped dimension in the Summary.
 7. **Apply Phase + Re-typecheck** (skip both in `review-only` mode). Apply every safely-fixable finding with `Edit`/`Write` (each fix is its own atomic unit - skip-with-reason on failure, keep the others), then re-run `npm run typecheck` (and the Step 2 vitest if an HMR fix landed). If a fix introduces a new type error, revert that specific edit and move the finding to `Skipped` with reason `"Fix introduced type error: <message>"`; do not roll back unrelated fixes. The Apply Phase also **fills coverage holes**: for each red-green hole the coverage finder reports on diff-introduced behavior, delegate to the `test-builder` agent to author the test (unit/UI written and run scoped to green; E2E flagged, not written inline). See "## Apply Phase".
-8. Emit the **Output Format** below.
+8. **Commit the pass** (skip in `review-only` mode, which writes nothing). Commit this pass's own work so the worktree returns to clean and the next agent inherits an attributed commit instead of a mystery. See "## Committing the pass" for the set rule, the exact commands, and the mixed-authorship case.
+9. Emit the **Output Format** below.
 
 ## Finders
 
@@ -171,7 +178,13 @@ For a deep, no-expense-spared cloud audit, use the `ultra` built-in instead (see
 
 ## Apply Phase
 
-Default mode applies fixes immediately after the findings table. Fixes land in the working tree only - **never commit**; the user runs `/commit` (then `/pull-request` or `/merge-back`) for that.
+Default mode applies fixes immediately after the findings table, then commits them (Step 8, see "## Committing the pass"). The commit is **local only, never pushed** - landing the branch is still `/pull-request`'s or `/merge-back`'s job.
+
+**This edits and commits in the worktree it is reviewing, and the task agent's own unfinished work is usually already sitting there.** The board spawns this skill from the Code Review column as an `isolated` + `always_spawn_new` session, but `isolated` isolates the **conversation, not the filesystem**: the session's `cwd` is the task's own worktree, the same tree the task agent has been using (`docs/session-lifecycle.md:222` documents the shared worktree).
+
+The two do **not** run concurrently. Entering an isolated column takes the `needsSessionSwitch` branch in `src/main/ipc/handlers/task-move.ts`, which suspends the task agent's main session and kills its PTY (`docs/session-lifecycle.md:228`, plus "one active PTY per task" at `:222`), preserving `agent_session_id` so it resumes when the card leaves. What the suspended agent leaves behind is its **uncommitted working tree** - and by the time you reach Step 8, those files are indistinguishable from your own edits. That is the whole reason Step 8 commits by set math instead of `git add -A`.
+
+Committing the pass is also what keeps the tree legible downstream: a finished pass **normally** leaves a clean tree plus one attributed commit. Normally, not always - a fix that lands on an already-dirty path stays uncommitted by design (see "The mixed-authorship case"), so a dirty tree downstream means one of two things, not one: this pass is still in flight, or it finished and deliberately left those paths mixed. `/pull-request`'s Pre-flight Checks documents both readings.
 
 ### What gets auto-fixed
 
@@ -213,7 +226,47 @@ When the coverage finder reports a red-green hole on behavior **this diff** intr
 4. **Red-green standard.** The test must assert the post-fix behavior such that reverting the change fails it. Where the change is localized, `test-builder` may briefly toggle the fix to confirm the test goes red, then restore it.
 5. If `test-builder` cannot produce a green test (ambiguous behavior, missing fixture), move the hole to Skipped with its reason. Never leave a red or `.skip` test behind.
 
-Tests land in the working tree only - never commit.
+Tests are committed with the rest of the pass (Step 8); they are new untracked files, so they always fall on the committable side of the set rule below.
+
+## Committing the pass
+
+Step 8, default mode only. The goal is that a finished pass leaves the worktree **clean**, with its work in one commit whose message says who wrote it.
+
+### What may be committed
+
+This skill deliberately reviews uncommitted work (Step 3: agents "sometimes commit during the working session, sometimes leave changes in the working tree, sometimes both"), so the tree is often **already dirty with the task agent's own unfinished work** when the pass starts. A blind `git add -A` would commit that work under a `refactor(review):` message, which is worse than leaving the tree dirty. So:
+
+> Commit **only** what became dirty during this pass. Never `git add -A`.
+
+Do not try to track "the files the Apply Phase edited" - there is no such value, and `test-builder` is a subagent whose test-file writes are not driver `Edit`/`Write` calls at all, so it would miss them. Use set math over git state instead, which is provable and needs no subagent cooperation. Each command is its own Bash call:
+
+1. `git diff HEAD --name-only` - tracked files dirty now.
+2. `git ls-files --others --exclude-standard` - untracked files now.
+3. `currentDirty` = the union of those two. **Committable = `currentDirty` minus `preexistingDirty`**, reading `preexistingDirty` back from `.kangentic/REVIEW_PREEXISTING_DIRTY.tmp` (written at Step 4) rather than from memory. If that file is missing or unreadable, do NOT guess and do NOT fall back to `git add -A`: skip the commit, and report that the pass could not establish what it may safely commit so the user can stage it themselves.
+
+Anything dirty now that was not dirty at Step 4 is provably this pass's work, whoever wrote it. The edge cases need no special handling: `test-builder`'s new test files are untracked now and were not before, so they commit; a fix on a path the task agent had already left dirty is in both sets, so it is excluded; a fix auto-reverted by the re-typecheck step returns that file to clean, drops out of `currentDirty`, and is never committed.
+
+If Committable is empty, skip the commit silently and go to the Output Format.
+
+### How to commit
+
+1. Stage each committable path explicitly: `git add <path>`, **one path per Bash tool call** (`.claude/rules/bash-single-command.md` forbids chaining).
+2. Write the message to `.kangentic/COMMIT_MSG.tmp` with the **Write** tool - the relative path, resolved from CWD. `.kangentic/` is gitignored, so it never stages itself and needs no cleanup. Never write to `.git/`; in a worktree `.git` is a file, not a directory.
+3. `git commit <path1> <path2> ... -F .kangentic/COMMIT_MSG.tmp` - **pass every committable path as a pathspec.** One command with several positional args, so it still satisfies `.claude/rules/bash-single-command.md`. Never use `$(...)` or backtick substitution (triggers a safety prompt).
+
+   **A bare `git commit -F` here is a real bug, not a shortcut.** With no pathspec, `git commit` commits the ENTIRE INDEX. The task agent routinely pauses with work already staged (`git add somefile.ts`, no commit yet); Step 4 correctly puts that file in `preexistingDirty` and Step 8 correctly excludes it from Committable, and then a bare commit sweeps it in anyway because it was sitting in the index the whole time - defeating the set math completely. The pathspec form commits only the named paths and leaves a pre-staged file untouched and still staged. As a cheap assertion, `git diff --cached --name-only` should equal Committable immediately before you commit; if it does not, stop rather than commit.
+
+The message is conventional, and the scope is literally `review`: `fix(review):`, `refactor(review):`, or `test(review):`, picked by primary change type. The body lists what was fixed, one line per finding. `allowed-tools` already grants `Bash(git:*)`, so nothing new is needed there.
+
+**Use `review` as the scope even though scope usually names a code area.** A review pass is routinely spread across every area it reviewed - one real pass touched migrations, git, IPC handlers, the transition engine, and the renderer at once - so no single area scope is honest, and the useful grouping is which pass produced the commit. It also makes the commit greppable, which the reading side relies on: `/pull-request`'s Pre-flight tells the next agent to expect exactly a `*(review)` commit and to leave it alone rather than squash or reword it.
+
+**Never push. Never amend an existing commit.** Amending would rewrite the task agent's commit and claim this pass as part of it, which is the misattribution this whole design exists to prevent.
+
+### The mixed-authorship case
+
+When a fix lands on a path that was already dirty, that fix stays uncommitted, mixed into the task agent's work in the same file. The hunks cannot be separated safely, so do not try. Instead the footer must **list those paths by name** - "some fixes left uncommitted" is not enough, because the next agent inherits a dirty tree and needs to know exactly which files hold two authors' work before it stages anything.
+
+**The same split can strand a test.** A coverage-hole test is a new untracked file, so it always falls on the committable side; if the behavior it pins lives in a file that stays uncommitted, the commit lands a test with no corresponding fix in its own history. The working tree is fine (the fix is physically present, just uncommitted), but that commit read in isolation - a bisect, or a later `git stash` of only the dirty paths - is not. When it happens, either move that test to `Skipped` for this pass, or commit it and say so explicitly in the footer: "test committed without its target fix (see the mixed-authorship list)."
 
 ## Output Format
 
@@ -266,6 +319,18 @@ Scoped run: PASS
 | 5 | src/main/baz.ts:88 | Architectural refactor - splits handler across 3 files | Design review |
 | 7 | tests/e2e/Qux.spec.ts | E2E coverage hole (real PTY) - not written inline | Run `/test write` |
 
+### Committed
+
+`refactor(review): <subject>` as `<sha>` - P files.
+
+Then the tree status, which is COMPUTED, not boilerplate: print `Worktree clean.` only when nothing
+was left behind. If anything was, print `N file(s) left uncommitted (mixed authorship).` instead -
+never print "clean" directly above a non-empty list, which is the contradiction this line exists to
+avoid.
+
+Left uncommitted (already dirty before this pass, so they hold two authors' work):
+- src/main/qux.ts
+
 ### Summary
 - Files reviewed: N
 - Findings: A critical, B high, C medium, D low
@@ -279,11 +344,13 @@ Edge cases the footer must handle cleanly:
 - No diff at all (committed-vs-base, uncommitted, and untracked all empty) -> short-circuit at the diff-gather step (Step 4) with `"No changes to review."`
 - Diff exists, zero quality findings -> skip the fix step, but STILL run the coverage pass; if it reports holes on diff-introduced behavior, write them (Tests Added) and report. Only when there are also no coverage holes, emit `"No findings, nothing to fix."`
 - Re-typecheck FAILS -> show the error block, list which fix was reverted, mark Verdict as **Needs revision**
+- Committable set empty at Step 8 (no fixes applied, or every fix landed on an already-dirty path) -> omit the `### Committed` block entirely, but STILL list the mixed-authorship paths and say the worktree was left dirty, so the reader knows the clean-tree handoff did not happen
+- Committable NON-empty while some fixes also landed on already-dirty paths (the common mixed case) -> emit `### Committed` for what did land, and do NOT report "Worktree clean.": print `N file(s) left uncommitted (mixed authorship)` and list them, because the tree is by definition not clean
 - Step 2 hmr-resync vitest FAILS -> the failure output is itself a Critical finding. Include the failing assertion's message verbatim in the findings table, attempt the auto-fix in the Apply Phase (e.g. add the missing store re-sync call to `App.tsx`, add the missing `key={hmrGeneration}` to the new `<DndContext>`, add a `// hmr-safe:` directive or `dispose` block to the new module-scope state), then re-run the vitest in addition to typecheck during the Re-typecheck step. If the test still fails after the fix attempt, mark Verdict as **Needs revision**.
 
 ### Review-only-mode footer
 
-When `review-only` is in `$ARGUMENTS`, skip the Apply Phase and emit the legacy footer:
+When `review-only` is in `$ARGUMENTS`, skip the Apply Phase and the Step 8 commit, and emit the legacy footer:
 
 - **Files reviewed:** N
 - **Findings:** N critical, N high, N medium, N low
@@ -300,4 +367,4 @@ The driver uses `Bash` (git/npm/npx only) for pre-flight + diff gathering, the `
 
 **CRITICAL: Use `git -C <path>` for all git commands in other directories.** Never use `cd <path> && git ...` - the `cd && git` pattern triggers an unbypasable Claude Code security prompt.
 
-**Do not commit.** The skill applies fixes to the working tree only. The user runs `/commit` to commit locally, then lands via the board PR flow (`/pull-request`) or `/merge-back` for a direct quick-push.
+**Commit this pass, and nothing else.** Step 8 commits only what became dirty during this pass, so the worktree returns to clean with the work attributed. Never `git add -A`, never touch work that was already uncommitted when the pass started, never amend, and **never push** - landing the branch stays `/pull-request`'s job, or `/merge-back`'s for a direct quick-push. See "## Committing the pass".

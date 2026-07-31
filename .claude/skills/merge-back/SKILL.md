@@ -81,6 +81,12 @@ If there are uncommitted changes (non-empty `git status --porcelain` output):
    e. If the agent reports gaps, fix them inline using the `Edit` tool.
    f. No general prose review here (that is `/sync-docs`'s job).
 4. Stage changes: `git add -A`
+
+   **This skill pushes straight to the source branch with no CI gate**, so anything swept in here
+   lands unreviewed. If the tree holds changes this session did not write, a `/code-review` pass may
+   still be running in this worktree, or it finished and deliberately left a mixed-authorship path
+   uncommitted - see the Code Review note in `.claude/skills/pull-request/SKILL.md` **Pre-flight
+   Checks**, and confirm with the user before staging.
 5. Write the commit message using the **Write tool** to the relative path `.kangentic/COMMIT_MSG.tmp` (resolved from CWD - do NOT resolve an absolute path, do NOT use the system temp directory, do NOT use `os.tmpdir()`).
 
    `.kangentic/` is gitignored, so `git add -A` won't stage it and no cleanup is needed.

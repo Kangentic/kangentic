@@ -66,6 +66,11 @@ Use conventional-commit format (`type(scope): subject`), matching `/merge-back`.
    `.kangentic/COMMIT_MSG.tmp` (resolved from CWD, never an absolute or system-temp path).
    `.kangentic/` is gitignored, so it is never staged and needs no cleanup.
 2. Stage everything: `git add -A`
+
+   If the tree holds changes this session did not write, a `/code-review` pass may still be running
+   in this worktree, or it finished and deliberately left a mixed-authorship path uncommitted -
+   either way `git add -A` would sweep a state you did not author. See the Code Review note in
+   `.claude/skills/pull-request/SKILL.md` **Pre-flight Checks**, and confirm with the user first.
 3. Commit: `git commit -F .kangentic/COMMIT_MSG.tmp`
 
 ## Step 4 - Report

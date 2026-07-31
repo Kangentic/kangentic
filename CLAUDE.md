@@ -264,6 +264,17 @@ checkout for HMR. PRs are the normal path to `main` (CI gates it); `/merge-back`
 quick-push escape hatch for admins. `/test` is now for **manual local runs** only - it is no longer
 wired to a column.
 
+Upstream of both, the **Code Review** column runs `/code-review` as an isolated column agent in the
+task's OWN worktree (`isolated` isolates the conversation, not the filesystem - see
+[docs/session-lifecycle.md](docs/session-lifecycle.md)). Entering the column suspends the task
+agent's session and kills its PTY, so the two never overlap - but it leaves that agent's
+UNCOMMITTED work in the shared tree, which is why the review pass commits by set math over
+`git status` and never `git add -A`. It auto-fixes findings, adds tests, and commits that pass
+itself, so Tests can open on a branch carrying a `*(review)` commit no local agent authored. That is
+expected, not corruption. A finished pass normally leaves the tree clean; a fix on an already-dirty
+path stays uncommitted by design, so a dirty tree means the pass is either in flight or left those
+paths deliberately mixed.
+
 #### When to test
 
 `/test` is the full local gate (typecheck, build, then unit + UI + E2E, all tests, no selection

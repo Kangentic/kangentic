@@ -57,19 +57,28 @@ to the head branch only when there is no stored number.
 Every later `gh pr` command (view, checks, merge) targets `<pr>` or `<prHead>`; the local `<branch>`
 is for local git only.
 
-## Step 1 - Doc review at merge time
+## Step 1 - Doc review at merge time (verify only, never push)
 
-The Tests column normally ran the targeted doc-anchor check at commit time, but it is skipped when
-`/pull-request` had nothing to commit. Re-audit the anchor files across the whole branch diff so a
-gap cannot slip through:
+`/pull-request` already audits doc anchors twice: before the PR opens (its Step 1 item 3, which runs
+against the branch diff even when the tree is clean) and again inside its Step 7 auto-fix loop for
+anchors a CI fix touched. So by the time a PR reaches Ship It the anchors have been audited. This
+step is a cheap BACKSTOP, not a second audit pass.
+
+It deliberately does **not** edit, commit, or push. Pushing to the PR head here re-triggers the full
+CI suite and forces Step 2 item 4 to wait out a second complete run at merge time, minutes after
+Tests already drove the checks green. It also keeps this skill off the staging path entirely, so
+there is no `git add` here to sweep up a dirty tree on the way to an admin merge. A gap found at
+this point means the Tests column missed something, and the fix belongs there where the CI round is
+already being spent.
 
 1. Determine the anchor source files in the branch diff (compare the current diff against
    `origin/<sourceBranch>`), then narrow to files matching the canonical anchor list in
    `.claude/skills/sync-docs/SKILL.md` Step 2. If none, skip to Step 2.
-2. Spawn a `doc-auditor` agent with the matching anchor files. Fix any reported gaps inline with
-   `Edit`.
-3. If docs changed, commit them (`docs:` message via `.kangentic/COMMIT_MSG.tmp`) and push to the
-   PR's remote head: `git push origin HEAD:<prHead> --force-with-lease`.
+2. Spawn a `doc-auditor` agent with the matching anchor files.
+3. If it reports no gap, go to Step 2. This is the expected outcome.
+4. If it reports a gap, **stop and report it**: name the anchor files and the missing doc coverage,
+   and tell the user to move the task back to Tests so `/pull-request` fixes the docs and re-greens
+   CI in one round. Do not `Edit` the docs, do not commit, and do not push from this skill.
 
 ## Step 2 - Re-verify (rebase if main moved, confirm green and mergeable)
 
