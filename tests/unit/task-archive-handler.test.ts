@@ -29,6 +29,13 @@
  *       covered by the spawn-agent-*.test.ts harness suites.
  *     - withTaskLock serialization: concurrent calls for the same id serialize;
  *       different ids run independently
+ *     - resetSessionForTodoRestore: restoring into a role='todo' lane runs the
+ *       SESSION-ONLY reset (cleanupTaskSession), never the full resource
+ *       teardown (cleanupTaskResources), which force-deletes the branch when
+ *       git.autoCleanup is on. A dedicated regression test pins this for a
+ *       task whose worktree_path AND branch_name are both still set (the
+ *       failed-Done-cleanup state) and asserts branch_name survives on the
+ *       restored row. A non-todo lane runs neither cleanup path.
  *
  *   TASK_BULK_UNARCHIVE
  *     - auto_spawn=false lane skips spawn for every task in the batch
@@ -36,6 +43,8 @@
  *     - per-iteration lock is independent per id (different ids don't block)
  *     - every restored task goes through spawnAgent with the same
  *       recovery-move contract as the single handler
+ *     - resetSessionForTodoRestore: same session-only-reset / branch-survival
+ *       regression coverage as TASK_UNARCHIVE, applied per task in the batch
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -117,6 +126,13 @@ const mockEnsureTaskWorktree = vi.fn(async () => null);
 const mockEnsureTaskBranchCheckout = vi.fn(async () => {});
 const mockCreateTransitionEngine = vi.fn();
 const mockSpawnAgent = vi.fn(async () => {});
+// cleanupTaskSession (session-only teardown, preserves worktree + branch) and
+// cleanupTaskResources (full teardown, force-deletes the branch when
+// git.autoCleanup is on) are separate spies so resetSessionForTodoRestore's
+// regression tests can assert exactly ONE of them ran. See the "regression
+// guard" tests under TASK_UNARCHIVE / TASK_BULK_UNARCHIVE below.
+const mockCleanupTaskSession = vi.fn(async () => {});
+const mockCleanupTaskResources = vi.fn(async () => {});
 
 vi.mock('../../src/main/ipc/helpers', () => ({
   getProjectRepos: (...args: unknown[]) => mockGetProjectRepos(...args),
@@ -124,7 +140,8 @@ vi.mock('../../src/main/ipc/helpers', () => ({
   ensureTaskBranchCheckout: (...args: unknown[]) => mockEnsureTaskBranchCheckout(...args),
   notifyBranchCheckoutBlocked: () => {},
   createTransitionEngine: (...args: unknown[]) => mockCreateTransitionEngine(...args),
-  cleanupTaskResources: vi.fn(async () => {}),
+  cleanupTaskSession: (...args: unknown[]) => mockCleanupTaskSession(...args),
+  cleanupTaskResources: (...args: unknown[]) => mockCleanupTaskResources(...args),
   spawnAgent: (...args: unknown[]) => mockSpawnAgent(...args),
 }));
 
@@ -601,6 +618,116 @@ describe('task-archive handlers', () => {
     });
 
     // -----------------------------------------------------------------------
+    // resetSessionForTodoRestore: restoring an archived task into a role='todo'
+    // lane runs a session-only reset (cleanupTaskSession), never the full
+    // resource teardown (cleanupTaskResources), which would force-delete the
+    // task's branch whenever git.autoCleanup is on. See the JSDoc above
+    // resetSessionForTodoRestore in task-archive.ts for the full incident.
+    // -----------------------------------------------------------------------
+
+    describe('resetSessionForTodoRestore (role=todo restore session reset)', () => {
+      it('tears down the session via cleanupTaskSession when restoring into a role=todo, auto_spawn=false lane', async () => {
+        const todoLane = createMockSwimlane('lane-todo', { role: 'todo', auto_spawn: false });
+        swimlaneRepo = createMockSwimlaneRepo([doneLane, todoLane]);
+        const task = createMockTask('task-todo-restore', { session_id: 'session-abc' });
+        taskRepo = createMockTaskRepo([task]);
+        mockGetProjectRepos.mockReturnValue({
+          tasks: taskRepo,
+          swimlanes: swimlaneRepo,
+          actions: { getTransitionsFor: vi.fn(() => []) },
+          attachments: { deleteByTaskId: vi.fn() },
+        });
+
+        await callHandler(IPC.TASK_UNARCHIVE, {
+          id: 'task-todo-restore',
+          targetSwimlaneId: 'lane-todo',
+        });
+
+        expect(mockCleanupTaskSession).toHaveBeenCalledTimes(1);
+        const [, cleanupTask, cleanupTasksRepo, cleanupProjectId, cleanupProjectPath] =
+          mockCleanupTaskSession.mock.calls[0] as [unknown, MockTask, MockTaskRepo, string, string];
+        expect(cleanupTask).toMatchObject({ id: 'task-todo-restore' });
+        expect(cleanupTasksRepo).toBe(taskRepo);
+        expect(cleanupProjectId).toBe('proj-123');
+        expect(cleanupProjectPath).toBe('/mock/project');
+        // Never the full resource teardown.
+        expect(mockCleanupTaskResources).not.toHaveBeenCalled();
+        // And never routed through the spawn path either - auto_spawn=false
+        // already short-circuits before the reset runs.
+        expect(mockEnsureTaskWorktree).not.toHaveBeenCalled();
+        expect(mockSpawnAgent).not.toHaveBeenCalled();
+      });
+
+      it('regression guard: does not route through cleanupTaskResources for a task whose worktree_path AND branch_name are both still set (the failed-Done-cleanup state), and branch_name survives on the row', async () => {
+        const todoLane = createMockSwimlane('lane-todo', { role: 'todo', auto_spawn: false });
+        swimlaneRepo = createMockSwimlaneRepo([doneLane, todoLane]);
+        const task = createMockTask('task-pinned-worktree', {
+          worktree_path: '/mock/project/.kangentic/worktrees/task-pinned-worktree',
+          branch_name: 'kangentic/task-pinned-worktree',
+        });
+        taskRepo = createMockTaskRepo([task]);
+        mockGetProjectRepos.mockReturnValue({
+          tasks: taskRepo,
+          swimlanes: swimlaneRepo,
+          actions: { getTransitionsFor: vi.fn(() => []) },
+          attachments: { deleteByTaskId: vi.fn() },
+        });
+
+        const result = await callHandler<MockTask>(IPC.TASK_UNARCHIVE, {
+          id: 'task-pinned-worktree',
+          targetSwimlaneId: 'lane-todo',
+        });
+
+        // The session-only reset ran, carrying the task through with both
+        // fields still on it...
+        expect(mockCleanupTaskSession).toHaveBeenCalledTimes(1);
+        const [, cleanupTask] = mockCleanupTaskSession.mock.calls[0] as [unknown, MockTask];
+        expect(cleanupTask).toMatchObject({
+          id: 'task-pinned-worktree',
+          worktree_path: task.worktree_path,
+          branch_name: task.branch_name,
+        });
+
+        // ...and NOT the full resource cleanup. cleanupTaskResources is what
+        // would call worktreeManager.removeBranch / `git branch -D` on this
+        // task's branch when git.autoCleanup is on (pinned directly against
+        // the real cleanupTaskResources implementation in
+        // delete-task-worktree.test.ts); this file mocks the whole helpers
+        // barrel, so the guard here is that the WRONG helper is never
+        // reached at all. Red-green: on the pre-fix handler (which called
+        // cleanupTaskResources instead of cleanupTaskSession), this fails
+        // because mockCleanupTaskSession is never called.
+        expect(mockCleanupTaskResources).not.toHaveBeenCalled();
+
+        // branch_name and worktree_path survive on the task row - nothing on
+        // this route ever clears them.
+        expect(result?.branch_name).toBe(task.branch_name);
+        expect(result?.worktree_path).toBe(task.worktree_path);
+      });
+
+      it('does not run the session reset at all when restoring into a non-todo lane', async () => {
+        const backlogLane = createMockSwimlane('lane-backlog', { role: null, auto_spawn: false });
+        swimlaneRepo = createMockSwimlaneRepo([doneLane, backlogLane]);
+        const task = createMockTask('task-non-todo-restore', { session_id: 'session-abc' });
+        taskRepo = createMockTaskRepo([task]);
+        mockGetProjectRepos.mockReturnValue({
+          tasks: taskRepo,
+          swimlanes: swimlaneRepo,
+          actions: { getTransitionsFor: vi.fn(() => []) },
+          attachments: { deleteByTaskId: vi.fn() },
+        });
+
+        await callHandler(IPC.TASK_UNARCHIVE, {
+          id: 'task-non-todo-restore',
+          targetSwimlaneId: 'lane-backlog',
+        });
+
+        expect(mockCleanupTaskSession).not.toHaveBeenCalled();
+        expect(mockCleanupTaskResources).not.toHaveBeenCalled();
+      });
+    });
+
+    // -----------------------------------------------------------------------
     // Lock serialization: concurrent TASK_UNARCHIVE calls for the same task id
     // must complete in submission order; different ids run independently.
     // -----------------------------------------------------------------------
@@ -854,6 +981,122 @@ describe('task-archive handlers', () => {
         expect(spawnArg.projectId).toBe('proj-123');
         expect(spawnArg.projectPath).toBe('/mock/project');
       }
+    });
+
+    // -----------------------------------------------------------------------
+    // resetSessionForTodoRestore: same regression coverage as TASK_UNARCHIVE
+    // above, applied to the bulk (Completed Tasks dialog "Restore selected")
+    // path - every restored task in the batch must get the session-only
+    // reset, never the branch-deleting full teardown.
+    // -----------------------------------------------------------------------
+
+    describe('resetSessionForTodoRestore (role=todo restore session reset)', () => {
+      it('tears down the session via cleanupTaskSession for every task restored into a role=todo, auto_spawn=false lane', async () => {
+        const todoLane = createMockSwimlane('lane-todo', { role: 'todo', auto_spawn: false });
+        swimlaneRepo = createMockSwimlaneRepo([doneLane, todoLane]);
+        const tasks = [
+          createMockTask('task-bulk-todo-a', { session_id: 'session-a' }),
+          createMockTask('task-bulk-todo-b', { session_id: 'session-b' }),
+        ];
+        taskRepo = createMockTaskRepo(tasks);
+        mockGetProjectRepos.mockReturnValue({
+          tasks: taskRepo,
+          swimlanes: swimlaneRepo,
+          actions: { getTransitionsFor: vi.fn(() => []) },
+          attachments: { deleteByTaskId: vi.fn() },
+        });
+
+        await callHandler(
+          IPC.TASK_BULK_UNARCHIVE,
+          ['task-bulk-todo-a', 'task-bulk-todo-b'],
+          'lane-todo',
+        );
+
+        expect(mockCleanupTaskSession).toHaveBeenCalledTimes(2);
+        const cleanedUpTaskIds = mockCleanupTaskSession.mock.calls.map(
+          (call) => (call[1] as MockTask).id,
+        );
+        expect(cleanedUpTaskIds).toEqual(['task-bulk-todo-a', 'task-bulk-todo-b']);
+        expect(mockCleanupTaskResources).not.toHaveBeenCalled();
+        expect(mockEnsureTaskWorktree).not.toHaveBeenCalled();
+        expect(mockSpawnAgent).not.toHaveBeenCalled();
+      });
+
+      it('regression guard: does not route any task through cleanupTaskResources when worktree_path AND branch_name are both still set, and branch_name survives on every row', async () => {
+        const todoLane = createMockSwimlane('lane-todo', { role: 'todo', auto_spawn: false });
+        swimlaneRepo = createMockSwimlaneRepo([doneLane, todoLane]);
+        const tasks = [
+          createMockTask('task-bulk-pinned-a', {
+            worktree_path: '/mock/project/.kangentic/worktrees/task-bulk-pinned-a',
+            branch_name: 'kangentic/task-bulk-pinned-a',
+          }),
+          createMockTask('task-bulk-pinned-b', {
+            worktree_path: '/mock/project/.kangentic/worktrees/task-bulk-pinned-b',
+            branch_name: 'kangentic/task-bulk-pinned-b',
+          }),
+        ];
+        taskRepo = createMockTaskRepo(tasks);
+        mockGetProjectRepos.mockReturnValue({
+          tasks: taskRepo,
+          swimlanes: swimlaneRepo,
+          actions: { getTransitionsFor: vi.fn(() => []) },
+          attachments: { deleteByTaskId: vi.fn() },
+        });
+
+        await callHandler(
+          IPC.TASK_BULK_UNARCHIVE,
+          ['task-bulk-pinned-a', 'task-bulk-pinned-b'],
+          'lane-todo',
+        );
+
+        // Both tasks went through the session-only reset with their fields intact...
+        expect(mockCleanupTaskSession).toHaveBeenCalledTimes(2);
+        for (const [taskArgIndex, sourceTask] of tasks.entries()) {
+          const [, cleanupTask] = mockCleanupTaskSession.mock.calls[taskArgIndex] as [unknown, MockTask];
+          expect(cleanupTask).toMatchObject({
+            id: sourceTask.id,
+            worktree_path: sourceTask.worktree_path,
+            branch_name: sourceTask.branch_name,
+          });
+        }
+
+        // ...and neither went through the branch-deleting full teardown.
+        // Red-green: on the pre-fix handler (cleanupTaskResources instead of
+        // cleanupTaskSession), mockCleanupTaskSession is never called and the
+        // count assertion above fails.
+        expect(mockCleanupTaskResources).not.toHaveBeenCalled();
+
+        for (const sourceTask of tasks) {
+          const restored = taskRepo.getById(sourceTask.id) as unknown as MockTask;
+          expect(restored.branch_name).toBe(sourceTask.branch_name);
+          expect(restored.worktree_path).toBe(sourceTask.worktree_path);
+        }
+      });
+
+      it('does not run the session reset for any task when restoring into a non-todo lane', async () => {
+        const backlogLane = createMockSwimlane('lane-backlog', { role: null, auto_spawn: false });
+        swimlaneRepo = createMockSwimlaneRepo([doneLane, backlogLane]);
+        const tasks = [
+          createMockTask('task-bulk-non-todo-a', { session_id: 'session-a' }),
+          createMockTask('task-bulk-non-todo-b', { session_id: 'session-b' }),
+        ];
+        taskRepo = createMockTaskRepo(tasks);
+        mockGetProjectRepos.mockReturnValue({
+          tasks: taskRepo,
+          swimlanes: swimlaneRepo,
+          actions: { getTransitionsFor: vi.fn(() => []) },
+          attachments: { deleteByTaskId: vi.fn() },
+        });
+
+        await callHandler(
+          IPC.TASK_BULK_UNARCHIVE,
+          ['task-bulk-non-todo-a', 'task-bulk-non-todo-b'],
+          'lane-backlog',
+        );
+
+        expect(mockCleanupTaskSession).not.toHaveBeenCalled();
+        expect(mockCleanupTaskResources).not.toHaveBeenCalled();
+      });
     });
   });
 });

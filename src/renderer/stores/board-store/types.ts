@@ -10,6 +10,7 @@ import type { DoneDropConfirmSlice } from './done-drop-confirm-slice';
 import type { ActiveViewSlice } from './active-view-slice';
 import type { BoardManagerSlice } from './board-manager-slice';
 import type { BoardFilterSlice } from './board-filter-slice';
+import type { LanePinSlice } from './lane-pin-slice';
 
 /**
  * Rect captured from the task card at drag start so the FlyingCard
@@ -82,4 +83,5 @@ export type PendingDoneConfirm =
  */
 export type BoardStore = TaskSlice & SwimlaneSlice & ArchivedTasksSlice & TaskCompletionSlice
   & BoardConfigSlice & BoardHydrationSlice & TaskMoveConfirmSlice
-  & DoneDropConfirmSlice & ActiveViewSlice & BoardManagerSlice & BoardFilterSlice;
+  & DoneDropConfirmSlice & ActiveViewSlice & BoardManagerSlice & BoardFilterSlice
+  & LanePinSlice;

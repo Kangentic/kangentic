@@ -18,7 +18,7 @@ import type {
  * avoid. Both loaders are guarded, so neither reads as protected merely by
  * sitting next to one that is.
  *
- * Preserved across HMR (Pattern A), matching moveGeneration in
+ * Preserved across HMR (Pattern A), matching moveGenerations in
  * board-store/task-slice.ts: it keeps the counters monotonic across a dev
  * session rather than resetting to 0 on every Fast Refresh. It does NOT protect
  * a reply already in flight when the module is replaced - that reply's own

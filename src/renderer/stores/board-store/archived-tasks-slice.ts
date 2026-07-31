@@ -5,6 +5,7 @@ import { withoutSessionsForTasks } from '../session-store/session-index';
 import { useToastStore } from '../toast-store';
 import { useProjectStore } from '../project-store';
 import { applyStructuralSharing } from './structural-sharing';
+import { applyTaskListPayload } from './lane-pins';
 import type { BoardStore } from './types';
 
 /**
@@ -167,6 +168,16 @@ export const createArchivedTasksSlice: StateCreator<BoardStore, [], [], Archived
       useSessionStore.getState().setSpawnProgress(input.id, 'Resuming agent...');
     }
 
+    // Restoring into To Do is a full reset (the backend tears the session down
+    // in TASK_UNARCHIVE), so drop the record here too - same optimistic eviction
+    // moveTask does for a todo-role target. Without it the card renders the
+    // suspended session from the move into Done as "Paused" until the backend
+    // push lands, and `withoutSessionsForTasks` is what keeps `_sessionByTaskId`
+    // from being left pointing a live task at a dead session.
+    if (targetLane?.role === 'todo') {
+      useSessionStore.setState((state) => withoutSessionsForTasks(state.sessions, input.id));
+    }
+
     try {
       await window.electronAPI.tasks.unarchive(input, useProjectStore.getState().currentProject?.id ?? null);
 
@@ -175,7 +186,7 @@ export const createArchivedTasksSlice: StateCreator<BoardStore, [], [], Archived
         fetchArchivedReconcile(get().archivedFullyLoaded),
       ]);
       set((state) => ({
-        tasks: applyStructuralSharing(state.tasks, nextTasks),
+        ...applyTaskListPayload(state, nextTasks),
         archivedTasks: applyStructuralSharing(state.archivedTasks, archivedReconcile.tasks),
         archivedTotalCount: archivedReconcile.totalCount,
       }));
@@ -206,6 +217,14 @@ export const createArchivedTasksSlice: StateCreator<BoardStore, [], [], Archived
         archivedTotalCount: previousArchivedTotalCount,
       });
       await get().loadBoard();
+      // The session record was evicted optimistically BEFORE the IPC, but the
+      // IPC never landed, so the backend still holds it. loadBoard() refetches
+      // tasks and swimlanes only, and nothing re-adds a suspended session on its
+      // own (the exit push maps over `sessions` and cannot re-insert), so
+      // without this the card stays session-less until an unrelated resync.
+      // Re-derived rather than snapshot-restored, so a session push that landed
+      // during the await window is not clobbered.
+      if (targetLane?.role === 'todo') await useSessionStore.getState().syncSessions();
       useToastStore.getState().addToast({
         message: `Failed to restore task: ${err instanceof Error ? err.message : 'Unknown error'}`,
         variant: 'error',
@@ -309,11 +328,21 @@ export const createArchivedTasksSlice: StateCreator<BoardStore, [], [], Archived
         archivedTotalCount: Math.max(0, state.archivedTotalCount - removedCount),
       };
     });
+    // Same full reset as the singular path: restoring into To Do tears the
+    // suspended sessions down on the backend, so drop them here too rather than
+    // leaving every restored card showing "Paused" until a syncSessions() lands.
+    const bulkTargetLane = get().swimlanes.find((lane) => lane.id === targetSwimlaneId);
+    if (bulkTargetLane?.role === 'todo') {
+      useSessionStore.setState((state) => withoutSessionsForTasks(state.sessions, idSet));
+    }
     try {
       await window.electronAPI.tasks.bulkUnarchive(ids, targetSwimlaneId, useProjectStore.getState().currentProject?.id ?? null);
-      // Reload tasks (sessions arrive via push-based session-changed events)
-      const tasks = await window.electronAPI.tasks.list();
-      set({ tasks });
+      // Reload tasks (sessions arrive via push-based session-changed events).
+      // Through applyTaskListPayload: this used to be a bare `set({ tasks })`,
+      // which skipped structural sharing (re-rendering every card) AND left an
+      // in-flight move's lane pin unreconciled.
+      const nextTasks = await window.electronAPI.tasks.list();
+      set((state) => applyTaskListPayload(state, nextTasks));
 
       const targetLane = get().swimlanes.find((lane) => lane.id === targetSwimlaneId);
       useToastStore.getState().addToast({
@@ -323,6 +352,9 @@ export const createArchivedTasksSlice: StateCreator<BoardStore, [], [], Archived
     } catch (error) {
       set({ archivedTasks: prevArchived, archivedTotalCount: prevArchivedTotalCount });
       await get().loadBoard();
+      // Same rollback gap as the singular path: the eviction ran before the IPC
+      // that never landed, and loadBoard() does not refetch sessions.
+      if (bulkTargetLane?.role === 'todo') await useSessionStore.getState().syncSessions();
       useToastStore.getState().addToast({
         message: `Failed to restore tasks: ${error instanceof Error ? error.message : 'Unknown error'}`,
         variant: 'error',

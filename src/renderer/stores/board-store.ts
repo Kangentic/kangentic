@@ -11,6 +11,7 @@ import { createDoneDropConfirmSlice } from './board-store/done-drop-confirm-slic
 import { createActiveViewSlice } from './board-store/active-view-slice';
 import { createBoardManagerSlice } from './board-store/board-manager-slice';
 import { createBoardFilterSlice } from './board-store/board-filter-slice';
+import { createLanePinSlice } from './board-store/lane-pin-slice';
 
 /**
  * Board store composition. Slice interfaces and implementations live
@@ -50,6 +51,7 @@ export function createBoardStore() {
     ...createActiveViewSlice(...args),
     ...createBoardManagerSlice(...args),
     ...createBoardFilterSlice(...args),
+    ...createLanePinSlice(...args),
   }));
 }
 

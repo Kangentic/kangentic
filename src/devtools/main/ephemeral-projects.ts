@@ -33,7 +33,7 @@ import { IPC } from '../../shared/ipc-channels';
 import { getProjectDb } from '../../main/db/database';
 import { agentRegistry } from '../../main/agent/agent-registry';
 import { DEFAULT_AGENT } from '../../shared/types';
-import type { Project } from '../../shared/types';
+import type { BoardColumnConfig, PermissionMode, Project } from '../../shared/types';
 import type { IpcContext } from '../../main/ipc/ipc-context';
 
 const execFileAsync = promisify(execFile);
@@ -92,11 +92,23 @@ const PREVIEW_EFFORT = 'low';
  * `planExitTarget`, not an autonomy level, and rewriting it would break the
  * plan-exit hand-off the Planning column exists for.
  */
-const PREVIEW_PERMISSION_MODE = 'acceptEdits';
-const REPLACED_PERMISSION_MODE = 'auto';
+// Typed as PermissionMode, not bare strings: these are compared against and
+// written into real board config, so a rename of a union member must fail
+// `npm run typecheck` rather than silently stop matching at runtime.
+const PREVIEW_PERMISSION_MODE: PermissionMode = 'acceptEdits';
+const REPLACED_PERMISSION_MODE: PermissionMode = 'auto';
+
+/**
+ * The slice of a column we read out of the parsed `kangentic.json`. Derived from
+ * `BoardColumnConfig` rather than hand-rolled, so `permissionMode` stays coupled
+ * to the real `PermissionMode` union: type-safety otherwise stops at the
+ * `JSON.parse` boundary, and this code dispatches on a string-literal
+ * comparison against it.
+ */
+type PreviewTeamColumn = Pick<BoardColumnConfig, 'id' | 'permissionMode'>;
 
 interface PreviewTeamConfig {
-  columns?: { id?: string; permissionMode?: string }[];
+  columns?: PreviewTeamColumn[];
 }
 
 /**
@@ -127,7 +139,7 @@ export async function forcePreviewCheapModels(cloneDir: string): Promise<void> {
     // Match by id: a local column whose id is absent from the team config is
     // treated as a NEW column and inserted, which would duplicate the board.
     const columns = team.columns
-      .filter((column): column is { id: string; permissionMode?: string } => typeof column.id === 'string')
+      .filter((column): column is PreviewTeamColumn & { id: string } => typeof column.id === 'string')
       .map((column) => ({
         id: column.id,
         modelOverride: PREVIEW_MODEL,

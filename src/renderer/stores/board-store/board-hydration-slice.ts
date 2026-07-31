@@ -2,6 +2,7 @@ import { type StateCreator } from 'zustand';
 import type { ShortcutConfig } from '../../../shared/types';
 import type { BoardStore } from './types';
 import { applyStructuralSharing, applySwimlaneStructuralSharing } from './structural-sharing';
+import { applyTaskListPayload } from './lane-pins';
 import { ARCHIVED_PREVIEW_LIMIT } from './archived-tasks-slice';
 
 export interface BoardHydrationSlice {
@@ -47,7 +48,11 @@ export const createBoardHydrationSlice: StateCreator<BoardStore, [], [], BoardHy
       // even when only one row actually changed.
       const keepFull = get().archiveViewers > 0 && get().archivedFullyLoaded;
       set((state) => ({
-        tasks: applyStructuralSharing(state.tasks, nextTasks),
+        // Through applyTaskListPayload, not applyStructuralSharing directly:
+        // loadBoard has no staleness guard, so an in-flight move's optimistic
+        // lane would otherwise be clobbered by a payload issued before its
+        // write. Reconciling pins in the same set() keeps the two consistent.
+        ...applyTaskListPayload(state, nextTasks),
         swimlanes: applySwimlaneStructuralSharing(state.swimlanes, nextSwimlanes),
         // While a viewer holds the full archive, keep it (reconciled out-of-band
         // below); otherwise downgrade to the preview.

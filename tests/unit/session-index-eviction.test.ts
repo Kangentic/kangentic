@@ -47,7 +47,7 @@ describe('withoutSessionsForTasks', () => {
   it('drops the evicted task from BOTH the array and the index', () => {
     const next = withoutSessionsForTasks(sessions, 'task-b');
 
-    expect(next.sessions.map((s) => s.id)).toEqual(['sess-a', 'sess-c']);
+    expect(next.sessions.map((session) => session.id)).toEqual(['sess-a', 'sess-c']);
     expect(next._sessionByTaskId.has('task-b')).toBe(false);
     // The invariant, stated directly: the index describes exactly the array.
     expect(next._sessionByTaskId.size).toBe(next.sessions.length);
@@ -56,7 +56,7 @@ describe('withoutSessionsForTasks', () => {
   it('accepts a Set for the bulk-delete path', () => {
     const next = withoutSessionsForTasks(sessions, new Set(['task-a', 'task-c']));
 
-    expect(next.sessions.map((s) => s.id)).toEqual(['sess-b']);
+    expect(next.sessions.map((session) => session.id)).toEqual(['sess-b']);
     expect(next._sessionByTaskId.size).toBe(1);
     expect(next._sessionByTaskId.get('task-b')?.id).toBe('sess-b');
   });

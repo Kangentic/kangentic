@@ -740,7 +740,22 @@
         var visible = tasks.filter(function (t) {
           return !t.projectId || t.projectId === currentProjectId;
         });
-        return withAttachmentCounts(visible);
+        // withAttachmentCounts copies each row (Object.assign), so this payload
+        // is a genuine snapshot of the board AT CALL TIME and cannot be mutated
+        // by a later move.
+        var payload = withAttachmentCounts(visible);
+        // Test hook: hold THIS call's response until __mockReleaseTaskList().
+        // Snapshot-at-call-time is the load-bearing property. The stale-reload
+        // bug IS a payload computed before a write and delivered after it, so a
+        // hold that recomputed lazily on release would report the post-write
+        // board and pass vacuously against the buggy code.
+        if (window.__mockHoldNextTaskList) {
+          window.__mockHoldNextTaskList = false;
+          return new Promise(function (resolve) {
+            window.__mockReleaseTaskList = function () { resolve(payload); };
+          });
+        }
+        return payload;
       },
       create: async function (input) {
         // Test hook: count create IPC calls so specs can verify a double-submit

@@ -98,7 +98,7 @@ Each PTY session spawns exactly one Claude Code CLI process. Two UI locations ca
 
 | Guard | Purpose |
 |-------|---------|
-| `moveGeneration` | Prevents stale board state from overwriting a concurrent move |
+| `moveGenerations` | Per-task counters; prevent stale board state from overwriting a concurrent move |
 
 ## Resume Flow
 

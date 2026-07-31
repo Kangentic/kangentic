@@ -40,6 +40,7 @@ import type {
   SessionUsage,
   Task,
 } from '../../src/shared/types';
+import { EventType, MONITOR_DESCRIPTION_EXCERPT_LIMIT } from '../../src/shared/types';
 import type { ManagedSessionSummary } from '../../src/main/pty/session-registry';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 
@@ -239,7 +240,10 @@ function registerSessionRecord(projectId: string, sessionId: string, record: Fak
   mockSessionRecordsByKey.set(`${projectId}:${sessionId}`, record);
 }
 
-function makeContext(summaries: ManagedSessionSummary[]): IpcContext {
+function makeContext(
+  summaries: ManagedSessionSummary[],
+  eventsBySessionId: Record<string, SessionEvent[]> = {},
+): IpcContext {
   return {
     projectRepo: {
       getById: vi.fn((id: string) => projectRowsById.get(id)),
@@ -248,10 +252,30 @@ function makeContext(summaries: ManagedSessionSummary[]): IpcContext {
       listManagedSummaries: vi.fn(() => summaries),
       getActivityCache: vi.fn((): Record<string, ActivityState> => ({})),
       getActivityReasonsCache: vi.fn((): Record<string, ActivityReason> => ({})),
-      getEventsCache: vi.fn((): Record<string, SessionEvent[]> => ({})),
+      getEventsCache: vi.fn((): Record<string, SessionEvent[]> => eventsBySessionId),
       getUsageCache: vi.fn((): Record<string, SessionUsage> => ({})),
     },
   } as unknown as IpcContext;
+}
+
+/**
+ * A SessionEvent carrying every optional field the real type declares
+ * (tool, toolId, costUsd, inputTokens, outputTokens) alongside the two
+ * `lastEventOf` is supposed to keep (type, detail). Used to prove the
+ * aggregator actually PROJECTS the event down rather than passing the raw
+ * object through - a fixture with only { type, detail } would make that
+ * assertion vacuous.
+ */
+function makeFullSessionEvent(overrides: Partial<SessionEvent> & Pick<SessionEvent, 'type'>): SessionEvent {
+  return {
+    ts: 1700000000000,
+    tool: 'Read',
+    toolId: 'tool-call-1',
+    costUsd: 0.0042,
+    inputTokens: 512,
+    outputTokens: 128,
+    ...overrides,
+  };
 }
 
 /** Every field MonitorSessionRow declares as non-nullable must never come out
@@ -512,5 +536,156 @@ describe('buildMonitorSnapshot', () => {
     const generatedAtMs = Date.parse(snapshot.generatedAt);
     expect(generatedAtMs).toBeGreaterThanOrEqual(before);
     expect(generatedAtMs).toBeLessThanOrEqual(after);
+  });
+
+  // =========================================================================
+  // descriptionExcerpt (private helper, exercised via row.taskDescription)
+  // =========================================================================
+
+  describe('descriptionExcerpt (row.taskDescription trimming)', () => {
+    it('caps a task description longer than MONITOR_DESCRIPTION_EXCERPT_LIMIT to exactly that length', () => {
+      const longDescription = 'x'.repeat(MONITOR_DESCRIPTION_EXCERPT_LIMIT + 50);
+      registerHealthyProject('project-a', {
+        tasksById: new Map([
+          ['task-long-desc', makeTask('task-long-desc', { description: longDescription })],
+        ]),
+      });
+      const summaries = [
+        makeManagedSummary({ id: 'session-long-desc', projectId: 'project-a', taskId: 'task-long-desc' }),
+      ];
+      const context = makeContext(summaries);
+
+      const snapshot = buildMonitorSnapshot(context);
+
+      expect(snapshot.rows).toHaveLength(1);
+      const row = snapshot.rows[0];
+      // Length alone would pass even if the wrong slice were taken (e.g. the
+      // tail instead of the head), so also assert against the exact prefix.
+      expect(row.taskDescription).toHaveLength(MONITOR_DESCRIPTION_EXCERPT_LIMIT);
+      expect(row.taskDescription).toBe(longDescription.slice(0, MONITOR_DESCRIPTION_EXCERPT_LIMIT));
+    });
+
+    it('leaves a description at or under the limit unchanged', () => {
+      const shortDescription = 'Short task description well under the excerpt limit.';
+      registerHealthyProject('project-a', {
+        tasksById: new Map([
+          ['task-short-desc', makeTask('task-short-desc', { description: shortDescription })],
+        ]),
+      });
+      const summaries = [
+        makeManagedSummary({ id: 'session-short-desc', projectId: 'project-a', taskId: 'task-short-desc' }),
+      ];
+      const context = makeContext(summaries);
+
+      const snapshot = buildMonitorSnapshot(context);
+
+      expect(snapshot.rows[0].taskDescription).toBe(shortDescription);
+    });
+
+    it('treats an empty-string description as null, matching the null/undefined (no-task) case', () => {
+      // The Command Terminal test above already pins the `task === undefined`
+      // side of "null/undefined stays null" (row.taskDescription is null with
+      // no task at all). This pins the other side: a real task whose
+      // description is the empty string is equally falsy and also renders null.
+      registerHealthyProject('project-a', {
+        tasksById: new Map([
+          ['task-empty-desc', makeTask('task-empty-desc', { description: '' })],
+        ]),
+      });
+      const summaries = [
+        makeManagedSummary({ id: 'session-empty-desc', projectId: 'project-a', taskId: 'task-empty-desc' }),
+      ];
+      const context = makeContext(summaries);
+
+      const snapshot = buildMonitorSnapshot(context);
+
+      expect(snapshot.rows[0].taskDescription).toBeNull();
+    });
+  });
+
+  // =========================================================================
+  // lastEventOf (private helper, exercised via row.lastEvent)
+  // =========================================================================
+
+  describe('lastEventOf (row.lastEvent projection)', () => {
+    it('projects a SessionEvent down to exactly { type, detail }, dropping correlation/telemetry fields', () => {
+      registerHealthyProject('project-a', {
+        tasksById: new Map([['task-a', makeTask('task-a')]]),
+      });
+      const summaries = [
+        makeManagedSummary({ id: 'session-a', projectId: 'project-a', taskId: 'task-a' }),
+      ];
+      const fullEvent = makeFullSessionEvent({ type: EventType.ToolStart, detail: 'Reading file.ts' });
+      const context = makeContext(summaries, { 'session-a': [fullEvent] });
+
+      const snapshot = buildMonitorSnapshot(context);
+
+      const lastEvent = snapshot.rows[0].lastEvent;
+      expect(lastEvent).not.toBeNull();
+      // Red-green: on a revert to `return event` (the raw SessionEvent), this
+      // key set would also include ts/tool/toolId/costUsd/inputTokens/
+      // outputTokens - all populated on the fixture above precisely so this
+      // assertion cannot pass vacuously.
+      expect(Object.keys(lastEvent as object).sort()).toEqual(['detail', 'type']);
+      expect(lastEvent).toEqual({ type: EventType.ToolStart, detail: 'Reading file.ts' });
+    });
+
+    it('picks the LAST event in the cache, not the first', () => {
+      registerHealthyProject('project-a', {
+        tasksById: new Map([['task-a', makeTask('task-a')]]),
+      });
+      const summaries = [
+        makeManagedSummary({ id: 'session-a', projectId: 'project-a', taskId: 'task-a' }),
+      ];
+      const context = makeContext(summaries, {
+        'session-a': [
+          makeFullSessionEvent({ type: EventType.ToolStart, detail: 'Reading file.ts' }),
+          makeFullSessionEvent({ type: EventType.ToolEnd, detail: 'Read file.ts' }),
+        ],
+      });
+
+      const snapshot = buildMonitorSnapshot(context);
+
+      expect(snapshot.rows[0].lastEvent).toEqual({ type: EventType.ToolEnd, detail: 'Read file.ts' });
+    });
+
+    it('returns null when the session has no events cached (undefined) or an empty array', () => {
+      registerHealthyProject('project-a', {
+        tasksById: new Map([
+          ['task-undefined-events', makeTask('task-undefined-events')],
+          ['task-empty-events', makeTask('task-empty-events')],
+        ]),
+      });
+      const summaries = [
+        makeManagedSummary({ id: 'session-undefined-events', projectId: 'project-a', taskId: 'task-undefined-events' }),
+        makeManagedSummary({ id: 'session-empty-events', projectId: 'project-a', taskId: 'task-empty-events' }),
+      ];
+      // session-undefined-events is deliberately absent from the cache map;
+      // session-empty-events is present with an explicit empty array.
+      const context = makeContext(summaries, { 'session-empty-events': [] });
+
+      const snapshot = buildMonitorSnapshot(context);
+
+      const rowsById = new Map(snapshot.rows.map((row) => [row.sessionId, row]));
+      expect(rowsById.get('session-undefined-events')?.lastEvent).toBeNull();
+      expect(rowsById.get('session-empty-events')?.lastEvent).toBeNull();
+    });
+
+    it('yields detail: null (not undefined) for an event with no detail field', () => {
+      registerHealthyProject('project-a', {
+        tasksById: new Map([['task-a', makeTask('task-a')]]),
+      });
+      const summaries = [
+        makeManagedSummary({ id: 'session-a', projectId: 'project-a', taskId: 'task-a' }),
+      ];
+      // makeFullSessionEvent does not set `detail` by default, so this event
+      // carries every other optional field but genuinely omits `detail`.
+      const eventWithNoDetail = makeFullSessionEvent({ type: EventType.Idle });
+      const context = makeContext(summaries, { 'session-a': [eventWithNoDetail] });
+
+      const snapshot = buildMonitorSnapshot(context);
+
+      expect(snapshot.rows[0].lastEvent).toEqual({ type: EventType.Idle, detail: null });
+    });
   });
 });

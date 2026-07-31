@@ -640,10 +640,12 @@ All stores in `src/renderer/stores/`. They call `window.electronAPI.*` for IPC a
 
 ### BoardStore (`board-store.ts`)
 
-State: `tasks`, `swimlanes`, `archivedTasks`, `loading`, `completingTask`, `completingTaskIds`, `completionGates`, `recentlyArchivedId`
+State: `tasks`, `swimlanes`, `archivedTasks`, `loading`, `completingTask`, `completingTaskIds`, `completionGates`, `recentlyArchivedId`, `lanePins`, `pendingMoveConfirms` (with `pendingMoveConfirm` as its head)
 
 - **Optimistic updates** -- all mutations update UI immediately, then sync via IPC. Errors revert via full `loadBoard()`.
-- **Stale move protection** -- `moveGeneration` counter prevents older async reloads from clobbering newer moves.
+- **Stale move protection** - per-task `moveGenerations` counters prevent older async reloads from clobbering newer moves of the same task.
+- **Lane pins** - `loadBoard()` has no staleness guard and `taskContentsMatch` compares `swimlane_id`, so a `tasks.list()` issued before a move's DB write reverts the optimistic lane when it resolves. A `lanePins` entry holds the card at its destination until a payload reports the task at neither the pre-move lane nor the pre-move `updated_at`. Read only at `KanbanBoard`'s `tasksPerLane`, the same chokepoint as `completingTaskIds`; every task payload applies through `applyTaskListPayload` so the reconcile is atomic with the write. See `.claude/rules/board-completing-task-chokepoint.md`.
+- **Move confirmations queue** - `pendingMoveConfirms` is FIFO. As a single slot, a second confirmation overwrote the first, and that move had already returned `ok` without calling the IPC, leaving an optimistic placement no write backed.
 - **Session cascade** -- after task move, reloads sessions to detect spawns/kills from transition engine. Auto-activates new sessions with toast notification.
 - **Completion animation** -- `setCompletingTask()` mounts the FlyingCard with the captured drop rect; a per-task completion gate joins the fly finishing (`markCompletionAnimationDone`) and the move being approved (`approveCompletion`, after a clean worktree probe or a confirmed dialog), and `persistCompletion` runs the actual move once both signals land.
 

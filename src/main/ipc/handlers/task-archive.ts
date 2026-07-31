@@ -9,12 +9,69 @@ import {
   notifyBranchCheckoutBlocked,
   createTransitionEngine,
   spawnAgent,
+  cleanupTaskSession,
 } from '../helpers';
 import { resolveProjectContext } from '../helpers/project-repos';
 import { applyProfileToLane } from '../../transition-engine/column-strategy';
 import { loadTaskProfile } from '../helpers/task-profile';
 import { withTaskLock } from '../task-lifecycle-lock';
+import type { TaskRepository } from '../../db/repositories/task-repository';
+import type { SwimlaneRole, Task } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
+
+/**
+ * Restoring an archived task into a To Do lane is a full reset, exactly as
+ * TASK_MOVE treats every other route into To Do (`task-move.ts` priority 1).
+ *
+ * Without this the task keeps the session the move into Done deliberately
+ * SUSPENDED rather than destroyed. That suspended entry stays in the PTY
+ * registry (`SessionManager.suspend` mutates `status` and never deletes), and
+ * `listSessions()` has no status filter, so `SESSION_LIST` keeps handing it to
+ * the renderer - `syncSessions()` reinstates the orphan instead of healing it.
+ * `TaskCard` resolves its session through `_sessionByTaskId`, not
+ * `task.session_id`, so nulling the task pointer does not hide it either: the
+ * restored card renders "Paused" for the rest of the app session.
+ *
+ * Startup recovery already refuses to give a non-auto-spawn task a suspended
+ * placeholder (`session-startup/resume-suspended.ts`), which is why a restart
+ * shows the card correctly today. This only makes the live app agree.
+ *
+ * Scoped to `role === 'todo'`, not to `!auto_spawn`: moving into a custom
+ * non-auto-spawn column deliberately suspends and offers Resume, and a restore
+ * into that same column should behave identically.
+ *
+ * Deliberately the SESSION-only half of TASK_MOVE's cleanup, not the full
+ * `cleanupTaskResources`. The full helper force-deletes the branch
+ * (`git branch -D`) whenever it removes a worktree and `git.autoCleanup` is on,
+ * which defaults to true. That is safe on the move-to-Backlog route, where the
+ * user is warned first, but not here: `deleteTaskWorktree` nulls `worktree_path`
+ * only when the Done-time removal SUCCEEDED and always preserves `branch_name`,
+ * so an archived task whose worktree was pinned at Done time (routine on
+ * Windows - AV, an open editor, `node_modules` handles) still carries both
+ * fields. Restoring it would then re-attempt the removal, now usually succeed
+ * because the agent PTY is long dead, and force-delete the branch holding the
+ * task's committed work with no confirmation anywhere in the flow.
+ *
+ * `cleanupTaskSession` kills the PTY and wipes the session records while leaving
+ * the worktree and branch alone, which is exactly the reset this route wants.
+ */
+async function resetSessionForTodoRestore(
+  context: IpcContext,
+  task: Task,
+  tasks: TaskRepository,
+  laneRole: SwimlaneRole | null | undefined,
+  projectId: string | null,
+  projectPath: string | null,
+): Promise<void> {
+  if (laneRole !== 'todo') return;
+  try {
+    await cleanupTaskSession(context, task, tasks, projectId, projectPath);
+  } catch (cleanupError) {
+    // Best-effort: the task is already unarchived and visible. A failed
+    // teardown leaves the stale card state, not a broken board.
+    console.error(`[TASK_UNARCHIVE] Session reset failed for task ${task.id.slice(0, 8)}:`, cleanupError);
+  }
+}
 
 export function registerTaskArchiveHandlers(context: IpcContext): void {
   ipcMain.handle(IPC.TASK_LIST_ARCHIVED, () => {
@@ -53,6 +110,7 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
 
       // Guard: don't resume if target doesn't auto-spawn (backlog, done, or custom with auto_spawn=false)
       if (!toLane?.auto_spawn) {
+        await resetSessionForTodoRestore(context, task, tasks, toLane?.role, resolvedProjectId, resolvedProjectPath);
         return tasks.getById(input.id);
       }
 
@@ -132,7 +190,10 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
         // into the same column, so the auto-spawn gate is resolved per task
         // rather than once for the shared lane.
         const taskLane = applyProfileToLane(toLane, loadTaskProfile(context, task, resolvedProjectPath));
-        if (!taskLane?.auto_spawn) return;
+        if (!taskLane?.auto_spawn) {
+          await resetSessionForTodoRestore(context, task, tasks, taskLane?.role, resolvedProjectId, resolvedProjectPath);
+          return;
+        }
 
         try {
           await ensureTaskWorktree(context, task, tasks, resolvedProjectPath);

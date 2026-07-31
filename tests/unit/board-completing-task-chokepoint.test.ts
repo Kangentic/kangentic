@@ -11,14 +11,23 @@ import path from 'node:path';
 // the source lane unguarded against a loadBoard() racing the fly.
 //
 // This scan fails if any board lane component other than KanbanBoard.tsx references
-// `completingTaskIds`, i.e. re-implements the filter per-lane. The producer side
-// (addCompletingTaskId / removeCompletingTaskId / the Set definition) lives in the
-// board store, outside this directory, so it is naturally out of scope.
+// either guard, i.e. re-implements the filter per-lane. The producer side
+// (addCompletingTaskId / removeCompletingTaskId / pinTaskLane / dropTaskLanePin and
+// the state definitions) lives in the board store, outside this directory, so it is
+// naturally out of scope.
+//
+// `lanePins` is the second guard, added for the same bug class on the non-Done side:
+// a cross-lane move's optimistic placement was clobbered by a loadBoard() whose
+// tasks.list() was issued before the move's DB write, so the card snapped back to its
+// source column. completingTaskIds EXCLUDES a task from every lane; lanePins REDIRECTS
+// one to a different lane. Both are read only at tasksPerLane, for the same reason: it
+// is the single place `tasks` is bucketed into per-lane arrays, so a guard applied
+// there is reconciliation-proof, and a guard applied per-lane protects only that lane.
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const SCAN_DIR = 'src/renderer/components/board';
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx']);
-const GUARD_IDENTIFIER = 'completingTaskIds';
+const GUARD_IDENTIFIERS = ['completingTaskIds', 'lanePins'];
 
 // The single chokepoint allowed to read the Set.
 const ALLOWED_FILES = new Set(['src/renderer/components/board/KanbanBoard.tsx']);
@@ -40,8 +49,8 @@ function toPosix(relativePath: string): string {
   return relativePath.replace(/\\/g, '/');
 }
 
-describe('completing tasks are filtered only at the tasksPerLane chokepoint', () => {
-  it('no board lane component except KanbanBoard reads completingTaskIds', () => {
+describe('lane membership is overridden only at the tasksPerLane chokepoint', () => {
+  it.each(GUARD_IDENTIFIERS)('no board lane component except KanbanBoard reads %s', (guard) => {
     const offenders: string[] = [];
     const absoluteDir = path.join(REPO_ROOT, SCAN_DIR);
     for (const filePath of collectSourceFiles(absoluteDir)) {
@@ -49,16 +58,28 @@ describe('completing tasks are filtered only at the tasksPerLane chokepoint', ()
       if (ALLOWED_FILES.has(relative)) continue;
       const lines = fs.readFileSync(filePath, 'utf-8').split('\n');
       lines.forEach((line, index) => {
-        if (line.includes(GUARD_IDENTIFIER)) {
+        if (line.includes(guard)) {
           offenders.push(`${relative}:${index + 1}`);
         }
       });
     }
     expect(
       offenders,
-      `Board lane components must not re-filter on completingTaskIds. Exclude completing tasks once ` +
-        `at KanbanBoard's tasksPerLane chokepoint so they are kept out of EVERY lane (source and Done) ` +
-        `for the whole fly. See .claude/rules/board-completing-task-chokepoint.md.\nOffenders:\n${offenders.join('\n')}`,
+      `Board lane components must not re-derive lane membership from ${guard}. Both guards are read ` +
+        `once at KanbanBoard's tasksPerLane chokepoint: completingTaskIds keeps a completing task out ` +
+        `of EVERY lane (source and Done) for the whole fly, and lanePins holds a moving task at its ` +
+        `destination until the server confirms the move. A per-lane filter only ever protects the lane ` +
+        `that implements it. See .claude/rules/board-completing-task-chokepoint.md.\nOffenders:\n${offenders.join('\n')}`,
     ).toEqual([]);
+  });
+
+  it('KanbanBoard actually reads both guards (the scan above is not vacuous)', () => {
+    const chokepoint = fs.readFileSync(
+      path.join(REPO_ROOT, 'src/renderer/components/board/KanbanBoard.tsx'),
+      'utf-8',
+    );
+    for (const guard of GUARD_IDENTIFIERS) {
+      expect(chokepoint, `KanbanBoard must read ${guard} at tasksPerLane`).toContain(guard);
+    }
   });
 });

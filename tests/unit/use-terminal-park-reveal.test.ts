@@ -6,7 +6,7 @@
  * as useTerminal wires them:
  *
  *   shouldDrop: () => suppressDataRef.current || isTerminalParked(sessionId)
- *   shouldHold: () => isBoardDragActive() || scrollbackPendingRef.current
+ *   shouldHold: () => scrollbackPendingRef.current
  *   onTerminalReveal(sessionId, () => reloadScrollback({ skipResize, skipFocus }))
  *
  * Locks the three-phase transition: while parked, live bytes are

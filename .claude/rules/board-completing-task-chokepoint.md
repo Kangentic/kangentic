@@ -31,20 +31,43 @@ persists when the fly ends.
 
 ## The rule
 
-There is exactly one place a completing task is excluded from the board:
-`KanbanBoard`'s `tasksPerLane` memo, the single chokepoint that buckets `tasks` into per-lane
-arrays. It reads `completingTaskIds` and skips any task whose id is in it, so a completing task
-renders in **no** lane (source or Done) for the entire flight, reconciliation-proof against any
-mid-flight reload.
+`KanbanBoard`'s `tasksPerLane` memo is the **only** place lane membership is overridden, both by
+exclusion and by redirection. It is the single chokepoint that buckets `tasks` into per-lane
+arrays, so a guard applied there is reconciliation-proof against any mid-flight reload, and a
+guard applied per-lane protects only the lane that implements it.
+
+Two guards live there:
+
+- **`completingTaskIds` (exclusion).** Skips any task whose id is in the Set, so a completing
+  task renders in **no** lane (source or Done) for the entire flight.
+- **`lanePins` (redirection).** Buckets a task with an optimistic cross-lane move still in flight
+  into its pinned destination rather than the lane the server last reported. Same bug class on
+  the non-Done side: `loadBoard()` has no staleness guard and replaces `tasks` wholesale, and
+  `taskContentsMatch` compares `swimlane_id` explicitly, so the server row always wins over an
+  optimistic move. `endBoardDrag()` runs at the top of `handleDragEnd`, well before `moveTask` is
+  called, and drains parked reloads synchronously, so a reload's `tasks.list()` can be issued
+  before the move's DB write and report the pre-move lane when it resolves. Dragging two tasks in
+  quick succession made this visible as a card snapping back to its source column.
+
+A pin's drop rule is content-based and must stay that way: it holds only while a payload reports
+the task at BOTH the pre-move lane and the pre-move `updated_at`. Matching on lane alone leaks
+forever when the server puts the task back at its origin (an auto-move, or a rejected move) -
+a stranded pin is strictly worse than the snap-back it fixes. Every uncertainty resolves toward
+dropping. See `src/renderer/stores/board-store/lane-pins.ts`.
 
 - Individual lane components (`Swimlane`, `DoneSwimlane`, any future lane renderer under
-  `src/renderer/components/board/`) MUST NOT read `completingTaskIds` to re-filter their own
-  task list. They receive an already-filtered `tasks` prop from `tasksPerLane`; a second
-  per-lane filter is redundant at best and reopens the source-lane gap at worst (it only ever
-  guards the lane that implements it).
+  `src/renderer/components/board/`) MUST NOT read `completingTaskIds` or `lanePins` to re-derive
+  their own task list. They receive an already-bucketed `tasks` prop from `tasksPerLane`; a
+  second per-lane filter is redundant at best and reopens the source-lane gap at worst (it only
+  ever guards the lane that implements it).
 - The producer side is unaffected: the store actions `addCompletingTaskId` /
-  `removeCompletingTaskId` and the `completingTaskIds` definition live in the board store
-  (`src/renderer/stores/board-store/`) and are the source of truth the chokepoint reads.
+  `removeCompletingTaskId` / `pinTaskLane` / `dropTaskLanePin` and the state definitions live in
+  the board store (`src/renderer/stores/board-store/`) and are the source of truth the chokepoint
+  reads.
+- **Every task-list payload goes through `applyTaskListPayload`** (`lane-pins.ts`), never a bare
+  `applyStructuralSharing(state.tasks, ...)`. Reconciling pins in the same `set()` as the payload
+  keeps the two atomically consistent and makes the drop rule mechanically enforceable, rather
+  than depending on someone remembering to add a `useEffect`.
 - Populate the guard synchronously the moment a Done drop is detected, BEFORE any `await` in
   `handleDragEnd` (the `checkPendingChanges` probe). `handleDragEnd` calls `addCompletingTaskId`
   and then `setCompletingTask` (mounting the `FlyingCard`) synchronously, so the card is filtered
@@ -63,7 +86,11 @@ mid-flight reload.
 
 - **Test (mechanical):** `tests/unit/board-completing-task-chokepoint.test.ts` scans
   `src/renderer/components/board/` and fails if any file other than `KanbanBoard.tsx` references
-  `completingTaskIds`. Runs in CI via `npm run test:unit`.
+  `completingTaskIds` or `lanePins`; it also asserts `KanbanBoard` reads both, so the scan cannot
+  pass vacuously after a rename. `tests/unit/board-lane-pin-lifecycle.test.ts` covers the pin drop
+  rule as a pure-function table (including the bounce-back-to-origin case that a lane-only rule
+  would leak) and statically fails any board-store slice that applies a task payload without
+  going through `applyTaskListPayload`. Runs in CI via `npm run test:unit`.
 - **Test (behavioral):** `tests/ui/move-to-done-reload-no-source-flash.spec.ts` drags a task to
   Done, fires a `loadBoard()` mid-flight, and asserts the card never reappears in its source
   lane (parametrized across multiple source columns). It goes red the moment the chokepoint

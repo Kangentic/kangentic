@@ -22,6 +22,7 @@
 import { useEffect, useRef } from 'react';
 import type { Project, SessionEvent } from '../../shared/types';
 import { useBoardStore } from '../stores/board-store';
+import { EMPTY_LANE_PINS } from '../stores/board-store/lane-pins';
 import { useBacklogStore } from '../stores/backlog-store';
 import { useConfigStore } from '../stores/config-store';
 import { useSessionStore, cancelSync } from '../stores/session-store';
@@ -161,6 +162,14 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
           archivedTotalCount: snapshot.board.archivedTotalCount,
           archivedFullyLoaded: snapshot.board.archivedFullyLoaded,
           shortcuts: snapshot.board.shortcuts,
+          // A lane pin is transient in-flight state for THIS project's board and
+          // must never survive a switch. The cold path self-heals (loadBoard's
+          // reconcile sees the pinned task absent from the new project's
+          // payload and drops it), but this is a direct setState, not a payload
+          // application, so it needs the explicit clear - and clearing on both
+          // branches makes "pins never cross a project" a statable invariant
+          // rather than an incidental one.
+          lanePins: EMPTY_LANE_PINS,
           hydrated: true,
           loading: false,
         });
@@ -253,7 +262,14 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
         // the old archive visible nor make this project's first loadBoard
         // fetch the full archive. archiveViewers is intentionally NOT reset:
         // it is refcounted by live component mount/unmount, not by switches.
-        useBoardStore.setState({ archivedTasks: [], archivedTotalCount: 0, archivedFullyLoaded: false });
+        // `lanePins` is cleared here as well as on the warm branch above, so
+        // "a pin never crosses a project" holds by construction rather than by
+        // relying on loadBoard()'s reconcile happening to find the pinned task
+        // absent from the new project's payload.
+        useBoardStore.setState({
+          archivedTasks: [], archivedTotalCount: 0, archivedFullyLoaded: false,
+          lanePins: EMPTY_LANE_PINS,
+        });
         const coldLoads = Promise.all([
           useBoardStore.getState().loadBoard(),
           useBacklogStore.getState().loadBacklog(),
@@ -370,7 +386,10 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
       // leaving the previous project's totals on screen. No-ops when closed.
       useUsageDashboardStore.getState().onProjectSwitched();
     } else {
-      useBoardStore.setState({ tasks: [], swimlanes: [], archivedTasks: [], archivedTotalCount: 0, archivedFullyLoaded: false });
+      useBoardStore.setState({
+        tasks: [], swimlanes: [], archivedTasks: [], archivedTotalCount: 0, archivedFullyLoaded: false,
+        lanePins: EMPTY_LANE_PINS,
+      });
       useSessionStore.setState({
         activeSessionId: null,
         dialogSessionIds: [],

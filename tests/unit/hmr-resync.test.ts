@@ -111,6 +111,17 @@ describe('HMR store re-sync', () => {
     // nothing to preserve until the first reassignment, and that reassignment
     // path is responsible for triggering its own preservation if needed.
     const letPattern = /^let\s+(\w+)\b[^=]*=\s*(.+?);?\s*$/gm;
+    // A `const` binding can still hold MUTABLE module state: a Map/Set seeded
+    // from hot.data is mutated in place for the module's whole life, so it needs
+    // preservation exactly as a `let` does. A `let`-only scan silently loses the
+    // declaration the moment someone converts a scalar counter into a keyed Map
+    // (which is how task-slice.ts's per-task `moveGenerations` dropped out).
+    // Deliberately narrow: it requires BOTH `import.meta.hot` and a collection
+    // constructor, so the many Pattern-E `const preservedXStore = hot.data.x`
+    // bindings (pinned by direct assignment, not a dispose stash) are not swept
+    // in, and plain `const` constants are untouched.
+    const hotCollectionPattern =
+      /^const\s+(\w+)\b[^=]*=\s*(import\.meta\.hot[^;]*new (?:Map|Set|WeakMap)[^;]*);?\s*$/gm;
     const TRIVIAL_INITIALIZERS = new Set(['null', 'undefined', 'false', 'true']);
 
     // Extract all dispose callback bodies from the source. A file may have
@@ -137,8 +148,9 @@ describe('HMR store re-sync', () => {
       const disposeBodies = extractDisposeBodies(source);
 
       let match;
-      letPattern.lastIndex = 0;
-      while ((match = letPattern.exec(source)) !== null) {
+      for (const declarationPattern of [letPattern, hotCollectionPattern]) {
+      declarationPattern.lastIndex = 0;
+      while ((match = declarationPattern.exec(source)) !== null) {
         const name = match[1];
         const initializer = match[2].trim();
         if (TRIVIAL_INITIALIZERS.has(initializer)) continue;
@@ -168,6 +180,7 @@ describe('HMR store re-sync', () => {
           const relativePath = path.relative(path.resolve(__dirname, '../..'), file).replace(/\\/g, '/');
           violations.push(`${relativePath}:${lineNumber} -> let ${name} = ${initializer} (not stashed in dispose)`);
         }
+      }
       }
     }
 

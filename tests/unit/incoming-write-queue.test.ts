@@ -183,7 +183,7 @@ describe('createIncomingWriteQueue', () => {
 
   // ---------------------------------------------------------------------
   // useTerminal.ts wiring: shouldDrop: () => suppressDataRef.current,
-  // shouldHold: () => isBoardDragActive() || scrollbackPendingRef.current.
+  // shouldHold: () => scrollbackPendingRef.current.
   // A scrollback replay now HOLDS (not drops) live bytes, so a fullscreen
   // TUI's selection-highlight diff arriving during a replay is never
   // silently discarded - it applies strictly after the replayed frame.
