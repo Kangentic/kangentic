@@ -240,6 +240,69 @@ describe('SessionTelemetry activity decisions', () => {
       localTelemetry.dispose();
     });
 
+    /**
+     * The settings-change restart (a ContextBar MODEL switch, and a column-config
+     * model edit) suspends the session and respawns it with `--resume`. Its
+     * documented contract is that the session resumes IDLE - no prompt, no
+     * auto_command - but the CLI still runs its resume-picker context reload:
+     * a CLI-INTERNAL turn that fires no hooks while `total_output_tokens` grows.
+     * A freshly-initialised session's idle is non-authoritative, so the
+     * heartbeat force-thought it and the board painted `thinking` for a fixed
+     * 30s (`DEFAULT_STALE_AFTER_HEARTBEAT_FORCED_MS`) with the agent parked the
+     * whole time.
+     *
+     * Reproduced live on a Sonnet 5 -> Opus -> Sonnet 5 switch: one interval,
+     * `enterTrigger: force-thinking`, `durationMs: 30005`,
+     * `exitTrigger: timer:stale-thinking`, `forceThinking: 1`, `staleThinking: 1`,
+     * every other counter 0.
+     */
+    it('force-thinks a freshly resumed session on resume-picker output growth (the defect)', () => {
+      telemetry.initSession('s1');
+      expect(telemetry.getActivityCache()['s1']).toBe('idle');
+      telemetry.processStatusUpdate('s1', usage(90_000, 100)); // seed previousUsage
+      vi.advanceTimersByTime(1_500); // past the 1s grace
+      telemetry.processStatusUpdate('s1', usage(96_000, 1_400)); // reload grows output
+      expect(telemetry.getActivityCache()['s1']).toBe('thinking');
+    });
+
+    it('markIdleAuthoritative suppresses that, so a settings restart stays idle', () => {
+      telemetry.initSession('s1');
+      // What restartSessionForSettingsChange asserts after the respawn.
+      telemetry.markIdleAuthoritative('s1');
+      telemetry.processStatusUpdate('s1', usage(90_000, 100));
+      vi.advanceTimersByTime(1_500);
+      telemetry.processStatusUpdate('s1', usage(96_000, 1_400));
+      expect(telemetry.getActivityCache()['s1']).toBe('idle');
+    });
+
+    it('markIdleAuthoritative is not sticky: a real turn restores normal recovery', () => {
+      // The assertion is about THIS resume being parked, not about the session
+      // forever. The flag is not cleared by the turn-initiating hook itself; it
+      // is rewritten by whichever path commits the NEXT idle. Here that is the
+      // watchdog hatch, which sets it false, so a later fallback idle whose
+      // agent really is generating still recovers.
+      const localLog: DecisionLog = { activityChanges: [], events: [], suspends: [], idleTimeouts: [] };
+      const localTelemetry = makeTelemetry(localLog, new Set(), { staleThinkingTimeoutMs: 1_000 });
+      localTelemetry.initSession('s1');
+      localTelemetry.markIdleAuthoritative('s1');
+      localTelemetry.ingestEvents('s1', [{ ts: Date.now(), type: EventType.Prompt }]); // real turn
+      vi.advanceTimersByTime(1_100); // watchdog reclaims -> non-authoritative idle
+      expect(localTelemetry.getActivityCache()['s1']).toBe('idle');
+      localTelemetry.processStatusUpdate('s1', usage(100, 50));
+      vi.advanceTimersByTime(1_500);
+      localTelemetry.processStatusUpdate('s1', usage(100, 120)); // real generation
+      expect(localTelemetry.getActivityCache()['s1']).toBe('thinking');
+      localTelemetry.dispose();
+    });
+
+    it('markIdleAuthoritative is a no-op while the session is thinking', () => {
+      telemetry.initSession('s1');
+      telemetry.ingestEvents('s1', [{ ts: Date.now(), type: EventType.Prompt }]);
+      expect(telemetry.getActivityCache()['s1']).toBe('thinking');
+      telemetry.markIdleAuthoritative('s1');
+      expect(telemetry.getActivityCache()['s1']).toBe('thinking');
+    });
+
     // Task #294 part 2: once idle_hint is pending, status.json churn is parked-TUI
     // statusline noise, not proof of work - the heartbeat must NOT keep refreshing
     // lastSignalAt, or it re-blinds the stale-thinking net and pins a stuck turn.

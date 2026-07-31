@@ -1,7 +1,9 @@
 /**
- * Dev-only: resolve the ORIGINAL task's title for a `/preview` window so the
- * title bar can identify which task the (otherwise indistinguishable
- * "Project 1" / "Project 2") preview clones belong to.
+ * Dev-only: resolve the ORIGINAL task's label (`#<display_id> - <title>`) for a
+ * `/preview` window so the title bar and the OS taskbar can identify which task
+ * the (otherwise indistinguishable "Project 1" / "Project 2") preview clones
+ * belong to. The number alone was not enough - it still meant scanning the board
+ * to find out which task it was.
  *
  * The preview clones run a fresh seeded board DB, so the original task is NOT in
  * any database the preview process opens. We recover it from the REAL
@@ -40,10 +42,17 @@ function samePath(first: string, second: string): boolean {
 }
 
 /**
- * Resolve the original task's title for a preview worktree path, or null if it
+ * Resolve the original task's label for a preview worktree path, or null if it
  * cannot be determined. Reads the real parent project DB read-only.
+ *
+ * The label is `#<display_id> - <title>` (falling back to the bare title when a
+ * legacy row has no display_id). Both consumers - the title-bar pill and the OS
+ * window/taskbar title - render this single string, so the two can never drift
+ * and the taskbar thumbnail carries the same "#N" the board shows. The id comes
+ * from the DB row, not the folder name, so a legacy `<slug>-<shortId>` worktree
+ * gets its number too.
  */
-export function resolvePreviewTaskTitle(worktreePath: string): string | null {
+export function resolvePreviewTaskLabel(worktreePath: string): string | null {
   try {
     if (!worktreePath) return null;
     const normalizedWorktree = toForwardSlash(path.resolve(worktreePath));
@@ -61,11 +70,19 @@ export function resolvePreviewTaskTitle(worktreePath: string): string | null {
     const projectId = findProjectId(path.join(configDir, 'index.db'), parentRoot);
     if (!projectId) return null;
 
-    return findTaskTitle(
+    const task = findTask(
       path.join(configDir, 'projects', `${projectId}.db`),
       { displayId, shortId: shortIdMatch?.[1] ?? null },
       worktreePath,
     );
+    if (!task) return null;
+    // A legacy row can carry a NULL display_id, so degrade to the bare title
+    // rather than rendering a meaningless "#null - " prefix. A DB old enough to
+    // lack the column entirely does not reach here at all: the SELECT throws at
+    // prepare and the outer catch returns null, so the caller shows "Project N".
+    return typeof task.displayId === 'number'
+      ? `#${task.displayId} - ${task.title}`
+      : task.title;
   } catch {
     return null;
   }
@@ -84,36 +101,44 @@ function findProjectId(globalDbPath: string, parentRoot: string): string | null 
   }
 }
 
-/** Look up the task title by display_id or UUID prefix (primary) or stored worktree path (fallback). */
-function findTaskTitle(
+/** A resolved task, carrying the number the board shows alongside its title. */
+interface PreviewTask {
+  displayId: number | null;
+  title: string;
+}
+
+/** Look up the task by display_id or UUID prefix (primary) or stored worktree path (fallback). */
+function findTask(
   projectDbPath: string,
   folderKey: { displayId: number | null; shortId: string | null },
   worktreePath: string,
-): string | null {
+): PreviewTask | null {
   if (!fs.existsSync(projectDbPath)) return null;
   const db = new Database(projectDbPath, { readonly: true, fileMustExist: true });
   try {
     if (folderKey.displayId !== null) {
-      const taskByDisplayId = db.prepare('SELECT title FROM tasks WHERE display_id = ? LIMIT 1')
-        .get(folderKey.displayId) as { title: string } | undefined;
-      if (taskByDisplayId?.title) return taskByDisplayId.title;
+      const taskByDisplayId = db.prepare('SELECT display_id AS displayId, title FROM tasks WHERE display_id = ? LIMIT 1')
+        .get(folderKey.displayId) as PreviewTask | undefined;
+      if (taskByDisplayId?.title) return taskByDisplayId;
     }
 
     // shortId is 8 hex chars containing no LIKE metacharacters, so the trailing `%` is the
     // only wildcard and needs no escaping. A UUIDv4 prefix collision within one project is
     // astronomically unlikely; LIMIT 1 takes the first match.
     if (folderKey.shortId) {
-      const taskByIdPrefix = db.prepare('SELECT title FROM tasks WHERE id LIKE ? LIMIT 1').get(`${folderKey.shortId}%`) as
-        | { title: string }
-        | undefined;
-      if (taskByIdPrefix?.title) return taskByIdPrefix.title;
+      const taskByIdPrefix = db.prepare('SELECT display_id AS displayId, title FROM tasks WHERE id LIKE ? LIMIT 1')
+        .get(`${folderKey.shortId}%`) as PreviewTask | undefined;
+      if (taskByIdPrefix?.title) return taskByIdPrefix;
     }
 
     const rows = db
-      .prepare('SELECT title, worktree_path FROM tasks WHERE worktree_path IS NOT NULL')
-      .all() as Array<{ title: string; worktree_path: string }>;
+      .prepare('SELECT display_id AS displayId, title, worktree_path FROM tasks WHERE worktree_path IS NOT NULL')
+      .all() as Array<PreviewTask & { worktree_path: string }>;
     const match = rows.find((row) => samePath(row.worktree_path, worktreePath));
-    return match ? match.title : null;
+    // Gate on `title` like the two branches above. Before the label change an
+    // empty title fell through as a falsy '' and rendered no pill; composing it
+    // now would produce a truthy "#34 - " with nothing after the dash.
+    return match?.title ? { displayId: match.displayId, title: match.title } : null;
   } finally {
     db.close();
   }

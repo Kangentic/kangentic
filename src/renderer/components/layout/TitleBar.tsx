@@ -107,13 +107,15 @@ export function TitleBar({
         <BrandMark className="w-5 h-5 text-fg-secondary" />
         <span className="text-sm font-semibold text-fg-secondary">Kangentic</span>
         {/*
-          Dev-only (preview): the original task's title after the wordmark, in a muted
-          pill (raised surface + edge border) so it stands out without the low-contrast
-          of a colored fill, so each preview window is identifiable when several are open
-          ("Project N" still tells the two clones apart). Shown in full (no truncation,
-          by request). Surface/edge/fg tokens re-color across all themes. Built out of
-          prod by __KANGENTIC_DEV__; previewTaskTitle is non-null only in `/preview`, so
-          its truthiness gates the render.
+          Dev-only (preview): the original task's `#<id> - <title>` label after the
+          wordmark, in a muted pill (raised surface + edge border) so it stands out without
+          the low-contrast of a colored fill, so each preview window is identifiable when
+          several are open ("Project N" still tells the two clones apart). Main composes
+          the label and reuses the identical string as the OS window title, so the pill and
+          the taskbar thumbnail cannot drift. Shown in full (no truncation, by request).
+          Surface/edge/fg tokens re-color across all themes. Built out of prod by
+          __KANGENTIC_DEV__; previewTaskTitle is non-null only in `/preview`, so its
+          truthiness gates the render.
         */}
         {__KANGENTIC_DEV__ && window.electronAPI.dev?.previewTaskTitle && (
           <span

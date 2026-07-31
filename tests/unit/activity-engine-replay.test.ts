@@ -978,6 +978,96 @@ describe('ActivityEngine replay tests', () => {
     });
   });
 
+  describe('session-026-false-active-injected-ctrl-c-kills-subagent', () => {
+    // Captured live (preview project, Sonnet 5): flipping effort in the
+    // ContextBar while the agent was mid-turn. The injected settings burst
+    // leads with a programmatic Ctrl+C (`terminal-submit.ts`), which aborted
+    // the running Task subagent. Claude emitted the subagent's empty-detail
+    // inner stop - correctly ignored as spurious (task #237) - but never the
+    // NAMED terminal `subagent_stop`, so `subagentDepth` stuck at 1.
+    //
+    // The fixture deliberately contains BOTH shapes so the contrast is local:
+    // the first subagent drains cleanly (inner "" stop, then the named
+    // `general-purpose` stop), the second never gets its named stop.
+    //
+    // This pins the SYMPTOM the engine reports. The fix is upstream of the
+    // engine - the burst now waits for the agent to park instead of
+    // interrupting it (`ScheduleKeystrokesOptions.waitForIdle`, red-green in
+    // `terminal-submit-scheduler.test.ts`) - so this fixture must keep
+    // reproducing: it is the guard that the engine still has no way to
+    // recover on its own if some other path ever strands a subagent.
+    const FIXTURE = 'session-026-false-active-injected-ctrl-c-kills-subagent.jsonl';
+
+    it('pins thinking on a stranded subagent, and a later completed turn does NOT clear it', () => {
+      const result = replay(loadFixture(FIXTURE));
+      expect(result.finalActivity).toBe('thinking');
+      expect(result.finalState.subagentDepth).toBe(1);
+      // The stream ends with a full user turn (prompt then idle). `Idle`
+      // clears `turnActive` only at depth 0, so the turn cannot rescue it.
+      expect(result.finalState.turnActive).toBe(true);
+      // Nothing else is holding the session.
+      expect(result.finalState.pendingToolCount).toBe(0);
+      expect(result.finalState.activeBackgroundShellIds).toEqual([]);
+      expect(result.finalState.anonymousBackgroundShellCount).toBe(0);
+    });
+
+    /**
+     * Index of the injected `/effort` prompt, i.e. where the aborted
+     * subagent's NAMED stop would have gone had it not been killed. The
+     * healthy first subagent in this same fixture has its named stop in
+     * exactly this position relative to its own inner stop.
+     */
+    const ABORTED_SUBAGENT_NAMED_STOP_INDEX = 17;
+
+    it('drains cleanly when the interrupted subagent gets its named stop (mechanical red-green)', () => {
+      // Splicing in ONLY the missing named `subagent_stop` proves the pin is
+      // that single lost hook and nothing else about the stream.
+      const events = loadFixture(FIXTURE);
+      // Fail loudly if the fixture is ever re-captured or reordered. A drifted
+      // index would splice the stop at some other point and silently exercise a
+      // different repair while still passing.
+      expect(events[ABORTED_SUBAGENT_NAMED_STOP_INDEX]?.type).toBe(EventType.Prompt);
+      const repaired = [
+        ...events.slice(0, ABORTED_SUBAGENT_NAMED_STOP_INDEX),
+        {
+          ts: events[ABORTED_SUBAGENT_NAMED_STOP_INDEX].ts - 1,
+          type: EventType.SubagentStop,
+          detail: 'general-purpose',
+        },
+        ...events.slice(ABORTED_SUBAGENT_NAMED_STOP_INDEX),
+      ];
+      const result = replay(repaired);
+      expect(result.finalActivity).toBe('idle');
+      expect(result.finalState.subagentDepth).toBe(0);
+      expect(result.finalState.turnActive).toBe(false);
+    });
+
+    it('is NOT healed by a late named stop, because turnActive was never cleared', () => {
+      // Worth pinning explicitly: once the turn's own `Idle` has been swallowed
+      // by the depth-0 gate, a `subagent_stop` arriving afterwards zeroes the
+      // depth but leaves `turnActive` set, so the predicate still reads
+      // thinking. That is precisely why nothing short of the `stuck-subagent`
+      // watchdog (whose reset clears BOTH) reclaims this session, and why the
+      // real fix is to not interrupt the turn in the first place.
+      const events = loadFixture(FIXTURE);
+      const lastEvent = events[events.length - 1];
+      const result = replay([
+        ...events,
+        { ts: lastEvent.ts + 1_000, type: EventType.SubagentStop, detail: 'general-purpose' },
+      ]);
+      expect(result.finalState.subagentDepth).toBe(0);
+      expect(result.finalState.turnActive).toBe(true);
+      expect(result.finalActivity).toBe('thinking');
+    });
+
+    it('counts the aborted subagent inner stop as ignored, never as a drain', () => {
+      const result = replay(loadFixture(FIXTURE));
+      // Three empty-detail inner stops across the stream; the #237 guard must
+      // ignore every one of them, including the aborted subagent's.
+      expect(result.ignoredInnerSubagentStopCompensations).toBe(3);
+    });
+  });
+
   describe('cross-fixture invariants', () => {
     it('all fixtures produce a deterministic outcome (no flakiness)', () => {
       const fixtures = [
@@ -999,6 +1089,7 @@ describe('ActivityEngine replay tests', () => {
         'session-019-service-error-stuck-subagent.jsonl',
         'session-023-false-idle-server-error-retry.jsonl',
         'session-025-false-idle-monitor-untracked.jsonl',
+        'session-026-false-active-injected-ctrl-c-kills-subagent.jsonl',
       ];
       for (const name of fixtures) {
         const events = loadFixture(name);

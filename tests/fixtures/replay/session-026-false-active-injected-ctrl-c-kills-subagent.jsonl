@@ -1,0 +1,20 @@
+{"ts":1785511016633,"type":"session_start","hookContext":"{\"session_id\":\"00000000-0000-0000-0000-000000000000\",\"hook_event_name\":\"SessionStart\",\"source\":\"resume\"}"}
+{"ts":1785511104248,"type":"prompt"}
+{"ts":1785511108417,"type":"tool_start","tool":"Agent","toolId":"toolu_01XvAwgmwN9yWyGUNYZC3os7","detail":"Count from 1 to 40 with sentences"}
+{"ts":1785511108552,"type":"subagent_start","detail":"general-purpose"}
+{"ts":1785511108582,"type":"tool_end","tool":"Agent","toolId":"toolu_01XvAwgmwN9yWyGUNYZC3os7"}
+{"ts":1785511110387,"type":"idle"}
+{"ts":1785511113038,"type":"subagent_stop","detail":""}
+{"ts":1785511119477,"type":"subagent_stop","detail":"general-purpose"}
+{"ts":1785511119603,"type":"prompt"}
+{"ts":1785511122124,"type":"idle"}
+{"ts":1785511124085,"type":"subagent_stop","detail":""}
+{"ts":1785511138338,"type":"prompt"}
+{"ts":1785511143909,"type":"tool_start","tool":"Agent","toolId":"toolu_01G5jKQaWA6Cxi1TGQnodjfV","detail":"Write paragraphs about numbers 1-120"}
+{"ts":1785511144050,"type":"subagent_start","detail":"general-purpose"}
+{"ts":1785511144087,"type":"tool_end","tool":"Agent","toolId":"toolu_01G5jKQaWA6Cxi1TGQnodjfV"}
+{"ts":1785511145867,"type":"idle"}
+{"ts":1785511147541,"type":"subagent_stop","detail":""}
+{"ts":1785511153256,"type":"prompt"}
+{"ts":1785511215227,"type":"prompt"}
+{"ts":1785511218315,"type":"idle"}

@@ -4194,9 +4194,11 @@ export interface ElectronAPI {
     /** True only in dev-preview (`/preview`, `--ephemeral`); false in the regular dogfood. */
     isEphemeralPreview: boolean;
     /**
-     * The original task's title for a `/preview` window, so the title bar can identify
-     * which task the "Project 1" / "Project 2" clones belong to. Null outside preview, or
-     * when main could not resolve it from the parent project DB.
+     * The original task's label for a `/preview` window - `#<display_id> - <title>` - so
+     * the title bar can identify which task the "Project 1" / "Project 2" clones belong
+     * to. Main reuses the same string as the OS window title, so the taskbar thumbnail
+     * and the in-app pill always agree. Null outside preview, or when main could not
+     * resolve it from the parent project DB.
      */
     previewTaskTitle: string | null;
   };

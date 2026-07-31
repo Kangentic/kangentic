@@ -1,7 +1,8 @@
 /**
- * Unit tests for resolvePreviewTaskTitle() - recovers the original task's title
- * for a `/preview` window from the real parent project DB (the preview clones
- * never contain it).
+ * Unit tests for resolvePreviewTaskLabel() - recovers the original task's
+ * `#<display_id> - <title>` label for a `/preview` window from the real parent
+ * project DB (the preview clones never contain it). The number comes from the DB
+ * row, not the folder name, so a legacy `<slug>-<shortId>` worktree gets one too.
  *
  * better-sqlite3 is compiled for Electron's Node ABI and cannot load under
  * vitest's system Node (same constraint as task-repository.test.ts), so the
@@ -20,7 +21,9 @@ import os from 'node:os';
 const mockState = vi.hoisted(() => ({
   configDir: '',
   projectsRows: [] as Array<{ id: string; path: string }>,
-  tasksRows: [] as Array<{ id: string; title: string; display_id?: number; worktree_path: string | null }>,
+  // `displayId` (not `display_id`): the resolver's SQL aliases the column, so
+  // these canned rows must carry the shape better-sqlite3 would hand back.
+  tasksRows: [] as Array<{ id: string; title: string; displayId?: number; worktree_path: string | null }>,
 }));
 
 vi.mock('../../src/main/config/paths', async () => {
@@ -41,7 +44,7 @@ vi.mock('better-sqlite3', () => {
     }
     get(boundArg?: unknown) {
       if (this.sql.includes('FROM tasks') && this.sql.includes('display_id = ?')) {
-        return mockState.tasksRows.find((task) => task.display_id === boundArg);
+        return mockState.tasksRows.find((task) => task.displayId === boundArg);
       }
       if (this.sql.includes('FROM tasks') && this.sql.includes('LIKE')) {
         const prefix = String(boundArg).replace(/%$/, '');
@@ -59,7 +62,7 @@ vi.mock('better-sqlite3', () => {
   return { default: FakeDatabase };
 });
 
-import { resolvePreviewTaskTitle } from '../../src/devtools/main/preview-task-title';
+import { resolvePreviewTaskLabel } from '../../src/devtools/main/preview-task-title';
 
 const PROJECT_ID = 'project-under-test';
 const TASK_ID = '7f45c661-4380-4499-b44b-963413c63abd';
@@ -92,49 +95,65 @@ afterEach(() => {
   fs.rmSync(projectRoot, { recursive: true, force: true });
 });
 
-describe('resolvePreviewTaskTitle', () => {
-  it('resolves the title by task UUID prefix from the worktree folder', () => {
+describe('resolvePreviewTaskLabel', () => {
+  // A row with no display_id (legacy) degrades to the bare title rather than
+  // rendering a meaningless "#null - ".
+  it('resolves by task UUID prefix, falling back to the bare title with no display_id', () => {
     mockState.projectsRows = [{ id: PROJECT_ID, path: projectRoot }];
     mockState.tasksRows = [{ id: TASK_ID, title: 'Improve /preview dev UX', worktree_path: null }];
     touchDbFiles(true, true);
 
-    expect(resolvePreviewTaskTitle(worktreePath(`improve-preview-dev-${SHORT_ID}`))).toBe(
+    expect(resolvePreviewTaskLabel(worktreePath(`improve-preview-dev-${SHORT_ID}`))).toBe(
       'Improve /preview dev UX',
+    );
+  });
+
+  // The number comes from the DB row, not the folder name, so a legacy folder
+  // whose task DOES have a display_id still gets the "#N - " prefix.
+  it('prefixes the number on a legacy folder when the task row has a display_id', () => {
+    mockState.projectsRows = [{ id: PROJECT_ID, path: projectRoot }];
+    mockState.tasksRows = [
+      { id: TASK_ID, title: 'Improve /preview dev UX', displayId: 460, worktree_path: null },
+    ];
+    touchDbFiles(true, true);
+
+    expect(resolvePreviewTaskLabel(worktreePath(`improve-preview-dev-${SHORT_ID}`))).toBe(
+      '#460 - Improve /preview dev UX',
     );
   });
 
   // Current worktree folders are the task's display_id. Legacy `<slug>-<shortId>`
   // folders are never renamed on disk, so both shapes have to resolve.
-  it('resolves the title by display_id from a numeric worktree folder', () => {
+  it('resolves the label by display_id from a numeric worktree folder', () => {
     mockState.projectsRows = [{ id: PROJECT_ID, path: projectRoot }];
     mockState.tasksRows = [
-      { id: TASK_ID, title: 'Improve /preview dev UX', display_id: 460, worktree_path: null },
+      { id: TASK_ID, title: 'Improve /preview dev UX', displayId: 460, worktree_path: null },
     ];
     touchDbFiles(true, true);
 
-    expect(resolvePreviewTaskTitle(worktreePath('460'))).toBe('Improve /preview dev UX');
+    expect(resolvePreviewTaskLabel(worktreePath('460'))).toBe('#460 - Improve /preview dev UX');
   });
 
   it('returns null for a numeric folder with no matching display_id', () => {
     mockState.projectsRows = [{ id: PROJECT_ID, path: projectRoot }];
     mockState.tasksRows = [
-      { id: TASK_ID, title: 'Improve /preview dev UX', display_id: 460, worktree_path: null },
+      { id: TASK_ID, title: 'Improve /preview dev UX', displayId: 460, worktree_path: null },
     ];
     touchDbFiles(true, true);
 
-    expect(resolvePreviewTaskTitle(worktreePath('999'))).toBeNull();
+    expect(resolvePreviewTaskLabel(worktreePath('999'))).toBeNull();
   });
 
   it('falls back to matching the stored worktree_path when the id prefix misses', () => {
     const folder = 'custom-branch-aaaaaaaa'; // shortId "aaaaaaaa" matches no task id
     mockState.projectsRows = [{ id: PROJECT_ID, path: projectRoot }];
     mockState.tasksRows = [
-      { id: 'deadbeef-0000-0000-0000-000000000000', title: 'Wrong task', worktree_path: null },
-      { id: 'feedface-1111-1111-1111-111111111111', title: 'Right task', worktree_path: worktreePath(folder) },
+      { id: 'deadbeef-0000-0000-0000-000000000000', title: 'Wrong task', displayId: 12, worktree_path: null },
+      { id: 'feedface-1111-1111-1111-111111111111', title: 'Right task', displayId: 34, worktree_path: worktreePath(folder) },
     ];
     touchDbFiles(true, true);
 
-    expect(resolvePreviewTaskTitle(worktreePath(folder))).toBe('Right task');
+    expect(resolvePreviewTaskLabel(worktreePath(folder))).toBe('#34 - Right task');
   });
 
   it('returns null when the path is not inside a worktrees dir', () => {
@@ -142,7 +161,7 @@ describe('resolvePreviewTaskTitle', () => {
     mockState.tasksRows = [{ id: TASK_ID, title: 'Improve /preview dev UX', worktree_path: null }];
     touchDbFiles(true, true);
 
-    expect(resolvePreviewTaskTitle(path.join(projectRoot, 'not', 'a', 'worktree'))).toBeNull();
+    expect(resolvePreviewTaskLabel(path.join(projectRoot, 'not', 'a', 'worktree'))).toBeNull();
   });
 
   it('returns null when no project matches the parent root', () => {
@@ -150,7 +169,7 @@ describe('resolvePreviewTaskTitle', () => {
     mockState.tasksRows = [{ id: TASK_ID, title: 'Improve /preview dev UX', worktree_path: null }];
     touchDbFiles(true, true);
 
-    expect(resolvePreviewTaskTitle(worktreePath(`improve-preview-dev-${SHORT_ID}`))).toBeNull();
+    expect(resolvePreviewTaskLabel(worktreePath(`improve-preview-dev-${SHORT_ID}`))).toBeNull();
   });
 
   it('returns null when no task matches by id prefix or worktree path', () => {
@@ -158,7 +177,7 @@ describe('resolvePreviewTaskTitle', () => {
     mockState.tasksRows = [{ id: 'deadbeef-0000-0000-0000-000000000000', title: 'Wrong task', worktree_path: null }];
     touchDbFiles(true, true);
 
-    expect(resolvePreviewTaskTitle(worktreePath(`improve-preview-dev-${SHORT_ID}`))).toBeNull();
+    expect(resolvePreviewTaskLabel(worktreePath(`improve-preview-dev-${SHORT_ID}`))).toBeNull();
   });
 
   it('returns null on a missing global DB (graceful fallback to "Project N")', () => {
@@ -166,21 +185,21 @@ describe('resolvePreviewTaskTitle', () => {
     mockState.tasksRows = [{ id: TASK_ID, title: 'Improve /preview dev UX', worktree_path: null }];
     // No DB files touched -> fs.existsSync(index.db) is false.
 
-    expect(resolvePreviewTaskTitle(worktreePath(`improve-preview-dev-${SHORT_ID}`))).toBeNull();
+    expect(resolvePreviewTaskLabel(worktreePath(`improve-preview-dev-${SHORT_ID}`))).toBeNull();
   });
 
   it('returns null when the global DB exists and a project matches but the project DB is absent', () => {
     // findProjectId succeeds (global DB present, project row matches), but the per-project
-    // DB file does not exist on disk, so findTaskTitle's fs.existsSync guard fires.
+    // DB file does not exist on disk, so findTask's fs.existsSync guard fires.
     mockState.projectsRows = [{ id: PROJECT_ID, path: projectRoot }];
     mockState.tasksRows = [{ id: TASK_ID, title: 'Improve /preview dev UX', worktree_path: null }];
     // Touch only the global DB; leave the project DB absent.
     touchDbFiles(true, false);
 
-    expect(resolvePreviewTaskTitle(worktreePath(`improve-preview-dev-${SHORT_ID}`))).toBeNull();
+    expect(resolvePreviewTaskLabel(worktreePath(`improve-preview-dev-${SHORT_ID}`))).toBeNull();
   });
 
   it('returns null for an empty worktree path', () => {
-    expect(resolvePreviewTaskTitle('')).toBeNull();
+    expect(resolvePreviewTaskLabel('')).toBeNull();
   });
 });

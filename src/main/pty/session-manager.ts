@@ -1128,6 +1128,17 @@ export class SessionManager extends EventEmitter {
     return this.telemetry.getActivityReason(sessionId);
   }
 
+  /**
+   * Assert that this session's current idle is authoritative - the caller knows
+   * from outside the hook stream that the agent is parked and started no work.
+   * Used by the settings-change restart, whose resumed session sends no prompt
+   * but whose `--resume` context reload would otherwise trip the status
+   * heartbeat's force-thinking recovery. See `ActivityEngine.markIdleAuthoritative`.
+   */
+  markIdleAuthoritative(sessionId: string): void {
+    this.telemetry.markIdleAuthoritative(sessionId);
+  }
+
   /** Return cached ActivityReason for all sessions (HMR/full-reload reconcile). */
   getActivityReasonsCache(): Record<string, ActivityReason> {
     return this.telemetry.getActivityReasonsCache();

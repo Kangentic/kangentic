@@ -768,6 +768,11 @@ export class SessionTelemetry {
     return this.activityEngine.getActivityReason(sessionId);
   }
 
+  /** See `ActivityEngine.markIdleAuthoritative`. */
+  markIdleAuthoritative(sessionId: string): void {
+    this.activityEngine.markIdleAuthoritative(sessionId);
+  }
+
   /**
    * Batch ActivityReason map for every session the engine tracks.
    * Mirrors getActivityCache() so the renderer can reconcile reasons

@@ -532,6 +532,46 @@ export class ActivityEngine {
   }
 
   /**
+   * Mark the session's CURRENT idle as hook-authoritative without firing a
+   * transition, i.e. "we know from outside the hook stream that this agent is
+   * parked and started no work".
+   *
+   * The one caller is the settings-change restart
+   * (`restartSessionForSettingsChange`), whose documented contract is that the
+   * session resumes IDLE: it sends no prompt and re-runs no auto_command. But a
+   * `--resume` respawn still runs the CLI's resume-picker context reload, a
+   * CLI-INTERNAL turn that fires no hooks while growing `total_output_tokens`.
+   * The status heartbeat's recovery gate (`session-telemetry.ts`) force-thinks
+   * exactly that shape unless the idle is authoritative, so a user-initiated
+   * model switch painted the card `thinking` for a fixed 30s
+   * (`DEFAULT_STALE_AFTER_HEARTBEAT_FORCED_MS`) with the agent parked the whole
+   * time - reproduced live, task-shows-active.
+   *
+   * Safe because it only asserts what the restart already guarantees, and it
+   * cannot latch. The flag is provenance for the CURRENT idle, and every path
+   * that commits the NEXT idle rewrites it: a hook turn-end sets it true,
+   * `forceIdle` and the watchdog hatch set it false. An idle commit requires
+   * `!turnActive`, and every site that clears `turnActive` also rewrites the
+   * flag, so a `true` set here cannot survive into a later idle. Note the
+   * turn-initiating branch does NOT clear it - the non-stickiness is structural,
+   * not a per-hook reset. Deliberately narrower than `forceIdle`, which resets
+   * counters and commits a transition; there is nothing to reset here.
+   *
+   * Two no-ops bound its reach, both silent by design. A respawn still `queued`
+   * behind `SessionQueue` has no engine state yet (`initSession` runs only in
+   * `performSpawn`), so the assertion is dropped and that resume can still be
+   * force-thought. And a fresh-intent respawn is seeded `thinking`, so only the
+   * resume-intent branch is covered.
+   */
+  markIdleAuthoritative(sessionId: string): void {
+    if (this.disposed) return;
+    const state = this.states.get(sessionId);
+    if (!state) return;
+    if (state.activity !== 'idle') return;
+    state.idleAuthoritative = true;
+  }
+
+  /**
    * Watcher liveness keep-alive (Subsystem B). The process-tree watcher
    * confirmed every engine-tracked bg shell is still present in the OS tree
    * this cycle (no deficit). Unlike `markThinkingSignal` - which moves only

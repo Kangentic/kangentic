@@ -144,6 +144,15 @@ export async function restartSessionForSettingsChange(
         undefined, // handoffPromptPrefix
         resolveSpawnOverrides(updatedTask, updatedLane, project),
       );
+      // This restart resumes IDLE by contract (no prompt, no auto_command), but
+      // `--resume` still runs the CLI's resume-picker context reload: a turn
+      // that fires NO hooks while growing `total_output_tokens`. The status
+      // heartbeat force-thinks exactly that shape unless the idle is
+      // authoritative, which painted a fixed 30s spurious `thinking` on a
+      // parked agent after a ContextBar model switch. Assert what the contract
+      // above already guarantees. Not sticky: any real turn hook clears it.
+      const resumedSessionId = tasks.getById(taskId)?.session_id;
+      if (resumedSessionId) context.sessionManager.markIdleAuthoritative(resumedSessionId);
       return { ok: true };
     } catch (respawnError) {
       if (isAbortError(respawnError)) return { ok: false, reason: 'respawn aborted' };

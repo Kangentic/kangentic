@@ -81,7 +81,32 @@ Point at `src/main/activity-engine/engine/watchdog.ts` (the `buildWatchdogHolds`
 
 **Transient server-error retry -> false IDLE mid-backoff** (task #367). Claude fires `StopFailure` not only for a terminal abort but also for a TRANSIENT, auto-retried error (529 overloaded / `server_error` / `rate_limit` / `api_error`); during the retry backoff the turn is still alive. Before the fix the engine treated every `StopFailure` as `turn_failed` and force-idled (the Interrupted bypass), so a task mid-retry showed a false "needs you" idle for the whole backoff window (no PTY output, no output-token growth). Fix: the Claude adapter classifies transient errors at the SOURCE into the generic `turn_retrying` event (`setTypeWhenDetailContains`, mirroring the `idle_hint` Notification precedent - the Claude-specific error strings live in the adapter, not the engine); the engine holds the session `thinking` (`applyRetryableFailureHold`, keeping `turnActive`) when the retry is genuinely live (`!idleHintPending && turnActive`), or idles immediately (`applyInterruptedBypass`, the terminal `turn_failed` path) when the turn had already wound down (`idleHintPending`) or ended (`!turnActive`). `turn_retrying` is NOT in `LOG_ONLY_EVENTS`, so each retry refreshes `lastSignalAt` and the 180s stale-thinking net fires ~180s after the LAST retry. A new provenance flag `retryFailurePending` joins the stale-thinking `believedParked` check so a parked-TUI "retrying in Ns..." repaint narrows the anchor to `signal` and cannot defer the net forever (the #294/#364 parked-repaint class). Empirical basis: kangentic.com Task #43 session `fc2f1446`, `idle` for ~166s during a live API retry. Pinned by `session-023-false-idle-server-error-retry.jsonl`.
 
-Durable pins (committed fixtures, run by the harness): `session-009-phantom-bg-shell-no-end.jsonl` (#175), `session-012-auto-bg-named-shell-live.jsonl` (#212), `session-005-waiting-for-input-idle-hint.jsonl`, `session-006-ask-user-question-resume.jsonl`, `session-010-subagent-permission-resume.jsonl` (#194), and the directory (trace-bundle) fixtures `session-013-stuck-foreground-e2e/`, `session-020-false-active-parked-housekeeping/` (#294), `session-021-false-active-resume-picker/` (#331), `session-022-false-active-repainting-past-180s/` (#364), and `session-024-fast-heal-hook-less-resume/` (the #331/#364 fast-heal follow-up) - each has separate `events.jsonl`, `pty-chunks.jsonl`, `status-deltas.jsonl`, `meta.json`.
+**Injected settings burst Ctrl+C kills a live subagent -> false ACTIVE for 180s-300s, surviving
+later completed turns.** A ContextBar model/effort switch (`task:setRuntimeOverride`), a column-config
+/ board-profile propagation, or a Command Terminal settings inject schedules a slash-command burst,
+and `TerminalSubmit.submitKeystrokes` leads every injected command with a programmatic `\x03`.
+Fired while the agent is mid-turn, that Ctrl+C aborts the turn and kills any in-flight Task
+subagent. Claude then emits ONLY the subagent's empty-detail inner stop - correctly ignored by the
+#237 guard, bumping `ignoredInnerSubagentStop` - and never the NAMED `subagent_stop`, so
+`subagentDepth` sticks above zero. Because `Idle` clears `turnActive` only at depth 0
+(`activity-engine.ts`'s turn-ending gate), **a later fully-completed user turn does not clear it**,
+which is the distinguishing signature versus every other false-ACTIVE class. Only the
+`timer:stuck-subagent` hold reclaims it: 180s on the `idleHintPending` short grace, else the 300s
+cap. Note the programmatic `\x03` bypasses `UserInterruptCoordinator` entirely (only the renderer
+xterm keybinding calls `signalUserInterrupt`), and routing it there would not help anyway - the
+burst submits its command ~150ms later, which re-sets `turnActive` well inside the coordinator's 3s
+settle, and `fireIfStillHot` suppresses itself at `subagentDepth > 0` regardless. Fix is upstream of
+the engine: a settings-only burst now waits for the agent to park
+(`ScheduleKeystrokesOptions.waitForIdle`), so it never interrupts live work; a burst carrying a real
+prompt (a column-move `autoCommand`) deliberately does not opt in. Provenance: reproduced live on
+Sonnet 5, preview session `5ebc129c`, healed after 180410ms - `DEFAULT_STALE_AFTER_IDLE_HINT_MS` plus
+the 400ms window - with the interval's `exit_trigger` reading `timer:stability`, a concrete instance
+of the windowed-hold label masking described above. Pinned by
+`session-026-false-active-injected-ctrl-c-kills-subagent.jsonl` (engine symptom, and the fact that a
+LATE named stop still cannot heal it because `turnActive` was never cleared) plus the `waitForIdle`
+red-green in `tests/unit/terminal-submit-scheduler.test.ts`.
+
+Durable pins (committed fixtures, run by the harness): `session-009-phantom-bg-shell-no-end.jsonl` (#175), `session-012-auto-bg-named-shell-live.jsonl` (#212), `session-005-waiting-for-input-idle-hint.jsonl`, `session-006-ask-user-question-resume.jsonl`, `session-010-subagent-permission-resume.jsonl` (#194), and the directory (trace-bundle) fixtures `session-013-stuck-foreground-e2e/`, `session-020-false-active-parked-housekeeping/` (#294), `session-021-false-active-resume-picker/` (#331), `session-022-false-active-repainting-past-180s/` (#364), and `session-024-fast-heal-hook-less-resume/` (the #331/#364 fast-heal follow-up) - each has separate `events.jsonl`, `pty-chunks.jsonl`, `status-deltas.jsonl`, `meta.json`. Plus `session-025-false-idle-monitor-untracked.jsonl` and `session-026-false-active-injected-ctrl-c-kills-subagent.jsonl`.
 
 ## Pinning and verifying a fix
 

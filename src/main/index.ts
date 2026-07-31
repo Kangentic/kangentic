@@ -7,7 +7,7 @@ import { installDiagnostics } from './diagnostics/install';
 import { startEventLoopLagMonitor } from './diagnostics/event-loop-lag';
 // Dev-only (dropped from prod via __KANGENTIC_DEV__ dead-code elimination).
 import { createPreviewClone, fillPreviewClone, registerEphemeralProjectDevIpc } from '../devtools/main/ephemeral-projects';
-import { resolvePreviewTaskTitle } from '../devtools/main/preview-task-title';
+import { resolvePreviewTaskLabel } from '../devtools/main/preview-task-title';
 import { registerSeedGitChangesDevIpc } from '../devtools/main/seed-git-changes';
 import { registerSeedEmbeddingBacklogDevIpc } from '../devtools/main/seed-embedding-backlog';
 import { registerSeedLargeConversationDevIpc } from '../devtools/main/seed-large-conversation';
@@ -196,10 +196,12 @@ const appLaunchTime = Date.now();
 const isEphemeral = process.argv.includes('--ephemeral');
 const isE2ETest = process.env.NODE_ENV === 'test';
 
-// Dev-only: the original task's title for a `/preview` window, resolved once from
-// the real parent project DB (the preview clones never contain it). Surfaced to the
-// renderer via additionalArguments so the title bar can identify the task both clones
-// belong to. Memoized; null outside dev-preview or when resolution misses (graceful).
+// Dev-only: the original task's label (`#<id> - <title>`) for a `/preview` window,
+// resolved once from the real parent project DB (the preview clones never contain it).
+// Surfaced to the renderer via additionalArguments so the title bar can identify the task
+// both clones belong to, and reused verbatim as the OS window title so the taskbar
+// thumbnail says the same thing. Memoized; null outside dev-preview or when resolution
+// misses (graceful).
 let cachedPreviewTaskTitle: string | null | undefined;
 function getPreviewTaskTitle(): string | null {
   if (cachedPreviewTaskTitle === undefined) {
@@ -213,7 +215,7 @@ function getPreviewTaskTitle(): string | null {
       ? [getCwdArg(), process.cwd(), app.getAppPath()]
       : [];
     cachedPreviewTaskTitle = worktreeCandidates.reduce<string | null>(
-      (resolved, candidate) => resolved ?? (candidate ? resolvePreviewTaskTitle(candidate) : null),
+      (resolved, candidate) => resolved ?? (candidate ? resolvePreviewTaskLabel(candidate) : null),
       null,
     );
   }
@@ -745,13 +747,22 @@ const createWindow = () => {
     if (cwd && mainWindow) {
       const worktreeMatch = cwd.replace(/\\/g, '/').match(/\.kangentic\/worktrees\/([^/]+)/);
       if (worktreeMatch) {
-        // Current worktree folders are the task's display_id; folders created
-        // before that scheme keep their `<slug>-<shortId>` name. Prefix the
-        // numeric form so the taskbar reads "Kangentic - #460" rather than a
-        // bare number that looks like a window index.
+        // A preview window gets the task's own `#<id> - <title>` label, with no
+        // app-name prefix: Windows already groups these thumbnails under
+        // Kangentic, so repeating it only pushed the part that identifies the
+        // window past the edge of the thumbnail. The number alone was not enough
+        // either - it still meant scanning the board to learn which task it was.
+        // Same string the title-bar pill renders, so the two cannot drift.
+        //
+        // Outside preview (or when resolution missed), keep the app-name form:
+        // there the title is the only thing distinguishing a worktree run from
+        // the main window. Current worktree folders are the task's display_id;
+        // folders created before that scheme keep their `<slug>-<shortId>` name,
+        // so prefix the numeric form to stop it reading as a window index.
         const folderName = worktreeMatch[1];
-        const label = /^\d+$/.test(folderName) ? `#${folderName}` : folderName;
-        mainWindow.setTitle(`Kangentic - ${label}`);
+        const folderLabel = /^\d+$/.test(folderName) ? `#${folderName}` : folderName;
+        const previewLabel = getPreviewTaskTitle();
+        mainWindow.setTitle(previewLabel ?? `Kangentic - ${folderLabel}`);
       }
     }
 
