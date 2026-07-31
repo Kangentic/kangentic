@@ -10,7 +10,7 @@ import {
 // `mountFramesFor` decides which frame divs the mascot mounts, reading @kangentic/branding's
 // `animations.json` rather than a hand-written list. Its three drift branches - rest unioned in,
 // an unknown name dropped, a sequence missing entirely - are the whole point of reading the
-// package instead of hardcoding, and NONE of them fires against the installed 2.7.0 contract:
+// package instead of hardcoding, and NONE of them fires against the installed contract:
 // all three supported sequences already list `rest` in their own `mountFrames`, name only frames
 // the component imports, and exist. Delete any one branch and every other test in the repo stays
 // green. So they are pinned here, against fabricated contracts.
@@ -68,7 +68,7 @@ describe('mountFramesFor', () => {
   });
 
   it('derives the shipped welcome-hero mount set from the installed package', () => {
-    // The end-to-end case: the real 2.7.0 contract, the real call the WelcomeScreen makes
+    // The end-to-end case: the real installed contract, the real call the WelcomeScreen makes
     // (sequence 'blink-loop' with a 'wave-once' intro). Pins that reading the package still
     // produces exactly the set the hand-written map used to.
     const contract: MascotAnimations = JSON.parse(fs.readFileSync(MASCOT_JSON, 'utf-8'));
