@@ -619,9 +619,11 @@ if (__KANGENTIC_DEV__) {
   // BrowserWindow `additionalArguments`) ONLY in dev-preview mode, so this is
   // true for `/preview` and false for the regular `npm start` dogfood.
   const isEphemeralPreview = process.argv.includes('--kangentic-ephemeral');
-  // The original task title (base64-encoded in the BrowserWindow additionalArguments by
-  // main) so the title bar can identify which task the preview clones belong to. Null
-  // when not in preview, or when main could not resolve it.
+  // The original task's label, `#<display_id> - <title>` (base64-encoded in the
+  // BrowserWindow additionalArguments by main), so the title bar can identify which task
+  // the preview clones belong to. Main reuses the identical string as the OS window
+  // title, so the in-app pill and the taskbar thumbnail cannot drift. Null when not in
+  // preview, or when main could not resolve it.
   const PREVIEW_TITLE_FLAG = '--kangentic-preview-task-title=';
   const previewTitleArg = process.argv.find((arg) => arg.startsWith(PREVIEW_TITLE_FLAG));
   const previewTaskTitle = previewTitleArg
