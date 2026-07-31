@@ -64,6 +64,7 @@ vi.mock('../../src/main/ipc/helpers', () => ({
 import {
   propagateStrategyToLiveSessions,
   propagateBoardProfileChange,
+  buildColumnStrategyChanges,
 } from '../../src/main/ipc/handlers/strategy-propagation';
 import { restartSessionForSettingsChange } from '../../src/main/ipc/handlers/session-reconcile';
 import type { BoardProfile, Swimlane, Task } from '../../src/shared/types';
@@ -264,6 +265,64 @@ describe('propagateBoardProfileChange', () => {
 
     expect(mockScheduleKeystrokes).toHaveBeenCalledTimes(1);
     expect(mockScheduleKeystrokes.mock.calls[0][0]).toBe('task-riding');
+  });
+});
+
+/**
+ * `buildColumnStrategyChanges` is the one place a column edit's before/after
+ * gets folded per task, for both the UI's SWIMLANE_UPDATE handler and the MCP
+ * update_column tool. It must fold the SAME task's profile over `before` AND
+ * `after` independently - not just `after` - or a profiled task's `before`
+ * stays the column's raw (unfolded) value while `after` is correctly folded,
+ * which manufactures a phantom delta on every cosmetic save of a column a
+ * profile retunes. That phantom delta is no longer just a spurious `/model` or
+ * `/effort` injection: since this diff, the SAME before/after pair also feeds
+ * `flipsAutoSpawn` (auto-spawn-reconcile.ts), so an unfolded `before` can make
+ * a colour or name edit look like a real auto_spawn transition and spawn a
+ * worktree + branch checkout for every profiled task in the column.
+ */
+describe('buildColumnStrategyChanges', () => {
+  function makeContextWithProfiles(profiles: BoardProfile[]) {
+    return {
+      ...makeContext(),
+      boardConfigManager: { getBoardProfiles: vi.fn(() => profiles) },
+    } as never;
+  }
+
+  it('folds the profile over BOTH before and after, not just after', () => {
+    const ridingTask = makeTask({ id: 'task-riding', profile_id: 'p1' });
+    mockSwimlaneList.mockReturnValue([makeLane({ effort_override: null })]);
+    mockTaskList.mockReturnValue([ridingTask]);
+    const profile: BoardProfile = {
+      id: 'p1',
+      name: 'Heavy',
+      columns: { [LANE_ID]: { effortOverride: 'xhigh' } },
+    };
+
+    const changes = buildColumnStrategyChanges({
+      context: makeContextWithProfiles([profile]),
+      projectId: 'proj-1',
+      before: makeLane({ effort_override: null }),
+      after: makeLane({ effort_override: null }),
+    });
+
+    expect(changes).toHaveLength(1);
+    // Both the column's before AND after here carry effort_override: null - the
+    // profile is what supplies 'xhigh'. If only `after` were folded, `before`
+    // would still read null and this assertion would catch it.
+    expect(changes[0].before).toMatchObject({ effort_override: 'xhigh' });
+    expect(changes[0].after).toMatchObject({ effort_override: 'xhigh' });
+  });
+
+  it('returns an empty list without a resolved project', () => {
+    const changes = buildColumnStrategyChanges({
+      context: makeContext(),
+      projectId: null,
+      before: makeLane(),
+      after: makeLane(),
+    });
+
+    expect(changes).toEqual([]);
   });
 });
 
