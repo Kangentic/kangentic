@@ -135,6 +135,9 @@ function lane(id: string, autoSpawn: boolean) {
   return {
     id,
     name: id,
+    // A CUSTOM column. Load-bearing for the placeholder branch, which keys off
+    // the role rather than auto_spawn so it can skip To Do and Done.
+    role: null,
     auto_spawn: autoSpawn,
     session_target: 'main',
     session_spawn_strategy: 'create_or_resume',

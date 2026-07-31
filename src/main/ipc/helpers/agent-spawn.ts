@@ -463,8 +463,8 @@ export async function autoSpawnForTask(
     try {
       const db = getProjectDb(projectId);
       const swimlaneRepo = new SwimlaneRepository(db);
-      const toLane = swimlaneRepo.getById(swimlaneId);
-      if (!toLane?.auto_spawn) return;
+      const rawLane = swimlaneRepo.getById(swimlaneId);
+      if (!rawLane) return;
 
       const project = context.projectRepo.getById(projectId);
       const projectPath = project?.path ?? null;
@@ -473,6 +473,28 @@ export async function autoSpawnForTask(
       const { tasks, actions, attachments } = getProjectRepos(context, projectId);
       const fullTask = tasks.getById(task.id);
       if (!fullTask) return;
+
+      // The caller's `swimlaneId` is a snapshot. Callers that batch (the
+      // auto_spawn reconcile walks a whole column, awaiting a worktree and a
+      // branch checkout per task) can reach this many seconds later, by which
+      // time a drag may have moved the task elsewhere. Spawning would then
+      // apply the ORIGINAL column's agent, model, and permission mode to a task
+      // that has left it. Same re-check task-move makes before its own spawn.
+      if (fullTask.swimlane_id !== swimlaneId) {
+        console.log(
+          `[auto-spawn] Task ${fullTask.id.slice(0, 8)} left the column before its spawn - skipping`,
+        );
+        return;
+      }
+
+      // Fold the task's Board Profile BEFORE the auto_spawn guard. `auto_spawn`
+      // is profile-scoped (see the `auto_spawn` case in `applyProfileToLane`),
+      // so a profile can turn it on for a column whose base has it off.
+      // Guarding on the raw lane rejected exactly those tasks here, before
+      // spawnAgent's own fold could ever see them. spawnAgent folds again
+      // internally, which is idempotent.
+      const toLane = applyProfileToLane(rawLane, loadTaskProfile(context, fullTask, projectPath)) ?? rawLane;
+      if (!toLane.auto_spawn) return;
 
       try {
         await ensureTaskWorktree(context, fullTask, tasks, projectPath);

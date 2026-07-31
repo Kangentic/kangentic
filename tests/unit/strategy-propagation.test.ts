@@ -46,6 +46,14 @@ vi.mock('../../src/main/ipc/handlers/session-reconcile', () => ({
 vi.mock('../../src/main/ipc/task-lifecycle-lock', () => ({
   withTaskLock: vi.fn(async (_id: string, fn: () => Promise<void>) => fn()),
 }));
+// Stubbed for its own sake AND to keep the real module's `agent-spawn` import
+// (and the electron it drags in) out of this suite. What the reconcile DOES is
+// pinned in auto-spawn-reconcile.test.ts; what matters here is that the
+// chokepoint reaches it, from both authoring surfaces, with the right arguments.
+const mockReconcileAutoSpawnChange = vi.fn();
+vi.mock('../../src/main/ipc/handlers/auto-spawn-reconcile', () => ({
+  reconcileAutoSpawnChange: (...args: unknown[]) => mockReconcileAutoSpawnChange(...args),
+}));
 vi.mock('../../src/main/ipc/helpers', () => ({
   getProjectRepos: vi.fn(() => ({
     swimlanes: { list: () => mockSwimlaneList() },
@@ -57,6 +65,7 @@ import {
   propagateStrategyToLiveSessions,
   propagateBoardProfileChange,
 } from '../../src/main/ipc/handlers/strategy-propagation';
+import { restartSessionForSettingsChange } from '../../src/main/ipc/handlers/session-reconcile';
 import type { BoardProfile, Swimlane, Task } from '../../src/shared/types';
 
 const LANE_ID = 'lane-executing';
@@ -107,6 +116,27 @@ function makeContext() {
   } as never;
 }
 
+/**
+ * Variant of makeContext() whose projectRepo.getById row carries an explicit
+ * `path`, deliberately different from `currentProjectPath` ('/mock/project'),
+ * so a restart that reads the wrong source is caught by exact literal
+ * comparison rather than by coincidence.
+ */
+function makeContextWithProjectRowPath(path: string | undefined) {
+  return {
+    currentProjectId: 'proj-1',
+    currentProjectPath: '/mock/project',
+    projectRepo: { getById: vi.fn(() => ({ id: 'proj-1', path, default_model: null, default_effort: null })) },
+    sessionManager: {
+      getSession: (...args: unknown[]) => mockGetSession(...args),
+      getUsageCache: () => mockUsageCache,
+    },
+    terminalSubmitScheduler: { scheduleKeystrokes: (...args: unknown[]) => mockScheduleKeystrokes(...args) },
+    mainWindow: { isDestroyed: () => false, webContents: { send: vi.fn() } },
+    boardConfigManager: {},
+  } as never;
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockUsageCache = {};
@@ -127,7 +157,7 @@ describe('propagateStrategyToLiveSessions', () => {
       before: makeLane({ effort_override: 'low' }),
       after: makeLane({ effort_override: 'high' }),
       sourceName: 'Executing',
-    }]);
+    }], 'proj-1');
 
     expect(mockScheduleKeystrokes).toHaveBeenCalledTimes(1);
     expect(mockUpdateAppliedSettings).toHaveBeenCalledWith('sess-1', { effort: 'high' });
@@ -143,7 +173,7 @@ describe('propagateStrategyToLiveSessions', () => {
       before: makeLane({ effort_override: 'high' }),
       after: makeLane({ effort_override: 'high' }),
       sourceName: 'Executing',
-    }]);
+    }], 'proj-1');
 
     expect(mockPrepareInjectionPlan).not.toHaveBeenCalled();
     expect(mockScheduleKeystrokes).not.toHaveBeenCalled();
@@ -157,7 +187,7 @@ describe('propagateStrategyToLiveSessions', () => {
       before: makeLane({ effort_override: 'low' }),
       after: makeLane({ effort_override: 'high' }),
       sourceName: 'Executing',
-    }]);
+    }], 'proj-1');
 
     expect(mockScheduleKeystrokes).not.toHaveBeenCalled();
   });
@@ -170,7 +200,7 @@ describe('propagateStrategyToLiveSessions', () => {
       before: makeLane({ effort_override: 'low' }),
       after,
       sourceName: 'Executing',
-    }]);
+    }], 'proj-1');
 
     expect(mockPrepareInjectionPlan.mock.calls[0][0]).toMatchObject({ toLane: after });
   });
@@ -188,7 +218,7 @@ describe('propagateStrategyToLiveSessions', () => {
       before: makeLane({ effort_override: 'low' }),
       after: makeLane({ effort_override: 'high' }),
       sourceName: 'Executing',
-    }]);
+    }], 'proj-1');
 
     expect(mockPrepareInjectionPlan.mock.calls[0][0]).toMatchObject({ liveEffort: 'medium' });
   });
@@ -208,21 +238,21 @@ describe('propagateBoardProfileChange', () => {
   });
 
   it('reaches the live session of a task riding the retuned profile', () => {
-    propagateBoardProfileChange(makeContext(), [profile('low')], [profile('high')]);
+    propagateBoardProfileChange(makeContext(), [profile('low')], [profile('high')], 'proj-1');
 
     expect(mockScheduleKeystrokes).toHaveBeenCalledTimes(1);
     expect(mockScheduleKeystrokes.mock.calls[0][0]).toBe('task-riding');
   });
 
   it('leaves tasks on Default alone - a profile write cannot change their settings', () => {
-    propagateBoardProfileChange(makeContext(), [profile('low')], [profile('high')]);
+    propagateBoardProfileChange(makeContext(), [profile('low')], [profile('high')], 'proj-1');
 
     const touchedTaskIds = mockScheduleKeystrokes.mock.calls.map((call) => call[0]);
     expect(touchedTaskIds).not.toContain('task-default');
   });
 
   it('injects nothing when the rewrite leaves the task\'s column unchanged', () => {
-    propagateBoardProfileChange(makeContext(), [profile('high')], [profile('high')]);
+    propagateBoardProfileChange(makeContext(), [profile('high')], [profile('high')], 'proj-1');
 
     expect(mockScheduleKeystrokes).not.toHaveBeenCalled();
   });
@@ -230,9 +260,123 @@ describe('propagateBoardProfileChange', () => {
   it('treats a deleted profile as a change back to the column\'s own settings', () => {
     // The task's profile_id now dangles, so it resolves to Default. That IS a
     // settings change for a running session and must propagate.
-    propagateBoardProfileChange(makeContext(), [profile('high')], []);
+    propagateBoardProfileChange(makeContext(), [profile('high')], [], 'proj-1');
 
     expect(mockScheduleKeystrokes).toHaveBeenCalledTimes(1);
     expect(mockScheduleKeystrokes.mock.calls[0][0]).toBe('task-riding');
+  });
+});
+
+/**
+ * An auto_spawn flip has to reach the tasks already in the column, live.
+ *
+ * It cannot ride the injection loop above, which bails on `!task.session_id` and
+ * so can only ever touch a session that already exists. It is delegated to the
+ * reconcile instead - but it has to be delegated from HERE, because this is the
+ * one place both authoring surfaces (a column edit and a Board Profile edit)
+ * already converge with their before/after folded per task. Reconciling only the
+ * column path would recreate the exact split-brain this chokepoint was extracted
+ * to kill, since `auto_spawn` is profile-scoped.
+ */
+describe('auto_spawn reconcile', () => {
+  it('reaches the reconcile on a column edit, with the explicit project', () => {
+    // The project is a parameter, never `context.currentProjectId`: a
+    // mis-targeted keystroke injection is cosmetic, a mis-targeted SPAWN is not.
+    propagateStrategyToLiveSessions(makeContext(), 'SWIMLANE_UPDATE', [{
+      task: makeTask(),
+      before: makeLane({ auto_spawn: false }),
+      after: makeLane({ auto_spawn: true }),
+      sourceName: 'Executing',
+    }], 'proj-1');
+
+    expect(mockReconcileAutoSpawnChange).toHaveBeenCalledTimes(1);
+    const [, , label, changes] = mockReconcileAutoSpawnChange.mock.calls[0];
+    expect(mockReconcileAutoSpawnChange.mock.calls[0][1]).toBe('proj-1');
+    expect(label).toBe('SWIMLANE_UPDATE');
+    expect(changes).toMatchObject([{ before: { auto_spawn: false }, after: { auto_spawn: true } }]);
+  });
+
+  it('reaches the reconcile on a Board Profile edit too', () => {
+    // The profile twin. `auto_spawn` is profile-scoped (column-strategy line
+    // 181), so a profile can flip it for a task without the column changing.
+    mockSwimlaneList.mockReturnValue([makeLane({ auto_spawn: false })]);
+    mockTaskList.mockReturnValue([makeTask({ id: 'task-riding', profile_id: 'p1' })]);
+    const withAutoSpawn = (autoSpawn: boolean): BoardProfile => ({
+      id: 'p1',
+      name: 'Heavy',
+      columns: { [LANE_ID]: { autoSpawn } },
+    });
+
+    propagateBoardProfileChange(makeContext(), [withAutoSpawn(false)], [withAutoSpawn(true)], 'proj-1');
+
+    expect(mockReconcileAutoSpawnChange).toHaveBeenCalledTimes(1);
+    expect(mockReconcileAutoSpawnChange.mock.calls[0][3]).toMatchObject([
+      { task: { id: 'task-riding' }, before: { auto_spawn: false }, after: { auto_spawn: true } },
+    ]);
+  });
+
+  it('hands over the change even when no model or effort moved', () => {
+    // The injection gate returns early for an auto_spawn-only edit, so the
+    // reconcile must be dispatched BEFORE it, not from inside the loop.
+    propagateStrategyToLiveSessions(makeContext(), 'SWIMLANE_UPDATE', [{
+      task: makeTask({ session_id: null }),
+      before: makeLane({ auto_spawn: false }),
+      after: makeLane({ auto_spawn: true }),
+      sourceName: 'Executing',
+    }], 'proj-1');
+
+    expect(mockPrepareInjectionPlan).not.toHaveBeenCalled();
+    expect(mockReconcileAutoSpawnChange).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * A MODEL-change restart resolves `projectPath` from the resolved project row
+ * (`context.projectRepo.getById(projectId)?.path`), never from ambient
+ * `context.currentProjectPath`. A mis-resolved path here targets the restart
+ * at the wrong project's checkout, not just a cosmetic keystroke injection -
+ * the same reasoning that makes `projectId` an explicit parameter rather than
+ * a read of `context.currentProjectId`.
+ */
+describe('propagateStrategyToLiveSessions - model-restart project path resolution', () => {
+  it('skips the restart when the resolved project row carries no path', () => {
+    mockPrepareInjectionPlan.mockReturnValue({
+      sequence: [],
+      verifier: null,
+      verifiedPrefixLength: 0,
+      needsRestartForModel: true,
+    });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    propagateStrategyToLiveSessions(makeContextWithProjectRowPath(undefined), 'TEST', [{
+      task: makeTask(),
+      before: makeLane({ model_override: 'sonnet-4' }),
+      after: makeLane({ model_override: 'opus-5' }),
+      sourceName: 'Executing',
+    }], 'proj-1');
+
+    expect(restartSessionForSettingsChange).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    warnSpy.mockRestore();
+  });
+
+  it('restarts with the resolved project row\'s path, not context.currentProjectPath', () => {
+    mockPrepareInjectionPlan.mockReturnValue({
+      sequence: [],
+      verifier: null,
+      verifiedPrefixLength: 0,
+      needsRestartForModel: true,
+    });
+
+    propagateStrategyToLiveSessions(makeContextWithProjectRowPath('/mock/from-project-row'), 'TEST', [{
+      task: makeTask(),
+      before: makeLane({ model_override: 'sonnet-4' }),
+      after: makeLane({ model_override: 'opus-5' }),
+      sourceName: 'Executing',
+    }], 'proj-1');
+
+    expect(restartSessionForSettingsChange).toHaveBeenCalledWith(
+      expect.anything(), 'proj-1', '/mock/from-project-row', 'task-1',
+    );
   });
 });

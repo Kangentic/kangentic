@@ -78,6 +78,9 @@ vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }
 vi.mock('../../src/main/db/repositories/session-repository', () => ({
   SessionRepository: class {
     updateAppliedSettings = vi.fn();
+    // Read by the auto_spawn reconcile that SWIMLANE_UPDATE now also dispatches.
+    // Empty: none of these cases flips auto_spawn, so nothing is ever planned.
+    getUserPausedTaskIds = vi.fn(() => new Set<string>());
   },
 }));
 

@@ -214,6 +214,45 @@ Each swimlane has an `auto_spawn` boolean (default: `true`):
 
 To Do and Done columns have `auto_spawn=false` by default.
 
+### Changing the flag applies immediately
+
+Editing `auto_spawn` reconciles the tasks ALREADY in the column, with no restart
+and no move: switching it on spawns for each task that has no session, and
+switching it off suspends the live sessions there. This runs through
+`reconcileAutoSpawnChange` (`src/main/ipc/handlers/auto-spawn-reconcile.ts`),
+dispatched from `propagateStrategyToLiveSessions`, so all four authoring surfaces
+behave identically on the ACTIVE project:
+
+- the Board Manager's column edit (`SWIMLANE_UPDATE`),
+- the Board Manager's Board Profile edit (`BOARD_CONFIG_SET_BOARD_PROFILES`) -
+  `auto_spawn` is profile-scoped, so a profile can flip it for a task without the
+  column changing,
+- the MCP `kangentic_update_column` tool,
+- the MCP profile tools (`kangentic_update_board_profile`,
+  `kangentic_delete_board_profile`, `kangentic_create_board_profile`), which
+  reach the same reconcile through `setBoardProfiles`.
+
+An MCP tool can also target a background project via its `project` argument; that
+writes the setting without reconciling. The reason is BLAST RADIUS, not an absent
+session: a background project can have live sessions (the Agent Monitor and the
+sidebar's per-project agent counts are built on exactly that). The reconcile
+SPAWNS, and a spawn creates a worktree and checks out a branch in a checkout the
+user is not looking at. Its tasks pick the new setting up when they next spawn.
+The cost is that turning `auto_spawn` off on a non-focused project leaves that
+project's agents running until it is next opened.
+
+Three things it deliberately does not do. A task the user explicitly paused is
+never started by a column edit; only an explicit Resume clears that. A To Do or
+Done column never spawns, whatever the flag says: the Board Manager and
+`apply-config.ts` both force `auto_spawn` false for a role column, but the MCP
+`update_column` tool writes the field with no role validation, so the reconcile
+guards the ON direction itself. Only the ON direction is guarded, since
+suspending a session that should not have been there is always safe. And the
+`kangentic.json` file watcher (`BOARD_CONFIG_APPLY`) does NOT reconcile, so a
+`git pull` that flips `autoSpawn` still takes effect on the next project open -
+that path fires for whichever project changed on disk, which is often not the
+focused one.
+
 ## plan_exit_target_id
 
 When a column has `permission_mode='plan'`, Claude runs in plan mode. When the agent completes planning and fires `ExitPlanMode`, Kangentic detects this via the event bridge and automatically moves the task to the column specified by `plan_exit_target_id`.

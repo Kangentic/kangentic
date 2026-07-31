@@ -4,9 +4,8 @@ import path from 'node:path';
 import { ipcMain, shell } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import { getProjectRepos } from '../helpers';
-import { applyProfileToLane, findTaskProfile } from '../../transition-engine/column-strategy';
 import { pruneDeletedColumnFromProfiles } from '../../config/board-config/prune-profile-references';
-import { propagateStrategyToLiveSessions, propagateBoardProfileChange } from './strategy-propagation';
+import { propagateStrategyToLiveSessions, propagateBoardProfileChange, buildColumnStrategyChanges } from './strategy-propagation';
 import { runWithProjectLogContext } from '../../diagnostics/project-log-context';
 import type { BoardProfile, ShortcutConfig } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
@@ -73,7 +72,11 @@ export function registerBoardHandlers(context: IpcContext): void {
   });
 
   ipcMain.handle(IPC.SWIMLANE_UPDATE, (_, input) => {
-    const { swimlanes, tasks } = getProjectRepos(context);
+    // Captured once, up front, and threaded down: the propagation below now
+    // SPAWNS and SUSPENDS as well as injecting, so it must not re-resolve the
+    // project from ambient state part-way through.
+    const projectId = context.currentProjectId;
+    const { swimlanes } = getProjectRepos(context, projectId);
     const before = swimlanes.getById(input.id);
     const result = swimlanes.update(input);
     triggerWriteBack(context);
@@ -98,20 +101,15 @@ export function registerBoardHandlers(context: IpcContext): void {
     // model into a task whose profile pins a different one here. The shared
     // helper owns the gate and the inject-vs-restart decision, so a profile edit
     // (below) behaves identically.
-    const boardProfiles = context.boardConfigManager.getBoardProfiles();
-    const laneList = swimlanes.list();
+    //
+    // An auto_spawn flip is reconciled through the same call: tasks already in
+    // the column spawn when it is switched on and suspend when it is switched
+    // off, instead of waiting for the next project open.
     propagateStrategyToLiveSessions(
       context,
       'SWIMLANE_UPDATE',
-      tasks.list(result.id).map((task) => {
-        const profile = findTaskProfile({ profiles: boardProfiles, profileId: task.profile_id, taskId: task.id });
-        return {
-          task,
-          before: applyProfileToLane(before, profile, laneList),
-          after: applyProfileToLane(result, profile, laneList),
-          sourceName: result.name,
-        };
-      }),
+      buildColumnStrategyChanges({ context, projectId, before, after: result }),
+      projectId,
     );
 
     return result;
@@ -219,9 +217,10 @@ export function registerBoardHandlers(context: IpcContext): void {
     // sessions in that column. Without this a task on an edited profile kept its
     // old model until the user moved it out and back - the settings-edit path
     // silently applied to one authoring surface and not the other.
+    const projectId = context.currentProjectId;
     const previousProfiles = context.boardConfigManager.getBoardProfiles();
     context.boardConfigManager.setBoardProfiles(profiles);
-    propagateBoardProfileChange(context, previousProfiles, profiles);
+    propagateBoardProfileChange(context, previousProfiles, profiles, projectId);
   });
 
   ipcMain.handle(IPC.BOARD_CONFIG_GET_SHORTCUTS, () => {

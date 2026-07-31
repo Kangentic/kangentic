@@ -5,7 +5,7 @@ import { TaskRepository } from '../../db/repositories/task-repository';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { SessionManager } from '../../pty/session-manager';
 import { ConfigManager } from '../../config/config-manager';
-import type { BoardProfile, SessionRecord, Task } from '../../../shared/types';
+import type { BoardProfile, SessionRecord, SwimlaneRole, Task } from '../../../shared/types';
 import { isResumeEligible } from '../spawn-intent';
 import { applyProfileToLane, findTaskProfile } from '../column-strategy';
 import { resolveIsolatedSwimlaneId } from '../session-isolation';
@@ -13,6 +13,21 @@ import { retireRecord, markRecordSuspended } from '../session-lifecycle';
 import { isShuttingDown } from '../../shutdown-state';
 import { prepareAgentSpawn, type PreparedSpawn } from './prepare-spawn';
 import { startStartupTimer } from './timing';
+
+/**
+ * Columns that deliberately offer no Resume, so a suspended record in one gets
+ * no placeholder registered.
+ *
+ * `SwimlaneRole` is exactly 'todo' | 'done'; a custom column has `role: null`.
+ * There is no live 'backlog' role - it was migrated to 'todo', and the Backlog
+ * is a separate table rather than a swimlane. Typed as the union rather than
+ * `string` so a typo in either literal is a compile error, not a silent miss
+ * that would register a placeholder on a To Do card.
+ *
+ * The gate is the ROLE, not `auto_spawn`: To Do and Done both default to
+ * `auto_spawn = 0`, so keying off the flag would sweep them in.
+ */
+const RESUME_HIDDEN_ROLES: ReadonlySet<SwimlaneRole> = new Set<SwimlaneRole>(['todo', 'done']);
 
 /**
  * Recover suspended and orphaned agent sessions on project open.
@@ -28,9 +43,13 @@ import { startStartupTimer } from './timing';
  *     clean-quit suspend; see getInterruptedExited). All three feed the same
  *     dedup/resume pipeline so autoSpawnTasks stays the pure-fresh fallback.
  *  3. Deduplicate: keep only the LATEST record per (task_id, isolated_swimlane_id).
- *  4. For each candidate, verify the task exists AND is NOT in a Backlog/Done
- *     column. Skip otherwise: retire the record, or preserve an OS-killed
- *     interrupted-exited record as suspended for future resume.
+ *  4. For each candidate, verify the task exists and that its column (profile
+ *     folded) wants an agent. When it does not, the record is still made
+ *     RECOVERABLE rather than dropped: an OS-killed 'exited' one is preserved as
+ *     suspended, an orphaned one is retired, and a suspended one gets a renderer
+ *     placeholder so Resume stays reachable in a custom column. Note this step
+ *     keys off `auto_spawn`, not the column's role, so it is not the
+ *     "Backlog/Done" check it was once described as.
  *  5. Detect the agent CLI, build the command, and spawn a new PTY.
  *  6. Mark old records as exited; insert fresh records for the new PTYs.
  */
@@ -198,11 +217,42 @@ export async function resumeSuspendedSessions(
         // Done): preserve it as 'suspended' for future resume, mirroring the
         // move-to-Done path, rather than leaving an abnormal 'exited' row that
         // gets re-gathered every startup.
-        markRecordSuspended(sessionRepo, record.id, 'system');
+        if (!markRecordSuspended(sessionRepo, record.id, 'system')) {
+          skipped++;
+          continue;
+        }
       } else if (record.status !== 'suspended') {
         // orphaned (crashed) records keep the pre-existing retire behavior here;
         // only the OS-killed exited carve-out above is preserved for resume.
         retireRecord(sessionRepo, record.id);
+        skipped++;
+        continue;
+      }
+
+      // The record is resumable (already 'suspended', or just upgraded from an
+      // OS-killed 'exited') but this branch returns before either placeholder
+      // branch below can run. Without a placeholder the renderer has NO session
+      // for the task at all, so the card opens the edit form and offers no
+      // Resume - the task is stranded, since `SESSION_RESUME` itself is happy to
+      // resume here (it rejects only role 'todo'). Register one so Resume stays
+      // reachable whatever the column's auto_spawn setting is.
+      //
+      // CUSTOM columns only. To Do and Done are `auto_spawn = 0` by default, and
+      // both deliberately hide Resume: a To Do card also relies on having no
+      // session to open straight into the edit form (TaskCard's `initialEdit`),
+      // so a placeholder there is a pure regression.
+      const hidesResume = resolvedLane.role !== null && RESUME_HIDDEN_ROLES.has(resolvedLane.role);
+      if (!hidesResume) {
+        sessionManager.registerSuspendedPlaceholder({
+          taskId: record.task_id,
+          projectId,
+          cwd: record.cwd,
+        });
+        // Same precondition the two branches below satisfy: SESSION_RESUME needs
+        // task.session_id clear to spawn rather than hand back a stale ref.
+        if (task.session_id) {
+          taskRepo.update({ id: task.id, session_id: null });
+        }
       }
       skipped++;
       continue;

@@ -107,7 +107,10 @@ export const handleUpdateColumn: CommandHandler = (
   const swimlaneRepo = new SwimlaneRepository(db);
   const updated = swimlaneRepo.update(updates);
 
-  context.onSwimlaneUpdated(updated);
+  // `swimlane` is the pre-update row resolved above. Handing it over lets the
+  // host propagate the change into live sessions the same way the UI's
+  // SWIMLANE_UPDATE does; without a before-row it cannot tell what changed.
+  context.onSwimlaneUpdated(updated, swimlane);
 
   return {
     success: true,

@@ -27,8 +27,15 @@ export interface CommandContext {
   onTaskUpdated: (task: Task) => void;
   onTaskDeleted: (task: Task) => void;
   onTaskMove: (input: { taskId: string; targetSwimlaneId: string; targetPosition: number }) => Promise<void>;
-  /** Also used for a newly CREATED column: both mean "this board's columns changed". */
-  onSwimlaneUpdated: (swimlane: Swimlane) => void;
+  /**
+   * Also used for a newly CREATED column: both mean "this board's columns changed".
+   *
+   * `previous` is the pre-edit row, and the implementation needs it to work out
+   * what actually changed for each task in the column (a model/effort delta to
+   * inject, an `auto_spawn` flip to reconcile). Omitted or null for a create,
+   * which has no tasks to reconcile.
+   */
+  onSwimlaneUpdated: (swimlane: Swimlane, previous?: Swimlane | null) => void;
   /**
    * A column was deleted. Separate from `onSwimlaneUpdated` only because the
    * caller passes a pre-delete snapshot of a row that no longer exists.

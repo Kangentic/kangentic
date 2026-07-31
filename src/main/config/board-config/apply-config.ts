@@ -126,6 +126,13 @@ export function applyBoardConfigToDb(
           is_archived: isDone ? true : (isTodo ? false : (columnConfig.archived ?? existing.is_archived)),
           is_ghost: false,
           permission_mode: (isTodo || isDone) ? null : (columnConfig.permissionMode ?? existing.permission_mode),
+          // KNOWN GAP: this write does NOT reconcile the tasks already in the
+          // column the way SWIMLANE_UPDATE and the profile writer do (see
+          // reconcileAutoSpawnChange), so a `git pull` that flips `autoSpawn`
+          // still needs a restart to take effect. Deliberate: this path runs off
+          // the kangentic.json file watcher for whichever project changed on
+          // disk, which is often not the focused one, making an automatic spawn
+          // from here materially riskier than one from a deliberate user edit.
           auto_spawn: (isTodo || isDone) ? false : (columnConfig.autoSpawn ?? existing.auto_spawn),
           auto_command: columnConfig.autoCommand ?? existing.auto_command,
           agent_override: (isTodo || isDone) ? null : (columnConfig.agentOverride ?? existing.agent_override),

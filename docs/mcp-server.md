@@ -222,6 +222,12 @@ a sweep like *"change every profile's Opus 4.8 to Opus 5"* safe to run column by
 `replaceColumns: true` for a wholesale swap, the usual choice when copying a profile from another
 board.
 
+On the ACTIVE project this reaches live sessions, exactly as the Board Manager's own profile save
+does: retuning `modelOverride` / `effortOverride` restarts or live-injects the sessions of tasks
+riding the profile, and retuning `autoSpawn` for a column spawns or suspends the tasks already
+sitting in it. A profile edit targeting a background project (via `project`) only writes the file;
+see the blast-radius note under `kangentic_update_column`.
+
 ### kangentic_delete_board_profile
 
 Delete a Board Profile.
@@ -231,9 +237,15 @@ Delete a Board Profile.
 | `profile` | string | Yes | Profile name (case-insensitive) or id |
 | `project` | string | No | Delete from another project's board |
 
-Tasks riding the deleted profile are **not** rewritten; they fall back to each column's own settings
-and keep running, and the response reports how many were affected. Rewriting those rows would make
-a delete far more destructive than it looks and could not be undone by re-creating the profile.
+Tasks riding the deleted profile are **not** rewritten; they fall back to each column's own settings,
+and the response reports how many were affected. Rewriting those rows would make a delete far more
+destructive than it looks and could not be undone by re-creating the profile.
+
+Falling back to the column's own settings IS a settings change for a running session, so on the
+active project it propagates like any other profile edit. Usually that just re-tunes the model or
+effort and the session keeps running. The one case where it does not: if the deleted profile was
+what turned `autoSpawn` **on** for a column whose own setting is off, the fallback is a true-to-false
+flip, and the live session there is suspended (resumable by hand) rather than left running.
 
 ### kangentic_list_tasks
 
@@ -427,16 +439,25 @@ Update a swimlane (column) configuration. Use `kangentic_get_column_detail` to i
 | `description` | string \| null | No | Free-form column purpose shown as a header tooltip and shared via `kangentic.json` (max 1000 chars). `null` clears. |
 | `color` | string | No | Hex color (e.g. `"#71717a"`) |
 | `icon` | string \| null | No | Lucide icon name, or `null` to clear |
-| `autoSpawn` | boolean | No | Whether moving a task into this column auto-spawns an agent |
+| `autoSpawn` | boolean | No | Whether moving a task into this column auto-spawns an agent. For the ACTIVE project, changing it also applies to the tasks already in the column, immediately: switching it on spawns for each task with no session (never for a user-paused one, and never in To Do or Done), switching it off suspends the live sessions there |
 | `autoCommand` | string \| null | No | Slash command template injected on agent spawn (e.g. `"/review --strict"`). `null` clears. |
 | `agentOverride` | string \| null | No | Force a specific agent for this column. `null` uses project default. |
-| `modelOverride` | string \| null | No | Adapter-specific model identifier passed at spawn time (e.g. Claude `"opus"`, `"sonnet"`, `"claude-opus-4-7"`). `null` inherits the agent default. |
-| `effortOverride` | string \| null | No | Adapter-specific effort/reasoning level (e.g. Claude `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`). Valid values are agent-specific. `null` inherits the agent default. |
+| `modelOverride` | string \| null | No | Adapter-specific model identifier passed at spawn time (e.g. Claude `"opus"`, `"sonnet"`, `"claude-opus-4-7"`). `null` inherits the agent default. For the ACTIVE project this reaches sessions already running in the column: a model change restarts them in place with `--resume`. |
+| `effortOverride` | string \| null | No | Adapter-specific effort/reasoning level (e.g. Claude `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`). Valid values are agent-specific. `null` inherits the agent default. For the ACTIVE project this reaches sessions already running in the column: an effort change is injected live, without a restart. |
 | `permissionMode` | string \| null | No | One of: `default`, `plan`, `acceptEdits`, `dontAsk`, `bypassPermissions`, `auto`. `null` uses project default. |
 | `handoffContext` | boolean | No | Enable multi-agent handoff context preservation when entering this column |
 | `planExitTargetColumn` | string \| null | No | Column to auto-move the task to when an agent in plan mode exits planning. `null` disables. |
 
 At least one updatable field is required.
+
+**Cross-project edits write the setting but do not reconcile.** When you target another board with
+`project`, the column is updated and persisted to that project's `kangentic.json`, but no session
+there is spawned, suspended, restarted, or injected. That is a blast-radius decision, not an
+assumption that the project is idle: a background project CAN have live sessions (the Agent Monitor
+and the sidebar's per-project agent counts exist for exactly that). Spawning creates a worktree and
+checks out a branch in a checkout the user is not looking at, so the reconcile is held back and the
+project's tasks pick the new settings up when they next spawn. The cost is that turning `autoSpawn`
+off on a non-focused project leaves its agents running until it is next opened.
 
 ### kangentic_create_column
 

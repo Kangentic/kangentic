@@ -208,6 +208,25 @@ describe('handleUpdateColumn - description field', () => {
     expect(updatedSwimlane.description).toBe('new description text');
   });
 
+  it('hands onSwimlaneUpdated the PRE-edit row as well, so the host can tell what changed', () => {
+    // The MCP writer used to notify with the updated row alone, which is why it
+    // propagated nothing to live sessions - not the auto_spawn reconcile, and
+    // not even the model/effort injection the UI's SWIMLANE_UPDATE has had all
+    // along. Without a before-row the host cannot compute a delta at all.
+    const swimlaneRow = makeSwimlaneRow({ name: 'Planning', role: null, auto_spawn: 0 });
+    const db = createMockDb([swimlaneRow]);
+    const context = createMockContext(db);
+
+    handleUpdateColumn({ column: 'Planning', autoSpawn: true }, context);
+
+    const onSwimlaneUpdated = context.onSwimlaneUpdated as ReturnType<typeof vi.fn>;
+    expect(onSwimlaneUpdated).toHaveBeenCalledOnce();
+    const [updatedSwimlane, previousSwimlane] = onSwimlaneUpdated.mock.calls[0] as Array<Record<string, unknown>>;
+    expect(updatedSwimlane.auto_spawn).toBe(true);
+    expect(previousSwimlane).toBeTruthy();
+    expect(previousSwimlane.auto_spawn).toBe(false);
+  });
+
   it('does not include description in data when the field is not passed', () => {
     // Even though the stored row has a description, a name-only update must NOT
     // alter description. The returned data reflects whatever SwimlaneRepository.update

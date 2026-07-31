@@ -737,7 +737,7 @@ On project open (`src/main/transition-engine/session-startup/`):
 1. **Prune orphaned worktrees** -- delete tasks whose worktree directories were removed externally
 2. **Mark crash recovery** -- leftover `running` DB records become `orphaned`
 3. **Deduplicate** -- keep only the latest record per task_id
-4. **Filter candidates** -- skip To Do/Done, skip auto_spawn=false, skip missing CWD
+4. **Filter candidates** -- skip To Do/Done, skip auto_spawn=false, skip missing CWD. A suspended record in a non-auto-spawn *custom* column still gets a placeholder registered so the renderer keeps offering Resume
 5. **Resume or respawn** -- suspended sessions use `--resume`, others get fresh `--session-id`
 6. **Reconcile** -- spawn fresh agents for tasks in auto_spawn columns with no session
 
