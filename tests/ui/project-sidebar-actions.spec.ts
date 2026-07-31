@@ -1,23 +1,34 @@
-import { test, expect, type Page } from '@playwright/test';
-import { launchPage, createProject } from './helpers';
+import { test, expect, type Browser, type Page } from '@playwright/test';
+import { launchSharedBrowser, resetPage, createProject } from './helpers';
 
-// Each describe is isolated per worker (separate process; per-test page launch / goto reset),
+// Each describe is isolated per worker (separate process; goto reset in beforeEach),
 // so the file's tests can fan out across the UI workers safely.
 test.describe.configure({ mode: 'parallel' });
 
+let browser: Browser;
 let page: Page;
 
+// One browser per worker group instead of one per test: page.goto() re-runs the
+// mock's init scripts, so each test still starts from a clean store.
+test.beforeAll(async () => {
+  ({ browser, page } = await launchSharedBrowser());
+});
+
+test.afterAll(async () => {
+  await browser?.close();
+});
+
 test.beforeEach(async () => {
-  const launched = await launchPage();
-  page = launched.page;
+  await resetPage(page);
   await createProject(page, 'TestProject');
 });
 
-test.afterEach(async () => {
-  await page.context().browser()?.close();
-});
-
+// `mode: 'default'` on each describe pins it to ONE group. Without it these tests land
+// in Playwright's `parallelWithHooks` bucket, chunked into `ceil(tests / shardTotal)`
+// groups - six groups, and six browser launches, at CI's shardTotal=9.
 test.describe('Project Sidebar Actions', () => {
+  test.describe.configure({ mode: 'default' });
+
   test('active project row shows accent left border and no inline action buttons', async () => {
     const sidebar = page.locator('.bg-surface-raised').first();
     const row = sidebar.locator('[role="button"]:has-text("TestProject")').first();
@@ -144,6 +155,8 @@ test.describe('Project Sidebar Actions', () => {
 });
 
 test.describe('Project Relocation', () => {
+  test.describe.configure({ mode: 'default' });
+
   test('settings General tab Move confirms and updates the project path', async () => {
     // The folder picker returns the destination PARENT (consume-once
     // override); the project folder keeps its name and moves into it.

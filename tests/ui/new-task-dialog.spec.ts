@@ -2,6 +2,13 @@ import { test, expect } from '@playwright/test';
 import { launchPage, waitForBoard, createProject, createTask } from './helpers';
 import type { Browser, Page } from '@playwright/test';
 
+// File-level parallel + per-describe default makes each top-level describe its own
+// shardable test group. It does NOT raise the worker count (playwright.config.ts pins
+// the ui project to 3), so the per-page CPU headroom the Escape-to-close-dropdown test
+// below depends on is unchanged - only which file occupies a worker changes. Tests
+// inside a describe still run in order on one worker.
+test.describe.configure({ mode: 'parallel' });
+
 const PROJECT_NAME = `NewTaskDialog Test ${Date.now()}`;
 let browser: Browser;
 let page: Page;
@@ -32,6 +39,8 @@ async function closeDialog() {
 }
 
 test.describe('BranchPicker', () => {
+  test.describe.configure({ mode: 'default' });
+
   test('chip renders with default branch name', async () => {
     await openNewTaskDialog();
 
@@ -104,6 +113,8 @@ test.describe('BranchPicker', () => {
 });
 
 test.describe('Worktree Toggle', () => {
+  test.describe.configure({ mode: 'default' });
+
   test('toggle is visible in New Task dialog', async () => {
     await openNewTaskDialog();
 
@@ -242,6 +253,8 @@ test.describe('Worktree Toggle', () => {
 });
 
 test.describe('To Do Edit Branch Config', () => {
+  test.describe.configure({ mode: 'default' });
+
   test('backlog edit shows full branch config UI', async () => {
     await createTask(page, 'Branch Config Task');
 
@@ -493,6 +506,8 @@ test.describe('To Do Edit Branch Config', () => {
 });
 
 test.describe('Save double-submit guard', () => {
+  test.describe.configure({ mode: 'default' });
+
   test('Save disables while in flight and calls tasks.update exactly once', async () => {
     const uniqueTitle = `Save Double Submit Guard ${Date.now()}`;
 
@@ -580,6 +595,8 @@ test.describe('Save double-submit guard', () => {
 });
 
 test.describe('Create double-submit guard', () => {
+  test.describe.configure({ mode: 'default' });
+
   test('Create disables while in flight and creates exactly one task', async () => {
     const uniqueTitle = `Double Submit Guard ${Date.now()}`;
     await openNewTaskDialog();

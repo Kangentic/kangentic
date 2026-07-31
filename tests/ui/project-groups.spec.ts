@@ -1,21 +1,27 @@
-import { test, expect, type Page } from '@playwright/test';
-import { launchPage, waitForBoard, createProject } from './helpers';
+import { test, expect, type Browser, type Page } from '@playwright/test';
+import { launchSharedBrowser, resetPage, waitForBoard, createProject } from './helpers';
 
-// Each describe is isolated per worker (separate process; per-test page launch / goto reset),
+// Each describe is isolated per worker (separate process; goto reset in beforeEach),
 // so the file's tests can fan out across the UI workers safely.
 test.describe.configure({ mode: 'parallel' });
 
+let browser: Browser;
 let page: Page;
 
-test.beforeEach(async () => {
-  const launched = await launchPage();
-  page = launched.page;
-  await createProject(page, 'Alpha');
-  await createProject(page, 'Beta');
+// One browser per worker group instead of one per test: page.goto() re-runs the
+// mock's init scripts, so each test still starts from a clean store.
+test.beforeAll(async () => {
+  ({ browser, page } = await launchSharedBrowser());
 });
 
-test.afterEach(async () => {
-  await page.context().browser()?.close();
+test.afterAll(async () => {
+  await browser?.close();
+});
+
+test.beforeEach(async () => {
+  await resetPage(page);
+  await createProject(page, 'Alpha');
+  await createProject(page, 'Beta');
 });
 
 /**

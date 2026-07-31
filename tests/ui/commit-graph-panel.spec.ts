@@ -108,6 +108,12 @@ const preConfig = `
   });
 `;
 
+// File-level parallel + per-describe default makes each top-level describe its own
+// shardable test group, while keeping the tests inside a describe in order on one
+// worker (the commit-history tests below hand state to each other through the
+// per-task changesSelectedCommit the close helper resets).
+test.describe.configure({ mode: 'parallel' });
+
 let browser: Browser;
 let page: Page;
 
@@ -149,6 +155,8 @@ async function closeChangesPanelAndDialog(dialog: Locator): Promise<void> {
 }
 
 test.describe('Task Detail Changes panel - commit-history browser', () => {
+  test.describe.configure({ mode: 'default' });
+
   test('shows the graph immediately with Uncommitted selected by default, selecting a commit shows its detail, and Uncommitted returns to the working diff', async () => {
     const dialog = await openDialogWithChangesPanel('Commit Graph Task', 'Code Review');
 
@@ -396,6 +404,8 @@ const prBadgePreConfig = `
 `;
 
 test.describe('Commit graph PR-head ref badge', () => {
+  test.describe.configure({ mode: 'default' });
+
   let prBadgeBrowser: Browser;
   let prBadgePage: Page;
 

@@ -1,5 +1,5 @@
-import { test, expect, type Page } from '@playwright/test';
-import { launchPage, createProject } from './helpers';
+import { test, expect, type Browser, type Page } from '@playwright/test';
+import { launchSharedBrowser, resetPage, createProject } from './helpers';
 
 // Each describe is isolated per worker (separate process; per-test page launch / goto reset),
 // so the file's tests can fan out across the UI workers safely.
@@ -30,23 +30,38 @@ async function openAsanaProvider(page: Page): Promise<void> {
 }
 
 test.describe('Asana setup dialog (first-time)', () => {
+  // Pins this describe to ONE group, so the shared browser below is actually shared.
+  // Without it these tests land in Playwright's `parallelWithHooks` bucket, chunked
+  // into `ceil(tests / shardTotal)` groups - one group per test at CI's shardTotal=9.
+  test.describe.configure({ mode: 'default' });
+
+  let browser: Browser;
+  let page: Page;
+
+  // One browser per worker group instead of one per test; each test creates its own
+  // project after the goto reset below.
+  test.beforeAll(async () => {
+    ({ browser, page } = await launchSharedBrowser());
+  });
+
+  test.afterAll(async () => {
+    await browser?.close();
+  });
+
   test.beforeEach(async ({ }, testInfo) => {
     testInfo.setTimeout(30000);
+    await resetPage(page);
   });
 
   test('selecting Asana with no credentials opens the PAT setup dialog', async () => {
-    const { browser, page } = await launchPage();
     await createProject(page, 'asana-pat-test');
 
     await openAsanaProvider(page);
     await expect(page.locator('[data-testid="asana-setup-dialog"]')).toBeVisible();
     await expect(page.locator('[data-testid="asana-setup-pat-input"]')).toBeVisible();
-
-    await browser.close();
   });
 
   test('dialog rejects an obviously-too-short token with a clear error', async () => {
-    const { browser, page } = await launchPage();
     await createProject(page, 'asana-pat-test');
 
     await openAsanaProvider(page);
@@ -56,15 +71,12 @@ test.describe('Asana setup dialog (first-time)', () => {
     const error = page.locator('[data-testid="asana-setup-error"]');
     await expect(error).toBeVisible();
     await expect(page.locator('[data-testid="asana-setup-dialog"]')).toBeVisible();
-
-    await browser.close();
   });
 
   test('whitespace-only token shows the empty-token error, not the format error', async () => {
     // The dialog trims the token before the length check. Pasting spaces should
     // produce "Paste your Personal Access Token..." rather than the format-hint
     // message that appears for a real-but-short string.
-    const { browser, page } = await launchPage();
     await createProject(page, 'asana-pat-whitespace-test');
 
     await openAsanaProvider(page);
@@ -80,12 +92,9 @@ test.describe('Asana setup dialog (first-time)', () => {
     // The dialog must remain open - no navigation to the URL step.
     await expect(page.locator('[data-testid="asana-setup-dialog"]')).toBeVisible();
     await expect(page.locator('[data-testid="import-source-url-input"]')).toBeHidden();
-
-    await browser.close();
   });
 
   test('saving a valid token closes the dialog and advances to the URL step', async () => {
-    const { browser, page } = await launchPage();
     await createProject(page, 'asana-pat-test');
 
     await openAsanaProvider(page);
@@ -94,12 +103,9 @@ test.describe('Asana setup dialog (first-time)', () => {
 
     await expect(page.locator('[data-testid="asana-setup-dialog"]')).toBeHidden();
     await expect(page.locator('[data-testid="import-source-url-input"]')).toBeVisible();
-
-    await browser.close();
   });
 
   test('PAT visibility toggle switches the input type', async () => {
-    const { browser, page } = await launchPage();
     await createProject(page, 'asana-pat-test');
 
     await openAsanaProvider(page);
@@ -111,12 +117,9 @@ test.describe('Asana setup dialog (first-time)', () => {
 
     await page.locator('[data-testid="asana-setup-toggle-token-btn"]').click();
     await expect(tokenInput).toHaveAttribute('type', 'password');
-
-    await browser.close();
   });
 
   test('an invalid token surfaces a readable error without closing the dialog', async () => {
-    const { browser, page } = await launchPage();
     await page.evaluate((invalid) => {
       (window as unknown as { __mockAsanaPreset?: unknown }).__mockAsanaPreset = {
         invalidToken: invalid,
@@ -132,25 +135,34 @@ test.describe('Asana setup dialog (first-time)', () => {
     await expect(error).toBeVisible();
     await expect(error).toContainText(/validation failed|invalid/i);
     await expect(page.locator('[data-testid="asana-setup-dialog"]')).toBeVisible();
-
-    await browser.close();
   });
 });
 
 test.describe('Asana provider when already connected', () => {
+  test.describe.configure({ mode: 'default' });
+
+  let browser: Browser;
+  let page: Page;
+
+  test.beforeAll(async () => {
+    ({ browser, page } = await launchSharedBrowser());
+  });
+
+  test.afterAll(async () => {
+    await browser?.close();
+  });
+
   test.beforeEach(async ({ }, testInfo) => {
     testInfo.setTimeout(30000);
+    await resetPage(page);
   });
 
   test('selecting Asana when connected jumps straight to the URL input step', async () => {
-    const { browser, page } = await launchPage();
     await preconnectAsana(page);
     await createProject(page, 'asana-pat-connected-test');
 
     await openAsanaProvider(page);
     await expect(page.locator('[data-testid="import-source-url-input"]')).toBeVisible();
     await expect(page.locator('[data-testid="asana-setup-dialog"]')).toBeHidden();
-
-    await browser.close();
   });
 });

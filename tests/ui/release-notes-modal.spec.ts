@@ -1,20 +1,31 @@
-import { test, expect, type Page } from '@playwright/test';
-import { launchPage, createProject } from './helpers';
+import { test, expect, type Browser, type Page } from '@playwright/test';
+import { launchSharedBrowser, resetPage, createProject } from './helpers';
 
-// Each describe is isolated per worker (separate process; per-test page launch / goto reset),
+// Each describe is isolated per worker (separate process; goto reset in beforeEach),
 // so the file's tests can fan out across the UI workers safely.
 test.describe.configure({ mode: 'parallel' });
 
+let browser: Browser;
 let page: Page;
 
-test.beforeEach(async () => {
-  const launched = await launchPage();
-  page = launched.page;
-  await createProject(page, 'TestProject');
+// One browser per worker group instead of one per test: page.goto() re-runs the
+// mock's init scripts, so each test still starts from a clean store.
+//
+// The `mode: 'default'` on the describe below pins it to ONE group. Without it these
+// tests land in Playwright's `parallelWithHooks` bucket, chunked into
+// `ceil(tests / shardTotal)` groups - one group, and one launch, per test at CI's
+// shardTotal=9, which would undo the sharing entirely.
+test.beforeAll(async () => {
+  ({ browser, page } = await launchSharedBrowser());
 });
 
-test.afterEach(async () => {
-  await page.context().browser()?.close();
+test.afterAll(async () => {
+  await browser?.close();
+});
+
+test.beforeEach(async () => {
+  await resetPage(page);
+  await createProject(page, 'TestProject');
 });
 
 async function fireUpdateDownloaded(target: Page, info: { version: string; releaseNotes: string }) {
@@ -42,6 +53,8 @@ async function readLastSeenReleaseNotesVersion(target: Page): Promise<string> {
 }
 
 test.describe('Release notes modal', () => {
+  test.describe.configure({ mode: 'default' });
+
   test('update-downloaded with notes opens the modal with rendered markdown', async () => {
     await fireUpdateDownloaded(page, {
       version: '9.9.9',

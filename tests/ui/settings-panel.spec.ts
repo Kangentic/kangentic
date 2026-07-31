@@ -3,6 +3,13 @@ import { launchPage, createProject } from './helpers';
 import type { Browser, Page } from '@playwright/test';
 import { MCP_TOOL_MANIFEST, mcpToolDocsUrl } from '../../src/shared/mcp-tool-manifest';
 
+// File-level parallel + per-describe default makes each top-level describe its own
+// shardable test group, so this file stops being one 40-plus-test atomic unit pinned
+// to a single shard. Tests INSIDE a describe still run in order on one worker, which
+// is what the self-reverting config mutations below rely on. The beforeAll runs once
+// per describe group (four launches instead of one), well under the file's serial span.
+test.describe.configure({ mode: 'parallel' });
+
 let browser: Browser;
 let page: Page;
 
@@ -39,6 +46,8 @@ async function closeSettings() {
 }
 
 test.describe('Settings Panel', () => {
+  test.describe.configure({ mode: 'default' });
+
   test('titlebar gear opens Settings panel with project and system tabs when project is open', async () => {
     await openSettings();
     await expect(page.locator('h2:has-text("Settings")')).toBeVisible();
@@ -713,6 +722,8 @@ test.describe('Settings Panel', () => {
 });
 
 test.describe('Project Settings via Sidebar', () => {
+  test.describe.configure({ mode: 'default' });
+
   test('sidebar context menu opens Settings panel', async () => {
     // Right-click the project row to open the context menu
     const projectRow = page.locator('[role="button"]').filter({ hasText: 'Settings Test' }).first();
@@ -766,6 +777,8 @@ test.describe('Project Settings via Sidebar', () => {
 });
 
 test.describe('Shared Settings Tooltip', () => {
+  test.describe.configure({ mode: 'default' });
+
   test('Behavior tab has tooltip "Applies to all projects"', async () => {
     await openSettings();
     const behaviorTab = page.getByRole('button', { name: 'Behavior' });
@@ -775,6 +788,8 @@ test.describe('Shared Settings Tooltip', () => {
 });
 
 test.describe('Settings Search', () => {
+  test.describe.configure({ mode: 'default' });
+
   test('search bar is visible in Settings', async () => {
     await openSettings();
     await expect(page.getByTestId('settings-search')).toBeVisible();

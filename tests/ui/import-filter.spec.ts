@@ -100,8 +100,8 @@
  *     state to the "filters excluded everything" branch when nothing was
  *     actually excluded.
  */
-import { test, expect, type Page } from '@playwright/test';
-import { launchPage, createProject, collectPageErrors } from './helpers';
+import { test, expect, type Browser, type Page } from '@playwright/test';
+import { launchSharedBrowser, resetPage, createProject, collectPageErrors } from './helpers';
 
 // Each describe is isolated per worker (separate process; per-test page launch / goto reset),
 // so the file's tests can fan out across the UI workers safely.
@@ -235,13 +235,26 @@ async function getFetchCallCount(page: Page): Promise<number> {
 // ---------------------------------------------------------------------------
 
 test.describe('ImportDialog - filter and streaming behaviour', () => {
+  let browser: Browser;
+  let page: Page;
+
+  // One browser per worker group instead of one per test. Every test seeds its own
+  // source, fetch preset, and uniquely-named project AFTER the reset below, so the
+  // shared page carries nothing across tests.
+  test.beforeAll(async () => {
+    ({ browser, page } = await launchSharedBrowser());
+  });
+
+  test.afterAll(async () => {
+    await browser?.close();
+  });
+
   test.beforeEach(async ({ }, testInfo) => {
     testInfo.setTimeout(30000);
+    await resetPage(page);
   });
 
   test('typing a search term with no match shows "No items match your filters" with Clear button', async () => {
-    const { browser, page } = await launchPage();
-
     await seedGitHubSource(page);
 
     await page.evaluate((issue) => {
@@ -263,13 +276,9 @@ test.describe('ImportDialog - filter and streaming behaviour', () => {
 
     await expect(page.locator('[data-testid="import-empty-state-message"]')).toBeVisible({ timeout: 3000 });
     await expect(page.locator('[data-testid="import-clear-filters-btn"]')).toBeVisible();
-
-    await browser.close();
   });
 
   test('clearFilters clears the client-side filter without triggering a refetch', async () => {
-    const { browser, page } = await launchPage();
-
     await seedGitHubSource(page);
 
     await page.evaluate(() => {
@@ -305,13 +314,9 @@ test.describe('ImportDialog - filter and streaming behaviour', () => {
     // Clearing filters never refetches - it is purely client-side state.
     const countAfterClear = await getFetchCallCount(page);
     expect(countAfterClear).toBe(countAfterOpen);
-
-    await browser.close();
   });
 
   test('typing narrows visible rows immediately with no server round-trip', async () => {
-    const { browser, page } = await launchPage();
-
     await seedGitHubSource(page);
 
     await page.evaluate(
@@ -343,13 +348,9 @@ test.describe('ImportDialog - filter and streaming behaviour', () => {
     // Filtering is purely client-side - no new fetch should have fired.
     const countAfterTyping = await getFetchCallCount(page);
     expect(countAfterTyping).toBe(countBeforeTyping);
-
-    await browser.close();
   });
 
   test('clicking a single row checkbox checks only that row', async () => {
-    const { browser, page } = await launchPage();
-
     await seedGitHubSource(page);
 
     await page.evaluate(
@@ -378,13 +379,9 @@ test.describe('ImportDialog - filter and streaming behaviour', () => {
     await expect(betaRow.locator('input[type="checkbox"]')).not.toBeChecked();
 
     await expect(page.locator('[data-testid="import-execute-btn"]')).toContainText('Import (1)');
-
-    await browser.close();
   });
 
   test('filter facets populate as later pages stream in, with no manual load-more', async () => {
-    const { browser, page } = await launchPage();
-
     await seedGitHubSource(page);
 
     await page.evaluate(
@@ -412,13 +409,9 @@ test.describe('ImportDialog - filter and streaming behaviour', () => {
     await page.locator('button', { hasText: 'Status' }).click();
     await expect(page.locator('[data-testid="filter-option-status-open"]')).toBeVisible();
     await expect(page.locator('[data-testid="filter-option-status-triaged"]')).toBeVisible();
-
-    await browser.close();
   });
 
   test('a filter set while a later page is still loading keeps matching items that arrive after', async () => {
-    const { browser, page } = await launchPage();
-
     await seedGitHubSource(page);
 
     await page.evaluate(
@@ -449,13 +442,9 @@ test.describe('ImportDialog - filter and streaming behaviour', () => {
     // must appear - the filter must not have been frozen against page 1 only.
     await waitForStreamingSettled(page);
     await expect(page.locator('[data-testid="import-issue-late-issue"]')).toBeVisible({ timeout: 3000 });
-
-    await browser.close();
   });
 
   test('virtualization renders a windowed subset of a large list', async () => {
-    const { browser, page } = await launchPage();
-
     await seedGitHubSource(page);
 
     // The dialog sorts newest-first, so index 0 gets the newest timestamp to
@@ -489,13 +478,9 @@ test.describe('ImportDialog - filter and streaming behaviour', () => {
     const renderedRowCount = await page.locator('[data-testid^="import-issue-bulk-"]').count();
     expect(renderedRowCount).toBeGreaterThan(0);
     expect(renderedRowCount).toBeLessThan(issueCount);
-
-    await browser.close();
   });
 
   test('switching the state filter mid-stream cancels the previous filter\'s in-flight page', async () => {
-    const { browser, page } = await launchPage();
-
     await seedGitHubSource(page);
 
     // A delay long enough that the "open" filter's page 2 is still in flight
@@ -544,13 +529,9 @@ test.describe('ImportDialog - filter and streaming behaviour', () => {
     // replaced, not appended-to: "closed"'s first page should REPLACE the
     // "open" filter's page 1 rather than accumulate alongside it.
     await expect(page.locator('[data-testid="import-issue-open-page1-issue"]')).toHaveCount(0);
-
-    await browser.close();
   });
 
   test('closing the dialog mid-stream stops further fetches with no unmounted-component error', async () => {
-    const { browser, page } = await launchPage();
-
     const consoleErrors: string[] = [];
     page.on('console', (message) => {
       if (message.type() === 'error') consoleErrors.push(message.text());
@@ -605,13 +586,9 @@ test.describe('ImportDialog - filter and streaming behaviour', () => {
 
     expect(getPageErrors()).toEqual([]);
     expect(consoleErrors).toEqual([]);
-
-    await browser.close();
   });
 
   test('a fetch failure mid-stream shows the error banner, and Retry clears it once it succeeds', async () => {
-    const { browser, page } = await launchPage();
-
     await seedGitHubSource(page);
 
     await page.evaluate(() => {
@@ -649,13 +626,9 @@ test.describe('ImportDialog - filter and streaming behaviour', () => {
 
     await expect(errorBanner).toHaveCount(0, { timeout: 5000 });
     await expect(page.locator('[data-testid="import-issue-retry-success-issue"]')).toBeVisible({ timeout: 5000 });
-
-    await browser.close();
   });
 
   test('select-all becomes unchecked once a later page streams in more selectable items', async () => {
-    const { browser, page } = await launchPage();
-
     await seedGitHubSource(page);
 
     await page.evaluate(
@@ -692,13 +665,9 @@ test.describe('ImportDialog - filter and streaming behaviour', () => {
     // selectedIds.size (1) no longer equals selectableIssues.length (2).
     await expect(selectAllCheckbox).not.toBeChecked();
     await expect(page.locator('[data-testid="import-execute-btn"]')).toContainText('Import (1)');
-
-    await browser.close();
   });
 
   test('the all-imported empty state shows Refresh, and clicking it re-streams via loadAllIssues', async () => {
-    const { browser, page } = await launchPage();
-
     await seedGitHubSource(page);
 
     await page.evaluate((issue) => {
@@ -726,13 +695,9 @@ test.describe('ImportDialog - filter and streaming behaviour', () => {
     // Refresh must call loadAllIssues(stateFilter) again - a real re-stream,
     // not a dead handler - so the fetch call count must increase.
     await expect.poll(async () => getFetchCallCount(page), { timeout: 3000 }).toBeGreaterThan(countBeforeRefresh);
-
-    await browser.close();
   });
 
   test('the all-imported empty-state message is suppressed while a later page is still streaming', async () => {
-    const { browser, page } = await launchPage();
-
     await seedGitHubSource(page);
 
     await page.evaluate(
@@ -769,13 +734,9 @@ test.describe('ImportDialog - filter and streaming behaviour', () => {
 
     await waitForStreamingSettled(page);
     await expect(page.locator('[data-testid="import-issue-midstream-fresh-2"]')).toBeVisible({ timeout: 3000 });
-
-    await browser.close();
   });
 
   test('a malformed page response (non-array issues) shows the error banner with Retry', async () => {
-    const { browser, page } = await launchPage();
-
     const getPageErrors = collectPageErrors(page);
 
     await seedGitHubSource(page);
@@ -812,13 +773,9 @@ test.describe('ImportDialog - filter and streaming behaviour', () => {
     // throw rather than it surfacing as an unhandled rejection (the failure
     // mode the catch exists to prevent, per the comment in loadAllIssues).
     expect(getPageErrors()).toEqual([]);
-
-    await browser.close();
   });
 
   test('a duplicate externalId across two streamed pages is deduped, not double-rendered', async () => {
-    const { browser, page } = await launchPage();
-
     await seedGitHubSource(page);
 
     // A source can return the same item on two pages when its ordering shifts
@@ -853,13 +810,9 @@ test.describe('ImportDialog - filter and streaming behaviour', () => {
     // The footer's loaded count reflects the deduped total (3 unique issues),
     // not the raw sum of both pages' issues arrays (4).
     await expect(page.locator('text=/3 of 3 items/')).toBeVisible();
-
-    await browser.close();
   });
 
   test('searching an issue number matches the ID the row prints, with or without the "#"', async () => {
-    const { browser, page } = await launchPage();
-
     await seedGitHubSource(page);
 
     // The target's number appears nowhere in its title or body, so it is reachable
@@ -899,13 +852,9 @@ test.describe('ImportDialog - filter and streaming behaviour', () => {
     await page.locator('[data-testid="import-search"]').fill('  #276  ');
     await expect(page.locator('[data-testid="import-issue-276"]')).toBeVisible({ timeout: 3000 });
     await expect(page.locator('[data-testid="import-issue-981"]')).toHaveCount(0, { timeout: 3000 });
-
-    await browser.close();
   });
 
   test('searching a number on a github_projects source matches the URL-derived ID, not externalId', async () => {
-    const { browser, page } = await launchPage();
-
     await seedGitHubProjectsSource(page);
 
     // A project item's externalId is an opaque node id that does NOT contain the
@@ -952,13 +901,9 @@ test.describe('ImportDialog - filter and streaming behaviour', () => {
     await page.locator('[data-testid="import-search"]').fill('#512');
     await expect(targetRow).toBeVisible({ timeout: 3000 });
     await expect(siblingRow).toHaveCount(0, { timeout: 3000 });
-
-    await browser.close();
   });
 
   test('searching matches the other fields the row prints - a label and an assignee', async () => {
-    const { browser, page } = await launchPage();
-
     await seedGitHubSource(page);
 
     // Neither term appears in either row's ID or title, so each hit can only come
@@ -1004,13 +949,9 @@ test.describe('ImportDialog - filter and streaming behaviour', () => {
     await page.locator('[data-testid="import-search"]').fill('@ryan-tuck');
     await expect(targetRow).toBeVisible({ timeout: 3000 });
     await expect(siblingRow).toHaveCount(0, { timeout: 3000 });
-
-    await browser.close();
   });
 
   test('searching text that appears only in an issue description matches nothing', async () => {
-    const { browser, page } = await launchPage();
-
     await seedGitHubSource(page);
 
     // The body is NOT searchable: no row renders it, so a body hit would look like
@@ -1062,13 +1003,9 @@ test.describe('ImportDialog - filter and streaming behaviour', () => {
     await page.locator('[data-testid="import-search"]').fill('335');
     await expect(crossReferencingRow).toBeVisible({ timeout: 3000 });
     await expect(plainBodyRow).toHaveCount(0, { timeout: 3000 });
-
-    await browser.close();
   });
 
   test('a query spanning two haystack fields (no separator) matches nothing, but a query within one field still matches', async () => {
-    const { browser, page } = await launchPage();
-
     await seedGitHubSource(page);
 
     // The target's rendered id is '#501', its title ends with 'redesign', and its
@@ -1126,13 +1063,9 @@ test.describe('ImportDialog - filter and streaming behaviour', () => {
     await page.locator('[data-testid="import-search"]').fill('designb');
     await expect(targetRow).toHaveCount(0, { timeout: 3000 });
     await expect(siblingRow).toHaveCount(0, { timeout: 3000 });
-
-    await browser.close();
   });
 
   test('a literal internal "#" in the query is preserved, not globally stripped', async () => {
-    const { browser, page } = await launchPage();
-
     await seedGitHubSource(page);
 
     // The target's title contains a literal 'c#'; the sibling's title contains a
@@ -1172,13 +1105,9 @@ test.describe('ImportDialog - filter and streaming behaviour', () => {
     await page.locator('[data-testid="import-search"]').fill('c#');
     await expect(targetRow).toBeVisible({ timeout: 3000 });
     await expect(siblingRow).toHaveCount(0, { timeout: 3000 });
-
-    await browser.close();
   });
 
   test('a query that normalizes to empty (a lone "#") is not treated as an active filter', async () => {
-    const { browser, page } = await launchPage();
-
     await seedGitHubSource(page);
 
     await page.evaluate(() => {
@@ -1203,7 +1132,5 @@ test.describe('ImportDialog - filter and streaming behaviour', () => {
     await expect(page.getByText('No items found')).toBeVisible({ timeout: 3000 });
     await expect(page.locator('[data-testid="import-empty-state-message"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="import-clear-filters-btn"]')).toHaveCount(0);
-
-    await browser.close();
   });
 });

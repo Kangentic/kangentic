@@ -1,30 +1,38 @@
-import { test, expect, type Page } from '@playwright/test';
-import { chromium } from '@playwright/test';
-import path from 'node:path';
-import { launchPage, createProject, waitForViteReady } from './helpers';
+import { test, expect, type Browser, type Page } from '@playwright/test';
+import { launchSharedBrowser, resetPage, createProject } from './helpers';
 
-// Each describe is isolated per worker (separate process; per-test page launch / goto reset),
+// Each describe is isolated per worker (separate process; goto reset in beforeEach),
 // so the file's tests can fan out across the UI workers safely.
 test.describe.configure({ mode: 'parallel' });
 
-const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
-const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
-
-let page: Page;
-
-test.beforeEach(async () => {
-  const launched = await launchPage();
-  page = launched.page;
-  await createProject(page, 'Alpha');
-  await createProject(page, 'Beta');
-  await createProject(page, 'Gamma');
-});
-
-test.afterEach(async () => {
-  await page.context().browser()?.close();
-});
-
 test.describe('Project Sidebar Search', () => {
+  // Pins this describe to ONE group, so the shared browser below is actually shared.
+  // Without it these tests land in Playwright's `parallelWithHooks` bucket, chunked
+  // into `ceil(tests / shardTotal)` groups - one group per test at CI's shardTotal=9.
+  test.describe.configure({ mode: 'default' });
+
+  let browser: Browser;
+  let page: Page;
+
+  // One browser per worker group instead of one per test, and scoped to THIS
+  // describe: the group edge cases below bring their own pre-configured browser,
+  // so a file-level hook would make them pay for three project creations they
+  // immediately discard.
+  test.beforeAll(async () => {
+    ({ browser, page } = await launchSharedBrowser());
+  });
+
+  test.afterAll(async () => {
+    await browser?.close();
+  });
+
+  test.beforeEach(async () => {
+    await resetPage(page);
+    await createProject(page, 'Alpha');
+    await createProject(page, 'Beta');
+    await createProject(page, 'Gamma');
+  });
+
   test('typing filters the project list by name', async () => {
     const sidebar = page.locator('.bg-surface-raised').first();
     const search = page.locator('[data-testid="project-sidebar-search"]');
@@ -66,22 +74,6 @@ test.describe('Project Sidebar Search', () => {
 });
 
 // ─── Group + search edge cases ─────────────────────────────────────────────
-
-async function launchWithGroupSearch(preConfigScript: string): Promise<{ browser: any; page: Page }> {
-  await waitForViteReady(VITE_URL);
-  const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
-  const newPage = await context.newPage();
-
-  await newPage.addInitScript({ path: MOCK_SCRIPT });
-  await newPage.addInitScript(preConfigScript);
-
-  await newPage.goto(VITE_URL);
-  await newPage.waitForLoadState('load');
-  await newPage.waitForSelector('text=Kangentic', { timeout: 15000 });
-
-  return { browser, page: newPage };
-}
 
 /**
  * Pre-configure a collapsed group containing "InGroup" project, plus an
@@ -143,48 +135,55 @@ function collapsedGroupPreConfig(): string {
 }
 
 test.describe('Project Sidebar Search - group edge cases', () => {
+  test.describe.configure({ mode: 'default' });
+
+  let groupBrowser: Browser;
+  let groupPage: Page;
+
+  // Both tests want the same pre-configured state, so they share one browser and
+  // reset via page.goto() (which re-runs the preconfig init script) rather than
+  // launching per test.
+  test.beforeAll(async () => {
+    ({ browser: groupBrowser, page: groupPage } = await launchSharedBrowser(
+      collapsedGroupPreConfig(),
+    ));
+  });
+
+  test.afterAll(async () => {
+    await groupBrowser?.close();
+  });
+
+  test.beforeEach(async () => {
+    await resetPage(groupPage);
+    // Wait for the board (project is open)
+    await groupPage.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+  });
+
   test('collapsed group force-expands when its children match the search query', async () => {
-    const { browser, page: groupPage } = await launchWithGroupSearch(collapsedGroupPreConfig());
+    // Initially the group is collapsed so InGroup is hidden
+    const sidebar = groupPage.locator('.bg-surface-raised').first();
+    await expect(sidebar.locator('[role="button"]:has-text("InGroup")')).toBeHidden();
 
-    try {
-      // Wait for the board (project is open)
-      await groupPage.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+    // Searching for the project name should force-expand the group
+    const search = groupPage.locator('[data-testid="project-sidebar-search"]');
+    await search.fill('InGroup');
 
-      // Initially the group is collapsed so InGroup is hidden
-      const sidebar = groupPage.locator('.bg-surface-raised').first();
-      await expect(sidebar.locator('[role="button"]:has-text("InGroup")')).toBeHidden();
-
-      // Searching for the project name should force-expand the group
-      const search = groupPage.locator('[data-testid="project-sidebar-search"]');
-      await search.fill('InGroup');
-
-      await expect(sidebar.locator('[role="button"]:has-text("InGroup")')).toBeVisible();
-    } finally {
-      await browser.close();
-    }
+    await expect(sidebar.locator('[role="button"]:has-text("InGroup")')).toBeVisible();
   });
 
   test('group with zero matching children is hidden entirely during search', async () => {
-    const { browser, page: groupPage } = await launchWithGroupSearch(collapsedGroupPreConfig());
+    // The group header should be visible before filtering
+    await expect(groupPage.locator('[data-testid^="project-group-"]')).toBeVisible();
 
-    try {
-      await groupPage.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+    // Search for a term that only matches the ungrouped project
+    const search = groupPage.locator('[data-testid="project-sidebar-search"]');
+    await search.fill('Ungrouped');
 
-      // The group header should be visible before filtering
-      await expect(groupPage.locator('[data-testid^="project-group-"]')).toBeVisible();
+    // Group header should be hidden (no matching children)
+    await expect(groupPage.locator('[data-testid^="project-group-"]')).toBeHidden();
 
-      // Search for a term that only matches the ungrouped project
-      const search = groupPage.locator('[data-testid="project-sidebar-search"]');
-      await search.fill('Ungrouped');
-
-      // Group header should be hidden (no matching children)
-      await expect(groupPage.locator('[data-testid^="project-group-"]')).toBeHidden();
-
-      // But the ungrouped project is still visible
-      const sidebar = groupPage.locator('.bg-surface-raised').first();
-      await expect(sidebar.locator('[role="button"]:has-text("Ungrouped")')).toBeVisible();
-    } finally {
-      await browser.close();
-    }
+    // But the ungrouped project is still visible
+    const sidebar = groupPage.locator('.bg-surface-raised').first();
+    await expect(sidebar.locator('[role="button"]:has-text("Ungrouped")')).toBeVisible();
   });
 });

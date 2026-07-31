@@ -11,13 +11,15 @@
  *    Fixed by portaling it to document.body via OverlayPopover + usePopoverPosition
  *    (the same pattern KebabMenu uses).
  *
- * Each test launches its own page (mode: 'parallel'), per the no-cross-test-state
- * convention used across this suite (see pr-url.spec.ts, label-promotion.spec.ts).
+ * The two new-task-dialog tests share one browser and reset via page.goto() in
+ * beforeEach, per the no-cross-test-state convention used across this suite. The
+ * clipping test keeps its own launch: it needs a narrower viewport and a seeded
+ * task, so there is nothing to share.
  */
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { launchPage, createProject, waitForViteReady } from './helpers';
+import { launchSharedBrowser, resetPage, createProject, waitForViteReady } from './helpers';
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -42,9 +44,27 @@ async function seedLabelColors(page: Page, labelColors: Record<string, string>):
   }, labelColors);
 }
 
-test('clicking a label suggestion commits the clicked label, not the typed text', async () => {
-  const { browser, page } = await launchPage();
-  try {
+test.describe('LabelInput autocomplete in the New Task dialog', () => {
+  // One group, one browser: the two tests below want the same starting state, so
+  // sharing beats paying a launch each.
+  test.describe.configure({ mode: 'default' });
+
+  let browser: Browser;
+  let page: Page;
+
+  test.beforeAll(async () => {
+    ({ browser, page } = await launchSharedBrowser());
+  });
+
+  test.afterAll(async () => {
+    await browser?.close();
+  });
+
+  test.beforeEach(async () => {
+    await resetPage(page);
+  });
+
+  test('clicking a label suggestion commits the clicked label, not the typed text', async () => {
     await createProject(page, `LabelAutocompleteClick ${Date.now()}`);
     await seedLabelColors(page, {
       research: '#3b82f6',
@@ -79,14 +99,9 @@ test('clicking a label suggestion commits the clicked label, not the typed text'
     // Exact-array equality: pre-fix this would be ['res'] (the blur-committed
     // partial text), not the clicked suggestion.
     expect(task!.labels).toEqual(['research']);
-  } finally {
-    await browser.close();
-  }
-});
+  });
 
-test('clicking outside the field closes the suggestion dropdown', async () => {
-  const { browser, page } = await launchPage();
-  try {
+  test('clicking outside the field closes the suggestion dropdown', async () => {
     await createProject(page, `LabelAutocompleteOutsideClick ${Date.now()}`);
     await seedLabelColors(page, {
       research: '#3b82f6',
@@ -128,9 +143,7 @@ test('clicking outside the field closes the suggestion dropdown', async () => {
     const task = taskData.find((t: { title: string }) => t.title === 'Outside click test');
     expect(task).toBeDefined();
     expect(task!.labels).toEqual([]);
-  } finally {
-    await browser.close();
-  }
+  });
 });
 
 const CLIP_PROJECT_ID = 'proj-label-input-clip';

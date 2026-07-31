@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import type { Browser, Page } from '@playwright/test';
-import { launchPage, waitForBoard, createProject, dismissOnboardingChecklist } from './helpers';
+import { launchSharedBrowser, resetPage, waitForBoard, createProject, dismissOnboardingChecklist } from './helpers';
 
 /**
  * Coverage for useAddProject's branches (src/renderer/hooks/useAddProject.ts): the
@@ -14,15 +14,31 @@ import { launchPage, waitForBoard, createProject, dismissOnboardingChecklist } f
 test.describe.configure({ mode: 'parallel' });
 
 test.describe('Add project flow', () => {
+  // Pins this describe to ONE group. Without it the tests land in Playwright's
+  // `parallelWithHooks` bucket, which chunks them into `ceil(tests / shardTotal)`
+  // groups - and since CI passes shardTotal=9, a file with fewer than 9 tests would
+  // get one group (and one browser launch) per test, undoing the sharing below.
+  test.describe.configure({ mode: 'default' });
+
   let browser: Browser;
   let page: Page;
 
-  test.afterEach(async () => {
+  // One browser per worker group instead of one per test. Every test here starts from
+  // the welcome screen, which page.goto() restores: the mock's project list is rebuilt
+  // empty on every navigation.
+  test.beforeAll(async () => {
+    ({ browser, page } = await launchSharedBrowser());
+  });
+
+  test.afterAll(async () => {
     await browser?.close();
   });
 
+  test.beforeEach(async () => {
+    await resetPage(page);
+  });
+
   test('reopens the existing project instead of creating a new one when probePath reports it already registered', async () => {
-    ({ browser, page } = await launchPage());
     await createProject(page, 'add-project-existing-a');
     const firstProjectIdOrNull = await page.evaluate(async () => {
       const current = await window.electronAPI.projects.getCurrent();
@@ -59,7 +75,6 @@ test.describe('Add project flow', () => {
   });
 
   test('shows an error toast and creates nothing when the folder cannot be opened', async () => {
-    ({ browser, page } = await launchPage());
     await expect(page.locator('[data-testid="welcome-open-project"]')).toBeVisible();
 
     await page.evaluate(() => {
@@ -82,7 +97,6 @@ test.describe('Add project flow', () => {
   });
 
   test('opens the project anyway and shows a warning toast when git setup fails', async () => {
-    ({ browser, page } = await launchPage());
 
     await page.evaluate(() => {
       (window as unknown as { __mockEnsureGitResult: Record<string, unknown> }).__mockEnsureGitResult = {
@@ -110,7 +124,6 @@ test.describe('Add project flow', () => {
   });
 
   test('opens the project and shows an info toast when a git repo is freshly created', async () => {
-    ({ browser, page } = await launchPage());
 
     await page.evaluate(() => {
       (window as unknown as { __mockEnsureGitResult: Record<string, unknown> }).__mockEnsureGitResult = {
@@ -134,7 +147,6 @@ test.describe('Add project flow', () => {
   });
 
   test("names the new project from probePath's suggestedName, not the folder's own basename", async () => {
-    ({ browser, page } = await launchPage());
 
     await page.evaluate(() => {
       (window as unknown as { __mockProbePathOverrides: Record<string, unknown> }).__mockProbePathOverrides = {

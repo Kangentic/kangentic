@@ -218,6 +218,56 @@ npx playwright test --project=ui
 - **Mock:** `tests/ui/mock-electron-api.js` injects a full in-memory mock of `window.electronAPI` via `addInitScript()`. Supports full CRUD for projects, tasks, swimlanes, actions, sessions, config, attachments.
 - **Pre-configure:** `window.__mockPreConfigure(fn)` lets tests set up mock state before React mounts
 
+#### Share the browser, reset with `goto()`
+
+`chromium.launch()` costs ~1-2s, so launching one per test is the single most expensive thing a UI
+spec can do. Launch once per describe and reset per test instead, using the two helpers in
+`tests/ui/helpers.ts`:
+
+```ts
+let browser: Browser;
+let page: Page;
+
+test.beforeAll(async () => {
+  ({ browser, page } = await launchSharedBrowser(optionalPreConfigScript));
+});
+test.afterAll(async () => { await browser?.close(); });
+test.beforeEach(async () => { await resetPage(page); });
+```
+
+`resetPage()` re-navigates to the app shell, which re-runs every registered `addInitScript` and
+rebuilds the mock's state from scratch, so tests stay isolated without a fresh browser. Anything a
+test needs on top of that (a project, a seeded fetch preset, a route interception) goes in the test
+itself, after the reset. `command-terminal.spec.ts` is the reference consumer.
+
+Keep a per-test launch only when the test genuinely needs a fresh document: a different viewport, a
+`page.route()` that must be installed before the first navigation, or per-document state that a
+prior load would mask (see `stats-lazy-retry.spec.ts`).
+
+#### Sharding granularity: `parallel` outside, `default` inside
+
+Playwright shards by test GROUP, and by default a whole spec file is one group -- so a 40-test file
+lands entirely on one shard and cannot be split. `test.describe.configure({ mode: 'parallel' })`
+alone is often the wrong fix: it scatters each test to its own worker, which breaks any describe
+whose tests hand state to each other.
+
+The middle setting is `mode: 'parallel'` at file level plus `mode: 'default'` on each top-level
+describe. That makes **each top-level describe its own shardable group** while keeping the tests
+inside a describe in order on one worker, so existing shared-page ordering is preserved exactly.
+Nested describes collapse to the outermost `'default'` one, so a file's group count is its
+top-level describe count.
+
+Two things to check before applying it:
+
+- **No cross-describe dependency.** Groups can land on different shards, so a describe that relies
+  on data an earlier describe created will fail. Classifier: run each shard slice cold
+  (`--shard=i/N`) and confirm it passes alone. This is deterministic, not a flake.
+- **`beforeAll` cost.** A file-level `beforeAll` now runs once per describe group. Only apply where
+  `beforeAll cost x describe count` stays well under the file's current serial span.
+
+Confirm the split with `npx playwright test --project=ui <file> --shard=i/4 --list`: before, one
+shard reports every test and the rest report zero.
+
 ### E2E Tests (`tests/e2e/`)
 
 ```bash

@@ -1,18 +1,31 @@
-import { test, expect, chromium, type Browser, type Page } from '@playwright/test';
-import { launchPage, createProject, waitForBoard } from './helpers';
+import { test, expect, type Browser, type Page } from '@playwright/test';
+import { launchSharedBrowser, resetPage, createProject, waitForBoard } from './helpers';
 
-// Each describe is isolated per worker (separate process). Within a worker, tests either
-// launch their own browser ('Backlog View') or reset shared store state between tests
-// ('Backlog Search and Filter'), so the file's tests can fan out across the UI workers safely.
+// Each describe is isolated per worker (separate process). Within a worker, both describes
+// share one browser and reset between tests - 'Backlog View' via page.goto(), 'Backlog Search
+// and Filter' via a store reset - so the file's tests can fan out across the UI workers safely.
 test.describe.configure({ mode: 'parallel' });
 
 test.describe('Backlog View', () => {
+  let browser: Browser;
+  let page: Page;
+
+  // One browser per worker group instead of one per test. Every test creates its own
+  // project after the reset below, so nothing carries between tests.
+  test.beforeAll(async () => {
+    ({ browser, page } = await launchSharedBrowser());
+  });
+
+  test.afterAll(async () => {
+    await browser?.close();
+  });
+
   test.beforeEach(async ({ }, testInfo) => {
     testInfo.setTimeout(30000);
+    await resetPage(page);
   });
 
   test('view toggle shows Board and Backlog tabs', async () => {
-    const { browser, page } = await launchPage();
     await createProject(page, 'backlog-test');
 
     const boardTab = page.locator('[data-testid="view-toggle-board"]');
@@ -20,12 +33,9 @@ test.describe('Backlog View', () => {
     await expect(boardTab).toBeVisible();
     await expect(backlogTab).toBeVisible();
     await expect(boardTab).toHaveText('Board');
-
-    await browser.close();
   });
 
   test('clicking Backlog tab switches to backlog view', async () => {
-    const { browser, page } = await launchPage();
     await createProject(page, 'backlog-test');
 
     // Board view should be active by default
@@ -41,22 +51,16 @@ test.describe('Backlog View', () => {
     // Switch back to board
     await page.locator('[data-testid="view-toggle-board"]').click();
     await expect(page.locator('[data-swimlane-name="To Do"]')).toBeVisible();
-
-    await browser.close();
   });
 
   test('backlog shows empty state when no items', async () => {
-    const { browser, page } = await launchPage();
     await createProject(page, 'backlog-test');
 
     await page.locator('[data-testid="view-toggle-backlog"]').click();
     await expect(page.locator('text=Backlog is empty')).toBeVisible();
-
-    await browser.close();
   });
 
   test('can create a backlog task', async () => {
-    const { browser, page } = await launchPage();
     await createProject(page, 'backlog-test');
 
     await page.locator('[data-testid="view-toggle-backlog"]').click();
@@ -77,12 +81,9 @@ test.describe('Backlog View', () => {
     // Item should appear in the table
     await expect(page.locator('[data-testid="backlog-task-row"]')).toBeVisible();
     await expect(page.locator('text=Test backlog task')).toBeVisible();
-
-    await browser.close();
   });
 
   test('backlog count badge updates in view toggle', async () => {
-    const { browser, page } = await launchPage();
     await createProject(page, 'backlog-test');
 
     await page.locator('[data-testid="view-toggle-backlog"]').click();
@@ -98,12 +99,9 @@ test.describe('Backlog View', () => {
     // Count badge should show 2
     const backlogTab = page.locator('[data-testid="view-toggle-backlog"]');
     await expect(backlogTab).toContainText('2');
-
-    await browser.close();
   });
 
   test('can search backlog tasks', async () => {
-    const { browser, page } = await launchPage();
     await createProject(page, 'backlog-test');
 
     await page.locator('[data-testid="view-toggle-backlog"]').click();
@@ -126,12 +124,9 @@ test.describe('Backlog View', () => {
     // Clear search
     await page.locator('[data-testid="backlog-search"]').fill('');
     await expect(page.locator('text=Add dark mode')).toBeVisible();
-
-    await browser.close();
   });
 
   test('can delete a backlog task', async () => {
-    const { browser, page } = await launchPage();
     await createProject(page, 'backlog-test');
 
     await page.locator('[data-testid="view-toggle-backlog"]').click();
@@ -152,12 +147,9 @@ test.describe('Backlog View', () => {
 
     // Item should be gone
     await expect(page.locator('text=Delete me')).not.toBeVisible();
-
-    await browser.close();
   });
 
   test('can edit a backlog task', async () => {
-    const { browser, page } = await launchPage();
     await createProject(page, 'backlog-test');
 
     await page.locator('[data-testid="view-toggle-backlog"]').click();
@@ -181,24 +173,18 @@ test.describe('Backlog View', () => {
     // Updated title should appear
     await expect(page.locator('text=Updated title')).toBeVisible();
     await expect(page.locator('text=Original title')).not.toBeVisible();
-
-    await browser.close();
   });
 
   test('toolbar shows Labels and Priorities buttons', async () => {
-    const { browser, page } = await launchPage();
     await createProject(page, 'backlog-test');
 
     await page.locator('[data-testid="view-toggle-backlog"]').click();
 
     await expect(page.locator('[data-testid="manage-labels-btn"]')).toBeVisible();
     await expect(page.locator('[data-testid="manage-priorities-btn"]')).toBeVisible();
-
-    await browser.close();
   });
 
   test('filter button shows and works', async () => {
-    const { browser, page } = await launchPage();
     await createProject(page, 'backlog-test');
 
     await page.locator('[data-testid="view-toggle-backlog"]').click();
@@ -212,12 +198,9 @@ test.describe('Backlog View', () => {
 
     // Priority section should be visible
     await expect(page.locator('text=PRIORITY')).toBeVisible();
-
-    await browser.close();
   });
 
   test('create backlog task with attachment passes pendingAttachments', async () => {
-    const { browser, page } = await launchPage();
     await createProject(page, 'backlog-attach-test');
 
     await page.locator('[data-testid="view-toggle-backlog"]').click();
@@ -263,12 +246,9 @@ test.describe('Backlog View', () => {
       );
     });
     expect(attachmentCount).toBe(1);
-
-    await browser.close();
   });
 
   test('edit backlog task with new attachment updates attachment_count', async () => {
-    const { browser, page } = await launchPage();
     await createProject(page, 'backlog-edit-attach-test');
 
     await page.locator('[data-testid="view-toggle-backlog"]').click();
@@ -314,12 +294,9 @@ test.describe('Backlog View', () => {
       );
     });
     expect(attachmentCount).toBe(1);
-
-    await browser.close();
   });
 
   test('context menu on multi-selected items shows count and moves all', async () => {
-    const { browser, page } = await launchPage();
     await createProject(page, 'backlog-ctx-multi');
 
     await page.locator('[data-testid="view-toggle-backlog"]').click();
@@ -352,12 +329,9 @@ test.describe('Backlog View', () => {
     // Only one item should remain in the backlog
     await expect(rows).toHaveCount(1);
     await expect(page.locator('text=Task C')).toBeVisible();
-
-    await browser.close();
   });
 
   test('bulk delete via context menu opens ConfirmDialog and removes both rows', async () => {
-    const { browser, page } = await launchPage();
     await createProject(page, 'backlog-bulk-delete');
 
     await page.locator('[data-testid="view-toggle-backlog"]').click();
@@ -397,12 +371,9 @@ test.describe('Backlog View', () => {
     await expect(rows).toHaveCount(0);
     await expect(page.locator('text=Delete Alpha')).not.toBeVisible();
     await expect(page.locator('text=Delete Beta')).not.toBeVisible();
-
-    await browser.close();
   });
 
   test('dialog state survives BacklogView unmount when toggling to board and back', async () => {
-    const { browser, page } = await launchPage();
     await createProject(page, 'backlog-dialog-persist');
 
     await page.locator('[data-testid="view-toggle-backlog"]').click();
@@ -447,12 +418,9 @@ test.describe('Backlog View', () => {
     // Dialog should be visible again because the store-lifted state survived unmount.
     // If someone adds a clearDialogState() call on BacklogView unmount, this breaks.
     await expect(page.locator('[data-testid="new-backlog-task-dialog"]')).toBeVisible();
-
-    await browser.close();
   });
 
   test('context menu on unselected item resets selection', async () => {
-    const { browser, page } = await launchPage();
     await createProject(page, 'backlog-ctx-reset');
 
     await page.locator('[data-testid="view-toggle-backlog"]').click();
@@ -482,8 +450,6 @@ test.describe('Backlog View', () => {
     await expect(page.locator('[data-testid="context-move-to-board"]').first()).toBeVisible();
     await expect(page.locator('text=Delete 2 items')).not.toBeVisible();
     await expect(page.locator('[data-testid="context-delete-item"]')).toHaveText('Delete');
-
-    await browser.close();
   });
 });
 
@@ -499,13 +465,17 @@ test.describe('Backlog View', () => {
  *   Board task D - "Board task only" labels:['board-only']  (board task, NOT in backlog)
  */
 test.describe('Backlog Search and Filter', () => {
+  // Pins this describe to ONE group, so its beforeAll fixture is built once. Without
+  // it these tests land in Playwright's `parallelWithHooks` bucket, chunked into
+  // `ceil(tests / shardTotal)` groups - one group, and one full fixture rebuild, per
+  // test at CI's shardTotal=9.
+  test.describe.configure({ mode: 'default' });
+
   let browser: Browser;
   let page: Page;
 
   test.beforeAll(async () => {
-    const result = await launchPage();
-    browser = result.browser;
-    page = result.page;
+    ({ browser, page } = await launchSharedBrowser());
 
     await createProject(page, `backlog-filter-test-${Date.now()}`);
     await waitForBoard(page);

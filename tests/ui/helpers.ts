@@ -1,4 +1,4 @@
-import { chromium, type Browser, type Page } from '@playwright/test';
+import { chromium, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import path from 'node:path';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
@@ -47,10 +47,21 @@ export async function waitForViteReady(url: string = VITE_URL, timeoutMs = 30000
 }
 
 /**
- * Launch a headless Chromium page with the electronAPI mock injected.
+ * Launch a headless Chromium browser with the electronAPI mock injected, plus an
+ * optional per-suite pre-configuration script, and navigate to the app shell.
+ *
+ * This is the launcher behind the suite's shared-browser pattern: launch ONCE in a
+ * describe's `beforeAll`, then call `resetPage()` in `beforeEach` so every test
+ * starts from fresh state. `chromium.launch()` costs ~1-2s, and the UI tier used to
+ * pay it per test in a dozen specs; `page.goto()` re-runs every registered
+ * addInitScript on the context, so it gives the same isolation for a fraction of the
+ * cost. `command-terminal.spec.ts` is the reference consumer.
+ *
  * The Vite dev server must be running (started by playwright webServer config).
  */
-export async function launchPage(): Promise<{ browser: Browser; page: Page }> {
+export async function launchSharedBrowser(
+  preConfigScript?: string,
+): Promise<{ browser: Browser; context: BrowserContext; page: Page }> {
   await waitForViteReady();
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
@@ -61,12 +72,39 @@ export async function launchPage(): Promise<{ browser: Browser; page: Page }> {
 
   // Inject the mock before any page scripts run
   await page.addInitScript({ path: MOCK_SCRIPT });
+  if (preConfigScript) {
+    await page.addInitScript(preConfigScript);
+  }
 
   await page.goto(VITE_URL);
   await page.waitForLoadState('load');
   // Wait for React to render the app shell
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
 
+  return { browser, context, page };
+}
+
+/**
+ * Re-navigate a shared page to the app shell, re-running every registered
+ * addInitScript and discarding all in-memory store state. The `beforeEach` half of
+ * the shared-browser pattern above.
+ *
+ * Suites that need the board (rather than the welcome screen) still call
+ * `createProject()` after this: the mock's project list is re-seeded from scratch on
+ * every navigation.
+ */
+export async function resetPage(page: Page): Promise<void> {
+  await page.goto(VITE_URL);
+  await page.waitForLoadState('load');
+  await page.waitForSelector('text=Kangentic', { timeout: 15000 });
+}
+
+/**
+ * Launch a one-off browser for a single test. Prefer `launchSharedBrowser` +
+ * `resetPage` when several tests share the same starting state.
+ */
+export async function launchPage(): Promise<{ browser: Browser; page: Page }> {
+  const { browser, page } = await launchSharedBrowser();
   return { browser, page };
 }
 

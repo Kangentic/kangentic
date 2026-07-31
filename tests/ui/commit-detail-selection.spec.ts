@@ -122,6 +122,12 @@ const preConfig = `
   });
 `;
 
+// File-level parallel + per-describe default makes each top-level describe its own
+// shardable test group, while keeping the tests inside a describe in order on one
+// worker. The beforeAll runs once per group (a preconfigured launch, no UI-driven
+// project setup), which is cheap next to the file's serial span.
+test.describe.configure({ mode: 'parallel' });
+
 let browser: Browser;
 let page: Page;
 
@@ -137,6 +143,8 @@ test.afterAll(async () => {
 });
 
 test.describe('Changes panel: commit-detail selection', () => {
+  test.describe.configure({ mode: 'default' });
+
   test('selecting a commit scopes the detail pane to its diff; Uncommitted returns to the working diff', async () => {
     const card = page.locator('[data-swimlane-name="Code Review"]').locator('text=Commit Detail Task').first();
     await card.click();
@@ -273,6 +281,8 @@ const restorePreConfig = `
 `;
 
 test.describe('Changes panel: commit-detail header restore fallback', () => {
+  test.describe.configure({ mode: 'default' });
+
   let restoreBrowser: Browser;
   let restorePage: Page;
 
@@ -468,6 +478,8 @@ function fileRowButton(page: Page, filePath: string) {
 }
 
 test.describe('Changes panel: file-content cache key isolation across commit selection', () => {
+  test.describe.configure({ mode: 'default' });
+
   let cacheBrowser: Browser;
   let cachePage: Page;
 

@@ -30,6 +30,11 @@ import { waitForViteReady } from './helpers';
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
 
+// File-level parallel + per-describe default makes each top-level describe its own
+// shardable test group. It does NOT scatter tests within a describe, so the
+// per-document isolation the header describes is untouched.
+test.describe.configure({ mode: 'parallel' });
+
 const PROJECT_ID = 'proj-stats-lazy';
 
 const preConfig = `
@@ -68,6 +73,8 @@ async function launchPage(): Promise<{ browser: Browser; page: Page }> {
 }
 
 test.describe('usage stats: lazy-import failure is scoped and recoverable', () => {
+  test.describe.configure({ mode: 'default' });
+
   let browser: Browser;
   let page: Page;
 
@@ -123,6 +130,8 @@ test.describe('usage stats: lazy-import failure is scoped and recoverable', () =
 });
 
 test.describe('usage stats: cold open paints the layout skeleton, then the dashboard', () => {
+  test.describe.configure({ mode: 'default' });
+
   let browser: Browser;
   let page: Page;
 

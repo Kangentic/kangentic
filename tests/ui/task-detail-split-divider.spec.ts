@@ -25,6 +25,16 @@ import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
 import { waitForViteReady } from './helpers';
 
+// File-level parallel + per-describe default makes each top-level describe its own
+// shardable test group. Each describe already launches its own browser in beforeAll,
+// so this costs nothing and stops the file being one atomic unit on one shard.
+//
+// It is deliberately NOT a bare file-level `mode: 'parallel'`: that scatters every
+// test to its own worker, which would break the persistence describe below, whose two
+// tests are an ordered pair (the first writes the ratio, the second reads it back).
+// `mode: 'default'` keeps each describe's tests in order on one worker.
+test.describe.configure({ mode: 'parallel' });
+
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
 
@@ -212,6 +222,8 @@ async function setStoredDividerRatioAndWait(page: Page, taskId: string, ratio: n
 // ---------------------------------------------------------------------------
 
 test.describe('Task Detail split divider: presence', () => {
+  test.describe.configure({ mode: 'default' });
+
   let browser: Browser;
   let page: Page;
 
@@ -310,6 +322,8 @@ test.describe('Task Detail split divider: presence', () => {
 // ---------------------------------------------------------------------------
 
 test.describe('Task Detail split divider: drag to resize', () => {
+  test.describe.configure({ mode: 'default' });
+
   let browser: Browser;
   let page: Page;
 
@@ -478,6 +492,9 @@ test.describe('Task Detail split divider: drag to resize', () => {
 // ---------------------------------------------------------------------------
 
 test.describe('Task Detail split divider: persistence', () => {
+  // Ordered pair: the drag test writes the ratio the reopen test reads back.
+  test.describe.configure({ mode: 'default' });
+
   let browser: Browser;
   let page: Page;
 
@@ -557,6 +574,8 @@ test.describe('Task Detail split divider: persistence', () => {
 // ---------------------------------------------------------------------------
 
 test.describe('Task Detail split divider: shared ratio across panel views', () => {
+  test.describe.configure({ mode: 'default' });
+
   let browser: Browser;
   let page: Page;
 
@@ -629,6 +648,8 @@ test.describe('Task Detail split divider: shared ratio across panel views', () =
 // ---------------------------------------------------------------------------
 
 test.describe('Task Detail split divider: resize overlay visibility', () => {
+  test.describe.configure({ mode: 'default' });
+
   let browser: Browser;
   let page: Page;
 
@@ -696,6 +717,8 @@ test.describe('Task Detail split divider: resize overlay visibility', () => {
 // ---------------------------------------------------------------------------
 
 test.describe('Task Detail split divider: terminal-panel-resize event', () => {
+  test.describe.configure({ mode: 'default' });
+
   let browser: Browser;
   let page: Page;
 
