@@ -286,15 +286,24 @@ describe('registerAllIpc idempotency', () => {
     // ActivityIntervalRecorder (also real and unmocked here - it is
     // constructed and .start()-ed the same way as desktopNotifier, just
     // below it in register-all.ts) attaches its own 'activity'/'exit' pair
-    // to write the session_activity_intervals ledger. Nothing else in this
-    // test's dependency graph listens on those events (every other
-    // registerXHandlers call and retrievalService.attach are mocked above),
-    // so a count of 2 here is exactly desktopNotifier (1) +
-    // activityIntervalRecorder (1). If this ever needs to change, re-attribute
-    // the count explicitly rather than just bumping the number.
+    // to write the session_activity_intervals ledger.
+    //
+    // The counts are DIFFERENT and that asymmetry is the point:
+    //   activity: desktopNotifier (1) + activityIntervalRecorder (1)       = 2
+    //   exit:     those two, plus registerMonitorHandlers (1)              = 3
+    //
+    // `registerMonitorHandlers` is deliberately NOT mocked below, so its real
+    // `sessionManager.on('exit', schedulePush)` attaches here - that is how the
+    // Agent Monitor learns a session ended and debounces a MONITOR_CHANGED push
+    // to every window. It takes no 'activity' listener, because live activity
+    // rides the unbuffered `session:activity` push and is patched onto rows in
+    // place rather than triggering a snapshot rebuild.
+    //
+    // If this ever needs to change, re-attribute the count explicitly rather
+    // than just bumping the number.
     expect(getOptionalIpcContext()?.desktopNotifier).toBeDefined();
     expect(getSessionManager().listenerCount('activity')).toBe(2);
-    expect(getSessionManager().listenerCount('exit')).toBe(2);
+    expect(getSessionManager().listenerCount('exit')).toBe(3);
   }, 30000);
 
   it('second call updates mainWindow without re-registering handlers', async () => {
@@ -358,17 +367,21 @@ describe('registerAllIpc idempotency', () => {
     // doesn't throw the way a real double-registration might.
     expect(mobileBridgeAttachContextSpy).toHaveBeenCalledTimes(1);
 
-    // Same guarantee for the desktop notifier AND the ActivityIntervalRecorder:
-    // a re-activate on macOS must not attach a second pair of SessionManager
-    // listeners for either (which would double-fire every idle/crash
-    // notification, and double-write every committed disposition transition
-    // to session_activity_intervals). Both are constructed inside the
-    // `if (context) return` idempotency guard at the top of registerAllIpc,
-    // so this assertion genuinely exercises that guard rather than passing
-    // by accident - it goes red the moment either listener stops being
-    // reused across a second registerAllIpc call.
+    // Same guarantee for the desktop notifier, the ActivityIntervalRecorder AND
+    // the Agent Monitor's push scheduler: a re-activate on macOS must not attach
+    // a second set of SessionManager listeners for any of them (which would
+    // double-fire every idle/crash notification, double-write every committed
+    // disposition transition to session_activity_intervals, and schedule the
+    // monitor's debounced snapshot push twice per session exit). All are reached
+    // inside the `if (context) return` idempotency guard at the top of
+    // registerAllIpc, so this assertion genuinely exercises that guard rather
+    // than passing by accident - it goes red the moment any of those listeners
+    // stops being reused across a second registerAllIpc call.
+    //
+    // Counts as attributed in the first test: activity is the notifier plus the
+    // recorder; exit is those two plus registerMonitorHandlers.
     expect(getSessionManager().listenerCount('activity')).toBe(2);
-    expect(getSessionManager().listenerCount('exit')).toBe(2);
+    expect(getSessionManager().listenerCount('exit')).toBe(3);
   }, 30000);
 
   it('second call preserves existing services', async () => {

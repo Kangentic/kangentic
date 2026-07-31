@@ -48,9 +48,12 @@ import {
   launchApp,
   closeApp,
   createProject,
+  createTask,
   createTempProject,
   cleanupTempProject,
   getTestDataDir,
+  getTaskIdByTitle,
+  moveTaskIpc,
   waitForBoard,
   resolveMockAgentPath,
 } from './helpers';
@@ -98,6 +101,21 @@ function readLogLines(): string[] {
  *  before this check trip its own positive control. */
 function fixtureIsLive(): boolean {
   return readLogLines().some((line) => line.startsWith('start:'));
+}
+
+/**
+ * Resolve a swimlane's id by name via `window.electronAPI`, production-safe (no
+ * devtools global). `getSwimlaneIds` in helpers.ts only covers Planning/Done;
+ * this test needs Executing, so it resolves it inline the same way
+ * `window-light-dismiss-pty-survival.spec.ts`'s local `getSwimlaneByName` does.
+ */
+async function getSwimlaneByName(target: Page, name: string): Promise<string> {
+  const swimlaneId = await target.evaluate(async (laneName) => {
+    const swimlanes: Array<{ id: string; name: string }> = await window.electronAPI.swimlanes.list();
+    return swimlanes.find((swimlane) => swimlane.name === laneName)?.id ?? null;
+  }, name);
+  if (!swimlaneId) throw new Error(`Swimlane "${name}" not found`);
+  return swimlaneId;
 }
 
 test.beforeAll(async () => {
@@ -263,28 +281,15 @@ test.describe('terminal fit invariant across rapid detail open/close', () => {
     await waitForBoard(page);
     await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
 
-    const taskId = await page.evaluate(async (title) => {
-      const stores = (window as unknown as {
-        __zustandStores?: {
-          board: { getState: () => {
-            swimlanes: Array<{ id: string; name: string }>;
-            createTask: (input: unknown) => Promise<{ id: string }>;
-            moveTask: (input: unknown, skip?: boolean) => Promise<unknown>;
-          } };
-        };
-      }).__zustandStores;
-      if (!stores) throw new Error('window.__zustandStores not exposed');
-      const board = stores.board.getState();
-      const todo = board.swimlanes.find((lane) => lane.name === 'To Do');
-      const executing = board.swimlanes.find((lane) => lane.name === 'Executing');
-      if (!todo || !executing) throw new Error('expected To Do and Executing lanes');
-      const task = await board.createTask({ title, swimlane_id: todo.id, description: '' });
-      await board.moveTask(
-        { taskId: task.id, targetSwimlaneId: executing.id, targetPosition: 0 },
-        true,
-      );
-      return task.id;
-    }, TASK_NAME);
+    // Go through window.electronAPI end to end (createTask -> lookup -> move),
+    // never window.__zustandStores: that global is a devtools-only bridge, tree-
+    // shaken out of the production bundle CI builds and launches against, so a
+    // spec that depends on it throws "window.__zustandStores not exposed" there
+    // even though it is fine on a local dev build.
+    await createTask(page, TASK_NAME);
+    const taskId = await getTaskIdByTitle(page, TASK_NAME);
+    const executingSwimlaneId = await getSwimlaneByName(page, 'Executing');
+    await moveTaskIpc(page, taskId, executingSwimlaneId);
 
     // Wait for the PTY to be live and painting into the bottom panel.
     await page.locator('[data-testid="terminal-session-pane"] .xterm-screen')
@@ -303,16 +308,15 @@ test.describe('terminal fit invariant across rapid detail open/close', () => {
       intervals: [100],
     }).toBe(true);
 
-    // Open through the same signal every entry point uses (card click, search
-    // palette, notification): `detailTaskId` asks main's arbiter, which pushes back
-    // and mounts the window.
+    // Open the GENUINE way a user does: click the task's own card. That is the
+    // same signal every entry point uses (card click, search palette,
+    // notification): each calls `setDetailTaskId`, which TaskCard's
+    // `handleClick` also calls, and `detailTaskId` is what main's arbiter
+    // reads to mount the window. Unlike driving `window.__zustandStores`
+    // directly, clicking the card works against a production build, where
+    // that devtools-only global does not exist.
     const openDetail = async (id: string) => {
-      await page.evaluate((detailTaskId) => {
-        const stores = (window as unknown as {
-          __zustandStores?: { session: { getState: () => { setDetailTaskId: (v: string | null) => void } } };
-        }).__zustandStores;
-        stores?.session.getState().setDetailTaskId(detailTaskId);
-      }, id);
+      await page.locator(`[data-task-id="${id}"]`).first().click();
       await page.locator('#window-layer-root .xterm-screen')
         .first()
         .waitFor({ state: 'visible', timeout: 15000 });
