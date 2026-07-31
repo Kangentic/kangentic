@@ -2,8 +2,7 @@ import { useRef, useState } from 'react';
 import { ChevronDown, Layers } from 'lucide-react';
 import { useBoardStore } from '../../stores/board-store';
 import { ContextBarPopover } from './ContextBarPopover';
-
-const pill = 'px-2 py-0.5 rounded bg-surface-raised whitespace-nowrap select-none';
+import { pill } from './context-bar-pill';
 
 /** Sentinel for the synthetic "Default" profile - the columns' own settings, never stored. */
 const DEFAULT_PROFILE_VALUE = '__default__';

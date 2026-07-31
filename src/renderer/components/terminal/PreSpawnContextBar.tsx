@@ -4,8 +4,8 @@ import { agentDisplayName } from '../../utils/agent-display-name';
 import { DEFAULT_AGENT } from '../../../shared/types';
 import { ModelEffortPicker } from './ModelEffortPicker';
 import { ProfilePicker } from './ProfilePicker';
+import { pill } from './context-bar-pill';
 
-const pill = 'px-2 py-0.5 rounded bg-surface-raised whitespace-nowrap select-none';
 const containerClass = 'min-h-8 bg-surface/80 border-t border-edge flex flex-wrap items-center px-3 py-1.5 gap-x-2 gap-y-2 text-xs flex-shrink-0';
 
 interface PreSpawnContextBarProps {

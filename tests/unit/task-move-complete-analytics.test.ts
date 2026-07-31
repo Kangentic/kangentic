@@ -79,7 +79,8 @@ vi.mock('../../src/main/transition-engine/agent-resolver', () => ({
   resolveTargetAgent: vi.fn(() => ({ agent: 'claude', isHandoff: false })),
 }));
 
-vi.mock('../../src/main/transition-engine/injection-plan', () => ({
+vi.mock('../../src/main/transition-engine/injection-plan', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/transition-engine/injection-plan')>()),
   prepareInjectionPlan: vi.fn(() => null),
 }));
 

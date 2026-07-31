@@ -1,7 +1,50 @@
-import type { Project, SessionRecord, Swimlane, Task } from '../../shared/types';
+import type { Project, SessionRecord, SessionUsage, Swimlane, Task } from '../../shared/types';
 import type { AgentAdapter } from '../agent/agent-adapter';
 import type { SessionRepository } from '../db/repositories/session-repository';
 import type { CommandVerifier } from './terminal-submit-scheduler';
+
+/**
+ * The effort the AGENT itself reports it is running at, or null when it reports
+ * none (a model with no effort levels, an agent with no live telemetry, or a
+ * session that has not reported yet).
+ *
+ * `applied_effort` records what Kangentic ASKED for at spawn, resume, or a live
+ * switch. An `/effort` the user types straight into the terminal never reaches
+ * it, so on its own it goes stale and a later column move diffs against a value
+ * the session stopped running at. Claude Code documents its reported level as
+ * the one in force "after any silent downgrade for the selected model", making
+ * it the closest thing to ground truth available.
+ *
+ * Type-only dependency on the usage cache shape, so this module stays free of a
+ * runtime SessionManager import.
+ */
+export function resolveLiveEffort(
+  usageCacheReader: { getUsageCache(): Record<string, SessionUsage> },
+  sessionId: string | null | undefined,
+): string | null {
+  if (!sessionId) return null;
+  // `model` is required on the type, but several adapters build sparse usage via
+  // an `as unknown as SessionUsage` cast, so guard it rather than trust the type.
+  return usageCacheReader.getUsageCache()[sessionId]?.model?.effort ?? null;
+}
+
+/**
+ * Ground truth for "what effort is this session running at", used as the SOURCE
+ * side of a column-transition delta.
+ *
+ * Order: a per-task pin wins (the ContextBar contract - the session was spawned
+ * or switched to the pin, so source = target = pin and no slash fires), then
+ * what the agent reports, then what we last asked for. Keeping the pin ahead of
+ * live also preserves the protection a NULL `applied_effort` relies on for
+ * records that predate applied-settings recording.
+ */
+export function resolveSourceEffort(input: {
+  taskEffortOverride: string | null | undefined;
+  liveEffort: string | null | undefined;
+  appliedEffort: string | null | undefined;
+}): string | null {
+  return input.taskEffortOverride ?? input.liveEffort ?? input.appliedEffort ?? null;
+}
 
 /**
  * Per-agent translation of a column-level model/effort change (and an
@@ -53,6 +96,14 @@ export interface InjectionPlanInput {
   project?: Pick<Project, 'default_model' | 'default_effort'> | null;
   /** Already-interpolated auto_command from the destination column, or empty. */
   autoCommand?: string;
+  /**
+   * Effort the agent itself reports it is running at (`resolveLiveEffort`), or
+   * null/omitted when it reports none. Resolved by the caller rather than read
+   * here so this module needs no SessionManager at runtime and stays unit
+   * testable with plain values. Omitting it reproduces the previous behaviour
+   * exactly (source falls back to the session record).
+   */
+  liveEffort?: string | null;
 }
 
 export interface InjectionPlan {
@@ -88,10 +139,9 @@ export interface InjectionPlan {
 }
 
 export function prepareInjectionPlan(input: InjectionPlanInput): InjectionPlan | null {
-  const { adapter, sessionRepo, task, toLane, autoCommand, project } = input;
+  const { adapter, sessionRepo, task, toLane, autoCommand, project, liveEffort } = input;
 
-  // SOURCE is the model/effort the live session is ACTUALLY running at, read
-  // from the session record (`applied_model` / `applied_effort`), NOT the
+  // SOURCE is the model/effort the live session is ACTUALLY running at, NOT the
   // leaving column's config. The leaving column disagrees after an in-flight
   // ContextBar switch or a kangentic.json column-config edit, which is what
   // produced the spurious `/effort` injection. A per-task override still wins:
@@ -100,15 +150,33 @@ export function prepareInjectionPlan(input: InjectionPlanInput): InjectionPlan |
   // record exists (unit stubs, a session predating this column) the applied
   // value is null, i.e. "agent default".
   //
+  // For EFFORT the source now prefers what the agent reports over what we asked
+  // for (`resolveSourceEffort`). The record alone cannot see an `/effort` the
+  // user typed into the terminal, so it goes stale: with applied=high, a manual
+  // switch to medium, and a destination column requiring high, source and target
+  // both read high, no slash fires, and the session silently keeps running at
+  // medium in a column that requires high.
+  //
   // The project-default tier is read on BOTH sides: without it, a task moving
   // between two override-less columns on a project with a default_model set
   // would read source = the applied project default (recorded at the last
   // spawn) vs target = null, and spuriously restart/re-inject even though
   // nothing actually changed.
   const record = sessionRepo?.getLatestForTask(task.id) ?? null;
+  // MODEL is deliberately NOT sourced from live telemetry. The agent reports a
+  // canonical id (`claude-opus-4-8`) while `applied_model` / `model_override` /
+  // `default_model` hold whatever flag string the user configured (`opus`), so
+  // comparing across those id spaces would read "changed" on almost every move,
+  // and `needsRestartForModel` below turns that into a suspend + `--resume` PTY
+  // restart per column transition. Effort has no such split: both sides draw
+  // from the adapter's discovered `effortLevels` vocabulary.
   const sourceModel = task.model_override ?? record?.applied_model ?? null;
   const targetModel = task.model_override ?? toLane?.model_override ?? project?.default_model ?? null;
-  const sourceEffort = task.effort_override ?? record?.applied_effort ?? null;
+  const sourceEffort = resolveSourceEffort({
+    taskEffortOverride: task.effort_override,
+    liveEffort,
+    appliedEffort: record?.applied_effort,
+  });
   const targetEffort = task.effort_override ?? toLane?.effort_override ?? project?.default_effort ?? null;
 
   const modelChanged = targetModel !== sourceModel;

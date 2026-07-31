@@ -12,16 +12,29 @@ slashes a column transition emits by diffing a **source** against a **target**:
   two override-less columns on a project with a default model/effort set would read source = the
   applied project default (recorded at the last spawn) vs target = null, and spuriously
   restart/re-inject even though nothing actually changed.
-- **Source** is the value the live session is *actually running at*, read from the session
-  record's `applied_model` / `applied_effort` columns: `task.<override> ?? record.applied_<field> ?? null`.
-  It is NOT the leaving column's config. The leaving column disagrees with reality after an
-  in-flight ContextBar switch or a `kangentic.json` column-config edit, and is null on a move
-  with no resolvable leaving-column - either case used to manufacture a redundant `/effort`
-  injection even though the spawn/resume `--model` / `--effort` flags had already applied the value.
-  A per-task override still wins for that field (source = target = pin, so no slash fires).
+- **Source** is the value the live session is *actually running at*. It is NOT the leaving
+  column's config. The leaving column disagrees with reality after an in-flight ContextBar switch
+  or a `kangentic.json` column-config edit, and is null on a move with no resolvable
+  leaving-column - either case used to manufacture a redundant `/effort` injection even though the
+  spawn/resume `--model` / `--effort` flags had already applied the value.
+  - **Effort:** `task.effort_override ?? <agent-reported effort> ?? record.applied_effort ?? null`
+    (`resolveSourceEffort`). `applied_effort` records what Kangentic *asked for*; an `/effort` the
+    user types straight into the terminal never reaches it. Preferring the agent's own reported
+    level fixes the case where applied = `high`, the user switched to `medium` by hand, and the
+    destination column requires `high`: source and target both read `high`, no slash fires, and
+    the session silently keeps running at `medium`. Callers resolve the live value with
+    `resolveLiveEffort(usageCacheReader, sessionId)`, where the reader is anything exposing
+    `getUsageCache()` (the handlers pass `context.sessionManager`). It is null for agents with no
+    live telemetry and for models with no effort levels, where the behaviour is unchanged.
+  - **Model:** `task.model_override ?? record.applied_model ?? null`. Deliberately *not* sourced
+    from telemetry: the agent reports a canonical id (`claude-opus-4-8`) while the configured
+    values are flag strings (`opus`), so comparing across those id spaces would read "changed" on
+    almost every move and `needsRestartForModel` would turn that into a PTY restart each time.
+  - A per-task override still wins for either field (source = target = pin, so no slash fires).
 
-When a field changes to a concrete target, the returned `InjectionPlan` carries an
-`appliedSettings: { model?, effort? }` for the emitted fields. Each caller (the `task-move`
+When effort changes to a concrete target, the returned `InjectionPlan` carries an
+`appliedSettings: { effort? }`. Model is never recorded there: a model change restarts, and the
+respawn records `applied_model` itself via its `--model` flag. Each caller (the `task-move`
 Priority 3c path, the `SWIMLANE_UPDATE` propagation, and the `task:setRuntimeOverride` live path)
 persists it via `SessionRepository.updateAppliedSettings` after scheduling the burst, so the
 session's recorded running value stays current and the *next* transition diffs against the truth.
@@ -117,8 +130,8 @@ A non-Claude adapter could implement `'command-injection'` verification once its
 
 ## Files
 
-- `src/main/transition-engine/injection-plan.ts` -- builds the chained sequence + verifier from a column transition spec; sources the delta from the session record's `applied_model` / `applied_effort` and returns `appliedSettings` for the caller to persist.
-- `src/main/transition-engine/terminal-submit-scheduler.ts` -- task-keyed lifecycle wrapper: cancel-on-rerun, freshlySpawned wait, drag-burst coalesce, and `sendCtrlC` routing (suppressed for fresh-spawn, enabled for live-injection).
-- `src/main/pty/terminal-submit.ts` -- byte-level engine: `submitContent` (bracketed paste) + `submitKeystrokes` (manual keypress sequence with retry-on-unconfirmed).
-- `src/main/agent/adapters/claude/slash-command-verifier.ts` -- Claude-specific JSONL-polling implementation.
-- `src/shared/types.ts` -- `SubmissionContext`, `SubmissionContextType`, `SubmissionVerifier` type definitions.
+- `src/main/transition-engine/injection-plan.ts` - builds the chained sequence + verifier from a column transition spec; sources the effort delta from the agent's reported level ahead of the session record's `applied_effort` (`resolveLiveEffort` / `resolveSourceEffort`), the model delta from `applied_model` alone, and returns `appliedSettings` for the caller to persist.
+- `src/main/transition-engine/terminal-submit-scheduler.ts` - task-keyed lifecycle wrapper: cancel-on-rerun, freshlySpawned wait, drag-burst coalesce, and `sendCtrlC` routing (suppressed for fresh-spawn, enabled for live-injection).
+- `src/main/pty/terminal-submit.ts` - byte-level engine: `submitContent` (bracketed paste) + `submitKeystrokes` (manual keypress sequence with retry-on-unconfirmed).
+- `src/main/agent/adapters/claude/slash-command-verifier.ts` - Claude-specific JSONL-polling implementation.
+- `src/shared/types.ts` - `SubmissionContext`, `SubmissionContextType`, `SubmissionVerifier` type definitions.

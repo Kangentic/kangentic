@@ -43,6 +43,7 @@ export function ContextBarPopover({
   pinnedOptions = [],
   currentValue,
   swimlaneDefault,
+  swimlaneDefaultLabel,
   onSelect,
   onClose,
   testId,
@@ -67,6 +68,15 @@ export function ContextBarPopover({
    * default" exists, so the live session keeps its current value).
    */
   swimlaneDefault: string | null;
+  /**
+   * Display form of `swimlaneDefault` for the bottom row. Model values are raw
+   * CLI ids (`claude-sonnet-5`), which read as noise next to the humanized rows
+   * above ("Sonnet 5"), so the model picker passes the same label those rows
+   * use. Omit for fields whose values are already human-readable (effort levels
+   * are literally "low".."max") and the raw value is shown. The `title` keeps
+   * the exact value either way, matching the option rows.
+   */
+  swimlaneDefaultLabel?: string | null;
   /** Called with the picked value, or `null` for "Use column default" (clears the per-task override). */
   onSelect: (value: string | null) => void;
   onClose: () => void;
@@ -128,7 +138,11 @@ export function ContextBarPopover({
       option.value === currentValue ||
       (oneMillionValue !== null && oneMillionValue === currentValue);
     return (
-      <div key={option.value} className="flex items-center">
+      // The hover highlight belongs on the ROW, not on the label button. The
+      // context badge and the 1M chip are siblings of that button, so a
+      // highlight scoped to it visibly stopped partway across the row, leaving
+      // the badge sitting on the unhighlighted background.
+      <div key={option.value} className="flex items-center hover:bg-surface-hover/40">
         <button
           type="button"
           onClick={() => onSelect(option.value)}
@@ -138,7 +152,7 @@ export function ContextBarPopover({
           // keeps short option lists like effort (`low`..`max`) from
           // collapsing to a 60px-wide target. Long model ids still grow
           // the popover past this floor via the parent's `w-max`.
-          className={`flex-1 min-w-[180px] py-2 text-sm text-left hover:bg-surface-hover/40 flex items-center gap-2 whitespace-nowrap ${
+          className={`flex-1 min-w-[180px] py-2 text-sm text-left flex items-center gap-2 whitespace-nowrap ${
             indent ? 'pl-7 pr-3 text-fg-muted' : 'px-3 text-fg-secondary'
           }`}
           data-testid={testId ? `${testId}-option-${option.value}` : undefined}
@@ -224,7 +238,7 @@ export function ContextBarPopover({
             data-testid={testId ? `${testId}-option-clear` : undefined}
           >
             <Check size={12} className={`flex-shrink-0 ${currentValue === null ? 'text-fg-secondary' : 'text-transparent'}`} />
-            <span className="flex-1 truncate">Use column default <span className="text-fg-disabled">({swimlaneDefault})</span></span>
+            <span className="flex-1 truncate">Use column default <span className="text-fg-disabled">({swimlaneDefaultLabel ?? swimlaneDefault})</span></span>
           </button>
         </div>
       )}

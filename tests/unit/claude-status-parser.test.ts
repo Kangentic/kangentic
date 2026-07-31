@@ -115,6 +115,33 @@ describe('ClaudeStatusParser', () => {
       const usage = ClaudeStatusParser.parseStatus(raw);
       expect(usage).not.toBeNull();
       expect(usage!.model.effort).toBe('xhigh');
+      expect(usage!.model.reportedByAgent).toBe(true);
+    });
+
+    it('ROOT CAUSE: a Haiku 4.5 payload reports its model but omits effort entirely', () => {
+      // Fixture shape authored from the Claude Code 2.1.220 statusline payload
+      // builder, NOT invented. That builder assembles the field as
+      // `supportsEffort(model) ? { level } : undefined` and JSON.stringify drops
+      // an undefined key; the capability check's exclusion list contains
+      // `claude-haiku-4-5`. So on Haiku there is no `effort` key to read, while
+      // `model` still reports normally - exactly what the bug screenshot showed
+      // (model pill updated to Haiku 4.5, effort pill stuck on a stale `high`).
+      const raw = JSON.stringify({
+        session_id: 'a1b2c3d4-0000-4000-8000-000000000000',
+        transcript_path: '/mock/projects/demo/a1b2c3d4.jsonl',
+        cwd: '/mock/demo',
+        prompt_id: 'b2c3d4e5-0000-4000-8000-000000000000',
+        model: { id: 'claude-haiku-4-5', display_name: 'Haiku 4.5' },
+        context_window: { used_percentage: 38, context_window_size: 200_000, total_input_tokens: 76_200 },
+        cost: { total_cost_usd: 0.57, total_duration_ms: 176_000 },
+      });
+      const usage = ClaudeStatusParser.parseStatus(raw);
+      expect(usage).not.toBeNull();
+      expect(usage!.model.displayName).toBe('Haiku 4.5');
+      expect(usage!.model.effort).toBeUndefined();
+      // The snapshot still ARRIVED. That is what lets the renderer say "this
+      // model has no effort level" rather than "nothing has reported yet".
+      expect(usage!.model.reportedByAgent).toBe(true);
     });
 
     it('leaves model.effort undefined when status omits effort', () => {

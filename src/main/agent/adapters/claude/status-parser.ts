@@ -86,9 +86,21 @@ export class ClaudeStatusParser {
       // 2.1.132+), so capture it for the lifetime-stats rollup.
       const transcriptPath = typeof data.transcript_path === 'string' ? data.transcript_path : undefined;
 
-      // Claude Code 2.1.119+ reports the active effort level (low/medium/high/xhigh)
-      // as a top-level `effort: { level }` object alongside model. Older versions
-      // omit it entirely, in which case we leave the field undefined.
+      // Claude Code 2.1.119+ reports the active effort level (low/medium/high/
+      // xhigh/max) as a top-level `effort: { level }` object alongside model.
+      //
+      // The key is absent in two distinct situations, and we deliberately do not
+      // try to tell them apart here:
+      //   1. Older Claude Code versions that predate the field.
+      //   2. Current versions running a model with NO effort levels. Claude Code
+      //      builds the field as `supportsEffort(model) ? { level } : undefined`
+      //      and JSON.stringify drops it. Support is per MODEL, not per family
+      //      or generation: `claude-haiku-4-5` and `claude-sonnet-4-5` have no
+      //      effort while `claude-opus-4-8` does. This is the case that made the
+      //      ContextBar show a stale configured effort as if it were live.
+      // Either way the honest answer is "the agent reports no effort", which is
+      // what `undefined` means downstream. `reportedByAgent` below carries the
+      // separate fact that a snapshot arrived at all.
       const effortObject = data.effort as Record<string, unknown> | undefined;
       const effortLevel = typeof effortObject?.level === 'string' ? effortObject.level : undefined;
 
@@ -140,6 +152,10 @@ export class ClaudeStatusParser {
             id: modelId,
             displayName: (model?.display_name as string) ?? '',
             effort: effortLevel,
+            // We only reach here by successfully parsing a real status payload,
+            // so this block is agent-reported by construction. The single place
+            // in the app that sets this.
+            reportedByAgent: true,
           },
           sessionId,
           transcriptPath,

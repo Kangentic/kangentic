@@ -90,7 +90,10 @@ vi.mock('../../src/main/transition-engine/agent-resolver', () => ({
   resolveTargetAgent: vi.fn(() => ({ agent: 'claude', isHandoff: false })),
 }));
 
-vi.mock('../../src/main/transition-engine/injection-plan', () => ({
+// Only the plan builder is mocked. `resolveLiveEffort` / `resolveSourceEffort`
+// stay real: the 2b respawn assertions below depend on their actual precedence.
+vi.mock('../../src/main/transition-engine/injection-plan', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/transition-engine/injection-plan')>()),
   prepareInjectionPlan: vi.fn(() => null),
 }));
 
@@ -201,6 +204,9 @@ function makeContext(taskRepo: unknown, swimlaneRepo: unknown) {
     killByTaskId: vi.fn(),
     listSessions: vi.fn(() => []),
     suspend: vi.fn(async () => {}),
+    // Read by resolveLiveEffort. Empty = the agent reports no effort, so the
+    // effort delta sources from the session record, as these cases assume.
+    getUsageCache: vi.fn((): Record<string, unknown> => ({})),
   };
   const context = {
     currentProjectId: 'proj-test',
@@ -657,6 +663,85 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
     // Delta exists: applied='low', target='xhigh' -> respawn.
     expect(context.sessionManager.suspend).toHaveBeenCalledWith('active-session-1');
     expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it('no-live-swap: DOES respawn when the agent reports an effort the record never saw', async () => {
+    // The stale-record bug at the handler level. `applied_effort` says xhigh
+    // because that is what we spawned with, but the user typed `/effort medium`
+    // in the terminal, which nothing writes back. The destination column wants
+    // xhigh. Diffing against the record alone reads xhigh == xhigh, fires
+    // nothing, and leaves the session running at medium in a column that
+    // requires xhigh. Diffing against what the agent reports catches it.
+    const { swimlaneRepo } = makeLanes({ permission_mode: null, effort_override: 'xhigh' });
+    setActiveRecord('acceptEdits', null, 'xhigh');
+    const taskRepo = makeTaskRepo();
+    const context = makeContext(taskRepo, swimlaneRepo);
+    context.sessionManager.getUsageCache.mockReturnValue({
+      'active-session-1': { model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8', effort: 'medium' } },
+    });
+    vi.mocked(prepareInjectionPlan).mockReturnValue(null);
+
+    await handleTaskMove(context as never, {
+      taskId: 'task-aaa00001',
+      targetSwimlaneId: EXECUTING_LANE_ID,
+      targetPosition: 0,
+    });
+
+    expect(context.sessionManager.suspend).toHaveBeenCalledWith('active-session-1');
+    expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes the usage-cache-resolved liveEffort on the prepareInjectionPlan input (not just the 2b fallback)', async () => {
+    // The two tests above prove liveEffort reaches the 2b resolveSourceEffort
+    // fallback (task-move.ts reads it once and shares it with both). This one
+    // pins the OTHER consumer of that same value: the `liveEffort` property on
+    // the object handed to prepareInjectionPlan itself. Deleting `liveEffort,`
+    // from that call site would still pass every test above (prepareInjectionPlan
+    // is stubbed to return null regardless of its input) but must fail here.
+    const { swimlaneRepo } = makeLanes({ permission_mode: null, effort_override: 'xhigh' });
+    setActiveRecord('acceptEdits', null, 'xhigh');
+    const taskRepo = makeTaskRepo();
+    const context = makeContext(taskRepo, swimlaneRepo);
+    // A decoy entry under a different session id proves the lookup keys off
+    // the task's OWN session_id ('active-session-1'), not just any populated entry.
+    context.sessionManager.getUsageCache.mockReturnValue({
+      'other-session': { model: { id: 'claude-sonnet-4-5', displayName: 'Sonnet 4.5', effort: 'low' } },
+      'active-session-1': { model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8', effort: 'medium' } },
+    });
+    vi.mocked(prepareInjectionPlan).mockReturnValue(null);
+
+    await handleTaskMove(context as never, {
+      taskId: 'task-aaa00001',
+      targetSwimlaneId: EXECUTING_LANE_ID,
+      targetPosition: 0,
+    });
+
+    expect(vi.mocked(prepareInjectionPlan)).toHaveBeenCalledTimes(1);
+    const planArg = vi.mocked(prepareInjectionPlan).mock.calls[0][0] as { liveEffort?: string | null };
+    expect(planArg.liveEffort).toBe('medium');
+  });
+
+  it('no-live-swap: does NOT respawn when the agent reports it already runs at the destination effort', async () => {
+    // Mirror of the above, and the churn this also removes: the record is stale
+    // at low, but the agent reports it is already at the destination xhigh, so
+    // there is nothing to apply.
+    const { swimlaneRepo } = makeLanes({ permission_mode: null, effort_override: 'xhigh' });
+    setActiveRecord('acceptEdits', null, 'low');
+    const taskRepo = makeTaskRepo();
+    const context = makeContext(taskRepo, swimlaneRepo);
+    context.sessionManager.getUsageCache.mockReturnValue({
+      'active-session-1': { model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8', effort: 'xhigh' } },
+    });
+    vi.mocked(prepareInjectionPlan).mockReturnValue(null);
+
+    await handleTaskMove(context as never, {
+      taskId: 'task-aaa00001',
+      targetSwimlaneId: EXECUTING_LANE_ID,
+      targetPosition: 0,
+    });
+
+    expect(context.sessionManager.suspend).not.toHaveBeenCalled();
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
   });
 
   // =========================================================================

@@ -91,7 +91,8 @@ vi.mock('../../src/main/ipc/handlers/session-reconcile', () => ({
     hoisted.restartSessionForSettingsChange(...args),
 }));
 
-vi.mock('../../src/main/transition-engine/injection-plan', () => ({
+vi.mock('../../src/main/transition-engine/injection-plan', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/transition-engine/injection-plan')>()),
   prepareInjectionPlan: (...args: unknown[]) => hoisted.prepareInjectionPlan(...args as [never]),
 }));
 
@@ -138,6 +139,7 @@ interface MockContext {
   currentProjectPath: string | null;
   sessionManager: {
     getSession: ReturnType<typeof vi.fn>;
+    getUsageCache: ReturnType<typeof vi.fn>;
   };
   terminalSubmitScheduler: { scheduleKeystrokes: ReturnType<typeof vi.fn> };
   boardConfigManager: {
@@ -170,6 +172,9 @@ function createMockContext(overrides: Partial<MockContext> = {}): MockContext {
     currentProjectPath: '/mock/board-project',
     sessionManager: {
       getSession: vi.fn(() => ({ status: 'running' })),
+      // Read by resolveLiveEffort; empty = the agent reports no effort, so the
+      // delta source falls back to the session record as it did before.
+      getUsageCache: vi.fn(() => ({})),
     },
     terminalSubmitScheduler: { scheduleKeystrokes: vi.fn() },
     boardConfigManager: {

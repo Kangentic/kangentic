@@ -32,7 +32,7 @@ import { runWithProjectLogContext } from '../../diagnostics/project-log-context'
 import { emitSpawnProgress, emitSpawnWaiting, clearSpawnProgress, createProgressCallback, getInFlightSpawnProgress } from '../../transition-engine/spawn-progress';
 import { resolveTargetAgent } from '../../transition-engine/agent-resolver';
 import { agentRegistry } from '../../agent/agent-registry';
-import { prepareInjectionPlan } from '../../transition-engine/injection-plan';
+import { prepareInjectionPlan, resolveLiveEffort, resolveSourceEffort } from '../../transition-engine/injection-plan';
 import { resolveIsolatedSwimlaneId, resolveForceFresh } from '../../transition-engine/session-isolation';
 import { resolveEffectiveAutoCommand, applyProfileToLane } from '../../transition-engine/column-strategy';
 import { loadTaskProfile } from '../helpers/task-profile';
@@ -595,6 +595,10 @@ export async function handleTaskMove(
                 attachmentPaths: attachments.getPathsForTask(task.id),
               }))
             : '';
+          // Read ONCE and share with the 2b fallback below, so the plan and the
+          // respawn decision cannot straddle a status update and disagree about
+          // what the session is running at.
+          const liveEffort = resolveLiveEffort(context.sessionManager, task.session_id);
           const plan = prepareInjectionPlan({
             adapter,
             sessionRepo,
@@ -602,6 +606,7 @@ export async function handleTaskMove(
             toLane: toLane ?? null,
             project,
             autoCommand: interpolatedAuto,
+            liveEffort,
           });
 
           // 1. Model change -> suspend + respawn. Checked BEFORE live injection
@@ -668,7 +673,11 @@ export async function handleTaskMove(
           // overrides win (no respawn when the task pinned the field). The
           // `!interpolatedAuto` guard is structurally redundant (an auto_command
           // would have produced a non-null plan above) but kept for safety.
-          const sourceEffort = task.effort_override ?? activeRecord?.applied_effort ?? null;
+          const sourceEffort = resolveSourceEffort({
+            taskEffortOverride: task.effort_override,
+            liveEffort,
+            appliedEffort: activeRecord?.applied_effort,
+          });
           const targetEffort = task.effort_override ?? toLane?.effort_override ?? project?.default_effort ?? null;
           const restartNeededForEffort = targetEffort !== sourceEffort && targetEffort !== null;
 

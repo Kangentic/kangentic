@@ -40,7 +40,12 @@ async function launchWithState(preConfigScript: string): Promise<{ browser: Brow
   return { browser, page };
 }
 
-const CLAUDE_RUNNING_PRECONFIG = `
+/**
+ * `effortOverride` is the configured task-level tier. The default (null) keeps
+ * the original fixtures' behaviour: no override anywhere, so a session that
+ * reports no effort has nothing to fall back to and the pill stays hidden.
+ */
+const claudeRunningPreconfig = (effortOverride: string | null = null): string => `
   window.__mockPreConfigure(function (state) {
     var ts = new Date().toISOString();
 
@@ -91,6 +96,8 @@ const CLAUDE_RUNNING_PRECONFIG = `
       position: 0,
       agent: 'claude',
       session_id: '${SESSION_ID}',
+      effort_override: ${effortOverride === null ? 'null' : `'${effortOverride}'`},
+      model_override: null,
       worktree_path: null,
       branch_name: null,
       pr_number: null,
@@ -105,16 +112,26 @@ const CLAUDE_RUNNING_PRECONFIG = `
   });
 `;
 
-async function applyClaudeUsage(page: Page, sessionId: string, effort: string | undefined): Promise<void> {
+async function applyClaudeUsage(
+  page: Page,
+  sessionId: string,
+  effort: string | undefined,
+  options: { reportedByAgent?: boolean; modelId?: string; modelDisplayName?: string } = {},
+): Promise<void> {
+  const {
+    reportedByAgent = true,
+    modelId = 'claude-opus-4-7[1m]',
+    modelDisplayName = 'Opus 4.7 (1M context)',
+  } = options;
   await page.evaluate(
-    ({ sessionId: id, effort: effortLevel }) => {
+    ({ sessionId: id, effort: effortLevel, reported, modelIdValue, modelName }) => {
       const stores = (window as unknown as {
         __zustandStores?: {
           session: { getState: () => { updateUsage: (id: string, data: unknown) => void } };
         };
       }).__zustandStores;
       stores?.session.getState().updateUsage(id, {
-        model: { id: 'claude-opus-4-7[1m]', displayName: 'Opus 4.7 (1M context)', effort: effortLevel },
+        model: { id: modelIdValue, displayName: modelName, effort: effortLevel, reportedByAgent: reported },
         contextWindow: {
           usedPercentage: 0,
           usedTokens: 0,
@@ -126,13 +143,13 @@ async function applyClaudeUsage(page: Page, sessionId: string, effort: string | 
         cost: { totalCostUsd: 0, totalDurationMs: 0 },
       });
     },
-    { sessionId, effort },
+    { sessionId, effort, reported: reportedByAgent, modelIdValue: modelId, modelName: modelDisplayName },
   );
 }
 
 test.describe('ContextBar effort suffix', () => {
   test('renders effort level next to model name when usage.model.effort is set', async () => {
-    const { browser, page } = await launchWithState(CLAUDE_RUNNING_PRECONFIG);
+    const { browser, page } = await launchWithState(claudeRunningPreconfig());
     try {
       await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
 
@@ -150,7 +167,7 @@ test.describe('ContextBar effort suffix', () => {
   });
 
   test('omits effort suffix when usage.model.effort is undefined (older Claude Code)', async () => {
-    const { browser, page } = await launchWithState(CLAUDE_RUNNING_PRECONFIG);
+    const { browser, page } = await launchWithState(claudeRunningPreconfig());
     try {
       await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
 
@@ -163,6 +180,97 @@ test.describe('ContextBar effort suffix', () => {
       await expect(usageBar).not.toContainText('high');
       await expect(usageBar).not.toContainText('medium');
       await expect(usageBar).not.toContainText('low');
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+/**
+ * A value the agent reports and a value we merely configured used to render
+ * identically. On a model with no effort levels (Claude Code omits the `effort`
+ * key entirely for those) that made the pill show a stale configured tier with
+ * full confidence. Provenance is asserted through `data-effort-source` /
+ * `data-model-source` rather than classes or measured borders, so these do not
+ * depend on rendering geometry.
+ */
+test.describe('ContextBar pill provenance', () => {
+  test('hides the effort control entirely when the model has no effort levels', async () => {
+    const { browser, page } = await launchWithState(claudeRunningPreconfig('high'));
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+      // A Haiku-shaped snapshot: model reported, effort key absent. That pair
+      // proves the model has no effort levels, so an effort picker could not
+      // apply anything to this session and a configured tier means nothing here.
+      await applyClaudeUsage(page, SESSION_ID, undefined, {
+        reportedByAgent: true,
+        modelId: 'claude-haiku-4-5',
+        modelDisplayName: 'Haiku 4.5',
+      });
+
+      // Scoped to the bar: a task-detail window plus the bottom panel can mount
+      // two context bars, and an unscoped locator would fail strict mode.
+      const usageBar = page.locator('[data-testid="usage-bar"].min-h-8');
+      // The model DID report, so its own pill is live - which is what proves a
+      // snapshot landed rather than the bar simply not having painted yet.
+      await expect(usageBar.locator('[data-model-source]'))
+        .toHaveAttribute('data-model-source', 'live', { timeout: 5000 });
+      await expect(usageBar.locator('[data-effort-source]')).toHaveCount(0);
+      // The configured `high` must not leak in as bare text either.
+      await expect(usageBar).not.toContainText('high');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('marks the effort pill configured before the first snapshot arrives', async () => {
+    const { browser, page } = await launchWithState(claudeRunningPreconfig('high'));
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+      // Spawn-seeded model, nothing reported yet. Whether this model has effort
+      // is still unknown, so the configured tier is the best answer available -
+      // shown, but marked as not confirmed.
+      await applyClaudeUsage(page, SESSION_ID, undefined, { reportedByAgent: false });
+
+      const effortPill = page.locator('[data-testid="usage-bar"].min-h-8').locator('[data-effort-source]');
+      await expect(effortPill).toHaveAttribute('data-effort-source', 'configured', { timeout: 5000 });
+      await expect(effortPill).toContainText('high');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('marks the effort pill live when the agent reports one', async () => {
+    const { browser, page } = await launchWithState(claudeRunningPreconfig('high'));
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+      await applyClaudeUsage(page, SESSION_ID, 'low');
+
+      const effortPill = page.locator('[data-testid="usage-bar"].min-h-8').locator('[data-effort-source]');
+      await expect(effortPill).toHaveAttribute('data-effort-source', 'live', { timeout: 5000 });
+      // Live wins over the configured `high`.
+      await expect(effortPill).toContainText('low');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('marks the model pill configured until a telemetry snapshot lands', async () => {
+    const { browser, page } = await launchWithState(claudeRunningPreconfig('high'));
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+      // A spawn seeds the model name from the `--model` flag with no telemetry.
+      await applyClaudeUsage(page, SESSION_ID, undefined, { reportedByAgent: false });
+      const modelPill = page.locator('[data-testid="usage-bar"].min-h-8').locator('[data-model-source]');
+      await expect(modelPill).toHaveAttribute('data-model-source', 'configured', { timeout: 5000 });
+
+      // The agent reports; the same pill becomes live.
+      await applyClaudeUsage(page, SESSION_ID, 'low', { reportedByAgent: true });
+      await expect(modelPill).toHaveAttribute('data-model-source', 'live', { timeout: 5000 });
     } finally {
       await browser.close();
     }

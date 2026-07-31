@@ -1,7 +1,7 @@
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { getProjectDb } from '../../db/database';
 import { agentRegistry } from '../../agent/agent-registry';
-import { prepareInjectionPlan } from '../../transition-engine/injection-plan';
+import { prepareInjectionPlan, resolveLiveEffort } from '../../transition-engine/injection-plan';
 import { applyProfileToLane, findTaskProfile } from '../../transition-engine/column-strategy';
 import { restartSessionForSettingsChange } from './session-reconcile';
 import { getProjectRepos } from '../helpers';
@@ -59,6 +59,12 @@ export function propagateStrategyToLiveSessions(
   const projectPath = context.currentProjectPath;
   const sessionRepo = projectId ? new SessionRepository(getProjectDb(projectId)) : null;
   const project = projectId ? context.projectRepo.getById(projectId) : null;
+  // `getUsageCache()` rebuilds a plain object from the app-wide session map on
+  // every call, so reading it per task would be O(tasks x live sessions across
+  // ALL open projects). Nothing mutates it inside this synchronous loop, so one
+  // snapshot serves the whole pass.
+  const usageCacheSnapshot = context.sessionManager.getUsageCache();
+  const usageCacheReader = { getUsageCache: () => usageCacheSnapshot };
 
   for (const { task, before, after, sourceName } of changes) {
     // Re-saving at a value the task already resolves to must inject nothing.
@@ -78,7 +84,18 @@ export function propagateStrategyToLiveSessions(
     const adapter = task.agent ? agentRegistry.get(task.agent) : undefined;
     // No auto_command propagation on a settings edit - the intent is "change
     // settings", not "re-run any auto trigger".
-    const plan = prepareInjectionPlan({ adapter, sessionRepo, task, toLane: after, project });
+    // Same source of truth as a column move, so the two paths cannot disagree
+    // about what the session is running at. Also drops a redundant injection:
+    // editing a column from low to high on a session the user already switched
+    // to high by hand currently re-injects `/effort high` for nothing.
+    const plan = prepareInjectionPlan({
+      adapter,
+      sessionRepo,
+      task,
+      toLane: after,
+      project,
+      liveEffort: resolveLiveEffort(usageCacheReader, task.session_id),
+    });
     if (!plan) continue;
 
     if (plan.needsRestartForModel) {

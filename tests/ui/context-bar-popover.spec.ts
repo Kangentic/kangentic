@@ -649,6 +649,35 @@ test.describe('ContextBar model popover - grouped suffixed models', () => {
         { taskId: TASK_ID, model: 'claude-opus-4-8[1m]' },
       ]);
 
+      // The "Use column default" footer humanizes the column's model the same
+      // way the rows above do. It used to print the raw CLI id, which read as
+      // noise next to "Opus 4.8" / "Haiku 4.5" one row up. The exact id stays
+      // in the title attribute, matching the option rows.
+      await expect(popover).toHaveCount(0);
+      await page.evaluate((taskId) => {
+        const stores = (window as unknown as {
+          __zustandStores?: { board: { setState: (fn: (s: unknown) => unknown) => void } };
+        }).__zustandStores;
+        stores?.board.setState((s) => {
+          const state = s as {
+            tasks: Array<{ id: string; swimlane_id: string }>;
+            swimlanes: Array<{ id: string; model_override: string | null }>;
+          };
+          const laneId = state.tasks.find((t) => t.id === taskId)?.swimlane_id;
+          return {
+            swimlanes: state.swimlanes.map((lane) =>
+              lane.id === laneId ? { ...lane, model_override: 'claude-opus-4-8' } : lane,
+            ),
+          };
+        });
+      }, TASK_ID);
+      await modelTrigger.click();
+      const clearRow = page.locator('[data-testid="context-bar-model-popover-option-clear"]');
+      await expect(clearRow).toHaveText('Use column default (Opus 4.8)');
+      await expect(clearRow).toHaveAttribute('title', 'claude-opus-4-8');
+      await modelTrigger.click();
+      await expect(popover).toHaveCount(0);
+
       // When the live model IS a demoted (dated pin) build, the disclosure
       // auto-expands so the active value's checkmark is never hidden.
       await applyClaudeUsage(page, SESSION_ID, 'claude-haiku-4-5-20251001', 'Haiku 4.5', 'high');

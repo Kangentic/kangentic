@@ -1212,8 +1212,33 @@ export interface SessionUsage {
   model: {
     id: string;
     displayName: string;
-    /** Claude effort level from status.json (`low` | `medium` | `high` | `xhigh`). Absent for older Claude Code versions and non-Claude adapters. */
+    /**
+     * Effort level the agent reports it is RUNNING AT, from its live telemetry
+     * (Claude's status.json `effort.level`). Claude Code documents this as the
+     * level "after any silent downgrade for the selected model", so it is the
+     * running value, not the requested one.
+     *
+     * Absent for older Claude Code versions, for non-Claude adapters, and - the
+     * case that matters - for any model with no effort levels at all. Claude
+     * Code gates the field on a per-model capability check, so the key is simply
+     * omitted for an unsupported model. The exclusion is per model, not per
+     * generation or family: `claude-haiku-4-5` and `claude-sonnet-4-5` have no
+     * effort while `claude-opus-4-8` does. Never mirror that list here; read the
+     * telemetry. Pair with `reportedByAgent` to tell "this model has no effort
+     * level" apart from "no telemetry has arrived yet".
+     */
     effort?: string;
+    /**
+     * True when this model block came from a live agent telemetry snapshot. Set
+     * by the adapter that parsed the snapshot and never inferred downstream.
+     *
+     * Needed because `displayName` alone does not imply telemetry: a spawn seeds
+     * it from the `--model` flag so a never-yet-reported session still shows its
+     * model (`session-spawn-flow.ts`). Without this flag the renderer cannot
+     * tell a configured value from a confirmed one, and presents both with the
+     * same visual weight.
+     */
+    reportedByAgent?: boolean;
   };
   /** Agent-reported session ID (from status.json). Used for stale ID recovery. */
   sessionId?: string;

@@ -145,8 +145,11 @@ export class ClaudeSessionHistoryParser {
     // place. When no authoritative window is known the merged window stays at
     // the 0 "unknown size" sentinel and the card/ContextBar show the model name
     // only. Mirror the Codex/Gemini `as unknown as SessionUsage` sparse cast:
-    // omitted keys (cost, rateLimits, effort, sessionId, transcriptPath, and now
-    // contextWindowSize + usedPercentage) are never overwritten by the merge.
+    // omitted keys (cost, rateLimits, effort, reportedByAgent, sessionId,
+    // transcriptPath, and contextWindowSize + usedPercentage) are never
+    // overwritten by the merge. `reportedByAgent` in particular MUST stay
+    // omitted here: it means "a live status snapshot arrived", and this
+    // transcript fallback is not one.
     const sparseUsage = {
       contextWindow: {
         usedTokens: latest.input,

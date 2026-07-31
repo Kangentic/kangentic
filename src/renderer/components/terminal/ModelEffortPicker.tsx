@@ -6,9 +6,9 @@ import { useProjectStore } from '../../stores/project-store';
 import { useKnownModels, useModelContextWindows, useModelDisplayNames } from '../../hooks/useKnownModels';
 import { groupModelIds, type ModelDisplayGroup } from '../../../shared/model-id';
 import { modelContextBadgeLabel, modelRowLabel } from '../../utils/format-tokens';
+import { resolveEffortDisplay, resolveModelDisplay } from '../../utils/pill-provenance';
 import { ContextBarPopover } from './ContextBarPopover';
-
-const pill = 'px-2 py-0.5 rounded bg-surface-raised whitespace-nowrap select-none';
+import { pillForProvenance } from './context-bar-pill';
 
 /**
  * Where a model/effort selection is applied:
@@ -37,6 +37,13 @@ interface ModelEffortPickerProps {
   /** Live effort tier when reported by the agent. Pre-spawn callers pass null. */
   liveEffort?: string | null;
   /**
+   * True once a live telemetry snapshot has been parsed for this session. A
+   * spawn seeds `liveModelName` from the `--model` flag before any telemetry
+   * arrives, so this is what separates a confirmed model from a configured one.
+   * Pre-spawn callers leave it false: nothing is running, so nothing is live.
+   */
+  telemetryLanded?: boolean;
+  /**
    * `live`: hide the effort pill when no current value (matches today's
    * ContextBar behaviour - hiding agent state we don't have).
    * `prespawn`: always show pills when their capability is supported, with
@@ -63,6 +70,7 @@ export function ModelEffortPicker({
   liveModelName = null,
   liveModelId = null,
   liveEffort = null,
+  telemetryLanded = false,
   mode,
 }: ModelEffortPickerProps) {
   const taskId = target.kind === 'task' ? target.taskId : null;
@@ -167,25 +175,73 @@ export function ModelEffortPicker({
   const taskModelOverride = task?.model_override ?? null;
   const taskEffortOverride = task?.effort_override ?? null;
   // Effort fallback chain: live status (truth) -> task override -> swimlane
-  // override -> project default. Some Claude models (Haiku 4.5) accept
-  // --effort but never echo it back in status updates, so without this chain
-  // the pill stays blank even though the user explicitly configured an
-  // effort tier.
-  const effectiveEffort = liveEffort ?? taskEffortOverride ?? swimlaneEffortOverride ?? projectDefaultEffort;
+  // override -> project default. It covers the window before the agent's first
+  // status write, where a configured tier is the best answer available. What it
+  // lacked was any way to say WHICH tier answered, so a configured value
+  // rendered as confidently as telemetry. `isLive` below carries that and drives
+  // the pill styling. (A model with no effort levels is handled separately, by
+  // hiding the pill outright - see `agentReportsNoEffort`.)
+  const effortDisplay = resolveEffortDisplay({
+    liveEffort,
+    taskEffortOverride,
+    swimlaneEffortOverride,
+    projectDefaultEffort,
+  });
+  const effectiveEffort = effortDisplay.value;
 
   // Display labels:
   // - live mode: existing behavior (live > overrides; effort pill suppressed when null)
   // - prespawn: show overrides falling through to "Default" so users can click to pick
   // An override is humanized the same way as the popover rows for
   // consistency; the live telemetry name is already human-readable and wins.
-  const modelOverrideId = taskModelOverride || swimlaneModelOverride || projectDefaultModel;
-  const modelOverrideLabel = modelOverrideId
-    ? modelRowLabel(modelOverrideId, modelDisplayNames)
-    : null;
-  const modelLabel = liveModelName ?? modelOverrideLabel ?? 'Default';
+  const modelDisplay = resolveModelDisplay({
+    liveModelName,
+    telemetryLanded,
+    taskModelOverride,
+    swimlaneModelOverride,
+    projectDefaultModel,
+  });
+  const modelLabel = modelDisplay.value === null
+    ? 'Default'
+    : liveModelName != null
+      ? modelDisplay.value
+      : modelRowLabel(modelDisplay.value, modelDisplayNames);
+  // A snapshot arrived and carried no effort: this model has no effort levels at
+  // all (Claude Code omits the field per-model), so there is nothing to report
+  // and nothing the picker could apply to THIS session. Hide it rather than
+  // offer a control that cannot act, or print a configured tier that has no
+  // meaning here. Derived from telemetry, never from a model list of our own.
+  const agentReportsNoEffort = mode === 'live' && telemetryLanded && liveEffort == null;
   const showModelTrigger = supportsModel;
-  const showEffortTrigger = supportsEffort && (mode === 'prespawn' || effectiveEffort != null);
+  const showEffortTrigger = supportsEffort && !agentReportsNoEffort
+    && (mode === 'prespawn' || effectiveEffort != null);
   const effortLabel = effectiveEffort ?? 'Default';
+
+  // Marking provenance is a LIVE-bar concern: the defect is a running agent's
+  // bar reading as telemetry when it is not. PreSpawnContextBar has no session,
+  // no cost, no tokens and no context meter, so nothing there can be mistaken
+  // for telemetry - marking its pills would be noise on a surface with no bug
+  // (and would sit oddly beside its solid agent and profile pills). In prespawn
+  // both pills render exactly as they always have.
+  const markProvenance = mode === 'live';
+  const modelConfirmed = !markProvenance || modelDisplay.isLive;
+  const effortConfirmed = !markProvenance || effortDisplay.isLive;
+  const modelSource = markProvenance ? (modelDisplay.isLive ? 'live' : 'configured') : undefined;
+  const effortSource = markProvenance ? (effortDisplay.isLive ? 'live' : 'configured') : undefined;
+
+  // Copy for an unconfirmed value. Only one case reaches here now: no snapshot
+  // has arrived yet, which is transient and resolves on its own. A model with no
+  // effort levels hides the pill entirely (`agentReportsNoEffort`) rather than
+  // explaining a value that does not apply.
+  const effortProvisionalTitle = 'Waiting for the agent to report. Showing your configured default.';
+  const modelProvisionalTitle = 'Waiting for the agent to report. Showing the model this session was started with.';
+
+  // The column/project default the "Use column default" row reverts to, in the
+  // same humanized form the option rows use.
+  const swimlaneDefaultModelId = swimlaneModelOverride ?? projectDefaultModel;
+  const swimlaneDefaultModelLabel = swimlaneDefaultModelId
+    ? modelRowLabel(swimlaneDefaultModelId, modelDisplayNames)
+    : null;
 
   // Resolve checkmark target: live ID match > task override.
   const currentModelValue = (liveModelId ? modelOptions.find((id) => id === liveModelId) : undefined)
@@ -193,7 +249,10 @@ export function ModelEffortPicker({
     ?? null;
   const currentEffortValue = effectiveEffort ?? null;
 
-  const triggerBase = `${pill} text-fg-muted inline-flex items-center gap-1`;
+  // Pill variant is chosen per-trigger from provenance, so `triggerBase` no
+  // longer carries it. Both variants have a border (transparent when live), so
+  // a pill flipping provisional -> live on a status update only repaints.
+  const triggerBase = 'text-fg-muted inline-flex items-center gap-1';
   const interactiveBase = 'cursor-pointer hover:bg-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-fg-faint';
 
   return (
@@ -210,9 +269,10 @@ export function ModelEffortPicker({
               // appears without a restart (non-blocking, throttled in the store).
               if (opening) useConfigStore.getState().rescanModels();
             }}
-            className={`${triggerBase} ${interactiveBase}`}
+            className={`${pillForProvenance(modelConfirmed)} ${triggerBase} ${interactiveBase}`}
             data-testid="context-bar-model-trigger"
-            title="Click to change model"
+            data-model-source={modelSource}
+            title={modelConfirmed ? 'Click to change model' : `${modelProvisionalTitle} Click to change.`}
           >
             {modelLabel}
             <ChevronDown size={11} className="text-fg-faint flex-shrink-0" />
@@ -225,6 +285,9 @@ export function ModelEffortPicker({
               pinnedOptions={pinnedModelOptions}
               currentValue={currentModelValue}
               swimlaneDefault={swimlaneModelOverride ?? projectDefaultModel}
+              // Humanized the same way as the rows above, so the footer reads
+              // "Use column default (Sonnet 5)" rather than the raw CLI id.
+              swimlaneDefaultLabel={swimlaneDefaultModelLabel}
               onSelect={applyModel}
               onClose={() => setOpenPopover(null)}
               testId="context-bar-model-popover"
@@ -234,8 +297,12 @@ export function ModelEffortPicker({
       ) : (
         liveModelName && (
           <span
-            className={`${pill} text-fg-muted`}
-            title="This agent does not support changing the model from Kangentic"
+            className={`${pillForProvenance(modelConfirmed)} text-fg-muted`}
+            data-testid="context-bar-model-static"
+            data-model-source={modelSource}
+            title={modelConfirmed
+              ? 'This agent does not support changing the model from Kangentic'
+              : `${modelProvisionalTitle} This agent does not support changing it from Kangentic.`}
           >
             {liveModelName}
           </span>
@@ -247,9 +314,10 @@ export function ModelEffortPicker({
             ref={effortTriggerRef}
             type="button"
             onClick={() => setOpenPopover((previous) => (previous === 'effort' ? null : 'effort'))}
-            className={`${triggerBase} ${interactiveBase} text-fg-faint`}
+            className={`${pillForProvenance(effortConfirmed)} ${triggerBase} ${interactiveBase} text-fg-faint`}
             data-testid="context-bar-effort-trigger"
-            title="Click to change effort"
+            data-effort-source={effortSource}
+            title={effortConfirmed ? 'Click to change effort' : `${effortProvisionalTitle} Click to change.`}
           >
             {effortLabel}
             <ChevronDown size={11} className="flex-shrink-0" />
@@ -268,10 +336,14 @@ export function ModelEffortPicker({
           )}
         </span>
       ) : (
-        effectiveEffort && (
+        !agentReportsNoEffort && effectiveEffort && (
           <span
-            className={`${pill} text-fg-faint`}
-            title="This agent does not support changing the effort level from Kangentic"
+            className={`${pillForProvenance(effortConfirmed)} text-fg-faint`}
+            data-testid="context-bar-effort-static"
+            data-effort-source={effortSource}
+            title={effortConfirmed
+              ? 'This agent does not support changing the effort level from Kangentic'
+              : `${effortProvisionalTitle} This agent does not support changing it from Kangentic.`}
           >
             {effectiveEffort}
           </span>

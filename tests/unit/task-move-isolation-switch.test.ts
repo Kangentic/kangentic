@@ -78,7 +78,8 @@ vi.mock('../../src/main/transition-engine/agent-resolver', () => ({
   resolveTargetAgent: vi.fn(() => ({ agent: 'claude', isHandoff: false })),
 }));
 
-vi.mock('../../src/main/transition-engine/injection-plan', () => ({
+vi.mock('../../src/main/transition-engine/injection-plan', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/transition-engine/injection-plan')>()),
   prepareInjectionPlan: vi.fn(() => null),
 }));
 
@@ -175,6 +176,8 @@ function makeContext(taskRepo: unknown, swimlaneRepo: unknown) {
     killByTaskId: vi.fn(),
     listSessions: vi.fn(() => []),
     suspend: vi.fn(async () => {}),
+    // Read by resolveLiveEffort; empty means the agent reports no effort.
+    getUsageCache: vi.fn((): Record<string, unknown> => ({})),
   };
   const context = {
     currentProjectId: 'proj-test',

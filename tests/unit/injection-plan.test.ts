@@ -23,7 +23,7 @@
  * - appliedSettings reports the new running effort for a concrete effort change
  */
 import { describe, it, expect } from 'vitest';
-import { prepareInjectionPlan } from '../../src/main/transition-engine/injection-plan';
+import { prepareInjectionPlan, resolveLiveEffort, resolveSourceEffort } from '../../src/main/transition-engine/injection-plan';
 import type { AgentAdapter, SettingsChangeSpec } from '../../src/main/agent/agent-adapter';
 import type { SessionRepository } from '../../src/main/db/repositories/session-repository';
 import type { SessionRecord, Swimlane } from '../../src/shared/types';
@@ -598,5 +598,159 @@ describe('prepareInjectionPlan -- per-task override wins over column override', 
     // (against the session's applied value) drives the restart flag.
     expect(capturedSpec).toMatchObject({ model: 'opus', modelChanged: false });
     expect(plan?.needsRestartForModel).toBe(true);
+  });
+});
+
+/**
+ * `applied_effort` records what Kangentic ASKED for at spawn/resume/live-switch.
+ * An `/effort` the user types straight into the terminal never reaches it, so on
+ * its own it goes stale and the delta is computed against a value the session
+ * stopped running at. The agent's own reported level is preferred as the source.
+ */
+describe('prepareInjectionPlan - agent-reported effort is the delta source', () => {
+  const claudeLike = () => fakeAdapter({
+    // Mirrors ClaudeAdapter.getInjectionSequence.
+    getInjectionSequence: (spec: SettingsChangeSpec) => {
+      const sequence: string[] = [];
+      if (spec.modelChanged && spec.model) sequence.push(`/model ${spec.model}`);
+      if (spec.effortChanged && spec.effort) sequence.push(`/effort ${spec.effort}`);
+      return sequence;
+    },
+  });
+
+  it('THE BUG: a manual /effort the record never saw no longer suppresses the injection', () => {
+    // applied=high (what we asked for at spawn), agent reports medium (the user
+    // typed `/effort medium`), destination column requires high. Before this,
+    // source and target both read high, effortChanged was false, nothing was
+    // injected, and the session silently kept running at medium.
+    const plan = prepareInjectionPlan({
+      adapter: claudeLike(),
+      sessionRepo: sessionRepoWith({ applied_effort: 'high' }),
+      task: { id: 't1', agent: 'fake', model_override: null, effort_override: null },
+      toLane: lane({ effort_override: 'high' }),
+      liveEffort: 'medium',
+    });
+    expect(plan?.sequence).toEqual(['/effort high']);
+    expect(plan?.appliedSettings).toEqual({ effort: 'high' });
+  });
+
+  it('removes churn when the record is stale but the session already runs at the target', () => {
+    const plan = prepareInjectionPlan({
+      adapter: claudeLike(),
+      sessionRepo: sessionRepoWith({ applied_effort: 'low' }),
+      task: { id: 't1', agent: 'fake', model_override: null, effort_override: null },
+      toLane: lane({ effort_override: 'high' }),
+      liveEffort: 'high',
+    });
+    expect(plan).toBeNull();
+  });
+
+  it('falls back to the record when the agent reports no effort (Haiku, or any agent without telemetry)', () => {
+    // Claude Code omits `effort` for models with no effort levels, so liveEffort
+    // is null and behaviour must be exactly what it was before.
+    const plan = prepareInjectionPlan({
+      adapter: claudeLike(),
+      sessionRepo: sessionRepoWith({ applied_effort: 'high' }),
+      task: { id: 't1', agent: 'fake', model_override: null, effort_override: null },
+      toLane: lane({ effort_override: 'high' }),
+      liveEffort: null,
+    });
+    expect(plan).toBeNull();
+  });
+
+  it('keeps a per-task pin ahead of live telemetry, so the pin still controls both sides', () => {
+    const plan = prepareInjectionPlan({
+      adapter: claudeLike(),
+      sessionRepo: sessionRepoWith({ applied_effort: 'low' }),
+      task: { id: 't1', agent: 'fake', model_override: null, effort_override: 'xhigh' },
+      toLane: lane({ effort_override: 'low' }),
+      liveEffort: 'medium',
+    });
+    // Pin wins on BOTH sides, so nothing fires - the ContextBar contract.
+    expect(plan).toBeNull();
+  });
+
+  it('keeps the NULL applied_effort protection for records predating applied-settings recording', () => {
+    const plan = prepareInjectionPlan({
+      adapter: claudeLike(),
+      sessionRepo: sessionRepoWith({ applied_effort: null }),
+      task: { id: 't1', agent: 'fake', model_override: null, effort_override: 'high' },
+      toLane: lane({ effort_override: 'high' }),
+    });
+    expect(plan).toBeNull();
+  });
+
+  it('ACCEPTED TRADE: a silently downgraded level re-asserts the configured target on each move', () => {
+    // Claude Code silently downgrades `max`/`xhigh` to `high` on a model that
+    // does not support them, and its status schema documents the reported level
+    // as the one in force "after any silent downgrade for the selected model".
+    // So live can legitimately differ from what we asked for, and that is
+    // indistinguishable from the user having typed `/effort high` by hand.
+    // We favour correctness: re-assert the target. Never a restart - but the
+    // cost is more than one idempotent slash. The live tier outranks
+    // `applied_effort`, and the agent's reported level never becomes the target,
+    // so the delta never clears: it re-fires on EVERY qualifying move rather
+    // than converging after the first. And a live-injection burst leads with
+    // Ctrl+C (`terminal-submit-scheduler.ts` passes `sendCtrlC: !freshlySpawned`,
+    // `terminal-submit.ts` writes `\x03` before the first command), so each
+    // re-assertion interrupts the agent's current turn.
+    // Do NOT "fix" this by dropping the live tier - that reintroduces the bug
+    // the sibling tests above pin. Converging needs an emit-side guard that can
+    // tell "we already asked this session for this target and its reported level
+    // has not moved since" apart from a genuine manual `/effort`.
+    const plan = prepareInjectionPlan({
+      adapter: claudeLike(),
+      sessionRepo: sessionRepoWith({ applied_effort: 'max' }),
+      task: { id: 't1', agent: 'fake', model_override: null, effort_override: null },
+      toLane: lane({ effort_override: 'max' }),
+      liveEffort: 'high',
+    });
+    expect(plan?.sequence).toEqual(['/effort max']);
+  });
+
+  it('never lets live effort disturb the model delta', () => {
+    // Model is deliberately not live-sourced: the agent reports a canonical id
+    // while the configured values are flag strings, and a false "changed" here
+    // would restart the PTY on every move.
+    const plan = prepareInjectionPlan({
+      adapter: claudeLike(),
+      sessionRepo: sessionRepoWith({ applied_model: 'opus', applied_effort: 'high' }),
+      task: { id: 't1', agent: 'fake', model_override: null, effort_override: null },
+      toLane: lane({ model_override: 'opus', effort_override: 'high' }),
+      liveEffort: 'medium',
+    });
+    expect(plan?.needsRestartForModel).toBe(false);
+    expect(plan?.sequence).toEqual(['/effort high']);
+  });
+});
+
+describe('resolveSourceEffort', () => {
+  it('prefers a per-task pin, then live telemetry, then the record', () => {
+    expect(resolveSourceEffort({ taskEffortOverride: 'xhigh', liveEffort: 'low', appliedEffort: 'high' })).toBe('xhigh');
+    expect(resolveSourceEffort({ taskEffortOverride: null, liveEffort: 'low', appliedEffort: 'high' })).toBe('low');
+    expect(resolveSourceEffort({ taskEffortOverride: null, liveEffort: null, appliedEffort: 'high' })).toBe('high');
+    expect(resolveSourceEffort({ taskEffortOverride: null, liveEffort: null, appliedEffort: null })).toBeNull();
+    expect(resolveSourceEffort({ taskEffortOverride: undefined, liveEffort: undefined, appliedEffort: undefined })).toBeNull();
+  });
+});
+
+describe('resolveLiveEffort', () => {
+  const cacheWith = (entries: Record<string, string | undefined>) => ({
+    getUsageCache: () => Object.fromEntries(
+      Object.entries(entries).map(([id, effort]) => [
+        id,
+        { model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8', effort } },
+      ]),
+    ) as never,
+  });
+
+  it('reads the reported effort for the session', () => {
+    expect(resolveLiveEffort(cacheWith({ 's1': 'medium' }), 's1')).toBe('medium');
+  });
+
+  it('returns null for a session with no id, no cache entry, or no reported effort', () => {
+    expect(resolveLiveEffort(cacheWith({ 's1': 'medium' }), null)).toBeNull();
+    expect(resolveLiveEffort(cacheWith({ 's1': 'medium' }), 'other')).toBeNull();
+    expect(resolveLiveEffort(cacheWith({ 's1': undefined }), 's1')).toBeNull();
   });
 });

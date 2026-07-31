@@ -17,6 +17,7 @@ import { ModelEffortPicker } from './ModelEffortPicker';
 import { ProfilePicker } from './ProfilePicker';
 import { ElapsedTime } from './ElapsedTime';
 import { ToolBreakdownPopover } from './ToolBreakdownPopover';
+import { pill, pillForProvenance } from './context-bar-pill';
 
 interface ContextBarProps {
   sessionId: string;
@@ -29,7 +30,6 @@ function parseAgentVersion(version: string | null | undefined): string | null {
   return version?.replace(/\s*\(.*\)/, '') || null;
 }
 
-const pill = 'px-2 py-0.5 rounded bg-surface-raised whitespace-nowrap select-none';
 // `[transform:translateZ(0)]` promotes the footer to its own compositing layer.
 // Without it, a freshly-spawned tiled window's frame composites such that the bar's
 // text-only pills (shell / version / cost / tokens) lay out correctly but Chromium
@@ -267,6 +267,11 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
   // the inject closure does not depend on closure narrowing of `usage`.
   const liveModelId = usage.model.id;
   const liveEffort = usage.model.effort || null;
+  // Whether a real telemetry snapshot has arrived, as opposed to the spawn-time
+  // seed that fills in the model name from the `--model` flag before the agent
+  // has said anything. Without this the model pill reads as confirmed from the
+  // moment the session starts.
+  const telemetryLanded = usage.model.reportedByAgent === true;
   const isTransientSession = session?.transient === true;
   const transientAgent = !task && isTransientSession ? taskAgent : null;
   const handleTransientInject = (patch: { model?: string | null; effort?: string | null }) => {
@@ -363,6 +368,7 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
              picker falls through to task/swimlane overrides. The CLI never
              emits "" today, but matches the original ContextBar semantics. */
           liveEffort={liveEffort}
+          telemetryLanded={telemetryLanded}
           mode="live"
         />
       ) : transientAgent ? (
@@ -372,13 +378,25 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
           liveModelName={modelName}
           liveModelId={liveModelId}
           liveEffort={liveEffort}
+          telemetryLanded={telemetryLanded}
           mode="live"
         />
       ) : (
+        /* No task row and no known transient agent: no picker, but the same two
+           values, so they declare provenance the same way. Effort here is read
+           straight off the snapshot, hence always live when present; the model
+           name can still be the spawn-time seed. */
         <>
-          <span className={`${pill} text-fg-muted`}>{modelName}</span>
+          <span
+            className={`${pillForProvenance(telemetryLanded)} text-fg-muted`}
+            data-model-source={telemetryLanded ? 'live' : 'configured'}
+          >
+            {modelName}
+          </span>
           {usage.model.effort && (
-            <span className={`${pill} text-fg-faint`}>{usage.model.effort}</span>
+            <span className={`${pill} text-fg-faint`} data-effort-source="live">
+              {usage.model.effort}
+            </span>
           )}
         </>
       )}

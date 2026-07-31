@@ -46,6 +46,30 @@ describe('UsageAccumulator.setSessionUsage - merge behavior', () => {
     expect(merged.model.id).toBe('gpt-5.3-codex');
   });
 
+  it('a spawn-time model seed is not mistaken for agent telemetry', () => {
+    // A spawn seeds the model name from the `--model` flag so a background
+    // session shows its model before reporting anything. That must NOT read as
+    // agent-confirmed, or the ContextBar presents a configured model (and a
+    // configured effort beside it) as if it were live.
+    const merged = usage.setSessionUsage('spawn-seeded', {
+      model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8' },
+    } as Partial<SessionUsage>);
+    expect(merged.model.reportedByAgent).toBeUndefined();
+  });
+
+  it('once telemetry has landed, a later partial merge cannot clear the flag', () => {
+    usage.setSessionUsage('live-session', {
+      model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8', reportedByAgent: true },
+    } as Partial<SessionUsage>);
+
+    // A token-only update carries no model block at all.
+    const merged = usage.setSessionUsage('live-session', {
+      contextWindow: { usedTokens: 1000 },
+    } as Partial<SessionUsage>);
+
+    expect(merged.model.reportedByAgent).toBe(true);
+  });
+
   it('usedPercentage is recalculated after cross-chunk merge', () => {
     let merged = usage.setSessionUsage('test-session', {
       contextWindow: { contextWindowSize: 200000 },
