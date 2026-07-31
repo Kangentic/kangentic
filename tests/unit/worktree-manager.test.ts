@@ -1219,6 +1219,71 @@ describe('WorktreeManager -- folder-name stability across Done round-trip', () =
   });
 });
 
+/**
+ * `withPathLengthCause` wiring: a failed `git worktree add` is enriched with a
+ * path-length explanation when the error looks like one, and left untouched
+ * otherwise. The predicate itself (`describeWorktreePathLengthCause`) is fully
+ * pinned in `worktree-folder.test.ts`; these only check that `createWorktree`
+ * actually calls it on the failure it raises.
+ */
+describe('WorktreeManager -- path-length error enrichment on a failed worktree add', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setupCreateWorktreeMocks();
+  });
+
+  it('appends the path-length explanation on Windows when the failure looks like one', async () => {
+    // describeWorktreePathLengthCause reads process.platform at call time (not
+    // bound at import like `path`), so the spoof works here - but it must stay
+    // live across the awaited rejection, not just the mock setup.
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    try {
+      mockProjectGit.raw.mockImplementation((args: string[]) => {
+        if (args[0] === 'rev-parse' && args[1] === '--verify') {
+          return Promise.reject(new Error('fatal: not a valid object name'));
+        }
+        if (args.includes('worktree') && args.includes('add')) {
+          return Promise.reject(new Error('ENAMETOOLONG: name too long, open ...'));
+        }
+        return Promise.resolve('');
+      });
+
+      const mgr = new WorktreeManager('/project');
+      await expect(mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task')))
+        .rejects.toThrow(/ran out of path/);
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+    }
+  });
+
+  it('leaves an unrelated worktree-add failure untouched', async () => {
+    // Platform-independent: describeWorktreePathLengthCause returns null for a
+    // message with no path-length signature on any platform, so this needs no
+    // spoof and must pass on both local Windows and CI Linux.
+    const originalMessage = 'fatal: could not lock config file .git/config: File exists';
+    mockProjectGit.raw.mockImplementation((args: string[]) => {
+      if (args[0] === 'rev-parse' && args[1] === '--verify') {
+        return Promise.reject(new Error('fatal: not a valid object name'));
+      }
+      if (args.includes('worktree') && args.includes('add')) {
+        return Promise.reject(new Error(originalMessage));
+      }
+      return Promise.resolve('');
+    });
+
+    const mgr = new WorktreeManager('/project');
+    let caught: Error | null = null;
+    try {
+      await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'));
+    } catch (error) {
+      caught = error as Error;
+    }
+
+    expect(caught?.message).toBe(originalMessage);
+  });
+});
+
 // ── Serial queue tests ────────────────────────────────────────────────────
 
 describe('WorktreeManager -- serial queue', () => {

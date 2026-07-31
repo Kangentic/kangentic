@@ -288,4 +288,49 @@ describe('retryFailedDoneCleanups', () => {
     expect(taskRepo.update).toHaveBeenCalledWith({ id: 'cccc3333', worktree_path: null });
     expect(taskRepo.update).not.toHaveBeenCalledWith(expect.objectContaining({ id: 'bbbb2222' }));
   });
+
+  /**
+   * removeWorktree has TWO failure modes, not one: it returns false when the
+   * directory is held, and it THROWS when the stored path is not a direct
+   * child of this project's worktrees root (assertRemovableWorktreePath in
+   * worktree-manager.ts). The throw must be caught PER TASK.
+   *
+   * The thrower sits in the MIDDLE of this fixture list, deliberately not
+   * last: if it were last, "the remaining tasks still get processed" would be
+   * vacuously true and this test would pass even against the pre-fix code,
+   * where an unhandled throw propagates out of the loop and abandons every
+   * task after it, not just the one with the bad row.
+   */
+  it('does not abandon the remaining tasks when one removeWorktree call throws', async () => {
+    const swimlaneRepo = makeSwimlaneRepo([
+      { id: 'lane-done', role: 'done', name: 'Done' },
+    ]);
+    const badPath = '/elsewhere/not-a-worktree';
+    const taskRepo = makeTaskRepo({
+      'lane-done': [
+        { id: 'aaaa1111', title: 'Cleans fine', worktree_path: '/home/dev/my-project/.kangentic/worktrees/clean-aaaa1111' },
+        { id: 'bbbb2222', title: 'Stored path outside the worktrees root', worktree_path: badPath },
+        { id: 'cccc3333', title: 'Cleans fine too', worktree_path: '/home/dev/my-project/.kangentic/worktrees/clean-cccc3333' },
+      ],
+    });
+    mockRemoveWorktree.mockImplementation(async (removalPath: string) => {
+      if (removalPath === badPath) {
+        throw new Error(`Refusing to remove ${badPath}: it is not a direct child of the worktrees root.`);
+      }
+      return true;
+    });
+
+    // The pass itself must resolve, never reject, no matter which task throws.
+    await expect(
+      retryFailedDoneCleanups(PROJECT_PATH, taskRepo as never, swimlaneRepo as never),
+    ).resolves.toBe(2);
+
+    // Both tasks AFTER the thrower in iteration order were still cleaned.
+    expect(taskRepo.update).toHaveBeenCalledTimes(2);
+    expect(taskRepo.update).toHaveBeenCalledWith({ id: 'aaaa1111', worktree_path: null });
+    expect(taskRepo.update).toHaveBeenCalledWith({ id: 'cccc3333', worktree_path: null });
+    // The thrower gets no DB write either way - its worktree_path is left set
+    // so a human can investigate rather than silently losing track of it.
+    expect(taskRepo.update).not.toHaveBeenCalledWith(expect.objectContaining({ id: 'bbbb2222' }));
+  });
 });
