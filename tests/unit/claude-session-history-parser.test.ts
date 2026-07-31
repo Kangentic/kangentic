@@ -93,12 +93,29 @@ describe('ClaudeSessionHistoryParser.parse', () => {
     expect(Object.prototype.hasOwnProperty.call(record, 'rateLimits')).toBe(false);
     expect(Object.prototype.hasOwnProperty.call(record, 'sessionId')).toBe(false);
     expect(Object.prototype.hasOwnProperty.call(record, 'transcriptPath')).toBe(false);
+    // `effort` lives on the MODEL block, not contextWindow. This previously
+    // probed contextWindow, where it could never appear, so it asserted nothing.
+    const model = record.model as Record<string, unknown>;
+    expect(Object.prototype.hasOwnProperty.call(model, 'effort')).toBe(false);
     const contextWindow = record.contextWindow as Record<string, unknown>;
-    expect(Object.prototype.hasOwnProperty.call(contextWindow, 'effort')).toBe(false);
     // The window and percentage are deliberately omitted so a cached authoritative
     // window (live or seeded on resume) survives the merge.
     expect(Object.prototype.hasOwnProperty.call(contextWindow, 'contextWindowSize')).toBe(false);
     expect(Object.prototype.hasOwnProperty.call(contextWindow, 'usedPercentage')).toBe(false);
+  });
+
+  it('never marks the model block as agent-reported (this is a transcript fallback, not a live snapshot)', () => {
+    // `reportedByAgent` distinguishes a live status.json snapshot from a
+    // configured/derived value; ClaudeStatusParser is the only producer that
+    // may set it true. If this parser ever started setting it, a background
+    // session with no status.json yet (transcript-only) would present its
+    // model - and by extension the ContextBar's provenance-marked pill - as
+    // agent-confirmed telemetry when nothing has actually reported.
+    const result = ClaudeSessionHistoryParser.parse(
+      assistantLine({ model: 'claude-opus-4-8', input: 1000 }), 'append',
+    );
+    const model = (result.usage as unknown as { model: Record<string, unknown> }).model;
+    expect(Object.prototype.hasOwnProperty.call(model, 'reportedByAgent')).toBe(false);
   });
 
   it('skips a trailing isSidechain assistant entry (subagent context is not the main thread)', () => {
