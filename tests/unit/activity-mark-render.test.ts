@@ -15,11 +15,35 @@
  * dialog-form-primitives.test.ts for the established rationale and pattern),
  * so - same as those two files - both components are called directly as
  * plain functions and their real `React.createElement` output
- * (`{ type, props }`) is walked without a renderer. Both components are
- * hookless (no state, no effects), so this is safe without a reconciler.
+ * (`{ type, props }`) is walked without a renderer.
+ *
+ * ActivityMark is no longer hookless. It takes a ref on the injected `<g>` and
+ * runs a layout effect that anchors the marching dash to the document timeline,
+ * so a re-injected or DOM-moved mark does not restart its animation mid-march.
+ * Calling a component as a plain function invokes hooks outside a render, where
+ * React's dispatcher is null, so the two hooks are stubbed below.
+ *
+ * That is sound for what this file asserts and nothing more: every assertion
+ * here is about the SHAPE of the returned element (role / aria-hidden, and the
+ * sibling `<g>` that keeps a `<title>` child free), which the hooks do not
+ * influence. The animation behavior the layout effect exists for is covered
+ * separately in `activity-mark.test.ts`. If a future assertion depends on ref
+ * or effect behavior, this file needs a real reconciler, not a bigger stub.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import React from 'react';
+
+vi.mock('react', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('react')>();
+  const withStubbedHooks = {
+    ...actual,
+    useRef: <T,>(initial: T) => ({ current: initial }),
+    useLayoutEffect: () => {},
+  };
+  // `ActivityMark` reaches the hooks through the DEFAULT import (`React.useRef`),
+  // so the stub has to land on `default` as well as the named exports.
+  return { ...withStubbedHooks, default: withStubbedHooks };
+});
 import { ActivityMark, type ActivityMarkProps } from '../../src/renderer/components/ActivityMark';
 import { CommandTerminalIcon } from '../../src/renderer/components/command-bar/CommandTerminalIcon';
 
