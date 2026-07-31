@@ -1,9 +1,11 @@
 /**
  * A window-manager LAYER: a body-level portal overlay that floats a content-
- * agnostic set of managed windows. The engine is mounted twice - the board
- * task-detail layer (modeless, gaps fall through to the live board) and the
- * command-terminal layer (modal-ish, a slight backdrop blur over the board) -
- * each with its own instance via `WindowManagerProvider`.
+ * agnostic set of managed windows. The engine is mounted three times - the board
+ * task-detail layer (modeless, gaps fall through to the live board), the
+ * command-terminal layer (modal-ish, a slight backdrop blur over the board), and
+ * the Agent Monitor's detail layer (which can be hosted in the main window or in
+ * the monitor's own pop-out renderer) - each with its own instance via
+ * `WindowManagerProvider`.
  *
  * The generic `WindowManagerLayer` renders the provider + the overlay surface
  * (frames, tile seams, footprint resizers, snap preview) and mounts the layer's

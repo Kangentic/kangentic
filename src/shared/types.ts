@@ -4571,8 +4571,12 @@ export interface ElectronAPI {
   /** Agent Monitor. Machine-global: no channel here takes a projectId, because the
    *  snapshot deliberately spans every registered project. */
   monitor: {
-    /** Full cross-project snapshot. Cheap: in-memory caches plus one warm DB read per
-     *  project (not per session). */
+    /** Full cross-project snapshot. Per-PROJECT setup (repos, swimlane names) is
+     *  resolved once and memoized, but the row build is O(sessions): each monitored
+     *  session costs a `tasks.getById` and a `sessions.findByAnyId`. Both are
+     *  indexed reads against an already-warm handle, and the push side is debounced
+     *  250ms, so this is cheap in practice - but it is not the O(projects) it was
+     *  once described as, and a project with many concurrent agents pays per agent. */
     getSnapshot: () => Promise<MonitorSnapshot>;
     /** Ask MAIN to reveal a task in the main window. Used by the detached monitor,
      *  whose own stores cannot reach the board. */

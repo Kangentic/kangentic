@@ -9,10 +9,16 @@ import { deepMerge, deepMergeConfig } from '../../shared/object-utils';
  *  (not deep-merged), so key/window deletion and a full-blob reset both work. This
  *  covers true `Record<string, ...>` dictionaries (where merge would leak deleted
  *  keys) AND renderer-authoritative layout blobs (`commandTerminalWorkspace`,
- *  `monitorWorkspace`) the renderer always writes in full - closing a window has to
- *  actually shrink the persisted array, which a merge would not do. Every other
- *  typed-struct field gets MERGE semantics. Update this list when adding such a field
- *  to AppConfig. */
+ *  `monitorWorkspace`) the renderer always writes in full.
+ *
+ *  What the layout blobs actually need this for is their OBJECT-shaped fields, not
+ *  their arrays: `deepMerge` already assigns an array wholesale (it recurses only
+ *  into non-array objects), so the `windows` array shrinks correctly either way.
+ *  The entry protects `tileTree` - collapsing a two-pane split to a single leaf
+ *  would otherwise merge-leak the old split's `direction` / `children` / `sizes`
+ *  onto the leaf - plus any legacy key a rewritten blob is meant to drop. Every
+ *  other typed-struct field gets MERGE semantics. Update this list when adding such
+ *  a field to AppConfig. */
 const CONFIG_DICTIONARY_PATHS = [
   'backlog.labelColors',
   'agent.cliPaths',

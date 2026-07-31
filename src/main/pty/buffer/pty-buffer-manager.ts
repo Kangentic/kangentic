@@ -42,8 +42,11 @@ const MAX_BYTES_PER_FLUSH = 256 * 1024;
  * before sampling, bounded so a missing repaint can never hang the read.
  *
  * An actively streaming session never quiesces, so the wait also settles EARLY
- * the moment a full-frame repaint marker (\x1b[2J clear or \x1b[H cursor-home)
- * lands in the bytes appended AFTER the resize (offset-tracked via
+ * the moment a full-frame repaint marker lands in the bytes appended AFTER the
+ * resize. The marker is the \x1b[2J erase ONLY. \x1b[H cursor-home was tried and
+ * removed: TUIs emit it for ordinary partial updates (a live session showed 169
+ * cursor-homes to 56 erases), so it settled on a spinner tick and sampled the
+ * pre-resize frame. Offset-tracked via
  * pendingRepaintScrollbackLength), provided no synchronized-output frame (DEC
  * 2026) is still open - that flag aligns the sample to a frame boundary.
  * Without the early settle, a streaming session always burned the full
@@ -60,7 +63,9 @@ const MAX_BYTES_PER_FLUSH = 256 * 1024;
  *
  *  - QUIESCE: no new data for this long counts as "the repaint has landed".
  *    ~3 flush ticks (16ms each), long enough to bridge a multi-chunk redraw.
- *    Fallback for repaints without a recognizable full-frame marker.
+ *    Required IN ADDITION to the marker on a stacked resize; it is NOT a
+ *    standalone fallback, because "some bytes, then quiet" is satisfied by a
+ *    spinner tick. A marker-less repaint rides the MAX_WAIT deadline instead.
  *  - MAX_WAIT: hard ceiling from wait entry. A width change with no repaint
  *    (or a genuinely slow one) adds at most this to a first paint.
  *  - STALE: a pending-repaint stamp older than this is treated as settled - the
@@ -520,9 +525,13 @@ export class PtyBufferManager {
         // Claude session: 169 cursor-homes to 56 full-screen clears in one 512KB
         // ring, so the false marker outnumbered the true one 3:1.
         //
-        // A TUI that repaints without erasing has no marker to key on and settles
-        // via quiesce below instead, which is correct if slower - the previous
-        // behavior traded correctness for that latency on EVERY session.
+        // A TUI that repaints without erasing has no marker to key on, so it rides
+        // the full REPAINT_MAX_WAIT_MS deadline below rather than settling early.
+        // That is deliberate, not an oversight: as the note on `settled` explains,
+        // a quiesce alone cannot stand in for the erase marker here (a spinner tick
+        // plus an ordinary lull satisfies it), and settling early on that was the
+        // other half of the flicker. Correct if slower - the previous behavior
+        // traded correctness for that latency on EVERY session.
         const markerSampleSafe =
           scanOffset !== null &&
           !current.synchronizedOpen &&

@@ -262,11 +262,11 @@ describe('HMR store re-sync', () => {
     }
 
     // window-store.ts (under window-manager/store/, not the Zustand stores/ dir) is
-    // also a Pattern E boundary: it builds two layer instances and pins BOTH
-    // (boardWindowManager + commandWindowManager) in import.meta.hot.data, then
-    // self-accepts. Guard it here so a later edit that drops a pin is caught
-    // mechanically, not only at runtime (a split-brain second store makes the
-    // command-terminal / board windows vanish on every save while dogfooding). It
+    // also a Pattern E boundary: it builds THREE layer instances and pins ALL of
+    // them (boardWindowManager + commandWindowManager + monitorWindowManager) in
+    // import.meta.hot.data, then self-accepts. Guard them here so a later edit that
+    // drops a pin is caught mechanically, not only at runtime (a split-brain second
+    // store makes that layer's windows vanish on every save while dogfooding). It
     // reads via `const HMR_DATA = import.meta.hot?.data`, so the read check is
     // looser than the stores/ ones above.
     const WINDOW_MANAGER_STORE = path.resolve(
@@ -277,10 +277,17 @@ describe('HMR store re-sync', () => {
     const windowStoreReads = /import\.meta\.hot\?\.data/.test(windowStoreSource);
     const windowStoreWritesBoard = /import\.meta\.hot\.data\.boardWindowManager\s*=/.test(windowStoreSource);
     const windowStoreWritesCommand = /import\.meta\.hot\.data\.commandWindowManager\s*=/.test(windowStoreSource);
+    const windowStoreWritesMonitor = /import\.meta\.hot\.data\.monitorWindowManager\s*=/.test(windowStoreSource);
     const windowStoreAccepts = /import\.meta\.hot\.accept\s*\(/.test(windowStoreSource);
-    if (!windowStoreReads || !windowStoreWritesBoard || !windowStoreWritesCommand || !windowStoreAccepts) {
+    if (
+      !windowStoreReads
+      || !windowStoreWritesBoard
+      || !windowStoreWritesCommand
+      || !windowStoreWritesMonitor
+      || !windowStoreAccepts
+    ) {
       violations.push(
-        `window-manager/store/window-store.ts -> reads:${windowStoreReads} writesBoard:${windowStoreWritesBoard} writesCommand:${windowStoreWritesCommand} accepts:${windowStoreAccepts}`,
+        `window-manager/store/window-store.ts -> reads:${windowStoreReads} writesBoard:${windowStoreWritesBoard} writesCommand:${windowStoreWritesCommand} writesMonitor:${windowStoreWritesMonitor} accepts:${windowStoreAccepts}`,
       );
     }
 

@@ -2,10 +2,14 @@ import type { ReactNode } from 'react';
 import { useValuePulse } from '../../hooks/useValuePulse';
 
 /**
- * The shared small-metric tile. Extracted from KpiTiles so surfaces other than the
- * usage dashboard (the Agent Monitor's summary strip) can reuse the exact chrome
- * rather than copying its class strings a third time, and can do so without
- * pulling KpiTiles' sparkline/chart import graph into their bundle.
+ * The shared small-metric tile, split out of KpiTiles so the chrome lives in one
+ * place and a consumer can render it without pulling KpiTiles' sparkline/chart
+ * import graph into their bundle.
+ *
+ * Only KpiTiles consumes it today. The Agent Monitor's summary strip is a
+ * separate `SummaryTile` in MonitorSummaryCards, because it is the HERO-sized
+ * variant (icon chip, `text-3xl` value) rather than this compact one; folding
+ * the two together is a worthwhile cleanup but has not been done.
  */
 
 /** Neutral signed delta for the secondary strip: the +/- sign carries the

@@ -1,10 +1,11 @@
 /**
  * React context that hands one window-manager INSTANCE (its bound store hook +
  * layer options + snap-preview controller) to a layer's subtree. The engine is
- * mounted twice - the board task-detail layer and the command-terminal layer -
- * and every shared component / DnD hook reads its instance from here instead of
- * importing a module singleton, so the two layers never cross-talk (separate
- * windows, tiling trees, focus, snap preview, and id space).
+ * mounted three times - the board task-detail layer, the command-terminal layer,
+ * and the Agent Monitor's detail layer - and every shared component / DnD hook
+ * reads its instance from here instead of importing a module singleton, so the
+ * layers never cross-talk (separate windows, tiling trees, focus, snap preview,
+ * and id space).
  */
 
 import { createContext, useContext, useMemo, useRef } from 'react';

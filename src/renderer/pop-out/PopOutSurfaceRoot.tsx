@@ -3,6 +3,7 @@ import { useBoardStore } from '../stores/board-store';
 import { getSurface } from './surface-registry';
 import { usePopOutBootstrap } from './usePopOutBootstrap';
 import { PopOutWindowFrame } from './PopOutWindowFrame';
+import { isGlobalPopOutKind } from '../../shared/pop-out';
 import type { PopOutDescriptor, PopOutTaskParams } from '../../shared/pop-out';
 import './surfaces';
 
@@ -13,10 +14,17 @@ export function PopOutSurfaceRoot({ descriptor }: { descriptor: PopOutDescriptor
   const surface = getSurface(descriptor.kind);
   usePopOutBootstrap(descriptor);
   // Task-scoped surfaces (changes / browser) title their window with the task's
-  // title so the detached window is associable to its task; the global stats
-  // surface has no task, so the frame falls back to its own name. board-store is
-  // hydrated by those surfaces' bootstrap, so the title lands once it loads.
-  const taskId = descriptor.kind === 'stats' ? null : (descriptor.params as PopOutTaskParams).taskId;
+  // title so the detached window is associable to its task; a global surface
+  // (stats, Agent Monitor) has no task, so the frame falls back to its own name.
+  // board-store is hydrated by those surfaces' bootstrap, so the title lands once
+  // it loads.
+  //
+  // Keyed off the shared GLOBAL_KINDS set rather than an inline `=== 'stats'`,
+  // for the reason that set exists: a new global kind would otherwise fall
+  // through to the task-params branch and read `.taskId` off an empty object.
+  const taskId = isGlobalPopOutKind(descriptor.kind)
+    ? null
+    : (descriptor.params as PopOutTaskParams).taskId;
   const taskTitle = useBoardStore((state) =>
     taskId ? state.tasks.find((task) => task.id === taskId)?.title ?? null : null,
   );

@@ -9,7 +9,7 @@ import { ContextUsageFooter } from '../board/ContextUsageFooter';
 import { formatActivityReasonText } from '../board/ActivityReasonTooltip';
 import { agentDisplayName } from '../../utils/agent-display-name';
 import { stripMarkdown } from '../../utils/strip-markdown';
-import { formatMonitorStatus, isWorking, needsUser } from './monitor-view-model';
+import { bucketOf, formatMonitorStatus, needsUser } from './monitor-view-model';
 
 /**
  * One agent session, rendered as the board's task card.
@@ -45,16 +45,23 @@ interface MonitorCardProps {
 /** The state glyph, matching TaskCard's vocabulary exactly. */
 function StateGlyph({ row }: { row: MonitorSessionRow }) {
   const title = row.activityReason ? formatActivityReasonText(row.activityReason) : undefined;
+  const bucket = bucketOf(row);
 
+  // Switch on the BUCKET, not a second derivation. `bucketOf` already decides
+  // which section and summary count this row lands in, and re-deriving the glyph
+  // from `isWorking` disagreed with it: a running session that has not reported
+  // activity yet (a freshly spawned agent, or a Command Terminal, which has no
+  // activity engine at all) buckets as `working` but fails `isActive`, so it was
+  // counted under Active while its own card drew the paused glyph.
   // The two ACTIVITY states use the shared branding marks, the same vocabulary a
   // board card shows; only the non-activity states (finished, paused) stay lucide.
-  if (needsUser(row)) {
+  if (bucket === 'needs-you') {
     return <ActivityMark mark="agent-idle" size={15} className="text-attention shrink-0" aria-label={title ?? 'Needs you'} />;
   }
-  if (isWorking(row)) {
+  if (bucket === 'working') {
     return <ActivityMark mark="agent-working" size={15} className="text-active shrink-0" aria-label={title ?? 'Working'} />;
   }
-  if (row.status === 'exited') {
+  if (bucket === 'finished') {
     return <Check size={14} className="text-fg-disabled shrink-0" aria-label="Finished" />;
   }
   return (

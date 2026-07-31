@@ -16,7 +16,6 @@ import { BrandMark } from '../BrandMark';
 
 const isMac = window.electronAPI.platform === 'darwin';
 
-
 interface TitleBarProps {
   /** Toggles the Command Terminal layer: opens it when closed, hides it when open. */
   onQuickSession?: () => void;

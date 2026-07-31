@@ -808,7 +808,7 @@ When `developer.previewInspectionServer` is enabled in dev builds (the toggle is
 
 Tool categories:
 - **Discovery:** `list_instances` - enumerate running preview instances by lockfile
-- **State:** `engine_state`, `renderer_state`, `store_state` - live ActivityStatsSnapshot, the fixed Zustand snapshot, and arbitrary store reads by name plus dot/bracket path. `store_state` also answers MAIN-side namespaces that are not Zustand stores: `detailOwners` returns the task-detail ownership map plus its recent mutation history (claim / release / release-ignored / release-all / resolve). That one exists because ownership was otherwise observable only by calling `requestOpen`, which focuses and can mount a window - probing changed what was being measured
+- **State:** `engine_state`, `renderer_state`, `store_state` - live ActivityStatsSnapshot, the fixed Zustand snapshot, and arbitrary store reads by name plus dot/bracket path. `store_state` also answers MAIN-side namespaces that are not Zustand stores: `detailOwners` returns the task-detail ownership map plus its recent mutation history (resolve / sync / release-all). That one exists because ownership was otherwise observable only by calling `requestOpen`, which focuses and can mount a window - probing changed what was being measured
 - **Visual / DOM:** `screenshot`, `screenshot_element`, `query_dom`, `query_all`, `computed_style`, `bounding_box`, `bounding_box_all`, `accessibility_tree`, `mutations` - the `_all` variants measure every matching element in one call
 - **React:** `react_query`, `react_tree`, `react_recent_renders` - fiber walker via `__REACT_DEVTOOLS_GLOBAL_HOOK__`
 - **Console:** `console` - CDP `Console.messageAdded` ring buffer (separate from product `tail_logs`)

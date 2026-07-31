@@ -5,17 +5,17 @@
  *
  *   1. A given task's detail can never be open twice. Asking for one that is
  *      already open focuses the existing host instead of mounting a second.
- *   2. A request from the DETACHED monitor opens on the board when the main
- *      window is already showing that task's project, and inside the pop-out
- *      when it is not. That keeps a pop-out click from yanking the user's board
- *      to another project, while still using the big surface when they are
- *      already there.
+ *   2. THE REQUESTER WINS. A request from a surface that does not already hold
+ *      the detail opens it THERE, displacing whoever had it (who is told to let
+ *      go first). There is deliberately no placement heuristic - an earlier
+ *      draft routed a detached-monitor request to the board when the main window
+ *      already showed that project, which made where a click landed depend on
+ *      state the user could not see. `resolveOpen` is unconditional.
  *
  * In main rather than the renderer because main is the only place that knows
- * BOTH halves: which renderer owns what (a pop-out is a separate renderer with
- * its own stores, invisible to the main window) and which project the main
- * window currently has open. Putting the rule anywhere else means implementing
- * it twice and watching the two drift.
+ * which renderer owns what: a pop-out is a separate renderer with its own
+ * stores, invisible to the main window. Putting the rule anywhere else means
+ * implementing it twice and watching the two drift.
  *
  * Rule 1 is also what makes the one-xterm-per-session invariant structural. Two
  * hosts mounting the same task would each mount a terminal for its session, and
@@ -197,10 +197,13 @@ export class DetailOwnerRegistry {
    * non-owner" guard structurally instead of as a special case.
    *
    * Order-stable by construction: a key this pair already owns is left in place
-   * rather than re-inserted. `ownedElsewhere` iterates in insertion order and
-   * `useRemoteDetailOwnersSync` compares positionally, so a clear-and-refill would
-   * make an unchanged set read as changed and needlessly re-publish the focused
-   * session set (which gates whether main streams PTY bytes at all).
+   * rather than re-inserted, so `ownedElsewhere`'s insertion-order iteration is
+   * stable for any consumer that needs it. Note the one consumer today,
+   * `useRemoteDetailOwnersSync`, compares by SET MEMBERSHIP rather than
+   * positionally, so it is already immune to a reorder; the stability is kept
+   * because a positional or serialize-and-diff consumer would otherwise read an
+   * unchanged set as changed and needlessly re-publish the focused session set
+   * (which gates whether main streams PTY bytes at all).
    *
    * The caller MUST send `DETAIL_CLOSE_HERE` for every `displaced` entry. Taking a
    * key without closing the loser's window is the one way this can be worse than

@@ -39,6 +39,13 @@ export interface PopOutParamsByKind {
  */
 const GLOBAL_KINDS: readonly PopOutKind[] = ['stats', 'monitor'];
 
+/** True for a kind whose params carry no task/project, so a caller must not read
+ *  `taskId` / `projectId` off them. Exported so every such branch reads the one
+ *  set instead of re-spelling `kind === 'stats'`. */
+export function isGlobalPopOutKind(kind: PopOutKind): boolean {
+  return GLOBAL_KINDS.includes(kind);
+}
+
 export type PopOutParams<K extends PopOutKind = PopOutKind> = PopOutParamsByKind[K];
 
 export interface PopOutDescriptor<K extends PopOutKind = PopOutKind> {

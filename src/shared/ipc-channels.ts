@@ -239,7 +239,7 @@ export const IPC = {
   MOBILE_PAIRING_ENDED: 'mobile:pairingEnded',
   MOBILE_STATE_CHANGED: 'mobile:stateChanged',
 
-  // Agent Monitor -- machine-global (like mobile bridge), NOT project-scoped. The monitor
+  // Agent Monitor - machine-global (like mobile bridge), NOT project-scoped. The monitor
   // aggregates live sessions across EVERY registered project, so these channels deliberately
   // take no trailing projectId and are outside the project-scoped-ipc mutation set. They are
   // also deliberately named outside the TASK_/SESSION_ prefixes so the parity test's channel
@@ -257,7 +257,7 @@ export const IPC = {
   // read channels with a projectId - see src/main/monitor/task-detail-bundle.ts.
   MONITOR_GET_TASK_DETAIL: 'monitor:getTaskDetail',
 
-  // Task-detail ownership -- machine-global, and deliberately outside the TASK_ prefix
+  // Task-detail ownership - machine-global, and deliberately outside the TASK_ prefix
   // so the project-scoped-ipc parity test does not classify these as task mutations.
   // They mutate no task; they arbitrate WHICH RENDERER hosts a task's detail, which is
   // knowledge only main has (a pop-out is a separate renderer with its own stores).

@@ -399,17 +399,26 @@ export class SessionManager extends EventEmitter {
    * to send it.
    */
   setFocusedSessions(sessionIds: string[], rendererId = SHARED_RENDERER_ID): void {
+    const previousForRenderer = this.focusedByRenderer.get(rendererId);
     if (sessionIds.length === 0) this.focusedByRenderer.delete(rendererId);
     else this.focusedByRenderer.set(rendererId, new Set(sessionIds));
     this.recomputeFocusedUnion();
-    // The emit set just changed, so prior in-flight accounting is stale (a
-    // session leaving the focused set would otherwise stay paused forever
-    // because the renderer no longer acks its data). Resume every paused PTY
-    // and clear the counters; backpressure rebuilds from zero as fresh data
-    // flows to the now-focused terminals (the scrollback replay catches them
-    // up). Focus changes are user-driven and infrequent, so a blanket reset is
-    // cheap and robust.
-    this.backpressure.reset();
+    // Prior in-flight accounting is stale for the sessions THIS renderer just
+    // changed: one leaving its visible set would otherwise stay paused forever,
+    // because that renderer no longer acks its data. Resume those and clear
+    // their counters; backpressure rebuilds from zero as fresh data flows to the
+    // now-focused terminals (the scrollback replay catches them up).
+    //
+    // Scoped to the caller's own sessions on purpose. This used to be a blanket
+    // `backpressure.reset()`, which was safe only while a single renderer
+    // published focus. The detached Agent Monitor is a second publisher, and its
+    // effect re-runs on any session-list change, so a blanket reset would
+    // force-resume a PTY the OTHER window is still actively throttling and zero
+    // its unacked byte count, defeating backpressure for a session this renderer
+    // has no relationship to.
+    const affectedSessionIds = new Set(previousForRenderer);
+    for (const sessionId of sessionIds) affectedSessionIds.add(sessionId);
+    for (const sessionId of affectedSessionIds) this.backpressure.release(sessionId);
   }
 
   /**
@@ -461,9 +470,18 @@ export class SessionManager extends EventEmitter {
 
   /** Drop a renderer's focus set when its window goes away. */
   clearFocusedSessionsFor(rendererId: number): void {
+    const departingSessionIds = this.focusedByRenderer.get(rendererId);
     if (!this.focusedByRenderer.delete(rendererId)) return;
     this.recomputeFocusedUnion();
-    this.backpressure.reset();
+    // Rescue only the sessions this renderer was the LAST consumer of. Their
+    // in-flight bytes can never be acked (the window that was reading them is
+    // gone), so without this a session that crossed the high-water mark just as
+    // its sole renderer died would stay paused forever and the agent would
+    // stall. A session another renderer still has visible keeps its accounting,
+    // which the blanket reset this replaces would have wrongly zeroed.
+    for (const sessionId of departingSessionIds ?? []) {
+      if (!this.focusedSessionIds.has(sessionId)) this.backpressure.release(sessionId);
+    }
   }
 
   private recomputeFocusedUnion(): void {

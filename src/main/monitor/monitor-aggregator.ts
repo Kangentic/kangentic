@@ -137,6 +137,14 @@ export function buildMonitorSnapshot(context: IpcContext): MonitorSnapshot {
     const project = resolveProject(context, managed.projectId, projectCache);
     if (!project) continue;
 
+    // Per-SESSION guard, matching the per-PROJECT one in `resolveProject`. That
+    // one covers only the DB open; the two row reads below run against an
+    // already-open handle and can still throw (a transient SQLITE_IOERR, a row
+    // that fails to parse). Without this, one bad session anywhere blanks the
+    // cross-project view for every project, because the caller can only discard
+    // the whole snapshot.
+    try {
+
     // Command Terminals ARE included, and the monitor is the only place they can
     // appear: they have no task and therefore no board card, and the Command
     // Terminal layer only ever shows the currently-open project. They carry a
@@ -191,6 +199,10 @@ export function buildMonitorSnapshot(context: IpcContext): MonitorSnapshot {
       isolated: managed.isolatedSwimlaneId !== null,
       isCommandTerminal,
     });
+
+    } catch (error) {
+      console.error(`[monitor] Failed to build row for session ${managed.id}:`, error);
+    }
   }
 
   capRecentlyFinished(rows);

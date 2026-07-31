@@ -9,6 +9,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import type { SerializedWorkspace } from '../../src/shared/types';
 
 let tmpDir: string;
 let configPath: string;
@@ -540,5 +541,215 @@ describe('Config Manager -- terminal.colors replace semantics', () => {
 
     const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
     expect(raw.terminal.colors).toEqual({});
+  });
+});
+
+describe('Config Manager -- monitorWorkspace replace semantics', () => {
+  // 'monitorWorkspace' is a CONFIG_DICTIONARY_PATHS entry (config-manager.ts) for the
+  // same reason as its sibling 'commandTerminalWorkspace' above: the renderer always
+  // writes the FULL SerializedWorkspace blob (config-store.ts's saveMonitorWorkspace /
+  // flushMonitorWorkspace), so save() must REPLACE the stored blob wholesale rather
+  // than deep-merge it - otherwise a detail window closed in one save could reappear
+  // after a later, unrelated save merges the stale entry back in.
+
+  it('set({ monitorWorkspace: null }) REPLACES the previous blob, not deep-merges it', async () => {
+    // Mirrors the commandTerminalWorkspace null-write test above for structural
+    // consistency, and null-write IS a real code path (all windows closed). But
+    // unlike the tileTree-collapse test below, this assertion does NOT by itself pin
+    // 'monitorWorkspace' in CONFIG_DICTIONARY_PATHS: deepMerge's null branch
+    // (`value !== null` failing) assigns `null` directly regardless of
+    // dictionaryPaths membership, so this passes even with the entry removed. The
+    // regression guard for the array-shrink hole is the next test.
+    const initialWorkspace: SerializedWorkspace = {
+      version: 1,
+      windows: [
+        {
+          taskId: 'proj-a:task-1',
+          kind: 'task-detail',
+          title: 'Fix the thing',
+          geometry: { x: 0.1, y: 0.1, w: 0.5, h: 0.5 },
+          restoreGeometry: null,
+          state: 'floating',
+        },
+      ],
+      tileTree: null,
+      tileTreeRect: { x: 0, y: 0, w: 1, h: 1 },
+      focusedTaskId: 'proj-a:task-1',
+    };
+
+    const cm = await createConfigManager();
+    cm.save({ monitorWorkspace: initialWorkspace });
+    const afterFirstWrite = cm.load();
+    expect(afterFirstWrite.monitorWorkspace).not.toBeNull();
+    expect(afterFirstWrite.monitorWorkspace?.windows).toHaveLength(1);
+
+    cm.save({ monitorWorkspace: null });
+    const afterNullWrite = cm.load();
+    expect(afterNullWrite.monitorWorkspace).toBeNull();
+
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect(raw.monitorWorkspace).toBeNull();
+  });
+
+  it('closing a tiled monitor window collapses windows AND tileTree on save, not merges the stale split back in', async () => {
+    // This is the assertion that actually pins 'monitorWorkspace' in
+    // CONFIG_DICTIONARY_PATHS. A plain windows-array shrink alone does NOT: deepMerge
+    // always assigns an array value wholesale (its recursion guard requires
+    // `!Array.isArray(value)`), so `windows: []` replaces correctly whether or not
+    // 'monitorWorkspace' is a dictionary path - confirmed empirically against the
+    // real deepMerge, both with and without the entry present. tileTree IS the
+    // discriminator: it is a plain object (SerializedTileNode), so it's reached by
+    // the recursive merge path. Collapsing a two-pane 'split' down to a single
+    // 'leaf' would, under merge semantics, leak the old split's
+    // direction/children/sizes onto the new leaf - the persisted layout would still
+    // describe the closed window's tiling, which is exactly the "closed details keep
+    // reappearing" failure the CONFIG_DICTIONARY_PATHS comment describes.
+    const twoWindowSplit: SerializedWorkspace = {
+      version: 1,
+      windows: [
+        {
+          taskId: 'proj-a:task-1',
+          kind: 'task-detail',
+          title: 'Fix the thing',
+          geometry: { x: 0, y: 0, w: 0.5, h: 1 },
+          restoreGeometry: null,
+          state: 'tiled',
+        },
+        {
+          taskId: 'proj-a:task-2',
+          kind: 'task-detail',
+          title: 'Also fix this',
+          geometry: { x: 0.5, y: 0, w: 0.5, h: 1 },
+          restoreGeometry: null,
+          state: 'tiled',
+        },
+      ],
+      tileTree: {
+        kind: 'split',
+        direction: 'horizontal',
+        children: [
+          { kind: 'leaf', taskId: 'proj-a:task-1' },
+          { kind: 'leaf', taskId: 'proj-a:task-2' },
+        ],
+        sizes: [0.5, 0.5],
+      },
+      tileTreeRect: { x: 0, y: 0, w: 1, h: 1 },
+      focusedTaskId: 'proj-a:task-2',
+    };
+    const oneWindowLeaf: SerializedWorkspace = {
+      version: 1,
+      windows: [
+        {
+          taskId: 'proj-a:task-1',
+          kind: 'task-detail',
+          title: 'Fix the thing',
+          geometry: { x: 0, y: 0, w: 1, h: 1 },
+          restoreGeometry: null,
+          state: 'tiled',
+        },
+      ],
+      tileTree: { kind: 'leaf', taskId: 'proj-a:task-1' },
+      tileTreeRect: { x: 0, y: 0, w: 1, h: 1 },
+      focusedTaskId: 'proj-a:task-1',
+    };
+
+    const cm = await createConfigManager();
+    cm.save({ monitorWorkspace: twoWindowSplit });
+    const afterFirstWrite = cm.load();
+    expect(afterFirstWrite.monitorWorkspace?.windows).toHaveLength(2);
+
+    cm.save({ monitorWorkspace: oneWindowLeaf });
+    const afterSecondWrite = cm.load();
+
+    // Red: removing 'monitorWorkspace' from CONFIG_DICTIONARY_PATHS makes this
+    // deep-merge instead. windows still shrinks to 1 (arrays always replace), but
+    // tileTree would merge the leaf's own two keys into the OLD split object,
+    // leaving 'direction' / 'children' / 'sizes' behind from the closed window's split.
+    expect(afterSecondWrite.monitorWorkspace?.windows).toHaveLength(1);
+    expect(afterSecondWrite.monitorWorkspace?.tileTree).toEqual({ kind: 'leaf', taskId: 'proj-a:task-1' });
+
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect(raw.monitorWorkspace.windows).toHaveLength(1);
+    expect(raw.monitorWorkspace.tileTree).toEqual({ kind: 'leaf', taskId: 'proj-a:task-1' });
+  });
+
+  it('writing a new monitorWorkspace blob REPLACES stale sub-fields rather than merging them in', async () => {
+    // Mirrors the commandTerminalWorkspace stale-sub-field test above: an extra key
+    // present in an earlier blob but absent from a later one must not survive.
+    const firstBlob = {
+      version: 1,
+      windows: [],
+      tileTree: null,
+      tileTreeRect: { x: 0, y: 0, w: 1, h: 1 },
+      focusedTaskId: 'proj-a:task-old',
+      // Extra key not in SerializedWorkspace - simulates a field that will be absent
+      // from the next write.
+      _staleKey: 'should-be-gone',
+    };
+    const secondBlob = {
+      version: 1,
+      windows: [],
+      tileTree: null,
+      tileTreeRect: { x: 0, y: 0, w: 1, h: 1 },
+      focusedTaskId: 'proj-a:task-new',
+      // _staleKey intentionally absent - in merge semantics it would survive from
+      // the first blob; in replace semantics it is gone.
+    };
+
+    const cm = await createConfigManager();
+    // Use a cast to bypass TypeScript's strict-shape check for the test-extra key.
+    cm.save({ monitorWorkspace: firstBlob as Parameters<typeof cm.save>[0]['monitorWorkspace'] });
+    cm.save({ monitorWorkspace: secondBlob as Parameters<typeof cm.save>[0]['monitorWorkspace'] });
+
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    // Replace semantics: the stale key from the first blob must not survive.
+    expect(raw.monitorWorkspace._staleKey).toBeUndefined();
+    // The new focusedTaskId must reflect the second write.
+    expect(raw.monitorWorkspace.focusedTaskId).toBe('proj-a:task-new');
+  });
+});
+
+describe('Config Manager -- monitor deep-merge (NOT a CONFIG_DICTIONARY_PATHS entry)', () => {
+  // 'monitor' is deliberately absent from CONFIG_DICTIONARY_PATHS: it is a typed
+  // MonitorView struct (layout/groupBy/sort/liveOnly/projectFilter/stateFilter/
+  // textFilter), not a renderer-authoritative dictionary, so a partial write must
+  // MERGE and preserve the other six keys. These tests guard both directions of
+  // that contract: an on-disk config missing 'monitor' entirely must still populate
+  // every key from DEFAULT_CONFIG.monitor (a renderer reading `.layout` off
+  // `undefined` would crash), and a partial on-disk 'monitor' block must merge in
+  // the rest of the defaults rather than replace the whole struct.
+
+  it('loads with monitor populated from DEFAULT_CONFIG.monitor when the on-disk config has no monitor key at all', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({ theme: 'dark' }));
+
+    const cm = await createConfigManager();
+    const config = cm.load();
+    const { DEFAULT_CONFIG } = await import('../../src/shared/types');
+
+    expect(config.monitor).toEqual(DEFAULT_CONFIG.monitor);
+    expect(config.monitor.layout).toBe('cards');
+  });
+
+  it('a partial on-disk monitor override merges rather than replaces, preserving the other MonitorView keys', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({
+      monitor: { layout: 'rows' },
+    }));
+
+    const cm = await createConfigManager();
+    const config = cm.load();
+
+    // The explicit override survives.
+    expect(config.monitor.layout).toBe('rows');
+    // Every other MonitorView key is preserved from DEFAULT_CONFIG.monitor, not
+    // dropped. Red if 'monitor' were ever added to CONFIG_DICTIONARY_PATHS (or
+    // deepMergeConfig's own narrower dictionaryPaths list): a partial write would
+    // then replace the whole struct, and these would come back undefined/empty in
+    // a way that doesn't match the defaults below.
+    expect(config.monitor.groupBy).toBe('project');
+    expect(config.monitor.sort).toBe('longest-running');
+    expect(config.monitor.liveOnly).toBe(false);
+    expect(config.monitor.projectFilter).toEqual([]);
+    expect(config.monitor.stateFilter).toEqual([]);
+    expect(config.monitor.textFilter).toBe('');
   });
 });

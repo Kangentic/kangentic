@@ -30,7 +30,19 @@ const MONITOR_PUSH_DEBOUNCE_MS = 250;
 export function registerMonitorHandlers(context: IpcContext): void {
   let pushTimer: ReturnType<typeof setTimeout> | null = null;
 
-  ipcMain.handle(IPC.MONITOR_GET_SNAPSHOT, () => buildMonitorSnapshot(context));
+  ipcMain.handle(IPC.MONITOR_GET_SNAPSHOT, () => {
+    try {
+      return buildMonitorSnapshot(context);
+    } catch (error) {
+      // Same reasoning as the push path below: one project's DB hiccup must not
+      // fail the whole cross-project fetch. `resolveProject` already guards the
+      // per-project OPEN, but the per-row reads against an already-open handle
+      // are not individually wrapped, so a mid-loop throw would otherwise reject
+      // this invoke and leave the monitor blank for every project.
+      console.error('[monitor] Failed to build snapshot for fetch:', error);
+      return { rows: [], generatedAt: new Date().toISOString() };
+    }
+  });
 
   /**
    * The project-scoped half of a task detail, for a host that is not that

@@ -20,7 +20,7 @@
  * too.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useConfigStore } from '../../stores/config-store';
 import { useMonitorStore } from '../../stores/monitor-store';
@@ -49,11 +49,20 @@ export function MonitorTaskDetailHost({
   const monitorRows = useMonitorStore((state) => state.rows);
   const settingsOpen = useConfigStore((state) => state.settingsOpen);
 
+  /** Bumped per fetch so a slow response cannot overwrite a newer one. Any
+   *  monitor row change re-fires the effect below, and an activity tick on ANY
+   *  tracked session (in any project) gives `rows` a new reference, so several
+   *  `getTaskDetail` calls are routinely in flight at once and can resolve out of
+   *  order. Without this, the older reply wins and the detail shows stale data. */
+  const requestGenerationRef = useRef(0);
+
   const refresh = useCallback(async () => {
     const api = window.electronAPI?.monitor;
     if (!api?.getTaskDetail) return;
+    const generation = ++requestGenerationRef.current;
     try {
       const next = await api.getTaskDetail(projectId, taskId);
+      if (generation !== requestGenerationRef.current) return;
       if (!next) {
         onUnavailable();
         return;
@@ -64,7 +73,12 @@ export function MonitorTaskDetailHost({
     }
   }, [projectId, taskId, onUnavailable]);
 
-  useEffect(() => { void refresh(); }, [refresh, monitorRows]);
+  useEffect(() => {
+    void refresh();
+    // Invalidate this fetch on unmount / re-fire, so a reply that lands after the
+    // host has moved to another task cannot call setBundle or onUnavailable.
+    return () => { requestGenerationRef.current += 1; };
+  }, [refresh, monitorRows]);
 
   const value = useMemo<TaskDetailHostValue | null>(() => {
     if (!bundle) return null;

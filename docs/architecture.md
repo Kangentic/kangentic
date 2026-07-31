@@ -221,14 +221,31 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 |---------|---------|---------|
 | `usage:getDashboardStats` | invoke | Composite usage-statistics payload for the dashboard (KPIs, bucketed token/cost time series, by-model / by-agent breakdowns), for one project or rolled up across every registered project, over the Live/Today/Week/Month/All Time ranges. Sources from the append-only `usage_history` + `conversation_turn_usage` ledgers so totals survive task deletion, bulk-archive, and revert-to-backlog; also merges in-flight sessions from the live `SessionManager` on top (skipped for a day drill or custom window, which are pure ledger accounting) so the SESSIONS KPI and Live view are not undercounted. Read-only; the explicit scope argument carries the project id. |
 
-### Agent Monitor (3 channels)
+### Agent Monitor (4 channels)
 Machine-global, like the Mobile Bridge channels: the monitor aggregates live sessions across
-**every** registered project, so neither channel takes a trailing `projectId`.
+**every** registered project, so no channel here takes a trailing `projectId`. The one exception
+is `monitor:getTaskDetail`, which names a project explicitly because it reads ONE task from a
+project that may not be the open one.
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `monitor:getSnapshot` | invoke | Cross-project snapshot of every live and recently-finished agent session: owning project, task title / ticket number / column, activity state and reason, agent, model, runtime, last event, and context-window usage. Built by joining the process-global session registry and activity/event/usage caches against each owning project's DB (one warm read per project, not per session). Read-only. |
+| `monitor:getSnapshot` | invoke | Cross-project snapshot of every live and recently-finished agent session: owning project, task title / ticket number / column, activity state and reason, agent, model, runtime, last event, and context-window usage. Built by joining the process-global session registry and activity/event/usage caches against each owning project's DB. Per-project setup is memoized once per snapshot; the row build itself is one indexed task read plus one session read per monitored session. Read-only. |
+| `monitor:getTaskDetail` | invoke | Everything the task-detail surface needs about a task's OWN project (task row, project name/path, swimlanes, shortcuts, label colors, base branch, worktree/browser flags), so a host that is not that project's board can render it. One bundle rather than stamping five read channels with a projectId. Returns null when the project or task is gone, so the caller closes rather than rendering a husk. Read-only. |
 | `monitor:revealTask` | invoke | Ask main to reveal a task in the MAIN window (switching project if needed) and focus it. Used by the DETACHED monitor, which is its own renderer with its own stores and so cannot open a task by setting local state. Re-emits the existing `notification:clicked` push so there is one reveal path, not two. |
 | `monitor:changed` | on | Fanned to every window (main + open pop-outs) when the DB-resident half of a row changes (a session spawned or exited, or an agent retitled/moved a task), debounced at 250ms. Live activity does NOT come through here - it rides the unbuffered `session:activity` push and is patched onto rows in place, so a state change needs no round trip. |
+
+### Task Detail Ownership (5 channels)
+Machine-global, and deliberately outside the `task:` prefix: these mutate no task, they arbitrate
+WHICH RENDERER hosts a task's detail. Only main can answer, because a pop-out is a separate
+renderer with its own stores and neither host can see the other's windows. Ownership is DERIVED
+from a host's complete mounted set, never accumulated from claim/release - see
+`.claude/rules/derived-detail-ownership.md`, which owns the rules.
+| Channel | Pattern | Purpose |
+|---------|---------|---------|
+| `detail:requestOpen` | invoke | Ask main where this task's detail should open. Main focuses the target window and returns `focused-existing` (the requester already holds it, so nothing remounts and a live terminal is not torn down) or `open-here` (the requester wins, naming any surface it displaced). |
+| `detail:openHere` | on | Main telling a surface in this renderer to mount a task's detail. |
+| `detail:closeHere` | on | Main telling the PREVIOUS holder to let go, because another surface took the detail. Sent BEFORE the winner mounts, so the detail is never briefly present twice. |
+| `detail:syncOwned` | send | A host reports the COMPLETE set of details it currently has mounted, derived from its window store. Replaces a claim/release pair: a lost or out-of-order message cannot strand a claim, which used to make a task permanently unopenable. Main reconciles per `(webContentsId, host)`. |
+| `detail:remoteOwners` | on | Main publishing which details are held by a DIFFERENT renderer, filtered per recipient. Terminal ownership ("one xterm per PTY") was renderer-local, so a detail hosted in the detached monitor left the main window free to mount a second xterm on the same live PTY. Only main sees both sides. |
 
 ### Config (10 channels)
 | Channel | Pattern | Purpose |
@@ -350,7 +367,7 @@ Machine-global (like Config), not project-scoped - backs the Mobile Devices sett
 | `window:isFocused` | invoke | Check if the sending window has focus (for the renderer's spawn-stall/plan-complete notification gating; the idle/crash desktop notifier resolves focus synchronously in main instead - see `src/main/notifications/desktop-notifier.ts`) |
 
 ### Pop-out Windows (6 channels)
-Detach a registered UI surface (usage stats, git changes, the task Browser pane) into its own OS-level `BrowserWindow`. See `src/shared/pop-out.ts` for the surface registry (`PopOutKind`, params, per-surface push fan-out) and `src/main/pop-out/` for the window manager + broadcast helper. Distinct from the in-app DOM window manager (`src/renderer/window-manager/`), which tiles movable panes inside the single main `BrowserWindow`.
+Detach a registered UI surface (usage stats, git changes, the task Browser pane, the Agent Monitor) into its own OS-level `BrowserWindow`. See `src/shared/pop-out.ts` for the surface registry (`PopOutKind`, params, per-surface push fan-out) and `src/main/pop-out/` for the window manager + broadcast helper. Distinct from the in-app DOM window manager (`src/renderer/window-manager/`), which tiles movable panes inside the single main `BrowserWindow`.
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `popOut:open` | invoke | Open a surface's pop-out window (kind + params), or focus it if already open |
@@ -634,7 +651,7 @@ State: `tasks`, `swimlanes`, `archivedTasks`, `loading`, `completingTask`, `comp
 
 State: `sessions`, `activeSessionId`, `openTaskId`, `dialogSessionIds`, `sessionUsage`, `sessionActivity`, `sessionEvents`
 
-- **Terminal ownership handoff** -- `dialogSessionIds` (a string array) lists every session owned by an open task-detail window, so the bottom panel never renders an xterm for a session a window already owns (one xterm per PTY). It replaced the scalar `dialogSessionId` once task detail became modeless and multiple windows can stack. When a window claims a session, the panel unmounts that session's xterm; on release, the panel recreates from scrollback. The array is renderer-GLOBAL, not per-layer: `useWindowSessionClaims` reconciles it across every window-manager instance in the renderer (`allWindowManagers` -- board, Command Terminal, Agent Monitor), resolving each window's taskId through its manager's `anchorToTaskId` since the board anchors by taskId and the monitor by `projectId:taskId`. A reconciler that walked one layer would treat the other layers' claims as stale and erase them, putting a second xterm on a live PTY.
+- **Terminal ownership handoff** -- `dialogSessionIds` (a string array) lists every session owned by an open task-detail window, so the bottom panel never renders an xterm for a session a window already owns (one xterm per PTY). It replaced the scalar `dialogSessionId` once task detail became modeless and multiple windows can stack. When a window claims a session, the panel unmounts that session's xterm; on release, the panel recreates from scrollback. The array is renderer-GLOBAL, not per-layer: `useWindowSessionClaims` reconciles it across every window-manager instance in the renderer (`allWindowManagers` - board, Command Terminal, Agent Monitor), resolving each window's taskId through its manager's `anchorToTaskId` since the board anchors by taskId and the monitor by `projectId:taskId`. A reconciler that walked one layer would treat the other layers' claims as stale and erase them, putting a second xterm on a live PTY.
 - **HMR store re-sync** -- The `vite:afterUpdate` handler in `App.tsx` re-fetches all IPC-backed stores (project, config, board, session) after Vite HMR replaces modules, preventing stores from reverting to defaults. A unit test (`hmr-resync.test.ts`) enforces that new stores are included. Usage and events are scoped to the current project; activity is fetched unscoped so sidebar badges work across all projects.
 - **Project switch cleanup** -- On project switch, `activeSessionId`, `dialogSessionIds`, `openTaskId`, `sessionUsage`, and `sessionEvents` are cleared before re-syncing. A generation counter invalidates in-flight syncs from the previous project. `sessionActivity` and `sessions` are preserved for sidebar badge rendering. After sync completes, any `_pendingOpenTaskId` (set by notification click) is applied and cleared.
 - **Event capping** -- max 500 events per session to bound DOM size in ActivityLog.

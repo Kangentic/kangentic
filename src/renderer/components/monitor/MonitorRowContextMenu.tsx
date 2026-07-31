@@ -53,6 +53,19 @@ export function MonitorRowContextMenu({
 
   const refreshRows = (): void => { void useMonitorStore.getState().loadSnapshot(); };
 
+  /** Surface a failed task mutation. These actions call `window.electronAPI.tasks.*`
+   *  directly rather than through the board store, because the row's project may not
+   *  be the open one - which also means they do not inherit the board slice's
+   *  rollback-and-toast handling, so each one reports for itself. Without this the
+   *  rejection reaches only the global `unhandledrejection` listener and the user
+   *  sees an unchanged row with no explanation. */
+  const reportActionFailure = (action: string, error: unknown): void => {
+    useToastStore.getState().addToast({
+      message: `Failed to ${action} "${row.taskTitle}": ${error instanceof Error ? error.message : 'Unknown error'}`,
+      variant: 'warning',
+    });
+  };
+
   const openOnBoard = (
     <button
       type="button"
@@ -111,25 +124,27 @@ export function MonitorRowContextMenu({
         void window.electronAPI.tasks
           .move({ taskId: row.taskId, targetSwimlaneId, targetPosition: 0 }, row.projectId)
           .then(refreshRows)
-          .catch((error) => {
-            useToastStore.getState().addToast({
-              message: `Failed to move "${row.taskTitle}": ${error instanceof Error ? error.message : 'Unknown error'}`,
-              variant: 'warning',
-            });
-          });
+          .catch((error) => reportActionFailure('move', error));
       }}
       onSendToBacklog={() => {
-        void window.electronAPI.tasks.delete(row.taskId, row.projectId).then(refreshRows);
+        void window.electronAPI.tasks
+          .delete(row.taskId, row.projectId)
+          .then(refreshRows)
+          .catch((error) => reportActionFailure('send to backlog', error));
       }}
       onArchive={() => {
         const doneLane = resolved.swimlanes.find((lane) => lane.role === 'done');
         if (!doneLane) return;
         void window.electronAPI.tasks
           .move({ taskId: row.taskId, targetSwimlaneId: doneLane.id, targetPosition: 0 }, row.projectId)
-          .then(refreshRows);
+          .then(refreshRows)
+          .catch((error) => reportActionFailure('archive', error));
       }}
       onDelete={() => {
-        void window.electronAPI.tasks.delete(row.taskId, row.projectId).then(refreshRows);
+        void window.electronAPI.tasks
+          .delete(row.taskId, row.projectId)
+          .then(refreshRows)
+          .catch((error) => reportActionFailure('delete', error));
       }}
     />
   );

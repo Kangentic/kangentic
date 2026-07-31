@@ -6,7 +6,7 @@ import { DataTable, type DataTableColumn } from '../DataTable';
 import { ElapsedTime } from '../terminal/ElapsedTime';
 import { formatActivityReasonText } from '../board/ActivityReasonTooltip';
 import { agentDisplayName } from '../../utils/agent-display-name';
-import { BUCKET_LABELS, bucketOf, formatMonitorStatus, isWorking, needsUser } from './monitor-view-model';
+import { BUCKET_LABELS, bucketOf, formatMonitorStatus, needsUser } from './monitor-view-model';
 
 /**
  * The dense layout: one line per session, sortable, in the shared DataTable.
@@ -24,12 +24,19 @@ import { BUCKET_LABELS, bucketOf, formatMonitorStatus, isWorking, needsUser } fr
  */
 
 function StateCell({ row }: { row: MonitorSessionRow }) {
-  const title = row.activityReason ? formatActivityReasonText(row.activityReason) : BUCKET_LABELS[bucketOf(row)];
+  const bucket = bucketOf(row);
+  const title = row.activityReason ? formatActivityReasonText(row.activityReason) : BUCKET_LABELS[bucket];
+  // Switch on the BUCKET, not a second derivation. `bucketOf` already decides
+  // which section and summary count this row lands in, and re-deriving the glyph
+  // from `isWorking` disagreed with it: a running session that has not reported
+  // activity yet (a freshly spawned agent, or a Command Terminal, which has no
+  // activity engine at all) buckets as `working` but fails `isActive`, so it was
+  // counted under Active while its own row drew the paused glyph.
   // The two ACTIVITY states use the shared branding marks, the same vocabulary a
   // board card shows; only the non-activity states (finished, paused) stay lucide.
-  if (needsUser(row)) return <ActivityMark mark="agent-idle" size={15} className="text-attention" aria-label={title} />;
-  if (isWorking(row)) return <ActivityMark mark="agent-working" size={15} className="text-active" aria-label={title} />;
-  if (row.status === 'exited') return <Check size={14} className="text-fg-disabled" aria-label="Finished" />;
+  if (bucket === 'needs-you') return <ActivityMark mark="agent-idle" size={15} className="text-attention" aria-label={title} />;
+  if (bucket === 'working') return <ActivityMark mark="agent-working" size={15} className="text-active" aria-label={title} />;
+  if (bucket === 'finished') return <Check size={14} className="text-fg-disabled" aria-label="Finished" />;
   return <CirclePause size={14} className="text-fg-faint" aria-label="Paused" />;
 }
 

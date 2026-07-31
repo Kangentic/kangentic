@@ -188,8 +188,11 @@ export interface MonitorGroup {
  */
 export function groupRows(
   rows: MonitorSessionRow[],
-  /** `'flat'` is internal-only: the table layout passes it because a <table>
-   *  cannot interleave section headers. Users never select it. */
+  /** `'flat'` is internal-only and currently has NO production caller: the table
+   *  layout renders one grouped `<MonitorTable>` per section rather than asking
+   *  for a single unlabelled group. Kept as a supported input (and covered by
+   *  tests) so a caller that cannot interleave section headers has a shape to
+   *  ask for. Users never select it. */
   groupBy: MonitorView['groupBy'] | 'flat',
 ): MonitorGroup[] {
   if (groupBy === 'flat') {
@@ -227,10 +230,14 @@ export type MonitorRenderUnit =
 /**
  * Flatten groups into a single list of render units.
  *
- * This is what lets ONE virtualizer serve every layout and grouping mode: the card
- * grid chunks into rows of `columns`, while table/compact layouts pass
- * `columns = 1`. Without it, the grid would need its own virtualization strategy
- * and group headers would not participate in the same measured list.
+ * This is what lets one virtualizer serve the CARD and LIST layouts: the card grid
+ * chunks into rows of `columns`, the list passes `columns = 1`, and group headers
+ * participate in the same measured list. Without it, the grid would need its own
+ * virtualization strategy.
+ *
+ * The TABLE layout does not come through here. It renders one `<MonitorTable>` per
+ * group and virtualizes via `DataTable`'s own `virtualized` prop, because a
+ * `<table>` cannot interleave section headers between its rows.
  */
 export function toRenderUnits(groups: MonitorGroup[], columns: number): MonitorRenderUnit[] {
   const perRow = Math.max(1, Math.floor(columns));

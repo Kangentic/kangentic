@@ -160,6 +160,18 @@
     workspaceByProject: {},
     commandTerminalWorkspace: null,
     monitorWorkspace: null,
+    // Mirrors DEFAULT_CONFIG.monitor. Required on AppConfig, and this file is .js
+    // so tsc cannot catch its absence; without it a UI test has no way to seed a
+    // persisted Agent Monitor view the way it can for every other config field.
+    monitor: {
+      layout: 'cards',
+      groupBy: 'project',
+      sort: 'longest-running',
+      liveOnly: false,
+      projectFilter: [],
+      stateFilter: [],
+      textFilter: '',
+    },
     hasCompletedFirstRun: true,
     lastSeenReleaseNotesVersion: '',
     skipDeleteConfirm: false,
@@ -2273,10 +2285,12 @@
       },
     },
 
-    // Task-detail ownership. There is exactly ONE renderer under test, so the
-    // board-vs-pop-out routing rule always resolves to "open here"; what this mock
-    // genuinely exercises is the never-open-twice rule and the claim/release
-    // lifecycle. `__owners` is exposed so a spec can assert ownership directly.
+    // Task-detail ownership. There is exactly ONE renderer under test, so a
+    // handover always resolves to "open here"; what this mock genuinely exercises
+    // is the never-open-twice rule and the derived syncOwned / releaseAllFor
+    // lifecycle (there is no claim/release pair - see
+    // .claude/rules/derived-detail-ownership.md). `__owners` is exposed so a spec
+    // can assert ownership directly.
     taskDetailOwnership: {
       // key -> { host }. Mirrors main's DetailOwnerRegistry closely enough to
       // exercise the real rule: the requester wins, and the previous holder is
