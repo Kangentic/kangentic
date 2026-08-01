@@ -113,40 +113,57 @@ async function scrollbackForTask(page: Page, taskId: string): Promise<string> {
 }
 
 /**
- * One-time settle margin before the FIRST getScrollback() read of a freshly
- * spawned session (see the call site below for why this test needs one).
+ * True once the main process has LATCHED first output for this task's
+ * session: `FirstOutputTracker.consume()` has succeeded and `'first-output'`
+ * has been emitted (session-manager.ts). Read via `SESSION_GET_FIRST_OUTPUT`
+ * (`sessionManager.getFirstOutputCache()`, a plain snapshot of the tracker's
+ * emitted-session set) - deliberately NOT via `scrollbackForTask()` /
+ * `getScrollback()`.
  *
- * PtyBufferManager batches raw PTY output behind a fixed 16ms flush timer
- * (session-manager.ts's onFlush -> firstOutputTracker.consume runs only
- * inside that flush). getScrollback() drains the session's pending
+ * That distinction is load-bearing, not stylistic - it is the actual fix for
+ * a CI-only flake (33.6s timeout on the launch-overlay wait below, then a
+ * 1.9s pass on retry: a missed edge, not slowness). PtyBufferManager batches
+ * raw PTY output behind a fixed 16ms flush timer, and only INSIDE that flush
+ * does session-manager.ts feed the chunk to `firstOutputTracker.consume()`
+ * and emit `'first-output'`. `getScrollback()` drains the session's pending
  * (not-yet-flushed) buffer as a side effect - `state.buffer = ''` in
- * PtyBufferManager.getScrollback, pinned by the "getScrollback drains
- * pending buffer" case in tests/unit/pty-buffer-manager.test.ts. The 16ms
- * flush timer, once armed by the first PTY chunk, fires unconditionally
- * later regardless of any getScrollback() call in between - but if that call
- * drains the buffer before the timer fires, the timer finds nothing to
- * deliver and skips its callback, so first-output detection never sees the
- * bytes that would have latched it.
+ * `PtyBufferManager.getScrollback`, pinned by the "getScrollback drains
+ * pending buffer" case in tests/unit/pty-buffer-manager.test.ts. A
+ * `getScrollback()` call that lands inside that 16ms window makes the flush
+ * timer find an empty buffer and skip its callback entirely
+ * (`if (!current.buffer) return;` in pty-buffer-manager.ts) - so first-output
+ * detection silently never sees the bytes that would have latched it.
  *
  * mock-claude's fullscreen-select harness writes its ENTIRE frame (including
- * the `\x1b[?25l` first-output trigger) in one stdout.write() and then parks
- * waiting on stdin, so this is a one-shot, all-or-nothing race per spawn: a
- * getScrollback() call that happens to land inside that single 16ms window
- * (which this test's very first, zero-delay poll can do, since it fires
- * immediately after moveTaskIpc() resolves and can coincide with the mock
- * CLI's own spawn+write timing under CI load) permanently starves first
- * output, and every later poll in the same test then finds the SAME
- * stuck-empty state for its whole timeout with no way to recover - this was
- * the CI flake this margin fixes.
+ * the `\x1b[?25l` first-output trigger) in one `stdout.write()` and then
+ * parks on stdin, so this is a one-shot, all-or-nothing race per spawn: lose
+ * it and the session NEVER latches first output (`consume()` short-circuits
+ * once emitted, so there is no second chance), and the renderer's
+ * LaunchOverlay - gated on `terminalReady`, which flips only via this same
+ * latch or a `hasUsage` / session-`exited` fallback, neither of which this
+ * mock ever produces - stays up forever (see TerminalTab.tsx). This raced
+ * not just a test-added scrollback poll, but ALSO TerminalTab's own
+ * mount-time `getScrollback()` call (`useTerminal.ts`'s `initTerminal`),
+ * which is why previously raising the poll timeout below (15000 -> 30000)
+ * only made the flake rarer, not gone, and it recurred on CI.
  *
- * Waiting comfortably longer than the fixed 16ms interval before ever
- * reading scrollback closes the window: whatever data has already arrived
- * has had time to flush naturally, and data that has not arrived yet reads
- * as an (harmless, nothing-to-drain) empty buffer. This mirrors the accepted
- * PTY-resize-debounce fixed wait elsewhere in this suite - bridging a
- * hardcoded internal batch timer, not "wait and hope."
+ * Polling this instead of scrollback content is structurally race-free: this
+ * read never touches the PTY buffer, so it can never be the call that starves
+ * the latch, and once it observes `true` the latch can never un-latch
+ * (`consume()` short-circuits on every later chunk). ORDERING IS LOAD-BEARING:
+ * do not call `getScrollback()` for this session - directly, or indirectly by
+ * mounting/reloading a terminal - before this resolves `true`, or the race
+ * this closes comes back.
  */
-const FLUSH_SETTLE_MARGIN_MS = 500;
+async function hasFirstOutputForTask(page: Page, taskId: string): Promise<boolean> {
+  return page.evaluate(async (tid) => {
+    const sessions: Array<{ id: string; taskId: string }> = await window.electronAPI.sessions.list();
+    const session = sessions.find((sessionEntry) => sessionEntry.taskId === tid);
+    if (!session) return false;
+    const firstOutputCache = await window.electronAPI.sessions.getFirstOutput();
+    return !!firstOutputCache[session.id];
+  }, taskId);
+}
 
 async function openTaskWindow(page: Page, taskTitle: string): Promise<void> {
   const card = page.locator(`text=${taskTitle}`).first();
@@ -209,22 +226,27 @@ test.describe('Fullscreen TUI select prompt - input/focus survives a scrollback 
     const taskId = await getTaskIdByTitle(page, taskTitle);
     await moveTaskIpc(page, taskId, executingId);
 
-    // See FLUSH_SETTLE_MARGIN_MS's doc comment: bridge the main process's
-    // fixed 16ms flush interval before the first getScrollback() read below,
-    // so this poll's own reads cannot race (and permanently starve) the
-    // one-time first-output latch the LaunchOverlay wait later in this test
-    // depends on.
-    await page.waitForTimeout(FLUSH_SETTLE_MARGIN_MS);
+    // Wait for the main process to LATCH first output before this test (or
+    // the dialog it opens next) ever calls getScrollback() - see
+    // hasFirstOutputForTask's doc comment for why that ordering is what
+    // actually closes the race, not extra patience. 30000: depends on
+    // mock-claude's spawn landing under CI's contended, sharded xvfb runners,
+    // the same "compound, multi-hop" class session-resume.spec.ts budgets at
+    // 30000 for.
+    await expect
+      .poll(() => hasFirstOutputForTask(page, taskId), {
+        timeout: 30000,
+        message: 'Expected the session to latch first output for the fullscreen select prompt',
+      })
+      .toBe(true);
 
-    // Wait for the mock's initial fullscreen frame: option 0 highlighted.
-    // 30000 (not the suite's default 20000 CI-slow budget): this depends on
-    // mock-claude's spawn landing and its first PTY chunk surviving the
-    // PtyBufferManager flush under CI's contended, sharded xvfb runners -
-    // the same "compound, multi-hop" class as the launch-overlay wait below,
-    // and matches session-resume.spec.ts's 30000 for that class of wait.
+    // Now safe to read scrollback: the flush that latches first output has
+    // already happened (consume() short-circuits on every later chunk), so
+    // this read cannot race it. Confirms the mock's initial frame actually
+    // rendered with option 1 highlighted, not just that first output arrived.
     await expect
       .poll(() => scrollbackForTask(page, taskId), {
-        timeout: 30000,
+        timeout: 10000,
         message: 'Expected the fullscreen select prompt to render with option 1 highlighted',
       })
       .toContain(HIGHLIGHT_FIRST);
@@ -238,21 +260,19 @@ test.describe('Fullscreen TUI select prompt - input/focus survives a scrollback 
     // particularly under CI's headless Linux/xvfb renderer.
     await openTaskWindow(page, taskTitle);
     const dialog = page.locator('[data-testid="task-detail-dialog"]').first();
-    // The LaunchOverlay (a z-10 shimmer covering the terminal until
-    // terminalReady) can still be up here even though scrollback already has
-    // the marker: overlay-lift is a separate renderer-side race (live
-    // 'data'-driven first-output detection), not tied to the getScrollback
-    // poll above. Wait for it to clear so the click isn't racing it -
-    // otherwise Playwright's own click-retry loop absorbs the wait and can
-    // exceed its 30s action timeout under CI's slower, contended runners.
-    // 30000 (not the suite's default 20000 CI-slow budget): terminalReady
-    // (TerminalTab.tsx) flips only after the PTY chunk survives the fixed
-    // 16ms PtyBufferManager flush AND propagates through the session store
-    // into a React re-render of a freshly (re)mounted dialog - a compound,
-    // multi-hop wait, the same class session-resume.spec.ts budgets at
-    // 30000 for post-restart session re-establishment. This is the wait that
-    // timed out at 15000 on CI (contended 8-worker Linux/xvfb shard; passed
-    // in 2.7s locally uncontended), the flake this comment documents fixing.
+    // By the time this dialog mounts, hasFirstOutputForTask above has already
+    // confirmed the main process latched first output, and the
+    // SESSION_FIRST_OUTPUT push (sent synchronously the moment the latch
+    // fired - see App.tsx's onFirstOutput listener) has already set
+    // sessionFirstOutput[sessionId] in the renderer store. TerminalTab seeds
+    // terminalReady from that same flag at mount (TerminalTab.tsx), so the
+    // LaunchOverlay should never even render here. This wait is a defensive
+    // backstop for a slow store propagation, not a missed-edge guard: if it
+    // ever times out, the fix is upstream, in preserving
+    // hasFirstOutputForTask's ordering guarantee (no getScrollback() call
+    // before the latch resolves) - NOT in raising this budget. Raising this
+    // exact budget (15000 -> 30000) previously papered over the real missed
+    // edge and the flake recurred; see hasFirstOutputForTask's doc comment.
     await dialog.locator('[data-testid="launch-overlay"]').waitFor({ state: 'hidden', timeout: 30000 });
     await dialog.locator('.xterm').first().click();
     await expect
