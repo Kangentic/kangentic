@@ -534,11 +534,26 @@ describe('PtyBufferManager', () => {
       vi.useRealTimers();
     });
 
-    it('samples immediately when the session has no full-screen TUI (no clear marker)', async () => {
+    it('settles a no-marker session within the short grace, far below the TUI ceiling', async () => {
       vi.useFakeTimers();
       const manager = armWidthChange(false);
 
-      await manager.waitForResizeRepaint(SESSION);
+      let settled = false;
+      const waitPromise = manager.waitForResizeRepaint(SESSION).then(() => {
+        settled = true;
+      });
+
+      // Not instant anymore: a fullscreen TUI that has not drawn its FIRST
+      // frame yet also has no marker, so the wait gives in-flight bytes a
+      // short window instead of sampling a near-empty ring.
+      await vi.advanceTimersByTimeAsync(16);
+      expect(settled).toBe(false);
+
+      // A silent session (a shell answering SIGWINCH with nothing) settles at
+      // the grace - never the TUI's 400ms ceiling.
+      await vi.advanceTimersByTimeAsync(64);
+      await waitPromise;
+      expect(settled).toBe(true);
 
       vi.useRealTimers();
     });
@@ -607,18 +622,20 @@ describe('PtyBufferManager', () => {
       vi.useRealTimers();
     });
 
-    it('a rows-only arm on a plain-shell session still samples immediately (no TUI marker)', async () => {
+    it('a rows-only arm on a plain-shell session settles at the short grace (no TUI marker)', async () => {
       vi.useFakeTimers();
       const manager = armRowsChange(false);
 
       // Discriminating precondition: the rows-only change actually armed the
       // settle. Without this, a reverted arming path would pass this test
-      // vacuously (nothing to clear means "resolves immediately" either way).
+      // vacuously (nothing to clear means "resolves quickly" either way).
       expect(manager.getDimensionState(SESSION)?.pendingRepaintAt).not.toBeNull();
 
-      // No \x1b[2J anywhere in the scrollback -> no SIGWINCH repaint to wait
-      // for; the wait clears the arm and resolves without timers.
-      await manager.waitForResizeRepaint(SESSION);
+      // No \x1b[2J anywhere in the scrollback and nothing arriving: the
+      // no-marker wait settles at its short grace and clears the arm.
+      const waitPromise = manager.waitForResizeRepaint(SESSION);
+      await vi.advanceTimersByTimeAsync(80);
+      await waitPromise;
 
       // The no-tui-marker path must have cleared the arm.
       expect(manager.getDimensionState(SESSION)?.pendingRepaintAt).toBeNull();

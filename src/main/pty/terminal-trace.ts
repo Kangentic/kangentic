@@ -29,6 +29,9 @@ export type RepaintSettleReason =
   | 'joined'
   | 'stale-stamp'
   | 'no-tui-marker'
+  | 'no-marker-first-frame'
+  | 'no-marker-quiesce'
+  | 'no-marker-deadline'
   | 'marker'
   | 'marker-and-quiesce'
   | 'deadline';

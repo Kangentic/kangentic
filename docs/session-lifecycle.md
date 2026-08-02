@@ -321,6 +321,39 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   alt-buffer reclaim was mistakenly written to fix. Gated by
   `tests/e2e/terminal-fit-invariant.spec.ts` (one distinct grid width per open, and the grid never
   wider than its viewport) and `tests/unit/fit-addon.test.ts`.
+- **A session nobody is showing goes back to the spawn grid (the resting grid).** A PTY has ONE
+  grid and every surface fits it to its own box, so a session last shown in the bottom panel was
+  left at that panel's strip - measured live at 306x14 - with nothing to give it back. The agent
+  then kept working in a 14-row window, and a paired phone (which mirrors the desktop grid 1:1 and
+  cannot reshape a shared session) could not fill its screen from 14 rows no matter what it did
+  locally. `SessionManager.scheduleRestingGridRestore` parks such a session back at
+  `DEFAULT_PTY_COLS x DEFAULT_PTY_ROWS` after `RESTING_GRID_DELAY_MS` (1s). The park is a MOBILE
+  feature and is gated on mobile interest: it fires only for a session a paired phone is actually
+  streaming (`MobileTerminalProbe.hasStreamSubscriber`, answered from the bridge's per-device
+  subscription registries), and a phone subscribing to a session that went unheld earlier gets an
+  immediate park instead (`parkRestingGridForMobileSubscriber`, called by the read-stream
+  subscribe handler BEFORE it serializes the seed, so the one snapshot already carries the
+  resting grid). A desktop that never pairs never parks at all - no probe, no bridge registries,
+  byte-for-byte the pre-park behavior. Three further guards make a firing park safe: it fires
+  only when NOTHING holds the session - unfocused AND no renderer has an xterm mounted for it
+  (`session:setMounted`, published by `terminal-mount-registry` from each terminal's own mount
+  effect); it never touches a grid a phone is holding (the armed size guard consulted through
+  `MobileTerminalProbe.isSizeHeld` - the guard registry, never a last-writer origin, which a
+  desktop resize overwrites while the hold stays armed); and it no-ops when the PTY is already at
+  the spawn grid. The park resizes with origin `'park'`, which deliberately does NOT update
+  `lastDesktopDimensions`: that map is the restore target for a phone's `release-size`, and a
+  park recording itself there made release "restore" the phone straight back to 120x30. After a
+  release the guard teardown asks for the park decision to re-run
+  (`reconsiderRestingGridAfterMobileRelease`), so an unheld session returns to the resting grid
+  and the phone's next visit finds park dims again. The mounted set is the load-bearing hold: a
+  PARKED terminal (Backlog view, occluded window) is unfocused but still mounted, and xterm
+  re-sends dimensions only when its OWN size changes, so a PTY reshaped underneath one would
+  disagree with it permanently - and the reveal deliberately skips its resize. Cost when it does
+  fire: the next open of that session pays the marker settle (~20-40ms) because the grid changed
+  while it was away, which is what any surface switch already pays. Gated by the `Resting grid
+  restore` block in `tests/unit/session-manager.test.ts`,
+  `tests/unit/terminal-mount-registry.test.ts`, and the park assertions in
+  `tests/unit/mobile-bridge/{interactive-terminal,read-stream}.test.ts`.
 - **Repaint-settled scrollback sampling.** A session spawns at a default 120x30; on a cold launch
   an auto-resumed PTY sits at that size until a card opens and the renderer fits it wider. When a
   geometry-changing resize fires (cols OR rows), a full-screen agent TUI repaints its frame
@@ -332,8 +365,14 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   the repaint, and the rows repaint always arrived 21-122ms later carrying a full `\x1b[2J` erase,
   so the marker settles the wait early rather than riding the ceiling. (The resize IPC's
   `colsChanged` report is unchanged - arming widened internally; nothing on the renderer or the
-  mobile wire consumes a rows flag.) The wait arms only when the
-  scrollback shows a TUI (a `\x1b[2J` clear), is skipped entirely when the session has no live PTY
+  mobile wire consumes a rows flag.) A ring with NO `\x1b[2J` anywhere takes a
+  short wait of its own rather than the old instant sample: "no marker" at mount time also
+  describes a fullscreen TUI that has not drawn its first frame yet (observed live as a 237-byte
+  replay where a settled mount replays hundreds of KB), so the no-marker path samples on a
+  post-resize erase (the first frame just landed), on a marker-less quiesce, or - for a session
+  that answers SIGWINCH with silence, i.e. a plain shell - after a small grace
+  (`NO_MARKER_SILENT_GRACE_MS`), bounded by `NO_MARKER_MAX_WAIT_MS` far below the TUI ceiling so
+  Command Terminal opens stay fast. The wait is skipped entirely when the session has no live PTY
   (a suspended, killed, or pre-spawn session can never receive a SIGWINCH repaint, so the wait
   would only burn its deadline), and is bounded by a max-wait ceiling, so a missing or
   slow repaint can only delay a first paint, never hang the read. An actively streaming session
@@ -350,10 +389,11 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   settle itself stops waiting at that ceiling), so an unconsumed old arm - a height drag nothing
   sampled after - cannot slow the next open. Concurrent samplers of the SAME
   resize (a bottom-panel tab and a detail window overlapping during a handover; in dev, StrictMode's
-  double mount of a Command Terminal window - TerminalTab itself now defers its init by one
-  animation frame, which lets StrictMode's synchronous unmount cancel the first scheduled init, so
-  its pair collapses to a single fetch) share ONE wait: the second joins the first rather than
-  starting its own. Two
+  double mount of a Command Terminal window - both terminal hosts defer their init by one
+  animation frame via the shared `useDeferredTerminalInit` hook, which lets StrictMode's
+  synchronous unmount cancel the first scheduled init, so each pair collapses to a single fetch
+  and no throwaway xterm races the survivor) share ONE wait: the second joins the first rather
+  than starting its own. Two
   independent waits could not both work, because the first to settle clears the pending-repaint
   state that the other's early-settle scan offset points at, so the loser could never settle early
   and rode the full ceiling out - a deterministic ~415ms added to that open. A resize that arrives

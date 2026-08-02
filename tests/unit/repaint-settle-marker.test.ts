@@ -157,6 +157,79 @@ describe('repaint settle: what the user sees first on a panel -> window handoff'
     expect(waited).toBeLessThan(300);
   });
 
+  /**
+   * The MOUNT-time gap in the no-marker early exit: "no full-screen erase
+   * anywhere in the ring" was read as "not a fullscreen TUI, nothing to wait
+   * for" - but a TUI that has not yet drawn its FIRST frame has no marker
+   * either. Sampling instantly there replayed a near-empty ring (observed
+   * live: a 237-byte replay where a settled mount replays hundreds of KB),
+   * and with the resting park live, every reopen is a geometry-changing
+   * mount that crosses exactly this path.
+   */
+  it('waits for a starting TUI\'s FIRST frame even though the ring has no marker yet', async () => {
+    const manager = new PtyBufferManager({ onFlush: vi.fn() });
+    manager.initSession(SESSION, '', PANEL_COLS);
+    manager.onResize(SESSION, PANEL_COLS);
+    // The agent's pre-frame chatter: no full-screen erase anywhere yet.
+    manager.onData(SESSION, 'spawning agent...\r\n');
+
+    // The mount fit resizes the PTY before the TUI has drawn once.
+    manager.onResize(SESSION, WINDOW_COLS);
+    const settle = manager.waitForResizeRepaint(SESSION);
+    // The first frame is already in flight and lands moments later. (A first
+    // frame that only STARTS after the ring has been silent past the grace
+    // is deliberately out of scope: the launch overlay covers agent startup,
+    // and the frame still paints through the live-byte path.)
+    const firstFrameTimer = setTimeout(() => manager.onData(SESSION, REPAINT_FRAME), 20);
+
+    await settle;
+    const sample = manager.getScrollback(SESSION);
+    clearTimeout(firstFrameTimer);
+
+    expect(
+      sample,
+      'the settle sampled a near-empty ring instead of waiting for the first frame',
+    ).toContain('DRAWN-AT-WINDOW-WIDTH');
+  });
+
+  it('settles a silent shell fast - far below the TUI deadline', async () => {
+    // The common no-marker case really is a plain shell, and a shell answers
+    // SIGWINCH with nothing. Waiting the TUI's full deadline there would slow
+    // every Command Terminal open; the no-marker wait must stay short.
+    const manager = new PtyBufferManager({ onFlush: vi.fn() });
+    manager.initSession(SESSION, '', PANEL_COLS);
+    manager.onResize(SESSION, PANEL_COLS);
+    manager.onData(SESSION, 'PS C:\\dev> ');
+    manager.onResize(SESSION, WINDOW_COLS);
+
+    const startedAt = Date.now();
+    await manager.waitForResizeRepaint(SESSION);
+    const waited = Date.now() - startedAt;
+
+    // Generous bound (CI timing varies): the point is "a fraction of the
+    // 400ms TUI deadline", not a precise latency.
+    expect(waited).toBeLessThan(250);
+  });
+
+  it('samples a marker-less redraw on its quiesce instead of instantly', async () => {
+    // A shell that DOES answer the resize (prompt redraw, no erase): the
+    // sample should include those bytes, keyed on the output going quiet.
+    const manager = new PtyBufferManager({ onFlush: vi.fn() });
+    manager.initSession(SESSION, '', PANEL_COLS);
+    manager.onResize(SESSION, PANEL_COLS);
+    manager.onData(SESSION, 'PS C:\\dev> ');
+
+    manager.onResize(SESSION, WINDOW_COLS);
+    const settle = manager.waitForResizeRepaint(SESSION);
+    const redrawTimer = setTimeout(() => manager.onData(SESSION, 'REDRAWN-PROMPT> '), 30);
+
+    await settle;
+    const sample = manager.getScrollback(SESSION);
+    clearTimeout(redrawTimer);
+
+    expect(sample).toContain('REDRAWN-PROMPT>');
+  });
+
   it('is bounded by the deadline when the repaint never comes', async () => {
     // A TUI that never re-erases has no trustworthy signal, so the wait rides its
     // deadline rather than settling on an ordinary partial update. This is the

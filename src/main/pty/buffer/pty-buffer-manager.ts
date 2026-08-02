@@ -99,6 +99,17 @@ const REPAINT_QUIESCE_MS = 50;
 const REPAINT_MAX_WAIT_MS = 400;
 const REPAINT_STALE_MS = 2000;
 const REPAINT_POLL_MS = 16;
+/**
+ * The no-marker wait's own bounds (see the branch in waitForResizeRepaint).
+ * A ring with no full-screen erase is usually a plain shell, whose answer to
+ * SIGWINCH is little or nothing - so the silent grace is small and the
+ * deadline sits far below the TUI's REPAINT_MAX_WAIT_MS. But "no marker" at
+ * MOUNT time also describes a fullscreen TUI that has not drawn its first
+ * frame yet, which is why this is a short wait and not the old instant
+ * sample.
+ */
+const NO_MARKER_SILENT_GRACE_MS = 50;
+const NO_MARKER_MAX_WAIT_MS = 150;
 
 /**
  * Largest slice end <= `max` that does not split a UTF-16 surrogate pair.
@@ -538,14 +549,76 @@ export class PtyBufferManager {
 
     // Gate on the TUI clear marker via a direct scan (NOT tuiStartIndex, which
     // cannot distinguish "marker absent" from "marker at index 0"). No marker
-    // means no full-screen repaint to wait for.
+    // anywhere in the ring does NOT mean nothing is coming: at MOUNT time a
+    // fullscreen TUI that has not drawn its first frame yet has no marker
+    // either, and the old instant sample here replayed a near-empty ring
+    // (observed live: 237 bytes where a settled mount replays hundreds of KB)
+    // - with the resting park live, every reopen is a geometry-changing mount
+    // that crosses exactly this path. It USUALLY means a plain shell though,
+    // and a shell answers SIGWINCH with little or nothing, so this wait is
+    // shaped differently from the TUI path below:
+    //  - a post-resize erase marker upgrades to a frame-boundary sample (the
+    //    TUI's first frame just landed);
+    //  - marker-less bytes that arrived and went quiet sample on the lull;
+    //  - a session that stays silent samples after a small grace, never the
+    //    TUI's 400ms deadline (that would slow every Command Terminal open).
     if (!state.scrollback.includes(FULL_FRAME_CLEAR)) {
-      clearPendingRepaint(state);
-      traceTerminal(sessionId, 'settle', {
-        reason: 'no-tui-marker' satisfies RepaintSettleReason,
-        lastCols: state.lastCols,
-        lastRows: state.lastRows,
+      const noMarkerDeadline = entryTime + NO_MARKER_MAX_WAIT_MS;
+      const noMarkerPromise = new Promise<void>((resolve) => {
+        const poll = (): void => {
+          const current = this.buffers.get(sessionId);
+          // Session torn down mid-wait (killed): stop waiting.
+          if (!current) {
+            resolve();
+            return;
+          }
+          const now = Date.now();
+          const scanOffset = current.pendingRepaintScrollbackLength;
+          const firstFrameLanded =
+            scanOffset !== null &&
+            !current.synchronizedOpen &&
+            current.scrollback.indexOf(FULL_FRAME_CLEAR, scanOffset) !== -1;
+          const quiesced =
+            current.lastDataAt !== null &&
+            current.lastDataAt >= stamp &&
+            now - current.lastDataAt >= REPAINT_QUIESCE_MS;
+          const stayedSilent =
+            (current.lastDataAt === null || current.lastDataAt < stamp) &&
+            now - entryTime >= NO_MARKER_SILENT_GRACE_MS;
+          if (firstFrameLanded || quiesced || stayedSilent || now >= noMarkerDeadline) {
+            traceTerminal(sessionId, 'settle', {
+              reason: (firstFrameLanded
+                ? 'no-marker-first-frame'
+                : quiesced
+                  ? 'no-marker-quiesce'
+                  : stayedSilent
+                    ? 'no-tui-marker'
+                    : 'no-marker-deadline') satisfies RepaintSettleReason,
+              waitedMs: now - entryTime,
+              lastCols: current.lastCols,
+              lastRows: current.lastRows,
+            });
+            // Only clear the stamp this wait was anchored to (same rule as
+            // the marker path below).
+            if (current.pendingRepaintAt === stamp) {
+              clearPendingRepaint(current);
+            }
+            resolve();
+            return;
+          }
+          setTimeout(poll, REPAINT_POLL_MS);
+        };
+        setTimeout(poll, REPAINT_POLL_MS);
       });
+      // Publish so a concurrent sampler for the same resize JOINS this wait
+      // (the same two-surfaces/StrictMode reality as the marker path).
+      state.repaintSettle = { stamp, promise: noMarkerPromise };
+      try {
+        await noMarkerPromise;
+      } finally {
+        const current = this.buffers.get(sessionId);
+        if (current?.repaintSettle?.stamp === stamp) current.repaintSettle = null;
+      }
       return;
     }
 
