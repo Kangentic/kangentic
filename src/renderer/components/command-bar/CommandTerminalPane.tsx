@@ -19,6 +19,7 @@
 import { useEffect, useRef, type RefObject } from 'react';
 import { useTerminal } from '../../hooks/useTerminal';
 import { useTerminalRefit } from '../../hooks/useTerminalRefit';
+import { useDeferredTerminalInit } from '../../hooks/useDeferredTerminalInit';
 import { useTerminalFileDrop } from '../../hooks/useTerminalFileDrop';
 import { FileDropOverlay } from '../terminal/FileDropOverlay';
 import { useConfigStore } from '../../stores/config-store';
@@ -74,38 +75,21 @@ export function CommandTerminalPane({ sessionId, isMaximized, gridGetterRef }: C
     };
   }, [gridGetterRef, getDimensions]);
 
-  // Init the terminal once the container has dimensions.
-  const initialized = useRef(false);
-  useEffect(() => {
-    const element = terminalRef.current;
-    if (!element) return;
-
-    const tryInit = () => {
-      if (initialized.current) return;
-      if (element.offsetWidth > 0 && element.offsetHeight > 0) {
-        initTerminal();
-        initialized.current = true;
-        fit();
-        focus();
-      }
-    };
-
-    tryInit();
-
-    let observer: ResizeObserver | null = null;
-    if (!initialized.current) {
-      observer = new ResizeObserver(() => {
-        tryInit();
-        if (initialized.current) observer?.disconnect();
-      });
-      observer.observe(element);
-    }
-
-    return () => {
-      observer?.disconnect();
-      initialized.current = false;
-    };
-  }, [initTerminal, terminalRef, fit, focus]);
+  // Init deferred one frame, shared with TerminalTab via
+  // useDeferredTerminalInit so the two hosts cannot drift. The hand-rolled
+  // synchronous init this replaces built a throwaway xterm under StrictMode
+  // (mount inits, cleanup disposes, remount inits again) whose
+  // geometry-changing work raced the surviving terminal through the settle
+  // pipeline - the deferred shape cancels the first mount's init before it
+  // ever runs.
+  const { initializedRef: initialized } = useDeferredTerminalInit({
+    terminalRef,
+    initTerminal,
+    onInit: () => {
+      fit();
+      focus();
+    },
+  });
 
   // Refit on any size change, shared with TerminalTab via useTerminalRefit so
   // the two hosts cannot drift:
@@ -134,7 +118,10 @@ export function CommandTerminalPane({ sessionId, isMaximized, gridGetterRef }: C
     if (wasMaximizedRef.current === isMaximized) return;
     wasMaximizedRef.current = isMaximized;
     if (initialized.current) focus();
-  }, [isMaximized, focus]);
+    // `initialized` is the stable ref returned by useDeferredTerminalInit -
+    // listed for exhaustive-deps (which cannot see through the hook), never
+    // a re-run trigger.
+  }, [isMaximized, focus, initialized]);
 
   return (
     <div className="h-full" data-testid="command-bar-terminal-pane" data-session-id={sessionId}>

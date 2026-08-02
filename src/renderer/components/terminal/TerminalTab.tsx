@@ -8,6 +8,7 @@ import { useBoardStore } from '../../stores/board-store';
 import { LaunchOverlay } from '../LaunchOverlay';
 import { useTerminalOverlay } from '../../utils/task-progress';
 import { useTerminalRefit } from '../../hooks/useTerminalRefit';
+import { useDeferredTerminalInit } from '../../hooks/useDeferredTerminalInit';
 
 const FIT_DELAY_MS = 100;
 
@@ -113,59 +114,18 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
   // Relative wrapper that hosts the xterm div and its overlays.
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const initialized = useRef(false);
-
-  // Init terminal once the container has real pixel dimensions, deferred by one
-  // frame: the commit that mounts this pane already pays the panel subtree
-  // render, and folding the xterm construction (open + WebGL context + fit,
-  // ~10ms) into that same task produced a 40-60ms pointer-thread stall when a
-  // spawning session's pane mounted mid-drag (task #468). The deferral is
-  // pixel-invisible - the replay veil / LaunchOverlay cover the pane from the
-  // first frame, and the container div paints the terminal background either
-  // way. It also makes StrictMode's mount -> unmount -> remount construct ONE
-  // terminal instead of two: the first mount's cleanup cancels its scheduled
-  // init before it ever runs. This is NOT the reverted drag-end deferral: the
-  // init lands on the very next frame, before the active effect's FIT_DELAY_MS
-  // corrective fit, so the fit sequence is unchanged.
-  // The cleanup resets initialized so React StrictMode's
-  // mount→unmount→remount cycle re-creates the terminal properly.
-  useEffect(() => {
-    const el = terminalRef.current;
-    if (!el) return;
-
-    let initRafId: number | null = null;
-
-    // Init on the next frame if the container has dimensions by then
-    const scheduleInit = () => {
-      if (initialized.current || initRafId !== null) return;
-      initRafId = requestAnimationFrame(() => {
-        initRafId = null;
-        if (initialized.current) return;
-        if (el.offsetWidth > 0 && el.offsetHeight > 0) {
-          initTerminal();
-          initialized.current = true;
-          observer.disconnect();
-        }
-      });
-    };
-
-    // If the container has no dimensions yet (a display:none tab), the rAF
-    // above no-ops and this observer re-schedules when dimensions arrive.
-    const observer: ResizeObserver = new ResizeObserver(() => {
-      if (initialized.current) {
-        observer.disconnect();
-        return;
-      }
-      scheduleInit();
-    });
-    observer.observe(el);
-
-    scheduleInit();
-
-    return () => {
-      if (initRafId !== null) cancelAnimationFrame(initRafId);
-      observer.disconnect();
-      initialized.current = false;
+  // Init deferred one frame, shared with CommandTerminalPane via
+  // useDeferredTerminalInit (see the hook for the pointer-stall, StrictMode
+  // one-terminal, and display:none rationales). The deferral is
+  // pixel-invisible here - the replay veil / LaunchOverlay cover the pane
+  // from the first frame, and the container div paints the terminal
+  // background either way. This is NOT the reverted drag-end deferral: the
+  // init lands on the very next frame, before the active effect's
+  // FIT_DELAY_MS corrective fit, so the fit sequence is unchanged.
+  const { initializedRef: initialized } = useDeferredTerminalInit({
+    terminalRef,
+    initTerminal,
+    onCleanup: () => {
       // Reset ONLY when the overlay would genuinely be wanted on the next mount, i.e.
       // a session that has not produced anything yet. If the store still holds
       // firstOutput/usage for this session, resetting re-shows "Starting agent..." for
@@ -181,8 +141,8 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
       if (!hasOutputRef.current) {
         setTerminalReady(false);
       }
-    };
-  }, [initTerminal, terminalRef]);
+    },
+  });
 
   // Lift overlay when Claude Code's TUI activates the alternate screen buffer
   // (first-output) or when usage data arrives (fallback). No clear() needed:
@@ -209,7 +169,10 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
     if (terminalReady && !wasReady && initialized.current) {
       reloadScrollback();
     }
-  }, [terminalReady, reloadScrollback]);
+    // `initialized` is the stable ref returned by useDeferredTerminalInit -
+    // listed for exhaustive-deps (which cannot see through the hook), never
+    // a re-run trigger.
+  }, [terminalReady, reloadScrollback, initialized]);
 
   // If session exits (Ctrl+C, crash, etc.) before usage arrives, clear the overlay
   // so the terminal isn't stuck behind the shimmer indefinitely.
@@ -254,7 +217,10 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
       cancelAnimationFrame(initRafId);
       clearTimeout(delayedFitId);
     };
-  }, [active, fit, focus, scrollbackPending]);
+    // `initialized` is the stable ref returned by useDeferredTerminalInit -
+    // listed for exhaustive-deps (which cannot see through the hook), never
+    // a re-run trigger.
+  }, [active, fit, focus, scrollbackPending, initialized]);
 
   // Container refit while active: persistent gate-aware ResizeObserver plus the
   // terminal-panel-resize handling, shared with CommandTerminalWindow via
