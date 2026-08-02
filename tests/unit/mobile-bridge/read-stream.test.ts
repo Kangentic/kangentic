@@ -56,6 +56,7 @@ class FakeSessionManager extends EventEmitter {
   getActivityStatsSnapshot = vi.fn(() => ({ permissionPending: false, permissionAwaitedToolId: null }));
   getSessionProjectId = vi.fn(() => 'proj-1');
   getDimensions = vi.fn((): { cols: number; rows: number } | null => ({ cols: 120, rows: 30 }));
+  parkRestingGridForMobileSubscriber = vi.fn();
 }
 
 describe('handleReadStream', () => {
@@ -96,6 +97,26 @@ describe('handleReadStream', () => {
     const payload = response.payload as { awaitedPromptId: string | null; awaitedPromptOptions?: string[] | null };
     expect(payload.awaitedPromptId).toBe('sess-1:tool-9');
     expect(payload.awaitedPromptOptions).toEqual(permissionDialogOptions);
+  });
+
+  it('parks an unheld session for a terminal subscriber BEFORE serializing the seed', async () => {
+    const context = { sessionManager } as unknown as IpcContext;
+    await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), fakeSession(), context, new SubscriptionRegistry());
+
+    // Park first, then serialize: the one seed already carries the resting
+    // grid instead of the strip the last desktop surface left behind (plus a
+    // second reflow-and-reseed when the debounced park fired later).
+    expect(sessionManager.parkRestingGridForMobileSubscriber).toHaveBeenCalledWith('sess-1');
+    const parkOrder = sessionManager.parkRestingGridForMobileSubscriber.mock.invocationCallOrder[0];
+    const serializeOrder = sessionManager.getSerializedFrame.mock.invocationCallOrder[0];
+    expect(parkOrder).toBeLessThan(serializeOrder);
+  });
+
+  it('never parks for a list-only subscriber (terminal:false)', async () => {
+    const context = { sessionManager } as unknown as IpcContext;
+    await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe', terminal: false }), fakeSession(), context, new SubscriptionRegistry());
+
+    expect(sessionManager.parkRestingGridForMobileSubscriber).not.toHaveBeenCalled();
   });
 
   it('omits awaitedPromptOptions entirely when no prompt is pending', async () => {

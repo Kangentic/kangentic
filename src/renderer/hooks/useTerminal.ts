@@ -11,6 +11,7 @@ import { isTerminalParked, onTerminalReveal } from '../utils/parked-terminals';
 import { noteTerminalFocus } from '../utils/dictation-target';
 import { registerTerminalCapture, unregisterTerminalCapture, type TerminalCaptureReader } from '../utils/terminal-capture-registry';
 import { registerDevtoolsTerminal, traceTerminalRenderer } from '../utils/terminal-grid-registry';
+import { registerMountedTerminal } from '../utils/terminal-mount-registry';
 import type { TerminalColorOverrides } from '../../shared/types';
 import '@xterm/xterm/css/xterm.css';
 
@@ -238,6 +239,9 @@ export function useTerminal(options: UseTerminalOptions) {
   /** Tears down the WebGL renderer attachment (cancels retries, disposes addon). */
   const disposeWebglRef = useRef<(() => void) | null>(null);
   const unregisterDevtoolsTerminalRef = useRef<(() => void) | null>(null);
+  /** Drops this session from the renderer's MOUNTED set (terminal-mount-registry),
+   *  which is what lets main park an unheld PTY back at the spawn grid. */
+  const releaseMountedTerminalRef = useRef<(() => void) | null>(null);
   /** This terminal's key in the WebGL renderer report, so the font-family
    *  effect can force a fresh glyph rasterization after a live font change
    *  (see terminal-webgl.ts's notifyFontChanged). */
@@ -471,6 +475,13 @@ export function useTerminal(options: UseTerminalOptions) {
     // path (xterm re-sends dimensions only when its OWN size changes), and
     // without this the two halves were never comparable from one place.
     unregisterDevtoolsTerminalRef.current = registerDevtoolsTerminal(terminal, options.sessionId ?? null);
+
+    // Tell main this session's grid is HELD for as long as this xterm lives -
+    // parked or not. Main parks an unheld PTY back at the spawn grid, and a
+    // mounted terminal is exactly what must stop it: a grid reshaped under a
+    // terminal that never asked for it has no way back (see the mismatch note
+    // above).
+    releaseMountedTerminalRef.current = registerMountedTerminal(options.sessionId ?? null);
 
     // Send user input to PTY (via the microtask-batched queue above).
     if (options.sessionId) {
@@ -773,6 +784,8 @@ export function useTerminal(options: UseTerminalOptions) {
       disposeWebglRef.current = null;
       unregisterDevtoolsTerminalRef.current?.();
       unregisterDevtoolsTerminalRef.current = null;
+      releaseMountedTerminalRef.current?.();
+      releaseMountedTerminalRef.current = null;
       rendererKeyRef.current = null;
       lastAppliedFontRef.current = null;
       xtermRef.current?.dispose();

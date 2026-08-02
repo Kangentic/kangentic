@@ -30,6 +30,8 @@ import { BridgeSession } from './session/bridge-session';
 import { SubscriptionRegistry } from './session/subscription-registry';
 import { CapabilityRouter } from './capability-router';
 import { registerCapabilityHandlers } from './handlers';
+import { subscriptionKeyFor } from './handlers/read-stream';
+import { sizeGuardKeyFor } from './handlers/terminal-size-guard';
 import { SessionLifecycleBoardFeed } from './session-lifecycle-feed';
 import { PushRegistrationStore } from './push/push-registration-store';
 import { PushNotifier } from './push/push-notifier';
@@ -145,6 +147,17 @@ export class MobileBridgeService extends EventEmitter {
    */
   attachContext(context: IpcContext): void {
     this.ipcContext = context;
+    // The resting park's two questions (see MobileTerminalProbe), answered
+    // from the per-device subscription registries the guard and read-stream
+    // handlers already maintain through every release path (explicit release,
+    // transport drop, revoke, shutdown). A desktop that never pairs never
+    // constructs this service's transports or registries, and a session
+    // manager with no probe never parks - the unpaired desktop is untouched
+    // by the whole mobile terminal feature.
+    context.sessionManager.setMobileTerminalProbe({
+      isSizeHeld: (sessionId) => this.anyDeviceSubscriptionHas(sizeGuardKeyFor(sessionId)),
+      hasStreamSubscriber: (sessionId) => this.anyDeviceSubscriptionHas(subscriptionKeyFor(sessionId)),
+    });
     registerCapabilityHandlers(this.capabilityRouter, {
       context,
       diffWatcher: this.diffWatcher,
@@ -241,6 +254,14 @@ export class MobileBridgeService extends EventEmitter {
       this.subscriptionsByDevice.set(deviceId, subscriptions);
     }
     return subscriptions;
+  }
+
+  /** Whether ANY paired device currently holds a subscription under this key. */
+  private anyDeviceSubscriptionHas(key: string): boolean {
+    for (const subscriptions of this.subscriptionsByDevice.values()) {
+      if (subscriptions.has(key)) return true;
+    }
+    return false;
   }
 
   /** Applies effective config. Called from register-all.ts at startup and from applyRuntimeConfig on every config:set. */

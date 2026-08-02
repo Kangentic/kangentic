@@ -53,7 +53,7 @@ const PROMPT_OPTIONS_RETRY_MS = 400;
  */
 const USAGE_COALESCE_MS = 2000;
 
-function subscriptionKeyFor(sessionId: string): string {
+export function subscriptionKeyFor(sessionId: string): string {
   return `stream:${sessionId}`;
 }
 
@@ -382,6 +382,12 @@ export async function handleReadStream(
   // field in this response, and it was being sent once per live session on
   // every cold start.
   const wantsTerminal = payload.terminal !== false;
+  // A terminal-wanting subscribe IS the mobile interest the resting park
+  // exists for: park an unheld session NOW, before the frame below is
+  // serialized, so the phone's one seed already carries the resting grid
+  // instead of the strip the last desktop surface left (plus a second
+  // reflow-and-reseed when the debounced park fired later).
+  if (wantsTerminal) context.sessionManager.parkRestingGridForMobileSubscriber(payload.sessionId);
   const scrollback = wantsTerminal ? await context.sessionManager.getSerializedFrame(payload.sessionId) : '';
   const activityState = context.sessionManager.getActivityCache()[payload.sessionId] ?? null;
   const activityReason = context.sessionManager.getActivityReason(payload.sessionId);

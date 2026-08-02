@@ -296,25 +296,41 @@ export function registerSessionHandlers(context: IpcContext): void {
 
   // Set which sessions are visible in the renderer (terminal panel + command bar overlay).
   // Background sessions stop emitting data IPC (accumulate in scrollback only).
+  /**
+   * A renderer that goes away must not keep sessions pinned as focused (main
+   * keeps emitting their data to a window that no longer exists) nor as
+   * mounted (main would keep treating their grids as held). One watcher per
+   * renderer clears both sets.
+   */
+  const watchRendererTeardown = (sender: Electron.WebContents): void => {
+    if (focusTeardownWatched.has(sender.id)) return;
+    focusTeardownWatched.add(sender.id);
+    const forget = (): void => {
+      context.sessionManager.clearFocusedSessionsFor(sender.id);
+      focusTeardownWatched.delete(sender.id);
+    };
+    sender.once('destroyed', forget);
+    sender.once('render-process-gone', forget);
+  };
+
   ipcMain.handle(IPC.SESSION_SET_FOCUSED, (event, sessionIds: string[]) => {
     // Keyed by the SENDING renderer: the detached Agent Monitor publishes its own
     // visible set, and a single shared set would have the two clobber each other.
     context.sessionManager.setFocusedSessions(sessionIds, event.sender.id);
-    // A renderer that goes away must not keep sessions pinned as focused, or main
-    // keeps emitting their data to a window that no longer exists.
-    const sender = event.sender;
-    if (!focusTeardownWatched.has(sender.id)) {
-      focusTeardownWatched.add(sender.id);
-      const forget = (): void => {
-        context.sessionManager.clearFocusedSessionsFor(sender.id);
-        focusTeardownWatched.delete(sender.id);
-      };
-      sender.once('destroyed', forget);
-      sender.once('render-process-gone', forget);
-    }
+    watchRendererTeardown(event.sender);
     // Immediately flush any buffered usage/events so the newly focused
     // sessions' data is up-to-date without waiting for the 2s timer.
     flushBackgroundBuffer();
+  });
+
+  // Set which sessions this renderer has an xterm MOUNTED for. Broader than
+  // the focused set: a parked terminal is unfocused but still holds a grid,
+  // and main must not reshape a PTY something is still rendering at its own
+  // size (xterm re-sends dimensions only when its OWN size changes, so the
+  // mismatch would have no path back).
+  ipcMain.handle(IPC.SESSION_SET_MOUNTED, (event, sessionIds: string[]) => {
+    context.sessionManager.setMountedSessions(sessionIds, event.sender.id);
+    watchRendererTeardown(event.sender);
   });
 
   // User pressed Ctrl+C in the terminal. Renderer already sent \x03 to

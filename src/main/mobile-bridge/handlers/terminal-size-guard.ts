@@ -44,6 +44,11 @@ export function armTerminalSizeGuard(
     if (desktopDims) {
       context.sessionManager.resize(sessionId, desktopDims.cols, desktopDims.rows, 'desktop');
     }
+    // The phone let go: an unheld session should return to the resting grid
+    // after the usual debounce, so the next phone visit finds park dims (its
+    // cue to request a fit-to-phone grid) rather than this restored desktop
+    // grid frozen with nobody watching.
+    context.sessionManager.reconsiderRestingGridAfterMobileRelease(sessionId);
   });
 }
 

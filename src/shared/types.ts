@@ -4391,6 +4391,13 @@ export interface ElectronAPI {
     killTransient: (sessionId: string) => Promise<void>;
     setFocused: (sessionIds: string[]) => Promise<void>;
     /**
+     * Which sessions this renderer has an xterm MOUNTED for - a superset of
+     * the focused set, because a parked terminal (Backlog view, occluded
+     * window) is unfocused but still holds a grid. Main leaves those PTYs
+     * alone; see SessionManager.scheduleRestingGridRestore.
+     */
+    setMounted: (sessionIds: string[]) => Promise<void>;
+    /**
      * User pressed Ctrl+C in this session's terminal. The renderer
      * sends \x03 directly to the PTY (via `write`); this is a parallel
      * signal that lets the activity engine recover quickly when the

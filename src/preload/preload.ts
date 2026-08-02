@@ -247,6 +247,7 @@ const api: ElectronAPI = {
     spawnTransient: (input) => ipcRenderer.invoke(IPC.SESSION_SPAWN_TRANSIENT, input),
     killTransient: (id) => ipcRenderer.invoke(IPC.SESSION_KILL_TRANSIENT, id),
     setFocused: (sessionIds: string[]) => ipcRenderer.invoke(IPC.SESSION_SET_FOCUSED, sessionIds),
+    setMounted: (sessionIds: string[]) => ipcRenderer.invoke(IPC.SESSION_SET_MOUNTED, sessionIds),
     notifyUserInterrupt: (sessionId: string) => ipcRenderer.invoke(IPC.SESSION_NOTIFY_USER_INTERRUPT, sessionId),
     injectSettings: (input) => ipcRenderer.invoke(IPC.SESSION_INJECT_SETTINGS, input),
   },

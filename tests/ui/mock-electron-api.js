@@ -1740,6 +1740,13 @@
       setFocused: async function (sessionIds) {
         window.electronAPI.sessions.__setFocusedCalls.push(sessionIds.slice());
       },
+      // Which sessions have an xterm mounted, published by every terminal's
+      // mount effect (terminal-mount-registry). Same call-log shape as
+      // setFocused above.
+      __setMountedCalls: [],
+      setMounted: async function (sessionIds) {
+        window.electronAPI.sessions.__setMountedCalls.push(sessionIds.slice());
+      },
       __notifyUserInterruptCalls: [],
       notifyUserInterrupt: async function (sessionId) {
         window.electronAPI.sessions.__notifyUserInterruptCalls.push(sessionId);

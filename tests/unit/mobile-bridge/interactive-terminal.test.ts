@@ -16,6 +16,7 @@ class FakeSessionManager extends EventEmitter {
   write = vi.fn();
   resize = vi.fn(() => ({ colsChanged: true }));
   getLastDesktopDimensions = vi.fn((): { cols: number; rows: number } | null => ({ cols: 120, rows: 30 }));
+  reconsiderRestingGridAfterMobileRelease = vi.fn();
 }
 
 function fakeContext(sessionManager: FakeSessionManager): IpcContext {
@@ -98,6 +99,10 @@ describe('handleInteractiveTerminal', () => {
     expect(response.payload).toEqual({ released: true });
     expect(sessionManager.resize).toHaveBeenLastCalledWith('sess-1', 120, 30, 'desktop');
     expect(subscriptions.has(sizeGuardKeyFor('sess-1'))).toBe(false);
+    // The release also asks the park decision to re-run: an unheld session
+    // should return to the resting grid so the next phone visit finds park
+    // dims (its cue to request a fit-to-phone grid).
+    expect(sessionManager.reconsiderRestingGridAfterMobileRelease).toHaveBeenCalledWith('sess-1');
   });
 
   it('device disconnect (registry dispose) restores the last desktop dimensions', () => {
@@ -121,6 +126,8 @@ describe('handleInteractiveTerminal', () => {
     expect(sessionManager.listenerCount('exit')).toBe(0);
     // Only the original mobile resize: no desktop-origin restore into a dead session.
     expect(sessionManager.resize).toHaveBeenCalledTimes(1);
+    // And no re-park request either - there is nothing left to park.
+    expect(sessionManager.reconsiderRestingGridAfterMobileRelease).not.toHaveBeenCalled();
   });
 
   it('release-size is answered even for a non-writable session; a resize is not', () => {
