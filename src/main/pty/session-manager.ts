@@ -50,7 +50,7 @@ export interface SessionManagerOptions {
   activityEngineOptions?: ActivityEngineOptions;
   /**
    * How long a session must stay unwatched before its grid is parked back at
-   * the spawn defaults (see scheduleRestingGridRestore). Production uses the
+   * the resting grid (see scheduleRestingGridRestore). Production uses the
    * default; tests shrink it so they need neither fake timers nor a wall-clock
    * wait.
    */
@@ -81,6 +81,19 @@ export interface MobileTerminalProbe {
  * a usable grid while the user is still looking at it.
  */
 const RESTING_GRID_DELAY_MS = 1000;
+
+/**
+ * The grid an unwatched session rests at: DETAIL-shaped, deliberately not the
+ * 120x30 spawn default (user decision 2026-08-02, from a live A/B on the
+ * phone). The phone mirrors this grid 1:1, and a phone-fitted narrow grid was
+ * built, tested end to end, and judged LESS readable than the desktop's own
+ * layout - Claude Code draws its rules and boxes for a wide frame, and at
+ * ~49 cols they dominate every line while the text wraps. Resting at the
+ * size a task detail typically fits means the phone's view is identical
+ * whether the detail is open or closed, and pan/zoom spends the density.
+ */
+const RESTING_GRID_COLS = 210;
+const RESTING_GRID_ROWS = 48;
 
 export class SessionManager extends EventEmitter {
   private registry = new SessionRegistry();
@@ -510,7 +523,7 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
-   * Park a session's grid back at the spawn defaults once NO renderer is
+   * Park a session's grid at the resting grid once NO renderer is
    * showing it.
    *
    * A PTY has exactly one grid, and every surface that displays a session fits
@@ -576,8 +589,8 @@ export class SessionManager extends EventEmitter {
     if (options.requireStreamSubscriber && !probe.hasStreamSubscriber(sessionId)) return;
     const session = this.registry.get(sessionId);
     if (!session?.pty) return;
-    if (session.pty.cols === DEFAULT_PTY_COLS && session.pty.rows === DEFAULT_PTY_ROWS) return;
-    this.resize(sessionId, DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS, 'park');
+    if (session.pty.cols === RESTING_GRID_COLS && session.pty.rows === RESTING_GRID_ROWS) return;
+    this.resize(sessionId, RESTING_GRID_COLS, RESTING_GRID_ROWS, 'park');
   }
 
   /**

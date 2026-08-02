@@ -2695,7 +2695,13 @@ describe('Resting grid restore', () => {
   /** Wait past the (shrunk) debounce. */
   const settle = (): Promise<unknown> => new Promise((resolve) => setTimeout(resolve, 40));
 
-  it('parks a session back at the spawn grid once no renderer shows it', async () => {
+  // The resting grid is DETAIL-shaped (210x48), deliberately not the 120x30
+  // spawn default: the phone mirrors it 1:1, and the desktop-sized layout
+  // proved more readable there than any phone-fitted grid.
+  const REST_COLS = 210;
+  const REST_ROWS = 48;
+
+  it('parks a session at the resting grid once no renderer shows it', async () => {
     const { session, mockPty } = await spawnSession('task-rest-a');
     manager.setFocusedSessions([session.id]);
     manager.resize(session.id, PANEL_COLS, PANEL_ROWS);
@@ -2704,7 +2710,7 @@ describe('Resting grid restore', () => {
     manager.setFocusedSessions([]);
     await settle();
 
-    expect([mockPty.cols, mockPty.rows]).toEqual([120, 30]);
+    expect([mockPty.cols, mockPty.rows]).toEqual([REST_COLS, REST_ROWS]);
   });
 
   it('leaves a session another window still shows alone', async () => {
@@ -2787,7 +2793,7 @@ describe('Resting grid restore', () => {
     manager.setFocusedSessions([]);
     await settle();
 
-    expect([mockPty.cols, mockPty.rows]).toEqual([120, 30]);
+    expect([mockPty.cols, mockPty.rows]).toEqual([REST_COLS, REST_ROWS]);
     expect(manager.getLastDesktopDimensions(session.id)).toEqual({ cols: PANEL_COLS, rows: PANEL_ROWS });
   });
 
@@ -2850,7 +2856,7 @@ describe('Resting grid restore', () => {
     manager.reconsiderRestingGridAfterMobileRelease(session.id);
     await settle();
 
-    expect([mockPty.cols, mockPty.rows]).toEqual([120, 30]);
+    expect([mockPty.cols, mockPty.rows]).toEqual([REST_COLS, REST_ROWS]);
   });
 
   /**
@@ -2870,13 +2876,13 @@ describe('Resting grid restore', () => {
 
     manager.setFocusedSessions([]);
     manager.parkRestingGridForMobileSubscriber(session.id);
-    expect([mockPty.cols, mockPty.rows]).toEqual([120, 30]);
+    expect([mockPty.cols, mockPty.rows]).toEqual([REST_COLS, REST_ROWS]);
   });
 
-  it('does not resize a session already at the spawn grid', async () => {
+  it('does not resize a session already at the resting grid', async () => {
     const { session, mockPty } = await spawnSession('task-rest-e');
     manager.setFocusedSessions([session.id]);
-    manager.resize(session.id, 120, 30);
+    manager.resize(session.id, REST_COLS, REST_ROWS);
     mockPty.resize.mockClear();
 
     manager.setFocusedSessions([]);
@@ -2921,7 +2927,7 @@ describe('Resting grid restore', () => {
     manager.setMountedSessions([]);
     await settle();
 
-    expect([mockPty.cols, mockPty.rows]).toEqual([120, 30]);
+    expect([mockPty.cols, mockPty.rows]).toEqual([REST_COLS, REST_ROWS]);
   });
 
   it('keeps a grid another window still has mounted', async () => {
@@ -2948,6 +2954,6 @@ describe('Resting grid restore', () => {
     manager.clearFocusedSessionsFor(7);
     await settle();
 
-    expect([mockPty.cols, mockPty.rows]).toEqual([120, 30]);
+    expect([mockPty.cols, mockPty.rows]).toEqual([REST_COLS, REST_ROWS]);
   });
 });

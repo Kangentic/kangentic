@@ -326,8 +326,11 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   left at that panel's strip - measured live at 306x14 - with nothing to give it back. The agent
   then kept working in a 14-row window, and a paired phone (which mirrors the desktop grid 1:1 and
   cannot reshape a shared session) could not fill its screen from 14 rows no matter what it did
-  locally. `SessionManager.scheduleRestingGridRestore` parks such a session back at
-  `DEFAULT_PTY_COLS x DEFAULT_PTY_ROWS` after `RESTING_GRID_DELAY_MS` (1s). The park is a MOBILE
+  locally. `SessionManager.scheduleRestingGridRestore` parks such a session at the RESTING GRID
+  (`RESTING_GRID_COLS x RESTING_GRID_ROWS`, 210x48 - detail-shaped on purpose, not the 120x30
+  spawn default: the phone mirrors the resting grid 1:1, and a phone-fitted narrow grid was
+  built, live-tested, and judged LESS readable than the desktop's own layout, whose rules and
+  boxes are drawn for a wide frame) after `RESTING_GRID_DELAY_MS` (1s). The park is a MOBILE
   feature and is gated on mobile interest: it fires only for a session a paired phone is actually
   streaming (`MobileTerminalProbe.hasStreamSubscriber`, answered from the bridge's per-device
   subscription registries), and a phone subscribing to a session that went unheld earlier gets an
