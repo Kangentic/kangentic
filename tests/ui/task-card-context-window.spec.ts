@@ -237,4 +237,38 @@ test.describe('TaskCard context-window render gate', () => {
       await browser.close();
     }
   });
+
+  test('unknown window (contextWindowSize: 0) still prints "0%", never a fabricated dash', async () => {
+    // TaskCard's ContextUsageFooter call omits `unknownLabel` deliberately (see
+    // the comment above its call site in TaskCard.tsx): the track is held at
+    // 0% rather than swapped for a placeholder, because a resized label would
+    // trip dnd-kit's per-card ResizeObserver re-measure mid-drag. This is the
+    // call-site half of that contract - ContextUsageFooter's own unit tests
+    // (tests/unit/context-usage-footer.test.ts) prove the component honors an
+    // omitted `unknownLabel`, but only reading TaskCard's actual props here
+    // proves TaskCard still omits it. contextWindowDisplayPercent(0, 0, 0)
+    // (src/renderer/utils/format-tokens.ts) returns 0 for an unknown window,
+    // so "0%" is the function's contract, not a value copied from a run.
+    const { browser, page } = await launchWithState(makePreConfig({
+      usedPercentage: 0,
+      usedTokens: 0,
+      cacheTokens: 0,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      contextWindowSize: 0,
+    }));
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+      const usageBar = page.locator(`[data-task-id="${TASK_ID}"] [data-testid="usage-bar"]`);
+      await expect(usageBar).toBeVisible({ timeout: 10000 });
+
+      const percentLabel = usageBar.locator('[data-testid="usage-bar-percent"]');
+      await expect(percentLabel).toHaveText('0%');
+      await expect(percentLabel).not.toHaveText('-');
+      await expect(usageBar).toHaveAttribute('data-context-window', 'unknown');
+    } finally {
+      await browser.close();
+    }
+  });
 });
