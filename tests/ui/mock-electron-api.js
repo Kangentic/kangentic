@@ -3043,6 +3043,7 @@
       var pairingConfirmedListeners = [];
       var pairingEndedListeners = [];
       var stateChangedListeners = [];
+      var terminalStreamsListeners = [];
       var mockDeviceCounter = 0;
 
       // Mirrors packages/protocol/src/capabilities/verbs.ts's CAPABILITY_VERBS -
@@ -3070,6 +3071,14 @@
         };
         window.__mockFireMobileStateChanged = function () {
           stateChangedListeners.forEach(function (listener) { listener(); });
+        };
+        // Drives the panel-suspension sync (useMobileTerminalStreamsSync):
+        // the sessions a phone streams the TERMINAL of, whose bottom-panel
+        // tab is dropped. Also seeds getTerminalStreams below, matching
+        // production where the push and the invoke read the same registry.
+        window.__mockFireMobileTerminalStreamsChanged = function (sessionIds) {
+          window.__mockMobileTerminalStreams = sessionIds;
+          terminalStreamsListeners.forEach(function (listener) { listener(sessionIds); });
         };
         window.__mockCompleteMobilePairing = function (displayName) {
           mockDeviceCounter += 1;
@@ -3189,6 +3198,16 @@
           return function () {
             var index = stateChangedListeners.indexOf(callback);
             if (index >= 0) stateChangedListeners.splice(index, 1);
+          };
+        },
+        getTerminalStreams: async function () {
+          return (typeof window !== 'undefined' && window.__mockMobileTerminalStreams) || [];
+        },
+        onTerminalStreamsChanged: function (callback) {
+          terminalStreamsListeners.push(callback);
+          return function () {
+            var index = terminalStreamsListeners.indexOf(callback);
+            if (index >= 0) terminalStreamsListeners.splice(index, 1);
           };
         },
       };

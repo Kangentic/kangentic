@@ -331,7 +331,18 @@ export class BridgeSession extends EventEmitter {
     // The peer is gone, so a held 'connected' is no longer defensible.
     this.clearReconnectGrace();
     this.scheduleAbsentProbe();
-    if (changed) this.emit('connectionState');
+    if (changed) {
+      // The absence EDGE, for per-device state that must not outlive the
+      // phone. The routine departure is SILENT - backgrounding, a lost
+      // network, the OS killing the app all send no Final frame - so state
+      // keyed to 'remoteClosed' alone (the subscription registries, and with
+      // them the resting park's terminal-stream gate and the bottom panel's
+      // dropped tab) would persist for a phone nobody is holding. Recovery is
+      // the same contract 'remoteClosed' already relies on: the phone re-arms
+      // every subscription with fresh read-* requests when it reconnects.
+      this.emit('peerAbsent');
+      this.emit('connectionState');
+    }
   }
 
   /** Keeps probing a slot whose peer is absent, so a phone that comes back is picked up in ~20s rather than on the next rekey tick. */

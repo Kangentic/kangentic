@@ -134,8 +134,12 @@ async function openSession(service: MobileBridgeServiceInstance): Promise<FakeBr
   const countBefore = createdSessions.length;
   // attachContext also starts the SessionLifecycleBoardFeed, which
   // subscribes to sessionManager and pushes onto boardEvents - a real
-  // EventEmitter and a stub bus keep that wiring inert here.
-  service.attachContext({ sessionManager: new EventEmitter(), boardEvents: { emitBoardChanged: vi.fn() } } as never);
+  // EventEmitter and a stub bus keep that wiring inert here. It also
+  // registers the resting park's MobileTerminalProbe on the session manager,
+  // so the fake needs the registration seam (the probe itself stays unused:
+  // no test here spawns a PTY).
+  const fakeSessionManager = Object.assign(new EventEmitter(), { setMobileTerminalProbe: vi.fn() });
+  service.attachContext({ sessionManager: fakeSessionManager, boardEvents: { emitBoardChanged: vi.fn() } } as never);
   service.reconcile({ enabled: true, relayUrl: 'wss://relay.example.com' });
   await flushMicrotasks();
   expect(createdSessions.length).toBe(countBefore + 1);
@@ -206,6 +210,33 @@ describe('MobileBridgeService session-lifecycle wiring', () => {
     expect(session.dispose).not.toHaveBeenCalled();
     // Session-count bookkeeping is untouched by a remote close (unlike an
     // actual revoke/eviction) - the device is still "paired".
+    expect(service.getStatus().pairedDeviceCount).toBe(1);
+
+    service.dispose();
+  });
+
+  /**
+   * The SILENT departure: backgrounding, a lost network, or an OS kill sends
+   * no Final frame, so 'remoteClosed' never fires - the bridge session
+   * concludes absence from its spent probe budget and emits 'peerAbsent'
+   * instead. The subscriptions are just as dead, and before this teardown
+   * existed they outlived the phone: the terminal-stream marker kept the
+   * resting park armed and the bottom panel's tab dropped for a device the
+   * desktop itself showed as offline.
+   */
+  it('peerAbsent (silent departure) tears down the device subscriptions like remoteClosed', async () => {
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    const session = await openSession(service);
+
+    const subscriptionTeardown = vi.fn();
+    (service as unknown as { getOrCreateSubscriptions(deviceId: string): { set(key: string, teardown: () => void): void } })
+      .getOrCreateSubscriptions(session.deviceId)
+      .set('stream-terminal:sess-1', subscriptionTeardown);
+
+    session.emit('peerAbsent');
+
+    expect(subscriptionTeardown).toHaveBeenCalledTimes(1);
+    expect(session.dispose).not.toHaveBeenCalled();
     expect(service.getStatus().pairedDeviceCount).toBe(1);
 
     service.dispose();

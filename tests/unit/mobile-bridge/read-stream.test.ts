@@ -172,6 +172,44 @@ describe('handleReadStream', () => {
     expect(subscriptions.has(terminalStreamKeyFor('sess-1'))).toBe(false);
   });
 
+  it('registers the terminal marker BEFORE the awaited seed serialize, so the resize floor is armed inside the settle window', async () => {
+    // The park fires, then the handler awaits the repaint settle (20-400ms).
+    // A desktop fit landing inside that window consults the floor refusal,
+    // which reads the marker - registered only after the await, the floor
+    // was inert exactly when the seed's grid was decided.
+    const context = { sessionManager } as unknown as IpcContext;
+    const subscriptions = new SubscriptionRegistry();
+    let markerPresentAtSerialize: boolean | null = null;
+    sessionManager.getSerializedFrame.mockImplementation(() => {
+      markerPresentAtSerialize = subscriptions.has(terminalStreamKeyFor('sess-1'));
+      return Promise.resolve('serialized-frame');
+    });
+
+    await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), fakeSession(), context, subscriptions);
+
+    expect(markerPresentAtSerialize).toBe(true);
+  });
+
+  it('a session that exits during the seed serialize is not subscribed post-mortem', async () => {
+    // The exit teardown for the would-be listeners has already fired for
+    // everyone else; registering after it means listeners and the marker
+    // leak until the device disconnects, and the dead id rides the
+    // terminal-streamed set into the renderer indefinitely.
+    const context = { sessionManager } as unknown as IpcContext;
+    const subscriptions = new SubscriptionRegistry();
+    sessionManager.getSerializedFrame.mockImplementation(() => {
+      sessionManager.getSession.mockReturnValue(undefined as never);
+      return Promise.resolve('serialized-frame');
+    });
+
+    const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), fakeSession(), context, subscriptions);
+
+    expect(response.ok).toBe(false);
+    expect(subscriptions.has(terminalStreamKeyFor('sess-1'))).toBe(false);
+    expect(sessionManager.listenerCount('data-tap')).toBe(0);
+    expect(sessionManager.listenerCount('exit')).toBe(0);
+  });
+
   it('unsubscribe and session exit both clear the terminal marker', async () => {
     const context = { sessionManager } as unknown as IpcContext;
 

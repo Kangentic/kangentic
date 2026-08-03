@@ -51,8 +51,15 @@ export class SubscriptionRegistry {
   /** Tears down every subscription. Safe to call repeatedly. */
   dispose(): void {
     if (this.teardowns.size === 0) return;
-    for (const teardown of this.teardowns.values()) teardown();
+    // Clear BEFORE running the teardowns, so has()/keys() reflect the
+    // post-dispose state while they run: a teardown that removes a sibling
+    // key (the stream teardown removes its terminal marker) then no-ops
+    // instead of mutating the map mid-iteration, and any policy consulted
+    // from inside a teardown (the resize floor's hasStreamSubscriber) sees
+    // the subscriptions as already gone.
+    const teardowns = [...this.teardowns.values()];
     this.teardowns.clear();
+    for (const teardown of teardowns) teardown();
     this.onChanged?.();
   }
 }

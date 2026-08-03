@@ -301,10 +301,11 @@ export class MobileBridgeService extends EventEmitter {
     queueMicrotask(() => {
       this.terminalStreamsEmitScheduled = false;
       if (this.disposed) return;
-      const signature = this.terminalStreamedSessionIds().join(',');
+      const sessionIds = this.terminalStreamedSessionIds();
+      const signature = sessionIds.join(',');
       if (signature === this.lastEmittedTerminalStreamsSignature) return;
       this.lastEmittedTerminalStreamsSignature = signature;
-      this.emit('terminalStreamsChanged', this.terminalStreamedSessionIds());
+      this.emit('terminalStreamsChanged', sessionIds);
     });
   }
 
@@ -445,6 +446,17 @@ export class MobileBridgeService extends EventEmitter {
       // the connection; the phone re-arms live subscriptions with fresh
       // read-* requests once reconnected, rather than this side guessing
       // what to re-push.
+      this.subscriptionsByDevice.get(deviceId)?.dispose();
+      this.subscriptionsByDevice.delete(deviceId);
+    });
+    session.on('peerAbsent', () => {
+      // The SILENT departure (backgrounding, lost network, OS kill) sends no
+      // Final frame, so 'remoteClosed' never fires for it - yet the phone's
+      // subscriptions are just as dead. Without this, the stream-terminal
+      // marker outlived the phone: the resting park stayed armed and the
+      // bottom panel's tab stayed dropped for a device the desktop itself
+      // showed as offline, healing only when the phone happened to return.
+      // Same recovery contract as 'remoteClosed': re-arm on reconnect.
       this.subscriptionsByDevice.get(deviceId)?.dispose();
       this.subscriptionsByDevice.delete(deviceId);
     });

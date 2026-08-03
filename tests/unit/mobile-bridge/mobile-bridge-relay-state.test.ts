@@ -172,7 +172,9 @@ async function flushMicrotasks(): Promise<void> {
 
 /** Opens one BridgeSession per roster device and returns them keyed by deviceId. */
 async function openSessions(service: MobileBridgeServiceInstance): Promise<Map<string, FakeBridgeSession>> {
-  service.attachContext({ sessionManager: new EventEmitter(), boardEvents: { emitBoardChanged: vi.fn() } } as never);
+  // attachContext registers the resting park's MobileTerminalProbe, so the
+  // fake session manager needs the registration seam (the probe stays unused).
+  service.attachContext({ sessionManager: Object.assign(new EventEmitter(), { setMobileTerminalProbe: vi.fn() }), boardEvents: { emitBoardChanged: vi.fn() } } as never);
   service.reconcile({ enabled: true, relayUrl: 'wss://relay.example.com' });
   await flushMicrotasks();
   const byDeviceId = new Map<string, FakeBridgeSession>();

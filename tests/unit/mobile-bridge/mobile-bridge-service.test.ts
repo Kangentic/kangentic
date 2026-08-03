@@ -465,7 +465,7 @@ describe('MobileBridgeService.attachContext() migrates pre-existing devices to t
     existsSyncSpy.mockImplementation((filePath: string) => filePath.includes('mobile-bridge-identity.json') || filePath.includes('mobile-bridge-roster.json'));
     readFileSyncSpy.mockImplementation((filePath: string) => (filePath.includes('mobile-bridge-roster.json') ? rosterJson : identityJson));
 
-    service.attachContext({ sessionManager: new EventEmitter(), boardEvents: { emitBoardChanged: vi.fn() } } as never);
+    service.attachContext({ sessionManager: Object.assign(new EventEmitter(), { setMobileTerminalProbe: vi.fn() }), boardEvents: { emitBoardChanged: vi.fn() } } as never);
 
     // Re-point the mock at whatever the migration itself just wrote -
     // otherwise listDevices() below would read back the STALE pre-migration
@@ -494,7 +494,7 @@ describe('MobileBridgeService.attachContext() migrates pre-existing devices to t
     });
 
     writeFileSyncSpy.mockClear();
-    service.attachContext({ sessionManager: new EventEmitter(), boardEvents: { emitBoardChanged: vi.fn() } } as never);
+    service.attachContext({ sessionManager: Object.assign(new EventEmitter(), { setMobileTerminalProbe: vi.fn() }), boardEvents: { emitBoardChanged: vi.fn() } } as never);
 
     // No roster write at all means migrateDevicesToFullCapabilityGrant()
     // correctly skipped this device instead of re-signing an entry that was

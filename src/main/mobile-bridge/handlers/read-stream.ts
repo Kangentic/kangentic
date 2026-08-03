@@ -414,8 +414,35 @@ export async function handleReadStream(
   // serialized, so the phone's one seed already carries the resting grid
   // instead of the strip the last desktop surface left (plus a second
   // reflow-and-reseed when the debounced park fired later).
-  if (wantsTerminal) context.sessionManager.parkRestingGridForMobileSubscriber(payload.sessionId);
-  const scrollback = wantsTerminal ? await context.sessionManager.getSerializedFrame(payload.sessionId) : '';
+  if (wantsTerminal) {
+    context.sessionManager.parkRestingGridForMobileSubscriber(payload.sessionId);
+    // The marker goes up BEFORE the awaited serialize below: resize()'s
+    // floor refusal consults it, and without it a desktop fit landing inside
+    // the settle window (20-400ms) could reshape the grid back under the
+    // phone so the one seed carried exactly the sliver the park removed.
+    // subscribeReadStream re-registers the same key, which is replace-safe.
+    subscriptions.set(terminalStreamKeyFor(payload.sessionId), () => {
+      // Marker only - see subscribeReadStream.
+    });
+  }
+  let scrollback = '';
+  if (wantsTerminal) {
+    try {
+      scrollback = await context.sessionManager.getSerializedFrame(payload.sessionId);
+    } catch (serializeError) {
+      subscriptions.remove(terminalStreamKeyFor(payload.sessionId));
+      throw serializeError;
+    }
+    // The session can exit DURING that await. Registering the subscription
+    // then would be post-mortem: its own onExit teardown never fires (the
+    // exit already happened), so the listeners and the marker above would
+    // leak until the device disconnects - and the dead id would ride the
+    // terminal-streamed set into the renderer indefinitely.
+    if (!context.sessionManager.getSession(payload.sessionId)) {
+      subscriptions.remove(terminalStreamKeyFor(payload.sessionId));
+      return { type: 'capability-response', requestId: request.requestId, ok: false, error: `No such session: ${payload.sessionId}` };
+    }
+  }
   const activityState = context.sessionManager.getActivityCache()[payload.sessionId] ?? null;
   const activityReason = context.sessionManager.getActivityReason(payload.sessionId);
   const usage = context.sessionManager.getUsageCache()[payload.sessionId] ?? null;

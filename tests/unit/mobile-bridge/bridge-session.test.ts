@@ -674,6 +674,8 @@ describe('BridgeSession.connectionState', () => {
       const session = startSession(desktop, desktopIdentity, deviceStatic.publicKey);
       const connectionStateEvents = vi.fn();
       session.on('connectionState', connectionStateEvents);
+      const peerAbsentEvents = vi.fn();
+      session.on('peerAbsent', peerAbsentEvents);
 
       vi.advanceTimersByTime(10 * 1000);
 
@@ -682,6 +684,12 @@ describe('BridgeSession.connectionState', () => {
       // transport-only badge got wrong by rendering a green "Connected".
       expect(session.transportState).toBe('connected');
       expect(connectionStateEvents).toHaveBeenCalled();
+      // The absence EDGE also announces itself: the service tears down the
+      // device's subscriptions on it, because a silent departure emits no
+      // 'remoteClosed' and the terminal-stream marker must not outlive the
+      // phone (a stale marker keeps the resting park armed and the panel tab
+      // dropped indefinitely). Exactly once - absence is an edge, not a level.
+      expect(peerAbsentEvents).toHaveBeenCalledTimes(1);
 
       session.dispose();
     } finally {

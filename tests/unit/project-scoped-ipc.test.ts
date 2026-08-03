@@ -65,6 +65,10 @@ const ALLOWLIST_CHANNELS = new Set([
   'SESSION_WRITE',
   'SESSION_RESIZE',
   'SESSION_SET_FOCUSED',
+  // By-session-id, per-renderer, no project semantics: the whole-set replace
+  // of "which sessions have an xterm mounted" that the resting park's held
+  // check reads (terminal-mount-registry.ts).
+  'SESSION_SET_MOUNTED',
   'SESSION_NOTIFY_USER_INTERRUPT',
   'SESSION_INJECT_SETTINGS',
   'SESSION_SPAWN_TRANSIENT',

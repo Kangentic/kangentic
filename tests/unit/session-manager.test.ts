@@ -3067,4 +3067,51 @@ describe('Resting grid restore', () => {
 
     expect([mockPty.cols, mockPty.rows]).toEqual([150, 35]);
   });
+
+  /**
+   * A REFUSED resize must not eat a pending park: resize() cancels the
+   * debounced restore up front on the assumption the resize will be honored,
+   * and without a reschedule in the refusal branch a sub-floor session whose
+   * rescue was mid-debounce would strand on the sliver.
+   */
+  it('a refused resize re-arms a pending park instead of consuming it', async () => {
+    const { session, mockPty } = await spawnSession('task-floor-rearm');
+    manager.setFocusedSessions([session.id]);
+    grabPanelGridUnwatched(session.id);
+    manager.setFocusedSessions([]);
+
+    // The debounced park is now pending. A trailing desktop-origin sub-floor
+    // resize (a stale in-flight panel fit) is refused - and must reschedule.
+    manager.resize(session.id, PANEL_COLS, PANEL_ROWS);
+    await settle();
+
+    expect([mockPty.cols, mockPty.rows]).toEqual([REST_COLS, REST_ROWS]);
+  });
+
+  /**
+   * The floor applies to the pre-spawn stash too: a sub-floor desktop fit
+   * landing while the PTY is down (mid-suspend, pre-respawn) would otherwise
+   * respawn the session at the strip while a phone streams it.
+   */
+  it('does not stash a sub-floor desktop grid for a suspended session a phone streams', async () => {
+    const { session } = await spawnSession('task-floor-stash');
+    await manager.suspend(session.id);
+
+    manager.resize(session.id, PANEL_COLS, PANEL_ROWS);
+
+    // The stash was skipped (dimensions fall back to the spawn default), but
+    // the desktop's INTENT is still the restore target.
+    expect(manager.getDimensions(session.id)).toEqual({ cols: 120, rows: 30 });
+    expect(manager.getLastDesktopDimensions(session.id)).toEqual({ cols: PANEL_COLS, rows: PANEL_ROWS });
+  });
+
+  it('still stashes a sub-floor grid for a suspended session when no phone streams', async () => {
+    const { session } = await spawnSession('task-floor-stash-unwatched');
+    await manager.suspend(session.id);
+    mobileStreamWatchers = new Set();
+
+    manager.resize(session.id, PANEL_COLS, PANEL_ROWS);
+
+    expect(manager.getDimensions(session.id)).toEqual({ cols: PANEL_COLS, rows: PANEL_ROWS });
+  });
 });

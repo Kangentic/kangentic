@@ -18,15 +18,30 @@
  *
  * Shipped, unlike the neighbouring dev-only terminal-grid-registry: main
  * depends on this in every build.
- *
- * hmr-safe: refcounts rebuilt by each terminal's own mount effect. A Fast
- * Refresh reset re-publishes from whatever re-registers.
  */
 
 /** Refcounted: two panes can legitimately hold the same session (an inactive
- *  panel pane plus a detail window mid-handoff). */
-const mountedSessionCounts = new Map<string, number>();
+ *  panel pane plus a detail window mid-handoff).
+ *
+ *  Preserved across HMR (Pattern A, mirroring parked-terminals.ts). The
+ *  registration lives in initTerminal, which runs once per xterm construction
+ *  and never re-runs on a Fast Refresh - so a reset Map here would hold
+ *  claims only in the DISCARDED module instance, and the next registration
+ *  from the fresh instance would publish a whole-set replace that erased
+ *  every still-mounted claim. Main would then read a parked-but-mounted
+ *  terminal as unheld and reshape its grid underneath it, which is the exact
+ *  state this registry exists to prevent. */
+// @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
+const mountedSessionCounts: Map<string, number> = import.meta.hot?.data?.mountedSessionCounts ?? new Map<string, number>();
 let publishScheduled = false;
+
+// @ts-expect-error -- Vite handles import.meta.hot
+if (import.meta.hot) {
+  // @ts-expect-error -- Vite handles import.meta.hot
+  import.meta.hot.dispose((data: Record<string, unknown>) => {
+    data.mountedSessionCounts = mountedSessionCounts;
+  });
+}
 
 function publishMountedSessions(): void {
   publishScheduled = false;

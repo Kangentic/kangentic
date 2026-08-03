@@ -926,7 +926,19 @@ export class SessionManager extends EventEmitter {
       // exited/killed session - it is not coming back, and xterm never re-sends
       // unchanged dims, so a resurrected 120x30 would stick forever.
       if (session && (session.status === 'queued' || session.status === 'suspended')) {
-        this.pendingResizes.set(sessionId, { cols: clampedCols, rows: clampedRows });
+        // The floor applies to the stash too: a sub-floor desktop fit landing
+        // in the pty-null window (mid-suspend, pre-respawn) would otherwise
+        // respawn the PTY at the strip while a phone streams it, and pair the
+        // seed's ptyDimensions with a frame serialized at the old grid. The
+        // desktop's INTENT is still recorded below, exactly like the live
+        // refusal.
+        const subFloorForStreamingPhone =
+          origin === 'desktop' &&
+          clampedRows < MOBILE_USABLE_MIN_ROWS &&
+          this.mobileTerminalProbe?.hasStreamSubscriber(sessionId) === true;
+        if (!subFloorForStreamingPhone) {
+          this.pendingResizes.set(sessionId, { cols: clampedCols, rows: clampedRows });
+        }
         if (origin === 'desktop') {
           this.lastDesktopDimensions.set(sessionId, { cols: clampedCols, rows: clampedRows });
         }
@@ -970,6 +982,13 @@ export class SessionManager extends EventEmitter {
       // refusal happens BEFORE bufferManager.onResize so the headless
       // parser's grid never diverges from the real PTY. Desktops with no
       // streaming phone never take this branch.
+      //
+      // The cancel above assumed the resize would be honored; a REFUSED
+      // resize must not eat a pending park, or a sub-floor session whose
+      // rescue was mid-debounce would strand on the sliver. Re-running the
+      // decision re-checks everything at fire time, so this is free when no
+      // park is actually due.
+      this.reconsiderRestingGrid(sessionId);
       return { colsChanged: false };
     }
 

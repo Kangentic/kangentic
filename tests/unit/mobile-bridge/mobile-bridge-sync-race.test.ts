@@ -118,7 +118,7 @@ describe('MobileBridgeService.syncSessions() reentrancy', () => {
     // attachContext also starts the SessionLifecycleBoardFeed, which
     // subscribes to sessionManager and pushes onto boardEvents - a real
     // EventEmitter and a stub bus keep that wiring inert here.
-    service.attachContext({ sessionManager: new EventEmitter(), boardEvents: { emitBoardChanged: vi.fn() } } as never);
+    service.attachContext({ sessionManager: Object.assign(new EventEmitter(), { setMobileTerminalProbe: vi.fn() }), boardEvents: { emitBoardChanged: vi.fn() } } as never);
 
     // Fire two reconciles with the SAME config while the first is still
     // suspended on transport.connect(). Without the guard, both would each
@@ -151,7 +151,7 @@ describe('MobileBridgeService.syncSessions() reentrancy', () => {
     fakeTransport.connect.mockImplementation(() => Promise.reject(new Error('relay is not up yet')));
 
     const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
-    service.attachContext({ sessionManager: new EventEmitter(), boardEvents: { emitBoardChanged: vi.fn() } } as never);
+    service.attachContext({ sessionManager: Object.assign(new EventEmitter(), { setMobileTerminalProbe: vi.fn() }), boardEvents: { emitBoardChanged: vi.fn() } } as never);
     service.reconcile({ enabled: true, relayUrl: 'wss://relay.example.com' });
     await Promise.resolve();
     await Promise.resolve();
