@@ -25,10 +25,10 @@ type HeadlessTerminalAddon = ITerminalAddon;
  * A per-session HEADLESS xterm parser kept in the MAIN process, fed the same
  * PTY output as the raw scrollback ring. Its serialized frame is a snapshot of
  * the PARSED grid - every currently-visible cell whatever its draw age - which
- * the mobile seed uses instead of a raw 512KB byte replay. A raw replay drops
- * the write-once static cells of a fullscreen TUI (e.g. Claude Code's static
- * status-line segment) once the bytes that drew them age out of the byte
- * window; the parsed grid always carries them.
+ * the mobile seed and the desktop alt-screen replay use instead of a raw 512KB
+ * byte replay. A raw replay drops the write-once static cells of a fullscreen
+ * TUI (e.g. Claude Code's static status-line segment) once the bytes that drew
+ * them age out of the byte window; the parsed grid always carries them.
  *
  * Never call `.open()`: `@xterm/headless` has no DOM and runs the VT parser
  * plus buffer only.
@@ -73,7 +73,7 @@ export class HeadlessFrameBuffer {
    * that produced output, twice a second.
    *
    * Unlike `serialize()` these do NOT flush first, so they can read a grid that
-   * is one macrotask behind the newest chunk (see `flush`). That is deliberate:
+   * is one macrotask behind the newest chunk (see `serialize`). That is deliberate:
    * the peek is sampled on a repeating timer and self-heals on the next tick, so
    * paying a flush barrier per sample would buy nothing. Do not "fix" it by
    * making these async.
@@ -105,34 +105,42 @@ export class HeadlessFrameBuffer {
   }
 
   /**
-   * Drain the write buffer. xterm parses a normal `write()` asynchronously (it
-   * schedules the parse on a macrotask, not synchronously), so serializing
-   * right after the last `write()` would snapshot a STALE grid. A zero-length
-   * write's callback fires only once every queued chunk ahead of it has been
-   * parsed, which is exactly the flush barrier we need.
-   */
-  private flush(): Promise<void> {
-    return new Promise<void>((resolve) => {
-      this.terminal.write('', resolve);
-    });
-  }
-
-  /**
-   * Snapshot the parsed grid as a self-contained escape-sequence frame the
-   * phone can cold-replay into a fresh xterm. Flushes pending writes first so
-   * the frame reflects every byte fed so far.
+   * Snapshot the parsed grid as a self-contained escape-sequence frame a fresh
+   * xterm can cold-replay (the mobile seed, and the desktop alt-screen replay
+   * via PtyBufferManager.getReplaySnapshot).
    *
-   * The serialize addon includes the alt buffer (`excludeAltBuffer` left at its
-   * false default) and the active terminal modes (`excludeModes` left false):
-   * it emits `\x1b[?1049h` when the session is in the alt screen and re-asserts
+   * The snapshot is ATOMIC WITH THE FLUSH BARRIER. xterm parses `write()`
+   * chunks asynchronously (the parse runs on a later macrotask), so a
+   * zero-length write's callback is the point where every chunk fed BEFORE
+   * this call has been parsed - and the grid is serialized synchronously
+   * inside that callback, before the parse loop can consume chunks queued
+   * BEHIND the barrier. That makes the frame's content boundary exact: bytes
+   * fed before serialize() are in, bytes fed after are out, deterministically.
+   * getReplaySnapshot's exactly-once accounting of bytes that race a sample
+   * rests on this; do not move the serialize back out to a post-await line.
+   *
+   * The serialize addon includes the alt buffer (`excludeAltBuffer` left at
+   * its false default) and the active terminal modes (`excludeModes` left
+   * false): it emits the serialized normal buffer first, then the
+   * `\x1b[?1049h` switch MID-STREAM followed by the alt grid, and re-asserts
    * DECCKM / mouse-tracking / bracketed-paste / focus modes from
-   * `terminal.modes`. So the frame carries its own mode/alt-screen preamble -
-   * the phone lands in the right screen with the right input modes without any
-   * extra prefix, matching what the raw scrollback path prepended by hand.
+   * `terminal.modes`. So the frame is self-contained - the receiver lands in
+   * the right screen with the right input modes without any extra prefix -
+   * but the switch is not a leading marker; never `startsWith` on it.
    */
   async serialize(): Promise<string> {
-    await this.flush();
-    return this.serializer.serialize({ scrollback: SERIALIZED_SCROLLBACK_LINES });
+    return new Promise<string>((resolve, reject) => {
+      this.terminal.write('', () => {
+        // The callback runs inside xterm's parse loop, so a throw here (e.g. a
+        // serializer disposed mid-sample) would otherwise escape as an uncaught
+        // main-process exception instead of rejecting this promise.
+        try {
+          resolve(this.serializer.serialize({ scrollback: SERIALIZED_SCROLLBACK_LINES }));
+        } catch (error) {
+          reject(error instanceof Error ? error : new Error(String(error)));
+        }
+      });
+    });
   }
 
   dispose(): void {

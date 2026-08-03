@@ -1265,20 +1265,24 @@ export class SessionManager extends EventEmitter {
     if (this.registry.get(sessionId)?.pty) {
       await this.bufferManager.waitForResizeRepaint(sessionId);
     }
-    return this.bufferManager.getScrollback(sessionId);
+    // Alt-screen sessions get the parsed-grid frame, everything else the raw
+    // byte replay - see PtyBufferManager.getReplaySnapshot for why a capped
+    // byte ring cannot reconstruct a fullscreen TUI's write-once cells.
+    return this.bufferManager.getReplaySnapshot(sessionId);
   }
 
   /**
    * The MOBILE seed frame: a snapshot of the PARSED grid from the per-session
    * headless xterm, serialized as a self-contained escape-sequence frame the
-   * phone cold-replays into a fresh terminal. Unlike getScrollback's raw 512KB
-   * byte replay, this never drops a fullscreen TUI's write-once static cells
-   * whose drawing bytes have aged out of the byte window.
+   * phone cold-replays into a fresh terminal. Unlike a raw 512KB byte replay,
+   * this never drops a fullscreen TUI's write-once static cells whose drawing
+   * bytes have aged out of the byte window (getScrollback serves the same
+   * frame to the desktop when the session is in the alt screen).
    *
    * Preserves the same repaint settle as getScrollback (awaits
    * waitForResizeRepaint, and like getScrollback skips it when no live PTY can
    * deliver a repaint) so the grid is never serialized mid-repaint at a stale
-   * geometry. Desktop consumers keep using getScrollback unchanged.
+   * geometry.
    */
   async getSerializedFrame(sessionId: string): Promise<string> {
     if (this.registry.get(sessionId)?.pty) {

@@ -1436,6 +1436,127 @@ describe('PtyBufferManager', () => {
     });
   });
 
+  describe('getReplaySnapshot (desktop replay payload)', () => {
+    // Real timers, like the getSerializedFrame block above: the frame branch
+    // awaits the headless parser's macrotask flush barrier.
+    it('serves a parsed-grid frame that keeps static cells a capped byte replay drops', async () => {
+      const manager = new PtyBufferManager({ onFlush: vi.fn() });
+      manager.initSession(SESSION, '', 80, 24);
+
+      // Same fixture as the getSerializedFrame regression above: a write-once
+      // static cell, then a >512KB dynamic flood that never redraws it.
+      const STATIC_SEGMENT = 'auto mode on';
+      manager.onData(SESSION, `\x1b[?1049h\x1b[2J\x1b[1;1H${STATIC_SEGMENT}`);
+      const MAX_SCROLLBACK = 512 * 1024;
+      const dynamicUnit = '\x1b[24;1H' + 'x'.repeat(20); // stays on row 24, 20 cols < 80: no wrap, no scroll
+      const dynamicChunk = dynamicUnit.repeat(80);
+      let floodedBytes = 0;
+      while (floodedBytes < MAX_SCROLLBACK + 400 * 1024) {
+        manager.onData(SESSION, dynamicChunk);
+        floodedBytes += dynamicChunk.length;
+      }
+
+      // Precondition: the ring is genuinely truncated past the write-once
+      // region, so the raw byte replay has lost the static cell.
+      expect(manager.getScrollback(SESSION)).not.toContain(STATIC_SEGMENT);
+
+      // The replay payload the desktop mount receives reconstructs it.
+      const snapshot = await manager.getReplaySnapshot(SESSION);
+      expect(snapshot).toContain(STATIC_SEGMENT);
+      // The frame carries its own alt-screen switch, and exactly one: the
+      // snapshot path must not prepend the byte path's hand-built preamble on
+      // top of the one the serialize addon emits.
+      expect(snapshot.split('\x1b[?1049h').length - 1).toBe(1);
+      // And the switch precedes the alt-grid content: the addon serializes the
+      // normal buffer first, then switches, so a frame emitting alt rows ahead
+      // of the switch would paint them into the wrong buffer.
+      expect(snapshot.indexOf('\x1b[?1049h')).toBeLessThan(snapshot.indexOf(STATIC_SEGMENT));
+
+      manager.removeSession(SESSION);
+    });
+
+    it('passes a non-alt-screen session through to the raw byte replay', async () => {
+      const manager = new PtyBufferManager({ onFlush: vi.fn() });
+      manager.initSession(SESSION, '', 80, 24);
+      manager.onData(SESSION, 'plain shell output\r\nsecond line');
+
+      const snapshot = await manager.getReplaySnapshot(SESSION);
+      // Byte-for-byte the getScrollback value (stable across reads with no new
+      // data), preamble and all.
+      expect(snapshot).toBe(manager.getScrollback(SESSION));
+      expect(snapshot).toContain('plain shell output');
+
+      manager.removeSession(SESSION);
+    });
+
+    it('drains the pending buffer on the frame branch like getScrollback does', async () => {
+      const onFlush = vi.fn();
+      const manager = new PtyBufferManager({ onFlush });
+      manager.initSession(SESSION, '', 80, 24);
+      manager.onData(SESSION, '\x1b[?1049h\x1b[2J\x1b[1;1Hpending frame bytes');
+
+      const snapshot = await manager.getReplaySnapshot(SESSION);
+      expect(snapshot).toContain('pending frame bytes');
+      expect(manager.getBufferStats(SESSION)?.pendingBytes).toBe(0);
+      // The already-queued 16ms flush finds an empty buffer and stays silent,
+      // so nothing baked into the frame is delivered a second time.
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(onFlush).not.toHaveBeenCalled();
+
+      manager.removeSession(SESSION);
+    });
+
+    it('returns empty string for an unknown or empty session', async () => {
+      const manager = new PtyBufferManager({ onFlush: vi.fn() });
+      expect(await manager.getReplaySnapshot('nonexistent')).toBe('');
+      manager.initSession(SESSION, '', 80, 24);
+      expect(await manager.getReplaySnapshot(SESSION)).toBe('');
+      manager.removeSession(SESSION);
+    });
+
+    it('folds bytes that race the sample into the reply exactly once, never via a flush', async () => {
+      const onFlush = vi.fn();
+      const manager = new PtyBufferManager({ onFlush });
+      manager.initSession(SESSION, '', 80, 24);
+      manager.onData(SESSION, '\x1b[?1049h\x1b[2J\x1b[1;1Halt frame');
+
+      const pendingSnapshot = manager.getReplaySnapshot(SESSION); // do not await yet
+      manager.onData(SESSION, 'RACE_BYTES'); // lands during the await window
+      const snapshot = await pendingSnapshot;
+
+      // The atomic serialize (see HeadlessFrameBuffer.serialize) bakes in only
+      // the bytes fed before the drain, so the race bytes cannot land inside
+      // the frame itself - they can only appear once, as the tail folded on
+      // after the await.
+      expect(snapshot.split('RACE_BYTES').length - 1).toBe(1);
+
+      // The held flush tick (replaySamplesInFlight, see scheduleFlush) must
+      // never deliver them a second time via onFlush: the tail fold already
+      // drained state.buffer, so the re-armed tick finds nothing to emit.
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      for (const call of onFlush.mock.calls) {
+        expect(call[1]).not.toContain('RACE_BYTES');
+      }
+
+      manager.removeSession(SESSION);
+    });
+
+    it('resolves empty when the session is torn down mid-sample', async () => {
+      const manager = new PtyBufferManager({ onFlush: vi.fn() });
+      manager.initSession(SESSION, '', 80, 24);
+      manager.onData(SESSION, '\x1b[?1049h\x1b[2J\x1b[1;1Halt frame');
+
+      const pendingSnapshot = manager.getReplaySnapshot(SESSION); // do not await yet
+      manager.removeSession(SESSION);
+
+      // The post-await teardown check must settle the reply to an empty
+      // string rather than leaving it hanging on a disposed parser, whether
+      // the serialize barrier resolves before or after REPLAY_SERIALIZE_MAX_WAIT_MS.
+      const snapshot = await pendingSnapshot;
+      expect(snapshot).toBe('');
+    });
+  });
+
   describe('getOutputPeek (live PTY-grid-to-peek wiring)', () => {
     // Real timers, mirroring the getSerializedFrame block above: the headless
     // parser drains its write buffer on a macrotask. getOutputPeek itself is

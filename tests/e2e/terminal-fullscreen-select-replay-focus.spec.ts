@@ -300,12 +300,17 @@ test.describe('Fullscreen TUI select prompt - input/focus survives a scrollback 
     await closeTaskWindow(page);
     await openTaskWindow(page, taskTitle);
 
-    // The freshly re-fetched scrollback must lead with the alt-screen
-    // re-assert, so the replay paints into the alt buffer, not the normal
-    // buffer (the secondary defect: the cursor left disconnected from the
-    // TUI frame).
+    // The freshly re-fetched replay must carry the alt-screen switch, so it
+    // paints into the alt buffer, not the normal buffer (the secondary defect:
+    // the cursor left disconnected from the TUI frame). An alt-screen session's
+    // replay is now a parsed-grid serialized frame
+    // (PtyBufferManager.getReplaySnapshot): the serialize addon emits the
+    // serialized normal buffer first and the \x1b[?1049h switch mid-stream, so
+    // the sequence is contained, not leading. The post-replay ArrowDown below
+    // (no manual re-click) is the functional proof the replay landed in the
+    // right buffer with focus intact.
     const freshScrollback = await scrollbackForTask(page, taskId);
-    expect(freshScrollback.startsWith('\x1b[?1049h')).toBe(true);
+    expect(freshScrollback).toContain('\x1b[?1049h');
 
     // Second arrow-down WITHOUT an explicit click: proves focus landed
     // automatically after the replay (the primary defect - previously, keys

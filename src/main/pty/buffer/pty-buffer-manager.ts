@@ -209,6 +209,18 @@ function updateModeState(state: ModeState, text: string): void {
  */
 const FULL_FRAME_CLEAR = '\x1b[2J';
 
+/**
+ * Hard ceiling on getReplaySnapshot's wait for the headless serialize. The
+ * barrier normally resolves in a few milliseconds; it can only hang when the
+ * headless terminal is disposed mid-sample (removeSession racing a replay) or
+ * wedged behind a pathological parse backlog. Mirrors waitForResizeRepaint's
+ * REPAINT_MAX_WAIT_MS discipline: every await on the replay path carries a
+ * teardown check and a deadline, so an IPC reply can never hang on a disposed
+ * parser (the renderer's replay watchdog stays a last resort, not the primary
+ * bound). On deadline the sample degrades to the byte replay.
+ */
+const REPLAY_SERIALIZE_MAX_WAIT_MS = 1000;
+
 function buildDecPrivateModePrefix(activeModes: Set<number>): string {
   if (activeModes.size === 0) return '';
   const sortedModes = Array.from(activeModes).sort((first, second) => first - second);
@@ -222,6 +234,15 @@ interface PtyBufferManagerCallbacks {
 interface BufferState {
   buffer: string;
   flushScheduled: boolean;
+  /** Count of getReplaySnapshot samples currently awaiting their serialize.
+   *  While > 0, scheduleFlush's tick re-arms instead of emitting, so no flush
+   *  can slip between a sample's drain and its IPC reply - the renderer drops
+   *  held bytes it believes the reply already contains, so an early flush here
+   *  would get those bytes silently discarded. A counter (not a boolean)
+   *  because staggered samplers can overlap; bounded by the sample's serialize
+   *  deadline and decremented in its finally, so a tick is deferred at most
+   *  one sample's duration. */
+  replaySamplesInFlight: number;
   scrollback: string;
   lastCols: number;
   /** The row count the bytes currently in the scrollback were drawn for,
@@ -277,11 +298,12 @@ interface BufferState {
    *  set split across two PTY chunks is parsed whole. Bounded in onData(). */
   modeParseCarry: string;
   /** Per-session headless xterm parser, fed the SAME bytes as `scrollback`.
-   *  Its serialized frame is a snapshot of the PARSED grid, used as the mobile
-   *  seed instead of the raw byte replay so write-once static TUI cells (whose
-   *  drawing bytes have aged out of the 512KB window) survive a cold replay.
-   *  Desktop consumers still read the raw `scrollback`; only getSerializedFrame
-   *  reads this. Disposed in removeSession. */
+   *  Its serialized frame is a snapshot of the PARSED grid, served instead of
+   *  the raw byte replay so write-once static TUI cells (whose drawing bytes
+   *  have aged out of the 512KB window) survive a cold replay. Two consumers:
+   *  the mobile seed (getSerializedFrame) and the desktop alt-screen replay
+   *  (getReplaySnapshot); desktop non-alt sessions still read the raw
+   *  `scrollback`. Disposed in removeSession. */
   headless: HeadlessFrameBuffer;
 }
 
@@ -319,6 +341,7 @@ export class PtyBufferManager {
     this.buffers.set(sessionId, {
       buffer: '',
       flushScheduled: false,
+      replaySamplesInFlight: 0,
       scrollback: previousScrollback,
       lastCols: initialCols,
       lastRows: initialRows,
@@ -406,6 +429,14 @@ export class PtyBufferManager {
       const current = this.buffers.get(sessionId);
       if (!current) return;
       current.flushScheduled = false;
+      // A replay snapshot is mid-sample: hold this tick (re-arm, do not emit)
+      // so no flush lands between the sample's drain and its reply. The
+      // sample's tail fold delivers whatever is buffered; anything left on its
+      // degraded paths rides the re-armed tick once the counter drops.
+      if (current.replaySamplesInFlight > 0) {
+        this.scheduleFlush(sessionId, current);
+        return;
+      }
       if (!current.buffer) return;
       const end = current.buffer.length > MAX_BYTES_PER_FLUSH
         ? surrogateSafeFlushEnd(current.buffer, MAX_BYTES_PER_FLUSH)
@@ -797,9 +828,12 @@ export class PtyBufferManager {
     // a clear with nothing after it: black, until something happens to force a
     // full redraw.
     //
-    // If the replay cost is worth attacking, the safe shape is a PARSED-grid
-    // snapshot like `getSerializedFrame`, which reconstructs the screen rather
-    // than betting that the bytes after some marker are sufficient to draw it.
+    // The alt-screen replay path now does take the safe shape: getReplaySnapshot
+    // serves the PARSED-grid frame (which reconstructs the screen rather than
+    // betting that the bytes after some marker are sufficient to draw it) when
+    // the session is in the alt buffer, so a ring capped past a write-once
+    // region no longer loses those cells on remount. This byte path remains the
+    // replay for non-alt sessions, where the warning above still stands.
     //
     // The in-memory buffer is trimmed on hysteresis (onData lets it grow to
     // SCROLLBACK_TRIM_THRESHOLD before slicing, to amortize the O(n) trim off
@@ -818,9 +852,13 @@ export class PtyBufferManager {
     // into it, so the input-mode reassert and the replayed frame land where
     // the session actually is. Gated on inAltScreen so a classic normal-buffer
     // session's replay is byte-for-byte unchanged (see the #313 comment on
-    // RESTORABLE_DEC_PRIVATE_MODES). A dangling synchronized-output frame is
-    // closed at the very end so a mid-frame sample can't stall xterm's
-    // renderer for its ~1s safety timeout.
+    // RESTORABLE_DEC_PRIVATE_MODES). Through the app's replay path this branch
+    // now fires only rarely: getReplaySnapshot routes an alt-screen session to
+    // the parsed-grid frame and reaches here alt-gated only via its
+    // serialize-deadline fallback, so in normal operation this method serves
+    // non-alt sessions (plus direct callers and unit tests). A dangling
+    // synchronized-output frame is closed at the very end so a mid-frame
+    // sample can't stall xterm's renderer for its ~1s safety timeout.
     return (state.inAltScreen ? '\x1b[?1049h' : '')
       + buildDecPrivateModePrefix(state.decPrivateModes)
       + '\x1b[0m'
@@ -845,17 +883,103 @@ export class PtyBufferManager {
 
   /**
    * Snapshot of the PARSED grid as a self-contained escape-sequence frame, for
-   * the MOBILE seed only. Unlike getScrollback (a raw 512KB byte replay), this
-   * reconstructs every currently-visible cell whatever its draw age, so a
-   * fullscreen TUI's write-once static regions are never dropped. The frame
-   * carries its own alt-screen + mode preamble (the serialize addon emits it),
-   * so the phone lands in the correct screen with the correct input modes.
+   * the mobile seed (getReplaySnapshot serves the desktop equivalent). Unlike
+   * getScrollback (a raw 512KB byte replay), this reconstructs every
+   * currently-visible cell whatever its draw age, so a fullscreen TUI's
+   * write-once static regions are never dropped. The frame carries its own
+   * alt-screen switch and mode re-asserts (emitted by the serialize addon
+   * mid-stream, after the serialized normal buffer - not a leading prefix), so
+   * the phone lands in the correct screen with the correct input modes.
    * Returns '' for an unknown session.
    */
   async getSerializedFrame(sessionId: string): Promise<string> {
     const state = this.buffers.get(sessionId);
     if (!state) return '';
     return state.headless.serialize();
+  }
+
+  /**
+   * The desktop replay payload: the parsed-grid serialized frame when the
+   * session is in the alt screen, the raw byte replay (getScrollback)
+   * otherwise.
+   *
+   * A fullscreen TUI does not redraw every cell after every clear, so once the
+   * ring outgrows MAX_SCROLLBACK the bytes that drew its write-once static
+   * regions are gone and no byte replay can reconstruct them - a remount at
+   * unchanged geometry (no SIGWINCH, so no fresh repaint to wait for) paints a
+   * permanently holed frame until a cols-changing resize. The parsed grid
+   * reconstructs every visible cell whatever its draw age, and the alt buffer
+   * has no user-reachable scrollback, so serving the frame there loses nothing
+   * the user could scroll to. Non-alt sessions (plain shells, agents without a
+   * TUI) keep the byte replay: their scrollback IS the bytes, and truncation
+   * there only loses old history.
+   *
+   * The frame is returned bare except for a possible tail of bytes that raced
+   * the sample - the serialize addon emits its own alt-screen switch and
+   * DEC-mode re-asserts (mid-stream, after the serialized normal buffer, not a
+   * leading prefix), so none of the byte path's hand-built prefix applies.
+   */
+  async getReplaySnapshot(sessionId: string): Promise<string> {
+    const state = this.buffers.get(sessionId);
+    if (!state?.scrollback) return '';
+    if (!state.inAltScreen) {
+      const scrollback = this.getScrollback(sessionId);
+      traceTerminal(sessionId, 'scrollback-sample', { source: 'byte-replay', bytes: scrollback.length });
+      return scrollback;
+    }
+    // Exactly-once accounting for bytes that race the sample. The drain and
+    // the serialize() call are back-to-back synchronous statements, so the
+    // drained set is exactly the bytes fed to the headless parser before the
+    // barrier - and the serialize (atomic with its barrier, see
+    // HeadlessFrameBuffer.serialize) bakes all of them into the frame and none
+    // that arrive later. Bytes arriving DURING the await land in the emptied
+    // pending buffer; the tick hold (replaySamplesInFlight, see scheduleFlush)
+    // keeps them from being flushed ahead of the reply (the renderer drops
+    // held bytes as already-replayed), and the tail fold below ships them with
+    // the frame instead. The deadline and the post-await teardown check mirror
+    // waitForResizeRepaint's discipline: this await must never leave the IPC
+    // reply hanging on a disposed parser.
+    state.buffer = '';
+    state.replaySamplesInFlight += 1;
+    try {
+      let deadlineTimer: NodeJS.Timeout | undefined;
+      let frame: string | null;
+      try {
+        frame = await Promise.race([
+          state.headless.serialize(),
+          new Promise<null>((resolve) => {
+            deadlineTimer = setTimeout(() => resolve(null), REPLAY_SERIALIZE_MAX_WAIT_MS);
+          }),
+        ]);
+      } finally {
+        if (deadlineTimer) clearTimeout(deadlineTimer);
+      }
+      if (!this.buffers.get(sessionId)) {
+        // Torn down mid-sample (removeSession disposed the parser): nothing to
+        // replay; the renderer's empty-scrollback path flushes its held bytes.
+        traceTerminal(sessionId, 'scrollback-sample', { source: 'parsed-grid-torn-down', bytes: 0 });
+        return '';
+      }
+      if (frame === null) {
+        // Deadline: the parser is wedged or was disposed without settling its
+        // barrier. Degrade to the byte replay (whose alt-screen branch
+        // hand-builds the \x1b[?1049h + mode prefix for exactly this case)
+        // rather than replying with a black frame.
+        const scrollback = this.getScrollback(sessionId);
+        traceTerminal(sessionId, 'scrollback-sample', { source: 'byte-replay-deadline', bytes: scrollback.length });
+        return scrollback;
+      }
+      // Tail fold: bytes that arrived during the await postdate the frame, so
+      // appending them replays them exactly once, in order. Draining them here
+      // keeps the held flush tick silent once it re-fires.
+      const tail = state.buffer;
+      state.buffer = '';
+      const payload = frame + tail;
+      traceTerminal(sessionId, 'scrollback-sample', { source: 'parsed-grid', bytes: payload.length, tailBytes: tail.length });
+      return payload;
+    } finally {
+      state.replaySamplesInFlight -= 1;
+    }
   }
 
   /**

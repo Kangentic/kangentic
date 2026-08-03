@@ -160,6 +160,33 @@ describe('Scrollback', () => {
     expect(scrollback.length).toBeLessThanOrEqual(512 * 1024 + 4);
     expect(scrollback.length).toBeGreaterThan(512 * 1024 - 32);
   });
+
+  it('serves the parsed grid for an alt-screen session, not the byte log', async () => {
+    const { session, feedData } = await spawnSession();
+
+    // A fullscreen TUI: enter the alt screen, draw AAA, then overwrite the
+    // same cells with BBB.
+    feedData('\x1b[?1049h\x1b[2J\x1b[1;1HAAA');
+    feedData('\x1b[1;1HBBB');
+
+    const replay = await manager.getScrollback(session.id);
+    // A byte log carries both draws; the parsed-grid frame holds only the
+    // cells as they stand now, and its own alt-screen switch.
+    expect(replay).toContain('BBB');
+    expect(replay).not.toContain('AAA');
+    expect(replay).toContain('\x1b[?1049h');
+  });
+
+  it('keeps the byte replay, history included, for a non-alt-screen session', async () => {
+    const { session, feedData } = await spawnSession();
+
+    feedData('first draw AAA\r\n');
+    feedData('second draw BBB\r\n');
+
+    const replay = await manager.getScrollback(session.id);
+    expect(replay).toContain('AAA');
+    expect(replay).toContain('BBB');
+  });
 });
 
 // ---------------------------------------------------------------------------

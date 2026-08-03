@@ -299,13 +299,20 @@ The handoff is transparent to the user - the task card shows spawn progress phas
 - PTY `onData` accumulates into a per-session buffer.
 - A 16ms flush interval (~60fps) emits buffered data via IPC `session:data`.
 - A 512KB scrollback ring buffer per session supports terminal restoration.
-- **Do not trim the replay to the last full-screen clear.** Tried and reverted: it cut a 512KB ring
-  to ~1.5KB but produced a permanently black terminal on a fast open/close/reopen. A raw byte
-  replay is not a frame snapshot - a fullscreen TUI leaves write-once static cells undrawn after a
-  clear (the reason the mobile seed uses the headless PARSED grid, `getSerializedFrame`, instead of
-  this byte replay). Slicing at the last clear discards those cells, and a sample landing at or just
-  after a clear replays a clear with nothing after it. If the replay cost is worth attacking, the
-  safe shape is a parsed-grid snapshot, not a byte-offset heuristic.
+- **Alt-screen sessions replay the parsed grid, not the byte tail.** A raw byte replay is not a
+  frame snapshot: a fullscreen TUI leaves write-once static cells (box rules, mode labels)
+  undrawn after a clear, so once a session outgrows the 512KB ring their drawing bytes are gone
+  and a remount at unchanged geometry (no SIGWINCH, so no fresh repaint) paints a permanently
+  holed frame. `PtyBufferManager.getReplaySnapshot` therefore serves the headless PARSED grid
+  (the same serialized frame `getSerializedFrame` gives the mobile seed) when the session is in
+  the alt screen, and the raw byte replay otherwise - a plain shell's scrollback IS the bytes,
+  and truncation there only loses old history.
+- **Do not trim the byte replay to the last full-screen clear.** Tried and reverted: it cut a
+  512KB ring to ~1.5KB but produced a permanently black terminal on a fast open/close/reopen.
+  Slicing at the last clear discards write-once cells, and a sample landing at or just after a
+  clear replays a clear with nothing after it. The parsed-grid snapshot above is the safe shape,
+  not a byte-offset heuristic; and since the byte path now serves normal-buffer sessions, a trim
+  there would discard genuine user-scrollable history, not just a TUI's redraw bytes.
 - **One grid width per mount (deterministic fit).** `proposeDimensions` (`src/renderer/addons/fit-addon.ts`)
   is a pure function of container geometry. It must not read anything that can change while a
   terminal is mounting, because every distinct column count costs a PTY resize and a full agent
@@ -445,15 +452,19 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   selection lives in `src/main/pty/buffer/output-peek.ts`.
 - **DEC private mode and alt-screen re-assert on replay.** `xterm.reset()` on the renderer wipes
   every DEC private mode xterm is tracking, and the original mode-set bytes usually scroll out of
-  the 512KB scrollback window on a long-running session. `PtyBufferManager` tracks DEC private
-  input/reporting modes (DECCKM, mouse tracking, bracketed paste, ...) from the live stream and
-  re-asserts them as a prefix on `getScrollback` (#313). Alt-screen (mode 1049/47/1047) is tracked
-  separately as `inAltScreen` and re-asserted with its own `\x1b[?1049h` prefix, gated on the
-  session currently being in the alt buffer - a classic (normal-buffer) session's replay is
-  unaffected, but a fullscreen-TUI session's replay now paints into the alt buffer instead of the
-  normal buffer (previously the cause of a cursor left visually disconnected from the TUI frame). A
-  synchronized-output frame (mode 2026) left open by a mid-frame sample is closed with a trailing
-  `\x1b[?2026l` so it cannot stall the renderer's ~1s safety timeout.
+  the 512KB scrollback window on a long-running session. On the byte-replay path,
+  `PtyBufferManager` tracks DEC private input/reporting modes (DECCKM, mouse tracking, bracketed
+  paste, ...) from the live stream and re-asserts them as a prefix on `getScrollback` (#313), and
+  a synchronized-output frame (mode 2026) left open by a mid-frame sample is closed with a
+  trailing `\x1b[?2026l` so it cannot stall the renderer's ~1s safety timeout. Alt-screen (mode
+  1049/47/1047) is tracked separately as `inAltScreen`; it routes the replay (see
+  `getReplaySnapshot` above), and a session in the alt screen gets a serialized frame that carries
+  its own addon-emitted alt-screen switch and mode re-asserts (mid-stream, after the serialized
+  normal buffer - not a leading prefix, so nothing may `startsWith` on it), so the replay paints
+  into the alt buffer with the right input modes (a replay landing in the normal buffer was
+  previously the cause of a cursor left visually disconnected from the TUI frame). `getScrollback`
+  itself retains the `\x1b[?1049h` prefix gate, reachable now only via direct byte-path reads and
+  `getReplaySnapshot`'s serialize-deadline fallback.
 - **Hold, not drop, live output across a renderer-side replay.** While a scrollback replay is in
   flight (`scrollbackPendingRef`), the renderer's incoming-write queue HOLDS (retains, does not
   ack) rather than drops live PTY bytes, and flushes them in order once the replay's `afterWrite`
@@ -464,8 +475,12 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   `scrollbackPendingRef` true indefinitely, which would otherwise drop all live output forever.
 - **But the held bytes that PREDATE the sample are dropped, not flushed.** The hold above must not
   be read as "every held byte is flushed after the replay": bytes main flushed BEFORE the
-  `getScrollback` reply are, by construction, already inside the replay (main appends to its ring
-  and its pending buffer from the same bytes and clears the pending buffer when it samples), so
+  `getScrollback` reply are, by construction, already inside the replay whichever shape it takes
+  (a byte replay: main appends to its ring and its pending buffer from the same bytes and clears
+  the pending buffer when it samples; a parsed-grid frame: the serialize is atomic with the
+  parser's flush barrier so every pre-sample byte is baked in, bytes racing the sample ride the
+  reply as an appended tail, and main holds the session's flush ticks for the sample's duration
+  so nothing can be flushed ahead of the reply), so
   flushing them afterwards repaints a pre-sample frame ON TOP of the fresh one. Because a TUI then
   sends only differential updates, nothing repairs it and the terminal shows the previous geometry's
   frame until the next SIGWINCH - a task detail opening on a session at the bottom panel's 14 rows

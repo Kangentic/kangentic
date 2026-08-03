@@ -333,12 +333,17 @@ export function useTerminal(options: UseTerminalOptions) {
    * then repainted the 14-row frame over it from the held queue.
    *
    * Everything main flushed to this renderer before the getScrollback REPLY is
-   * by construction inside `scrollback`: main appends to its ring and its
-   * pending buffer from the same bytes, clears the pending buffer at sample
-   * time (PtyBufferManager.getScrollback), and IPC replies are ordered against
-   * the flush stream. Main's half of the double-delivery guard has always been
-   * there; this is the renderer's half, for the bytes main can no longer
-   * recall.
+   * by construction inside `scrollback`, whichever shape the sample takes. A
+   * byte replay: main appends to its ring and its pending buffer from the same
+   * bytes, clears the pending buffer at sample time, and IPC replies are
+   * ordered against the flush stream. A parsed-grid frame (an alt-screen
+   * session's sample, PtyBufferManager.getReplaySnapshot): every byte fed
+   * before the sample is baked into the frame (the serialize is atomic with
+   * the parser's flush barrier), bytes racing the sample ride the reply as an
+   * appended tail, and main holds the session's flush ticks for the sample's
+   * duration so none of those bytes can arrive here ahead of the reply. Main's
+   * half of the double-delivery guard has always been there; this is the
+   * renderer's half, for the bytes main can no longer recall.
    *
    * Called in the same microtask as the resolve, so no post-sample flush (a
    * separate macrotask) can be caught by it. That rests on the resize reply
