@@ -1,4 +1,4 @@
-import { Network, Code2, Sparkles } from 'lucide-react';
+import { Network, Code2, Sparkles, Rocket } from 'lucide-react';
 import type { AppConfig } from '../../shared/types';
 import { useScopedUpdate } from '../../renderer/components/settings/shared';
 import { useUpdaterStore } from '../../renderer/stores/updater-store';
@@ -136,7 +136,7 @@ export function DevToolsSections({ globalConfig }: { globalConfig: AppConfig }) 
             data-testid="dev-trigger-whats-new-dialog"
             className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-md border border-edge/60 bg-surface-inset/40 px-2.5 py-1 text-xs font-medium text-fg-secondary transition-colors hover:border-accent/50 hover:bg-accent/10 hover:text-fg"
           >
-            <Sparkles size={13} />
+            <Rocket size={13} />
             Show dialog
           </button>
         </div>

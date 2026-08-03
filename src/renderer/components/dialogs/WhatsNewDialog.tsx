@@ -1,4 +1,4 @@
-import { Sparkles, ExternalLink } from 'lucide-react';
+import { Rocket, ExternalLink } from 'lucide-react';
 import { BaseDialog } from './BaseDialog';
 import { MarkdownRenderer } from '../MarkdownRenderer';
 import { useUpdaterStore } from '../../stores/updater-store';
@@ -26,6 +26,17 @@ import { githubReleaseUrl } from '../../lib/github-release-url';
  * once-per-version decision; this component only renders.
  *
  * Mounted in AppLayout so it appears regardless of sidebar state.
+ *
+ * Rocket rather than Sparkles for the icon: Sparkles means AI/semantic
+ * everywhere else in the renderer (NameFromPromptButton, the search palette's
+ * "matched by meaning" badge, MemoryTab), and release notes are human-authored.
+ * It is also distinct from the pre-restart dialog's CloudDownload, so "update
+ * ready" and "update applied" never read as the same thing.
+ *
+ * The title is brand plus version, like a release-page header, rather than
+ * "What's new in vX": RELEASE_NOTES.md opens with its own `## What's New`
+ * heading, so that phrasing echoed itself on two adjacent lines. The title names
+ * the release and the body's own headings section it.
  */
 export function WhatsNewDialog() {
   const whatsNewOpen = useUpdaterStore((state) => state.whatsNewOpen);
@@ -38,8 +49,8 @@ export function WhatsNewDialog() {
   return (
     <BaseDialog
       onClose={closeWhatsNew}
-      title={`What's new in v${appVersion}`}
-      icon={<Sparkles size={16} className="text-accent" />}
+      title={`Kangentic v${appVersion}`}
+      icon={<Rocket size={16} className="text-accent" />}
       trapFocus={!whatsNewAutoOpened}
       backdropClassName="backdrop-blur-xs"
       className="w-[560px] max-h-[80vh]"

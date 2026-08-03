@@ -85,7 +85,7 @@ test.describe("What's New dialog", () => {
     try {
       const dialog = page.getByTestId('whats-new-dialog');
       await expect(dialog).toBeVisible();
-      await expect(page.getByRole('heading', { name: `What's new in v${MOCK_APP_VERSION}` })).toBeVisible();
+      await expect(page.getByRole('heading', { name: `Kangentic v${MOCK_APP_VERSION}` })).toBeVisible();
 
       // Structural, not textual: the markdown body rendered something.
       await expect(dialog.locator('.markdown-body')).not.toBeEmpty();
