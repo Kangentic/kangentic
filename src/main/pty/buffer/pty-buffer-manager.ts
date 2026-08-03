@@ -890,7 +890,11 @@ export class PtyBufferManager {
    * alt-screen switch and mode re-asserts (emitted by the serialize addon
    * mid-stream, after the serialized normal buffer - not a leading prefix), so
    * the phone lands in the correct screen with the correct input modes.
-   * Returns '' for an unknown session.
+   * Known gap, accepted for mobile: the addon cannot emit the mouse ENCODING
+   * modes (1005/1006/1015/1016), which cost the desktop wheel scroll and is
+   * folded back on in getReplaySnapshot; the phone's terminal is touch-driven
+   * and sends no mouse reports, so this frame stays bare until a phone-side
+   * need appears. Returns '' for an unknown session.
    */
   async getSerializedFrame(sessionId: string): Promise<string> {
     const state = this.buffers.get(sessionId);
@@ -914,10 +918,12 @@ export class PtyBufferManager {
    * TUI) keep the byte replay: their scrollback IS the bytes, and truncation
    * there only loses old history.
    *
-   * The frame is returned bare except for a possible tail of bytes that raced
-   * the sample - the serialize addon emits its own alt-screen switch and
-   * DEC-mode re-asserts (mid-stream, after the serialized normal buffer, not a
-   * leading prefix), so none of the byte path's hand-built prefix applies.
+   * The frame carries the addon's own alt-screen switch and mode re-asserts
+   * (mid-stream, after the serialized normal buffer, not a leading prefix),
+   * followed by two appendices of ours: the folded DEC private mode prefix
+   * (the addon cannot emit the mouse ENCODING modes 1005/1006/1015/1016, so
+   * without it wheel scroll died after every same-grid remount - see the tail
+   * fold below) and any bytes that raced the sample.
    */
   async getReplaySnapshot(sessionId: string): Promise<string> {
     const state = this.buffers.get(sessionId);
@@ -974,7 +980,15 @@ export class PtyBufferManager {
       // keeps the held flush tick silent once it re-fires.
       const tail = state.buffer;
       state.buffer = '';
-      const payload = frame + tail;
+      // Re-assert the tracked DEC private modes after the frame. The serialize
+      // addon emits mouse TRACKING from terminal.modes (?1000h etc.) but has no
+      // API for the mouse ENCODING modes (1005/1006/1015/1016), so a bare frame
+      // left xterm reporting legacy X10 bytes that an SGR-expecting TUI
+      // ignores: wheel scroll went dead after every same-grid remount until the
+      // TUI happened to re-assert its own modes in the live stream. The folded
+      // prefix covers every mode in RESTORABLE_DEC_PRIVATE_MODES, and
+      // re-asserting one the addon already emitted is a no-op.
+      const payload = frame + buildDecPrivateModePrefix(state.decPrivateModes) + tail;
       traceTerminal(sessionId, 'scrollback-sample', { source: 'parsed-grid', bytes: payload.length, tailBytes: tail.length });
       return payload;
     } finally {

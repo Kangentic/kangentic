@@ -292,11 +292,12 @@ if (process.env.MOCK_CLAUDE_BACKGROUND_BASH === '1' && sessionId && !settingsPat
 // MOCK_CLAUDE_FULLSCREEN_SELECT=1 is set, this branch instead behaves like a
 // real Claude Code fullscreen TUI parked at an AskUserQuestion-style select
 // prompt: it enters the alt screen buffer (1049h), turns on application
-// cursor keys (DECCKM, 1h), draws a 3-option menu, and reacts to arrow-key
-// input by moving the highlight via a cursor-addressed, synchronized-output
+// cursor keys (DECCKM, 1h) and SGR-encoded mouse tracking (1000h + 1006h),
+// draws a 3-option menu, and reacts to arrow-key and SGR wheel-report input
+// by moving the highlight via a cursor-addressed, synchronized-output
 // (2026h/2026l) DIFF - never a full repaint - exactly like the fix this
-// harness verifies (a dropped diff, or a replay landing in the wrong xterm
-// buffer, must not go unnoticed).
+// harness verifies (a dropped diff, a replay landing in the wrong xterm
+// buffer, or a replay that loses the mouse encoding must not go unnoticed).
 const FULLSCREEN_SELECT_OPTIONS = ['First option', 'Second option', 'Third option'];
 
 // Fullscreen TUI that REPAINTS ON RESIZE, for the terminal fit/handoff harness.
@@ -456,6 +457,14 @@ if (process.env.MOCK_CLAUDE_TUI_REPAINT === '1') {
   const drawFullScreen = () => {
     let out = '\x1b[?1049h'; // enter the alt screen buffer
     out += '\x1b[?1h'; // DECCKM: application cursor keys
+    // VT200 mouse tracking in SGR encoding, like Claude's real fullscreen
+    // renderer: wheel scroll arrives as SGR reports (\x1b[<64/65;x;yM), and
+    // the handler below parses ONLY that encoding. This split is load-bearing
+    // for the replay guard: the serialize addon re-asserts TRACKING (?1000h)
+    // but cannot emit the ENCODING (?1006h), so a replay that fails to restore
+    // it leaves xterm sending legacy X10 reports this harness (like real
+    // Claude) ignores - and the wheel assertion in the spec goes red.
+    out += '\x1b[?1000h\x1b[?1006h';
     // Hide the cursor while the TUI manages its own visual indicators. This
     // is also Kangentic's detectFirstOutput heuristic for Claude (see
     // src/main/agent/adapters/claude/claude-adapter.ts) -- without it the
@@ -529,7 +538,21 @@ if (process.env.MOCK_CLAUDE_TUI_REPAINT === '1') {
     if (combined.includes('\x1bOB') || combined.includes('\x1b[B')) {
       moveHighlight(1);
     }
-    const partialEscapeMatch = combined.match(/\x1b(?:O|\[)?$/);
+    // SGR-encoded wheel reports only (button 64 = up, 65 = down), one move per
+    // report. Legacy X10 reports (\x1b[M + 3 raw bytes) are deliberately NOT
+    // parsed - real Claude ignores them too, which is how a replay that drops
+    // the ?1006h encoding manifests as dead scroll. Click reports (\x1b[<0...)
+    // fall through unmatched, like every other unrecognized input.
+    const wheelReports = combined.match(/\x1b\[<6[45];\d+;\d+M/g);
+    if (wheelReports) {
+      for (const report of wheelReports) {
+        moveHighlight(report.startsWith('\x1b[<65') ? 1 : -1);
+      }
+    }
+    // The carry must retain a trailing partial SGR report (\x1b[<64;12 ...) as
+    // well as a bare \x1b / \x1b[ / \x1bO, or a wheel report split across two
+    // PTY chunks loses its head and the notch is silently dropped.
+    const partialEscapeMatch = combined.match(/\x1b(?:\[(?:<[\d;]*)?|O)?$/);
     if (partialEscapeMatch) inputCarry = partialEscapeMatch[0];
   });
   process.stdin.resume();

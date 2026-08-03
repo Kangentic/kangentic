@@ -23,11 +23,13 @@
  * terminal escape sequences at all, so it cannot reproduce a bug that only
  * exists in the alt-screen replay path. Setting MOCK_CLAUDE_FULLSCREEN_SELECT=1
  * switches it to a small interactive select-prompt harness: it enters the alt
- * screen buffer, turns on DECCKM, draws a 3-option menu, and moves the
- * highlight via a cursor-addressed, synchronized-output DIFF on arrow input --
- * never a full repaint - so a lost keystroke or a misplaced replay is
- * directly observable in the scrollback (the highlighted-option marker for
- * the NEXT option only ever appears if the keystroke actually reached the PTY).
+ * screen buffer, turns on DECCKM and SGR-encoded mouse tracking, draws a
+ * 3-option menu, and moves the highlight via a cursor-addressed,
+ * synchronized-output DIFF on arrow-key or SGR wheel-report input --
+ * never a full repaint - so a lost keystroke, a misplaced replay, or a replay
+ * that drops the mouse encoding is directly observable in the scrollback (the
+ * highlighted-option marker for the NEXT option only ever appears if the
+ * input actually reached the PTY in a form the harness parses).
  *
  * This spec drives real, focused Playwright keyboard events into the xterm
  * DOM (not a `sessions.write` IPC bypass), because the bug is specifically
@@ -321,6 +323,40 @@ test.describe('Fullscreen TUI select prompt - input/focus survives a scrollback 
       .poll(() => scrollbackForTask(page, taskId), {
         timeout: 10000,
         message: 'Expected the highlight to advance to option 3 after a post-replay ArrowDown with no manual re-focus',
+      })
+      .toContain(HIGHLIGHT_THIRD);
+
+    // Wheel scroll across the replay: the mock enables SGR-encoded mouse
+    // tracking (?1000h + ?1006h) and parses ONLY SGR wheel reports, like real
+    // Claude. The serialize addon re-asserts mouse TRACKING but cannot emit
+    // the ENCODING, so a replay that fails to restore ?1006h leaves xterm
+    // sending legacy X10 reports the TUI ignores - wheel scroll dead, exactly
+    // the shipped regression this guards. xterm emits ONE report per wheel
+    // EVENT (delta size does not multiply notches), so dispatch three events
+    // per direction and assert on the CLAMPED endpoints (top and bottom
+    // option) - deterministic whether an event maps to one notch or several.
+    const terminalBox = await dialog.locator('.xterm').first().boundingBox();
+    if (!terminalBox) throw new Error('Expected the terminal to have a bounding box');
+    await page.mouse.move(
+      terminalBox.x + terminalBox.width / 2,
+      terminalBox.y + terminalBox.height / 2,
+    );
+    for (let wheelEvent = 0; wheelEvent < 3; wheelEvent++) {
+      await page.mouse.wheel(0, -120);
+    }
+    await expect
+      .poll(() => scrollbackForTask(page, taskId), {
+        timeout: 10000,
+        message: 'Expected wheel-up to reach the PTY as SGR reports and clamp the highlight to option 1 after the replay',
+      })
+      .toContain(HIGHLIGHT_FIRST);
+    for (let wheelEvent = 0; wheelEvent < 3; wheelEvent++) {
+      await page.mouse.wheel(0, 120);
+    }
+    await expect
+      .poll(() => scrollbackForTask(page, taskId), {
+        timeout: 10000,
+        message: 'Expected wheel-down to clamp the highlight back to option 3',
       })
       .toContain(HIGHLIGHT_THIRD);
 

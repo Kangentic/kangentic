@@ -462,9 +462,13 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   its own addon-emitted alt-screen switch and mode re-asserts (mid-stream, after the serialized
   normal buffer - not a leading prefix, so nothing may `startsWith` on it), so the replay paints
   into the alt buffer with the right input modes (a replay landing in the normal buffer was
-  previously the cause of a cursor left visually disconnected from the TUI frame). `getScrollback`
-  itself retains the `\x1b[?1049h` prefix gate, reachable now only via direct byte-path reads and
-  `getReplaySnapshot`'s serialize-deadline fallback.
+  previously the cause of a cursor left visually disconnected from the TUI frame). One mode class
+  the addon cannot emit is the mouse ENCODING modes (1005/1006/1015/1016 - it re-asserts mouse
+  TRACKING only), so `getReplaySnapshot` folds the tracked DEC-mode prefix onto the frame; without
+  it, a same-grid remount left xterm reporting legacy X10 mouse bytes that an SGR-expecting TUI
+  ignores, and wheel scroll went dead until the TUI happened to re-assert its own modes.
+  `getScrollback` itself retains the `\x1b[?1049h` prefix gate, reachable now only via direct
+  byte-path reads and `getReplaySnapshot`'s serialize-deadline fallback.
 - **Hold, not drop, live output across a renderer-side replay.** While a scrollback replay is in
   flight (`scrollbackPendingRef`), the renderer's incoming-write queue HOLDS (retains, does not
   ack) rather than drops live PTY bytes, and flushes them in order once the replay's `afterWrite`

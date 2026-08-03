@@ -1475,6 +1475,28 @@ describe('PtyBufferManager', () => {
       manager.removeSession(SESSION);
     });
 
+    it('re-asserts mouse-encoding modes the serialize addon cannot emit', async () => {
+      const manager = new PtyBufferManager({ onFlush: vi.fn() });
+      manager.initSession(SESSION, '', 80, 24);
+      // A fullscreen TUI with wheel-scroll support: mouse tracking (1000) in
+      // SGR encoding (1006), like Claude Code. The serialize addon re-asserts
+      // TRACKING from terminal.modes (?1000h) but has no API for the ENCODING
+      // modes (1005/1006/1015/1016), so a bare frame leaves xterm reporting
+      // legacy X10 bytes that an SGR-expecting TUI ignores: wheel scroll went
+      // dead after every same-grid remount until the TUI happened to re-assert
+      // its own modes in the live stream.
+      manager.onData(SESSION, '\x1b[?1049h\x1b[?1000h\x1b[?1006h\x1b[2J\x1b[1;1HTUI frame');
+
+      const snapshot = await manager.getReplaySnapshot(SESSION);
+      // The folded DEC prefix (buildDecPrivateModePrefix) re-asserts every
+      // tracked input/reporting mode after the frame; 1006 must be a member
+      // (terminated by ';' or the trailing 'h', never a substring of a longer
+      // parameter).
+      expect(snapshot).toMatch(/\x1b\[\?(?:[0-9]+;)*1006[;h]/);
+
+      manager.removeSession(SESSION);
+    });
+
     it('passes a non-alt-screen session through to the raw byte replay', async () => {
       const manager = new PtyBufferManager({ onFlush: vi.fn() });
       manager.initSession(SESSION, '', 80, 24);
