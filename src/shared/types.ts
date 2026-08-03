@@ -4763,6 +4763,12 @@ export interface ElectronAPI {
     onPairingConfirmed: (callback: (payload: MobilePairingConfirmedPayload) => void) => () => void;
     onPairingEnded: (callback: (payload: MobilePairingEndedPayload) => void) => () => void;
     onStateChanged: (callback: () => void) => () => void;
+    /** Sessions a phone holds a terminal-wanting stream subscription for (not the
+     *  list-only feed). The bottom panel suspends its terminal for these - the
+     *  resting park owns their grid - so it renders a placeholder instead of an
+     *  xterm that would fit the PTY to its strip. */
+    getTerminalStreams: () => Promise<string[]>;
+    onTerminalStreamsChanged: (callback: (sessionIds: string[]) => void) => () => void;
   };
 
   // Board Config

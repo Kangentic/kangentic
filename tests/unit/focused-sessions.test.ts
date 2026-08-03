@@ -582,3 +582,4 @@ describe('derivePanelSessionId', () => {
     expect(result).toBe('sess-a');
   });
 });
+

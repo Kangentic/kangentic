@@ -543,6 +543,12 @@ const api: ElectronAPI = {
       ipcRenderer.on(IPC.MOBILE_STATE_CHANGED, handler);
       return () => ipcRenderer.removeListener(IPC.MOBILE_STATE_CHANGED, handler);
     },
+    getTerminalStreams: () => ipcRenderer.invoke(IPC.MOBILE_GET_TERMINAL_STREAMS),
+    onTerminalStreamsChanged: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, sessionIds: string[]) => callback(sessionIds);
+      ipcRenderer.on(IPC.MOBILE_TERMINAL_STREAMS_CHANGED, handler);
+      return () => ipcRenderer.removeListener(IPC.MOBILE_TERMINAL_STREAMS_CHANGED, handler);
+    },
   },
 
   boardConfig: {

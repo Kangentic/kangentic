@@ -58,6 +58,24 @@ export function subscriptionKeyFor(sessionId: string): string {
 }
 
 /**
+ * Marker key present ONLY while a subscription with `terminal: true` is live.
+ * `stream:<id>` alone cannot answer "is a phone watching this TERMINAL":
+ * the phone holds list-only stream subscriptions for EVERY live session the
+ * moment it connects (its activity feed), and gating the resting park on the
+ * bare stream key made the park fire for all of them - sessions no phone
+ * terminal ever opened were reshaped to the resting grid, and every later
+ * panel reveal replayed them at the wrong geometry (the mis-wrapped-panel
+ * defect, observed live 2026-08-02). The teardown registered under
+ * `stream:<id>` removes this marker, so every release path (replace,
+ * unsubscribe, exit, transport drop, dispose) clears both together.
+ */
+export const TERMINAL_STREAM_KEY_PREFIX = 'stream-terminal:';
+
+export function terminalStreamKeyFor(sessionId: string): string {
+  return `${TERMINAL_STREAM_KEY_PREFIX}${sessionId}`;
+}
+
+/**
  * Which project owns a session, for a session that may no longer be running.
  *
  * `sessionManager.getSessionProjectId` reads the LIVE registry, so it answers
@@ -308,7 +326,16 @@ function subscribeReadStream(
     context.sessionManager.off('exit', onExit);
     if (terminalFlushTimer) clearTimeout(terminalFlushTimer);
     if (usageFlushTimer) clearTimeout(usageFlushTimer);
+    // The terminal marker lives and dies with THIS subscription: a list-only
+    // re-subscribe replaces this teardown, which runs it, which drops the
+    // marker before the new registration decides whether to re-add it.
+    subscriptions.remove(terminalStreamKeyFor(sessionId));
   });
+  if (wantsTerminal) {
+    subscriptions.set(terminalStreamKeyFor(sessionId), () => {
+      // Marker only - the real teardown lives under subscriptionKeyFor.
+    });
+  }
 
   // Seed the sync state WITHOUT emitting: the phone bootstraps its view
   // with a transcript-window request right after subscribing (tail first,

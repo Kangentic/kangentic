@@ -35,6 +35,7 @@ function derive(sessions: Session[], overrides: Partial<{
   currentProjectId: string | null;
   dialogSessionIds: string[];
   remoteDetailTaskIds: string[];
+  mobileTerminalStreamedSessionIds: string[];
 }> = {}) {
   return derivePanelSessions({
     sessions,
@@ -146,6 +147,33 @@ describe('derivePanelSessions', () => {
       );
       expect(result.owned.has('sess-far')).toBe(true);
       expect(ids(result.visible)).toEqual(['sess-a']);
+    });
+
+    it('drops the tab of a phone-streamed session - its terminal lives on the phone', () => {
+      // The resting park owns the PTY grid while a phone streams it; a panel
+      // tab would either fit the strip out from under the phone or render a
+      // frame laid out for a grid it does not have. Same no-tab treatment as
+      // a detail window, and the tab returns when the phone lets go (user
+      // decision 2026-08-02: no placeholder - the user is on their phone).
+      const result = derive(
+        [makeSession({ id: 'sess-a', taskId: 'task-a' }), makeSession({ id: 'sess-b', taskId: 'task-b' })],
+        { mobileTerminalStreamedSessionIds: ['sess-b'] },
+      );
+      expect(result.owned.has('sess-b')).toBe(true);
+      expect(ids(result.visible)).toEqual(['sess-a']);
+    });
+
+    it('unions phone-streamed sessions with both detail-window sources', () => {
+      const result = derive(
+        [
+          makeSession({ id: 'sess-a', taskId: 'task-a' }),
+          makeSession({ id: 'sess-b', taskId: 'task-b' }),
+          makeSession({ id: 'sess-c', taskId: 'task-c' }),
+        ],
+        { dialogSessionIds: ['sess-a'], mobileTerminalStreamedSessionIds: ['sess-c'] },
+      );
+      expect([...result.owned].sort()).toEqual(['sess-a', 'sess-c']);
+      expect(ids(result.visible)).toEqual(['sess-b']);
     });
   });
 

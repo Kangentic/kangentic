@@ -37,6 +37,11 @@ export function registerMobileBridgeHandlers(context: IpcContext): void {
 
   ipcMain.handle(IPC.MOBILE_LIST_DEVICES, (): MobilePairedDevice[] => service.listDevices());
 
+  // The set the bottom panel suspends its terminals for. The push below keeps
+  // it current; this invoke seeds a renderer that mounts after the phone
+  // already subscribed (app start with a connected phone, window reload).
+  ipcMain.handle(IPC.MOBILE_GET_TERMINAL_STREAMS, (): string[] => service.terminalStreamedSessionIds());
+
   ipcMain.handle(IPC.MOBILE_REVOKE_DEVICE, (_event, deviceId: string) => {
     service.revokeDevice(deviceId);
   });
@@ -97,5 +102,9 @@ export function registerMobileBridgeHandlers(context: IpcContext): void {
 
   service.on('stateChanged', () => {
     sendIfWindowAlive(IPC.MOBILE_STATE_CHANGED);
+  });
+
+  service.on('terminalStreamsChanged', (sessionIds: string[]) => {
+    sendIfWindowAlive(IPC.MOBILE_TERMINAL_STREAMS_CHANGED, sessionIds);
   });
 }

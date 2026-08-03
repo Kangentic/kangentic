@@ -61,6 +61,15 @@ export interface CoreSessionSlice {
    *  either let the panel mount a second xterm on a live PTY, or made main stream
    *  bytes to a renderer with nothing to paint them into. */
   remoteDetailTaskIds: string[];
+  /** Sessions a paired phone holds a terminal-WANTING stream subscription for
+   *  (not the list-only feed it keeps for every live session). Pushed by main's
+   *  mobile bridge. The bottom panel renders a placeholder instead of an xterm
+   *  for these: the resting park owns their grid (a phone mirrors it 1:1 and
+   *  cannot escape a strip fit), so a panel xterm fitting them to its strip
+   *  produced both the phone's sliver view and the panel's own mis-wrapped
+   *  frames. A task-detail window still mounts a real terminal for them - the
+   *  detail is the primary surface and its grid wins while it is open. */
+  mobileTerminalStreamedSessionIds: string[];
   /** Destination project id captured at the FIRST frame of a project switch when that
    *  project has persisted detail windows (read synchronously from
    *  `config.workspaceByProject` before the deferred cold-path workspace restore runs). The

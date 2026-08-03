@@ -30,7 +30,7 @@ import { BridgeSession } from './session/bridge-session';
 import { SubscriptionRegistry } from './session/subscription-registry';
 import { CapabilityRouter } from './capability-router';
 import { registerCapabilityHandlers } from './handlers';
-import { subscriptionKeyFor } from './handlers/read-stream';
+import { terminalStreamKeyFor, TERMINAL_STREAM_KEY_PREFIX } from './handlers/read-stream';
 import { sizeGuardKeyFor } from './handlers/terminal-size-guard';
 import { SessionLifecycleBoardFeed } from './session-lifecycle-feed';
 import { PushRegistrationStore } from './push/push-registration-store';
@@ -130,6 +130,8 @@ export class MobileBridgeService extends EventEmitter {
    */
   private lastEmittedConnectionSignature: string | null = null;
   private relayStateEmitTimer: ReturnType<typeof setTimeout> | null = null;
+  private terminalStreamsEmitScheduled = false;
+  private lastEmittedTerminalStreamsSignature = '';
   private disposed = false;
 
   constructor(config: MobileBridgeConfig) {
@@ -156,7 +158,13 @@ export class MobileBridgeService extends EventEmitter {
     // by the whole mobile terminal feature.
     context.sessionManager.setMobileTerminalProbe({
       isSizeHeld: (sessionId) => this.anyDeviceSubscriptionHas(sizeGuardKeyFor(sessionId)),
-      hasStreamSubscriber: (sessionId) => this.anyDeviceSubscriptionHas(subscriptionKeyFor(sessionId)),
+      // TERMINAL-wanting subscriptions only, never the bare stream key: the
+      // phone holds a list-only stream subscription for EVERY live session
+      // whenever it is connected (its activity feed), and answering from
+      // `stream:<id>` made the park fire for all of them - which reshaped
+      // sessions no phone terminal ever opened and garbled their later panel
+      // reveals (observed live 2026-08-02).
+      hasStreamSubscriber: (sessionId) => this.anyDeviceSubscriptionHas(terminalStreamKeyFor(sessionId)),
     });
     registerCapabilityHandlers(this.capabilityRouter, {
       context,
@@ -250,7 +258,7 @@ export class MobileBridgeService extends EventEmitter {
   private getOrCreateSubscriptions(deviceId: string): SubscriptionRegistry {
     let subscriptions = this.subscriptionsByDevice.get(deviceId);
     if (!subscriptions) {
-      subscriptions = new SubscriptionRegistry();
+      subscriptions = new SubscriptionRegistry(() => this.scheduleTerminalStreamsEmit());
       this.subscriptionsByDevice.set(deviceId, subscriptions);
     }
     return subscriptions;
@@ -262,6 +270,42 @@ export class MobileBridgeService extends EventEmitter {
       if (subscriptions.has(key)) return true;
     }
     return false;
+  }
+
+  /**
+   * Sessions with a live terminal-WANTING stream subscription on any device -
+   * the sessions a phone is actually watching the terminal of, not merely
+   * listing in its feed. The renderer suspends the bottom panel's terminal
+   * for these (the resting park owns their grid; a panel xterm fitting them
+   * to its strip is what produced both the phone's sliver view and the
+   * mis-wrapped panel), so it needs to know the set and every change to it.
+   */
+  terminalStreamedSessionIds(): string[] {
+    const sessionIds = new Set<string>();
+    for (const subscriptions of this.subscriptionsByDevice.values()) {
+      for (const key of subscriptions.keys()) {
+        if (key.startsWith(TERMINAL_STREAM_KEY_PREFIX)) sessionIds.add(key.slice(TERMINAL_STREAM_KEY_PREFIX.length));
+      }
+    }
+    return [...sessionIds].sort();
+  }
+
+  /**
+   * Coalesced per microtask (a re-subscribe fires remove + add back to back;
+   * a device drop clears many keys at once) and deduplicated against the
+   * last emitted value, so listeners only ever see actual changes.
+   */
+  private scheduleTerminalStreamsEmit(): void {
+    if (this.terminalStreamsEmitScheduled || this.disposed) return;
+    this.terminalStreamsEmitScheduled = true;
+    queueMicrotask(() => {
+      this.terminalStreamsEmitScheduled = false;
+      if (this.disposed) return;
+      const signature = this.terminalStreamedSessionIds().join(',');
+      if (signature === this.lastEmittedTerminalStreamsSignature) return;
+      this.lastEmittedTerminalStreamsSignature = signature;
+      this.emit('terminalStreamsChanged', this.terminalStreamedSessionIds());
+    });
   }
 
   /** Applies effective config. Called from register-all.ts at startup and from applyRuntimeConfig on every config:set. */

@@ -35,6 +35,7 @@ import { useSearchPalette } from '../../hooks/useSearchPalette';
 import { useViewToggle } from '../../hooks/useViewToggle';
 import { useFocusedSessionsSync } from '../../hooks/useFocusedSessionsSync';
 import { useRemoteDetailOwnersSync } from '../../hooks/useRemoteDetailOwnersSync';
+import { useMobileTerminalStreamsSync } from '../../hooks/useMobileTerminalStreamsSync';
 import { useMonitorDetailOwnership } from '../monitor/useMonitorDetailOwnership';
 import { useDictation } from '../../hooks/useDictation';
 import { DictationSurface } from '../dictation/DictationSurface';
@@ -105,6 +106,7 @@ export function AppLayout() {
       currentProjectId,
       dialogSessionIds: s.dialogSessionIds,
       remoteDetailTaskIds: s.remoteDetailTaskIds,
+      mobileTerminalStreamedSessionIds: s.mobileTerminalStreamedSessionIds,
     });
     return shouldForceCollapseTerminal({
       activeSessionCount: panelSessions.active.length,
@@ -157,6 +159,7 @@ export function AppLayout() {
   // TerminalTab, so it is the honest answer to "is there an xterm to receive bytes".
   useFocusedSessionsSync(terminal.showContent);
   useRemoteDetailOwnersSync();
+  useMobileTerminalStreamsSync();
   // The monitor's ownership half, mounted here rather than in `MonitorDetailLayer`
   // because that layer unmounts whenever the monitor is closed or detached while its
   // window store survives - see `useMonitorDetailOwnership`.

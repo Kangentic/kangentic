@@ -357,6 +357,40 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   restore` block in `tests/unit/session-manager.test.ts`,
   `tests/unit/terminal-mount-registry.test.ts`, and the park assertions in
   `tests/unit/mobile-bridge/{interactive-terminal,read-stream}.test.ts`.
+- **A phone-streamed session is never rendered by the bottom panel, and never drops below the
+  mobile row floor.** Terminal ownership is one xterm per PTY, and a phone mirrors the grid 1:1
+  with no way to escape a strip-shaped fit: when the expanded bottom panel survived a
+  detail-close as the owning surface, its fit took the grid to the 306x14 strip and the phone
+  showed a sliver; and when the park reshaped a session under an unmounted-then-revealed panel
+  xterm, the reveal's `skipResize` replay left the panel permanently mis-wrapped (both observed
+  live 2026-08-02; user decision: the panel is a utility surface - the task detail is primary,
+  and the phone must never inherit the strip). Three layers enforce it:
+  1. **The gate is terminal-wanting subscriptions, not the bare stream key.** The phone holds a
+     list-only stream subscription for EVERY live session whenever it is connected, so
+     `MobileTerminalProbe.hasStreamSubscriber` answers from the `stream-terminal:<id>` marker
+     that `read-stream` registers only for `terminal: true` subscribes (and removes on every
+     release path). Gating on `stream:<id>` made the park fire for the entire board.
+  2. **The panel drops the tab of a phone-streamed session entirely.** Main pushes the
+     terminal-streamed set to the renderer (`MobileBridgeService.terminalStreamedSessionIds`,
+     `mobile:terminalStreamsChanged`, mirrored by `useMobileTerminalStreamsSync`), and
+     `derivePanelSessions` folds it into the `owned` exclusion - the same no-tab treatment a
+     detail-owned session gets, so no panel fit ever contends with the park, and the focused
+     set, the parked/reveal plan, and the WebGL budget all follow from the shared derivation.
+     No placeholder (user decision 2026-08-02): the user watching that session is on their
+     phone, not at the desk, and the tab returns the moment the phone lets go. A task-detail
+     window still mounts a real terminal: the detail is primary and its grid wins while open.
+  3. **`SessionManager` backstops the races** (`MOBILE_USABLE_MIN_ROWS`, 20): `resize()`
+     REFUSES a desktop-origin resize below the floor while a phone streams (before
+     `bufferManager.onResize`, so the headless parser never diverges from the real PTY; the
+     refused grid still records `lastDesktopDimensions` as the restore target), and
+     `parkRestingGridForMobileSubscriber` overrides a desktop HOLD below the floor, rescuing a
+     phone that subscribes to a session the strip captured before the phone arrived.
+  A desktop with no terminal-streaming phone never hits any layer: the panel renders and owns
+  grids exactly as before the park existed. Gated by the floor tests in the `Resting grid
+  restore` block of `tests/unit/session-manager.test.ts`, the terminal-marker tests in
+  `tests/unit/mobile-bridge/read-stream.test.ts`, the change-hook test in
+  `tests/unit/mobile-bridge/subscription-registry.test.ts`, and `panelTerminalSessionIdFor` in
+  `tests/unit/focused-sessions.test.ts`.
 - **Repaint-settled scrollback sampling.** A session spawns at a default 120x30; on a cold launch
   an auto-resumed PTY sits at that size until a card opens and the renderer fits it wider. When a
   geometry-changing resize fires (cols OR rows), a full-screen agent TUI repaints its frame

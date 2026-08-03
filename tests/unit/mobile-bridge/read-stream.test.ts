@@ -11,7 +11,7 @@ vi.mock('../../../src/main/agent/transcript-service', () => ({
 }));
 
 import type { CapabilityRequestMessage } from '@kangentic/protocol';
-import { handleReadStream } from '../../../src/main/mobile-bridge/handlers/read-stream';
+import { handleReadStream, terminalStreamKeyFor } from '../../../src/main/mobile-bridge/handlers/read-stream';
 import type { IpcContext } from '../../../src/main/ipc/ipc-context';
 import type { BridgeSession } from '../../../src/main/mobile-bridge/session/bridge-session';
 import { SubscriptionRegistry } from '../../../src/main/mobile-bridge/session/subscription-registry';
@@ -137,6 +137,53 @@ describe('handleReadStream', () => {
     const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), fakeSession(), context, new SubscriptionRegistry());
     const payload = response.payload as { awaitedPromptId: string | null };
     expect(payload.awaitedPromptId).toBeNull();
+  });
+
+  /**
+   * The terminal MARKER key answers "is a phone watching this TERMINAL",
+   * which the resting park and the panel's placeholder both gate on. The
+   * bare stream key cannot: the phone holds a list-only stream subscription
+   * for EVERY live session the moment it connects, and gating the park on it
+   * made every unheld session park - sessions no phone terminal ever opened
+   * were reshaped, and their later panel reveals replayed mis-wrapped
+   * (observed live 2026-08-02).
+   */
+  it('a terminal subscribe registers the terminal marker; a list-only one never does', async () => {
+    const context = { sessionManager } as unknown as IpcContext;
+    const subscriptions = new SubscriptionRegistry();
+
+    await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), fakeSession(), context, subscriptions);
+    expect(subscriptions.has(terminalStreamKeyFor('sess-1'))).toBe(true);
+
+    const listOnly = new SubscriptionRegistry();
+    await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe', terminal: false }), fakeSession(), context, listOnly);
+    expect(listOnly.has(terminalStreamKeyFor('sess-1'))).toBe(false);
+  });
+
+  it('a list-only re-subscribe clears the terminal marker the previous subscribe left', async () => {
+    const context = { sessionManager } as unknown as IpcContext;
+    const subscriptions = new SubscriptionRegistry();
+
+    await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), fakeSession(), context, subscriptions);
+    expect(subscriptions.has(terminalStreamKeyFor('sess-1'))).toBe(true);
+
+    // The phone closed its terminal: the task screen re-subscribes list-only.
+    await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe', terminal: false }), fakeSession(), context, subscriptions);
+    expect(subscriptions.has(terminalStreamKeyFor('sess-1'))).toBe(false);
+  });
+
+  it('unsubscribe and session exit both clear the terminal marker', async () => {
+    const context = { sessionManager } as unknown as IpcContext;
+
+    const unsubscribed = new SubscriptionRegistry();
+    await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), fakeSession(), context, unsubscribed);
+    await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'unsubscribe' }), fakeSession(), context, unsubscribed);
+    expect(unsubscribed.has(terminalStreamKeyFor('sess-1'))).toBe(false);
+
+    const exited = new SubscriptionRegistry();
+    await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), fakeSession(), context, exited);
+    sessionManager.emit('exit', 'sess-1', 0, true);
+    expect(exited.has(terminalStreamKeyFor('sess-1'))).toBe(false);
   });
 
   it('subscribe registers session-manager listeners; unsubscribe removes them', async () => {

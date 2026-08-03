@@ -239,6 +239,8 @@ export const IPC = {
   MOBILE_PAIRING_CONFIRMED: 'mobile:pairingConfirmed',
   MOBILE_PAIRING_ENDED: 'mobile:pairingEnded',
   MOBILE_STATE_CHANGED: 'mobile:stateChanged',
+  MOBILE_GET_TERMINAL_STREAMS: 'mobile:getTerminalStreams',
+  MOBILE_TERMINAL_STREAMS_CHANGED: 'mobile:terminalStreamsChanged',
 
   // Agent Monitor - machine-global (like mobile bridge), NOT project-scoped. The monitor
   // aggregates live sessions across EVERY registered project, so these channels deliberately

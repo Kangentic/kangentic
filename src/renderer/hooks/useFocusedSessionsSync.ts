@@ -117,11 +117,15 @@ export function useFocusedSessionsSync(panelShowsTerminal: boolean): void {
       sessions: s.sessions,
       currentProjectId,
       sessionActivity: s.sessionActivity,
+      // Includes phone-streamed sessions (folded into `owned`): they have no
+      // tab, so they can never be the panel's mounted terminal, and focus /
+      // parking / WebGL all follow from this one resolution.
       ownedSessionIds: derivePanelSessions({
         sessions: s.sessions,
         currentProjectId,
         dialogSessionIds: s.dialogSessionIds,
         remoteDetailTaskIds: s.remoteDetailTaskIds,
+        mobileTerminalStreamedSessionIds: s.mobileTerminalStreamedSessionIds,
       }).owned,
       panelShowsTerminal,
     }),

@@ -48,4 +48,27 @@ describe('SubscriptionRegistry', () => {
     expect(teardownA).toHaveBeenCalledTimes(1);
     expect(teardownB).toHaveBeenCalledTimes(1);
   });
+
+  /**
+   * The change hook the mobile bridge derives its terminal-streamed set from.
+   * It must fire on every membership mutation (add, remove, dispose) and read
+   * post-change state, but an empty dispose must stay silent - the bridge
+   * disposes registries on every device drop, subscribed or not.
+   */
+  it('onChanged fires after set, remove, and non-empty dispose, reading settled state', () => {
+    const observedKeySets: string[][] = [];
+    const registry: SubscriptionRegistry = new SubscriptionRegistry(() => {
+      observedKeySets.push(registry.keys());
+    });
+
+    registry.set('stream:a', () => undefined);
+    registry.remove('stream:a');
+    registry.dispose(); // empty: no keys were present, so no change to report
+
+    expect(observedKeySets).toEqual([['stream:a'], []]);
+
+    registry.set('stream:b', () => undefined);
+    registry.dispose();
+    expect(observedKeySets).toEqual([['stream:a'], [], ['stream:b'], []]);
+  });
 });

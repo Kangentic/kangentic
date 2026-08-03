@@ -38,6 +38,7 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
   const dialogSessionIds = useSessionStore((s) => s.dialogSessionIds);
   const remoteDetailTaskIds = useSessionStore((s) => s.remoteDetailTaskIds);
   const markSingleIdleSessionSeen = useSessionStore((s) => s.markSingleIdleSessionSeen);
+  const mobileTerminalStreamedSessionIds = useSessionStore((s) => s.mobileTerminalStreamedSessionIds);
 
   // Which sessions the panel shows a tab for. `active` is every running,
   // non-transient session for this project; `owned` is the ones a task-detail
@@ -58,8 +59,9 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
       currentProjectId,
       dialogSessionIds,
       remoteDetailTaskIds,
+      mobileTerminalStreamedSessionIds,
     }),
-    [allSessions, currentProjectId, dialogSessionIds, remoteDetailTaskIds],
+    [allSessions, currentProjectId, dialogSessionIds, remoteDetailTaskIds, mobileTerminalStreamedSessionIds],
   );
 
   // Narrow activity/idle selectors to only the panel's visible sessions.
