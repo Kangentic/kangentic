@@ -709,6 +709,66 @@ describe('Config Manager -- monitorWorkspace replace semantics', () => {
   });
 });
 
+describe('Config Manager -- divergent-cache clobber across instances (characterization)', () => {
+  // Characterizes a footgun that shipped live: src/main/index.ts keeps a
+  // module-scope `windowConfigManager` whose cache is populated at startup (by
+  // resolveWindowBounds), separate from the ipc-context ConfigManager that
+  // config:set writes through. ConfigManager.save() always deep-merges into its
+  // OWN cached config and rewrites the WHOLE file, so a save() through the
+  // stale-cached instance silently reverts every field written through the
+  // other instance since that cache was populated.
+  //
+  // This bit the debounced window-bounds writer specifically: it used to always
+  // save() through windowConfigManager, so any renderer-driven config write
+  // made after launch (an update to lastWhatsNewShownVersion, in the observed
+  // incident) was reverted back to its pre-launch value on the next window
+  // move or resize. The fix (src/main/index.ts) makes that call site prefer
+  // `getOptionalIpcContext()?.configManager ?? windowConfigManager` - the SAME
+  // pattern the pop-out bounds writer already used - so it merges into the
+  // fresher, IPC-authoritative cache instead.
+  //
+  // The fresh-install seed a few lines above that same call site
+  // (`windowConfigManager.save({ lastWhatsNewShownVersion: app.getVersion() })`
+  // in app.whenReady()) is NOT a case of this hazard: it runs before
+  // createWindow(), before any IPC context exists and before anything else has
+  // written config, so there is no fresher cache yet to clobber.
+  //
+  // This test does NOT exercise src/main/index.ts (a startup file the unit
+  // tier cannot import) and does NOT guard the call-site fix itself - reverting
+  // that fix leaves this test green, since it only characterizes
+  // ConfigManager's own save()/load() contract. Its value is narrower: it names
+  // the hazard for whoever next adds a THIRD long-lived ConfigManager instance,
+  // or "simplifies" an existing one back to a single shared save() call.
+  it("a stale-cached instance's save() reverts a field written by a fresher instance in the meantime", async () => {
+    const staleCached = await createConfigManager();
+    // Populate this instance's cache now, before the other instance writes
+    // anything - mirrors windowConfigManager reading config at startup.
+    staleCached.load();
+
+    const { ConfigManager } = await import('../../src/main/config/config-manager');
+    const fresher = new ConfigManager();
+    fresher.save({ lastWhatsNewShownVersion: '0.32.0' });
+
+    // The fresher instance's write landed on disk.
+    let raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect(raw.lastWhatsNewShownVersion).toBe('0.32.0');
+
+    // An unrelated save through the stale-cached instance (standing in for the
+    // debounced window-bounds writer) merges its partial update into ITS OWN
+    // outdated cache and rewrites the whole file, so the write succeeds but
+    // reverts lastWhatsNewShownVersion back to the default it saw at load time.
+    staleCached.save({ windowBounds: { x: 0, y: 0, width: 800, height: 600 } });
+
+    raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    // Red if ConfigManager ever stopped caching per-instance (e.g. a shared
+    // module-level cache): this would then read '0.32.0' instead.
+    expect(raw.lastWhatsNewShownVersion).toBe('');
+    // The stale-cached instance's own write still succeeds - this is a silent
+    // clobber, not a failed write, which is what makes it dangerous.
+    expect(raw.windowBounds).toEqual({ x: 0, y: 0, width: 800, height: 600 });
+  });
+});
+
 describe('Config Manager -- monitor deep-merge (NOT a CONFIG_DICTIONARY_PATHS entry)', () => {
   // 'monitor' is deliberately absent from CONFIG_DICTIONARY_PATHS: it is a typed
   // MonitorView struct (layout/groupBy/sort/liveOnly/projectFilter/stateFilter/
