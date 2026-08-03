@@ -95,6 +95,18 @@ const RESTING_GRID_DELAY_MS = 1000;
 const RESTING_GRID_COLS = 210;
 const RESTING_GRID_ROWS = 48;
 
+/**
+ * The row floor for a session a phone is actively streaming. Below this, the
+ * phone's 1:1 mirror is a sliver of its screen with no recovery available
+ * away from the desk (user decision 2026-08-02: that view must never reach a
+ * phone). The bottom terminal panel's strip (~14 rows) sits well below the
+ * floor; any realistic task detail sits well above it, so detail-driven grids
+ * always win. Enforced in resize() (refuse desktop shrinks below the floor
+ * while a phone streams) and at subscribe time (park a session already stuck
+ * below the floor even though a desktop surface holds it).
+ */
+const MOBILE_USABLE_MIN_ROWS = 20;
+
 export class SessionManager extends EventEmitter {
   private registry = new SessionRegistry();
   private shellResolver = new ShellResolver();
@@ -572,10 +584,25 @@ export class SessionManager extends EventEmitter {
     this.parkRestingGrid(sessionId, { requireStreamSubscriber: true });
   }
 
-  private parkRestingGrid(sessionId: string, options: { requireStreamSubscriber: boolean }): void {
+  private parkRestingGrid(
+    sessionId: string,
+    options: { requireStreamSubscriber: boolean; overrideHoldBelowFloor?: boolean },
+  ): void {
     // Re-check everything at fire time: a session can be shown again, gone,
     // or handed to a phone during the wait.
-    if (this.isSessionHeld(sessionId)) return;
+    const session = this.registry.get(sessionId);
+    if (!session?.pty) return;
+    // A desktop surface holding the grid normally blocks the park outright.
+    // The subscribe-time caller overrides that for a grid below the phone
+    // floor: the only surface that holds a sub-floor grid is the bottom
+    // panel's strip, and a phone subscribing to it would otherwise be stuck
+    // in a sliver view it cannot escape from away from the desk. The panel
+    // then renders the resting grid clipped - the same state it is in
+    // whenever a task detail owns the grid.
+    if (this.isSessionHeld(sessionId)) {
+      const belowFloor = session.pty.rows < MOBILE_USABLE_MIN_ROWS;
+      if (!(options.overrideHoldBelowFloor === true && belowFloor)) return;
+    }
     // No probe means no bridge attached, which means no paired phone exists:
     // the park never fires and an unpaired desktop behaves exactly as it did
     // before the park existed.
@@ -587,8 +614,6 @@ export class SessionManager extends EventEmitter {
     // PTY out from under the still-holding phone.
     if (probe.isSizeHeld(sessionId)) return;
     if (options.requireStreamSubscriber && !probe.hasStreamSubscriber(sessionId)) return;
-    const session = this.registry.get(sessionId);
-    if (!session?.pty) return;
     if (session.pty.cols === RESTING_GRID_COLS && session.pty.rows === RESTING_GRID_ROWS) return;
     this.resize(sessionId, RESTING_GRID_COLS, RESTING_GRID_ROWS, 'park');
   }
@@ -603,7 +628,7 @@ export class SessionManager extends EventEmitter {
    */
   parkRestingGridForMobileSubscriber(sessionId: string): void {
     this.cancelRestingGridRestore(sessionId);
-    this.parkRestingGrid(sessionId, { requireStreamSubscriber: false });
+    this.parkRestingGrid(sessionId, { requireStreamSubscriber: false, overrideHoldBelowFloor: true });
   }
 
   /**
@@ -927,7 +952,40 @@ export class SessionManager extends EventEmitter {
       this.lastDesktopDimensions.set(sessionId, { cols: session.pty.cols, rows: session.pty.rows });
     }
 
+    if (
+      origin === 'desktop' &&
+      clampedRows < MOBILE_USABLE_MIN_ROWS &&
+      this.mobileTerminalProbe?.hasStreamSubscriber(sessionId) === true
+    ) {
+      // A phone mirrors this grid 1:1 and cannot make a strip taller, so a
+      // sub-floor grid renders a sliver of the phone screen with no way to
+      // recover away from the desktop. The bottom terminal panel is the case
+      // that hits this: its wide short strip (~306x14) grabs the grid
+      // whenever it becomes the surviving surface (user decision 2026-08-02:
+      // that view must never reach a phone). Refusing here leaves the panel
+      // rendering the taller grid clipped - exactly what it already does
+      // while a task detail owns the grid - and it self-heals: the next
+      // panel-layout fit after the phone unsubscribes goes through, and the
+      // restore target above already records what the desktop wanted. The
+      // refusal happens BEFORE bufferManager.onResize so the headless
+      // parser's grid never diverges from the real PTY. Desktops with no
+      // streaming phone never take this branch.
+      return { colsChanged: false };
+    }
+
     const colsChanged = this.bufferManager.onResize(sessionId, clampedCols, clampedRows);
+    if (clampedCols === session.pty.cols && clampedRows === session.pty.rows) {
+      // The grid is not changing, so reshaping the PTY, suppressing activity
+      // transitions, and emitting pty-resize would all be pure churn - the
+      // emit especially: a task-detail remount re-sends its unchanged fit
+      // (xterm only skips re-sending within one instance's lifetime), and
+      // broadcasting it made every subscribed phone re-seed a byte-identical
+      // frame over the relay (measured live 2026-08-02). The bookkeeping
+      // above still ran: the park cancel and the desktop restore target
+      // record INTENT, and the buffer manager saw the call so its
+      // initial-resize-establishes-dimensions semantics hold.
+      return { colsChanged };
+    }
     session.pty.resize(clampedCols, clampedRows);
     // Mark resize time so the dispatch can suppress idle->thinking
     // transitions during the redraw burst that follows.

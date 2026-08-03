@@ -1187,7 +1187,7 @@ describe('Dimension tracking', () => {
     expect(manager.getDimensions('nonexistent')).toBeNull();
   });
 
-  it('every resize emits pty-resize with the clamped grid', async () => {
+  it('every grid-changing resize emits pty-resize with the clamped grid', async () => {
     const mock = createMockPty();
     vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
     const session = await manager.spawn({ taskId: 'task-dims-emit', command: '', cwd: tmpDir });
@@ -1197,6 +1197,30 @@ describe('Dimension tracking', () => {
 
     manager.resize(session.id, 80.7, 0);
     expect(resizes).toEqual([[session.id, 80, 1]]);
+  });
+
+  it('a resize to the current grid neither reshapes the PTY nor emits pty-resize', async () => {
+    // A task-detail remount (a desktop project switch away and back) re-sends
+    // its unchanged fit: xterm only skips re-sending dims within one
+    // instance's lifetime. Broadcasting that no-op made every subscribed
+    // phone re-seed a byte-identical frame over the relay (measured live
+    // 2026-08-02), and the PTY paid a pointless reshape.
+    const mock = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
+    const session = await manager.spawn({ taskId: 'task-dims-noop', command: '', cwd: tmpDir });
+
+    manager.resize(session.id, 210, 48);
+    const resizes: Array<[string, number, number]> = [];
+    manager.on('pty-resize', (sessionId: string, cols: number, rows: number) => resizes.push([sessionId, cols, rows]));
+    mock.mockPty.resize.mockClear();
+
+    const result = manager.resize(session.id, 210, 48);
+
+    expect(result).toEqual({ colsChanged: false });
+    expect(resizes).toEqual([]);
+    expect(mock.mockPty.resize).not.toHaveBeenCalled();
+    // The desktop restore target still records the re-asserted intent.
+    expect(manager.getLastDesktopDimensions(session.id)).toEqual({ cols: 210, rows: 48 });
   });
 
   it('a mobile resize snapshots the desktop grid as the restore target; desktop resizes update it', async () => {
@@ -2695,6 +2719,19 @@ describe('Resting grid restore', () => {
   /** Wait past the (shrunk) debounce. */
   const settle = (): Promise<unknown> => new Promise((resolve) => setTimeout(resolve, 40));
 
+  /**
+   * Acquire the panel's strip grid the only way it can be acquired now: with
+   * no phone streaming. The floor policy makes resize() refuse a sub-floor
+   * desktop grid while a phone streams, so every "session left at the strip"
+   * scenario begins before the phone subscribed.
+   */
+  function grabPanelGridUnwatched(sessionId: string): void {
+    const previousWatchers = mobileStreamWatchers;
+    mobileStreamWatchers = new Set();
+    manager.resize(sessionId, PANEL_COLS, PANEL_ROWS);
+    mobileStreamWatchers = previousWatchers;
+  }
+
   // The resting grid is DETAIL-shaped (210x48), deliberately not the 120x30
   // spawn default: the phone mirrors it 1:1, and the desktop-sized layout
   // proved more readable there than any phone-fitted grid.
@@ -2704,7 +2741,7 @@ describe('Resting grid restore', () => {
   it('parks a session at the resting grid once no renderer shows it', async () => {
     const { session, mockPty } = await spawnSession('task-rest-a');
     manager.setFocusedSessions([session.id]);
-    manager.resize(session.id, PANEL_COLS, PANEL_ROWS);
+    grabPanelGridUnwatched(session.id);
     expect([mockPty.cols, mockPty.rows]).toEqual([PANEL_COLS, PANEL_ROWS]);
 
     manager.setFocusedSessions([]);
@@ -2717,7 +2754,7 @@ describe('Resting grid restore', () => {
     const { session, mockPty } = await spawnSession('task-rest-b');
     manager.setFocusedSessions([session.id], 1);
     manager.setFocusedSessions([session.id], 2);
-    manager.resize(session.id, PANEL_COLS, PANEL_ROWS);
+    grabPanelGridUnwatched(session.id);
 
     manager.setFocusedSessions([], 1);
     await settle();
@@ -2728,7 +2765,7 @@ describe('Resting grid restore', () => {
   it('is cancelled by a surface switch inside the delay', async () => {
     const { session, mockPty } = await spawnSession('task-rest-c');
     manager.setFocusedSessions([session.id]);
-    manager.resize(session.id, PANEL_COLS, PANEL_ROWS);
+    grabPanelGridUnwatched(session.id);
 
     // Dispose then mount elsewhere: the session blinks out of the focused set
     // and straight back in. Reshaping the PTY in that gap would add two
@@ -2767,15 +2804,16 @@ describe('Resting grid restore', () => {
     manager.setFocusedSessions([session.id]);
     mobileSizeHolds.add(session.id);
     manager.resize(session.id, 80, 40, 'mobile');
-    // Desktop wins the grid; the guard stays armed.
-    manager.resize(session.id, PANEL_COLS, PANEL_ROWS);
+    // Desktop wins the grid (an above-floor grid, so the floor policy lets it
+    // through); the guard stays armed.
+    manager.resize(session.id, 190, 50);
 
     manager.setFocusedSessions([]);
     await settle();
 
     // A last-writer heuristic parks here, reshaping the PTY out from under
     // the still-holding phone.
-    expect([mockPty.cols, mockPty.rows]).toEqual([PANEL_COLS, PANEL_ROWS]);
+    expect([mockPty.cols, mockPty.rows]).toEqual([190, 50]);
   });
 
   /**
@@ -2788,7 +2826,7 @@ describe('Resting grid restore', () => {
   it('parks without recording itself as the desktop grid', async () => {
     const { session, mockPty } = await spawnSession('task-rest-restore-target');
     manager.setFocusedSessions([session.id]);
-    manager.resize(session.id, PANEL_COLS, PANEL_ROWS);
+    grabPanelGridUnwatched(session.id);
 
     manager.setFocusedSessions([]);
     await settle();
@@ -2839,7 +2877,7 @@ describe('Resting grid restore', () => {
   it('re-parks after the phone releases its hold', async () => {
     const { session, mockPty } = await spawnSession('task-rest-release');
     manager.setFocusedSessions([session.id]);
-    manager.resize(session.id, PANEL_COLS, PANEL_ROWS);
+    grabPanelGridUnwatched(session.id);
     mobileSizeHolds.add(session.id);
     manager.resize(session.id, 80, 40, 'mobile');
 
@@ -2849,6 +2887,9 @@ describe('Resting grid restore', () => {
 
     // The guard teardown: drop the hold, restore desktop dims, re-run the
     // park decision (terminal-size-guard.ts does exactly this sequence).
+    // The restore target is the sub-floor strip and the phone is still
+    // STREAMING, so the floor policy refuses the restore itself - the
+    // reconsider then parks the unheld session either way.
     mobileSizeHolds.delete(session.id);
     const restore = manager.getLastDesktopDimensions(session.id);
     expect(restore).toEqual({ cols: PANEL_COLS, rows: PANEL_ROWS });
@@ -2863,20 +2904,46 @@ describe('Resting grid restore', () => {
    * A phone subscribing to a session that went unheld BEFORE the phone was
    * watching (or before pairing existed) must not inherit the strip: the
    * read-stream handler parks immediately - no debounce - so the one seed it
-   * builds next already carries the resting grid. A held session is never
-   * touched by it.
+   * builds next already carries the resting grid. A desktop surface holding
+   * a USABLE grid is respected; a surface holding a sub-floor strip is not
+   * (user decision 2026-08-02): the phone would otherwise be stuck in a
+   * sliver view with no recovery available away from the desk, so the
+   * subscribe-time park overrides that hold and the panel renders the
+   * resting grid clipped instead.
    */
-  it('parks immediately for a subscribing phone, and only when unheld', async () => {
+  it('parks immediately for a subscribing phone, overriding only a sub-floor hold', async () => {
     const { session, mockPty } = await spawnSession('task-rest-subscribe');
     manager.setFocusedSessions([session.id]);
-    manager.resize(session.id, PANEL_COLS, PANEL_ROWS);
 
+    // Held at a usable grid: respected, never touched.
+    manager.resize(session.id, 190, 50);
     manager.parkRestingGridForMobileSubscriber(session.id);
-    expect([mockPty.cols, mockPty.rows]).toEqual([PANEL_COLS, PANEL_ROWS]);
+    expect([mockPty.cols, mockPty.rows]).toEqual([190, 50]);
 
+    // Held at the panel's sub-floor strip: the rescue parks it anyway.
+    grabPanelGridUnwatched(session.id);
+    expect([mockPty.cols, mockPty.rows]).toEqual([PANEL_COLS, PANEL_ROWS]);
+    manager.parkRestingGridForMobileSubscriber(session.id);
+    expect([mockPty.cols, mockPty.rows]).toEqual([REST_COLS, REST_ROWS]);
+
+    // Unheld: parks as before.
+    grabPanelGridUnwatched(session.id);
     manager.setFocusedSessions([]);
     manager.parkRestingGridForMobileSubscriber(session.id);
     expect([mockPty.cols, mockPty.rows]).toEqual([REST_COLS, REST_ROWS]);
+  });
+
+  it('a size-guard hold blocks even the subscribe-time rescue', async () => {
+    const { session, mockPty } = await spawnSession('task-rest-subscribe-guard');
+    manager.setFocusedSessions([session.id]);
+    // A mobile-origin resize is not floor-gated (the phone asked for it), so
+    // a sub-floor phone grid with the guard armed is reachable.
+    mobileSizeHolds.add(session.id);
+    manager.resize(session.id, 80, 10, 'mobile');
+
+    manager.parkRestingGridForMobileSubscriber(session.id);
+
+    expect([mockPty.cols, mockPty.rows]).toEqual([80, 10]);
   });
 
   it('does not resize a session already at the resting grid', async () => {
@@ -2905,7 +2972,7 @@ describe('Resting grid restore', () => {
     const { session, mockPty } = await spawnSession('task-rest-parked');
     manager.setFocusedSessions([session.id]);
     manager.setMountedSessions([session.id]);
-    manager.resize(session.id, PANEL_COLS, PANEL_ROWS);
+    grabPanelGridUnwatched(session.id);
 
     // Board -> Backlog: the terminal parks. Unfocused, still mounted.
     manager.setFocusedSessions([]);
@@ -2918,7 +2985,7 @@ describe('Resting grid restore', () => {
     const { session, mockPty } = await spawnSession('task-rest-unmount');
     manager.setFocusedSessions([session.id]);
     manager.setMountedSessions([session.id]);
-    manager.resize(session.id, PANEL_COLS, PANEL_ROWS);
+    grabPanelGridUnwatched(session.id);
     manager.setFocusedSessions([]);
     await settle();
     expect([mockPty.cols, mockPty.rows]).toEqual([PANEL_COLS, PANEL_ROWS]);
@@ -2935,7 +3002,7 @@ describe('Resting grid restore', () => {
     manager.setFocusedSessions([session.id], 1);
     manager.setMountedSessions([session.id], 1);
     manager.setMountedSessions([session.id], 2);
-    manager.resize(session.id, PANEL_COLS, PANEL_ROWS);
+    grabPanelGridUnwatched(session.id);
 
     manager.setFocusedSessions([], 1);
     manager.setMountedSessions([], 1);
@@ -2948,12 +3015,56 @@ describe('Resting grid restore', () => {
     const { session, mockPty } = await spawnSession('task-rest-f');
     manager.setFocusedSessions([session.id], 7);
     manager.setMountedSessions([session.id], 7);
-    manager.resize(session.id, PANEL_COLS, PANEL_ROWS);
+    grabPanelGridUnwatched(session.id);
 
     // The window is gone: both its focused and its mounted claims die with it.
     manager.clearFocusedSessionsFor(7);
     await settle();
 
     expect([mockPty.cols, mockPty.rows]).toEqual([REST_COLS, REST_ROWS]);
+  });
+
+  /**
+   * The floor policy itself (user decision 2026-08-02): while a phone streams
+   * a session, a desktop-origin resize below MOBILE_USABLE_MIN_ROWS is
+   * refused outright - the phone mirrors the grid 1:1 and cannot make a
+   * strip taller, so the panel's ~14-row grab must never reach it. The
+   * refusal is invisible to an unpaired desktop and to any usable grid.
+   */
+  it('refuses a sub-floor desktop resize while a phone streams the session', async () => {
+    const { session, mockPty } = await spawnSession('task-floor-refuse');
+    manager.setFocusedSessions([session.id]);
+    const resizes: Array<[number, number]> = [];
+    manager.on('pty-resize', (_sessionId: string, cols: number, rows: number) => resizes.push([cols, rows]));
+    mockPty.resize.mockClear();
+
+    const result = manager.resize(session.id, PANEL_COLS, PANEL_ROWS);
+
+    expect(result).toEqual({ colsChanged: false });
+    expect(mockPty.resize).not.toHaveBeenCalled();
+    expect(resizes).toEqual([]);
+    expect([mockPty.cols, mockPty.rows]).toEqual([120, 30]);
+    // The refused grid still records what the desktop WANTED, so a later
+    // restore (phone gone, panel still up) has the right target.
+    expect(manager.getLastDesktopDimensions(session.id)).toEqual({ cols: PANEL_COLS, rows: PANEL_ROWS });
+  });
+
+  it('lets the same sub-floor resize through when no phone streams', async () => {
+    const { session, mockPty } = await spawnSession('task-floor-unwatched');
+    manager.setFocusedSessions([session.id]);
+    mobileStreamWatchers = new Set();
+
+    manager.resize(session.id, PANEL_COLS, PANEL_ROWS);
+
+    expect([mockPty.cols, mockPty.rows]).toEqual([PANEL_COLS, PANEL_ROWS]);
+  });
+
+  it('lets an above-floor desktop resize through while a phone streams', async () => {
+    const { session, mockPty } = await spawnSession('task-floor-above');
+    manager.setFocusedSessions([session.id]);
+
+    manager.resize(session.id, 150, 35);
+
+    expect([mockPty.cols, mockPty.rows]).toEqual([150, 35]);
   });
 });
