@@ -423,6 +423,65 @@ test.describe('agent monitor', () => {
     }
   });
 
+  test('an unknown context window reads "-", never a fabricated 0%', async () => {
+    // sess-other-project, sess-paused, and sess-command-terminal all carry
+    // contextPercent: null (no status.json has arrived for them yet). Before
+    // this fix MonitorCard passed `percent={row.contextPercent ?? 0}` straight
+    // through, so ContextUsageFooter printed a confident "0%" for a value it
+    // never actually had - indistinguishable from a session that is genuinely
+    // empty. sess-working's known, nonzero window (62%) proves the known path
+    // is untouched.
+    //
+    // Scoped to the percent span (`monitor-card-usage-percent`), not the whole
+    // footer: the model-name span can independently render "-" (sess-paused
+    // has no modelDisplayName), so an assertion against the footer as a whole
+    // is satisfied by either half and does not actually pin the percent label.
+    const { browser, page } = await launchWithState(monitorPreConfig());
+    try {
+      await openMonitor(page);
+
+      const unknownIds = ['sess-other-project', 'sess-paused', 'sess-command-terminal'];
+      for (const id of unknownIds) {
+        const footer = page.locator(`[data-session-id="${id}"] [data-testid="monitor-card-usage"]`);
+        const percentLabel = footer.locator('[data-testid="monitor-card-usage-percent"]');
+        await expect(percentLabel).toHaveText('-');
+        await expect(footer).toHaveAttribute('data-context-window', 'unknown');
+      }
+
+      const knownFooter = page.locator('[data-session-id="sess-working"] [data-testid="monitor-card-usage"]');
+      await expect(knownFooter.locator('[data-testid="monitor-card-usage-percent"]')).toHaveText('62%');
+      await expect(knownFooter).not.toHaveAttribute('data-context-window', 'unknown');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the footer model name falls back to a bare "-", never a derived agent display name', async () => {
+    // Guard against `modelName={row.modelDisplayName ?? agentDisplayName(row.agentName)}`
+    // returning: sess-paused has modelDisplayName: null and agentName: 'claude', so that
+    // older fallback rendered "Claude Code" (agent-display-name.ts) instead of the flat "-"
+    // MonitorCard now passes for an unresolved model. sess-working's known model name
+    // ("Opus 5") is asserted alongside it so the test cannot pass vacuously against an
+    // always-"-" implementation.
+    const { browser, page } = await launchWithState(monitorPreConfig());
+    try {
+      await openMonitor(page);
+
+      const pausedModel = page.locator(
+        '[data-session-id="sess-paused"] [data-testid="monitor-card-usage-model"]',
+      );
+      await expect(pausedModel).toHaveText('-');
+      await expect(pausedModel).not.toHaveText('Claude Code');
+
+      const workingModel = page.locator(
+        '[data-session-id="sess-working"] [data-testid="monitor-card-usage-model"]',
+      );
+      await expect(workingModel).toHaveText('Opus 5');
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('opens from the keybinding and closes via X and Escape', async () => {
     const { browser, page } = await launchWithState(monitorPreConfig());
     try {

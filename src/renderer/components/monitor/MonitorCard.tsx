@@ -7,7 +7,6 @@ import { PrLink } from '../PrLink';
 import { ElapsedTime } from '../terminal/ElapsedTime';
 import { ContextUsageFooter } from '../board/ContextUsageFooter';
 import { formatActivityReasonText } from '../board/ActivityReasonTooltip';
-import { agentDisplayName } from '../../utils/agent-display-name';
 import { bucketOf, formatMonitorStatus, needsUser } from './monitor-view-model';
 
 /**
@@ -315,10 +314,16 @@ function MonitorCardInner({
           card with no label pills the well's bottom edge and the rule land within
           a few pixels of each other. The board card keeps the rule, having no
           well of its own to do that job. */}
+      {/* `'-'` on an unresolved model, matching MonitorTable's Model column for the
+          same null. This slot names the MODEL; the table surfaces the agent in a
+          separate Agent column, which the card has no room for. If agent identity
+          is ever wanted here, the helper documented for a model-slot fallback is
+          `agentShortName` ("Claude"), not `agentDisplayName` ("Claude Code"). */}
       <ContextUsageFooter
-        modelName={row.modelDisplayName ?? agentDisplayName(row.agentName)}
+        modelName={row.modelDisplayName ?? '-'}
         percent={row.contextPercent ?? 0}
         windowKnown={row.contextPercent !== null}
+        unknownLabel="-"
         divider={false}
         testId="monitor-card-usage"
       />

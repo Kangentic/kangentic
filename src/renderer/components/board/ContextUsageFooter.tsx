@@ -14,13 +14,23 @@ import { getProgressColor } from '../../utils/progress-color';
  * carries the same clamped value), so this component stays presentational.
  */
 export function ContextUsageFooter({
-  modelName, percent, windowKnown = true, testId = 'usage-bar', className = '', divider = true,
+  modelName, percent, windowKnown = true, unknownLabel, testId = 'usage-bar', className = '', divider = true,
 }: {
   /** Human model name (e.g. "Opus 5"). Never the raw model id - users don't read those. */
   modelName: string;
   percent: number;
   /** False when the agent has not reported a usable context window; the track sits at 0. */
   windowKnown?: boolean;
+  /**
+   * Replaces the percent label with this text when `windowKnown` is false. Omit
+   * to keep printing `{percent}%` regardless, which is the board's behavior:
+   * TaskCard deliberately holds the track at 0% until a known window arrives
+   * (see the comment above its call site), so the label reads as the value of
+   * the track it labels rather than contradicting it. The monitor card has no
+   * such track-matching intent and passes `"-"`, the unknown state
+   * `MonitorTable` already renders for the same null `contextPercent`.
+   */
+  unknownLabel?: string;
   testId?: string;
   className?: string;
   /**
@@ -37,6 +47,7 @@ export function ContextUsageFooter({
   divider?: boolean;
 }) {
   const clamped = Math.min(Math.max(percent, 0), 100);
+  const percentLabel = !windowKnown && unknownLabel != null ? unknownLabel : `${clamped}%`;
   // `pt-2` exists to clear the RULE, so it goes with it. Left in, a divider-less
   // footer sat 16px below the content above it while every other gap on the card
   // is 6-8px, which read as a missing element rather than as breathing room.
@@ -47,9 +58,13 @@ export function ContextUsageFooter({
       data-testid={testId}
       data-context-window={windowKnown ? undefined : 'unknown'}
     >
+      {/* Both halves carry their own testid. The model name and the unknown-window
+          label can render the SAME text ("-"), so an assertion scoped to the whole
+          footer cannot tell which half produced it - which is exactly how a test
+          meant to pin the percent label passes on the model name instead. */}
       <div className="flex items-center justify-between mb-1.5">
-        <span className="text-xs text-fg-faint truncate">{modelName}</span>
-        <span className="text-xs text-fg-faint">{clamped}%</span>
+        <span className="text-xs text-fg-faint truncate" data-testid={`${testId}-model`}>{modelName}</span>
+        <span className="text-xs text-fg-faint" data-testid={`${testId}-percent`}>{percentLabel}</span>
       </div>
       <div className="w-full h-1 bg-surface-hover rounded-full overflow-hidden">
         <div

@@ -198,7 +198,14 @@ export function buildMonitorSnapshot(context: IpcContext): MonitorSnapshot {
       // Prefer the agent-reported live model (what the card shows); fall back to
       // the persisted applied model, which is all we have before first output
       // and after exit. Null means "the agent's own default".
-      modelDisplayName: usage?.model.displayName ?? record?.applied_model ?? null,
+      //
+      // `|| undefined` before the `??` chain, not a second `??`: UsageAccumulator
+      // seeds `displayName: ''` (emptyUsage) and status.json can omit
+      // `display_name` (status-parser.ts uses `?? ''`), so an empty string is a
+      // real, reachable value here - and `??` treats '' as present, never falling
+      // through to `applied_model`. `||` is deliberately safe on this field: a
+      // model display name is never legitimately falsy other than ''.
+      modelDisplayName: (usage?.model.displayName || undefined) ?? record?.applied_model ?? null,
       // Prefer the agent-reported live effort (status.json) over the value the
       // session was spawned with, mirroring how model is resolved above.
       effort: usage?.model.effort ?? record?.applied_effort ?? null,

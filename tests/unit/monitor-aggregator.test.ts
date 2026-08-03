@@ -247,6 +247,7 @@ function registerSessionRecord(projectId: string, sessionId: string, record: Fak
 function makeContext(
   summaries: ManagedSessionSummary[],
   eventsBySessionId: Record<string, SessionEvent[]> = {},
+  usageBySessionId: Record<string, SessionUsage> = {},
 ): IpcContext {
   return {
     projectRepo: {
@@ -257,7 +258,7 @@ function makeContext(
       getActivityCache: vi.fn((): Record<string, ActivityState> => ({})),
       getActivityReasonsCache: vi.fn((): Record<string, ActivityReason> => ({})),
       getEventsCache: vi.fn((): Record<string, SessionEvent[]> => eventsBySessionId),
-      getUsageCache: vi.fn((): Record<string, SessionUsage> => ({})),
+      getUsageCache: vi.fn((): Record<string, SessionUsage> => usageBySessionId),
       // The peek is read per session while building a row. Stubbed empty here;
       // the extraction rule itself is covered against captured real grids in
       // tests/unit/output-peek.test.ts. Without this the aggregator's per-session
@@ -285,6 +286,27 @@ function makeFullSessionEvent(overrides: Partial<SessionEvent> & Pick<SessionEve
     inputTokens: 512,
     outputTokens: 128,
     ...overrides,
+  };
+}
+
+/** A SessionUsage fixture with every required field, so a test only has to
+ *  override what it is exercising (usually contextWindow and/or model). */
+function makeSessionUsage(overrides: {
+  contextWindow?: Partial<SessionUsage['contextWindow']>;
+  model?: Partial<SessionUsage['model']>;
+} = {}): SessionUsage {
+  return {
+    contextWindow: {
+      usedPercentage: 0,
+      usedTokens: 0,
+      cacheTokens: 0,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      contextWindowSize: 0,
+      ...overrides.contextWindow,
+    },
+    cost: { totalCostUsd: 0, totalDurationMs: 0 },
+    model: { id: '', displayName: '', ...overrides.model },
   };
 }
 
@@ -569,6 +591,192 @@ describe('buildMonitorSnapshot', () => {
     const generatedAtMs = Date.parse(snapshot.generatedAt);
     expect(generatedAtMs).toBeGreaterThanOrEqual(before);
     expect(generatedAtMs).toBeLessThanOrEqual(after);
+  });
+
+  // =========================================================================
+  // modelDisplayName (live telemetry vs the persisted applied_model fallback)
+  // =========================================================================
+
+  describe('modelDisplayName', () => {
+    it('falls back to applied_model when the usage cache has no entry for the session', () => {
+      registerHealthyProject('project-a', { tasksById: new Map([['task-a', makeTask('task-a')]]) });
+      registerSessionRecord('project-a', 'session-a', {
+        exited_at: null,
+        applied_model: 'claude-opus-4-8',
+        applied_effort: null,
+        permission_mode: null,
+      });
+      const context = makeContext([
+        makeManagedSummary({ id: 'session-a', projectId: 'project-a', taskId: 'task-a' }),
+      ]);
+
+      const snapshot = buildMonitorSnapshot(context);
+
+      expect(snapshot.rows[0].modelDisplayName).toBe('claude-opus-4-8');
+    });
+
+    it('falls back to applied_model when the cached usage carries an empty displayName', () => {
+      // UsageAccumulator.emptyUsage() seeds displayName: '', and status.json can
+      // omit display_name (status-parser.ts uses `?? ''`), so an empty string is
+      // a real, reachable value here - not just an absent one. `??` alone treats
+      // '' as present and never falls through, which is the bug this covers.
+      registerHealthyProject('project-a', { tasksById: new Map([['task-a', makeTask('task-a')]]) });
+      registerSessionRecord('project-a', 'session-a', {
+        exited_at: null,
+        applied_model: 'claude-opus-4-8',
+        applied_effort: null,
+        permission_mode: null,
+      });
+      const context = makeContext(
+        [makeManagedSummary({ id: 'session-a', projectId: 'project-a', taskId: 'task-a' })],
+        {},
+        { 'session-a': makeSessionUsage({ model: { displayName: '' } }) },
+      );
+
+      const snapshot = buildMonitorSnapshot(context);
+
+      expect(snapshot.rows[0].modelDisplayName).toBe('claude-opus-4-8');
+    });
+
+    it('prefers a nonempty live displayName over applied_model', () => {
+      registerHealthyProject('project-a', { tasksById: new Map([['task-a', makeTask('task-a')]]) });
+      registerSessionRecord('project-a', 'session-a', {
+        exited_at: null,
+        applied_model: 'claude-opus-4-8',
+        applied_effort: null,
+        permission_mode: null,
+      });
+      const context = makeContext(
+        [makeManagedSummary({ id: 'session-a', projectId: 'project-a', taskId: 'task-a' })],
+        {},
+        { 'session-a': makeSessionUsage({ model: { displayName: 'Haiku 4.5' } }) },
+      );
+
+      const snapshot = buildMonitorSnapshot(context);
+
+      expect(snapshot.rows[0].modelDisplayName).toBe('Haiku 4.5');
+    });
+
+    it('is null when neither live usage nor applied_model has a value', () => {
+      registerHealthyProject('project-a', { tasksById: new Map([['task-a', makeTask('task-a')]]) });
+      const context = makeContext([
+        makeManagedSummary({ id: 'session-a', projectId: 'project-a', taskId: 'task-a' }),
+      ]);
+
+      const snapshot = buildMonitorSnapshot(context);
+
+      expect(snapshot.rows[0].modelDisplayName).toBeNull();
+    });
+  });
+
+  // =========================================================================
+  // contextPercent (resolveContextPercent, exercised through the built row)
+  // =========================================================================
+
+  describe('contextPercent', () => {
+    it('is null when the session has no cached usage at all', () => {
+      registerHealthyProject('project-a', { tasksById: new Map([['task-a', makeTask('task-a')]]) });
+      const context = makeContext([
+        makeManagedSummary({ id: 'session-a', projectId: 'project-a', taskId: 'task-a' }),
+      ]);
+
+      const snapshot = buildMonitorSnapshot(context);
+
+      expect(snapshot.rows[0].contextPercent).toBeNull();
+    });
+
+    it('is null when the window size is unknown (the transcript-fallback sentinel)', () => {
+      registerHealthyProject('project-a', { tasksById: new Map([['task-a', makeTask('task-a')]]) });
+      const context = makeContext(
+        [makeManagedSummary({ id: 'session-a', projectId: 'project-a', taskId: 'task-a' })],
+        {},
+        {
+          'session-a': makeSessionUsage({
+            contextWindow: { contextWindowSize: 0, usedPercentage: 0 },
+          }),
+        },
+      );
+
+      const snapshot = buildMonitorSnapshot(context);
+
+      expect(snapshot.rows[0].contextPercent).toBeNull();
+    });
+
+    it('is 0, not null, for a genuinely empty session with a KNOWN window', () => {
+      // Distinguishes "no usage yet" (null, renders "-") from "usage confirmed
+      // empty" (0, renders "0%") - a real zero must not collapse into the
+      // unknown-window display path.
+      registerHealthyProject('project-a', { tasksById: new Map([['task-a', makeTask('task-a')]]) });
+      const context = makeContext(
+        [makeManagedSummary({ id: 'session-a', projectId: 'project-a', taskId: 'task-a' })],
+        {},
+        {
+          'session-a': makeSessionUsage({
+            contextWindow: { contextWindowSize: 1000000, usedPercentage: 0 },
+          }),
+        },
+      );
+
+      const snapshot = buildMonitorSnapshot(context);
+
+      expect(snapshot.rows[0].contextPercent).toBe(0);
+    });
+
+    it('rounds a known window/percentage', () => {
+      registerHealthyProject('project-a', { tasksById: new Map([['task-a', makeTask('task-a')]]) });
+      const context = makeContext(
+        [makeManagedSummary({ id: 'session-a', projectId: 'project-a', taskId: 'task-a' })],
+        {},
+        {
+          'session-a': makeSessionUsage({
+            contextWindow: { contextWindowSize: 200000, usedPercentage: 61.6 },
+          }),
+        },
+      );
+
+      const snapshot = buildMonitorSnapshot(context);
+
+      expect(snapshot.rows[0].contextPercent).toBe(62);
+    });
+
+    it('clamps an over-budget percentage to 100', () => {
+      // Genuinely reachable, not a defensive-only branch: usage-accumulator's
+      // over-budget pairing path (src/main/activity-engine/usage-accumulator.ts)
+      // computes usedPercentage from usedTokens / knownWindow with no upper
+      // clamp of its own, so a session that has burned past its reported window
+      // arrives here above 100.
+      registerHealthyProject('project-a', { tasksById: new Map([['task-a', makeTask('task-a')]]) });
+      const context = makeContext(
+        [makeManagedSummary({ id: 'session-a', projectId: 'project-a', taskId: 'task-a' })],
+        {},
+        {
+          'session-a': makeSessionUsage({
+            contextWindow: { contextWindowSize: 200000, usedPercentage: 143.2 },
+          }),
+        },
+      );
+
+      const snapshot = buildMonitorSnapshot(context);
+
+      expect(snapshot.rows[0].contextPercent).toBe(100);
+    });
+
+    it('clamps a negative percentage to 0', () => {
+      registerHealthyProject('project-a', { tasksById: new Map([['task-a', makeTask('task-a')]]) });
+      const context = makeContext(
+        [makeManagedSummary({ id: 'session-a', projectId: 'project-a', taskId: 'task-a' })],
+        {},
+        {
+          'session-a': makeSessionUsage({
+            contextWindow: { contextWindowSize: 200000, usedPercentage: -4 },
+          }),
+        },
+      );
+
+      const snapshot = buildMonitorSnapshot(context);
+
+      expect(snapshot.rows[0].contextPercent).toBe(0);
+    });
   });
 
   // =========================================================================

@@ -2162,7 +2162,8 @@ export interface MonitorSessionRow {
   prState: PRState | null;
   /** Adapter name captured at spawn (e.g. "claude"). Null for a pre-adapter session. */
   agentName: string | null;
-  /** The model the session was actually spawned/resumed/switched with. Null = agent default. */
+  /** The agent-reported live model when available, else the model the session was
+   *  spawned/resumed/switched with. Null = agent default with no live report yet. */
   modelDisplayName: string | null;
   /** Reasoning effort the session was actually spawned/resumed/switched with
    *  (`applied_effort`). Null = the agent's own default, or an agent with no
