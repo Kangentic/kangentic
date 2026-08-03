@@ -12,6 +12,15 @@ interface UpdaterState {
    *  mid-keystroke. */
   autoOpened: boolean;
 
+  /** True while the post-update "What's New" dialog is showing. Deliberately
+   *  independent of `isModalOpen`, which belongs to the pre-restart flow: the
+   *  two dialogs have different triggers, lifecycles, and footers. */
+  whatsNewOpen: boolean;
+  /** The what's-new counterpart to `autoOpened`: gates focus trapping so the
+   *  once-per-version auto-open never steals focus from a PTY mid-keystroke,
+   *  while a click on the status-bar version pill traps normally. */
+  whatsNewAutoOpened: boolean;
+
   /** Called from the update-downloaded IPC push. Auto-opens the modal once
    *  per version; a version already seen (or a relaunch after "Later") does
    *  not reopen it. Falls back to the legacy persistent toast when there are
@@ -25,12 +34,22 @@ interface UpdaterState {
    *  relaunch the re-delivered update re-shows the indicator without
    *  auto-opening the modal again. */
   dismiss: () => void;
+
+  /** Opens the post-update "What's New" dialog. `autoOpened` is true for the
+   *  once-per-version launch check and false for the status-bar version pill. */
+  openWhatsNew: (options: { autoOpened: boolean }) => void;
+  /** Closes the what's-new dialog. Does NOT write the config marker: that is
+   *  written when the dialog opens, so quitting without closing it still counts
+   *  as shown. See useWhatsNewOnLaunch. */
+  closeWhatsNew: () => void;
 }
 
 const createUpdaterStore = () => create<UpdaterState>((set, get) => ({
   pendingUpdate: null,
   isModalOpen: false,
   autoOpened: false,
+  whatsNewOpen: false,
+  whatsNewAutoOpened: false,
 
   receiveUpdate: (info) => {
     if (!info.releaseNotes?.trim()) {
@@ -58,6 +77,13 @@ const createUpdaterStore = () => create<UpdaterState>((set, get) => ({
       pendingUpdate: info,
       isModalOpen: !alreadySeen,
       autoOpened: !alreadySeen,
+      // A downloaded update awaiting restart outranks notes for the version
+      // already running, so when this modal auto-opens it takes over rather than
+      // stacking on the what's-new dialog. Those notes stay reachable from the
+      // status-bar version pill. When the modal does NOT auto-open (already
+      // seen), leave what's-new exactly as it was.
+      whatsNewOpen: alreadySeen ? get().whatsNewOpen : false,
+      whatsNewAutoOpened: alreadySeen ? get().whatsNewAutoOpened : false,
     });
   },
 
@@ -77,6 +103,14 @@ const createUpdaterStore = () => create<UpdaterState>((set, get) => ({
         .updateConfig({ lastSeenReleaseNotesVersion: pendingUpdate.version })
         .catch(() => undefined);
     }
+  },
+
+  openWhatsNew: ({ autoOpened }) => {
+    set({ whatsNewOpen: true, whatsNewAutoOpened: autoOpened });
+  },
+
+  closeWhatsNew: () => {
+    set({ whatsNewOpen: false, whatsNewAutoOpened: false });
   },
 }));
 

@@ -115,6 +115,8 @@ The deb package declares `depends` on Electron's required system libraries (`lib
 
 Auto-update via `electron-updater` runs on Windows and macOS only. The guard in `src/main/updater.ts` checks `app.isPackaged && process.platform !== 'linux'` -- dev mode and Linux are excluded. Linux users update via the launcher package (`npx kangentic`).
 
+Release notes are not gated by that guard. The pre-restart modal is, since it needs a downloaded update, but the post-update "What's New" dialog reads notes inlined into the renderer bundle at build time, so it works on every platform and for every install route: a Linux `npx kangentic` upgrade and a manual installer run both surface it on the next launch. See [Auto-Update Behavior](deployment.md#auto-update-behavior).
+
 ## Security Fuses
 
 Electron fuses enabled for production builds:

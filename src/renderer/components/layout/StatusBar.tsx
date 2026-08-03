@@ -3,8 +3,10 @@ import { useSessionStore } from '../../stores/session-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useBoardStore } from '../../stores/board-store';
 import { useProjectStore } from '../../stores/project-store';
+import { useUpdaterStore } from '../../stores/updater-store';
 import { DEFAULT_AGENT } from '../../../shared/types';
 import { Pill } from '../Pill';
+import { bakedReleaseNotes } from '../../lib/baked-release-notes';
 
 /**
  * Bottom status bar: agents/queued/tasks counts, agent-not-found warning, and
@@ -20,6 +22,8 @@ export function StatusBar() {
   const currentProject = useProjectStore((s) => s.currentProject);
   const agentEntry = useConfigStore((s) =>
     s.agentList.find((agent) => agent.name === (currentProject?.default_agent ?? DEFAULT_AGENT)));
+  const openWhatsNewAction = useUpdaterStore((s) => s.openWhatsNew);
+  const openWhatsNew = () => openWhatsNewAction({ autoOpened: false });
 
   const projectSessions = allSessions.filter((s) => s.projectId === currentProject?.id);
   const activeSessions = projectSessions.filter((s) => s.status === 'running').length;
@@ -59,7 +63,22 @@ export function StatusBar() {
           <span className="text-red-400" data-testid="agent-not-found">{agentEntry.displayName} not found</span>
         )}
         {appVersion && (
-          <Pill size="sm" className="border border-edge text-fg-muted">v{appVersion}</Pill>
+          // Passing `onClick` makes Pill render a real <button> with
+          // `cursor-pointer`, which is what keeps this from also light-dismissing
+          // an open task window (see the data-dismiss-surface note above).
+          // `undefined` when the build has no notes leaves it a plain <span>: a
+          // clickable pill that opens an empty dialog is worse than a static one.
+          <Pill
+            size="sm"
+            onClick={bakedReleaseNotes ? openWhatsNew : undefined}
+            title={bakedReleaseNotes ? `What's new in v${appVersion}` : undefined}
+            data-testid="status-bar-version-pill"
+            className={`border border-edge text-fg-muted${
+              bakedReleaseNotes ? ' hover:text-fg-secondary hover:border-fg-faint transition-colors' : ''
+            }`}
+          >
+            v{appVersion}
+          </Pill>
         )}
       </div>
     </div>

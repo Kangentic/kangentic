@@ -2,6 +2,7 @@ const PROCESS_START = performance.now();
 
 import { app, BrowserWindow, clipboard, Menu, nativeImage, powerMonitor, session, shell } from 'electron';
 import path from 'node:path';
+import fs from 'node:fs';
 import { registerAllIpc, getSessionManager, getTerminalSubmitScheduler, getBoardConfigManager, getCurrentProjectId, getOptionalIpcContext, openProjectByPath, deleteProjectFromIndex, pruneStaleWorktreeProjects, activateAllProjects, getLastOpenedProject } from './ipc/register-all';
 import { installDiagnostics } from './diagnostics/install';
 import { startEventLoopLagMonitor } from './diagnostics/event-loop-lag';
@@ -25,6 +26,23 @@ const windowConfigManager = new ConfigManager();
 import { initAnalytics, trackEvent, sanitizeErrorMessage, shouldEmitHeartbeat, setAnalyticsClientId } from './analytics/analytics';
 import { resolveClientId } from './analytics/client-id';
 import { PATHS } from './config/paths';
+// Whether this launch found an existing global config.json. Read at module
+// scope, before anything can call ConfigManager.save(): this is the only
+// reliable way to tell a fresh install from an upgrade, since on an existing
+// machine the file is there but simply lacks any newly-added key, and after the
+// first save() the two cases are indistinguishable. Consumed by the What's New
+// seed in app.whenReady(). An instance flag on ConfigManager would not do -
+// this file's manager and the lazily-built one in ipc/register-all.ts would
+// disagree depending on which happened to load first.
+//
+// Placement is readability only. esbuild bundles every imported module's
+// top-level code ABOVE this file's own statements, so sitting here rather than
+// beside windowConfigManager changes nothing about when this runs. The real
+// invariant is that no module in the import graph writes PATHS.configFile at
+// module scope: ConfigManager.save() is its only writer, and every call site is
+// inside a function. Adding a module-scope config write anywhere upstream would
+// break this silently, wherever this line sits.
+const configFileExistedAtLaunch = fs.existsSync(PATHS.configFile);
 import { initStartupTimer, mark, phase, endPhase, finishStartupTimer } from './startup-timer';
 import { resolveBackgroundColor, resolveIconPath, resolveWindowBounds, resolveRendererIndexPath } from './window-utils';
 import { popOutWindowManager } from './pop-out/pop-out-window-manager';
@@ -533,11 +551,22 @@ const createWindow = () => {
     if (boundsTimer) clearTimeout(boundsTimer);
     boundsTimer = setTimeout(() => {
       if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isMinimized()) return;
+      // Prefer the app-canonical manager, exactly as the pop-out bounds writer
+      // below does. ConfigManager.save() deep-merges into its OWN cached config
+      // and rewrites the whole file, and windowConfigManager's cache is populated
+      // at startup for resolveWindowBounds. Saving bounds through it therefore
+      // writes a snapshot that predates every setting the renderer has written
+      // since (through context.configManager), silently reverting them on the
+      // next window move or resize. Caught because it clobbered
+      // lastWhatsNewShownVersion, which made the What's New dialog reopen on a
+      // later launch, but the same clobber applied to any setting changed after
+      // launch.
+      const boundsConfigManager = getOptionalIpcContext()?.configManager ?? windowConfigManager;
       if (mainWindow.isMaximized()) {
-        windowConfigManager.save({ windowMaximized: true });
+        boundsConfigManager.save({ windowMaximized: true });
       } else {
         const bounds = mainWindow.getBounds();
-        windowConfigManager.save({ windowBounds: bounds, windowMaximized: false });
+        boundsConfigManager.save({ windowBounds: bounds, windowMaximized: false });
       }
     }, 500);
   };
@@ -832,6 +861,19 @@ app.whenReady().then(async () => {
   // Fix node-pty spawn-helper permissions on macOS before any PTY spawns.
   // Must run before createWindow() which triggers session recovery.
   ensureSpawnHelperPermissions();
+
+  // On a fresh install, record the running version as already having shown its
+  // "What's New" notes. A first-time user has not upgraded from anything, so
+  // showing them what changed is meaningless, and it would stack on the
+  // onboarding walkthrough that opens on this same boot. An existing install
+  // keeps the merged '' default and correctly sees the notes after it upgrades.
+  //
+  // Must run before createWindow(): a direct save() does not broadcast
+  // CONFIG_CHANGED (only the config:set handler does), so seeding after the
+  // renderer has fetched config would never reach it.
+  if (!configFileExistedAtLaunch) {
+    windowConfigManager.save({ lastWhatsNewShownVersion: app.getVersion() });
+  }
 
   // Start the in-process MCP HTTP server BEFORE createWindow so the URL
   // is available when projects.ts writes per-project mcp-config.json

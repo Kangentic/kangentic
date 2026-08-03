@@ -20,6 +20,7 @@ import { useWalkthroughActivation } from '../onboarding/useWalkthroughActivation
 import { useOnboardingProgress } from '../../hooks/useOnboardingProgress';
 import { ProjectPathMissingDialog } from '../dialogs/ProjectPathMissingDialog';
 import { ReleaseNotesDialog } from '../dialogs/ReleaseNotesDialog';
+import { WhatsNewDialog } from '../dialogs/WhatsNewDialog';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useBoardStore } from '../../stores/board-store';
@@ -508,6 +509,7 @@ export function AppLayout() {
       {searchPalette.isOpen && <SearchPalette onClose={searchPalette.close} />}
       <ProjectPathMissingDialog />
       <ReleaseNotesDialog />
+      <WhatsNewDialog />
       {onboardingChecklistOpen && <WelcomeChecklistDialog />}
       <WalkthroughLayer />
       <ToastContainer />

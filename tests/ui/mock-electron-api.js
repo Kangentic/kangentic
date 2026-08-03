@@ -174,6 +174,12 @@
     },
     hasCompletedFirstRun: true,
     lastSeenReleaseNotesVersion: '',
+    // Matches the mocked app.getVersion() below, so WhatsNewDialog stays closed
+    // by default. An empty marker would not match and would auto-open a
+    // `fixed inset-0` backdrop over every spec in the tier. Like
+    // hasCompletedFirstRun above, the mock models an ESTABLISHED install; a spec
+    // that wants the dialog seeds a different version via __mockPreConfigure.
+    lastWhatsNewShownVersion: '0.1.0',
     skipDeleteConfirm: false,
     skipBoardConfigConfirm: false,
     autoFocusIdleSession: false,

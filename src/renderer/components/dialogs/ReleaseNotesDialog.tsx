@@ -2,12 +2,7 @@ import { CloudDownload, ExternalLink } from 'lucide-react';
 import { BaseDialog } from './BaseDialog';
 import { MarkdownRenderer } from '../MarkdownRenderer';
 import { useUpdaterStore } from '../../stores/updater-store';
-
-/** Matches electron-builder.yml's `publish` block (owner: Kangentic, repo: kangentic)
- *  and the `vX.Y.Z` tag format `/release` creates. */
-function githubReleaseUrl(version: string): string {
-  return `https://github.com/Kangentic/kangentic/releases/tag/v${version}`;
-}
+import { githubReleaseUrl } from '../../lib/github-release-url';
 
 /**
  * Shown when a downloaded update's release notes should be reviewed before
@@ -19,6 +14,11 @@ function githubReleaseUrl(version: string): string {
  * Auto-opened for a version not yet seen; `autoOpened` gates focus trapping
  * so an unbidden modal never steals focus from a PTY mid-keystroke, while a
  * user-initiated reopen (the title-bar indicator) traps normally.
+ *
+ * This placement is deliberately PRE-restart. WhatsNewDialog is its post-restart
+ * counterpart, for the user who never sees this one: the fast path straight from
+ * the toast, an install via `autoUpdater.autoInstallOnAppQuit`, a fresh install,
+ * or Linux, where the updater does not run at all.
  *
  * Mounted in AppLayout so it appears regardless of sidebar state.
  */

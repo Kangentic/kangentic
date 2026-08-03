@@ -115,6 +115,32 @@ export function DevToolsSections({ globalConfig }: { globalConfig: AppConfig }) 
           </button>
         </div>
       </section>
+
+      {/* The post-restart counterpart. Its real trigger is a version change on
+          launch, which a dev session never produces, so open it directly. The
+          notes are the build's own baked RELEASE_NOTES.md, not a fixture. */}
+      <section className="space-y-2">
+        <div className="flex items-center justify-between gap-3 rounded-lg bg-surface-hover px-4 py-3">
+          <div className="min-w-0">
+            <div className="text-sm font-medium text-fg-primary">What&apos;s New Dialog</div>
+            <div className="text-xs text-fg-muted">
+              Open the post-update notes for the running version. Normally shown once on the first
+              launch after the version changes; the status-bar version pill is the way back in.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              useUpdaterStore.getState().openWhatsNew({ autoOpened: false });
+            }}
+            data-testid="dev-trigger-whats-new-dialog"
+            className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-md border border-edge/60 bg-surface-inset/40 px-2.5 py-1 text-xs font-medium text-fg-secondary transition-colors hover:border-accent/50 hover:bg-accent/10 hover:text-fg"
+          >
+            <Sparkles size={13} />
+            Show dialog
+          </button>
+        </div>
+      </section>
     </div>
   );
 }

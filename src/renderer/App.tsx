@@ -17,6 +17,7 @@ import { usePopOutStore } from './stores/pop-out-store';
 import { useDictationStore } from './stores/dictation-store';
 import { useProjectSwitchEffect } from './hooks/useProjectSwitchEffect';
 import { useAgentDrivenInvalidation } from './hooks/useAgentDrivenInvalidation';
+import { useWhatsNewOnLaunch } from './hooks/useWhatsNewOnLaunch';
 import { invalidateProject } from './stores/project-cache';
 import { resolveAutoFocusTarget } from './utils/auto-focus';
 import { derivePanelSessions } from './utils/panel-sessions';
@@ -49,6 +50,11 @@ export function App() {
   const upsertSession = useSessionStore((s) => s.upsertSession);
   const updateSessionStatus = useSessionStore((s) => s.updateSessionStatus);
   const updateActivity = useSessionStore((s) => s.updateActivity);
+
+  // Shows the running version's release notes once, on the first launch after
+  // the version changes. Self-gating on its own config marker; waits for
+  // loadAppVersion() and loadConfig() below to settle before deciding.
+  useWhatsNewOnLaunch();
 
   useEffect(() => {
     if (process.env.NODE_ENV !== 'production') {

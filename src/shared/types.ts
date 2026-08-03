@@ -2553,6 +2553,21 @@ export interface AppConfig {
   /** The version whose release-notes modal has already been auto-shown, so it does
    *  not reopen on every relaunch. Empty string until the first update lands. */
   lastSeenReleaseNotesVersion: string;
+  /** The version whose post-update "What's New" dialog has already been shown.
+   *
+   *  Deliberately NOT `lastSeenReleaseNotesVersion`, which records the PENDING
+   *  version when the pre-restart modal is dismissed. A user who clicks "Later"
+   *  and then quits normally has the update installed by
+   *  `autoUpdater.autoInstallOnAppQuit`, and would relaunch with the new version
+   *  already marked seen and the notes never read - exactly the case the
+   *  post-update surface exists to cover.
+   *
+   *  Seeded to the running version on a fresh install (src/main/index.ts) so a
+   *  first-time user is not shown notes for software they have never run, and so
+   *  it does not collide with the onboarding walkthrough on that same boot.
+   *  Empty string on an existing install that has not yet upgraded past the
+   *  release this key was added in. */
+  lastWhatsNewShownVersion: string;
   /** Project ids whose onboarding checklist the user has dismissed. Global (per-machine)
    *  memory keyed by project id, like `lastActiveTaskByProject`. `undefined` means the
    *  one-time upgrade backfill (App.tsx, on first hydration) has not run yet; `[]` means
@@ -2828,6 +2843,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   },
   hasCompletedFirstRun: false,
   lastSeenReleaseNotesVersion: '',
+  lastWhatsNewShownVersion: '',
   skipDeleteConfirm: false,
   skipBoardConfigConfirm: false,
   autoFocusIdleSession: false,

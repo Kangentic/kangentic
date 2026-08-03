@@ -175,7 +175,16 @@ export async function launchApp(options?: {
   // "Session crashed" desktop notifications on the developer's machine. Tests
   // may pre-write their own config.json (e.g. with mock Claude CLI paths), so
   // merge rather than overwrite.
+  // Also record the running version as already having shown its "What's New"
+  // dialog. Without this the marker merges in as '' from DEFAULT_CONFIG, which
+  // does not match app.getVersion(), and WhatsNewDialog auto-opens a
+  // `fixed inset-0` backdrop over the spec and swallows every click. A test
+  // fixture is an ESTABLISHED install, not a user who just upgraded. Read from
+  // package.json so it tracks the version the launched app actually reports.
   const configPath = path.join(dataDir, 'config.json');
+  const appVersion = JSON.parse(
+    fs.readFileSync(path.join(__dirname, '..', '..', 'package.json'), 'utf-8'),
+  ).version as string;
   const notificationDefaults = {
     desktop: { onAgentIdle: false, onAgentCrash: false, onPlanComplete: false },
     toasts: { onAgentIdle: false, onAgentCrash: false, onPlanComplete: false, durationSeconds: 4, maxCount: 5 },
@@ -192,11 +201,16 @@ export async function launchApp(options?: {
       existing.notifications = notificationDefaults;
       changed = true;
     }
+    if (existing.lastWhatsNewShownVersion !== appVersion) {
+      existing.lastWhatsNewShownVersion = appVersion;
+      changed = true;
+    }
     if (changed) fs.writeFileSync(configPath, JSON.stringify(existing));
   } catch {
     fs.writeFileSync(configPath, JSON.stringify({
       hasCompletedFirstRun: true,
       notifications: notificationDefaults,
+      lastWhatsNewShownVersion: appVersion,
     }));
   }
 
