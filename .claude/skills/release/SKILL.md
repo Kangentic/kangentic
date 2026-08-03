@@ -67,9 +67,20 @@ what it finds. There is no skip and no confirmation prompt here.
    extras, fix stale references. Do not ask the user; do not offer a skip.
 3. **Document every undocumented `feat:` commit** since the previous tag: scan for features not
    covered in `docs/` and write the missing coverage. Unconditional - do not ask.
-4. Stage the changed doc files (e.g. `git add docs/foo.md docs/bar.md`). They ride into the
+4. **Check `@kangentic/protocol` changelog parity.** Desktop releases are frequent and protocol
+   releases are not, so this is the check most likely to catch a protocol release that bypassed
+   `/release-protocol`. It is a read-and-fix check, not a protocol release: never bump, tag, or
+   publish the protocol package from here.
+   - List the tags: `git tag --list "protocol-v*"`.
+   - Grep the entry headers: `Grep` for `^## \[protocol-v` in `packages/protocol/CHANGELOG.md`.
+   - Every tag must have a matching entry. Backfill any that do not, reconstructing each from
+     `git log <previousTag>..<thatTag> --oneline --no-decorate -- packages/protocol/src` and the
+     commit messages, and stage `packages/protocol/CHANGELOG.md` with the other doc files.
+   - A version bumped but never tagged is NOT a gap. See
+     `.claude/rules/protocol-release-parity.md` for why the tag is the line.
+5. Stage the changed doc files (e.g. `git add docs/foo.md docs/bar.md`). They ride into the
    release commit in Step 4.
-5. Report what was fixed: list the changed doc files. A large doc pass folded into the
+6. Report what was fixed: list the changed doc files. A large doc pass folded into the
    version-bump commit is expected and desired - do not treat it as scope creep.
 
 ## Step 2 -- Version Bump

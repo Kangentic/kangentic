@@ -339,6 +339,7 @@ session; rules with one load when you touch matching files. Each rule names its 
 - `cli-features-over-custom-layers.md` - do not shadow an agent CLI's native controls (`src/main/agent/`).
 - `dev-tooling-build-exclusion.md` - dev tooling build-excluded via `__KANGENTIC_DEV__` (`src/devtools/`).
 - `docs-stay-in-sync.md` - update docs when changing anchor source files (types, IPC, migrations, adapters, settings).
+- `protocol-release-parity.md` - every `protocol-v*` tag needs a `CHANGELOG.md` entry; never hand-tag a protocol release (`packages/protocol/`).
 - `skill-authoring.md` - when to fork a skill and how to route agents (`.claude/`).
 - `board-config-parity.md` - team-shared swimlane fields must round-trip to `kangentic.json`.
 - `external-scripts-parity.md` - unbundled bridge/plugin scripts must register in `EXTERNAL_SCRIPTS` and be copied by both `build.js` and `dev.js`.

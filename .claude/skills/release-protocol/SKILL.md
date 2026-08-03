@@ -53,8 +53,25 @@ tag sequences never collide.
 3. **Fetch latest:** Run `git fetch origin main`.
 4. **Verify up-to-date:** Run `git diff HEAD origin/main --stat`. Must be empty. If not, stop with: "Local main is behind origin/main. Run `git pull` first."
 5. **Install dependencies:** Run `npm ci`.
+6. **Verify changelog parity across the whole tag sequence.** This step exists because the
+   sequence has already drifted once: eight versions reached npm with no entry, because the tags
+   were hand-created on feature commits instead of through this skill, and Step 3 only ever
+   prepends the newest entry so it never looked down. See
+   `.claude/rules/protocol-release-parity.md`.
+   - List every tag: `git tag --list "protocol-v*"`.
+   - Grep the entry headers: `Grep` for `^## \[protocol-v` in `packages/protocol/CHANGELOG.md`.
+   - Every tag must have a matching `## [protocol-vX.Y.Z]` entry. A version that was bumped but
+     never tagged is NOT a gap (the changelog entry lands at release time by convention); a
+     tagged version with no entry is.
+   - **Backfill any gap before continuing, do not just report it.** For each missing version,
+     reconstruct the entry from `git log <previousTag>..<thatTag> --oneline --no-decorate --
+     packages/protocol/src` plus the individual commit messages, and insert it in descending
+     order. Fold the backfill into this release's commit in Step 4.
+   - Note that a tag pointing at anything other than a `chore(protocol-release):` commit is the
+     signature of a past bypass, and is the fastest way to spot which releases to check first.
 
-Report the current protocol version, the bump type, and the new version before proceeding.
+Report the current protocol version, the bump type, the new version, and any backfill you
+performed before proceeding.
 
 ## Step 1 -- Validate
 
