@@ -1555,6 +1555,64 @@ describe('PtyBufferManager', () => {
       const snapshot = await pendingSnapshot;
       expect(snapshot).toBe('');
     });
+
+    it('resumes normal flush delivery once a sample completes (replaySamplesInFlight must not stick)', async () => {
+      const onFlush = vi.fn();
+      const manager = new PtyBufferManager({ onFlush });
+      manager.initSession(SESSION, '', 80, 24);
+      manager.onData(SESSION, '\x1b[?1049h\x1b[2J\x1b[1;1Halt frame');
+
+      await manager.getReplaySnapshot(SESSION);
+
+      // The frame branch drains everything into the reply (see "drains the
+      // pending buffer" above), so nothing should have flushed yet.
+      expect(onFlush).not.toHaveBeenCalled();
+
+      // Bytes fed AFTER the sample has fully resolved must still reach
+      // onFlush on the ordinary 16ms tick. If replaySamplesInFlight's finally
+      // decrement were ever lost (an early return before it, an off-by-one),
+      // the counter would stay above zero, scheduleFlush's tick would re-arm
+      // forever, and this data would never be delivered - the renderer would
+      // go permanently silent for the session.
+      manager.onData(SESSION, 'POST_SAMPLE_BYTES');
+      await expect
+        .poll(
+          () => onFlush.mock.calls.some((call) => typeof call[1] === 'string' && call[1].includes('POST_SAMPLE_BYTES')),
+          { timeout: 2000, interval: 20 },
+        )
+        .toBe(true);
+
+      manager.removeSession(SESSION);
+    });
+
+    it('propagates a HeadlessFrameBuffer.serialize rejection rather than swallowing it', async () => {
+      const manager = new PtyBufferManager({ onFlush: vi.fn() });
+      manager.initSession(SESSION, '', 80, 24);
+      manager.onData(SESSION, '\x1b[?1049h\x1b[2J\x1b[1;1Halt frame');
+
+      // Force the underlying serializer to throw. HeadlessFrameBuffer.serialize's
+      // own try/catch (see tests/unit/headless-frame.test.ts) turns that into a
+      // REJECTED promise rather than an uncaught main-process exception - but
+      // getReplaySnapshot has no catch of its own around the Promise.race, so
+      // that rejection must propagate all the way out to the caller
+      // (SessionManager.getScrollback, then the IPC reply) rather than resolve
+      // to a frame, the byte replay, or an empty string. The renderer's
+      // existing getScrollback().catch() (useTerminal.ts) is the actual safety
+      // net downstream; this pins that getReplaySnapshot itself does not
+      // silently absorb the failure first.
+      interface ManagerInternals {
+        buffers: Map<string, { headless: { serializer: { serialize: (...args: unknown[]) => string } } }>;
+      }
+      const bufferState = (manager as unknown as ManagerInternals).buffers.get(SESSION);
+      if (!bufferState) throw new Error('test setup: session buffer state missing');
+      bufferState.headless.serializer.serialize = () => {
+        throw new Error('serializer disposed mid-sample');
+      };
+
+      await expect(manager.getReplaySnapshot(SESSION)).rejects.toThrow('serializer disposed mid-sample');
+
+      manager.removeSession(SESSION);
+    });
   });
 
   describe('getOutputPeek (live PTY-grid-to-peek wiring)', () => {
