@@ -110,7 +110,18 @@ async function start() {
     fs.mkdirSync(ephemeralDataDir, { recursive: true });
   }
   if (ephemeral && !fresh && ephemeralDataDir) {
-    fs.writeFileSync(path.join(ephemeralDataDir, 'config.json'), JSON.stringify({ hasCompletedFirstRun: true }, null, 2));
+    // Record the running version as already having shown its "What's New" notes, for
+    // the same reason hasCompletedFirstRun suppresses the onboarding walkthrough.
+    // Writing config.json here is itself what makes it necessary: the app's own
+    // fresh-install seed (src/main/index.ts) gates on the file NOT existing, so it is
+    // skipped, the marker merges in as '' from DEFAULT_CONFIG, that never matches the
+    // running version, and the dialog auto-opens a `fixed inset-0` backdrop over the
+    // board on every preview boot. Read from package.json so it tracks whatever
+    // app.getVersion() will report, matching how tests/e2e/helpers.ts derives it.
+    // --fresh deliberately gets neither seed: that mode exists to test the real
+    // first-launch experience, where the app's own seed does run.
+    const previewAppVersion = JSON.parse(fs.readFileSync(path.join(projectDir, 'package.json'), 'utf-8')).version;
+    fs.writeFileSync(path.join(ephemeralDataDir, 'config.json'), JSON.stringify({ hasCompletedFirstRun: true, lastWhatsNewShownVersion: previewAppVersion }, null, 2));
     const preClone = (cloneDir) => new Promise((resolve) => {
       const cloneProc = spawn('git', ['clone', '--no-checkout', '--local', resolvedTarget, cloneDir], { stdio: 'inherit', windowsHide: true });
       cloneProc.on('close', () => resolve());
