@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import os from 'node:os';
 import fs from 'node:fs';
 
@@ -12,6 +12,7 @@ import {
   buildSpawnEnv,
   resolveSpawnCwd,
   diagnoseSpawnFailure,
+  FULL_REPAINT_ENV_KEY,
 } from '../../src/main/pty/spawn/pty-spawn';
 
 describe('resolveShellArgs', () => {
@@ -87,6 +88,56 @@ describe('buildSpawnEnv', () => {
   it('handles undefined input', () => {
     const env = buildSpawnEnv(undefined);
     expect(env.CLAUDECODE).toBeUndefined();
+  });
+});
+
+// Claude Code's fullscreen TUI intermittently omits history entries from its
+// incremental scrolled-view updates (anthropics/claude-code#83714). The
+// full-repaint flag removes the incremental path; Kangentic defaults it on
+// for Windows spawns, matching Claude Code's own agent-view practice. These
+// pin the keeplist so the identity-marker strip cannot silently swallow it,
+// and the default so a refactor cannot silently widen or drop it.
+describe('buildSpawnEnv full-repaint keeplist', () => {
+  let savedHostValue: string | undefined;
+
+  beforeEach(() => {
+    // Hermetic: the host machine may legitimately export the flag globally.
+    savedHostValue = process.env[FULL_REPAINT_ENV_KEY];
+    delete process.env[FULL_REPAINT_ENV_KEY];
+  });
+
+  afterEach(() => {
+    if (savedHostValue === undefined) delete process.env[FULL_REPAINT_ENV_KEY];
+    else process.env[FULL_REPAINT_ENV_KEY] = savedHostValue;
+  });
+
+  it('defaults the flag on for win32 spawns', () => {
+    const env = buildSpawnEnv({}, 'win32');
+    expect(env[FULL_REPAINT_ENV_KEY]).toBe('1');
+  });
+
+  it('does NOT default it on non-Windows platforms', () => {
+    const env = buildSpawnEnv({}, 'linux');
+    expect(env[FULL_REPAINT_ENV_KEY]).toBeUndefined();
+  });
+
+  it('keeps an explicit value over the default (user opt-out wins)', () => {
+    const env = buildSpawnEnv({ [FULL_REPAINT_ENV_KEY]: '0' }, 'win32');
+    expect(env[FULL_REPAINT_ENV_KEY]).toBe('0');
+  });
+
+  it('keeplists the flag through the strip while identity markers still drop', () => {
+    const env = buildSpawnEnv(
+      {
+        [FULL_REPAINT_ENV_KEY]: '1',
+        CLAUDECODE: '1',
+        CLAUDE_CODE_SESSION_ID: 'parent-session-uuid',
+      },
+      'linux',
+    );
+    expect(env[FULL_REPAINT_ENV_KEY]).toBe('1');
+    expect(env.CLAUDECODE).toBeUndefined();
+    expect(env.CLAUDE_CODE_SESSION_ID).toBeUndefined();
   });
 });
 

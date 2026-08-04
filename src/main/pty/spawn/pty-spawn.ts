@@ -54,19 +54,47 @@ export function resolveShellArgs(shell: string): ShellInvocation {
  * is lost on a Done -> back round-trip. (Clearing `CLAUDECODE` alone, the prior
  * behavior, only stopped the child from refusing to start.) A Kangentic-spawned
  * agent must always be a clean top-level session, so drop every `CLAUDE_CODE_*`
- * marker. This is the documented practice for tools that spawn the Claude CLI as
- * a subprocess; it is harmless for non-Claude agents, which ignore these vars,
- * and it deliberately leaves `ANTHROPIC_*` keys (BYOK / API auth) untouched.
+ * marker except the keeplisted tuning flag below. This is the documented
+ * practice for tools that spawn the Claude CLI as a subprocess; it is harmless
+ * for non-Claude agents, which ignore these vars, and it deliberately leaves
+ * `ANTHROPIC_*` keys (BYOK / API auth) untouched.
+ *
+ * `platform` is injectable for tests (cross-platform parity); production
+ * callers omit it.
  */
+
+/**
+ * The one `CLAUDE_CODE_*` key that survives the strip, and its Windows
+ * default. Unlike the identity markers above, this is a renderer tuning flag:
+ * it cannot re-parent a child session. Claude Code's fullscreen TUI
+ * intermittently omits history entries from its incremental scrolled-view
+ * updates (deep scroll up, ride back down: entries vanish with the layout
+ * closed up until a re-anchor - anthropics/claude-code#83714, confirmed
+ * producer-side by diffing the raw PTY stream). Full-frame repaints remove
+ * the incremental-update path entirely, and Claude Code's own agent views
+ * enable this automatically on Windows. Defaulted on win32 only, matching
+ * that practice; an explicit value already in the environment (including a
+ * user's opt-out) always wins, and non-Claude agents ignore the var, the
+ * same argument the strip itself relies on. PARTIAL mitigation: it removes
+ * the dominant closed-up flavor, while the rarer blank-band flavor (a
+ * window-assembly defect upstream) persists. Unwind this default once the
+ * upstream issue is fixed.
+ */
+export const FULL_REPAINT_ENV_KEY = 'CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT';
+
 export function buildSpawnEnv(
   inputEnv: Record<string, string> | undefined,
+  platform: NodeJS.Platform = process.platform,
 ): Record<string, string> {
   const merged = { ...process.env, ...inputEnv };
   const result: Record<string, string> = {};
   for (const [key, value] of Object.entries(merged)) {
     if (value === undefined) continue;
-    if (key === 'CLAUDECODE' || key.startsWith('CLAUDE_CODE_')) continue;
+    if (key === 'CLAUDECODE' || (key.startsWith('CLAUDE_CODE_') && key !== FULL_REPAINT_ENV_KEY)) continue;
     result[key] = value;
+  }
+  if (platform === 'win32' && result[FULL_REPAINT_ENV_KEY] === undefined) {
+    result[FULL_REPAINT_ENV_KEY] = '1';
   }
   return result;
 }
