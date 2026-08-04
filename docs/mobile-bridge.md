@@ -4,6 +4,15 @@ Kangentic's mobile companion app (`kangentic-mobile`, a separate repo) pairs wit
 
 This doc covers **Phase 1 (protocol, pairing & secure relay transport)**, **Phase 2 (data feeds, interactive control & capabilities)**, and the shipped core of **Phase 3 (session lifecycle honesty & E2E push notifications)**: identity, pairing ceremony, signed device roster, capability-verb envelope, ongoing session crypto, outbound relay transport client, the live capability-verb handlers, the data feeds they subscribe to (SessionManager output, the transcript service, board state, `DiffService`), and the E2E-encrypted push pipeline. See [Scope](#scope) at the bottom for what is still deferred to later phases.
 
+## Build gating
+
+The bridge ships in production builds: the Mobile Devices settings tab, its `mobileBridge.*` registry entries, and the reconcile that honors a persisted `mobileBridge.enabled` all compile into every build. `mobileBridge.enabled` defaults to `false`, so shipping does not turn the bridge on by itself.
+
+Two affordances stay deliberately `__KANGENTIC_DEV__`-gated and are dead-code-eliminated from packaged builds:
+
+- **`src/main/mobile-bridge/dev-quick-pair.ts`** - a dev-only backdoor for the mobile dev rig. It mirrors a tiny handshake through the repo's gitignored `.kangentic/mobile-dev-pairing/` directory and adopts the rig's persistent phone key straight into the signed roster with every capability granted, no QR/SAS ceremony. Every call site is gated so this can never reach a real user.
+- **The `'local'` relay mode** - `ws://127.0.0.1:8080`, for pointing a dev build at a relay running on the same machine (`kangentic-relay`'s own dev server). The Select only offers it in a dev build, and `resolveRelayUrl()` (`src/shared/relay.ts`) also gates the *resolution* on `__KANGENTIC_DEV__`: `mobileBridge.*` is global config in a shared configDir, so a persisted `relayMode: 'local'` (saved from a dev build, or hand-edited) could otherwise survive into a production build on the same machine and silently dial plaintext loopback. A production build falls through to the hosted relay instead.
+
 ## Layout
 
 ```

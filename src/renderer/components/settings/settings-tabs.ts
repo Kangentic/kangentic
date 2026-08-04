@@ -79,11 +79,7 @@ export const SETTINGS_TABS: SettingsTabMeta[] = [
   { id: 'memory', label: 'Memory', category: 'system', tier: 'advanced', tooltip: 'Applies to all projects' },
   { id: 'mcpServer', label: 'MCP Server', category: 'system', tier: 'advanced', tooltip: 'Applies to all projects' },
   { id: 'browserAutomation', label: 'Agent Browser', category: 'system', tier: 'advanced', tooltip: 'Applies to all projects' },
-  // Dev-only until the mobile app launches (paired gates: settings-registry
-  // entries, and the service reconcile in register-all.ts / system.ts).
-  ...(__KANGENTIC_DEV__
-    ? ([{ id: 'mobile', label: 'Mobile Devices', category: 'system', tier: 'advanced', tooltip: 'Applies to all projects' }] satisfies SettingsTabMeta[])
-    : []),
+  { id: 'mobile', label: 'Mobile Devices', category: 'system', tier: 'advanced', tooltip: 'Applies to all projects' },
   // -- Shared settings: Other tier --
   { id: 'privacy', label: 'Privacy', category: 'system', tier: 'other', tooltip: 'Applies to all projects' },
   { id: 'developer', label: 'Developer', category: 'system', tier: 'other', tooltip: 'Applies to all projects' },

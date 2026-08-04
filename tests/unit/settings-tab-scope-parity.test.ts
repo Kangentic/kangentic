@@ -87,22 +87,13 @@ describe('settings tab/scope parity: global-in-project-tab allowlist', () => {
   });
 });
 
-/** MobileDevicesTab.tsx's `mobileBridge.*` ids are real, but both its
- *  SETTINGS_TABS entry and its SETTINGS_REGISTRY entries are gated behind
- *  `__KANGENTIC_DEV__`, which vitest.config.ts pins to `false` so tests run
- *  production-like. The source literals are unconditional, so a static scan
- *  would see them as dead ids at test time. Excluded here for the same
- *  reason mcp-tool-list-parity.test.ts excludes the dev-only devtools glob:
- *  the dev build is where this file's ids are actually exercised. */
-const DEV_ONLY_TAB_FILES = new Set(['MobileDevicesTab.tsx']);
-
 /** Every `settingProps('id')`, `searchId: 'id'`, and `searchIds={[...]}` literal
  *  referenced by a tab component, so a dead/renamed registry id shows up as a
  *  parity failure instead of a silently-unsearchable row. */
 function collectReferencedSettingIds(): Array<{ id: string; file: string }> {
   const references: Array<{ id: string; file: string }> = [];
   const files = fs.readdirSync(TABS_DIR, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && entry.name.endsWith('.tsx') && !DEV_ONLY_TAB_FILES.has(entry.name))
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.tsx'))
     .map((entry) => entry.name);
 
   const settingPropsPattern = /settingProps\(\s*'([^']+)'\s*\)/g;
@@ -237,5 +228,29 @@ describe('settings tab/scope parity: tier grouping', () => {
         + `prints a tier header at the first tab of each new run, so a split tier would print the `
         + `same header twice. Keep each tier's tabs together:\n${reentered.join('\n')}`,
     ).toEqual([]);
+  });
+});
+
+describe('settings tab/scope parity: mobile bridge ships in production', () => {
+  // Regression guard for the mobile-bridge launch un-gate. This suite
+  // compiles with __KANGENTIC_DEV__ = false (vitest.config.ts), i.e. the
+  // production build - so a re-introduced `...(__KANGENTIC_DEV__ ? [...] :
+  // [])` gate around either the tab entry or the registry entries would
+  // make these assertions fail here, not just at runtime in a packaged app.
+  it('the Mobile Devices tab is present', () => {
+    const mobileTab = SETTINGS_TABS.find((tab) => tab.id === 'mobile');
+    expect(mobileTab).toBeDefined();
+    expect(mobileTab?.category).toBe('system');
+  });
+
+  it('all five mobileBridge.* registry entries are present', () => {
+    const mobileIds = SETTINGS_REGISTRY.filter((entry) => entry.tabId === 'mobile').map((entry) => entry.id).sort();
+    expect(mobileIds).toEqual([
+      'mobileBridge.devices',
+      'mobileBridge.enabled',
+      'mobileBridge.pairing',
+      'mobileBridge.relayMode',
+      'mobileBridge.relayUrl',
+    ]);
   });
 });

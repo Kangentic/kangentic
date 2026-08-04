@@ -98,15 +98,15 @@ export class MobileBridgeService extends EventEmitter {
    * the renderer's live watch on the same worktree (and vice versa).
    */
   private readonly diffWatcher = new DiffWatcher();
-  /** Dev-only instant pairing for the mobile dev rig; every call site is __KANGENTIC_DEV__-gated so packaged builds drop it. */
-  private readonly devQuickPair = new DevQuickPair({
-    getIdentity: () => this.ensureIdentity(),
-    getRelayUrl: () => this.config.relayUrl,
-    onRosterChanged: () => {
-      void this.syncSessions();
-      this.emitStateChanged();
-    },
-  });
+  /**
+   * Dev-only instant pairing for the mobile dev rig. `null` in a production
+   * build: constructed only inside `if (__KANGENTIC_DEV__)` in the
+   * constructor below, not as an unconditional field initializer, because an
+   * unconditional `new DevQuickPair(...)` here would still run (and keep the
+   * module reachable, defeating dead-code elimination) in every build - the
+   * gate has to wrap the CONSTRUCTION, not just the later reconcile() call.
+   */
+  private readonly devQuickPair: DevQuickPair | null;
   private ipcContext: IpcContext | null = null;
   /** Feeds session lifecycle edges onto the board-changed bus so phones' board views track spawn/queue/suspend/exit. */
   private sessionLifecycleFeed: SessionLifecycleBoardFeed | null = null;
@@ -137,6 +137,16 @@ export class MobileBridgeService extends EventEmitter {
   constructor(config: MobileBridgeConfig) {
     super();
     this.config = config;
+    this.devQuickPair = __KANGENTIC_DEV__
+      ? new DevQuickPair({
+          getIdentity: () => this.ensureIdentity(),
+          getRelayUrl: () => this.config.relayUrl,
+          onRosterChanged: () => {
+            void this.syncSessions();
+            this.emitStateChanged();
+          },
+        })
+      : null;
   }
 
   /**
@@ -318,7 +328,7 @@ export class MobileBridgeService extends EventEmitter {
       // config.relayUrl is always resolved (see src/shared/relay.ts's
       // resolveRelayUrl at both reconcile() call sites) and therefore never
       // '', so there is no longer a meaningful empty-URL case to gate on here.
-      this.devQuickPair.reconcile(config.enabled && isGenuineEncryptionAvailable());
+      this.devQuickPair?.reconcile(config.enabled && isGenuineEncryptionAvailable());
     }
     if (!config.enabled && wasEnabled) {
       this.cancelPairing('Mobile bridge disabled');
@@ -761,7 +771,7 @@ export class MobileBridgeService extends EventEmitter {
       clearTimeout(this.relayStateEmitTimer);
       this.relayStateEmitTimer = null;
     }
-    this.devQuickPair.stop();
+    this.devQuickPair?.stop();
     this.sessionLifecycleFeed?.dispose();
     this.sessionLifecycleFeed = null;
     this.pushNotifier?.dispose();

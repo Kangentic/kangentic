@@ -1,7 +1,7 @@
 /**
  * Unit tests for src/shared/relay.ts.
  *
- * Two invariants are load-bearing here and get their own dedicated cases:
+ * Three invariants are load-bearing here and get their own dedicated cases:
  * (1) validateRelayUrl delegates its TLS/loopback decision to the protocol
  * package's isSecureRelayAddress rather than reimplementing it with
  * new URL().hostname comparisons - a hostname-based rewrite would silently
@@ -10,13 +10,21 @@
  * resolveRelayUrl always returns either a normalized-and-valid URL or a
  * hardcoded constant, never a raw/un-normalized stored string - so a value
  * saved before this schema existed, or written with WHATWG's IPv4/IPv6
- * canonicalizations, can never reach the pairing QR unnormalized.
+ * canonicalizations, can never reach the pairing QR unnormalized. (3)
+ * relayMode: 'local' resolves to plaintext loopback ONLY in a dev build.
+ * `mobileBridge.*` is global config in a shared configDir, so a value saved
+ * from a dev build (or hand-edited) can reach a production build on the same
+ * machine; resolveRelayUrl must fall through to the hosted relay there
+ * rather than dialing ws://127.0.0.1:8080.
  *
- * Unlike an earlier version of this module, KANGENTIC_HOSTED_RELAY_URL and
- * LOCAL_DEV_RELAY_URL are both build-mode-independent constants now - only
- * the Select's list of *offered* modes varies by build (Local is dev-only),
- * not what a given mode resolves to. So every case below runs identically
- * regardless of vitest.config.ts's __KANGENTIC_DEV__ setting.
+ * KANGENTIC_HOSTED_RELAY_URL and LOCAL_DEV_RELAY_URL are themselves
+ * build-mode-independent constants - only what 'local' MODE resolves TO
+ * depends on __KANGENTIC_DEV__ (invariant 3 above), which vitest.config.ts
+ * pins to `false`, so this suite exercises the production branch: the
+ * 'local' case below asserts the hosted fallback, not loopback. The dev
+ * branch (an actual `npm start` session resolving to loopback) is exercised
+ * by tests/ui/mobile-devices-settings.spec.ts, whose webServer runs in dev
+ * mode.
  */
 import { describe, expect, it } from 'vitest';
 import {
@@ -154,9 +162,9 @@ describe('resolveRelayUrl', () => {
     expect(resolveRelayUrl(bridge)).toBe(KANGENTIC_HOSTED_RELAY_URL);
   });
 
-  it('resolves to the local dev relay when relayMode is "local", regardless of relayUrl', () => {
+  it('resolves relayMode "local" to the hosted relay, not loopback, in a production build (__KANGENTIC_DEV__ = false)', () => {
     const bridge: AppConfig['mobileBridge'] = { relayMode: 'local', relayUrl: 'wss://ignored.example.com' };
-    expect(resolveRelayUrl(bridge)).toBe(LOCAL_DEV_RELAY_URL);
+    expect(resolveRelayUrl(bridge)).toBe(KANGENTIC_HOSTED_RELAY_URL);
   });
 
   it('infers "custom" when relayMode is unset but relayUrl is a saved value (pre-resolver schema)', () => {

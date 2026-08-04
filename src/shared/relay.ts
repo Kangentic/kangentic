@@ -94,17 +94,20 @@ export function inferRelayMode(bridge: AppConfig['mobileBridge']): 'hosted' | 'l
  * and never ''. An empty or invalid custom URL falls back to the hosted relay
  * rather than reaching a WebSocket dial.
  *
- * 'local' is unconditional (not gated on __KANGENTIC_DEV__ here) because the
- * whole mobile-bridge feature - the settings tab, the registry entry that
- * lets 'local' be selected, and the reconcile sites that read this config -
- * is already __KANGENTIC_DEV__-gated end to end. A stray 'local' value can
- * only exist in a dev build's config.
+ * 'local' is gated on __KANGENTIC_DEV__ here, even though the feature itself
+ * ships in production: `mobileBridge.*` is GLOBAL config in a shared
+ * configDir, so a `relayMode: 'local'` value saved from a dev build (or
+ * hand-edited) survives into a production build on the same machine. Without
+ * this gate, a production build would silently dial plaintext loopback
+ * (`ws://127.0.0.1:8080`) instead of falling back to the hosted relay - the
+ * Select simply not OFFERING 'local' in production does not protect a config
+ * value that predates the build that reads it.
  */
 export function resolveRelayUrl(bridge: AppConfig['mobileBridge']): string {
   const storedUrl = bridge?.relayUrl ?? '';
   switch (inferRelayMode(bridge)) {
     case 'local':
-      return LOCAL_DEV_RELAY_URL;
+      return __KANGENTIC_DEV__ ? LOCAL_DEV_RELAY_URL : KANGENTIC_HOSTED_RELAY_URL;
     case 'custom': {
       const validation = validateRelayUrl(storedUrl);
       return validation.ok ? validation.normalized : KANGENTIC_HOSTED_RELAY_URL;

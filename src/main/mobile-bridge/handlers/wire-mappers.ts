@@ -82,9 +82,10 @@ function asJsonValue(value: unknown): JsonValue {
  * marker instead. Transcript text/content spans are already clamped at
  * parse time (transcript-cache MAX_SPAN_CHARS), but tool inputs are
  * deliberately un-clamped there for the desktop viewer - the phone does
- * not need a megabyte Write-file payload inside a prompt card, and
- * bounding every entry is what lets the transcript-sync chunker guarantee
- * its frames stay under the wire cap.
+ * not need a megabyte Write-file payload inside a prompt card. This clamp
+ * plus `clampBlocks` below (which bounds an assistant entry's total block
+ * count/size, not just one block's size) together are what let the
+ * transcript-sync chunker guarantee its frames stay under the wire cap.
  */
 const MAX_TOOL_INPUT_CHARS = 32 * 1024;
 const TOOL_INPUT_PREVIEW_CHARS = 2 * 1024;
@@ -97,6 +98,39 @@ function clampToolInput(input: JsonValue): JsonValue {
     originalChars: serialized.length,
     preview: serialized.slice(0, TOOL_INPUT_PREVIEW_CHARS),
   };
+}
+
+/**
+ * `clampToolInput` bounds a single tool_use input's serialized size, but not
+ * how many blocks one assistant entry can carry - an entry with enough
+ * blocks (hundreds of small tool_use calls in one turn) can still exceed the
+ * wire cap even though every individual block is within budget, and
+ * transcript-sync's `chunkUpserts` only splits BETWEEN upserts, never within
+ * one entry. Clamp the mapped block list's total serialized size the same
+ * way `clampToolInput` clamps a single value, staying comfortably under
+ * transcript-sync's DELTA_CHUNK_BUDGET_CHARS (192 KiB) so a clamped entry
+ * still fits inside one chunk rather than becoming an oversized singleton.
+ * A truncation marker replaces the remainder so the phone can tell the
+ * entry was cut, rather than silently receiving a partial one.
+ */
+export const MAX_ENTRY_BLOCKS_CHARS = 128 * 1024;
+
+function clampBlocks(blocks: TranscriptBlockWire[]): TranscriptBlockWire[] {
+  let totalChars = 0;
+  const kept: TranscriptBlockWire[] = [];
+  for (const block of blocks) {
+    const size = JSON.stringify(block).length;
+    if (totalChars + size > MAX_ENTRY_BLOCKS_CHARS) {
+      kept.push({
+        type: 'text',
+        text: `[${blocks.length - kept.length} more block(s) omitted: this entry exceeded the per-entry size budget]`,
+      });
+      return kept;
+    }
+    totalChars += size;
+    kept.push(block);
+  }
+  return kept;
 }
 
 function toTranscriptBlockWire(block: TranscriptBlock): TranscriptBlockWire {
@@ -122,7 +156,7 @@ export function toTranscriptEntryWire(entry: TranscriptEntry): TranscriptEntryWi
         ...(entry.model !== undefined ? { model: entry.model } : {}),
         ...(entry.agentName !== undefined ? { agentName: entry.agentName } : {}),
         ...(entry.usage !== undefined ? { usage: entry.usage } : {}),
-        blocks: entry.blocks.map(toTranscriptBlockWire),
+        blocks: clampBlocks(entry.blocks.map(toTranscriptBlockWire)),
       };
     case 'tool_result':
       return {

@@ -1,6 +1,11 @@
 import type { BridgeEvent } from '@kangentic/protocol';
 import type { BridgeSession } from '../session/bridge-session';
 
+/** `encodeMessage`'s two size-cap throws (packages/protocol/src/wire/framing.ts) both start
+ *  with this prefix; every other `sendMessage` failure (session torn down mid-send, transport
+ *  disconnected) is routine and must stay silent. */
+const ENCODE_SIZE_ERROR_PREFIX = 'Encoded bridge message exceeds';
+
 /**
  * Pushes one BridgeEvent to a device, silently dropping it if the session
  * is not established. `isEstablished` is only false before the first Noise
@@ -12,13 +17,18 @@ import type { BridgeSession } from '../session/bridge-session';
  * not by this side replaying missed deltas. `BridgeSession.sendMessage` also
  * throws once torn down; the try/catch keeps a transient send failure from
  * escaping an event-listener callback.
+ *
+ * An oversize frame is the one failure worth surfacing: it is not transient
+ * (retrying sends the same over-budget payload again) and, unlike a torn-down
+ * session, the phone has no other signal that this event was dropped.
  */
 export function sendEvent(session: BridgeSession, event: BridgeEvent): void {
   if (!session.isEstablished) return;
   try {
     session.sendMessage({ type: 'event', event });
-  } catch {
-    // Best-effort push; a transient send failure should not throw out of
-    // an event listener callback.
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith(ENCODE_SIZE_ERROR_PREFIX)) {
+      console.warn(`[mobile-bridge/send-event] dropped oversize ${event.kind} event:`, error.message);
+    }
   }
 }

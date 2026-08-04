@@ -137,8 +137,7 @@ export function registerSystemHandlers(context: IpcContext): void {
     if (config.mobileBridge) {
       const effectiveConfig = context.configManager.getEffectiveConfig(context.currentProjectPath || undefined);
       context.mobileBridgeService.reconcile({
-        // Dev-only until the mobile app launches (mirrors register-all.ts).
-        enabled: __KANGENTIC_DEV__ && (effectiveConfig.mobileBridge?.enabled ?? false),
+        enabled: effectiveConfig.mobileBridge?.enabled ?? false,
         relayUrl: resolveRelayUrl(effectiveConfig.mobileBridge),
       });
     }

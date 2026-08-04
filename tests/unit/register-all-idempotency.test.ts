@@ -72,8 +72,12 @@ vi.mock('../../src/main/git/git-detector', () => ({
 vi.mock('../../src/main/agent/adapters/claude/command-builder', () => ({
   CommandBuilder: class { build = vi.fn(); },
 }));
+// Hoisted (not an inline factory closure) so a single test can override its
+// return value for one call via mockReturnValueOnce, e.g. to pin the startup
+// reconcile against a persisted mobileBridge.enabled: true.
+const getEffectiveConfigMock = vi.fn(() => ({ claude: {}, git: {}, terminal: {} }));
 vi.mock('../../src/main/config/config-manager', () => ({
-  ConfigManager: class { getEffectiveConfig = vi.fn(() => ({ claude: {}, git: {}, terminal: {} })); },
+  ConfigManager: class { getEffectiveConfig = getEffectiveConfigMock; },
 }));
 vi.mock('../../src/main/config/board-config-manager', () => ({
   BoardConfigManager: class {
@@ -219,6 +223,7 @@ describe('registerAllIpc idempotency', () => {
     vi.clearAllMocks();
     mobileBridgeReconcileSpy.mockClear();
     mobileBridgeDisposeSpy.mockClear();
+    getEffectiveConfigMock.mockClear();
     // Reset the module-level `context` singleton between tests
     vi.resetModules();
   });
@@ -404,5 +409,26 @@ describe('registerAllIpc idempotency', () => {
     expect(sessionManager2).toBe(sessionManager1);
     expect(scheduler2).toBe(scheduler1);
     expect(boardConfigManager2).toBe(boardConfigManager1);
+  }, 30000);
+
+  it('reconciles the startup mobile bridge with a persisted enabled: true', async () => {
+    // Regression guard for the mobile-bridge launch un-gate: the startup
+    // reconcile in register-all.ts must forward a persisted enabled bit
+    // as-is, not force it to false the way the removed __KANGENTIC_DEV__
+    // gate did.
+    getEffectiveConfigMock.mockReturnValueOnce({
+      claude: {},
+      git: {},
+      terminal: {},
+      mobileBridge: { enabled: true, relayMode: 'custom', relayUrl: 'wss://relay.example.com' },
+    });
+    const { registerAllIpc } = await import('../../src/main/ipc/register-all');
+
+    registerAllIpc(makeMockWindow(1));
+
+    expect(mobileBridgeReconcileSpy).toHaveBeenCalledWith({
+      enabled: true,
+      relayUrl: new URL('wss://relay.example.com').href,
+    });
   }, 30000);
 });

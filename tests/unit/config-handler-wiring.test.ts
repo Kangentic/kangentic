@@ -115,7 +115,7 @@ vi.mock('../../src/main/retrieval/retrieval-service', () => ({
 // ---------------------------------------------------------------------------
 
 import { registerSystemHandlers } from '../../src/main/ipc/handlers/system';
-import { KANGENTIC_HOSTED_RELAY_URL, LOCAL_DEV_RELAY_URL } from '../../src/shared/relay';
+import { KANGENTIC_HOSTED_RELAY_URL } from '../../src/shared/relay';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -297,20 +297,18 @@ describe('CONFIG_SET IPC handler - mobileBridgeService reconcile wiring', () => 
     invokeHandler('config:set', { mobileBridge: { enabled: true } });
 
     expect(context.mobileBridgeService.reconcile).toHaveBeenCalledTimes(1);
-    // The mobile bridge is gated to dev builds until the mobile app
-    // launches, and this suite compiles with __KANGENTIC_DEV__ = false
-    // (vitest.config.ts) - i.e. the production build. So even a persisted
-    // enabled:true must reconcile to enabled:false here; relayUrl still
-    // flows from the EFFECTIVE config through resolveRelayUrl(), which
-    // normalizes the URL (new URL().href adds the trailing slash on an
-    // authority-only URL) - not the stored string verbatim.
+    // The mobile bridge ships in production; the handler must forward the
+    // persisted enabled bit as-is. relayUrl flows from the EFFECTIVE config
+    // through resolveRelayUrl(), which normalizes the URL (new URL().href
+    // adds the trailing slash on an authority-only URL) - not the stored
+    // string verbatim.
     expect(context.mobileBridgeService.reconcile).toHaveBeenCalledWith({
-      enabled: false,
+      enabled: true,
       relayUrl: new URL('wss://relay.example.com').href,
     });
   });
 
-  it('resolves relayUrl to the local dev relay when relayMode is "local"', () => {
+  it('resolves relayUrl to the hosted relay when relayMode is "local", since this suite compiles __KANGENTIC_DEV__ = false (production)', () => {
     const context = makeContext({ currentProjectPath: '/repo/main' });
     context.configManager.getEffectiveConfig.mockReturnValue({
       agent: { maxConcurrentSessions: 5, idleTimeoutMinutes: 30 },
@@ -321,9 +319,13 @@ describe('CONFIG_SET IPC handler - mobileBridgeService reconcile wiring', () => 
 
     invokeHandler('config:set', { mobileBridge: { enabled: true } });
 
+    // resolveRelayUrl() gates 'local' on __KANGENTIC_DEV__: a persisted
+    // relayMode: 'local' (saved from a dev build, or hand-edited) must not
+    // resolve to plaintext loopback in a production build. See
+    // src/shared/relay.ts's resolveRelayUrl and tests/unit/relay-url.test.ts.
     expect(context.mobileBridgeService.reconcile).toHaveBeenCalledWith({
-      enabled: false,
-      relayUrl: LOCAL_DEV_RELAY_URL,
+      enabled: true,
+      relayUrl: KANGENTIC_HOSTED_RELAY_URL,
     });
   });
 

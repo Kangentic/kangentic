@@ -13,12 +13,17 @@
  * matching phone SECRET key to the app through a dev-only env var, and
  * the ongoing session connects with no in-app pairing.
  *
- * Security posture: this is a deliberate dev backdoor and must never
- * exist in production. Every call site is gated on __KANGENTIC_DEV__, so
- * esbuild dead-code-eliminates the module from packaged builds; the
- * exchange only trusts files inside this repo checkout on the developer's
- * own machine, and only PUBLIC keys cross it. The QR/SAS ceremony remains
- * the only pairing path everywhere else.
+ * Security posture: this is a deliberate dev backdoor and must never exist
+ * in production. `MobileBridgeService` constructs this class only behind a
+ * `__KANGENTIC_DEV__ ? new DevQuickPair(...) : null` guard, not as an
+ * unconditional field initializer - gating only the later `.reconcile()`
+ * call is NOT enough, since esbuild's dead-code elimination cannot drop a
+ * class that is still constructed unconditionally even if none of its
+ * methods are ever invoked. With construction itself gated, esbuild
+ * dead-code-eliminates this whole module from packaged builds. The exchange
+ * only trusts files inside this repo checkout on the developer's own
+ * machine, and only PUBLIC keys cross it. The QR/SAS ceremony remains the
+ * only pairing path everywhere else.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -26,7 +31,6 @@ import { bytesToHex, CAPABILITY_VERBS, hexToBytes } from '@kangentic/protocol';
 import type { BridgeIdentity } from './identity';
 import { addOrReplaceDevice, loadRoster } from './roster-store';
 
-const DEV_PAIRING_DIRNAME = path.join('.kangentic', 'mobile-dev-pairing');
 const DESKTOP_FILE = 'desktop.json';
 const PHONE_FILE = 'phone.json';
 const DEV_DEVICE_DISPLAY_NAME = 'Dev Quick Pair';
@@ -46,7 +50,16 @@ interface PhoneFilePayload {
 function devPairingDir(): string {
   // In dev, electron-forge runs with cwd at the repo root; .kangentic/ is
   // the repo's gitignored per-project data directory.
-  return path.resolve(process.cwd(), DEV_PAIRING_DIRNAME);
+  //
+  // Inlined rather than a module-level const: a top-level `const x =
+  // path.join(...)` is a function CALL, which esbuild's tree-shaking keeps
+  // even when x has zero references (it cannot prove the call is
+  // side-effect-free), so an unused top-level const would survive into the
+  // production bundle as a dangling string literal even after this whole
+  // module becomes otherwise unreachable dead code. Inlining moves the call
+  // inside this function body, so it is eliminated together with the
+  // function when nothing calls it.
+  return path.resolve(process.cwd(), path.join('.kangentic', 'mobile-dev-pairing'));
 }
 
 export class DevQuickPair {

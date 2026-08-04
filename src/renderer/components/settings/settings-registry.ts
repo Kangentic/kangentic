@@ -167,18 +167,11 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'developer.activityDebugOverlay', tabId: 'developer', label: 'Activity Engine Debug Overlay', description: 'Show a floating panel with live activity-engine state for every running session. Useful for diagnosing spinner / idle bugs.', scope: 'global', keywords: ['debug', 'overlay', 'diagnostic', 'engine', 'activity', 'thinking', 'idle', 'subagent', 'background', 'shell', 'reason'] },
 
   // ── Mobile Devices ──
-  // Dev-only until the mobile app launches: compiled out of production
-  // builds (with the tab in AppSettingsPanel and the service gate in
-  // register-all.ts / system.ts) so the bridge cannot leak into a release.
-  ...(__KANGENTIC_DEV__
-    ? ([
-        { id: 'mobileBridge.enabled', tabId: 'mobile', label: 'Mobile Bridge', description: 'Let a paired phone connect to this desktop through an end-to-end encrypted relay.', scope: 'global', keywords: ['mobile', 'phone', 'companion', 'pair', 'pairing', 'qr', 'relay', 'bridge', 'remote'] },
-        { id: 'mobileBridge.relayMode', tabId: 'mobile', label: 'Relay', description: 'Where this desktop connects for mobile pairing. The relay only ever sees encrypted traffic.', scope: 'global', keywords: ['relay', 'server', 'hosted', 'local', 'custom', 'self-host', 'cloud', 'mobile', 'kangentic cloud'] },
-        { id: 'mobileBridge.relayUrl', tabId: 'mobile', label: 'Custom Relay Address', description: 'The self-hosted relay to dial when Relay above is set to Custom Relay.', scope: 'global', keywords: ['relay', 'server', 'url', 'address', 'self-host', 'websocket', 'mobile', 'custom'] },
-        { id: 'mobileBridge.pairing', tabId: 'mobile', label: 'Pair a Device', description: 'Scan a QR code with the Kangentic mobile app to pair a new phone.', scope: 'global', keywords: ['pair', 'pairing', 'qr', 'scan', 'phone', 'mobile', 'sas', 'code'] },
-        { id: 'mobileBridge.devices', tabId: 'mobile', label: 'Paired Devices', description: 'Phones paired to this desktop, identified by key fingerprint. Rename or revoke a device here.', scope: 'global', keywords: ['paired', 'devices', 'phone', 'revoke', 'rename', 'fingerprint', 'mobile'] },
-      ] satisfies SettingDefinition[])
-    : []),
+  { id: 'mobileBridge.enabled', tabId: 'mobile', label: 'Mobile Bridge', description: 'Let a paired phone connect to this desktop through an end-to-end encrypted relay.', scope: 'global', keywords: ['mobile', 'phone', 'companion', 'pair', 'pairing', 'qr', 'relay', 'bridge', 'remote'] },
+  { id: 'mobileBridge.relayMode', tabId: 'mobile', label: 'Relay', description: 'Where this desktop connects for mobile pairing. The relay only ever sees encrypted traffic.', scope: 'global', keywords: ['relay', 'server', 'hosted', 'local', 'custom', 'self-host', 'cloud', 'mobile', 'kangentic cloud'] },
+  { id: 'mobileBridge.relayUrl', tabId: 'mobile', label: 'Custom Relay Address', description: 'The self-hosted relay to dial when Relay above is set to Custom Relay.', scope: 'global', keywords: ['relay', 'server', 'url', 'address', 'self-host', 'websocket', 'mobile', 'custom'] },
+  { id: 'mobileBridge.pairing', tabId: 'mobile', label: 'Pair a Device', description: 'Scan a QR code with the Kangentic mobile app to pair a new phone.', scope: 'global', keywords: ['pair', 'pairing', 'qr', 'scan', 'phone', 'mobile', 'sas', 'code'] },
+  { id: 'mobileBridge.devices', tabId: 'mobile', label: 'Paired Devices', description: 'Phones paired to this desktop, identified by key fingerprint. Rename or revoke a device here.', scope: 'global', keywords: ['paired', 'devices', 'phone', 'revoke', 'rename', 'fingerprint', 'mobile'] },
 ];
 
 /** Lookup by ID for O(1) access. */

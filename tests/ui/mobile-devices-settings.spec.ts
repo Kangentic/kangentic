@@ -15,12 +15,18 @@
  * __KANGENTIC_DEV__ is always true here and the relay mode Select renders
  * all three options ("Local", "Kangentic Cloud", "Custom Relay") - "Local"
  * is a dev-only Select option, gated behind __KANGENTIC_DEV__ in the
- * component, but is always offered under this tier's dev webServer. Unlike
- * an earlier version of this module, "hosted" resolves to
- * KANGENTIC_HOSTED_RELAY_URL unconditionally (not build-mode-dependent), so
- * this tier actually exercises the "Kangentic Cloud" label and its resolved
- * URL, not just "Local". These literals are hard-coded rather than imported
- * from src/shared/relay.ts, since playwright.config.ts sets no `define` and
+ * component, but is always offered under this tier's dev webServer. "hosted"
+ * resolves to KANGENTIC_HOSTED_RELAY_URL unconditionally (not build-mode-
+ * dependent), so this tier actually exercises the "Kangentic Cloud" label
+ * and its resolved URL, not just "Local". "local" is DIFFERENT: unlike
+ * "hosted", resolveRelayUrl() gates what "local" resolves TO on
+ * __KANGENTIC_DEV__ too (not just whether the Select offers it) - a
+ * production build falls through to the hosted relay instead of loopback,
+ * so a persisted relayMode: 'local' can never reach a real user's phone as
+ * plaintext ws://127.0.0.1:8080. This tier's dev webServer is exactly why
+ * the "Local" test below still resolves to loopback: it runs the dev
+ * branch. These literals are hard-coded rather than imported from
+ * src/shared/relay.ts, since playwright.config.ts sets no `define` and
  * importing a runtime export from that module into a .spec.ts throws at
  * module load.
  *

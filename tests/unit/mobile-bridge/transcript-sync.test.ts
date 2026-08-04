@@ -157,7 +157,13 @@ describe('sliceTranscriptWindow', () => {
   });
 
   it('stops early on the byte budget but always returns at least one entry', () => {
-    const huge = assistantEntry('huge', 'y'.repeat(DELTA_CHUNK_BUDGET_CHARS));
+    // A 'user' entry, not 'assistant': wire-mappers.ts's clampBlocks bounds an
+    // assistant entry's block list before this ever runs, so an assistant
+    // entry can no longer BE this oversized on the wire - that clamp has its
+    // own dedicated coverage (wire-mappers-transcript-blocks.test.ts). This
+    // test exercises sliceTranscriptWindow's own independent budget-stop, for
+    // which a 'user' entry's unbounded `text` still works.
+    const huge = userEntry('huge', 'y'.repeat(DELTA_CHUNK_BUDGET_CHARS));
     const slice = sliceTranscriptWindow(resolved(5, [userEntry('u0'), huge]), undefined, 5);
     expect(slice.entries.map((entry) => entry.uuid)).toEqual(['huge']);
     expect(slice.startIndex).toBe(1);
