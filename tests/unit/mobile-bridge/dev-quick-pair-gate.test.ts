@@ -20,6 +20,16 @@
  * 2. The `.reconcile()` CALL site, gated separately so a production build
  *    (where the field is always `null`) never invokes it.
  *
+ * A THIRD, independent invariant guards the same dead-code-elimination goal
+ * one level down, inside dev-quick-pair.ts itself: `devPairingDir()`'s
+ * `.kangentic/mobile-dev-pairing` path is built INLINE inside the function
+ * body, not as a top-level `const x = path.join(...)`. A top-level const
+ * initialized by a function call is a call esbuild cannot prove
+ * side-effect-free, so it survives tree-shaking (as a dangling string
+ * literal) even once nothing else in the module is reachable. Re-hoisting it
+ * back to module scope would silently reintroduce that leak, so it gets its
+ * own scan below.
+ *
  * This cannot be a behavioral test: __KANGENTIC_DEV__ is a compile-time
  * substitution, and vitest.config.ts pins it to `false`, so the gated branch
  * is simply dead code at test time - a runtime assertion could not observe
@@ -33,6 +43,7 @@ import path from 'node:path';
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
 const SERVICE_PATH = path.join(REPO_ROOT, 'src/main/mobile-bridge/mobile-bridge-service.ts');
+const DEV_QUICK_PAIR_PATH = path.join(REPO_ROOT, 'src/main/mobile-bridge/dev-quick-pair.ts');
 
 describe('dev-quick-pair stays gated to dev builds', () => {
   it('DevQuickPair is constructed only inside a __KANGENTIC_DEV__ ternary, never unconditionally', () => {
@@ -76,5 +87,33 @@ describe('dev-quick-pair stays gated to dev builds', () => {
       openBraces,
       'the nearest `if (__KANGENTIC_DEV__)` above the call site does not actually enclose it (brace mismatch)',
     ).toBeGreaterThan(closeBraces);
+  });
+
+  it('the dev-pairing directory path is built inline, never as a top-level path.*() const', () => {
+    const source = fs.readFileSync(DEV_QUICK_PAIR_PATH, 'utf-8');
+
+    // devPairingDir() itself must still build the path inline (the function
+    // this invariant is actually about) - guards against the whole helper
+    // disappearing silently, which would make the negative assertion below
+    // vacuously true.
+    expect(
+      source.includes("path.resolve(process.cwd(), path.join('.kangentic', 'mobile-dev-pairing'))"),
+      'devPairingDir() should build the dev-pairing path inline inside the function body - has it moved or changed shape?',
+    ).toBe(true);
+
+    // No top-level (column-0) `const x = path.join(...)` / `path.resolve(...)`
+    // anywhere in the file: such a const is a function call esbuild cannot
+    // prove side-effect-free, so it survives tree-shaking as a dangling
+    // string literal even after the rest of the module is unreachable dead
+    // code - the exact leak this file's header documents as already fixed
+    // once (DEV_PAIRING_DIRNAME, removed). Column-0 only, deliberately: a
+    // const declared inside a function or class body (indented) is fine,
+    // since it dies with its enclosing scope when nothing calls that scope.
+    expect(
+      /^const\s+\w+\s*=\s*path\.(join|resolve)\(/m.test(source),
+      'no top-level `const x = path.join(...)`/`path.resolve(...)` in dev-quick-pair.ts - that survives esbuild tree-shaking ' +
+        'as a dangling string literal even once the module is otherwise unreachable dead code. Build the path inline inside ' +
+        'the function that needs it instead (see devPairingDir()).',
+    ).toBe(false);
   });
 });
