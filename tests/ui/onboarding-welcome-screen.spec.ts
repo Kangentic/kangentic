@@ -269,4 +269,47 @@ test.describe('Welcome screen readiness', () => {
     await expect(page.locator('[data-testid="welcome-git-status"]')).toBeHidden();
     await expect(toggle).toHaveText(/Show setup/);
   });
+
+  test('the footer links sit on one row and each opens its own URL externally', async () => {
+    ({ browser, page } = await launchWithOverrides({}));
+
+    const setupGuide = page.locator('[data-testid="welcome-setup-guide"]');
+    const pairPhone = page.locator('[data-testid="welcome-pair-phone"]');
+    await expect(setupGuide).toBeVisible();
+    await expect(pairPhone).toBeVisible();
+
+    // Pinning the row's geometry mechanically, not by eye. The container is
+    // `flex` with no `flex-wrap`, so it cannot break onto a second line: what
+    // this actually guards is the row surviving as a row (a switch to
+    // flex-col, or the buttons going block-level, splits the y values by a
+    // full line box), and the two links staying side by side in order rather
+    // than overlapping or reordering.
+    // Compared with a tolerance rather than exactly: Blink lays out in 1/64px
+    // units and `items-center` halves the leftover cross-axis space, so two
+    // children whose heights ever diverge by an odd sub-pixel amount get y
+    // values differing in the last digit. Zero-tolerance geometry assertions
+    // are banned by .claude/rules/cross-platform-parity.md; a real break moves
+    // y far past 1px, so the guard keeps its teeth.
+    const [setupGuideBox, pairPhoneBox] = await Promise.all([
+      setupGuide.boundingBox(),
+      pairPhone.boundingBox(),
+    ]);
+    expect(setupGuideBox).not.toBeNull();
+    expect(pairPhoneBox).not.toBeNull();
+    expect(Math.abs(pairPhoneBox!.y - setupGuideBox!.y)).toBeLessThanOrEqual(1);
+    // gap-4 (16px) makes the ordering strict, so this needs no tolerance.
+    expect(pairPhoneBox!.x).toBeGreaterThan(setupGuideBox!.x + setupGuideBox!.width);
+
+    // Both links are clicked, so each one's URL is pinned to its own button.
+    // Asserting the accumulated array in order also catches a handler wired to
+    // the wrong constant, which asserting only the last call would miss.
+    await setupGuide.click();
+    await pairPhone.click();
+    await expect
+      .poll(() => page.evaluate(() => window.__openedExternalUrls ?? []))
+      .toEqual([
+        'https://www.kangentic.com/getting-started/',
+        'https://www.kangentic.com/mobile/pairing/',
+      ]);
+  });
 });

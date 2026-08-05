@@ -13,6 +13,7 @@ import { OverseerMascot } from '../onboarding/OverseerMascot';
 import brandLogoUrl from '@kangentic/branding/assets/brandmark-small.svg?url';
 
 const SETUP_GUIDE_URL = 'https://www.kangentic.com/getting-started/';
+const MOBILE_PAIRING_URL = 'https://www.kangentic.com/mobile/pairing/';
 const CURATED_NOT_FOUND_LIMIT = 3;
 
 /** Reusable detection row used for both the Git and agent entries */
@@ -447,16 +448,25 @@ export function WelcomeScreen() {
           </div>
         </div>
 
-        {/* Footer link row: laid out to accept a second low-weight link later
-            (e.g. a Kangentic Mobile mention, tracked separately) without a relayout. */}
         <div className="mt-6 mb-8 flex items-center justify-center gap-4 text-sm">
           <button
             type="button"
             onClick={() => window.electronAPI.shell.openExternal(SETUP_GUIDE_URL)}
             className="inline-flex items-center gap-1 text-accent-fg underline underline-offset-2 hover:opacity-80 cursor-pointer"
             title={SETUP_GUIDE_URL}
+            data-testid="welcome-setup-guide"
           >
             Read the setup guide
+            <ExternalLink size={12} />
+          </button>
+          <button
+            type="button"
+            onClick={() => window.electronAPI.shell.openExternal(MOBILE_PAIRING_URL)}
+            className="inline-flex items-center gap-1 text-accent-fg underline underline-offset-2 hover:opacity-80 cursor-pointer"
+            title={MOBILE_PAIRING_URL}
+            data-testid="welcome-pair-phone"
+          >
+            Pair a phone
             <ExternalLink size={12} />
           </button>
         </div>
