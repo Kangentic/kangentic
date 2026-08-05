@@ -20,6 +20,7 @@ interface ShutdownDependencies {
   getCurrentProjectId: () => string | null;
   deleteProjectFromIndex: (projectId: string) => void;
   stopUpdaterTimers: () => void;
+  stopAnnouncementTimers: () => void;
   clearPendingTimers: () => void;
   isEphemeral: boolean;
 }
@@ -42,6 +43,7 @@ export function syncShutdownCleanup(dependencies: ShutdownDependencies): void {
   // Clear pending timers that could fire during shutdown
   dependencies.clearPendingTimers();
   dependencies.stopUpdaterTimers();
+  dependencies.stopAnnouncementTimers();
   // Stop the periodic metrics snapshot so no tick races the sync shutdown writes.
   stopMetricsSnapshotTimer();
 

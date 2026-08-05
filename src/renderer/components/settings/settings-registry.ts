@@ -173,6 +173,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'mobileBridge.relayUrl', tabId: 'mobile', label: 'Custom Relay Address', description: 'The self-hosted relay to dial when Relay above is set to Custom Relay.', scope: 'global', keywords: ['relay', 'server', 'url', 'address', 'self-host', 'websocket', 'mobile', 'custom'] },
   { id: 'mobileBridge.pairing', tabId: 'mobile', label: 'Pair a Device', description: 'Scan a QR code with the Kangentic mobile app to pair a new phone.', scope: 'global', keywords: ['pair', 'pairing', 'qr', 'scan', 'phone', 'mobile', 'sas', 'code'] },
   { id: 'mobileBridge.devices', tabId: 'mobile', label: 'Paired Devices', description: 'Phones paired to this desktop, identified by key fingerprint. Rename or revoke a device here.', scope: 'global', keywords: ['paired', 'devices', 'phone', 'revoke', 'rename', 'fingerprint', 'mobile'] },
+  { id: 'mobileBridge.getApp', tabId: 'mobile', label: 'Get the App', description: 'Join the Kangentic Mobile closed test on Android: join the testers group, then opt in on Google Play.', scope: 'global', keywords: ['android', 'play', 'store', 'closed test', 'beta', 'tester', 'opt in', 'install', 'download', 'app', 'mobile'] },
 ];
 
 /** Lookup by ID for O(1) access. */

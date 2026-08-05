@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '../shared/ipc-channels';
 import type { ElectronAPI, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, SessionEvent, UpdateDownloadedInfo, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner } from '../shared/types';
+import type { Announcement } from '../shared/announcements';
 import { POPOUT_ARG_PREFIX } from '../shared/pop-out';
 import type { PopOutDescriptor, PopOutKind, PopOutParamsByKind } from '../shared/pop-out';
 import { installConsoleCapture } from './diagnostics/console-capture';
@@ -473,6 +474,15 @@ const api: ElectronAPI = {
       const handler = (_event: Electron.IpcRendererEvent, info: UpdateDownloadedInfo) => callback(info);
       ipcRenderer.on(IPC.UPDATE_DOWNLOADED, handler);
       return () => ipcRenderer.removeListener(IPC.UPDATE_DOWNLOADED, handler);
+    },
+  },
+
+  announcements: {
+    getActive: () => ipcRenderer.invoke(IPC.ANNOUNCEMENTS_GET),
+    onChanged: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, active: Announcement[]) => callback(active);
+      ipcRenderer.on(IPC.ANNOUNCEMENTS_CHANGED, handler);
+      return () => ipcRenderer.removeListener(IPC.ANNOUNCEMENTS_CHANGED, handler);
     },
   },
 

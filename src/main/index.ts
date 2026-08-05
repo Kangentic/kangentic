@@ -184,6 +184,7 @@ process.on('unhandledRejection', (reason) => {
 });
 
 import { initUpdater, updateUpdaterWindow, stopUpdaterTimers } from './updater';
+import { initAnnouncements, updateAnnouncementsWindow, stopAnnouncementTimers } from './announcements';
 import { ensureSpawnHelperPermissions } from './pty/spawn/spawn-helper-permissions';
 
 // Initialize anonymous analytics BEFORE app.whenReady() -- the SDK requires this
@@ -943,6 +944,7 @@ app.whenReady().then(async () => {
 
   createWindow();
   initUpdater(mainWindow!);
+  initAnnouncements(mainWindow!);
 
   // Windows has no powerMonitor 'shutdown' event (Linux/macOS only). An OS
   // shutdown/restart/log-off there is signaled via this BrowserWindow event
@@ -1056,6 +1058,7 @@ app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow();
     updateUpdaterWindow(mainWindow!);
+    updateAnnouncementsWindow(mainWindow!);
   }
 });
 
@@ -1104,6 +1107,7 @@ function getShutdownDependencies() {
     getCurrentProjectId,
     deleteProjectFromIndex,
     stopUpdaterTimers,
+    stopAnnouncementTimers,
     clearPendingTimers: () => {
       if (activateAllProjectsTimer) {
         clearTimeout(activateAllProjectsTimer);

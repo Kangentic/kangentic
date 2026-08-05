@@ -1,4 +1,5 @@
 import type { PopOutDescriptor, PopOutKind, PopOutParamsByKind } from './pop-out';
+import type { Announcement } from './announcements';
 
 // === Database Models ===
 
@@ -2577,6 +2578,13 @@ export interface AppConfig {
    *  Empty string on an existing install that has not yet upgraded past the
    *  release this key was added in. */
   lastWhatsNewShownVersion: string;
+  /** Ids of in-app announcements the user has dismissed from the banner
+   *  (src/shared/announcements.ts). Auto-set on dismissal, not shown in the
+   *  settings UI. Pruned on write to ids still present in the active feed so
+   *  the array stays bounded (computeDismissedIdsAfterDismiss). Optional
+   *  because configs written before this key existed lack it until their next
+   *  save; readers guard with `?? []`. */
+  dismissedAnnouncementIds?: string[];
   /** Project ids whose onboarding checklist the user has dismissed. Global (per-machine)
    *  memory keyed by project id, like `lastActiveTaskByProject`. `undefined` means the
    *  one-time upgrade backfill (App.tsx, on first hydration) has not run yet; `[]` means
@@ -2853,6 +2861,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   hasCompletedFirstRun: false,
   lastSeenReleaseNotesVersion: '',
   lastWhatsNewShownVersion: '',
+  dismissedAnnouncementIds: [],
   skipDeleteConfirm: false,
   skipBoardConfigConfirm: false,
   autoFocusIdleSession: false,
@@ -4663,6 +4672,12 @@ export interface ElectronAPI {
     checkForUpdate: () => Promise<void>;
     installUpdate: () => Promise<void>;
     onUpdateDownloaded: (callback: (info: UpdateDownloadedInfo) => void) => () => void;
+  };
+
+  // Announcements (remote feed; active = filtered for this client in main)
+  announcements: {
+    getActive: () => Promise<Announcement[]>;
+    onChanged: (callback: (active: Announcement[]) => void) => () => void;
   };
 
   // Backlog Attachments

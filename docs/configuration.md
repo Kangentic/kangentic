@@ -97,6 +97,7 @@ These settings appear in both App Settings (as defaults) and Project Settings (a
 | `hasCompletedFirstRun` | boolean | `false` | Legacy: set true on first task creation, kept for schema/fixture compatibility. No onboarding UI reads it, and it is not the walkthrough gate: creating a task is step 3 of the walkthrough, so this flips mid-flow. The walkthrough is suppressed once `onboardedProjectIds` is non-empty. Auto-set, not shown in UI. |
 | `lastSeenReleaseNotesVersion` | string | `''` | The version whose release-notes modal has already been auto-shown (see [Auto-Update Behavior](deployment.md#auto-update-behavior)), so it does not reopen on every relaunch after "Later". Auto-set, not shown in UI. |
 | `lastWhatsNewShownVersion` | string | `''` | The version whose post-update ["What's New" dialog](deployment.md#auto-update-behavior) has already been shown. Deliberately separate from `lastSeenReleaseNotesVersion`, which records the PENDING version when the pre-restart modal is dismissed: a user who clicks "Later" and then quits normally has the update installed by `autoInstallOnAppQuit`, and would relaunch with the new version already marked seen and the notes never read. Written when the dialog OPENS, not when it closes, so quitting with it open does not re-arm it. Seeded to the running version on a fresh install (no `config.json` existed at launch), so a first-time user is not shown notes for software they have never run. Auto-set, not shown in UI. |
+| `dismissedAnnouncementIds` | string[] | `[]` | Ids of [in-app announcements](#in-app-announcements) dismissed from the banner. Pruned on write to ids still present in the active feed, so the array stays bounded with no separate cleanup. Auto-set, not shown in UI. |
 | `onboardedProjectIds` | string[] \| undefined | `undefined` | Project ids whose onboarding checklist the user has dismissed. `undefined` means the one-time upgrade backfill (on first app hydration) has not run yet; `[]` means it has run and nothing is dismissed. Global, keyed by project id like `lastActiveTaskByProject`. **Emptiness, not membership, gates the walkthrough:** the checklist auto-opens only while this list is empty, because the walkthrough teaches the app rather than a repo and must not replay on every newly added project. It becomes non-empty by three routes, all meaning "not a first run": the backfill finding an existing project, a real dismissal, or all five steps completed. Auto-set, not shown in UI. |
 | `onboardingBaseline` | Record\<string, object\> \| undefined | `undefined` | Per-project snapshot of the settings the onboarding checklist watches (`defaultAgent`, `defaultModel`, `defaultEffort`, `permissionMode`, and a `swimlaneSignature` string encoding of the board's shape), captured on first checklist open. Adding a project does not capture one: the auto-open gate is install-scoped, so a second project has no baseline until the checklist is opened there by hand. Checklist steps 1 and 2 tick when live state DIFFERS from this, so opening a settings screen and closing it unchanged earns no checkmark. Both are guarded on the baseline existing, so a baseline-less project reports them un-ticked rather than complete. Keyed by project id; replaced wholesale on write (a `CONFIG_DICTIONARY_PATHS` entry). Auto-set, not shown in UI. |
 | `windowBounds` | object \| null | `null` | Persisted window bounds `{x, y, width, height}`. Auto-saved, not shown in UI. |
@@ -402,7 +403,7 @@ The Mobile Devices tab hosts the desktop half of the mobile companion app's pair
 | `mobileBridge.relayMode` | `'hosted' \| 'local' \| 'custom'` | `'hosted'` | `'hosted'` always dials the Kangentic-hosted relay (`wss://relay.kangentic.com`), in every build. `'local'` is a dev-only mode: the Select only offers it in a dev build, and `resolveRelayMode()` itself gates the mode on `__KANGENTIC_DEV__` - a dev build dials `ws://127.0.0.1:8080` (`src/shared/relay.ts`'s `LOCAL_DEV_RELAY_URL`), while a production build reports and dials `'hosted'` even if a persisted `relayMode: 'local'` reaches it (e.g. carried over from a dev build's config in the same shared configDir). Both `resolveRelayUrl()` and the settings Select read `resolveRelayMode()`, so the mode shown and the URL dialed cannot disagree. `'custom'` dials `relayUrl` instead, for self-hosters. |
 | `mobileBridge.relayUrl` | string | `''` | The self-hosted relay to dial. Only consulted when `relayMode === 'custom'`; resolve the actual dial address through `resolveRelayUrl()` rather than reading this key directly - it normalizes the value and falls back to the hosted relay if this is empty or fails validation, so it never resolves to `''`. |
 
-**Actions (not config keys):** the Mobile Devices tab also exposes two settings-registry entries that are UI surfaces, not `AppConfig` keys: **Pair a Device** (registry id `mobileBridge.pairing`) starts the QR pairing ceremony described in [Mobile Bridge](mobile-bridge.md#pairing-ceremony), and **Paired Devices** (registry id `mobileBridge.devices`) lists currently paired phones, identified by key fingerprint, with rename and revoke actions - pairing grants all ten capability verbs uniformly, so there is no per-device capability control. Both are backed by the `mobile:*` IPC channels and the signed device roster (`src/main/mobile-bridge/roster-store.ts`), not persisted in `AppConfig`.
+**Actions (not config keys):** the Mobile Devices tab also exposes three settings-registry entries that are UI surfaces, not `AppConfig` keys: **Pair a Device** (registry id `mobileBridge.pairing`) starts the QR pairing ceremony described in [Mobile Bridge](mobile-bridge.md#pairing-ceremony), **Paired Devices** (registry id `mobileBridge.devices`) lists currently paired phones, identified by key fingerprint, with rename and revoke actions - pairing grants all ten capability verbs uniformly, so there is no per-device capability control - and **Get the App** (registry id `mobileBridge.getApp`) shows the Android closed-test signup steps (testers Google Group + Play opt-in page, each with a QR code and link), deliberately rendered OUTSIDE the bridge-enabled gating so it stays usable with the bridge off. The first two are backed by the `mobile:*` IPC channels and the signed device roster (`src/main/mobile-bridge/roster-store.ts`), not persisted in `AppConfig`; Get the App is purely informational.
 
 ### Privacy
 
@@ -626,11 +627,48 @@ Config files written by hand (without `id` fields on columns) are treated as add
 | `boardConfig:shortcutsChanged` | Event: shortcuts file changed |
 | `boardConfig:setDefaultBaseBranch` | Update the default base branch in `kangentic.json` |
 
+## In-App Announcements
+
+The desktop app periodically fetches a static JSON feed, `announcements.json` on this repo's
+`main` branch (served via `raw.githubusercontent.com`), and shows the highest-priority active
+announcement as a dismissible banner above the board content; "Learn more" opens a dialog with
+the markdown body, external links, and a QR code. There is no backend and no account: an
+unreachable, malformed, or empty feed simply means no banner (offline and self-hosted setups
+lose nothing). The poll runs 10 seconds after launch and every 4 hours (`src/main/announcements.ts`),
+is skipped entirely under `NODE_ENV=test`, and never emits error telemetry.
+
+Feed schema (`src/shared/announcements.ts`): each entry carries `id`, `title` (banner line),
+`body` (markdown intro), `links` (label + https URL; a link flagged `qr: true` renders a large
+scannable QR code above its button, for phone-destined links like store opt-in pages), optional
+`sections` (titled sub-messages, each `{ heading?, body?, links? }`, for one announcement that
+carries several messages such as per-platform statuses), `minVersion` / `maxVersion` (inclusive
+version window), `platforms` (`win32` / `darwin` / `linux`; omitted = all - note this targets
+the DESKTOP OS, not the user's phone), `publishedAt` / `expiresAt` (ISO 8601), and `priority`.
+Unknown fields and malformed entries are ignored, so the feed can grow without breaking released
+clients; an entry needing new client behavior sets `minVersion` instead.
+
+**Publishing warning:** an edit to `announcements.json` on `main` is a production push - it
+reaches every released client within one poll cycle (about 4 hours, plus ~5 minutes of CDN
+cache). Set targeting fields conservatively and put an `expiresAt` on every entry.
+`tests/unit/announcements-json-valid.test.ts` validates the committed file through the real
+parser on every push, so a typo'd entry (which production would silently drop) fails CI on the
+content PR instead of shipping invisible.
+
+**Authoring contract - no scrolling:** an announcement must fit its dialog without a scrollbar
+on a typical desktop window (QR links lay out side by side to help; the dialog's scroll is a
+safety valve for very small windows only, and a UI test pins the contract for a realistic
+two-QR announcement). Keep bodies to a few short paragraphs and QR links to two or three; if a
+message wants more, it should be a link to a page, not a longer announcement.
+
+Dismissals persist per-announcement-id in `dismissedAnnouncementIds` (see the
+[Top-Level reference](#top-level)).
+
 ## Environment Variables
 
 | Variable | Purpose |
 |----------|---------|
 | `KANGENTIC_DATA_DIR` | Override the config/data directory path |
+| `KANGENTIC_ANNOUNCEMENTS_URL` | Override the announcements feed URL (for testing against a local fixture) |
 
 ## Legacy Migration
 

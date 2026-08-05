@@ -420,6 +420,12 @@ Detach a registered UI surface (usage stats, git changes, the task Browser pane,
 | `updater:install` | invoke | Install downloaded update (quit and install) |
 | `updater:downloaded` | on | Event: update has been downloaded and is ready to install |
 
+### Announcements (2 channels)
+| Channel | Pattern | Purpose |
+|---------|---------|---------|
+| `announcements:get` | invoke | Current active announcements (remote feed, already filtered for this client's version/platform in main) |
+| `announcements:changed` | on | Event: the filtered active announcement list changed since the last poll |
+
 ### Search (1 channel)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|

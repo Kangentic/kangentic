@@ -581,6 +581,16 @@ Desktop and toast notifications fire when an agent needs attention and the user 
 
 The Settings > Notifications panel exposes four configurable events: **Agent Idle**, **Agent Crash** (session exit; desktop alerts on error exits only, toasts also cover clean exits), **Plan Complete**, and **Spawn Stalled** (a task spawn that waits too long on the git queue while preparing). Each can be set to Off, Desktop only, Toast only, or Both. Toast duration and max visible count are also configurable.
 
+### Announcements
+
+Occasionally Kangentic shows a product announcement (for example, a call for mobile-app beta
+testers) as a slim banner above the board. **Learn more** opens the full message with links and
+a QR code; the **X** dismisses that announcement permanently on this machine. Announcements are
+fetched from a static file on the public GitHub repo - no account, no tracking, and if the feed
+is unreachable (offline or self-hosted setups) the banner simply never appears. See
+[Configuration - In-App Announcements](configuration.md#in-app-announcements) for the feed
+mechanics.
+
 ### Mobile Devices
 
 The Mobile Devices tab is the desktop half of the mobile companion app's pairing link - global (applies to this desktop installation, not any one project) and off by default. Enable the **Mobile Bridge** toggle, then pick a **Relay**: *Kangentic Cloud* (the default hosted relay) or *Custom Relay* (your own self-hosted address, entered in the field that appears below). Dev builds also offer a *Local* option pointing at a relay on localhost. The address actually being dialed is shown beneath the picker, and **Test connection** probes it for reachability before you pair. The relay only ever sees encrypted traffic. A custom address must use `wss://`, or `ws://` for localhost only, since the phone refuses to pair over an untrusted transport.
@@ -588,6 +598,8 @@ The Mobile Devices tab is the desktop half of the mobile companion app's pairing
 Click **Pair a Device** to display a QR code; scanning it with the Kangentic mobile app starts an end-to-end encrypted pairing handshake. Once the handshake completes, both the desktop and the phone show the same short code - compare them, then tap **Confirm** on the phone. The desktop auto-enrolls the device as soon as it hears back; there is no second confirmation to make on the desktop. This catches a photographed or relayed QR, since an attacker cannot make both sides show the same code. To back out, cancel on the phone (or close the desktop's pairing panel) before confirming.
 
 The phone is treated as an extension of your own desktop, not a separate integration to configure: pairing grants it full access to the same ten capabilities the protocol defines (there is no shell, file, or arbitrary-command access in the protocol at all). Paired devices appear in a list below, identified by a key fingerprint you can compare against the phone's own Settings > Devices screen, along with their connection status and paired date. Rename a device from that list, or revoke it - revoking removes it from the desktop's signed roster immediately, and a revoked phone must be paired again from scratch to reconnect. See [Mobile Bridge](mobile-bridge.md) for the underlying protocol, pairing ceremony, and security design.
+
+Don't have the app yet? The **Get the App** section at the bottom of the tab stays usable even with the bridge toggle off. Kangentic Mobile for Android is currently in closed testing, and joining is two steps, each with a QR code to scan from your phone plus a clickable link: join the testers Google Group, then open the Google Play opt-in page and tap **Become a tester**. Use the same Google account your phone's Play Store is signed into, and stay opted in while the test is running.
 
 ### Privacy
 

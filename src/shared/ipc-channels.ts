@@ -366,6 +366,10 @@ export const IPC = {
   UPDATE_INSTALL: 'updater:install',
   UPDATE_DOWNLOADED: 'updater:downloaded',
 
+  // Announcements (remote feed poll; see src/main/announcements.ts)
+  ANNOUNCEMENTS_GET: 'announcements:get',
+  ANNOUNCEMENTS_CHANGED: 'announcements:changed',
+
   // Search
   SEARCH_EVERYTHING: 'search:everything',
 

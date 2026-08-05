@@ -21,6 +21,8 @@ import { useOnboardingProgress } from '../../hooks/useOnboardingProgress';
 import { ProjectPathMissingDialog } from '../dialogs/ProjectPathMissingDialog';
 import { ReleaseNotesDialog } from '../dialogs/ReleaseNotesDialog';
 import { WhatsNewDialog } from '../dialogs/WhatsNewDialog';
+import { AnnouncementBanner } from '../announcements/AnnouncementBanner';
+import { AnnouncementDialog } from '../announcements/AnnouncementDialog';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useBoardStore } from '../../stores/board-store';
@@ -433,6 +435,7 @@ export function AppLayout() {
         )}
 
         <div className="flex-1 flex flex-col min-w-0" ref={terminal.contentColRef}>
+          <AnnouncementBanner />
           {currentProject ? (
             <>
               <ViewToggle />
@@ -510,6 +513,7 @@ export function AppLayout() {
       <ProjectPathMissingDialog />
       <ReleaseNotesDialog />
       <WhatsNewDialog />
+      <AnnouncementDialog />
       {onboardingChecklistOpen && <WelcomeChecklistDialog />}
       <WalkthroughLayer />
       <ToastContainer />

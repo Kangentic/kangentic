@@ -2,8 +2,10 @@ import { create } from 'zustand';
 import type { AppConfig, DeepPartial, AgentDetectionInfo, OnboardingBaseline, OnboardingStepKey, SerializedWorkspace } from '../../shared/types';
 import { DEFAULT_CONFIG } from '../../shared/types';
 import { deepMergeConfig } from '../../shared/object-utils';
+import { computeDismissedIdsAfterDismiss } from '../../shared/announcements';
 import { parseModelId } from '../../shared/model-id';
 import { invalidateAllProjects } from './project-cache';
+import { useAnnouncementsStore } from './announcements-store';
 
 /** Last-viewed settings tab, preserved across HMR (Pattern A) so the panel
  *  reopens to the same section during dogfooding instead of resetting to the
@@ -49,6 +51,9 @@ interface ConfigStore {
   updateConfig: (partial: DeepPartial<AppConfig>) => Promise<void>;
   /** Dismiss the onboarding checklist for a project (adds its id to `onboardedProjectIds`). */
   markProjectOnboarded: (projectId: string) => void;
+  /** Dismiss an in-app announcement (adds its id to `dismissedAnnouncementIds`,
+   *  pruned to ids still in the active feed so the array stays bounded). */
+  dismissAnnouncement: (announcementId: string) => void;
   /** Record what a project's watched settings looked like before the user touched them, so
    *  checklist steps 1 and 2 can tick on a real change rather than on a screen being opened.
    *  No-op when a baseline already exists, so re-opening the checklist never re-baselines
@@ -282,6 +287,21 @@ export const useConfigStore = create<ConfigStore>((set, get) => {
       const existing = get().config.onboardedProjectIds ?? [];
       if (existing.includes(projectId)) return;
       get().updateConfig({ onboardedProjectIds: [...existing, projectId] });
+    },
+
+    dismissAnnouncement: (announcementId) => {
+      const existing = get().config.dismissedAnnouncementIds ?? [];
+      if (existing.includes(announcementId)) return;
+      const activeIds = useAnnouncementsStore.getState().active
+        .map((announcement) => announcement.id);
+      // Fire-and-forget, matching the other incidental config writes here:
+      // failing to persist the dismissal must not break hiding the banner.
+      void get()
+        .updateConfig({
+          dismissedAnnouncementIds:
+            computeDismissedIdsAfterDismiss(existing, activeIds, announcementId),
+        })
+        .catch(() => undefined);
     },
 
     captureOnboardingBaseline: (projectId, baseline) => {

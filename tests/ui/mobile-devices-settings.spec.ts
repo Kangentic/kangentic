@@ -167,6 +167,39 @@ test.describe('Mobile Devices settings tab', () => {
     }
   });
 
+  test('Get the App section stays interactive with the bridge off and opens both signup links', async () => {
+    // Bridge OFF is the interesting case: the section sits OUTSIDE the
+    // enabled-gated wrapper (opacity-40 pointer-events-none when disabled),
+    // because a user who has not installed the app yet is exactly the user
+    // who has not enabled the bridge. Clicks succeeding proves the escape.
+    await setMobileBridgeConfig({ enabled: false, relayMode: 'hosted', relayUrl: '' });
+    await openMobileTab();
+
+    const section = page.locator('[data-testid="mobile-get-app"]');
+    await expect(section).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Get the App' })).toBeVisible();
+
+    // Both step QRs resolve to encoded data URLs.
+    await expect(page.locator('[data-testid="mobile-get-app-group-qr"]')).toHaveAttribute('src', /^data:/);
+    await expect(page.locator('[data-testid="mobile-get-app-optin-qr"]')).toHaveAttribute('src', /^data:/);
+
+    await page.evaluate(() => {
+      window.__openedExternalUrls = [];
+    });
+    await page.locator('[data-testid="mobile-get-app-group-link"]').click();
+    await page.locator('[data-testid="mobile-get-app-optin-link"]').click();
+    await expect
+      .poll(() => page.evaluate(() => window.__openedExternalUrls))
+      .toEqual([
+        'https://groups.google.com/g/kangentic-testers',
+        // Deterministic from the Android applicationId; must match the Play
+        // Console closed-test opt-in URL exactly.
+        'https://play.google.com/apps/testing/com.kangentic.mobile',
+      ]);
+
+    await closeSettings();
+  });
+
   test('hosted mode renders the enable toggle, relay mode select, resolved URL, and section headers', async () => {
     await openMobileTab();
     await expect(page.getByRole('switch')).toBeVisible();

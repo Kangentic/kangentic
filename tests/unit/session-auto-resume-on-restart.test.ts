@@ -73,6 +73,7 @@ function makeDeps(options: { sessionStatus?: 'running' | 'queued' } = {}) {
     getCurrentProjectId: () => null,
     deleteProjectFromIndex: vi.fn(),
     stopUpdaterTimers: vi.fn(),
+    stopAnnouncementTimers: vi.fn(),
     clearPendingTimers: vi.fn(),
     isEphemeral: false,
   };

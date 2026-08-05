@@ -123,6 +123,7 @@ function buildMockDependencies(sessions: Session[]) {
     getCurrentProjectId: vi.fn(() => null),
     deleteProjectFromIndex: vi.fn(),
     stopUpdaterTimers: vi.fn(),
+    stopAnnouncementTimers: vi.fn(),
     clearPendingTimers: vi.fn(),
     isEphemeral: false,
   };
@@ -176,6 +177,12 @@ describe('syncShutdownCleanup history wire-up', () => {
     // getDiffWatcher returns the same stub on every call, so reading it here
     // gives the instance the cleanup path acted on.
     expect(dependencies.getDiffWatcher().closeAll).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops the announcement poll timers so the 4-hour interval cannot fire during shutdown', () => {
+    const dependencies = buildMockDependencies([]);
+    syncShutdownCleanup(dependencies);
+    expect(dependencies.stopAnnouncementTimers).toHaveBeenCalledTimes(1);
   });
 
   it('does NOT call captureSessionMetrics for queued sessions (never spawned - nothing to capture)', () => {

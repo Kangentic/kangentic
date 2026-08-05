@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Check, CircleAlert, Copy, Loader2, Pencil, QrCode, Server, Smartphone, Trash2, WifiOff, X } from 'lucide-react';
-import QRCode from 'qrcode';
 import { formatKeyFingerprint } from '@kangentic/protocol/roster/fingerprint';
 import type { AppConfig, MobileDeviceConnectionState, MobilePairedDevice, RemoteServerStatus } from '../../../../shared/types';
 import { resolveRelayMode, resolveRelayUrl, validateRelayUrl } from '../../../../shared/relay';
@@ -9,7 +8,17 @@ import { INPUT_CLASS, SectionHeader, Select, SettingRow, SettingToggleRow, useSc
 import { Pill } from '../../Pill';
 import { settingProps } from '../settings-registry';
 import { ConfirmDialog } from '../../dialogs/ConfirmDialog';
+import { QrImage } from '../../QrImage';
+import { ExternalLinkButton } from '../../ExternalLinkButton';
 import { useMobileStore } from '../../../stores/mobile-store';
+
+/** The anyone-can-join Google Group that authorizes Play closed-test access
+ *  (its members are the track's tester list in the Play Console). Also
+ *  referenced by the mobile-launch announcement in announcements.json. */
+const ANDROID_TESTERS_GROUP_URL = 'https://groups.google.com/g/kangentic-testers';
+/** Deterministic from the Android applicationId (com.kangentic.mobile);
+ *  resolves once the closed testing track is published in the Play Console. */
+const ANDROID_CLOSED_TEST_OPT_IN_URL = 'https://play.google.com/apps/testing/com.kangentic.mobile';
 
 /**
  * 'idle' means this device has no session open yet (nothing to report), so it
@@ -79,7 +88,6 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
   const clearPairingEnded = useMobileStore((state) => state.clearPairingEnded);
 
   const [qrUri, setQrUri] = useState<string | null>(null);
-  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
   const [revokeTarget, setRevokeTarget] = useState<{ deviceId: string; displayName: string } | null>(null);
   const [renamingDeviceId, setRenamingDeviceId] = useState<string | null>(null);
@@ -97,7 +105,6 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
     const unsubscribeConfirmed = window.electronAPI.mobile.onPairingConfirmed((payload) => {
       setPairingConfirmed(payload);
       setQrUri(null);
-      setQrDataUrl(null);
     });
     const unsubscribeEnded = window.electronAPI.mobile.onPairingEnded((payload) => {
       // A plain cancel (Cancel button, or the panel closing mid-ceremony) is
@@ -106,7 +113,6 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
       // surfacing as a message.
       if (payload.kind === 'failed') setPairingEnded(payload.reason);
       setQrUri(null);
-      setQrDataUrl(null);
     });
     const unsubscribeState = window.electronAPI.mobile.onStateChanged(() => {
       void loadStatus();
@@ -151,20 +157,6 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
   }, [pairingConfirmed, clearPairingConfirmed]);
 
   useEffect(() => {
-    if (!qrUri) {
-      setQrDataUrl(null);
-      return;
-    }
-    let cancelled = false;
-    QRCode.toDataURL(qrUri, { margin: 1, width: 220 }).then((dataUrl) => {
-      if (!cancelled) setQrDataUrl(dataUrl);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [qrUri]);
-
-  useEffect(() => {
     if (!linkCopied) return;
     const timer = setTimeout(() => setLinkCopied(false), 2000);
     return () => clearTimeout(timer);
@@ -191,7 +183,6 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
   const handleCancelPairing = async () => {
     await cancelPairing();
     setQrUri(null);
-    setQrDataUrl(null);
   };
 
   const startRename = (device: MobilePairedDevice) => {
@@ -394,9 +385,7 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
         ) : (
           <div className="space-y-3 rounded-md border border-edge bg-surface-hover/40 p-4" data-testid="mobile-pair-qr">
             <p className="text-sm text-fg-secondary">Scan this code with the Kangentic app on your phone.</p>
-            {qrDataUrl && (
-              <img src={qrDataUrl} alt="Pairing QR code" className="rounded-md border border-edge" width={220} height={220} />
-            )}
+            {qrUri && <QrImage value={qrUri} alt="Pairing QR code" />}
             <div className="flex gap-2">
               <button
                 type="button"
@@ -522,6 +511,45 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
             })}
           </ul>
         )}
+      </div>
+
+      {/* Outside the enabled-gated wrapper above: getting the app is exactly
+          what a user with the bridge still off needs, so this section stays
+          fully interactive regardless of the toggle. */}
+      <SectionHeader label="Get the App" searchIds={['mobileBridge.getApp']} />
+      <div className="space-y-3" data-testid="mobile-get-app">
+        <p className="text-sm text-fg-muted">
+          Kangentic Mobile for Android is in closed testing. Two steps to join:
+        </p>
+        <div className="rounded-md border border-edge bg-surface-hover/40 p-4 space-y-2" data-testid="mobile-get-app-step-group">
+          <p className="text-sm text-fg">1. Join the testers Google Group</p>
+          <QrImage
+            value={ANDROID_TESTERS_GROUP_URL}
+            alt="QR code for the Kangentic testers Google Group"
+            testId="mobile-get-app-group-qr"
+          />
+          <ExternalLinkButton
+            label="Join the testers Google Group"
+            url={ANDROID_TESTERS_GROUP_URL}
+            testId="mobile-get-app-group-link"
+          />
+        </div>
+        <div className="rounded-md border border-edge bg-surface-hover/40 p-4 space-y-2" data-testid="mobile-get-app-step-optin">
+          <p className="text-sm text-fg">2. Become a tester</p>
+          <QrImage
+            value={ANDROID_CLOSED_TEST_OPT_IN_URL}
+            alt="QR code for the Play Store tester opt-in page"
+            testId="mobile-get-app-optin-qr"
+          />
+          <ExternalLinkButton
+            label="Become a tester on Google Play"
+            url={ANDROID_CLOSED_TEST_OPT_IN_URL}
+            testId="mobile-get-app-optin-link"
+          />
+        </div>
+        <p className="text-xs text-fg-faint">
+          Use the same Google account you use in the Play Store, and stay opted in while the test is running.
+        </p>
       </div>
 
       {revokeTarget && (

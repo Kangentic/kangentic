@@ -11,6 +11,7 @@ import { useSessionStore } from './stores/session-store';
 import { useBacklogStore } from './stores/backlog-store';
 import { useToastStore } from './stores/toast-store';
 import { useUpdaterStore } from './stores/updater-store';
+import { useAnnouncementsStore } from './stores/announcements-store';
 import { useUsageDashboardStore } from './stores/usage-dashboard-store';
 import { useMonitorStore } from './stores/monitor-store';
 import { usePopOutStore } from './stores/pop-out-store';
@@ -126,12 +127,20 @@ export function App() {
       useUpdaterStore.getState().receiveUpdate(info);
     });
 
+    // Announcements: hydrate the active list (the first poll may have landed
+    // before this renderer mounted), then stay live via the changed push.
+    void useAnnouncementsStore.getState().loadActive();
+    const cleanupAnnouncementsChanged = window.electronAPI.announcements?.onChanged((active) => {
+      useAnnouncementsStore.getState().receiveActive(active);
+    });
+
     return () => {
       if (mountTimerRafId !== undefined) cancelAnimationFrame(mountTimerRafId);
       cleanupAutoOpen();
       cleanupPathMissing?.();
       cleanupPopOutChanged?.();
       cleanupUpdateListener?.();
+      cleanupAnnouncementsChanged?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only bootstrap: every callee is a stable Zustand action or an IPC listener registered exactly once
   }, []);
@@ -803,6 +812,8 @@ if (import.meta.hot) {
     }
     // Pop-out windows Pattern B: re-hydrate which surfaces are currently detached.
     usePopOutStore.getState().loadOpen();
+    // Announcements Pattern B: re-pull the active list from main-process truth.
+    void useAnnouncementsStore.getState().loadActive();
     useSessionStore.getState().syncSessions().then((applied) => {
       if (!applied) return;
 
@@ -834,5 +845,6 @@ if (import.meta.env.DEV) {
     usageDashboard: useUsageDashboardStore,
     popOut: usePopOutStore,
     dictation: useDictationStore,
+    announcements: useAnnouncementsStore,
   };
 }

@@ -377,6 +377,18 @@
     listeners.forEach(function (fn) { fn(info); });
   };
 
+  // Announcements test hooks: installed eagerly for the same reason as the
+  // update-downloaded hooks above. `__mockFireAnnouncementsChanged(active)`
+  // also updates `__mockActiveAnnouncements` so a later
+  // announcements.getActive() (e.g. an HMR resync) returns the same list.
+  window.__mockActiveAnnouncements = [];
+  window.__mockAnnouncementsChangedListeners = [];
+  window.__mockFireAnnouncementsChanged = function (active) {
+    window.__mockActiveAnnouncements = active;
+    var listeners = window.__mockAnnouncementsChangedListeners.slice();
+    listeners.forEach(function (fn) { fn(active); });
+  };
+
   // Notification-click test hook (App.tsx's `notifications.onClicked` handler,
   // including the isCommandTerminal branch). Installed eagerly for the same
   // reason as the update-downloaded hooks above. Unlike that hook, this one
@@ -3268,6 +3280,24 @@
         window.__mockUpdateDownloadedListeners.push(callback);
         return function () {
           var listeners = window.__mockUpdateDownloadedListeners || [];
+          var idx = listeners.indexOf(callback);
+          if (idx >= 0) listeners.splice(idx, 1);
+        };
+      },
+    },
+
+    announcements: {
+      getActive: async function () {
+        return window.__mockActiveAnnouncements || [];
+      },
+      onChanged: function (callback) {
+        // Tests fire the changed push via
+        // `window.__mockFireAnnouncementsChanged([announcement, ...])`. The
+        // listener array and the fire hook itself are installed eagerly at
+        // mock-bootstrap time (see top of file), not lazily here.
+        window.__mockAnnouncementsChangedListeners.push(callback);
+        return function () {
+          var listeners = window.__mockAnnouncementsChangedListeners || [];
           var idx = listeners.indexOf(callback);
           if (idx >= 0) listeners.splice(idx, 1);
         };

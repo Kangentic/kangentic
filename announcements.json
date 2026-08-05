@@ -1,0 +1,33 @@
+{
+  "announcements": [
+    {
+      "id": "mobile-launch-status-2026-08",
+      "title": "Kangentic Mobile is almost here - iOS in review, Android in beta",
+      "body": "The mobile companion app is on its way to both stores. Here is where each platform stands, and how you can help.",
+      "sections": [
+        {
+          "heading": "iOS: in App Store review",
+          "body": "The iOS app has been submitted and is with Apple for review. Nothing to do yet - we'll post a new announcement here the moment it's live on the App Store."
+        },
+        {
+          "heading": "Android: open for beta testers",
+          "body": "Help us test on Android - two steps:\n\n1. **Join the testers group**\n2. **Become a tester**, then install the app\n\nUse the Google account your phone's Play Store is signed into.",
+          "links": [
+            { "label": "Join the testers Google Group", "url": "https://groups.google.com/g/kangentic-testers", "qr": true },
+            { "label": "Become a tester on Google Play", "url": "https://play.google.com/apps/testing/com.kangentic.mobile", "qr": true }
+          ]
+        },
+        {
+          "heading": "After installing: pair your desktop",
+          "body": "Enable **Mobile Bridge** in Settings > Mobile Devices and click **Pair a Device**, then scan the QR with the app.",
+          "links": [
+            { "label": "Kangentic Mobile docs", "url": "https://kangentic.com/mobile/" }
+          ]
+        }
+      ],
+      "publishedAt": "2026-08-05T00:00:00Z",
+      "expiresAt": "2026-09-30T00:00:00Z",
+      "priority": 0
+    }
+  ]
+}
