@@ -39,6 +39,15 @@ convenience and fix the scope to match after the fact.
   `settingProps(...)` / `searchId` / `searchIds` literal referenced by a tab component names a
   real registry id; (d) every registry `tabId` has a `SETTINGS_TABS` entry and a `TAB_LABELS`
   entry. Runs in CI via `npm run test:unit`.
+
+  The same file also guards a neighbouring bug class - a setting that is reachable in config but
+  not in the UI: (e) every `NotificationConfig.desktop` / `.toasts` event boolean has a
+  `notifications.<key>` registry row (or an allowlist entry with a reason); (f) both channels
+  declare the same event key set, since one dropdown writes both; and (g) every
+  `notifications.on*` row is really rendered by a `NotifyChannelRow`, with its `searchId`
+  matching its `eventKey`. Checks (a)-(d) only ever walk row -> registry, so a config key with
+  no row was invisible to all of them - that is how the Agent Crash notification shipped with
+  no Settings control.
 - **Review:** `/code-review` flags a new setting whose tab placement does not match its scope.
 
 ## Scope
