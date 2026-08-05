@@ -1,4 +1,4 @@
-import { _electron as electron, type ElectronApplication, type Page } from '@playwright/test';
+import { _electron as electron, expect, type ElectronApplication, type Page } from '@playwright/test';
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -633,4 +633,72 @@ export async function moveTaskIpc(page: Page, taskId: string, targetSwimlaneId: 
       targetPosition: 0,
     });
   }, { taskId, targetSwimlaneId });
+}
+
+/** One SESSION_PTY_RESIZED echo recorded by armPtyEchoRecorder. */
+export interface PtyEchoEntry {
+  cols: number;
+  rows: number;
+  origin: string;
+}
+
+/**
+ * Subscribe an append-only recorder to the SESSION_PTY_RESIZED broadcast for
+ * one session, via the real preload bridge (production-safe: the bridge is not
+ * tree-shaken, unlike the devtools globals). Re-arming replaces any previous
+ * recorder. Read with readPtyEchoes / settledPtyEchoes.
+ */
+export async function armPtyEchoRecorder(page: Page, sessionId: string): Promise<void> {
+  await page.evaluate((echoSessionIdFilter) => {
+    const globalScope = window as unknown as {
+      __ptyEchoes?: Array<{ cols: number; rows: number; origin: string }>;
+      __ptyEchoUnsubscribe?: () => void;
+    };
+    globalScope.__ptyEchoes = [];
+    globalScope.__ptyEchoUnsubscribe?.();
+    globalScope.__ptyEchoUnsubscribe = window.electronAPI.sessions.onPtyResized(
+      (echoSessionId, cols, rows, origin) => {
+        if (echoSessionId !== echoSessionIdFilter) return;
+        globalScope.__ptyEchoes!.push({ cols, rows, origin });
+      },
+    );
+  }, sessionId);
+}
+
+/** Every echo the recorder has seen so far, in arrival order. */
+export async function readPtyEchoes(page: Page): Promise<PtyEchoEntry[]> {
+  return page.evaluate(() => {
+    const echoes = (window as unknown as { __ptyEchoes?: Array<{ cols: number; rows: number; origin: string }> })
+      .__ptyEchoes ?? [];
+    return echoes.slice();
+  });
+}
+
+/** Poll until the echo log stops growing (two consecutive 500ms reads agree)
+ *  and is non-empty, then return it. */
+export async function settledPtyEchoes(page: Page, timeoutMs: number, message?: string): Promise<PtyEchoEntry[]> {
+  let lastLength = -1;
+  await expect
+    .poll(async () => {
+      const echoes = await readPtyEchoes(page);
+      if (echoes.length === 0) return 'empty';
+      if (echoes.length === lastLength) return 'stable';
+      lastLength = echoes.length;
+      return 'changing';
+    }, {
+      message:
+        message
+        ?? 'The PTY-dims echo log never settled non-empty - either no real grid change '
+        + 'occurred here, or the SESSION_PTY_RESIZED broadcast is broken.',
+      timeout: timeoutMs,
+      intervals: [500],
+    })
+    .toBe('stable');
+  return readPtyEchoes(page);
+}
+
+/** Every width the TUI fixture has drawn a frame at (its RULER-<cols>- marker),
+ *  in scrollback order. */
+export function rulerWidths(scrollback: string): number[] {
+  return Array.from(scrollback.matchAll(/RULER-(\d+)-/g)).map((match) => parseInt(match[1], 10));
 }
