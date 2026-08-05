@@ -277,6 +277,8 @@ test.describe('Welcome screen readiness', () => {
     const pairPhone = page.locator('[data-testid="welcome-pair-phone"]');
     await expect(setupGuide).toBeVisible();
     await expect(pairPhone).toBeVisible();
+    await expect(setupGuide).toHaveText(/Read the setup guide/);
+    await expect(pairPhone).toHaveText(/Pair a phone/);
 
     // Pinning the row's geometry mechanically, not by eye. The container is
     // `flex` with no `flex-wrap`, so it cannot break onto a second line: what
