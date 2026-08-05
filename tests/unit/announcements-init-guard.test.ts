@@ -168,6 +168,36 @@ describe('announcements poller', () => {
     expect(getHandlerResult()).toEqual(active);
   });
 
+  it('does not push to a destroyed window but still advances the cache for a later pull', async () => {
+    process.env.NODE_ENV = 'test';
+    const { initAnnouncements, updateAnnouncementsWindow, checkAnnouncements } = await importFreshModule();
+    initAnnouncements(fakeWindow);
+
+    // A window can be destroyed between poll cycles (e.g. macOS closed the
+    // last window and the dock icon hasn't recreated one yet). Give this
+    // fake its own send spy so it can't be confused with fakeWindow's.
+    const destroyedSend = vi.fn();
+    const destroyedWindow = {
+      isDestroyed: () => true,
+      webContents: { send: destroyedSend },
+    } as unknown as Electron.BrowserWindow;
+    updateAnnouncementsWindow(destroyedWindow);
+
+    const feed = { announcements: [{ id: 'a1', title: 'T', body: 'B' }] };
+    fetchMock.mockResolvedValue(okJsonResponse(feed));
+
+    await checkAnnouncements();
+
+    // No push to a destroyed window's webContents.
+    expect(destroyedSend).not.toHaveBeenCalled();
+    // But the cache still advances, so ANNOUNCEMENTS_GET reflects the fresh
+    // list the moment a new renderer mounts and pulls it (the "mount-time
+    // pull" UI spec's path). A change that moved `cachedActive = active`
+    // inside the isDestroyed guard would leave this stale until the feed
+    // changed again on a later poll.
+    expect(getHandlerResult()).toEqual([{ id: 'a1', title: 'T', body: 'B', links: [] }]);
+  });
+
   it('honors the KANGENTIC_ANNOUNCEMENTS_URL override', async () => {
     const { checkAnnouncements } = await importFreshModule();
     process.env.KANGENTIC_ANNOUNCEMENTS_URL = 'https://localhost:9999/fixture.json';
