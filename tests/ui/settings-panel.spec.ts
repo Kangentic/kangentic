@@ -181,6 +181,79 @@ test.describe('Settings Panel', () => {
     await closeSettings();
   });
 
+  test('Agent Crash notification dropdown writes to notifications.desktop/toasts.onAgentCrash in global config, not the project override', async () => {
+    // NotifyChannelRow (NotificationsTab.tsx) is the write path shared by all
+    // four Events rows; Agent Crash is the row this change added, so it is
+    // the natural row to pin the shared behavior against. The structural
+    // parity checks in settings-tab-scope-parity.test.ts (e/f/g) are pure
+    // regex scans over NotificationsTab.tsx - they never execute the
+    // component, so none of them prove the dropdown actually writes the
+    // config path it claims, that it writes to GLOBAL config (not the
+    // project override, per settings-tab-scope.md), or that it leaves the
+    // other three event rows' values untouched. This is UI-tier coverage
+    // against the mock config, the same fidelity as the Terminal font-size
+    // and Word-delete-on-Backspace persistence tests above - not a real
+    // config.json round trip.
+    await openSettings();
+    await page.getByRole('button', { name: 'Notifications' }).click();
+
+    const row = page.locator('[data-testid="setting-row-notifications.onAgentCrash"]');
+    const select = row.locator('select');
+
+    type NotificationsConfig = {
+      notifications: {
+        desktop: { onAgentIdle: boolean; onAgentCrash: boolean; onPlanComplete: boolean; onSpawnStalled: boolean };
+        toasts: { onAgentIdle: boolean; onAgentCrash: boolean; onPlanComplete: boolean; onSpawnStalled: boolean; durationSeconds: number; maxCount: number };
+      };
+    };
+    const readGlobalNotifications = async () => {
+      const globalConfig = await page.evaluate(() => window.electronAPI.config.getGlobal());
+      return (globalConfig as NotificationsConfig).notifications;
+    };
+
+    // mock-electron-api.js seeds onAgentCrash true on both channels, so the
+    // dropdown starts on "Both". Capture the full baseline (including the
+    // three sibling event rows and the Delivery numbers) before mutating,
+    // so a shallow-merge bug that wipes siblings has something to be caught
+    // against.
+    const baseline = await readGlobalNotifications();
+    expect(baseline.desktop.onAgentCrash).toBe(true);
+    expect(baseline.toasts.onAgentCrash).toBe(true);
+    await expect(select).toHaveValue('both');
+
+    // "Desktop only": desktop stays true, toasts flips to false. Asserting
+    // both channels (not just one) rules out a handler that sets both from
+    // a single-channel selection.
+    await select.selectOption('desktop');
+    await expect.poll(async () => (await readGlobalNotifications()).desktop.onAgentCrash, { timeout: 3000 }).toBe(true);
+    await expect.poll(async () => (await readGlobalNotifications()).toasts.onAgentCrash, { timeout: 3000 }).toBe(false);
+    // Read direction: the Select must reflect the new committed value, not
+    // just the write succeeding underneath it.
+    await expect(select).toHaveValue('desktop');
+
+    const afterWrite = await readGlobalNotifications();
+    expect(afterWrite.desktop.onAgentIdle).toBe(baseline.desktop.onAgentIdle);
+    expect(afterWrite.desktop.onPlanComplete).toBe(baseline.desktop.onPlanComplete);
+    expect(afterWrite.desktop.onSpawnStalled).toBe(baseline.desktop.onSpawnStalled);
+    expect(afterWrite.toasts.onAgentIdle).toBe(baseline.toasts.onAgentIdle);
+    expect(afterWrite.toasts.onPlanComplete).toBe(baseline.toasts.onPlanComplete);
+    expect(afterWrite.toasts.onSpawnStalled).toBe(baseline.toasts.onSpawnStalled);
+    expect(afterWrite.toasts.durationSeconds).toBe(baseline.toasts.durationSeconds);
+    expect(afterWrite.toasts.maxCount).toBe(baseline.toasts.maxCount);
+
+    // Events rows are notifications.* - a global-only (system-tab) scope.
+    // The project override must never receive this write.
+    const projectOverrides = await page.evaluate(() => window.electronAPI.config.getProjectOverrides());
+    expect((projectOverrides as { notifications?: { desktop?: { onAgentCrash?: boolean } } } | null)?.notifications?.desktop?.onAgentCrash).toBeUndefined();
+
+    // Restore so later tests in this shared-page file are unaffected.
+    await select.selectOption('both');
+    await expect.poll(async () => (await readGlobalNotifications()).desktop.onAgentCrash, { timeout: 3000 }).toBe(true);
+    await expect.poll(async () => (await readGlobalNotifications()).toasts.onAgentCrash, { timeout: 3000 }).toBe(true);
+
+    await closeSettings();
+  });
+
   test('shows Terminal tab with shell, font size, font family, cursor style, and backspace behavior', async () => {
     // Terminal is a SYSTEM (global-only) tab: these fields no longer save to
     // the project override, they save to global config.
