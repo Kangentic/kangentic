@@ -18,7 +18,7 @@ front rather than reaching for ad-hoc fixes later.
 | **B. Re-sync** | Zustand stores whose truth lives in the main process (IPC-backed) | Add a `load*` / `sync*` call to the `vite:afterUpdate` handler in `App.tsx` | `loadBoard()`, `loadBacklog()`, `loadConfig()`, `loadProjects()`, `syncSessions()` |
 | **C. Re-key remount** | Stateful third-party React subtrees whose subscriptions go stale across Fast Refresh (every `<DndContext>`) | `const hmrGeneration = useHmrGeneration();` then `<DndContext key={hmrGeneration}>` | All 5 `<DndContext>` sites: `KanbanBoard`, `BacklogView`, `PrioritiesPopover`, `ProjectSidebar`, `ShortcutsTab` |
 | **D. Cleanup** | Imperative DOM or global state no React component owns | Add the clear to the top of the `vite:afterUpdate` handler | `.drop-highlight` class removal in `App.tsx` |
-| **E. Pin instance** | A Zustand store whose only runtime export is the non-component hook, so the module is not a Fast Refresh boundary and a re-eval can hand a SECOND store to part of the tree | `const make = () => create<T>(init); export const useX = import.meta.hot?.data?.x ?? make();` plus `import.meta.hot.data.x = useX; import.meta.hot.accept(() => import.meta.hot.invalidate())` | `board-store.ts`, `backlog-store.ts`, `project-store.ts` |
+| **E. Pin instance** | A Zustand store whose only runtime export is the non-component hook, so the module is not a Fast Refresh boundary and a re-eval can hand a SECOND store to part of the tree | `const make = () => create<T>(init); export const useX = import.meta.hot?.data?.x ?? make();` plus `import.meta.hot.data.x = useX; import.meta.hot.accept(() => import.meta.hot.invalidate())` | `board-store.ts`, `backlog-store.ts`, `announcements-store.ts`, and the rest of `PATTERN_E_STORES` in `tests/unit/hmr-resync.test.ts` (the authoritative list) |
 
 **Decision tree:**
 
@@ -49,8 +49,9 @@ already collapse to no-ops).
   `load*` / `sync*` is called in `App.tsx`'s `vite:afterUpdate` (B); every module-scope mutable
   declaration under the watched dirs has `import.meta.hot.dispose(` or a `// hmr-safe:` opt-out
   (A); every `<DndContext>` has `key={hmrGeneration}` (C); and each instance-pinned store
-  (`board-store.ts`, `backlog-store.ts`, `project-store.ts`) reads and writes its instance in
-  `import.meta.hot.data` and self-accepts (E). Runs in CI via `npm run test:unit`.
+  (the test's `PATTERN_E_STORES` array - extend it whenever a store adopts the pin) reads and
+  writes its instance in `import.meta.hot.data` and self-accepts (E). Runs in CI via
+  `npm run test:unit`.
 - **Review:** the `hmr-parity` agent audits all five patterns; `hmr-integrity` is the narrow
   Pattern B store-registration check.
 

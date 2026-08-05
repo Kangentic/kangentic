@@ -260,7 +260,7 @@ describe('HMR store re-sync', () => {
   // back, and self-accept so editing the store's own code forces a clean reload
   // instead of running stale closures. See .claude/rules/hmr-patterns.md.
   it('instance-pinned stores read, write, and self-accept across HMR (Pattern E)', () => {
-    const PATTERN_E_STORES = ['board-store.ts', 'backlog-store.ts', 'project-store.ts', 'dictation-store.ts', 'usage-dashboard-store.ts', 'pop-out-store.ts', 'updater-store.ts', 'monitor-store.ts'];
+    const PATTERN_E_STORES = ['board-store.ts', 'backlog-store.ts', 'project-store.ts', 'dictation-store.ts', 'usage-dashboard-store.ts', 'pop-out-store.ts', 'updater-store.ts', 'monitor-store.ts', 'announcements-store.ts'];
     const violations: string[] = [];
     for (const fileName of PATTERN_E_STORES) {
       const source = fs.readFileSync(path.join(STORES_DIR, fileName), 'utf-8');
