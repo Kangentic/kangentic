@@ -31,6 +31,7 @@ import {
   KANGENTIC_HOSTED_RELAY_URL,
   LOCAL_DEV_RELAY_URL,
   relayHealthUrl,
+  resolveRelayMode,
   resolveRelayUrl,
   validateRelayUrl,
 } from '../../src/shared/relay';
@@ -197,6 +198,42 @@ describe('resolveRelayUrl', () => {
   it('resolves a raw un-normalized stored value to its normalized form - the invariant that keeps a raw string out of the QR', () => {
     const bridge: AppConfig['mobileBridge'] = { relayMode: 'custom', relayUrl: 'ws://127.1' };
     expect(resolveRelayUrl(bridge)).toBe('ws://127.0.0.1/');
+  });
+});
+
+/**
+ * resolveRelayMode is what the settings Select binds to, and it exists because
+ * the Select only renders its 'local' <option> in a dev build while the stored
+ * value can still BE 'local' in production (mobileBridge.* is global config in
+ * a shared configDir). Binding inferRelayMode's raw value there gives a
+ * controlled <select> a value matching no <option>, which renders blank.
+ *
+ * This suite compiles with __KANGENTIC_DEV__ = false (vitest.config.ts), i.e.
+ * the production build, so 'local' must come back as 'hosted' here.
+ */
+describe('resolveRelayMode', () => {
+  it('reports a persisted "local" as "hosted" in a production build, so the Select always has a matching option', () => {
+    expect(resolveRelayMode({ relayMode: 'local', relayUrl: '' })).toBe('hosted');
+  });
+
+  it('agrees with resolveRelayUrl for a persisted "local" - the mode shown and the URL dialed cannot disagree', () => {
+    const bridge: AppConfig['mobileBridge'] = { relayMode: 'local', relayUrl: '' };
+    expect(resolveRelayMode(bridge)).toBe('hosted');
+    expect(resolveRelayUrl(bridge)).toBe(KANGENTIC_HOSTED_RELAY_URL);
+  });
+
+  it('passes "hosted" and "custom" through untouched', () => {
+    expect(resolveRelayMode({ relayMode: 'hosted', relayUrl: '' })).toBe('hosted');
+    expect(resolveRelayMode({ relayMode: 'custom', relayUrl: 'wss://relay.example.com' })).toBe('custom');
+  });
+
+  it('still infers "custom" from a pre-relayMode-schema config that only has a relayUrl', () => {
+    expect(resolveRelayMode({ relayUrl: 'wss://legacy.example.com' })).toBe('custom');
+  });
+
+  it('defaults to "hosted" for an empty or absent config', () => {
+    expect(resolveRelayMode(undefined)).toBe('hosted');
+    expect(resolveRelayMode({ relayUrl: '' })).toBe('hosted');
   });
 });
 

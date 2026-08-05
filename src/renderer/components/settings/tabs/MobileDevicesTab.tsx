@@ -3,7 +3,7 @@ import { Check, CircleAlert, Copy, Loader2, Pencil, QrCode, Server, Smartphone, 
 import QRCode from 'qrcode';
 import { formatKeyFingerprint } from '@kangentic/protocol/roster/fingerprint';
 import type { AppConfig, MobileDeviceConnectionState, MobilePairedDevice, RemoteServerStatus } from '../../../../shared/types';
-import { inferRelayMode, resolveRelayUrl, validateRelayUrl } from '../../../../shared/relay';
+import { resolveRelayMode, resolveRelayUrl, validateRelayUrl } from '../../../../shared/relay';
 import { formatDate } from '../../../lib/datetime';
 import { INPUT_CLASS, SectionHeader, Select, SettingRow, SettingToggleRow, useScopedUpdate } from '../shared';
 import { Pill } from '../../Pill';
@@ -41,7 +41,12 @@ function connectionStateDisplay(state: MobileDeviceConnectionState): { label: st
 export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) {
   const updateGlobal = useScopedUpdate('global');
   const enabled = globalConfig.mobileBridge?.enabled ?? false;
-  const relayMode = inferRelayMode(globalConfig.mobileBridge);
+  // resolveRelayMode, not inferRelayMode: the Select below only offers 'local'
+  // in a dev build, but the persisted value can still BE 'local' in production
+  // (mobileBridge.* is global config in a shared configDir). Binding the raw
+  // stored mode would give a controlled <select> a value matching no <option>,
+  // which renders blank - above a pill showing the hosted URL it resolved to.
+  const relayMode = resolveRelayMode(globalConfig.mobileBridge);
   const resolvedRelayUrl = resolveRelayUrl(globalConfig.mobileBridge);
 
   // Local draft with a commit boundary (blur/Enter), not a per-keystroke write:

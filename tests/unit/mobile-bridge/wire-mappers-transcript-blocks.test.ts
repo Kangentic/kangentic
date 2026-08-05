@@ -13,9 +13,28 @@
  */
 import { describe, it, expect } from 'vitest';
 import { MAX_ENTRY_BLOCKS_CHARS, toTranscriptEntryWire } from '../../../src/main/mobile-bridge/handlers/wire-mappers';
+import { DELTA_CHUNK_BUDGET_CHARS } from '../../../src/main/mobile-bridge/handlers/transcript-sync';
 import type { TranscriptBlock, TranscriptEntry } from '../../../src/shared/types';
 
+/** A `text` block whose serialized size is exactly `totalSerializedChars`. The
+ *  JSON overhead is measured rather than hardcoded so the boundary cases below
+ *  stay exact if the wire block shape ever gains a field. `toTranscriptBlockWire`
+ *  maps a text block to the identical shape, so the size survives mapping. */
+function textBlockOfSerializedSize(totalSerializedChars: number): TranscriptBlock {
+  const overheadChars = JSON.stringify({ type: 'text', text: '' }).length;
+  return { type: 'text', text: 'x'.repeat(totalSerializedChars - overheadChars) };
+}
+
 describe('toTranscriptEntryWire block clamping', () => {
+  it('keeps the per-entry budget under the chunker budget it is documented to fit inside', () => {
+    // wire-mappers.ts's comment says MAX_ENTRY_BLOCKS_CHARS stays "comfortably
+    // under transcript-sync's DELTA_CHUNK_BUDGET_CHARS" so a clamped entry fits
+    // in one chunk instead of becoming an oversized singleton. That relationship
+    // lived only in prose across two files: raising the per-entry budget would
+    // silently void it with nothing failing. Assert it mechanically instead.
+    expect(MAX_ENTRY_BLOCKS_CHARS).toBeLessThan(DELTA_CHUNK_BUDGET_CHARS);
+  });
+
   it('passes a normal assistant entry through unchanged', () => {
     const entry: TranscriptEntry = {
       kind: 'assistant',
@@ -79,5 +98,47 @@ describe('toTranscriptEntryWire block clamping', () => {
     expect(wire.blocks.length).toBeLessThan(6);
     const lastBlock = wire.blocks[wire.blocks.length - 1];
     expect(lastBlock.type).toBe('text');
+  });
+
+  // The two cases below pin the comparison itself (`>` vs `>=`) at the exact
+  // budget boundary. Every case above sits either well under or well over it,
+  // so an off-by-one flip would pass all of them.
+  it('does not truncate an entry sitting exactly at the budget', () => {
+    const entry: TranscriptEntry = {
+      kind: 'assistant',
+      uuid: 'u4',
+      ts: 1700000000000,
+      blocks: [textBlockOfSerializedSize(MAX_ENTRY_BLOCKS_CHARS)],
+    };
+
+    const wire = toTranscriptEntryWire(entry);
+    if (wire.kind !== 'assistant') throw new Error('unreachable');
+
+    expect(wire.blocks).toHaveLength(1);
+    const onlyBlock = wire.blocks[0];
+    if (onlyBlock.type !== 'text') throw new Error('unreachable');
+    expect(onlyBlock.text).not.toContain('more block(s) omitted');
+  });
+
+  it('truncates a single first block that is one char over the budget, keeping only the marker', () => {
+    // Also the "one oversized block" path: `text` and `thinking` blocks are not
+    // bounded by clampToolInput (only tool_use inputs are), so clampBlocks is
+    // the only thing standing between an unbounded text block and the wire. It
+    // must drop the block rather than emit it alongside the marker.
+    const entry: TranscriptEntry = {
+      kind: 'assistant',
+      uuid: 'u5',
+      ts: 1700000000000,
+      blocks: [textBlockOfSerializedSize(MAX_ENTRY_BLOCKS_CHARS + 1)],
+    };
+
+    const wire = toTranscriptEntryWire(entry);
+    if (wire.kind !== 'assistant') throw new Error('unreachable');
+
+    expect(wire.blocks).toHaveLength(1);
+    const onlyBlock = wire.blocks[0];
+    if (onlyBlock.type !== 'text') throw new Error('unreachable');
+    expect(onlyBlock.text).toContain('1 more block(s) omitted');
+    expect(JSON.stringify(wire.blocks).length).toBeLessThan(MAX_ENTRY_BLOCKS_CHARS);
   });
 });

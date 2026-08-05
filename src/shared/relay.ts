@@ -89,25 +89,44 @@ export function inferRelayMode(bridge: AppConfig['mobileBridge']): 'hosted' | 'l
 }
 
 /**
+ * The relay mode this BUILD actually honors, as opposed to `inferRelayMode`'s
+ * "what the config literally says". The two differ in exactly one case:
+ * 'local' is gated on __KANGENTIC_DEV__, even though the bridge itself ships
+ * in production. `mobileBridge.*` is GLOBAL config in a shared configDir, so a
+ * `relayMode: 'local'` value saved from a dev build (or hand-edited) survives
+ * into a production build on the same machine. Without this gate, a production
+ * build would silently dial plaintext loopback (`ws://127.0.0.1:8080`) instead
+ * of falling back to the hosted relay - the Select simply not OFFERING 'local'
+ * in production does not protect a config value that predates the build that
+ * reads it.
+ *
+ * Both the dialer (`resolveRelayUrl` below) and the settings Select read this,
+ * not `inferRelayMode`, so the gate lives in ONE place. That matters for the
+ * UI as much as the dial: `MobileDevicesTab`'s Select only renders its 'local'
+ * <option> in a dev build, so binding it to a raw 'local' would leave a
+ * controlled <select> whose value matches no option - a blank dropdown sitting
+ * above a pill reading the hosted URL it actually resolved to.
+ */
+export function resolveRelayMode(bridge: AppConfig['mobileBridge']): 'hosted' | 'local' | 'custom' {
+  const storedMode = inferRelayMode(bridge);
+  if (storedMode === 'local' && !__KANGENTIC_DEV__) return 'hosted';
+  return storedMode;
+}
+
+/**
  * Resolves the relay URL a bridge session should actually dial. Always
  * returns a normalized, valid URL - never the stored `relayUrl` verbatim,
  * and never ''. An empty or invalid custom URL falls back to the hosted relay
  * rather than reaching a WebSocket dial.
  *
- * 'local' is gated on __KANGENTIC_DEV__ here, even though the feature itself
- * ships in production: `mobileBridge.*` is GLOBAL config in a shared
- * configDir, so a `relayMode: 'local'` value saved from a dev build (or
- * hand-edited) survives into a production build on the same machine. Without
- * this gate, a production build would silently dial plaintext loopback
- * (`ws://127.0.0.1:8080`) instead of falling back to the hosted relay - the
- * Select simply not OFFERING 'local' in production does not protect a config
- * value that predates the build that reads it.
+ * Switches on `resolveRelayMode`, not `inferRelayMode`, so the 'local' case
+ * below is only ever reached in a dev build (see that function for why).
  */
 export function resolveRelayUrl(bridge: AppConfig['mobileBridge']): string {
   const storedUrl = bridge?.relayUrl ?? '';
-  switch (inferRelayMode(bridge)) {
+  switch (resolveRelayMode(bridge)) {
     case 'local':
-      return __KANGENTIC_DEV__ ? LOCAL_DEV_RELAY_URL : KANGENTIC_HOSTED_RELAY_URL;
+      return LOCAL_DEV_RELAY_URL;
     case 'custom': {
       const validation = validateRelayUrl(storedUrl);
       return validation.ok ? validation.normalized : KANGENTIC_HOSTED_RELAY_URL;

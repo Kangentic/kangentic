@@ -3,8 +3,13 @@ import type { BridgeSession } from '../session/bridge-session';
 
 /** `encodeMessage`'s two size-cap throws (packages/protocol/src/wire/framing.ts) both start
  *  with this prefix; every other `sendMessage` failure (session torn down mid-send, transport
- *  disconnected) is routine and must stay silent. */
-const ENCODE_SIZE_ERROR_PREFIX = 'Encoded bridge message exceeds';
+ *  disconnected) is routine and must stay silent.
+ *
+ *  Exported so the test can drive the REAL `encodeMessage` past its caps and assert the thrown
+ *  message still starts with this. `@kangentic/protocol` is versioned and published
+ *  independently, so a reworded throw over there would otherwise silently disable this warn
+ *  with nothing failing on either side. */
+export const ENCODE_SIZE_ERROR_PREFIX = 'Encoded bridge message exceeds';
 
 /**
  * Pushes one BridgeEvent to a device, silently dropping it if the session

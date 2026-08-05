@@ -48,7 +48,21 @@ const DEV_QUICK_PAIR_PATH = path.join(REPO_ROOT, 'src/main/mobile-bridge/dev-qui
 describe('dev-quick-pair stays gated to dev builds', () => {
   it('DevQuickPair is constructed only inside a __KANGENTIC_DEV__ ternary, never unconditionally', () => {
     const source = fs.readFileSync(SERVICE_PATH, 'utf-8');
-    expect(source.indexOf('new DevQuickPair('), 'could not find the `new DevQuickPair(...)` construction site - has it moved?').toBeGreaterThan(-1);
+    // Exactly one, not merely at-least-one. The ternary regex below only
+    // inspects its TRUE branch, so `__KANGENTIC_DEV__ ? new DevQuickPair(devArgs)
+    // : new DevQuickPair(prodArgs)` would satisfy it while defeating the whole
+    // invariant. Counting the construction sites is what rules that out.
+    //
+    // Counted over code with comments stripped: the JSDoc on the devQuickPair
+    // field documents this very invariant and says `new DevQuickPair(...)` in
+    // prose, so a raw scan of the file finds two and fails on the comment.
+    const codeOnly = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    const constructionSiteCount = (codeOnly.match(/new DevQuickPair\(/g) ?? []).length;
+    expect(
+      constructionSiteCount,
+      'expected exactly one `new DevQuickPair(...)` construction site in mobile-bridge-service.ts - zero means it moved ' +
+        '(this test is now vacuous), more than one means a second, possibly ungated construction was added.',
+    ).toBe(1);
 
     // Directly matches `__KANGENTIC_DEV__ ? new DevQuickPair(` as one
     // ternary (whitespace/newlines between the '?' and the construction
@@ -109,8 +123,10 @@ describe('dev-quick-pair stays gated to dev builds', () => {
     // once (DEV_PAIRING_DIRNAME, removed). Column-0 only, deliberately: a
     // const declared inside a function or class body (indented) is fine,
     // since it dies with its enclosing scope when nothing calls that scope.
+    // `export const` and `let` reintroduce the identical leak, so the anchor
+    // has to admit both rather than just a bare `const`.
     expect(
-      /^const\s+\w+\s*=\s*path\.(join|resolve)\(/m.test(source),
+      /^(export\s+)?(const|let|var)\s+\w+\s*=\s*path\.(join|resolve)\(/m.test(source),
       'no top-level `const x = path.join(...)`/`path.resolve(...)` in dev-quick-pair.ts - that survives esbuild tree-shaking ' +
         'as a dangling string literal even once the module is otherwise unreachable dead code. Build the path inline inside ' +
         'the function that needs it instead (see devPairingDir()).',

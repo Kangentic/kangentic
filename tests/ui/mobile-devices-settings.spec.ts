@@ -19,13 +19,24 @@
  * resolves to KANGENTIC_HOSTED_RELAY_URL unconditionally (not build-mode-
  * dependent), so this tier actually exercises the "Kangentic Cloud" label
  * and its resolved URL, not just "Local". "local" is DIFFERENT: unlike
- * "hosted", resolveRelayUrl() gates what "local" resolves TO on
+ * "hosted", resolveRelayMode() gates what "local" resolves TO on
  * __KANGENTIC_DEV__ too (not just whether the Select offers it) - a
  * production build falls through to the hosted relay instead of loopback,
  * so a persisted relayMode: 'local' can never reach a real user's phone as
  * plaintext ws://127.0.0.1:8080. This tier's dev webServer is exactly why
  * the "Local" test below still resolves to loopback: it runs the dev
- * branch. These literals are hard-coded rather than imported from
+ * branch.
+ *
+ * Be precise about what that buys, though: this tier CANNOT falsify the gate.
+ * A dev build resolved "local" to loopback both before and after the gate
+ * existed, so the "Local" test below passes either way - it pins that dev-mode
+ * behavior did not regress, not that the production gate is present. The
+ * red-green coverage for the gate itself lives entirely in the unit tier
+ * (tests/unit/relay-url.test.ts and tests/unit/config-handler-wiring.test.ts),
+ * which compiles __KANGENTIC_DEV__ = false and so exercises the branch this
+ * webServer can never reach.
+ *
+ * These literals are hard-coded rather than imported from
  * src/shared/relay.ts, since playwright.config.ts sets no `define` and
  * importing a runtime export from that module into a .spec.ts throws at
  * module load.
