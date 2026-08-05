@@ -443,11 +443,12 @@ describe('settings tab/scope parity: mobile bridge ships in production', () => {
     expect(mobileTab?.category).toBe('system');
   });
 
-  it('all five mobileBridge.* registry entries are present', () => {
+  it('all six mobileBridge.* registry entries are present', () => {
     const mobileIds = SETTINGS_REGISTRY.filter((entry) => entry.tabId === 'mobile').map((entry) => entry.id).sort();
     expect(mobileIds).toEqual([
       'mobileBridge.devices',
       'mobileBridge.enabled',
+      'mobileBridge.getApp',
       'mobileBridge.pairing',
       'mobileBridge.relayMode',
       'mobileBridge.relayUrl',
