@@ -173,6 +173,7 @@ test.describe('Settings Panel', () => {
     await page.getByRole('button', { name: 'Notifications' }).click();
     // Event rows with Desktop/Toast inline labels
     await expect(page.getByText('Agent Idle')).toBeVisible();
+    await expect(page.getByText('Agent Crash')).toBeVisible();
     await expect(page.getByText('Plan Complete')).toBeVisible();
     // Delivery settings
     await expect(page.getByText('Toast Auto-Dismiss')).toBeVisible();

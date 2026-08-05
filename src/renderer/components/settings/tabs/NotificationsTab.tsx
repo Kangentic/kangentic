@@ -2,7 +2,7 @@ import type { AppConfig, NotificationConfig } from '../../../../shared/types';
 import { SectionHeader, SettingRow, Select, INPUT_CLASS, useScopedUpdate } from '../shared';
 import { settingProps } from '../settings-registry';
 
-type NotifyEventKey = 'onAgentIdle' | 'onPlanComplete' | 'onSpawnStalled';
+type NotifyEventKey = 'onAgentIdle' | 'onAgentCrash' | 'onPlanComplete' | 'onSpawnStalled';
 
 /** Map desktop/toast booleans to a single dropdown value. */
 function notifyChannelValue(desktop: boolean, toast: boolean): string {
@@ -52,12 +52,17 @@ export function NotificationsTab({ globalConfig }: { globalConfig: AppConfig }) 
     <>
       <SectionHeader
         label="Events"
-        searchIds={['notifications.onAgentIdle', 'notifications.onPlanComplete', 'notifications.onSpawnStalled']}
+        searchIds={['notifications.onAgentIdle', 'notifications.onAgentCrash', 'notifications.onPlanComplete', 'notifications.onSpawnStalled']}
       />
       <NotifyChannelRow
         eventKey="onAgentIdle"
         config={globalConfig.notifications}
         searchId="notifications.onAgentIdle"
+      />
+      <NotifyChannelRow
+        eventKey="onAgentCrash"
+        config={globalConfig.notifications}
+        searchId="notifications.onAgentCrash"
       />
       <NotifyChannelRow
         eventKey="onPlanComplete"

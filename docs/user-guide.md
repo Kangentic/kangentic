@@ -579,7 +579,7 @@ Command Terminals keep running when you hide the layer and when you switch proje
 
 Desktop and toast notifications fire when an agent needs attention and the user can't already see it - either the window is minimized/unfocused, or a different project is active. Notification events: agent idle, permission-blocked idle (body shows "Needs permission"), session crash (non-zero exit), and plan-completion auto-moves. The task name is the title and the project name is the body. Clicking a desktop notification brings the window to the foreground, switches to the correct project, and opens the task detail dialog. The taskbar also flashes on Windows. A 10-second per-session cooldown prevents repeated desktop notifications from the same agent.
 
-The Settings > Notifications panel exposes three configurable events: **Agent Idle**, **Plan Complete**, and **Spawn Stalled** (a task spawn that waits too long on the git queue while preparing). Each can be set to Desktop & Toast, Desktop Only, Toast Only, or Off. Toast duration and max visible count are also configurable. The **Agent Crash** notification (non-zero exit) is always on and not exposed in the settings UI.
+The Settings > Notifications panel exposes four configurable events: **Agent Idle**, **Agent Crash** (session exit; desktop alerts on error exits only, toasts also cover clean exits), **Plan Complete**, and **Spawn Stalled** (a task spawn that waits too long on the git queue while preparing). Each can be set to Off, Desktop only, Toast only, or Both. Toast duration and max visible count are also configurable.
 
 ### Mobile Devices
 

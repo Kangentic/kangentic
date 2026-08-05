@@ -273,11 +273,11 @@ profiles (including across projects) via the `kangentic_*_board_profile` MCP too
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `notifications.desktop.onAgentIdle` | boolean | `true` | Desktop notification when agent goes idle on non-visible project |
-| `notifications.desktop.onAgentCrash` | boolean | `true` | Desktop notification when session exits with error (always on) |
+| `notifications.desktop.onAgentCrash` | boolean | `true` | Desktop notification when session exits with error |
 | `notifications.desktop.onPlanComplete` | boolean | `true` | Desktop notification when plan completes and task auto-moves |
 | `notifications.desktop.onSpawnStalled` | boolean | `true` | Desktop notification when a task spawn stays in a preparing phase (worktree/git queue) past the stall threshold (~8s) |
 | `notifications.toasts.onAgentIdle` | boolean | `true` | In-app toast when agent goes idle |
-| `notifications.toasts.onAgentCrash` | boolean | `true` | In-app toast when session exits with error (always on) |
+| `notifications.toasts.onAgentCrash` | boolean | `true` | In-app toast when a session exits (error or clean); the `notifications.desktop.onAgentCrash` row fires on error exits only |
 | `notifications.toasts.onPlanComplete` | boolean | `true` | In-app toast when plan completes |
 | `notifications.toasts.onSpawnStalled` | boolean | `true` | In-app toast (with a Cancel action) when a task spawn stalls past the threshold while preparing |
 | `notifications.toasts.durationSeconds` | number | `4` | Toast auto-dismiss time in seconds (1-30) |

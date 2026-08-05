@@ -19,7 +19,22 @@
  *       tab component names a real registry id (catches the dead-id class
  *       of drift, not just the scope class);
  *   (d) every registry tabId has a SETTINGS_TABS entry and a TAB_LABELS
- *       entry, so a tab rename can't silently orphan search.
+ *       entry, so a tab rename can't silently orphan search;
+ *   (e) every boolean event key under NotificationConfig.desktop/.toasts has
+ *       a `notifications.<key>` registry entry, with an explicit allowlist
+ *       for any key deliberately kept out of the UI - the reverse of (c).
+ *       This is what let onAgentCrash ship with no Settings row: (c) only
+ *       ever walks row -> registry, never config -> row, so a config key
+ *       with no UI was invisible to every check in this file;
+ *   (f) NotificationConfig.desktop and .toasts declare the same boolean
+ *       event key set, since NotifyChannelRow reads and writes both from
+ *       one dropdown - a key on only one channel renders as a wrong value,
+ *       not a crash, so nothing else would catch it;
+ *   (g) every notification row is really RENDERED and wired to the config key
+ *       it names: each `notifications.on*` registry id has a NotifyChannelRow,
+ *       and each row's `searchId` matches its `eventKey`. Those two props are
+ *       independent, so a row can display one setting's label while writing
+ *       another's config key, and (c) cannot see it - both ids are real.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -27,6 +42,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { SETTINGS_REGISTRY, TAB_LABELS, PROJECT_TAB_GLOBALS } from '../../src/renderer/components/settings/settings-registry';
 import { SETTINGS_TABS } from '../../src/renderer/components/settings/settings-tabs';
+import { DEFAULT_CONFIG } from '../../src/shared/types';
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const TABS_DIR = path.join(REPO_ROOT, 'src/renderer/components/settings/tabs');
@@ -87,9 +103,12 @@ describe('settings tab/scope parity: global-in-project-tab allowlist', () => {
   });
 });
 
-/** Every `settingProps('id')`, `searchId: 'id'`, and `searchIds={[...]}` literal
- *  referenced by a tab component, so a dead/renamed registry id shows up as a
- *  parity failure instead of a silently-unsearchable row. */
+/** Every `settingProps('id')`, `searchId: 'id'`, `searchId="id"`, and
+ *  `searchIds={[...]}` literal referenced by a tab component, so a
+ *  dead/renamed registry id shows up as a parity failure instead of a
+ *  silently-unsearchable row. `searchId="id"` (the JSX attribute form, used
+ *  by NotificationsTab's NotifyChannelRow) is distinct from the
+ *  `searchId: 'id'` object-property form above it. */
 function collectReferencedSettingIds(): Array<{ id: string; file: string }> {
   const references: Array<{ id: string; file: string }> = [];
   const files = fs.readdirSync(TABS_DIR, { withFileTypes: true })
@@ -97,7 +116,8 @@ function collectReferencedSettingIds(): Array<{ id: string; file: string }> {
     .map((entry) => entry.name);
 
   const settingPropsPattern = /settingProps\(\s*'([^']+)'\s*\)/g;
-  const searchIdPattern = /searchId:\s*'([^']+)'/g;
+  const searchIdPropertyPattern = /searchId:\s*'([^']+)'/g;
+  const searchIdAttributePattern = /searchId="([^"]+)"/g;
   const searchIdsPattern = /searchIds=\{\[([^\]]*)\]\}/g;
   const quotedIdPattern = /'([^']+)'/g;
 
@@ -107,7 +127,10 @@ function collectReferencedSettingIds(): Array<{ id: string; file: string }> {
     for (const match of content.matchAll(settingPropsPattern)) {
       references.push({ id: match[1], file: fileName });
     }
-    for (const match of content.matchAll(searchIdPattern)) {
+    for (const match of content.matchAll(searchIdPropertyPattern)) {
+      references.push({ id: match[1], file: fileName });
+    }
+    for (const match of content.matchAll(searchIdAttributePattern)) {
       references.push({ id: match[1], file: fileName });
     }
     for (const match of content.matchAll(searchIdsPattern)) {
@@ -135,6 +158,183 @@ describe('settings tab/scope parity: registry to rendered parity', () => {
         + `typo\'d, or the entry was deleted?). A dead id here means the row is unsearchable / a `
         + `SectionHeader never hides during search:\n${dead.join('\n')}`,
     ).toEqual([]);
+  });
+});
+
+/** Boolean event keys declared on one NotificationConfig channel (desktop or
+ *  toasts), read from DEFAULT_CONFIG rather than regexed off the interface
+ *  text - `durationSeconds` / `maxCount` are numbers and are filtered out
+ *  here, since they already have their own full-path registry ids. */
+function notificationEventKeys(channel: 'desktop' | 'toasts'): string[] {
+  return Object.entries(DEFAULT_CONFIG.notifications[channel])
+    .filter(([, value]) => typeof value === 'boolean')
+    .map(([key]) => key)
+    .sort();
+}
+
+/**
+ * Notification event keys deliberately NOT exposed in Settings, with a
+ * reason. Empty by design: every notification a user can receive should be
+ * switchable. Note the id convention below - a row id is
+ * `notifications.<key>` (e.g. `notifications.onAgentCrash`), NOT the config
+ * path `notifications.desktop.<key>`, because one row owns both channels.
+ */
+const UNEXPOSED_NOTIFICATION_EVENTS: Record<string, string> = {};
+
+/** Both channels' event keys, and every registry id. Hoisted rather than
+ *  recomputed per test: both are pure reads of module-level constants
+ *  (DEFAULT_CONFIG, SETTINGS_REGISTRY) with no mutation, so there is no
+ *  isolation reason to rebuild them - matching how `tabCategoryById` above is
+ *  derived once and shared across describe blocks. */
+const NOTIFICATION_EVENT_KEYS = new Set([
+  ...notificationEventKeys('desktop'),
+  ...notificationEventKeys('toasts'),
+]);
+const REGISTRY_IDS = new Set(SETTINGS_REGISTRY.map((entry) => entry.id));
+
+describe('settings tab/scope parity: notification config to registry parity', () => {
+  it('every notification event boolean has a registry row, or is allowlisted', () => {
+    const missing = [...NOTIFICATION_EVENT_KEYS]
+      .filter((key) => !UNEXPOSED_NOTIFICATION_EVENTS[key])
+      .filter((key) => !REGISTRY_IDS.has(`notifications.${key}`))
+      .sort();
+    expect(
+      missing,
+      `These NotificationConfig event booleans (desktop and/or toasts) have no `
+        + `SETTINGS_REGISTRY entry, so a user has no way to turn them off (this is exactly `
+        + `how onAgentCrash shipped unreachable). Add a 'notifications.<key>' entry `
+        + `to settings-registry.ts and a NotifyChannelRow to NotificationsTab.tsx, or - only `
+        + `if deliberately kept out of the UI - record the key in UNEXPOSED_NOTIFICATION_EVENTS `
+        + `(settings-tab-scope-parity.test.ts) with a reason:\n${missing.join('\n')}`,
+    ).toEqual([]);
+  });
+
+  it('the unexposed-events allowlist has no stale entries', () => {
+    const stale = Object.keys(UNEXPOSED_NOTIFICATION_EVENTS).filter((key) => {
+      if (!NOTIFICATION_EVENT_KEYS.has(key)) return true; // no longer a real config boolean
+      return REGISTRY_IDS.has(`notifications.${key}`); // now has a row after all
+    }).sort();
+    expect(
+      stale,
+      `These UNEXPOSED_NOTIFICATION_EVENTS entries no longer name a config boolean that is `
+        + `missing a registry row (renamed, removed, or a row was added?). Remove them:\n`
+        + `${stale.join('\n')}`,
+    ).toEqual([]);
+  });
+
+  it('every notifications.on* registry id names a real event key', () => {
+    const desktopKeys = new Set(notificationEventKeys('desktop'));
+    const toastKeys = new Set(notificationEventKeys('toasts'));
+    const dead = SETTINGS_REGISTRY
+      .filter((entry) => /^notifications\.on/.test(entry.id))
+      .map((entry) => entry.id.slice('notifications.'.length))
+      .filter((key) => !desktopKeys.has(key) && !toastKeys.has(key))
+      .sort();
+    expect(
+      dead,
+      `These SETTINGS_REGISTRY ids look like a notification event row ('notifications.on...') `
+        + `but name no real boolean on NotificationConfig.desktop or .toasts (typo'd, or the `
+        + `config key was renamed/removed?):\n${dead.join('\n')}`,
+    ).toEqual([]);
+  });
+
+  it('desktop and toasts declare the same event key set', () => {
+    // NotifyChannelRow reads and writes config.desktop[eventKey] and
+    // config.toasts[eventKey] together from one dropdown. A key present on
+    // only one channel makes the other read `undefined`, which
+    // notifyChannelValue silently renders as a wrong-but-plausible value
+    // ('Desktop only' / 'Toast only') instead of an error.
+    expect(notificationEventKeys('desktop')).toEqual(notificationEventKeys('toasts'));
+  });
+
+  it('every NotifyChannelRow pairs its eventKey with the matching searchId', () => {
+    // NotifyChannelRow takes `eventKey` and `searchId` as INDEPENDENT props:
+    // the visible label/description come from settingProps(searchId), while the
+    // value read and written come from config.desktop[eventKey] /
+    // config.toasts[eventKey]. Nothing in the type system ties them together,
+    // so a row can render "Agent Crash" while silently driving onAgentIdle.
+    // That mismatch is invisible to every other check here (both ids are real)
+    // and to the UI spec (the label still renders), so it is pinned here.
+    const source = fs.readFileSync(path.join(TABS_DIR, 'NotificationsTab.tsx'), 'utf-8');
+    const rows = [...source.matchAll(/<NotifyChannelRow\b([\s\S]*?)\/>/g)];
+    expect(
+      rows.length,
+      'found no <NotifyChannelRow .../> elements in NotificationsTab.tsx - did the component '
+        + 'get renamed? Update this check with it.',
+    ).toBeGreaterThan(0);
+
+    const mismatched = rows
+      .map((row) => ({
+        eventKey: row[1].match(/eventKey="([^"]+)"/)?.[1],
+        searchId: row[1].match(/searchId="([^"]+)"/)?.[1],
+      }))
+      .filter((row) => row.searchId !== `notifications.${row.eventKey}`)
+      .map((row) => `eventKey="${row.eventKey}" paired with searchId="${row.searchId}"`)
+      .sort();
+    expect(
+      mismatched,
+      `These NotifyChannelRow rows (NotificationsTab.tsx) label themselves from one setting id `
+        + `while reading and writing a different config key, so the row silently drives the wrong `
+        + `notification. A row's searchId must be 'notifications.<eventKey>':\n`
+        + `${mismatched.join('\n')}`,
+    ).toEqual([]);
+  });
+
+  it('every notifications.on* registry row is actually rendered in NotificationsTab', () => {
+    // The reverse of the dead-id check: that one walks tab file -> registry and
+    // only fails on a DANGLING reference, never a MISSING one. So a registry
+    // row with no NotifyChannelRow satisfies every other check here while
+    // showing up in Settings search as a result pointing at a control that is
+    // not on the page - the same "reachable in config, unreachable in UI" shape
+    // as the Agent Crash gap, one layer up.
+    const source = fs.readFileSync(path.join(TABS_DIR, 'NotificationsTab.tsx'), 'utf-8');
+    const rendered = new Set(
+      [...source.matchAll(/searchId="([^"]+)"/g)].map((match) => match[1]),
+    );
+    const unrendered = SETTINGS_REGISTRY
+      .filter((entry) => /^notifications\.on/.test(entry.id))
+      .map((entry) => entry.id)
+      .filter((id) => !rendered.has(id))
+      .sort();
+    expect(
+      unrendered,
+      `These SETTINGS_REGISTRY notification rows have no NotifyChannelRow in `
+        + `NotificationsTab.tsx, so Settings search offers them but the Notifications tab never `
+        + `renders a control for them. Add a NotifyChannelRow, or remove the registry entry:\n`
+        + `${unrendered.join('\n')}`,
+    ).toEqual([]);
+  });
+
+  it('collectReferencedSettingIds picks up the searchId="..." JSX-attribute form', () => {
+    // Pins searchIdAttributePattern itself. The dead-id check above only flags
+    // ids that ARE collected and are not real, so deleting that regex would
+    // silently stop scanning every NotifyChannelRow and leave the suite green.
+    // Asserting that a given id was collected pins nothing: SectionHeader's
+    // searchIds={[...]} array names the same four ids, so the array alone
+    // satisfies any presence check even with the attribute regex removed
+    // (verified by deleting it - a presence-based version stayed green).
+    // COUNT is the only signal that separates the two forms. Both expected
+    // counts are derived from the source rather than hardcoded, so trimming
+    // the now-redundant searchIds array adjusts the expectation instead of
+    // failing with a misleading message.
+    const source = fs.readFileSync(path.join(TABS_DIR, 'NotificationsTab.tsx'), 'utf-8');
+    const countMatches = (pattern: RegExp): number => [...source.matchAll(pattern)].length;
+    const attributeIds = countMatches(/searchId="([^"]+)"/g);
+    const arrayIds = [...source.matchAll(/searchIds=\{\[([^\]]*)\]\}/g)]
+      .reduce((total, match) => total + [...match[1].matchAll(/'([^']+)'/g)].length, 0);
+    const settingPropsIds = countMatches(/settingProps\(\s*'([^']+)'\s*\)/g);
+    expect(attributeIds, 'no searchId="..." attributes left in NotificationsTab.tsx').toBeGreaterThan(0);
+
+    const collected = collectReferencedSettingIds()
+      .filter((reference) => reference.file === 'NotificationsTab.tsx');
+    expect(
+      collected.length,
+      `collectReferencedSettingIds found ${collected.length} references in `
+        + `NotificationsTab.tsx, but the file literally contains ${attributeIds} searchId="..." `
+        + `attributes + ${arrayIds} searchIds={[...]} entries + ${settingPropsIds} settingProps() `
+        + `literals. A shortfall of exactly ${attributeIds} means searchIdAttributePattern is no `
+        + `longer scanning the JSX-attribute form, leaving every NotifyChannelRow unchecked.`,
+    ).toBe(attributeIds + arrayIds + settingPropsIds);
   });
 });
 
