@@ -56,6 +56,10 @@ import {
   moveTaskIpc,
   waitForBoard,
   resolveMockAgentPath,
+  armPtyEchoRecorder,
+  readPtyEchoes,
+  settledPtyEchoes,
+  rulerWidths,
 } from './helpers';
 import type { ElectronApplication, Page } from '@playwright/test';
 
@@ -308,6 +312,18 @@ test.describe('terminal fit invariant across rapid detail open/close', () => {
       intervals: [100],
     }).toBe(true);
 
+    // Echo recorder for the post-loop drift epilogue: main broadcasts every
+    // real PTY grid change (SESSION_PTY_RESIZED), so the end state of the
+    // whole open/close churn is observable without perturbing it. Production-
+    // safe: the preload bridge is not tree-shaken.
+    const sessionId: string = await page.evaluate(async (targetTaskId) => {
+      const sessions: Array<{ id: string; taskId: string }> = await window.electronAPI.sessions.list();
+      const session = sessions.find((sessionEntry) => sessionEntry.taskId === targetTaskId);
+      if (!session) throw new Error('no session for task');
+      return session.id;
+    }, taskId);
+    await armPtyEchoRecorder(page, sessionId);
+
     // Open the GENUINE way a user does: click the task's own card. That is the
     // same signal every entry point uses (card click, search palette,
     // notification): each calls `setDetailTaskId`, which TaskCard's
@@ -385,6 +401,16 @@ test.describe('terminal fit invariant across rapid detail open/close', () => {
       + '. For reference, the real app shows panel 306x11 and window 209x48.',
     ).toBe(true);
 
+    // The panel remounts on close and re-asserts its fit, and the surfaces are
+    // proven different just above, so the settled last echo after the control
+    // close is the PANEL's grid - the baseline the post-loop drift epilogue
+    // compares against.
+    const baselineEchoes = await settledPtyEchoes(page, 15000,
+      'The PTY-dims echo log never settled non-empty after the control '
+      + 'open/close, so the panel remount never re-asserted its grid (or the '
+      + 'SESSION_PTY_RESIZED broadcast is broken).');
+    const panelBaseline = baselineEchoes[baselineEchoes.length - 1];
+
     for (let cycle = 1; cycle <= CYCLES; cycle++) {
       await resetGridWidths(page);
       // openDetail waits for the window's own terminal rather than sleeping, so the
@@ -413,11 +439,59 @@ test.describe('terminal fit invariant across rapid detail open/close', () => {
       await page.waitForTimeout(DWELL_MS);
     }
 
+    // EPILOGUE - end-state PTY agreement. Eight open/close handoffs later, the
+    // PTY must be back at the panel's grid (the panel's remount re-asserts its
+    // fit on every close). If any handoff lost or overrode a resize and the
+    // width-drift self-heal failed to recover it, the last echo is a rogue
+    // grid instead and this names it. Growth is asserted FIRST: the surfaces
+    // are proven different by the control, so the loop must have produced new
+    // echoes - without that check, a broadcast that died right after the
+    // baseline was captured would leave the baseline itself as the last entry
+    // and the value comparison would pass having proven nothing.
+    await expect
+      .poll(async () => {
+        const echoes = await readPtyEchoes(page);
+        if (echoes.length <= baselineEchoes.length) return 'no-new-echoes';
+        const last = echoes[echoes.length - 1];
+        return `${last.cols}x${last.rows}`;
+      }, {
+        message:
+          'After the full open/close churn the PTY did not settle back at the '
+          + 'panel baseline grid ' + JSON.stringify(panelBaseline)
+          + ' - either a handoff left the PTY at another surface\'s width and the '
+          + 'self-heal did not recover it, or ("no-new-echoes") the loop produced '
+          + 'no echoes at all and the SESSION_PTY_RESIZED broadcast died after '
+          + 'the baseline was captured.',
+        timeout: 15000,
+        intervals: [250],
+      })
+      .toBe(`${panelBaseline.cols}x${panelBaseline.rows}`);
+
+    if (process.platform !== 'win32') {
+      // One end-state scrollback read - safe HERE and only here: the loop's
+      // measurements are complete, so getScrollback's drain side effect (it
+      // empties the pending flush buffer) can no longer perturb what the
+      // recorder counted. The fixture's last frame must be drawn at the final
+      // PTY width. Linux-gated: on Windows ConPTY never delivers the resize to
+      // the grandchild fixture, so it never redraws (see mock-claude.js).
+      await expect
+        .poll(async () => {
+          const scrollback: string = await page.evaluate(
+            async (scrollbackSessionId) => window.electronAPI.sessions.getScrollback(scrollbackSessionId),
+            sessionId,
+          );
+          const widths = rulerWidths(scrollback);
+          return widths[widths.length - 1] ?? 0;
+        }, { timeout: 15000, intervals: [250] })
+        .toBe(panelBaseline.cols);
+    }
+
     // Print what the oracle saw on EVERY run, pass or fail. A green run whose
     // recorded widths are empty is not a green run, it is a blind one, and that
     // distinction is invisible if only failures report.
     console.log('[fit-invariant] control widths: ' + JSON.stringify(controlWidths));
     console.log('[fit-invariant] per-open widths: ' + JSON.stringify(gridWidthsPerOpen));
+    console.log('[fit-invariant] panel baseline: ' + JSON.stringify(panelBaseline));
 
     // Every cycle must have recorded at least one width, or the loop was inert and
     // the multi-width assertion below would compare empty arrays. This is the

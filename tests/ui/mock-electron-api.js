@@ -1570,7 +1570,9 @@
       __resizeCalls: [],
       resize: async function (sessionId, cols, rows) {
         window.electronAPI.sessions.__resizeCalls.push({ sessionId: sessionId, cols: cols, rows: rows });
-        return { colsChanged: false };
+        // Tests can force the result (e.g. { colsChanged: false, refused: true }
+        // to exercise the width-drift refusal hold) via window.__mockResizeResult.
+        return window.__mockResizeResult || { colsChanged: false };
       },
       list: async function () {
         return sessions;
@@ -1603,6 +1605,23 @@
       },
       ackData: function () {
         // No-op in the headless mock: backpressure pause/resume has no PTY here.
+      },
+      onPtyResized: function (callback) {
+        // Tests can fire the width-drift echo via
+        // window.__mockFirePtyResized(sessionId, cols, rows, origin).
+        if (!window.__mockPtyResizedListeners) window.__mockPtyResizedListeners = [];
+        window.__mockPtyResizedListeners.push(callback);
+        if (!window.__mockFirePtyResized) {
+          window.__mockFirePtyResized = function (sessionId, cols, rows, origin) {
+            var listeners = (window.__mockPtyResizedListeners || []).slice();
+            for (var i = 0; i < listeners.length; i++) { listeners[i](sessionId, cols, rows, origin || 'desktop'); }
+          };
+        }
+        return function () {
+          var listeners = window.__mockPtyResizedListeners || [];
+          var idx = listeners.indexOf(callback);
+          if (idx >= 0) listeners.splice(idx, 1);
+        };
       },
       onFirstOutput: function (callback) {
         // Tests can fire this via window.__mockFireFirstOutput(sessionId).

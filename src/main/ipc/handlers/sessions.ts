@@ -19,7 +19,7 @@ import { markRecordExited, markRecordSuspended, promoteRecord, recoverStaleSessi
 import { isShuttingDown } from '../../shutdown-state';
 import { applySuspendDbWrites, reconcileTaskSessionRef } from './session-reconcile';
 import { abortInFlightResume, registerResumeController, releaseResumeController } from './session-resume-controllers';
-import type { Session, TaskResolvePrResult } from '../../../shared/types';
+import type { PtyResizeOrigin, Session, TaskResolvePrResult } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 import { isAbortError } from '../../../shared/abort-utils';
 import { broadcast } from '../../pop-out/window-broadcast';
@@ -411,6 +411,20 @@ export function registerSessionHandlers(context: IpcContext): void {
     const projectId = context.sessionManager.getSessionProjectId(sessionId);
     sendToFocusedRenderers(IPC.SESSION_DATA, sessionId, data, projectId);
   });
+
+  // Fires only when the PTY's dims actually changed (SessionManager.resize
+  // short-circuits no-ops before the emit). Broadcast rather than focus-routed:
+  // the mounted owner xterm this echo exists for can be mid-mount (registered
+  // in the mounted set only a microtask later), and a missed echo during that
+  // window is exactly the divergence with no recovery path. Echoes are rare,
+  // so fanning a few no-op sends is the cheaper failure mode.
+  context.sessionManager.on(
+    'pty-resize',
+    (sessionId: string, cols: number, rows: number, origin: PtyResizeOrigin = 'desktop') => {
+      if (context.mainWindow.isDestroyed()) return;
+      broadcast(context.mainWindow, IPC.SESSION_PTY_RESIZED, sessionId, cols, rows, origin);
+    },
+  );
 
   context.sessionManager.on('first-output', (sessionId: string) => {
     const projectId = context.sessionManager.getSessionProjectId(sessionId);

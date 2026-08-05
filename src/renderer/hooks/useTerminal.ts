@@ -12,13 +12,40 @@ import { noteTerminalFocus } from '../utils/dictation-target';
 import { registerTerminalCapture, unregisterTerminalCapture, type TerminalCaptureReader } from '../utils/terminal-capture-registry';
 import { registerDevtoolsTerminal, traceTerminalRenderer } from '../utils/terminal-grid-registry';
 import { registerMountedTerminal } from '../utils/terminal-mount-registry';
-import type { TerminalColorOverrides } from '../../shared/types';
+import type { PtyResizeOrigin, TerminalColorOverrides } from '../../shared/types';
 import '@xterm/xterm/css/xterm.css';
 
 /** Delay before forwarding a resize to the PTY. Coalesces rapid resizes
  *  (panel drag, window resize) into a single PTY resize so the TUI
  *  (Claude Code) only redraws once and scrollback isn't churned. */
 const PTY_RESIZE_DEBOUNCE_MS = 200;
+
+/** Bounded corrective re-asserts per divergence signature inside one budget
+ *  window, so the width-drift self-heal can never fight a grid holder
+ *  unboundedly. The budget is deliberately NOT reset by an in-sync echo: in a
+ *  two-surface fight each side's successful re-assert lands an in-sync echo at
+ *  the OTHER side, so a reset-on-heal budget never binds in exactly the
+ *  livelock it exists to bound. Time decay binds every pattern instead: at
+ *  most this many re-asserts per signature per window, then quiet until the
+ *  window lapses. */
+const MAX_ECHO_REASSERTS_PER_SIGNATURE = 2;
+
+/** See MAX_ECHO_REASSERTS_PER_SIGNATURE. Also times the refusal hold: after
+ *  main refuses a re-assert (the mobile sub-floor guard), no further
+ *  re-asserts fire until this window lapses. The hold is time-stamped rather
+ *  than signature-keyed because the pre-send fit() re-reads the container, so
+ *  this terminal's own dims (and therefore the signature future echoes
+ *  compute) can drift during the debounce - a burned signature would stop
+ *  binding exactly when the container is being resized. */
+const ECHO_REASSERT_BUDGET_WINDOW_MS = 10_000;
+
+/** Delay between a disagreeing PTY-dims echo and the corrective re-assert.
+ *  Coalesces an echo burst (a multi-step reshape emits one echo per real dim
+ *  change) into one corrective pass, and gives an in-flight legitimate resize
+ *  time to land before the disagreement is judged. Kept below
+ *  PTY_RESIZE_DEBOUNCE_MS so this terminal's own pending debounced resize is
+ *  still pending (and therefore detectable) when its echo arrives. */
+const ECHO_REASSERT_DEBOUNCE_MS = 150;
 
 /** Backstop for a scrollback replay whose chunked write never completes (e.g.
  *  a dropped xterm.write callback). Force-clears scrollbackPendingRef and
@@ -199,6 +226,107 @@ export function isSessionSwapWithoutRemount(
   );
 }
 
+/** Re-assert budget bookkeeping, keyed by the divergence signature (echoed
+ *  dims vs own dims). Held in a per-instance ref by the hook; produced and
+ *  consumed by resolvePtyEchoReassert so the budget-window arithmetic lives in
+ *  one place. */
+export interface PtyEchoReassertAttempts {
+  signature: string;
+  count: number;
+  lastScheduledAt: number;
+}
+
+export type PtyEchoSkipReason =
+  | 'in-sync'
+  | 'foreign-hold'
+  | 'refused-hold'
+  | 'parked'
+  | 'replay-in-flight'
+  | 'own-resize-pending'
+  | 'attempt-cap';
+
+export type PtyEchoReassertDecision =
+  | { action: 'reassert'; signature: string; nextAttempts: PtyEchoReassertAttempts }
+  | { action: 'skip'; signature: string; reason: PtyEchoSkipReason };
+
+export interface PtyEchoReassertInput {
+  echoedCols: number;
+  echoedRows: number;
+  ownCols: number;
+  ownRows: number;
+  origin: PtyResizeOrigin;
+  /** scrollbackPendingRef: a mount replay or reload is in flight. */
+  replayPending: boolean;
+  /** isTerminalParked(sessionId): off-view or occluded. */
+  parked: boolean;
+  /** A debounced onResize send is pending for THIS terminal. */
+  ownResizePending: boolean;
+  previousAttempts: PtyEchoReassertAttempts | null;
+  /** When main last REFUSED a re-assert for this terminal (the mobile
+   *  sub-floor guard), or null. Time-stamped, not signature-keyed - see
+   *  ECHO_REASSERT_BUDGET_WINDOW_MS. */
+  lastRefusalAt: number | null;
+  now: number;
+}
+
+/**
+ * The guard matrix of the width-drift self-heal: should this mounted terminal
+ * re-assert its own fitted grid in response to a PTY-dims echo that disagrees
+ * with it? Pure and exported for unit tests (precedent:
+ * isSessionSwapWithoutRemount above).
+ *
+ * Guard order is load-bearing, most-specific first, so the trace names the
+ * REAL reason rather than whichever mechanical guard happened to be checked
+ * first:
+ * - `in-sync`: the echo matches our grid. This is also how the echo of our own
+ *   resize self-filters - main short-circuits same-dims resizes before the
+ *   emit, so every echo carries the dims of an ACTUAL grid change.
+ * - `foreign-hold`: a phone ('mobile') or the resting-grid park ('park')
+ *   legitimately holds the grid; re-asserting would stomp it. 'spawn' is
+ *   treated like 'desktop': nothing legitimately holds a spawn grid against a
+ *   mounted owner, so a respawn under a mounted xterm is healable divergence.
+ * - `refused-hold`: main refused a recent re-assert (it is deliberately
+ *   holding the grid - the mobile sub-floor guard), so healing attempts stop
+ *   until the hold window lapses, whatever dims later echoes carry.
+ * - `parked`: this terminal is off-view; it must not reshape a grid it is not
+ *   showing (the reveal reload re-fits when it comes back).
+ * - `replay-in-flight`: the replay's own fit + resize settle the dims; its
+ *   resize's echo then self-filters as in-sync.
+ * - `own-resize-pending`: our debounced onResize send is about to assert these
+ *   dims anyway.
+ * - `attempt-cap`: the time-windowed budget (see
+ *   MAX_ECHO_REASSERTS_PER_SIGNATURE) is spent for this signature.
+ */
+export function resolvePtyEchoReassert(input: PtyEchoReassertInput): PtyEchoReassertDecision {
+  const signature = `${input.echoedCols}x${input.echoedRows}<-${input.ownCols}x${input.ownRows}`;
+  if (input.echoedCols === input.ownCols && input.echoedRows === input.ownRows) {
+    return { action: 'skip', reason: 'in-sync', signature };
+  }
+  if (input.origin === 'mobile' || input.origin === 'park') {
+    return { action: 'skip', reason: 'foreign-hold', signature };
+  }
+  if (input.lastRefusalAt !== null && input.now - input.lastRefusalAt < ECHO_REASSERT_BUDGET_WINDOW_MS) {
+    return { action: 'skip', reason: 'refused-hold', signature };
+  }
+  if (input.parked) return { action: 'skip', reason: 'parked', signature };
+  if (input.replayPending) return { action: 'skip', reason: 'replay-in-flight', signature };
+  if (input.ownResizePending) return { action: 'skip', reason: 'own-resize-pending', signature };
+  const attemptsForSignature =
+    input.previousAttempts !== null
+    && input.previousAttempts.signature === signature
+    && input.now - input.previousAttempts.lastScheduledAt < ECHO_REASSERT_BUDGET_WINDOW_MS
+      ? input.previousAttempts.count
+      : 0;
+  if (attemptsForSignature >= MAX_ECHO_REASSERTS_PER_SIGNATURE) {
+    return { action: 'skip', reason: 'attempt-cap', signature };
+  }
+  return {
+    action: 'reassert',
+    signature,
+    nextAttempts: { signature, count: attemptsForSignature + 1, lastScheduledAt: input.now },
+  };
+}
+
 export function useTerminal(options: UseTerminalOptions) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
@@ -233,6 +361,17 @@ export function useTerminal(options: UseTerminalOptions) {
    *  (e.g. TerminalTab) to gate PTY output while a loading overlay is shown. */
   const suppressDataRef = useRef(false);
   const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Debounce timer for the width-drift self-heal's corrective re-assert
+   *  (see the SESSION_PTY_RESIZED listener effect below). Cleared by that
+   *  effect's cleanup, so a session change or unmount never fires a stale
+   *  re-assert. */
+  const echoReassertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Time-windowed re-assert budget per divergence signature (see
+   *  MAX_ECHO_REASSERTS_PER_SIGNATURE / resolvePtyEchoReassert). */
+  const echoReassertAttemptsRef = useRef<PtyEchoReassertAttempts | null>(null);
+  /** When main last refused a re-assert (the mobile sub-floor guard); arms the
+   *  refused-hold guard in resolvePtyEchoReassert. */
+  const echoRefusedAtRef = useRef<number | null>(null);
   /** Coalesces xterm onData bursts (paste, key-repeat, clipboard callback)
    *  into one IPC write per microtask. */
   const writeBatcherRef = useRef<WriteBatcher | null>(null);
@@ -546,6 +685,7 @@ export function useTerminal(options: UseTerminalOptions) {
       // geometry - no stale frame, no compensating resize needed here. The
       // colsChanged field of the resize result is therefore intentionally
       // unused by the renderer.
+      traceTerminalRenderer(sid, 'resize-request', { cols, rows, origin: 'mount' });
       const resizePromise = window.electronAPI.sessions.resize(sid, cols, rows);
       const scrollbackPromise = suppressScrollback
         ? Promise.resolve<string | null>(null)
@@ -728,6 +868,133 @@ export function useTerminal(options: UseTerminalOptions) {
       queue.reset();
     };
   }, [options.sessionId]);
+
+  /** The corrective half of the width-drift self-heal (scheduled by the
+   *  SESSION_PTY_RESIZED listener effect below): re-fit to the live container,
+   *  re-send OUR grid to the PTY, then repair the already-garbled frame with a
+   *  replay. Reads everything through refs so its identity is stable. */
+  const reassertOwnGrid = useCallback(async (sessionId: string) => {
+    echoReassertTimerRef.current = null;
+    const terminal = xtermRef.current;
+    if (!terminal || !fitAddonRef.current) return;
+    // Re-checked at fire time (the debounce is 150ms of drift): a replay that
+    // started meanwhile owns settling the dims via its own fit + resize, and a
+    // parked terminal must not reshape a grid it is not showing.
+    if (scrollbackPendingRef.current || isTerminalParked(sessionId)) return;
+    // Re-fit first: the container may have moved during the debounce, and our
+    // OWN fitted grid is the thing being re-asserted.
+    const wasAtBottom = isAtBottomRef.current;
+    fitAddonRef.current.fit();
+    if (wasAtBottom) terminal.scrollToBottom();
+    const { cols, rows } = terminal;
+    // The fit may have scheduled the debounced onResize; the direct send below
+    // supersedes it (the flushResize pattern).
+    if (resizeTimerRef.current) {
+      clearTimeout(resizeTimerRef.current);
+      resizeTimerRef.current = null;
+    }
+    traceTerminalRenderer(sessionId, 'resize-request', { cols, rows, origin: 'echo-reassert' });
+    try {
+      const result = await window.electronAPI.sessions.resize(sessionId, cols, rows);
+      if (result?.refused) {
+        // Main is deliberately holding this grid (the mobile sub-floor guard).
+        // Arm the time-stamped refusal hold so later echoes stop after this
+        // single refused IPC instead of retrying to the cap. Time-stamped, not
+        // signature-burned: the fit() above may have moved our own dims during
+        // the debounce, so a signature keyed to the schedule-time dims would
+        // stop matching exactly when the container is being resized.
+        echoRefusedAtRef.current = Date.now();
+        traceTerminalRenderer(sessionId, 'echo-reassert-refused', { cols, rows });
+        return;
+      }
+    } catch {
+      // The session died during the async gap; nothing left to heal.
+      return;
+    }
+    // Re-checked once more after the await: a replay that started during the
+    // IPC round trip (a reveal catch-up, an overlay lift, a remount) owns
+    // settling the dims and the frame. reloadScrollback is last-writer-wins
+    // (it bumps the generation unconditionally), so issuing the repair anyway
+    // would abort that replay mid-flight and drop its focus grant. Same guard
+    // for a terminal disposed or replaced during the gap.
+    if (scrollbackPendingRef.current || isTerminalParked(sessionId) || xtermRef.current !== terminal) return;
+    // Repair the garbled frame. skipResize: the resize above already landed
+    // and armed main's repaint settle (any geometry change stamps
+    // pendingRepaintAt, and getScrollback awaits waitForResizeRepaint
+    // regardless of who resized), so the reload samples the frame drawn at the
+    // corrected width. skipFocus: a heal must never steal focus. A full
+    // replay rather than the bare SIGWINCH, because a diff-only TUI never
+    // repaints the whole viewport and the xterm buffer holds the mis-wrapped
+    // history either way.
+    traceTerminalRenderer(sessionId, 'echo-reassert', { cols, rows });
+    reloadScrollbackRef.current?.({ skipResize: true, skipFocus: true });
+  }, []);
+
+  // The width-drift self-heal. Main broadcasts SESSION_PTY_RESIZED whenever
+  // the PTY's dims actually change, from any origin. xterm re-sends its
+  // dimensions only when its OWN size changes, so a PTY reshaped under this
+  // mounted terminal (a lost resize, another surface's late write, a respawn)
+  // otherwise diverges with no recovery path: live absolute-positioned TUI
+  // output wraps into a staircase until the window is resized by hand. On a
+  // disagreeing echo the mounted owner re-asserts its own fitted grid;
+  // resolvePtyEchoReassert holds the guard matrix that keeps this from
+  // fighting legitimate grid holders (phones, the park), a replay in flight,
+  // or its own pending resize.
+  useEffect(() => {
+    const sessionId = options.sessionId;
+    if (!sessionId) return;
+    const cleanup = window.electronAPI.sessions.onPtyResized((resizedSessionId, cols, rows, origin) => {
+      if (resizedSessionId !== sessionId) return;
+      const terminal = xtermRef.current;
+      // Not initialized yet: the mount replay fits and resizes at the settled
+      // geometry on its own.
+      if (!terminal) return;
+      const decision = resolvePtyEchoReassert({
+        echoedCols: cols,
+        echoedRows: rows,
+        ownCols: terminal.cols,
+        ownRows: terminal.rows,
+        origin,
+        replayPending: scrollbackPendingRef.current,
+        parked: isTerminalParked(sessionId),
+        ownResizePending: resizeTimerRef.current !== null,
+        previousAttempts: echoReassertAttemptsRef.current,
+        lastRefusalAt: echoRefusedAtRef.current,
+        now: Date.now(),
+      });
+      traceTerminalRenderer(sessionId, 'pty-resize-echo', {
+        cols,
+        rows,
+        origin,
+        ownCols: terminal.cols,
+        ownRows: terminal.rows,
+        action: decision.action,
+        reason: decision.action === 'skip' ? decision.reason : undefined,
+      });
+      if (decision.action === 'skip') return;
+      // The budget is spent at SCHEDULE time: an echo burst coalesces into one
+      // debounced pass, but every occurrence counts, so no echo pattern can
+      // queue unbounded corrective work.
+      echoReassertAttemptsRef.current = decision.nextAttempts;
+      if (echoReassertTimerRef.current) clearTimeout(echoReassertTimerRef.current);
+      echoReassertTimerRef.current = setTimeout(() => {
+        void reassertOwnGrid(sessionId);
+      }, ECHO_REASSERT_DEBOUNCE_MS);
+    });
+    return () => {
+      cleanup();
+      if (echoReassertTimerRef.current) {
+        clearTimeout(echoReassertTimerRef.current);
+        echoReassertTimerRef.current = null;
+      }
+      // The budget and the refusal hold belong to THIS session's divergence
+      // history. Panel/detail/spawn grids are structural (306x14, 210x48,
+      // 120x30), so a stale record would collide with the next session's first
+      // real divergence inside the window and suppress its heal.
+      echoReassertAttemptsRef.current = null;
+      echoRefusedAtRef.current = null;
+    };
+  }, [options.sessionId, reassertOwnGrid]);
 
   // Handle context-menu actions dispatched from the main process: Copy, Select
   // All, and Paste. The event detail carries the right-click coordinates so we
@@ -938,6 +1205,7 @@ export function useTerminal(options: UseTerminalOptions) {
     clearTimeout(resizeTimerRef.current);
     resizeTimerRef.current = null;
     const { cols, rows } = xtermRef.current;
+    traceTerminalRenderer(options.sessionId, 'resize-request', { cols, rows, origin: 'flush' });
     window.electronAPI.sessions.resize(options.sessionId, cols, rows);
   }, [options.sessionId]);
 
@@ -998,6 +1266,7 @@ export function useTerminal(options: UseTerminalOptions) {
     // the frame drawn at the fitted geometry.
     // skipResize sends no SIGWINCH: the window manager calls it once resizing
     // has already settled, so there is nothing to wait for.
+    if (!skipResize) traceTerminalRenderer(sessionId, 'resize-request', { cols, rows, origin: 'reload' });
     const resizePromise = skipResize
       ? Promise.resolve(undefined)
       : window.electronAPI.sessions.resize(sessionId, cols, rows);

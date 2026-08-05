@@ -177,7 +177,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `transition:set` | invoke | Set action chain for lane A→B |
 | `transition:getFor` | invoke | Get transitions for lane pair (exact match, then wildcard) |
 
-### Sessions (36 channels)
+### Sessions (37 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `session:spawn` | invoke | Spawn PTY session (may queue) |
@@ -203,6 +203,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `session:notifyUserInterrupt` | invoke | Notify telemetry of a user Ctrl+C; arms the 3-second settle timer that synthesizes Interrupted if hooks don't recover |
 | `session:data` | on | Terminal output available (includes `projectId`) |
 | `session:drainAck` | send | Renderer-to-main flow-control ack for per-session PTY backpressure; fire-and-forget (no projectId) |
+| `session:ptyResized` | on | The PTY's grid actually changed (`cols`, `rows`, `PtyResizeOrigin`). Broadcast to every window; the mounted owner xterm uses it to detect and heal a width divergence (xterm re-sends dims only when its own size changes) |
 | `session:firstOutput` | on | Alternate screen buffer detected - TUI ready (includes `projectId`) |
 | `session:exit` | on | Session exited (includes `projectId`) |
 | `session:status` | on | Session changed - pushes full `Session` object (includes `projectId`) |

@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '../shared/ipc-channels';
-import type { ElectronAPI, NotificationInput, Project, Session, SessionUsage, ActivityState, ActivityReason, SessionEvent, UpdateDownloadedInfo, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner } from '../shared/types';
+import type { ElectronAPI, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, SessionEvent, UpdateDownloadedInfo, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner } from '../shared/types';
 import { POPOUT_ARG_PREFIX } from '../shared/pop-out';
 import type { PopOutDescriptor, PopOutKind, PopOutParamsByKind } from '../shared/pop-out';
 import { installConsoleCapture } from './diagnostics/console-capture';
@@ -200,6 +200,11 @@ const api: ElectronAPI = {
       return () => ipcRenderer.removeListener(IPC.SESSION_DATA, handler);
     },
     ackData: (id, bytes) => ipcRenderer.send(IPC.SESSION_DRAIN_ACK, id, bytes),
+    onPtyResized: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, sessionId: string, cols: number, rows: number, origin: PtyResizeOrigin) => callback(sessionId, cols, rows, origin);
+      ipcRenderer.on(IPC.SESSION_PTY_RESIZED, handler);
+      return () => ipcRenderer.removeListener(IPC.SESSION_PTY_RESIZED, handler);
+    },
     onFirstOutput: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, sessionId: string, projectId?: string) => callback(sessionId, projectId);
       ipcRenderer.on(IPC.SESSION_FIRST_OUTPUT, handler);

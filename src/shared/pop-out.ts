@@ -149,6 +149,12 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
       // so a window without that session's terminal never receives its bytes.
       IPC.SESSION_USAGE,
       IPC.SESSION_EVENT,
+      // PTY dims echo for the width-drift self-heal. Unlike SESSION_DATA it IS
+      // fanned to every window: echoes only fire on real dim changes, and a
+      // freshly mounted xterm could miss a focus-routed echo during exactly the
+      // mount window where a divergence is born. Any future pop-out surface
+      // that hosts a terminal must declare this channel too.
+      IPC.SESSION_PTY_RESIZED,
       IPC.TASK_SPAWN_PROGRESS,
     ],
   },

@@ -536,6 +536,14 @@ export interface SwimlaneTransition {
 
 export type SessionStatus = 'running' | 'queued' | 'exited' | 'suspended';
 
+/**
+ * Who reshaped the PTY. 'spawn' is the grid the PTY spawned at; the rest
+ * mirror SessionManager.resize's origin parameter ('desktop' is any
+ * renderer-driven fit, 'mobile' a paired phone's grid request, 'park' the
+ * resting-grid park for unwatched sessions).
+ */
+export type PtyResizeOrigin = 'desktop' | 'mobile' | 'park' | 'spawn';
+
 export interface Session {
   id: string;
   taskId: string;
@@ -4368,7 +4376,15 @@ export interface ElectronAPI {
     reconcile: (taskId: string, projectId?: string | null) => Promise<Session | null>;
     reset: (taskId: string, projectId?: string | null) => Promise<void>;
     write: (sessionId: string, data: string) => Promise<void>;
-    resize: (sessionId: string, cols: number, rows: number) => Promise<{ colsChanged: boolean }>;
+    /**
+     * `colsChanged` is intentionally unused by the renderer (main orders the
+     * geometry change ahead of any scrollback sample on its own - see the
+     * parallel-IPC note in useTerminal's mount path). `refused` is set only
+     * when main deliberately held the grid against this resize (the mobile
+     * sub-floor guard) and is consumed only by the echo re-assert, which uses
+     * it to stop healing attempts immediately instead of retrying to its cap.
+     */
+    resize: (sessionId: string, cols: number, rows: number) => Promise<{ colsChanged: boolean; refused?: true }>;
     list: () => Promise<Session[]>;
     getScrollback: (sessionId: string) => Promise<string>;
     /**
@@ -4387,6 +4403,19 @@ export interface ElectronAPI {
      * (fire-and-forget send), keyed by sessionId only - not project-scoped.
      */
     ackData: (sessionId: string, bytes: number) => void;
+    /**
+     * The PTY's dimensions actually changed, from any origin: a renderer fit,
+     * a phone's grid request, the resting-grid park, or the spawn itself.
+     * Exists because xterm re-sends dimensions only when its OWN size changes,
+     * so a PTY reshaped under a mounted xterm otherwise diverges with no
+     * recovery path. The mounted owner compares the echoed dims to its own and
+     * re-asserts its fit when they disagree. Broadcast to every window (echoes
+     * only fire on real dim changes); filtered by sessionId in the listener.
+     * Deliberately the one sessions push without a projectId parameter:
+     * session ids are globally-unique UUIDs, so the sessionId filter alone is
+     * unambiguous across projects.
+     */
+    onPtyResized: (callback: (sessionId: string, cols: number, rows: number, origin: PtyResizeOrigin) => void) => () => void;
     onFirstOutput: (callback: (sessionId: string, projectId?: string) => void) => () => void;
     onExit: (callback: (sessionId: string, exitCode: number, projectId?: string, intentional?: boolean) => void) => () => void;
     onStatus: (callback: (sessionId: string, session: Session, projectId?: string) => void) => () => void;

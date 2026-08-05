@@ -27,6 +27,7 @@ import { DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS, performSpawn } from './lifecycle/se
 import { SessionRegistry, toSession, filterCacheByProject, type ManagedSession, type ManagedSessionSummary } from './session-registry';
 import { createWriteQueue, type WriteQueue } from './write-queue';
 import { BackpressureController } from './buffer/backpressure-controller';
+import { traceTerminal } from './terminal-trace';
 import { isShuttingDown } from '../shutdown-state';
 import type { TranscriptRepository } from '../db/repositories/transcript-repository';
 import type {
@@ -37,6 +38,7 @@ import type {
   SessionEvent,
   SpawnSessionInput,
   PerToolStat,
+  PtyResizeOrigin,
 } from '../../shared/types';
 import type { ActivityEngineOptions, ActivityStatsSnapshot } from '../activity-engine/engine';
 
@@ -915,44 +917,73 @@ export class SessionManager extends EventEmitter {
     sessionId: string,
     cols: number,
     rows: number,
-    origin: 'desktop' | 'mobile' | 'park' = 'desktop',
-  ): { colsChanged: boolean } {
+    // 'spawn' is excluded: the spawn grid is announced by performSpawn's own
+    // pty-resize emit, never passed through resize(). Deriving from the shared
+    // type keeps the two unions linked when PtyResizeOrigin grows.
+    origin: Exclude<PtyResizeOrigin, 'spawn'> = 'desktop',
+  ): { colsChanged: boolean; refused?: true } {
     const session = this.registry.get(sessionId);
 
     // Guard against NaN/Infinity from layout edge cases (e.g. getComputedStyle
     // returning "" during unmount, yielding parseInt -> NaN)
-    if (!Number.isFinite(cols) || !Number.isFinite(rows)) return { colsChanged: false };
+    if (!Number.isFinite(cols) || !Number.isFinite(rows)) {
+      traceTerminal(sessionId, 'resize-invalid', { origin, cols, rows });
+      return { colsChanged: false };
+    }
 
     // Clamp to valid dimensions (node-pty throws on 0 or negative)
     const clampedCols = Math.max(2, Math.floor(cols));
     const clampedRows = Math.max(1, Math.floor(rows));
 
-    if (!session?.pty) {
-      // The PTY does not exist yet. A resize can beat the auto-resume spawn (the
-      // renderer mounts and fits before the main-process spawn lands), or arrive
-      // while a session is queued/suspended awaiting (re)spawn. Stash the dims so
-      // performSpawn spawns the PTY at the real size instead of the default,
-      // closing the stale-geometry race at the source. Never stash for an
-      // exited/killed session - it is not coming back, and xterm never re-sends
-      // unchanged dims, so a resurrected 120x30 would stick forever.
-      if (session && (session.status === 'queued' || session.status === 'suspended')) {
-        // The floor applies to the stash too: a sub-floor desktop fit landing
-        // in the pty-null window (mid-suspend, pre-respawn) would otherwise
-        // respawn the PTY at the strip while a phone streams it, and pair the
-        // seed's ptyDimensions with a frame serialized at the old grid. The
-        // desktop's INTENT is still recorded below, exactly like the live
-        // refusal.
-        const subFloorForStreamingPhone =
-          origin === 'desktop' &&
-          clampedRows < MOBILE_USABLE_MIN_ROWS &&
-          this.mobileTerminalProbe?.hasStreamSubscriber(sessionId) === true;
-        if (!subFloorForStreamingPhone) {
-          this.pendingResizes.set(sessionId, { cols: clampedCols, rows: clampedRows });
-        }
-        if (origin === 'desktop') {
-          this.lastDesktopDimensions.set(sessionId, { cols: clampedCols, rows: clampedRows });
-        }
+    // A queued or suspended session stashes the dims instead of reshaping. A
+    // resize can beat the auto-resume spawn (the renderer mounts and fits
+    // before the main-process spawn lands), arrive while a session awaits
+    // (re)spawn, or land in suspend's marked-but-alive window: suspend() sets
+    // status BEFORE gracefulPtyShutdown resolves, so `session.pty` can still be
+    // non-null for up to ~3s of teardown, and reshaping that dying PTY would
+    // SIGWINCH a mid-exit agent and re-broadcast an echo that arms further
+    // re-asserts on other mounted terminals. Stashing records the INTENT so
+    // performSpawn spawns the respawned PTY at the real size, closing the
+    // stale-geometry race at the source.
+    if (session && (session.status === 'queued' || session.status === 'suspended')) {
+      // The floor applies to the stash too: a sub-floor desktop fit landing
+      // in the suspended window (mid-suspend, pre-respawn) would otherwise
+      // respawn the PTY at the strip while a phone streams it, and pair the
+      // seed's ptyDimensions with a frame serialized at the old grid. The
+      // desktop's INTENT is still recorded below, exactly like the live
+      // refusal.
+      const subFloorForStreamingPhone =
+        origin === 'desktop' &&
+        clampedRows < MOBILE_USABLE_MIN_ROWS &&
+        this.mobileTerminalProbe?.hasStreamSubscriber(sessionId) === true;
+      if (!subFloorForStreamingPhone) {
+        this.pendingResizes.set(sessionId, { cols: clampedCols, rows: clampedRows });
       }
+      if (origin === 'desktop') {
+        this.lastDesktopDimensions.set(sessionId, { cols: clampedCols, rows: clampedRows });
+      }
+      traceTerminal(sessionId, 'resize-stash', {
+        origin,
+        cols: clampedCols,
+        rows: clampedRows,
+        status: session.status,
+        stashed: !subFloorForStreamingPhone,
+      });
+      return { colsChanged: false };
+    }
+
+    if (!session?.pty) {
+      // No session, or an exited/killed one. Never stash here - the session is
+      // not coming back, and xterm never re-sends unchanged dims, so a
+      // resurrected 120x30 would stick forever. Distinct trace event from
+      // 'resize-stash' so the merged trace separates "nothing to resize" from
+      // "deferred to the respawn".
+      traceTerminal(sessionId, 'resize-ignored', {
+        origin,
+        cols: clampedCols,
+        rows: clampedRows,
+        status: session?.status ?? 'unknown',
+      });
       return { colsChanged: false };
     }
 
@@ -999,7 +1030,18 @@ export class SessionManager extends EventEmitter {
       // decision re-checks everything at fire time, so this is free when no
       // park is actually due.
       this.reconsiderRestingGrid(sessionId);
-      return { colsChanged: false };
+      traceTerminal(sessionId, 'resize-refused', {
+        origin,
+        cols: clampedCols,
+        rows: clampedRows,
+        ptyCols: session.pty.cols,
+        ptyRows: session.pty.rows,
+        reason: 'sub-floor-mobile-hold',
+      });
+      // `refused` tells the echo re-assert (the width-drift self-heal) that
+      // main is deliberately holding this grid, so it stops immediately
+      // instead of burning its retry budget against the floor.
+      return { colsChanged: false, refused: true };
     }
 
     const colsChanged = this.bufferManager.onResize(sessionId, clampedCols, clampedRows);
@@ -1013,16 +1055,21 @@ export class SessionManager extends EventEmitter {
       // above still ran: the park cancel and the desktop restore target
       // record INTENT, and the buffer manager saw the call so its
       // initial-resize-establishes-dimensions semantics hold.
+      traceTerminal(sessionId, 'resize-noop', { origin, cols: clampedCols, rows: clampedRows });
       return { colsChanged };
     }
     session.pty.resize(clampedCols, clampedRows);
+    traceTerminal(sessionId, 'resize-applied', { origin, cols: clampedCols, rows: clampedRows });
     // Mark resize time so the dispatch can suppress idle->thinking
     // transitions during the redraw burst that follows.
     this.resizeManager.notifyResize(sessionId);
     // The mobile bridge's seam onto grid changes, mirroring 'data-tap':
     // read-stream forwards this to subscribed phones as a terminal-resize
     // event so their renderer matches the grid before the repaint bytes land.
-    this.emit('pty-resize', sessionId, clampedCols, clampedRows);
+    // The IPC handler also forwards it to renderers (SESSION_PTY_RESIZED) so
+    // the mounted owner xterm can detect and heal a width divergence; the
+    // origin lets it leave phone- and park-held grids alone.
+    this.emit('pty-resize', sessionId, clampedCols, clampedRows, origin);
     return { colsChanged };
   }
 

@@ -407,6 +407,45 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   `tests/unit/mobile-bridge/read-stream.test.ts`, the change-hook test in
   `tests/unit/mobile-bridge/subscription-registry.test.ts`, and `panelTerminalSessionIdFor` in
   `tests/unit/focused-sessions.test.ts`.
+- **The width-drift self-heal (PTY dims echo + owner re-assert).** xterm re-sends its dimensions
+  only when its OWN size changes, so a PTY reshaped under a mounted xterm (a lost or overridden
+  resize on a surface flip, a respawn at stashed dims, any last-writer-wins race - `resize()`
+  carries no surface identity) used to diverge with NO recovery path: with the Windows
+  full-repaint flag every frame is absolute-positioned at the PTY width, so the mounted grid
+  rendered a staircase (rows shifted progressively right, labels clipped) until the window was
+  resized by hand. Main now broadcasts `session:ptyResized` (`SESSION_PTY_RESIZED`) whenever the
+  PTY's grid ACTUALLY changes - the same-dims short-circuit runs first, so the echo of a
+  terminal's own resize always carries its own dims - with the resize's origin
+  (`PtyResizeOrigin`: `desktop`/`mobile`/`park`/`spawn`). It is a broadcast, not a focus-routed
+  push: a freshly mounted xterm can miss a routed echo during exactly the mount window where a
+  divergence is born, and echoes only fire on real grid changes. The mounted owner's listener
+  (`useTerminal`) compares the echoed dims to its own and, when they disagree, re-asserts its
+  fitted grid after a 150ms coalescing debounce and repairs the already-garbled frame with a
+  `reloadScrollback({ skipResize: true })` replay (the resize it just sent armed the repaint
+  settle, so the reload samples the frame drawn at the corrected width). The guard matrix is the
+  pure `resolvePtyEchoReassert` (exported from `useTerminal.ts`): in-sync self-filter first,
+  then foreign-hold (`mobile`/`park` origins - a phone or the park legitimately holds the grid;
+  `spawn` is healable), refused-hold (see below), parked, replay-in-flight, own-resize-pending,
+  and last a TIME-WINDOWED budget (2 re-asserts per divergence signature per 10s) - deliberately
+  not reset by an in-sync echo, because in a two-surface fight each side's successful re-assert
+  lands an in-sync echo at the other side, so a reset-on-heal budget never binds in exactly the
+  livelock it exists to bound. `resize()` also reports `refused: true` from the mobile sub-floor
+  branch (the one path where main deliberately holds the grid against the caller), which arms a
+  time-stamped refusal hold after a single refused IPC: no further re-asserts for the budget
+  window, whatever dims later echoes carry (time-stamped rather than signature-keyed, because
+  the pre-send fit can move the terminal's own dims and a burned signature would stop binding
+  exactly then). Every renderer resize sender now traces `resize-request` with an origin
+  tag (`mount`/`flush`/`reload`/`echo-reassert`/`debounced-onResize`) and main traces every
+  resize outcome (`resize-applied`/`resize-noop`/`resize-refused`/`resize-stash`/
+  `resize-ignored`/`resize-invalid`), so `kangentic_devtools_terminal_state`'s merged trace
+  names the trigger if a divergence ever recurs. A resize for a queued or suspended session
+  stashes (including suspend's marked-but-alive teardown window, where the PTY is still
+  non-null but must not be reshaped or re-echoed); one for a missing or exited session is
+  ignored. Gated by `tests/unit/pty-resize-echo-reassert.test.ts` (the guard
+  matrix), the emit/refusal pins in `tests/unit/session-manager.test.ts`,
+  `tests/ui/terminal-resize-echo-reassert.spec.ts` (real xterm wiring: re-assert, repair,
+  self-echo no-op, budget bound), and `tests/e2e/terminal-width-drift-selfheal.spec.ts` (a real
+  PTY driven to the incident by a rogue `sessions.resize`, healed back to the owner grid).
 - **Repaint-settled scrollback sampling.** A session spawns at a default 120x30; on a cold launch
   an auto-resumed PTY sits at that size until a card opens and the renderer fits it wider. When a
   geometry-changing resize fires (cols OR rows), a full-screen agent TUI repaints its frame

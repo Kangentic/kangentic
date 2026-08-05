@@ -96,6 +96,7 @@ export const IPC = {
   SESSION_GET_SCROLLBACK: 'session:getScrollback',
   SESSION_DATA: 'session:data',
   SESSION_DRAIN_ACK: 'session:drainAck',
+  SESSION_PTY_RESIZED: 'session:ptyResized',
   SESSION_FIRST_OUTPUT: 'session:firstOutput',
   SESSION_GET_FIRST_OUTPUT: 'session:getFirstOutput',
   SESSION_EXIT: 'session:exit',

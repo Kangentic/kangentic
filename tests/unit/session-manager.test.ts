@@ -1214,16 +1214,36 @@ describe('Dimension tracking', () => {
     expect(manager.getDimensions('nonexistent')).toBeNull();
   });
 
-  it('every grid-changing resize emits pty-resize with the clamped grid', async () => {
+  it('every grid-changing resize emits pty-resize with the clamped grid and its origin', async () => {
     const mock = createMockPty();
     vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
     const session = await manager.spawn({ taskId: 'task-dims-emit', command: '', cwd: tmpDir });
 
-    const resizes: Array<[string, number, number]> = [];
-    manager.on('pty-resize', (sessionId: string, cols: number, rows: number) => resizes.push([sessionId, cols, rows]));
+    const resizes: Array<[string, number, number, string]> = [];
+    manager.on('pty-resize', (sessionId: string, cols: number, rows: number, origin: string) => resizes.push([sessionId, cols, rows, origin]));
 
     manager.resize(session.id, 80.7, 0);
-    expect(resizes).toEqual([[session.id, 80, 1]]);
+    expect(resizes).toEqual([[session.id, 80, 1, 'desktop']]);
+
+    // Explicit origins ride the emit unchanged, so the renderer's echo
+    // listener can leave phone- and park-held grids alone (foreign-hold).
+    manager.resize(session.id, 90, 20, 'mobile');
+    manager.resize(session.id, 210, 48, 'park');
+    expect(resizes.slice(1)).toEqual([
+      [session.id, 90, 20, 'mobile'],
+      [session.id, 210, 48, 'park'],
+    ]);
+  });
+
+  it('the spawn announces its grid with the spawn origin', async () => {
+    const mock = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
+
+    const resizes: Array<[number, number, string]> = [];
+    manager.on('pty-resize', (_sessionId: string, cols: number, rows: number, origin: string) => resizes.push([cols, rows, origin]));
+
+    await manager.spawn({ taskId: 'task-dims-spawn-origin', command: '', cwd: tmpDir });
+    expect(resizes).toEqual([[120, 30, 'spawn']]);
   });
 
   it('a resize to the current grid neither reshapes the PTY nor emits pty-resize', async () => {
@@ -3144,7 +3164,11 @@ describe('Resting grid restore', () => {
 
     const result = manager.resize(session.id, PANEL_COLS, PANEL_ROWS);
 
-    expect(result).toEqual({ colsChanged: false });
+    // `refused` marks the one outcome where main deliberately HOLDS the grid
+    // against the caller. The echo re-assert (width-drift self-heal) reads it
+    // to stop after a single refused IPC instead of retrying to its cap; every
+    // other early return stays the bare { colsChanged: false }.
+    expect(result).toEqual({ colsChanged: false, refused: true });
     expect(mockPty.resize).not.toHaveBeenCalled();
     expect(resizes).toEqual([]);
     expect([mockPty.cols, mockPty.rows]).toEqual([120, 30]);
@@ -3216,6 +3240,57 @@ describe('Resting grid restore', () => {
 
     manager.resize(session.id, PANEL_COLS, PANEL_ROWS);
 
+    expect(manager.getDimensions(session.id)).toEqual({ cols: PANEL_COLS, rows: PANEL_ROWS });
+  });
+
+  /**
+   * The pre-spawn stash is a deferral, not a refusal: the PTY does not exist,
+   * so nothing was held AGAINST the caller and nothing changed that could
+   * echo. `refused` must stay reserved for the floor's deliberate hold, or the
+   * echo re-assert would burn its budget on a session that is merely
+   * mid-respawn.
+   */
+  it('a stashed resize neither emits pty-resize nor reports refused', async () => {
+    const { session } = await spawnSession('task-floor-stash-shape');
+    await manager.suspend(session.id);
+    mobileStreamWatchers = new Set();
+
+    const resizes: Array<[number, number]> = [];
+    manager.on('pty-resize', (_sessionId: string, cols: number, rows: number) => resizes.push([cols, rows]));
+
+    const result = manager.resize(session.id, PANEL_COLS, PANEL_ROWS);
+
+    expect(result).toEqual({ colsChanged: false });
+    expect(resizes).toEqual([]);
+  });
+
+  /**
+   * suspend() marks the record 'suspended' BEFORE gracefulPtyShutdown
+   * resolves, so the PTY stays non-null for up to ~3s of teardown. A resize
+   * landing in that window must stash like any suspended-session resize:
+   * reshaping the dying PTY would SIGWINCH a mid-exit agent and re-broadcast
+   * a pty-resize echo that arms re-asserts on other mounted terminals during
+   * teardown.
+   */
+  it('a resize in suspend\'s marked-but-alive window stashes instead of reshaping the dying PTY', async () => {
+    const { session, mockPty } = await spawnSession('task-floor-suspend-window');
+    mobileStreamWatchers = new Set();
+
+    const resizes: Array<[number, number]> = [];
+    manager.on('pty-resize', (_sessionId: string, cols: number, rows: number) => resizes.push([cols, rows]));
+    mockPty.resize.mockClear();
+
+    // Deliberately not awaited yet: the status flip is synchronous, the PTY
+    // teardown is not - this is the marked-but-alive window.
+    const suspendPromise = manager.suspend(session.id);
+    const result = manager.resize(session.id, PANEL_COLS, PANEL_ROWS);
+
+    expect(result).toEqual({ colsChanged: false });
+    expect(mockPty.resize).not.toHaveBeenCalled();
+    expect(resizes).toEqual([]);
+
+    await suspendPromise;
+    // The stash recorded the intent, so the respawn lands at the real size.
     expect(manager.getDimensions(session.id)).toEqual({ cols: PANEL_COLS, rows: PANEL_ROWS });
   });
 });
