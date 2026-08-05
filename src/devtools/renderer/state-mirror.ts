@@ -1,3 +1,4 @@
+import { useAnnouncementsStore } from '../../renderer/stores/announcements-store';
 import { useBacklogStore } from '../../renderer/stores/backlog-store';
 import { useBoardStore } from '../../renderer/stores/board-store';
 import { useConfigStore } from '../../renderer/stores/config-store';
@@ -67,6 +68,7 @@ export function buildPreviewSnapshot(): RendererStateSnapshot {
  * fails CI instead of silently being unreadable.
  */
 const PREVIEW_STORES: Record<string, ReadableStore> = {
+  announcements: useAnnouncementsStore,
   backlog: useBacklogStore,
   board: useBoardStore,
   config: useConfigStore,
