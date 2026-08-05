@@ -40,8 +40,8 @@ describe('POP_OUT_SURFACES fan-out declarations', () => {
   /**
    * A channel a surface subscribes to but does not declare here is dropped
    * SILENTLY for pop-out windows (windowsForChannel filters on this list), so the
-   * detached surface just never updates. These pin the monitor's three live
-   * wires - MONITOR_PEEK included, even though (unlike the other two) it is
+   * detached surface just never updates. These pin the monitor's live
+   * wires - MONITOR_PEEK included, even though (unlike the others) it is
    * subscribe-gated rather than an unconditional push: the detached window
    * subscribes on its own behalf, so main is already fanning to it by the time
    * rows exist, and dropping this line would silently freeze every card's
@@ -53,6 +53,21 @@ describe('POP_OUT_SURFACES fan-out declarations', () => {
     expect(channels).toContain(IPC.SESSION_ACTIVITY);
     expect(channels).toContain(IPC.MONITOR_PEEK);
     expect(channels).toContain(IPC.CONFIG_CHANGED);
+  });
+
+  /**
+   * The monitor is currently the ONLY pop-out surface that can host a task
+   * detail (and therefore a live terminal) for a project the board is not on
+   * (see the channels comment in src/shared/pop-out.ts). Without this channel
+   * declared, a PTY reshaped under that detached terminal would never receive
+   * the width-drift self-heal's echo (windowsForChannel filters the broadcast
+   * on this list) and the divergence would never recover in that window -
+   * silently, since nothing else observes the drop. If a future surface also
+   * hosts a terminal, extend this assertion to it too.
+   */
+  it('the monitor declares the PTY-dims echo so a hosted terminal can self-heal a width divergence', () => {
+    const channels = POP_OUT_SURFACES.monitor.channels;
+    expect(channels).toContain(IPC.SESSION_PTY_RESIZED);
   });
 
   it('the monitor is a global surface with no task params', () => {
