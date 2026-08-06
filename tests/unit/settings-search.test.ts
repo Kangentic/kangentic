@@ -21,3 +21,16 @@ describe('settings search: hotkeys/shortcuts disentanglement', () => {
     expect(matchingIds.has('hotkeys')).toBe(true);
   });
 });
+
+describe('settings search: mobileBridge.getApp rename back-compat', () => {
+  // The Mobile Devices "Get the App" section was renamed to "Kangentic
+  // Mobile", so that literal string no longer appears anywhere it renders.
+  // 'get the app' is kept as a deliberate keyword alias so a user searching
+  // Settings from muscle memory (the old label) still finds the entry. This
+  // is invisible in the UI tier (nothing renders the old string to assert
+  // against) and easy to prune as "stray" cruft, so pin it here.
+  it('still matches mobileBridge.getApp on the old "get the app" label', () => {
+    const { matchingIds } = computeSearchResults('get the app', SETTINGS_REGISTRY);
+    expect(matchingIds.has('mobileBridge.getApp')).toBe(true);
+  });
+});
