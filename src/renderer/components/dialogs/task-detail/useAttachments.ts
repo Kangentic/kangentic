@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useToastStore } from '../../../stores/toast-store';
-import { MAX_ATTACHMENT_BYTES, MEDIA_TYPE_EXT, resolveMediaType, isImageMediaType, pastedAttachmentPrefix, reserveNextPastedIndex } from '../attachment-utils';
+import { MAX_ATTACHMENT_BYTES, MEDIA_TYPE_EXT, resolveMediaType, isImageMediaType, pastedAttachmentPrefix, reserveNextPastedIndex, openAttachmentWithToast } from '../attachment-utils';
 import { compressClipboardImage } from '../image-compress';
 import type { TaskAttachment } from '../../../../shared/types';
 
@@ -167,8 +167,10 @@ export function useAttachments(taskId: string, updateAttachmentCount: (taskId: s
     }
   }, []);
 
-  const handleOpenExternal = useCallback((attachment: AttachmentWithPreview) => {
-    window.electronAPI.attachments.open(attachment.id);
+  const handleOpenExternal = useCallback(async (attachment: AttachmentWithPreview) => {
+    await openAttachmentWithToast(attachment.filename, () =>
+      window.electronAPI.attachments.open(attachment.id),
+    );
   }, []);
 
   const closePreview = useCallback(() => {

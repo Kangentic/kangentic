@@ -11,7 +11,7 @@ import { useToastStore } from '../../stores/toast-store';
 import { useKeybinding } from '../../hooks/useKeybinding';
 import { DescriptionEditor } from '../DescriptionEditor';
 import { AttachmentChipStrip } from '../dialogs/AttachmentChipStrip';
-import { MAX_ATTACHMENT_BYTES, MEDIA_TYPE_EXT, resolveMediaType, isImageMediaType, pastedAttachmentPrefix, reserveNextPastedIndex } from '../dialogs/attachment-utils';
+import { MAX_ATTACHMENT_BYTES, MEDIA_TYPE_EXT, resolveMediaType, isImageMediaType, pastedAttachmentPrefix, reserveNextPastedIndex, openAttachmentWithToast } from '../dialogs/attachment-utils';
 import { compressClipboardImage } from '../dialogs/image-compress';
 import type { BacklogTask, BacklogTaskCreateInput, BacklogTaskUpdateInput } from '../../../shared/types';
 
@@ -206,6 +206,17 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate }: 
     }
   }, [attachments]);
 
+  const handleOpenAttachment = useCallback(async (attachment: DisplayAttachment) => {
+    if (isImageMediaType(attachment.media_type)) {
+      setPreviewAttachment(attachment);
+      return;
+    }
+    if (!isSavedAttachment(attachment)) return;
+    await openAttachmentWithToast(attachment.filename, () =>
+      window.electronAPI.backlogAttachments.open(attachment.id),
+    );
+  }, []);
+
   const handlePaste = useCallback((event: React.ClipboardEvent) => {
     const items = event.clipboardData?.items;
     if (!items) return;
@@ -359,13 +370,7 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate }: 
 
             <AttachmentChipStrip
               attachments={attachments}
-              onOpen={(attachment) => {
-                if (isImageMediaType(attachment.media_type)) {
-                  setPreviewAttachment(attachment);
-                } else if (isSavedAttachment(attachment)) {
-                  window.electronAPI.backlogAttachments.open(attachment.id);
-                }
-              }}
+              onOpen={(attachment) => { void handleOpenAttachment(attachment); }}
               onRemove={removeAttachment}
             />
 
@@ -405,6 +410,7 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate }: 
       {/* Full-size preview overlay (images only) */}
       {previewAttachment && isImageMediaType(previewAttachment.media_type) && (
         <div
+          data-testid="attachment-preview-overlay"
           className="fixed inset-0 bg-black/80 flex flex-col items-center justify-center z-[60]"
           onClick={() => setPreviewAttachment(null)}
         >

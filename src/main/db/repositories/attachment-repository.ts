@@ -3,6 +3,7 @@ import path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import type Database from 'better-sqlite3';
 import type { TaskAttachment } from '../../../shared/types';
+import { attachmentDiskName } from '../../../shared/attachment-filename';
 
 export class AttachmentRepository {
   constructor(private db: Database.Database) {}
@@ -29,9 +30,7 @@ export class AttachmentRepository {
     const id = uuidv4();
     const now = new Date().toISOString();
 
-    // Sanitize filename: keep only safe characters
-    const sanitized = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const diskName = `${id}_${sanitized}`;
+    const diskName = attachmentDiskName(id, filename);
 
     const attachDir = path.join(projectPath, '.kangentic', 'tasks', taskId, 'attachments');
     fs.mkdirSync(attachDir, { recursive: true });

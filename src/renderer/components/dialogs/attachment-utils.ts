@@ -1,5 +1,6 @@
 import { Image as ImageIcon, FileText, FileCode, File as FileIcon } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { useToastStore } from '../../stores/toast-store';
 
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024; // 10MB
 
@@ -59,6 +60,39 @@ export function reserveNextPastedIndex(
   issuedHighest: number,
 ): number {
   return Math.max(highestPastedIndex(prefix, existingFilenames), issuedHighest) + 1;
+}
+
+/**
+ * Hand an attachment to the OS default app, reporting any failure as a toast.
+ *
+ * Both the task-detail dialog and the backlog dialog open attachments through
+ * their own IPC namespace but owe the user the same thing when it fails, so
+ * the invoke is passed in as a thunk and the failure contract lives here once.
+ *
+ * The main-process handler resolves '' on success and a non-empty error string
+ * when it could not open the file, in which case it has ALREADY revealed the
+ * file in the OS file manager - which is why only that branch says so. A
+ * thrown error means the open never got that far, so it makes no such claim.
+ */
+export async function openAttachmentWithToast(
+  filename: string,
+  invokeOpen: () => Promise<string>,
+): Promise<void> {
+  try {
+    const errorMessage = await invokeOpen();
+    if (errorMessage) {
+      useToastStore.getState().addToast({
+        message: `Couldn't open "${filename}": ${errorMessage}. Showing it in the file manager instead.`,
+        variant: 'warning',
+      });
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    useToastStore.getState().addToast({
+      message: `Couldn't open "${filename}": ${message}`,
+      variant: 'warning',
+    });
+  }
 }
 
 /** Return the appropriate Lucide icon for a given media type. */

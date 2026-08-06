@@ -75,7 +75,7 @@ interface TaskDetailBodyProps {
   pendingCommandLabel: string | null;
   savedAttachments: AttachmentWithPreview[];
   handlePreview: (attachment: AttachmentWithPreview) => void;
-  handleOpenExternal: (attachment: AttachmentWithPreview) => void;
+  handleOpenExternal: (attachment: AttachmentWithPreview) => Promise<void>;
   handleToggle: () => void;
   changesOpen: boolean;
   projectPath: string;

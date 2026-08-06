@@ -1,7 +1,5 @@
 import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import { ipcMain, shell } from 'electron';
+import { ipcMain } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import { getProjectDb } from '../../db/database';
 import { BacklogRepository } from '../../db/repositories/backlog-repository';
@@ -11,7 +9,7 @@ import { ActionRepository } from '../../db/repositories/action-repository';
 import { AttachmentRepository } from '../../db/repositories/attachment-repository';
 import { BacklogAttachmentRepository } from '../../db/repositories/backlog-attachment-repository';
 import { SessionRepository } from '../../db/repositories/session-repository';
-import { cleanupTaskResources, createTransitionEngine, getProjectRepos, ensureTaskWorktree, ensureTaskBranchCheckout, notifyBranchCheckoutBlocked, spawnAgent } from '../helpers';
+import { cleanupTaskResources, createTransitionEngine, getProjectRepos, ensureTaskWorktree, ensureTaskBranchCheckout, notifyBranchCheckoutBlocked, spawnAgent, openAttachmentFile } from '../helpers';
 import { isAbortError } from '../../../shared/abort-utils';
 import { withTaskLock } from '../task-lifecycle-lock';
 import type { IpcContext } from '../ipc-context';
@@ -347,16 +345,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
     const db = getProjectDb(context.currentProjectId);
     const attachment = new BacklogAttachmentRepository(db).getById(id);
     if (!attachment) throw new Error(`Backlog attachment ${id} not found`);
-    const tempDir = path.join(os.tmpdir(), 'kangentic-attachments');
-    fs.mkdirSync(tempDir, { recursive: true });
-    const tempPath = path.join(tempDir, attachment.id + '_' + attachment.filename);
-    fs.copyFileSync(attachment.file_path, tempPath);
-    const errorMessage = await shell.openPath(tempPath);
-    if (errorMessage) {
-      // File format unsupported or no default app - fall back to showing in file explorer
-      shell.showItemInFolder(tempPath);
-    }
-    return errorMessage;
+    return openAttachmentFile(attachment);
   });
 
   // --- Import handlers ---

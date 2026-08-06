@@ -1,9 +1,6 @@
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import { ipcMain, shell } from 'electron';
+import { ipcMain } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
-import { getProjectRepos } from '../helpers';
+import { getProjectRepos, openAttachmentFile } from '../helpers';
 import { pruneDeletedColumnFromProfiles } from '../../config/board-config/prune-profile-references';
 import { propagateStrategyToLiveSessions, propagateBoardProfileChange, buildColumnStrategyChanges } from './strategy-propagation';
 import { runWithProjectLogContext } from '../../diagnostics/project-log-context';
@@ -45,17 +42,11 @@ export function registerBoardHandlers(context: IpcContext): void {
     return attachments.getDataUrl(id);
   });
 
-  ipcMain.handle(IPC.ATTACHMENT_OPEN, (_, id: string) => {
+  ipcMain.handle(IPC.ATTACHMENT_OPEN, async (_, id: string) => {
     const { attachments } = getProjectRepos(context);
     const attachment = attachments.getById(id);
     if (!attachment) throw new Error(`Attachment ${id} not found`);
-    // Copy to temp dir with original filename to avoid long-path issues on Windows
-    // and ensure the OS opens it with the correct default app
-    const tempDir = path.join(os.tmpdir(), 'kangentic-attachments');
-    fs.mkdirSync(tempDir, { recursive: true });
-    const tempPath = path.join(tempDir, attachment.id + '_' + attachment.filename);
-    fs.copyFileSync(attachment.file_path, tempPath);
-    return shell.openPath(tempPath);
+    return openAttachmentFile(attachment);
   });
 
   // === Swimlanes ===
