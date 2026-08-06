@@ -12,7 +12,7 @@ interface ExternalLinkButtonProps {
 /**
  * A slim pill button that opens an external URL in the OS browser: truncating
  * label, trailing ExternalLink glyph. Shared by the announcement dialog's
- * link list and the Mobile Devices "Get the App" steps so the external-link
+ * link list and the Mobile Devices tab's docs link so the external-link
  * affordance reads identically everywhere.
  */
 export function ExternalLinkButton({ label, url, fullWidth, testId }: ExternalLinkButtonProps) {

@@ -167,36 +167,65 @@ test.describe('Mobile Devices settings tab', () => {
     }
   });
 
-  test('Get the App section stays interactive with the bridge off and opens both signup links', async () => {
+  test('the Kangentic Mobile section stays interactive with the bridge off and opens the mobile docs', async () => {
     // Bridge OFF is the interesting case: the section sits OUTSIDE the
     // enabled-gated wrapper (opacity-40 pointer-events-none when disabled),
     // because a user who has not installed the app yet is exactly the user
-    // who has not enabled the bridge. Clicks succeeding proves the escape.
+    // who has not enabled the bridge. The click succeeding proves the escape.
     await setMobileBridgeConfig({ enabled: false, relayMode: 'hosted', relayUrl: '' });
     await openMobileTab();
 
     const section = page.locator('[data-testid="mobile-get-app"]');
     await expect(section).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Get the App' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Kangentic Mobile' })).toBeVisible();
 
-    // Both step QRs resolve to encoded data URLs.
-    await expect(page.locator('[data-testid="mobile-get-app-group-qr"]')).toHaveAttribute('src', /^data:/);
-    await expect(page.locator('[data-testid="mobile-get-app-optin-qr"]')).toHaveAttribute('src', /^data:/);
+    // Anchor on the section's own content BEFORE asserting anything is absent.
+    // QrImage renders null until its async toDataURL() resolves, so a bare
+    // "no <img>" count can sample that gap and pass vacuously against a QR
+    // that simply had not painted yet. Waiting for the docs link first makes
+    // the three absence checks below statements about a settled section.
+    const docsLink = section.locator('[data-testid="mobile-get-app-docs-link"]');
+    await expect(docsLink).toBeVisible();
+
+    // The section is a blurb plus exactly one link, not the two QR blocks it
+    // used to be: the launch-phase signup steps live in the mobile-launch
+    // announcement and on the docs page, so this tab never goes stale.
+    // ExternalLinkButton draws a lucide <svg>, so only a returning QrImage
+    // trips the image count. A future App Store / Play badge image would trip
+    // it too - deliberately, so that regrowing this section is a decision
+    // rather than an accident. The button count and the two step-block ids
+    // catch what an image count alone cannot: a half-revert that restores the
+    // step markup and its copy without (or before) its QR.
+    await expect(section.locator('img')).toHaveCount(0);
+    await expect(section.getByRole('button')).toHaveCount(1);
+    await expect(section.locator('[data-testid="mobile-get-app-step-group"]')).toHaveCount(0);
+    await expect(section.locator('[data-testid="mobile-get-app-step-optin"]')).toHaveCount(0);
 
     await page.evaluate(() => {
       window.__openedExternalUrls = [];
     });
-    await page.locator('[data-testid="mobile-get-app-group-link"]').click();
-    await page.locator('[data-testid="mobile-get-app-optin-link"]').click();
+    await docsLink.click();
     await expect
       .poll(() => page.evaluate(() => window.__openedExternalUrls))
-      .toEqual([
-        'https://groups.google.com/g/kangentic-testers',
-        // Deterministic from the Android applicationId; must match the Play
-        // Console closed-test opt-in URL exactly.
-        'https://play.google.com/apps/testing/com.kangentic.mobile',
-      ]);
+      .toEqual(['https://www.kangentic.com/mobile/']);
 
+    await closeSettings();
+  });
+
+  test('the Kangentic Mobile section survives pairing: it is not an empty-state prompt', async () => {
+    // The mirror of the bridge-off case above. The section is unconditional in
+    // BOTH directions, and this pins the direction that is tempting to "tidy
+    // up": hiding it once a device exists, on the theory that a paired user has
+    // already got the app. They have not necessarily got it on their NEXT
+    // device, and the link is the docs landing page (notifications, security,
+    // relay self-hosting), whose audience is mostly people who already paired.
+    await openMobileTab();
+    await pairDevice('Pixel 9');
+
+    await expect(page.locator('[data-testid="mobile-get-app"]')).toBeVisible();
+    await expect(page.locator('[data-testid="mobile-get-app-docs-link"]')).toBeVisible();
+
+    await revokeDevice('Pixel 9');
     await closeSettings();
   });
 

@@ -12,13 +12,11 @@ import { QrImage } from '../../QrImage';
 import { ExternalLinkButton } from '../../ExternalLinkButton';
 import { useMobileStore } from '../../../stores/mobile-store';
 
-/** The anyone-can-join Google Group that authorizes Play closed-test access
- *  (its members are the track's tester list in the Play Console). Also
- *  referenced by the mobile-launch announcement in announcements.json. */
-const ANDROID_TESTERS_GROUP_URL = 'https://groups.google.com/g/kangentic-testers';
-/** Deterministic from the Android applicationId (com.kangentic.mobile);
- *  resolves once the closed testing track is published in the Play Console. */
-const ANDROID_CLOSED_TEST_OPT_IN_URL = 'https://play.google.com/apps/testing/com.kangentic.mobile';
+/** The docs page owns the install instructions, so the launch phase (closed
+ *  test, open beta, public release, and the iOS status) can change on the
+ *  website without a desktop release. The signup steps for whichever phase is
+ *  live belong in the mobile-launch announcement in announcements.json. */
+const MOBILE_DOCS_URL = 'https://www.kangentic.com/mobile/';
 
 /**
  * 'idle' means this device has no session open yet (nothing to report), so it
@@ -515,41 +513,22 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
 
       {/* Outside the enabled-gated wrapper above: getting the app is exactly
           what a user with the bridge still off needs, so this section stays
-          fully interactive regardless of the toggle. */}
-      <SectionHeader label="Get the App" searchIds={['mobileBridge.getApp']} />
+          fully interactive regardless of the toggle. It is also NOT conditioned
+          on the paired-device list being empty. The link is the docs landing
+          page, not an install page, so a paired user is the main audience for
+          its notifications, security, and relay pages - and pairing one phone
+          does not mean the next device is installed. Hiding it once a device
+          exists would take it away from the person adding a second one. */}
+      <SectionHeader label="Kangentic Mobile" searchIds={['mobileBridge.getApp']} />
       <div className="space-y-3" data-testid="mobile-get-app">
         <p className="text-sm text-fg-muted">
-          Kangentic Mobile for Android is in closed testing. Two steps to join:
+          Installing the app, push notifications, and how the encrypted link works.
         </p>
-        <div className="rounded-md border border-edge bg-surface-hover/40 p-4 space-y-2" data-testid="mobile-get-app-step-group">
-          <p className="text-sm text-fg">1. Join the testers Google Group</p>
-          <QrImage
-            value={ANDROID_TESTERS_GROUP_URL}
-            alt="QR code for the Kangentic testers Google Group"
-            testId="mobile-get-app-group-qr"
-          />
-          <ExternalLinkButton
-            label="Join the testers Google Group"
-            url={ANDROID_TESTERS_GROUP_URL}
-            testId="mobile-get-app-group-link"
-          />
-        </div>
-        <div className="rounded-md border border-edge bg-surface-hover/40 p-4 space-y-2" data-testid="mobile-get-app-step-optin">
-          <p className="text-sm text-fg">2. Become a tester</p>
-          <QrImage
-            value={ANDROID_CLOSED_TEST_OPT_IN_URL}
-            alt="QR code for the Play Store tester opt-in page"
-            testId="mobile-get-app-optin-qr"
-          />
-          <ExternalLinkButton
-            label="Become a tester on Google Play"
-            url={ANDROID_CLOSED_TEST_OPT_IN_URL}
-            testId="mobile-get-app-optin-link"
-          />
-        </div>
-        <p className="text-xs text-fg-faint">
-          Use the same Google account you use in the Play Store, and stay opted in while the test is running.
-        </p>
+        <ExternalLinkButton
+          label="Read the docs"
+          url={MOBILE_DOCS_URL}
+          testId="mobile-get-app-docs-link"
+        />
       </div>
 
       {revokeTarget && (
