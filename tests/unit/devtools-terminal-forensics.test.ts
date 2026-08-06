@@ -37,6 +37,37 @@ const SESSION_ID = 'session-under-test';
 const GRID_COLS = 60;
 const GRID_ROWS = 12;
 
+/** Alt-screen entry plus the focus-reporting mode a fullscreen TUI enables. */
+const TUI_SETUP = '\x1b[?1049h\x1b[?1004h';
+
+/**
+ * REAL captured bytes, not a synthetic fixture: the frame Claude Code v2.1.222
+ * emitted over the PTY after a ctrl+Home jump in a long fullscreen transcript
+ * (captured 2026-08-05 via the devtools byte tap; upstream
+ * anthropics/claude-code#83714). Ported from task 484's detector test, which is
+ * where these bytes were first pinned.
+ *
+ * It erases every row of a 210x48 grid and draws only chrome - banner,
+ * separators, branch chip, mode line - then the TUI goes idle. This is the
+ * TOTAL-omission flavour of the defect; the band this task chases is the same
+ * shape with most rows drawn and a contiguous run missing. Either way the
+ * forensics capture has to report the surviving rows faithfully, which is what
+ * the test below pins.
+ */
+const DEFECTIVE_JUMP_FRAME =
+  '\x1b[<u\x1b[>1u\x1b[>4;2m\x1b[m\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h\x1b[?2026h\x1b[?2026l\x1b[?25l\x1b[H\x1b[K\x1b[38;2;215;119;87m\r\n ▐\x1b[48;2;0;0;0m▛███▜\x1b[49m▌   \x1b[m\x1b[1mClaude Code\x1b[22m \x1b[38;2;153;153;153mv2.1.222\x1b[K\x1b[38;2;215;119;87m\r\n▝▜\x1b[48;2;0;0;0m█████\x1b[49m▛▘  \x1b[38;2;153;153;153mFable 5 with xhigh effort · Claude Max\x1b[K\x1b[38;2;215;119;87m\r\n  ▘▘ ▝▝    \x1b[38;2;153;153;153m~\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\479\x1b[K\x1b[m\r\n\x1b[K\r\n' +
+  ' '.repeat(210) + '\r\n' +
+  '\x1b[K\r\n'.repeat(21) +
+  ' '.repeat(210) + '\r\n' +
+  '\x1b[K\r\n'.repeat(4) +
+  ' '.repeat(210) + '\r\n' +
+  '\x1b[K\r\n'.repeat(9) +
+  '\x1b[K\x1b[38;2;8;145;178m\r\n' +
+  '─'.repeat(177) + '\x1b[38;2;0;0;0m\x1b[48;2;8;145;178m fix-alt-screen-terminal-replay \x1b[38;2;8;145;178m\x1b[49m──\x1b[m❯ \x1b[K\x1b[38;2;8;145;178m\r\n' +
+  '─'.repeat(210) + '\x1b[m\r\n' +
+  '\x1b[K\r\n' +
+  '  \x1b[38;2;255;193;7m⏵⏵ auto mode on \x1b[38;2;153;153;153m(shift+tab to cycle) · ← 1 agent\x1b[K\x1b[45;3H\x1b[?25h';
+
 /** Rows the fake renderer reports, with a hole where rows 4-5 should be. */
 const RENDERER_ROWS = [
   'top matter',
@@ -59,6 +90,8 @@ interface Harness {
   setRendererDumps: (dumps: unknown) => void;
   setRawScrollback: (raw: string) => void;
   setSerializedFrame: (frame: string) => void;
+  /** The PTY geometry the route reads back when re-parsing main's frame. */
+  setDimensions: (cols: number, rows: number) => void;
 }
 
 const harness: Harness = {
@@ -66,6 +99,7 @@ const harness: Harness = {
   setRendererDumps: () => {},
   setRawScrollback: () => {},
   setSerializedFrame: () => {},
+  setDimensions: () => {},
 };
 
 function httpGet(port: number, path: string): Promise<{ status: number; body: unknown }> {
@@ -122,10 +156,13 @@ beforeAll(async () => {
   ];
   let rawScrollback = '';
   let serializedFrame = '';
+  let ptyCols = GRID_COLS;
+  let ptyRows = GRID_ROWS;
 
   harness.setRendererDumps = (dumps) => { rendererDumps = dumps; };
   harness.setRawScrollback = (raw) => { rawScrollback = raw; };
   harness.setSerializedFrame = (frame) => { serializedFrame = frame; };
+  harness.setDimensions = (cols, rows) => { ptyCols = cols; ptyRows = rows; };
 
   const stubDebugger = {
     attach: vi.fn(),
@@ -147,7 +184,7 @@ beforeAll(async () => {
 
   const sessionManager = {
     getTerminalDimensions: () => [
-      { sessionId: SESSION_ID, taskId: 'task-1', status: 'running', ptyCols: GRID_COLS, ptyRows: GRID_ROWS, inAltScreen: true },
+      { sessionId: SESSION_ID, taskId: 'task-1', status: 'running', ptyCols, ptyRows, inAltScreen: true },
     ],
     getSerializedFrame: async () => serializedFrame,
     getRawScrollback: () => rawScrollback,
@@ -218,7 +255,49 @@ describe('GET /terminal-forensics', () => {
     expect(body.rendererGrids[0].scrollRegionTop).toBe(0);
   });
 
+  it('reports a REAL upstream defective frame faithfully', async () => {
+    // The capture's whole job is to be right once, at repro time, on bytes like
+    // these. A synthetic fixture cannot prove that: it is built from the same
+    // assumptions as the code reading it. These are the actual bytes the defect
+    // produced, so if the parse or the row indexing is wrong, this fails.
+    harness.setDimensions(210, 48);
+    const buffer = new HeadlessFrameBuffer(210, 48);
+    buffer.write(TUI_SETUP);
+    buffer.write(DEFECTIVE_JUMP_FRAME);
+    const frame = await buffer.serialize();
+    buffer.dispose();
+
+    harness.setSerializedFrame(frame);
+    harness.setRawScrollback(TUI_SETUP + DEFECTIVE_JUMP_FRAME);
+
+    const response = await httpGet(harness.port, `/terminal-forensics?sessionId=${SESSION_ID}`);
+    expect(response.status).toBe(200);
+    const body = response.body as {
+      mainGrid: { rows: string[]; error?: string };
+      raw: { tail: string };
+    };
+
+    expect(body.mainGrid.error).toBeUndefined();
+    expect(body.mainGrid.rows).toHaveLength(48);
+
+    // The chrome the defective frame DID draw has to be visible...
+    const rendered = body.mainGrid.rows.join('\n');
+    expect(rendered).toContain('Claude Code');
+    expect(rendered).toContain('auto mode on');
+    expect(rendered).toContain('fix-alt-screen-terminal-replay');
+
+    // ...and the erased transcript body has to read as genuinely empty rows,
+    // which is the signal an operator reads as "the agent did not send these".
+    const emptyRows = body.mainGrid.rows.filter((row) => row === '').length;
+    expect(emptyRows).toBeGreaterThan(30);
+
+    // The raw tail is the tiebreaker between "never sent" and "lost in transit",
+    // so the chrome text must be searchable in it after escaping.
+    expect(body.raw.tail).toContain('auto mode on');
+  });
+
   it('escapes control bytes in the raw tail so sequences stay readable', async () => {
+    harness.setDimensions(GRID_COLS, GRID_ROWS);
     harness.setSerializedFrame('');
     harness.setRawScrollback('\x1b[5;20rhello\r\nworld\x07');
 
@@ -245,6 +324,32 @@ describe('GET /terminal-forensics', () => {
     expect(body.raw.tail).toBe('ghij');
     expect(body.raw.totalBytes).toBe(10);
     expect(body.raw.tailBytes).toBe(4);
+  });
+
+  it('nudges the tail slice off a split surrogate pair instead of returning an orphaned half', async () => {
+    // A plain slice(-n) can land between the two UTF-16 code units of an astral
+    // character (an emoji in agent output is the realistic case). Sized so the
+    // requested rawTailBytes puts the slice start exactly on the emoji's LOW
+    // surrogate: 'ab' (2) + the emoji (2 code units, indices 2-3) + 'cdef' (4).
+    // rawTailBytes=5 requests raw.length(8)-5=index 3, the low surrogate.
+    harness.setSerializedFrame('');
+    harness.setRawScrollback('ab\u{1F600}cdef');
+
+    const response = await httpGet(
+      harness.port,
+      `/terminal-forensics?sessionId=${SESSION_ID}&rawTailBytes=5`,
+    );
+    const body = response.body as { raw: { tail: string; totalBytes: number; tailBytes: number } };
+
+    // The nudge nudges start forward past the orphaned low surrogate, costing
+    // one character rather than returning it: the emoji is dropped whole, not
+    // split. If the guard were absent, the slice would start ON the low
+    // surrogate, and the tail's first code unit would be a lone low surrogate
+    // (0xdc00-0xdfff) with no preceding high surrogate to pair it - visible
+    // corruption, not a legitimate character.
+    expect(body.raw.tail).toBe('cdef');
+    expect(body.raw.tailBytes).toBe(4);
+    expect(body.raw.tail.charCodeAt(0)).toBeLessThan(0xdc00);
   });
 
   it('reports the PTY row for the session and degrades rather than failing', async () => {
