@@ -410,6 +410,76 @@ describe('PairingService ceremony', () => {
     expect(sasListener).not.toHaveBeenCalled();
   });
 
+  /**
+   * Proves phase flips to 'sas-pending' BEFORE activeTransport.send() is
+   * called for message 2, not after. A real relay socket can deliver a
+   * queued inbound frame synchronously from inside an outbound write, so if
+   * the phase commit happened after send() (the ordering this diff fixes),
+   * that re-entrant frame would land on onFrame() while phase was still
+   * 'waiting-for-phone', route straight back into handleMessage1() with the
+   * token already marked consumed, and fail a ceremony that had just
+   * succeeded - all while the outer handleMessage1() call still went on to
+   * emit 'sas' as if nothing happened, since fail() does not throw.
+   *
+   * The mock transport simulates exactly that: its send() injects a garbage
+   * frame back through the desktop's own onFrame before forwarding the real
+   * message 2 to the phone. With the fix, that injected frame reaches
+   * handleConfirmFrame() (phase already 'sas-pending') and is silently
+   * ignored rather than reaching handleMessage1().
+   */
+  it('keeps a ceremony that just succeeded intact when send() re-enters onFrame synchronously', async () => {
+    const identity = testIdentity();
+    const service = new PairingService(identity);
+    const token = service.mintToken();
+    const [desktopTransport, phoneTransport] = createLoopbackTransportPair();
+
+    let injectedReentrantFrame = false;
+    const reentrantDesktopTransport: Transport = {
+      ...desktopTransport,
+      send: (frame) => {
+        if (!injectedReentrantFrame) {
+          injectedReentrantFrame = true;
+          // Simulates a relay flushing a queued inbound frame synchronously
+          // from inside the outbound write - lands back on the desktop's
+          // own onFrame before this send() call returns.
+          phoneTransport.send(new Uint8Array([9, 9, 9, 9]));
+        }
+        desktopTransport.send(frame);
+      },
+    };
+    service.start(reentrantDesktopTransport);
+
+    const failedListener = vi.fn();
+    service.on('failed', failedListener);
+
+    const phoneStaticKeyPair = generateX25519KeyPair();
+    const phoneHandshake = createPairingInitiatorHandshake({
+      localStatic: phoneStaticKeyPair,
+      remoteStatic: identity.staticKeyPair.publicKey,
+      pairingToken: token.token,
+    });
+    let phoneConfirmCipher: CipherState | undefined;
+    phoneTransport.onFrame((frame) => {
+      const result = phoneHandshake.readMessage(frame);
+      if (result.split) phoneConfirmCipher = result.split[0];
+    });
+
+    const sasEventPromise = new Promise<void>((resolve) => service.once('sas', () => resolve()));
+    phoneTransport.send(phoneHandshake.writeMessage(new TextEncoder().encode('Test Phone')).message);
+    await sasEventPromise;
+
+    expect(failedListener).not.toHaveBeenCalled();
+    expect(token.consumed).toBe(true);
+
+    if (!phoneConfirmCipher) throw new Error('test setup: phone did not derive a confirm cipher from message 2');
+    const confirmedEventPromise = new Promise<{ deviceId: string }>((resolve) => service.once('confirmed', resolve));
+    phoneTransport.send(sealPairingConfirm(phoneConfirmCipher));
+    const confirmedEvent = await confirmedEventPromise;
+
+    expect(confirmedEvent.deviceId).toBe(bytesToHex(phoneStaticKeyPair.publicKey));
+    expect(failedListener).not.toHaveBeenCalled();
+  });
+
   it('start() before mintToken() throws synchronously', () => {
     const identity = testIdentity();
     const service = new PairingService(identity);
