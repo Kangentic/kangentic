@@ -22,6 +22,24 @@ const SERIALIZED_SCROLLBACK_LINES = 500;
 type HeadlessTerminalAddon = ITerminalAddon;
 
 /**
+ * The DECSTBM margins of one buffer, 0-based and inclusive.
+ *
+ * xterm has no PUBLIC read path for the scroll region. `IModes` is a bag of
+ * mode FLAGS, and DECSTBM is two integers of buffer state, so it structurally
+ * cannot appear there; `IBuffer` exposes cursor and viewport geometry only. The
+ * margins do live on the internal `Buffer` (`InputHandler.setScrollRegion`
+ * writes them), unmangled in the shipped bundle, and `_core` is the same private
+ * door `src/renderer/addons/fit-addon.ts` already goes through. The public
+ * alternative is a DECRQSS round trip (`\x1bP$qr\x1b\\`, answered on `onData`),
+ * which would turn a synchronous property read into an async protocol exchange
+ * over the PTY's own data channel. Narrowly typed rather than cast to `any` so
+ * the reach stays confined to these two numbers.
+ */
+interface TerminalWithScrollRegion {
+  _core?: { buffers?: { active?: { scrollTop?: number; scrollBottom?: number } } };
+}
+
+/**
  * A per-session HEADLESS xterm parser kept in the MAIN process, fed the same
  * PTY output as the raw scrollback ring. Its serialized frame is a snapshot of
  * the PARSED grid - every currently-visible cell whatever its draw age - which
@@ -127,6 +145,11 @@ export class HeadlessFrameBuffer {
    * `terminal.modes`. So the frame is self-contained - the receiver lands in
    * the right screen with the right input modes without any extra prefix -
    * but the switch is not a leading marker; never `startsWith` on it.
+   *
+   * What the addon CANNOT carry is the DECSTBM scroll region, so
+   * `scrollRegionSuffix` appends it (and the cursor restore DECSTBM would
+   * otherwise clobber). That suffix is the frame's TAIL by construction; do not
+   * append anything after it that assumes a home cursor.
    */
   async serialize(): Promise<string> {
     return new Promise<string>((resolve, reject) => {
@@ -135,12 +158,68 @@ export class HeadlessFrameBuffer {
         // serializer disposed mid-sample) would otherwise escape as an uncaught
         // main-process exception instead of rejecting this promise.
         try {
-          resolve(this.serializer.serialize({ scrollback: SERIALIZED_SCROLLBACK_LINES }));
+          resolve(
+            this.serializer.serialize({ scrollback: SERIALIZED_SCROLLBACK_LINES })
+              + this.scrollRegionSuffix(),
+          );
         } catch (error) {
           reject(error instanceof Error ? error : new Error(String(error)));
         }
       });
     });
+  }
+
+  /**
+   * Active DECSTBM margins, or null when the region already spans the whole
+   * grid (the default, and the common case - a full-screen region needs no
+   * re-assert, so the suffix costs zero bytes for every session that never sets
+   * one).
+   */
+  private activeScrollRegion(): { top: number; bottom: number } | null {
+    const activeBuffer = (this.terminal as unknown as TerminalWithScrollRegion)._core?.buffers?.active;
+    const top = activeBuffer?.scrollTop;
+    const bottom = activeBuffer?.scrollBottom;
+    if (typeof top !== 'number' || typeof bottom !== 'number') return null;
+    if (top <= 0 && bottom >= this.terminal.rows - 1) return null;
+    return { top, bottom };
+  }
+
+  /**
+   * Re-assert the scroll region a replay would otherwise silently drop, and put
+   * the cursor back where the frame left it.
+   *
+   * The serialize addon builds its mode prefix from `terminal.modes`, which
+   * carries no margin data, so a replayed frame always lands in a terminal whose
+   * region spans the full viewport. Claude Code drives a real scroll region (its
+   * binary ships a DECSTBM capability gate alongside SD/IL emission), so without
+   * this the TUI's margins and the terminal's silently disagree after every
+   * replay, and each later region-relative op acts on the wrong rows.
+   *
+   * Order is load-bearing, twice over:
+   *
+   * - The region must FOLLOW the frame. Set before it, the frame's own row
+   *   writes would scroll against it and reflow the replay.
+   * - The region must be followed by an absolute CUP. DECSTBM homes the cursor
+   *   (`InputHandler.setScrollRegion` ends in `_setCursor(0, 0)`), which would
+   *   otherwise discard the position the addon's relative moves just built.
+   *
+   * The CUP is also emitted for a full-screen region when origin mode is on,
+   * because the addon appends its own `\x1b[?6h` AFTER its cursor restore and
+   * DECSET 6 homes the cursor too - so that frame arrives with the cursor at
+   * home whatever the margins are. Same clobber, same one-line repair.
+   */
+  private scrollRegionSuffix(): string {
+    const region = this.activeScrollRegion();
+    const originMode = this.terminal.modes.originMode;
+    if (!region && !originMode) return '';
+
+    const buffer = this.terminal.buffer.active;
+    // CUP's row is region-relative under origin mode and absolute otherwise; its
+    // column is unaffected either way (`_setCursor` offsets only y). `cursorY`
+    // is already viewport-relative, which is the space CUP addresses.
+    const cursorRow = originMode ? buffer.cursorY - (region?.top ?? 0) + 1 : buffer.cursorY + 1;
+    const regionSequence = region ? `\x1b[${region.top + 1};${region.bottom + 1}r` : '';
+    return `${regionSequence}\x1b[${Math.max(1, cursorRow)};${buffer.cursorX + 1}H`;
   }
 
   dispose(): void {

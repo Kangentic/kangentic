@@ -19,7 +19,14 @@
  *
  * This mirrors the board-drag gate in session-update-coalescer.ts: a module
  * predicate plus a notify-listener set, with reset-on-HMR being harmless.
+ *
+ * Parking is NOT the only way a session stops receiving bytes: main also gates
+ * on its focused set, which a session can leave without ever being parked. That
+ * strictly wider edge lives in `focused-terminals.ts`; the two are deliberately
+ * separate because only parking carries the byte-dropping side effect.
  */
+
+import { traceTerminalRenderer } from './terminal-grid-registry';
 
 // Preserved across HMR (Pattern A, mirroring terminal-capture-registry.ts and
 // useTerminal.ts's savedScrollPositions). A components-only Fast Refresh does
@@ -56,6 +63,13 @@ export function syncParkedTerminals(parked: ReadonlySet<string>): void {
   for (const sessionId of parkedSessionIds) {
     if (!parked.has(sessionId)) revealed.push(sessionId);
   }
+  // Traced on BOTH edges. A park silently starts dropping inbound bytes and a
+  // reveal silently issues a replay, so without these the merged timeline shows
+  // a replay with no cause and a gap in the byte stream with no explanation.
+  for (const sessionId of parked) {
+    if (!parkedSessionIds.has(sessionId)) traceTerminalRenderer(sessionId, 'terminal-park');
+  }
+  for (const sessionId of revealed) traceTerminalRenderer(sessionId, 'terminal-reveal');
 
   parkedSessionIds.clear();
   for (const sessionId of parked) parkedSessionIds.add(sessionId);

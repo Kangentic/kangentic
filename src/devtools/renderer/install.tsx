@@ -7,7 +7,11 @@ import {
   getRendererLagReport,
 } from './lag-recorder';
 import { getTerminalRendererReport } from '../../renderer/utils/terminal-webgl';
-import { readTerminalGrids, readTerminalRendererTrace } from '../../renderer/utils/terminal-grid-registry';
+import {
+  readTerminalGrids,
+  readTerminalGridRows,
+  readTerminalRendererTrace,
+} from '../../renderer/utils/terminal-grid-registry';
 
 /**
  * Renderer-side bootstrap for the dev-only inspection bridge.
@@ -31,6 +35,7 @@ export function DevtoolsBootstrap(): null {
       __kangenticLagReport?: () => unknown;
       __kangenticTerminalRenderers?: () => unknown;
       __kangenticTerminalGrids?: () => unknown;
+      __kangenticTerminalGridRows?: (sessionId: string) => unknown;
       __kangenticTerminalTrace?: () => unknown;
     };
     (window as DevtoolsWindow).__kangenticPreviewSnapshot = buildPreviewSnapshot;
@@ -40,6 +45,10 @@ export function DevtoolsBootstrap(): null {
     // mismatch is unrecoverable and was previously invisible from either side
     // alone (see terminal-grid-registry).
     (window as DevtoolsWindow).__kangenticTerminalGrids = readTerminalGrids;
+    // Opt-in, session-scoped row dump for the terminal-forensics route. Separate
+    // from the grids report because per-row text is far too large to ride the
+    // always-on payload.
+    (window as DevtoolsWindow).__kangenticTerminalGridRows = readTerminalGridRows;
     (window as DevtoolsWindow).__kangenticTerminalTrace = readTerminalRendererTrace;
 
     // Freeze flight recorder: record renderer event-loop stalls so the

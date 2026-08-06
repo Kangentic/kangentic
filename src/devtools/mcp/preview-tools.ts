@@ -532,6 +532,27 @@ export function registerDevtoolsPreviewTools(server: McpServer): void {
       toolResult(await callBridge({ method: 'GET', path: '/terminal-state', instanceId })),
   );
 
+  server.registerTool(
+    'kangentic_devtools_terminal_forensics',
+    {
+      description:
+        'Row-by-row forensics for ONE session, joining the three layers that can disagree: the renderer\'s xterm viewport (per-row text, cursor, alt-screen flag, DECSTBM margins), main\'s parsed grid (its own headless frame re-parsed to rows), and the tail of the raw PTY byte ring with control bytes escaped. Use when rows are MISSING or blank rather than mis-sized - kangentic_devtools_terminal_state reports how many rows have content, this reports which. Reading it: text absent from the raw tail means the agent never sent it (upstream); present in the raw tail and main\'s grid but not the renderer\'s means it was lost in the IPC/queue/write path; present in both grids means the data is fine and the fault is paint, which a same-instant kangentic_devtools_screenshot_element on .xterm-screen confirms. Caveat: main\'s grid comes from a bare serialize with no tail fold, so a capture taken MID-STREAM can trail the renderer by a frame - capture while the TUI is idle. Dev-only.',
+      inputSchema: z.object({
+        sessionId: z.string().describe('Session to dump. Get one from kangentic_devtools_terminal_state.'),
+        rawTailBytes: z.number().int().min(1).max(262144).optional().describe('Raw ring tail to return, in bytes before escaping. Default 49152.'),
+        instanceId: z.string().optional().describe(INSTANCE_ARG_DESCRIPTION),
+      }),
+      annotations: READ_ONLY_ANNOTATIONS,
+    },
+    async ({ sessionId, rawTailBytes, instanceId }) =>
+      toolResult(await callBridge({
+        method: 'GET',
+        path: '/terminal-forensics',
+        query: { sessionId, rawTailBytes },
+        instanceId,
+      })),
+  );
+
   // ── Visual / DOM ─────────────────────────────────────────────────────
   server.registerTool(
     'kangentic_devtools_screenshot',

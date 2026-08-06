@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as http from 'node:http';
 import * as path from 'node:path';
 import { app, type BrowserWindow } from 'electron';
+import { Terminal } from '@xterm/headless';
 import {
   clickAtCenterOfSelector,
   dispatchKeyEvent,
@@ -161,6 +162,10 @@ async function handleRequest(
 
   if (route === 'GET /terminal-state') {
     return respondTerminalState(options, response);
+  }
+
+  if (route === 'GET /terminal-forensics') {
+    return respondTerminalForensics(options, url, response);
   }
 
   if (route === 'GET /logs') {
@@ -648,6 +653,161 @@ async function respondTerminalState(
         return firstTs - secondTs;
       }),
   });
+}
+
+/** Bytes of raw ring returned by default, and the ceiling a caller may ask for. */
+const FORENSIC_RAW_TAIL_BYTES = 48 * 1024;
+const FORENSIC_RAW_TAIL_MAX_BYTES = 256 * 1024;
+
+/**
+ * Render control bytes readable so a tool result can be reasoned about as text.
+ * ESC becomes a literal `\x1b` rather than being stripped, because the whole
+ * point of reading the raw ring is to see the sequences.
+ */
+function escapeControlBytes(raw: string): string {
+  return raw.replace(/[\x00-\x1f\x7f]/g, (character) => {
+    if (character === '\n') return '\\n';
+    if (character === '\r') return '\\r';
+    if (character === '\t') return '\\t';
+    if (character === '\x1b') return '\\x1b';
+    return `\\x${character.charCodeAt(0).toString(16).padStart(2, '0')}`;
+  });
+}
+
+/**
+ * Session-scoped terminal forensics: the renderer's grid, main's parsed grid,
+ * and the raw bytes that fed both, row by row and side by side.
+ *
+ * This exists for one question that `/terminal-state` structurally cannot
+ * answer. That route reports HOW MANY rows have content (`nonEmptyLines`), which
+ * is enough for "the grid collapsed" but not for "rows 17 through 27 are blank
+ * and everything around them is correct". Diagnosing a hole needs to know WHICH
+ * rows, in all three layers at once:
+ *
+ * - rows absent from the raw ring: the agent never sent them (upstream).
+ * - rows in the ring and in main's parsed grid but not the renderer's xterm:
+ *   lost between the two, in the IPC / queue / write path.
+ * - rows present in both grids while the pixels are blank: a paint bug, which a
+ *   same-instant screenshot of `.xterm-screen` confirms.
+ *
+ * A separate route rather than more fields on `/terminal-state`, despite that
+ * route's own "extend this payload" note: the note is about always-on summary
+ * fields, and this payload is per-row text plus a byte dump for ONE session.
+ * `/terminal-state` already returns well over 100KB for a busy machine, and
+ * folding this in would break it for every caller that just wants dimensions.
+ */
+async function respondTerminalForensics(
+  options: InspectionServerOptions,
+  url: URL,
+  response: http.ServerResponse,
+): Promise<void> {
+  const sessionManager = options.getSessionManager();
+  if (!sessionManager) {
+    return respondError(response, 503, 'no-session-manager', 'Session manager is not available.');
+  }
+  const window = options.getMainWindow();
+  if (!window) {
+    return respondError(response, 503, 'no-main-window', 'Main window is not available yet.');
+  }
+  const sessionId = url.searchParams.get('sessionId');
+  if (!sessionId) {
+    return respondError(response, 400, 'missing-session-id', 'sessionId is required.');
+  }
+  const rawTailBytes = clampLimit(
+    url.searchParams.get('rawTailBytes'),
+    FORENSIC_RAW_TAIL_BYTES,
+    FORENSIC_RAW_TAIL_MAX_BYTES,
+  );
+
+  const dimensions = sessionManager.getTerminalDimensions()
+    .find((row) => row.sessionId === sessionId) ?? null;
+
+  // Main's parsed grid, reconstructed by replaying its own serialized frame
+  // through a throwaway parser. Going through the public getSerializedFrame
+  // keeps this out of PtyBufferManager's internals, at one known cost: that
+  // frame is a bare serialize with no tail fold, so it can trail the newest
+  // chunk by a macrotask. Harmless when the TUI is idle (the state worth
+  // capturing), but a capture taken MID-STREAM can show a legitimate
+  // main-vs-renderer difference that is not loss. `serializedAt` is stamped so
+  // that ambiguity is visible rather than assumed away.
+  let mainGrid: { rows: string[]; error?: string } = { rows: [] };
+  let serializedFrameBytes = 0;
+  try {
+    const frame = await sessionManager.getSerializedFrame(sessionId);
+    serializedFrameBytes = frame.length;
+    mainGrid = {
+      rows: await renderFrameToRows(
+        frame,
+        dimensions?.ptyCols ?? 80,
+        dimensions?.ptyRows ?? 24,
+      ),
+    };
+  } catch (error) {
+    mainGrid = { rows: [], error: String(error) };
+  }
+
+  const evaluated = await runtimeEvaluate(
+    window,
+    `(() => {
+      const readRows = window.__kangenticTerminalGridRows;
+      if (typeof readRows !== 'function') return null;
+      try { return { dumps: readRows(${JSON.stringify(sessionId)}) }; }
+      catch (error) { return { error: String(error) }; }
+    })()`,
+  );
+  if (evaluated.error) {
+    return respondError(response, 500, 'evaluate-failed', evaluated.error);
+  }
+  const evaluatedValue = (evaluated.value ?? {}) as { dumps?: unknown };
+  const rendererGrids = Array.isArray(evaluatedValue.dumps) ? evaluatedValue.dumps : [];
+
+  const raw = sessionManager.getRawScrollback(sessionId);
+
+  respondJson(response, 200, {
+    ts: new Date().toISOString(),
+    sessionId,
+    pty: dimensions,
+    /** One entry per mounted xterm showing this session (normally one). */
+    rendererGrids,
+    mainGrid: { ...mainGrid, serializedFrameBytes },
+    raw: {
+      totalBytes: raw.length,
+      tailBytes: Math.min(rawTailBytes, raw.length),
+      /** Control bytes escaped; search this for a missing row's text. */
+      tail: escapeControlBytes(raw.slice(-rawTailBytes)),
+    },
+    trace: readTerminalTrace(sessionId),
+  });
+}
+
+/**
+ * Re-parse a serialized frame into plain viewport rows.
+ *
+ * A throwaway headless parser rather than a regex over the escape stream: the
+ * frame positions cells with absolute and relative cursor moves, so the only
+ * faithful way to learn what row N holds is to let a real VT parser lay it out,
+ * which is exactly what both the renderer and main already do with these bytes.
+ */
+async function renderFrameToRows(frame: string, cols: number, rows: number): Promise<string[]> {
+  const terminal = new Terminal({
+    cols: Math.max(1, cols),
+    rows: Math.max(1, rows),
+    allowProposedApi: true,
+  });
+  try {
+    await new Promise<void>((resolve) => {
+      terminal.write(frame, () => resolve());
+    });
+    const buffer = terminal.buffer.active;
+    const dumped: string[] = [];
+    for (let offset = 0; offset < terminal.rows; offset++) {
+      const line = buffer.getLine(buffer.viewportY + offset);
+      dumped.push(line ? line.translateToString(true).replace(/\s+$/, '') : '');
+    }
+    return dumped;
+  } finally {
+    terminal.dispose();
+  }
 }
 
 async function respondRendererState(

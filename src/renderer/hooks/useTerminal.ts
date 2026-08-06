@@ -8,12 +8,44 @@ import { createWriteBatcher, type WriteBatcher } from '../utils/write-batcher';
 import { createIncomingWriteQueue, writeChunkedToTerminal } from '../utils/incoming-write-queue';
 import { onBoardDragEnd } from '../lib/session-update-coalescer';
 import { isTerminalParked, onTerminalReveal } from '../utils/parked-terminals';
+import { onTerminalRefocus } from '../utils/focused-terminals';
 import { noteTerminalFocus } from '../utils/dictation-target';
 import { registerTerminalCapture, unregisterTerminalCapture, type TerminalCaptureReader } from '../utils/terminal-capture-registry';
-import { registerDevtoolsTerminal, traceTerminalRenderer } from '../utils/terminal-grid-registry';
+import {
+  readSessionScrollRegion,
+  readSessionViewportRows,
+  registerDevtoolsTerminal,
+  traceTerminalRenderer,
+} from '../utils/terminal-grid-registry';
+import { createRepaintNudge, type RepaintNudgeController } from '../utils/repaint-nudge';
 import { registerMountedTerminal } from '../utils/terminal-mount-registry';
 import type { PtyResizeOrigin, TerminalColorOverrides } from '../../shared/types';
 import '@xterm/xterm/css/xterm.css';
+
+/**
+ * Scroll-region fields for a replay trace entry.
+ *
+ * Sampled at `replay-done` specifically, because that is the instant the
+ * question is answerable. A replay writes a serialized frame into a terminal
+ * whose margins `xterm.reset()` (and any resize) just returned to full screen,
+ * and the frame can only carry the region back if main re-asserted it - the
+ * serialize addon itself has no access to it. So the region measured right
+ * after a replay is the one that says whether it survived the round trip.
+ *
+ * `scrollRegionFull` is the read at a glance: true means the margins span the
+ * whole grid, which for a TUI that drives a region means the region is gone and
+ * every region-relative op it issues next will land on the wrong rows.
+ */
+function describeScrollRegion(sessionId: string | null | undefined): Record<string, unknown> {
+  if (!sessionId) return {};
+  const { top, bottom, rows } = readSessionScrollRegion(sessionId);
+  return {
+    scrollRegionTop: top,
+    scrollRegionBottom: bottom,
+    scrollRegionFull:
+      top === null || bottom === null || rows === null ? null : top <= 0 && bottom >= rows - 1,
+  };
+}
 
 /** Delay before forwarding a resize to the PTY. Coalesces rapid resizes
  *  (panel drag, window resize) into a single PTY resize so the TUI
@@ -356,6 +388,9 @@ export function useTerminal(options: UseTerminalOptions) {
    *  replay paths the moment a fresh scrollback sample arrives - see the
    *  stale-held-byte note at that call site. */
   const incomingResetRef = useRef<(() => number) | null>(null);
+  /** Post-interaction repaint nudge, owned by the queue effect below but armed
+   *  from initTerminal's onData handler, which is declared above it. */
+  const repaintNudgeRef = useRef<RepaintNudgeController | null>(null);
   const isAtBottomRef = useRef(true);
   /** When true, onData writes are suppressed. Controlled by the caller
    *  (e.g. TerminalTab) to gate PTY output while a loading overlay is shown. */
@@ -423,7 +458,10 @@ export function useTerminal(options: UseTerminalOptions) {
    *  are the whole story - without them a replay that died is visible only as the
    *  ABSENCE of a later event, which is how the stuck-black-terminal state stayed
    *  unreadable. Low frequency (a handful per mount), so it is always on. */
-  const traceReplay = useCallback((event: string, detail: Record<string, unknown>) => {
+  const traceReplay = useCallback((
+    event: string,
+    detail: Record<string, unknown> | (() => Record<string, unknown>),
+  ) => {
     traceTerminalRenderer(options.sessionId ?? null, event, detail);
   }, [options.sessionId]);
 
@@ -629,7 +667,14 @@ export function useTerminal(options: UseTerminalOptions) {
 
     // Send user input to PTY (via the microtask-batched queue above).
     if (options.sessionId) {
-      terminal.onData(batcher.schedule);
+      terminal.onData((data) => {
+        // Arms the post-interaction repaint nudge. Any input counts, not just a
+        // wheel event: the confirmed repro of the missing-rows family is a
+        // KEYBOARD jump (Ctrl+End / Ctrl+Home), so a wheel-only trigger would
+        // miss it entirely.
+        repaintNudgeRef.current?.noteInput();
+        batcher.schedule(data);
+      });
 
       // Debounced PTY resize -- coalesces rapid dimension changes so the
       // TUI only redraws once after resizing settles.
@@ -749,7 +794,12 @@ export function useTerminal(options: UseTerminalOptions) {
             // A completed replay means the terminal is healthy, so the next stuck
             // one gets a fresh recovery budget.
             stuckReplayRecoveriesRef.current = 0;
-            traceReplay('replay-done', { trigger: 'mount', generation: scrollbackGeneration, cols: xtermRef.current?.cols ?? null });
+            traceReplay('replay-done', () => ({
+              trigger: 'mount',
+              generation: scrollbackGeneration,
+              cols: xtermRef.current?.cols ?? null,
+              ...describeScrollRegion(options.sessionId),
+            }));
             // Flush any live bytes the incoming queue held during the replay
             // (see shouldHold in the queue effect below) now that the replay
             // frame is fully painted, so they apply strictly after it.
@@ -850,8 +900,31 @@ export function useTerminal(options: UseTerminalOptions) {
     incomingResumeRef.current = () => queue.kick();
     incomingResetRef.current = () => queue.reset();
 
+    // Post-interaction repaint nudge (see repaint-nudge.ts). Created alongside
+    // the queue so it shares the session's lifetime, and reached from the input
+    // side through a ref because that hook lives in initTerminal.
+    const repaintNudge = createRepaintNudge({
+      readGate: () => {
+        const terminal = xtermRef.current;
+        return {
+          altScreen: terminal?.buffer.active.type === 'alternate',
+          focusReportingEnabled: terminal?.modes.sendFocusMode === true,
+          parked: isTerminalParked(sessionId),
+          replayPending: scrollbackPendingRef.current,
+        };
+      },
+      // Dev-gated: the comparison exists to REPORT whether a nudge repaired
+      // anything, and the trace that records it is itself dev-only. Returning
+      // null in production skips the row walk while the nudge still fires.
+      snapshotViewport: () => (__KANGENTIC_DEV__ ? readSessionViewportRows(sessionId) : null),
+      send: (data) => window.electronAPI.sessions.write(sessionId, data),
+      trace: (event, detail) => traceTerminalRenderer(sessionId, event, detail),
+    });
+    repaintNudgeRef.current = repaintNudge;
+
     const cleanup = window.electronAPI.sessions.onData((incomingSessionId, data) => {
       if (incomingSessionId !== sessionId) return;
+      repaintNudge.noteOutput();
       queue.push(data);
     });
     // Resume the held drain the moment a board drag ends (also via the
@@ -866,6 +939,8 @@ export function useTerminal(options: UseTerminalOptions) {
       incomingResetRef.current = null;
       unsubscribeDragEnd();
       queue.reset();
+      repaintNudge.dispose();
+      repaintNudgeRef.current = null;
     };
   }, [options.sessionId]);
 
@@ -1309,7 +1384,12 @@ export function useTerminal(options: UseTerminalOptions) {
             isAtBottomRef.current = restoreScrollPosition(xtermRef.current, options.sessionId);
           }
           stuckReplayRecoveriesRef.current = 0;
-          traceReplay('replay-done', { trigger: 'reload', generation: scrollbackGeneration, cols: xtermRef.current?.cols ?? null });
+          traceReplay('replay-done', () => ({
+            trigger: 'reload',
+            generation: scrollbackGeneration,
+            cols: xtermRef.current?.cols ?? null,
+            ...describeScrollRegion(options.sessionId),
+          }));
           // Flush any live bytes the incoming queue held during the reload
           // (see shouldHold in the queue effect below) now that the replay
           // frame is fully painted, so they apply strictly after it.
@@ -1384,6 +1464,32 @@ export function useTerminal(options: UseTerminalOptions) {
     const sessionId = options.sessionId;
     if (!sessionId) return;
     return onTerminalReveal(sessionId, () => {
+      reloadScrollback({ skipResize: true, skipFocus: true });
+    });
+  }, [options.sessionId, reloadScrollback]);
+
+  // Refocus catch-up: the same repair, on the strictly wider edge. Main gates
+  // PTY emission on its focused union, and a session can leave that union
+  // WITHOUT being parked - a detail window owned by a detached monitor, the
+  // bottom panel hidden, the command bar closed over a transient. Those cases
+  // never fired the reveal edge above, so the grid stayed stale with nothing to
+  // repair it. Same options for the same reasons: the PTY was not resized while
+  // unfocused, and a view change can refocus many sessions at once, so neither a
+  // resize nor a focus steal is wanted. Republishing an unchanged focused set is
+  // edge-filtered, and a session that is both parked and unfocused settles on
+  // one replay because reloadScrollback's generation guard supersedes the first.
+  useEffect(() => {
+    const sessionId = options.sessionId;
+    if (!sessionId) return;
+    return onTerminalRefocus(sessionId, () => {
+      // A replay already in flight is about to repaint the whole grid, so a
+      // catch-up would only abort it (reloadScrollback bumps the generation) and
+      // pay a second round trip for the same frame. This is the common case at
+      // startup and on a fresh window: the first focus publish reports every
+      // session as regained, and those terminals are mid-mount-replay. A
+      // terminal that has not mounted yet never receives this at all - it has no
+      // listener registered.
+      if (scrollbackPendingRef.current) return;
       reloadScrollback({ skipResize: true, skipFocus: true });
     });
   }, [options.sessionId, reloadScrollback]);

@@ -156,6 +156,86 @@ export interface TerminalGridReport {
    *  and grid disagree. */
   wrappedLines: number;
   nonEmptyLines: number;
+  /** `true` while a fullscreen TUI owns the grid. Main reports its own
+   *  `inAltScreen` from the byte stream; disagreement between the two means the
+   *  renderer and the parser are on different screens. */
+  altScreen: boolean | null;
+  /**
+   * The DECSTBM margins, 0-based and inclusive, or null when unreadable.
+   *
+   * Load-bearing because nothing round-trips them: a serialized replay frame
+   * carries mode FLAGS only, and both `xterm.reset()` and a grid resize reset
+   * the region outright. An agent that drives a scroll region (Claude Code does)
+   * therefore ends up believing in margins the terminal no longer has, and every
+   * region-relative op afterwards lands on the wrong rows. Comparing this
+   * against `rows` is the only way to see that from outside.
+   */
+  scrollRegionTop: number | null;
+  scrollRegionBottom: number | null;
+}
+
+/**
+ * The scroll region has no public read path - `IModes` holds mode flags and
+ * DECSTBM is buffer state - so this goes through `_core`, the same private door
+ * `src/renderer/addons/fit-addon.ts` uses. Narrowly typed rather than `any`, and
+ * every caller already runs inside a try/catch that degrades to geometry only.
+ */
+interface TerminalWithScrollRegion {
+  _core?: { buffers?: { active?: { scrollTop?: number; scrollBottom?: number } } };
+}
+
+function readScrollRegion(terminal: Terminal): { top: number | null; bottom: number | null } {
+  const activeBuffer = (terminal as unknown as TerminalWithScrollRegion)._core?.buffers?.active;
+  const top = activeBuffer?.scrollTop;
+  const bottom = activeBuffer?.scrollBottom;
+  return {
+    top: typeof top === 'number' ? top : null,
+    bottom: typeof bottom === 'number' ? bottom : null,
+  };
+}
+
+/** Viewport rows top to bottom, trailing whitespace trimmed, so a blank row is
+ *  an empty string and a contiguous run of them is directly visible. */
+function collectViewportRows(terminal: Terminal): string[] {
+  const buffer = terminal.buffer.active;
+  const rows: string[] = [];
+  for (let offset = 0; offset < terminal.rows; offset++) {
+    const line = buffer.getLine(buffer.viewportY + offset);
+    rows.push(line ? line.translateToString(true).replace(/\s+$/, '') : '');
+  }
+  return rows;
+}
+
+/** One session's viewport rows, or null when no terminal is mounted for it (or
+ *  it is mid-teardown). Used for the repaint nudge's before/after comparison. */
+export function readSessionViewportRows(sessionId: string): string[] | null {
+  for (const entry of registered.values()) {
+    if (entry.sessionId !== sessionId) continue;
+    try {
+      return collectViewportRows(entry.terminal);
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/** The live scroll region of one session's terminal, for a trace detail thunk.
+ *  Returns nulls rather than throwing when the terminal is mid-teardown. */
+export function readSessionScrollRegion(sessionId: string): {
+  top: number | null;
+  bottom: number | null;
+  rows: number | null;
+} {
+  for (const entry of registered.values()) {
+    if (entry.sessionId !== sessionId) continue;
+    try {
+      return { ...readScrollRegion(entry.terminal), rows: entry.terminal.rows };
+    } catch {
+      return { top: null, bottom: null, rows: null };
+    }
+  }
+  return { top: null, bottom: null, rows: null };
 }
 
 /** Measure every mounted terminal. Installed on `window.__kangenticTerminalGrids`
@@ -172,6 +252,8 @@ export function readTerminalGrids(): TerminalGridReport[] {
 
     let wrappedLines = 0;
     let nonEmptyLines = 0;
+    let altScreen: boolean | null = null;
+    let scrollRegion: { top: number | null; bottom: number | null } = { top: null, bottom: null };
     try {
       const buffer = entry.terminal.buffer.active;
       for (let index = 0; index < buffer.length; index++) {
@@ -180,6 +262,8 @@ export function readTerminalGrids(): TerminalGridReport[] {
         if (line.isWrapped) wrappedLines += 1;
         if (line.translateToString(true).trim().length > 0) nonEmptyLines += 1;
       }
+      altScreen = buffer.type === 'alternate';
+      scrollRegion = readScrollRegion(entry.terminal);
     } catch {
       // A terminal disposed between registration and this read: report geometry
       // only rather than failing the whole snapshot.
@@ -203,7 +287,73 @@ export function readTerminalGrids(): TerminalGridReport[] {
           : Math.round(screenWidth - viewportClientWidth),
       wrappedLines,
       nonEmptyLines,
+      altScreen,
+      scrollRegionTop: scrollRegion.top,
+      scrollRegionBottom: scrollRegion.bottom,
     });
   }
   return reports;
+}
+
+export interface TerminalGridRows {
+  handle: string;
+  sessionId: string | null;
+  surface: TerminalSurface;
+  cols: number;
+  rows: number;
+  altScreen: boolean | null;
+  scrollRegionTop: number | null;
+  scrollRegionBottom: number | null;
+  cursorRow: number | null;
+  cursorColumn: number | null;
+  /** Every viewport row top to bottom, trailing whitespace trimmed. A blank row
+   *  is an empty string, so a contiguous run of them is directly visible. */
+  viewportRows: string[];
+}
+
+/**
+ * Dump one session's viewport row by row.
+ *
+ * This is the renderer's leg of the three-way forensics split. `nonEmptyLines`
+ * answers "how many rows have content" but not "WHICH rows", and a band of
+ * blank rows in the middle of a frame is only diagnosable if you can line the
+ * renderer's grid up against the parsed grid main holds and the raw bytes that
+ * fed both. Separate from `readTerminalGrids` because it is opt-in and
+ * session-scoped: the always-on report is already large enough that adding
+ * per-row text to it would blow the payload for every caller.
+ */
+export function readTerminalGridRows(sessionId: string): TerminalGridRows[] {
+  const dumps: TerminalGridRows[] = [];
+  for (const [handle, entry] of registered) {
+    if (entry.sessionId !== sessionId) continue;
+    let viewportRows: string[] = [];
+    let altScreen: boolean | null = null;
+    let cursorRow: number | null = null;
+    let cursorColumn: number | null = null;
+    let scrollRegion: { top: number | null; bottom: number | null } = { top: null, bottom: null };
+    try {
+      const buffer = entry.terminal.buffer.active;
+      altScreen = buffer.type === 'alternate';
+      cursorRow = buffer.cursorY;
+      cursorColumn = buffer.cursorX;
+      scrollRegion = readScrollRegion(entry.terminal);
+      viewportRows = collectViewportRows(entry.terminal);
+    } catch {
+      // Same degrade-not-fail contract as readTerminalGrids.
+    }
+    dumps.push({
+      handle,
+      sessionId: entry.sessionId,
+      surface: resolveSurface(entry.terminal.element ?? null),
+      cols: entry.terminal.cols,
+      rows: entry.terminal.rows,
+      altScreen,
+      scrollRegionTop: scrollRegion.top,
+      scrollRegionBottom: scrollRegion.bottom,
+      cursorRow,
+      cursorColumn,
+      viewportRows,
+    });
+  }
+  return dumps;
 }

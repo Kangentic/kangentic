@@ -1,5 +1,32 @@
 import { describe, it, expect } from 'vitest';
+import { Terminal } from '@xterm/headless';
 import { HeadlessFrameBuffer } from '../../src/main/pty/buffer/headless-frame';
+
+/**
+ * Cold-replay a serialized frame into a fresh parser, exactly as the renderer
+ * does (xterm.reset() then write). Awaits xterm's own write callback so the
+ * parse has actually landed before the assertions read the buffer.
+ */
+async function replayIntoFreshTerminal(payload: string, cols = 80, rows = 24): Promise<Terminal> {
+  const terminal = new Terminal({ cols, rows, allowProposedApi: true });
+  await new Promise<void>((resolve) => {
+    terminal.write(payload, () => resolve());
+  });
+  return terminal;
+}
+
+/**
+ * The scroll region has no public read path (see the note on
+ * TerminalWithScrollRegion in headless-frame.ts), so the assertions go through
+ * the same private door the production code does, cast through `unknown`.
+ */
+function readScrollRegion(terminal: Terminal): { top: number; bottom: number } {
+  interface CoreAccessor {
+    _core: { buffers: { active: { scrollTop: number; scrollBottom: number } } };
+  }
+  const activeBuffer = (terminal as unknown as CoreAccessor)._core.buffers.active;
+  return { top: activeBuffer.scrollTop, bottom: activeBuffer.scrollBottom };
+}
 
 /**
  * HeadlessFrameBuffer.serialize underlies both the mobile seed
@@ -39,6 +66,85 @@ describe('HeadlessFrameBuffer', () => {
       };
 
       await expect(buffer.serialize()).rejects.toThrow('serializer disposed mid-sample');
+
+      buffer.dispose();
+    });
+  });
+
+  /**
+   * The DECSTBM scroll region is the one piece of TUI state a serialized frame
+   * cannot carry on its own: @xterm/addon-serialize builds its mode prefix from
+   * `terminal.modes`, which is a bag of mode FLAGS with no margin members. So
+   * every replay used to land in a terminal whose region spanned the full
+   * viewport while the agent still believed its own margins were set, leaving
+   * each later region-relative op (SD, IL) acting on the wrong rows. Claude Code
+   * drives a real region, so this is a live gap rather than a theoretical one.
+   *
+   * These assertions replay the frame the way the renderer does and read the
+   * margins back out, which is the only way to observe the round trip.
+   */
+  describe('serialize scroll-region round trip', () => {
+    it('restores the scroll region a replayed frame would otherwise drop', async () => {
+      const buffer = new HeadlessFrameBuffer(80, 24);
+      buffer.write('\x1b[?1049h');   // alt screen, as a fullscreen TUI uses
+      buffer.write('\x1b[5;20r');    // DECSTBM rows 5..20 => 0-based 4..19
+      buffer.write('\x1b[8;3Hhello');
+
+      const replayed = await replayIntoFreshTerminal(await buffer.serialize());
+
+      expect(readScrollRegion(replayed)).toEqual({ top: 4, bottom: 19 });
+
+      buffer.dispose();
+      replayed.dispose();
+    });
+
+    it('leaves the cursor where the frame left it, despite DECSTBM homing it', async () => {
+      const buffer = new HeadlessFrameBuffer(80, 24);
+      buffer.write('\x1b[?1049h');
+      buffer.write('\x1b[5;20r');
+      buffer.write('\x1b[8;3Hhello');
+
+      const replayed = await replayIntoFreshTerminal(await buffer.serialize());
+
+      // `\x1b[8;3H` then 5 printed cells: row 7, column 7 (both 0-based).
+      // Without the CUP that follows the region, DECSTBM's own _setCursor(0, 0)
+      // would leave this at the region top instead.
+      expect(replayed.buffer.active.cursorY).toBe(7);
+      expect(replayed.buffer.active.cursorX).toBe(7);
+
+      buffer.dispose();
+      replayed.dispose();
+    });
+
+    it('compensates for origin mode, whose CUP is region-relative', async () => {
+      const buffer = new HeadlessFrameBuffer(80, 24);
+      buffer.write('\x1b[?1049h');
+      buffer.write('\x1b[5;20r');
+      buffer.write('\x1b[?6h');      // DECOM: CUP rows become region-relative
+      buffer.write('\x1b[3;1Hhi');   // row 3 OF THE REGION => absolute row 6
+
+      // serialize() carries the flush barrier; cursorRow() deliberately does
+      // not, so the source grid is only readable after the await.
+      const frame = await buffer.serialize();
+      expect(buffer.cursorRow()).toBe(6);
+
+      const replayed = await replayIntoFreshTerminal(frame);
+
+      expect(readScrollRegion(replayed)).toEqual({ top: 4, bottom: 19 });
+      expect(replayed.buffer.active.cursorY).toBe(6);
+
+      buffer.dispose();
+      replayed.dispose();
+    });
+
+    it('adds nothing when the region already spans the grid', async () => {
+      const buffer = new HeadlessFrameBuffer(80, 24);
+      buffer.write('\x1b[?1049h');
+      buffer.write('plain output with no scroll region');
+
+      // The suffix is region + CUP, so a session that never sets a region pays
+      // zero bytes for this - which is every plain shell and most of a TUI's life.
+      expect(await buffer.serialize()).not.toMatch(/\x1b\[\d+;\d+r/);
 
       buffer.dispose();
     });

@@ -743,6 +743,21 @@ export class SessionManager extends EventEmitter {
     for (const sessionIds of this.focusedByRenderer.values()) {
       for (const sessionId of sessionIds) union.add(sessionId);
     }
+    // Trace the EDGES of the emit gate. This union is what decides whether a
+    // session's PTY data reaches any renderer at all, so a session silently
+    // leaving it is the difference between "the terminal is stale" and "the
+    // terminal is broken" - and until now it produced no trace on either side,
+    // which is why a gap in a session's byte stream was unattributable.
+    for (const sessionId of union) {
+      if (!this.focusedSessionIds.has(sessionId)) {
+        traceTerminal(sessionId, 'focus-union-gained', { renderers: this.focusedByRenderer.size });
+      }
+    }
+    for (const sessionId of this.focusedSessionIds) {
+      if (!union.has(sessionId)) {
+        traceTerminal(sessionId, 'focus-union-lost', { renderers: this.focusedByRenderer.size });
+      }
+    }
     this.focusedSessionIds = union;
   }
 
@@ -1346,6 +1361,24 @@ export class SessionManager extends EventEmitter {
       await this.bufferManager.waitForResizeRepaint(sessionId);
     }
     return this.bufferManager.getSerializedFrame(sessionId);
+  }
+
+  /**
+   * The UNPROCESSED byte ring, exactly as it arrived from the PTY.
+   *
+   * The forensics read, and the only one that can answer "did these bytes ever
+   * exist?". Every other view is downstream of a parser: the transcript is
+   * ANSI-stripped, the serialized frame is a re-render of the parsed grid, and
+   * the renderer's xterm is a second parse of the same stream. When rows are
+   * missing from a frame, all of those agree with each other whether the agent
+   * omitted the rows or something here dropped them - the raw ring is what
+   * separates the two.
+   *
+   * No settle and no slicing: a diagnostic wants the bytes as they are, not a
+   * replay-shaped view of them.
+   */
+  getRawScrollback(sessionId: string): string {
+    return this.bufferManager.getRawScrollback(sessionId);
   }
 
   /**

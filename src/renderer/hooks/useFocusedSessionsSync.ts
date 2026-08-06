@@ -12,6 +12,7 @@ import {
   type TerminalVisibilityWindowInput,
 } from '../utils/terminal-visibility';
 import { syncParkedTerminals } from '../utils/parked-terminals';
+import { syncFocusedTerminals } from '../utils/focused-terminals';
 import {
   WEBGL_ATTACH_BUDGET,
   applyWebglAttachmentPlan,
@@ -197,8 +198,8 @@ export function useFocusedSessionsSync(panelShowsTerminal: boolean): void {
 
     // Order matters: publish the parked set FIRST so reveal listeners kick off
     // their scrollback catch-up (their scrollbackPendingRef holds any live
-    // bytes until the replay paints), THEN re-focus the sessions so main
-    // resumes emitting, THEN swap the WebGL attachments.
+    // bytes until the replay paints), THEN publish the focused set and re-focus
+    // the sessions so main resumes emitting, THEN swap the WebGL attachments.
     syncParkedTerminals(parkedSessionIds);
 
     // Sessions a detail window in ANOTHER renderer owns. Resolved from task ids
@@ -222,6 +223,12 @@ export function useFocusedSessionsSync(panelShowsTerminal: boolean): void {
       parkedSessionIds,
       remotelyOwnedSessionIds,
     });
+    // Same reasoning as the parked publish above, one step later because the
+    // focused set is only known now: fire the refocus catch-up BEFORE the IPC
+    // that makes main resume emitting. Main is still silent for these sessions
+    // while the sample is in flight, so there are no post-sample bytes for the
+    // replay's queue reset to discard.
+    syncFocusedTerminals(new Set(focusedIds));
     window.electronAPI.sessions.setFocused(focusedIds);
 
     lastWebglPlanRef.current = {

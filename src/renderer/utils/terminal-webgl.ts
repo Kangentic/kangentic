@@ -1,5 +1,6 @@
 import type { Terminal, ITerminalAddon } from '@xterm/xterm';
 import { WebglAddon } from '@xterm/addon-webgl';
+import { traceTerminalRenderer } from './terminal-grid-registry';
 
 /**
  * WebGL renderer attachment with context-loss recovery and a page-wide
@@ -282,6 +283,10 @@ export function attachWebglRenderer(
     }
     status.renderer = 'dom';
     status.suspendedByBudget = true;
+    // Traced at the FLIP, not at applyWebglAttachmentPlan: the coordinator
+    // re-applies the full plan on every window/store change, so tracing the call
+    // would bury the handful of real transitions in constant no-op noise.
+    traceTerminalRenderer(rendererKey, 'webgl-suspend', { reason: 'budget' });
   };
 
   const resume = (): boolean => {
@@ -290,6 +295,7 @@ export function attachWebglRenderer(
     suspended = false;
     if (tryAttach()) {
       status.suspendedByBudget = false;
+      traceTerminalRenderer(rendererKey, 'webgl-resume', { attached: true });
       return true;
     }
     // Stay budget-suspended rather than escalating: the coordinator re-applies
@@ -297,6 +303,7 @@ export function attachWebglRenderer(
     // context-loss backoff ladder here would conflate a transient acquisition
     // failure with a real loss.
     suspended = true;
+    traceTerminalRenderer(rendererKey, 'webgl-resume', { attached: false });
     console.warn(`[terminal-webgl] WebGL re-attach after budget suspend failed for ${rendererKey}; staying suspended`);
     return false;
   };
