@@ -271,7 +271,7 @@ Sessions are resumable on next launch via `--resume <agent_session_id>` from the
 - When the window releases it: the tab returns, still selected, and the panel recreates xterm from the PTY scrollback buffer.
 - This prevents duplicate xterm instances from sending conflicting resize calls.
 - Both surfaces can therefore hold a live terminal at once, so `deriveFocusedSessionIds` focuses the window-owned sessions AND the panel's own session; anything with a mounted xterm must be in that set or the main process suppresses its PTY output.
-- The converse also holds: anything with NO mounted xterm must be OUT of that set. A collapsed panel renders no `TerminalTab`, so `derivePanelSessionId` returns null for it (`panelShowsTerminal`, threaded from `useTerminalResize`'s `showContent`). Otherwise main streams bytes nothing can acknowledge, and a chatty agent eventually trips backpressure (`BACKPRESSURE_HIGH_WATER`) and has its PTY paused. Output produced while collapsed accumulates in main's scrollback ring and is replayed when the panel expands and the terminal remounts.
+- The converse also holds: anything with NO mounted xterm must be OUT of that set. A collapsed panel renders no `TerminalTab`, so `derivePanelSessionId` returns null for it (`panelShowsTerminal`, threaded from `useTerminalResize`'s `showContent`). Otherwise main streams bytes nothing can acknowledge, and a chatty agent eventually trips backpressure (`BACKPRESSURE_HIGH_WATER`) and has its PTY paused. Output produced while collapsed accumulates in main's scrollback ring and is replayed when the panel expands and the terminal remounts. A remount is not the only way back: a session that stays MOUNTED and merely leaves the focused union (a detail window a detached monitor owns, a hidden panel, a closed command bar over a transient) is repaired on the focus edge alone, without remounting. See the focus-edge catch-up bullet under Output Streaming.
 
 ## Project-Scoped Session State
 
@@ -515,6 +515,16 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   TRACKING only), so `getReplaySnapshot` folds the tracked DEC-mode prefix onto the frame; without
   it, a same-grid remount left xterm reporting legacy X10 mouse bytes that an SGR-expecting TUI
   ignores, and wheel scroll went dead until the TUI happened to re-assert its own modes.
+  A SECOND thing the addon cannot emit is the DECSTBM scroll region: it builds its prefix from
+  `terminal.modes`, and a region is two integers of buffer state rather than a mode flag, so
+  `IModes` has no member for it. `HeadlessFrameBuffer.serialize` therefore appends the region
+  itself plus an absolute cursor restore. Order is load-bearing twice over: the region must FOLLOW
+  the frame (set before it, the frame's own row writes would scroll against it), and it must be
+  followed by the CUP, because DECSTBM homes the cursor and would otherwise discard the position
+  the addon's relative moves just rebuilt. The suffix is empty when the region already spans the
+  grid, which is the common case. Claude Code gates its own DECSTBM use on a terminal-capability
+  probe and currently leaves it off under xterm.js (which answers no XTVERSION), so this is a
+  guard against the gate opening rather than a break being repaired today.
   `getScrollback` itself retains the `\x1b[?1049h` prefix gate, reachable now only via direct
   byte-path reads and `getReplaySnapshot`'s serialize-deadline fallback.
 - **Hold, not drop, live output across a renderer-side replay.** While a scrollback replay is in
@@ -553,6 +563,39 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   replay lifecycle is traced (`replay-start` / `-write` / `-abort` / `-done` / `-error` /
   `-watchdog`, each with its generation) and surfaces in `kangentic_devtools_terminal_state`, so an
   abandoned replay is readable directly instead of inferred from a missing later event.
+- **Focus-edge catch-up, the wider sibling of park/reveal.** Main gates PTY emission on its focused
+  union, but the only catch-up repaint used to be `onTerminalReveal`, which fires on the PARKED
+  edge. Parking implies unfocus, not the reverse, so every session that left the union WITHOUT
+  being parked had no path back to a correct grid: a detail window a detached monitor owns
+  (`remotelyOwnedSessionIds`), a hidden bottom panel, a closed command bar over a transient.
+  `src/renderer/utils/focused-terminals.ts` adds the missing edge (`syncFocusedTerminals` /
+  `onTerminalRefocus`, edge-triggered exactly like the parked registry), and `useTerminal`
+  subscribes it to the same `reloadScrollback({ skipResize: true, skipFocus: true })` the reveal
+  path uses, skipping when a replay is already in flight so a mount-time replay is never aborted
+  and re-issued for the same frame. Both registries are kept: only parking additionally makes the
+  incoming queue ack-and-discard, so neither subsumes the other.
+- **Post-interaction repaint nudge.** A fullscreen TUI intermittently emits a frame that erases
+  the grid and then redraws only some of it, leaving either the whole transcript blank or a
+  contiguous band of rows missing mid-frame. Its renderer is differential, so it never revisits
+  those rows and only a full repaint heals them, which is why a click or a resize fixes it and
+  waiting does not. `src/renderer/utils/repaint-nudge.ts` asks for that repaint automatically:
+  after real user input reaches a focused alt-screen terminal and the output it provoked goes
+  quiet (250ms), it writes a FocusOut+FocusIn pair, which is the same report a real terminal sends
+  on alt-tab and the same one the user's click was already sending. It fires on the TRIGGER rather
+  than on a detected symptom, so there is no threshold to false-positive on a legitimately sparse
+  frame and it covers every shape of the defect. Gated on alt-screen plus DECSET 1004 plus
+  not-parked plus no-replay-pending, floored at one per 750ms per session. `isUserInputData`
+  filters out xterm's OWN focus and motion reports, which arrive through the same `onData` channel
+  and would otherwise self-arm a nudge on every mount replay. The before/after grid comparison is
+  reporting only and never gates the nudge. Upstream: anthropics/claude-code#83714.
+- **Trace vocabulary for the two mechanisms above.** `focus-union-gained` / `focus-union-lost`
+  (main, `recomputeFocusedUnion`), `terminal-unfocus` / `terminal-refocus` (renderer,
+  `focused-terminals.ts`), and `repaint-repaired` / `repaint-verified` (renderer,
+  `repaint-nudge.ts`, the latter meaning the frame was already correct and the nudge cost one
+  render). All six merge into `kangentic_devtools_terminal_state`'s timeline alongside the
+  resize and replay events above. `kangentic_devtools_terminal_forensics` is the session-scoped
+  companion: renderer viewport rows, main's re-parsed grid, and the raw byte ring side by side,
+  which is what separates "the agent never sent these rows" from "we lost them".
 - **Replay veil for a warm mount.** For an already-running session, `TerminalTab`'s launch overlay
   never shows (`terminalReady` starts true), so the whole mount-time fit -> replay -> refit ->
   held-byte-flush sequence used to paint live, occasionally as a visible flash. `TerminalTab` now
