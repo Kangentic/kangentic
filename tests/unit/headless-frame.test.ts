@@ -77,8 +77,13 @@ describe('HeadlessFrameBuffer', () => {
    * `terminal.modes`, which is a bag of mode FLAGS with no margin members. So
    * every replay used to land in a terminal whose region spanned the full
    * viewport while the agent still believed its own margins were set, leaving
-   * each later region-relative op (SD, IL) acting on the wrong rows. Claude Code
-   * drives a real region, so this is a live gap rather than a theoretical one.
+   * each later region-relative op (SD, IL) acting on the wrong rows.
+   *
+   * Claude Code's own DECSTBM use is currently gated OFF under xterm.js
+   * (measured with `claude --debug`; see `scrollRegionSuffix`), so the region
+   * branch guards against that gate reopening rather than repairing a live
+   * break. The origin-mode branch is live regardless, which is why it has its
+   * own case below.
    *
    * These assertions replay the frame the way the renderer does and read the
    * margins back out, which is the only way to observe the round trip.

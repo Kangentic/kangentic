@@ -190,10 +190,19 @@ export class HeadlessFrameBuffer {
    *
    * The serialize addon builds its mode prefix from `terminal.modes`, which
    * carries no margin data, so a replayed frame always lands in a terminal whose
-   * region spans the full viewport. Claude Code drives a real scroll region (its
-   * binary ships a DECSTBM capability gate alongside SD/IL emission), so without
-   * this the TUI's margins and the terminal's silently disagree after every
-   * replay, and each later region-relative op acts on the wrong rows.
+   * region spans the full viewport. Without this, a TUI that sets a region ends
+   * up believing in margins the terminal no longer has, and each later
+   * region-relative op acts on the wrong rows.
+   *
+   * Currently DORMANT for Claude Code, and deliberately kept anyway. Its binary
+   * ships a DECSTBM capability gate alongside SD/IL emission, but the gate is
+   * shut under xterm.js: measured 2026-08-06 with `claude --debug`, which logs
+   * `XTVERSION: no reply (terminal ignored query)` and then
+   * `DECSTBM: gated (TMUX=unset ZELLIJ=unset TERM_PROGRAM=unset TERM=unset)`.
+   * xterm registers `CSI > c` but no `CSI > q`, so it never answers XTVERSION.
+   * The gate can reopen on any upgrade (or if we ever set TERM), silently, and
+   * the resulting bug is expensive to re-diagnose - hence the guard. The
+   * origin-mode branch below is NOT dormant.
    *
    * Order is load-bearing, twice over:
    *

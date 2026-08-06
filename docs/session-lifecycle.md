@@ -521,10 +521,14 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   itself plus an absolute cursor restore. Order is load-bearing twice over: the region must FOLLOW
   the frame (set before it, the frame's own row writes would scroll against it), and it must be
   followed by the CUP, because DECSTBM homes the cursor and would otherwise discard the position
-  the addon's relative moves just rebuilt. The suffix is empty when the region already spans the
-  grid, which is the common case. Claude Code gates its own DECSTBM use on a terminal-capability
-  probe and currently leaves it off under xterm.js (which answers no XTVERSION), so this is a
-  guard against the gate opening rather than a break being repaired today.
+  the addon's relative moves just rebuilt. The suffix is empty only when the region already spans
+  the grid AND origin mode is off, which is the common case: with DECOM on it still emits a bare
+  CUP, because the addon appends its own `\x1b[?6h` after its cursor restore and DECSET 6 homes
+  the cursor too. Claude Code gates its own DECSTBM use on a terminal-capability probe and
+  currently leaves it off under xterm.js (measured with `claude --debug`: `XTVERSION: no reply`
+  then `DECSTBM: gated`, because xterm registers `CSI > c` but no `CSI > q`), so the REGION half
+  guards against that gate reopening rather than repairing a live break. The origin-mode half
+  repairs a live one.
   `getScrollback` itself retains the `\x1b[?1049h` prefix gate, reachable now only via direct
   byte-path reads and `getReplaySnapshot`'s serialize-deadline fallback.
 - **Hold, not drop, live output across a renderer-side replay.** While a scrollback replay is in

@@ -173,10 +173,15 @@ export interface TerminalGridReport {
    *
    * Load-bearing because nothing round-trips them: a serialized replay frame
    * carries mode FLAGS only, and both `xterm.reset()` and a grid resize reset
-   * the region outright. An agent that drives a scroll region (Claude Code does)
-   * therefore ends up believing in margins the terminal no longer has, and every
-   * region-relative op afterwards lands on the wrong rows. Comparing this
-   * against `rows` is the only way to see that from outside.
+   * the region outright. An agent that drives a scroll region therefore ends up
+   * believing in margins the terminal no longer has, and every region-relative
+   * op afterwards lands on the wrong rows. Comparing this against `rows` is the
+   * only way to see that from outside.
+   *
+   * Reported even though Claude Code's own DECSTBM use is currently gated OFF
+   * under xterm.js (see `HeadlessFrameBuffer.scrollRegionSuffix`): this field is
+   * how anyone would notice the gate reopening, so it is the one place the
+   * dormant case still has to be observable.
    */
   scrollRegionTop: number | null;
   scrollRegionBottom: number | null;
