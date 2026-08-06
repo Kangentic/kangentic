@@ -19,7 +19,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 import {
   CAPABILITY_VERBS,
+  bytesToHex,
   createPairingInitiatorHandshake,
+  derivePairingSlotId,
   generateX25519KeyPair,
   sealPairingConfirm,
   type CapabilityVerb,
@@ -291,6 +293,32 @@ describe('MobileBridgeService.startPairing() is the deliberate identity-creation
     await expect(service.startPairing()).rejects.toThrow(/TLS/);
     expect(writeFileSyncSpy).not.toHaveBeenCalled();
     expect(fakeTransport.connect).not.toHaveBeenCalled();
+  });
+});
+
+describe('MobileBridgeService.startPairing() derives the relay slot id from the pairing token', () => {
+  it('passes createTransport a slotId derived from the minted token, never the token bytes verbatim', async () => {
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    const { qrPayload } = await service.startPairing();
+    const mintedPairingToken = qrPayload.pairingToken;
+
+    // .at(-1), not [0]: createTransport's call history is not cleared between
+    // tests in this file, so an earlier test's startPairing() call is still
+    // in there. The most recent call is the one this test's startPairing()
+    // just made.
+    const transportOptions = vi.mocked(createTransport).mock.calls.at(-1)?.[0];
+    if (!transportOptions) throw new Error('test setup: createTransport was not called');
+
+    expect(transportOptions.slotId).toBe(derivePairingSlotId(mintedPairingToken));
+    // The regression this guards: the slot travels in cleartext in the relay
+    // URL's query string while the pairing token is the Noise IKpsk0
+    // pre-shared key, so dialing the raw token as the slot id would publish
+    // the PSK to every hop that can read a request URI. Asserting the
+    // positive derivation above is not enough by itself, since a broken
+    // derivation that happened to still differ from the raw hex would slip
+    // through it - this assertion is the one that actually catches a revert
+    // back to `bytesToHex(token.token)`.
+    expect(transportOptions.slotId).not.toBe(bytesToHex(mintedPairingToken));
   });
 });
 
