@@ -156,7 +156,13 @@ export function createRepaintNudge(options: RepaintNudgeOptions): RepaintNudgeCo
   const minIntervalMs = options.minIntervalMs ?? NUDGE_MIN_INTERVAL_MS;
   const now = options.now ?? (() => Date.now());
 
-  let phase: 'idle' | 'armed' | 'verifying' = 'idle';
+  // 'dormant' rather than the more obvious 'idle': this is the nudge's own state
+  // machine and has nothing to do with `ActivityState`, whose union includes an
+  // 'idle' member. Naming it 'idle' inside src/renderer reads to the
+  // activity-state classification scan as a hand-rolled bucket comparison
+  // (.claude/rules/activity-state-classification.md). Renaming keeps the check
+  // honest instead of spending an `activity-state-ok` escape on a name clash.
+  let phase: 'dormant' | 'armed' | 'verifying' = 'dormant';
   // Requiring output before nudging keeps a swallowed keystroke (or input to a
   // session that is not actually rendering) from spending a render.
   let sawOutputSinceInput = false;
@@ -171,7 +177,7 @@ export function createRepaintNudge(options: RepaintNudgeOptions): RepaintNudgeCo
   };
 
   const reset = (): void => {
-    phase = 'idle';
+    phase = 'dormant';
     sawOutputSinceInput = false;
     snapshotBefore = null;
     clearQuiesceTimer();
@@ -233,7 +239,7 @@ export function createRepaintNudge(options: RepaintNudgeOptions): RepaintNudgeCo
       quiesceTimer = setTimeout(onQuiesced, quiesceMs);
     },
     noteOutput(): void {
-      if (phase === 'idle') return;
+      if (phase === 'dormant') return;
       sawOutputSinceInput = true;
       clearQuiesceTimer();
       quiesceTimer = setTimeout(onQuiesced, quiesceMs);
