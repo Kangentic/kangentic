@@ -25,3 +25,25 @@ export function deriveSessionSlotId(desktopStaticPublicKey: Uint8Array, phoneSta
   const material = concatBytes(desktopStaticPublicKey, phoneStaticPublicKey);
   return bytesToHex(deriveLabeledKey(material, SESSION_SLOT_LABEL, SESSION_SLOT_LENGTH));
 }
+
+const PAIRING_SLOT_LABEL = 'kangentic-pairing-slot-v1';
+const PAIRING_SLOT_LENGTH = 16;
+
+/**
+ * Derives the relay rendezvous slot id for the PAIRING ceremony from the
+ * pairing token, for both peers to dial.
+ *
+ * The slot must be derived rather than being the token itself, because it
+ * travels in cleartext in the relay URL's query string while the same token is
+ * the Noise IKpsk0 pre-shared key. Dialing it verbatim published the PSK to
+ * every hop that can read a request URI - on a hosted relay that includes
+ * whatever terminates TLS - which reduced IKpsk0 to plain IK for such an
+ * observer. A one-way labeled hash keeps the routing label public and the PSK
+ * secret: the token itself now never leaves the QR code.
+ *
+ * The result is a routing label, NOT key material. Its 128 bits are sized to
+ * defeat blind enumeration, which is all a rendezvous label has to do.
+ */
+export function derivePairingSlotId(pairingToken: Uint8Array): string {
+  return bytesToHex(deriveLabeledKey(pairingToken, PAIRING_SLOT_LABEL, PAIRING_SLOT_LENGTH));
+}

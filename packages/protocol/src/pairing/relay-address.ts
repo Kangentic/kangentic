@@ -61,16 +61,25 @@ function plaintextRelayHost(relayAddress: string): string | null {
 
 /**
  * True if the phone's pairing QR scanner will accept this relay address.
- * wss:// is always secure; ws:// is accepted only for loopback, since the
- * pairing token doubles as the Noise PSK and is dialed verbatim as `?slot=`.
+ * wss:// is always secure; ws:// is accepted only for loopback.
+ *
+ * The relay address arrives inside a scanned QR payload, so it is attacker
+ * controllable: a crafted QR naming a plaintext host would route the whole
+ * ceremony through that host, and the pairing then persists it to the trust
+ * anchor for every later session. That is what the restriction prevents, and
+ * it holds regardless of how strong the frames themselves are.
+ *
+ * Note this rule predates derivePairingSlotId() and used to be justified by
+ * the pairing token being dialed verbatim as `?slot=`, which put the Noise PSK
+ * in cleartext on the wire. The slot is a derived routing label now, so that
+ * particular exposure is gone - the address-pinning reason above is not, which
+ * is why the restriction stays.
  *
  * Parses the AUTHORITY rather than prefix-matching. Prefix matching accepted
  * `ws://127.0.0.1:8080@evil.test`: everything before an '@' is userinfo, so
- * that address dials evil.test while looking like loopback, putting the PSK
- * on the wire in cleartext to an attacker-chosen host - and the pairing then
- * persists that host to the trust anchor for every later session. Authority
- * parsing also subsumes the old boundary check, since `localhost.evil.com`
- * is simply a different host.
+ * that address dials evil.test while looking like loopback. Authority parsing
+ * also subsumes the old boundary check, since `localhost.evil.com` is simply a
+ * different host.
  */
 export function isSecureRelayAddress(relayAddress: string): boolean {
   if (relayAddress.startsWith('wss://')) return true;

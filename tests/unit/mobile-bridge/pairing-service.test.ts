@@ -215,11 +215,10 @@ describe('PairingService ceremony', () => {
     expect(persistedDevice?.capabilities).toEqual(DEFAULT_PAIRING_CAPABILITIES);
   });
 
-  it('emits failed (not sas) when the phone uses the wrong pairing token', async () => {
+  it('ignores a wrong-token message 1 without emitting sas or failed', async () => {
     const identity = testIdentity();
     const service = new PairingService(identity);
-    const token = service.mintToken();
-    void token;
+    service.mintToken();
     const [desktopTransport, phoneTransport] = createLoopbackTransportPair();
     service.start(desktopTransport);
 
@@ -232,21 +231,96 @@ describe('PairingService ceremony', () => {
     });
 
     const sasListener = vi.fn();
+    const failedListener = vi.fn();
     service.on('sas', sasListener);
-    const failedEventPromise = new Promise<{ reason: string }>((resolve) => {
-      service.once('failed', resolve);
-    });
+    service.on('failed', failedListener);
 
     const message1 = phoneHandshake.writeMessage(new TextEncoder().encode('Test Phone')).message;
     phoneTransport.send(message1);
 
-    const failedEvent = await failedEventPromise;
-
-    expect(failedEvent.reason).toEqual(expect.any(String));
+    // The loopback transport is synchronous, so by the time send() returns the
+    // service has fully processed the frame: no waiting needed to prove a
+    // negative here.
     expect(sasListener).not.toHaveBeenCalled();
+    expect(failedListener).not.toHaveBeenCalled();
   });
 
-  it('fails the ceremony (does not enroll) when the confirm frame does not open', async () => {
+  /**
+   * The regression this whole change exists to prevent. The pairing slot used
+   * to BE the pairing token, so anyone who could read the relay request URI
+   * could deliver one frame and permanently burn the ceremony: consumed was set
+   * before readMessage() ever authenticated anything.
+   *
+   * Asserting `consumed === false` would not be enough to prove the fix.
+   * readMessage() advances messageIndex and mixes the sender's ephemeral into
+   * the transcript BEFORE it throws, so a shared HandshakeState stays poisoned
+   * even once the token survives. Only completing a real handshake afterwards
+   * proves the ceremony is genuinely still usable.
+   */
+  it('survives unauthenticated frames and still completes a real pairing afterwards', async () => {
+    const identity = testIdentity();
+    const service = new PairingService(identity);
+    const token = service.mintToken();
+    const [desktopTransport, phoneTransport] = createLoopbackTransportPair();
+    service.start(desktopTransport);
+
+    const failedListener = vi.fn();
+    service.on('failed', failedListener);
+
+    // Three shapes of hostile or stray traffic: raw garbage, an empty frame,
+    // and a well-formed message 1 built under a different token.
+    phoneTransport.send(new Uint8Array([1, 2, 3, 4]));
+    phoneTransport.send(new Uint8Array(0));
+    const attackerHandshake = createPairingInitiatorHandshake({
+      localStatic: generateX25519KeyPair(),
+      remoteStatic: identity.staticKeyPair.publicKey,
+      pairingToken: randomBytes(32),
+    });
+    phoneTransport.send(attackerHandshake.writeMessage(new TextEncoder().encode('Attacker')).message);
+
+    expect(failedListener).not.toHaveBeenCalled();
+    expect(token.consumed).toBe(false);
+
+    // Now the real phone arrives on the same, still-live ceremony.
+    const phoneStaticKeyPair = generateX25519KeyPair();
+    const phoneHandshake = createPairingInitiatorHandshake({
+      localStatic: phoneStaticKeyPair,
+      remoteStatic: identity.staticKeyPair.publicKey,
+      pairingToken: token.token,
+    });
+
+    let phoneConfirmCipher: CipherState | undefined;
+    phoneTransport.onFrame((frame) => {
+      const result = phoneHandshake.readMessage(frame);
+      if (result.split) phoneConfirmCipher = result.split[0];
+    });
+
+    const sasEventPromise = new Promise<void>((resolve) => service.once('sas', () => resolve()));
+    phoneTransport.send(phoneHandshake.writeMessage(new TextEncoder().encode('Real Phone')).message);
+    await sasEventPromise;
+
+    expect(token.consumed).toBe(true);
+    if (!phoneConfirmCipher) throw new Error('test setup: phone did not derive a confirm cipher from message 2');
+
+    const confirmedEventPromise = new Promise<{ deviceId: string; displayName: string }>((resolve) => {
+      service.once('confirmed', resolve);
+    });
+    phoneTransport.send(sealPairingConfirm(phoneConfirmCipher));
+    const confirmedEvent = await confirmedEventPromise;
+
+    expect(confirmedEvent.deviceId).toBe(bytesToHex(phoneStaticKeyPair.publicKey));
+    expect(confirmedEvent.displayName).toBe('Real Phone');
+    expect(failedListener).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The sas-pending half of the same defect. A confirm frame that does not open
+   * is unauthenticated, and the slot is reachable by anyone who can read the
+   * request URI, so one injected frame must not end the ceremony. This is safe
+   * because CipherState advances its nonce only on a successful decrypt, which
+   * the second half of this test proves: the real frame still opens afterwards.
+   */
+  it('ignores confirm frames that do not open, and still enrolls on the real one', async () => {
     const identity = testIdentity();
     const service = new PairingService(identity);
     const token = service.mintToken();
@@ -259,24 +333,81 @@ describe('PairingService ceremony', () => {
       remoteStatic: identity.staticKeyPair.publicKey,
       pairingToken: token.token,
     });
+    let phoneConfirmCipher: CipherState | undefined;
+    phoneTransport.onFrame((frame) => {
+      const result = phoneHandshake.readMessage(frame);
+      if (result.split) phoneConfirmCipher = result.split[0];
+    });
     const sasEventPromise = new Promise<void>((resolve) => service.once('sas', () => resolve()));
     const message1 = phoneHandshake.writeMessage(new TextEncoder().encode('Test Phone')).message;
     phoneTransport.send(message1);
     await sasEventPromise;
 
     const confirmedListener = vi.fn();
+    const failedListener = vi.fn();
     service.on('confirmed', confirmedListener);
-    const failedEventPromise = new Promise<{ reason: string }>((resolve) => service.once('failed', resolve));
+    service.on('failed', failedListener);
 
-    // Garbage bytes instead of a genuine sealed confirm frame - simulates a
-    // relay-in-the-middle (or a corrupted transit) that cannot produce a
-    // frame that opens under the desktop's derived key.
+    // Garbage bytes instead of a genuine sealed confirm frame - an injected
+    // frame that cannot open under the desktop's derived key.
     phoneTransport.send(new Uint8Array([1, 2, 3, 4]));
+    phoneTransport.send(new Uint8Array([5, 6, 7, 8]));
 
-    const failedEvent = await failedEventPromise;
-    expect(failedEvent.reason).toMatch(/Could not verify your phone/);
+    expect(failedListener).not.toHaveBeenCalled();
     expect(confirmedListener).not.toHaveBeenCalled();
     expect(writeFileSyncSpy).not.toHaveBeenCalled();
+
+    if (!phoneConfirmCipher) throw new Error('test setup: phone did not derive a confirm cipher from message 2');
+    const confirmedEventPromise = new Promise<{ deviceId: string }>((resolve) => service.once('confirmed', resolve));
+    phoneTransport.send(sealPairingConfirm(phoneConfirmCipher));
+    const confirmedEvent = await confirmedEventPromise;
+
+    expect(confirmedEvent.deviceId).toBe(bytesToHex(phoneStaticKeyPair.publicKey));
+    expect(failedListener).not.toHaveBeenCalled();
+    expect(writeFileSyncSpy).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * Transport.send() genuinely throws - RelayClient rejects a send while not
+   * connected, and on its per-session byte cap - and message 2 is now sent
+   * after the phase has already flipped to sas-pending. Without a guard the
+   * throw would escape into the transport callback and leave the ceremony
+   * parked for the whole SAS timeout, waiting on a confirm frame the phone
+   * cannot produce because it never received message 2.
+   */
+  it('fails fast when the transport throws while sending message 2', async () => {
+    const identity = testIdentity();
+    const service = new PairingService(identity);
+    const token = service.mintToken();
+    const [desktopTransport, phoneTransport] = createLoopbackTransportPair();
+    const sendingDesktopTransport: Transport = {
+      ...desktopTransport,
+      send: () => {
+        throw new Error('RelayClient.send() called while not connected');
+      },
+    };
+    service.start(sendingDesktopTransport);
+
+    const phoneHandshake = createPairingInitiatorHandshake({
+      localStatic: generateX25519KeyPair(),
+      remoteStatic: identity.staticKeyPair.publicKey,
+      pairingToken: token.token,
+    });
+
+    const sasListener = vi.fn();
+    service.on('sas', sasListener);
+    const failedEventPromise = new Promise<{ reason: string }>((resolve) => service.once('failed', resolve));
+
+    phoneTransport.send(phoneHandshake.writeMessage(new TextEncoder().encode('Test Phone')).message);
+
+    const failedEvent = await failedEventPromise;
+    // Match the SEND-specific reason, not a substring shared with the
+    // construct-the-response failure: an assertion both branches satisfy
+    // cannot tell a regression that fires the wrong one from a pass.
+    expect(failedEvent.reason).toMatch(/failed while sending the response/);
+    // The peer did authenticate, so the token is still correctly spent.
+    expect(token.consumed).toBe(true);
+    expect(sasListener).not.toHaveBeenCalled();
   });
 
   it('start() before mintToken() throws synchronously', () => {
@@ -440,12 +571,12 @@ describe('PairingService pairing-token expiry and single-use enforcement', () =>
     service.start(desktopTransport);
 
     // Force the single-use flag directly rather than driving two full
-    // handshake attempts: a genuine second frame is unreachable through the
-    // public API here, because the first attempt's processing is entirely
-    // synchronous and always leaves "waiting-for-phone" (moving to either
-    // "sas-pending" or "done", tearing down the frame subscription) before a
-    // second frame could ever arrive. This isolates the "already consumed"
-    // branch of handleMessage1's validity check on its own.
+    // handshake attempts. Rejected frames no longer consume the token and no
+    // longer end the ceremony, so several message-1 frames CAN now arrive in
+    // "waiting-for-phone" - but none of them reaches this branch, because the
+    // only thing that sets consumed is a frame that authenticates, and that
+    // same frame moves the phase to "sas-pending". Forcing the flag isolates
+    // the "already consumed" branch of handleMessage1's validity check.
     (service as unknown as { activeToken: { consumed: boolean } }).activeToken.consumed = true;
 
     const phoneStaticKeyPair = generateX25519KeyPair();
@@ -464,6 +595,52 @@ describe('PairingService pairing-token expiry and single-use enforcement', () =>
 
     const failedEvent = await failedEventPromise;
     expect(failedEvent.reason).toMatch(/expired or already used/);
+  });
+
+  /**
+   * The validity check runs per frame now that a rejected frame no longer ends
+   * the ceremony, so a valid handshake landing in the last moments of the TTL
+   * has to still complete. That path was previously unreachable: frame one
+   * always terminated waiting-for-phone.
+   */
+  it('completes a valid handshake that arrives just before the pairing token expires', async () => {
+    // Fake timers freeze Date.now(), so "1 ms before expiry" is exact rather
+    // than a race against however long the handshake takes to run. The whole
+    // ceremony is synchronous, so no timer ever needs advancing here.
+    vi.useFakeTimers();
+    try {
+      const identity = testIdentity();
+      const service = new PairingService(identity);
+      const token = service.mintToken();
+      const [desktopTransport, phoneTransport] = createLoopbackTransportPair();
+      service.start(desktopTransport);
+
+      // A rejected frame first, so the near-expiry attempt is genuinely the
+      // second one to reach handleMessage1.
+      phoneTransport.send(new Uint8Array([9, 9, 9, 9]));
+
+      // Still valid, but only just: isPairingTokenValid is `now < expiresAt`.
+      (service as unknown as { activeToken: { expiresAt: number } }).activeToken.expiresAt = Date.now() + 1;
+
+      const phoneStaticKeyPair = generateX25519KeyPair();
+      const phoneHandshake = createPairingInitiatorHandshake({
+        localStatic: phoneStaticKeyPair,
+        remoteStatic: identity.staticKeyPair.publicKey,
+        pairingToken: token.token,
+      });
+
+      const failedListener = vi.fn();
+      service.on('failed', failedListener);
+      const sasEventPromise = new Promise<void>((resolve) => service.once('sas', () => resolve()));
+
+      phoneTransport.send(phoneHandshake.writeMessage(new TextEncoder().encode('Test Phone')).message);
+      await sasEventPromise;
+
+      expect(token.consumed).toBe(true);
+      expect(failedListener).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

@@ -13,13 +13,18 @@ import type { Transport, TransportState, Unsubscribe } from '@kangentic/protocol
  * has no runtime dependency beyond that - `ws` is a devDependency used
  * only by the in-repo relay test double (tests/unit/mobile-bridge/).
  *
- * Wire contract with the relay (defined here because the relay SERVER is
- * a separate task/repo; this is the assumed contract until that lands):
- * connect to `${relayUrl}?slot=<hex-encoded-slot-id>`. The slot id is the
- * pairing token during pairing (so the relay can rendezvous the phone and
- * desktop connections that present the SAME token) or a value derived
- * from the paired device's static key for an ongoing session. The relay
- * never sees the slot id's cryptographic meaning, only its bytes.
+ * Wire contract with the relay (the relay SERVER lives in a separate repo):
+ * connect to `${relayUrl}?slot=<hex-encoded-slot-id>`, where the slot id is
+ * derived - `derivePairingSlotId(token)` during pairing, and
+ * `deriveSessionSlotId(desktopKey, phoneKey)` for an ongoing session - so
+ * the relay can rendezvous the two connections presenting the SAME value.
+ * The relay never sees the slot id's cryptographic meaning, only its bytes.
+ *
+ * Both slots are ROUTING LABELS, never key material. That is a deliberate
+ * property to preserve: the slot rides in a URL query string, which is the
+ * most-logged part of a request, so anything secret placed here is published
+ * to every hop that can read a request URI. The pairing slot used to be the
+ * pairing token verbatim, which meant dialing published the Noise PSK.
  *
  * Accountless: no Kangentic account/entitlement coupling here. Any such
  * gate lives only on the hosted relay's own connection-acceptance policy,

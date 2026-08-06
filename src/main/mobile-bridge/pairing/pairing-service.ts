@@ -82,8 +82,12 @@ type PairingPhase = 'idle' | 'waiting-for-phone' | 'sas-pending' | 'done';
  *   'sas'       ({ sas, phoneStaticPublicKeyHex }) - show the SAS to the user
  *   'confirmed' ({ deviceId, displayName })        - pairing succeeded
  *   'cancelled' ({ reason })                       - user cancelled before confirming
- *   'failed'    ({ reason })                       - handshake/transport error, an unopenable
- *                                                     confirm frame, or a ceremony timeout
+ *   'failed'    ({ reason })                       - a spent/expired token, a handshake or
+ *                                                     transport error, or a ceremony timeout
+ *
+ * A frame that simply does not authenticate is IGNORED rather than failing the
+ * ceremony, in both phases: the relay slot is reachable by anyone who can read
+ * the request URI, so one injected frame must not be able to end a pairing.
  *
  * One instance handles exactly one ceremony; the caller (mobile-bridge-service)
  * creates a fresh instance per "Pair a device" attempt.
@@ -118,10 +122,8 @@ export class PairingService extends EventEmitter {
 
     this.phase = 'waiting-for-phone';
     this.activeTransport = transport;
-    this.handshake = createPairingResponderHandshake({
-      localStatic: this.identity.staticKeyPair,
-      pairingToken: this.activeToken.token,
-    });
+    // No handshake is built here: each inbound frame gets its own, and only an
+    // authenticated one is committed to this.handshake. See handleMessage1().
     this.unsubscribeFrame = transport.onFrame((frame) => this.onFrame(frame));
     // There is no active-ceremony timeout otherwise: the token's TTL is
     // only checked lazily when message 1 arrives, so a QR that is never
@@ -157,34 +159,63 @@ export class PairingService extends EventEmitter {
   }
 
   private handleMessage1(frame: Uint8Array): void {
-    if (!this.handshake || !this.activeToken || !this.activeTransport) return;
+    if (!this.activeToken || !this.activeTransport) return;
     if (!isPairingTokenValid(this.activeToken)) {
       this.fail('Pairing token expired or already used');
       return;
     }
-    // Single-use regardless of outcome: one attempt is all an attacker (or a
-    // legitimate retry) gets against this token.
-    this.activeToken.consumed = true;
+
+    // Every inbound frame gets its OWN handshake state. readMessage() advances
+    // messageIndex and mixes the sender's ephemeral into the transcript BEFORE
+    // it authenticates anything, so running a rejected frame through a shared
+    // HandshakeState would poison it and break the real phone's later attempt.
+    // CONSTRUCTING one is BLAKE2s hashing only (no DH), so a fresh state per
+    // frame costs essentially nothing over reusing one. The per-frame work is
+    // in readMessage() below, whose 'es' token runs one X25519 scalar
+    // multiplication against the sender's ephemeral before the AEAD tag can
+    // reject the frame - tens of microseconds, not free, so the no-cap
+    // reasoning below rests on the TTL and the relay's limits, not on this
+    // being hash-only.
+    const attempt = createPairingResponderHandshake({
+      localStatic: this.identity.staticKeyPair,
+      pairingToken: this.activeToken.token,
+    });
 
     let readResult: ReturnType<HandshakeState['readMessage']>;
     try {
-      readResult = this.handshake.readMessage(frame);
+      readResult = attempt.readMessage(frame);
     } catch {
-      this.fail('Pairing handshake failed to authenticate (wrong or expired code)');
+      // Unauthenticated garbage. The relay slot is reachable by anyone who can
+      // read the request URI, so a frame arriving here proves nothing: ignore
+      // it, keep the token, and stay in waiting-for-phone so the real phone can
+      // still pair. Consuming the token here (the old behavior) let one frame
+      // deterministically burn the ceremony.
+      //
+      // Deliberately no attempt cap: aborting at N would only turn a one-frame
+      // denial into an N-frame one, and against a 32-byte PSK a cap buys
+      // nothing cryptographically. The work is already bounded by the token's
+      // 10-minute TTL, the relay's per-IP rate limits, and its cap of two
+      // peers per slot.
       return;
     }
+
+    // Authenticated: the sender proved possession of the pairing token, so the
+    // token is spent now. This is not a check-then-act race against the
+    // isPairingTokenValid() call above - onFrame() is synchronous and Node is
+    // single-threaded, so no second frame can interleave between the two.
+    this.activeToken.consumed = true;
+    this.handshake = attempt;
     this.phoneDeviceName = sanitizeDeviceNamePayload(readResult.payload);
 
     let writeResult: ReturnType<HandshakeState['writeMessage']>;
     try {
-      writeResult = this.handshake.writeMessage(new Uint8Array(0));
+      writeResult = attempt.writeMessage(new Uint8Array(0));
     } catch {
-      this.fail('Pairing handshake failed while responding');
+      this.fail('Pairing handshake failed to construct the response');
       return;
     }
-    this.activeTransport.send(writeResult.message);
 
-    const phoneStaticPublicKey = this.handshake.getRemoteStaticKey();
+    const phoneStaticPublicKey = attempt.getRemoteStaticKey();
     if (!phoneStaticPublicKey) {
       this.fail('Pairing handshake did not yield the phone identity key');
       return;
@@ -200,22 +231,47 @@ export class PairingService extends EventEmitter {
     // tests/unit/protocol/pairing-confirm.test.ts.
     this.confirmCipher = writeResult.split[0];
 
+    // Commit every piece of state BEFORE sending message 2. Now that many
+    // frames can arrive while waiting-for-phone, a transport that delivered one
+    // synchronously from inside send() would otherwise re-enter handleMessage1
+    // with the token already consumed and fail a ceremony that just succeeded.
     this.phase = 'sas-pending';
-    const sas = deriveShortAuthenticationString(this.handshake.getHandshakeHash());
+    const sas = deriveShortAuthenticationString(attempt.getHandshakeHash());
     this.armPhaseTimer(SAS_PENDING_TIMEOUT_MS, 'Timed out waiting for your phone. Pair again.');
+    try {
+      this.activeTransport.send(writeResult.message);
+    } catch {
+      // Transport.send() genuinely throws - RelayClient rejects a send while
+      // not connected (the socket can drop mid-ceremony and be reconnecting)
+      // and on its per-session byte cap. Because the phase is already
+      // sas-pending by this point, letting it escape would park the ceremony
+      // for the full SAS timeout waiting on a confirm frame the phone cannot
+      // send, since it never received message 2. Fail immediately instead.
+      //
+      // Distinct from the construct-the-response failure above on purpose: one
+      // is local crypto, this one is I/O, and the reason string is all a log or
+      // a bug report carries.
+      this.fail('Pairing handshake failed while sending the response');
+      return;
+    }
     this.emit('sas', { sas, phoneStaticPublicKeyHex: bytesToHex(phoneStaticPublicKey) });
   }
 
-  /** Auto-enrolls on the phone's sealed confirm frame; fails the ceremony on anything that does not open cleanly. */
+  /**
+   * Auto-enrolls on the phone's sealed confirm frame, and ignores anything that
+   * does not open cleanly.
+   *
+   * Ignoring rather than failing is the same rule handleMessage1() applies, for
+   * the same reason: the relay slot is reachable by anyone who can read the
+   * request URI, so one injected frame must not be able to end the ceremony.
+   * It is safe here because CipherState.decryptWithAd() advances its nonce only
+   * on a SUCCESSFUL decrypt, so a rejected frame leaves the cipher state clean
+   * and the real confirm frame still opens. A phone that never confirms is
+   * caught by the existing SAS_PENDING_TIMEOUT_MS timer instead.
+   */
   private handleConfirmFrame(frame: Uint8Array): void {
-    if (!this.confirmCipher) {
-      this.fail('Pairing confirm arrived before the handshake completed');
-      return;
-    }
-    if (!openPairingConfirm(this.confirmCipher, frame)) {
-      this.fail('Could not verify your phone. Pair again.');
-      return;
-    }
+    if (!this.confirmCipher) return;
+    if (!openPairingConfirm(this.confirmCipher, frame)) return;
     this.confirmSas();
   }
 

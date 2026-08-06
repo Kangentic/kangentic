@@ -32,7 +32,7 @@ export {
 } from './crypto/secretstream';
 
 export { deriveShortAuthenticationString, type ShortAuthenticationString } from './crypto/sas';
-export { deriveSessionSlotId } from './crypto/slot';
+export { deriveSessionSlotId, derivePairingSlotId } from './crypto/slot';
 
 export type { JsonValue, BridgeMessage, HeartbeatMessage, CapabilityRequestMessage, CapabilityResponseMessage, EventMessage } from './wire/messages';
 export { encodeMessage, decodeMessage, MAX_FRAME_LENGTH, MAX_DECODED_LENGTH, COMPRESSION_THRESHOLD } from './wire/framing';

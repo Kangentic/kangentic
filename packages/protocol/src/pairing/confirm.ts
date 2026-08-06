@@ -14,8 +14,14 @@
  * desktop's key, the two transcripts necessarily agree - which means the
  * SAS the human compared necessarily agreed too. The AEAD open IS the
  * desktop's SAS verification; that is why the frame carries no digits of
- * its own, and why a failed open is treated as a mismatch/failure, not a
- * silent no-op.
+ * its own.
+ *
+ * A failed open is IGNORED rather than treated as a ceremony-ending failure.
+ * The frame is unauthenticated and the relay slot is reachable by anyone who
+ * can read the request URI, so treating one bad frame as a mismatch let an
+ * observer end a pairing at will. The caller stays in its sas-pending phase
+ * and lets its own timeout decide - see pairing-service.ts's
+ * handleConfirmFrame().
  *
  * There is no reject frame. Backing out of the ceremony on the phone closes
  * the transport without sending this frame; close-without-confirm is the
@@ -42,6 +48,15 @@ export function sealPairingConfirm(initiatorToResponder: CipherState): Uint8Arra
  * tampered/wrong-key ciphertext or an unexpected plaintext, so the caller
  * can treat "could not verify" uniformly whether the failure was
  * cryptographic or structural.
+ *
+ * A false return from a FAILED DECRYPT leaves `initiatorToResponder` untouched:
+ * CipherState advances its nonce only on a successful decrypt, so a caller may
+ * keep waiting for the real frame after rejecting any number of bad ones. Scoped
+ * to that path deliberately - the structural checks below return false only
+ * after a decrypt already succeeded and already advanced the nonce. They are
+ * unreachable in practice (an authenticating tag means the plaintext is the one
+ * sealPairingConfirm wrote) and kept as belt-and-braces, but a caller that ever
+ * made them reachable would not inherit the keep-waiting guarantee.
  */
 export function openPairingConfirm(initiatorToResponder: CipherState, frame: Uint8Array): boolean {
   let plaintext: Uint8Array;

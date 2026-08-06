@@ -16,6 +16,7 @@ import { WebSocket as NodeWebSocket } from 'ws';
 import {
   bytesToHex,
   createPairingInitiatorHandshake,
+  derivePairingSlotId,
   deriveShortAuthenticationString,
   generateX25519KeyPair,
   sealPairingConfirm,
@@ -114,7 +115,9 @@ describe('mobile bridge pairing over a real relay double', () => {
     const identity = testIdentity();
     const service = new PairingService(identity);
     const token = service.mintToken();
-    const slotId = bytesToHex(token.token);
+    // Both peers derive the slot from the token rather than dialing the token
+    // itself, which is what keeps the Noise PSK off the relay URL.
+    const slotId = derivePairingSlotId(token.token);
 
     const desktopTransport = new RelayClient({ relayUrl: relay.url, slotId });
     await desktopTransport.connect();
@@ -174,11 +177,13 @@ describe('mobile bridge pairing over a real relay double', () => {
     desktopTransport.close();
   });
 
-  it('rejects pairing when the simulated phone presents the wrong token, even over a real relay connection', async () => {
+  it('ignores a wrong-token frame and still pairs the real phone, even over a real relay connection', async () => {
     const identity = testIdentity();
     const service = new PairingService(identity);
     const token = service.mintToken();
-    const slotId = bytesToHex(token.token);
+    // Both peers derive the slot from the token rather than dialing the token
+    // itself, which is what keeps the Noise PSK off the relay URL.
+    const slotId = derivePairingSlotId(token.token);
 
     const desktopTransport = new RelayClient({ relayUrl: relay.url, slotId });
     await desktopTransport.connect();
@@ -198,18 +203,31 @@ describe('mobile bridge pairing over a real relay double', () => {
       pairingToken: wrongToken,
     });
 
-    const sasListener = vi.fn();
-    service.on('sas', sasListener);
-    const failedEventPromise = new Promise<{ reason: string }>((resolve) => {
-      service.once('failed', resolve);
+    const failedListener = vi.fn();
+    service.on('failed', failedListener);
+
+    const wrongMessage1 = phoneHandshake.writeMessage(new TextEncoder().encode('Wrong Token Phone')).message;
+    phoneSocket.send(wrongMessage1);
+
+    // The wrong-token frame must not end the ceremony, so prove it by pairing
+    // for real on the SAME still-live ceremony straight afterwards. A single
+    // socket delivers in order and the relay forwards in order, so the bad
+    // frame is guaranteed to reach the desktop first. Awaiting the sas event
+    // is also what makes this async-safe: it cannot pass before both frames
+    // have been processed.
+    const rightHandshake = createPairingInitiatorHandshake({
+      localStatic: phoneStaticKeyPair,
+      remoteStatic: identity.staticKeyPair.publicKey,
+      pairingToken: token.token,
     });
+    const sasEventPromise = new Promise<ShortAuthenticationString>((resolve) => {
+      service.once('sas', (payload: { sas: ShortAuthenticationString }) => resolve(payload.sas));
+    });
+    phoneSocket.send(rightHandshake.writeMessage(new TextEncoder().encode('Real Phone')).message);
 
-    const message1 = phoneHandshake.writeMessage(new TextEncoder().encode('Wrong Token Phone')).message;
-    phoneSocket.send(message1);
-
-    const failedEvent = await failedEventPromise;
-    expect(failedEvent.reason).toEqual(expect.any(String));
-    expect(sasListener).not.toHaveBeenCalled();
+    const sas = await sasEventPromise;
+    expect(sas.digits).toEqual(expect.any(String));
+    expect(failedListener).not.toHaveBeenCalled();
 
     phoneSocket.close();
     desktopTransport.close();

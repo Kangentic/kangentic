@@ -3,6 +3,7 @@ import {
   bytesToHex,
   capabilitySetFromArray,
   CAPABILITY_VERBS,
+  derivePairingSlotId,
   deriveSessionSlotId,
   encodePairingQrPayload,
   PROTOCOL_VERSION,
@@ -683,7 +684,9 @@ export class MobileBridgeService extends EventEmitter {
     const token = pairingService.mintToken();
     this.activePairing = pairingService;
 
-    const slotId = bytesToHex(token.token);
+    // Derived, never the token itself: the slot travels in cleartext in the
+    // relay URL, and the token is the Noise PSK. See derivePairingSlotId().
+    const slotId = derivePairingSlotId(token.token);
     const transport = createTransport({ relayUrl: this.config.relayUrl, slotId });
 
     pairingService.on('sas', (payload: { sas: ShortAuthenticationString; phoneStaticPublicKeyHex: string }) => {

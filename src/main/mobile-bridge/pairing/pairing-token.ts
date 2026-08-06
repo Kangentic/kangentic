@@ -8,7 +8,12 @@ export interface PairingToken {
   token: Uint8Array;
   createdAt: number;
   expiresAt: number;
-  /** Single-use: set once a handshake attempt has been made against this token, success or failure. */
+  /**
+   * Single-use: set once a frame has AUTHENTICATED against this token, never on
+   * a rejected one. The relay slot is reachable by anyone who can read the
+   * request URI, so consuming on any arriving frame let a single unauthenticated
+   * frame burn the ceremony. See PairingService.handleMessage1().
+   */
   consumed: boolean;
 }
 
