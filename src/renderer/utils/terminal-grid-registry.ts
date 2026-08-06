@@ -22,11 +22,19 @@
  * installed from `src/devtools/`.
  *
  * Every WRITE is gated on `__KANGENTIC_DEV__`, so production collapses them to
- * no-ops. The only readers (`readTerminalGrids`, `readTerminalRendererTrace`) are
- * called from `src/devtools/renderer/install.tsx`, which production
- * dead-code-eliminates - so without the guard this would maintain a registry and a
- * 300-entry ring that nothing in a packaged build could ever read. Drop the guard
- * only if a shipped reader is added.
+ * no-ops. Most readers (`readTerminalGrids`, `readTerminalGridRows`,
+ * `readTerminalRendererTrace`) are called from `src/devtools/renderer/install.tsx`,
+ * which production dead-code-eliminates - so without the guard this would maintain
+ * a registry and a 300-entry ring that nothing in a packaged build could ever read.
+ *
+ * Two readers now have SHIPPED call sites: `useTerminal` reads
+ * `readSessionViewportRows` for the repaint nudge's before/after comparison and
+ * `readSessionScrollRegion` for a replay trace detail. Neither changes the
+ * calculus, because the write gate leaves `registered` empty in production, so
+ * both return their empty forms there - and both call sites are themselves
+ * dev-gated (a `__KANGENTIC_DEV__` ternary, and a trace thunk that only runs
+ * inside the guard). Keep it that way: a shipped reader whose RESULT drives
+ * product behavior is what would force the write gate to be dropped.
  */
 
 import type { Terminal } from '@xterm/xterm';

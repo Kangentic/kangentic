@@ -17,7 +17,7 @@ import {
   registerDevtoolsTerminal,
   traceTerminalRenderer,
 } from '../utils/terminal-grid-registry';
-import { createRepaintNudge, type RepaintNudgeController } from '../utils/repaint-nudge';
+import { createRepaintNudge, isUserInputData, type RepaintNudgeController } from '../utils/repaint-nudge';
 import { registerMountedTerminal } from '../utils/terminal-mount-registry';
 import type { PtyResizeOrigin, TerminalColorOverrides } from '../../shared/types';
 import '@xterm/xterm/css/xterm.css';
@@ -668,11 +668,13 @@ export function useTerminal(options: UseTerminalOptions) {
     // Send user input to PTY (via the microtask-batched queue above).
     if (options.sessionId) {
       terminal.onData((data) => {
-        // Arms the post-interaction repaint nudge. Any input counts, not just a
-        // wheel event: the confirmed repro of the missing-rows family is a
-        // KEYBOARD jump (Ctrl+End / Ctrl+Home), so a wheel-only trigger would
-        // miss it entirely.
-        repaintNudgeRef.current?.noteInput();
+        // Arms the post-interaction repaint nudge. Any REAL input counts, not
+        // just a wheel event: the confirmed repro of the missing-rows family is
+        // a KEYBOARD jump (Ctrl+End / Ctrl+Home), so a wheel-only trigger would
+        // miss it entirely. But `onData` also carries xterm's own focus and
+        // mouse-motion reports, which are not input at all and would otherwise
+        // self-arm the nudge on every replay - see isUserInputData.
+        if (isUserInputData(data)) repaintNudgeRef.current?.noteInput();
         batcher.schedule(data);
       });
 
@@ -917,7 +919,12 @@ export function useTerminal(options: UseTerminalOptions) {
       // anything, and the trace that records it is itself dev-only. Returning
       // null in production skips the row walk while the nudge still fires.
       snapshotViewport: () => (__KANGENTIC_DEV__ ? readSessionViewportRows(sessionId) : null),
-      send: (data) => window.electronAPI.sessions.write(sessionId, data),
+      // The rejection is swallowed on purpose: a nudge landing after the bridge
+      // is torn down (window closing, session killed) is a no-op worth exactly
+      // nothing, and letting it float would surface as an unhandled rejection.
+      send: (data) => {
+        void window.electronAPI.sessions.write(sessionId, data).catch(() => {});
+      },
       trace: (event, detail) => traceTerminalRenderer(sessionId, event, detail),
     });
     repaintNudgeRef.current = repaintNudge;
@@ -1477,7 +1484,11 @@ export function useTerminal(options: UseTerminalOptions) {
   // unfocused, and a view change can refocus many sessions at once, so neither a
   // resize nor a focus steal is wanted. Republishing an unchanged focused set is
   // edge-filtered, and a session that is both parked and unfocused settles on
-  // one replay because reloadScrollback's generation guard supersedes the first.
+  // one replay because the reveal edge publishes FIRST (see the ordering in
+  // useFocusedSessionsSync) and its reloadScrollback sets scrollbackPendingRef
+  // synchronously, so the refocus edge below takes its early return. The two do
+  // not race and the second is skipped, not superseded - a generation bump would
+  // have aborted a healthy in-flight replay and paid for the same frame twice.
   useEffect(() => {
     const sessionId = options.sessionId;
     if (!sessionId) return;

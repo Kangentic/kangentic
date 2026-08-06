@@ -225,9 +225,15 @@ export function useFocusedSessionsSync(panelShowsTerminal: boolean): void {
     });
     // Same reasoning as the parked publish above, one step later because the
     // focused set is only known now: fire the refocus catch-up BEFORE the IPC
-    // that makes main resume emitting. Main is still silent for these sessions
-    // while the sample is in flight, so there are no post-sample bytes for the
-    // replay's queue reset to discard.
+    // that makes main start feeding THIS renderer.
+    //
+    // The guarantee is per-renderer ROUTING, not global silence. Main's emit
+    // gate is a union across renderers, so a session a detached monitor already
+    // holds is being read the whole time - but SESSION_DATA is dispatched only
+    // to the renderers focused on that session (`sendToFocusedRenderers` ->
+    // `getRenderersFocusedOn`), so this renderer receives nothing until its own
+    // setFocused lands. Anything that did arrive first would predate the sample,
+    // which is exactly what the replay's queue reset exists to discard.
     syncFocusedTerminals(new Set(focusedIds));
     window.electronAPI.sessions.setFocused(focusedIds);
 

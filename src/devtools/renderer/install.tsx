@@ -86,6 +86,7 @@ export function DevtoolsBootstrap(): null {
       delete (window as DevtoolsWindow).__kangenticLagReport;
       delete (window as DevtoolsWindow).__kangenticTerminalRenderers;
       delete (window as DevtoolsWindow).__kangenticTerminalGrids;
+      delete (window as DevtoolsWindow).__kangenticTerminalGridRows;
       delete (window as DevtoolsWindow).__kangenticTerminalTrace;
     };
   }, []);

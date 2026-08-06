@@ -148,5 +148,60 @@ describe('HeadlessFrameBuffer', () => {
 
       buffer.dispose();
     });
+
+    it('still emits a bare CUP for origin mode with no scroll region set', async () => {
+      // scrollRegionSuffix's early return is `if (!region && !originMode) return '';`,
+      // so origin mode alone (no region) must still fall through and emit a CUP.
+      // The reason: the serialize addon appends its own `\x1b[?6h` AFTER its own
+      // cursor restore, and DECSET 6 homes the cursor on its own, so without this
+      // half of the condition a frame with origin mode on but no region would
+      // always replay with the cursor stuck at home. Dropping the `originMode`
+      // operand from the early-return condition (`!region && !originMode` ->
+      // `!region`) makes this go red.
+      const buffer = new HeadlessFrameBuffer(80, 24);
+      buffer.write('\x1b[?1049h');   // alt screen, as a fullscreen TUI uses
+      buffer.write('\x1b[?6h');      // DECOM on, no DECSTBM region set
+      buffer.write('\x1b[8;3Hhello'); // no active region, so this addresses absolutely
+
+      const frame = await buffer.serialize();
+
+      // No region was ever set, so the suffix must carry no DECSTBM re-assert.
+      expect(frame).not.toMatch(/\x1b\[\d+;\d+r/);
+
+      const replayed = await replayIntoFreshTerminal(frame);
+
+      // Same landing spot as the plain cursor-survives-homing case: row 7, column 7
+      // (both 0-based), from `\x1b[8;3H` plus five printed cells.
+      expect(replayed.buffer.active.cursorY).toBe(7);
+      expect(replayed.buffer.active.cursorX).toBe(7);
+
+      buffer.dispose();
+      replayed.dispose();
+    });
+
+    it('round-trips a region whose bottom touches the grid edge but whose top does not', async () => {
+      // activeScrollRegion() treats a region as "spans the whole grid" (and drops
+      // it) only when BOTH `top <= 0` and `bottom >= rows - 1` hold. Every other
+      // test in this file uses top=4/bottom=19 on a 24-row grid, where both
+      // operands are false, so `&&` and a mutated `||` agree and no existing test
+      // can tell them apart. This region has top=4 (not <= 0) but bottom=23, the
+      // last row of a 24-row grid (>= rows - 1): a real, non-full region that a
+      // broken `||` would wrongly null out and silently drop.
+      const buffer = new HeadlessFrameBuffer(80, 24);
+      buffer.write('\x1b[?1049h');
+      buffer.write('\x1b[5;24r');    // DECSTBM rows 5..24 => 0-based 4..23 (grid edge)
+      buffer.write('\x1b[8;3Hhello');
+
+      const frame = await buffer.serialize();
+
+      expect(frame).toMatch(/\x1b\[\d+;\d+r/);
+
+      const replayed = await replayIntoFreshTerminal(frame);
+
+      expect(readScrollRegion(replayed)).toEqual({ top: 4, bottom: 23 });
+
+      buffer.dispose();
+      replayed.dispose();
+    });
   });
 });

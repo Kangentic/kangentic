@@ -748,14 +748,21 @@ export class SessionManager extends EventEmitter {
     // leaving it is the difference between "the terminal is stale" and "the
     // terminal is broken" - and until now it produced no trace on either side,
     // which is why a gap in a session's byte stream was unattributable.
-    for (const sessionId of union) {
-      if (!this.focusedSessionIds.has(sessionId)) {
-        traceTerminal(sessionId, 'focus-union-gained', { renderers: this.focusedByRenderer.size });
+    //
+    // Gated at the BLOCK, not left to traceTerminal's own early return: the
+    // detail objects are built by the caller, so an ungated block allocates one
+    // per changed session in production to hand to a no-op. Same reason the
+    // renderer's hot trace sites pass thunks.
+    if (__KANGENTIC_DEV__) {
+      for (const sessionId of union) {
+        if (!this.focusedSessionIds.has(sessionId)) {
+          traceTerminal(sessionId, 'focus-union-gained', { renderers: this.focusedByRenderer.size });
+        }
       }
-    }
-    for (const sessionId of this.focusedSessionIds) {
-      if (!union.has(sessionId)) {
-        traceTerminal(sessionId, 'focus-union-lost', { renderers: this.focusedByRenderer.size });
+      for (const sessionId of this.focusedSessionIds) {
+        if (!union.has(sessionId)) {
+          traceTerminal(sessionId, 'focus-union-lost', { renderers: this.focusedByRenderer.size });
+        }
       }
     }
     this.focusedSessionIds = union;

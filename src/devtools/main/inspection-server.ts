@@ -762,6 +762,7 @@ async function respondTerminalForensics(
   const rendererGrids = Array.isArray(evaluatedValue.dumps) ? evaluatedValue.dumps : [];
 
   const raw = sessionManager.getRawScrollback(sessionId);
+  const tail = sliceTailOnCharacterBoundary(raw, rawTailBytes);
 
   respondJson(response, 200, {
     ts: new Date().toISOString(),
@@ -772,12 +773,31 @@ async function respondTerminalForensics(
     mainGrid: { ...mainGrid, serializedFrameBytes },
     raw: {
       totalBytes: raw.length,
-      tailBytes: Math.min(rawTailBytes, raw.length),
+      tailBytes: tail.length,
       /** Control bytes escaped; search this for a missing row's text. */
-      tail: escapeControlBytes(raw.slice(-rawTailBytes)),
+      tail: escapeControlBytes(tail),
     },
     trace: readTerminalTrace(sessionId),
   });
+}
+
+/**
+ * Take the last `length` UTF-16 units of `raw`, nudged forward off a split
+ * surrogate pair.
+ *
+ * A plain `slice(-n)` can land between the halves of an astral character (an
+ * emoji in agent output is the realistic case), and a lone surrogate does not
+ * survive the JSON response: it degrades to U+FFFD, which reads as corruption in
+ * the one capture that is supposed to be trustworthy. Dropping the orphaned half
+ * costs one character and keeps the tail honest.
+ */
+function sliceTailOnCharacterBoundary(raw: string, length: number): string {
+  if (raw.length <= length) return raw;
+  let start = raw.length - length;
+  const code = raw.charCodeAt(start);
+  // A low surrogate here means its high half is the character before `start`.
+  if (code >= 0xdc00 && code <= 0xdfff) start += 1;
+  return raw.slice(start);
 }
 
 /**

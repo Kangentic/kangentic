@@ -39,6 +39,54 @@
 export const REPAINT_NUDGE_BYTES = '\x1b[O\x1b[I';
 
 /**
+ * `onData` is not "the user typed". xterm answers the very modes this nudge
+ * gates on by writing REPORTS back through that same channel, so the raw stream
+ * has to be filtered before it can arm anything.
+ *
+ * Focus reports are the load-bearing case, and the gate makes them worse rather
+ * than better: the nudge requires DECSET 1004, which is exactly the mode that
+ * makes xterm emit `\x1b[I` / `\x1b[O` on focus. A replay re-asserts 1004
+ * (`RESTORABLE_DEC_PRIVATE_MODES`) and `useTerminal` focuses the terminal in a
+ * `requestAnimationFrame` right afterwards, so without this filter EVERY mount
+ * replay arms a nudge with no user present, and the TUI's own focus repaint
+ * satisfies the output condition - a self-sustaining round trip that spends an
+ * extra full agent render per terminal open, and one per visible pane on every
+ * focus change.
+ *
+ * Mouse MOTION is the mirror problem. Claude Code enables `?1000h ?1002h
+ * ?1003h ?1006h`, so pointer drift over the pane arrives here too: it
+ * over-triggers the nudge, and worse, it STARVES a real one, because
+ * `noteInput` clears `sawOutputSinceInput` - drift landing after the TUI has
+ * already answered a genuine scroll cancels the nudge that scroll earned.
+ *
+ * Clicks, releases, and wheel ticks are deliberately KEPT: they are real
+ * interactions, and a click healing a bad frame is the observation this whole
+ * mechanism is built on.
+ */
+const FOCUS_REPORT_PATTERN = /^\x1b\[[IO]$/;
+const SGR_MOUSE_REPORT_PATTERN = /^\x1b\[<(\d+);\d+;\d+[Mm]$/;
+const X10_MOUSE_REPORT_PATTERN = /^\x1b\[M([\s\S])/;
+/** Bit 5 of a mouse report's button byte marks motion (drift or drag). */
+const MOUSE_MOTION_BIT = 32;
+
+/**
+ * True when `data` is something the USER did, rather than a report xterm
+ * generated on the terminal's behalf. Exported so the policy is testable
+ * without a live terminal or a PTY.
+ */
+export function isUserInputData(data: string): boolean {
+  if (FOCUS_REPORT_PATTERN.test(data)) return false;
+
+  const sgrReport = SGR_MOUSE_REPORT_PATTERN.exec(data);
+  if (sgrReport) return (Number(sgrReport[1]) & MOUSE_MOTION_BIT) === 0;
+
+  const x10Report = X10_MOUSE_REPORT_PATTERN.exec(data);
+  if (x10Report) return ((x10Report[1].charCodeAt(0) - 32) & MOUSE_MOTION_BIT) === 0;
+
+  return true;
+}
+
+/**
  * Output-quiet window before the nudge. Long enough that a streaming agent never
  * sees one mid-frame (its chunks arrive far closer together than this), short
  * enough that a user who scrolled and stopped does not sit looking at a hole.
@@ -160,13 +208,13 @@ export function createRepaintNudge(options: RepaintNudgeOptions): RepaintNudgeCo
       return;
     }
 
-    const at = now();
-    if (at - lastNudgeAt < minIntervalMs) {
+    const firedAt = now();
+    if (firedAt - lastNudgeAt < minIntervalMs) {
       reset();
       return;
     }
 
-    lastNudgeAt = at;
+    lastNudgeAt = firedAt;
     snapshotBefore = options.snapshotViewport();
     options.send(REPAINT_NUDGE_BYTES);
     // The nudge's own frame will call noteOutput and re-arm this timer, which is
