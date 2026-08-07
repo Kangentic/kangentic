@@ -181,7 +181,7 @@ Click a task card to open the detail dialog. From here you can:
 - Click any attachment thumbnail to open a full-size preview modal (press Escape to close)
 - See the full terminal output (takes the terminal from the bottom panel, whose tab for this task disappears while the detail is open)
 - View session status, usage stats, and model info
-- Pause or resume the agent session using the circular play/pause button in the header
+- Pause or resume the agent session using the circular play/pause button in the header. Pausing also closes the detail window, so you do not have to dismiss it separately; the session stays paused and resumable from the board
 - Run shortcuts from the header bar (configurable pills that launch external tools)
 - Open the **Commands & Skills** popover to browse and run Claude Code commands (`.claude/commands/`) and skills (`.claude/skills/`) from the project directory. Search by name, navigate with arrow keys, press Enter to invoke.
 - Open the task's transcript in the read-only [conversation viewer](#the-conversation-viewer) via the **View conversation** pill (speech-bubble icon). Muted until the task has session history, live or historical.
@@ -191,7 +191,7 @@ Click a task card to open the detail dialog. From here you can:
   - **View conversation** - same as the header pill
   - **View PR** - open the associated pull request. PR URLs are populated automatically when an agent runs `gh pr create` or `gh pr view` (GitHub), explicitly via the `kangentic_create_task` / `kangentic_update_task` MCP tools (any platform), or manually through the PR URL field in edit mode. Those are the only ways to link a PR: writing a PR URL into the task description does not link it, so you can cite another task's PR as background without it being mistaken for this task's own. Also shown as a pill in the header bar and a clickable badge on the task card.
   - **Commands & Skills** - submenu of available Claude Code commands and skills (same as the header popover)
-  - **Pause / Resume session** - manually suspend or resume the agent
+  - **Pause / Resume session** - manually suspend or resume the agent (pausing closes the detail window, same as the header button)
   - **Move to** - submenu listing all other columns as move targets
   - **Archive** - move the task to Done and archive it
   - **Delete** - permanently delete the task, session, and worktree

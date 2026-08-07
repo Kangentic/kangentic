@@ -713,6 +713,7 @@ function TaskDetailKebabItems({
           label={isSessionActive ? 'Pause session' : 'Resume session'}
           onClick={() => { closeAll(); onToggle(); }}
           disabled={toggling}
+          data-testid="toggle-session-btn"
         />
       )}
 
