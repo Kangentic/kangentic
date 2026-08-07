@@ -76,7 +76,11 @@ export interface SubmitKeystrokesResult {
   unconfirmedCommands: string[];
   /** User draft cleared off the prompt, if the caller told us about one. */
   discardedDraft: string | null;
-  /** True when the leading clear interrupted a live turn. */
+  /**
+   * True when delivery interrupted a live turn. Always false since the clear
+   * became Ctrl+U: injection is now non-destructive by construction, and a
+   * command sent mid-turn is queued by the CLI rather than cutting it off.
+   */
   interruptedTurn: boolean;
 }
 
@@ -127,12 +131,49 @@ export interface SubmitKeystrokesOptions {
  *  render itself is fast when the machine is fast and patient when it is not.
  */
 const SETTLE_IDLE_MS = 150;
+/**
+ * Idle window after typing a SLASH command, before the Esc that dismisses the
+ * picker. Longer than the general one because the picker mounts a beat after
+ * the text echoes, and Esc is only sent once now - so it has to land on a
+ * picker that already exists.
+ */
+const SLASH_PICKER_IDLE_MS = 400;
 const SETTLE_CAP_MS = 1200;
 /** Bound on the post-Enter wait when nothing can be verified. */
 const UNVERIFIED_SETTLE_CAP_MS = 800;
 const VERIFY_POLL_MS = 25;
 const VERIFY_WINDOW_MS = 400;
 const MAX_SUBMIT_ATTEMPTS = 5;
+/**
+ * Cap on the wait between Esc and the Enter that follows it.
+ *
+ * This is a HANDSHAKE, not a gap, and the distinction is the whole point.
+ * `\x1b` and `\r` arriving in one read is the terminal's Meta encoding, so the
+ * TUI receives Alt+Enter (insert a newline) instead of Esc-then-Enter. What
+ * decides whether they coalesce is when the CHILD reads stdin, not when we
+ * write: a busy Ink app mid-render can leave both bytes sitting in the pipe and
+ * read them together no matter how long we waited between writes.
+ *
+ * A fixed delay was tried first and observed to fail live for exactly that
+ * reason - it works when the TUI is idle and stops working when it is busy,
+ * which is the same defect as the original flat 100ms sleep. Waiting for the
+ * Esc's own repaint proves the child has read it, and adapts: fast when the
+ * TUI is fast, patient when it is not. The cap only bounds a silent TUI.
+ */
+const ESC_SETTLE_CAP_MS = 400;
+/**
+ * Ctrl+U: clear the input line.
+ *
+ * Claude Code's own docs name this as the way to clear input ("Up arrow to edit
+ * queued messages or Ctrl+U to clear the input line"). It replaced Ctrl+C,
+ * which means CANCEL there and EXITS the CLI when pressed twice, and which did
+ * not reliably clear a draft - the failure that produced
+ * `Tell me about 10 planets with details/merge-pull-request`.
+ *
+ * Being a line-editing key rather than a signal, it also leaves a running turn
+ * alone, which is what makes immediate-mode injection non-destructive.
+ */
+const CLEAR_LINE = '\x15';
 
 /**
  * `TerminalSubmit` is the byte-pushing engine for getting user-facing text
@@ -223,9 +264,19 @@ export class TerminalSubmit {
 
     try {
       if (shouldClear) {
-        // Clears any half-typed draft AND interrupts a live turn. Both are
-        // deliberate; the caller reports them.
-        this.sessionManager.write(sessionId, '\x03');
+        // Ctrl+U, the documented "clear the input line" key, NOT Ctrl+C.
+        //
+        // Claude Code's docs are explicit: "Users can now use the Up arrow to
+        // edit queued messages or Ctrl+U to clear the input line." Ctrl+C means
+        // CANCEL there, and two of them exit the CLI outright - so the old
+        // `\x03` was both unreliable at the job we wanted (a draft survived it,
+        // and the auto_command glued onto it: `Tell me about 10 planets with
+        // details/merge-pull-request`) and dangerous when it did land twice.
+        //
+        // Ctrl+U is also a line-editing key rather than a control signal, so it
+        // does NOT interrupt a running turn. That is what lets immediate mode
+        // clear a stale draft without disturbing the agent mid-response.
+        this.sessionManager.write(sessionId, CLEAR_LINE);
         await this.settleAfterWrite(sessionId, signal, SETTLE_CAP_MS);
       }
 
@@ -235,23 +286,50 @@ export class TerminalSubmit {
         if (canVerify) sawVerifiable = true;
 
         this.sessionManager.write(sessionId, command.text);
-        await this.settleAfterWrite(sessionId, signal, SETTLE_CAP_MS);
+        // A slash command gets a longer idle window, because the thing we are
+        // waiting for is the PICKER, and it mounts a beat after the keystrokes
+        // echo. At the ordinary 150ms idle the settle returns on the text's own
+        // repaint, the single Esc then lands before the picker exists (a no-op),
+        // and the picker eats the Enter - with Esc now sent at most once there
+        // is no second chance to clear it. Waiting for a longer quiet period
+        // catches the picker's own mount repaint and extends again if more
+        // arrives, so it stays a handshake rather than a fixed sleep.
+        await this.settleAfterWrite(
+          sessionId,
+          signal,
+          SETTLE_CAP_MS,
+          isSlashCommand ? SLASH_PICKER_IDLE_MS : SETTLE_IDLE_MS,
+        );
 
         let confirmed = false;
         for (let attempt = 0; attempt < MAX_SUBMIT_ATTEMPTS; attempt++) {
-          if (isSlashCommand) {
-            // Dismiss the autocomplete picker so Enter resolves to "submit
-            // typed text" rather than "select highlighted entry".
-            //
-            // Drain but do NOT settle between Esc and Enter. The remaining
-            // failure mode is a picker that mounts in the gap between them:
-            // the Esc finds nothing to dismiss, then the picker appears and
-            // eats the Enter. Settling here would widen that gap by a full
-            // idle window and make the race MORE likely, not less. The
-            // preceding settle already waited for the render; keeping these
-            // two keystrokes adjacent is what closes the window.
+          // Esc dismisses the slash picker, but it is NOT a picker-scoped key -
+          // Claude Code documents it as "stop Claude while it is generating
+          // output". Two consequences, and both were live bugs:
+          //
+          //   1. Never send it while a turn is running. Dismissing a picker
+          //      would silently interrupt the agent, which is precisely the
+          //      "editing a message already in flight" behaviour immediate mode
+          //      must avoid. Immediate mode does not need it anyway: a message
+          //      submitted mid-turn is QUEUED by the CLI and runs after.
+          //   2. Never send it twice. On a non-empty prompt with no picker, the
+          //      first Esc prints "Esc again to clear" - so a second one CLEARS
+          //      the command we just typed. Retrying with Esc would delete the
+          //      very text it is trying to submit.
+          //
+          // Hence: at most once, on the first attempt, and only when we are not
+          // sitting on a live turn. Retries send Enter alone.
+          const sendEsc = isSlashCommand && attempt === 0 && !opts.interruptingTurn;
+          if (sendEsc) {
+            // Wait for the Esc's own repaint before Enter. `\x1b` followed by
+            // `\r` in ONE read is the Meta prefix, so the TUI would receive
+            // Alt+Enter (insert a newline) instead of Esc-then-Enter. What
+            // decides that is when the CHILD reads stdin, not when we write, so
+            // neither `drain()` nor a fixed delay is sufficient - both were
+            // tried and both failed on a busy TUI. Settling proves the child
+            // consumed the Esc, which is the actual precondition.
             this.sessionManager.write(sessionId, '\x1b');
-            await this.sessionManager.drain(sessionId);
+            await this.settleAfterWrite(sessionId, signal, ESC_SETTLE_CAP_MS);
           }
 
           const sentAt = Date.now();
@@ -288,7 +366,11 @@ export class TerminalSubmit {
         outcome,
         unconfirmedCommands,
         discardedDraft: shouldClear ? pendingDraft : null,
-        interruptedTurn: shouldClear && (opts.interruptingTurn ?? false),
+        // Always false now: the clear is Ctrl+U (line editing), which leaves a
+        // running turn alone, and Esc is suppressed while a turn is live. The
+        // field stays so the outcome notice keeps a slot for a genuine
+        // interruption if one is ever reintroduced deliberately.
+        interruptedTurn: false,
       };
     } catch (caughtError) {
       const message = caughtError instanceof Error ? caughtError.message : String(caughtError);
@@ -297,7 +379,11 @@ export class TerminalSubmit {
           outcome: 'aborted',
           unconfirmedCommands,
           discardedDraft: shouldClear ? pendingDraft : null,
-          interruptedTurn: shouldClear && (opts.interruptingTurn ?? false),
+          // Always false now: the clear is Ctrl+U (line editing), which leaves a
+        // running turn alone, and Esc is suppressed while a turn is live. The
+        // field stays so the outcome notice keeps a slot for a genuine
+        // interruption if one is ever reintroduced deliberately.
+        interruptedTurn: false,
         };
       }
       console.error(`[terminal-submit] ${source}: keystroke delivery failed: ${message}`);
@@ -317,11 +403,16 @@ export class TerminalSubmit {
    * targets a session whose terminal is NOT the one on screen - observing
    * `'data'` would silently degrade every such delivery to the wall-clock cap.
    */
-  private async settleAfterWrite(sessionId: string, signal: AbortSignal, capMs: number): Promise<void> {
+  private async settleAfterWrite(
+    sessionId: string,
+    signal: AbortSignal,
+    capMs: number,
+    idleMs: number = SETTLE_IDLE_MS,
+  ): Promise<void> {
     await this.sessionManager.drain(sessionId);
     await waitForOutputSettle(this.sessionManager, sessionId, {
       event: 'data-tap',
-      idleMs: SETTLE_IDLE_MS,
+      idleMs,
       capMs,
       floorMs: 0,
       signal,

@@ -77,6 +77,12 @@ interface TrialOptions {
   busyRepaintIntervalMs?: number;
   /** Window after spawn during which a Ctrl+C is swallowed by ConPTY. */
   startupRenderMs?: number;
+  /**
+   * How long the TUI leaves bytes sitting before reading them, i.e. how much
+   * input coalesces into one read. Raise it to model a child that is busy
+   * rendering and has not touched stdin yet.
+   */
+  readCoalesceWindowMs?: number;
 }
 
 interface TrialResult {
@@ -92,6 +98,7 @@ async function runTrial(options: TrialOptions): Promise<TrialResult> {
     repaintLatencyMs: options.repaintLatencyMs ?? DEFAULT_TUI_OPTIONS.repaintLatencyMs,
     busyRepaintIntervalMs: options.busyRepaintIntervalMs ?? DEFAULT_TUI_OPTIONS.busyRepaintIntervalMs,
     startupRenderMs: options.startupRenderMs ?? DEFAULT_TUI_OPTIONS.startupRenderMs,
+    readCoalesceWindowMs: options.readCoalesceWindowMs ?? DEFAULT_TUI_OPTIONS.readCoalesceWindowMs,
   };
   const sessionManager = new SimulatedSessionManager(SESSION_ID, tuiOptions, {
     writeQueueDelayMs: options.writeQueueDelayMs ?? 0,

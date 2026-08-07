@@ -85,6 +85,21 @@ export interface FakeTuiOptions {
    * assertion that a retry occurred.
    */
   eatEnterCount: number;
+  /**
+   * Window within which separate writes arrive as ONE read.
+   *
+   * This is the difference between modeling keystrokes and modeling a PTY, and
+   * it is not cosmetic: `\x1b` followed by `\r` in a single read is the
+   * terminal's Meta prefix, so the TUI receives Alt+Enter (insert newline)
+   * rather than Esc-then-Enter (dismiss, then submit). Delivering each write
+   * as its own key event - what this rig used to do - makes that failure
+   * invisible, which is exactly how a 100%-delivery measurement coexisted with
+   * a live bug that inserted blank lines and never submitted.
+   *
+   * `drain()` does NOT protect against this. It empties the writer's own
+   * queue; it says nothing about how the child chunks its reads.
+   */
+  readCoalesceWindowMs: number;
 }
 
 export const DEFAULT_TUI_OPTIONS: FakeTuiOptions = {
@@ -94,6 +109,7 @@ export const DEFAULT_TUI_OPTIONS: FakeTuiOptions = {
   escClearsWithoutPicker: false,
   busyRepaintIntervalMs: 0,
   eatEnterCount: 0,
+  readCoalesceWindowMs: 10,
 };
 
 export interface Submission {
@@ -120,6 +136,12 @@ export class FakeTui {
   private repaintTimer: ReturnType<typeof setTimeout> | null = null;
   private busyTimer: ReturnType<typeof setInterval> | null = null;
   private eatenEnters = 0;
+  /** True once "Esc again to clear" is showing; a second Esc wipes the line. */
+  private pendingEscClear = false;
+  /** Set if a double-Esc ever destroyed the prompt. Asserted against. */
+  escClearedBuffer = false;
+  private pendingRead = '';
+  private readTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly createdAt = Date.now();
 
   constructor(
@@ -146,21 +168,93 @@ export class FakeTui {
     return this.picker;
   }
 
+  /**
+   * Bytes from the writer. Buffered and parsed on the coalesce window rather
+   * than per call, because a PTY child reads whatever has accumulated - it does
+   * not see the writer's individual `write()` boundaries.
+   */
   receive(chunk: string): void {
-    if (chunk === '\x03') this.handleCtrlC();
-    else if (chunk === '\x1b') this.handleEscape();
-    else if (chunk === '\r') this.handleEnter();
-    else this.handleText(chunk);
+    this.pendingRead += chunk;
+    if (this.readTimer) clearTimeout(this.readTimer);
+    this.readTimer = setTimeout(() => {
+      this.readTimer = null;
+      const read = this.pendingRead;
+      this.pendingRead = '';
+      this.parseRead(read);
+    }, this.options.readCoalesceWindowMs);
+    this.readTimer.unref?.();
+  }
+
+  /**
+   * Parse one read into key events, the way an Ink-style parser does.
+   *
+   * The load-bearing case: `\x1b` with anything after it IN THE SAME READ is a
+   * Meta prefix, so `\x1b\r` is Alt+Enter, not Esc followed by Enter. A lone
+   * trailing `\x1b` is a real Escape keypress.
+   */
+  private parseRead(read: string): void {
+    let index = 0;
+    let text = '';
+    const flushText = (): void => {
+      if (text.length > 0) {
+        this.handleText(text);
+        text = '';
+      }
+    };
+    while (index < read.length) {
+      const byte = read[index];
+      if (byte === '\x1b') {
+        flushText();
+        const next = read[index + 1];
+        if (next === undefined) {
+          this.handleEscape();
+          index += 1;
+        } else {
+          this.handleMeta(next);
+          index += 2;
+        }
+        continue;
+      }
+      if (byte === '\x03' || byte === '\x15' || byte === '\r') {
+        flushText();
+        if (byte === '\x03') this.handleCtrlC();
+        else if (byte === '\x15') this.handleClearLine();
+        else this.handleEnter();
+        index += 1;
+        continue;
+      }
+      text += byte;
+      index += 1;
+    }
+    flushText();
+    // Any input at all repaints the prompt box; the settle handshake only
+    // cares that bytes arrived and then stopped.
     this.scheduleRepaint();
+  }
+
+  /**
+   * A Meta (Alt) chord. Alt+Enter inserts a newline in Claude Code instead of
+   * submitting, which is precisely the observed failure: the command sat in the
+   * prompt gaining blank lines while every retry "pressed Enter".
+   */
+  private handleMeta(key: string): void {
+    if (key === '\r') {
+      this.buffer += '\n';
+      this.scheduleRepaint();
+      return;
+    }
+    // Other Meta chords are inert for this rig's purposes.
   }
 
   dispose(): void {
     if (this.pickerTimer) clearTimeout(this.pickerTimer);
     if (this.repaintTimer) clearTimeout(this.repaintTimer);
     if (this.busyTimer) clearInterval(this.busyTimer);
+    if (this.readTimer) clearTimeout(this.readTimer);
     this.pickerTimer = null;
     this.repaintTimer = null;
     this.busyTimer = null;
+    this.readTimer = null;
   }
 
   private handleCtrlC(): void {
@@ -179,10 +273,35 @@ export class FakeTui {
     this.closePicker();
   }
 
+  /**
+   * Ctrl+U: clear the input line.
+   *
+   * Line editing, not a signal. It always clears regardless of what the TUI is
+   * doing, and - unlike Ctrl+C - it is never swallowed by a startup render and
+   * never contributes to the double-press that exits the CLI. That difference
+   * is the whole reason the clear moved onto this key.
+   */
+  private handleClearLine(): void {
+    this.consecutiveEmptyCtrlC = 0;
+    this.buffer = '';
+    this.closePicker();
+  }
+
+  /**
+   * Esc, with the three meanings Claude Code actually gives it.
+   *
+   * It is NOT a picker-scoped key. The docs describe it as "stop Claude while
+   * it is generating output", and on a non-empty prompt with no picker the
+   * first press prints "Esc again to clear" while the SECOND press clears the
+   * line. Modeling only the picker case is what let a retry loop that re-sent
+   * Esc look safe: in reality the second Esc deletes the command being
+   * submitted.
+   */
   private handleEscape(): void {
     this.consecutiveEmptyCtrlC = 0;
     if (this.picker === 'open') {
       this.closePicker();
+      this.pendingEscClear = false;
       return;
     }
     if (this.picker === 'rendering') {
@@ -190,7 +309,19 @@ export class FakeTui {
       // picker mounted, so nothing consumes it. The picker still renders.
       return;
     }
-    if (this.options.escClearsWithoutPicker) this.buffer = '';
+    if (this.options.escClearsWithoutPicker) {
+      this.buffer = '';
+      return;
+    }
+    if (this.buffer.length === 0) return;
+    if (this.pendingEscClear) {
+      // "Esc again to clear" was already showing. This press wipes the prompt.
+      this.buffer = '';
+      this.pendingEscClear = false;
+      this.escClearedBuffer = true;
+      return;
+    }
+    this.pendingEscClear = true;
   }
 
   private handleEnter(): void {

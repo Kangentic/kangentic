@@ -111,17 +111,31 @@ Rung 3 is what makes the guarantee falsifiable rather than aspirational. It rout
 Each keystroke now waits for the TUI's own render instead:
 
 ```
-clear (if warranted) -> drain -> settle
-text                 -> drain -> settle     // the picker has rendered
-Esc (slash only)     -> drain               // adjacent to Enter, deliberately
-Enter                -> drain -> verify
+Ctrl+U (if warranted) -> drain -> settle
+text                  -> drain -> settle    // longer idle for a slash picker
+Esc (slash, once, no live turn) -> drain -> settle   // separate READ
+Enter                 -> drain -> verify    // retries re-press Enter only
 ```
+
+### Which keys, and why (verified against Claude Code's docs)
+
+Three key choices were originally wrong, and each produced a distinct reported bug. They are now grounded in Claude Code's documented behaviour rather than inference.
+
+| key | why |
+|---|---|
+| **Ctrl+U** clears the prompt | The docs name it directly: "Up arrow to edit queued messages or **Ctrl+U to clear the input line**". It replaced Ctrl+C, which means CANCEL and **exits the CLI on a double press**, and which did not reliably clear a draft - producing `Tell me about 10 planets with details/merge-pull-request`. Ctrl+U is line editing, so it also leaves a running turn alone. |
+| **no interrupt, ever** | "When a command is sent while Claude is responding, it typically **queues** and runs after the current turn finishes." Immediate mode therefore types and presses Enter; the CLI queues it. Interrupting was both unnecessary and the cause of the "it looked like it was editing a message already in flight" behaviour. |
+| **Esc at most once, never during a live turn** | Esc is not picker-scoped - the docs describe it as "**stop Claude while it is generating output**". So it must never fire while a turn is running (it would abort the agent), and never twice: on a non-empty prompt the first press prints "Esc again to clear" and the second **clears the command being submitted**. |
 
 Three details are load-bearing:
 
 - **The drain is what makes the wait mean anything.** `sessionManager.write` enqueues; the queue drains over later ticks. A delay measured without draining is a delay from the enqueue, not from the PTY.
 - **Settle observes `'data-tap'`, not `'data'`.** The `'data'` event is gated on renderer focus and is default-closed. Auto_command injection normally targets a session whose terminal is not the one on screen, so observing `'data'` would degrade every such delivery to the wall-clock cap.
-- **Esc and Enter stay adjacent.** The remaining race is a picker mounting *between* them; settling there would widen that gap by a full idle window and make it more likely, not less.
+- **Esc and Enter must land in SEPARATE reads.** `\x1b` immediately followed by `\r` in one read *is* the terminal's Meta encoding: the TUI parses it as Alt+Enter, which Claude Code binds to "insert a newline" rather than "submit". `drain()` does not prevent this - it empties Kangentic's write queue and says nothing about how ConPTY chunks bytes to the child, so the two writes routinely coalesce. The 40ms gap is an encoding boundary, not a render wait.
+
+  This shipped briefly and was caught in manual testing: the command typed correctly, then every retry added a blank line to the prompt instead of submitting, and the burst escalated to a restart. An earlier version of this document argued the opposite - that Esc and Enter should stay adjacent to dodge a picker mounting between them. That trade was wrong twice over: nothing new is typed between the two keystrokes, so no new picker can mount, and the adjacency silently changed which KEY the TUI received.
+
+  The load rig missed it because `SimulatedSessionManager` delivered every `write()` as its own key event, which is not how a PTY behaves. It now buffers incoming bytes and parses them on a coalesce window, so Meta sequences form the same way they do in a real terminal. Removing the gap drops the no-verifier sweep from 85.7% to 57.1% and produces submissions like `"/code-review\n"`.
 
 **Esc is sent only for `/`-prefixed commands.** Its job is dismissing the slash-command picker, which only opens for a slash. On a plain-prose auto_command no picker exists and Esc is not a no-op on Claude Code's prompt, so sending it risks clearing the text just typed.
 
@@ -222,7 +236,7 @@ That single predicate is shared with rung-3 escalation; there is deliberately no
 
 ## Measured delivery rate
 
-`tests/unit/injection-load-rig.test.ts` drives the real `TerminalSubmit` against a TUI model that can fail the way the real one fails (a picker with a render delay that eats Enter, a prompt buffer that survives, a startup window that swallows Ctrl+C, an asynchronous write queue). Before and after the rebuild:
+`tests/unit/injection-load-rig.test.ts` drives the real `TerminalSubmit` against a TUI model that can fail the way the real one fails (a picker with a render delay that eats Enter, a prompt buffer that survives, a startup window that swallows Ctrl+C, an asynchronous write queue, and reads that coalesce so Meta sequences form). Before and after the rebuild:
 
 | Scenario | before | after |
 |---|---|---|

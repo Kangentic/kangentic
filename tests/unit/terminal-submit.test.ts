@@ -79,7 +79,7 @@ describe('TerminalSubmit', () => {
       const { submit, sessionManager } = makeSubmit();
       await submit.submitKeystrokes(SESSION_ID, [{ text: '/test', verify: 'none' }]);
 
-      expect(sessionManager.writes).toEqual(['\x03', '/test', '\x1b', '\r']);
+      expect(sessionManager.writes).toEqual(['\x15', '/test', '\x1b', '\r']);
       sessionManager.dispose();
     });
 
@@ -90,7 +90,7 @@ describe('TerminalSubmit', () => {
       const { submit, sessionManager } = makeSubmit();
       await submit.submitKeystrokes(SESSION_ID, [{ text: 'review the diff', verify: 'none' }]);
 
-      expect(sessionManager.writes).toEqual(['\x03', 'review the diff', '\r']);
+      expect(sessionManager.writes).toEqual(['\x15', 'review the diff', '\r']);
       expect(sessionManager.tui.submissions.map((entry) => entry.text)).toEqual(['review the diff']);
       sessionManager.dispose();
     });
@@ -103,7 +103,7 @@ describe('TerminalSubmit', () => {
       ]);
 
       expect(sessionManager.writes).toEqual([
-        '\x03',
+        '\x15',
         '/model opus', '\x1b', '\r',
         '/effort high', '\x1b', '\r',
       ]);
@@ -138,7 +138,7 @@ describe('TerminalSubmit', () => {
       const { submit, sessionManager } = makeSubmit();
       const result = await submit.submitKeystrokes(SESSION_ID, ['/test']);
 
-      expect(sessionManager.writes).toEqual(['\x03', '/test', '\x1b', '\r']);
+      expect(sessionManager.writes).toEqual(['\x15', '/test', '\x1b', '\r']);
       expect(result.outcome).toBe('unconfirmed');
       sessionManager.dispose();
     });
@@ -202,13 +202,24 @@ describe('TerminalSubmit', () => {
         { freshlySpawned: true, pendingDraft: 'instead can we' },
       );
 
-      expect(sessionManager.writes[0]).toBe('\x03');
+      expect(sessionManager.writes[0]).toBe('\x15');
       expect(sessionManager.tui.submissions.map((entry) => entry.text)).toEqual(['/pull-request']);
       expect(result.discardedDraft).toBe('instead can we');
       sessionManager.dispose();
     });
 
-    it('reports an interrupted turn when told the agent was mid-turn', async () => {
+    it('never interrupts a live turn, and never sends Esc while one is running', async () => {
+      // Immediate-mode delivery into a busy agent must be NON-destructive.
+      // Claude Code queues a message submitted mid-turn ("When a command is
+      // sent while Claude is responding, it typically queues and runs after the
+      // current turn finishes"), so there is nothing to interrupt for.
+      //
+      // Two keys would break that and both are excluded here. Ctrl+C is a
+      // cancel (and exits the CLI on a double press), so the clear is Ctrl+U.
+      // Esc is documented as "stop Claude while it is generating output", so it
+      // is suppressed entirely while a turn is live - dismissing a picker with
+      // it would silently abort the agent, which is the reported "it looked
+      // like it was editing a message already in flight" behaviour.
       const { submit, sessionManager } = makeSubmit();
       const result = await submit.submitKeystrokes(
         SESSION_ID,
@@ -216,7 +227,10 @@ describe('TerminalSubmit', () => {
         { interruptingTurn: true },
       );
 
-      expect(result.interruptedTurn).toBe(true);
+      expect(result.interruptedTurn).toBe(false);
+      expect(sessionManager.writes).not.toContain('\x03');
+      expect(sessionManager.writes).not.toContain('\x1b');
+      expect(sessionManager.writes).toContain('\x15');
       sessionManager.dispose();
     });
   });
@@ -283,10 +297,15 @@ describe('TerminalSubmit', () => {
       sessionManager.dispose();
     });
 
-    it('re-sends Esc AND Enter on retry, recovering a picker-eaten submission', async () => {
-      // Re-firing Enter alone cannot recover: the picker is still open and eats
-      // it again. The Esc is what clears the condition. This is the single most
-      // load-bearing detail of the retry loop.
+    it('sends Esc at most once, and still recovers a picker-eaten submission', async () => {
+      // Esc is NOT safe to repeat. On a non-empty prompt with no picker, the
+      // first press prints "Esc again to clear" and the SECOND press clears the
+      // line - so a retry loop that re-sent Esc would delete the very command
+      // it is trying to submit. An earlier version of this test asserted the
+      // opposite (`escapeCount > 1`), which is how that hazard went unnoticed.
+      //
+      // Recovery therefore comes from re-pressing Enter, with the single Esc on
+      // the first attempt having already dismissed the picker.
       //
       // The swallow is forced rather than provoked via `pickerRenderMs`: a
       // timing-driven window lands differently under CI load, where the first
@@ -304,7 +323,12 @@ describe('TerminalSubmit', () => {
       expect(result.outcome).toBe('confirmed');
       expect(sessionManager.tui.submissions.map((entry) => entry.text)).toEqual(['/code-review']);
       const escapeCount = sessionManager.writes.filter((data) => data === '\x1b').length;
-      expect(escapeCount).toBeGreaterThan(1);
+      expect(escapeCount).toBe(1);
+      // The retry that actually recovered it: more Enters than Escs.
+      const enterCount = sessionManager.writes.filter((data) => data === '\r').length;
+      expect(enterCount).toBeGreaterThan(1);
+      // And the double-Esc line-wipe never happened.
+      expect(sessionManager.tui.escClearedBuffer).toBe(false);
       sessionManager.dispose();
     });
 
@@ -324,7 +348,7 @@ describe('TerminalSubmit', () => {
 
       expect(result.outcome).toBe('failed');
       expect(result.unconfirmedCommands).toEqual(['/code-review']);
-      const clearWrites = sessionManager.writes.filter((data) => data === '\x03');
+      const clearWrites = sessionManager.writes.filter((data) => data === '\x15');
       expect(clearWrites).toHaveLength(1); // the deliberate leading clear only
       expect(sessionManager.tui.maxConsecutiveEmptyCtrlC).toBeLessThan(2);
       sessionManager.dispose();
