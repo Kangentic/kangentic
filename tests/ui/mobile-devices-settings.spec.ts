@@ -1113,5 +1113,34 @@ test.describe('Mobile Devices settings tab', () => {
     await searchInput.fill('');
     await expect(page.getByRole('heading', { name: 'Mobile', exact: true })).toBeVisible();
     await closeSettings();
+
+    // Mirror image of the "official" scenario above, with the two sections'
+    // roles swapped: "get the app" is a keyword ONLY on mobileBridge.getApp
+    // (a Mobile-section id) - see settings-registry.ts - and appears on
+    // neither of the Relay section's ids (relayMode / relayUrl). This is not
+    // redundant with the "official" scenario: Relay and Mobile hide their
+    // bodies through genuinely different mechanisms (Relay's is
+    // `{relaySectionVisible && (...)}`, which unmounts; Mobile's is a
+    // `className` toggle to `hidden`), wired to two independently computed
+    // booleans - a bug that swaps which id list feeds which boolean, or that
+    // hardcodes one of the two to always stay visible, needs a pin in BOTH
+    // directions to be caught.
+    await setMobileBridgeConfig({ enabled: true, relayMode: 'hosted', relayUrl: '' });
+    await openMobileTab();
+    await searchInput.fill('get the app');
+
+    await expect(page.getByRole('heading', { name: 'Relay', exact: true })).toHaveCount(0);
+    // Load-bearing: the Relay section body - its controls and its
+    // unconditional docs tail - must actually be gone, not merely rendering
+    // under a missing heading.
+    await expect(page.locator('[data-testid="mobile-relay-mode"]')).not.toBeVisible();
+    await expect(page.locator('[data-testid="mobile-relay-docs-link"]')).not.toBeVisible();
+    // Mobile is unaffected by a query naming its own id: it stays visible, so
+    // this is not "everything collapsed", only Relay.
+    await expect(page.getByRole('heading', { name: 'Mobile', exact: true })).toBeVisible();
+
+    await searchInput.fill('');
+    await expect(page.getByRole('heading', { name: 'Relay', exact: true })).toBeVisible();
+    await closeSettings();
   });
 });
