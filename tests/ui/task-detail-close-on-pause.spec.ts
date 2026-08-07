@@ -231,6 +231,22 @@ async function readSessionStatus(page: Page, taskId: string): Promise<string | n
   }, taskId);
 }
 
+/**
+ * Read the renderer-GLOBAL `dialogSessionIds` set: which sessions are
+ * currently claimed by an open detail window (see `useTaskSessionState`'s
+ * `claimDialogSession` / `releaseDialogSession`, one xterm per PTY). The
+ * bottom terminal panel reads this set to decide whether it may mount its
+ * own xterm for a session.
+ */
+async function readDialogSessionIds(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const stores = (window as unknown as {
+      __zustandStores: { session: { getState: () => { dialogSessionIds: string[] } } };
+    }).__zustandStores;
+    return stores.session.getState().dialogSessionIds;
+  });
+}
+
 // ---------------------------------------------------------------------------
 // The gesture closes the window
 // ---------------------------------------------------------------------------
@@ -251,6 +267,35 @@ test('pausing from the header button closes the detail window', async () => {
     expect(await readSessionStatus(page, TASK_ID)).toBe('suspended');
     const killCalls = await page.evaluate(() => (window as unknown as { __killCalls: string[] }).__killCalls);
     expect(killCalls).toEqual([]);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('pausing releases the terminal-ownership claim so the bottom panel can reclaim it', async () => {
+  // Before this change, pausing left the window open on the Resume prompt,
+  // so the claim on the now-suspended session's id stayed held for as long
+  // as the window did - the bottom panel's tab for this task stayed hidden
+  // even though nothing was running anymore. `useTaskSessionState` claims
+  // and releases `dialogSessionIds` off the LIVE `session?.id` via a
+  // `useLayoutEffect` cleanup that fires on unmount - a mechanism this
+  // diff does not touch - but pausing is now the first gesture that makes
+  // this window unmount on its own, so this is the first test to exercise
+  // that release actually happens for THIS trigger. Matches the docs
+  // promise: "the session stays paused and resumable from the board".
+  const { browser, page } = await launchWithRunningTask();
+  try {
+    const dialog = await openDetailWindow(page);
+
+    // Baseline: the open window holds the claim.
+    await expect.poll(() => readDialogSessionIds(page), { timeout: 10000 }).toContain(SESSION_ID);
+
+    await dialog.locator('button[title="Pause session"]').click();
+    await expect(dialog).toBeHidden({ timeout: 10000 });
+
+    // The claim is released once the window actually unmounts, a beat after
+    // the dialog element itself goes hidden - poll rather than sampling once.
+    await expect.poll(() => readDialogSessionIds(page), { timeout: 10000 }).not.toContain(SESSION_ID);
   } finally {
     await browser.close();
   }
