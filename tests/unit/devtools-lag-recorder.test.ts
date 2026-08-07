@@ -105,6 +105,10 @@ describe('renderer lag recorder - background throttle classification', () => {
  * point every future diagnosis at the wrong layer.
  */
 describe('renderer lag recorder - long animation frames', () => {
+  beforeEach(() => {
+    observeCalls.length = 0;
+  });
+
   interface FakeScript {
     duration: number;
     sourceURL?: string;
@@ -127,7 +131,15 @@ describe('renderer lag recorder - long animation frames', () => {
    * `disconnect()` models a real PerformanceObserver's teardown: once disconnected, it must
    * stop delivering entries, so `emit()` after `disconnect()` is a no-op. That is what makes
    * a missing `disconnect()` call in the recorder's own `stopRendererLagRecorder()` observable.
+   *
+   * A start -> stop -> restart cycle constructs a NEW FakeObserver instance, exactly as a real
+   * PerformanceObserver cannot be reused after `disconnect()` either - so the constructor resets
+   * `disconnected` for the fresh instance, and `emit()` always targets whichever instance was
+   * constructed most recently. `observeCalls` accumulates every `observe()` call's options across
+   * every instance the stub ever constructs, so a test spanning a restart can inspect both calls.
    */
+  const observeCalls: Array<{ type?: string; buffered?: boolean }> = [];
+
   function stubObserver(supported: boolean): { emit: (frames: FakeFrame[]) => void } {
     let capturedCallback: ((list: { getEntries: () => FakeFrame[] }) => void) | null = null;
     let disconnected = false;
@@ -135,8 +147,11 @@ describe('renderer lag recorder - long animation frames', () => {
       static supportedEntryTypes = supported ? ['long-animation-frame'] : ['longtask'];
       constructor(callback: (list: { getEntries: () => FakeFrame[] }) => void) {
         capturedCallback = callback;
+        disconnected = false;
       }
-      observe(): void { /* the stub delivers via emit() */ }
+      observe(options?: { type?: string; buffered?: boolean }): void {
+        observeCalls.push(options ?? {});
+      }
       disconnect(): void {
         disconnected = true;
       }
@@ -297,5 +312,41 @@ describe('renderer lag recorder - long animation frames', () => {
     const framesAfterStop = recorder.getRendererLagReport().recentLongFrames;
     expect(framesAfterStop).not.toBe('unavailable');
     expect(framesAfterStop as Exclude<typeof framesAfterStop, 'unavailable'>).toHaveLength(1);
+  });
+
+  it('replays the buffered entry backlog only on the FIRST attach, and the ring survives a stop -> restart', async () => {
+    // `startLongFrameObserver`'s `observe({ buffered: !longFrameSupported })` is a new branch
+    // this commit introduced with no covering assertion anywhere. A dev remount of
+    // DevtoolsBootstrap (or a manual stop/restart) reconnects the observer, and if that second
+    // `observe()` call also asked for the buffered backlog, the browser would replay frames the
+    // ring already carries - a duplicated spike that reads as a real repeat, exactly the wrong
+    // conclusion for a tool whose entire job is attribution.
+    const observer = stubObserver(true);
+    const recorder = await loadRecorder();
+
+    recorder.startRendererLagRecorder();
+    expect(observeCalls).toHaveLength(1);
+    expect(observeCalls[0].type).toBe('long-animation-frame');
+    expect(observeCalls[0].buffered).toBe(true);
+
+    observer.emit([{ startTime: 0, duration: 60, scripts: [] }]);
+    recorder.stopRendererLagRecorder();
+
+    // Restart constructs a fresh PerformanceObserver (a real one cannot be reused after
+    // `disconnect()`), which is a SECOND `observe()` call - it must not ask for `buffered` this
+    // time, or the entry recorded before stop would be double-counted by the browser's replay.
+    recorder.startRendererLagRecorder();
+    expect(observeCalls).toHaveLength(2);
+    expect(observeCalls[1].type).toBe('long-animation-frame');
+    expect(observeCalls[1].buffered).toBe(false);
+
+    // The ring itself is a flight recorder that survives the stop: still exactly the one frame
+    // recorded before stop, not reset to empty and not doubled by a buffered replay after
+    // restart.
+    const frames = recorder.getRendererLagReport().recentLongFrames;
+    expect(frames).not.toBe('unavailable');
+    expect(frames as Exclude<typeof frames, 'unavailable'>).toHaveLength(1);
+
+    recorder.stopRendererLagRecorder();
   });
 });

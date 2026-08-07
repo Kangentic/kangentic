@@ -252,6 +252,60 @@ test.describe('Rate limits cross-session sync', () => {
     await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
   });
 
+  test('rate-limit fill bars stay on width, unlike the composited context and card fills', async () => {
+    // ContextBar.tsx documents deliberately keeping RateLimitBar's fill on
+    // `width` (unlike the context-usage fill in the same file and
+    // ContextUsageFooter's board/monitor card fill, both of which moved to a
+    // composited `transform: scaleX()` - see composited-meter-fill.test.ts):
+    // the `minWidth: 2px` floor that keeps a barely-started window visible is
+    // a width-space idea with no scale-space equivalent short of measuring
+    // the track. That static scan only asserts properties of fills it FINDS
+    // via `scaleX(` - a correct-looking conversion of this bar (with
+    // `origin-left` and `transform` in its transition list) would just add a
+    // third entry and still pass. This test guards the actual decision: the
+    // fill must still be a `width` bar, and the floor that decision protects
+    // (a low nonzero percentage stays visible via `minWidth: 2px`) must still
+    // be there.
+    await page.locator(`[data-task-id="${TASK_FRESH_ID}"]`).first().click();
+    await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible' });
+
+    const contextBar = page.locator('[data-testid="task-detail-dialog"] [data-testid="usage-bar"].min-h-8');
+    await expect(contextBar).toBeVisible({ timeout: 10000 });
+
+    const pill = contextBar.locator('[data-testid="rate-limits-pill"]');
+    await expect(pill).toBeVisible();
+
+    // One fill per window (5h session at 73%, 7d weekly at 41% - see
+    // makePreConfig's fresh rateLimits payload). A count other than 2 here
+    // means the fill's own class list changed, which is itself the
+    // conversion signal this test exists to catch.
+    const fills = pill.locator('span.block.h-full.rounded-full');
+    await expect(fills).toHaveCount(2);
+
+    const fiveHourFillStyle = await fills.nth(0).evaluate((el) => ({
+      width: (el as HTMLElement).style.width,
+      minWidth: (el as HTMLElement).style.minWidth,
+      transform: (el as HTMLElement).style.transform,
+    }));
+    expect(fiveHourFillStyle.width).toBe('73%');
+    expect(fiveHourFillStyle.transform).toBe('');
+    // Pinned even though it is visually inert at 73% (the floor only matters
+    // near zero): `roundedUsedPercentage > 0` is what sets it, so its
+    // presence here is what a future "why is this here" cleanup would delete
+    // along with the whole `width` approach.
+    expect(fiveHourFillStyle.minWidth).toBe('2px');
+
+    const sevenDayFillStyle = await fills.nth(1).evaluate((el) => ({
+      width: (el as HTMLElement).style.width,
+      transform: (el as HTMLElement).style.transform,
+    }));
+    expect(sevenDayFillStyle.width).toBe('41%');
+    expect(sevenDayFillStyle.transform).toBe('');
+
+    await page.locator('[data-testid="task-detail-close"]').click();
+    await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
+  });
+
   test('pill tooltip records the snapshot source as "Updated ... via <agent>"', async () => {
     await page.locator(`[data-task-id="${TASK_STALE_ID}"]`).first().click();
     await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible' });
