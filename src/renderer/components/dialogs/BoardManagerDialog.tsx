@@ -36,6 +36,7 @@ import {
   type PermissionMode,
   type SessionTarget,
   type SessionSpawnStrategy,
+  type AutoCommandMode,
   type SwimlaneCreateInput,
   type SwimlaneUpdateInput,
   type BoardProfile,
@@ -91,6 +92,7 @@ const PROFILE_FIELD_MAP = [
   ['effort_override', 'effortOverride'],
   ['permission_mode', 'permissionMode'],
   ['auto_command', 'autoCommand'],
+  ['auto_command_mode', 'autoCommandMode'],
   ['auto_spawn', 'autoSpawn'],
   ['handoff_context', 'handoffContext'],
   ['session_target', 'sessionTarget'],
@@ -309,6 +311,7 @@ export function buildUpdateInput(draft: Swimlane, original: Swimlane): SwimlaneU
     permission_mode: isTodoOrDone ? undefined : draft.permission_mode,
     auto_spawn: isTodoOrDone ? undefined : draft.auto_spawn,
     auto_command: isTodoOrDone ? undefined : (draft.auto_command?.trim() || null),
+    auto_command_mode: isTodoOrDone ? undefined : draft.auto_command_mode,
     plan_exit_target_id: isPlanMode ? (draft.plan_exit_target_id || null) : undefined,
     agent_override: isTodoOrDone ? undefined : (draft.agent_override || null),
     model_override: isTodoOrDone ? undefined : (draft.model_override?.trim() || null),
@@ -329,6 +332,7 @@ export function buildCreateInput(draft: Swimlane): SwimlaneCreateInput {
     permission_mode: draft.permission_mode,
     auto_spawn: draft.auto_spawn,
     auto_command: draft.auto_command?.trim() || null,
+    auto_command_mode: draft.auto_command_mode,
     plan_exit_target_id: isPlanMode ? (draft.plan_exit_target_id || null) : undefined,
     agent_override: draft.agent_override || null,
     model_override: draft.model_override?.trim() || null,
@@ -354,6 +358,7 @@ function makeNewDraft(): Swimlane {
     permission_mode: null,
     auto_spawn: false,
     auto_command: '',
+    auto_command_mode: 'immediate',
     plan_exit_target_id: null,
     agent_override: null,
     model_override: null,
@@ -1832,6 +1837,23 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                     </button>
                   ))}
                 </div>
+                </SettingField>
+
+                <SettingField label="Auto-command timing" className={SECTION_FULL_SPAN}>
+                  <p className="text-xs text-fg-faint -mt-2 mb-2">
+                    Whether the command interrupts the agent or waits for it to finish what it is doing.
+                  </p>
+                  <Select
+                    value={draft.auto_command_mode}
+                    onChange={(event) => updateDraft((current) => ({
+                      ...current,
+                      auto_command_mode: event.target.value as AutoCommandMode,
+                    }))}
+                    data-testid="auto-command-mode-select"
+                  >
+                    <option value="immediate">Run immediately</option>
+                    <option value="deferred">Wait for the current turn to finish</option>
+                  </Select>
                 </SettingField>
                 </div>
               ) : <DisabledSectionNotice reason={disabledReasonFor('Automation')} />}

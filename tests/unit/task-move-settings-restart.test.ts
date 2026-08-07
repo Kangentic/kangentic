@@ -369,7 +369,6 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
     vi.mocked(prepareInjectionPlan).mockReturnValue({
       sequence: [],
       verifier: null,
-      verifiedPrefixLength: 0,
       needsRestartForModel: true,
     });
 
@@ -400,9 +399,8 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
     const taskRepo = makeTaskRepo();
     const context = makeContext(taskRepo, swimlaneRepo);
     vi.mocked(prepareInjectionPlan).mockReturnValue({
-      sequence: ['/effort xhigh'],
+      sequence: [{ text: '/effort xhigh', verify: 'command-match' }],
       verifier: null,
-      verifiedPrefixLength: 1,
       needsRestartForModel: false,
       appliedSettings: { effort: 'xhigh' },
     });
@@ -442,7 +440,6 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
     vi.mocked(prepareInjectionPlan).mockReturnValue({
       sequence: [],
       verifier: null,
-      verifiedPrefixLength: 0,
       needsRestartForModel: true,
     });
 
@@ -474,7 +471,6 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
     vi.mocked(prepareInjectionPlan).mockReturnValue({
       sequence: [],
       verifier: null,
-      verifiedPrefixLength: 0,
       needsRestartForModel: true,
     });
 
@@ -500,7 +496,6 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
     vi.mocked(prepareInjectionPlan).mockReturnValue({
       sequence: [],
       verifier: null,
-      verifiedPrefixLength: 0,
       needsRestartForModel: true,
     });
 
@@ -544,7 +539,6 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
     vi.mocked(prepareInjectionPlan).mockReturnValue({
       sequence: [],
       verifier: null,
-      verifiedPrefixLength: 0,
       needsRestartForModel: true,
     });
 
@@ -572,9 +566,8 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
     const taskRepo = makeTaskRepo();
     const context = makeContext(taskRepo, swimlaneRepo);
     vi.mocked(prepareInjectionPlan).mockReturnValue({
-      sequence: ['/effort xhigh'],
+      sequence: [{ text: '/effort xhigh', verify: 'command-match' }],
       verifier: null,
-      verifiedPrefixLength: 1,
       needsRestartForModel: false,
       appliedSettings: { effort: 'xhigh' },
     });
@@ -597,9 +590,8 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
     const taskRepo = makeTaskRepo();
     const context = makeContext(taskRepo, swimlaneRepo);
     vi.mocked(prepareInjectionPlan).mockReturnValue({
-      sequence: ['implement the task'],
+      sequence: [{ text: 'implement the task', verify: 'submitted' }],
       verifier: null,
-      verifiedPrefixLength: 0,
       needsRestartForModel: false,
       // appliedSettings absent - auto_command only
     });

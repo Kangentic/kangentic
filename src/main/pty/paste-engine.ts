@@ -1,5 +1,6 @@
 import type { SessionManager } from './session-manager';
 import type { SubmissionVerifier } from '../../shared/types';
+import { waitForOutputSettle, type OutputSettleResult } from './output-settle';
 
 /**
  * PasteEngine: deterministic paste-and-submit for TUI agents. Private
@@ -162,20 +163,19 @@ async function writeChunked(
   }
 }
 
-interface SettleResult {
-  waitedMs: number;
-  observedOutput: boolean;
-  /** 'idle' = data arrived then OUTPUT_SETTLE_IDLE_MS quiet (happy path);
-   *  'cap'  = saw data but never went idle (busy session, fall back);
-   *  'floor-only' = no data ever (hookless agent, MIN_GAP_MS floor only). */
-  reason: 'idle' | 'cap' | 'floor-only';
-}
+type SettleResult = OutputSettleResult;
 
 /**
  * Wait for the TUI to render the paste placeholder, then honor the
  * React-commit floor before resolving. Resolves on first data + idle
  * window, or capMs fallback if data never arrives. The floor keeps
  * fast-render small payloads from racing past React's commit cycle.
+ *
+ * Delegates to the shared `waitForOutputSettle` primitive. Stays on the
+ * renderer-gated `'data'` event (not `'data-tap'`) to preserve this engine's
+ * documented caller contract: the browser pane and dictation paths run
+ * alongside a subscribed terminal, and widening the seam here would change
+ * paste timing for reasons unrelated to this change.
  */
 function waitForPasteSettle(
   sessionManager: SessionManager,
@@ -184,68 +184,17 @@ function waitForPasteSettle(
   signal: AbortSignal,
 ): Promise<SettleResult> {
   const capMs = Math.max(SETTLE_CAP_MIN_MS, Math.round(packetLength * SETTLE_CAP_PER_BYTE_MS) + SETTLE_CAP_MIN_MS);
-  return new Promise<SettleResult>((resolve, reject) => {
-    if (signal.aborted) {
-      reject(new PasteSubmitError('aborted', 'paste-engine: aborted before settle'));
-      return;
-    }
-    const start = Date.now();
-    let observedOutput = false;
-    let idleTimer: ReturnType<typeof setTimeout> | null = null;
-    let resolved = false;
-
-    const cleanup = (): void => {
-      sessionManager.off('data', onData);
-      signal.removeEventListener('abort', onAbort);
-      if (idleTimer) clearTimeout(idleTimer);
-      clearTimeout(capTimer);
-    };
-
-    const finish = (reason: SettleResult['reason']): void => {
-      if (resolved) return;
-      cleanup();
-      const elapsed = Date.now() - start;
-      const remainingFloor = Math.max(0, MIN_GAP_MS - elapsed);
-      if (remainingFloor > 0) {
-        // Settle landed inside the floor window; sleep the rest so React commits.
-        const floorTimer = setTimeout(() => {
-          if (resolved) return;
-          resolved = true;
-          signal.removeEventListener('abort', onFloorAbort);
-          resolve({ waitedMs: Date.now() - start, observedOutput, reason });
-        }, remainingFloor);
-        const onFloorAbort = (): void => {
-          if (resolved) return;
-          resolved = true;
-          clearTimeout(floorTimer);
-          reject(new PasteSubmitError('aborted', 'paste-engine: aborted during minimum-gap floor'));
-        };
-        signal.addEventListener('abort', onFloorAbort, { once: true });
-        return;
-      }
-      resolved = true;
-      resolve({ waitedMs: elapsed, observedOutput, reason });
-    };
-
-    const onData = (...args: unknown[]): void => {
-      if (args[0] !== sessionId) return;
-      observedOutput = true;
-      if (idleTimer) clearTimeout(idleTimer);
-      idleTimer = setTimeout(() => finish('idle'), OUTPUT_SETTLE_IDLE_MS);
-    };
-
-    const onAbort = (): void => {
-      if (resolved) return;
-      resolved = true;
-      cleanup();
-      reject(new PasteSubmitError('aborted', 'paste-engine: aborted during output settle'));
-    };
-
-    sessionManager.on('data', onData);
-    signal.addEventListener('abort', onAbort, { once: true });
-    const capTimer = setTimeout(() => {
-      finish(observedOutput ? 'cap' : 'floor-only');
-    }, capMs);
+  return waitForOutputSettle(sessionManager, sessionId, {
+    event: 'data',
+    idleMs: OUTPUT_SETTLE_IDLE_MS,
+    capMs,
+    floorMs: MIN_GAP_MS,
+    signal,
+    abortError: (stage) => {
+      if (stage === 'before') return new PasteSubmitError('aborted', 'paste-engine: aborted before settle');
+      if (stage === 'floor') return new PasteSubmitError('aborted', 'paste-engine: aborted during minimum-gap floor');
+      return new PasteSubmitError('aborted', 'paste-engine: aborted during output settle');
+    },
   });
 }
 

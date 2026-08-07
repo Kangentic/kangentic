@@ -143,9 +143,8 @@ beforeEach(() => {
   mockUsageCache = {};
   mockGetSession.mockReturnValue({ status: 'running' });
   mockPrepareInjectionPlan.mockReturnValue({
-    sequence: ['/effort high'],
+    sequence: [{ text: '/effort high', verify: 'command-match' }],
     verifier: null,
-    verifiedPrefixLength: 0,
     needsRestartForModel: false,
     appliedSettings: { effort: 'high' },
   });
@@ -402,7 +401,6 @@ describe('propagateStrategyToLiveSessions - model-restart project path resolutio
     mockPrepareInjectionPlan.mockReturnValue({
       sequence: [],
       verifier: null,
-      verifiedPrefixLength: 0,
       needsRestartForModel: true,
     });
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -423,7 +421,6 @@ describe('propagateStrategyToLiveSessions - model-restart project path resolutio
     mockPrepareInjectionPlan.mockReturnValue({
       sequence: [],
       verifier: null,
-      verifiedPrefixLength: 0,
       needsRestartForModel: true,
     });
 

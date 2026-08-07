@@ -167,8 +167,10 @@ export function registerTaskRuntimeOverrideHandlers(context: IpcContext): void {
             context.terminalSubmitScheduler.scheduleKeystrokes(
               input.taskId,
               task.session_id,
-              sequence,
-              { verifier, verifiedPrefixLength: sequence.length },
+              // Adapter-emitted, so we know the exact invocation we asked for
+              // and can demand a discrete transcript entry matching it.
+              sequence.map((text) => ({ text, verify: 'command-match' as const })),
+              { verifier },
             );
             // Record the session's new running effort (concrete change only) so a
             // later column move diffs against it instead of re-injecting. Model is

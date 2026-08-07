@@ -83,6 +83,9 @@ const SWIMLANE_FIELD_SHARING: Record<keyof Swimlane, FieldSharing> = {
   permission_mode: 'team',
   auto_spawn: 'team',
   auto_command: 'team',
+  // Team-shared for the same reason auto_command is: it changes how the
+  // column's shared command behaves for every teammate, not just locally.
+  auto_command_mode: 'team',
   plan_exit_target_id: 'team',
   agent_override: 'team',
   model_override: 'team',
@@ -111,6 +114,7 @@ const ROUNDTRIP_CASES: Array<{ field: keyof Swimlane; configKey: keyof BoardColu
   { field: 'permission_mode', configKey: 'permissionMode', dbValue: 'plan', configValue: 'plan' },
   { field: 'auto_spawn', configKey: 'autoSpawn', dbValue: true, configValue: true },
   { field: 'auto_command', configKey: 'autoCommand', dbValue: '/code-review', configValue: '/code-review' },
+  { field: 'auto_command_mode', configKey: 'autoCommandMode', dbValue: 'deferred', configValue: 'deferred' },
   { field: 'agent_override', configKey: 'agentOverride', dbValue: 'codex', configValue: 'codex' },
   { field: 'model_override', configKey: 'modelOverride', dbValue: 'opus', configValue: 'opus' },
   { field: 'effort_override', configKey: 'effortOverride', dbValue: 'high', configValue: 'high' },
@@ -141,6 +145,7 @@ function makeSwimlane(overrides: Partial<Swimlane> = {}): Swimlane {
     permission_mode: null,
     auto_spawn: false,
     auto_command: null,
+    auto_command_mode: 'immediate',
     plan_exit_target_id: null,
     agent_override: null,
     model_override: null,

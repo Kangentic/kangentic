@@ -231,8 +231,8 @@ describe('TASK_SET_RUNTIME_OVERRIDE handler', () => {
     expect(context.terminalSubmitScheduler.scheduleKeystrokes).toHaveBeenCalledWith(
       'task-1',
       'session-1',
-      ['/effort high'],
-      expect.objectContaining({ verifiedPrefixLength: 1 }),
+      [{ text: '/effort high', verify: 'command-match' }],
+      { verifier: null },
     );
   });
 
@@ -312,8 +312,8 @@ describe('TASK_SET_RUNTIME_OVERRIDE handler', () => {
     expect(context.terminalSubmitScheduler.scheduleKeystrokes).toHaveBeenCalledWith(
       'task-1',
       'session-1',
-      ['/effort high'],
-      expect.objectContaining({ verifiedPrefixLength: 1 }),
+      [{ text: '/effort high', verify: 'command-match' }],
+      { verifier: null },
     );
     // Effort is persisted to the session record so the next column move diffs
     // against the true running value and does not re-inject.

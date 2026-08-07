@@ -83,7 +83,9 @@ export function registerTranscriptionHandlers(context: IpcContext): void {
   // the focused terminal as the user speaks. Same ordered FIFO write path as
   // SESSION_WRITE, so it never fragments concurrent user typing.
   ipcMain.on(IPC.TRANSCRIBE_LIVE_WRITE, (_event, sessionId: string, payload: string) => {
-    if (sessionId && payload) context.sessionManager.write(sessionId, payload);
+    // 'user': dictation is the user speaking into the prompt, so it counts as
+    // a draft that an injected auto_command must not concatenate onto.
+    if (sessionId && payload) context.sessionManager.write(sessionId, payload, 'user');
   });
 
   // Inject finalized text into the focused terminal WITHOUT submitting. The
@@ -95,7 +97,7 @@ export function registerTranscriptionHandlers(context: IpcContext): void {
   ipcMain.handle(IPC.TRANSCRIBE_COMMIT, (_event, sessionId: string, text: string): boolean => {
     const sanitized = text.replace(/[\r\n]+/g, ' ').trim();
     if (!sessionId || sanitized.length === 0) return false;
-    context.sessionManager.write(sessionId, sanitized);
+    context.sessionManager.write(sessionId, sanitized, 'user');
     return true;
   });
 
@@ -114,7 +116,7 @@ export function registerTranscriptionHandlers(context: IpcContext): void {
     async (_event, sessionId: string, text: string, eraseCount: number): Promise<boolean> => {
       const sanitized = text.replace(/[\r\n]+/g, ' ').trim();
       if (!sessionId || sanitized.length === 0) return false;
-      if (eraseCount > 0) context.sessionManager.write(sessionId, '\x7f'.repeat(eraseCount));
+      if (eraseCount > 0) context.sessionManager.write(sessionId, '\x7f'.repeat(eraseCount), 'user');
       try {
         await context.terminalSubmit.submitContent(sessionId, sanitized, { source: 'dictation' });
         return true;

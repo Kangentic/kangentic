@@ -183,6 +183,17 @@ When a suspended task moves to an active column:
   ("Proceed with implementing the approved plan.") delivered as the resumed
   session's first message when the destination column has no `auto_command`;
   the `auto_command` wins when present.
+- The resume prompt is also how **auto_command escalation** lands. When a live
+  session's keystroke injection cannot be confirmed in the agent's transcript,
+  `restartSessionForSettingsChange` suspends and resumes with the command as the
+  prompt argument, which is guaranteed by the spawn rather than by TUI timing.
+  That restart is gated on the turn-completion predicate (activity idle AND a
+  quiet PTY) so it can never kill live work, is attempted at most once, and
+  carries only the user's `auto_command` - never an adapter-emitted settings
+  write, which would arrive as literal message text. Unlike the ordinary
+  settings-change restart it does NOT assert idle-authoritative afterwards,
+  because a resume with a prompt starts a real turn. See
+  [Command Injection](command-injection.md) for the full delivery ladder.
 - The **first move OUT of Done** (the recovery / restore move, whatever the
   destination column) resumes the session WITHOUT injecting the destination
   column's `auto_command`. Restoring a Done task is usually to inspect the

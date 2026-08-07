@@ -350,7 +350,10 @@ describe('spawnAgent auto_command injection (isolation-scoped resume check)', ()
     expect(resumePromptArg(deps.engine)).toBeUndefined();
     expect(deps.scheduleKeystrokes).toHaveBeenCalledTimes(1);
     expect(deps.scheduleKeystrokes).toHaveBeenCalledWith(
-      TASK_ID, FRESH_PTY_SESSION_ID, ['/code-review'], { freshlySpawned: true },
+      TASK_ID,
+      FRESH_PTY_SESSION_ID,
+      [{ text: '/code-review', verify: 'submitted' }],
+      expect.objectContaining({ freshlySpawned: true }),
     );
   });
 
@@ -391,7 +394,10 @@ describe('spawnAgent auto_command injection (isolation-scoped resume check)', ()
     expect(resumePromptArg(deps.engine)).toBeUndefined();
     expect(deps.scheduleKeystrokes).toHaveBeenCalledTimes(1);
     expect(deps.scheduleKeystrokes).toHaveBeenCalledWith(
-      TASK_ID, FRESH_PTY_SESSION_ID, ['/standup'], { freshlySpawned: true },
+      TASK_ID,
+      FRESH_PTY_SESSION_ID,
+      [{ text: '/standup', verify: 'submitted' }],
+      expect.objectContaining({ freshlySpawned: true }),
     );
   });
 });
@@ -532,7 +538,10 @@ describe('spawnAgent auto_command suppression on recovery move out of Done (hand
     expect(deps.engine.resumeSuspendedSession).toHaveBeenCalledTimes(1);
     expect(deps.scheduleKeystrokes).toHaveBeenCalledTimes(1);
     expect(deps.scheduleKeystrokes).toHaveBeenCalledWith(
-      TASK_ID, FRESH_PTY_SESSION_ID, ['/merge-back'], { freshlySpawned: true },
+      TASK_ID,
+      FRESH_PTY_SESSION_ID,
+      [{ text: '/merge-back', verify: 'submitted' }],
+      expect.objectContaining({ freshlySpawned: true }),
     );
   });
 });

@@ -187,7 +187,11 @@ When a task moves to a column with `auto_command` set, the command delivery depe
 **Fresh spawns** (priority 4, no suspended session to resume):
 - `TerminalSubmitScheduler.scheduleKeystrokes` schedules the command for deferred PTY injection
 - Interpolates the `auto_command` template with task variables
-- Waits for the CLI's first `'thinking'` activity event, then writes Ctrl+C → text → Esc → Enter via `TerminalSubmit.submitKeystrokes`
+- Waits for the CLI's first `'thinking'` activity event, then delivers via `TerminalSubmit.submitKeystrokes` as a handshake chain (drain + output-settle between keystrokes) rather than fixed sleeps
+
+If keystroke delivery cannot be confirmed in the agent's transcript, it escalates to a session restart that passes the command as the CLI's prompt argument - the same guarantee the resumed path has. Every injection ends in a recorded outcome on the task, and a failure raises a notice instead of a console warning. The full contract, including the delivery ladder, the prompt-state policy, and the measured before/after delivery rate, is in [Command Injection](command-injection.md).
+
+A column also declares WHEN its command fires, via `auto_command_mode`: `immediate` (the default; interrupts the agent's current turn if there is one) or `deferred` (holds until that turn genuinely finishes). "Finishes" requires activity `idle` AND a quiet PTY, because a bare idle is reported for minutes during an API retry backoff or a `Monitor` wait.
 
 This enables workflows like moving a task from "Running" to "Code Review" to automatically send a review prompt to the agent.
 

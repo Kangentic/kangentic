@@ -25,6 +25,9 @@ import type { CommandVerifier } from '../../../transition-engine/terminal-submit
  * `/`-prefix from the next command). We require both; a combined-args entry
  * is treated as a non-match so the burst can retry-Enter and recover.
  */
+/** Mirrors `InjectionVerifyMode`. `none` is unverifiable by definition. */
+export type SlashVerifyMode = 'command-match' | 'submitted' | 'none';
+
 export interface SlashVerifierOptions {
   /**
    * If set, the verifier polls internally for up to `timeoutMs` before
@@ -50,7 +53,21 @@ export function createSlashCommandVerifier(
   const internalTimeout = options.timeoutMs;
   const pollIntervalMs = options.pollIntervalMs ?? 25;
 
-  return async function verify(command: string, sentAt: number): Promise<boolean> {
+  return async function verify(
+    command: string,
+    sentAt: number,
+    mode: SlashVerifyMode = 'command-match',
+  ): Promise<boolean> {
+    // Never report an unverifiable command as confirmed.
+    if (mode === 'none') return false;
+    if (mode === 'submitted') {
+      // A user-supplied auto_command. We cannot require it to parse as a
+      // registered slash command: it may be plain prose, or a `/foo` this
+      // project does not define, and Claude only treats a LEADING slash as a
+      // command anyway. The question that IS answerable, and the one that
+      // matters, is whether exactly this text became a user turn.
+      return scanForSubmittedText(jsonlPath, command, sentAt);
+    }
     const parsed = parseSlashCommand(command);
     if (!parsed) return true; // Non-slash text: no JSONL signal expected.
     // sentAt is the timestamp of the Enter the caller is asking us to confirm
@@ -133,6 +150,86 @@ async function scanForMatch(
     return true;
   }
   return false;
+}
+
+/**
+ * Confirm that EXACTLY `command` became a user turn at or after `sentAt`.
+ *
+ * Exactness is the entire point. The reported bug submits
+ * `instead can we/pull-request` as one message, and that string CONTAINS
+ * `/pull-request` - a substring test would confirm the precise failure this
+ * verifier exists to catch as a successful delivery.
+ *
+ * Two shapes count as the same submission:
+ *   1. the raw user text equals the command (plain prose, or a `/foo` Claude
+ *      did not recognize and therefore left as literal text);
+ *   2. the entry was rewritten into `<command-name>` / `<command-args>` tags
+ *      because Claude DID recognize it, in which case `/name args`
+ *      reconstructs what the user typed.
+ */
+async function scanForSubmittedText(
+  jsonlPath: string,
+  command: string,
+  sentAt: number,
+): Promise<boolean> {
+  let content: string;
+  try {
+    content = await fs.readFile(jsonlPath, 'utf-8');
+  } catch {
+    return false;
+  }
+  const expected = command.trim();
+  const lines = content.split(/\r?\n/);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (!line) continue;
+    let entry: unknown;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!isRecord(entry)) continue;
+
+    const ts = parseTimestamp(entry.timestamp);
+    if (ts !== null && ts < sentAt - 50) return false;
+
+    const tagged = extractCommandTagContent(entry);
+    if (tagged) {
+      const reconstructed = tagged.args ? `${tagged.name} ${tagged.args}` : tagged.name;
+      if (reconstructed.trim() === expected) return true;
+      // A recognized command whose tags do not reconstruct to what we sent is
+      // a DIFFERENT submission (the combined-args concatenation case). Keep
+      // scanning rather than accepting it.
+      continue;
+    }
+
+    const userText = extractUserText(entry);
+    if (userText !== null && userText.trim() === expected) return true;
+  }
+  return false;
+}
+
+/**
+ * Raw text of a user-turn entry. `message.content` is a string for simple
+ * turns and an array of content blocks for richer ones; only the latter shape
+ * appears once attachments or tool results are involved, and the current
+ * command-tag extractor handles only the string form.
+ */
+function extractUserText(entry: Record<string, unknown>): string | null {
+  if (entry.type !== 'user') return null;
+  const message = entry.message;
+  if (!isRecord(message)) return null;
+  const content = message.content;
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return null;
+  const parts: string[] = [];
+  for (const block of content) {
+    if (!isRecord(block)) continue;
+    if (block.type !== 'text') continue;
+    if (typeof block.text === 'string') parts.push(block.text);
+  }
+  return parts.length > 0 ? parts.join('') : null;
 }
 
 /**

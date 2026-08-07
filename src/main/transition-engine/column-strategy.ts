@@ -22,6 +22,7 @@
  */
 
 import type {
+  AutoCommandMode,
   BoardProfile,
   BoardProfileEntry,
   PermissionMode,
@@ -39,6 +40,7 @@ export type LaneStrategyFields = Pick<
   | 'effort_override'
   | 'permission_mode'
   | 'auto_command'
+  | 'auto_command_mode'
   | 'auto_spawn'
   | 'handoff_context'
   | 'session_target'
@@ -61,6 +63,7 @@ export interface ColumnStrategy {
   effort_override: string | null;
   permission_mode: PermissionMode | null;
   auto_command: string | null;
+  auto_command_mode: AutoCommandMode;
   auto_spawn: boolean;
   handoff_context: boolean;
   session_target: SessionTarget;
@@ -116,6 +119,7 @@ const NO_LANE_STRATEGY: ColumnStrategy = {
   effort_override: null,
   permission_mode: null,
   auto_command: null,
+  auto_command_mode: 'immediate',
   auto_spawn: false,
   handoff_context: false,
   session_target: 'main',
@@ -162,6 +166,7 @@ export function resolveColumnStrategy(input: {
     effort_override: lane.effort_override,
     permission_mode: lane.permission_mode,
     auto_command: lane.auto_command,
+    auto_command_mode: lane.auto_command_mode,
     auto_spawn: lane.auto_spawn,
     handoff_context: lane.handoff_context,
     session_target: lane.session_target,
@@ -178,6 +183,9 @@ export function resolveColumnStrategy(input: {
     effort_override: hasKey(entry, 'effortOverride') ? entry.effortOverride ?? null : base.effort_override,
     permission_mode: hasKey(entry, 'permissionMode') ? entry.permissionMode ?? null : base.permission_mode,
     auto_command: hasKey(entry, 'autoCommand') ? entry.autoCommand ?? null : base.auto_command,
+    auto_command_mode: hasKey(entry, 'autoCommandMode')
+      ? entry.autoCommandMode ?? 'immediate'
+      : base.auto_command_mode,
     auto_spawn: hasKey(entry, 'autoSpawn') ? entry.autoSpawn === true : base.auto_spawn,
     handoff_context: hasKey(entry, 'handoffContext') ? entry.handoffContext === true : base.handoff_context,
     session_target: hasKey(entry, 'sessionTarget') ? entry.sessionTarget ?? 'main' : base.session_target,

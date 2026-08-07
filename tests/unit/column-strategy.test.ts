@@ -64,6 +64,7 @@ describe('resolveColumnStrategy', () => {
         effort_override: null,
         permission_mode: null,
         auto_command: null,
+        auto_command_mode: 'immediate',
         auto_spawn: false,
         handoff_context: false,
         session_target: 'main',

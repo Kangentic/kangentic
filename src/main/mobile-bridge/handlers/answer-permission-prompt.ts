@@ -37,7 +37,7 @@ export function handleAnswerPermissionPrompt(
     return { type: 'capability-response', requestId: request.requestId, ok: false, error: `Session is not accepting input (not running): ${payload.sessionId}` };
   }
 
-  context.sessionManager.write(payload.sessionId, payload.keystrokes);
+  context.sessionManager.write(payload.sessionId, payload.keystrokes, 'user');
 
   const responsePayload: AnswerPermissionPromptResponsePayload = { answered: true };
   return { type: 'capability-response', requestId: request.requestId, ok: true, payload: responsePayload as unknown as JsonValue };

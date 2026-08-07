@@ -147,7 +147,6 @@ export function propagateStrategyToLiveSessions(
 
     context.terminalSubmitScheduler.scheduleKeystrokes(task.id, task.session_id, plan.sequence, {
       verifier: plan.verifier,
-      verifiedPrefixLength: plan.verifiedPrefixLength,
     });
     // Record the new running value so a later column move does not re-inject.
     if (plan.appliedSettings && sessionRepo) {

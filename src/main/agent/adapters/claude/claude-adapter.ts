@@ -283,10 +283,16 @@ export class ClaudeAdapter implements AgentAdapter {
         const verifier = createSlashCommandVerifier(filePath);
         if (!verifier) return false;
         // sentAt comes from TerminalSubmit.submitKeystrokes's most-recent
-        // Enter timestamp, re-advanced on each retry-Enter. Falling back to
+        // Enter timestamp, re-advanced on each retry attempt. Falling back to
         // Date.now() preserves single-call use (e.g. ad-hoc verifier
         // invocation in tests) but the production path always supplies it.
-        return verifier(context.text, context.sentAt ?? Date.now());
+        //
+        // `mode` distinguishes an adapter-emitted settings command (must
+        // parse as a discrete invocation with exactly these args) from a
+        // user-supplied auto_command (only needs to have been submitted
+        // verbatim). Defaulting to the stricter mode keeps older callers
+        // behaving exactly as before.
+        return verifier(context.text, context.sentAt ?? Date.now(), context.mode ?? 'command-match');
       };
     }
     return null;

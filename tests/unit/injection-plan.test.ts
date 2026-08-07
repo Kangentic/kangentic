@@ -27,6 +27,16 @@ import { buildCommandInjectionVerifier, prepareInjectionPlan, resolveLiveEffort,
 import type { AgentAdapter, SettingsChangeSpec } from '../../src/main/agent/agent-adapter';
 import type { SessionRepository } from '../../src/main/db/repositories/session-repository';
 import type { SessionRecord, Swimlane } from '../../src/shared/types';
+import type { InjectionPlan } from '../../src/main/transition-engine/injection-plan';
+
+/**
+ * Command text only. The plan now carries per-command verify modes, so most
+ * assertions care about WHAT is delivered; the modes themselves are asserted
+ * explicitly in the verification describe below.
+ */
+function planTexts(plan: InjectionPlan | null): string[] | undefined {
+  return plan?.sequence.map((command) => command.text);
+}
 
 function lane(overrides: Partial<Swimlane> = {}): Swimlane {
   return {
@@ -131,7 +141,7 @@ describe('prepareInjectionPlan', () => {
       task: { id: 't1', agent: 'fake', model_override: null, effort_override: null },
       toLane: lane({ model_override: null, effort_override: 'xhigh' }),
     });
-    expect(plan?.sequence).toEqual(['/effort xhigh']);
+    expect(planTexts(plan)).toEqual(['/effort xhigh']);
     expect(plan?.appliedSettings).toEqual({ effort: 'xhigh' });
   });
 
@@ -147,7 +157,7 @@ describe('prepareInjectionPlan', () => {
     // (default -> opus) flags a restart for the caller. Plan is non-null so the
     // caller can act on it.
     expect(plan).not.toBeNull();
-    expect(plan?.sequence).toEqual([]);
+    expect(planTexts(plan)).toEqual([]);
     expect(plan?.needsRestartForModel).toBe(true);
   });
 
@@ -209,7 +219,7 @@ describe('prepareInjectionPlan', () => {
     });
     // Non-null plan even with an empty sequence, so the caller can restart.
     expect(plan).not.toBeNull();
-    expect(plan?.sequence).toEqual([]);
+    expect(planTexts(plan)).toEqual([]);
     expect(plan?.needsRestartForModel).toBe(true);
     // Model is applied by the respawn flag, not recorded here; effort unchanged.
     expect(plan?.appliedSettings).toBeUndefined();
@@ -243,7 +253,7 @@ describe('prepareInjectionPlan', () => {
     });
     // The plan is non-null because effort changed.
     expect(plan).not.toBeNull();
-    expect(plan?.sequence).toEqual(['/effort xhigh']);
+    expect(planTexts(plan)).toEqual(['/effort xhigh']);
     // model changed (opus -> null) but a null ("Default") target is not a real
     // change: no restart, and model is ABSENT from appliedSettings. Only the
     // concrete effort change is recorded.
@@ -263,7 +273,7 @@ describe('prepareInjectionPlan', () => {
       toLane: lane({ model_override: 'opus' }),
       autoCommand: '   review the diff   ',
     });
-    expect(plan?.sequence).toEqual(['/model opus', 'review the diff']);
+    expect(planTexts(plan)).toEqual(['/model opus', 'review the diff']);
   });
 
   it('returns just the auto_command when there are no settings deltas', () => {
@@ -277,16 +287,22 @@ describe('prepareInjectionPlan', () => {
       toLane: lane(),
       autoCommand: 'do thing',
     });
-    // verifiedPrefixLength = 0 because settings sequence is empty.
-    // The auto_command sits at index 0 and is fire-and-forget.
     // appliedSettings is absent: no settings field changed to a concrete value.
-    expect(plan).toEqual({ sequence: ['do thing'], verifier: null, verifiedPrefixLength: 0, needsRestartForModel: false });
+    expect(plan).toEqual({
+      sequence: [{ text: 'do thing', verify: 'submitted' }],
+      verifier: null,
+      needsRestartForModel: false,
+    });
   });
 
-  it('verifiedPrefixLength excludes the trailing auto_command so it stays fire-and-forget', () => {
-    // The whole point of the prefix split: a `/`-prefixed user auto_command
-    // must NOT be subjected to verification (it might not produce a JSONL
-    // entry the verifier recognizes, and retry exhaustion would drop it).
+  it('verifies the auto_command itself, under the weaker submitted mode', () => {
+    // This is the hole the rebuild closes. A single `verifiedPrefixLength`
+    // could express only ONE semantic for a whole burst, so the trailing user
+    // auto_command - the thing users actually care about - was excluded from
+    // verification entirely and settled on a fixed timer. Per-command modes
+    // let the settings writes keep strict command-matching while the user's
+    // command is checked for the weaker, always-answerable question: did
+    // exactly this text get submitted?
     const adapter = fakeAdapter({
       getInjectionSequence: () => ['/model opus', '/effort high'],
     });
@@ -297,9 +313,11 @@ describe('prepareInjectionPlan', () => {
       toLane: lane({ model_override: 'opus', effort_override: 'high' }),
       autoCommand: '/review --strict',
     });
-    expect(plan?.sequence).toEqual(['/model opus', '/effort high', '/review --strict']);
-    // First two (settings) are verified; auto_command is not.
-    expect(plan?.verifiedPrefixLength).toBe(2);
+    expect(plan?.sequence).toEqual([
+      { text: '/model opus', verify: 'command-match' },
+      { text: '/effort high', verify: 'command-match' },
+      { text: '/review --strict', verify: 'submitted' },
+    ]);
   });
 
   it('verifier is null when adapter does not implement getSubmissionVerifier', () => {
@@ -315,7 +333,13 @@ describe('prepareInjectionPlan', () => {
     expect(plan?.verifier).toBeNull();
   });
 
-  it('verifier is null when no session record has a captured agent_session_id', () => {
+  it('still builds a verifier when the agent session id is not captured YET', async () => {
+    // A fresh spawn has no captured id at plan-build time. Returning null here
+    // would leave fresh-spawn auto_commands permanently unverifiable - and that
+    // is the delivery path that most needs the check, since it is the one that
+    // runs without a leading clear. Delivery is deferred until the CLI comes
+    // alive, and the id is re-resolved on every poll, so by the time
+    // verification actually runs the id is there.
     const submissionVerifier = async (): Promise<boolean> => true;
     const adapter = fakeAdapter({
       getInjectionSequence: () => ['/x'],
@@ -327,7 +351,12 @@ describe('prepareInjectionPlan', () => {
       task: { id: 't1', agent: 'fake' },
       toLane: lane({ model_override: 'opus' }),
     });
-    expect(plan?.verifier).toBeNull();
+
+    expect(plan?.verifier).not.toBeNull();
+    // With the id still missing at poll time there is no transcript to scan, so
+    // the honest answer is "not confirmed" - which keeps the caller retrying
+    // rather than declaring a hard failure.
+    expect(await plan?.verifier?.('/x', Date.now(), 'command-match')).toBe(false);
   });
 
   it('wires the adapter verifier when both the hook and a captured session id are available', () => {
@@ -358,7 +387,11 @@ describe('prepareInjectionPlan', () => {
       toLane: lane(),
       autoCommand: 'fallback',
     });
-    expect(plan).toEqual({ sequence: ['fallback'], verifier: null, verifiedPrefixLength: 0, needsRestartForModel: false });
+    expect(plan).toEqual({
+      sequence: [{ text: 'fallback', verify: 'submitted' }],
+      verifier: null,
+      needsRestartForModel: false,
+    });
   });
 
   it('verifier is null when sessionRepo is null even if adapter has getSubmissionVerifier', () => {
@@ -478,7 +511,7 @@ describe('prepareInjectionPlan -- project-level default_model / default_effort t
       toLane: lane({ model_override: null, effort_override: null }),
       project: { default_model: null, default_effort: 'high' },
     });
-    expect(plan?.sequence).toEqual(['/effort high']);
+    expect(planTexts(plan)).toEqual(['/effort high']);
     expect(plan?.appliedSettings).toEqual({ effort: 'high' });
   });
 });
@@ -579,7 +612,7 @@ describe('prepareInjectionPlan -- per-task override wins over column override', 
       effort: 'xhigh',
       effortChanged: false,
     });
-    expect(plan?.sequence).toEqual([]);
+    expect(planTexts(plan)).toEqual([]);
     expect(plan?.needsRestartForModel).toBe(true);
   });
 
@@ -633,7 +666,7 @@ describe('prepareInjectionPlan - agent-reported effort is the delta source', () 
       toLane: lane({ effort_override: 'high' }),
       liveEffort: 'medium',
     });
-    expect(plan?.sequence).toEqual(['/effort high']);
+    expect(planTexts(plan)).toEqual(['/effort high']);
     expect(plan?.appliedSettings).toEqual({ effort: 'high' });
   });
 
@@ -708,7 +741,7 @@ describe('prepareInjectionPlan - agent-reported effort is the delta source', () 
       toLane: lane({ effort_override: 'max' }),
       liveEffort: 'high',
     });
-    expect(plan?.sequence).toEqual(['/effort max']);
+    expect(planTexts(plan)).toEqual(['/effort max']);
   });
 
   it('never lets live effort disturb the model delta', () => {
@@ -723,7 +756,7 @@ describe('prepareInjectionPlan - agent-reported effort is the delta source', () 
       liveEffort: 'medium',
     });
     expect(plan?.needsRestartForModel).toBe(false);
-    expect(plan?.sequence).toEqual(['/effort high']);
+    expect(planTexts(plan)).toEqual(['/effort high']);
   });
 });
 

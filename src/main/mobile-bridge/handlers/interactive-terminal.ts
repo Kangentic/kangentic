@@ -56,7 +56,9 @@ export function handleInteractiveTerminal(
     return { type: 'capability-response', requestId: request.requestId, ok: true, payload: toWireJson(responsePayload) };
   }
 
-  context.sessionManager.write(payload.sessionId, payload.data);
+  // A phone typing into the terminal is the same human input as the desktop
+  // keyboard, so it feeds the prompt-draft ledger identically.
+  context.sessionManager.write(payload.sessionId, payload.data, 'user');
 
   const responsePayload: InteractiveTerminalResponsePayload = { written: true };
   return { type: 'capability-response', requestId: request.requestId, ok: true, payload: toWireJson(responsePayload) };

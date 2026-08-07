@@ -673,6 +673,42 @@ export function App() {
       }));
     }
 
+    // A column's auto_command finished delivering. Main only pushes the
+    // outcomes worth acting on (see `shouldNotify` in auto-command-outcome.ts),
+    // so anything arriving here is either a real failure or a success that
+    // took something from the user without asking. Current project only: the
+    // message names a task the user cannot see from another project.
+    if (tasks?.onAutoCommandResult) {
+      cleanups.push(tasks.onAutoCommandResult((result) => {
+        const activeProjectId = useProjectStore.getState().currentProject?.id;
+        if (result.projectId && result.projectId !== activeProjectId) return;
+
+        if (result.state === 'failed') {
+          useToastStore.getState().addToast({
+            message: `"${result.taskTitle}" did not run ${result.command}. ${result.reason ?? ''}`.trim(),
+            variant: 'warning',
+            duration: 12000,
+          });
+          return;
+        }
+
+        // Delivered, but it cost the user something. Quote the discarded draft
+        // verbatim so it can be copied back out of the toast: clearing typed
+        // text is defensible, losing it silently is not.
+        const notes: string[] = [];
+        if (result.discardedDraft) notes.push(`Your unsent text was cleared: "${result.discardedDraft}"`);
+        else if (result.interruptedTurn) notes.push('The agent was interrupted mid-task.');
+        if (result.escalated) notes.push('The session was restarted to deliver it.');
+        if (notes.length === 0) return;
+
+        useToastStore.getState().addToast({
+          message: `"${result.taskTitle}" ran ${result.command}. ${notes.join(' ')}`,
+          variant: 'info',
+          duration: 12000,
+        });
+      }));
+    }
+
     // Task auto-moved (plan exit → next column)
     if (tasks?.onAutoMoved) {
       cleanups.push(tasks.onAutoMoved((autoMovedTaskId, _targetSwimlaneId, taskTitle, autoMoveProjectId) => {

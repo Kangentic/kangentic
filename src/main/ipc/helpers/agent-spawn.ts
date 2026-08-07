@@ -19,6 +19,9 @@ import { isResumeEligible } from '../../transition-engine/spawn-intent';
 import { resolveIsolatedSwimlaneId, resolveForceFresh } from '../../transition-engine/session-isolation';
 import { resolveEffectiveAutoCommand, applyProfileToLane } from '../../transition-engine/column-strategy';
 import { loadTaskProfile } from './task-profile';
+import { buildCommandInjectionVerifier } from '../../transition-engine/injection-plan';
+import type { CommandVerifier } from '../../transition-engine/terminal-submit-scheduler';
+import { reportAutoCommandOutcome } from './auto-command-outcome';
 import { emitSpawnProgress, createProgressCallback } from '../../transition-engine/spawn-progress';
 import { ensureTaskWorktree, ensureTaskBranchCheckout, notifyBranchCheckoutBlocked } from './task-git';
 import { getProjectRepos } from './project-repos';
@@ -328,7 +331,17 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
       const effectiveAutoCommand = resolveEffectiveAutoCommand(currentTask.auto_command, toLane.auto_command);
       if (!options.suppressAutoCommand && effectiveAutoCommand?.trim()) {
         const interpolated = interpolateTaskTemplate(effectiveAutoCommand, resolveAutoCommandVars(currentTask));
-        context.terminalSubmitScheduler.scheduleKeystrokes(currentTask.id, currentTask.session_id, [interpolated], { freshlySpawned: true });
+        context.terminalSubmitScheduler.scheduleKeystrokes(
+          currentTask.id,
+          currentTask.session_id,
+          [{ text: interpolated, verify: 'submitted' }],
+          {
+            freshlySpawned: true,
+            verifier: resolveInjectionVerifier(targetAgent, sessionRepo, currentTask.id),
+            mode: toLane.auto_command_mode ?? 'immediate',
+            onOutcome: (report) => reportAutoCommandOutcome(context, tasks, currentTask, report, options.projectId),
+          },
+        );
       }
     }
 
@@ -430,11 +443,40 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
   currentTask = tasks.getById(task.id);
 
   if (currentTask?.session_id && interpolatedAutoCommand !== undefined && !deliverAutoCommandAsPrompt) {
-    context.terminalSubmitScheduler.scheduleKeystrokes(currentTask.id, currentTask.session_id, [interpolatedAutoCommand], { freshlySpawned: true });
+    context.terminalSubmitScheduler.scheduleKeystrokes(
+      currentTask.id,
+      currentTask.session_id,
+      [{ text: interpolatedAutoCommand, verify: 'submitted' }],
+      {
+        freshlySpawned: true,
+        verifier: resolveInjectionVerifier(targetAgent, sessionRepo, currentTask.id),
+        mode: toLane?.auto_command_mode ?? 'immediate',
+        onOutcome: (report) => reportAutoCommandOutcome(context, tasks, currentTask, report, options.projectId),
+      },
+    );
   }
   };
 
   return project?.name ? runWithProjectLogContext(project.name, run) : run();
+}
+
+/**
+ * Verifier for a fresh-spawn auto_command, or null when the agent exposes none.
+ *
+ * Built at SCHEDULE time but resolved at POLL time. That distinction is what
+ * makes fresh-spawn injection verifiable at all: the agent's session id is
+ * usually not captured yet when the spawn returns, but delivery is deferred
+ * until the CLI comes alive, by which point it is. Building eagerly against
+ * the id would give up on the exact path that most needed the check.
+ */
+function resolveInjectionVerifier(
+  agentName: string,
+  sessionRepo: SessionRepository,
+  taskId: string,
+): CommandVerifier | null {
+  const adapter = agentRegistry.get(agentName);
+  if (!adapter) return null;
+  return buildCommandInjectionVerifier(adapter, sessionRepo, taskId);
 }
 
 /**

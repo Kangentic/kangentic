@@ -52,7 +52,10 @@ export function registerSessionHandlers(context: IpcContext): void {
     if (!taskId) return context.sessionManager.kill(id);
     return withTaskLock(taskId, async () => context.sessionManager.kill(id));
   });
-  ipcMain.handle(IPC.SESSION_WRITE, (_, id, data) => context.sessionManager.write(id, data));
+  // Renderer keystrokes are the primary source of user-typed prompt text, so
+  // they are tagged 'user' for the prompt-draft ledger that keeps an injected
+  // auto_command from concatenating onto a half-written message.
+  ipcMain.handle(IPC.SESSION_WRITE, (_, id, data) => context.sessionManager.write(id, data, 'user'));
   // Renderer drain acknowledgement for per-session output backpressure. One-way
   // (send, not invoke): the renderer reports bytes it has consumed so main can
   // pause/resume the session's PTY. Keyed by sessionId only - not project-scoped.

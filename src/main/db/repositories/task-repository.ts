@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import type Database from 'better-sqlite3';
-import type { Task, TaskCreateInput, TaskUpdateInput, TaskMoveInput, ArchivedTasksPreview } from '../../../shared/types';
+import type { Task, TaskCreateInput, TaskUpdateInput, TaskMoveInput, ArchivedTasksPreview, AutoCommandState } from '../../../shared/types';
 import { worktreeFolderUnderRoot } from '../../../shared/worktree-folder';
 
 /** Raw row from SQLite - labels stored as JSON string. */
@@ -385,6 +385,22 @@ export class TaskRepository {
   archive(id: string): void {
     const now = new Date().toISOString();
     this.db.prepare('UPDATE tasks SET archived_at = ?, updated_at = ? WHERE id = ?').run(now, now, id);
+  }
+
+  /**
+   * Record the outcome of this task's most recent auto_command delivery.
+   *
+   * Deliberately NOT part of `update()`: this is engine telemetry, not a user
+   * edit, so it must not bump `updated_at` and trip the board's
+   * something-changed paths on every column move.
+   */
+  recordAutoCommandOutcome(
+    id: string,
+    outcome: { state: AutoCommandState; command: string; error: string | null },
+  ): void {
+    this.db.prepare(
+      'UPDATE tasks SET auto_command_state = ?, auto_command_text = ?, auto_command_error = ?, auto_command_at = ? WHERE id = ?',
+    ).run(outcome.state, outcome.command, outcome.error, new Date().toISOString(), id);
   }
 
   unarchive(id: string, targetSwimlaneId: string, position: number): Task {

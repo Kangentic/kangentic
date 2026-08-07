@@ -1,6 +1,7 @@
 import type { SessionManager } from './session-manager';
 import type { PasteEngine, PasteOptions } from './paste-engine';
 import { sanitizeForPty } from '../../shared/paths';
+import { waitForOutputSettle } from './output-settle';
 
 /**
  * Re-export the PasteEngine error class so callers (`browser.ts`) can catch
@@ -11,18 +12,45 @@ import { sanitizeForPty } from '../../shared/paths';
 export { PasteSubmitError } from './paste-engine';
 
 /**
- * Per-command verifier polled by `submitKeystrokes` between writes when
- * delivering a chained sequence (e.g. `/model X` then `/effort Y`). Returns
- * true when the agent confirmed the injected command was processed, false on
- * single-scan miss. Adapters supply this via
- * `getSubmissionVerifier('command-injection')`, with the `sentAt` of the
- * most recent Enter so the verifier can bound its scan window.
+ * How strongly a single command's delivery can be confirmed.
+ *
+ * - `command-match` the adapter emitted this itself (`/effort xhigh`), so the
+ *   transcript must contain a discrete invocation with exactly these args.
+ *   Rejecting a combined-args entry is the point: that is how a swallowed
+ *   Enter is detected.
+ * - `submitted` a user-supplied auto_command. We cannot require it to parse
+ *   as a registered slash command (it may be plain prose, or an unregistered
+ *   `/foo`), only that EXACTLY this text became a user turn. Strictly weaker
+ *   than `command-match`, so it is always available.
+ * - `none` this adapter exposes no transcript verifier. Delivery ends
+ *   `unconfirmed`; it is never reported as confirmed.
+ *
+ * This replaces the old `verifiedPrefixLength`, which could only express one
+ * semantic for a whole burst and therefore had to leave the user's
+ * auto_command unverified entirely.
+ */
+export type InjectionVerifyMode = 'command-match' | 'submitted' | 'none';
+
+/** One command plus how its delivery may be confirmed. */
+export interface InjectionCommand {
+  text: string;
+  verify: InjectionVerifyMode;
+}
+
+/**
+ * Per-command verifier polled by `submitKeystrokes` after each Enter.
+ * Returns true when the agent's transcript confirms the command was
+ * processed. Adapters supply this via `getSubmissionVerifier('command-injection')`.
  *
  * Defined here so `terminal-submit-scheduler` (the lifecycle wrapper),
  * `injection-plan` (the builder), and `slash-command-verifier` (the impl)
  * can all import from one place.
  */
-export type CommandVerifier = (command: string, sentAt: number) => Promise<boolean>;
+export type CommandVerifier = (
+  command: string,
+  sentAt: number,
+  mode: InjectionVerifyMode,
+) => Promise<boolean>;
 
 /**
  * Free-form-content delivery options. Forwarded verbatim to PasteEngine.
@@ -30,29 +58,55 @@ export type CommandVerifier = (command: string, sentAt: number) => Promise<boole
  */
 export type SubmitContentOptions = PasteOptions;
 
+/** Terminal state of one `submitKeystrokes` call. */
+export type InjectionOutcome = 'confirmed' | 'unconfirmed' | 'failed' | 'aborted';
+
+export interface SubmitKeystrokesResult {
+  /**
+   * `confirmed`   every verifiable command was seen in the transcript.
+   * `unconfirmed` nothing could be checked (adapter has no verifier). NOT a
+   *               failure, and deliberately distinguished: 11 of 12 adapters
+   *               are in this bucket, so conflating it with `failed` would
+   *               make the outcome meaningless off Claude.
+   * `failed`      a verifiable command exhausted its retries.
+   * `aborted`     cancelled mid-burst.
+   */
+  outcome: InjectionOutcome;
+  /** Commands that were verifiable but never confirmed. */
+  unconfirmedCommands: string[];
+  /** User draft cleared off the prompt, if the caller told us about one. */
+  discardedDraft: string | null;
+  /** True when the leading clear interrupted a live turn. */
+  interruptedTurn: boolean;
+}
+
 /** Manual-keystroke delivery options. */
 export interface SubmitKeystrokesOptions {
   /**
-   * Send Ctrl+C before the first command to clear half-typed input or
-   * interrupt thinking. Default true. Set false for paths that just spawned
-   * the CLI and have nothing to interrupt (e.g. fresh-spawn auto_command).
+   * Explicit override for the leading clear. When unset the policy is
+   * derived (see `shouldClearPrompt`): clear unless this is a fresh spawn
+   * with no known draft.
    */
   sendCtrlC?: boolean;
   /**
-   * Per-command verifier. When provided, each command in
-   * `commands[0:verifiedPrefixLength]` is polled for confirmation in the
-   * agent's transcript with retry-on-Enter. Trailing commands settle on a
-   * fixed window. Defaults to verifying every command when supplied.
+   * True when the CLI was just spawned. At SPAWN time its prompt is empty by
+   * construction, so the clear has nothing to do and sending it only adds a
+   * keystroke that historically landed mid-render on Windows ConPTY (the
+   * `</task>/test` glue bug). Note this is not the same as "empty at DELIVERY
+   * time": fresh-spawn delivery is deferred, and a user can type during the
+   * wait, which is what `pendingDraft` exists to catch.
    */
-  verifier?: CommandVerifier | null;
+  freshlySpawned?: boolean;
   /**
-   * Number of leading commands to verify. Lets callers verify deterministic
-   * adapter-emitted writes (`/model X`, `/effort Y`) while leaving
-   * user-supplied auto_commands fire-and-forget - the verifier cannot know
-   * whether a `/`-prefixed user command will produce a matching transcript
-   * entry, so attempting to verify it risks dropping the user's intent.
+   * Text the session's draft ledger believes is sitting unsubmitted in the
+   * prompt. Used for two things: forcing a clear on a fresh-spawn delivery
+   * where the user typed during the wait, and reporting what was discarded.
    */
-  verifiedPrefixLength?: number;
+  pendingDraft?: string | null;
+  /** True when the agent is mid-turn, so the clear is a deliberate interrupt. */
+  interruptingTurn?: boolean;
+  /** Per-command verifier; commands with `verify: 'none'` skip it. */
+  verifier?: CommandVerifier | null;
   /**
    * Caller cancellation. The current write/wait stops; previous writes have
    * already been queued through `sessionManager.write` and cannot be
@@ -63,6 +117,23 @@ export interface SubmitKeystrokesOptions {
   source?: string;
 }
 
+/** Settle tuning. These are CAPS on a handshake, not the mechanism.
+ *
+ *  The old code slept a flat 100ms between keypresses, sized against the
+ *  worst observed Ink picker render. That is correct on an idle machine and
+ *  wrong on a busy one, which is precisely why delivery degraded under load:
+ *  when the picker took longer than 100ms, the Esc landed before it mounted
+ *  (a no-op), the picker then rendered, and it ate the Enter. Waiting for the
+ *  render itself is fast when the machine is fast and patient when it is not.
+ */
+const SETTLE_IDLE_MS = 150;
+const SETTLE_CAP_MS = 1200;
+/** Bound on the post-Enter wait when nothing can be verified. */
+const UNVERIFIED_SETTLE_CAP_MS = 800;
+const VERIFY_POLL_MS = 25;
+const VERIFY_WINDOW_MS = 400;
+const MAX_SUBMIT_ATTEMPTS = 5;
+
 /**
  * `TerminalSubmit` is the byte-pushing engine for getting user-facing text
  * into a PTY session. Two methods, two strategies:
@@ -72,18 +143,19 @@ export interface SubmitKeystrokesOptions {
  *   so special characters do not trigger key handlers. Browser-pane Send and
  *   future content-delivery paths use this.
  *
- * - **submitKeystrokes**: manual `Ctrl+C? → text → Esc → Enter` keystroke
- *   sequence for slash commands and anything the TUI must interpret. The Esc
- *   step dismisses any open autocomplete picker so Enter resolves to "submit
- *   typed text" rather than "select picker item". `auto_command`, `/model`,
- *   `/effort`, and `send_command` actions all use this.
+ * - **submitKeystrokes**: manual `clear? -> text -> Esc? -> Enter` keystroke
+ *   sequence for slash commands and anything the TUI must interpret.
+ *   `auto_command`, `/effort`, and `send_command` actions all use this.
  *
  * The two strategies are NOT interchangeable - bracket-pasting `/test` makes
  * the TUI treat it as literal text (slash-command parser never fires), and
  * sending a 2KB URL as keystrokes takes ~80 seconds and trips key handlers.
- * Callers must pick the right method for their content type. The
- * `TerminalSubmitScheduler` wrapper layered on top of `submitKeystrokes`
- * adds task-keyed lifecycle (cancel, fresh-spawn wait, drag-burst coalesce).
+ * Callers must pick the right method for their content type.
+ *
+ * PROMPT-STATE POLICY LIVES HERE, not in the scheduler, because
+ * `send_command` (transition-engine) and the Command Terminal call this
+ * method directly and bypass the scheduler entirely. Policy at the byte layer
+ * is policy everywhere.
  */
 export class TerminalSubmit {
   constructor(
@@ -93,7 +165,7 @@ export class TerminalSubmit {
 
   /**
    * Bracketed-paste delivery for free-form content. Delegates to PasteEngine
-   * which handles drain → chunked write → output settle → \r → submission
+   * which handles drain -> chunked write -> output settle -> \r -> submission
    * evidence with retry. See `paste-engine.ts` for the underlying algorithm
    * and timing tunables.
    */
@@ -106,181 +178,221 @@ export class TerminalSubmit {
   }
 
   /**
-   * Manual keystroke sequence for one or more commands. Each command is
-   * sanitized (CR/LF/Tab → space, then trim) and delivered as
-   * `text → Esc → Enter` with `KEYPRESS_DELAY` ms between keypresses (see
-   * the constant in the body for the current value and the rationale).
-   * The leading Ctrl+C (default, opt-out via `sendCtrlC: false`) clears
-   * any half-typed input before the first command.
+   * Deliver one or more commands as keystrokes.
    *
-   * For chained bursts (e.g. `/model X` then `/effort Y` then auto_command):
-   *   - Pass the whole sequence in `commands[]`.
-   *   - Provide a `verifier` and `verifiedPrefixLength` to confirm each
-   *     deterministic write reached the transcript. Trailing user-supplied
-   *     commands settle on a fixed 500ms window (intentionally unverified -
-   *     a `/`-prefixed user command may not produce a matching JSONL entry).
+   * Each command is sanitized, then delivered as a handshake chain rather
+   * than a timed sequence: every write is followed by a queue drain (so the
+   * wait is measured from the PTY, not from the enqueue) and an output settle
+   * (so the next keystroke lands after the TUI has actually rendered).
    *
-   * Aborting via `opts.signal` stops the next write/wait. Already-queued
-   * writes still flush through `sessionManager.write`.
+   * Escape is sent ONLY for `/`-prefixed commands. Its job is dismissing the
+   * slash-command picker, which only opens for a slash; on a plain-prose
+   * command no picker exists and Esc is not a no-op on Claude Code's prompt,
+   * so sending it there risks clearing the very text we just typed.
+   *
+   * When a command is verifiable and confirmation does not arrive, the retry
+   * re-sends Esc AND Enter, not Enter alone. Re-firing Enter into a picker
+   * that is still open just gets eaten again; the Esc is what clears the
+   * condition. This is the single most load-bearing detail in the retry loop.
+   *
+   * On exhaustion we do NOT write Ctrl+C. If the command actually did submit
+   * and verification merely lagged, that Ctrl+C would kill the turn it just
+   * started; it is also the only path that could produce two consecutive
+   * Ctrl+C presses and exit the CLI. Exhaustion is reported instead, and the
+   * scheduler escalates.
    */
   async submitKeystrokes(
     sessionId: string,
-    commands: string[],
+    commands: ReadonlyArray<string | InjectionCommand>,
     opts: SubmitKeystrokesOptions = {},
-  ): Promise<void> {
-    const sanitized = commands.map((cmd) => sanitizeForPty(cmd)).filter((cmd) => cmd.length > 0);
-    if (sanitized.length === 0) return;
-
-    const sendCtrlC = opts.sendCtrlC ?? true;
-    const verifier = opts.verifier ?? null;
-    // Default to verifying every command when a verifier is provided; clamp
-    // to the actual sanitized length so an over-large hint does not index
-    // past the array. Filter-then-clamp is intentional: empty commands were
-    // dropped, but the caller's prefix length still refers to the pre-filter
-    // sequence; clamping is the safe interpretation.
-    const verifiedPrefixLength = verifier
-      ? Math.min(opts.verifiedPrefixLength ?? sanitized.length, sanitized.length)
-      : 0;
+  ): Promise<SubmitKeystrokesResult> {
+    const sanitized = normalizeCommands(commands);
     const source = opts.source ?? 'unknown';
+    const pendingDraft = opts.pendingDraft && opts.pendingDraft.length > 0 ? opts.pendingDraft : null;
 
-    // Tunables. KEYPRESS_DELAY at 100ms gives Claude Code's Ink TUI enough
-    // time to render the slash-command autocomplete picker BEFORE the Esc
-    // keypress arrives. Empirically 40ms was too aggressive -- under load
-    // (ConPTY IPC overhead, React commit cycle for the picker overlay) the
-    // Esc could arrive before the picker had rendered, becoming a no-op,
-    // and the subsequent Enter would land while the picker was still
-    // visible. The picker then ate the Enter (or Enter "selected" a partial
-    // match), leaving the auto_command typed but never submitted -- the
-    // exact regression we shipped fixes for. 100ms covers the worst
-    // observed picker-render time on Windows ConPTY without making the
-    // total burst (Ctrl+C + 3 keypresses + settle) feel sluggish.
-    const CTRL_C_SETTLE = 100;
-    const KEYPRESS_DELAY = 100;
-    const COMMAND_SETTLE = 500;
-    const VERIFY_POLL_MS = 25;
-    const RETRY_INTERVAL_MS = 400;
-    const MAX_RETRIES = 4;
+    if (sanitized.length === 0) {
+      return { outcome: 'unconfirmed', unconfirmedCommands: [], discardedDraft: null, interruptedTurn: false };
+    }
 
-    const wait = (ms: number): Promise<void> => new Promise((resolve, reject) => {
-      const signal = opts.signal;
-      if (signal?.aborted) {
-        reject(new Error('aborted'));
-        return;
-      }
-      const onAbort = (): void => {
-        clearTimeout(timer);
-        reject(new Error('aborted'));
-      };
-      const timer = setTimeout(() => {
-        // Detach the abort listener on success so signals reused across many
-        // waits in a single burst do not accumulate dead listeners.
-        signal?.removeEventListener('abort', onAbort);
-        resolve();
-      }, ms);
-      signal?.addEventListener('abort', onAbort, { once: true });
-    });
+    const verifier = opts.verifier ?? null;
+    const signal = opts.signal ?? new AbortController().signal;
+    const shouldClear = shouldClearPrompt(opts, pendingDraft);
+    const unconfirmedCommands: string[] = [];
+    let sawVerifiable = false;
+    let sawFailure = false;
 
     try {
-      if (sendCtrlC) {
-        // Leading Ctrl+C clears any half-typed input or interrupts thinking.
+      if (shouldClear) {
+        // Clears any half-typed draft AND interrupts a live turn. Both are
+        // deliberate; the caller reports them.
         this.sessionManager.write(sessionId, '\x03');
-        await wait(CTRL_C_SETTLE);
+        await this.settleAfterWrite(sessionId, signal, SETTLE_CAP_MS);
       }
 
-      for (let commandIndex = 0; commandIndex < sanitized.length; commandIndex++) {
-        const command = sanitized[commandIndex];
-        const shouldVerify = verifier !== null && commandIndex < verifiedPrefixLength;
-        const sentAt = Date.now();
+      for (const command of sanitized) {
+        const isSlashCommand = command.text.startsWith('/');
+        const canVerify = verifier !== null && command.verify !== 'none';
+        if (canVerify) sawVerifiable = true;
 
-        this.sessionManager.write(sessionId, command);
-        await wait(KEYPRESS_DELAY);
-        // Escape dismisses any open slash-command autocomplete picker so the
-        // following Enter resolves to "submit typed text" rather than "select
-        // picker item" (or, if the picker is mid-render, getting swallowed).
-        this.sessionManager.write(sessionId, '\x1b');
-        await wait(KEYPRESS_DELAY);
-        this.sessionManager.write(sessionId, '\r');
+        this.sessionManager.write(sessionId, command.text);
+        await this.settleAfterWrite(sessionId, signal, SETTLE_CAP_MS);
 
-        if (shouldVerify && verifier) {
-          const confirmed = await this.pollWithRetries(
-            verifier,
-            command,
-            sentAt,
-            sessionId,
-            { pollMs: VERIFY_POLL_MS, retryIntervalMs: RETRY_INTERVAL_MS, maxRetries: MAX_RETRIES },
-            opts.signal,
-          );
+        let confirmed = false;
+        for (let attempt = 0; attempt < MAX_SUBMIT_ATTEMPTS; attempt++) {
+          if (isSlashCommand) {
+            // Dismiss the autocomplete picker so Enter resolves to "submit
+            // typed text" rather than "select highlighted entry".
+            //
+            // Drain but do NOT settle between Esc and Enter. The remaining
+            // failure mode is a picker that mounts in the gap between them:
+            // the Esc finds nothing to dismiss, then the picker appears and
+            // eats the Enter. Settling here would widen that gap by a full
+            // idle window and make the race MORE likely, not less. The
+            // preceding settle already waited for the render; keeping these
+            // two keystrokes adjacent is what closes the window.
+            this.sessionManager.write(sessionId, '\x1b');
+            await this.sessionManager.drain(sessionId);
+          }
+
+          const sentAt = Date.now();
+          this.sessionManager.write(sessionId, '\r');
+          await this.sessionManager.drain(sessionId);
+
+          if (!canVerify || !verifier) break;
+
+          confirmed = await this.pollForConfirmation(verifier, command, sentAt, signal);
+          if (confirmed) break;
+        }
+
+        if (canVerify) {
           if (!confirmed) {
-            // After exhausting retries, clear any stuck text from the prompt
-            // buffer so the next command does not concatenate into the failed
-            // one. Better to drop the command than produce a malformed
-            // combined invocation.
+            unconfirmedCommands.push(command.text);
+            sawFailure = true;
             console.warn(
-              `[terminal-submit] ${source}: verification failed for "${command}" after ${MAX_RETRIES} retries -- clearing prompt and continuing`,
+              `[terminal-submit] ${source}: "${command.text}" unconfirmed after ${MAX_SUBMIT_ATTEMPTS} attempts`,
             );
-            this.sessionManager.write(sessionId, '\x03');
-            await wait(50);
           }
         } else {
-          await wait(COMMAND_SETTLE);
+          // Nothing to check against; give the TUI a bounded moment so a
+          // following command does not race this one's render.
+          await this.settleAfterWrite(sessionId, signal, UNVERIFIED_SETTLE_CAP_MS);
         }
       }
 
+      const outcome: InjectionOutcome = sawFailure ? 'failed' : sawVerifiable ? 'confirmed' : 'unconfirmed';
       console.log(
-        `[terminal-submit] ${source}: delivered ${sanitized.length} command(s) to session ${sessionId.slice(0, 8)}: ${sanitized.join(' | ')}`,
+        `[terminal-submit] ${source}: ${outcome} - delivered ${sanitized.length} command(s) to ` +
+          `session ${sessionId.slice(0, 8)}: ${sanitized.map((entry) => entry.text).join(' | ')}`,
       );
+      return {
+        outcome,
+        unconfirmedCommands,
+        discardedDraft: shouldClear ? pendingDraft : null,
+        interruptedTurn: shouldClear && (opts.interruptingTurn ?? false),
+      };
     } catch (caughtError) {
       const message = caughtError instanceof Error ? caughtError.message : String(caughtError);
-      if (message.includes('abort')) return; // aborted writes are expected
+      if (message.includes('abort')) {
+        return {
+          outcome: 'aborted',
+          unconfirmedCommands,
+          discardedDraft: shouldClear ? pendingDraft : null,
+          interruptedTurn: shouldClear && (opts.interruptingTurn ?? false),
+        };
+      }
       console.error(`[terminal-submit] ${source}: keystroke delivery failed: ${message}`);
       throw caughtError;
     }
   }
 
   /**
-   * Poll a verifier with a tight loop and re-fire Enter periodically when
-   * confirmation does not arrive. The reliability core of the verified path:
-   * in the happy case the transcript entry appears within 50-100ms of the
-   * initial Enter and we return immediately; in the "Enter eaten by overlay"
-   * case we re-fire Enter every `retryIntervalMs` until either a write lands
-   * cleanly or we exhaust the retry budget.
+   * Drain the write queue, then wait for the TUI's render to settle.
+   *
+   * The drain is what makes the wait meaningful: `sessionManager.write`
+   * enqueues, and the queue drains over later ticks, so a delay measured
+   * without it is a delay from the enqueue rather than from the PTY.
+   *
+   * Observes `'data-tap'`, not `'data'`. The `'data'` event is gated on
+   * renderer focus and is default-closed, and auto_command injection normally
+   * targets a session whose terminal is NOT the one on screen - observing
+   * `'data'` would silently degrade every such delivery to the wall-clock cap.
    */
-  private async pollWithRetries(
-    verifier: CommandVerifier,
-    command: string,
-    initialSentAt: number,
-    sessionId: string,
-    opts: { pollMs: number; retryIntervalMs: number; maxRetries: number },
-    signal: AbortSignal | undefined,
-  ): Promise<boolean> {
-    const wait = (ms: number): Promise<void> => new Promise((resolve, reject) => {
-      if (signal?.aborted) {
-        reject(new Error('aborted'));
-        return;
-      }
-      const onAbort = (): void => {
-        clearTimeout(timer);
-        reject(new Error('aborted'));
-      };
-      const timer = setTimeout(() => {
-        signal?.removeEventListener('abort', onAbort);
-        resolve();
-      }, ms);
-      signal?.addEventListener('abort', onAbort, { once: true });
+  private async settleAfterWrite(sessionId: string, signal: AbortSignal, capMs: number): Promise<void> {
+    await this.sessionManager.drain(sessionId);
+    await waitForOutputSettle(this.sessionManager, sessionId, {
+      event: 'data-tap',
+      idleMs: SETTLE_IDLE_MS,
+      capMs,
+      floorMs: 0,
+      signal,
+      abortError: () => new Error('aborted'),
     });
-
-    let sentAt = initialSentAt;
-    let retries = 0;
-    while (true) {
-      const deadline = Date.now() + opts.retryIntervalMs;
-      while (Date.now() < deadline) {
-        if (await verifier(command, sentAt)) return true;
-        await wait(opts.pollMs);
-      }
-      if (retries >= opts.maxRetries) return false;
-      retries += 1;
-      sentAt = Date.now();
-      this.sessionManager.write(sessionId, '\r');
-    }
   }
+
+  /**
+   * Poll the verifier for one retry window. Unlike the previous
+   * implementation this does NOT re-fire Enter itself; the caller's attempt
+   * loop re-sends Esc AND Enter together, which is what actually recovers a
+   * submission the picker swallowed.
+   */
+  private async pollForConfirmation(
+    verifier: CommandVerifier,
+    command: InjectionCommand,
+    sentAt: number,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    const deadline = Date.now() + VERIFY_WINDOW_MS;
+    while (Date.now() < deadline) {
+      if (signal.aborted) throw new Error('aborted');
+      if (await verifier(command.text, sentAt, command.verify)) return true;
+      await waitMs(VERIFY_POLL_MS, signal);
+    }
+    return false;
+  }
+}
+
+/**
+ * Whether to clear the prompt before typing.
+ *
+ * Warm sessions always clear: it is the only way to guarantee the command
+ * cannot concatenate onto a draft, and the user initiated the move that is
+ * injecting it. A fresh spawn skips the clear because its prompt is empty by
+ * construction - UNLESS the draft ledger saw the user type during the
+ * deferred wait, which is the realistic path to the reported
+ * `instead can we/pull-request` bug.
+ */
+function shouldClearPrompt(opts: SubmitKeystrokesOptions, pendingDraft: string | null): boolean {
+  if (opts.sendCtrlC !== undefined) return opts.sendCtrlC;
+  if (!opts.freshlySpawned) return true;
+  return pendingDraft !== null;
+}
+
+/** Sanitize, drop empties, and default a bare string to unverifiable. */
+function normalizeCommands(commands: ReadonlyArray<string | InjectionCommand>): InjectionCommand[] {
+  const normalized: InjectionCommand[] = [];
+  for (const entry of commands) {
+    const raw = typeof entry === 'string' ? { text: entry, verify: 'none' as const } : entry;
+    const text = sanitizeForPty(raw.text);
+    if (text.length === 0) continue;
+    normalized.push({ text, verify: raw.verify });
+  }
+  return normalized;
+}
+
+function waitMs(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new Error('aborted'));
+      return;
+    }
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      reject(new Error('aborted'));
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
 }

@@ -320,7 +320,6 @@ describe('SWIMLANE_UPDATE handler - restart-on-model and effort live-inject bran
     hoisted.prepareInjectionPlan.mockReturnValue({
       sequence: [],
       verifier: null,
-      verifiedPrefixLength: 0,
       needsRestartForModel: true,
     });
 
@@ -362,9 +361,8 @@ describe('SWIMLANE_UPDATE handler - restart-on-model and effort live-inject bran
 
     // prepareInjectionPlan returns a live-inject plan (no model restart needed).
     hoisted.prepareInjectionPlan.mockReturnValue({
-      sequence: ['/effort xhigh'],
+      sequence: [{ text: '/effort xhigh', verify: 'command-match' }],
       verifier: null,
-      verifiedPrefixLength: 1,
       needsRestartForModel: false,
       appliedSettings: { effort: 'xhigh' },
     });
@@ -376,8 +374,8 @@ describe('SWIMLANE_UPDATE handler - restart-on-model and effort live-inject bran
     expect(context.terminalSubmitScheduler.scheduleKeystrokes).toHaveBeenCalledWith(
       'task-board-2',
       'session-board-2',
-      ['/effort xhigh'],
-      { verifier: null, verifiedPrefixLength: 1 },
+      [{ text: '/effort xhigh', verify: 'command-match' }],
+      { verifier: null },
     );
 
     // No restart should have been triggered for an effort-only change.
@@ -526,9 +524,8 @@ describe('SWIMLANE_UPDATE handler - restart-on-model and effort live-inject bran
 
     // prepareInjectionPlan returns a live-inject plan (model unchanged, no restart needed).
     hoisted.prepareInjectionPlan.mockReturnValue({
-      sequence: ['/effort xhigh'],
+      sequence: [{ text: '/effort xhigh', verify: 'command-match' }],
       verifier: null,
-      verifiedPrefixLength: 1,
       needsRestartForModel: false,
       appliedSettings: { effort: 'xhigh' },
     });
@@ -540,8 +537,8 @@ describe('SWIMLANE_UPDATE handler - restart-on-model and effort live-inject bran
     expect(context.terminalSubmitScheduler.scheduleKeystrokes).toHaveBeenCalledWith(
       'task-board-6',
       'session-board-6',
-      ['/effort xhigh'],
-      { verifier: null, verifiedPrefixLength: 1 },
+      [{ text: '/effort xhigh', verify: 'command-match' }],
+      { verifier: null },
     );
 
     // Model is unchanged, so no restart should be triggered.
@@ -570,7 +567,6 @@ describe('SWIMLANE_UPDATE handler - restart-on-model and effort live-inject bran
     hoisted.prepareInjectionPlan.mockReturnValue({
       sequence: [],
       verifier: null,
-      verifiedPrefixLength: 0,
       needsRestartForModel: true,
     });
     hoisted.restartSessionForSettingsChange.mockResolvedValue({ ok: true });
@@ -608,7 +604,6 @@ describe('SWIMLANE_UPDATE handler - restart-on-model and effort live-inject bran
     hoisted.prepareInjectionPlan.mockReturnValue({
       sequence: [],
       verifier: null,
-      verifiedPrefixLength: 0,
       needsRestartForModel: true,
     });
     hoisted.restartSessionForSettingsChange.mockResolvedValue({ ok: false, reason: 'no session found' });

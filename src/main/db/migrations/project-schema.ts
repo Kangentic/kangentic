@@ -17,6 +17,7 @@ export function runProjectMigrations(db: Database.Database): void {
       permission_mode TEXT DEFAULT NULL,
       auto_spawn INTEGER NOT NULL DEFAULT 1,
       auto_command TEXT DEFAULT NULL,
+      auto_command_mode TEXT NOT NULL DEFAULT 'immediate',
       created_at TEXT NOT NULL
     );
 
@@ -1230,6 +1231,41 @@ export function runProjectMigrations(db: Database.Database): void {
             OR effort_override IS NOT NULL OR permission_mode IS NOT NULL)`);
     });
     addRunModeTransaction();
+  }
+
+  // Migration: add auto_command_mode to swimlanes. Controls WHEN a column's
+  // auto_command fires: 'immediate' (inject on arrival, interrupting a live
+  // turn) or 'deferred' (hold until the current turn genuinely finishes).
+  // Defaults to 'immediate', which is exactly the behavior every existing
+  // column already had, so no backfill is needed.
+  const hasAutoCommandMode = (db.pragma('table_info(swimlanes)') as Array<{ name: string }>)
+    .some((column) => column.name === 'auto_command_mode');
+  if (!hasAutoCommandMode) {
+    db.exec("ALTER TABLE swimlanes ADD COLUMN auto_command_mode TEXT NOT NULL DEFAULT 'immediate'");
+  }
+
+  // Migration: record the outcome of a task's most recent auto_command
+  // injection, so a failure is observable instead of being a console warning
+  // nobody sees. Written by the injection reporter; read by the renderer to
+  // raise a notice.
+  //
+  // `auto_command_state` is one of 'confirmed' | 'unconfirmed' | 'failed' |
+  // 'cancelled'. `unconfirmed` is NOT a failure: most agents expose no
+  // transcript verifier at all, so their deliveries can only ever land there,
+  // and conflating the two would make the field meaningless off Claude.
+  const taskInjectionColumns = (db.pragma('table_info(tasks)') as Array<{ name: string }>)
+    .map((column) => column.name);
+  if (!taskInjectionColumns.includes('auto_command_state')) {
+    db.exec('ALTER TABLE tasks ADD COLUMN auto_command_state TEXT DEFAULT NULL');
+  }
+  if (!taskInjectionColumns.includes('auto_command_text')) {
+    db.exec('ALTER TABLE tasks ADD COLUMN auto_command_text TEXT DEFAULT NULL');
+  }
+  if (!taskInjectionColumns.includes('auto_command_error')) {
+    db.exec('ALTER TABLE tasks ADD COLUMN auto_command_error TEXT DEFAULT NULL');
+  }
+  if (!taskInjectionColumns.includes('auto_command_at')) {
+    db.exec('ALTER TABLE tasks ADD COLUMN auto_command_at TEXT DEFAULT NULL');
   }
 
   // Seed default swimlanes if empty (must run after all ALTER TABLE migrations)

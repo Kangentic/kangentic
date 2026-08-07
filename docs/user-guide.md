@@ -353,6 +353,7 @@ Click the column header's settings icon. You can configure:
 | **Permission Mode** | Override the global permission mode for agents in this column |
 | **Auto Spawn** | Whether moving a task here spawns an agent (default: on) |
 | **Auto Command** | Command injected into running sessions when tasks arrive |
+| **Auto Command Timing** | Whether that command interrupts the agent or waits for its current turn to finish |
 | **Plan Exit Target** | For plan-mode columns: where tasks move when planning completes |
 
 When a column's agent override differs from the current session's agent, moving a task into that column triggers a cross-agent handoff. The outgoing agent's context (transcript, git changes, metrics) is automatically packaged and delivered to the incoming agent.

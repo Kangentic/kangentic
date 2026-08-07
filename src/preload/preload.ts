@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '../shared/ipc-channels';
-import type { ElectronAPI, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, SessionEvent, UpdateDownloadedInfo, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner } from '../shared/types';
+import type { ElectronAPI, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, SessionEvent, UpdateDownloadedInfo, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice } from '../shared/types';
 import type { Announcement } from '../shared/announcements';
 import { POPOUT_ARG_PREFIX } from '../shared/pop-out';
 import type { PopOutDescriptor, PopOutKind, PopOutParamsByKind } from '../shared/pop-out';
@@ -107,6 +107,11 @@ const api: ElectronAPI = {
         callback(taskId, taskTitle, message, projectId);
       ipcRenderer.on(IPC.TASK_SPAWN_BLOCKED, handler);
       return () => ipcRenderer.removeListener(IPC.TASK_SPAWN_BLOCKED, handler);
+    },
+    onAutoCommandResult: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, result: AutoCommandResultNotice) => callback(result);
+      ipcRenderer.on(IPC.TASK_AUTO_COMMAND_RESULT, handler);
+      return () => ipcRenderer.removeListener(IPC.TASK_AUTO_COMMAND_RESULT, handler);
     },
     onCreatedByAgent: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, taskId: string, taskTitle: string, columnName: string, projectId?: string) =>

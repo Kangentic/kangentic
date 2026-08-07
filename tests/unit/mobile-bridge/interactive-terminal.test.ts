@@ -38,7 +38,7 @@ describe('handleInteractiveTerminal', () => {
 
     expect(response.ok).toBe(true);
     expect(response.payload).toEqual({ written: true });
-    expect(sessionManager.write).toHaveBeenCalledWith('sess-1', 'npm login\r');
+    expect(sessionManager.write).toHaveBeenCalledWith('sess-1', 'npm login\r', 'user');
   });
 
   it('rejects (never reports written:true) when the session exists but has no live PTY', () => {

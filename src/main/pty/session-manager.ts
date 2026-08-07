@@ -26,6 +26,7 @@ import { safeKillPty } from './lifecycle/pty-kill';
 import { DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS, performSpawn } from './lifecycle/session-spawn-flow';
 import { SessionRegistry, toSession, filterCacheByProject, type ManagedSession, type ManagedSessionSummary } from './session-registry';
 import { createWriteQueue, type WriteQueue } from './write-queue';
+import { PromptDraftLedger, type WriteOrigin } from './prompt-draft-ledger';
 import { BackpressureController } from './buffer/backpressure-controller';
 import { traceTerminal } from './terminal-trace';
 import { isShuttingDown } from '../shutdown-state';
@@ -149,6 +150,11 @@ export class SessionManager extends EventEmitter {
    * cannot be fragmented by interleaved writes.
    */
   private writeQueues = new Map<string, WriteQueue>();
+  /**
+   * Per-session record of what the user has typed and not yet sent. Read by
+   * keystroke injection so an auto_command never concatenates onto a draft.
+   */
+  private promptDrafts = new PromptDraftLedger();
   /**
    * Terminal dimensions from a resize that arrived before the session's PTY
    * existed (the renderer mounted and fit its container before the auto-resume
@@ -437,6 +443,9 @@ export class SessionManager extends EventEmitter {
         writeQueue.dispose();
         this.writeQueues.delete(sessionId);
       }
+      // The prompt died with the PTY; a remembered draft would otherwise be
+      // reported as discarded by the next session to reuse this id.
+      this.promptDrafts.clear(sessionId);
       // The PTY is gone; drop any backpressure accounting (resume is moot).
       this.backpressure.release(sessionId);
       // Nothing left to reshape either: a respawn spawns at the desktop grid.
@@ -882,9 +891,20 @@ export class SessionManager extends EventEmitter {
     return !!this.registry.get(sessionId)?.pty;
   }
 
-  write(sessionId: string, data: string): void {
+  /**
+   * Enqueue bytes for the session's PTY.
+   *
+   * `origin` tells the prompt-draft ledger whether these bytes are something a
+   * human typed. It defaults to `'system'` so an unmarked caller can never be
+   * mistaken for user input; the human-facing entry points (the renderer's
+   * SESSION_WRITE, dictation, the mobile bridge's interactive terminal and
+   * permission-prompt answers) pass `'user'` explicitly.
+   */
+  write(sessionId: string, data: string, origin: WriteOrigin = 'system'): void {
     const session = this.registry.get(sessionId);
     if (!session?.pty || data.length === 0) return;
+
+    this.promptDrafts.record(sessionId, data, origin);
 
     let queue = this.writeQueues.get(sessionId);
     if (!queue) {
@@ -910,6 +930,15 @@ export class SessionManager extends EventEmitter {
     const queue = this.writeQueues.get(sessionId);
     if (!queue) return Promise.resolve();
     return queue.drained();
+  }
+
+  /**
+   * Text the user has typed into this session's prompt and not yet sent, or
+   * null when the prompt looks empty. Used by keystroke injection to decide
+   * whether a clear is needed and to report what it discarded.
+   */
+  getPendingDraft(sessionId: string): string | null {
+    return this.promptDrafts.get(sessionId);
   }
 
   /**

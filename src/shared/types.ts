@@ -478,6 +478,8 @@ export interface Swimlane {
   permission_mode: PermissionMode | null;
   auto_spawn: boolean;
   auto_command: string | null;
+  /** When this column's auto_command fires (see AutoCommandMode). Defaults to 'immediate'. */
+  auto_command_mode: AutoCommandMode;
   plan_exit_target_id: string | null;
   agent_override: string | null;
   /** Free-form model identifier (e.g. "opus", "sonnet", "claude-opus-4-7"). Adapter-specific; null inherits the agent default. */
@@ -490,6 +492,54 @@ export interface Swimlane {
   /** What to do with that track on entry (see SessionSpawnStrategy). Defaults to 'create_or_resume'. */
   session_spawn_strategy: SessionSpawnStrategy;
   created_at: string;
+}
+
+/**
+ * When a column's `auto_command` is delivered to the agent.
+ *
+ * - `immediate` (default) inject as soon as the task lands in the column,
+ *   interrupting the agent's current turn if there is one. The interruption is
+ *   reported to the user rather than being silent.
+ * - `deferred` hold until the agent's current turn genuinely finishes, then
+ *   inject. "Finished" is the two-signal turn-completion predicate (idle AND a
+ *   quiet PTY), not a timer and not a bare idle check - see
+ *   `src/main/transition-engine/turn-completion.ts` for why a bare idle is not
+ *   safe here.
+ */
+export type AutoCommandMode = 'immediate' | 'deferred';
+
+/**
+ * Terminal state of one auto_command delivery.
+ *
+ * `unconfirmed` is NOT a failure, and the distinction is load-bearing: only
+ * Claude currently implements `getSubmissionVerifier('command-injection')`, so
+ * on every other agent a delivery can only ever land here. Treating it as a
+ * failure would make the field meaningless off Claude and would turn a normal
+ * delivery into an error notice for most users.
+ *
+ * `escalated` means keystrokes could not be confirmed, so the session was
+ * restarted and the command handed to the CLI as its prompt argument. Delivery
+ * is guaranteed by the spawn, so it is not a failure - but no verifier saw it
+ * land, so it is deliberately not `confirmed` either.
+ */
+export type AutoCommandState = 'confirmed' | 'unconfirmed' | 'escalated' | 'failed' | 'cancelled';
+
+/** Payload of the `task:autoCommandResult` push event. */
+export interface AutoCommandResultNotice {
+  taskId: string;
+  taskTitle: string;
+  projectId?: string;
+  state: AutoCommandState;
+  /** The command text that was attempted. */
+  command: string;
+  /** Set when `state` is 'failed'; already user-facing prose. */
+  reason?: string;
+  /** Unsent text that was cleared off the prompt to make room, if any. */
+  discardedDraft?: string;
+  /** True when delivery interrupted a turn the agent was in the middle of. */
+  interruptedTurn: boolean;
+  /** True when delivery only succeeded by restarting the session. */
+  escalated: boolean;
 }
 
 export type ActionType =
@@ -1170,6 +1220,22 @@ export type SubmissionContext =
        * `sentAt - tolerance`.
        */
       sentAt?: number;
+      /**
+       * How strongly this command's delivery may be confirmed.
+       *
+       * - `command-match` the adapter emitted this itself (`/effort xhigh`),
+       *   so the transcript must show a discrete invocation with exactly
+       *   these args. Rejecting a combined-args entry is the point: that is
+       *   how a swallowed Enter is detected.
+       * - `submitted` a user-supplied auto_command. It may be plain prose or
+       *   an unregistered `/foo`, so it cannot be required to parse as a
+       *   registered slash command - only that EXACTLY this text became a
+       *   user turn. Strictly weaker, therefore always available.
+       *
+       * Defaults to `command-match` when absent, preserving the behavior of
+       * callers written before per-command modes existed.
+       */
+      mode?: 'command-match' | 'submitted';
     };
 
 /** Context type for `getSubmissionVerifier()` parameter. */
@@ -3405,6 +3471,7 @@ export interface SwimlaneCreateInput {
   permission_mode?: PermissionMode | null;
   auto_spawn?: boolean;
   auto_command?: string | null;
+  auto_command_mode?: AutoCommandMode;
   plan_exit_target_id?: string | null;
   agent_override?: string | null;
   model_override?: string | null;
@@ -3426,6 +3493,7 @@ export interface SwimlaneUpdateInput {
   permission_mode?: PermissionMode | null;
   auto_spawn?: boolean;
   auto_command?: string | null;
+  auto_command_mode?: AutoCommandMode;
   plan_exit_target_id?: string | null;
   agent_override?: string | null;
   model_override?: string | null;
@@ -4022,6 +4090,8 @@ export interface BoardColumnConfig {
   planExitTarget?: string; // name of target column
   archived?: boolean;
   autoCommand?: string | null;
+  /** When the auto-command fires (see AutoCommandMode). Omitted means 'immediate'. */
+  autoCommandMode?: AutoCommandMode;
   agentOverride?: string | null;
   /** Adapter-specific model identifier passed at spawn time (e.g. Claude `--model`). Null inherits the agent default. */
   modelOverride?: string | null;
@@ -4082,6 +4152,7 @@ export interface BoardProfileEntry {
   effortOverride?: string | null;
   permissionMode?: PermissionMode | null;
   autoCommand?: string | null;
+  autoCommandMode?: AutoCommandMode;
   autoSpawn?: boolean;
   handoffContext?: boolean;
   sessionTarget?: SessionTarget;
@@ -4324,6 +4395,17 @@ export interface ElectronAPI {
      * the renderer already toasts.
      */
     onSpawnBlocked: (callback: (taskId: string, taskTitle: string, message: string, projectId?: string) => void) => () => void;
+    /**
+     * A column's auto_command finished delivering, and the result is worth
+     * telling the user about.
+     *
+     * Only fires for outcomes a user should act on: a `failed` delivery, or a
+     * successful one that had to discard typed text or interrupt a live turn.
+     * A plain `confirmed` delivery is silent, and so is `unconfirmed` - most
+     * agents expose no transcript verifier at all, so every delivery on them
+     * lands there and toasting it would be constant noise that means nothing.
+     */
+    onAutoCommandResult: (callback: (result: AutoCommandResultNotice) => void) => () => void;
     onCreatedByAgent: (callback: (taskId: string, taskTitle: string, columnName: string, projectId?: string) => void) => () => void;
     onUpdatedByAgent: (callback: (taskId: string, taskTitle: string, projectId?: string) => void) => () => void;
     onDeletedByAgent: (callback: (taskId: string, taskTitle: string, projectId?: string) => void) => () => void;

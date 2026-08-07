@@ -135,6 +135,9 @@ export function applyBoardConfigToDb(
           // from here materially riskier than one from a deliberate user edit.
           auto_spawn: (isTodo || isDone) ? false : (columnConfig.autoSpawn ?? existing.auto_spawn),
           auto_command: columnConfig.autoCommand ?? existing.auto_command,
+          // Mirrors auto_command's lack of an (isTodo || isDone) guard: the two
+          // travel together, and a mode without its command is inert anyway.
+          auto_command_mode: columnConfig.autoCommandMode ?? existing.auto_command_mode,
           agent_override: (isTodo || isDone) ? null : (columnConfig.agentOverride ?? existing.agent_override),
           model_override: (isTodo || isDone) ? null : (columnConfig.modelOverride ?? existing.model_override),
           effort_override: (isTodo || isDone) ? null : (columnConfig.effortOverride ?? existing.effort_override),
@@ -155,6 +158,7 @@ export function applyBoardConfigToDb(
           permission_mode: (isTodo || isDone) ? null : (columnConfig.permissionMode ?? null),
           auto_spawn: (isTodo || isDone) ? false : (columnConfig.autoSpawn ?? true),
           auto_command: columnConfig.autoCommand ?? null,
+          auto_command_mode: columnConfig.autoCommandMode ?? 'immediate',
           agent_override: (isTodo || isDone) ? null : (columnConfig.agentOverride ?? null),
           model_override: (isTodo || isDone) ? null : (columnConfig.modelOverride ?? null),
           effort_override: (isTodo || isDone) ? null : (columnConfig.effortOverride ?? null),

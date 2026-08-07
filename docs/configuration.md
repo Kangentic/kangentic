@@ -433,6 +433,7 @@ Each swimlane has its own overrides (stored in the per-project DB):
 | `permission_mode` | PermissionMode \| null | null | Permission mode override for this column |
 | `auto_spawn` | boolean | true | Whether moving a task here spawns an agent |
 | `auto_command` | string \| null | null | Command injected into running session on task arrival |
+| `auto_command_mode` | `'immediate'` \| `'deferred'` | `'immediate'` | Whether the auto-command interrupts the agent's current turn or waits for it to finish |
 | `plan_exit_target_id` | string \| null | null | Target column when plan-mode agent exits |
 | `agent_override` | string \| null | null | Agent CLI override for sessions spawned in this column |
 | `model_override` | string \| null | null | Adapter-specific model identifier passed at spawn time (e.g. Claude `--model opus`). Live-applied via `/model` slash on column transition when supported. |
@@ -550,6 +551,7 @@ Ghost columns are invisible on the board but still exist in the database. Once a
       "autoSpawn": true,
       "permissionMode": "default",
       "autoCommand": null,
+      "autoCommandMode": "immediate",
       "planExitTarget": null,
       "agentOverride": null,
       "modelOverride": null,

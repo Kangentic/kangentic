@@ -36,6 +36,8 @@ import { prepareInjectionPlan, resolveLiveEffort, resolveSourceEffort } from '..
 import { resolveIsolatedSwimlaneId, resolveForceFresh } from '../../transition-engine/session-isolation';
 import { resolveEffectiveAutoCommand, applyProfileToLane } from '../../transition-engine/column-strategy';
 import { loadTaskProfile } from '../helpers/task-profile';
+import { reportAutoCommandOutcome } from '../helpers/auto-command-outcome';
+import { restartSessionForSettingsChange } from './session-reconcile';
 import type { Task, Swimlane, SessionRecord } from '../../../shared/types';
 
 /**
@@ -647,9 +649,32 @@ export async function handleTaskMove(
           // inject into the running PTY. With no model delta the sequence carries
           // at most `/effort` + the auto_command.
           if (plan) {
-            context.terminalSubmitScheduler.scheduleKeystrokes(task.id, task.session_id, plan.sequence, {
+            const injectedSessionId = task.session_id;
+            context.terminalSubmitScheduler.scheduleKeystrokes(task.id, injectedSessionId, plan.sequence, {
               verifier: plan.verifier,
-              verifiedPrefixLength: plan.verifiedPrefixLength,
+              mode: toLane?.auto_command_mode ?? 'immediate',
+              // Rung 3 of the delivery ladder. Routed through the allowlisted
+              // in-place restart rather than a new spawn call, so this adds no
+              // spawn entry point (see spawn-entry-point-parity.md).
+              escalate: async (commands) => {
+                if (!resolvedProjectPath) return false;
+                // `restartSessionForSettingsChange` mutates per-task session
+                // state and documents that its caller must hold the task lock.
+                // Taking it here is safe and not reentrant: `scheduleKeystrokes`
+                // is fire-and-forget, so this callback runs well after the
+                // TASK_MOVE handler released the lock.
+                return withTaskLock(task.id, async () => {
+                  const restarted = await restartSessionForSettingsChange(
+                    context,
+                    resolvedProjectId,
+                    resolvedProjectPath,
+                    task.id,
+                    { resumePrompt: commands.join('\n') },
+                  );
+                  return restarted.ok;
+                });
+              },
+              onOutcome: (report) => reportAutoCommandOutcome(context, tasks, task, report, resolvedProjectId),
             });
             // Record what the burst applied so the NEXT move diffs against the
             // session's new running value instead of re-injecting it.
@@ -658,7 +683,8 @@ export async function handleTaskMove(
             }
             console.log(
               `[TASK_MOVE] Injecting ${plan.sequence.length} command(s) for task ${task.id.slice(0, 8)}`
-              + ` into running session${plan.verifier ? ' (with command verification)' : ''}: ${plan.sequence.join(' | ')}`,
+              + ` into running session${plan.verifier ? ' (with command verification)' : ''}: `
+              + `${plan.sequence.map((command) => command.text).join(' | ')}`,
             );
             return null;
           }

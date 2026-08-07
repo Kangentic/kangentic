@@ -3,39 +3,35 @@
  *
  * `TerminalSubmit` exposes two methods:
  *
- *  - `submitContent(sessionId, text, opts)` — bracketed-paste delivery for
+ *  - `submitContent(sessionId, text, opts)` - bracketed-paste delivery for
  *    free-form content (browser-pane Send). Thin wrapper around the
  *    `PasteEngine.pasteAndSubmit` instance passed in the constructor; tests
  *    here just confirm the forwarding contract (paste-engine internals are
  *    covered by `paste-engine.test.ts`).
  *
- *  - `submitKeystrokes(sessionId, commands[], opts)` — manual `Ctrl+C? →
- *    text → Esc → Enter` keystroke sequence for slash commands. Tests pin
- *    the byte-level contract: ESCAPE is always between text and Enter so
- *    Enter resolves to "submit" (not "select picker item"); commands are
- *    sanitized; aborts stop the next write/wait; verifier integration
- *    works for chained sequences.
+ *  - `submitKeystrokes(sessionId, commands[], opts)` - the keystroke sequence
+ *    for slash commands. Tests pin the byte-level contract, the prompt-state
+ *    policy, and the per-command verification modes.
+ *
+ * These run on REAL timers against the `FakeTui` simulator rather than fake
+ * timers. The delivery path is now a handshake chain (drain, then wait for the
+ * TUI's render to settle) rather than a fixed-sleep sequence, so a fake-timer
+ * harness would have to hand-simulate the very output it is meant to be
+ * reacting to. Driving a TUI model that actually emits bytes tests the real
+ * mechanism; the settle windows are small, so the suite stays fast.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { EventEmitter } from 'node:events';
+import { describe, it, expect } from 'vitest';
 import { TerminalSubmit, type CommandVerifier } from '../../src/main/pty/terminal-submit';
 import type { PasteEngine, PasteOptions } from '../../src/main/pty/paste-engine';
+import type { SessionManager } from '../../src/main/pty/session-manager';
+import {
+  SimulatedSessionManager,
+  DEFAULT_TUI_OPTIONS,
+  createStubPasteEngine,
+  type FakeTuiOptions,
+} from './injection-tui-simulator';
 
-class MockSessionManager extends EventEmitter {
-  writes: Array<{ id: string; data: string }> = [];
-
-  write(id: string, data: string): void {
-    this.writes.push({ id, data });
-  }
-
-  writeRaw(id: string, data: string): void {
-    this.writes.push({ id, data });
-  }
-
-  drain(_id: string): Promise<void> {
-    return Promise.resolve();
-  }
-}
+const SESSION_ID = 's1';
 
 class MockPasteEngine implements PasteEngine {
   calls: Array<{ sessionId: string; text: string; options?: PasteOptions }> = [];
@@ -46,208 +42,292 @@ class MockPasteEngine implements PasteEngine {
   }
 }
 
-async function tick(): Promise<void> {
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
-}
-
-/** Drive the timer chain in submitKeystrokes: each wait() in the sequence
- *  resolves at a different timer boundary, and each needs a microtask flush
- *  before the next-loop wait gets registered. Use small step sizes so every
- *  intervening setTimeout (40ms keypress delays, 100ms Ctrl+C settle,
- *  500ms COMMAND_SETTLE) lands inside a flush window rather than getting
- *  jumped over in a single big advance. */
-async function advanceAndTick(ms: number, iterations = 30): Promise<void> {
-  const stepSize = Math.max(1, Math.ceil(ms / iterations));
-  for (let i = 0; i < iterations; i++) {
-    vi.advanceTimersByTime(stepSize);
-    await tick();
-  }
+function makeSubmit(tuiOptions: Partial<FakeTuiOptions> = {}): {
+  submit: TerminalSubmit;
+  sessionManager: SimulatedSessionManager;
+} {
+  const sessionManager = new SimulatedSessionManager(SESSION_ID, {
+    ...DEFAULT_TUI_OPTIONS,
+    ...tuiOptions,
+  });
+  const submit = new TerminalSubmit(
+    sessionManager as unknown as SessionManager,
+    createStubPasteEngine() as unknown as PasteEngine,
+  );
+  return { submit, sessionManager };
 }
 
 describe('TerminalSubmit', () => {
-  let sessionManager: MockSessionManager;
-  let pasteEngine: MockPasteEngine;
-  let submit: TerminalSubmit;
-
-  beforeEach(() => {
-    vi.useFakeTimers();
-    sessionManager = new MockSessionManager();
-    pasteEngine = new MockPasteEngine();
-    submit = new TerminalSubmit(sessionManager as never, pasteEngine);
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-    sessionManager.removeAllListeners();
-  });
-
   describe('submitContent', () => {
     it('forwards to PasteEngine.pasteAndSubmit byte-for-byte', async () => {
-      await submit.submitContent('s1', 'hello world', { bracketed: true, source: 'test' });
+      const pasteEngine = new MockPasteEngine();
+      const sessionManager = new SimulatedSessionManager(SESSION_ID);
+      const submit = new TerminalSubmit(sessionManager as unknown as SessionManager, pasteEngine);
+
+      await submit.submitContent(SESSION_ID, 'hello world', { bracketed: true, source: 'test' });
 
       expect(pasteEngine.calls).toHaveLength(1);
-      expect(pasteEngine.calls[0].sessionId).toBe('s1');
+      expect(pasteEngine.calls[0].sessionId).toBe(SESSION_ID);
       expect(pasteEngine.calls[0].text).toBe('hello world');
       expect(pasteEngine.calls[0].options).toEqual({ bracketed: true, source: 'test' });
-    });
-
-    it('passes through verifier and signal options', async () => {
-      const stubVerifier = vi.fn().mockResolvedValue(true);
-      const controller = new AbortController();
-
-      await submit.submitContent('s1', 'payload', {
-        verifier: stubVerifier,
-        signal: controller.signal,
-        source: 'browser-capture',
-      });
-
-      expect(pasteEngine.calls[0].options?.verifier).toBe(stubVerifier);
-      expect(pasteEngine.calls[0].options?.signal).toBe(controller.signal);
-      expect(pasteEngine.calls[0].options?.source).toBe('browser-capture');
+      sessionManager.dispose();
     });
   });
 
-  describe('submitKeystrokes', () => {
-    it('writes Ctrl+C → text → Esc → Enter for a single command', async () => {
-      const promise = submit.submitKeystrokes('s1', ['/test']);
-      await advanceAndTick(1000);
-      await promise;
+  describe('submitKeystrokes byte contract', () => {
+    it('writes clear then text then Esc then Enter for a slash command', async () => {
+      const { submit, sessionManager } = makeSubmit();
+      await submit.submitKeystrokes(SESSION_ID, [{ text: '/test', verify: 'none' }]);
 
-      const datas = sessionManager.writes.map((w) => w.data);
-      expect(datas).toEqual(['\x03', '/test', '\x1b', '\r']);
+      expect(sessionManager.writes).toEqual(['\x03', '/test', '\x1b', '\r']);
+      sessionManager.dispose();
     });
 
-    it('skips the leading Ctrl+C when sendCtrlC is false', async () => {
-      const promise = submit.submitKeystrokes('s1', ['/test'], { sendCtrlC: false });
-      await advanceAndTick(1000);
-      await promise;
+    it('does not send Esc for a plain-prose command', async () => {
+      // Esc exists to dismiss the slash-command picker, and no picker opens for
+      // prose. On Claude Code's prompt Esc is not a no-op, so sending it here
+      // risks clearing the very text we just typed.
+      const { submit, sessionManager } = makeSubmit();
+      await submit.submitKeystrokes(SESSION_ID, [{ text: 'review the diff', verify: 'none' }]);
 
-      const datas = sessionManager.writes.map((w) => w.data);
-      expect(datas).toEqual(['/test', '\x1b', '\r']);
+      expect(sessionManager.writes).toEqual(['\x03', 'review the diff', '\r']);
+      expect(sessionManager.tui.submissions.map((entry) => entry.text)).toEqual(['review the diff']);
+      sessionManager.dispose();
     });
 
-    it('regression: Escape is always positioned between text and Enter', async () => {
-      // The class of bug we shipped a fix for: bracketed-paste delivery left
-      // the slash-command picker open and Enter selected/swallowed the
-      // command. Manual Esc dismisses the picker so Enter submits.
-      const promise = submit.submitKeystrokes('s1', ['/test']);
-      await advanceAndTick(1000);
-      await promise;
+    it('writes each command in a chained sequence', async () => {
+      const { submit, sessionManager } = makeSubmit();
+      await submit.submitKeystrokes(SESSION_ID, [
+        { text: '/model opus', verify: 'none' },
+        { text: '/effort high', verify: 'none' },
+      ]);
 
-      const datas = sessionManager.writes.map((w) => w.data);
-      const textIndex = datas.indexOf('/test');
-      expect(textIndex).toBeGreaterThan(-1);
-      expect(datas[textIndex + 1]).toBe('\x1b');
-      expect(datas[textIndex + 2]).toBe('\r');
-    });
-
-    it('writes each command in a chained sequence with Esc between', async () => {
-      const promise = submit.submitKeystrokes('s1', ['/model opus', '/effort high']);
-      await advanceAndTick(2000);
-      await promise;
-
-      const datas = sessionManager.writes.map((w) => w.data);
-      // Ctrl+C → cmd1 → Esc → \r → cmd2 → Esc → \r
-      expect(datas).toEqual([
+      expect(sessionManager.writes).toEqual([
         '\x03',
         '/model opus', '\x1b', '\r',
         '/effort high', '\x1b', '\r',
       ]);
+      sessionManager.dispose();
     });
 
     it('sanitizes commands: collapses CR/LF/Tab to spaces', async () => {
-      const promise = submit.submitKeystrokes('s1', ['line\none\rtwo\tthree']);
-      await advanceAndTick(1000);
-      await promise;
+      const { submit, sessionManager } = makeSubmit();
+      await submit.submitKeystrokes(SESSION_ID, [{ text: 'line\none\rtwo\tthree', verify: 'none' }]);
 
-      const datas = sessionManager.writes.map((w) => w.data);
-      expect(datas).toContain('line one two three');
+      expect(sessionManager.writes).toContain('line one two three');
+      sessionManager.dispose();
     });
 
     it('drops empty commands silently', async () => {
-      const promise = submit.submitKeystrokes('s1', ['', '   ', '\n\t']);
-      await advanceAndTick(1000);
-      await promise;
+      const { submit, sessionManager } = makeSubmit();
+      const result = await submit.submitKeystrokes(SESSION_ID, [
+        { text: '', verify: 'none' },
+        { text: '   ', verify: 'none' },
+        { text: '\n\t', verify: 'none' },
+      ]);
 
-      // No writes - all commands sanitized to empty.
       expect(sessionManager.writes).toHaveLength(0);
+      expect(result.outcome).toBe('unconfirmed');
+      sessionManager.dispose();
     });
 
-    it('aborts in-flight via AbortSignal between writes', async () => {
+    it('accepts bare strings and treats them as unverifiable', async () => {
+      // `send_command` and the Command Terminal both pass plain strings. A bare
+      // string carries no declared verification, so it must never be reported
+      // as confirmed.
+      const { submit, sessionManager } = makeSubmit();
+      const result = await submit.submitKeystrokes(SESSION_ID, ['/test']);
+
+      expect(sessionManager.writes).toEqual(['\x03', '/test', '\x1b', '\r']);
+      expect(result.outcome).toBe('unconfirmed');
+      sessionManager.dispose();
+    });
+
+    it('reports aborted when cancelled mid-burst', async () => {
+      const { submit, sessionManager } = makeSubmit();
       const controller = new AbortController();
-      const promise = submit.submitKeystrokes('s1', ['/test'], { signal: controller.signal });
-
-      // Advance through Ctrl+C settle so we are between commands.
-      vi.advanceTimersByTime(100);
-      await tick();
-      const writesBeforeCancel = sessionManager.writes.length;
-
+      const promise = submit.submitKeystrokes(
+        SESSION_ID,
+        [{ text: '/test', verify: 'none' }],
+        { signal: controller.signal },
+      );
       controller.abort();
-      await advanceAndTick(1000);
-      await promise; // resolves cleanly on abort (logged, not thrown)
+      const result = await promise;
 
-      // No additional writes after cancel.
-      expect(sessionManager.writes.length).toBe(writesBeforeCancel);
+      expect(result.outcome).toBe('aborted');
+      sessionManager.dispose();
+    });
+  });
+
+  describe('prompt-state policy', () => {
+    it('clears the prompt on a warm session so the command cannot concatenate', async () => {
+      const { submit, sessionManager } = makeSubmit();
+      sessionManager.tui.setDraft('instead can we');
+
+      const result = await submit.submitKeystrokes(
+        SESSION_ID,
+        [{ text: '/pull-request', verify: 'none' }],
+        { pendingDraft: 'instead can we' },
+      );
+
+      expect(sessionManager.tui.submissions.map((entry) => entry.text)).toEqual(['/pull-request']);
+      expect(result.discardedDraft).toBe('instead can we');
+      sessionManager.dispose();
     });
 
-    it('verifier confirms via JSONL match within the first poll window', async () => {
-      const verifier: CommandVerifier = vi.fn().mockResolvedValue(true);
+    it('skips the clear on a fresh spawn with an empty prompt', async () => {
+      // The prompt is empty by construction at spawn, so the clear has nothing
+      // to do and only adds a keystroke that historically landed mid-render.
+      const { submit, sessionManager } = makeSubmit();
+      const result = await submit.submitKeystrokes(
+        SESSION_ID,
+        [{ text: '/test', verify: 'none' }],
+        { freshlySpawned: true },
+      );
 
-      const promise = submit.submitKeystrokes('s1', ['/model opus'], {
-        verifier,
-        verifiedPrefixLength: 1,
-      });
-      // Verifier resolves before the retry interval fires.
-      await advanceAndTick(500);
-      await promise;
-
-      expect(verifier).toHaveBeenCalled();
-      const calls = (verifier as unknown as ReturnType<typeof vi.fn>).mock.calls;
-      expect(calls[0][0]).toBe('/model opus');
+      expect(sessionManager.writes).toEqual(['/test', '\x1b', '\r']);
+      expect(result.discardedDraft).toBeNull();
+      sessionManager.dispose();
     });
 
-    it('verifier retry-on-Enter when first scan misses', async () => {
-      let scanCount = 0;
-      // Miss the first retry interval (~16 polls of 25ms = 400ms),
-      // succeed before the second one fires its Enter so the test
-      // observes exactly one retry write before resolving.
-      const verifier: CommandVerifier = async (_command, _sentAt) => {
-        scanCount += 1;
-        return scanCount > 20;
+    it('clears on a fresh spawn when the user typed during the deferred wait', async () => {
+      // Fresh-spawn delivery is deferred, so "empty at spawn time" is not
+      // "empty at delivery time". This is the reported bug's real path.
+      const { submit, sessionManager } = makeSubmit();
+      sessionManager.tui.setDraft('instead can we');
+
+      const result = await submit.submitKeystrokes(
+        SESSION_ID,
+        [{ text: '/pull-request', verify: 'none' }],
+        { freshlySpawned: true, pendingDraft: 'instead can we' },
+      );
+
+      expect(sessionManager.writes[0]).toBe('\x03');
+      expect(sessionManager.tui.submissions.map((entry) => entry.text)).toEqual(['/pull-request']);
+      expect(result.discardedDraft).toBe('instead can we');
+      sessionManager.dispose();
+    });
+
+    it('reports an interrupted turn when told the agent was mid-turn', async () => {
+      const { submit, sessionManager } = makeSubmit();
+      const result = await submit.submitKeystrokes(
+        SESSION_ID,
+        [{ text: '/test', verify: 'none' }],
+        { interruptingTurn: true },
+      );
+
+      expect(result.interruptedTurn).toBe(true);
+      sessionManager.dispose();
+    });
+  });
+
+  describe('verification', () => {
+    it('reports confirmed when the verifier matches', async () => {
+      const { submit, sessionManager } = makeSubmit();
+      const seen: Array<{ command: string; mode: string }> = [];
+      const verifier: CommandVerifier = async (command, _sentAt, mode) => {
+        seen.push({ command, mode });
+        return true;
       };
 
-      const promise = submit.submitKeystrokes('s1', ['/model opus'], {
-        verifier,
-        verifiedPrefixLength: 1,
-      });
-      // Total ~1000ms to cover Ctrl+C settle (100ms) + keypress group (200ms)
-      // + first retry interval (400ms) + a few more polls before success.
-      await advanceAndTick(1200, 120);
-      await promise;
-
-      // The retry path fires extra `\r` writes when verifier keeps returning false.
-      const enterCount = sessionManager.writes.filter((w) => w.data === '\r').length;
-      expect(enterCount).toBeGreaterThan(1);
-    });
-
-    it('time-settles trailing commands beyond verifiedPrefixLength', async () => {
-      const verifier: CommandVerifier = vi.fn().mockResolvedValue(true);
-
-      const promise = submit.submitKeystrokes(
-        's1',
-        ['/model opus', 'auto user prompt'],
-        { verifier, verifiedPrefixLength: 1 },
+      const result = await submit.submitKeystrokes(
+        SESSION_ID,
+        [{ text: '/model opus', verify: 'command-match' }],
+        { verifier },
       );
-      await advanceAndTick(2500);
-      await promise;
 
-      // Verifier called only for the first (verified) command, not the
-      // trailing user-supplied prompt.
-      expect(verifier).toHaveBeenCalledTimes(1);
-      const calls = (verifier as unknown as ReturnType<typeof vi.fn>).mock.calls;
-      expect(calls[0][0]).toBe('/model opus');
+      expect(result.outcome).toBe('confirmed');
+      expect(seen[0]).toEqual({ command: '/model opus', mode: 'command-match' });
+      sessionManager.dispose();
     });
+
+    it('forwards each command its own verify mode', async () => {
+      const { submit, sessionManager } = makeSubmit();
+      const modes: string[] = [];
+      const verifier: CommandVerifier = async (_command, _sentAt, mode) => {
+        modes.push(mode);
+        return true;
+      };
+
+      await submit.submitKeystrokes(
+        SESSION_ID,
+        [
+          { text: '/effort high', verify: 'command-match' },
+          { text: '/code-review', verify: 'submitted' },
+        ],
+        { verifier },
+      );
+
+      // The user's auto_command is verified too, under the weaker mode. Under
+      // the old single `verifiedPrefixLength` it was excluded entirely.
+      expect(modes).toEqual(['command-match', 'submitted']);
+      sessionManager.dispose();
+    });
+
+    it('never calls the verifier for a command declared unverifiable', async () => {
+      const { submit, sessionManager } = makeSubmit();
+      let calls = 0;
+      const verifier: CommandVerifier = async () => {
+        calls += 1;
+        return true;
+      };
+
+      const result = await submit.submitKeystrokes(
+        SESSION_ID,
+        [{ text: '/test', verify: 'none' }],
+        { verifier },
+      );
+
+      expect(calls).toBe(0);
+      expect(result.outcome).toBe('unconfirmed');
+      sessionManager.dispose();
+    });
+
+    it('re-sends Esc AND Enter on retry, recovering a picker-eaten submission', async () => {
+      // Re-firing Enter alone cannot recover: the picker is still open and eats
+      // it again. The Esc is what clears the condition. This is the single most
+      // load-bearing detail of the retry loop.
+      //
+      // The swallow is forced rather than provoked via `pickerRenderMs`: a
+      // timing-driven window lands differently under CI load, where the first
+      // attempt may simply succeed and fail the assertion that a retry occurred.
+      const { submit, sessionManager } = makeSubmit({ eatEnterCount: 1 });
+      const verifier: CommandVerifier = async (command) =>
+        sessionManager.tui.submissions.some((entry) => entry.text === command);
+
+      const result = await submit.submitKeystrokes(
+        SESSION_ID,
+        [{ text: '/code-review', verify: 'submitted' }],
+        { verifier },
+      );
+
+      expect(result.outcome).toBe('confirmed');
+      expect(sessionManager.tui.submissions.map((entry) => entry.text)).toEqual(['/code-review']);
+      const escapeCount = sessionManager.writes.filter((data) => data === '\x1b').length;
+      expect(escapeCount).toBeGreaterThan(1);
+      sessionManager.dispose();
+    });
+
+    it('reports failed, and never writes Ctrl+C, when retries are exhausted', async () => {
+      // On exhaustion the old code fired Ctrl+C into the live session. If the
+      // command HAD submitted and verification merely lagged, that killed the
+      // turn it just started - and it was the only path that could produce two
+      // consecutive Ctrl+C presses and exit the CLI.
+      const { submit, sessionManager } = makeSubmit();
+      const verifier: CommandVerifier = async () => false;
+
+      const result = await submit.submitKeystrokes(
+        SESSION_ID,
+        [{ text: '/code-review', verify: 'submitted' }],
+        { verifier },
+      );
+
+      expect(result.outcome).toBe('failed');
+      expect(result.unconfirmedCommands).toEqual(['/code-review']);
+      const clearWrites = sessionManager.writes.filter((data) => data === '\x03');
+      expect(clearWrites).toHaveLength(1); // the deliberate leading clear only
+      expect(sessionManager.tui.maxConsecutiveEmptyCtrlC).toBeLessThan(2);
+      sessionManager.dispose();
+    }, 20_000);
   });
 });

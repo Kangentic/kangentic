@@ -53,6 +53,7 @@ export function buildBoardConfigFromDb(params: {
       if (lane.permission_mode) column.permissionMode = lane.permission_mode;
       if (lane.is_archived && lane.role !== 'done') column.archived = true;
       if (lane.auto_command) column.autoCommand = lane.auto_command;
+      if (lane.auto_command_mode !== 'immediate') column.autoCommandMode = lane.auto_command_mode;
       if (lane.agent_override) column.agentOverride = lane.agent_override;
       if (lane.model_override) column.modelOverride = lane.model_override;
       if (lane.effort_override) column.effortOverride = lane.effort_override;

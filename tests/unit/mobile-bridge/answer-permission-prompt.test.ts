@@ -78,7 +78,9 @@ describe('handleAnswerPermissionPrompt', () => {
     );
     expect(response.ok).toBe(true);
     expect(response.payload).toEqual({ answered: true });
-    expect(write).toHaveBeenCalledWith('sess-1', '1\r');
+    // Tagged 'user': a phone answering a permission prompt is human input, and
+    // the prompt-draft ledger must see it the same way it sees the keyboard.
+    expect(write).toHaveBeenCalledWith('sess-1', '1\r', 'user');
   });
 
   it('rejects (without writing) when the prompt matches but the PTY is no longer writable', () => {

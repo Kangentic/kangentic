@@ -1,7 +1,7 @@
 import type { Project, SessionRecord, SessionUsage, Swimlane, Task } from '../../shared/types';
 import type { AgentAdapter } from '../agent/agent-adapter';
 import type { SessionRepository } from '../db/repositories/session-repository';
-import type { CommandVerifier } from './terminal-submit-scheduler';
+import type { CommandVerifier, InjectionCommand, InjectionVerifyMode } from './terminal-submit-scheduler';
 
 /**
  * The effort the AGENT itself reports it is running at, or null when it reports
@@ -73,7 +73,7 @@ export function resolveSourceEffort(input: {
  *
  * Returns null when there is nothing to inject (no settings delta, no
  * auto_command). Callers pass the result straight to
- * `terminalSubmitScheduler.scheduleKeystrokes(task.id, sessionId, plan.sequence, { verifier: plan.verifier, verifiedPrefixLength: plan.verifiedPrefixLength })`.
+ * `terminalSubmitScheduler.scheduleKeystrokes(task.id, sessionId, plan.sequence, { verifier: plan.verifier })`.
  */
 export interface InjectionPlanInput {
   adapter: AgentAdapter | undefined;
@@ -107,17 +107,18 @@ export interface InjectionPlanInput {
 }
 
 export interface InjectionPlan {
-  sequence: string[];
-  verifier: CommandVerifier | null;
   /**
-   * Number of leading commands in `sequence` that are safe to verify against
-   * the agent's transcript. This covers the deterministic adapter-emitted
-   * writes (`/effort Y` from `getInjectionSequence`) but excludes any trailing
-   * user-supplied auto_command, because the verifier cannot tell a `/`-prefixed
-   * user command from a settings command and would risk dropping the user's
-   * intended action after retry exhaustion.
+   * The commands to deliver, each carrying how its delivery may be confirmed.
+   *
+   * This replaced a `sequence: string[]` plus a single `verifiedPrefixLength`
+   * count. That shape could express only ONE verification semantic for a whole
+   * burst, so the trailing user auto_command - the thing users actually care
+   * about - had to be excluded from verification entirely and settled on a
+   * fixed timer. Per-command modes remove that hole by construction rather
+   * than by tuning the count.
    */
-  verifiedPrefixLength: number;
+  sequence: InjectionCommand[];
+  verifier: CommandVerifier | null;
   /**
    * Set when the destination has a CONCRETE model different from the session's
    * running model. A model change is never applied as a live `/model` swap on an
@@ -204,10 +205,19 @@ export function prepareInjectionPlan(input: InjectionPlanInput): InjectionPlan |
     effortChanged,
   }) ?? [];
 
+  // Adapter-emitted settings writes are verified strictly: we know the exact
+  // invocation we asked for, so a combined-args entry must read as a miss and
+  // retry. The user's auto_command is verified as "exactly this text was
+  // submitted", which holds whether or not it is a registered slash command.
+  const sequence: InjectionCommand[] = settingsSequence.map((text) => ({
+    text,
+    verify: 'command-match' as const,
+  }));
+
   const trimmedAutoCommand = autoCommand?.trim() ?? '';
-  const sequence = trimmedAutoCommand
-    ? [...settingsSequence, trimmedAutoCommand]
-    : settingsSequence;
+  if (trimmedAutoCommand) {
+    sequence.push({ text: trimmedAutoCommand, verify: 'submitted' });
+  }
 
   // Return null only when there is nothing to do at all: no live writes AND no
   // restart needed. A model-only change has an empty sequence but must still
@@ -233,7 +243,6 @@ export function prepareInjectionPlan(input: InjectionPlanInput): InjectionPlan |
   return {
     sequence,
     verifier,
-    verifiedPrefixLength: settingsSequence.length,
     needsRestartForModel,
     ...(hasApplied ? { appliedSettings } : {}),
   };
@@ -269,11 +278,21 @@ export function buildCommandInjectionVerifier(
   const submissionVerifier = adapter.getSubmissionVerifier('command-injection');
   if (!submissionVerifier) return null;
   const record = prefetchedRecord !== undefined ? prefetchedRecord : sessionRepo.getLatestForTask(taskId);
-  if (!record?.agent_session_id || !record.cwd) return null;
+  // A record is required (there is nothing to re-resolve against without one),
+  // but its agent_session_id is NOT. A fresh spawn has no captured id yet, and
+  // returning null here would leave fresh-spawn auto_commands permanently
+  // unverifiable - the exact delivery path that most needed the check, since
+  // it is the one that runs without a leading clear. Delivery is deferred
+  // until the CLI comes alive, and the id is resolved on every poll below, so
+  // by the time verification actually runs the id is there.
+  if (!record) return null;
   const recordId = record.id;
   const capturedAgentSessionId = record.agent_session_id;
   const capturedCwd = record.cwd;
-  return async (command: string, sentAt: number) => {
+  return async (command: string, sentAt: number, mode: InjectionVerifyMode) => {
+    // `none` never reaches a verifier (submitKeystrokes skips the call), but
+    // guard anyway so an unverifiable command can never be reported confirmed.
+    if (mode === 'none') return false;
     // Re-resolve the agent session id from the SAME record (by primary key,
     // never latest-for-task, which could shadow an isolated session's row) on
     // every poll: a /clear mid-burst forks the live conversation to a new id
@@ -284,25 +303,33 @@ export function buildCommandInjectionVerifier(
     const currentRecord = sessionRepo.findByAnyId(recordId);
     const currentAgentSessionId = currentRecord?.agent_session_id ?? capturedAgentSessionId;
     const currentCwd = currentRecord?.cwd ?? capturedCwd;
+    // Still no captured id/cwd: the transcript we would scan does not exist
+    // yet, so this poll simply has no answer. Reporting "not confirmed" lets
+    // the caller keep retrying rather than treating it as a hard failure.
+    if (!currentAgentSessionId || !currentCwd) return false;
     const verifiedInCurrent = await submissionVerifier({
       type: 'command-injection',
       text: command,
       agentSessionId: currentAgentSessionId,
       cwd: currentCwd,
       sentAt,
+      mode,
     });
     if (verifiedInCurrent || currentAgentSessionId === capturedAgentSessionId) {
       return verifiedInCurrent;
     }
     // The id changed mid-burst: also accept a match under the id captured at
     // plan-build time - the command may have landed in the pre-fork
-    // transcript an instant before the fork.
+    // transcript an instant before the fork. Skipped when nothing was captured
+    // (fresh spawn), where there is no earlier transcript to fall back to.
+    if (!capturedAgentSessionId || !capturedCwd) return false;
     return submissionVerifier({
       type: 'command-injection',
       text: command,
       agentSessionId: capturedAgentSessionId,
       cwd: capturedCwd,
       sentAt,
+      mode,
     });
   };
 }
