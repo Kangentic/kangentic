@@ -102,7 +102,30 @@ export function useTaskActions(input: {
     setPendingAction(action);
     try {
       if (action === 'pausing') {
-        await input.suspendSession(input.task.id);
+        // Pausing means "I am done with this task for now", so the window leaves
+        // immediately instead of sitting on a Resume prompt. It deliberately does
+        // NOT wait for the suspend to resolve: main tears the PTY down inside
+        // that call (gracefulPtyShutdown gives the agent up to 1500ms to exit,
+        // then force-kills and waits up to 1500ms more for propagation), and
+        // there is nothing for the user to watch meanwhile. Nor is there much to
+        // guard against - with a project open and the task on the board, suspend
+        // has no realistic reject path, and a rejection is still surfaced by the
+        // catch below. Starting the suspend BEFORE closing matters: the store's
+        // optimistic write lands synchronously, so the bottom panel already reads
+        // the session as suspended by the time the window goes.
+        //
+        // This hangs off the GESTURE, never the suspended state: a board move,
+        // the Code Review column, and a restart with auto-resume off all reach
+        // 'suspended' without ever entering this branch, and handleCommandSelect
+        // suspends through the same store action without entering handleToggle at
+        // all. `onClose` bypasses the unsaved-edit discard guard (`closeWithGuard`)
+        // rather than being unwrapped - it is the window's `requestCloseFrozen`,
+        // which snapshots the body's branch selector before starting the exit.
+        // Skipping the discard guard is safe because the edit-mode title bar
+        // carries no pause control, so this gesture cannot fire while editing.
+        const suspending = input.suspendSession(input.task.id);
+        input.onClose();
+        await suspending;
       } else {
         // Snapshot the displayed session id BEFORE the call. If main returns
         // the same id we already had on display, the renderer's view was

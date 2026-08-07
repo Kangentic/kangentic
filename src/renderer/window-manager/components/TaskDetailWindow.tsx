@@ -46,7 +46,7 @@ import { useLayerStore } from '../context';
 import { registerWindowCloser, unregisterWindowCloser } from '../store/window-close-registry';
 import { classifySnapZone, nextSnap } from '../dnd/snap-zones';
 import type { SnapDirection } from '../dnd/snap-zones';
-import type { Task, ShortcutConfig, TaskRunMode } from '../../../shared/types';
+import type { Task, ShortcutConfig, TaskRunMode, SessionDisplayState } from '../../../shared/types';
 
 interface TaskDetailWindowProps {
   task: Task;
@@ -61,6 +61,20 @@ interface TaskDetailWindowProps {
   titleBarPointerDown: (event: React.PointerEvent) => void;
   /** Animated, guard-aware window close (overlay-phase exit -> closeWindow). */
   requestClose: () => void;
+}
+
+/**
+ * Everything TaskDetailBody branches on to pick which face it shows: the
+ * active terminal, the queued / preparing placeholders, or the resume prompt.
+ * Named as one shape because it is snapshotted and restored as one - a field
+ * added here without being frozen reintroduces the split-state bug the freeze
+ * exists to prevent (see `sessionViewRef` below).
+ */
+interface BodySessionView {
+  sessionId: string | null;
+  displayKind: SessionDisplayState['kind'];
+  isSuspended: boolean;
+  toggling: boolean;
 }
 
 // Controls whose own click/double-click must win over a window drag or maximize
@@ -148,9 +162,61 @@ export function TaskDetailWindow({
     currentSwimlaneRole: currentSwimlane?.role,
   });
 
+  // A close request only STARTS the frame's exit; the window stays mounted for
+  // the fade. Session state can move underneath it in that window - pausing
+  // sets pendingAction and flips the session to 'suspended' in the very same
+  // tick - and TaskDetailBody would then swap the terminal for the big Resume
+  // prompt, so what the user watches fade out is a button that only appeared
+  // because they clicked. Freeze everything that picks the body's branch at the
+  // instant close is requested, so a window on its way out keeps the face it had.
+  //
+  // `displayKind` is the field that actually does the work here, not the two
+  // flags the Resume prompt reads. TaskDetailBody picks its branch in order, and
+  // the active-terminal branch is gated FIRST, on `sessionId && displayKind !==
+  // 'queued' && displayKind !== 'suspended'`. `displayKind` is derived straight
+  // from `session.status` (task-progress.ts), so the optimistic write flips it
+  // to 'suspended' on the same render that starts the fade. Freezing only
+  // `isSuspended` / `toggling` therefore fails BOTH gates at once - the terminal
+  // branch because displayKind is live-suspended, the resume branch because the
+  // frozen flags are pre-gesture false - and the body falls through to its
+  // description / empty-state branch, blanking the panel for the whole fade.
+  // That is the same flash with different content, so the snapshot has to cover
+  // the branch selector itself.
+  //
+  // `sessionId` is frozen alongside it because the two are read by that same
+  // gate, and a HALF-frozen gate is precisely the bug above. Measured honestly:
+  // reverting `sessionId` alone to live still passes, because a suspended
+  // session keeps its row and its id (only `status` moves), so it is defensive
+  // rather than load-bearing for this flow. Snapshot the gate as one value
+  // anyway - splitting it is what cost a render pass here already.
+  //
+  // Only the RENDER is frozen. Terminal ownership is claimed and released by
+  // `useTaskSessionState` off the live `session?.id`, not off these props, so a
+  // frozen `sessionId` cannot hold or leak the one-xterm-per-PTY claim.
+  //
+  // The snapshot comes from a ref rather than the live values for two reasons:
+  // this callback is handed to `useTaskActions` below as its `onClose`, so
+  // reading `actions.toggling` here would be circular; and the ref still holds
+  // the PRE-gesture values at this point, because a click handler runs to
+  // completion before React commits and re-runs the effect that refreshes it.
+  // It captures the real state rather than a hardcoded default so that closing
+  // an already suspended window keeps its Resume prompt instead of flashing a
+  // terminal.
+  const sessionViewRef = useRef<BodySessionView>({
+    sessionId: null,
+    displayKind: 'none',
+    isSuspended: false,
+    toggling: false,
+  });
+  const [closingView, setClosingView] = useState<BodySessionView | null>(null);
+  const requestCloseFrozen = useCallback(() => {
+    setClosingView(sessionViewRef.current);
+    requestClose();
+  }, [requestClose]);
+
   const actions = useTaskActions({
     task,
-    onClose: requestClose,
+    onClose: requestCloseFrozen,
     initialEdit,
     title,
     description,
@@ -191,6 +257,29 @@ export function TaskDetailWindow({
     skipDeleteConfirm,
     updateConfig,
   });
+
+  // Track the body's branch selector until a close is requested, then hold it.
+  // An effect (not a render-time write) is what makes the snapshot pre-gesture:
+  // it lands on commit, so it cannot run in the middle of the click handler that
+  // sets pendingAction, suspends, and closes.
+  const liveSessionId = sessionState.session?.id ?? null;
+  const liveDisplayKind = sessionState.displayState.kind;
+  useEffect(() => {
+    if (closingView) return;
+    sessionViewRef.current = {
+      sessionId: liveSessionId,
+      displayKind: liveDisplayKind,
+      isSuspended: sessionState.isSuspended,
+      toggling: actions.toggling,
+    };
+  }, [closingView, liveSessionId, liveDisplayKind, sessionState.isSuspended, actions.toggling]);
+
+  const bodySessionView: BodySessionView = closingView ?? {
+    sessionId: liveSessionId,
+    displayKind: liveDisplayKind,
+    isSuspended: sessionState.isSuspended,
+    toggling: actions.toggling,
+  };
 
   const hasSessionContext = sessionState.hasSessionContext || actions.toggling;
 
@@ -251,8 +340,8 @@ export function TaskDetailWindow({
   // The single guarded close used by every close affordance. Proceeds through
   // the frame's animated exit unless the discard guard intercepts.
   const closeWithGuard = useCallback(() => {
-    if (handleCloseAttempt()) requestClose();
-  }, [handleCloseAttempt, requestClose]);
+    if (handleCloseAttempt()) requestCloseFrozen();
+  }, [handleCloseAttempt, requestCloseFrozen]);
 
   const handleToggleMaximized = useCallback(() => toggleMaximizeWindow(windowId), [toggleMaximizeWindow, windowId]);
   const handleUndock = useCallback(() => untileWindow(windowId), [untileWindow, windowId]);
@@ -644,10 +733,10 @@ export function TaskDetailWindow({
               isArchived={isArchived}
               isInTodo={isInTodo}
               hasSessionContext={hasSessionContext}
-              sessionId={sessionState.session?.id ?? null}
-              displayKind={sessionState.displayState.kind}
-              isSuspended={sessionState.isSuspended}
-              toggling={actions.toggling}
+              sessionId={bodySessionView.sessionId}
+              displayKind={bodySessionView.displayKind}
+              isSuspended={bodySessionView.isSuspended}
+              toggling={bodySessionView.toggling}
               pendingAction={actions.pendingAction}
               pendingCommandLabel={pendingCommandLabel}
               savedAttachments={attachments.savedAttachments}
@@ -708,7 +797,7 @@ export function TaskDetailWindow({
           confirmLabel="Discard"
           cancelLabel="Keep editing"
           message="Closing now will discard your unsaved edits to this task."
-          onConfirm={() => { setConfirmDiscard(false); requestClose(); }}
+          onConfirm={() => { setConfirmDiscard(false); requestCloseFrozen(); }}
           onCancel={() => setConfirmDiscard(false)}
         />
       )}
