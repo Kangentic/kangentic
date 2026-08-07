@@ -215,6 +215,71 @@ test.describe('Activity marks', () => {
     }
   });
 
+  test('a mark REBUILT after mount (idle -> working mid-session) re-anchors instead of keeping its own creation-time phase', async () => {
+    // Every anchor assertion above seeds the card as agent-working from the very first paint,
+    // so the only invocation of ActivityMark's layout effect they exercise is its FIRST one -
+    // which always runs, dependency array or not, and would still pass even if a future edit
+    // added one (e.g. `}, [mark])` still fires on this exact prop change; `}, [])` would not,
+    // but neither shape is what this test is pinning). The actual defect class the anchor
+    // exists to prevent is a SUBSEQUENT render swapping in fresh markup: `TaskCard` flips
+    // `mark` from 'agent-idle' to 'agent-working' via `dangerouslySetInnerHTML`, which builds
+    // a brand-new <g class="kng-spin"> with no React fiber and no animation history. This
+    // drives that exact transition mid-session, after the page has been running long enough
+    // that an unanchored animation could not land on startTime 0 by coincidence, and confirms
+    // the freshly created animation is actively RE-anchored - not merely correctly anchored
+    // because it happened to exist from the start.
+    const { browser, page } = await launch('idle');
+    try {
+      const idleMark = page.locator(`[data-task-id="${TASK_ID}"] [data-mark="agent-idle"]`);
+      await expect(idleMark).toBeVisible({ timeout: 15000 });
+      // agent-idle is static (see 'a static mark carries no motion group at all'), so nothing
+      // is animating yet - the interesting event is what the rebuild does a moment from now.
+      await expect(idleMark.locator('.kng-spin')).toHaveCount(0);
+
+      await page.evaluate((sessionId) => {
+        const stores = (window as unknown as {
+          __zustandStores: { session: { getState: () => { updateActivity: (id: string, state: string) => void } } };
+        }).__zustandStores;
+        stores.session.getState().updateActivity(sessionId, 'thinking');
+      }, SESSION_ID);
+
+      const workingMark = page.locator(`[data-task-id="${TASK_ID}"] [data-mark="agent-working"]`);
+      await expect(workingMark).toBeVisible({ timeout: 10000 });
+
+      await expect
+        .poll(
+          () => page.evaluate((taskId) => {
+            const node = document.querySelector(
+              `[data-task-id="${taskId}"] [data-mark="agent-working"] .kng-spin`,
+            );
+            if (!node) return null;
+            const animations = node.getAnimations();
+            return {
+              // Turns the "enough real time has passed" precondition into an assertion rather
+              // than a sleep-and-hope: a fresh, UNanchored animation's startTime is set to the
+              // document timeline's current time at creation, so it can only read exactly 0 by
+              // fluke if the timeline itself is still near its origin.
+              documentTimeWellPastOrigin: (document.timeline.currentTime ?? 0) > 200,
+              // Not just "no animation has drifted" - a mutation that dropped the motion group
+              // entirely would otherwise pass this vacuously, the same failure mode the
+              // sibling test above guards against with its `classes:` key.
+              animationCount: animations.length,
+              startTime: animations[0]?.startTime ?? null,
+            };
+          }, TASK_ID),
+          {
+            message:
+              'the rebuilt working mark kept its own creation-time phase instead of '
+              + 're-anchoring to the document timeline - it will visibly jump or restart '
+              + 'against every mark that was already on screen',
+          },
+        )
+        .toEqual({ documentTimeWellPastOrigin: true, animationCount: 1, startTime: 0 });
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('marks render at their call site size, not the packaged 24px', async () => {
     // Computed style, not boundingBox: the task-detail window carries a scale transform, so
     // every measured rect inside it is uniformly smaller than its layout size.
