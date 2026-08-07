@@ -1207,4 +1207,82 @@ test.describe('agent monitor', () => {
       await browser.close();
     }
   });
+
+  /**
+   * The Active tile freezes its own icon at `counts.working === 0`, so an idle machine's
+   * chrome stops moving. The only prior coverage was a source-text scan in
+   * tests/unit/activity-mark.test.ts that pins the literal override string, and it stayed
+   * green for the entire time the override did nothing at all: the packaged `activity.css`
+   * is imported unlayered from node_modules and outranks any Tailwind utility, which live
+   * in `@layer utilities`. A string scan cannot see a lost cascade. These two assert the
+   * EFFECT - the computed `animation-name` of the real `.kng-spin` node - on both sides of
+   * the ternary, so neither a dropped `!important` nor a permanently-frozen tile can ship.
+   */
+  test('the Active tile freezes its ring when no agent is working', async () => {
+    const { browser, page } = await launchWithState(`
+      ${monitorPreConfig()}
+      window.__mockMonitorRows = [
+        {
+          // Running but user-blocked, so it routes through requiresUserInteraction() into
+          // the needs-you bucket rather than the suspended short-circuit. That keeps the
+          // summary row mounted (it unmounts entirely with zero rows) while holding the
+          // working count at 0, which is the state under test.
+          sessionId: 'sess-idle-only', projectId: '${PROJECT_A}', projectName: 'Monitor Alpha',
+          taskId: 'task-a', taskTitle: 'Fix PTY capture race', outputPeek: [], displayId: 142,
+          columnName: 'Tests', commandTerminalBranch: null, labels: [], prUrl: null,
+          prNumber: null, prState: null, agentName: 'claude', modelDisplayName: 'Opus 5',
+          effort: 'xhigh', permissionMode: 'plan', startedAt: '2026-01-01T00:00:00.000Z',
+          exitedAt: null, status: 'running', activity: 'idle',
+          activityReason: { kind: 'idle', since: 0 }, lastEvent: null, contextPercent: 62,
+          isolated: false, isCommandTerminal: false
+        }
+      ];
+    `);
+    try {
+      // Reduced motion would strip the animation regardless of the override and pass this
+      // vacuously. Headless Chromium already defaults to no-preference; pinned so the
+      // precondition is explicit rather than incidental.
+      await page.emulateMedia({ reducedMotion: 'no-preference' });
+      await openMonitor(page);
+      await expect(page.locator('[data-testid="monitor-summary-working-value"]')).toHaveText('0');
+
+      const workingRing = page.locator(
+        '[data-testid="monitor-summary-working"] [data-mark="agent-working"] .kng-spin',
+      );
+      await workingRing.waitFor({ state: 'attached', timeout: 10000 });
+      await expect
+        .poll(() => workingRing.evaluate((node) => getComputedStyle(node).animationName), {
+          message: 'the Active tile kept rotating at zero: the freeze lost the cascade',
+        })
+        .toBe('none');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the Active tile keeps its ring rotating while an agent is working', async () => {
+    // The other branch of the same ternary. Without it, an override that froze the tile
+    // unconditionally would still satisfy the zero-state test above.
+    const { browser, page } = await launchWithState(monitorPreConfig());
+    try {
+      await page.emulateMedia({ reducedMotion: 'no-preference' });
+      await openMonitor(page);
+      // The default fixture's three running+thinking rows. An exact count, so a fixture
+      // change that dropped it to zero fails here with a clear message instead of timing
+      // out confusingly on the animation assertion below.
+      await expect(page.locator('[data-testid="monitor-summary-working-value"]')).toHaveText('3');
+
+      const workingRing = page.locator(
+        '[data-testid="monitor-summary-working"] [data-mark="agent-working"] .kng-spin',
+      );
+      await workingRing.waitFor({ state: 'attached', timeout: 10000 });
+      await expect
+        .poll(() => workingRing.evaluate((node) => getComputedStyle(node).animationName), {
+          message: 'the Active tile stopped rotating while agents were working',
+        })
+        .toBe('kng-activity-spin');
+    } finally {
+      await browser.close();
+    }
+  });
 });

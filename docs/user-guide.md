@@ -668,7 +668,7 @@ The viewer opens positioned at the latest message, or centered on the turn match
 
 The Command Terminal provides quick, ephemeral access to Claude Code without creating a task on the board. Useful for one-off actions like creating releases, running queries, or any ad-hoc interaction.
 
-**Opening:** Press `Ctrl+Shift+P` (or `Cmd+Shift+P` on macOS), or click the terminal icon in the title bar (next to the settings gear). The same button **toggles** the layer closed again, so there is always a one-click way to hide it, even when a window is maximized. The terminal icon's border reflects activity across your open terminals: it marches in green while an agent is working, holds a steady warm amber when one needs your input, and stays plain when idle.
+**Opening:** Press `Ctrl+Shift+P` (or `Cmd+Shift+P` on macOS), or click the terminal icon in the title bar (next to the settings gear). The same button **toggles** the layer closed again, so there is always a one-click way to hide it, even when a window is maximized. The terminal icon reflects activity across your open terminals: its prompt blinks in green while an agent is working, it holds a steady warm amber when one needs your input, and it stays plain when idle.
 
 **Behavior:**
 - Spawns Claude Code at the project root on the configured default base branch

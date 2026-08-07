@@ -1355,7 +1355,7 @@ test.describe('Task Activity Indicators', () => {
 
         const pauseButton = dialog.locator('button[title="Pause session"]');
         await expect(pauseButton).toBeVisible({ timeout: 10000 });
-        // Active: the marching ring with the pause centered inside it. Ring and bars are one
+        // Active: the rotating ring with the pause centered inside it. Ring and bars are one
         // packaged mark now, so the mark's identity carries both facts.
         await expect(pauseButton.locator('[data-mark="control-pause-working"]')).toBeVisible();
         await expect(pauseButton.locator('[data-mark="control-pause-idle"]')).toHaveCount(0);
@@ -1374,7 +1374,7 @@ test.describe('Task Activity Indicators', () => {
 
         const pauseButton = dialog.locator('button[title="Pause session"]');
         await expect(pauseButton).toBeVisible({ timeout: 10000 });
-        // Idle: the static amber ring + the centered pause; the ring does not march.
+        // Idle: the static amber ring + the centered pause; the ring does not rotate.
         await expect(pauseButton.locator('[data-mark="control-pause-idle"]')).toBeVisible();
         await expect(pauseButton.locator('[data-mark="control-pause-working"]')).toHaveCount(0);
       } finally {
@@ -1392,11 +1392,11 @@ test.describe('Task Activity Indicators', () => {
 
         const pauseButton = dialog.locator('button[title="Pause session"]');
         await expect(pauseButton).toBeVisible({ timeout: 10000 });
-        // Permission maps to idle: the static amber ring, never the marching one.
+        // Permission maps to idle: the static amber ring, never the rotating one.
         await expect(pauseButton.locator('[data-mark="control-pause-idle"]')).toBeVisible();
         await expect(pauseButton.locator('[data-mark="control-pause-working"]')).toHaveCount(0);
 
-        // Drive permission -> thinking; the static ring becomes the marching ring.
+        // Drive permission -> thinking; the static ring becomes the rotating ring.
         await page.evaluate((sessionId) => {
           const stores = (window as unknown as {
             __zustandStores: { session: { getState: () => { updateActivity: (id: string, state: string) => void } } };
