@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { ChevronDown, Search, X } from 'lucide-react';
 import { useOverlayPhase } from '../../hooks/useOverlayPhase';
-import { useSettingVisible, useSettingsSearch } from './settings-search';
+import { useAnySettingVisible, useSettingVisible, useSettingsSearch } from './settings-search';
 import { TIER_LABELS } from './settings-tabs';
 import type { SettingsTabTier } from './settings-tabs';
 import { Pill } from '../Pill';
@@ -258,13 +258,12 @@ interface SectionHeaderProps {
 }
 
 export function SectionHeader({ label, description, prominent, searchIds }: SectionHeaderProps) {
-  const { isSearching, matchingIds } = useSettingsSearch();
-
-  // When searching with searchIds, hide if none of the listed IDs match.
-  if (isSearching && searchIds && searchIds.length > 0) {
-    const anyVisible = searchIds.some((id) => matchingIds.has(id));
-    if (!anyVisible) return null;
-  }
+  // Shared with the section BODIES that sit under a header (see
+  // useAnySettingVisible's own comment): a header and its body must apply the
+  // same any-of-these-ids rule, or the header hides while the body renders on
+  // (or the reverse, orphaning the heading).
+  const visible = useAnySettingVisible(searchIds);
+  if (!visible) return null;
 
   return (
     <div className={prominent ? 'pt-4 mt-4 border-t-2 border-edge first:pt-0 first:mt-0' : 'pt-3 mt-2 first:pt-0 first:mt-0'}>
