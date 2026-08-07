@@ -34,3 +34,23 @@ describe('settings search: mobileBridge.getApp rename back-compat', () => {
     expect(matchingIds.has('mobileBridge.getApp')).toBe(true);
   });
 });
+
+describe('settings search: hosted relay preset rename back-compat', () => {
+  // The same shape as the getApp aliases above, for the relay row: the hosted
+  // preset was relabelled "Kangentic Cloud" -> "Kangentic Relay". Settings
+  // search indexes registry fields only, never the rendered <option> text (see
+  // settings-search.tsx), so BOTH names have to be carried as keywords on
+  // mobileBridge.relayMode or the row becomes unfindable by the only name the
+  // user has ever seen. Neither direction is visible in the UI tier, and the
+  // old-name keywords in particular read as stray cruft to a future reader, so
+  // pin both here.
+  it.each(['kangentic relay', 'official'])('matches the relay row on the new name "%s"', (query) => {
+    const { matchingIds } = computeSearchResults(query, SETTINGS_REGISTRY);
+    expect(matchingIds.has('mobileBridge.relayMode')).toBe(true);
+  });
+
+  it.each(['kangentic cloud', 'cloud'])('still matches the relay row on the old name "%s"', (query) => {
+    const { matchingIds } = computeSearchResults(query, SETTINGS_REGISTRY);
+    expect(matchingIds.has('mobileBridge.relayMode')).toBe(true);
+  });
+});

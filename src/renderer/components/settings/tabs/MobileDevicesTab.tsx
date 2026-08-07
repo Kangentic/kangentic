@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Check, CircleAlert, Copy, Loader2, Pencil, QrCode, Server, Smartphone, Trash2, WifiOff, X } from 'lucide-react';
+import { Check, CircleAlert, Copy, ExternalLink, Loader2, Pencil, QrCode, Server, ShieldCheck, Smartphone, Trash2, WifiOff, X } from 'lucide-react';
 import { formatKeyFingerprint } from '@kangentic/protocol/roster/fingerprint';
 import type { AppConfig, MobileDeviceConnectionState, MobilePairedDevice, RemoteServerStatus } from '../../../../shared/types';
 import { resolveRelayMode, resolveRelayUrl, validateRelayUrl } from '../../../../shared/relay';
@@ -17,6 +17,14 @@ import { useMobileStore } from '../../../stores/mobile-store';
  *  website without a desktop release. The signup steps for whichever phase is
  *  live belong in the mobile-launch announcement in announcements.json. */
 const MOBILE_DOCS_URL = 'https://www.kangentic.com/mobile/';
+
+/** Backs the "Official" badge on the hosted relay: the page states what the
+ *  link encrypts, why the relay cannot read it, and - in "What a relay operator
+ *  can still see" - what it observes anyway, naming Kangentic's own instance.
+ *  Deliberately not /mobile/relay/, which is the self-hosting how-to (the
+ *  Custom Relay path), nor /mobile/, which the Kangentic Mobile section below
+ *  already links. Repoint this once the hosted relay has a page of its own. */
+const RELAY_SECURITY_DOCS_URL = 'https://www.kangentic.com/mobile/security/';
 
 /**
  * 'idle' means this device has no session open yet (nothing to report), so it
@@ -240,12 +248,35 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
 
   return (
     <div className="space-y-4">
-      <SettingToggleRow
-        {...settingProps('mobileBridge.enabled')}
-        icon={<Smartphone className="size-5" />}
-        checked={enabled}
-        onChange={(value) => updateGlobal({ mobileBridge: { enabled: value } })}
-      />
+      <div className="space-y-1.5">
+        <SettingToggleRow
+          {...settingProps('mobileBridge.enabled')}
+          icon={<Smartphone className="size-5" />}
+          checked={enabled}
+          onChange={(value) => updateGlobal({ mobileBridge: { enabled: value } })}
+        />
+        {/* Deliberately OUTSIDE the enabled-gated wrapper below, and a sibling
+            of the card rather than a child of it. Outside, because the bridge
+            ships off: someone still deciding whether to route their agent
+            traffic through our server is by definition someone who has not
+            flipped the toggle, and inside the gate this link would be both
+            dimmed and pointer-events-none for exactly that person. A child of
+            the card is not an option either - ToggleCard's root IS the
+            role="switch" button, and nesting an interactive element in a
+            button is invalid (see its own `info` prop for the same dodge).
+            The indent is the card's px-3.5 + size-5 icon + gap-3, so the link
+            lines up with the description text above it. */}
+        <button
+          type="button"
+          onClick={() => void window.electronAPI.shell.openExternal(RELAY_SECURITY_DOCS_URL)}
+          className="ml-[2.875rem] inline-flex items-center gap-1 text-xs text-accent-fg underline underline-offset-2 hover:opacity-80 cursor-pointer"
+          title={RELAY_SECURITY_DOCS_URL}
+          data-testid="mobile-relay-security-link"
+        >
+          What the relay can see
+          <ExternalLink size={12} />
+        </button>
+      </div>
 
       <div className={enabled ? 'space-y-4' : 'space-y-4 opacity-40 pointer-events-none'}>
         <SettingRow {...settingProps('mobileBridge.relayMode')}>
@@ -266,13 +297,28 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
                 data-testid="mobile-relay-mode"
               >
                 {__KANGENTIC_DEV__ && <option value="local">Local</option>}
-                <option value="hosted">Kangentic Cloud</option>
+                <option value="hosted">Kangentic Relay</option>
                 <option value="custom">Custom Relay</option>
               </Select>
               {relayMode !== 'custom' && (
-                <Pill size="sm" className="self-start bg-surface-hover/60 text-fg-faint font-mono" data-testid="mobile-relay-resolved-url">
-                  {resolvedRelayUrl}
-                </Pill>
+                // The badge is a SIBLING of the resolved-URL pill, never nested
+                // inside it: that pill is asserted with an exact toHaveText.
+                // Laying them out side by side (rather than stacked) also keeps
+                // the pill's y fixed, which a test pins to within 1px.
+                <div className="flex flex-wrap items-center gap-2 self-start">
+                  <Pill size="sm" className="bg-surface-hover/60 text-fg-faint font-mono" data-testid="mobile-relay-resolved-url">
+                    {resolvedRelayUrl}
+                  </Pill>
+                  {/* Keyed to 'hosted', not to the pill's presence: the pill
+                      also renders for the dev-only 'local' mode, and marking a
+                      localhost relay "Official" would be simply untrue. */}
+                  {relayMode === 'hosted' && (
+                    <Pill size="sm" className="bg-surface-hover/60 text-accent-fg border border-edge/50" data-testid="mobile-relay-official-badge">
+                      <ShieldCheck size={11} />
+                      Official
+                    </Pill>
+                  )}
+                </div>
               )}
             </div>
             <div className="shrink-0 flex flex-col items-start gap-1">
@@ -294,6 +340,12 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
                   relayTestResult.reachable ? (
                     <Pill size="sm" className="bg-green-500/15 text-green-400">
                       <Check size={11} />
+                      {/* Inert against the hosted relay today: its /healthz
+                          contract is {"status":"ok"} with no version field, so
+                          this reads "Reachable" in practice and only the test
+                          mock exercises the version branch. Kept so the pill
+                          lights up on its own if the relay starts reporting
+                          one. */}
                       {relayTestResult.version ? `v${relayTestResult.version}` : 'Reachable'}
                     </Pill>
                   ) : (

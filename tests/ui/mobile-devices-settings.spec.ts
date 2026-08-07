@@ -13,11 +13,11 @@
  *
  * The UI tier's webServer runs plain `vite` (development mode), so
  * __KANGENTIC_DEV__ is always true here and the relay mode Select renders
- * all three options ("Local", "Kangentic Cloud", "Custom Relay") - "Local"
+ * all three options ("Local", "Kangentic Relay", "Custom Relay") - "Local"
  * is a dev-only Select option, gated behind __KANGENTIC_DEV__ in the
  * component, but is always offered under this tier's dev webServer. "hosted"
  * resolves to KANGENTIC_HOSTED_RELAY_URL unconditionally (not build-mode-
- * dependent), so this tier actually exercises the "Kangentic Cloud" label
+ * dependent), so this tier actually exercises the "Kangentic Relay" label
  * and its resolved URL, not just "Local". "local" is DIFFERENT: unlike
  * "hosted", resolveRelayMode() gates what "local" resolves TO on
  * __KANGENTIC_DEV__ too (not just whether the Select offers it) - a
@@ -233,7 +233,7 @@ test.describe('Mobile Devices settings tab', () => {
     await openMobileTab();
     await expect(page.getByRole('switch')).toBeVisible();
     await expect(page.locator('[data-testid="mobile-relay-mode"]')).toHaveValue('hosted');
-    await expect(page.locator('[data-testid="mobile-relay-mode"]')).toContainText('Kangentic Cloud');
+    await expect(page.locator('[data-testid="mobile-relay-mode"]')).toContainText('Kangentic Relay');
     // Read-only resolved URL, not an editable input - the whole point of a
     // resolved mode is that a normal user never sees a text field here. The
     // hosted-relay constant is returned verbatim (not passed through
@@ -245,11 +245,11 @@ test.describe('Mobile Devices settings tab', () => {
     await closeSettings();
   });
 
-  test('the relay mode select offers Local, Kangentic Cloud, and Custom Relay in a dev build', async () => {
+  test('the relay mode select offers Local, Kangentic Relay, and Custom Relay in a dev build', async () => {
     await openMobileTab();
     const select = page.locator('[data-testid="mobile-relay-mode"]');
     const optionLabels = await select.locator('option').allTextContents();
-    expect(optionLabels).toEqual(['Local', 'Kangentic Cloud', 'Custom Relay']);
+    expect(optionLabels).toEqual(['Local', 'Kangentic Relay', 'Custom Relay']);
     await closeSettings();
   });
 
@@ -261,6 +261,56 @@ test.describe('Mobile Devices settings tab', () => {
     await expect.poll(async () => (await getGlobalConfig()).mobileBridge?.relayMode).toBe('local');
     await expect(page.locator('[data-testid="mobile-relay-resolved-url"]')).toHaveText('ws://127.0.0.1:8080');
     await expect(page.locator('[data-testid="mobile-relay-url-input"]')).toHaveCount(0);
+
+    await closeSettings();
+  });
+
+  test('the Official badge marks the Kangentic-operated relay and nothing else', async () => {
+    await openMobileTab();
+
+    const badge = page.locator('[data-testid="mobile-relay-official-badge"]');
+    await expect(badge).toBeVisible();
+
+    // The badge must be a SIBLING of the resolved-URL pill, never a child of
+    // it: that pill is asserted elsewhere with an exact toHaveText, which
+    // covers descendant text, so nesting the badge would silently break it.
+    await expect(page.locator('[data-testid="mobile-relay-resolved-url"] [data-testid="mobile-relay-official-badge"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="mobile-relay-resolved-url"]')).toHaveText('wss://relay.kangentic.com');
+
+    // 'local' is the case a presence-of-the-pill check would get wrong: the
+    // resolved-URL pill renders for local too, so a badge keyed to the pill
+    // rather than to the mode would label a loopback dev relay "Official".
+    await page.locator('[data-testid="mobile-relay-mode"]').selectOption('local');
+    await expect(page.locator('[data-testid="mobile-relay-resolved-url"]')).toHaveText('ws://127.0.0.1:8080');
+    await expect(badge).toHaveCount(0);
+
+    await page.locator('[data-testid="mobile-relay-mode"]').selectOption('custom');
+    await expect(page.locator('[data-testid="mobile-relay-url-input"]')).toBeVisible();
+    await expect(badge).toHaveCount(0);
+
+    await closeSettings();
+  });
+
+  test('the relay security link stays live with the bridge off', async () => {
+    // The point of the test: this link sits OUTSIDE the enabled-gated wrapper
+    // (opacity-40 pointer-events-none). Someone deciding whether to route
+    // agent traffic through our relay has not enabled the bridge yet, so a
+    // link inside the gate would be dead for exactly its audience. Clicking
+    // it while disabled is what proves the escape - and nothing else would
+    // catch a later refactor tidying it back into the relay row.
+    await setMobileBridgeConfig({ enabled: false, relayMode: 'hosted', relayUrl: '' });
+    await openMobileTab();
+
+    const securityLink = page.locator('[data-testid="mobile-relay-security-link"]');
+    await expect(securityLink).toBeVisible();
+
+    await page.evaluate(() => {
+      window.__openedExternalUrls = [];
+    });
+    await securityLink.click();
+    await expect
+      .poll(() => page.evaluate(() => window.__openedExternalUrls))
+      .toEqual(['https://www.kangentic.com/mobile/security/']);
 
     await closeSettings();
   });

@@ -169,7 +169,12 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
 
   // ── Mobile Devices ──
   { id: 'mobileBridge.enabled', tabId: 'mobile', label: 'Mobile Bridge', description: 'Let a paired phone connect to this desktop through an end-to-end encrypted relay.', scope: 'global', keywords: ['mobile', 'phone', 'companion', 'pair', 'pairing', 'qr', 'relay', 'bridge', 'remote'] },
-  { id: 'mobileBridge.relayMode', tabId: 'mobile', label: 'Relay', description: 'Where this desktop connects for mobile pairing. The relay only ever sees encrypted traffic.', scope: 'global', keywords: ['relay', 'server', 'hosted', 'local', 'custom', 'self-host', 'cloud', 'mobile', 'kangentic cloud'] },
+  // 'cloud' and 'kangentic cloud' are deliberate back-compat aliases, not
+  // stray cruft: the hosted preset was labelled "Kangentic Cloud" until it was
+  // renamed to "Kangentic Relay", and settings search indexes registry fields
+  // only (never the rendered <option> text), so these keywords are the only
+  // thing that still finds this row for a user searching from muscle memory.
+  { id: 'mobileBridge.relayMode', tabId: 'mobile', label: 'Relay', description: 'Where this desktop connects for mobile pairing. The relay forwards encrypted traffic and never holds your keys.', scope: 'global', keywords: ['relay', 'server', 'hosted', 'local', 'custom', 'self-host', 'official', 'mobile', 'kangentic relay', 'cloud', 'kangentic cloud'] },
   { id: 'mobileBridge.relayUrl', tabId: 'mobile', label: 'Custom Relay Address', description: 'The self-hosted relay to dial when Relay above is set to Custom Relay.', scope: 'global', keywords: ['relay', 'server', 'url', 'address', 'self-host', 'websocket', 'mobile', 'custom'] },
   { id: 'mobileBridge.pairing', tabId: 'mobile', label: 'Pair a Device', description: 'Scan a QR code with the Kangentic mobile app to pair a new phone.', scope: 'global', keywords: ['pair', 'pairing', 'qr', 'scan', 'phone', 'mobile', 'sas', 'code'] },
   { id: 'mobileBridge.devices', tabId: 'mobile', label: 'Paired Devices', description: 'Phones paired to this desktop, identified by key fingerprint. Rename or revoke a device here.', scope: 'global', keywords: ['paired', 'devices', 'phone', 'revoke', 'rename', 'fingerprint', 'mobile'] },
