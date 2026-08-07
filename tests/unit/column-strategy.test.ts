@@ -5,7 +5,7 @@ import {
   resolveEffectiveAutoCommand,
   applyProfileToLane,
 } from '../../src/main/transition-engine/column-strategy';
-import type { BoardProfile, Swimlane } from '../../src/shared/types';
+import type { BoardProfile, BoardProfileEntry, Swimlane } from '../../src/shared/types';
 import type { LaneStrategyFields } from '../../src/main/transition-engine/column-strategy';
 
 /** A base column that pins a full strategy, so "inherit" and "clear" are distinguishable. */
@@ -17,6 +17,7 @@ function makeLane(overrides: Partial<LaneStrategyFields> = {}): LaneStrategyFiel
     effort_override: 'high',
     permission_mode: 'auto',
     auto_command: '/implement',
+    auto_command_mode: 'deferred',
     auto_spawn: true,
     handoff_context: true,
     session_target: 'main',
@@ -40,6 +41,7 @@ describe('resolveColumnStrategy', () => {
         effort_override: 'high',
         permission_mode: 'auto',
         auto_command: '/implement',
+        auto_command_mode: 'deferred',
         auto_spawn: true,
         handoff_context: true,
         session_target: 'main',
@@ -114,6 +116,44 @@ describe('resolveColumnStrategy', () => {
       const resolved = resolveColumnStrategy({ lane, profile });
       expect(resolved.model_override).toBeNull();   // explicitly cleared
       expect(resolved.effort_override).toBe('xhigh'); // untouched, inherited
+    });
+  });
+
+  // auto_command_mode is its own tri-state field, mirroring the string overrides
+  // above, but its "clear" arm falls back to the string default 'immediate'
+  // rather than to null - `AutoCommandMode` has no null member, so there is no
+  // "agent default" to clear to.
+  describe('auto_command_mode - the same three states as the string overrides', () => {
+    it('a present key with a value overrides the lane', () => {
+      const lane = makeLane({ auto_command_mode: 'immediate' });
+      const profile = makeProfile({ 'lane-executing': { autoCommandMode: 'deferred' } });
+      const resolved = resolveColumnStrategy({ lane, profile });
+      expect(resolved.auto_command_mode).toBe('deferred');
+    });
+
+    it('an absent key inherits the lane, not the "immediate" default', () => {
+      const lane = makeLane({ auto_command_mode: 'deferred' });
+      // The entry exists (for modelOverride) but never mentions autoCommandMode.
+      const profile = makeProfile({ 'lane-executing': { modelOverride: 'claude-sonnet-5' } });
+      const resolved = resolveColumnStrategy({ lane, profile });
+      expect(resolved.auto_command_mode).toBe('deferred');
+    });
+
+    // RED-GREEN GUARD: a `??`-based resolver (`entry.autoCommandMode ?? lane.auto_command_mode`)
+    // would silently inherit here instead of clearing, since it can't distinguish
+    // "key present, value undefined" from "key absent".
+    it('a present key set to null CLEARS to the "immediate" default', () => {
+      const lane = makeLane({ auto_command_mode: 'deferred' });
+      // `AutoCommandMode` has no null member, so a stray null is not
+      // representable in the type - it can still arrive at runtime from a
+      // hand-edited kangentic.json, which is exactly what the resolver's
+      // defensive `?? 'immediate'` (rather than a bare `entry.autoCommandMode`)
+      // exists to survive. Cast through `unknown` to construct that shape.
+      const profile = makeProfile({
+        'lane-executing': { autoCommandMode: null } as unknown as BoardProfileEntry,
+      });
+      const resolved = resolveColumnStrategy({ lane, profile });
+      expect(resolved.auto_command_mode).toBe('immediate');
     });
   });
 

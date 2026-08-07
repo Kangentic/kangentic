@@ -419,6 +419,94 @@ describe('TerminalSubmitScheduler', () => {
 
       expect(terminalSubmit.calls).toHaveLength(0);
     });
+
+    it('delivers the newer burst, not the older, when two deferred bursts target the same task', async () => {
+      // Regression: `PendingDeferred` used to carry no identity, so the two
+      // waits raced on a bare `has(taskId)` presence check. Whichever turn-
+      // completion promise settled first deleted the OTHER wait's map entry
+      // and delivered its OWN (stale) burst, silently dropping the newer one.
+      sessionManager.registry.set('s1', { status: 'running' });
+      sessionManager.activity.s1 = 'thinking';
+
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('/first')], { mode: 'deferred' });
+      await tick();
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('/second')], { mode: 'deferred' });
+      await tick();
+
+      sessionManager.emitActivity('s1', 'idle');
+      await tick();
+      vi.advanceTimersByTime(1600);
+      await tick();
+
+      expect(terminalSubmit.calls).toHaveLength(1);
+      expect(MockTerminalSubmit.texts(terminalSubmit.calls[0])).toEqual(['/second']);
+    });
+
+    it('reports both bursts of a same-task deferred double-schedule, never just one', async () => {
+      // The pre-fix bug produced exactly ONE onOutcome call total: the second
+      // burst's continuation found no map entry and returned without ever
+      // reporting. This is the assertion that most directly pins the fix,
+      // since "delivers the newer burst" alone would also pass on a design
+      // that dropped the older burst's report entirely.
+      sessionManager.registry.set('s1', { status: 'running' });
+      sessionManager.activity.s1 = 'thinking';
+      const reports: InjectionReport[] = [];
+
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('/first')], {
+        mode: 'deferred',
+        onOutcome: (report) => reports.push(report),
+      });
+      await tick();
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('/second')], {
+        mode: 'deferred',
+        onOutcome: (report) => reports.push(report),
+      });
+      await tick();
+
+      // The older burst is reported synchronously, the moment the newer one
+      // supersedes it - well before the turn ever completes.
+      expect(reports).toHaveLength(1);
+      expect(reports[0].outcome).toBe('cancelled');
+      expect(reports[0].commands).toEqual(['/first']);
+
+      sessionManager.emitActivity('s1', 'idle');
+      await tick();
+      vi.advanceTimersByTime(1600);
+      await tick();
+      terminalSubmit.finishLatest({ outcome: 'confirmed' });
+      await tick();
+
+      expect(reports).toHaveLength(2);
+      expect(reports[1].outcome).toBe('confirmed');
+      expect(reports[1].commands).toEqual(['/second']);
+    });
+
+    it('still delivers the newer burst when a cancel intervenes between the two schedule calls', async () => {
+      // The subtler half of the race: `cancel()` aborts the first wait
+      // synchronously, but its `.then` continuation only runs a microtask
+      // LATER - by which time the second `scheduleKeystrokes` call has already
+      // installed the newer entry. A bare `has(taskId)` guard cannot tell its
+      // own (now-stale) wait from the newer one that took its slot, so it
+      // deleted the newer entry out from under it. All three calls here run
+      // synchronously, exactly as they would from one drag-through, and the
+      // microtask flush happens only afterward so the stale continuation is
+      // actually exercised.
+      sessionManager.registry.set('s1', { status: 'running' });
+      sessionManager.activity.s1 = 'thinking';
+
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('/first')], { mode: 'deferred' });
+      scheduler.cancel('task-1');
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('/second')], { mode: 'deferred' });
+      await tick();
+
+      sessionManager.emitActivity('s1', 'idle');
+      await tick();
+      vi.advanceTimersByTime(1600);
+      await tick();
+
+      expect(terminalSubmit.calls).toHaveLength(1);
+      expect(MockTerminalSubmit.texts(terminalSubmit.calls[0])).toEqual(['/second']);
+    });
   });
 
   describe('outcome reporting and escalation', () => {

@@ -84,6 +84,14 @@ function toState(report: InjectionReport): AutoCommandState {
  * the task again or stopping the session, and reporting their own action back
  * to them is noise.
  *
+ * Discarding typed text is the one thing that overrides both. It is a loss the
+ * user did not ask for and cannot recover from anywhere else, and it is
+ * orthogonal to whether a verifier happened to confirm the delivery - so it is
+ * checked BEFORE the silent states rather than after. Ordering it after them
+ * meant a cleared draft was announced on Claude and swallowed on every other
+ * agent, which is precisely backwards: those are the agents where the outcome
+ * is least observable to begin with.
+ *
  * What remains is a real failure, or a success that took something from the
  * user without asking: it discarded text they had typed, or it interrupted a
  * turn that was running.
@@ -92,6 +100,7 @@ function shouldNotify(state: AutoCommandState, report: InjectionReport): boolean
   if (state === 'failed') return true;
   // A session respawn is never silent: the user's terminal just went away.
   if (state === 'escalated') return true;
+  if (report.discardedDraft) return true;
   if (state === 'cancelled' || state === 'unconfirmed') return false;
-  return Boolean(report.discardedDraft) || report.interruptedTurn;
+  return report.interruptedTurn;
 }

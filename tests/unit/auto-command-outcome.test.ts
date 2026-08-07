@@ -188,6 +188,75 @@ describe('reportAutoCommandOutcome', () => {
       expect(harness.send.mock.calls[0][1]).toMatchObject({ interruptedTurn: true });
     });
 
+    it('notifies on an unconfirmed delivery that discarded typed text', () => {
+      // Regression: `discardedDraft` used to be checked AFTER the silent-state
+      // early return, so on the 11 adapters with no transcript verifier -
+      // where every delivery lands on `unconfirmed` - erasing the user's
+      // typed text was silent. Those are exactly the agents where the outcome
+      // is least observable to begin with.
+      reportAutoCommandOutcome(
+        harness.context,
+        harness.tasks,
+        TASK,
+        makeReport({ outcome: 'unconfirmed', discardedDraft: 'wait, actually' }),
+        'proj-1',
+      );
+
+      expect(harness.send).toHaveBeenCalledTimes(1);
+      expect(harness.send.mock.calls[0][0]).toBe(IPC.TASK_AUTO_COMMAND_RESULT);
+      expect(harness.send.mock.calls[0][1]).toMatchObject({
+        state: 'unconfirmed',
+        discardedDraft: 'wait, actually',
+      });
+    });
+
+    it('notifies on a cancelled delivery that discarded typed text', () => {
+      // Same ordering bug on the other silent state: a cancelled burst can
+      // still have cleared the prompt on its way out.
+      reportAutoCommandOutcome(
+        harness.context,
+        harness.tasks,
+        TASK,
+        makeReport({ outcome: 'cancelled', discardedDraft: 'wait, actually' }),
+        'proj-1',
+      );
+
+      expect(harness.send).toHaveBeenCalledTimes(1);
+      expect(harness.send.mock.calls[0][0]).toBe(IPC.TASK_AUTO_COMMAND_RESULT);
+      expect(harness.send.mock.calls[0][1]).toMatchObject({
+        state: 'cancelled',
+        discardedDraft: 'wait, actually',
+      });
+    });
+
+    it('still stays silent on unconfirmed with no discarded draft and no interrupted turn', () => {
+      // Regression guard: the reordering must not turn the common
+      // no-verifier-adapter case into a notification on every column move.
+      reportAutoCommandOutcome(
+        harness.context,
+        harness.tasks,
+        TASK,
+        makeReport({ outcome: 'unconfirmed', discardedDraft: null, interruptedTurn: false }),
+        'proj-1',
+      );
+
+      expect(harness.send).not.toHaveBeenCalled();
+    });
+
+    it('still stays silent on cancelled with no discarded draft', () => {
+      // Regression guard: a plain cancellation (the user's own second move)
+      // must still be noise, not a notification.
+      reportAutoCommandOutcome(
+        harness.context,
+        harness.tasks,
+        TASK,
+        makeReport({ outcome: 'cancelled', discardedDraft: null }),
+        'proj-1',
+      );
+
+      expect(harness.send).not.toHaveBeenCalled();
+    });
+
     it('records an escalated delivery as its own state, never as confirmed', () => {
       // The restart was issued; no verifier saw the command land. Persisting
       // `confirmed` here would be the silent success this work removes.

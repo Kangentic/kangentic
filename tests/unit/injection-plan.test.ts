@@ -441,7 +441,7 @@ describe('prepareInjectionPlan', () => {
     expect(plan?.verifier).not.toBeNull();
 
     const testSentAt = Date.now();
-    await plan!.verifier!('/model opus', testSentAt);
+    await plan!.verifier!('/model opus', testSentAt, 'command-match');
 
     // The wrapper must have passed both the command text and sentAt through.
     expect(capturedContexts).toHaveLength(1);
@@ -837,7 +837,7 @@ describe('buildCommandInjectionVerifier: poll-time id re-resolution (mid-burst /
       verifyResult: () => true,
     });
 
-    await expect(verifier!('/effort high', 123)).resolves.toBe(true);
+    await expect(verifier!('/effort high', 123, 'command-match')).resolves.toBe(true);
     expect(calls).toEqual([{ agentSessionId: 'post-fork-id', cwd: '/worktree' }]);
     // Re-resolved by PRIMARY KEY (never latest-for-task, which could shadow an
     // isolated session's sibling row).
@@ -850,7 +850,7 @@ describe('buildCommandInjectionVerifier: poll-time id re-resolution (mid-burst /
       verifyResult: (call) => call.agentSessionId === 'pre-fork-id',
     });
 
-    await expect(verifier!('/effort high', 123)).resolves.toBe(true);
+    await expect(verifier!('/effort high', 123, 'command-match')).resolves.toBe(true);
     expect(calls.map((call) => call.agentSessionId)).toEqual(['post-fork-id', 'pre-fork-id']);
   });
 
@@ -860,7 +860,7 @@ describe('buildCommandInjectionVerifier: poll-time id re-resolution (mid-burst /
       verifyResult: () => false,
     });
 
-    await expect(verifier!('/effort high', 123)).resolves.toBe(false);
+    await expect(verifier!('/effort high', 123, 'command-match')).resolves.toBe(false);
     expect(calls).toHaveLength(1);
   });
 
@@ -870,7 +870,7 @@ describe('buildCommandInjectionVerifier: poll-time id re-resolution (mid-burst /
       verifyResult: () => true,
     });
 
-    await expect(verifier!('/effort high', 123)).resolves.toBe(true);
+    await expect(verifier!('/effort high', 123, 'command-match')).resolves.toBe(true);
     expect(calls).toEqual([{ agentSessionId: 'pre-fork-id', cwd: '/worktree' }]);
   });
 });

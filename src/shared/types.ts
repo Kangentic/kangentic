@@ -375,6 +375,24 @@ export interface Task {
    */
   run_mode: TaskRunMode;
   attachment_count: number;
+  /**
+   * Outcome of this task's most recent auto_command injection - the durable
+   * half of the two sinks in `auto-command-outcome.ts` (the other being the
+   * transient `task:autoCommandResult` notice). All four stay null until a
+   * first injection runs.
+   *
+   * Declared here because `SELECT t.*` already returns these columns on every
+   * task read, so omitting them made `Task` describe a narrower shape than it
+   * actually carries over IPC - present at runtime, unreachable to a typed
+   * consumer.
+   */
+  auto_command_state: AutoCommandState | null;
+  /** The command text that was attempted, joined with ' | ' when a burst carried several. */
+  auto_command_text: string | null;
+  /** User-facing failure prose, set only when `auto_command_state` is 'failed'. */
+  auto_command_error: string | null;
+  /** When that outcome was recorded (UTC ISO 8601). */
+  auto_command_at: string | null;
   /** Serialized `TaskDetailViewState` (JSON) persisting the task-detail dialog's layout across restarts. null until the user changes the layout once. */
   detail_view_state: string | null;
   archived_at: string | null;

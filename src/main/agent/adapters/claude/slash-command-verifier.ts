@@ -1,5 +1,5 @@
 import fs from 'node:fs/promises';
-import type { CommandVerifier } from '../../../transition-engine/terminal-submit-scheduler';
+import type { CommandVerifier, InjectionVerifyMode } from '../../../transition-engine/terminal-submit-scheduler';
 
 /**
  * Builds a verifier that polls Claude's session JSONL for confirmation that
@@ -25,8 +25,13 @@ import type { CommandVerifier } from '../../../transition-engine/terminal-submit
  * `/`-prefix from the next command). We require both; a combined-args entry
  * is treated as a non-match so the burst can retry-Enter and recover.
  */
-/** Mirrors `InjectionVerifyMode`. `none` is unverifiable by definition. */
-export type SlashVerifyMode = 'command-match' | 'submitted' | 'none';
+/**
+ * Alias of `InjectionVerifyMode`, deliberately not a copy of its members. The
+ * mode this verifier receives IS the injection layer's mode, so redeclaring
+ * the union would create two identical types that assign freely and drift
+ * silently. `none` is unverifiable by definition.
+ */
+export type SlashVerifyMode = InjectionVerifyMode;
 
 export interface SlashVerifierOptions {
   /**

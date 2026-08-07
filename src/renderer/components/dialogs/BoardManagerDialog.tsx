@@ -21,7 +21,7 @@ import { Pill } from '../Pill';
 import { ICON_REGISTRY, ROLE_DEFAULTS, getUsedIcons } from '../../utils/swimlane-icons';
 import { Select } from '../settings/shared';
 import { ToggleCard } from '../ToggleCard';
-import { SegmentedControl } from '../SegmentedControl';
+import { SegmentedControl, type SegmentedControlOption } from '../SegmentedControl';
 import { SETTING_LABEL_CLASS, SETTING_DESCRIPTION_CLASS } from '../SettingText';
 import { OverlayPopover } from '../OverlayPopover';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
@@ -610,6 +610,28 @@ const DIALOG_SELECT_CLASS = 'w-full appearance-none bg-surface-control border bo
 // viewport: two columns when the pane is wide enough (maximized, even on a small
 // monitor), one column when it is narrow (windowed). Columns auto-size via 1fr.
 // Short single-line controls pair up; full-width fields carry `SECTION_FULL_SPAN`.
+/**
+ * Module scope, not an inline literal at the call site: `SegmentedControl` keys
+ * its measuring effect on `options`, and this dialog re-renders on every
+ * keystroke in any field, so a fresh array each render would tear down and
+ * rebuild the control's ResizeObserver (and force a synchronous layout read)
+ * on every character typed. The options are fully static, so one instance does.
+ */
+const AUTO_COMMAND_MODE_OPTIONS: SegmentedControlOption<AutoCommandMode>[] = [
+  {
+    value: 'immediate',
+    label: 'Run immediately',
+    icon: <Zap size={14} />,
+    testId: 'auto-command-mode-immediate',
+  },
+  {
+    value: 'deferred',
+    label: 'Wait for current turn',
+    icon: <Clock size={14} />,
+    testId: 'auto-command-mode-deferred',
+  },
+];
+
 const SECTION_GRID_CLASS = 'grid grid-cols-1 @[720px]:grid-cols-2 gap-x-6 gap-y-3 max-w-4xl pt-2';
 const SECTION_FULL_SPAN = '@[720px]:col-span-2';
 
@@ -1982,20 +2004,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                         ...current,
                         auto_command_mode: next,
                       }))}
-                      options={[
-                        {
-                          value: 'immediate' as const,
-                          label: 'Run immediately',
-                          icon: <Zap size={14} />,
-                          testId: 'auto-command-mode-immediate',
-                        },
-                        {
-                          value: 'deferred' as const,
-                          label: 'Wait for current turn',
-                          icon: <Clock size={14} />,
-                          testId: 'auto-command-mode-deferred',
-                        },
-                      ]}
+                      options={AUTO_COMMAND_MODE_OPTIONS}
                     />
                   </span>
                 </div>

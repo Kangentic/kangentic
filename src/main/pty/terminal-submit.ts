@@ -379,11 +379,9 @@ export class TerminalSubmit {
           outcome: 'aborted',
           unconfirmedCommands,
           discardedDraft: shouldClear ? pendingDraft : null,
-          // Always false now: the clear is Ctrl+U (line editing), which leaves a
-        // running turn alone, and Esc is suppressed while a turn is live. The
-        // field stays so the outcome notice keeps a slot for a genuine
-        // interruption if one is ever reintroduced deliberately.
-        interruptedTurn: false,
+          // See `SubmitKeystrokesResult.interruptedTurn`: always false while the
+          // clear is Ctrl+U and Esc is suppressed during a live turn.
+          interruptedTurn: false,
         };
       }
       console.error(`[terminal-submit] ${source}: keystroke delivery failed: ${message}`);

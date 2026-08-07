@@ -1249,10 +1249,16 @@ export function runProjectMigrations(db: Database.Database): void {
   // nobody sees. Written by the injection reporter; read by the renderer to
   // raise a notice.
   //
-  // `auto_command_state` is one of 'confirmed' | 'unconfirmed' | 'failed' |
-  // 'cancelled'. `unconfirmed` is NOT a failure: most agents expose no
-  // transcript verifier at all, so their deliveries can only ever land there,
-  // and conflating the two would make the field meaningless off Claude.
+  // `auto_command_state` is one of 'confirmed' | 'unconfirmed' | 'escalated' |
+  // 'failed' | 'cancelled' (the `AutoCommandState` union). `unconfirmed` is NOT
+  // a failure: most agents expose no transcript verifier at all, so their
+  // deliveries can only ever land there, and conflating the two would make the
+  // field meaningless off Claude.
+  //
+  // These columns are the durable audit trail, queryable after the fact. They
+  // are NOT the renderer's read path: the `task:autoCommandResult` notice is
+  // built from the in-memory report at push time (see `auto-command-outcome.ts`,
+  // "two sinks"), so nothing reads these back to raise it.
   const taskInjectionColumns = (db.pragma('table_info(tasks)') as Array<{ name: string }>)
     .map((column) => column.name);
   if (!taskInjectionColumns.includes('auto_command_state')) {

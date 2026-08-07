@@ -281,6 +281,12 @@ export class TaskRepository {
       profile_id: exclusive.profile_id,
       run_mode: exclusive.run_mode,
       attachment_count: 0,
+      // A brand-new task has never run an auto_command. These four columns are
+      // written only by `recordAutoCommandOutcome`, never by create/update.
+      auto_command_state: null,
+      auto_command_text: null,
+      auto_command_error: null,
+      auto_command_at: null,
       detail_view_state: null,
       archived_at: null,
       created_at: createdAt,

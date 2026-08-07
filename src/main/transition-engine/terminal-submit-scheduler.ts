@@ -6,6 +6,7 @@ import type {
   SubmitKeystrokesResult,
   TerminalSubmit,
 } from '../pty/terminal-submit';
+import type { AutoCommandMode } from '../../shared/types';
 import { waitForTurnCompletion } from './turn-completion';
 
 /**
@@ -20,8 +21,16 @@ export type {
   InjectionVerifyMode,
 } from '../pty/terminal-submit';
 
-/** How an auto_command's arrival is timed. */
-export type AutoCommandMode = 'immediate' | 'deferred';
+/**
+ * How an auto_command's arrival is timed.
+ *
+ * Re-exported from `shared/types`, never redeclared. A second identical string
+ * union assigns freely across every boundary a lane's `auto_command_mode`
+ * crosses to reach `ScheduleKeystrokesOptions.mode`, so the two copies can only
+ * be kept in step by hand - and when they do diverge, the error surfaces as a
+ * baffling "AutoCommandMode is not assignable to AutoCommandMode".
+ */
+export type { AutoCommandMode };
 
 /**
  * What actually happened to one scheduled injection. Every scheduled burst
@@ -114,6 +123,16 @@ interface ActiveBurst {
 /** State for a task waiting on a fresh-spawn or turn-completion signal. */
 interface PendingDeferred {
   cleanup: () => void;
+  /**
+   * The burst this wait is holding.
+   *
+   * Kept so a supersede can REPORT the burst it drops. The record is also its
+   * own identity token: every async continuation compares
+   * `this.deferred.get(taskId) === entry` rather than calling `has(taskId)`,
+   * because a presence check cannot tell its own wait from a newer one that
+   * has since taken the slot.
+   */
+  burst: QueuedBurst;
 }
 
 /**
@@ -192,6 +211,11 @@ export class TerminalSubmitScheduler {
         return;
       }
       if ((opts.mode ?? 'immediate') === 'deferred') {
+        // A deferred wait can be long (a turn, up to the 120s cap), so a second
+        // deferred burst for the same task routinely arrives while the first is
+        // still waiting. Retire the older one explicitly - and report it - so
+        // the two never race for the single `deferred` slot.
+        this.supersedeDeferred(taskId);
         this.scheduleAfterTurn(taskId, burst);
         return;
       }
@@ -322,13 +346,20 @@ export class TerminalSubmitScheduler {
    */
   private scheduleAfterTurn(taskId: string, burst: QueuedBurst): void {
     const controller = new AbortController();
-    this.deferred.set(taskId, { cleanup: (): void => controller.abort() });
+    const entry: PendingDeferred = { cleanup: (): void => controller.abort(), burst };
+    this.deferred.set(taskId, entry);
 
     void waitForTurnCompletion(this.sessionManager, burst.sessionId, {
       signal: controller.signal,
       timeoutMs: burst.opts.timeoutMs,
     }).then((result) => {
-      if (!this.deferred.has(taskId)) return;
+      // Identity, NOT presence. `cancel()` aborts this wait synchronously, but
+      // this callback only runs a microtask later - by which time a newer burst
+      // may already hold the slot. A bare `has(taskId)` would then delete the
+      // NEWER entry and strand it (its own continuation finds nothing and
+      // returns silently), while delivering this stale burst in its place.
+      // Same guard shape as `runBurst`'s `current === entry`.
+      if (this.deferred.get(taskId) !== entry) return;
       this.deferred.delete(taskId);
 
       if (result === 'aborted') return;
@@ -348,10 +379,38 @@ export class TerminalSubmitScheduler {
       }
       if (result === 'timeout') {
         console.warn(
-          `[TerminalSubmitScheduler] Deferred wait timed out for task ${taskId.slice(0, 8)} -- delivering immediately`,
+          `[TerminalSubmitScheduler] Deferred wait timed out for task ${taskId.slice(0, 8)}, delivering immediately`,
         );
       }
       this.startBurst(taskId, burst);
+    });
+  }
+
+  /**
+   * Retire a deferred wait that a newer burst has replaced.
+   *
+   * The drop is reported as `cancelled` rather than being silent. A superseded
+   * burst is still a command the board asked for and never sent, and the whole
+   * point of the rebuild is that no delivery outcome is unobservable. It stays
+   * quiet for the USER (`shouldNotify` treats `cancelled` as noise, since the
+   * usual cause is their own second move) while landing in the durable record.
+   */
+  private supersedeDeferred(taskId: string): void {
+    const pending = this.deferred.get(taskId);
+    if (!pending) return;
+    this.deferred.delete(taskId);
+    pending.cleanup();
+    const commandTexts = pending.burst.commands.map((command) => command.text);
+    this.report(pending.burst.opts, {
+      taskId,
+      sessionId: pending.burst.sessionId,
+      commands: commandTexts,
+      outcome: 'cancelled',
+      unconfirmedCommands: commandTexts,
+      discardedDraft: null,
+      interruptedTurn: false,
+      escalated: false,
+      reason: 'A newer command for this task replaced it before it was sent.',
     });
   }
 
@@ -434,6 +493,13 @@ export class TerminalSubmitScheduler {
     let state: 'queued' | 'waiting' = isQueued ? 'queued' : 'waiting';
     let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
 
+    // Identity, not presence. `entry` is created at the foot of this function,
+    // before any listener or timer below can fire. A bare
+    // `this.deferred.has(taskId)` is equally satisfied by a NEWER wait that has
+    // since taken the slot, which would let this stale burst deliver in its
+    // place and strand the new one. See `PendingDeferred.burst`.
+    const isCurrent = (): boolean => this.deferred.get(taskId) === entry;
+
     const hardTimer = setTimeout(() => {
       console.warn(`[TerminalSubmitScheduler] Hard timeout (${timeoutMs}ms) for task ${taskId.slice(0, 8)} -- cancelling`);
       this.cancel(taskId);
@@ -453,7 +519,7 @@ export class TerminalSubmitScheduler {
     const startFallbackTimer = (): void => {
       if (fallbackTimer) return;
       fallbackTimer = setTimeout(() => {
-        if (!this.deferred.has(taskId)) return;
+        if (!isCurrent()) return;
         console.log(`[TerminalSubmitScheduler] 30s fallback for task ${taskId.slice(0, 8)} -- delivering anyway`);
         detachAndDeliver();
       }, 30_000);
@@ -471,13 +537,13 @@ export class TerminalSubmitScheduler {
 
     const onActivity = (evtSessionId: string, activityState: string): void => {
       if (evtSessionId !== sessionId) return;
-      if (!this.deferred.has(taskId)) return;
+      if (!isCurrent()) return;
       if (state === 'waiting' && activityState === 'thinking') detachAndDeliver();
     };
 
     const onSessionChanged = (evtSessionId: string, evtSession: { status: string }): void => {
       if (evtSessionId !== sessionId) return;
-      if (!this.deferred.has(taskId)) return;
+      if (!isCurrent()) return;
       if (state === 'queued' && evtSession.status === 'running') {
         state = 'waiting';
         startFallbackTimer();
@@ -486,7 +552,7 @@ export class TerminalSubmitScheduler {
 
     const onExit = (evtSessionId: string): void => {
       if (evtSessionId !== sessionId) return;
-      if (!this.deferred.has(taskId)) return;
+      if (!isCurrent()) return;
       console.log(`[TerminalSubmitScheduler] Session ${sessionId.slice(0, 8)} exited -- cancelling injection for task ${taskId.slice(0, 8)}`);
       this.cancel(taskId);
       this.report(opts, {
@@ -508,7 +574,7 @@ export class TerminalSubmitScheduler {
 
     if (!isQueued) startFallbackTimer();
 
-    this.deferred.set(taskId, {
+    const entry: PendingDeferred = {
       cleanup: (): void => {
         this.sessionManager.off('activity', onActivity);
         this.sessionManager.off('session-changed', onSessionChanged);
@@ -516,7 +582,9 @@ export class TerminalSubmitScheduler {
         if (fallbackTimer) clearTimeout(fallbackTimer);
         clearTimeout(hardTimer);
       },
-    });
+      burst,
+    };
+    this.deferred.set(taskId, entry);
   }
 
   private report(opts: ScheduleKeystrokesOptions, report: InjectionReport): void {

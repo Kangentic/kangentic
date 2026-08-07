@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import type Database from 'better-sqlite3';
-import type { Swimlane, SwimlaneCreateInput, SwimlaneUpdateInput, SwimlaneRole, PermissionMode, SessionTarget, SessionSpawnStrategy, AutoCommandMode } from '../../../shared/types';
+import type { Swimlane, SwimlaneCreateInput, SwimlaneUpdateInput, SwimlaneRole, PermissionMode, SessionTarget, SessionSpawnStrategy } from '../../../shared/types';
 
 /** Raw row shape returned by better-sqlite3 for the swimlanes table. */
 interface SwimlaneRow {
@@ -231,7 +231,12 @@ export class SwimlaneRepository {
       permission_mode: (row.permission_mode as PermissionMode) ?? null,
       auto_spawn: Boolean(row.auto_spawn),
       auto_command: row.auto_command || null,
-      auto_command_mode: (row.auto_command_mode as AutoCommandMode) ?? 'immediate',
+      // Narrowed, not asserted. `as AutoCommandMode` would let any string the
+      // column happens to hold (raw SQL, a hand-edited row) through as a valid
+      // mode, and since every consumer tests `=== 'deferred'` it would then act
+      // as 'immediate' anyway - just without saying so. This makes that the
+      // defined behavior rather than an accident of the comparison operator.
+      auto_command_mode: row.auto_command_mode === 'deferred' ? 'deferred' : 'immediate',
       plan_exit_target_id: row.plan_exit_target_id || null,
       agent_override: row.agent_override || null,
       model_override: row.model_override || null,
