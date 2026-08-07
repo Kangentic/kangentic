@@ -393,11 +393,14 @@
   z-index: 0;
 }
 
-/* The activity marks' marching-border animation used to live here as
-   `@keyframes march-border` / `.animate-march-border`. It now ships with the marks themselves,
-   in `@kangentic/branding/assets/activity/activity.css` (`kng-activity-march` / `.kng-march`,
-   same 1.4s linear dashoffset), imported by `components/ActivityMark.tsx` - so the keyframe
-   and the geometry it animates can no longer drift apart. */
+/* The activity marks' motion used to live here as `@keyframes march-border` /
+   `.animate-march-border`. It now ships with the marks themselves, in
+   `@kangentic/branding/assets/activity/activity.css`, imported by `components/ActivityMark.tsx` -
+   so the keyframes and the geometry they animate can no longer drift apart. Every shipped
+   primitive is now on a composited property, all 1.4s linear so they stay in lockstep:
+   `.kng-spin` (a `transform`, on the round working marks) and `.kng-blink` (an `opacity`, on the
+   terminal chip's prompt, since a rounded rect cannot carry a travelling dash under any
+   transform). `.kng-march` still ships in the packaged CSS but no mark uses it. */
 
 /* xterm: fill parent height so scrollbar is flush with bottom edge.
    xterm.js creates a .xterm child div that is content-sized (rows * cellHeight)

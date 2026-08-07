@@ -57,7 +57,7 @@ const ChangesPanel = lazy(() => import('../dialogs/task-detail/changes/ChangesPa
  * The Stop button glyph, carrying the same activity ring the task-detail header folds into its
  * pause button (`PauseButtonIcon`), but with a STOP square centered instead of pause bars - the
  * command terminal stops (kills the PTY); it never pauses. Activity is encoded by the ring:
- *   - thinking (agent working): a marching active ring around the stop square.
+ *   - thinking (agent working): a rotating active ring around the stop square.
  *   - idle/permission (needs you): a static attention ring around the stop square.
  *   - not yet running / no activity: the plain red CircleStop (rest state).
  *

@@ -2003,7 +2003,9 @@ test.describe('Command Terminal', () => {
   //
   // Ring and square are ONE packaged @kangentic/branding mark, so `data-mark` carries both
   // "a ring is showing" and "which state it is": there is no separate stop-square element to
-  // assert, and no animate-spin class (the working mark marches via .kng-march instead).
+  // assert, and no lucide `animate-spin` class - the working ring rotates via the packaged
+  // `.kng-spin`, whose own contract (period, composited property, reduced motion) is pinned in
+  // tests/ui/activity-marks.spec.ts rather than re-asserted here.
   //
   // Each test uses a deterministic spawnTransient override (known session id) so
   // page.evaluate can call updateActivity + markFirstOutput on that exact id
@@ -2091,7 +2093,7 @@ test.describe('Command Terminal', () => {
       // We assert the activity-specific state in each individual test instead.
     }
 
-    test('thinking activity shows the marching active stop ring', async () => {
+    test('thinking activity shows the rotating active stop ring', async () => {
       // Derives expected behavior from the contract in CommandTerminalWindow.tsx:
       //   isThinking = sessionRunning && isActive(activity)
       //   -> the control-stop-working mark, tinted text-active
@@ -2158,7 +2160,7 @@ test.describe('Command Terminal', () => {
         await expect(ring).toBeVisible({ timeout: 3000 });
         await expect(ring).toHaveClass(/text-attention/);
 
-        // Idle is static. The marching variant is a DIFFERENT mark, so its absence is the
+        // Idle is static. The animated variant is a DIFFERENT mark, so its absence is the
         // assertion - there is no motion class to check on the idle one.
         await expect(stopButton.locator('[data-mark="control-stop-working"]')).toHaveCount(0);
 
@@ -2195,7 +2197,7 @@ test.describe('Command Terminal', () => {
         const stopButton = page.getByTestId('command-bar-terminate-button');
 
         // Static attention ring - permission maps to the idle disposition, so it renders the
-        // SAME mark as idle, not the marching one.
+        // SAME mark as idle, not the animated one.
         const ring = stopButton.locator('[data-mark="control-stop-idle"]');
         await expect(ring).toBeVisible({ timeout: 3000 });
         await expect(ring).toHaveClass(/text-attention/);

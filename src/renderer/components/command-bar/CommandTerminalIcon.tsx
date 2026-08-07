@@ -6,7 +6,7 @@ import type { CommandTerminalTone } from '../../stores/session-store/transient-s
  * The Command Terminal glyph: a terminal icon whose state lives IN the glyph rather than in a
  * separate corner badge. The stroke color is the aggregate activity of a project's terminals
  * (green while working / warm amber when one needs you / muted rest, via the --kng-active /
- * --kng-attention tokens), and the working border MARCHES (a dash flows around the perimeter).
+ * --kng-attention tokens), and the working state BLINKS its prompt like a live shell.
  * The center morphs from the shell prompt to a `+` when rendered for the "New terminal" button,
  * so that button reads as a terminal glyph (not a bare plus).
  *
@@ -14,9 +14,9 @@ import type { CommandTerminalTone } from '../../stores/session-store/transient-s
  * and the only one that holds the exemption second-hand: it draws nothing itself, it wraps
  * `ActivityMark`. The geometry comes from `@kangentic/branding`'s `terminal-*` marks.
  * It was previously hand-authored here and was byte-identical to the packaged art (same rect,
- * chevron, plus, and `65 35` dash), which is exactly the duplication the shared set exists to
- * remove. This component stays as the app-facing wrapper because it owns the tone -> mark
- * mapping and the `data-activity` / `data-plus` test contract.
+ * chevron, plus, and the working dash it carried then), which is exactly the duplication the
+ * shared set exists to remove. This component stays as the app-facing wrapper because it owns
+ * the tone -> mark mapping and the `data-activity` / `data-plus` test contract.
  *
  * Shared by the title bar (20px, the project-wide toggle) and the project sidebar (14px, per
  * project row). Callers outside the title bar MUST pass their own `testId`: the default belongs
@@ -40,7 +40,7 @@ export function CommandTerminalIcon({
   const needsAttention = tone === 'idle'; // activity-state-ok: presentational tone, not an ActivityState
   const colorClass = isWorking ? 'text-active' : needsAttention ? 'text-attention' : '';
 
-  // `showPlus` wins: the "New terminal" button is an ACTION, so it never marches. Rest and
+  // `showPlus` wins: the "New terminal" button is an ACTION, so it never animates. Rest and
   // needs-you share the `terminal-idle` geometry and differ only in tone, which is why the
   // packaged set ships no separate `-rest` mark.
   const mark: ActivityMarkName = showPlus

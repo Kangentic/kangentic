@@ -138,12 +138,14 @@ won't be found.
   settings, or the OS window controls - only this pair's own position moves. The toggle glyph's
   stroke color is the aggregate activity of the project's terminals (active-green working /
   attention-amber needs-you / muted rest, via the central `--kng-active` / `--kng-attention`
-  tokens) and the working border MARCHES (`.kng-march` + a `pathLength`-normalized stroke-dash,
-  both shipped with the mark). The glyph itself is no longer hand-authored: `CommandTerminalIcon`
-  is a thin wrapper over `components/ActivityMark.tsx`, which renders the `terminal-idle` /
-  `terminal-working` / `terminal-new` marks from `@kangentic/branding`. See the Activity marks
-  section below. The toggle reflects only the CURRENT project, so the same glyph is mirrored
-  per project in the sidebar (`SidebarCommandTerminalIndicator` in each `ProjectListItem` row,
+  tokens) and the working state BLINKS its whole prompt like a live shell cursor (`.kng-blink`,
+  shipped with the mark). It marched a travelling dash until 2026-08-07; a rounded rect cannot
+  carry a composited travelling dash, so the working chip was redesigned rather than left
+  stalling. The glyph itself is no longer hand-authored: `CommandTerminalIcon` is a thin wrapper
+  over `components/ActivityMark.tsx`, which renders the `terminal-idle` / `terminal-working` /
+  `terminal-new` marks from `@kangentic/branding`. See the Activity marks section below. The
+  toggle reflects only the CURRENT project, so the same glyph is mirrored per project in the
+  sidebar (`SidebarCommandTerminalIndicator` in each `ProjectListItem` row,
   plus a plain tone dot on `CollapsedRail`'s 28px buttons, where an arc-bearing glyph would read
   as broken). Both the toggle and the sidebar read one shared selector,
   `selectCommandTerminalSummary` (`transient-session-slice.ts`), which derives count + tone from
@@ -179,7 +181,34 @@ won't be found.
   `?raw`, strips the packaged `<svg>` wrapper, and injects the inner markup into a `<g>` under a
   React-authored root. That root shape is load-bearing and must not become `BrandMark`'s wrapper-
   `<span>` form: React forbids `children` next to `dangerouslySetInnerHTML` on one element, and
-  `TaskCard` passes a `<title>` child for its hover tooltip. Marks are `currentColor` only, so the
+  `TaskCard` passes a `<title>` child for its hover tooltip. MOTION is always on a COMPOSITED
+  property, because Chromium composites only `transform` / `opacity` and a non-composited
+  animation stops producing frames for exactly as long as the renderer's main thread is blocked
+  (measured: 194 stalls in 3.6h, worst 703ms, and the indicators visibly hitched). Which primitive
+  a mark gets is decided by its geometry, not by taste: to travel a dash along a perimeter a
+  transform must map the shape onto ITSELF while advancing arc length, which is the shape's
+  symmetry group. A circle's is continuous, so the three ROUND working marks rotate (`.kng-spin`)
+  and it is the SAME image the old march produced - `pathLength` 100 makes a dash shift of d
+  exactly a rotation of d percent of 360 degrees. A rounded square's is DISCRETE (four 90-degree
+  rotations, nothing between), so `terminal-working` cannot travel a dash at all; its working
+  state is instead a solid outline with a blinking PROMPT (`.kng-blink`, an `opacity`), and
+  its rest strategy is now `static` rather than `drop-dash` since there is no dash left to drop.
+  Which element blinks was settled at the 16px sidebar size, not at review size: 2.8.0 blinked
+  the 4-unit prompt BAR alone, which draws 2.7px there against the 15.6px of perimeter the march
+  put in motion, and read as no motion at all. The whole prompt is 7.9px. Blinking the outline
+  too moves more ink but fades the tone that carries working-vs-resting, so it stays solid.
+  `.kng-march` still ships but no mark uses it. Three things bite silently: `ActivityMark`'s
+  timeline anchor must select EVERY motion class (none of the primitives is phase-invariant - the
+  rotating arc is dashed and a restarted blink can land mid-off), any consumer that freezes motion
+  must too AND must do it with `!important` (`MonitorSummaryCards`' zero-state Active tile is the
+  only one; `ActivityMark` imports the packaged CSS from node_modules, so `.kng-spin` arrives
+  UNLAYERED and outranks every Tailwind utility, which compile into `@layer utilities` - an
+  un-important override loses the cascade outright and does nothing, which is what the tile did
+  from the day it adopted the shared marks until a rendered test caught it - the lucide era before
+  that just omitted `animate-spin` and never fought the cascade), and the packaged CSS must ship
+  no animation fill mode or a stopped blink rests at its 0.06 trough instead of visible.
+  The shared 1400ms period across all primitives is what keeps a rotating agent ring in lockstep
+  with a blinking chip in the same sidebar row. Marks are `currentColor` only, so the
   CALL SITE supplies `text-active` / `text-attention` / `text-fg-muted` - never hardcode a hex,
   since `--kng-active` / `--kng-attention` are desktop-only values that mobile and web
   deliberately diverge from. There is no `-rest` mark: rest is the `-idle` geometry in a muted

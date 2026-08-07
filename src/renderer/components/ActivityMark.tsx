@@ -14,8 +14,26 @@ import terminalWorkingSvg from '@kangentic/branding/assets/activity/terminal-wor
 /**
  * The activity marks, owned upstream in `@kangentic/branding` (`assets/activity/`) and shared
  * with the website and the mobile app. Nine marks over five silhouettes (`activity.json` counts
- * `control-pause` and `control-stop` separately) on one 24 grid at stroke 2, `currentColor` only,
- * motion via a marching `stroke-dashoffset`.
+ * `control-pause` and `control-stop` separately) on one 24 grid at stroke 2, `currentColor` only.
+ *
+ * Motion is composited, always, because Chromium can only composite `transform` and `opacity` and
+ * a non-composited animation stops producing frames for exactly as long as THIS renderer's main
+ * thread is blocked - which is what made the indicators visibly hitch. Two primitives ship, and
+ * which one a mark gets is decided by its geometry:
+ *
+ *  - `.kng-spin` (a `transform`) on the ROUND working marks, riding a `pathLength`-normalized
+ *    dash on the outline. On a circle a rotation and a marching dash are the same image, so this
+ *    was a free swap.
+ *  - `.kng-blink` (an `opacity`) on the terminal chip's PROMPT, outline held solid. A rounded rect
+ *    has only a DISCRETE symmetry group, so no transform can travel a dash around it, and the
+ *    chip's working state was redesigned rather than left stalling. Which element blinks is a
+ *    legibility decision settled at the 16px sidebar size, not at review size: branding 2.8.0
+ *    blinked the 4-unit prompt BAR alone, which draws 2.7px there and was reported illegible
+ *    immediately. Blinking the outline too would move more ink but fade the tone that carries
+ *    working-vs-resting, so the outline stays at full strength.
+ *
+ * `.kng-march` (the original `stroke-dashoffset`) still ships in the packaged CSS but no mark
+ * uses it. Upstream holds every primitive to one period so marks stay in lockstep in a shared row.
  *
  * The grid is a WIDTH KEYLINE, not a square ink box: every mark fills its slot's width and
  * takes whatever height its form actually needs. Two keylines, one per role - 18 for
@@ -27,7 +45,7 @@ import terminalWorkingSvg from '@kangentic/branding/assets/activity/terminal-wor
  *
  * A deliberate inline-SVG exception to the lucide-only icon convention (`ui-conventions.md`),
  * and the third in that chain after `BrandMark.tsx` and `command-bar/CommandTerminalIcon.tsx`
- * (which is now a wrapper over this): no lucide glyph carries a marching activity border, and
+ * (which is now a wrapper over this): no lucide glyph carries a dashed activity border, and
  * these marks must stay byte-identical across three surfaces. The `?raw` sources are trusted
  * build-time package assets.
  *
@@ -106,36 +124,51 @@ const MARK_INNER: Record<ActivityMarkName, string> = Object.fromEntries(
 ) as Record<ActivityMarkName, string>;
 
 /**
- * Anchor every marching mark to the document timeline so the animation's phase is a
+ * Every class the packaged set uses to carry motion. ALL THREE must be listed.
+ *
+ * None of the three is phase-invariant, so every one of them needs the anchor:
+ * the set rotates a 75/25 DASHED arc, so a restart snaps its gap back to 12
+ * o'clock exactly as visibly as a restarted march did, and a restarted blink can
+ * land the cursor mid-off. (The lucide spinner these replaced was
+ * phase-invariant because it was one solid arc, which is why the restarts only
+ * became legible when the marks landed.) A selector that named only the classes
+ * in use at the time would silently un-anchor whatever upstream moved next -
+ * which is exactly what happened when the round marks went from march to spin.
+ * `.kng-march` is currently unused by the shipped set and is listed anyway.
+ */
+const MOTION_SELECTOR = '.kng-march, .kng-spin, .kng-blink';
+
+/**
+ * Anchor every animated mark to the document timeline so the animation's phase is a
  * pure function of time rather than of when its DOM node happened to be created.
  *
- * The march lives on a node inside `dangerouslySetInnerHTML`, so it has no React
+ * The motion lives on a node inside `dangerouslySetInnerHTML`, so it has no React
  * fiber: anything that rebuilds or re-inserts that node gives it a brand-new
  * animation starting at zero, and the 75/25 dashed ring snaps its gap back to 12
  * o'clock. That is highly legible - it reads as the indicator freezing or choking.
- * The lucide spinner this replaced never showed it, because a rotating circle looks
- * identical at every phase, which is why the restarts only became visible when the
- * marks landed.
  *
  * Setting `startTime = 0` re-bases the animation onto the document timeline origin,
  * making its phase `documentTime % period` for EVERY mark. Two consequences, both
  * wanted: a rebuilt node resumes exactly where the surviving ones are (so a restart
- * is undetectable), and all marks on screen march in lockstep, which reads as
- * deliberate rather than as N independent spinners.
+ * is undetectable), and all marks on screen move in lockstep, which reads as
+ * deliberate rather than as N independent spinners. Upstream deliberately holds
+ * every primitive to the same period so a rotating agent ring and a blinking
+ * terminal chip stay in lockstep in the same sidebar row.
  *
  * Idempotent by construction - re-applying always computes the same anchor - so it
  * is safe to run on any render.
  */
-function anchorMarchToTimeline(host: SVGGElement | null): void {
+function anchorMarkMotionToTimeline(host: SVGGElement | null): void {
   if (!host) return;
-  const marching = host.querySelector('.kng-march');
-  // `getAnimations` is unavailable in jsdom and absent under reduced motion (the
-  // packaged CSS drops the animation entirely), where there is nothing to anchor.
-  if (!marching || typeof marching.getAnimations !== 'function') return;
-  for (const animation of marching.getAnimations()) {
-    // Only write on drift: assigning startTime unconditionally on every render
-    // would be a needless style mutation on every card, every frame.
-    if (animation.startTime !== 0) animation.startTime = 0;
+  for (const animated of host.querySelectorAll(MOTION_SELECTOR)) {
+    // `getAnimations` is unavailable in jsdom and absent under reduced motion (the
+    // packaged CSS drops the animation entirely), where there is nothing to anchor.
+    if (typeof animated.getAnimations !== 'function') continue;
+    for (const animation of animated.getAnimations()) {
+      // Only write on drift: assigning startTime unconditionally on every render
+      // would be a needless style mutation on every card, every frame.
+      if (animation.startTime !== 0) animation.startTime = 0;
+    }
   }
 }
 
@@ -160,8 +193,10 @@ export interface ActivityMarkProps extends React.SVGProps<SVGSVGElement> {
  *  3. A wrapper `<span>` carrying the tone class would break the sidebar specs, which assert
  *     that `span.text-active` / `span.text-attention` resolve to the count digits alone.
  *
- * The extra `<g>` is harmless to the packaged CSS: `.kng-march` is a class selector and the
- * reduced-motion rule is `svg[data-rest="drop-dash"] *`, so both still match one level deeper.
+ * The extra `<g>` is harmless to the packaged CSS: every motion rule is a class selector and the
+ * reduced-motion dash rule is `svg[data-rest="drop-dash"] *`, so all of them still match one level
+ * deeper. It is also harmless to compositing: the animated element is the packaged inner `<g>`,
+ * and an extra static ancestor does not stop Blink from promoting it.
  */
 export function ActivityMark({
   mark,
@@ -179,9 +214,9 @@ export function ActivityMark({
   // BEFORE paint, so a rebuilt node is already in phase on the frame it appears and
   // the reset is never shown. No dependency array on purpose - a DOM move or a
   // re-injection can hand us a fresh animation without changing `mark`, and
-  // `anchorMarchToTimeline` no-ops when the anchor is already correct.
+  // `anchorMarkMotionToTimeline` no-ops when the anchor is already correct.
   React.useLayoutEffect(() => {
-    anchorMarchToTimeline(markGroupRef.current);
+    anchorMarkMotionToTimeline(markGroupRef.current);
   });
 
   return (

@@ -50,7 +50,7 @@ function PauseButtonIcon({
   if (toggling) return <Loader2 size={18} className="animate-spin" />;
 
   // Active and idle/permission share one packaged mark, differing only by color and motion
-  // (a marching dash vs a static ring), so the two states read as one visual language.
+  // (a rotating dashed arc vs a static ring), so the two states read as one visual language.
   //
   // Rendered at 20 in a 20px box, which is a pixel-for-pixel match for the lucide Circle +
   // hand-drawn bars this replaced: the packaged control ring is r=10 on a 20-unit ink box, so
@@ -716,7 +716,7 @@ function TaskDetailKebabItems({
         />
       )}
 
-      {/* Commands -- searchable flyout (shares CommandSearchList with the header
+      {/* Commands - searchable flyout (shares CommandSearchList with the header
           pill). Hover to open / leave to close, like Move to: the flyout is a DOM
           child of this container, so moving the pointer INTO it (to type in the
           search) stays within the container and keeps it open; the search input
@@ -753,7 +753,7 @@ function TaskDetailKebabItems({
         </div>
       )}
 
-      {/* Move to -- flyout submenu */}
+      {/* Move to - flyout submenu */}
       {moveTargets.length > 0 && (
         <div
           ref={moveFlyoutTriggerRef}
@@ -834,7 +834,7 @@ function TaskDetailKebabItems({
         />
       )}
 
-      {/* Delete -- always available */}
+      {/* Delete - always available */}
       <KebabMenuItem
         icon={<Trash2 size={14} />}
         label="Delete"

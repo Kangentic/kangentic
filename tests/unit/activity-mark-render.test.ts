@@ -18,8 +18,8 @@
  * (`{ type, props }`) is walked without a renderer.
  *
  * ActivityMark is no longer hookless. It takes a ref on the injected `<g>` and
- * runs a layout effect that anchors the marching dash to the document timeline,
- * so a re-injected or DOM-moved mark does not restart its animation mid-march.
+ * runs a layout effect that anchors the mark's motion to the document timeline,
+ * so a re-injected or DOM-moved mark does not restart its animation mid-cycle.
  * Calling a component as a plain function invokes hooks outside a render, where
  * React's dispatcher is null, so the two hooks are stubbed below.
  *

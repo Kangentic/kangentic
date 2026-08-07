@@ -105,15 +105,33 @@ function MonitorSummaryCardsInner({ rows }: { rows: MonitorSessionRow[] }) {
       />
       <SummaryTile
         label="Active"
-        // The working mark marches by default (`.kng-march` in the branding CSS).
-        // At zero there is nothing in flight to animate, so freeze the dash rather
-        // than have an idle machine's chrome keep moving. Same conditional the
-        // lucide spinner this replaced used.
+        // The working mark animates by default. At zero there is nothing in flight
+        // to animate, so freeze it rather than have an idle machine's chrome keep
+        // moving. Same conditional the lucide spinner this replaced used.
+        //
+        // BOTH motion classes, deliberately. `agent-working` moved from `.kng-march`
+        // to `.kng-spin` upstream, so naming only one leaves the tile animating on
+        // an idle machine. Naming both means a future upstream flip in either
+        // direction stays frozen here. (The chip's `.kng-blink` is not listed
+        // because this tile only ever renders the ring.)
+        //
+        // The `!` is load-bearing, not defensive. `ActivityMark` imports the packaged
+        // `activity.css` straight from node_modules, so `.kng-spin { animation: ... }`
+        // lands UNLAYERED, while `@import "tailwindcss"` compiles every utility into
+        // `@layer utilities` - and an unlayered author rule beats a layered one at any
+        // specificity. Without `!important` this override loses the cascade outright
+        // and silently does nothing, which is how the tile spun at zero for both the
+        // `.kng-march` era and the first cut of this widening. Only importance, which
+        // outranks layering, wins here. Pinned red-green in tests/ui/agent-monitor.spec.ts.
         icon={(
           <ActivityMark
             mark="agent-working"
             size={15}
-            className={counts.working > 0 ? '' : '[&_.kng-march]:[animation:none]'}
+            className={
+              counts.working > 0
+                ? ''
+                : '[&_.kng-march]:[animation:none]! [&_.kng-spin]:[animation:none]!'
+            }
           />
         )}
         value={counts.working}

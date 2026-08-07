@@ -57,6 +57,8 @@ when the same UI is reconstructed or re-pointed by a restore.
 
 Renderer UI under `src/renderer/`. Governs motion that fires on mount or on a value change for
 surfaces reconstructed/re-pointed by a restore. Does not govern ongoing ambient motion
-(`animate-spin`, `animate-pulse-subtle`, and the activity marks' `.kng-march` from
+(`animate-spin`, `animate-pulse-subtle`, and the activity marks' `.kng-spin` / `.kng-blink` from
 `@kangentic/branding/assets/activity/activity.css`) or genuinely user-initiated open/close
-animations, which are intentional and stay.
+animations, which are intentional and stay. The activity marks are in fact the opposite case: they
+are anchored to the document timeline precisely so a restore or re-mount CANNOT replay them from
+phase zero.

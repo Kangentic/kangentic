@@ -5,14 +5,19 @@
  * already assert WHICH mark each state renders. This file covers the three things that are
  * properties of the packaged set itself, and that fail silently everywhere else:
  *
- *  1. The packaged `activity.css` reaches the renderer's cascade. `.kng-march` is an unscoped
- *     global arriving from node_modules, so a mark can render perfectly and simply never move.
- *     No `data-mark` assertion catches that.
+ *  1. The packaged `activity.css` reaches the renderer's cascade, and each working mark is on
+ *     the primitive it is supposed to be on. `.kng-spin` / `.kng-march` are unscoped globals
+ *     arriving from node_modules, so a mark can render perfectly and simply never move, and no
+ *     `data-mark` assertion catches that. WHICH primitive matters too: only the rotation is
+ *     composited, so a silent revert to the march would still animate here and still stall
+ *     under load.
+ *  1b. Every mark on screen is anchored to the document timeline. Invisible when it works,
+ *     and when it breaks it looks exactly like the stall in (1).
  *  2. The marks render at the size their call site asked for. The packaged SVGs carry a
  *     hardcoded `width="24" height="24"`, so a regression in ActivityMark's root would silently
  *     paint every indicator at 24px.
- *  3. `prefers-reduced-motion` is honored, including the `drop-dash` strategy that needs
- *     `data-rest` to survive into the DOM.
+ *  3. `prefers-reduced-motion` is honored for every primitive, that a stopped mark comes to rest
+ *     in a readable state, and that `data-rest` survives into the DOM.
  */
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
@@ -108,34 +113,103 @@ async function launch(
  */
 
 test.describe('Activity marks', () => {
-  test('the packaged activity.css reaches the cascade and drives the march', async () => {
-    const { browser, page } = await launch('thinking');
+  test('the packaged activity.css reaches the cascade and drives a COMPOSITED rotation', async () => {
+    const { browser, page } = await launch('thinking', undefined, 'thinking');
     try {
+      const readAnimation = (locator: ReturnType<Page['locator']>): Promise<unknown> =>
+        locator.evaluate((node) => {
+          const style = getComputedStyle(node);
+          return {
+            name: style.animationName,
+            duration: style.animationDuration,
+            timing: style.animationTimingFunction,
+            iteration: style.animationIterationCount,
+          };
+        });
+
       const mark = page.locator(`[data-task-id="${TASK_ID}"] [data-mark="agent-working"]`);
       await expect(mark).toBeVisible({ timeout: 15000 });
 
+      // The round working mark ROTATES. `transform` is the only reason this test names a
+      // specific keyframe rather than just "something animates": Chromium composites transform
+      // animations and cannot composite `stroke-dashoffset`, so a silent revert to the march
+      // would keep this mark rendering and animating while reintroducing the stall it was
+      // moved to escape. Nothing else in the suite would notice.
       await expect
-        .poll(
-          () => mark.locator('.kng-march').evaluate((node) => {
-            const style = getComputedStyle(node);
-            return {
-              name: style.animationName,
-              duration: style.animationDuration,
-              timing: style.animationTimingFunction,
-              iteration: style.animationIterationCount,
-            };
-          }),
-          {
-            message:
-              'activity.css did not reach the cascade: .kng-march resolved to no animation, so every working mark is frozen',
-          },
-        )
+        .poll(() => readAnimation(mark.locator('.kng-spin')), {
+          message:
+            'activity.css did not reach the cascade, or agent-working reverted to the '
+            + 'non-composited march: the board indicator freezes whenever the renderer is busy',
+        })
         .toEqual({
-          name: 'kng-activity-march',
+          name: 'kng-activity-spin',
           duration: '1.4s',
           timing: 'linear',
           iteration: 'infinite',
         });
+
+      // The terminal chip is not radially symmetric, so it cannot rotate at all. Its working
+      // state is a solid outline with a blinking cursor, on `opacity`, which composites. The
+      // period must MATCH the rotation above: both are anchored to the document timeline, and a
+      // mismatch drifts the sidebar's agent ring out of lockstep with the chip beside it.
+      const terminalMark = page.getByTestId('quick-session-icon');
+      await expect(terminalMark).toHaveAttribute('data-mark', 'terminal-working', { timeout: 10000 });
+      await expect
+        .poll(() => readAnimation(terminalMark.locator('.kng-blink')), {
+          message: 'the terminal chip lost its blink, or its period drifted from the rotation',
+        })
+        .toEqual({
+          name: 'kng-activity-blink',
+          duration: '1.4s',
+          timing: 'linear',
+          iteration: 'infinite',
+        });
+
+      // The blink rides the WHOLE PROMPT and leaves the outline solid. Both halves matter and
+      // neither is caught anywhere else: blinking less (the bar alone, as 2.8.0 shipped) draws
+      // 2.7px at this size and is illegible, and blinking more (the outline, or the whole mark)
+      // fades the tone that carries working-vs-resting. Either mistake still animates, still
+      // composites, and sails past every other assertion in this file.
+      await expect(terminalMark.locator('.kng-blink > path')).toHaveCount(2);
+      await expect(terminalMark.locator('.kng-blink rect')).toHaveCount(0);
+      await expect
+        .poll(() => terminalMark.locator('rect').first().evaluate((node) => getComputedStyle(node).animationName), {
+          message: 'the chip outline must not blink - a whole-mark fade dims the state tone',
+        })
+        .toBe('none');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('every mark on screen is anchored to the document timeline, so none can restart', async () => {
+    // The anchor is what makes a rebuilt node resume where the survivors are. It is invisible
+    // when it works and indistinguishable from the compositing stall when it breaks, so assert
+    // it directly: startTime 0 on every animation, and one shared currentTime across all of
+    // them. This is the guard for the selector regression - anchoring only `.kng-march` would
+    // leave the rotating marks un-anchored, and everything else here would still pass.
+    const { browser, page } = await launch('thinking', undefined, 'thinking');
+    try {
+      const mark = page.locator(`[data-task-id="${TASK_ID}"] [data-mark="agent-working"]`);
+      await expect(mark).toBeVisible({ timeout: 15000 });
+      await expect(page.getByTestId('quick-session-icon'))
+        .toHaveAttribute('data-mark', 'terminal-working', { timeout: 10000 });
+
+      await expect
+        .poll(
+          () => page.evaluate(() => {
+            const animated = Array.from(document.querySelectorAll('.kng-spin, .kng-march, .kng-blink'));
+            const animations = animated.flatMap((node) => node.getAnimations());
+            return {
+              // Both shipped primitives must actually be on screen, or "all anchored" is vacuous.
+              classes: [...new Set(animated.map((node) => node.getAttribute('class')))].sort(),
+              unanchored: animations.filter((animation) => animation.startTime !== 0).length,
+              phases: new Set(animations.map((animation) => String(animation.currentTime))).size,
+            };
+          }),
+          { message: 'activity marks are not all anchored to the document timeline' },
+        )
+        .toEqual({ classes: ['kng-blink', 'kng-spin'], unanchored: 0, phases: 1 });
     } finally {
       await browser.close();
     }
@@ -183,13 +257,13 @@ test.describe('Activity marks', () => {
     }
   });
 
-  test('a static mark carries no marching group at all', async () => {
+  test('a static mark carries no motion group at all', async () => {
     const { browser, page } = await launch('idle');
     try {
       const mark = page.locator(`[data-task-id="${TASK_ID}"] [data-mark="agent-idle"]`);
       await expect(mark).toBeVisible({ timeout: 15000 });
       await expect(mark).toHaveAttribute('data-rest', 'static');
-      await expect(mark.locator('.kng-march')).toHaveCount(0);
+      await expect(mark.locator('.kng-march, .kng-spin')).toHaveCount(0);
       // The idle branch carries its own `size={16}` literal in TaskCard, separate from the
       // thinking branch the size test above measures, so it can regress on its own.
       await expect
@@ -200,35 +274,60 @@ test.describe('Activity marks', () => {
     }
   });
 
-  test('prefers-reduced-motion stops the march and drops the drop-dash dash', async () => {
-    // The transient terminal is seeded 'thinking' on purpose. `terminal-working` is the ONLY
-    // mark that declares `drop-dash`, and it renders only when a running transient PTY is
-    // active: `selectCommandTerminalSummary` counts `transient && running` sessions, so the
-    // task's own (non-transient) session never drives the toggle no matter what its activity
-    // is. Without this the toggle sits at `terminal-idle` / `static` and the dash assertion
-    // below has nothing to check.
+  test('prefers-reduced-motion stops every primitive and leaves both marks readable', async () => {
+    // The transient terminal is seeded 'thinking' on purpose: `terminal-working` renders only
+    // when a running transient PTY is active, because `selectCommandTerminalSummary` counts
+    // `transient && running` sessions, so the task's own (non-transient) session never drives
+    // the toggle no matter what its activity is. Without this the toggle sits at `terminal-idle`
+    // and the blink assertion below has nothing to check.
     const { browser, page } = await launch('thinking', 'reduce', 'thinking');
     try {
       const mark = page.locator(`[data-task-id="${TASK_ID}"] [data-mark="agent-working"]`);
       await expect(mark).toBeVisible({ timeout: 15000 });
+      // Each time upstream added a primitive, a reduced-motion rule still naming only the
+      // previous ones would have left the newest marks moving - silently, and only for the
+      // users who asked for no motion. Both shipped primitives are checked here for that reason.
       await expect
         .poll(
-          () => mark.locator('.kng-march').evaluate((node) => getComputedStyle(node).animationName),
-          { message: 'prefers-reduced-motion should disable the march' },
+          () => mark.locator('.kng-spin').evaluate((node) => getComputedStyle(node).animationName),
+          { message: 'prefers-reduced-motion should disable the rotation' },
         )
         .toBe('none');
 
-      // Under reduced motion a `drop-dash` mark must lose its dash outright, not merely freeze
-      // it mid-gap. That rule is `svg[data-rest="drop-dash"] *`, so it only fires if `data-rest`
-      // survives the packaged-wrapper strip into the React-authored root.
       const terminalMark = page.getByTestId('quick-session-icon');
       await expect(terminalMark).toHaveAttribute('data-mark', 'terminal-working', { timeout: 10000 });
-      await expect(terminalMark).toHaveAttribute('data-rest', 'drop-dash');
+      await expect
+        .poll(
+          () => terminalMark.locator('.kng-blink').evaluate((node) => getComputedStyle(node).animationName),
+          { message: 'prefers-reduced-motion should disable the blink' },
+        )
+        .toBe('none');
+
+      // And the prompt must come to rest VISIBLE, not stuck at the keyframe's 0.06 trough. The
+      // packaged CSS deliberately ships no animation fill mode for exactly this reason, so a
+      // stopped blink resolves to the element's own opacity rather than to its last keyframe.
+      // Without this the mark would rest looking like it had lost its prompt.
+      //
+      // Read the GROUP, not a child path. The animation is on `<g class="kng-blink">`, and a
+      // child <path> computes to opacity 1 no matter what the group is doing - so asserting on
+      // the path would pass even with the group stuck at 0.06, which is the whole failure.
+      await expect
+        .poll(
+          () => terminalMark.locator('.kng-blink').evaluate((node) => getComputedStyle(node).opacity),
+          { message: 'a stopped prompt must rest visible, not at the blink trough' },
+        )
+        .toBe('1');
+
+      // `data-rest` still has to survive the packaged-wrapper strip into the React-authored
+      // root: it is the hook the packaged `svg[data-rest="drop-dash"] *` rule keys off. No
+      // shipped mark declares drop-dash since the chip's dash was removed, so this asserts the
+      // attribute is plumbed and correct rather than exercising that rule.
+      await expect(terminalMark).toHaveAttribute('data-rest', 'static');
       await expect
         .poll(
           () => terminalMark.locator('rect').first()
             .evaluate((node) => getComputedStyle(node).strokeDasharray),
-          { message: 'a drop-dash mark should lose its dash under reduced motion' },
+          { message: 'the working chip outline must be solid' },
         )
         .toBe('none');
     } finally {
