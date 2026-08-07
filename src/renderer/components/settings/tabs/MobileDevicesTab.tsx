@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Check, CircleAlert, Copy, ExternalLink, Loader2, Pencil, QrCode, Server, ShieldCheck, Smartphone, Trash2, WifiOff, X } from 'lucide-react';
+import { Check, CircleAlert, Copy, Loader2, Pencil, QrCode, Server, ShieldCheck, Smartphone, Trash2, WifiOff, X } from 'lucide-react';
 import { formatKeyFingerprint } from '@kangentic/protocol/roster/fingerprint';
 import type { AppConfig, MobileDeviceConnectionState, MobilePairedDevice, RemoteServerStatus } from '../../../../shared/types';
 import { resolveRelayMode, resolveRelayUrl, validateRelayUrl } from '../../../../shared/relay';
@@ -7,6 +7,7 @@ import { formatDate } from '../../../lib/datetime';
 import { INPUT_CLASS, SectionHeader, Select, SettingRow, SettingToggleRow, useScopedUpdate } from '../shared';
 import { Pill } from '../../Pill';
 import { settingProps } from '../settings-registry';
+import { useAnySettingVisible } from '../settings-search';
 import { ConfirmDialog } from '../../dialogs/ConfirmDialog';
 import { QrImage } from '../../QrImage';
 import { ExternalLinkButton } from '../../ExternalLinkButton';
@@ -18,13 +19,22 @@ import { useMobileStore } from '../../../stores/mobile-store';
  *  live belong in the mobile-launch announcement in announcements.json. */
 const MOBILE_DOCS_URL = 'https://www.kangentic.com/mobile/';
 
-/** Backs the "Official" badge on the hosted relay: the page states what the
- *  link encrypts, why the relay cannot read it, and - in "What a relay operator
- *  can still see" - what it observes anyway, naming Kangentic's own instance.
- *  Deliberately not /mobile/relay/, which is the self-hosting how-to (the
- *  Custom Relay path), nor /mobile/, which the Kangentic Mobile section below
- *  already links. Repoint this once the hosted relay has a page of its own. */
-const RELAY_SECURITY_DOCS_URL = 'https://www.kangentic.com/mobile/security/';
+/** The relay section's overview: what the relay is, why it exists, the
+ *  blind-forwarding guarantee, and a hosted-vs-your-own comparison that routes
+ *  onward to the hosted page (which backs the "Official" badge and details what
+ *  an operator can still observe) or the self-hosting how-to. Deliberately the
+ *  overview rather than either leaf: someone opening this from the settings tab
+ *  is asking what the relay does, and can pick a branch from there. The relay
+ *  docs are their own top-level section on the site, not a subsection of
+ *  Mobile, which is the same split this tab draws between Relay and Mobile. */
+const RELAY_DOCS_URL = 'https://www.kangentic.com/relay/';
+
+/** The ids each section's heading advertises. Declared once and passed to BOTH
+ *  the SectionHeader's `searchIds` and the body's `useAnySettingVisible` gate,
+ *  so the two cannot answer the search differently: a body gated on a subset
+ *  hides the very row the query matched and leaves the heading orphaned. */
+const RELAY_SEARCH_IDS = ['mobileBridge.relayMode', 'mobileBridge.relayUrl'];
+const MOBILE_SEARCH_IDS = ['mobileBridge.pairing', 'mobileBridge.devices', 'mobileBridge.getApp'];
 
 /**
  * 'idle' means this device has no session open yet (nothing to report), so it
@@ -63,6 +73,29 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
   // which renders blank - above a pill showing the hosted URL it resolved to.
   const relayMode = resolveRelayMode(globalConfig.mobileBridge);
   const resolvedRelayUrl = resolveRelayUrl(globalConfig.mobileBridge);
+
+  /** Every control in a section dims and stops taking clicks with the bridge
+   *  off; each section's docs tail sits outside this wrapper (see the comment
+   *  in the JSX below). */
+  const gatedSectionClass = enabled ? 'space-y-4' : 'space-y-4 opacity-40 pointer-events-none';
+  /** The relay controls used to be a SettingRow, which hid itself on a search
+   *  miss. Now that its heading is a SectionHeader, the controls have to honor
+   *  the same search filtering explicitly or they render under a hidden header.
+   *  Gated on the WHOLE id list the heading advertises, not just relayMode:
+   *  SectionHeader shows when ANY of its ids match, so a relayUrl-only query
+   *  ("websocket", "address") kept the heading and hid the Custom Relay Address
+   *  field the user was searching for. */
+  const relaySectionVisible = useAnySettingVisible(RELAY_SEARCH_IDS);
+  /** Same rule for the Mobile section. Applied as a class rather than an
+   *  `&&` wrapper only to avoid adding a JSX nesting level around ~190 lines:
+   *  the pairing flow and device list would all have to shift one indent, and
+   *  the resulting whitespace hunk would bury the real change. `hidden` is
+   *  display:none, so the content is out of the accessibility tree too. */
+  const mobileSectionVisible = useAnySettingVisible(MOBILE_SEARCH_IDS);
+  /** Via settingProps, not a raw SETTINGS_BY_ID index: a future rename of the
+   *  id then fails with "Unknown setting ID: ..." instead of a bare "cannot
+   *  read properties of undefined". */
+  const relayHeading = settingProps('mobileBridge.relayMode');
 
   // Local draft with a commit boundary (blur/Enter), not a per-keystroke write:
   // each committed relayUrl change disposes and redials every bridge session
@@ -248,39 +281,35 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
 
   return (
     <div className="space-y-4">
-      <div className="space-y-1.5">
-        <SettingToggleRow
-          {...settingProps('mobileBridge.enabled')}
-          icon={<Smartphone className="size-5" />}
-          checked={enabled}
-          onChange={(value) => updateGlobal({ mobileBridge: { enabled: value } })}
-        />
-        {/* Deliberately OUTSIDE the enabled-gated wrapper below, and a sibling
-            of the card rather than a child of it. Outside, because the bridge
-            ships off: someone still deciding whether to route their agent
-            traffic through our server is by definition someone who has not
-            flipped the toggle, and inside the gate this link would be both
-            dimmed and pointer-events-none for exactly that person. A child of
-            the card is not an option either - ToggleCard's root IS the
-            role="switch" button, and nesting an interactive element in a
-            button is invalid (see its own `info` prop for the same dodge).
-            The indent is the card's px-3.5 + size-5 icon + gap-3, so the link
-            lines up with the description text above it. */}
-        <button
-          type="button"
-          onClick={() => void window.electronAPI.shell.openExternal(RELAY_SECURITY_DOCS_URL)}
-          className="ml-[2.875rem] inline-flex items-center gap-1 text-xs text-accent-fg underline underline-offset-2 hover:opacity-80 cursor-pointer"
-          title={RELAY_SECURITY_DOCS_URL}
-          data-testid="mobile-relay-security-link"
-        >
-          What the relay can see
-          <ExternalLink size={12} />
-        </button>
-      </div>
+      <SettingToggleRow
+        {...settingProps('mobileBridge.enabled')}
+        icon={<Smartphone className="size-5" />}
+        checked={enabled}
+        onChange={(value) => updateGlobal({ mobileBridge: { enabled: value } })}
+      />
 
-      <div className={enabled ? 'space-y-4' : 'space-y-4 opacity-40 pointer-events-none'}>
-        <SettingRow {...settingProps('mobileBridge.relayMode')}>
-          <div className="flex gap-2 items-start">
+      {/* The tab below the master switch is two independent sections, Relay and
+          Mobile: where this desktop connects, and which phones may use it.
+          They are peers, so both are SectionHeaders - the relay controls used
+          to sit in a SettingRow whose own label was also "Relay", which put two
+          different headings for the same thing on one tab.
+
+          Each section ends in an UNGATED documentation tail. Everything else in
+          a section is inside the enabled-gate, but the docs are exactly what a
+          user with the bridge still off needs: someone deciding whether to
+          route agent traffic through our relay has by definition not flipped
+          the toggle, and someone who has not installed the app yet has not
+          either. Parent opacity cannot be undone by a child, so the link has to
+          live outside the gated wrapper rather than opt out of it. */}
+      <SectionHeader
+        label={relayHeading.label}
+        description={relayHeading.description}
+        searchIds={RELAY_SEARCH_IDS}
+      />
+      {relaySectionVisible && (
+        <>
+          <div className={gatedSectionClass}>
+            <div className="flex gap-2 items-start">
             <div className="flex-1 flex flex-col gap-2">
               <Select
                 value={relayMode}
@@ -358,46 +387,68 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
               </div>
             </div>
           </div>
-        </SettingRow>
 
-        {relayMode === 'custom' && (
-          <SettingRow {...settingProps('mobileBridge.relayUrl')}>
-            <div className="ml-1 space-y-2 border-l border-edge pl-3" data-testid="mobile-relay-custom-fields">
-              <input
-                type="text"
-                className={INPUT_CLASS}
-                value={relayDraft}
-                placeholder="wss://relay.example.com"
-                disabled={!enabled}
-                data-testid="mobile-relay-url-input"
-                onChange={(event) => {
-                  setRelayDraft(event.target.value);
-                  setRelayDraftError(null);
-                  // Same in-flight invalidation as the mode Select above.
-                  relayTestRequestRef.current++;
-                  setRelayTestResult(null);
-                }}
-                onBlur={commitRelayDraft}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') event.currentTarget.blur();
-                }}
-              />
-              {relayDraftError && (
-                <p className="text-xs text-danger" data-testid="mobile-relay-url-error">
-                  {relayDraftError}
-                </p>
-              )}
-            </div>
-          </SettingRow>
-        )}
+          {relayMode === 'custom' && (
+            <SettingRow {...settingProps('mobileBridge.relayUrl')}>
+              <div className="ml-1 space-y-2 border-l border-edge pl-3" data-testid="mobile-relay-custom-fields">
+                <input
+                  type="text"
+                  className={INPUT_CLASS}
+                  value={relayDraft}
+                  placeholder="wss://relay.example.com"
+                  disabled={!enabled}
+                  data-testid="mobile-relay-url-input"
+                  onChange={(event) => {
+                    setRelayDraft(event.target.value);
+                    setRelayDraftError(null);
+                    // Same in-flight invalidation as the mode Select above.
+                    relayTestRequestRef.current++;
+                    setRelayTestResult(null);
+                  }}
+                  onBlur={commitRelayDraft}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') event.currentTarget.blur();
+                  }}
+                />
+                {relayDraftError && (
+                  <p className="text-xs text-danger" data-testid="mobile-relay-url-error">
+                    {relayDraftError}
+                  </p>
+                )}
+              </div>
+            </SettingRow>
+          )}
+          </div>
 
+          <ExternalLinkButton
+            label="How the relay works"
+            url={RELAY_DOCS_URL}
+            testId="mobile-relay-docs-link"
+          />
+        </>
+      )}
+
+      {/* ── Mobile ── the phones allowed to use the relay above. Named for the
+          device, not the ceremony: "Pairing" over a "Pair a device" button and
+          a "Paired Devices" list stacked three "pair"s deep, and the thing this
+          section is actually about is your phone.
+
+          Label and description are literals here, where Relay's come from the
+          registry: this heading spans THREE registry rows (pairing, devices,
+          getApp), so there is no single entry to source them from. Relay maps
+          1:1 onto mobileBridge.relayMode and reads it directly. */}
+      <SectionHeader
+        label="Mobile"
+        description="Phones paired to this desktop, and the app they run. Each paired phone is identified here by key fingerprint."
+        searchIds={MOBILE_SEARCH_IDS}
+      />
+      <div className={mobileSectionVisible ? gatedSectionClass : 'hidden'}>
         {status && !status.secureStorageAvailable && (
           <p className="text-xs text-danger">
             Secure storage is unavailable on this system, so a device identity cannot be created.
           </p>
         )}
 
-        <SectionHeader label="Pair a Device" searchIds={['mobileBridge.pairing']} />
         {!qrUri && !pairingConfirmed ? (
           <div className="space-y-2">
             <button
@@ -457,7 +508,9 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
           </div>
         )}
 
-        <SectionHeader label="Paired Devices" searchIds={['mobileBridge.devices']} />
+        {/* A sub-label, not a SectionHeader: the device list belongs to Mobile
+            rather than sitting beside it as a third peer section. */}
+        <div className="text-sm font-medium text-fg-secondary pt-1">Paired Devices</div>
         {devices.length === 0 ? (
           <p className="text-sm text-fg-faint">No devices paired yet.</p>
         ) : (
@@ -563,21 +616,17 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
         )}
       </div>
 
-      {/* Outside the enabled-gated wrapper above: getting the app is exactly
-          what a user with the bridge still off needs, so this section stays
-          fully interactive regardless of the toggle. It is also NOT conditioned
-          on the paired-device list being empty. The link is the docs landing
-          page, not an install page, so a paired user is the main audience for
-          its notifications, security, and relay pages - and pairing one phone
-          does not mean the next device is installed. Hiding it once a device
-          exists would take it away from the person adding a second one. */}
-      <SectionHeader label="Kangentic Mobile" searchIds={['mobileBridge.getApp']} />
-      <div className="space-y-3" data-testid="mobile-get-app">
+      {/* Mobile's documentation tail, the counterpart to the relay's. Outside
+          the gate for the same reason, and NOT conditioned on the device list
+          being empty: the target is a docs landing page rather than an install
+          page, so a paired user is most of its audience, and pairing one phone
+          does not mean the next device is installed. */}
+      <div className={mobileSectionVisible ? 'space-y-3' : 'hidden'} data-testid="mobile-get-app">
         <p className="text-sm text-fg-muted">
-          Installing the app, push notifications, and how the encrypted link works.
+          Installing the app, pairing a phone, and push notifications.
         </p>
         <ExternalLinkButton
-          label="Read the docs"
+          label="How to install and pair"
           url={MOBILE_DOCS_URL}
           testId="mobile-get-app-docs-link"
         />

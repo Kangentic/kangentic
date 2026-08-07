@@ -74,7 +74,7 @@ async function openMobileTab() {
   await page.locator('[data-testid="settings-button"]').click();
   await page.locator('h2:has-text("Settings")').waitFor({ state: 'visible', timeout: 3000 });
   await page.getByRole('button', { name: 'Mobile Devices', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Pair a Device' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Mobile', exact: true })).toBeVisible();
 }
 
 async function closeSettings() {
@@ -161,23 +161,23 @@ test.describe('Mobile Devices settings tab', () => {
       const tabButton = freshPage.getByRole('button', { name: 'Mobile Devices', exact: true });
       await expect(tabButton).toBeVisible();
       await tabButton.click();
-      await expect(freshPage.getByRole('heading', { name: 'Pair a Device' })).toBeVisible();
+      await expect(freshPage.getByRole('heading', { name: 'Mobile', exact: true })).toBeVisible();
     } finally {
       await freshBrowser.close();
     }
   });
 
-  test('the Kangentic Mobile section stays interactive with the bridge off and opens the mobile docs', async () => {
-    // Bridge OFF is the interesting case: the section sits OUTSIDE the
-    // enabled-gated wrapper (opacity-40 pointer-events-none when disabled),
-    // because a user who has not installed the app yet is exactly the user
-    // who has not enabled the bridge. The click succeeding proves the escape.
+  test("Mobile's app-docs tail stays interactive with the bridge off and opens the mobile docs", async () => {
+    // Bridge OFF is the interesting case: this is the Mobile section's
+    // documentation tail, which sits OUTSIDE the enabled-gated wrapper
+    // (opacity-40 pointer-events-none when disabled), because a user who has
+    // not installed the app yet is exactly the user who has not enabled the
+    // bridge. The click succeeding proves the escape.
     await setMobileBridgeConfig({ enabled: false, relayMode: 'hosted', relayUrl: '' });
     await openMobileTab();
 
     const section = page.locator('[data-testid="mobile-get-app"]');
     await expect(section).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Kangentic Mobile' })).toBeVisible();
 
     // Anchor on the section's own content BEFORE asserting anything is absent.
     // QrImage renders null until its async toDataURL() resolves, so a bare
@@ -212,7 +212,7 @@ test.describe('Mobile Devices settings tab', () => {
     await closeSettings();
   });
 
-  test('the Kangentic Mobile section survives pairing: it is not an empty-state prompt', async () => {
+  test("Mobile's app-docs tail survives pairing: it is not an empty-state prompt", async () => {
     // The mirror of the bridge-off case above. The section is unconditional in
     // BOTH directions, and this pins the direction that is tempting to "tidy
     // up": hiding it once a device exists, on the theory that a paired user has
@@ -240,7 +240,14 @@ test.describe('Mobile Devices settings tab', () => {
     // new URL() normalization, unlike a saved custom value).
     await expect(page.locator('[data-testid="mobile-relay-resolved-url"]')).toHaveText('wss://relay.kangentic.com');
     await expect(page.locator('[data-testid="mobile-relay-url-input"]')).toHaveCount(0);
-    await expect(page.getByRole('heading', { name: 'Pair a Device' })).toBeVisible();
+    // The tab is two peer sections, Relay and Mobile. "Relay" must be the
+    // section heading and NOT also a row label inside it: the relay controls
+    // used to live in a SettingRow whose own label was "Relay" too, which put
+    // two headings for one thing on the tab. "Paired Devices" is deliberately
+    // a sub-label within Mobile rather than a third peer heading.
+    await expect(page.getByRole('heading', { name: 'Relay', exact: true })).toHaveCount(1);
+    await expect(page.getByRole('heading', { name: 'Mobile', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Paired Devices' })).toHaveCount(0);
     await expect(page.getByText('Paired Devices')).toBeVisible();
     await closeSettings();
   });
@@ -291,26 +298,31 @@ test.describe('Mobile Devices settings tab', () => {
     await closeSettings();
   });
 
-  test('the relay security link stays live with the bridge off', async () => {
+  test("the Relay section's docs tail stays live with the bridge off", async () => {
     // The point of the test: this link sits OUTSIDE the enabled-gated wrapper
     // (opacity-40 pointer-events-none). Someone deciding whether to route
     // agent traffic through our relay has not enabled the bridge yet, so a
     // link inside the gate would be dead for exactly its audience. Clicking
     // it while disabled is what proves the escape - and nothing else would
-    // catch a later refactor tidying it back into the relay row.
+    // catch a later refactor tidying it back into the gated relay controls.
     await setMobileBridgeConfig({ enabled: false, relayMode: 'hosted', relayUrl: '' });
     await openMobileTab();
 
-    const securityLink = page.locator('[data-testid="mobile-relay-security-link"]');
-    await expect(securityLink).toBeVisible();
+    const relayDocsLink = page.locator('[data-testid="mobile-relay-docs-link"]');
+    await expect(relayDocsLink).toBeVisible();
 
     await page.evaluate(() => {
       window.__openedExternalUrls = [];
     });
-    await securityLink.click();
+    await relayDocsLink.click();
+    // The relay section's OVERVIEW, not a leaf. Someone opening this from
+    // settings is asking what the relay does; the overview answers that and
+    // routes on to the hosted page or the self-hosting how-to. The two
+    // sections' tails must also stay distinct targets - Relay goes to /relay/,
+    // Mobile goes to /mobile/ - which is the collision this split fixed.
     await expect
       .poll(() => page.evaluate(() => window.__openedExternalUrls))
-      .toEqual(['https://www.kangentic.com/mobile/security/']);
+      .toEqual(['https://www.kangentic.com/relay/']);
 
     await closeSettings();
   });
@@ -1043,6 +1055,63 @@ test.describe('Mobile Devices settings tab', () => {
     // Confirm path: the device is actually removed by the mock's revokeDevice().
     await revokeDevice('Revoke Target Device');
 
+    await closeSettings();
+  });
+
+  test('a search matching only one section id in a two-id header still reveals that section\'s body (regression)', async () => {
+    // Regression coverage for a header/body search-visibility mismatch: each
+    // of the Relay and Mobile sections is one SectionHeader with a
+    // MULTI-id searchIds array, but the body below it used to be gated (or not
+    // gated at all) on a DIFFERENT rule than its own header. A query matching
+    // only part of a section's id set could then show the heading while
+    // hiding the very body content the query was about, or - worse - hide the
+    // heading while the ungated body kept rendering underneath nothing.
+    //
+    // "websocket" is a keyword ONLY on mobileBridge.relayUrl (not on
+    // mobileBridge.relayMode) - see settings-registry.ts. It discriminates
+    // between "any of the Relay section's ids matched" (correct: body must
+    // show) and "the specific id `relayMode` matched" (the historical bug:
+    // body stays hidden because relayMode is what the body used to gate on).
+    await setMobileBridgeConfig({ enabled: true, relayMode: 'custom', relayUrl: '' });
+    await openMobileTab();
+
+    const searchInput = page.getByTestId('settings-search');
+    await searchInput.fill('websocket');
+
+    // The heading is not the falsifier here (SectionHeader's own gate already
+    // matches on any of RELAY_SEARCH_IDS and was not touched by the historical
+    // bug) - it is a sanity anchor confirming the section is even present.
+    await expect(page.getByRole('heading', { name: 'Relay', exact: true })).toBeVisible();
+    // The load-bearing assertion: the Custom Relay Address field - the exact
+    // control "websocket" is searching for - must render under a heading that
+    // claims to have a match.
+    await expect(page.locator('[data-testid="mobile-relay-url-input"]')).toBeVisible();
+
+    await searchInput.fill('');
+    await expect(page.getByRole('heading', { name: 'Mobile', exact: true })).toBeVisible();
+    await closeSettings();
+
+    // "official" is a keyword ONLY on mobileBridge.relayMode - it does not
+    // appear on any of the Mobile section's ids (pairing / devices / getApp).
+    // This is the mirror direction: a query that matches a DIFFERENT
+    // section's id entirely must not leave the Mobile section's body
+    // (buttons, docs tail) rendering orphaned under no heading.
+    await setMobileBridgeConfig({ enabled: true, relayMode: 'hosted', relayUrl: '' });
+    await openMobileTab();
+    await searchInput.fill('official');
+
+    await expect(page.getByRole('heading', { name: 'Mobile', exact: true })).toHaveCount(0);
+    // Load-bearing: both halves of the Mobile section body - the pairing
+    // button and the unconditional docs tail - must actually be hidden
+    // (display:none), not merely under a missing heading.
+    await expect(page.locator('[data-testid="mobile-pair-start"]')).not.toBeVisible();
+    await expect(page.locator('[data-testid="mobile-get-app"]')).not.toBeVisible();
+    // The Relay section is unaffected by a query naming its own id: it stays
+    // visible, so this is not "everything collapsed", only Mobile.
+    await expect(page.getByRole('heading', { name: 'Relay', exact: true })).toBeVisible();
+
+    await searchInput.fill('');
+    await expect(page.getByRole('heading', { name: 'Mobile', exact: true })).toBeVisible();
     await closeSettings();
   });
 });
