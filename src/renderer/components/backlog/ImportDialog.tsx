@@ -478,7 +478,7 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
             value={filterText}
             onChange={(event) => setFilterText(event.target.value)}
             placeholder="Filter by ID, title, label, or assignee..."
-            className="w-full bg-surface/50 border border-edge/50 rounded text-sm text-fg placeholder-fg-disabled pl-8 pr-3 py-1.5 outline-none focus:border-edge-input"
+            className="w-full bg-surface/50 border border-edge/50 rounded text-sm text-fg placeholder-fg-muted pl-8 pr-3 py-1.5 outline-none focus:border-edge-input"
             data-testid="import-search"
           />
         </div>

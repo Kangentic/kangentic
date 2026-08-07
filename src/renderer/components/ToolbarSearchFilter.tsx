@@ -79,7 +79,7 @@ export function ToolbarSearchFilter({
           value={searchValue}
           onChange={(event) => onSearchChange(event.target.value)}
           placeholder={searchPlaceholder}
-          className="w-[21rem] bg-surface/50 border border-edge/50 rounded-md text-sm text-fg placeholder-fg-disabled pl-8 pr-8 py-1.5 outline-none focus:border-edge-input"
+          className="w-[21rem] bg-surface/50 border border-edge/50 rounded-md text-sm text-fg placeholder-fg-muted pl-8 pr-8 py-1.5 outline-none focus:border-edge-input"
           data-testid={searchTestId}
           aria-label={searchPlaceholder}
         />

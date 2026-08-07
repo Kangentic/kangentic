@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import { Plus } from 'lucide-react';
 import { CountBadge } from '../CountBadge';
+import { SegmentedControl } from '../SegmentedControl';
 import { ToolbarSearchFilter } from '../ToolbarSearchFilter';
 import { ImportPopover } from '../backlog/ImportPopover';
 import { LabelsPopover } from '../backlog/manage-labels/LabelsPopover';
@@ -86,35 +87,28 @@ export const ViewToggle = React.memo(function ViewToggle() {
   // `cursor-pointer` or `data-no-dismiss`, or a click on it will also dismiss.
   return (
     <div className="flex items-center px-4 pt-2 pb-2 border-b border-edge" data-testid="view-toggle" data-dismiss-surface="board">
-      <div className="flex items-center gap-0.5 bg-surface/50 rounded-lg p-0.5 border border-edge/30">
-        <button
-          type="button"
-          onClick={() => setActiveView('board')}
-          className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-            activeView === 'board'
-              ? 'bg-surface-raised text-fg shadow-sm'
-              : 'text-fg-muted hover:text-fg hover:bg-surface-hover/40'
-          }`}
-          data-testid="view-toggle-board"
-        >
-          Board
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveView('backlog')}
-          className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors flex items-center gap-1.5 ${
-            activeView === 'backlog'
-              ? 'bg-surface-raised text-fg shadow-sm'
-              : 'text-fg-muted hover:text-fg hover:bg-surface-hover/40'
-          }`}
-          data-testid="view-toggle-backlog"
-        >
-          Backlog
-          {backlogItems.length > 0 && (
-            <CountBadge count={backlogItems.length} variant={activeView === 'backlog' ? 'accent' : 'muted'} />
-          )}
-        </button>
-      </div>
+      {/* `ground="raised"`: this sits on the app ground, not in a form row, so the
+          thumb takes `surface-raised` (lighter than its track in every theme)
+          rather than the `surface-hover` fill the settings-row variant shares
+          with `Select`. See the token note in SegmentedControl. */}
+      <SegmentedControl
+        ground="raised"
+        ariaLabel="View"
+        testId="view-toggle-group"
+        value={activeView}
+        onChange={setActiveView}
+        options={[
+          { value: 'board' as const, label: 'Board', testId: 'view-toggle-board' },
+          {
+            value: 'backlog' as const,
+            label: 'Backlog',
+            testId: 'view-toggle-backlog',
+            trailing: backlogItems.length > 0
+              ? <CountBadge count={backlogItems.length} variant={activeView === 'backlog' ? 'accent' : 'muted'} />
+              : undefined,
+          },
+        ]}
+      />
 
       <div className="w-px h-5 bg-edge/50 mx-2.5" />
 

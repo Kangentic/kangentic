@@ -1,5 +1,6 @@
 import type React from 'react';
 import { Info } from 'lucide-react';
+import { SettingText } from './SettingText';
 
 interface ToggleCardProps {
   label: string;
@@ -21,6 +22,22 @@ interface ToggleCardProps {
    */
   info?: string;
 }
+
+/**
+ * `surface-hover` + `edge-input`, the same shell every input uses (see
+ * `FIELD_CONTROL_BASE`), so a card and the dropdown beside it are one family.
+ *
+ * It was previously `surface/40`, a translucent value that composited to a
+ * third dark matching nothing. The reason a card can share the input fill is
+ * that its DESCRIPTION steps up to `fg-tertiary` (7.05:1 here, AAA). At
+ * `fg-faint` the same line is 2.14:1 and effectively unreadable, which is what
+ * made an earlier attempt at this fail - the fill was never the problem, the
+ * faint text on it was.
+ */
+const TOGGLE_CARD_SURFACE = {
+  enabled: 'bg-surface-control border-edge-input hover:border-fg-faint',
+  disabled: 'bg-surface-control border-edge-input',
+} as const;
 
 /**
  * Aria-hidden visual indicator for an interactive toggle. The interactive
@@ -54,6 +71,7 @@ export function ToggleIndicator({ checked, className = '' }: { checked: boolean;
  * For dense lists of toggles, use `CompactToggleList` instead.
  */
 export function ToggleCard({ label, description, checked, onChange, icon, ariaLabel, disabled, info }: ToggleCardProps) {
+  const tone = TOGGLE_CARD_SURFACE;
   return (
     <button
       type="button"
@@ -64,30 +82,27 @@ export function ToggleCard({ label, description, checked, onChange, icon, ariaLa
       aria-label={ariaLabel ?? label}
       onClick={disabled ? undefined : () => onChange(!checked)}
       className={`flex items-start justify-between gap-3 w-full text-left border rounded-md px-3.5 py-2.5 transition-colors focus:outline-none focus-visible:border-accent ${
-        disabled
-          ? 'bg-surface/40 border-edge/40 opacity-50 cursor-not-allowed'
-          : 'cursor-pointer bg-surface/40 hover:bg-surface/70 border-edge/40 hover:border-edge'
+        disabled ? `${tone.disabled} opacity-50 cursor-not-allowed` : `cursor-pointer ${tone.enabled}`
       }`}
     >
       {icon && <span className="flex-shrink-0 mt-0.5 text-fg-muted">{icon}</span>}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5">
-          <span className="text-sm font-medium text-fg-secondary">{label}</span>
-          {info && (
-            // Non-interactive span (nesting a button inside the card button is
-            // invalid); stopPropagation keeps a click on the icon from toggling.
-            <span
-              title={info}
-              aria-hidden="true"
-              onClick={(event) => event.stopPropagation()}
-              className="flex-shrink-0 text-fg-faint hover:text-fg-tertiary cursor-help"
-            >
-              <Info size={13} />
-            </span>
-          )}
-        </div>
-        <p className="text-xs text-fg-faint mt-0.5">{description}</p>
-      </div>
+      <SettingText
+        className="flex-1"
+        label={label}
+        description={description}
+        labelTrailing={info && (
+          // Non-interactive span (nesting a button inside the card button is
+          // invalid); stopPropagation keeps a click on the icon from toggling.
+          <span
+            title={info}
+            aria-hidden="true"
+            onClick={(event) => event.stopPropagation()}
+            className="flex-shrink-0 text-fg-faint hover:text-fg-tertiary cursor-help"
+          >
+            <Info size={13} />
+          </span>
+        )}
+      />
       <ToggleIndicator checked={checked} className="mt-0.5" />
     </button>
   );

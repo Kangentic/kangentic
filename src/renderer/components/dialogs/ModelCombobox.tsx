@@ -360,7 +360,7 @@ export function ModelCombobox({
 
   return (
     <div ref={containerRef} className={`relative ${className}`}>
-      <div className="flex items-center gap-0 border border-edge-input rounded bg-surface">
+      <div className="flex items-center gap-0 border border-edge-input rounded bg-surface-control">
         <input
           ref={inputRef}
           type="text"

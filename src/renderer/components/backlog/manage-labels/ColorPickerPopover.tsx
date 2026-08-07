@@ -132,7 +132,7 @@ export function ColorPickerPopover({
             onBlur={() => {
               if (!/^#[0-9a-fA-F]{6}$/.test(hexInput)) setHexInput(color);
             }}
-            className="w-full bg-surface border border-edge-input rounded px-3 py-1.5 text-sm text-fg font-mono focus:outline-none focus:border-accent"
+            className="w-full bg-surface-control border border-edge-input rounded px-3 py-1.5 text-sm text-fg font-mono focus:outline-none focus:border-accent"
             placeholder="#000000"
             maxLength={7}
           />

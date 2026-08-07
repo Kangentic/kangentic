@@ -141,7 +141,7 @@ export function AsanaSetupDialog({ onClose, onSaved }: AsanaSetupDialogProps) {
                 onChange={(event) => { setToken(event.target.value); setError(null); }}
                 onKeyDown={(event) => { if (event.key === 'Enter') handleSave(); }}
                 placeholder="Paste your token"
-                className="w-full bg-surface/50 border border-edge/50 rounded text-sm text-fg placeholder-fg-disabled px-2.5 py-1.5 pr-9 outline-none focus:border-edge-input font-mono"
+                className="w-full bg-surface/50 border border-edge/50 rounded text-sm text-fg placeholder-fg-muted px-2.5 py-1.5 pr-9 outline-none focus:border-edge-input font-mono"
                 data-testid="asana-setup-pat-input"
               />
               <button

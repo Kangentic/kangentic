@@ -183,7 +183,7 @@ export function BranchPicker({
       // shell's `focus-within:border-accent` lights up identically for the name
       // input, this button, and the worktree toggle, so a keyboard user cannot
       // tell which of the three has focus. Same pattern as `CompactToggleList`.
-      className={`flex w-full max-w-[170px] shrink-0 cursor-pointer items-center gap-1.5 bg-surface-hover/40 px-3 text-xs transition-colors hover:bg-surface-hover focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent ${
+      className={`flex w-full max-w-[170px] shrink-0 cursor-pointer items-center gap-1.5 bg-surface-control/40 px-3 text-xs transition-colors hover:bg-surface-hover focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent ${
         open ? 'text-accent-fg' : 'text-fg-secondary'
       }`}
       title={`Base branch: ${displayBranch}`}
@@ -202,7 +202,7 @@ export function BranchPicker({
     <button
       type="button"
       onClick={() => setOpen(!open)}
-      className={`w-full flex items-center gap-2 px-3 py-2 text-sm text-fg border border-edge-input rounded bg-surface hover:border-fg-faint transition-colors ${className || ''}`}
+      className={`w-full flex items-center gap-2 px-3 py-2 text-sm text-fg border border-edge-input rounded bg-surface-control hover:border-fg-faint transition-colors ${className || ''}`}
       data-testid="branch-picker-input"
     >
       <GitBranch size={14} className="text-fg-faint flex-shrink-0" />
@@ -223,7 +223,7 @@ export function BranchPicker({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search branches..."
-            className="w-full bg-surface/50 border border-edge/50 rounded text-xs text-fg-tertiary placeholder-fg-disabled pl-7 pr-2 py-1.5 outline-none focus:border-edge-input"
+            className="w-full bg-surface/50 border border-edge/50 rounded text-xs text-fg-tertiary placeholder-fg-muted pl-7 pr-2 py-1.5 outline-none focus:border-edge-input"
           />
         </div>
       </div>

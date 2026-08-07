@@ -315,7 +315,7 @@ export function SearchPalette({ onClose }: SearchPaletteProps) {
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search tasks, backlog, conversations, session events, projects..."
-              className="flex-1 min-w-0 bg-transparent text-sm text-fg placeholder-fg-disabled outline-none"
+              className="flex-1 min-w-0 bg-transparent text-sm text-fg placeholder-fg-muted outline-none"
             />
             {/* Corner spinner only while results are already on screen (a
                 re-query); the empty "Searching..." state carries its own inline

@@ -80,8 +80,8 @@ export function ProfileNameDialog({
           // along is task complexity (and the cost that follows from it), not
           // an abstract quality tier.
           placeholder="e.g. Simple or Complex"
-          className="w-full px-3 py-2 bg-surface border border-edge rounded text-sm text-fg
-            focus:outline-none focus:border-accent"
+          className="w-full px-3 py-2 bg-surface-control border border-edge-input rounded text-sm text-fg-tertiary
+            placeholder-fg-muted focus:outline-none focus:border-accent"
           data-testid="profile-name-input"
         />
 

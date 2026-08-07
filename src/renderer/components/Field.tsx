@@ -2,17 +2,34 @@ import type { ReactNode } from 'react';
 import { Info } from 'lucide-react';
 
 /**
- * The shared shell for a single-line form control inside a dialog: 34px tall
- * (`py-1.5` + `text-sm` + 1px borders), `rounded`, on the `surface` token.
+ * The shared shell for a single-line form control: 34px tall (`py-1.5` +
+ * `text-sm` + 1px borders), `rounded`, on the `surface-control` token.
  *
  * 34px is the scale because `Select` (settings/shared.tsx) and `Combobox` are
  * both already this height and are used across settings, the board manager, and
  * the task run-mode card - changing THEM ripples app-wide, so everything else
  * comes up to meet them. Height stays padding-derived rather than a fixed
  * `h-[34px]` so the box keeps growing with the font if the text scale changes.
+ *
+ * `--kng-surface-control` is a DEDICATED token, not a borrowed one, and that is
+ * the point. Inputs, comboboxes, and `ToggleCard` all reference it, so a card
+ * and the dropdown beside it read as one family - and re-tuning the control fill
+ * is one value per theme rather than a sweep across ~19 files. It exists because
+ * neither neighbouring token worked: `surface` is too dark (and nearly
+ * theme-neutral, so every theme looked alike inside a dialog) while
+ * `surface-hover` is too light, and there was nothing between them. Each theme's
+ * value is 60% of the way from `surface-raised` to `surface-hover`.
+ *
+ * Text ON this fill has to be chosen against the WHOLE theme set, not the
+ * default one - that mistake cost several rounds. Worst-case ratios across all
+ * 10 themes: `fg` 8.88:1, `fg-tertiary` 4.84:1, `fg-muted` 3.34:1. So anything a
+ * user must read stays at `fg-tertiary` or brighter; `fg-muted` and `fg-faint`
+ * are for hint text and decoration. Value text is `fg-tertiary`, placeholders
+ * are `fg-muted` (deliberately sub-AA: a placeholder must read dimmer than the
+ * value it stands in for). `tests/unit/theme-contrast.test.ts` enforces this.
  */
 const FIELD_CONTROL_BASE =
-  'w-full bg-surface border border-edge-input rounded py-1.5 text-sm text-fg placeholder-fg-faint focus:outline-none focus:border-accent';
+  'w-full bg-surface-control border border-edge-input rounded py-1.5 text-sm text-fg-tertiary placeholder-fg-muted focus:outline-none focus:border-accent';
 
 export const FIELD_CONTROL_CLASS = `${FIELD_CONTROL_BASE} px-3`;
 

@@ -65,7 +65,15 @@ export function usePopoverPosition(
     if (!trigger || !popover) return;
 
     const triggerRect = trigger.getBoundingClientRect();
-    const popoverRect = popover.getBoundingClientRect();
+    // `offsetWidth`/`offsetHeight`, NOT `getBoundingClientRect()`, for the
+    // popover's own size. `OverlayPopover` plays a grow-in animation that starts
+    // at `transform: scale(0.96)`, and this effect runs on the commit that mounts
+    // it - so a rect measurement reads ~4% short. On a marginal fit that is
+    // exactly enough to decide "fits below" for a popover that then paints at
+    // full size and spills past the viewport edge. The offset* properties are
+    // layout dimensions and ignore transforms.
+    const popoverWidth = popover.offsetWidth;
+    const popoverHeight = popover.offsetHeight;
     const viewportWidth = window.innerWidth;
     const viewportHeight = window.innerHeight;
 
@@ -82,17 +90,25 @@ export function usePopoverPosition(
       // each side flips to the other only when the preferred side overflows.
       // 'above' is for bottom-anchored triggers (ContextBar) where downward can
       // render past a floating container's edge even with viewport room below.
-      const fitsBelow = triggerRect.bottom + popoverRect.height + viewportPadding <= viewportHeight;
-      const fitsAbove = triggerRect.top - popoverRect.height - viewportPadding >= 0;
-      const openAbove = preferVertical === 'above' ? (fitsAbove || !fitsBelow) : !fitsBelow;
+      const spaceBelow = viewportHeight - triggerRect.bottom - viewportPadding;
+      const spaceAbove = triggerRect.top - viewportPadding;
+      const fitsBelow = popoverHeight <= spaceBelow;
+      const fitsAbove = popoverHeight <= spaceAbove;
+      // When one side fits, use it (honouring `preferVertical`). When NEITHER
+      // fits, take the roomier side rather than flipping unconditionally: a
+      // popover taller than the space on both sides should spill where there is
+      // the most room, not always upward past the viewport top.
+      const openAbove = preferVertical === 'above'
+        ? (fitsAbove || !fitsBelow)
+        : (!fitsBelow && (fitsAbove || spaceAbove > spaceBelow));
       resolvedVertical = openAbove ? 'above' : 'below';
 
       // Horizontal: align the trigger-nearest edge, flipping on overflow.
       let alignRight: boolean;
       if (effectivePreferRight) {
-        alignRight = !(triggerRect.right - popoverRect.width < viewportPadding);
+        alignRight = !(triggerRect.right - popoverWidth < viewportPadding);
       } else {
-        alignRight = triggerRect.left + popoverRect.width + viewportPadding > viewportWidth;
+        alignRight = triggerRect.left + popoverWidth + viewportPadding > viewportWidth;
       }
       resolvedHorizontal = alignRight ? 'right' : 'left';
 
@@ -105,10 +121,10 @@ export function usePopoverPosition(
         popover.style.marginTop = '';
         popover.style.marginBottom = '';
         popover.style.top = openAbove
-          ? `${triggerRect.top - popoverRect.height - 8}px`
+          ? `${triggerRect.top - popoverHeight - 8}px`
           : `${triggerRect.bottom + 8}px`;
         popover.style.left = alignRight
-          ? `${triggerRect.right - popoverRect.width}px`
+          ? `${triggerRect.right - popoverWidth}px`
           : `${triggerRect.left}px`;
       } else {
         if (openAbove) {
@@ -132,8 +148,8 @@ export function usePopoverPosition(
       }
     } else {
       // Flyout mode
-      const fitsRight = triggerRect.right + popoverRect.width + viewportPadding <= viewportWidth;
-      const fitsLeft = triggerRect.left - popoverRect.width >= viewportPadding;
+      const fitsRight = triggerRect.right + popoverWidth + viewportPadding <= viewportWidth;
+      const fitsLeft = triggerRect.left - popoverWidth >= viewportPadding;
 
       if (fitsRight) {
         resolvedHorizontal = 'right';
@@ -166,7 +182,7 @@ export function usePopoverPosition(
 
       // Vertical: anchor top, shift up if overflowing bottom
       popover.style.top = '0';
-      const overflowBottom = triggerRect.top + popoverRect.height + viewportPadding - viewportHeight;
+      const overflowBottom = triggerRect.top + popoverHeight + viewportPadding - viewportHeight;
       if (overflowBottom > 0) {
         popover.style.top = `-${overflowBottom}px`;
       }

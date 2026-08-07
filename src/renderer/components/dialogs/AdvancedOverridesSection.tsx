@@ -314,10 +314,18 @@ export function AdvancedOverridesSection({
           {/* The label's own weight is part of the selection signal: full text
               colour on the live branch, muted on the other. That does more work
               than fill can without adding any visual mass. */}
-          <span className={`text-xs shrink-0 ${selected ? 'text-fg' : 'text-fg-muted'}`}>{label}</span>
+          <span className={`text-xs shrink-0 ${selected ? 'text-fg' : 'text-fg-secondary'}`}>{label}</span>
           {/* Both strings fit side by side at the task-detail window's 650px
-              minimum width, so the truncate is a floor, not the normal case. */}
-          <span className={`text-xs min-w-0 truncate ${selected ? 'text-fg-faint' : 'text-fg-disabled'}`}>{description}</span>
+              minimum width, so the truncate is a floor, not the normal case.
+
+              One colour for both states, not a selected/unselected pair. This
+              line explains what the option DOES, so it has to be readable in
+              either state - and the dim halves of the old pair were `fg-faint`
+              (2.52:1 on this fill) and `fg-disabled` (1.58:1), far below AA. The
+              selection signal is carried by the dot, the border, and the label's
+              own step from `fg-secondary` to `fg`, which is plenty without
+              making the explanation illegible. */}
+          <span className="text-xs min-w-0 truncate text-fg-tertiary">{description}</span>
         </button>
         {/* pl-10 aligns the body with the card's LABEL, not its dot: the header's
             px-4 (16) + dot (14) + gap-2.5 (10).

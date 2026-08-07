@@ -352,7 +352,7 @@ export function ImportPopover({ onOpenImportDialog }: ImportPopoverProps) {
                   if (event.key === 'Enter') handleConnect();
                 }}
                 placeholder={selectedSourceType.placeholder}
-                className="w-full bg-surface/50 border border-edge/50 rounded text-sm text-fg placeholder-fg-disabled px-2.5 py-1.5 outline-none focus:border-edge-input mb-1"
+                className="w-full bg-surface/50 border border-edge/50 rounded text-sm text-fg placeholder-fg-muted px-2.5 py-1.5 outline-none focus:border-edge-input mb-1"
                 data-testid="import-source-url-input"
               />
               <p className="text-[11px] text-fg-faint mb-2">{selectedSourceType.hint}</p>

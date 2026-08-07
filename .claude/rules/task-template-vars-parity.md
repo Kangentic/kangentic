@@ -36,8 +36,10 @@ When you add, rename, or remove a task-template keyword:
 2. **Resolver:** add/rename/remove the matching key in `TASK_TEMPLATE_RESOLVERS`
    (`src/main/agent/shared/task-template-resolvers.ts`). The `Record<TaskTemplateVarName, ...>`
    shape makes a missing resolver a `tsc` failure, not a silent gap.
-3. **UI:** nothing to edit - `BoardManagerDialog.tsx`'s chip list renders
-   `TASK_TEMPLATE_VARS.map((templateVar) => templateVar.chip)` directly from the catalog.
+3. **UI:** nothing to edit - `BoardManagerDialog.tsx`'s "Template variable" picker maps
+   `TASK_TEMPLATE_VARS` directly, rendering each entry's `chip` and `description`. Because it
+   shows the description too, a new keyword's `description` is user-facing copy, not just a docs
+   string: keep it to one line (the menu clamps it).
 4. **Docs:** document the new keyword in both `docs/transition-engine.md` (Template Variables)
    and `docs/architecture.md` (Action Types). This couples to [[docs-stay-in-sync]].
 5. **Resolution semantics are per-keyword, not a blanket rule.** `{{baseBranch}}` resolves to the
@@ -67,7 +69,8 @@ When you add, rename, or remove a task-template keyword:
   `npm run typecheck` the moment a catalog name has no resolver.
 - **Test (mechanical, CI):** `tests/unit/task-template-vars-parity.test.ts` asserts (a) every
   catalog name has a resolver and vice versa; (b) `TASK_TEMPLATE_VARS` covers exactly the catalog
-  names; (c) every chip is documented in both `docs/transition-engine.md` and
+  names, and that the dialog maps the catalog rather than hardcoding chips of its own; (c) every
+  chip is documented in both `docs/transition-engine.md` and
   `docs/architecture.md`; plus red-green coverage of the `{{baseBranch}}` effective-default fix
   and the `interpolateTaskTemplate` drop-and-collapse semantics (including that a substituted
   value containing literal `{{...}}` text is never re-scanned). Runs in CI via `npm run test:unit`.

@@ -234,7 +234,7 @@ export function DescriptionEditor({
           at 280 a To Do task with attachments had to be scrolled to reach its
           own run-mode controls. */}
       <div
-        className="relative w-full bg-surface flex-1 min-h-[160px] overflow-hidden"
+        className="relative w-full bg-surface-control flex-1 min-h-[160px] overflow-hidden"
         data-testid="description-editor-body"
       >
         <textarea
@@ -257,7 +257,7 @@ export function DescriptionEditor({
           onSelect={mentions.handleTextareaSelect}
           onClick={mentions.handleTextareaClick}
           inert={showPreview}
-          className="absolute inset-0 w-full h-full bg-transparent pl-3 pr-28 py-2 text-sm text-fg focus:outline-none resize-none overflow-y-auto"
+          className="absolute inset-0 w-full h-full bg-transparent pl-3 pr-28 py-2 text-sm text-fg-tertiary focus:outline-none resize-none overflow-y-auto"
         />
         {mentions.menuOpen && (
           <DescriptionMentionMenu
@@ -293,7 +293,10 @@ export function DescriptionEditor({
                 160px, so the old 20px icon over its own line of text took up
                 roughly half the box for a secondary hint. */}
             <div className="absolute inset-0 flex items-center justify-center">
-              <span className="inline-flex items-center gap-2 rounded-md border border-dashed border-edge px-3 py-1.5 text-xs text-fg-disabled">
+              {/* `fg-muted`, not `fg-disabled`: this is an instruction, and at
+                  `fg-disabled` it sat at 1.58:1 on the control fill - the
+                  weakest text in the app. Nothing here is disabled. */}
+              <span className="inline-flex items-center gap-2 rounded-md border border-dashed border-edge px-3 py-1.5 text-xs text-fg-muted">
                 <Paperclip size={14} />
                 Paste or drop files here
               </span>
@@ -302,7 +305,7 @@ export function DescriptionEditor({
         )}
         {showPreview && (
           <div
-            className="absolute inset-0 bg-surface pl-3 pr-28 py-2 overflow-y-auto"
+            className="absolute inset-0 bg-surface-control pl-3 pr-28 py-2 overflow-y-auto"
             data-testid="description-preview"
           >
             {value ? (

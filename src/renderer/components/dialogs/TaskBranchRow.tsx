@@ -91,7 +91,7 @@ export function TaskBranchRow({
           and it was redundant besides, since the two buttons already draw their
           own inset ring. Focus is indicated locally, on the segment that has it. */}
       <div
-        className={`${editableName ? 'flex' : 'inline-flex'} min-h-[34px] items-stretch divide-x divide-edge-input overflow-hidden rounded border bg-surface transition-colors ${
+        className={`${editableName ? 'flex' : 'inline-flex'} min-h-[34px] items-stretch divide-x divide-edge-input overflow-hidden rounded border bg-surface-control transition-colors ${
           branchNameError ? 'border-danger' : 'border-edge-input'
         }`}
         data-testid="task-branch-row"

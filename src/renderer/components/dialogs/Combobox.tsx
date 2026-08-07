@@ -214,7 +214,9 @@ export function Combobox({
 
   return (
     <div ref={containerRef} className={`relative ${className}${disabled ? ' opacity-60' : ''}`}>
-      <div className="flex items-center gap-0 border border-edge-input rounded bg-surface">
+      {/* `surface-hover`, matching FIELD_CONTROL_BASE: this is an input, not a
+          text-bearing card. See the note there for the split. */}
+      <div className="flex items-center gap-0 border border-edge-input rounded bg-surface-control">
         <input
           ref={inputRef}
           type="text"
@@ -225,7 +227,9 @@ export function Combobox({
           placeholder={placeholder}
           data-testid={testId}
           disabled={disabled}
-          className={`flex-1 bg-transparent px-3 py-1.5 text-sm text-fg focus:outline-none disabled:cursor-not-allowed ${
+          // `fg-tertiary`, matching FIELD_CONTROL_BASE: see the note there on
+          // why value text steps down rather than the fill stepping up.
+          className={`flex-1 bg-transparent px-3 py-1.5 text-sm text-fg-tertiary focus:outline-none disabled:cursor-not-allowed ${
             placeholderVariant === 'muted' ? 'placeholder-fg-faint' : 'placeholder-fg'
           }`}
         />

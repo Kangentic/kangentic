@@ -206,7 +206,11 @@ test('portaled model menu matches the trigger width', async () => {
     // in-flow stretch, so ModelCombobox measures the container via
     // useLayoutEffect and applies it as an explicit `width`. Model renders in a
     // half-width column, so a missing width would be plainly visible.
-    const container = modelInput.locator('xpath=ancestor::div[contains(@class,"border-edge-input")][1]');
+    // The bordered shell is the input's direct parent. Addressed structurally
+    // rather than by a border-color class: this assertion is about GEOMETRY, and
+    // keying it to a color token made a purely visual retheme (edge-input ->
+    // edge on the dark control family) look like a layout regression.
+    const container = modelInput.locator('xpath=..');
     await expect(container).toHaveCount(1);
     const containerBox = await container.boundingBox();
     expect(containerBox).not.toBeNull();

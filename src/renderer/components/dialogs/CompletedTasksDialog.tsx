@@ -259,7 +259,7 @@ export function CompletedTasksDialog({ onClose }: CompletedTasksDialogProps) {
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
                 placeholder="Search tasks..."
-                className="w-64 bg-surface/50 border border-edge/50 rounded-md text-sm text-fg placeholder-fg-disabled pl-8 pr-3 py-1.5 outline-none focus:border-edge-input"
+                className="w-64 bg-surface/50 border border-edge/50 rounded-md text-sm text-fg placeholder-fg-muted pl-8 pr-3 py-1.5 outline-none focus:border-edge-input"
                 data-testid="completed-tasks-search"
               />
             </div>

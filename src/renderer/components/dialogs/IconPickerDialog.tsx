@@ -59,7 +59,7 @@ export function IconPickerDialog({
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search icons..."
             autoFocus
-            className="w-full bg-surface/50 border border-edge/50 rounded text-xs text-fg-tertiary placeholder-fg-disabled pl-7 pr-2 py-1.5 outline-none focus:border-edge-input"
+            className="w-full bg-surface/50 border border-edge/50 rounded text-xs text-fg-tertiary placeholder-fg-muted pl-7 pr-2 py-1.5 outline-none focus:border-edge-input"
           />
         </div>
       </div>

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Layers, Sliders, Bot, Zap, History,
+  Layers, Sliders, Bot, Repeat, Zap, Clock, Plus,
   RotateCcw, Palette, ChevronRight, X,
 } from 'lucide-react';
 import { HexColorPicker } from 'react-colorful';
@@ -21,6 +21,10 @@ import { Pill } from '../Pill';
 import { ICON_REGISTRY, ROLE_DEFAULTS, getUsedIcons } from '../../utils/swimlane-icons';
 import { Select } from '../settings/shared';
 import { ToggleCard } from '../ToggleCard';
+import { SegmentedControl } from '../SegmentedControl';
+import { SETTING_LABEL_CLASS, SETTING_DESCRIPTION_CLASS } from '../SettingText';
+import { OverlayPopover } from '../OverlayPopover';
+import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 import { useAgentCapabilityResolution } from '../../hooks/useAgentCapabilityResolution';
 import { useModelContextWindows, useModelDisplayNames } from '../../hooks/useKnownModels';
 import { useKeybinding } from '../../hooks/useKeybinding';
@@ -59,19 +63,24 @@ const PRESET_COLORS = [
 const DEFAULT_COLOR = '#3b82f6';
 const NEW_DRAFT_PREFIX = 'new:';
 
-type SectionId = 'general' | 'agent' | 'auto' | 'handoff';
+type SectionId = 'general' | 'agent' | 'auto';
 
+/**
+ * Handoff is deliberately NOT a section. It was one row - a single toggle - so
+ * it cost a sticky heading, a rule, and a section's worth of vertical space to
+ * present one boolean. It now sits at the end of Automation, which is what it
+ * is: something that happens on its own when a task enters the column.
+ *
+ * `Repeat` rather than `Zap` for Automation: the lightning bolt is the glyph for
+ * "run immediately" on the timing control INSIDE this section, and a section
+ * heading that repeats one of its own options' icons reads as if the section is
+ * about that option.
+ */
 const SECTIONS: { id: SectionId; label: string; icon: typeof Sliders }[] = [
   { id: 'general', label: 'General', icon: Sliders },
   { id: 'agent', label: 'Agent', icon: Bot },
-  { id: 'auto', label: 'Automation', icon: Zap },
-  { id: 'handoff', label: 'Handoff', icon: History },
+  { id: 'auto', label: 'Automation', icon: Repeat },
 ];
-
-// Sourced from TASK_TEMPLATE_VARS (shared/task-template-vars.ts) - the same
-// declaration the auto-command resolver and the docs-parity test read, so the
-// chips can never drift from what the interpolation actually substitutes.
-const TEMPLATE_VARIABLES = TASK_TEMPLATE_VARS.map((templateVar) => templateVar.chip);
 
 // ────────────────────────────────────────────────────────────────────────
 // Pure helpers (exported for unit tests)
@@ -388,11 +397,14 @@ function SettingField({ label, description, hint, children, className = '' }: {
   return (
     <div className={`flex flex-col h-full ${className}`}>
       <div className="flex items-center justify-between gap-2">
-        <label className="text-sm font-medium text-fg-secondary">{label}</label>
+        {/* Raw classes rather than <SettingText>: this row right-aligns `hint`
+            (the Reset control) against the LABEL line, a layout the shared
+            component does not own. The values still come from one place. */}
+        <label className={SETTING_LABEL_CLASS}>{label}</label>
         {hint}
       </div>
       {description && (
-        <p className="text-xs text-fg-faint mt-0.5">{description}</p>
+        <p className={`${SETTING_DESCRIPTION_CLASS} mt-0.5`}>{description}</p>
       )}
       <div className={description ? 'mt-auto pt-1.5' : 'mt-1.5'}>{children}</div>
     </div>
@@ -429,7 +441,10 @@ function SectionHeading({ section }: { section: typeof SECTIONS[number] }) {
       data-testid={`board-manager-section-${section.id}`}
       className="sticky top-0 z-10 -mx-7 mt-3 px-7 pt-3 pb-2 bg-surface-raised border-t border-edge/50 flex items-center gap-2 first:mt-0 first:border-t-0"
     >
-      <SectionIcon size={13} strokeWidth={1.75} className="text-fg-faint" />
+      {/* 15, not 13: at 13 these glyphs lose their interior detail against the
+          12px uppercase label beside them. The label's cap height is unchanged,
+          so the row's height does not move. */}
+      <SectionIcon size={15} strokeWidth={1.75} className="text-fg-faint" />
       <span className="text-xs font-semibold uppercase tracking-wider text-fg-faint">{section.label}</span>
     </div>
   );
@@ -437,7 +452,103 @@ function SectionHeading({ section }: { section: typeof SECTIONS[number] }) {
 
 /** One-line inline explanation shown in place of a section's fields when it does not apply. */
 function DisabledSectionNotice({ reason }: { reason: string }) {
-  return <p className="text-xs text-fg-faint pt-3 pb-1 max-w-2xl">{reason}</p>;
+  return <p className={`${SETTING_DESCRIPTION_CLASS} pt-3 pb-1 max-w-2xl`}>{reason}</p>;
+}
+
+/**
+ * The auto-command's template-variable inserter.
+ *
+ * This replaced a row of ten always-on `{{chip}}` buttons. Ten monospace tokens
+ * are a wall of syntax the user has to read past to reach the field they
+ * actually came for, and their names alone do not say what they resolve to -
+ * `{{task_xml}}` and `{{description}}` are not self-explanatory. One pill opens
+ * a list that can afford to carry each variable's meaning.
+ *
+ * Portal + `strategy: 'fixed'` is not optional: the board manager's detail form
+ * is a scroll container, so an in-flow menu is clipped to it (see
+ * `.claude/rules/popover-escapes-clipping.md`). The outside-click handler checks
+ * BOTH refs for the same reason - once portaled, a click inside the menu is
+ * "outside" the trigger's subtree.
+ */
+function TemplateVariablePicker({ onInsert }: { onInsert: (variable: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  const { style } = usePopoverPosition(
+    buttonRef as React.RefObject<HTMLElement>,
+    menuRef as React.RefObject<HTMLElement>,
+    open,
+    { mode: 'dropdown', strategy: 'fixed' },
+  );
+
+  useEffect(() => {
+    if (!open) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (buttonRef.current?.contains(target) || menuRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.stopPropagation();
+        setOpen(false);
+        buttonRef.current?.focus();
+      }
+    };
+    document.addEventListener('mousedown', handlePointerDown, true);
+    document.addEventListener('keydown', handleKey, true);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown, true);
+      document.removeEventListener('keydown', handleKey, true);
+    };
+  }, [open]);
+
+  return (
+    <>
+      <button
+        ref={buttonRef}
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        aria-expanded={open}
+        data-testid="template-variable-trigger"
+        className="inline-flex cursor-pointer items-center gap-1 rounded border border-edge/40 bg-surface-control/40 px-2 py-1 text-xs text-fg-muted transition-colors hover:border-edge hover:text-fg focus:outline-none focus-visible:border-accent"
+      >
+        <Plus size={13} />
+        Template variable
+      </button>
+
+      <OverlayPopover
+        open={open}
+        popoverRef={menuRef}
+        style={style}
+        portal
+        className="fixed z-[2147483646] w-80 overflow-hidden rounded-lg border border-edge bg-surface shadow-xl"
+        data-testid="template-variable-menu"
+      >
+        <div className="max-h-72 overflow-y-auto py-1">
+          {TASK_TEMPLATE_VARS.map((templateVar) => (
+            <button
+              key={templateVar.name}
+              type="button"
+              onClick={() => {
+                onInsert(templateVar.chip);
+                setOpen(false);
+              }}
+              className="flex w-full cursor-pointer flex-col gap-0.5 px-3 py-1.5 text-left transition-colors hover:bg-surface-hover focus:outline-none focus-visible:bg-surface-hover"
+            >
+              <span className="font-mono text-xs text-fg">{templateVar.chip}</span>
+              {/* Clamped: a couple of these descriptions are written for the docs
+                  tables and run long. The full text stays available on hover. */}
+              <span className="line-clamp-1 text-[11px] text-fg-faint" title={templateVar.description}>
+                {templateVar.description}
+              </span>
+            </button>
+          ))}
+        </div>
+      </OverlayPopover>
+    </>
+  );
 }
 
 /**
@@ -469,11 +580,11 @@ function DetailIdentityHeader({ draft, position, total, profileName }: {
       )}
       <span className="text-sm font-semibold text-fg truncate">{draft.name || 'Untitled'}</span>
       {draft.role && (
-        <Pill size="sm" className="bg-surface-hover/60 text-fg-faint flex-shrink-0">
+        <Pill size="sm" className="bg-surface-control/60 text-fg-faint flex-shrink-0">
           {draft.role === 'todo' ? 'To Do' : 'Done'}
         </Pill>
       )}
-      <Pill size="sm" className="bg-surface-hover/60 text-fg-faint flex-shrink-0">{position} of {total}</Pill>
+      <Pill size="sm" className="bg-surface-control/60 text-fg-faint flex-shrink-0">{position} of {total}</Pill>
       {profileName && (
         <Pill
           size="sm"
@@ -492,7 +603,7 @@ function DetailIdentityHeader({ draft, position, total, profileName }: {
 // Main dialog
 // ────────────────────────────────────────────────────────────────────────
 
-const DIALOG_SELECT_CLASS = 'w-full appearance-none bg-surface-hover border border-edge-input rounded pl-3 pr-10 py-1.5 text-sm text-fg focus:outline-none focus:border-accent';
+const DIALOG_SELECT_CLASS = 'w-full appearance-none bg-surface-control border border-edge-input rounded pl-3 pr-10 py-1.5 text-sm text-fg-tertiary focus:outline-none focus:border-accent';
 
 // Responsive two-column form grid. Driven by a container query on the scroll
 // region (`@container`), so it lays out by the DETAIL PANE's width, not the
@@ -774,6 +885,10 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   // custom column even with Auto-spawn off; only its dependent fields hide.)
   const sessionsRunHere = !isTodoOrDone && draft?.auto_spawn === true;
 
+  // Gates the timing control. Trimmed, so a field holding only whitespace is
+  // still "no command" - the injection plan treats it that way too.
+  const hasAutoCommandDraft = Boolean(draft?.auto_command?.trim());
+
   const isOverview = activeId === ALL_COLUMNS_ID;
 
   const dirtyIds = useMemo(
@@ -936,6 +1051,32 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
       });
     });
   }, [activeId, activeProfileId, drafts]);
+
+  /**
+   * Insert a `{{variable}}` at the auto-command textarea's cursor, restoring the
+   * caret after it. The rAF is load-bearing: `updateDraft` re-renders the
+   * controlled textarea, and setting the selection before that paint lands puts
+   * the caret back at the end of the old value.
+   */
+  const insertTemplateVariable = useCallback((variable: string) => {
+    const node = autoCommandRef.current;
+    const current = draft?.auto_command ?? '';
+    if (!node) {
+      updateDraft((row) => ({ ...row, auto_command: current + variable }));
+      return;
+    }
+    const start = node.selectionStart ?? current.length;
+    const end = node.selectionEnd ?? current.length;
+    updateDraft((row) => ({
+      ...row,
+      auto_command: current.slice(0, start) + variable + current.slice(end),
+    }));
+    window.requestAnimationFrame(() => {
+      node.focus();
+      const cursor = start + variable.length;
+      node.setSelectionRange(cursor, cursor);
+    });
+  }, [draft?.auto_command, updateDraft]);
 
   // ── Save / cancel / delete ────────────────────────────────────────
   const requestCancel = useCallback(() => {
@@ -1450,7 +1591,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                     onChange={(event) => updateDraft((current) => ({ ...current, name: event.target.value }))}
                     onKeyDown={(event) => { if (event.key === 'Enter') void handleSave(); }}
                     data-testid="board-manager-name"
-                    className="w-full bg-surface-hover border border-edge-input rounded px-3 py-1.5 text-sm text-fg placeholder-fg-faint focus:outline-none focus:border-accent"
+                    className="w-full bg-surface-control border border-edge-input rounded px-3 py-1.5 text-sm text-fg-tertiary placeholder-fg-muted focus:outline-none focus:border-accent"
                   />
                 </SettingField>
 
@@ -1466,7 +1607,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                     rows={1}
                     maxLength={1000}
                     data-testid="board-manager-description"
-                    className="w-full bg-surface-hover border border-edge-input rounded px-3 py-1.5 text-sm text-fg placeholder-fg-faint focus:outline-none focus:border-accent resize-y"
+                    className="w-full bg-surface-control border border-edge-input rounded px-3 py-1.5 text-sm text-fg-tertiary placeholder-fg-muted focus:outline-none focus:border-accent resize-y"
                   />
                 </SettingField>
 
@@ -1503,7 +1644,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                         !PRESET_COLORS.includes(draft.color.toLowerCase())
                           ? 'border-white/60 scale-110'
                           : showCustomPicker
-                            ? 'border-white/60 bg-surface-hover'
+                            ? 'border-white/60 bg-surface-control'
                             : 'border-edge-input hover:border-fg-muted bg-surface'
                       }`}
                       style={!PRESET_COLORS.includes(draft.color.toLowerCase()) ? { backgroundColor: draft.color } : undefined}
@@ -1537,7 +1678,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                           if (!/^#[0-9a-fA-F]{6}$/.test(hexInput)) setHexInput(draft.color);
                         }}
                         aria-label="Hex color value"
-                        className="w-full bg-surface-hover border border-edge-input rounded px-3 py-1.5 text-sm text-fg font-mono focus:outline-none focus:border-accent"
+                        className="w-full bg-surface-control border border-edge-input rounded px-3 py-1.5 text-sm text-fg-tertiary font-mono focus:outline-none focus:border-accent"
                         placeholder="#000000"
                         maxLength={7}
                       />
@@ -1553,7 +1694,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                     onClick={() => setShowIconPicker(true)}
                     data-testid="board-manager-icon"
                     aria-label={`Choose icon${draft.icon ? `: ${draft.icon}` : ''}`}
-                    className="w-full flex items-center gap-2.5 bg-surface-hover border border-edge-input hover:border-fg-faint rounded px-3 py-1.5 transition-colors group"
+                    className="w-full flex items-center gap-2.5 bg-surface-control border border-edge-input hover:border-fg-faint rounded px-3 py-1.5 transition-colors group"
                   >
                     <div className="flex-shrink-0">
                       {(() => {
@@ -1605,7 +1746,6 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                   {draft.auto_spawn && (<>
                   <SettingField
                     label="Agent"
-                    description="Which agent CLI to run for sessions in this column."
                     hint={draft.agent_override ? (
                       <ResetHint
                         title="Reset to project setting"
@@ -1646,7 +1786,6 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                   {supportsModelOverride && (
                     <SettingField
                       label="Model"
-                      description="Override the model for sessions spawned here."
                       hint={draft.model_override ? (
                         <ResetHint
                           title={projectDefaultModelLabel ? 'Reset to project default' : 'Reset to agent default'}
@@ -1673,7 +1812,6 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                   {effortLevels.length > 0 && (
                     <SettingField
                       label="Effort"
-                      description="Reasoning effort budget. Higher costs more tokens."
                       hint={draft.effort_override ? (
                         <ResetHint
                           title={projectDefaultEffort ? 'Reset to project default' : 'Reset to agent default'}
@@ -1694,7 +1832,6 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
 
                   <SettingField
                     label="Permissions"
-                    description="How the agent handles tool approvals in this column."
                     hint={draft.permission_mode ? (
                       <ResetHint
                         title="Reset to project setting"
@@ -1744,10 +1881,20 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
               <SectionHeading section={SECTIONS[2]} />
               {sessionsRunHere ? (
                 <div className={SECTION_GRID_CLASS}>
-                    <SettingField
-                      label="Session"
-                      description="Share the task's main session, or run a separate isolated one for this column."
-                    >
+                    {/* Leads the section, following the order a column is actually
+                        configured: what the agent ARRIVES with (prior context),
+                        then which session it runs in, then what it is told to do. */}
+                    <div className={SECTION_FULL_SPAN}>
+                      <ToggleCard
+                          label="Receive context from prior agent"
+                        description="On cross-agent moves into this column, hand the previous agent's conversation to the new one."
+                        checked={draft.handoff_context}
+                        onChange={(next) => updateDraft((current) => ({ ...current, handoff_context: next }))}
+                        info={'When a task enters this column and the assigned agent differs from the one that ran in the previous column, Kangentic injects the previous session\'s transcript as the first message, so the new agent continues with full context instead of starting from the task description alone.\n\nSame-agent moves (e.g. Claude to Claude) resume natively via the agent\'s own session id and ignore this setting.'}
+                      />
+                    </div>
+
+                    <SettingField label="Session">
                       <Select
                         value={draft.session_target ?? 'main'}
                         onChange={(event) => {
@@ -1777,10 +1924,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                       </Select>
                     </SettingField>
 
-                    <SettingField
-                      label="On enter"
-                      description="Resume the session or start fresh."
-                    >
+                    <SettingField label="On enter">
                       <Select
                         value={draft.session_spawn_strategy ?? 'create_or_resume'}
                         onChange={(event) => updateDraft((current) => ({
@@ -1797,7 +1941,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                     </SettingField>
 
                 <SettingField label="Auto-command" className={SECTION_FULL_SPAN}>
-                <p className="text-xs text-fg-faint -mt-2 mb-2">
+                <p className={`${SETTING_DESCRIPTION_CLASS} -mt-2 mb-2`}>
                   Runs in the agent on startup, the moment a task enters this column. Supports template variables.
                 </p>
                 <textarea
@@ -1807,71 +1951,57 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                   rows={1}
                   placeholder="/review {{title}}"
                   data-testid="auto-command-input"
-                  className="w-full bg-surface-hover border border-edge-input rounded px-3 py-1.5 text-sm text-fg font-mono placeholder-fg-faint focus:outline-none focus:border-accent resize-y"
+                  className="w-full bg-surface-control border border-edge-input rounded px-3 py-1.5 text-sm text-fg-tertiary font-mono placeholder-fg-muted focus:outline-none focus:border-accent resize-y"
                 />
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {TEMPLATE_VARIABLES.map((variable) => (
-                    <button
-                      key={variable}
-                      type="button"
-                      onClick={() => {
-                        const node = autoCommandRef.current;
-                        const current = draft.auto_command ?? '';
-                        if (node) {
-                          const start = node.selectionStart ?? current.length;
-                          const end = node.selectionEnd ?? current.length;
-                          const next = current.slice(0, start) + variable + current.slice(end);
-                          updateDraft((row) => ({ ...row, auto_command: next }));
-                          window.requestAnimationFrame(() => {
-                            node.focus();
-                            const cursor = start + variable.length;
-                            node.setSelectionRange(cursor, cursor);
-                          });
-                        } else {
-                          updateDraft((row) => ({ ...row, auto_command: current + variable }));
-                        }
-                      }}
-                      className="text-[11px] font-mono px-1.5 py-0.5 rounded bg-surface-hover/40 text-fg-muted hover:text-fg border border-edge/40 hover:border-edge transition-colors"
-                    >
-                      {variable}
-                    </button>
-                  ))}
-                </div>
-                </SettingField>
+                {/* The field's own footer row: what you can PUT in the command
+                    on the left, WHEN it runs on the right. Timing was a separate
+                    labelled field below, which read as a sibling setting when it
+                    is really part of this one - it modifies this command and
+                    means nothing without it. In the field's footer the
+                    relationship needs no explaining, and the two option labels
+                    say what the old "Timing" label plus its description did.
 
-                <SettingField label="Auto-command timing" className={SECTION_FULL_SPAN}>
-                  <p className="text-xs text-fg-faint -mt-2 mb-2">
-                    Whether the command interrupts the agent or waits for it to finish what it is doing.
-                  </p>
-                  <Select
-                    value={draft.auto_command_mode}
-                    onChange={(event) => updateDraft((current) => ({
-                      ...current,
-                      auto_command_mode: event.target.value as AutoCommandMode,
-                    }))}
-                    data-testid="auto-command-mode-select"
+                    Disabled rather than hidden when there is no command: hiding
+                    it made the form jump on the first keystroke, and left no
+                    trace that the setting exists at all. */}
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                  <TemplateVariablePicker onInsert={insertTemplateVariable} />
+                  {/* `title` on the WRAPPER, not the control: a disabled button
+                      does not fire the mouse events a tooltip needs. */}
+                  <span
+                    title={hasAutoCommandDraft
+                      ? 'Whether the command interrupts the agent or waits for it to finish what it is doing.'
+                      : 'Set an auto-command to choose when it runs.'}
                   >
-                    <option value="immediate">Run immediately</option>
-                    <option value="deferred">Wait for the current turn to finish</option>
-                  </Select>
+                    <SegmentedControl
+                      ariaLabel="Auto-command timing"
+                      testId="auto-command-mode"
+                      disabled={!hasAutoCommandDraft}
+                      value={draft.auto_command_mode}
+                      onChange={(next: AutoCommandMode) => updateDraft((current) => ({
+                        ...current,
+                        auto_command_mode: next,
+                      }))}
+                      options={[
+                        {
+                          value: 'immediate' as const,
+                          label: 'Run immediately',
+                          icon: <Zap size={14} />,
+                          testId: 'auto-command-mode-immediate',
+                        },
+                        {
+                          value: 'deferred' as const,
+                          label: 'Wait for current turn',
+                          icon: <Clock size={14} />,
+                          testId: 'auto-command-mode-deferred',
+                        },
+                      ]}
+                    />
+                  </span>
+                </div>
                 </SettingField>
                 </div>
               ) : <DisabledSectionNotice reason={disabledReasonFor('Automation')} />}
-
-              <SectionHeading section={SECTIONS[3]} />
-              {sessionsRunHere ? (
-                <div className={SECTION_GRID_CLASS}>
-                  <div className={SECTION_FULL_SPAN}>
-                    <ToggleCard
-                      label="Receive context from prior agent"
-                      description="On cross-agent moves into this column, hand the previous agent's conversation to the new one."
-                      checked={draft.handoff_context}
-                      onChange={(next) => updateDraft((current) => ({ ...current, handoff_context: next }))}
-                      info={'When a task enters this column and the assigned agent differs from the one that ran in the previous column, Kangentic injects the previous session\'s transcript as the first message, so the new agent continues with full context instead of starting from the task description alone.\n\nSame-agent moves (e.g. Claude to Claude) resume natively via the agent\'s own session id and ignore this setting.'}
-                    />
-                  </div>
-                </div>
-              ) : <DisabledSectionNotice reason={disabledReasonFor('Handoff')} />}
             </div>
           </div>
         )}

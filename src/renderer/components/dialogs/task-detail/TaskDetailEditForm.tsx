@@ -99,7 +99,7 @@ export function TaskDetailEditForm({
           placeholder="Task title"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          className="flex-1 min-w-0 bg-surface border border-edge-input rounded px-3 py-2 text-sm text-fg placeholder-fg-faint focus:outline-none focus:border-accent"
+          className="flex-1 min-w-0 bg-surface-control border border-edge-input rounded px-3 py-2 text-sm text-fg placeholder-fg-faint focus:outline-none focus:border-accent"
         />
         <NameFromPromptButton description={description} onTitle={setTitle} />
       </div>

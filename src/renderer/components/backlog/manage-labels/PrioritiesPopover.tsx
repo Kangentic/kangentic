@@ -152,7 +152,7 @@ export function PrioritiesPopover() {
         onClick={() => setOpen(!open)}
         className={`flex items-center gap-1.5 px-3 py-1.5 text-sm border rounded transition-colors ${
           open
-            ? 'text-fg border-accent/50 bg-surface-hover/40'
+            ? 'text-fg border-accent/50 bg-surface-control/40'
             : 'text-fg-muted hover:text-fg border-edge/50 hover:bg-surface-hover/40'
         }`}
         data-testid="manage-priorities-btn"
@@ -315,7 +315,7 @@ function PriorityRow({
           ) : (
             <Pill
               size="sm"
-              className="bg-surface-hover/60 font-medium cursor-pointer"
+              className="bg-surface-control/60 font-medium cursor-pointer"
               style={{ color }}
             >
               {label}
@@ -344,7 +344,7 @@ function PriorityRow({
               if (event.key === 'Enter') saveEdit();
               if (event.key === 'Escape') setEditing(false);
             }}
-            className="bg-surface border border-edge-input rounded px-2 py-0.5 text-sm text-fg focus:outline-none focus:border-accent w-full"
+            className="bg-surface-control border border-edge-input rounded px-2 py-0.5 text-sm text-fg focus:outline-none focus:border-accent w-full"
           />
         </div>
       )}

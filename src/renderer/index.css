@@ -29,6 +29,7 @@
   --kng-surface: #18181b;          /* zinc-900 */
   --kng-surface-raised: #27272a;   /* zinc-800 */
   --kng-surface-hover: #3f3f46;    /* zinc-700 */
+  --kng-surface-control: #35353b;
   --kng-surface-inset: #18181b;    /* zinc-900 */
 
   /* Foreground (text) */
@@ -81,6 +82,7 @@
   --kng-surface: #f5f5f4;          /* stone-100 */
   --kng-surface-raised: #fafaf9;   /* stone-50 */
   --kng-surface-hover: #e7e5e4;    /* stone-200 */
+  --kng-surface-control: #efedec;
   --kng-surface-inset: #ffffff;
 
   /* Foreground (text) */
@@ -109,6 +111,7 @@
   --kng-surface: #1a1d2e;
   --kng-surface-raised: #232740;
   --kng-surface-hover: #2e3350;
+  --kng-surface-control: #2a2e4a;
   --kng-surface-inset: #141623;
   --kng-fg: #e0e2e8;
   --kng-fg-secondary: #c6c8d0;
@@ -129,6 +132,7 @@
   --kng-surface: #1a2318;
   --kng-surface-raised: #222e1f;
   --kng-surface-hover: #2e3e2a;
+  --kng-surface-control: #293826;
   --kng-surface-inset: #151c13;
   --kng-fg: #e0e4de;
   --kng-fg-secondary: #c6cac4;
@@ -149,6 +153,7 @@
   --kng-surface: #0f1923;
   --kng-surface-raised: #162231;
   --kng-surface-hover: #1e2e42;
+  --kng-surface-control: #1b293b;
   --kng-surface-inset: #0b1318;
   --kng-fg: #dae0e6;
   --kng-fg-secondary: #c0c6ce;
@@ -169,6 +174,7 @@
   --kng-surface: #1f1a17;
   --kng-surface-raised: #2a2320;
   --kng-surface-hover: #38302a;
+  --kng-surface-control: #322b26;
   --kng-surface-inset: #181412;
   --kng-fg: #e6e2de;
   --kng-fg-secondary: #ccc8c4;
@@ -191,6 +197,7 @@
   --kng-surface: #f5f0e8;
   --kng-surface-raised: #faf8f3;
   --kng-surface-hover: #e8e0d4;
+  --kng-surface-control: #efeae0;
   --kng-surface-inset: #ffffff;
   --kng-fg: #2a2218;
   --kng-fg-secondary: #3d3228;
@@ -211,6 +218,7 @@
   --kng-surface: #eef5f0;
   --kng-surface-raised: #f7faf8;
   --kng-surface-hover: #d8e8dd;
+  --kng-surface-control: #e4efe8;
   --kng-surface-inset: #ffffff;
   --kng-fg: #142820;
   --kng-fg-secondary: #1e3028;
@@ -231,6 +239,7 @@
   --kng-surface: #edf3f8;
   --kng-surface-raised: #f6f9fc;
   --kng-surface-hover: #d6e4f0;
+  --kng-surface-control: #e3ecf5;
   --kng-surface-inset: #ffffff;
   --kng-fg: #121e2e;
   --kng-fg-secondary: #1a2a3a;
@@ -251,6 +260,7 @@
   --kng-surface: #f8f0ec;
   --kng-surface-raised: #fcf8f6;
   --kng-surface-hover: #ecd8d0;
+  --kng-surface-control: #f2e5df;
   --kng-surface-inset: #ffffff;
   --kng-fg: #2a1c18;
   --kng-fg-secondary: #3a2520;
@@ -287,6 +297,7 @@
   --color-surface: var(--kng-surface);
   --color-surface-raised: var(--kng-surface-raised);
   --color-surface-hover: var(--kng-surface-hover);
+  --color-surface-control: var(--kng-surface-control);
   --color-surface-inset: var(--kng-surface-inset);
 
   --color-fg: var(--kng-fg);
@@ -627,6 +638,13 @@
 
   .grow-in {
     animation-duration: 1ms;
+  }
+
+  /* SegmentedControl's sliding thumb. A transition, not an animation, and
+     nothing waits on its `transitionend`, so it is safe to drop outright: the
+     thumb still lands on the selected option, it just gets there instantly. */
+  .kng-segmented-thumb {
+    transition: none;
   }
 
   /* Overlay open/close: collapse to instant but keep the animation so the

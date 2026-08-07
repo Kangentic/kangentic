@@ -302,7 +302,7 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
             }}
             placeholder="Search projects..."
             data-testid="project-sidebar-search"
-            className="w-full h-8 bg-surface/50 border border-edge/50 rounded-md text-xs text-fg placeholder-fg-disabled pl-7 pr-7 outline-none focus:border-edge-input transition-colors"
+            className="w-full h-8 bg-surface/50 border border-edge/50 rounded-md text-xs text-fg placeholder-fg-muted pl-7 pr-7 outline-none focus:border-edge-input transition-colors"
           />
           {search && (
             <button

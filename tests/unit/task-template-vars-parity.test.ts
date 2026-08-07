@@ -191,16 +191,36 @@ describe('interpolateTaskTemplate: drop-and-collapse semantics', () => {
   });
 });
 
-describe('BoardManagerDialog chip list is sourced from the catalog', () => {
+describe('BoardManagerDialog variable list is sourced from the catalog', () => {
   // Static scan rather than importing the .tsx (which would pull in React):
-  // pins that the Automation tab renders TASK_TEMPLATE_VARS instead of a
+  // pins that the Automation section renders TASK_TEMPLATE_VARS instead of a
   // hand-maintained array that can silently drift from the resolvers.
-  it('renders TEMPLATE_VARIABLES from TASK_TEMPLATE_VARS, not a hardcoded list', () => {
-    const source = fs.readFileSync(
-      path.join(REPO_ROOT, 'src/renderer/components/dialogs/BoardManagerDialog.tsx'),
-      'utf-8',
-    );
+  //
+  // Asserted as the INVARIANT (rendered from the catalog, no hardcoded chips)
+  // rather than as one exact line. The presentation has already changed once -
+  // a row of always-on chips became a picker menu - and pinning the old
+  // `const TEMPLATE_VARIABLES = ...` spelling failed that refactor while the
+  // property it exists to protect was never violated.
+  const source = fs.readFileSync(
+    path.join(REPO_ROOT, 'src/renderer/components/dialogs/BoardManagerDialog.tsx'),
+    'utf-8',
+  );
+
+  it('renders the variable list by mapping the shared catalog', () => {
     expect(source).toContain("import { TASK_TEMPLATE_VARS } from '../../../shared/task-template-vars'");
-    expect(source).toMatch(/const TEMPLATE_VARIABLES = TASK_TEMPLATE_VARS\.map\(/);
+    expect(source).toMatch(/TASK_TEMPLATE_VARS\.map\(/);
+  });
+
+  it('hardcodes no template-variable chips of its own', () => {
+    // Matches a STANDALONE quoted chip, which is the shape a hand-maintained
+    // array takes (`['{{task_xml}}', '{{title}}', ...]`). Deliberately not a
+    // bare `{{name}}` scan: that also hits the field's placeholder copy
+    // (`"/review {{title}}"`) and any comment that names a variable in prose,
+    // neither of which is a second source of truth.
+    const hardcoded = source.match(/['"]\{\{[a-zA-Z_]+\}\}['"]/g) ?? [];
+    expect(hardcoded).toEqual([]);
+    // Non-vacuous: the catalog is big enough that a hand-rolled copy of it
+    // would trip the scan above many times over.
+    expect(TASK_TEMPLATE_VARS.length).toBeGreaterThan(3);
   });
 });

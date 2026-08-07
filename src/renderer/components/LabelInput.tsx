@@ -101,7 +101,7 @@ export function LabelInput({ labels, setLabels, labelColors, allExistingLabels, 
     <div className="relative">
       <div
         ref={containerRef}
-        className="flex flex-wrap items-center gap-1 bg-surface border border-edge-input rounded px-2 py-1 min-h-[34px] focus-within:border-accent"
+        className="flex flex-wrap items-center gap-1 bg-surface-control border border-edge-input rounded px-2 py-1 min-h-[34px] focus-within:border-accent"
       >
         {labels.map((label) => {
           const color = labelColors[label];
@@ -109,7 +109,7 @@ export function LabelInput({ labels, setLabels, labelColors, allExistingLabels, 
             <Pill
               key={label}
               size="sm"
-              className={color ? 'bg-surface-hover/60 font-medium' : 'bg-surface-raised text-fg-secondary font-medium border border-edge-input'}
+              className={color ? 'bg-surface-control/60 font-medium' : 'bg-surface-raised text-fg-secondary font-medium border border-edge-input'}
               style={color ? { color } : undefined}
             >
               {label}

@@ -294,3 +294,42 @@ describe('in-flow scrollable popover menus (clipping regression guard)', () => {
     ).toEqual([]);
   });
 });
+
+/**
+ * The flip-above decision must be made from the popover's UNTRANSFORMED size.
+ *
+ * `OverlayPopover` plays a grow-in animation starting at `transform:
+ * scale(0.96)`, and `usePopoverPosition`'s layout effect runs on the commit that
+ * mounts it. `getBoundingClientRect()` reports the TRANSFORMED box, so the
+ * popover measured ~4% short and, on a marginal fit, the hook concluded "fits
+ * below" for a menu that then painted at full size and ran off the bottom of the
+ * screen. `offsetWidth` / `offsetHeight` are layout dimensions and ignore
+ * transforms.
+ *
+ * A static scan on purpose. Reproducing the bug through the DOM requires the
+ * trigger to land inside the ~12px window where a 4% error flips the decision,
+ * and a test tuned to a 12px window is exactly the pixel-fragile kind
+ * `.claude/rules/cross-platform-parity.md` forbids. The user-facing invariant (a
+ * too-tall dropdown stays on screen) is covered behaviorally by
+ * `tests/ui/popover-viewport-flip.spec.ts`; this pins the mechanism that spec
+ * cannot isolate.
+ */
+describe('usePopoverPosition measures the popover without its entrance transform', () => {
+  const source = fs.readFileSync(
+    path.join(REPO_ROOT, 'src/renderer/hooks/usePopoverPosition.ts'),
+    'utf-8',
+  );
+
+  it('reads the popover size from offsetWidth / offsetHeight', () => {
+    expect(source).toMatch(/const popoverWidth = popover\.offsetWidth/);
+    expect(source).toMatch(/const popoverHeight = popover\.offsetHeight/);
+  });
+
+  it('never measures the popover element with getBoundingClientRect', () => {
+    // The TRIGGER still needs a rect: it supplies viewport coordinates, which
+    // offsetTop/offsetLeft cannot. Only the popover's own size is at issue.
+    const popoverRectReads = source.match(/popover\.getBoundingClientRect\(\)/g) ?? [];
+    expect(popoverRectReads).toEqual([]);
+    expect(source).toMatch(/trigger\.getBoundingClientRect\(\)/);
+  });
+});

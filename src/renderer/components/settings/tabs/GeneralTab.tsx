@@ -2,7 +2,7 @@ import { FolderInput } from 'lucide-react';
 import { useConfigStore } from '../../../stores/config-store';
 import { useProjectStore } from '../../../stores/project-store';
 import { useProjectRelocation } from '../../../hooks/useProjectRelocation';
-import { SettingRow } from '../shared';
+import { SettingRow, INPUT_CLASS } from '../shared';
 import { settingProps } from '../settings-registry';
 
 /**
@@ -33,8 +33,13 @@ export function GeneralTab() {
       {project && (
         <SettingRow {...settingProps('project.location')}>
           <div className="flex items-center gap-2">
+            {/* `INPUT_CLASS` rather than a hand-rolled shell: this is read-only,
+                but it is still a value FIELD sitting in a row with a button, and
+                it was the last control left on the pre-unification `bg-surface`
+                + `border-edge` pairing. Borrowing the shared class means it
+                cannot drift again. The focus utilities in it are inert on a div. */}
             <div
-              className="flex-1 min-w-0 px-3 py-1.5 text-sm bg-surface border border-edge rounded text-fg-muted truncate"
+              className={`${INPUT_CLASS} flex-1 min-w-0 truncate`}
               title={project.path}
               data-testid="project-location-path"
             >

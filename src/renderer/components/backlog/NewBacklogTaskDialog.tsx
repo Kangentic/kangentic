@@ -355,7 +355,7 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate }: 
               value={title}
               onChange={(event) => setTitle(event.target.value)}
               placeholder="Task title"
-              className="w-full bg-surface border border-edge-input rounded px-3 py-2 text-sm text-fg placeholder-fg-faint focus:outline-none focus:border-accent"
+              className="w-full bg-surface-control border border-edge-input rounded px-3 py-2 text-sm text-fg placeholder-fg-faint focus:outline-none focus:border-accent"
               data-testid="backlog-task-title"
             />
 

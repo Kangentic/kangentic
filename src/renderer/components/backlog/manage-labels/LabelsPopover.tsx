@@ -114,7 +114,7 @@ export function LabelsPopover() {
         onClick={() => setOpen(!open)}
         className={`flex items-center gap-1.5 px-3 py-1.5 text-sm border rounded transition-colors ${
           open
-            ? 'text-fg border-accent/50 bg-surface-hover/40'
+            ? 'text-fg border-accent/50 bg-surface-control/40'
             : 'text-fg-muted hover:text-fg border-edge/50 hover:bg-surface-hover/40'
         }`}
         data-testid="manage-labels-btn"
@@ -185,7 +185,7 @@ export function LabelsPopover() {
                   setAddingLabel(false);
                 }}
                 placeholder="Label name"
-                className="flex-1 bg-surface border border-edge-input rounded px-2 py-1 text-sm text-fg focus:outline-none focus:border-accent"
+                className="flex-1 bg-surface-control border border-edge-input rounded px-2 py-1 text-sm text-fg focus:outline-none focus:border-accent"
               />
             </div>
           ) : (
@@ -274,7 +274,7 @@ function LabelRow({
           ) : (
             <Pill
               size="sm"
-              className="bg-surface-hover/60 font-medium cursor-pointer"
+              className="bg-surface-control/60 font-medium cursor-pointer"
               style={{ color: effectiveColor }}
             >
               {name}
@@ -303,7 +303,7 @@ function LabelRow({
               if (event.key === 'Enter') saveEdit();
               if (event.key === 'Escape') setEditing(false);
             }}
-            className="bg-surface border border-edge-input rounded px-2 py-0.5 text-sm text-fg focus:outline-none focus:border-accent w-full"
+            className="bg-surface-control border border-edge-input rounded px-2 py-0.5 text-sm text-fg focus:outline-none focus:border-accent w-full"
           />
         </div>
       )}

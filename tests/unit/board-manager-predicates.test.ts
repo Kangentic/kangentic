@@ -88,7 +88,8 @@ describe('hasOverride', () => {
       makeSwimlane({ handoff_context: true }),
     ];
     for (const draft of variants) {
-      for (const section of ['general', 'agent', 'auto', 'handoff'] as const) {
+      // Handoff is no longer a section: its single toggle moved into Automation.
+      for (const section of ['general', 'agent', 'auto'] as const) {
         expect(hasOverride(draft, section)).toBe(false);
       }
     }
