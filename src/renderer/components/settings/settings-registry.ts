@@ -175,6 +175,12 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   // only (never the rendered <option> text), so these keywords are the only
   // thing that still finds this row for a user searching from muscle memory.
   { id: 'mobileBridge.relayMode', tabId: 'mobile', label: 'Relay', description: 'Where this desktop connects for mobile pairing. The relay forwards encrypted traffic and never holds your keys.', scope: 'global', keywords: ['relay', 'server', 'hosted', 'local', 'custom', 'self-host', 'official', 'mobile', 'kangentic relay', 'cloud', 'kangentic cloud'] },
+  // Search-index only: this row has no SettingRow of its own. The relay address
+  // is an unlabelled field inside the Relay section (the picker directly above it
+  // says which relay it addresses), so this entry exists to put "websocket",
+  // "self-host", and "address" into the index. MobileDevicesTab's RELAY_SEARCH_IDS
+  // lists it beside mobileBridge.relayMode, and a match on either reveals the
+  // whole section. Do not go looking for its settingProps() call site.
   { id: 'mobileBridge.relayUrl', tabId: 'mobile', label: 'Custom Relay Address', description: 'The self-hosted relay to dial when Relay above is set to Custom Relay.', scope: 'global', keywords: ['relay', 'server', 'url', 'address', 'self-host', 'websocket', 'mobile', 'custom'] },
   { id: 'mobileBridge.pairing', tabId: 'mobile', label: 'Pair a Device', description: 'Scan a QR code with the Kangentic mobile app to pair a new phone.', scope: 'global', keywords: ['pair', 'pairing', 'qr', 'scan', 'phone', 'mobile', 'sas', 'code'] },
   { id: 'mobileBridge.devices', tabId: 'mobile', label: 'Paired Devices', description: 'Phones paired to this desktop, identified by key fingerprint. Rename or revoke a device here.', scope: 'global', keywords: ['paired', 'devices', 'phone', 'revoke', 'rename', 'fingerprint', 'mobile'] },
