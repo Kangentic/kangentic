@@ -39,6 +39,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { runDeferredTerminalInit } from '../../src/renderer/hooks/useDeferredTerminalInit';
+import { resetTerminalInitQueue, pendingTerminalInitCount } from '../../src/renderer/utils/terminal-init-queue';
 
 // ---------------------------------------------------------------------------
 // Deterministic rAF + ResizeObserver stubs
@@ -79,6 +80,10 @@ beforeEach(() => {
   scheduledFrames.clear();
   nextFrameHandle = 1;
   FakeResizeObserver.instances = [];
+  // The init queue is module state shared by every host. Clearing `scheduledFrames` above
+  // drops any pump frame it had scheduled, so without this reset the queue would still
+  // believe a pump is pending and never schedule another one.
+  resetTerminalInitQueue();
   vi.stubGlobal('requestAnimationFrame', (callback: FrameCallback): number => {
     const handle = nextFrameHandle;
     nextFrameHandle += 1;
@@ -201,6 +206,136 @@ describe('shared deferred terminal init contract', () => {
     cleanup();
     flushAnimationFrame();
     expect(cancelledOnInit).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The serialization contract. Hosts that mount in the SAME commit each schedule their init
+ * for the same frame, so before the shared queue their costs compounded: measured against the
+ * live app, the worst frames stacked 2-3 inits (~120ms each) into one 330-350ms block. The
+ * queue does not make construction cheaper, it caps the longest single block at one init.
+ *
+ * These assertions are what a revert to per-host requestAnimationFrame would break.
+ */
+describe('terminal inits are serialized one per frame', () => {
+  function mountHost(initTerminal: () => void): () => void {
+    return runDeferredTerminalInit({
+      element: { offsetWidth: 800, offsetHeight: 300 },
+      initializedRef: { current: false },
+      initTerminal,
+    });
+  }
+
+  it('runs only ONE init per frame when three hosts mount in the same commit', () => {
+    const order: string[] = [];
+    mountHost(() => order.push('a'));
+    mountHost(() => order.push('b'));
+    mountHost(() => order.push('c'));
+
+    flushAnimationFrame();
+    expect(order).toEqual(['a']);
+    flushAnimationFrame();
+    expect(order).toEqual(['a', 'b']);
+    flushAnimationFrame();
+    expect(order).toEqual(['a', 'b', 'c']);
+  });
+
+  it('still inits a lone host on the very next frame', () => {
+    // The cap must not cost a single terminal anything: the common case is one pane opening.
+    const initTerminal = vi.fn();
+    mountHost(initTerminal);
+    flushAnimationFrame();
+    expect(initTerminal).toHaveBeenCalledTimes(1);
+  });
+
+  it('a cancelled host is dropped from the queue and never delays the ones behind it', () => {
+    const order: string[] = [];
+    mountHost(() => order.push('a'));
+    const cancelSecond = mountHost(() => order.push('b'));
+    mountHost(() => order.push('c'));
+
+    cancelSecond();
+    expect(pendingTerminalInitCount()).toBe(2);
+
+    flushAnimationFrame();
+    flushAnimationFrame();
+    expect(order).toEqual(['a', 'c']);
+  });
+
+  it('a zero-dimension host releases its turn immediately instead of delaying the host behind it', () => {
+    // A host that is still 0x0 when its FIFO turn arrives must yield the queue right away - the
+    // ResizeObserver re-schedules it once it is sized. If it instead consumed its turn without
+    // releasing the queue, the sized host mounted right behind it would pay for the stall.
+    const order: string[] = [];
+    const zeroDimensionElement = { offsetWidth: 0, offsetHeight: 0 };
+    const zeroDimensionInitialized = { current: false };
+    runDeferredTerminalInit({
+      element: zeroDimensionElement,
+      initializedRef: zeroDimensionInitialized,
+      initTerminal: () => order.push('zero-dimension host'),
+    });
+    const sizedHostInitialized = { current: false };
+    runDeferredTerminalInit({
+      element: { offsetWidth: 800, offsetHeight: 300 },
+      initializedRef: sizedHostInitialized,
+      initTerminal: () => order.push('sized host'),
+    });
+
+    expect(pendingTerminalInitCount()).toBe(2);
+
+    // The zero-dimension host's FIFO turn arrives first and no-ops: nothing inits, and the
+    // queue depth drops by exactly one slot - the slot was genuinely released, not silently
+    // held onto for another frame.
+    flushAnimationFrame();
+    expect(order).toEqual([]);
+    expect(zeroDimensionInitialized.current).toBe(false);
+    expect(pendingTerminalInitCount()).toBe(1);
+
+    // The sized host runs on the very next frame - it is not pushed out further by the
+    // zero-dimension host that yielded ahead of it.
+    flushAnimationFrame();
+    expect(order).toEqual(['sized host']);
+    expect(sizedHostInitialized.current).toBe(true);
+    expect(pendingTerminalInitCount()).toBe(0);
+
+    // The zero-dimension host was skipped, not dropped: once its ResizeObserver reports real
+    // dimensions, it still initializes on the following frame.
+    zeroDimensionElement.offsetWidth = 800;
+    zeroDimensionElement.offsetHeight = 300;
+    FakeResizeObserver.instances[0].fire();
+    flushAnimationFrame();
+    expect(order).toEqual(['sized host', 'zero-dimension host']);
+    expect(zeroDimensionInitialized.current).toBe(true);
+  });
+
+  it('holds one-per-frame under a BURST, and still runs every host', () => {
+    // The burst is the case that matters most, not the 2-3 hosts a handoff produces:
+    // dragging a batch of tasks into a spawning column mounts a pane per task in one
+    // commit. Unqueued, ten ~75ms constructions land in a single frame as one ~750ms
+    // lock with no paint and no input - and a drag is exactly when a dropped pointer
+    // event is least recoverable (dnd-kit loses the drag or the card jumps).
+    const order: number[] = [];
+    for (let index = 0; index < 10; index++) mountHost(() => order.push(index));
+
+    for (let frame = 1; frame <= 10; frame++) {
+      flushAnimationFrame();
+      expect(order).toHaveLength(frame);
+    }
+    // FIFO, and nothing is dropped on the floor.
+    expect(order).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(pendingTerminalInitCount()).toBe(0);
+  });
+
+  it('a host that throws during construction does not strand the queue behind it', () => {
+    // A wedged queue would leave every pane behind the thrower permanently blank, which is a
+    // far worse failure than the construction error itself.
+    const order: string[] = [];
+    mountHost(() => { throw new Error('xterm construction failed'); });
+    mountHost(() => order.push('survivor'));
+
+    expect(() => flushAnimationFrame()).toThrow('xterm construction failed');
+    flushAnimationFrame();
+    expect(order).toEqual(['survivor']);
   });
 });
 

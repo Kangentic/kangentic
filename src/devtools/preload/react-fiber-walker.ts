@@ -212,6 +212,28 @@ function walkFiberTree(fiber: ReactFiber, depthRemaining: number): TreeNode {
 const RENDER_RING_SIZE = 100;
 const renderRing: ReactRenderRecord[] = [];
 
+/**
+ * KNOWN GAP: in a Vite dev server this attaches to nothing, so `recentRenders` (and the
+ * `kangentic_devtools_react_recent_renders` tool) returns `[]` forever.
+ *
+ * Preload runs before any page script, so there is no `__REACT_DEVTOOLS_GLOBAL_HOOK__` yet and
+ * this returns early below. `@vitejs/plugin-react`'s react-refresh preamble then creates the
+ * hook from scratch, complete with its own no-op `onCommitFiberRoot`, and our wrapper is never
+ * in the chain. Confirmed against a running instance: the hook exists, `inject` exists, and
+ * `renderers.size === 0`.
+ *
+ * Read an empty result as "not instrumented", NOT as "no React work happened" - that misreading
+ * is the actual hazard here, since the tool fails silently rather than erroring. For render
+ * attribution use `kangentic_devtools_event_loop_lag`'s `recentLongFrames`, which the browser
+ * attributes per script.
+ *
+ * The fix would be to CREATE a minimal hook here when none exists, so react-refresh adopts and
+ * wraps ours instead of replacing it. It is deliberately not done: even attached, this ring
+ * reports `root.current`'s name on every entry (always the root, never the component that
+ * re-rendered) and `actualDuration` is 0 outside a profiling build, so it can only answer "did a
+ * commit happen at time t". Weigh that against the downside of a stub that does not match what
+ * react-refresh expects, which is breaking Fast Refresh in the daily-dogfooded dev loop.
+ */
 export function installRenderTracker(): ReactRenderRecord[] {
   const hook = getHook();
   if (!hook) return renderRing;

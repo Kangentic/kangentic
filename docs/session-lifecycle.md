@@ -481,10 +481,12 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   settle itself stops waiting at that ceiling), so an unconsumed old arm - a height drag nothing
   sampled after - cannot slow the next open. Concurrent samplers of the SAME
   resize (a bottom-panel tab and a detail window overlapping during a handover; in dev, StrictMode's
-  double mount of a Command Terminal window - both terminal hosts defer their init by one
-  animation frame via the shared `useDeferredTerminalInit` hook, which lets StrictMode's
+  double mount of a Command Terminal window - both terminal hosts defer their init off the mount
+  commit via the shared `useDeferredTerminalInit` hook, which lets StrictMode's
   synchronous unmount cancel the first scheduled init, so each pair collapses to a single fetch
-  and no throwaway xterm races the survivor) share ONE wait: the second joins the first rather
+  and no throwaway xterm races the survivor; what matters here is cancel-before-run, not which
+  frame the init lands on, since the shared queue in `terminal-init-queue.ts` can push a host
+  contending with others several frames out) share ONE wait: the second joins the first rather
   than starting its own. Two
   independent waits could not both work, because the first to settle clears the pending-repaint
   state that the other's early-settle scan offset points at, so the loser could never settle early

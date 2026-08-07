@@ -35,20 +35,27 @@ src/devtools/
   main/
     lockfile.ts              ← <projectRoot>/.kangentic/preview.lock
     instances.ts             ← combines product worktree-list with lockfile/port info
-    inspection-server.ts     ← localhost HTTP bridge
+    inspection-server.ts     ← localhost HTTP bridge (SessionEvent injection is inline here)
     cdp.ts                   ← webContents.debugger.attach wrapper
-    session-event-injector.ts ← gated: synthesize SessionEvents
+    screenshot.ts            ← Page.captureScreenshot plumbing
+    ephemeral-projects.ts    ← --ephemeral preview project setup
+    preview-task-title.ts    ← preview window title
+    seed-*.ts                ← board/data seeders (usage, git changes, conversation, backlog)
 
   preload/
     install-globals.ts       ← installs window.__kangenticPreviewSnapshot, __kangenticPreviewReact
     mutation-observer.ts     ← in-renderer mutation ring buffer
-    react-fiber-walker.ts    ← __REACT_DEVTOOLS_GLOBAL_HOOK__ utilities
+    react-fiber-walker.ts    ← __REACT_DEVTOOLS_GLOBAL_HOOK__ utilities + the onCommitFiberRoot
+                               ring. NOTE: the ring is inert under Vite dev - see the KNOWN GAP
+                               block on installRenderTracker before trusting an empty result
 
   renderer/
     install.tsx              ← <DevtoolsBootstrap />
     state-mirror.ts          ← buildPreviewSnapshot() + PREVIEW_STORES registry / readStoreState()
     store-state.ts           ← pure store path-walk + JSON sanitization helpers
-    react-bridge.ts          ← React fiber walker + onCommitFiberRoot ring
+    lag-recorder.ts          ← event-loop lag ring + the long-animation-frame ring that carries
+                               per-script attribution (both surfaced via /event-loop-lag)
+    TestHarness.tsx          ← floating board-seeding toolbar (ephemeral previews only)
     DevToolsSections.tsx     ← rendered inside DeveloperTab when __KANGENTIC_DEV__
 
   mcp/
@@ -88,7 +95,7 @@ HTTP bridge: `Page.captureScreenshot`, `DOM.querySelector` /
 `getOuterHTML` / `getBoxModel`, `Input.dispatchMouseEvent` /
 `dispatchKeyEvent`, `Runtime.evaluate`, `Console.messageAdded`.
 
-### Renderer mirror (`renderer/state-mirror.ts`, `renderer/react-bridge.ts`)
+### Renderer mirror (`renderer/state-mirror.ts`, `renderer/store-state.ts`)
 
 `buildPreviewSnapshot()` aggregates every Zustand store plus a few ring
 buffers (toasts shown, dialogs opened, IPC errors). Installed on
@@ -102,9 +109,17 @@ and serves `/store-state`. `PREVIEW_STORES` is the single place a new
 Zustand store must be registered to become readable; the
 `devtools-preview-stores` unit test fails CI if a `*-store.ts` is missing.
 
-`react-bridge.ts` rides the always-installed
-`__REACT_DEVTOOLS_GLOBAL_HOOK__` to walk fibers from a DOM node and
-maintain a ring buffer of recent commits (via `onCommitFiberRoot`).
+`renderer/lag-recorder.ts` holds the two dev-only performance rings: the
+event-loop lag sampler (WHEN the thread blocked) and the
+`long-animation-frame` ring with per-script attribution (WHAT ran). Both
+are served by `/event-loop-lag`.
+
+Fiber walking lives in `preload/react-fiber-walker.ts`, not here: it rides
+`__REACT_DEVTOOLS_GLOBAL_HOOK__` to walk fibers from a DOM node and to
+maintain a ring buffer of recent commits (via `onCommitFiberRoot`). Read
+the KNOWN GAP block on `installRenderTracker` before trusting an empty
+`recentRenders` result - under a Vite dev server the ring never attaches,
+so `[]` means "not instrumented", not "no React work happened".
 
 ### MCP tools (`mcp/preview-tools.ts`, `mcp/register.ts`)
 

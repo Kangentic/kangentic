@@ -1,13 +1,17 @@
 /**
  * Defers a terminal host's initTerminal() until its container has real pixel
- * dimensions, by one animation frame. Shared by TerminalTab and
- * CommandTerminalPane (the same "cannot drift" pattern as useTerminalRefit)
- * because the deferral carries three load-bearing behaviors at once:
+ * dimensions, onto a frame where no other terminal is being constructed.
+ * Shared by TerminalTab and CommandTerminalPane (the same "cannot drift"
+ * pattern as useTerminalRefit) because the deferral carries three load-bearing
+ * behaviors at once:
  *
  * - The commit that mounts a pane already pays the panel subtree render;
- *   folding xterm construction (open + WebGL context + fit, ~10ms) into that
- *   same task produced a 40-60ms pointer-thread stall when a spawning
- *   session's pane mounted mid-drag (task #468).
+ *   folding xterm construction (open + WebGL context + fit) into that same task
+ *   produced a 40-60ms pointer-thread stall when a spawning session's pane
+ *   mounted mid-drag (task #468). That construction was documented here as
+ *   "~10ms"; measured later against the live app via the long-frame ring, it
+ *   averages ~75ms and peaks at 130ms, of which the WebGL context alone is
+ *   13-29ms. The deferral matters more than the original estimate implied.
  * - StrictMode's mount -> unmount -> remount constructs ONE terminal instead
  *   of two: the first mount's cleanup cancels its scheduled init before it
  *   ever runs. The synchronous init CommandTerminalPane hand-rolled instead
@@ -16,6 +20,12 @@
  *   'no-tui-marker' twice per open).
  * - A display:none container (an inactive tab) has no dimensions yet; the
  *   ResizeObserver re-schedules the init when they arrive.
+ *
+ * The frame the init lands on comes from the SHARED queue in
+ * terminal-init-queue.ts, not from a per-host requestAnimationFrame. A per-host
+ * frame is the same frame for every host that mounted in the same commit, which
+ * is how a 350ms block gets built out of three 120ms inits. One per frame caps
+ * the worst block at one terminal's cost.
  *
  * The imperative core lives in runDeferredTerminalInit, exported so
  * tests/unit/deferred-terminal-init.test.ts asserts the contract against the
@@ -30,6 +40,7 @@
  * extraction: the cleanup resets the flag and the next frame re-inits.
  */
 import { useEffect, useRef, type RefObject } from 'react';
+import { enqueueTerminalInit } from '../utils/terminal-init-queue';
 
 /** The two size fields the controller reads; tests pass plain objects. */
 export interface DeferredInitHost {
@@ -45,13 +56,15 @@ export function runDeferredTerminalInit(input: {
   onInit?: () => void;
 }): () => void {
   const { element, initializedRef, initTerminal, onInit } = input;
-  let initRafId: number | null = null;
+  let cancelQueuedInit: (() => void) | null = null;
 
-  // Init on the next frame if the container has dimensions by then.
+  // Init on a frame where no OTHER terminal is being constructed. The queue is what stops
+  // several hosts mounting in one commit from stacking their inits into a single long frame;
+  // see terminal-init-queue.ts for the measurement that motivated it.
   const scheduleInit = (): void => {
-    if (initializedRef.current || initRafId !== null) return;
-    initRafId = requestAnimationFrame(() => {
-      initRafId = null;
+    if (initializedRef.current || cancelQueuedInit !== null) return;
+    cancelQueuedInit = enqueueTerminalInit(() => {
+      cancelQueuedInit = null;
       if (initializedRef.current) return;
       if (element.offsetWidth > 0 && element.offsetHeight > 0) {
         initTerminal();
@@ -76,7 +89,8 @@ export function runDeferredTerminalInit(input: {
   scheduleInit();
 
   return () => {
-    if (initRafId !== null) cancelAnimationFrame(initRafId);
+    cancelQueuedInit?.();
+    cancelQueuedInit = null;
     observer.disconnect();
     initializedRef.current = false;
   };

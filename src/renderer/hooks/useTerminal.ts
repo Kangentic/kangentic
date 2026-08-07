@@ -120,18 +120,22 @@ if (import.meta.hot) {
 // a key for a terminal that has since disposed its report entry.
 let transientRendererKeyCounter = 0;
 
-/**
- * De-duplicating concurrent `getScrollback` calls was TRIED and REVERTED - do not
- * re-add it without new measurements.
- *
- * A detail open mounts the terminal twice (StrictMode), and each mount fetches the
- * scrollback, so sharing one in-flight promise looks like free savings. Measured
- * live, it made the open SLOWER: the FIRST mount's fetch is the one that pays
- * main's repaint-settle wait, while the second mount's own fetch is cheap precisely
- * because the resize has already settled by then. Sharing forces the second mount
- * to wait on the expensive first fetch instead of issuing its own cheap one
- * (mount-to-paint went from ~78ms to ~103ms on a 522KB session).
- */
+// De-duplicating concurrent `getScrollback` calls was TRIED and REVERTED - do not re-add it
+// without new measurements. (Standalone note, not documentation of the function below.)
+//
+// The original reasoning: a detail open mounted the terminal TWICE under StrictMode and each
+// mount fetched the scrollback, so sharing one in-flight promise looked like free savings.
+// Measured live it made the open SLOWER, because the FIRST mount's fetch is the one that pays
+// main's repaint-settle wait while the second mount's is cheap precisely because the resize
+// has already settled; sharing forced the second to wait on the expensive first
+// (mount-to-paint went from ~78ms to ~103ms on a 522KB session).
+//
+// That premise NO LONGER HOLDS. `useDeferredTerminalInit` cancels its scheduled init in the
+// effect cleanup, so StrictMode's mount -> unmount -> remount now constructs exactly one
+// terminal and issues exactly one `getScrollback` per open. So the conclusion is moot rather
+// than wrong: there is no longer a concurrent pair to de-duplicate. Kept because the warning
+// still applies to any future change that reintroduces concurrent fetches for one session,
+// and because the 78ms/103ms numbers are the only recorded measurement of that path.
 function nextTransientRendererKey(): number {
   transientRendererKeyCounter += 1;
   return transientRendererKeyCounter;

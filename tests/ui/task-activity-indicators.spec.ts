@@ -256,6 +256,40 @@ test.describe('Task Activity Indicators', () => {
       await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
     });
 
+    test('context bar progress fill reflects the non-zero context percent via data-percent and scaleX', async () => {
+      // Regression guard for the `width: 'N%'` -> `transform: scaleX(n)`
+      // rewrite in ContextBar.tsx: the sibling "0% bar" assertion elsewhere
+      // in this file (the TaskCard's ContextUsageFooter, a different
+      // component) only ever reads data-percent at 0, where `pct / 100` is 0
+      // regardless of whether pct is computed correctly - a swapped
+      // variable, a dropped clamp, or an inverted ratio would all still read
+      // data-percent="0" / scaleX(0) and pass. ContextBar's own fill had no
+      // data-percent/transform assertion at any percent before this test.
+      // This fixture's usage (usedPercentage: 25, usedTokens: 1500,
+      // contextWindowSize: 200000 - see makePreConfig's withUsage payload) is
+      // well under budget, so contextWindowDisplayPercent rounds/caps it to
+      // the reported 25, which an inverted ratio would visibly differ on
+      // (scaleX(0.75) vs the correct scaleX(0.25)).
+      await page.locator('text=Test Initializing Task').first().click();
+      await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible' });
+
+      const usageBar = page.locator('[data-testid="usage-bar"].min-h-8');
+      await expect(usageBar).toBeVisible();
+
+      // Scoped to a `div` (the RateLimitBar track fill is a `span` with the
+      // same classes), so this is unambiguous even when rate-limit rows are
+      // also present in the bar.
+      const fill = usageBar.locator('div.h-full.rounded-full');
+      await expect(fill).toHaveCount(1);
+      await expect(fill).toHaveAttribute('data-percent', '25');
+      const transform = await fill.evaluate((el) => (el as HTMLElement).style.transform);
+      expect(transform).toBe('scaleX(0.25)');
+
+      // Click the X close button (Escape may be captured by terminal in view mode)
+      await page.locator('[data-testid="task-detail-close"]').click();
+      await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
+    });
+
     test('usage dashboard shows live token and cost tiles when usage exists', async () => {
       // The old status-bar usage strip was replaced by the dashboard; the live
       // KPI layering reads the same in-memory sessionUsage. Self-cleaning for
@@ -649,9 +683,14 @@ test.describe('Task Activity Indicators', () => {
         await expect(usageBar).toContainText('Claude Sonnet');
         await expect(usageBar).toContainText('0%');
         await expect(usageBar).not.toContainText('Loading agent...');
-        // Inner progress bar element exists at zero width (not "visible" since 0px wide)
+        // Inner progress bar element exists, holding the track at zero.
+        // Asserted via data-percent rather than the inline style: the fill is
+        // scaled with a composited `transform: scaleX()` on a full-width bar, so
+        // there is no `width:` to match, and pinning the transform string here
+        // would re-couple this test to the animation mechanism it should not care
+        // about. data-percent is the value the track represents.
         await expect(usageBar.locator('div.h-full.rounded-full')).toHaveCount(1);
-        await expect(usageBar.locator('div.h-full.rounded-full')).toHaveAttribute('style', /width:\s*0%/);
+        await expect(usageBar.locator('div.h-full.rounded-full')).toHaveAttribute('data-percent', '0');
       } finally {
         await browser.close();
       }

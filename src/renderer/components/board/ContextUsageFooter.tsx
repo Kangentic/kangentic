@@ -66,10 +66,24 @@ export function ContextUsageFooter({
         <span className="text-xs text-fg-faint truncate" data-testid={`${testId}-model`}>{modelName}</span>
         <span className="text-xs text-fg-faint" data-testid={`${testId}-percent`}>{percentLabel}</span>
       </div>
+      {/* The fill is a full-width bar scaled on the X axis, not a bar whose WIDTH
+          changes. `transform` is composited; `width` is a layout property, so a
+          width transition costs layout AND paint on every frame of its 300ms, on
+          every card with a running session. Keep `origin-left` or the bar grows
+          from its centre, and keep the transition list naming `transform` - a
+          stale `width` in that list leaves the bar rendering correctly while
+          silently not animating, which no test catches.
+
+          Do NOT add `will-change: transform`. A transform transition composites
+          while it runs without it; a permanent hint here would mint one layer per
+          card. The track above is deliberately box-identical to `CardStatusBar`
+          in TaskCard.tsx - see its JSDoc, card height stability is load-bearing
+          for dnd-kit's per-card ResizeObserver during a drag. */}
       <div className="w-full h-1 bg-surface-hover rounded-full overflow-hidden">
         <div
-          className="h-full rounded-full transition-all duration-300"
-          style={{ width: `${clamped}%`, backgroundColor: getProgressColor(clamped) }}
+          className="h-full w-full origin-left rounded-full transition-[transform,background-color] duration-300"
+          data-percent={clamped}
+          style={{ transform: `scaleX(${clamped / 100})`, backgroundColor: getProgressColor(clamped) }}
         />
       </div>
     </div>

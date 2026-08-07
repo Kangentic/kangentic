@@ -91,6 +91,13 @@ function RateLimitBar({ limitWindow }: { limitWindow: RateLimitWindow }) {
           100%, so nothing overflows horizontally and the track still reads as a
           pill. */}
       <span className="relative flex-1 min-w-[40px] h-1.5 bg-surface-hover rounded-full">
+        {/* This one stays on `width` on purpose, unlike the context fill above and
+            ContextUsageFooter's. The `minWidth: 2px` floor below keeps a barely
+            started window visible, and that is a width-space idea with no
+            scale-space equivalent short of measuring the track and dividing - a
+            layout read on every render, to remove a transition that fires when a
+            rate-limit window ticks, which is minutes apart rather than per token.
+            The composited-transform rewrite is not worth that trade here. */}
         <span
           className="block h-full rounded-full transition-[width,background-color] duration-300"
           style={{
@@ -501,10 +508,17 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
                   {fractionLabel}
                 </span>
               )}
+              {/* Scaled on X rather than width-animated: `transform` is composited,
+                  `width` costs layout and paint on every frame of the 300ms. Keep
+                  `transform` in the transition list - naming `width` here would
+                  leave the bar drawing at the right size but never animating, and
+                  no test asserts motion. See ContextUsageFooter.tsx, which carries
+                  the same treatment for the board and monitor cards. */}
               <div className="flex-1 h-1.5 bg-surface-hover rounded-full overflow-hidden" title={barTooltip}>
                 <div
-                  className="h-full rounded-full transition-[width,background-color] duration-300"
-                  style={{ width: `${Math.min(pct, 100)}%`, backgroundColor: progressColor }}
+                  className="h-full w-full origin-left rounded-full transition-[transform,background-color] duration-300"
+                  data-percent={Math.min(pct, 100)}
+                  style={{ transform: `scaleX(${Math.min(pct, 100) / 100})`, backgroundColor: progressColor }}
                 />
               </div>
               <span ref={pctRef} className="tabular-nums text-fg-faint whitespace-nowrap transition-colors duration-300" title={`${100 - pct}% remaining`}>{pct}%{!showFraction && ' context'}</span>

@@ -114,14 +114,22 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
   // Relative wrapper that hosts the xterm div and its overlays.
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Init deferred one frame, shared with CommandTerminalPane via
-  // useDeferredTerminalInit (see the hook for the pointer-stall, StrictMode
-  // one-terminal, and display:none rationales). The deferral is
-  // pixel-invisible here - the replay veil / LaunchOverlay cover the pane
-  // from the first frame, and the container div paints the terminal
-  // background either way. This is NOT the reverted drag-end deferral: the
-  // init lands on the very next frame, before the active effect's
-  // FIT_DELAY_MS corrective fit, so the fit sequence is unchanged.
+  // Init deferred to a frame where no other terminal is being constructed,
+  // shared with CommandTerminalPane via useDeferredTerminalInit (see the hook
+  // for the pointer-stall, StrictMode one-terminal, and display:none
+  // rationales). The deferral is pixel-invisible here - the replay veil /
+  // LaunchOverlay cover the pane from the first frame, and the container div
+  // paints the terminal background either way.
+  //
+  // This is NOT the reverted drag-end deferral. A pane mounting on its own
+  // still inits on the very next frame, ahead of the active effect's
+  // FIT_DELAY_MS corrective fit. A pane mounting in a BURST does not: the
+  // shared queue in terminal-init-queue.ts runs one construction per frame,
+  // so the Nth pane inits N turns later and the 100ms corrective fit can fire
+  // first and no-op. That is safe rather than merely tolerated, because
+  // initTerminal's own fit is a pure function of the container's live geometry
+  // at the moment it runs (see useTerminal.ts), so a late init still fits
+  // correctly without needing this effect's window.
   const { initializedRef: initialized } = useDeferredTerminalInit({
     terminalRef,
     initTerminal,

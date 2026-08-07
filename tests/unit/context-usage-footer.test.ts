@@ -61,6 +61,28 @@ function findByTestId(node: unknown, testId: string): ElementLike | null {
   return null;
 }
 
+/**
+ * Depth-first search for the first element carrying a `data-percent` prop at
+ * all (the fill div has no testid of its own - it is the last leaf under the
+ * track, distinguished only by that attribute). Distinct from `findByTestId`
+ * because the fill is not addressable by testid.
+ */
+function findByDataPercent(node: unknown): ElementLike | null {
+  if (node === null || node === undefined || typeof node === 'boolean') return null;
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = findByDataPercent(child);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (isElementLike(node)) {
+    if ('data-percent' in node.props) return node;
+    return findByDataPercent(node.props.children);
+  }
+  return null;
+}
+
 describe('ContextUsageFooter unknownLabel', () => {
   it('keeps printing the percent when unknownLabel is omitted, even with an unknown window (the board default)', () => {
     const output = ContextUsageFooter({
@@ -114,5 +136,75 @@ describe('ContextUsageFooter unknownLabel', () => {
     const unknownOutput = ContextUsageFooter({ modelName: 'Opus 5', percent: 10, windowKnown: false });
     if (!isElementLike(unknownOutput)) throw new Error('ContextUsageFooter did not return an element');
     expect(unknownOutput.props['data-context-window']).toBe('unknown');
+  });
+});
+
+/**
+ * Coverage for the fill div itself: `data-percent={clamped}` and
+ * `style={{ transform: \`scaleX(${clamped / 100})\` }}` (the `width: 'N%'` ->
+ * `transform: scaleX(n)` rewrite). The existing UI-tier assertion
+ * (tests/ui/task-activity-indicators.spec.ts) only ever reads `data-percent`
+ * at 0, where `clamped / 100` is 0 regardless of whether `clamped` is
+ * computed correctly - a swapped variable, a dropped clamp, or an inverted
+ * ratio (e.g. `1 - clamped / 100`) would all still read `data-percent="0"` /
+ * `scaleX(0)` and pass. 62 is chosen because it is the value an inverted
+ * ratio would visibly differ on (`scaleX(0.38)` vs the correct
+ * `scaleX(0.62)`), which 0 and 100 cannot distinguish.
+ *
+ * `data-percent` here is a NUMBER, not a string: this is the real
+ * `React.createElement` prop tree pre-DOM-serialization, the same trap the
+ * `data-context-window` test above documents. The UI-tier spec reads the
+ * DOM-serialized string form instead.
+ */
+describe('ContextUsageFooter fill (data-percent and scaleX transform)', () => {
+  it('sets data-percent and scaleX to the exact clamped ratio at a non-zero percent (62 -> 0.62)', () => {
+    const output = ContextUsageFooter({
+      modelName: 'Opus 5',
+      percent: 62,
+      windowKnown: true,
+      testId: 'usage-bar',
+    });
+    const fill = findByDataPercent(output);
+    if (!fill) throw new Error('expected a fill element carrying data-percent in the output');
+
+    expect(fill.props['data-percent']).toBe(62);
+    const style = fill.props.style as { transform?: string } | undefined;
+    if (!style) throw new Error('expected the fill element to carry an inline style');
+    // Pinned as a literal, not `scaleX(${62 / 100})` - mirroring the
+    // implementation's own arithmetic here would not catch a swapped or
+    // inverted ratio, since both sides would compute the same wrong value.
+    expect(style.transform).toBe('scaleX(0.62)');
+  });
+
+  it('clamps a percent above 100 to a full scaleX(1)', () => {
+    const output = ContextUsageFooter({
+      modelName: 'Opus 5',
+      percent: 140,
+      windowKnown: true,
+      testId: 'usage-bar',
+    });
+    const fill = findByDataPercent(output);
+    if (!fill) throw new Error('expected a fill element carrying data-percent in the output');
+
+    expect(fill.props['data-percent']).toBe(100);
+    const style = fill.props.style as { transform?: string } | undefined;
+    if (!style) throw new Error('expected the fill element to carry an inline style');
+    expect(style.transform).toBe('scaleX(1)');
+  });
+
+  it('clamps a negative percent to an empty scaleX(0)', () => {
+    const output = ContextUsageFooter({
+      modelName: 'Opus 5',
+      percent: -20,
+      windowKnown: true,
+      testId: 'usage-bar',
+    });
+    const fill = findByDataPercent(output);
+    if (!fill) throw new Error('expected a fill element carrying data-percent in the output');
+
+    expect(fill.props['data-percent']).toBe(0);
+    const style = fill.props.style as { transform?: string } | undefined;
+    if (!style) throw new Error('expected the fill element to carry an inline style');
+    expect(style.transform).toBe('scaleX(0)');
   });
 });
