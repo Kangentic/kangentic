@@ -268,6 +268,14 @@ export function prepareInjectionPlan(input: InjectionPlanInput): InjectionPlan |
  * (e.g. `prepareInjectionPlan` reading it for the delta source) pass it through
  * to avoid a second query. Omit it to read fresh.
  */
+/**
+ * How long a resolved session record is reused before the verifier re-reads it.
+ * See the comment at the re-resolve site: this exists to keep a synchronous
+ * SQLite call out of a 40Hz poll loop without losing mid-burst `/clear`
+ * detection.
+ */
+const RECORD_RERESOLVE_TTL_MS = 250;
+
 export function buildCommandInjectionVerifier(
   adapter: AgentAdapter,
   sessionRepo: SessionRepository,
@@ -289,18 +297,34 @@ export function buildCommandInjectionVerifier(
   const recordId = record.id;
   const capturedAgentSessionId = record.agent_session_id;
   const capturedCwd = record.cwd;
+  let resolvedRecord: SessionRecord | null = record;
+  let resolvedAt = 0;
   return async (command: string, sentAt: number, mode: InjectionVerifyMode) => {
     // `none` never reaches a verifier (submitKeystrokes skips the call), but
     // guard anyway so an unverifiable command can never be reported confirmed.
     if (mode === 'none') return false;
     // Re-resolve the agent session id from the SAME record (by primary key,
-    // never latest-for-task, which could shadow an isolated session's row) on
-    // every poll: a /clear mid-burst forks the live conversation to a new id
-    // (persisted by the live status-file reconcile), and the slash entries
-    // being verified land in the NEW transcript. Polling only the
-    // plan-build-time id would never confirm, ending in stray retry Enters
-    // plus a Ctrl+C fired into the live session.
-    const currentRecord = sessionRepo.findByAnyId(recordId);
+    // never latest-for-task, which could shadow an isolated session's row): a
+    // /clear mid-burst forks the live conversation to a new id (persisted by
+    // the live status-file reconcile), and the slash entries being verified
+    // land in the NEW transcript. Polling only the plan-build-time id would
+    // never confirm, ending in stray retry Enters plus a Ctrl+C fired into the
+    // live session.
+    //
+    // Re-resolved on a TTL rather than on every poll. `findByAnyId` calls
+    // `db.prepare` inline, so better-sqlite3 recompiles the SQL each time, and
+    // better-sqlite3 is synchronous - at a 25ms poll cadence that is 40 blocking
+    // DB round trips per second per in-flight burst, on the same thread that
+    // services IPC. It buys nothing at that rate: the thing it watches for is a
+    // human typing /clear. The TTL stays well inside one retry attempt
+    // (VERIFY_WINDOW_MS is 400ms, and there are 5 attempts), so a fork is still
+    // picked up within the same attempt that follows it.
+    const now = Date.now();
+    if (now - resolvedAt >= RECORD_RERESOLVE_TTL_MS) {
+      resolvedRecord = sessionRepo.findByAnyId(recordId) ?? null;
+      resolvedAt = now;
+    }
+    const currentRecord = resolvedRecord;
     const currentAgentSessionId = currentRecord?.agent_session_id ?? capturedAgentSessionId;
     const currentCwd = currentRecord?.cwd ?? capturedCwd;
     // Still no captured id/cwd: the transcript we would scan does not exist

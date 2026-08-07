@@ -9,11 +9,15 @@
  * session JSONL and only confirms when an entry matches the EXACT command
  * we sent (single-line args, no embedded next-command).
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
+import fsPromises from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { createSlashCommandVerifier } from '../../src/main/agent/adapters/claude/slash-command-verifier';
+import {
+  createSlashCommandVerifier,
+  clearTranscriptTailCache,
+} from '../../src/main/agent/adapters/claude/slash-command-verifier';
 
 let tmpDir: string;
 let jsonlPath: string;
@@ -233,5 +237,135 @@ describe('createSlashCommandVerifier - single-scan mode (no timeoutMs)', () => {
 
     // The entry is older than sentAt - 50ms tolerance, so it must be rejected.
     expect(result).toBe(false);
+  });
+});
+
+/**
+ * Cost of verification, which is a main-process concern rather than a cosmetic
+ * one: `pollForConfirmation` asks every 25ms for up to ~2s per command, and
+ * injection concurrency is per task, so dragging several tasks into one column
+ * runs several of these loops at once. Re-reading a multi-megabyte transcript
+ * 40 times a second per task blocks the main process, and a blocked main process
+ * stalls IPC and therefore the UI.
+ */
+describe('transcript scanning cost', () => {
+  beforeEach(() => {
+    clearTranscriptTailCache();
+  });
+
+  it('reads the file once across repeated polls while it is unchanged', async () => {
+    appendEntry({
+      type: 'system',
+      subtype: 'local_command',
+      content: '<command-name>/model</command-name>\n<command-args>opus</command-args>',
+      timestamp: nowIso(-5000),
+    });
+
+    // Count real reads by watching atime-independent access: spy on the promises
+    // API the verifier uses. `stat` is allowed (that is the cheap gate); `open`
+    // and `readFile` are the expensive paths that must not repeat.
+    const readSpy = vi.spyOn(fsPromises, 'readFile');
+    const openSpy = vi.spyOn(fsPromises, 'open');
+
+    const verifier = createSlashCommandVerifier(jsonlPath)!;
+    const sentAt = Date.now();
+    for (let poll = 0; poll < 12; poll++) {
+      await verifier('/model opus', sentAt);
+    }
+
+    // Twelve polls, one read: every subsequent poll was served from the
+    // content-identity cache after a `stat`.
+    expect(readSpy.mock.calls.length + openSpy.mock.calls.length).toBe(1);
+
+    readSpy.mockRestore();
+    openSpy.mockRestore();
+  });
+
+  it('re-reads once the transcript actually grows, and still finds the new entry', async () => {
+    const verifier = createSlashCommandVerifier(jsonlPath)!;
+    const sentAt = Date.now();
+
+    appendEntry({ type: 'user', message: { role: 'user', content: 'unrelated' }, timestamp: nowIso(-5000) });
+    expect(await verifier('/pull-request', sentAt, 'submitted')).toBe(false);
+
+    // A real append changes size, which invalidates the cache.
+    appendEntry({
+      type: 'user',
+      message: { role: 'user', content: '/pull-request' },
+      timestamp: nowIso(10),
+    });
+    expect(await verifier('/pull-request', sentAt, 'submitted')).toBe(true);
+  });
+
+  it('keeps every concurrent burst cached rather than evicting them into a thrash', async () => {
+    // The burst case the whole cache exists for: several tasks dragged into an
+    // auto_command column at once, each polling its OWN transcript at 40Hz.
+    //
+    // This is a regression test for a real defect in the first version of the
+    // cache, which cleared ALL entries on overflow. Past the limit that inverts
+    // the optimization: each insert wipes every other burst's entry, they all
+    // miss on their next poll, re-read, and evict each other again - so the
+    // cache became pure overhead at exactly the concurrency it was added for.
+    // LRU eviction is what makes the guarantee hold under concurrency.
+    const sessionCount = 12;
+    const paths: string[] = [];
+    for (let session = 0; session < sessionCount; session++) {
+      const sessionPath = path.join(tmpDir, `concurrent-${session}.jsonl`);
+      fs.writeFileSync(
+        sessionPath,
+        JSON.stringify({
+          type: 'user',
+          message: { role: 'user', content: '/pull-request' },
+          timestamp: nowIso(10),
+        }) + '\n',
+      );
+      paths.push(sessionPath);
+    }
+
+    const readSpy = vi.spyOn(fsPromises, 'readFile');
+    const openSpy = vi.spyOn(fsPromises, 'open');
+
+    const sentAt = Date.now();
+    // Interleave the polls the way concurrent bursts actually arrive, rather
+    // than draining one session at a time - round-robin is the access pattern
+    // that a clear-all policy degenerates on.
+    for (let poll = 0; poll < 10; poll++) {
+      for (const sessionPath of paths) {
+        const verifier = createSlashCommandVerifier(sessionPath)!;
+        expect(await verifier('/pull-request', sentAt, 'submitted')).toBe(true);
+      }
+    }
+
+    // 120 polls across 12 unchanged transcripts: one read each, and no more.
+    // Under the old clear-all policy this was 120.
+    expect(readSpy.mock.calls.length + openSpy.mock.calls.length).toBe(sessionCount);
+
+    readSpy.mockRestore();
+    openSpy.mockRestore();
+  });
+
+  it('finds an entry at the tail of a transcript far larger than the read window', async () => {
+    // The scan only ever needs the last few hundred ms of entries, so it reads a
+    // bounded tail rather than the whole file. This is the case that bound
+    // guards: a long session's JSONL is megabytes, and reading all of it per
+    // poll is what made bursts expensive.
+    const filler = JSON.stringify({
+      type: 'user',
+      message: { role: 'user', content: 'x'.repeat(400) },
+      timestamp: nowIso(-60_000),
+    });
+    // Comfortably past the 256KB window.
+    for (let line = 0; line < 2000; line++) appendEntry(JSON.parse(filler));
+    expect(fs.statSync(jsonlPath).size).toBeGreaterThan(256 * 1024);
+
+    const verifier = createSlashCommandVerifier(jsonlPath)!;
+    const sentAt = Date.now();
+    appendEntry({
+      type: 'user',
+      message: { role: 'user', content: '/merge-pull-request' },
+      timestamp: nowIso(10),
+    });
+
+    expect(await verifier('/merge-pull-request', sentAt, 'submitted')).toBe(true);
   });
 });
