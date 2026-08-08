@@ -191,6 +191,9 @@
     // independent literal, so a change there does not turn this red on its own - keep
     // them in step or every UI test silently runs under the wrong policy.
     windowLightDismiss: 'focused',
+    // true, because the mock models an established install (like hasCompletedFirstRun
+    // above) that has already crossed the single -> focused default flip.
+    hasMigratedWindowLightDismissDefault: true,
     autoNameAskedTaskIds: [],
     autoNameRateLimitPerHour: 60,
     restoreWindowPosition: true,
