@@ -109,8 +109,23 @@ export class ConfigManager {
     let configFileUnreadable = false;
     try {
       const raw = fs.readFileSync(PATHS.configFile, 'utf-8');
-      parsed = JSON.parse(raw);
-      this.config = deepMergeConfig(DEFAULT_CONFIG, parsed as Partial<AppConfig>);
+      const rawParsed: unknown = JSON.parse(raw);
+      // JSON.parse can succeed on content that is valid JSON but not a usable config
+      // object: `null`, an array, or a bare primitive (number/string/boolean). None of
+      // those throw here, so without this guard they would fall through as if the file
+      // had been read successfully - `parsed && 'claude' in parsed` below throws on a
+      // primitive (the `in` operator requires an object operand), and for an array
+      // deepMergeConfig silently returns a bare-defaults copy with no error at all,
+      // which the unconditional windowLightDismiss migration further down would then
+      // persist over the file's actual (non-object) contents. Treat this exactly like
+      // an unparseable file: fall back to defaults in memory, leave the file untouched.
+      if (rawParsed !== null && typeof rawParsed === 'object' && !Array.isArray(rawParsed)) {
+        parsed = rawParsed as Record<string, unknown>;
+        this.config = deepMergeConfig(DEFAULT_CONFIG, parsed as Partial<AppConfig>);
+      } else {
+        this.config = { ...DEFAULT_CONFIG };
+        configFileUnreadable = true;
+      }
     } catch {
       this.config = { ...DEFAULT_CONFIG };
       configFileUnreadable = fs.existsSync(PATHS.configFile);

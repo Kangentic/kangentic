@@ -627,6 +627,54 @@ describe('Config Manager -- windowLightDismiss `single` to `focused` default mig
   });
 });
 
+describe('Config Manager -- load() parse-validity guard', () => {
+  // JSON.parse can succeed on content that is valid JSON but not a usable config
+  // object: `null`, an array, or a bare primitive (number/string/boolean). None of
+  // those throw during JSON.parse, so without a validity check they fall through as
+  // if the file had been read successfully.
+  //
+  // This guard is co-located with (but not owned by) the windowLightDismiss migration
+  // above: that migration is what turns the gap destructive, by being the first block
+  // in load() not gated on `parsed` - deepMergeConfig(DEFAULT_CONFIG, []) silently
+  // returns a bare-defaults copy with no error, so the windowLightDismiss migration's
+  // unconditional save() persists that over the file's actual (non-object) contents.
+  // A bare number/string/boolean is worse and pre-dates this migration entirely:
+  // `parsed && 'claude' in parsed` (the claude.* -> agent.* migration, unchanged by
+  // this diff) throws a TypeError on a primitive, since `in` requires an object
+  // operand, crashing load() outright on main today.
+  //
+  // Keep this describe block even if the windowLightDismiss migration above is later
+  // retired (see its "Retirable" doc comment in shared/types.ts) - the parse-validity
+  // guard remains needed for the pre-existing claude.* migration's `in` check.
+  it.each(['[]', '123', '"just a string"', 'true'])(
+    'leaves valid-but-non-object config JSON %s on disk instead of overwriting it with defaults',
+    async (nonObjectJson) => {
+      fs.writeFileSync(configPath, nonObjectJson);
+
+      const cm = await createConfigManager();
+      cm.load();
+
+      expect(fs.readFileSync(configPath, 'utf-8')).toBe(nonObjectJson);
+    },
+  );
+
+  it.each(['123', '"just a string"', 'true'])(
+    'does not throw when config JSON is a bare primitive: %s',
+    async (primitiveJson) => {
+      // Pre-existing hazard, not introduced by this diff: on main, `parsed && 'claude'
+      // in parsed` throws a TypeError for a primitive `parsed`, so load() crashes
+      // outright rather than falling back to defaults. `[]` is excluded here because
+      // `'claude' in []` does not throw (arrays are objects) - it silently returns
+      // false, which is the "no crash, but destructive on disk" case pinned above.
+      fs.writeFileSync(configPath, primitiveJson);
+
+      const cm = await createConfigManager();
+
+      expect(() => cm.load()).not.toThrow();
+    },
+  );
+});
+
 describe('Config Manager -- terminal.colors replace semantics', () => {
   it('removing a slot key from a later save() actually clears it, not deep-merges it back', async () => {
     const cm = await createConfigManager();
