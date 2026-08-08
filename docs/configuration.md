@@ -209,8 +209,8 @@ IPC channels for shortcuts are in the Board Config group: `boardConfig:getShortc
 ### Board Profiles
 
 A **Board Profile** is a named alternate set of per-column strategy settings (agent, model, effort,
-permission mode, auto-command, auto-spawn, handoff context, session target, session spawn strategy,
-plan-exit target). A task selects one and rides its ladder as it moves - so one task can run Planning
+permission mode, auto-command, auto-command mode, auto-spawn, handoff context, session target,
+session spawn strategy, plan-exit target). A task selects one and rides its ladder as it moves - so one task can run Planning
 in Opus xhigh and Merge in Sonnet high while another runs the same board more cheaply. Column
 *identity* (which columns exist, their name, order, role, color, icon) is singular across profiles;
 only strategy is profile-scoped.
