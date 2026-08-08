@@ -318,6 +318,28 @@ describe('BrowserPaneRegistry', () => {
       const entry = registry.list().find((pane) => pane.sessionId === 'sess-a');
       expect(entry?.url).toBe('http://localhost:4200');
     });
+
+    it('keeps the cached URL and stays alive when the live guest read throws', () => {
+      // The guest can be torn down between the alive check and the getURL()
+      // call; the try/catch must swallow that and keep the cache rather than
+      // letting the throw escape list(). alive stays true here (the liveness
+      // check itself passed) which is what distinguishes this branch from the
+      // destroyed-guest case above.
+      registry.register(REGISTER_A);
+      const throwingGuest: FakeGuest = {
+        id: 11,
+        destroyed: false,
+        isDestroyed: () => false,
+        getURL: () => {
+          throw new Error('guest torn down mid-read');
+        },
+      };
+      seedGuests(throwingGuest);
+
+      const entry = registry.list().find((pane) => pane.sessionId === 'sess-a');
+      expect(entry?.alive).toBe(true);
+      expect(entry?.url).toBe('http://localhost:4200');
+    });
   });
 
   describe('listForProject', () => {
@@ -330,6 +352,16 @@ describe('BrowserPaneRegistry', () => {
       expect(result.panes.map((pane) => pane.sessionId)).toEqual(['sess-a']);
       expect(result.otherProjectPaneCount).toBe(1);
       expect(result.unknownProjectPaneCount).toBe(1);
+    });
+
+    it('flows the live guest URL through the project-scoped view, not the cache', () => {
+      // listForProject is built over list(); this pins that composition rather
+      // than re-testing the live-URL fallback rules covered above.
+      registry.register(REGISTER_A); // cached url http://localhost:4200
+      seedGuests(fakeGuest(11, false, 'http://localhost:4200/settings?tab=git'));
+
+      const result = registry.listForProject('proj-1');
+      expect(result.panes[0]?.url).toBe('http://localhost:4200/settings?tab=git');
     });
   });
 
