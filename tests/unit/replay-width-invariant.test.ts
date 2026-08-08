@@ -173,3 +173,35 @@ describe('useFocusedSessionsSync attaches the renderer before publishing the rev
     expect(applyAt).toBeLessThan(parkAt);
   });
 });
+
+describe('reloadScrollback re-issues a width mismatch with a real resize', () => {
+  // A source scan, not a behavioral test, because there is no algorithm left to
+  // exercise here: `resolveReplayWidthAction` (the decision) is covered
+  // exhaustively above, and everything past the decision is a single call
+  // site's argument literal, not logic - a mirror re-implementation (the
+  // pattern tests/unit/use-terminal-scrollback.test.ts uses for the rest of
+  // reloadScrollback's orchestration) would just be a second copy of that
+  // literal, which stays green even if the real one regresses.
+  //
+  // Of the three wiring facts this call site carries, only one has a divergent
+  // failure mode worth pinning: a `skipResize: true` reissue sends no SIGWINCH,
+  // so main never reshapes its grid and the reissue re-samples the SAME
+  // stale-width frame, burning the one-shot budget (MAX_REPLAY_WIDTH_REPLAYS)
+  // without ever converging - a silent regression from "recovers in one extra
+  // round trip" to "never recovers". The `skipFocus` forwarding and the budget
+  // refund lines are self-evident from a read of the surrounding code and do
+  // not carry that kind of silent failure, so they are left unscanned.
+  const source = fs.readFileSync(
+    path.join(__dirname, '../../src/renderer/hooks/useTerminal.ts'),
+    'utf8',
+  );
+
+  it('passes reissue:true and forwards skipFocus, never skipResize', () => {
+    const reissueAt = source.indexOf('reloadScrollbackRef.current?.({ skipFocus, reissue: true });');
+    expect(reissueAt, 'the width re-issue call site was not found verbatim').toBeGreaterThan(-1);
+    // RED: appending `, skipResize: true` to the call above (the regression
+    // this guard exists for) makes the literal match fail.
+    const callLine = source.slice(reissueAt, source.indexOf('\n', reissueAt));
+    expect(callLine).not.toContain('skipResize');
+  });
+});
