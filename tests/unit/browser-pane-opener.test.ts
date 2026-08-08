@@ -208,6 +208,15 @@ describe('openPaneForCallerTask', () => {
       expect(result).toMatchObject({ ok: false, error: { kind: 'navigation-host-blocked' } });
       expect(sent).toEqual([]);
     });
+
+    it('refuses with app-not-ready when the app has no host installed yet', async () => {
+      // Reachable during startup: the MCP server can field a call before
+      // registerBrowserHandlers has wired setBrowserPaneOpenerHost.
+      setBrowserPaneOpenerHost(() => null);
+      const result = await openPaneForCallerTask(openInput('http://localhost:5173'));
+      expect(result).toMatchObject({ ok: false, error: { kind: 'app-not-ready' } });
+      expect(sent).toEqual([]);
+    });
   });
 
   describe('URL resolution', () => {
@@ -242,6 +251,18 @@ describe('openPaneForCallerTask', () => {
       await openPaneForCallerTask(openInput('http://localhost:5173'));
       expect(order).toEqual(['seed', 'push']);
       expect(sent[0]).toMatchObject({ channel: IPC.BROWSER_PANE_OPEN_REQUEST, args: [PROJECT, CALLER_TASK] });
+    });
+
+    it('refuses with url-seed-failed when the sidecar write throws, and never pushes', async () => {
+      // mockImplementationOnce so the throw does not leak into later tests -
+      // clearAllMocks() in beforeEach resets calls, not implementations.
+      vi.mocked(browserUrlStore.set).mockImplementationOnce(() => {
+        throw new Error('disk full');
+      });
+      const result = await openPaneForCallerTask(openInput('http://localhost:5173'));
+      expect(result).toMatchObject({ ok: false, error: { kind: 'url-seed-failed' } });
+      expect(result.ok === false && result.error.detail).toContain('disk full');
+      expect(sent).toEqual([]);
     });
   });
 
@@ -284,6 +305,18 @@ describe('openPaneForCallerTask', () => {
       expect(result).toMatchObject({ ok: false, error: { kind: 'pane-not-rendering' } });
       // No rollback push: the pane stays open on purpose.
       expect(sent.filter((entry) => entry.channel === IPC.BROWSER_PANE_CLOSE_REQUEST)).toEqual([]);
+    });
+
+    it('refuses with app-not-ready when the Kangentic window is unavailable to push to', async () => {
+      // Distinct from the "no host installed" refusal above: the host exists
+      // (every earlier precondition passes, and the URL is already seeded),
+      // but send() itself reports no live window - the same signal a closed
+      // or destroyed BrowserWindow would produce.
+      installHost({ send: () => false });
+      const result = await openPaneForCallerTask(openInput('http://localhost:5173'));
+      expect(result).toMatchObject({ ok: false, error: { kind: 'app-not-ready' } });
+      // The seed still happened - only the push failed.
+      expect(browserUrlStore.set).toHaveBeenCalledWith('/projects/app', CALLER_TASK, 'http://localhost:5173');
     });
   });
 
@@ -500,5 +533,19 @@ describe('closePanes', () => {
     const result = await closePanes(closeInput({ all: true }));
     expect(result).toMatchObject({ ok: true, data: { closed: [], skipped: [] } });
     expect(sent).toEqual([]);
+  });
+
+  it('refuses with app-not-ready when the app has no host installed yet, once there is something to close', async () => {
+    // The empty-result path above returns ok before ever reading the host, so
+    // it cannot exercise this refusal - it needs a non-empty target list first.
+    setBrowserPaneOpenerHost(() => null);
+    const result = await closePanes(closeInput({ all: true }));
+    expect(result).toMatchObject({ ok: false, error: { kind: 'app-not-ready' } });
+  });
+
+  it('refuses with app-not-ready when the close push has no live window to send to', async () => {
+    installHost({ send: () => false });
+    const result = await closePanes(closeInput({ all: true }));
+    expect(result).toMatchObject({ ok: false, error: { kind: 'app-not-ready' } });
   });
 });

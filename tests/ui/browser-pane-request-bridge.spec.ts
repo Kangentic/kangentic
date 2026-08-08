@@ -34,6 +34,10 @@ const TASK_ID = 'task-pane-bridge';
 const SESSION_ID = 'sess-pane-bridge';
 const PROJECT_PATH = '/mock/pane-bridge-test';
 const SEEDED_URL = 'http://localhost:5173/';
+// Synthetic webContentsId injected onto the <webview> stub to simulate a real
+// Electron guest attaching. Must be a positive integer (the real guard checks
+// `Number.isInteger(webContentsId) && webContentsId > 0`).
+const MOCK_WEB_CONTENTS_ID = 7373;
 
 const preConfig = `
   window.__mockPreConfigure(function (state) {
@@ -178,6 +182,146 @@ test.describe('browser pane request bridge', () => {
 
     await sharedPage.locator('[data-testid="browser-pane"]').waitFor({ state: 'visible', timeout: 10000 });
     await expect(sharedPage.locator('[data-testid="browser-empty-state"]')).toHaveCount(0);
+  });
+
+  test('a second open push on an already-active pane refetches without remounting the live guest', async () => {
+    // Coverage for the promise in useBrowserUrl's refreshToken doc comment:
+    // "a live pane's guest is never torn down." browser-pane-refetch-guard
+    // .spec.ts already pins this for the OTHER refetch trigger (a project
+    // switch), but that trigger changes `projectId` itself, which is also
+    // BrowserPane's registration effect dependency
+    // (`[sessionId, taskId, projectId]`) - so a broken guard there produces a
+    // NEW register call for the wrong project, which is what that spec's
+    // "last register call" discriminator catches.
+    //
+    // This push changes NONE of those three: it fires again on a pane that
+    // is already open, already resolved, and already registered. That makes
+    // the register-call-log discriminator blind here even if the loading
+    // guard breaks: with stable deps, BrowserPane's registration effect
+    // would never re-run at all, so a torn-down-and-rebuilt <webview> would
+    // sit unregistered with zero new register/unregister calls logged - the
+    // call log would look identical to the guarded run. The only thing that
+    // actually distinguishes "same guest" from "silently replaced, and now
+    // permanently unregistered" is whether the DOM node itself survives,
+    // which is what the property-injection check below verifies directly.
+    await sharedPage.evaluate((url) => {
+      window.__mockBrowser?.reset();
+      window.__mockBrowser?.seedTaskUrl('task-pane-bridge', url);
+    }, SEEDED_URL);
+
+    await emitOpenRequest(sharedPage);
+    await sharedPage
+      .locator('[data-testid="task-detail-dialog"]')
+      .waitFor({ state: 'visible', timeout: 10000 });
+    await sharedPage.locator('[data-testid="browser-pane"]').waitFor({ state: 'visible', timeout: 10000 });
+
+    // Register the guest, exactly as browser-pane-refetch-guard.spec.ts does:
+    // inject getWebContentsId/getURL onto the plain HTMLElement stub, then
+    // fire the dom-ready listener the registration effect attached on mount.
+    await sharedPage.locator('[data-testid="browser-webview"]').waitFor({ state: 'attached', timeout: 5000 });
+    await sharedPage.evaluate((webContentsId: number) => {
+      const element = document.querySelector('[data-testid="browser-webview"]');
+      if (!element) throw new Error('browser-webview element not found in DOM');
+      const stub = element as HTMLElement & { getWebContentsId: () => number; getURL: () => string };
+      stub.getWebContentsId = () => webContentsId;
+      stub.getURL = () => SEEDED_URL;
+      element.dispatchEvent(new Event('dom-ready'));
+    }, MOCK_WEB_CONTENTS_ID);
+
+    await expect
+      .poll(
+        async () => {
+          const calls = await sharedPage.evaluate(() => window.__mockBrowser?.getPaneCalls() ?? []);
+          return calls.filter((call) => call.type === 'register').length;
+        },
+        { timeout: 5000 },
+      )
+      .toBe(1);
+
+    // The mock's getUrls normally resolves in the same microtask turn as the
+    // effect's synchronous setLoading(true), so React coalesces both updates
+    // into one commit and the intermediate loading state never actually
+    // paints - masking a broken guard even though real IPC always has
+    // non-zero latency. Delay this one refetch so the race genuinely plays
+    // out the way it would in production, instead of hiding behind the
+    // mock's unrealistic instant resolution. 500ms (not the ~150ms this only
+    // strictly needs) so the mid-flight probe below has a comfortable margin
+    // over CI's slower, more heavily loaded headless Linux runners.
+    const REFETCH_DELAY_MS = 500;
+    await sharedPage.evaluate((delayMs: number) => {
+      const original = window.electronAPI.browser.getUrls;
+      window.electronAPI.browser.getUrls = (taskId: string, projectId?: string | null) =>
+        new Promise((resolve) => {
+          setTimeout(() => resolve(original(taskId, projectId)), delayMs);
+        });
+    }, REFETCH_DELAY_MS);
+
+    // Re-seed (a real second open_pane call would re-seed too) and push again
+    // on the SAME task/project/session: the pane is already live when this
+    // arrives, which is the scenario this test targets.
+    await sharedPage.evaluate((url) => {
+      window.__mockBrowser?.seedTaskUrl('task-pane-bridge', url);
+    }, SEEDED_URL);
+    await emitOpenRequest(sharedPage);
+
+    // Mid-flight probe: the delayed refetch above is still pending here, so
+    // this is exactly the window a broken loading guard would unmount the
+    // guest in. Intentional fixed wait, not a settle poll - it only needs to
+    // land inside the artificial delay above, well before it resolves.
+    // Empirically confirmed NOT to be this test's only discriminator: with
+    // the loading guard removed, the post-settle check below (a fresh
+    // <webview> can never regain the property this test injected onto the
+    // original node) fails on its own too. This probe adds an earlier,
+    // independent catch rather than being load-bearing by itself, so a
+    // timing slip that pushes it past the delay does not silently defang
+    // the test.
+    await sharedPage.waitForTimeout(REFETCH_DELAY_MS / 4);
+    await expect(sharedPage.locator('[data-testid="browser-pane-loading"]')).toHaveCount(0);
+    const survivedMidFlight = await sharedPage.evaluate((expectedId: number) => {
+      const element = document.querySelector('[data-testid="browser-webview"]') as
+        | (HTMLElement & { getWebContentsId?: () => number })
+        | null;
+      return typeof element?.getWebContentsId === 'function' && element.getWebContentsId() === expectedId;
+    }, MOCK_WEB_CONTENTS_ID);
+    expect(survivedMidFlight).toBe(true);
+
+    // Settle: the pane must still read as active, never having shown a
+    // loading spinner (which would mean the guard broke and the active
+    // subtree - including the <webview> - was unmounted).
+    await expect(sharedPage.locator('[data-testid="browser-pane"]')).toBeVisible();
+    await expect(sharedPage.locator('[data-testid="browser-pane-loading"]')).toHaveCount(0);
+
+    // The load-bearing check: getWebContentsId is a plain JS property
+    // monkeypatched onto ONE DOM node. It survives only if that exact node
+    // is still mounted - a remount produces a fresh <webview> stub with no
+    // injected function at all. This is what actually proves the guarantee
+    // (confirmed above to independently catch a broken guard, not merely
+    // corroborate the mid-flight probe).
+    const survivedSameGuest = await sharedPage.evaluate((expectedId: number) => {
+      const element = document.querySelector('[data-testid="browser-webview"]') as
+        | (HTMLElement & { getWebContentsId?: () => number })
+        | null;
+      return typeof element?.getWebContentsId === 'function' && element.getWebContentsId() === expectedId;
+    }, MOCK_WEB_CONTENTS_ID);
+    expect(survivedSameGuest).toBe(true);
+
+    // Corroborates the mechanism explained above: with sessionId/taskId/
+    // projectId unchanged, the registration effect never re-ran on the live
+    // guest, so no second register call was ever logged for it, and it was
+    // never unregistered. Scoped to THIS guest's id on purpose, matching
+    // browser-pane-registration.spec.ts's established convention: StrictMode
+    // double-invokes mount effects, so the log also carries one throwaway
+    // unregister from the initial mount (before this test injects
+    // getWebContentsId), which never registered and so carries `undefined`.
+    // What must never appear is a register or unregister for the id that is
+    // actually driving the pane.
+    const finalCalls = await sharedPage.evaluate(() => window.__mockBrowser?.getPaneCalls() ?? []);
+    expect(
+      finalCalls.filter((call) => call.type === 'register' && call.input.webContentsId === MOCK_WEB_CONTENTS_ID),
+    ).toHaveLength(1);
+    expect(
+      finalCalls.filter((call) => call.type === 'unregister' && call.webContentsId === MOCK_WEB_CONTENTS_ID),
+    ).toHaveLength(0);
   });
 
   test('a close push hides the pane but leaves the task-detail window open', async () => {
