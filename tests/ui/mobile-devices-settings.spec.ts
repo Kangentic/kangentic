@@ -234,12 +234,17 @@ test.describe('Mobile Devices settings tab', () => {
     await expect(page.getByRole('switch')).toBeVisible();
     await expect(page.locator('[data-testid="mobile-relay-mode"]')).toHaveValue('hosted');
     await expect(page.locator('[data-testid="mobile-relay-mode"]')).toContainText('Kangentic Relay');
-    // Read-only resolved URL, not an editable input - the whole point of a
-    // resolved mode is that a normal user never sees a text field here. The
-    // hosted-relay constant is returned verbatim (not passed through
+    // ONE address control for every mode: the same input, read-only where the
+    // address is resolved for you. readOnly rather than disabled so the address
+    // stays selectable and copyable, which the Pill this replaced also allowed.
+    // The hosted-relay constant is returned verbatim (not passed through
     // new URL() normalization, unlike a saved custom value).
-    await expect(page.locator('[data-testid="mobile-relay-resolved-url"]')).toHaveText('wss://relay.kangentic.com');
-    await expect(page.locator('[data-testid="mobile-relay-url-input"]')).toHaveCount(0);
+    const urlInput = page.locator('[data-testid="mobile-relay-url-input"]');
+    await expect(urlInput).toHaveValue('wss://relay.kangentic.com');
+    await expect(urlInput).toHaveAttribute('readonly', '');
+    await expect(urlInput).not.toBeDisabled();
+    // The shield marks the Kangentic-operated relay, and only it.
+    await expect(page.locator('[title="Kangentic-operated relay"]')).toBeVisible();
     // The tab is two peer sections, Relay and Mobile. "Relay" must be the
     // section heading and NOT also a row label inside it: the relay controls
     // used to live in a SettingRow whose own label was "Relay" too, which put
@@ -266,34 +271,52 @@ test.describe('Mobile Devices settings tab', () => {
     await page.locator('[data-testid="mobile-relay-mode"]').selectOption('local');
 
     await expect.poll(async () => (await getGlobalConfig()).mobileBridge?.relayMode).toBe('local');
-    await expect(page.locator('[data-testid="mobile-relay-resolved-url"]')).toHaveText('ws://127.0.0.1:8080');
-    await expect(page.locator('[data-testid="mobile-relay-url-input"]')).toHaveCount(0);
+    const urlInput = page.locator('[data-testid="mobile-relay-url-input"]');
+    await expect(urlInput).toHaveValue('ws://127.0.0.1:8080');
+    // Read-only like hosted, but NOT shielded: local is loopback, not the
+    // Kangentic-operated relay, so marking it would be untrue.
+    await expect(urlInput).toHaveAttribute('readonly', '');
+    await expect(page.locator('[title="Kangentic-operated relay"]')).toHaveCount(0);
 
     await closeSettings();
   });
 
-  test('the Official badge marks the Kangentic-operated relay and nothing else', async () => {
+  test('the address field is the whole provenance claim: the shield marks only the hosted relay, and no badge returns', async () => {
+    // There was an "Official" chip beside the address until 2026-08-07. It had no
+    // contrast case: resolveRelayMode() collapses a stored 'local' to 'hosted' in
+    // production, so a real user only ever reached 'hosted' (address + chip) or
+    // 'custom' (no address pill at all), making the chip present in every case
+    // the pill was. The shield that replaced it is keyed to 'hosted' ALONE, which
+    // is what earns it - the same box in local and custom mode shows none.
+    //
+    // "Whole" claim is literal: the shield is aria-hidden (a sighted-only
+    // affordance), so the input's own aria-label is the ONLY carrier of the
+    // provenance fact for a screen reader. It has to track the shield exactly,
+    // state for state, or a screen reader user gets told about a relay operator
+    // that is not (or is) actually the one in the box.
     await openMobileTab();
 
-    const badge = page.locator('[data-testid="mobile-relay-official-badge"]');
-    await expect(badge).toBeVisible();
+    const urlInput = page.locator('[data-testid="mobile-relay-url-input"]');
+    const officialMark = page.locator('[title="Kangentic-operated relay"]');
+    await expect(urlInput).toHaveValue('wss://relay.kangentic.com');
+    await expect(officialMark).toBeVisible();
+    await expect(urlInput).toHaveAttribute('aria-label', 'Relay address, the Kangentic-operated relay');
+    await expect(page.locator('[data-testid="mobile-relay-official-badge"]')).toHaveCount(0);
+    // The domain and the shield are the signal, so the word must not reappear as
+    // a chip or anywhere else in the relay row.
+    await expect(page.getByText('Official', { exact: true })).toHaveCount(0);
 
-    // The badge must be a SIBLING of the resolved-URL pill, never a child of
-    // it: that pill is asserted elsewhere with an exact toHaveText, which
-    // covers descendant text, so nesting the badge would silently break it.
-    await expect(page.locator('[data-testid="mobile-relay-resolved-url"] [data-testid="mobile-relay-official-badge"]')).toHaveCount(0);
-    await expect(page.locator('[data-testid="mobile-relay-resolved-url"]')).toHaveText('wss://relay.kangentic.com');
-
-    // 'local' is the case a presence-of-the-pill check would get wrong: the
-    // resolved-URL pill renders for local too, so a badge keyed to the pill
-    // rather than to the mode would label a loopback dev relay "Official".
     await page.locator('[data-testid="mobile-relay-mode"]').selectOption('local');
-    await expect(page.locator('[data-testid="mobile-relay-resolved-url"]')).toHaveText('ws://127.0.0.1:8080');
-    await expect(badge).toHaveCount(0);
+    await expect(urlInput).toHaveValue('ws://127.0.0.1:8080');
+    await expect(officialMark).toHaveCount(0);
+    await expect(urlInput).toHaveAttribute('aria-label', 'Relay address');
 
+    // Custom keeps the same box, now editable, and still unshielded.
     await page.locator('[data-testid="mobile-relay-mode"]').selectOption('custom');
-    await expect(page.locator('[data-testid="mobile-relay-url-input"]')).toBeVisible();
-    await expect(badge).toHaveCount(0);
+    await expect(urlInput).toBeVisible();
+    await expect(urlInput).not.toHaveAttribute('readonly', '');
+    await expect(officialMark).toHaveCount(0);
+    await expect(urlInput).toHaveAttribute('aria-label', 'Relay address');
 
     await closeSettings();
   });
@@ -344,22 +367,25 @@ test.describe('Mobile Devices settings tab', () => {
     await closeSettings();
   });
 
-  test('selecting Custom Relay reveals the relay URL input and hides the resolved-default line', async () => {
+  test('selecting Custom Relay makes the address field editable and empty, never prefilled with the hosted fallback', async () => {
     await openMobileTab();
 
-    await expect(page.locator('[data-testid="mobile-relay-resolved-url"]')).toBeVisible();
-    await expect(page.locator('[data-testid="mobile-relay-url-input"]')).toHaveCount(0);
+    const urlInput = page.locator('[data-testid="mobile-relay-url-input"]');
+    await expect(urlInput).toHaveValue('wss://relay.kangentic.com');
+    await expect(urlInput).toHaveAttribute('readonly', '');
 
     await page.locator('[data-testid="mobile-relay-mode"]').selectOption('custom');
 
-    await expect(page.locator('[data-testid="mobile-relay-url-input"]')).toBeVisible();
+    await expect(urlInput).not.toHaveAttribute('readonly', '');
     await expect.poll(async () => (await getGlobalConfig()).mobileBridge?.relayMode).toBe('custom');
-    // Regression check: with an empty custom draft, resolveRelayUrl falls
-    // back to the hosted relay internally, but that fallback must never be
-    // surfaced next to a Select that reads "Custom Relay" - it read as
-    // "picking Custom didn't do anything" (the hosted relay address was
-    // still shown underneath). The line is hidden in custom mode now.
-    await expect(page.locator('[data-testid="mobile-relay-resolved-url"]')).toHaveCount(0);
+    // Regression check, and the reason the field's value is the DRAFT in custom
+    // mode rather than resolveRelayUrl(): with an empty custom draft
+    // resolveRelayUrl falls back to the hosted relay internally, but that
+    // fallback must never surface under a Select reading "Custom Relay" - it read
+    // as "picking Custom didn't do anything", the hosted address still sitting
+    // there. Now that one box serves both modes, prefilling it would be the same
+    // bug wearing the editable field's clothes.
+    await expect(urlInput).toHaveValue('');
 
     await closeSettings();
   });
@@ -405,32 +431,133 @@ test.describe('Mobile Devices settings tab', () => {
     await closeSettings();
   });
 
+  test('blurring the read-only relay address field in hosted mode does not persist relayMode: custom', async () => {
+    // The address field is now mounted in every mode and is readOnly rather
+    // than disabled (so the resolved address stays selectable and copyable),
+    // but readOnly blocks typing, not focus/blur. commitRelayDraft used to run
+    // unconditionally on blur, so clicking into the hosted address to copy it
+    // and then clicking away silently rewrote mobileBridge to
+    // relayMode: 'custom' with whatever relayDraft happened to hold. This
+    // pins the guard: a blur while NOT in custom mode is a no-op.
+    await openMobileTab();
+
+    const urlInput = page.locator('[data-testid="mobile-relay-url-input"]');
+    await expect(urlInput).toHaveAttribute('readonly', '');
+    await urlInput.click();
+    await urlInput.blur();
+
+    // No expect.poll here on purpose. The mock's config.set mutates its
+    // shared config object synchronously (no internal await), so by the time
+    // Playwright's blur() action resolves, a buggy commit has already landed
+    // if it was going to. Reading it immediately is the correct check for
+    // this negative claim, not a race against an async write.
+    const persisted = await getGlobalConfig();
+    expect(persisted.mobileBridge?.relayMode).toBe('hosted');
+    expect(persisted.mobileBridge?.relayUrl ?? '').toBe('');
+
+    await closeSettings();
+  });
+
+  test('switching back to hosted after drafting (but never re-saving) a custom relay URL, then blurring the now read-only field, does not resurrect that draft as relayMode: custom', async () => {
+    // The worse variant of the bug above. relayDraft is component state that
+    // outlives a mode switch - nothing resets it when the Select changes -
+    // so without the guard a blur back in hosted mode would not just flip the
+    // mode again, it would carry along a real, now-irrelevant draft URL
+    // rather than an empty one.
+    await openMobileTab();
+
+    const select = page.locator('[data-testid="mobile-relay-mode"]');
+    const urlInput = page.locator('[data-testid="mobile-relay-url-input"]');
+
+    await select.selectOption('custom');
+    await expect.poll(async () => (await getGlobalConfig()).mobileBridge?.relayMode).toBe('custom');
+    await urlInput.fill('wss://relay.stale-draft.dev');
+    await urlInput.blur();
+    await expect.poll(async () => (await getGlobalConfig()).mobileBridge?.relayUrl).toBe('wss://relay.stale-draft.dev/');
+
+    await select.selectOption('hosted');
+    await expect.poll(async () => (await getGlobalConfig()).mobileBridge?.relayMode).toBe('hosted');
+    await expect(urlInput).toHaveAttribute('readonly', '');
+
+    await urlInput.click();
+    await urlInput.blur();
+
+    // Same reasoning as the simple case above: the mock's config.set mutates
+    // synchronously, so this read is not racing a would-be commit.
+    expect((await getGlobalConfig()).mobileBridge?.relayMode).toBe('hosted');
+
+    await setMobileBridgeConfig({ relayMode: 'hosted', relayUrl: '' });
+    await closeSettings();
+  });
+
   test('Test connection renders the reachable and no-response trailing states', async () => {
     await openMobileTab();
 
     await page.evaluate(() => {
-      (window as unknown as { __mockTestRelay: (relayUrl: string) => Promise<{ reachable: boolean; version?: string | null; reason?: string }> }).__mockTestRelay =
-        () => Promise.resolve({ reachable: true, version: '0.4.0' });
+      (window as unknown as { __mockTestRelay: (relayUrl: string) => Promise<{ reachable: boolean; version?: string | null; latencyMs?: number; reason?: string }> }).__mockTestRelay =
+        () => Promise.resolve({ reachable: true, version: '0.4.0', latencyMs: 42 });
     });
     await page.locator('[data-testid="mobile-relay-test-connection"]').click();
-    await expect(page.getByText('v0.4.0')).toBeVisible();
+    const result = page.locator('[data-testid="mobile-relay-test-result"]');
+    // The verdict leads and the latency trails it. The relay's own service
+    // version is not a compatibility signal, so it stays out of the verdict
+    // text and rides in the tooltip.
+    await expect(result).toHaveText('Reachable, 42 ms');
+    await expect(result).toHaveAttribute('data-reachable', 'true');
+    await expect(result).toHaveAttribute('title', 'Relay v0.4.0');
+    // Facts get weight, not hue (the same rule WelcomeScreen states at :293 for
+    // its CLI-detection probe): the verdict is a bare caption with NO box of its
+    // own, and only the icon carries the outcome. A filled box made a one-shot
+    // health check the loudest thing on the row, and as a Pill it was the single
+    // rounded-full element in a panel of rounded rectangles. The token, not a raw
+    // green-500/green-400 pair, so this tracks all 11 themes the way the shield on
+    // the address field does - and because --kng-active means "an agent is
+    // working" everywhere else in the app.
+    await expect(result).not.toHaveClass(/\bbg-/);
+    await expect(result).not.toHaveClass(/rounded/);
+    await expect(result.locator('svg')).toHaveClass(/text-active/);
 
     await page.evaluate(() => {
-      (window as unknown as { __mockTestRelay: (relayUrl: string) => Promise<{ reachable: boolean; version?: string | null; reason?: string }> }).__mockTestRelay =
+      (window as unknown as { __mockTestRelay: (relayUrl: string) => Promise<{ reachable: boolean; version?: string | null; latencyMs?: number; reason?: string }> }).__mockTestRelay =
         () => Promise.resolve({ reachable: false, reason: 'ECONNREFUSED' });
     });
     await page.locator('[data-testid="mobile-relay-test-connection"]').click();
     const noResponse = page.getByText('No response');
     await expect(noResponse).toBeVisible();
     await expect(noResponse).toHaveAttribute('title', 'ECONNREFUSED');
+    // Same treatment on the failure branch, via the attention token.
+    await expect(result).not.toHaveClass(/\bbg-/);
+    await expect(result.locator('svg')).toHaveClass(/text-attention/);
+    // The reason is what makes the failure actionable, so it is printed, not
+    // left hover-only on the verdict.
+    await expect(page.locator('[data-testid="mobile-relay-test-error"]')).toHaveText('ECONNREFUSED');
 
     await closeSettings();
   });
 
-  test('a test result does not shift the resolved-URL pill below it', async () => {
+  test('a relay that reports neither a version nor a latency renders the bare verdict, not a half-built one', async () => {
+    // Regression coverage for the two absent-field paths. The hosted relay's
+    // documented /healthz body is {"status":"ok"}, and RemoteServerStatus is
+    // shared with a probe that does not time its request, so both clauses have
+    // to be genuinely optional rather than interpolated unconditionally into
+    // "Reachable,  ms" / a "Relay vundefined" tooltip. The mock's DEFAULT
+    // testRelay is exactly this shape, so no __mockTestRelay is installed here.
     await openMobileTab();
 
-    const resolvedUrl = page.locator('[data-testid="mobile-relay-resolved-url"]');
+    await page.locator('[data-testid="mobile-relay-test-connection"]').click();
+    const result = page.locator('[data-testid="mobile-relay-test-result"]');
+    await expect(result).toHaveText('Reachable');
+    await expect(result).not.toHaveAttribute('title', /.*/);
+    // A reachable probe prints no failure line.
+    await expect(page.locator('[data-testid="mobile-relay-test-error"]')).toHaveCount(0);
+
+    await closeSettings();
+  });
+
+  test('a test result does not shift the address field beside it', async () => {
+    await openMobileTab();
+
+    const resolvedUrl = page.locator('[data-testid="mobile-relay-url-input"]');
     const before = await resolvedUrl.boundingBox();
     expect(before).not.toBeNull();
 
@@ -446,9 +573,189 @@ test.describe('Mobile Devices settings tab', () => {
     // Sub-pixel tolerance rather than exact equality: font metrics and
     // fractional layout rounding differ between local Windows and the headless
     // Linux CI runner, and the invariant under test is "the fixed-height slot
-    // stops the pill from reflowing", not "the float is bit-identical".
+    // stops the field from reflowing", not "the float is bit-identical".
     expect(Math.abs((after?.y ?? 0) - (before?.y ?? 0))).toBeLessThan(1);
 
+    await closeSettings();
+  });
+
+  test('the address field and the test verdict share one vertical center', async () => {
+    // A cross-COLUMN invariant, which the no-reflow test above deliberately
+    // does not cover: that one measures a single element before and after, so it
+    // stays green with these two several px out of line. They sit in
+    // different columns of one grid row precisely so `items-center` centers both
+    // in a single shared row box; as two independent flex stacks (a gap-2 column
+    // beside a gap-1 one) their centers sat 5px apart.
+    //
+    // Anchored to the address field, which is the only thing left in column 1
+    // (the resolved-URL Pill and the Official badge that used to share the cell
+    // are both gone) and which renders in every mode that renders this row.
+    await openMobileTab();
+
+    await page.evaluate(() => {
+      (window as unknown as { __mockTestRelay: (relayUrl: string) => Promise<{ reachable: boolean; version?: string | null; latencyMs?: number; reason?: string }> }).__mockTestRelay =
+        () => Promise.resolve({ reachable: true, version: '0.4.0', latencyMs: 42 });
+    });
+    await page.locator('[data-testid="mobile-relay-test-connection"]').click();
+    const verdict = page.locator('[data-testid="mobile-relay-test-result"]');
+    await expect(verdict).toBeVisible();
+
+    const [urlBox, resultBox, buttonBox] = await Promise.all([
+      page.locator('[data-testid="mobile-relay-url-input"]').boundingBox(),
+      verdict.boundingBox(),
+      page.locator('[data-testid="mobile-relay-test-connection"]').boundingBox(),
+    ]);
+    expect(urlBox).not.toBeNull();
+    expect(resultBox).not.toBeNull();
+    expect(buttonBox).not.toBeNull();
+    // Centers rather than tops, and this is the whole point of measuring centers:
+    // the 34px address field and the 24px verdict chip SHOULD differ in height,
+    // so a top- or bottom-edge check would be meaningless here. A 1px tolerance
+    // rather than exact equality, because Blink lays out in 1/64px units and
+    // `items-center` halves whatever cross-axis remainder the row has, which
+    // rounds differently on local Windows than on the headless Linux CI runner.
+    const urlCenter = (urlBox?.y ?? 0) + (urlBox?.height ?? 0) / 2;
+    const resultCenter = (resultBox?.y ?? 0) + (resultBox?.height ?? 0) / 2;
+    expect(Math.abs(resultCenter - urlCenter)).toBeLessThanOrEqual(1);
+
+    // The horizontal counterpart of the fixed-height slot. The verdict shares its
+    // grid column with the Test connection button, so a verdict WIDER than the
+    // button would widen that auto-sized column and narrow the Select beside it
+    // every time a probe finishes.
+    //
+    // Asserted as the verdict against the button in the SAME render, not as the
+    // Select's width before vs after the probe. Those two are equivalent
+    // (fits => the column cannot grow => the Select cannot shrink), but the
+    // before/after form compares two strings measured in different type sizes,
+    // and glyph advance width is font-dependent in a way line height is not:
+    // this repo bundles no webfont, so the stack resolves to Segoe UI locally
+    // and a fontconfig substitute on the Linux CI runner. That delta is also
+    // QUANTIZED, not noisy - the column either grows or it does not - so a
+    // looser tolerance would not have absorbed the divergence, only moved
+    // where it lands. Comparing two boxes from one render is font-relative and
+    // says the same thing on every platform.
+    expect(resultBox?.width ?? 0).toBeLessThanOrEqual(buttonBox?.width ?? 0);
+
+    await closeSettings();
+  });
+
+  test('in custom mode the address field sits under the picker at its width, level with the verdict', async () => {
+    // Custom and hosted share ONE skeleton and now ONE control: picker over
+    // address, probe button over verdict, the only difference being whether the
+    // address box accepts typing. The editable form used to sit in its own
+    // SettingRow below this whole row, which put the verdict and its failure
+    // reason ABOVE the input being tested. This pins the corrected placement in
+    // the mode where it was worst.
+    await openMobileTab();
+    await setMobileBridgeConfig({ relayMode: 'custom' });
+    const urlInput = page.locator('[data-testid="mobile-relay-url-input"]');
+    await urlInput.fill('wss://relay.example.com');
+
+    await page.evaluate(() => {
+      (window as unknown as { __mockTestRelay: (relayUrl: string) => Promise<{ reachable: boolean; version?: string | null; latencyMs?: number; reason?: string }> }).__mockTestRelay =
+        () => Promise.resolve({ reachable: true, version: null, latencyMs: 7 });
+    });
+    await page.locator('[data-testid="mobile-relay-test-connection"]').click();
+    const verdict = page.locator('[data-testid="mobile-relay-test-result"]');
+    await expect(verdict).toBeVisible();
+
+    const [selectBox, inputBox, verdictBox] = await Promise.all([
+      page.locator('[data-testid="mobile-relay-mode"]').boundingBox(),
+      urlInput.boundingBox(),
+      verdict.boundingBox(),
+    ]);
+    expect(selectBox).not.toBeNull();
+    expect(inputBox).not.toBeNull();
+    expect(verdictBox).not.toBeNull();
+
+    // It occupies column 1, so it shares the Select's left edge and width - the
+    // same slot the read-only form of this field occupies in hosted mode.
+    expect(Math.abs((inputBox?.x ?? 0) - (selectBox?.x ?? 0))).toBeLessThanOrEqual(1);
+    expect(Math.abs((inputBox?.width ?? 0) - (selectBox?.width ?? 0))).toBeLessThanOrEqual(1);
+    // BELOW the picker, and on the same grid row as the verdict rather than
+    // several rows above it. Centers, since the 34px input and the 24px chip are
+    // allowed to differ in height.
+    expect(inputBox?.y ?? 0).toBeGreaterThan((selectBox?.y ?? 0) + (selectBox?.height ?? 0) - 1);
+    const inputCenter = (inputBox?.y ?? 0) + (inputBox?.height ?? 0) / 2;
+    const verdictCenter = (verdictBox?.y ?? 0) + (verdictBox?.height ?? 0) / 2;
+    expect(Math.abs(verdictCenter - inputCenter)).toBeLessThanOrEqual(1);
+
+    await setMobileBridgeConfig({ relayMode: 'hosted' });
+    await closeSettings();
+  });
+
+  test('the relay row prints ONE error line: a draft validation error suppresses the probe reason', async () => {
+    // Both can be set at once, and used to render in two different places in the
+    // same red: the probe reason above the input, the draft's validation error
+    // below it. They also say nearly the same thing, because the main process
+    // re-runs validateRelayUrl and reports the same cause back as an unreachable
+    // reason. One line, draft error wins.
+    await openMobileTab();
+    await setMobileBridgeConfig({ relayMode: 'custom' });
+
+    await page.evaluate(() => {
+      (window as unknown as { __mockTestRelay: (relayUrl: string) => Promise<{ reachable: boolean; version?: string | null; latencyMs?: number; reason?: string }> }).__mockTestRelay =
+        () => Promise.resolve({ reachable: false, reason: 'PROBE REASON SHOULD BE SUPPRESSED' });
+    });
+    const urlInput = page.locator('[data-testid="mobile-relay-url-input"]');
+    await urlInput.fill('http://not-a-websocket-url');
+    await urlInput.blur();
+    await expect(page.locator('[data-testid="mobile-relay-url-error"]')).toBeVisible();
+
+    await page.locator('[data-testid="mobile-relay-test-connection"]').click();
+    await expect(page.locator('[data-testid="mobile-relay-test-result"]')).toHaveAttribute('data-reachable', 'false');
+
+    // The validation error still owns the single line, and the probe reason is
+    // nowhere on the page - not merely visually second.
+    await expect(page.locator('[data-testid="mobile-relay-url-error"]')).toBeVisible();
+    await expect(page.locator('[data-testid="mobile-relay-test-error"]')).toHaveCount(0);
+    await expect(page.getByText('PROBE REASON SHOULD BE SUPPRESSED')).toHaveCount(0);
+
+    // Fixing the draft hands the line back to the probe, so the precedence is a
+    // priority and not a permanent mute.
+    await urlInput.fill('wss://relay.example.com');
+    await urlInput.blur();
+    await page.locator('[data-testid="mobile-relay-test-connection"]').click();
+    await expect(page.locator('[data-testid="mobile-relay-test-error"]')).toHaveText('PROBE REASON SHOULD BE SUPPRESSED');
+    await expect(page.locator('[data-testid="mobile-relay-url-error"]')).toHaveCount(0);
+
+    await setMobileBridgeConfig({ relayMode: 'hosted', relayUrl: '' });
+    await closeSettings();
+  });
+
+  test('the test verdict stays in the button column instead of sliding under the Select', async () => {
+    // The verdict belongs to column 2, under the button that produced it. Break
+    // the address cell in column 1 and grid auto-placement pulls the verdict slot
+    // into column 1 instead. Nothing else in the layout would look wrong, which
+    // is exactly why this needs pinning.
+    await openMobileTab();
+    await setMobileBridgeConfig({ relayMode: 'custom' });
+    await page.locator('[data-testid="mobile-relay-url-input"]').fill('wss://relay.example.com');
+
+    await page.evaluate(() => {
+      (window as unknown as { __mockTestRelay: (relayUrl: string) => Promise<{ reachable: boolean; version?: string | null; latencyMs?: number; reason?: string }> }).__mockTestRelay =
+        () => Promise.resolve({ reachable: true, version: null, latencyMs: 7 });
+    });
+    await page.locator('[data-testid="mobile-relay-test-connection"]').click();
+    const verdict = page.locator('[data-testid="mobile-relay-test-result"]');
+    await expect(verdict).toBeVisible();
+
+    const [buttonBox, resultBox] = await Promise.all([
+      page.locator('[data-testid="mobile-relay-test-connection"]').boundingBox(),
+      verdict.boundingBox(),
+    ]);
+    expect(buttonBox).not.toBeNull();
+    expect(resultBox).not.toBeNull();
+    // The verdict hugs the button's leading edge, indented by the button's own
+    // px-3 so its icon sits under the button's icon rather than out at the border
+    // box. Asserted as a band rather than an exact offset: the point is that it is
+    // in column 2 at all. Had it flowed into column 1 it would sit at the Select's
+    // left edge, hundreds of px to the left, so a loose bound still catches the
+    // grid-auto-placement bug this was written for.
+    expect(resultBox?.x ?? 0).toBeGreaterThanOrEqual((buttonBox?.x ?? 0) - 1);
+    expect(resultBox?.x ?? 0).toBeLessThanOrEqual((buttonBox?.x ?? 0) + 20);
+
+    await setMobileBridgeConfig({ relayMode: 'hosted' });
     await closeSettings();
   });
 
@@ -465,6 +772,33 @@ test.describe('Mobile Devices settings tab', () => {
     await page.locator('[data-testid="mobile-relay-mode"]').selectOption('custom');
     await expect(page.getByText('No response')).toHaveCount(0);
 
+    await closeSettings();
+  });
+
+  test('switching the relay mode away from custom clears a stale draft validation error, not just the probe result', async () => {
+    // The relay row's error line moved from a custom-only SettingRow (which
+    // unmounted along with the mode) into the always-rendered grid row. The
+    // mode Select's onChange cleared relayTestResult on a mode switch but not
+    // relayDraftError, so an invalid custom draft's red error line survived
+    // underneath the newly-selected hosted relay's read-only address - an
+    // error about a draft the user was no longer editing.
+    await setMobileBridgeConfig({ relayMode: 'custom', relayUrl: '' });
+    await openMobileTab();
+
+    const urlInput = page.locator('[data-testid="mobile-relay-url-input"]');
+    const errorLine = page.locator('[data-testid="mobile-relay-url-error"]');
+    await urlInput.fill('http://not-a-websocket-url');
+    await urlInput.blur();
+    await expect(errorLine).toBeVisible();
+
+    await page.locator('[data-testid="mobile-relay-mode"]').selectOption('hosted');
+
+    await expect(errorLine).toHaveCount(0);
+    // The mode switch itself landed too, so the error's disappearance is not
+    // a coincidence of some unrelated re-render.
+    await expect.poll(async () => (await getGlobalConfig()).mobileBridge?.relayMode).toBe('hosted');
+
+    await setMobileBridgeConfig({ relayMode: 'hosted', relayUrl: '' });
     await closeSettings();
   });
 

@@ -3203,6 +3203,10 @@
         },
         // Tests can set window.__mockTestRelay = function (relayUrl) { ... }
         // to control the "Test connection" result; default is a reachable stub.
+        // The default deliberately reports NEITHER a version nor a latency, so
+        // it exercises the bare-verdict path a relay that answers /healthz with
+        // {"status":"ok"} produces; a test wanting the fuller pill supplies both
+        // through __mockTestRelay.
         testRelay: async function (relayUrl) {
           if (typeof window !== 'undefined' && typeof window.__mockTestRelay === 'function') {
             return window.__mockTestRelay(relayUrl);

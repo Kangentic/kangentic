@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Check, CircleAlert, Copy, Loader2, Pencil, QrCode, Server, ShieldCheck, Smartphone, Trash2, WifiOff, X } from 'lucide-react';
+import { Check, CircleAlert, Copy, Loader2, Pencil, QrCode, Shield, Signal, Smartphone, Trash2, WifiOff, X } from 'lucide-react';
 import { formatKeyFingerprint } from '@kangentic/protocol/roster/fingerprint';
 import type { AppConfig, MobileDeviceConnectionState, MobilePairedDevice, RemoteServerStatus } from '../../../../shared/types';
 import { resolveRelayMode, resolveRelayUrl, validateRelayUrl } from '../../../../shared/relay';
 import { formatDate } from '../../../lib/datetime';
-import { INPUT_CLASS, SectionHeader, Select, SettingRow, SettingToggleRow, useScopedUpdate } from '../shared';
+import { INPUT_CLASS, SectionHeader, Select, SettingToggleRow, useScopedUpdate } from '../shared';
 import { Pill } from '../../Pill';
 import { settingProps } from '../settings-registry';
 import { useAnySettingVisible } from '../settings-search';
@@ -21,8 +21,11 @@ const MOBILE_DOCS_URL = 'https://www.kangentic.com/mobile/';
 
 /** The relay section's overview: what the relay is, why it exists, the
  *  blind-forwarding guarantee, and a hosted-vs-your-own comparison that routes
- *  onward to the hosted page (which backs the "Official" badge and details what
- *  an operator can still observe) or the self-hosting how-to. Deliberately the
+ *  onward to the hosted page (which names who operates the hosted relay and
+ *  details what an operator can still observe) or the self-hosting how-to. That
+ *  page is now the only place the provenance claim is made: the tab states it by
+ *  naming the relay in the Select and printing its domain, and no longer carries
+ *  an "Official" badge asserting it a third time. Deliberately the
  *  overview rather than either leaf: someone opening this from the settings tab
  *  is asking what the relay does, and can pick a branch from there. The relay
  *  docs are their own top-level section on the site, not a subsection of
@@ -34,6 +37,35 @@ const RELAY_DOCS_URL = 'https://www.kangentic.com/relay/';
  *  so the two cannot answer the search differently: a body gated on a subset
  *  hides the very row the query matched and leaves the heading orphaned. */
 const RELAY_SEARCH_IDS = ['mobileBridge.relayMode', 'mobileBridge.relayUrl'];
+
+/** The relay address field's classes, authored in full rather than layered onto
+ *  the shared INPUT_CLASS. Two of its states need to override a property
+ *  INPUT_CLASS already sets, and Tailwind resolves same-specificity utilities by
+ *  stylesheet order rather than by the order they appear in a class attribute, so
+ *  "INPUT_CLASS + pl-9" is not reliably 36px of left padding and
+ *  "INPUT_CLASS + text-fg-faint" is not reliably muted. Left padding and text
+ *  color are therefore left out here and supplied per state at the call site.
+ *  Same convention as SettingsPanel's project switcher, which writes a complete
+ *  className precisely because it passes a leading icon. Mono in every mode: the
+ *  content is a URL whether you typed it or it was resolved for you. */
+const RELAY_ADDRESS_INPUT_BASE = 'bg-surface-hover border border-edge-input rounded py-1.5 pr-3 text-sm font-mono w-full focus:outline-none focus:border-accent';
+
+/** The probe verdict is a CAPTION on the Test connection button, not an object of
+ *  its own: bare icon plus text, no chip. Two reasons, and the shape is only the
+ *  visible one.
+ *
+ *  A filled box made a transient result look like standing furniture beside three
+ *  controls that genuinely are (picker, address, button). And as a Pill it was the
+ *  single `rounded-full` element in a panel where every other box is a rounded
+ *  rectangle - Pill offers no radius that matches, since `shape="square"` is
+ *  rounded-lg against its neighbours' rounded. WelcomeScreen already draws this
+ *  distinction: its CLI-detection verdict is a bare colored icon plus plain text,
+ *  while `Pill shape="square"` is reserved there for a discrete labeled datum. A
+ *  verdict is not a datum.
+ *
+ *  gap and icon size match the button's own (gap-1.5, size 13) so the caption's
+ *  icon and text sit directly under the button's, reading as one unit. */
+const RELAY_VERDICT_CLASS = 'flex items-center gap-1.5 text-xs text-fg-secondary';
 const MOBILE_SEARCH_IDS = ['mobileBridge.pairing', 'mobileBridge.devices', 'mobileBridge.getApp'];
 
 /**
@@ -83,8 +115,15 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
    *  the same search filtering explicitly or they render under a hidden header.
    *  Gated on the WHOLE id list the heading advertises, not just relayMode:
    *  SectionHeader shows when ANY of its ids match, so a relayUrl-only query
-   *  ("websocket", "address") kept the heading and hid the Custom Relay Address
-   *  field the user was searching for. */
+   *  ("websocket", "address") kept the heading and hid the custom relay address
+   *  field the user was searching for.
+   *
+   *  This is now the ONLY gate on that address field, which is a fix rather than
+   *  a loss of precision. The field had a SettingRow with its own per-row gate,
+   *  so the mirror-image bug was live in the other direction: a relayMode-only
+   *  query while in custom mode hid the address field and left the Select reading
+   *  "Custom Relay" above the gap, a picker pointing at a control that was not
+   *  rendered. One any-of gate for the whole section cannot desynchronize. */
   const relaySectionVisible = useAnySettingVisible(RELAY_SEARCH_IDS);
   /** Same rule for the Mobile section. Applied as a class rather than an
    *  `&&` wrapper only to avoid adding a JSX nesting level around ~190 lines:
@@ -237,6 +276,18 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
   };
 
   const commitRelayDraft = () => {
+    // Custom mode ONLY. The address box is now mounted in every mode, and
+    // `readOnly` blocks typing but not focus, so clicking into the hosted or
+    // local address to copy it (the whole reason it is readOnly rather than
+    // disabled) fires this on the way out. Every path below writes
+    // `relayMode: 'custom'`, so without this guard that copy silently switched
+    // the user off the Kangentic relay and onto a custom one holding a stale or
+    // empty draft. While the field lived inside `{relayMode === 'custom' && ...}`
+    // the mount itself was the guard; it no longer is.
+    //
+    // Reads `relayMode` rather than the `isCustomRelay` alias, which is declared
+    // below this handler, matching how handleTestRelay already tests the mode.
+    if (relayMode !== 'custom') return;
     const trimmed = relayDraft.trim();
     if (trimmed.length === 0) {
       // Empty draft: resolveRelayUrl falls back to the built-in default, so
@@ -279,6 +330,27 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
     }
   };
 
+  /** The relay row has ONE error line, wherever the failure came from, so a
+   *  draft that is invalid and a probe that failed cannot print two red lines of
+   *  near-identical text in two different places (which is what happened while
+   *  the address field lived in its own SettingRow below the probe row).
+   *
+   *  The draft's own validation error wins: it is the more specific statement,
+   *  it is about what is literally in the box, and when both are set the invalid
+   *  URL IS why the probe failed - the main process re-runs validateRelayUrl and
+   *  reports the same cause back as an unreachable reason. Each source keeps its
+   *  own data-testid so tests can still tell which one is showing. */
+  const relayProbeReason = relayTestResult && !relayTestResult.reachable ? relayTestResult.reason : null;
+  const relayErrorMessage = relayDraftError ?? relayProbeReason;
+
+  /** Whether the address box accepts typing, and whether it earns the shield.
+   *  Deliberately two flags rather than one: the dev-only 'local' mode is
+   *  read-only like hosted but is NOT the Kangentic-operated relay, so marking it
+   *  with the shield would be as untrue as the old "Official" chip would have
+   *  been on loopback. */
+  const isCustomRelay = relayMode === 'custom';
+  const showHostedRelayShield = relayMode === 'hosted';
+
   return (
     <div className="space-y-4">
       <SettingToggleRow
@@ -309,8 +381,20 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
       {relaySectionVisible && (
         <>
           <div className={gatedSectionClass}>
-            <div className="flex gap-2 items-start">
-            <div className="flex-1 flex flex-col gap-2">
+            {/* ONE grid, not two stacked flex columns. The address field and the
+                probe verdict belong to different
+                COLUMNS of the same grid ROW, so a single `items-center` centers
+                both of them in one shared row box and their vertical centers
+                cannot drift. As two independent flex columns they each carried
+                their own rhythm (a gap-2 stack beside a gap-1 stack), which put
+                the two chips' centers 5px apart with nothing in the layout
+                tying them together. `justify-items` stays at its `stretch`
+                default so the Select fills column 1; the button opts out with
+                `justify-self-start` so it keeps its natural width rather than
+                stretching if a result chip ever drives column 2 wider than
+                itself. A test pins that today's verdict does not, since a wider
+                column 2 would narrow the Select on every completed probe. */}
+            <div className="grid grid-cols-[1fr_auto] items-center gap-2">
               <Select
                 value={relayMode}
                 onChange={(event) => {
@@ -320,6 +404,12 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
                   // the old mode, which would otherwise land after this clear.
                   relayTestRequestRef.current++;
                   setRelayTestResult(null);
+                  // Same reason, for the draft's own validation error. It used
+                  // to unmount with the custom-only SettingRow that held it;
+                  // now the error line is part of the always-rendered row, so a
+                  // rejected draft left its red text under the resolved address
+                  // of a relay it was never about.
+                  setRelayDraftError(null);
                   updateGlobal({ mobileBridge: { relayMode: event.target.value as 'hosted' | 'local' | 'custom' } });
                 }}
                 disabled={!enabled}
@@ -329,73 +419,99 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
                 <option value="hosted">Kangentic Relay</option>
                 <option value="custom">Custom Relay</option>
               </Select>
-              {relayMode !== 'custom' && (
-                // The badge is a SIBLING of the resolved-URL pill, never nested
-                // inside it: that pill is asserted with an exact toHaveText.
-                // Laying them out side by side (rather than stacked) also keeps
-                // the pill's y fixed, which a test pins to within 1px.
-                <div className="flex flex-wrap items-center gap-2 self-start">
-                  <Pill size="sm" className="bg-surface-hover/60 text-fg-faint font-mono" data-testid="mobile-relay-resolved-url">
-                    {resolvedRelayUrl}
-                  </Pill>
-                  {/* Keyed to 'hosted', not to the pill's presence: the pill
-                      also renders for the dev-only 'local' mode, and marking a
-                      localhost relay "Official" would be simply untrue. */}
-                  {relayMode === 'hosted' && (
-                    <Pill size="sm" className="bg-surface-hover/60 text-accent-fg border border-edge/50" data-testid="mobile-relay-official-badge">
-                      <ShieldCheck size={11} />
-                      Official
-                    </Pill>
-                  )}
-                </div>
-              )}
-            </div>
-            <div className="shrink-0 flex flex-col items-start gap-1">
               <button
                 type="button"
                 onClick={() => void handleTestRelay()}
                 disabled={testingRelay || !enabled || (relayMode === 'custom' && relayDraft.trim().length === 0)}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded border border-edge-input bg-surface-hover text-fg-secondary hover:text-fg disabled:opacity-50 disabled:cursor-not-allowed"
+                className="justify-self-start flex items-center gap-1.5 px-3 py-1.5 text-sm rounded border border-edge-input bg-surface-hover text-fg-secondary hover:text-fg disabled:opacity-50 disabled:cursor-not-allowed"
                 data-testid="mobile-relay-test-connection"
               >
-                {testingRelay ? <Loader2 size={13} className="animate-spin" /> : <Server size={13} />}
+                {/* Signal, not Server. Server was not WRONG - the target is a
+                    server - but at 13px its two stacked rects each carrying an
+                    interior line and dot collapse into mush, the same failure the
+                    shield had at 11px. Signal is pure straight strokes with no
+                    interior detail, so it survives the size, and "does this
+                    endpoint answer, and how well" is exactly what the button
+                    does now that the verdict reports latency.
+
+                    The candidates it beat, and why they were unavailable rather
+                    than merely worse: Activity already means agent activity
+                    (TerminalPanel, the Agent Monitor pop-out, DeveloperTab), Plug
+                    means MCP Server, Globe means Browser, Zap is a settings tab
+                    icon, and WifiOff means "phone not attached" a few lines below
+                    - reusing any of them would repeat the mistake of borrowing a
+                    meaning the app has already assigned. Radio's ping metaphor
+                    fits best of all, but a Radio glyph inside a settings form
+                    reads as a radio-button control.
+
+                    agent-execution-fields.tsx has the same button for the agent
+                    execution-server probe and must keep the same glyph. */}
+                {testingRelay ? <Loader2 size={13} className="animate-spin" /> : <Signal size={13} />}
                 Test connection
               </button>
-              {/* Fixed-height slot, always present: the result pill must not
-                  reflow the resolved-URL row next to it when a test result
-                  appears/disappears or flips between the two pill widths. */}
-              <div className="h-6 flex items-center">
-                {relayTestResult && (
-                  relayTestResult.reachable ? (
-                    <Pill size="sm" className="bg-green-500/15 text-green-400">
-                      <Check size={11} />
-                      {/* Inert against the hosted relay today: its /healthz
-                          contract is {"status":"ok"} with no version field, so
-                          this reads "Reachable" in practice and only the test
-                          mock exercises the version branch. Kept so the pill
-                          lights up on its own if the relay starts reporting
-                          one. */}
-                      {relayTestResult.version ? `v${relayTestResult.version}` : 'Reachable'}
-                    </Pill>
-                  ) : (
-                    <Pill size="sm" className="bg-amber-500/15 text-amber-400" title={relayTestResult.reason}>
-                      <CircleAlert size={11} />
-                      No response
-                    </Pill>
-                  )
-                )}
-              </div>
-            </div>
-          </div>
 
-          {relayMode === 'custom' && (
-            <SettingRow {...settingProps('mobileBridge.relayUrl')}>
-              <div className="ml-1 space-y-2 border-l border-edge pl-3" data-testid="mobile-relay-custom-fields">
+              {/* Row 2, column 1: THE ADDRESS. ONE control for every mode - the
+                  same input, read-only where the address is resolved for you
+                  (hosted, and the dev-only local) and editable where you supply
+                  it (custom). So the section has a single skeleton, picker over
+                  address and probe button over verdict, whose only difference
+                  between modes is whether the address box accepts typing.
+
+                  readOnly, NOT disabled. This box replaced a resolved-URL Pill
+                  whose text could be selected and copied, and a disabled input
+                  can be neither focused nor selected - it would take away the
+                  ability to copy the relay address for no gain. readOnly also
+                  announces itself correctly to a screen reader. `disabled` is
+                  still wired, but to the MASTER TOGGLE, which is a different
+                  question ("is the bridge on") from mode.
+
+                  The editable form used to live in its own SettingRow BELOW this
+                  whole row, which read backwards: the probe verdict and its
+                  failure reason both appeared above the input being tested, that
+                  reason was stranded under an empty cell ~400px from its own
+                  chip, and the SettingRow put a second heading and an indent rule
+                  inside a section that already has a heading. Its description
+                  only restated the dependency ("when Relay above is set to Custom
+                  Relay") that showing the field solely in that mode already made
+                  self-evident.
+
+                  No visible label, deliberately: the box sits directly under the
+                  picker at the same width, so its position says which relay it is
+                  the address OF, and the placeholder demonstrates the required
+                  format. `aria-label` carries both facts for screen readers. */}
+              <div className="relative min-w-0">
+                {/* Shield ONLY for the Kangentic-operated relay, which is what
+                    makes it worth drawing: unlike the "Official" chip this
+                    replaces, it has a real contrast case, since the same box in
+                    local or custom mode shows none. 14px inside a 34px field,
+                    where a shield is legible - the chip that failed was trying to
+                    draw one at 11px. aria-hidden because the fact is in the
+                    input's own accessible name; the title is a supplementary
+                    affordance for sighted users, never the sole carrier.
+
+                    The title lives on a wrapping span because lucide's props omit
+                    `title`, and that span deliberately does NOT carry
+                    pointer-events-none: it would suppress the hover the title
+                    needs. The cost is a 14px dead zone over the field's left
+                    padding, which is free here - the mark only ever renders in
+                    hosted mode, where the field is read-only and there is no
+                    typing position to click into. */}
+                {showHostedRelayShield && (
+                  <span
+                    aria-hidden="true"
+                    title="Kangentic-operated relay"
+                    className="absolute left-3 top-1/2 -translate-y-1/2 text-accent-fg"
+                  >
+                    <Shield size={14} />
+                  </span>
+                )}
                 <input
                   type="text"
-                  className={INPUT_CLASS}
-                  value={relayDraft}
+                  className={`${RELAY_ADDRESS_INPUT_BASE} ${showHostedRelayShield ? 'pl-9' : 'pl-3'} ${isCustomRelay ? 'text-fg' : 'text-fg-faint cursor-default'}`}
+                  value={isCustomRelay ? relayDraft : resolvedRelayUrl}
                   placeholder="wss://relay.example.com"
+                  readOnly={!isCustomRelay}
+                  aria-label={showHostedRelayShield ? 'Relay address, the Kangentic-operated relay' : 'Relay address'}
                   disabled={!enabled}
                   data-testid="mobile-relay-url-input"
                   onChange={(event) => {
@@ -410,14 +526,100 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
                     if (event.key === 'Enter') event.currentTarget.blur();
                   }}
                 />
-                {relayDraftError && (
-                  <p className="text-xs text-danger" data-testid="mobile-relay-url-error">
-                    {relayDraftError}
-                  </p>
+              </div>
+
+              {/* Row 2, column 2. Fixed-height slot, always present: the verdict
+                  must not reflow the address row next to it when a result
+                  appears/disappears or flips between widths. h-6 is under the
+                  34px address field's height, so the slot never drives the row -
+                  the address cell does, and `items-center` centers the verdict in
+                  it. pl-3 matches the button's px-3 above, putting the caption's
+                  icon and text directly under the button's own rather than out at
+                  its border box (1px shy, since the button also has a border -
+                  below the threshold where a reader sees misalignment). */}
+              <div className="h-6 flex items-center pl-3">
+                {relayTestResult && (
+                  relayTestResult.reachable ? (
+                    // The verdict leads and is never displaced by anything else
+                    // the probe happened to learn. Latency and the relay's
+                    // version are each an OPTIONAL clause that renders only when
+                    // the probe produced one: a relay need not report a version,
+                    // and RemoteServerStatus is shared with an agent-server probe
+                    // that does not time its request.
+                    //
+                    // That version is the relay SERVICE's own semver. It is not
+                    // the wire PROTOCOL_VERSION, which is bound into the Noise
+                    // prologue and enforced between desktop and phone - never by
+                    // the relay, which forwards blind and never joins the
+                    // handshake. So it carries no compatibility meaning, has
+                    // nothing here to be checked against, and rides in the
+                    // tooltip instead of the verdict.
+                    //
+                    // Only the ICON carries the verdict, via the `active` /
+                    // `attention` tokens - the same treatment WelcomeScreen gives
+                    // its CLI-detection probe, for the same two reasons. Facts get
+                    // weight, not hue: a filled green box made a one-shot health
+                    // check the loudest thing on the row, above even the address
+                    // it is about. And a raw green is not how this app paints a
+                    // VERDICT - the literal green-400 further down this file is a
+                    // steady connection STATE, not the outcome of a check, and
+                    // WelcomeScreen's CLI probe already uses these same two
+                    // tokens. Tokens, not raw green-500 / amber-400 hues, so both
+                    // states track all 11 themes the way the shield on the address
+                    // field already does.
+                    //
+                    // And NOT the accent, which is the other tempting swap here.
+                    // The accent is theme-defined and is only blue in some of
+                    // them (index.css gives it green in two and gold in one), so
+                    // a verdict painted with it would be green in the very
+                    // themes we just moved off green, and in the gold theme a
+                    // reachable relay would render the same hue as an
+                    // unreachable one. The division that actually holds: the
+                    // accent is safe on a STANDING element because it carries no
+                    // state meaning, and active / attention are safe on a
+                    // TRANSIENT verdict because they are theme-invariant and
+                    // mean exactly "good" and "needs you".
+                    <span
+                      className={RELAY_VERDICT_CLASS}
+                      title={relayTestResult.version ? `Relay v${relayTestResult.version}` : undefined}
+                      data-testid="mobile-relay-test-result"
+                      data-reachable="true"
+                    >
+                      {/* A bare Check, not CheckCircle: an enclosed glyph loses
+                          its interior at this size the way ShieldCheck did. */}
+                      <Check size={13} className="text-active shrink-0" />
+                      {relayTestResult.latencyMs == null ? 'Reachable' : `Reachable, ${relayTestResult.latencyMs} ms`}
+                    </span>
+                  ) : (
+                    <span
+                      className={RELAY_VERDICT_CLASS}
+                      title={relayTestResult.reason}
+                      data-testid="mobile-relay-test-result"
+                      data-reachable="false"
+                    >
+                      <CircleAlert size={13} className="text-attention shrink-0" />
+                      No response
+                    </span>
+                  )
                 )}
               </div>
-            </SettingRow>
-          )}
+
+              {/* Row 3, spanning both columns: the row's single error line, from
+                  whichever source produced it (see relayErrorMessage above for
+                  the precedence and why there is only one). "No response" is the
+                  verdict; the reason is what makes it actionable, so it is
+                  printed rather than left hover-only on the verdict, which keeps
+                  its tooltip too. Below the address row and never above it: a
+                  test pins that a result must not shift the address field. */}
+              {relayErrorMessage && (
+                <p
+                  className="col-span-2 text-xs text-danger"
+                  data-testid={relayDraftError ? 'mobile-relay-url-error' : 'mobile-relay-test-error'}
+                >
+                  {relayErrorMessage}
+                </p>
+              )}
+            </div>
           </div>
 
           <ExternalLinkButton

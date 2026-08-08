@@ -323,14 +323,20 @@ describe('registerMobileBridgeHandlers - MOBILE_TEST_RELAY', () => {
     expect(result).toEqual({ reachable: false, reason: 'Relay responded with HTTP 503' });
   });
 
-  it('reports reachable with a null version when the body is not JSON (the documented /healthz contract has no version field)', async () => {
+  it('reports reachable with a null version when the body is not JSON (version is optional in the /healthz body)', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => { throw new Error('Unexpected token'); } })));
     const context = makeContext();
     registerMobileBridgeHandlers(context);
 
     const result = await invokeHandler(IPC.MOBILE_TEST_RELAY, 'wss://relay.example.com');
 
-    expect(result).toEqual({ reachable: true, version: null });
+    // expect.any(Number), not a lower bound: the stubbed fetch resolves in the
+    // same tick, so the measured latency is legitimately 0 here.
+    expect(result).toEqual({ reachable: true, version: null, latencyMs: expect.any(Number) });
+    // Math.round must actually run: a raw performance.now() delta is a float
+    // in the general case, and expect.any(Number) above passes for either, so
+    // it would not catch Math.round being dropped from the handler.
+    expect(Number.isInteger((result as { latencyMs: number }).latencyMs)).toBe(true);
   });
 
   it('reports reachable with the version when the body provides one', async () => {
@@ -340,7 +346,17 @@ describe('registerMobileBridgeHandlers - MOBILE_TEST_RELAY', () => {
 
     const result = await invokeHandler(IPC.MOBILE_TEST_RELAY, 'wss://relay.example.com');
 
-    expect(result).toEqual({ reachable: true, version: '0.4.0' });
+    expect(result).toEqual({ reachable: true, version: '0.4.0', latencyMs: expect.any(Number) });
+  });
+
+  it('reports no latency on an unreachable relay (there is no response to have timed)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 503, json: async () => ({}) })));
+    const context = makeContext();
+    registerMobileBridgeHandlers(context);
+
+    const result = await invokeHandler(IPC.MOBILE_TEST_RELAY, 'wss://relay.example.com');
+
+    expect(result).not.toHaveProperty('latencyMs');
   });
 
   it('probes relayHealthUrl(normalized), not the raw input', async () => {

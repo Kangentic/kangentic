@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Check, CircleAlert, Loader2, Server } from 'lucide-react';
+import { Check, CircleAlert, Loader2, Signal } from 'lucide-react';
 import type { AgentDetectionInfo, AgentExecutionServer, AgentProjectExecution, AppConfig, RemoteServerStatus } from '../../../../shared/types';
 import { Select, SettingRow, INPUT_CLASS, useScopedUpdate } from '../shared';
 import { settingProps } from '../settings-registry';
@@ -81,11 +81,17 @@ export function AgentExecutionFields({ agent, config, globalConfig }: {
             trailing={
               probeResult ? (
                 probeResult.reachable ? (
-                  <span className="text-xs flex items-center gap-1 text-green-400">
+                  // Tokens, not raw green-400 / amber-400, so the verdict tracks
+                  // every theme. Same treatment as the relay's Test connection
+                  // verdict in MobileDevicesTab and WelcomeScreen's CLI probe:
+                  // the lockstep with the relay control is the whole verdict, not
+                  // just the glyph, or the two drift apart in exactly the themes
+                  // where a fixed hue stops reading as a verdict at all.
+                  <span className="text-xs flex items-center gap-1 text-active">
                     <Check size={13} />{probeResult.version ? `v${probeResult.version}` : 'Reachable'}
                   </span>
                 ) : (
-                  <span className="text-xs flex items-center gap-1 text-amber-400" title={probeResult.reason}>
+                  <span className="text-xs flex items-center gap-1 text-attention" title={probeResult.reason}>
                     <CircleAlert size={13} />Unreachable
                   </span>
                 )
@@ -108,7 +114,12 @@ export function AgentExecutionFields({ agent, config, globalConfig }: {
                 className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-xs rounded border border-edge-input bg-surface-hover text-fg-secondary hover:text-fg disabled:opacity-50 disabled:cursor-not-allowed"
                 data-testid={`execution-test-connection-${agent.name}`}
               >
-                {probing ? <Loader2 size={13} className="animate-spin" /> : <Server size={13} />}
+                {/* Signal, kept in lockstep with the relay's identical Test
+                    connection button in MobileDevicesTab: two controls that do
+                    the same thing must not drift to different glyphs. See that
+                    file for why Server was dropped and why Signal was picked
+                    over the other candidates. */}
+                {probing ? <Loader2 size={13} className="animate-spin" /> : <Signal size={13} />}
                 Test connection
               </button>
             </div>

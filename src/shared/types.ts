@@ -185,7 +185,16 @@ export interface ResolvedExecutionTarget {
 
 /** Result of probing a remote execution server for reachability. */
 export type RemoteServerStatus =
-  | { reachable: true; version: string | null }
+  | {
+      reachable: true;
+      version: string | null;
+      /** Whole milliseconds from request start to response headers. Optional
+       *  rather than nullable like `version` because only probes that actually
+       *  time their request report it: the relay probe does, the agent
+       *  execution-server probe does not, and making it required would force a
+       *  value out of every adapter's `probeServer`. */
+      latencyMs?: number;
+    }
   | { reachable: false; reason: string };
 
 export interface AgentSummarizeInput {
