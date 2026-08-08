@@ -453,3 +453,71 @@ test.describe('BrowserPaneActive zoom controls', () => {
     await expect(zoomReset).toHaveText('110%');
   });
 });
+
+test.describe('BrowserPaneActive keyboard shortcuts - pane-active gating (inspect/draw)', () => {
+  // Regression guard for the multi-pane collision fix: Ctrl+D / Ctrl+I now
+  // require `paneActive` (hover OR focus-within), the same gate zoom already
+  // had, not just the `notFormField` guard covered above. With more than one
+  // BrowserPane mounted at once (a second task's pane, a retained
+  // backgrounded-project pane), a bare `notFormField` gate used to fire
+  // Inspect/Draw on every mounted pane simultaneously. These tests fire the
+  // shortcuts with a non-form-field target while the pane is neither hovered
+  // nor focused (mirrors the "Ctrl+= does NOT fire..." zoom test above) and
+  // assert the pane-local callbacks never ran.
+
+  test('Ctrl+D does NOT toggle draw mode when the pane is neither hovered nor focused', async () => {
+    // setDrawMode's updater calls cancelInspect() synchronously when turning
+    // draw ON, which calls webviewRef.current?.executeJavaScript(...). The
+    // headless <webview> stub has no such method, so if the gate fails to
+    // block the callback, the resulting TypeError is thrown during React's
+    // render phase and the ErrorBoundary tears down BrowserPaneActive. "Pane
+    // stays mounted" is therefore proof the callback did not run, not just
+    // that draw settled back to off.
+    await openBrowserPane(sharedPage);
+    const drawButton = sharedPage.locator('[data-testid="browser-draw-toggle"]');
+    await expect(drawButton).not.toHaveClass(/bg-accent/);
+
+    const paneBox = await sharedPage.locator('[data-testid="browser-pane"]').boundingBox();
+    if (paneBox) {
+      await sharedPage.mouse.move(paneBox.x + paneBox.width / 2, paneBox.y + paneBox.height / 2);
+    }
+    await sharedPage.evaluate(() => {
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    });
+    await sharedPage.mouse.move(0, 0);
+
+    await sharedPage.keyboard.press('Control+d');
+
+    await expect(drawButton).not.toHaveClass(/bg-accent/);
+    await expect(sharedPage.locator('[data-testid="browser-pane"]')).toBeVisible();
+  });
+
+  test('Ctrl+I does NOT start inspect when the pane is neither hovered nor focused', async () => {
+    // startInspect() sets inspectActive true, awaits
+    // webviewRef.current?.executeJavaScript(INSPECT_SCRIPT), and its own
+    // try/catch swallows the resulting TypeError into the visible error strip
+    // (data-testid="browser-send-error") rather than crashing the pane -- so
+    // unlike the draw-mode case above, "pane stays mounted" alone would not
+    // distinguish "gate blocked the call" from "gate let it through but the
+    // call failed gracefully". The error-strip absence is the assertion that
+    // actually proves startInspect was never invoked.
+    await openBrowserPane(sharedPage);
+    const inspectButton = sharedPage.locator('[data-testid="browser-inspect-toggle"]');
+    await expect(inspectButton).not.toHaveClass(/bg-accent/);
+
+    const paneBox = await sharedPage.locator('[data-testid="browser-pane"]').boundingBox();
+    if (paneBox) {
+      await sharedPage.mouse.move(paneBox.x + paneBox.width / 2, paneBox.y + paneBox.height / 2);
+    }
+    await sharedPage.evaluate(() => {
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    });
+    await sharedPage.mouse.move(0, 0);
+
+    await sharedPage.keyboard.press('Control+i');
+
+    await expect(inspectButton).not.toHaveClass(/bg-accent/);
+    await expect(sharedPage.locator('[data-testid="browser-pane"]')).toBeVisible();
+    await expect(sharedPage.locator('[data-testid="browser-send-error"]')).not.toBeVisible();
+  });
+});

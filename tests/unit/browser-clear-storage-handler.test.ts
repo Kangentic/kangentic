@@ -125,6 +125,7 @@ vi.mock('../../src/main/browser/browser-pane-registry', () => ({
 import path from 'node:path';
 import { registerBrowserHandlers } from '../../src/main/ipc/handlers/browser';
 import { BROWSER_PARTITION, browserPartitionForWorktree } from '../../src/shared/browser-partition';
+import { browserUrlStore } from '../../src/main/browser/browser-url-store';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -497,5 +498,164 @@ describe('BROWSER_PANE_UNREGISTER IPC handler', () => {
     await invokeUnregisterPane(VALID_SESSION_ID);
     expect(fakeRegistryUnregister).toHaveBeenCalledOnce();
     expect(fakeRegistryUnregister).toHaveBeenCalledWith(VALID_SESSION_ID);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Hole #6: BROWSER_URL_GET / BROWSER_URL_SET_TASK / BROWSER_URL_CLEAR_TASK
+// project-scoped routing.
+//
+// These three handlers now resolve their project via
+// resolveProjectContext(context, projectId) instead of reading the ambient
+// context.currentProjectPath directly (see the comment above them in
+// src/main/ipc/handlers/browser.ts). resolveProjectContext itself is fully
+// unit-tested in isolation as a pure function
+// (tests/unit/resolve-project-context.test.ts); what is NOT covered
+// anywhere is that these three handlers actually THREAD the caller's
+// explicit projectId argument into it and use the RESULT (not the raw
+// ambient context fields) for the browserUrlStore / configManager calls.
+// That wiring is exactly what a popped-out pane's cross-project URL-mixup
+// bug (see the handler's own comment) depends on.
+// ---------------------------------------------------------------------------
+
+const URL_CURRENT_PROJECT_ID = 'proj-url-current';
+const URL_CURRENT_PROJECT_PATH = '/mock/browser-url-current';
+const URL_OTHER_PROJECT_ID = 'proj-url-other';
+const URL_OTHER_PROJECT_PATH = '/mock/browser-url-other';
+
+function makeUrlContext(opts: {
+  currentProjectId?: string | null;
+  currentProjectPath?: string | null;
+  getByIdResult?: { path: string } | undefined;
+} = {}) {
+  const getById = vi.fn(() => opts.getByIdResult);
+  // Note: 'currentProjectId' in opts, not `?? URL_CURRENT_PROJECT_ID` - an
+  // explicit `null` in opts (the "no project open" cases) must NOT be
+  // coalesced back to the default project, since `??` treats `null` as
+  // nullish the same as `undefined`.
+  return {
+    currentProjectId: 'currentProjectId' in opts ? opts.currentProjectId : URL_CURRENT_PROJECT_ID,
+    currentProjectPath: 'currentProjectPath' in opts ? opts.currentProjectPath : URL_CURRENT_PROJECT_PATH,
+    configManager: {
+      loadProjectOverrides: vi.fn(() => null),
+    },
+    projectRepo: { getById },
+    sessionManager: {
+      getSessionProjectId: vi.fn(() => undefined),
+    },
+  };
+}
+
+async function invokeUrlGet(taskId: string, projectId?: string | null): Promise<unknown> {
+  const handler = capturedHandlers.get('browser:urlGet');
+  if (!handler) throw new Error('browser:urlGet handler not registered');
+  return handler(undefined, taskId, projectId);
+}
+
+async function invokeUrlSetTask(taskId: string, url: string, projectId?: string | null): Promise<unknown> {
+  const handler = capturedHandlers.get('browser:urlSetTask');
+  if (!handler) throw new Error('browser:urlSetTask handler not registered');
+  return handler(undefined, taskId, url, projectId);
+}
+
+async function invokeUrlClearTask(taskId: string, projectId?: string | null): Promise<unknown> {
+  const handler = capturedHandlers.get('browser:urlClearTask');
+  if (!handler) throw new Error('browser:urlClearTask handler not registered');
+  return handler(undefined, taskId, projectId);
+}
+
+describe('BROWSER_URL_GET / SET_TASK / CLEAR_TASK IPC handlers - project-scoped routing', () => {
+  beforeEach(() => {
+    capturedHandlers.clear();
+    vi.mocked(browserUrlStore.get).mockClear();
+    vi.mocked(browserUrlStore.set).mockClear();
+    vi.mocked(browserUrlStore.clear).mockClear();
+    vi.mocked(browserUrlStore.get).mockReturnValue(null);
+  });
+
+  it('BROWSER_URL_GET: omitted projectId falls back to the ambient current project', async () => {
+    const context = makeUrlContext();
+    registerBrowserHandlers(context as unknown as Parameters<typeof registerBrowserHandlers>[0]);
+
+    await invokeUrlGet('task-1');
+
+    expect(context.configManager.loadProjectOverrides).toHaveBeenCalledWith(URL_CURRENT_PROJECT_PATH);
+    expect(browserUrlStore.get).toHaveBeenCalledWith(URL_CURRENT_PROJECT_PATH, 'task-1');
+    // No explicit projectId was passed, so resolveProjectContext must not
+    // consult the project repo at all.
+    expect(context.projectRepo.getById).not.toHaveBeenCalled();
+  });
+
+  it('BROWSER_URL_GET: an explicit projectId for a DIFFERENT project routes to that project, not the ambient one', async () => {
+    // This is the cross-project bug fix: a popped-out pane whose task belongs
+    // to project OTHER navigates while project CURRENT is in the foreground.
+    // Before routing through resolveProjectContext, the handler read
+    // context.currentProjectPath unconditionally and would have read/written
+    // OTHER's task URL against CURRENT's browser-urls.json instead.
+    const context = makeUrlContext({ getByIdResult: { path: URL_OTHER_PROJECT_PATH } });
+    registerBrowserHandlers(context as unknown as Parameters<typeof registerBrowserHandlers>[0]);
+
+    await invokeUrlGet('task-1', URL_OTHER_PROJECT_ID);
+
+    expect(context.projectRepo.getById).toHaveBeenCalledWith(URL_OTHER_PROJECT_ID);
+    expect(context.configManager.loadProjectOverrides).toHaveBeenCalledWith(URL_OTHER_PROJECT_PATH);
+    expect(context.configManager.loadProjectOverrides).not.toHaveBeenCalledWith(URL_CURRENT_PROJECT_PATH);
+    expect(browserUrlStore.get).toHaveBeenCalledWith(URL_OTHER_PROJECT_PATH, 'task-1');
+    expect(browserUrlStore.get).not.toHaveBeenCalledWith(URL_CURRENT_PROJECT_PATH, 'task-1');
+  });
+
+  it('BROWSER_URL_GET: no project open and no explicit projectId returns nulls without touching the store', async () => {
+    const context = makeUrlContext({ currentProjectId: null, currentProjectPath: null });
+    registerBrowserHandlers(context as unknown as Parameters<typeof registerBrowserHandlers>[0]);
+
+    const result = await invokeUrlGet('task-1');
+
+    expect(result).toEqual({ projectDefault: null, taskOverride: null });
+    expect(browserUrlStore.get).not.toHaveBeenCalled();
+    expect(context.configManager.loadProjectOverrides).not.toHaveBeenCalled();
+  });
+
+  it('BROWSER_URL_SET_TASK: an explicit projectId for a DIFFERENT project writes to that project, not the ambient one', async () => {
+    const context = makeUrlContext({ getByIdResult: { path: URL_OTHER_PROJECT_PATH } });
+    registerBrowserHandlers(context as unknown as Parameters<typeof registerBrowserHandlers>[0]);
+
+    await invokeUrlSetTask('task-1', 'http://localhost:3000', URL_OTHER_PROJECT_ID);
+
+    expect(browserUrlStore.set).toHaveBeenCalledWith(URL_OTHER_PROJECT_PATH, 'task-1', 'http://localhost:3000');
+    expect(browserUrlStore.set).not.toHaveBeenCalledWith(URL_CURRENT_PROJECT_PATH, 'task-1', 'http://localhost:3000');
+  });
+
+  it('BROWSER_URL_SET_TASK: throws "No project open" when no project resolves', async () => {
+    const context = makeUrlContext({ currentProjectId: null, currentProjectPath: null });
+    registerBrowserHandlers(context as unknown as Parameters<typeof registerBrowserHandlers>[0]);
+
+    await expect(invokeUrlSetTask('task-1', 'http://localhost:3000')).rejects.toThrow('No project open');
+    expect(browserUrlStore.set).not.toHaveBeenCalled();
+  });
+
+  it('BROWSER_URL_SET_TASK: throws "URL is required" when url is empty, even with a project resolved', async () => {
+    const context = makeUrlContext();
+    registerBrowserHandlers(context as unknown as Parameters<typeof registerBrowserHandlers>[0]);
+
+    await expect(invokeUrlSetTask('task-1', '')).rejects.toThrow('URL is required');
+    expect(browserUrlStore.set).not.toHaveBeenCalled();
+  });
+
+  it('BROWSER_URL_CLEAR_TASK: an explicit projectId for a DIFFERENT project clears that project, not the ambient one', async () => {
+    const context = makeUrlContext({ getByIdResult: { path: URL_OTHER_PROJECT_PATH } });
+    registerBrowserHandlers(context as unknown as Parameters<typeof registerBrowserHandlers>[0]);
+
+    await invokeUrlClearTask('task-1', URL_OTHER_PROJECT_ID);
+
+    expect(browserUrlStore.clear).toHaveBeenCalledWith(URL_OTHER_PROJECT_PATH, 'task-1');
+    expect(browserUrlStore.clear).not.toHaveBeenCalledWith(URL_CURRENT_PROJECT_PATH, 'task-1');
+  });
+
+  it('BROWSER_URL_CLEAR_TASK: no-ops without throwing when no project resolves', async () => {
+    const context = makeUrlContext({ currentProjectId: null, currentProjectPath: null });
+    registerBrowserHandlers(context as unknown as Parameters<typeof registerBrowserHandlers>[0]);
+
+    await expect(invokeUrlClearTask('task-1')).resolves.toBeUndefined();
+    expect(browserUrlStore.clear).not.toHaveBeenCalled();
   });
 });
