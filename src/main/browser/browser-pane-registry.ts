@@ -9,7 +9,9 @@ import { detachDebugger, isDebuggerAttached } from './cdp/cdp';
  * via IPC on `dom-ready` and unregisters on unmount. The main process also
  * keeps the registry honest from the guest's own lifecycle events
  * (`did-navigate` -> updateUrl, `destroyed` -> unregister), which fire even
- * when a renderer cleanup is skipped (e.g. a hard reload).
+ * when a renderer cleanup is skipped (e.g. a hard reload). The tracked URL is
+ * a fallback rather than the source of truth: `list()` reads it from the live
+ * guest, since `did-navigate` misses same-document navigation entirely.
  *
  * Keyed by sessionId: there is exactly one Browser pane per task-detail
  * window, and a session is unique to its pane.
@@ -29,6 +31,12 @@ export interface BrowserPaneEntry {
 
 /** A pane entry enriched with live status for `list()` / discovery. */
 export interface BrowserPaneStatus extends BrowserPaneEntry {
+  /**
+   * Narrower than the entry's own `url`: read from the live guest while it
+   * exists, so it reflects same-document navigation the `did-navigate` cache
+   * never sees. Falls back to the cached value once the guest is gone.
+   */
+  url: string | null;
   /** True when the guest webContents still resolves and is not destroyed. */
   alive: boolean;
   /** True when a CDP debugger is currently attached to the guest. */
@@ -178,13 +186,37 @@ export class BrowserPaneRegistry {
     return entry.projectId === projectId;
   }
 
-  /** All registered panes enriched with live + debugger-attached status. */
+  /**
+   * All registered panes enriched with live + debugger-attached status.
+   *
+   * The URL is read from the LIVE guest rather than reported from the cached
+   * `entry.url`, because the cache is only ever as fresh as the `did-navigate`
+   * events that feed it and `did-navigate` does not fire at all for
+   * same-document navigation. Every SPA route change, `pushState`, and fragment
+   * update therefore drifts the cache by design, and a dev server is exactly
+   * what this feature points a pane at. That made `list_panes`, the one tool an
+   * agent has for checking where its own pane is pointed, report a URL the pane
+   * had left.
+   *
+   * Reading live is free here: this method already resolves the guest to decide
+   * `alive`. The cached value stays as the fallback for a pane whose guest is
+   * gone, where it is the last thing we truthfully knew.
+   */
   list(): BrowserPaneStatus[] {
     return [...this.panes.values()].map((entry) => {
       const guest = electronWebContents.fromId(entry.webContentsId);
       const alive = guest != null && !guest.isDestroyed();
+      let url = entry.url;
+      if (alive) {
+        try {
+          url = guest.getURL() || entry.url;
+        } catch {
+          // Guest torn down between the alive check and the read; keep the cache.
+        }
+      }
       return {
         ...entry,
+        url,
         alive,
         debuggerAttached: alive ? isDebuggerAttached(guest) : false,
       };

@@ -29,10 +29,11 @@ interface FakeGuest {
   id: number;
   destroyed: boolean;
   isDestroyed(): boolean;
+  getURL(): string;
 }
 
-function fakeGuest(id: number, destroyed = false): FakeGuest {
-  return { id, destroyed, isDestroyed: () => destroyed };
+function fakeGuest(id: number, destroyed = false, liveUrl = ''): FakeGuest {
+  return { id, destroyed, isDestroyed: () => destroyed, getURL: () => liveUrl };
 }
 
 /** Wire `webContents.fromId` to resolve a set of fake guests by id. */
@@ -284,6 +285,38 @@ describe('BrowserPaneRegistry', () => {
       registry.register({ ...REGISTER_A, projectId: null });
       const result = registry.resolveTarget({ projectId: null });
       expect(result.ok && result.entry.sessionId).toBe('sess-a');
+    });
+  });
+
+  // The cached `url` is only as fresh as the did-navigate events feeding it,
+  // and same-document navigation (SPA routing, pushState, a fragment change)
+  // never fires did-navigate at all. A dev server is exactly what a pane points
+  // at, so the cache drifts there by design and list_panes reported a URL the
+  // pane had left.
+  describe('list() reports the live URL', () => {
+    it('prefers the guest URL over the value captured at registration', () => {
+      registry.register(REGISTER_A); // registered at http://localhost:4200
+      seedGuests(fakeGuest(11, false, 'http://localhost:4200/settings?tab=git'));
+
+      const entry = registry.list().find((pane) => pane.sessionId === 'sess-a');
+      expect(entry?.url).toBe('http://localhost:4200/settings?tab=git');
+    });
+
+    it('keeps the last known URL when the guest is gone', () => {
+      registry.register(REGISTER_A);
+      seedGuests(fakeGuest(11, true, 'ignored-because-destroyed'));
+
+      const entry = registry.list().find((pane) => pane.sessionId === 'sess-a');
+      expect(entry?.alive).toBe(false);
+      expect(entry?.url).toBe('http://localhost:4200');
+    });
+
+    it('falls back to the cached URL when the guest reports an empty one', () => {
+      registry.register(REGISTER_A);
+      seedGuests(fakeGuest(11, false, ''));
+
+      const entry = registry.list().find((pane) => pane.sessionId === 'sess-a');
+      expect(entry?.url).toBe('http://localhost:4200');
     });
   });
 
