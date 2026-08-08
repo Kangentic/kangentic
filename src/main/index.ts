@@ -41,7 +41,9 @@ import { PATHS } from './config/paths';
 // invariant is that no module in the import graph writes PATHS.configFile at
 // module scope: ConfigManager.save() is its only writer, and every call site is
 // inside a function. Adding a module-scope config write anywhere upstream would
-// break this silently, wherever this line sits.
+// break this silently, wherever this line sits. Note that load() counts as such
+// a write on a fresh install - its windowLightDismiss migration saves the
+// one-shot marker there - so a module-scope load() breaks this too.
 const configFileExistedAtLaunch = fs.existsSync(PATHS.configFile);
 import { initStartupTimer, mark, phase, endPhase, finishStartupTimer } from './startup-timer';
 import { resolveBackgroundColor, resolveIconPath, resolveWindowBounds, resolveRendererIndexPath } from './window-utils';

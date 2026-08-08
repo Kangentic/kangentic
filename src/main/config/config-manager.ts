@@ -102,12 +102,18 @@ export class ConfigManager {
 
     ensureDirs();
     let parsed: Record<string, unknown> | null = null;
+    // `parsed === null` covers two very different states: there is no config file
+    // yet, or there is one and we could not read or parse it. The migrations below
+    // save(), which rewrites the file wholesale - harmless on a fresh install, and
+    // destructive on a file that is merely unparseable. Keep them apart.
+    let configFileUnreadable = false;
     try {
       const raw = fs.readFileSync(PATHS.configFile, 'utf-8');
       parsed = JSON.parse(raw);
       this.config = deepMergeConfig(DEFAULT_CONFIG, parsed as Partial<AppConfig>);
     } catch {
       this.config = { ...DEFAULT_CONFIG };
+      configFileUnreadable = fs.existsSync(PATHS.configFile);
     }
 
     // One-time migration: claude.* namespace -> agent.* (cliPath -> cliPaths).
@@ -155,6 +161,35 @@ export class ConfigManager {
     if (parsedTerminal && typeof parsedTerminal === 'object' && 'scrollbackLines' in parsedTerminal) {
       delete (this.config.terminal as unknown as Record<string, unknown>).scrollbackLines;
       this.save(this.config);
+    }
+
+    // One-time migration: adopt the `focused` light-dismiss default. Changing
+    // DEFAULT_CONFIG alone reaches fresh installs only, because save() writes the
+    // whole blob and load() lets a persisted value beat the default - so every
+    // install that ran under the old `single` default keeps it. That matters
+    // rather than being cosmetic: `single` resolves to no target once a second
+    // window is open, so click-outside close silently stops working there.
+    //
+    // A persisted `single` is indistinguishable from a deliberate choice, so this
+    // knowingly overrides one made before the flip shipped. The marker bounds it
+    // to a single rewrite, so re-picking `single` afterwards sticks. It runs on a
+    // fresh install too (a no-op on an already-`focused` value) rather than being
+    // gated on `parsed`, so the marker is persisted on the first launch instead of
+    // being re-evaluated on every one until some unrelated save happens to land.
+    if (!this.config.hasMigratedWindowLightDismissDefault) {
+      this.config.hasMigratedWindowLightDismissDefault = true;
+      if (this.config.windowLightDismiss === 'single') {
+        this.config.windowLightDismiss = 'focused';
+      }
+      // The one exception to running unconditionally: an existing file we failed to
+      // parse. Every migration above this one is `parsed`-gated, so before this block
+      // an unparseable config was left on disk untouched and the session merely ran on
+      // defaults. Saving here would replace it with bare defaults at launch and destroy
+      // whatever was hand-recoverable in it. Deferring costs nothing - the marker is
+      // still false next launch and the rewrite is idempotent.
+      if (!configFileUnreadable) {
+        this.save(this.config);
+      }
     }
 
     return this.config;

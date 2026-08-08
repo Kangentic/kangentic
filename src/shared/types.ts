@@ -2713,6 +2713,28 @@ export interface AppConfig {
   autoFocusIdleSession: boolean;
   /** Click-outside dismiss policy for modeless task-detail windows. Default `focused`. */
   windowLightDismiss: WindowLightDismiss;
+  /** One-shot marker for the `single` -> `focused` default flip on `windowLightDismiss`.
+   *
+   *  `ConfigManager.save()` writes the WHOLE merged blob, so every install that ran
+   *  while `single` was the default has it persisted as a literal key. A default change
+   *  alone therefore reaches fresh installs only: an upgrading user keeps `single`
+   *  forever, and `single` resolves to no target once a second window is open, so
+   *  click-outside close silently does nothing there with no visible cause.
+   *
+   *  A persisted `single` cannot be told apart from a deliberate choice - both serialize
+   *  identically - so the migration in `ConfigManager.load()` accepts overriding a real
+   *  `single` choice made before this shipped. This marker is what bounds that to exactly
+   *  one rewrite: a user who re-picks `single` afterwards keeps it.
+   *
+   *  The marker is persisted on every launch that can safely write, INCLUDING a fresh
+   *  install, so the block stops re-evaluating. The one exception is a config file that
+   *  exists but will not parse: writing there would replace it with bare defaults, so
+   *  the rewrite is deferred to a launch that can read the file.
+   *
+   *  Retirable (with its migration block) once no supported install can still predate
+   *  the release that introduced it - at which point every config on disk already
+   *  carries `true`. Until then it stays, like `hasCompletedFirstRun` below. */
+  hasMigratedWindowLightDismissDefault: boolean;
   /** Task IDs that have already been offered an auto-rename suggestion. Persisted so a
    *  dismissed suggestion does not reappear on the next app launch. Drained on task
    *  delete (TASK_DELETE / TASK_BULK_DELETE handlers in `task-crud.ts`) so the array
@@ -2961,6 +2983,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   skipBoardConfigConfirm: false,
   autoFocusIdleSession: false,
   windowLightDismiss: 'focused',
+  hasMigratedWindowLightDismissDefault: false,
   autoNameAskedTaskIds: [],
   autoNameRateLimitPerHour: 60,
   restoreWindowPosition: true,

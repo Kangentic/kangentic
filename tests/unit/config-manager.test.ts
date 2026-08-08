@@ -509,6 +509,124 @@ describe('Config Manager -- terminal.scrollbackLines global migration', () => {
   });
 });
 
+describe('Config Manager -- windowLightDismiss `single` to `focused` default migration', () => {
+  // The default flipped from 'single' to 'focused' when click-outside close became a
+  // denylist. save() writes the whole merged blob and load() lets a persisted value
+  // beat the default, so the new default reaches fresh installs only - every existing
+  // install has a literal "windowLightDismiss": "single" on disk and would keep it.
+  // That is not cosmetic: 'single' resolves to no target once a second window is open,
+  // so click-outside close silently does nothing there.
+
+  it("rewrites a persisted 'single' to 'focused' and records the marker on disk", async () => {
+    fs.writeFileSync(configPath, JSON.stringify({ windowLightDismiss: 'single' }));
+
+    const cm = await createConfigManager();
+    const config = cm.load();
+
+    expect(config.windowLightDismiss).toBe('focused');
+    expect(config.hasMigratedWindowLightDismissDefault).toBe(true);
+
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect(raw.windowLightDismiss).toBe('focused');
+    expect(raw.hasMigratedWindowLightDismissDefault).toBe(true);
+  });
+
+  it("leaves a deliberate 'single' alone once the marker is set", async () => {
+    // The whole point of the marker: a stored 'single' from before the flip and one the
+    // user picked afterwards serialize identically, so only the marker separates them.
+    fs.writeFileSync(configPath, JSON.stringify({
+      windowLightDismiss: 'single',
+      hasMigratedWindowLightDismissDefault: true,
+    }));
+
+    const cm = await createConfigManager();
+    const config = cm.load();
+
+    expect(config.windowLightDismiss).toBe('single');
+    // Reading the marker back is what makes this test falsifiable. Without it the
+    // assertion above passes trivially on a build that has no migration at all.
+    expect(config.hasMigratedWindowLightDismissDefault).toBe(true);
+
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect(raw.windowLightDismiss).toBe('single');
+  });
+
+  it("does not re-migrate a 'single' re-picked after the first load", async () => {
+    // End to end through the same manager: migrate, then write 'single' back the way
+    // the settings dropdown does, then load again. Red if the marker were keyed off the
+    // parsed file rather than persisted, or if save() dropped it.
+    fs.writeFileSync(configPath, JSON.stringify({ windowLightDismiss: 'single' }));
+
+    const cm = await createConfigManager();
+    expect(cm.load().windowLightDismiss).toBe('focused');
+    cm.save({ windowLightDismiss: 'single' });
+
+    vi.resetModules();
+    const cmAfterRestart = await createConfigManager();
+
+    expect(cmAfterRestart.load().windowLightDismiss).toBe('single');
+  });
+
+  // it.each rather than a loop inside one it(), so a failure names the policy that
+  // failed instead of only a line number. 'focused' is in the list because a value
+  // that merely matches the new default still has to survive as an explicit choice.
+  it.each(['off', 'all', 'focused'] as const)("does not touch a persisted '%s'", async (policy) => {
+    fs.writeFileSync(configPath, JSON.stringify({ windowLightDismiss: policy }));
+
+    const cm = await createConfigManager();
+    const config = cm.load();
+
+    expect(config.windowLightDismiss).toBe(policy);
+    expect(config.hasMigratedWindowLightDismissDefault).toBe(true);
+  });
+
+  it("sets the marker on a fresh install without changing windowLightDismiss", async () => {
+    // Not a no-op: the marker flips and is WRITTEN, creating config.json during load()
+    // where no migration used to write one. That eager write is the deliberate design
+    // (it stops the block re-evaluating on every launch), so pin it - re-gating the
+    // migration on `parsed` would leave the in-memory assertions green and this red.
+    expect(fs.existsSync(configPath)).toBe(false);
+
+    const cm = await createConfigManager();
+    const config = cm.load();
+
+    expect(config.windowLightDismiss).toBe('focused');
+    expect(config.hasMigratedWindowLightDismissDefault).toBe(true);
+
+    expect(fs.existsSync(configPath)).toBe(true);
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect(raw.hasMigratedWindowLightDismissDefault).toBe(true);
+  });
+
+  it('leaves an unparseable config file on disk instead of overwriting it with defaults', async () => {
+    // The migration is the only one in load() not gated on `parsed`, so it is the only
+    // one that reaches the catch branch - where save() would rewrite the whole blob and
+    // destroy a file the user could still hand-repair. The session runs on defaults
+    // either way; what must not happen is the file being replaced.
+    const corruptContents = '{ "windowLightDismiss": "single", }';
+    fs.writeFileSync(configPath, corruptContents);
+
+    const cm = await createConfigManager();
+    const config = cm.load();
+
+    expect(config.hasMigratedWindowLightDismissDefault).toBe(true);
+    expect(fs.readFileSync(configPath, 'utf-8')).toBe(corruptContents);
+  });
+
+  it('still migrates on the next launch after an unparseable file is repaired', async () => {
+    // The deferred write must not cost the migration: skipping save() leaves the marker
+    // false on disk, so the rewrite is simply owed to the following launch.
+    fs.writeFileSync(configPath, '{ "windowLightDismiss": "single", }');
+    (await createConfigManager()).load();
+
+    vi.resetModules();
+    fs.writeFileSync(configPath, JSON.stringify({ windowLightDismiss: 'single' }));
+    const cmAfterRepair = await createConfigManager();
+
+    expect(cmAfterRepair.load().windowLightDismiss).toBe('focused');
+  });
+});
+
 describe('Config Manager -- terminal.colors replace semantics', () => {
   it('removing a slot key from a later save() actually clears it, not deep-merges it back', async () => {
     const cm = await createConfigManager();
