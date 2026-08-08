@@ -234,6 +234,49 @@ describe('window-manager layer isolation', () => {
       ]);
     });
 
+    it('every marker site names the RIGHT scope, not just some scope', () => {
+      // The two tests above pin that a marker exists and that it names SOME layer, but
+      // neither catches a marker naming the WRONG one - e.g. MonitorPage or
+      // PopOutMonitorRoot accidentally scoped `"board"`. That is a worse bug than a missing
+      // marker: a click on the monitor overlay would then resolve to the BOARD's window
+      // store and close a board window sitting behind the monitor - the exact bug this
+      // scoping was introduced to prevent (see the file header) - while a click on the
+      // board would resolve to a store no board window is ever added to, silently
+      // disabling background-close there instead.
+      const EXPECTED_SCOPE_BY_FILE: Record<string, string> = {
+        'src/renderer/components/layout/AppLayout.tsx': 'board',
+        'src/renderer/components/layout/StatusBar.tsx': 'board',
+        'src/renderer/components/monitor/MonitorPage.tsx': 'monitor',
+        'src/renderer/pop-out/roots/PopOutMonitorRoot.tsx': 'monitor',
+      };
+
+      const markerLines = collectScopeMarkerLines();
+      const offenders: string[] = [];
+
+      for (const [file, expectedScope] of Object.entries(EXPECTED_SCOPE_BY_FILE)) {
+        const line = markerLines.find((entry) => entry.startsWith(`${file}:`));
+        // A missing entry here already fails the "actually present" test above; this
+        // test only has something to check once the site exists.
+        if (!line) continue;
+        // Only a literal string value is statically checkable. A conditional
+        // (`data-dismiss-layer={someExpr}`) already passed the "names its layer" test
+        // above by containing `=`; resolving what it evaluates to needs the runtime
+        // tree, so it is left to `tests/ui/window-click-outside-close.spec.ts` and
+        // `tests/ui/agent-monitor.spec.ts` rather than flagged here as unresolvable.
+        const literalMatch = /data-dismiss-layer\s*=\s*"(\w+)"/.exec(line);
+        if (!literalMatch) continue;
+        if (literalMatch[1] !== expectedScope) {
+          offenders.push(`${line} (expected "${expectedScope}")`);
+        }
+      }
+
+      expect(
+        offenders,
+        'A marker site names the wrong layer for its host. Offenders (expected scope in '
+        + 'parens):\n' + offenders.join('\n'),
+      ).toEqual([]);
+    });
+
     it('the retired allowlist attribute does not come back', () => {
       // `data-dismiss-surface` was the OPPOSITE polarity: an allowlist of five regions
       // that dismissed, with everything else inert. Reintroducing it alongside the

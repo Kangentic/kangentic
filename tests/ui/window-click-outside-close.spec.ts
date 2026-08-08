@@ -381,7 +381,9 @@ test.describe('window light-dismiss (click-outside-to-close)', () => {
     await page.waitForTimeout(600);
     await pollWindowCount(page, 1);
 
-    // Restore to default so later tests are unaffected.
+    // Leave `off` behind so later tests are unaffected. Not "restore to default": the
+    // shipped default is `focused` now, and every test sets its own policy at the top
+    // anyway - this only has to stop `off` from leaking into a shared-page sibling.
     await setPolicy(page, 'single');
   });
 
