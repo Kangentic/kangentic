@@ -294,7 +294,7 @@ export function DescriptionEditor({
                 roughly half the box for a secondary hint. */}
             <div className="absolute inset-0 flex items-center justify-center">
               {/* `fg-muted`, not `fg-disabled`: this is an instruction, and at
-                  `fg-disabled` it sat at 1.58:1 on the control fill - the
+                  `fg-disabled` it sat at 1.48:1 on the control fill - the
                   weakest text in the app. Nothing here is disabled. */}
               <span className="inline-flex items-center gap-2 rounded-md border border-dashed border-edge px-3 py-1.5 text-xs text-fg-muted">
                 <Paperclip size={14} />
@@ -305,7 +305,7 @@ export function DescriptionEditor({
         )}
         {showPreview && (
           <div
-            className="absolute inset-0 bg-surface-control pl-3 pr-28 py-2 overflow-y-auto"
+            className="markdown-on-control absolute inset-0 bg-surface-control pl-3 pr-28 py-2 overflow-y-auto"
             data-testid="description-preview"
           >
             {value ? (
