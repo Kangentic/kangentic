@@ -214,7 +214,7 @@ export function Combobox({
 
   return (
     <div ref={containerRef} className={`relative ${className}${disabled ? ' opacity-60' : ''}`}>
-      {/* `surface-hover`, matching FIELD_CONTROL_BASE: this is an input, not a
+      {/* `surface-control`, matching FIELD_CONTROL_BASE: this is an input, not a
           text-bearing card. See the note there for the split. */}
       <div className="flex items-center gap-0 border border-edge-input rounded bg-surface-control">
         <input

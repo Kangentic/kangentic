@@ -14,15 +14,23 @@ import { Info } from 'lucide-react';
  * `--kng-surface-control` is a DEDICATED token, not a borrowed one, and that is
  * the point. Inputs, comboboxes, and `ToggleCard` all reference it, so a card
  * and the dropdown beside it read as one family - and re-tuning the control fill
- * is one value per theme rather than a sweep across ~19 files. It exists because
- * neither neighbouring token worked: `surface` is too dark (and nearly
- * theme-neutral, so every theme looked alike inside a dialog) while
- * `surface-hover` is too light, and there was nothing between them. Each theme's
- * value is 60% of the way from `surface-raised` to `surface-hover`.
+ * is one value per theme rather than a sweep across ~19 files. Each theme's
+ * value is tuned to a ~1.3:1 step against `surface-raised` (the ground under
+ * BaseDialog, the task-detail window, and the settings panel), extrapolated
+ * along the theme's own raised-to-hover hue ray. The first cut sat 60% of the
+ * way from `surface-raised` to `surface-hover` and did not register (1.09-1.22:1
+ * against that ground): the compressed themes' whole raised-to-hover span falls
+ * short of that same ~1.3:1 step, which is why the fill now sits at or PAST
+ * `surface-hover` where it must. That collapse is safe because nothing grounds a control on
+ * full-strength `surface-hover` - the fill's real neighbours are `surface-raised`
+ * and the segmented track's `surface`, and the fill carrying the separation also
+ * means `edge-input` is now redundant-by-design against the fill in the
+ * compressed themes (the border's job is the ground side, where it stays
+ * legible). `tests/unit/theme-contrast.test.ts` enforces the separation floors.
  *
  * Text ON this fill has to be chosen against the WHOLE theme set, not the
  * default one - that mistake cost several rounds. Worst-case ratios across all
- * 10 themes: `fg` 8.88:1, `fg-tertiary` 4.84:1, `fg-muted` 3.34:1. So anything a
+ * 10 themes: `fg` 8.49:1, `fg-tertiary` 4.63:1, `fg-muted` 3.19:1. So anything a
  * user must read stays at `fg-tertiary` or brighter; `fg-muted` and `fg-faint`
  * are for hint text and decoration. Value text is `fg-tertiary`, placeholders
  * are `fg-muted` (deliberately sub-AA: a placeholder must read dimmer than the

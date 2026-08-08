@@ -24,15 +24,15 @@ interface ToggleCardProps {
 }
 
 /**
- * `surface-hover` + `edge-input`, the same shell every input uses (see
+ * `surface-control` + `edge-input`, the same shell every input uses (see
  * `FIELD_CONTROL_BASE`), so a card and the dropdown beside it are one family.
  *
  * It was previously `surface/40`, a translucent value that composited to a
  * third dark matching nothing. The reason a card can share the input fill is
- * that its DESCRIPTION steps up to `fg-tertiary` (7.05:1 here, AAA). At
- * `fg-faint` the same line is 2.14:1 and effectively unreadable, which is what
- * made an earlier attempt at this fail - the fill was never the problem, the
- * faint text on it was.
+ * that its DESCRIPTION steps up to `fg-tertiary` (7.75:1 in the default theme,
+ * AAA). At `fg-faint` the same line is 2.37:1 and effectively unreadable, which
+ * is what made an earlier attempt at this fail - the fill was never the
+ * problem, the faint text on it was.
  */
 const TOGGLE_CARD_SURFACE = {
   enabled: 'bg-surface-control border-edge-input hover:border-fg-faint',

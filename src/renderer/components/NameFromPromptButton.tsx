@@ -95,7 +95,11 @@ export function NameFromPromptButton({ description, onTitle }: NameFromPromptBut
       data-testid="name-from-prompt-button"
       aria-label="Generate a title from the description"
       title="Generate a title from the description"
-      className="flex-shrink-0 inline-flex items-center justify-center w-9 h-9 text-fg-muted hover:text-accent-fg bg-surface hover:bg-surface-hover border border-edge-input hover:border-accent rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+      // `surface-control`, matching the title input beside it (see
+      // FIELD_CONTROL_BASE in `Field.tsx` for why the token exists). Hover stays
+      // border + text only: the fill can sit at or past `surface-hover`, so a bg
+      // swap there would be invisible or inverted.
+      className="flex-shrink-0 inline-flex items-center justify-center w-9 h-9 text-fg-muted hover:text-accent-fg bg-surface-control border border-edge-input hover:border-accent rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
     >
       {isPending ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
     </button>

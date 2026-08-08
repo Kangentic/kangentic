@@ -18,16 +18,15 @@ interface SegmentedControlProps<T extends string> {
   onChange: (value: T) => void;
   /**
    * Which ground the control sits on. This is a real fork, not a style
-   * preference: the surface ramp INVERTS between themes. In dark themes
-   * `surface-hover` (#3f3f46) is the lightest of the three surface tokens, but in
-   * the light themes it is the DARKEST (#e7e5e4, against `surface-raised`
-   * #fafaf9). So one hardcoded thumb fill reads as "raised" in dark and
-   * "pressed" in light, and which of those is correct depends on the ground.
+   * preference: the surface ramp INVERTS between themes. In dark themes the
+   * control fill is LIGHTER than its ground; in the light themes it is DARKER.
+   * So one hardcoded thumb fill reads as "raised" in dark and "pressed" in
+   * light, and which of those is correct depends on the ground.
    *
    *   - `'control'` (default) - the control sits in a form row on a
    *     `surface-raised` ground, beside `Select` / `Combobox`. The thumb takes
-   *     `surface-hover`, the same fill those controls use, so a segmented control
-   *     and a select in one row read as the same species of control.
+   *     `surface-control`, the same fill those controls use, so a segmented
+   *     control and a select in one row read as the same species of control.
    *   - `'raised'` - the control sits on the app ground (the board toolbar). The
    *     thumb takes `surface-raised`, which stays lighter than its track in every
    *     theme.

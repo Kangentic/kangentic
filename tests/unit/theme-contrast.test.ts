@@ -15,6 +15,11 @@
  * exempt and listed explicitly, because it must stay dimmer than the value it
  * stands in for - if it matched, an empty field would be indistinguishable from
  * a filled one.
+ *
+ * It also guards SURFACE separation, for the same reason: the control fill
+ * shipped at 1.09-1.22:1 against the dialog ground because it was only ever
+ * eyeballed in the default theme, and an input that does not announce itself is
+ * invisible in exactly the themes nobody has open.
  */
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
@@ -81,12 +86,40 @@ const MUST_READ: { what: string; foreground: string; background: string }[] = [
   { what: 'control value', foreground: 'fg-tertiary', background: 'surface-control' },
 ];
 
+/**
+ * The grounds the control fill actually sits on, and the minimum separation
+ * that still reads at a glance. `surface-raised` is the ground under BaseDialog,
+ * the task-detail window, and the settings panel; `surface` is the
+ * SegmentedControl 'control' track.
+ *
+ * Both floors sit ~0.03 below the tightest theme, which is the margin a
+ * per-theme nudge needs before it fails. They are not the same KIND of number
+ * though: `surface-raised` is the tuning target, so its 1.25 tracks the ~1.3:1
+ * step the tokens are cut to (see FIELD_CONTROL_BASE in `Field.tsx`), while
+ * separation from `surface` is only a side effect of that tuning and ranges
+ * 1.21-1.55 across themes, so 1.17 is empirical rather than derived.
+ *
+ * There is deliberately NO floor against `surface-hover`: nothing grounds a
+ * control on it (hover appears near the control fill only as transient hover
+ * states and sub-50% tints), and the compressed themes' entire raised-to-hover
+ * span is smaller than any visible step, so the control fill legitimately sits
+ * at or past `surface-hover` in those themes.
+ */
+const CONTROL_SEPARATION_FLOORS: { ground: string; floor: number }[] = [
+  { ground: 'surface-raised', floor: 1.25 },
+  { ground: 'surface', floor: 1.17 },
+];
+
 describe('theme contrast (all themes, not just the default)', () => {
   const themes = parseThemes(CSS);
 
   it('parses every theme in index.css', () => {
     // Guards against the scan silently matching nothing and passing vacuously.
-    expect(themes.length).toBeGreaterThanOrEqual(8);
+    // Pinned to the CSS's own declaration count rather than a fixed floor: a
+    // theme the parser failed to match would still clear a floor, and would then
+    // exempt itself from every assertion below without failing anything.
+    const declaredControlFills = CSS.match(/--kng-surface-control\s*:/g) ?? [];
+    expect(themes.length).toBe(declaredControlFills.length);
     expect(themes.some((theme) => theme.name.includes(':root'))).toBe(true);
   });
 
@@ -101,6 +134,24 @@ describe('theme contrast (all themes, not just the default)', () => {
         if (ratio < AA_NORMAL_TEXT) {
           failures.push(
             `${theme.name}: ${pairing.what} (${pairing.foreground} on ${pairing.background}) = ${ratio.toFixed(2)}:1`,
+          );
+        }
+      }
+    }
+    expect(failures).toEqual([]);
+  });
+
+  it('keeps the control fill visibly separated from every ground it sits on', () => {
+    const failures: string[] = [];
+    for (const theme of themes) {
+      const control = theme.vars['surface-control'];
+      for (const { ground, floor } of CONTROL_SEPARATION_FLOORS) {
+        const groundValue = theme.vars[ground];
+        if (!control || !groundValue) continue;
+        const ratio = contrastRatio(control, groundValue);
+        if (ratio < floor) {
+          failures.push(
+            `${theme.name}: surface-control on ${ground} = ${ratio.toFixed(3)}:1 (floor ${floor}:1)`,
           );
         }
       }
