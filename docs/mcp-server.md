@@ -59,7 +59,7 @@ This approach keeps `.mcp.json` completely untouched - no injection, no cleanup,
 
 ## Cross-Project Calls
 
-Every Kangentic MCP tool except `kangentic_get_current_task` accepts an optional `project` parameter. Use it to route a tool call at a *different* Kangentic project than the one the MCP client is bound to - no need to switch projects in the UI or reconfigure MCP.
+Every Kangentic MCP tool accepts an optional `project` parameter, with two deliberate exceptions: `kangentic_get_current_task` (it resolves the project from the caller's own worktree) and the whole `kangentic_browser_*` family (see [Browser automation tool surface](#browser-automation-tool-surface-kangentic_browser_), which is confined to the connection's own project, so no argument exists that could name another one). Use it to route a tool call at a *different* Kangentic project than the one the MCP client is bound to - no need to switch projects in the UI or reconfigure MCP.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
