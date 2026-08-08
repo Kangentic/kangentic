@@ -25,7 +25,15 @@ export type DriverResult<T> = { ok: true; data: T } | { ok: false; error: Driver
 
 const SETTINGS_HINT = 'Settings -> Agent Browser';
 
-function capabilityGate(
+/**
+ * The automation policy check, exported so a tool whose side effects happen
+ * BEFORE it can reach `withGuest` can apply the same gate up front rather than
+ * duplicating the policy. `browser-pane-opener.ts` is the one such caller: it
+ * opens a window and seeds a URL before any guest exists to resolve, so gating
+ * only inside `withGuest` would let a disabled capability still change what is
+ * on the user's screen. Keep this the single source of the tier rules.
+ */
+export function capabilityGate(
   capability: BrowserCapability,
   config: ResolvedBrowserAutomationConfig,
 ): DriverError | null {

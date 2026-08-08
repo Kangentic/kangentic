@@ -79,6 +79,35 @@ describe('toggleBrowserOpen', () => {
     expect(getState().browserOpenTasks.has('task-2')).toBe(true);
   });
 
+  it('setBrowserOpen is idempotent: a redundant call changes no state', () => {
+    // The MCP open/close tools drive this directly, where a toggle would be
+    // wrong (an agent asking to OPEN must never close an already-open pane).
+    // The early return is what makes a repeated push a genuine no-op rather
+    // than a fresh Set plus a persistence write on every call.
+    const { actions, getState } = createTestStore();
+    actions.setBrowserOpen('task-1', true);
+    const afterFirstOpen = getState().browserOpenTasks;
+
+    actions.setBrowserOpen('task-1', true);
+    expect(getState().browserOpenTasks).toBe(afterFirstOpen); // same reference: no churn
+    expect(getState().browserOpenTasks.has('task-1')).toBe(true);
+
+    actions.setBrowserOpen('task-1', false);
+    expect(getState().browserOpenTasks.has('task-1')).toBe(false);
+    const afterClose = getState().browserOpenTasks;
+    actions.setBrowserOpen('task-1', false);
+    expect(getState().browserOpenTasks).toBe(afterClose);
+  });
+
+  it('refreshBrowserUrl bumps only its own task, from an absent start', () => {
+    const { actions, getState } = createTestStore();
+    expect(getState().browserUrlRefreshTokens['task-1']).toBeUndefined();
+    actions.refreshBrowserUrl('task-1');
+    actions.refreshBrowserUrl('task-1');
+    expect(getState().browserUrlRefreshTokens['task-1']).toBe(2);
+    expect(getState().browserUrlRefreshTokens['task-2']).toBeUndefined();
+  });
+
   it('does not mutate changesOpenTasks when toggling browser', () => {
     const { actions, getState } = createTestStore();
     // Pre-populate changesOpenTasks via toggleChangesOpen
