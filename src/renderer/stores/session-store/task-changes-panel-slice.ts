@@ -41,6 +41,25 @@ export interface TaskChangesPanelSlice {
   /** Task IDs whose Browser pane is open (persists across dialog open/close). */
   browserOpenTasks: Set<string>;
   /**
+   * Per-task counter that forces `useBrowserUrl` to refetch, keyed by task ID.
+   *
+   * Exists for one case: `kangentic_browser_open_pane` seeds the task's URL
+   * sidecar in the main process and then asks this renderer to show the pane. If
+   * the pane is ALREADY mounted on its empty state (open, but with no URL ever
+   * saved), its fetch effect keys on `[taskId, projectId]` and neither changed,
+   * so it would never see the seeded URL and the pane would register no guest.
+   * Bumping this re-runs the fetch WITHOUT remounting anything, which matters:
+   * a remount would destroy a live guest (see
+   * .claude/rules/retained-pane-never-remounts.md).
+   *
+   * Deliberately not persisted in the detail-view blob - it is a transient
+   * nudge, not layout. Equally deliberately NOT preserved across HMR via
+   * `import.meta.hot.data`: losing the counter just means the next open
+   * refetches once more, which `useBrowserUrl`'s hasResolvedRef and
+   * found-nothing guards already make safe for an already-mounted pane.
+   */
+  browserUrlRefreshTokens: Record<string, number>;
+  /**
    * Selected commit OID in the Changes panel's history browser, keyed by task
    * ID. `null` (or absent) means "Uncommitted changes" (the default, top-of-list
    * row) - the branch-wide working diff. A non-null value scopes the detail
@@ -79,6 +98,15 @@ export interface TaskChangesPanelSlice {
   setChangesViewMode: (taskId: string, mode: 'split' | 'expanded') => void;
   setDividerRatio: (taskId: string, ratio: number) => void;
   toggleBrowserOpen: (taskId: string) => void;
+  /**
+   * Set a task's Browser pane open state explicitly. `toggleBrowserOpen`
+   * delegates here, and the `kangentic_browser_open_pane` / `_close_pane` MCP
+   * tools drive it through the browser-pane request bridge, where a toggle would
+   * be wrong (an agent asking to open must not close an already-open pane).
+   */
+  setBrowserOpen: (taskId: string, open: boolean) => void;
+  /** Force `useBrowserUrl` to refetch this task's URLs. See {@link browserUrlRefreshTokens}. */
+  refreshBrowserUrl: (taskId: string) => void;
   setChangesSelectedCommit: (taskId: string, commitOid: string | null) => void;
   setChangesHistoryHeight: (taskId: string, height: number) => void;
   toggleMaximized: (taskId: string) => void;
@@ -209,6 +237,7 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
   changesViewMode: {},
   dividerRatio: {},
   browserOpenTasks: new Set<string>(),
+  browserUrlRefreshTokens: {},
   changesSelectedCommit: {},
   changesHistoryHeight: {},
   maximizedTasks: new Set<string>(),
@@ -229,14 +258,22 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
   },
 
   toggleBrowserOpen: (taskId) => {
-    const next = new Set(get().browserOpenTasks);
-    if (next.has(taskId)) {
-      next.delete(taskId);
-    } else {
-      next.add(taskId);
-    }
+    get().setBrowserOpen(taskId, !get().browserOpenTasks.has(taskId));
+  },
+
+  setBrowserOpen: (taskId, open) => {
+    const current = get().browserOpenTasks;
+    if (current.has(taskId) === open) return; // idempotent: no churn, no save
+    const next = new Set(current);
+    if (open) next.add(taskId);
+    else next.delete(taskId);
     set({ browserOpenTasks: next });
     scheduleDetailViewSave(taskId, get);
+  },
+
+  refreshBrowserUrl: (taskId) => {
+    const tokens = get().browserUrlRefreshTokens;
+    set({ browserUrlRefreshTokens: { ...tokens, [taskId]: (tokens[taskId] ?? 0) + 1 } });
   },
 
   setChangesSelectedCommit: (taskId, commitOid) => {

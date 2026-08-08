@@ -11,6 +11,7 @@ import {
   browserPaneRegistry,
   type ResolveTargetSelector,
 } from '../../browser/browser-pane-registry';
+import { openPaneForCallerTask, closePanes } from '../../browser/browser-pane-opener';
 import type { ResolvedBrowserAutomationConfig } from '../../browser/browser-automation-config';
 import {
   clickAtCenterOfSelector,
@@ -127,7 +128,10 @@ export function registerBrowserTools(
     callerSessionId && sessions ? sessions.getSessionTaskId(callerSessionId) : undefined;
 
   // Caller scope is stamped here, not taken from tool arguments, so no tool can
-  // opt out of it. This is the single point that scopes all 13 driving tools.
+  // opt out of it. This is the single point that scopes the 13 tools driving
+  // through `drive()` below. The two lifecycle tools (open_pane / close_pane)
+  // build their own equivalent selector in `browser-pane-opener.ts`, from the
+  // same caller identity - see .claude/rules/browser-automation-driver.md.
   const selectorFrom = (args: TargetArgs): ResolveTargetSelector => ({
     sessionId: args.sessionId,
     taskId: args.taskId,
@@ -188,6 +192,74 @@ export function registerBrowserTools(
         content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
         structuredContent: { ...payload, items: panes },
       };
+    },
+  );
+
+  // ── Lifecycle (open / close a pane) ───────────────────────────────────
+  server.registerTool(
+    'kangentic_browser_open_pane',
+    {
+      description:
+        "Open the embedded Browser pane for YOUR OWN task and load a URL, so you can then drive it with the other kangentic_browser_* tools. Use this instead of asking the user to open the Browser pill. Opens the task's detail window if it is not already open. Returns the pane once it is registered and driveable, so the very next call can act on it. Only ever targets your own task; there is no way to open a pane for another task or project. Calling it again with a different url navigates the existing pane rather than reopening it.",
+      inputSchema: z.object({
+        url: z
+          .string()
+          .optional()
+          .describe(
+            "Absolute http(s) URL to load, e.g. http://localhost:5173. Omit to reuse the task's saved Browser URL, or the project default. If neither exists, pass one - a pane with no URL registers nothing and cannot be driven.",
+          ),
+      }),
+      annotations: MUTATING_ANNOTATIONS,
+    },
+    async ({ url }) => {
+      const result = await openPaneForCallerTask({
+        projectId,
+        callerSessionId,
+        callerTaskId,
+        url,
+        // Opening always loads a URL, so this is a navigation-tier action:
+        // "Allow navigation" off in Settings disables this tool too.
+        capability: 'navigate',
+        config: getAutomationConfig(),
+      });
+      return driverToolResult(result);
+    },
+  );
+
+  server.registerTool(
+    'kangentic_browser_close_pane',
+    {
+      description:
+        "Close embedded Browser panes, putting them away exactly as the user's Browser pill does. The task's detail window stays open. With no arguments this closes your own task's pane; pass all to close every pane in your project. Panes in other projects are left alone and reported as a count unless you pass includeOtherProjects. The response lists the panes actually closed, so a partial close is never reported as complete.",
+      inputSchema: z.object({
+        ...TARGET_SHAPE,
+        all: z
+          .boolean()
+          .optional()
+          .describe(
+            'Close every pane in scope instead of a single target. Use this for "close all browsers". Takes precedence over sessionId and taskId, which are ignored when this is set.',
+          ),
+        includeOtherProjects: z
+          .boolean()
+          .optional()
+          .describe(
+            'Also close Browser panes belonging to other projects. Off by default, because another project may have an agent mid-verification in its pane. Only pass this when the user asked for every browser everywhere.',
+          ),
+      }),
+      annotations: MUTATING_ANNOTATIONS,
+    },
+    async ({ sessionId, taskId, all, includeOtherProjects }) => {
+      const result = await closePanes({
+        projectId,
+        callerSessionId,
+        callerTaskId,
+        sessionId,
+        taskId,
+        all,
+        includeOtherProjects,
+        config: getAutomationConfig(),
+      });
+      return driverToolResult(result);
     },
   );
 

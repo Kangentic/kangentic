@@ -31,10 +31,36 @@ the two surfaces forking the CDP driver (so click/type/screenshot semantics drif
   declares its capability tier (`observe` / `interact` / `navigate` / `eval`). `withGuest` is the single
   chokepoint that gates the global automation policy, resolves the target pane, attaches CDP, and shapes
   the `{ kind, detail }` error envelope. No tool may attach CDP or read a guest webContents directly.
-  The sole exception is the discovery tool `kangentic_browser_list_panes`: it only reads the pane
-  registry (no CDP attach, no `sendCommand`) and enumerates every pane rather than resolving one target,
-  so the single-target `withGuest` path does not apply. It echoes `automationEnabled` so the agent sees
-  the policy state. A new tool that drives a pane must still go through `withGuest`.
+  There are exactly TWO exceptions, both of which attach no CDP:
+  - `kangentic_browser_list_panes`, the discovery tool: it only reads the pane registry (no CDP attach,
+    no `sendCommand`) and enumerates every pane rather than resolving one target, so the single-target
+    `withGuest` path does not apply. It echoes `automationEnabled` so the agent sees the policy state.
+  - `kangentic_browser_close_pane`: closing is renderer state (`browserOpenTasks`), reached by an IPC
+    push, so there is no guest to resolve and nothing to drive. It still resolves its single-target
+    form through `resolveTarget` and still checks `config.enabled` explicitly, since it never reaches
+    `withGuest`'s capability gate. It is annotated MUTATING despite driving no CDP - it changes what is
+    on the user's screen.
+
+  `kangentic_browser_open_pane` is NOT an exception: every path that LOADS a URL ends by resolving
+  through `withGuest` at the `navigate` tier, which is what makes "the pane is registered AND
+  driveable" true rather than merely claimed. Its orchestration lives in
+  `src/main/browser/browser-pane-opener.ts`, and the tool passes the tier in explicitly so it sits
+  next to the `annotations:` it has to agree with. Its one non-navigating path - the pane is already
+  up and no `url` was passed - returns registry status without attaching CDP, so it reports liveness
+  (via `resolveLiveGuest`) rather than driveability; do not read the guarantee as covering it.
+
+  Because that tool mutates the screen BEFORE it can reach a guest, it calls the driver's exported
+  `capabilityGate` itself, up front. Gating only inside `withGuest` would let a gated-off capability
+  open a window and seed a URL and only then refuse. A tool with side effects ahead of its
+  `withGuest` call must do the same; the gate stays defined once, in the driver.
+
+  A new tool that drives a pane must still go through `withGuest`.
+- **A tool that opens or closes UI is caller-scoped by construction, and says what it did.**
+  `open_pane` takes no `sessionId` / `taskId` at all: it targets the caller's own task, so there is no
+  argument that could name another project's task. `close_pane` defaults to the caller's project and
+  crosses projects only on an explicit `includeOtherProjects`, because a backgrounded project may have
+  an agent mid-verification in its pane. Either way the response names the scope it applied and lists
+  what it actually closed, so a partial result can never be reported as complete.
 - **Every pane target is caller-scoped.** `registerBrowserTools` takes a `BrowserToolDependencies`
   carrying the URL-path `projectId` (always present) and the optional `callerSessionId`, mirroring
   `registerSteeringTools`. `ResolveTargetSelector.projectId` is required and explicitly nullable, so

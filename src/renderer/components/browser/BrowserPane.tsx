@@ -7,6 +7,7 @@ import { useBrowserUrl } from './useBrowserUrl';
 import { INSPECT_SCRIPT, CLEAR_PICK_SCRIPT } from './inspectScript';
 import { AttachmentChips } from './AttachmentChips';
 import { useToastStore } from '../../stores/toast-store';
+import { useSessionStore } from '../../stores/session-store';
 import { useKeybinding } from '../../hooks/useKeybinding';
 import { PopOutButton } from '../../pop-out/PopOutButton';
 import { browserPartitionForWorktree } from '../../../shared/browser-partition';
@@ -43,13 +44,19 @@ interface BrowserPaneProps {
 }
 
 export function BrowserPane({ sessionId, taskId, cwd, projectId }: BrowserPaneProps) {
+  // Bumped by the browser-pane request bridge after `kangentic_browser_open_pane`
+  // seeds this task's URL in main. Without it a pane already mounted on its empty
+  // state would never see the seeded URL, since the fetch keys on taskId +
+  // projectId and neither changed. A refetch, never a remount: a remount would
+  // destroy the guest along with the agent's CDP session.
+  const urlRefreshToken = useSessionStore((state) => state.browserUrlRefreshTokens[taskId] ?? 0);
   const {
     loading: urlLoading,
     effectiveUrl,
     projectDefault,
     saveForProject,
     recordNavigation,
-  } = useBrowserUrl(taskId, projectId);
+  } = useBrowserUrl(taskId, projectId, urlRefreshToken);
 
   if (urlLoading) {
     return (

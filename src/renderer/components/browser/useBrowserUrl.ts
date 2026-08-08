@@ -31,7 +31,15 @@ export interface UseBrowserUrlResult {
   recordNavigation: (url: string) => void;
 }
 
-export function useBrowserUrl(taskId: string, projectId: string | null): UseBrowserUrlResult {
+/**
+ * @param refreshToken Bump to force a refetch without remounting. Used by the
+ *   `kangentic_browser_open_pane` bridge: main seeds the task's URL sidecar and
+ *   then asks the renderer to show the pane, which is invisible to a fetch keyed
+ *   only on `[taskId, projectId]` when the pane is already mounted on its empty
+ *   state. A refetch is safe where a remount is not - both guards below hold, so
+ *   a live pane's guest is never torn down.
+ */
+export function useBrowserUrl(taskId: string, projectId: string | null, refreshToken = 0): UseBrowserUrlResult {
   const [projectDefault, setProjectDefault] = useState<string | null>(null);
   const [taskOverride, setTaskOverride] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -65,7 +73,7 @@ export function useBrowserUrl(taskId: string, projectId: string | null): UseBrow
       .catch(() => { /* leave defaults; UI shows empty state */ })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [taskId, projectId]);
+  }, [taskId, projectId, refreshToken]);
 
   const saveForProject = useCallback(async (url: string) => {
     const existing = await window.electronAPI.config.getProjectOverrides();

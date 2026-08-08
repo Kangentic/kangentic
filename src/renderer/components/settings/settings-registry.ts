@@ -107,7 +107,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'git.prRefreshIntervalMinutes', tabId: 'git', label: 'Auto-refresh PRs', description: 'How often to refresh linked PR state in the background', scope: 'project', keywords: ['pull request', 'pr', 'refresh', 'poll', 'merged', 'sync', 'stale'] },
 
   // ── Browser ──
-  { id: 'browser.enabled', tabId: 'browser', label: 'Enable Browser Pane', description: 'Show the Browser pill in task detail headers. Disable for security-sensitive projects that should not embed external sites.', scope: 'project', keywords: ['webview', 'embedded', 'preview', 'disable', 'security'] },
+  { id: 'browser.enabled', tabId: 'browser', label: 'Enable Browser Pane', description: 'Show the Browser pill in task detail headers, and let agents open the pane themselves. Disable for security-sensitive projects that should not embed external sites.', scope: 'project', keywords: ['webview', 'embedded', 'preview', 'disable', 'security', 'agent'] },
   { id: 'browser.defaultUrl', tabId: 'browser', label: 'Default URL', description: 'Project default URL when a task has no per-task override. Auto-saved when you first navigate the Browser pane.', scope: 'project', keywords: ['webview', 'preview', 'localhost', 'dev server', 'url'] },
   { id: 'browser.clearStorage', tabId: 'browser', label: 'Clear Browser Data', description: 'Wipe cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the embedded browser. Saved URLs are kept.', scope: 'global', keywords: ['cookies', 'cache', 'reset', 'logout', 'sign out', 'storage', 'privacy', 'wipe'] },
 

@@ -106,11 +106,18 @@ function automationConfig(): ResolvedBrowserAutomationConfig {
 
 /**
  * Minimal valid arguments per tool, so every registered tool can actually be
- * invoked. `null` marks the ONE tool that legitimately does not route through
- * withGuest (see .claude/rules/browser-automation-driver.md).
+ * invoked. `null` marks a tool that legitimately does not route a target
+ * through withGuest here (see .claude/rules/browser-automation-driver.md):
+ * `list_panes` is a pure registry read, `close_pane` mutates renderer pane
+ * state and attaches no CDP, and `open_pane` refuses before any target
+ * resolution when the caller has no task - which is the case in this harness,
+ * so it never reaches the withGuest spy either. `open_pane`'s own scoping is
+ * covered by tests/unit/browser-pane-opener.test.ts.
  */
 const MINIMAL_ARGS: Record<string, Record<string, unknown> | null> = {
   kangentic_browser_list_panes: null,
+  kangentic_browser_open_pane: null,
+  kangentic_browser_close_pane: null,
   kangentic_browser_navigate: { url: 'http://localhost:1' },
   kangentic_browser_screenshot: {},
   kangentic_browser_screenshot_element: { selector: 'body' },
@@ -183,7 +190,7 @@ describe('kangentic_browser_* caller scoping', () => {
         `${tool.name} has no MINIMAL_ARGS entry: decide its caller scoping before it ships`,
       ).toBe(true);
       const args = MINIMAL_ARGS[tool.name];
-      if (args === null) continue; // list_panes: registry read only, no withGuest
+      if (args === null) continue; // no withGuest target here; see MINIMAL_ARGS
       vi.mocked(withGuest).mockClear();
       await client.callTool({ name: tool.name, arguments: args });
       expect(lastSelector().projectId, `${tool.name} did not scope its selector`).toBe(

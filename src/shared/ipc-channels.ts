@@ -361,6 +361,18 @@ export const IPC = {
   // place that knows taskId + sessionId + the guest's getWebContentsId().
   BROWSER_PANE_REGISTER: 'browser:paneRegister',
   BROWSER_PANE_UNREGISTER: 'browser:paneUnregister',
+  // Main -> renderer: open / close a task's Browser pane on behalf of the
+  // kangentic_browser_open_pane / _close_pane MCP tools. Pane open state is
+  // renderer-owned (`browserOpenTasks`), so main cannot set it directly.
+  //
+  // Fire-and-forget by design. Main validates every precondition itself
+  // (current project, per-project browser.enabled, the task row, the resolved
+  // URL) before pushing, and then awaits the PANE REGISTRY rather than an
+  // acknowledgement - a registered live guest is the only proof the pane is
+  // actually driveable, which a reply could not give. See
+  // `src/main/browser/browser-pane-opener.ts`.
+  BROWSER_PANE_OPEN_REQUEST: 'browser:paneOpenRequest',
+  BROWSER_PANE_CLOSE_REQUEST: 'browser:paneCloseRequest',
 
   // Updater
   UPDATE_CHECK: 'updater:check',

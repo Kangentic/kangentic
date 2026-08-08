@@ -128,8 +128,16 @@ describe('buildServerInstructions - browser section', () => {
     expect(instructions).toContain('external or desktop browser-automation tool');
     // Guard against proactive driving (the "do not drive" contract).
     expect(instructions).toContain('Do not drive the browser proactively');
-    // Open-pane discovery advice.
-    expect(instructions).toContain('Browser pill in the task header');
+    // The way out of "no pane open" must be something the AGENT can do. This
+    // used to point at the Browser pill, a UI affordance an agent cannot reach,
+    // which left it no option but to stop and ask the user - the most common
+    // dead end on this whole family. Pin the tool, and pin that the old
+    // ask-the-user advice has not crept back in.
+    expect(instructions).toContain('kangentic_browser_open_pane');
+    expect(instructions).toContain('you do not need to ask the user');
+    expect(instructions).not.toContain('Browser pill in the task header');
+    // Closing is advertised too, so an agent puts the user's layout back.
+    expect(instructions).toContain('kangentic_browser_close_pane');
   });
 
   it('omits the entire BROWSER VERIFICATION section when browser automation is disabled', () => {

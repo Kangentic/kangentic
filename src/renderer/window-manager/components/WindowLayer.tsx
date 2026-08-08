@@ -33,6 +33,7 @@ import { useTaskDetailWindowBridge } from '../bridge/useTaskDetailWindowBridge';
 import { useConversationWindowBridge } from '../bridge/useConversationWindowBridge';
 import { useWindowSessionClaims } from '../bridge/useWindowSessionClaims';
 import { useDetailOwnershipSync } from '../bridge/useDetailOwnershipSync';
+import { useBrowserPaneRequestBridge } from '../bridge/useBrowserPaneRequestBridge';
 import { useProjectStore } from '../../stores/project-store';
 import { useWindowAutoCloseOnDone } from '../bridge/useWindowAutoCloseOnDone';
 import { useWindowFocusReconcile } from '../bridge/useWindowFocusReconcile';
@@ -245,6 +246,7 @@ export function WindowManagerLayer(props: WindowManagerLayerProps) {
  *  instance (the exported singleton), so they are independent of the provider. */
 function BoardBridges(): null {
   useTaskDetailWindowBridge();
+  useBrowserPaneRequestBridge();
   useConversationWindowBridge();
   useWindowSessionClaims();
   useBoardDetailOwnership();

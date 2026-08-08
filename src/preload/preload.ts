@@ -616,6 +616,18 @@ const api: ElectronAPI = {
       ipcRenderer.on(IPC.BROWSER_ZOOM_CHANGED, handler);
       return () => ipcRenderer.removeListener(IPC.BROWSER_ZOOM_CHANGED, handler);
     },
+    onPaneOpenRequest: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, projectId: string, taskId: string) =>
+        callback(projectId, taskId);
+      ipcRenderer.on(IPC.BROWSER_PANE_OPEN_REQUEST, handler);
+      return () => ipcRenderer.removeListener(IPC.BROWSER_PANE_OPEN_REQUEST, handler);
+    },
+    onPaneCloseRequest: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, projectId: string, taskIds: string[]) =>
+        callback(projectId, taskIds);
+      ipcRenderer.on(IPC.BROWSER_PANE_CLOSE_REQUEST, handler);
+      return () => ipcRenderer.removeListener(IPC.BROWSER_PANE_CLOSE_REQUEST, handler);
+    },
   },
 
   search: {

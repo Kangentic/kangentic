@@ -23,6 +23,10 @@ declare global {
       getTaskUrlProject: (taskId: string) => string | null;
       /** Fire the main-process zoom broadcast at one specific guest. */
       emitZoomChanged: (factor: number, webContentsId: number) => void;
+      /** Fire main's open push, as kangentic_browser_open_pane does. */
+      emitPaneOpenRequest: (projectId: string, taskId: string) => void;
+      /** Fire main's close push, as kangentic_browser_close_pane does. */
+      emitPaneCloseRequest: (projectId: string, taskIds: string[]) => void;
     };
 
     /** Captures the URL most recently submitted by BrowserEmptyState mounts. */

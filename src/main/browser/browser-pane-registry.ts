@@ -94,12 +94,41 @@ export type ResolveTargetResult =
 const FOREIGN_PROJECT_HINT =
   'The kangentic_browser_* tools only drive Browser panes in your own project. Call kangentic_browser_list_panes to see the panes you can drive.';
 
+/**
+ * What to do about `no-pane-open`, addressed to the agent that hit it.
+ *
+ * This used to say "open the Browser pane (the Browser pill in the task header)
+ * and load a URL first", which named a UI affordance an agent cannot reach: the
+ * only way out was to stop and ask the user, and that made this the most common
+ * dead end on the whole family. `kangentic_browser_open_pane` opens the caller's
+ * own pane and navigates it in one call, so the fix is now something the agent
+ * can actually perform. Keep this pointing at the tool, not at the pill.
+ */
+const NO_PANE_OPEN_HINT =
+  'Call kangentic_browser_open_pane with a url to open and load your own task\'s Browser pane, then retry.';
+
 export type ResolveGuestResult =
   | { ok: true; entry: BrowserPaneEntry; webContents: WebContents }
   | { ok: false; kind: 'pane-destroyed'; detail: string };
 
 export class BrowserPaneRegistry {
   private readonly panes = new Map<string, BrowserPaneEntry>();
+
+  /**
+   * Callbacks re-evaluated on every membership change, so a main-process caller
+   * can await a pane appearing or going away instead of polling.
+   *
+   * This is what makes `kangentic_browser_open_pane` able to return only once
+   * the pane is actually driveable: pane registration is renderer-driven and
+   * asynchronous (it lands on the guest's `dom-ready`), so main has no other
+   * signal that the push it sent took effect.
+   */
+  private readonly waiters = new Set<() => void>();
+
+  private notifyWaiters(): void {
+    // Iterate a copy: a waiter that settles removes itself from the set.
+    for (const waiter of [...this.waiters]) waiter();
+  }
 
   register(input: {
     sessionId: string;
@@ -116,10 +145,12 @@ export class BrowserPaneRegistry {
       url: input.url,
       registeredAt: Date.now(),
     });
+    this.notifyWaiters();
   }
 
   unregister(sessionId: string): void {
     this.panes.delete(sessionId);
+    this.notifyWaiters();
   }
 
   /** Unregister sessionId's pane ONLY if its current entry still has this exact
@@ -131,6 +162,7 @@ export class BrowserPaneRegistry {
     const entry = this.panes.get(sessionId);
     if (entry && entry.webContentsId === webContentsId) {
       this.panes.delete(sessionId);
+      this.notifyWaiters();
     }
   }
 
@@ -139,6 +171,7 @@ export class BrowserPaneRegistry {
     for (const [sessionId, entry] of this.panes) {
       if (entry.webContentsId === webContentsId) {
         this.panes.delete(sessionId);
+        this.notifyWaiters();
         return;
       }
     }
@@ -256,7 +289,7 @@ export class BrowserPaneRegistry {
         return {
           ok: false,
           kind: 'no-pane-open',
-          detail: `No Browser pane is registered for session ${selector.sessionId}. Open the task's Browser pane (the Browser pill in the task header) and load a URL first.`,
+          detail: `No Browser pane is registered for session ${selector.sessionId}. ${NO_PANE_OPEN_HINT}`,
         };
       }
       if (!this.inScope(entry, scope)) {
@@ -285,7 +318,7 @@ export class BrowserPaneRegistry {
         return {
           ok: false,
           kind: 'no-pane-open',
-          detail: `No Browser pane is open for task ${selector.taskId}. Open the task's Browser pane (the Browser pill in the task header) and load a URL first.`,
+          detail: `No Browser pane is open for task ${selector.taskId}. ${NO_PANE_OPEN_HINT}`,
         };
       }
       if (matches.length > 1) {
@@ -336,8 +369,8 @@ export class BrowserPaneRegistry {
     if (inScopePanes.length === 0) {
       const base =
         scope === null
-          ? "No Browser pane is open in any task. Open a task's Browser pane (the Browser pill in the task header) and load a URL first."
-          : "No Browser pane is open in this project. Open a task's Browser pane (the Browser pill in the task header) and load a URL first.";
+          ? `No Browser pane is open in any task. ${NO_PANE_OPEN_HINT}`
+          : `No Browser pane is open in this project. ${NO_PANE_OPEN_HINT}`;
       // Never strand a pane silently: an entry with no project recorded is
       // unreachable from a scoped caller, so say so and say how to fix it.
       const skipped =
@@ -399,6 +432,72 @@ export class BrowserPaneRegistry {
   }
 
   /**
+   * Resolve when `predicate` holds, or after `timeoutMs`. Re-evaluated on every
+   * membership change rather than polled. Follows the bounded-await discipline
+   * used across the main process (see `cdp.ts`'s screenshot race): the timer is
+   * always cleared on the settling path, so no waiter outlives its deadline.
+   */
+  private waitFor(predicate: () => boolean, timeoutMs: number): Promise<boolean> {
+    if (predicate()) return Promise.resolve(true);
+    return new Promise<boolean>((resolve) => {
+      const check = (): void => {
+        if (!predicate()) return;
+        this.waiters.delete(check);
+        clearTimeout(timer);
+        resolve(true);
+      };
+      // Declared after `check` but initialized before the waiter is registered,
+      // so `check` can never run while it is still in its temporal dead zone.
+      // The whole executor is synchronous, so no notification can slip between
+      // the timer and the `waiters.add` below - do not "fix" this ordering.
+      const timer = setTimeout(() => {
+        this.waiters.delete(check);
+        resolve(false);
+      }, timeoutMs);
+      this.waiters.add(check);
+    });
+  }
+
+  /**
+   * Wait for a pane belonging to `taskId` in `projectId` to become driveable,
+   * returning its entry or null on timeout.
+   *
+   * The predicate requires a LIVE guest, not merely a registry entry. A stale
+   * entry is only evicted by `resolveLiveGuest` on a drive call, so a
+   * presence-only wait could resolve against a destroyed guest and hand the
+   * caller a pane whose very next command fails `pane-destroyed` - exactly the
+   * dead end the open tool exists to remove.
+   */
+  async waitForLivePane(
+    target: { taskId: string; projectId: string },
+    timeoutMs: number,
+  ): Promise<BrowserPaneEntry | null> {
+    const findLive = (): BrowserPaneEntry | null => {
+      for (const entry of this.panes.values()) {
+        if (entry.taskId !== target.taskId) continue;
+        if (entry.projectId !== target.projectId) continue;
+        const guest = electronWebContents.fromId(entry.webContentsId);
+        if (!guest || guest.isDestroyed()) continue;
+        return entry;
+      }
+      return null;
+    };
+    await this.waitFor(() => findLive() !== null, timeoutMs);
+    return findLive();
+  }
+
+  /**
+   * Wait for every named pane to unregister. Returns the sessionIds still
+   * registered when the wait ends, so a caller can report what it actually
+   * closed rather than assuming the push landed.
+   */
+  async waitForPanesGone(sessionIds: readonly string[], timeoutMs: number): Promise<string[]> {
+    const stillRegistered = (): string[] => sessionIds.filter((sessionId) => this.panes.has(sessionId));
+    await this.waitFor(() => stillRegistered().length === 0, timeoutMs);
+    return stillRegistered();
+  }
+
+  /**
    * Synchronously detach every attached debugger. Wired into the synchronous
    * `before-quit` path (see .claude/rules/synchronous-shutdown.md): no await,
    * no network. `detachDebugger` already guards a destroyed webContents.
@@ -409,6 +508,7 @@ export class BrowserPaneRegistry {
       if (guest) detachDebugger(guest);
     }
     this.panes.clear();
+    this.notifyWaiters();
   }
 
   /** Test/diagnostic helper: number of registered panes. */

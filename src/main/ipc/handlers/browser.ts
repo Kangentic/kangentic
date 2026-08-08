@@ -5,9 +5,10 @@ import { IPC } from '../../../shared/ipc-channels';
 import { BROWSER_PARTITION, browserPartitionForWorktree } from '../../../shared/browser-partition';
 import type { BrowserCaptureInput, BrowserPaneRegisterInput } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
-import { resolveProjectContext } from '../helpers/project-repos';
+import { getProjectRepos, resolveProjectContext } from '../helpers/project-repos';
 import { browserUrlStore } from '../../browser/browser-url-store';
 import { browserPaneRegistry } from '../../browser/browser-pane-registry';
+import { setBrowserPaneOpenerHost } from '../../browser/browser-pane-opener';
 import { PasteSubmitError } from '../../pty/terminal-submit';
 import { agentRegistry } from '../../agent/agent-registry';
 import {
@@ -45,6 +46,28 @@ import {
 // Mirrors Chrome DevTools MCP's "snapshot over screenshot" guidance.
 
 export function registerBrowserHandlers(context: IpcContext): void {
+  // Give the pane opener (behind kangentic_browser_open_pane / _close_pane) the
+  // slice of app state it needs. Injected rather than imported so the opener -
+  // and through it the MCP browser tool file - stays free of the IPC context's
+  // whole dependency graph (every handler, analytics, better-sqlite3).
+  setBrowserPaneOpenerHost(() => ({
+    currentProjectId: context.currentProjectId,
+    currentProjectPath: context.currentProjectPath,
+    taskExists: (projectId, taskId) => {
+      try {
+        return getProjectRepos(context, projectId).tasks.getById(taskId) !== undefined;
+      } catch {
+        return false;
+      }
+    },
+    browserOverrides: (projectPath) => context.configManager.loadProjectOverrides(projectPath)?.browser ?? null,
+    send: (channel, ...args) => {
+      if (context.mainWindow.isDestroyed()) return false;
+      context.mainWindow.webContents.send(channel, ...args);
+      return true;
+    },
+  }));
+
   ipcMain.handle(IPC.BROWSER_CAPTURE_SEND, async (_event, input: BrowserCaptureInput) => {
     if (!input.sessionId) throw new Error('captureAndSend requires a sessionId');
     if (!input.pngBase64) throw new Error('captureAndSend requires pngBase64');

@@ -365,6 +365,131 @@ describe('BrowserPaneRegistry', () => {
     });
   });
 
+  /**
+   * The completion signal behind `kangentic_browser_open_pane` / `_close_pane`.
+   * Pane registration is renderer-driven and asynchronous, so main has nothing
+   * else to await after it pushes.
+   */
+  describe('waitForLivePane / waitForPanesGone', () => {
+    it('resolves as soon as a matching live pane registers', async () => {
+      seedGuests(fakeGuest(11));
+      const pending = registry.waitForLivePane({ taskId: 'task-1', projectId: 'proj-1' }, 1000);
+      registry.register(REGISTER_A);
+      await expect(pending).resolves.toMatchObject({ sessionId: 'sess-a' });
+    });
+
+    it('resolves immediately when the pane is already up', async () => {
+      registry.register(REGISTER_A);
+      seedGuests(fakeGuest(11));
+      await expect(
+        registry.waitForLivePane({ taskId: 'task-1', projectId: 'proj-1' }, 1000),
+      ).resolves.toMatchObject({ sessionId: 'sess-a' });
+    });
+
+    it('does NOT accept a registered pane whose guest is destroyed', async () => {
+      // The load-bearing case. A stale entry is only evicted by resolveLiveGuest
+      // on a drive call, so a presence-only wait would resolve here and hand the
+      // agent a pane whose very next command fails `pane-destroyed` - exactly
+      // the dead end open_pane exists to remove.
+      registry.register(REGISTER_A);
+      seedGuests(fakeGuest(11, true));
+      await expect(
+        registry.waitForLivePane({ taskId: 'task-1', projectId: 'proj-1' }, 20),
+      ).resolves.toBeNull();
+    });
+
+    it('ignores a same-task pane belonging to another project', async () => {
+      registry.register({ ...REGISTER_A, projectId: 'proj-2' });
+      seedGuests(fakeGuest(11));
+      await expect(
+        registry.waitForLivePane({ taskId: 'task-1', projectId: 'proj-1' }, 20),
+      ).resolves.toBeNull();
+    });
+
+    it('resolves null on timeout when nothing registers', async () => {
+      seedGuests();
+      await expect(
+        registry.waitForLivePane({ taskId: 'task-1', projectId: 'proj-1' }, 20),
+      ).resolves.toBeNull();
+    });
+
+    it('reports the panes still registered when the close wait ends', async () => {
+      registry.register(REGISTER_A);
+      registry.register(REGISTER_B);
+      seedGuests(fakeGuest(11), fakeGuest(22));
+      const pending = registry.waitForPanesGone(['sess-a', 'sess-b'], 40);
+      registry.unregister('sess-a');
+      // sess-b never unregisters, so it must be reported rather than assumed closed.
+      await expect(pending).resolves.toEqual(['sess-b']);
+    });
+
+    it('resolves empty once every named pane unregisters', async () => {
+      registry.register(REGISTER_A);
+      seedGuests(fakeGuest(11));
+      const pending = registry.waitForPanesGone(['sess-a'], 1000);
+      registry.unregisterIfMatches('sess-a', 11);
+      await expect(pending).resolves.toEqual([]);
+    });
+
+    it('wakes a waiter when the GUEST destroys itself, not just on a renderer unregister', async () => {
+      // `unregisterByWebContentsId` is what the guest's own `destroyed` event
+      // is wired to in src/main/index.ts - the backstop that keeps the registry
+      // honest when a renderer cleanup never runs. If it stopped notifying,
+      // close_pane would stall its full 3s and then report a pane that really
+      // did close as `skipped`, which is exactly the misreporting the tool's
+      // design forbids. The 1000ms budget only fails if no notification lands.
+      registry.register(REGISTER_A);
+      seedGuests(fakeGuest(11));
+      const pending = registry.waitForPanesGone(['sess-a'], 1000);
+      registry.unregisterByWebContentsId(11);
+      await expect(pending).resolves.toEqual([]);
+    });
+
+    it('wakes a waiter on detachAll, so shutdown never leaves one hanging', async () => {
+      registry.register(REGISTER_A);
+      seedGuests(fakeGuest(11));
+      const pending = registry.waitForPanesGone(['sess-a'], 1000);
+      registry.detachAll();
+      await expect(pending).resolves.toEqual([]);
+    });
+  });
+
+  /**
+   * The whole point of the open/close tools: `no-pane-open` used to tell the
+   * agent to click a UI pill it cannot reach, so its only move was to stop and
+   * ask the user. The hint must keep naming a tool the agent can actually call.
+   * The sibling copy in server-instructions.ts is pinned the same way.
+   */
+  describe('no-pane-open hint', () => {
+    const hintCases: { name: string; run: () => { ok: boolean; detail?: string } }[] = [
+      {
+        name: 'an unknown sessionId',
+        run: () => registry.resolveTarget({ sessionId: 'nope', projectId: 'proj-1' }) as never,
+      },
+      {
+        name: 'a task with no pane',
+        run: () => registry.resolveTarget({ taskId: 'task-9', projectId: 'proj-1' }) as never,
+      },
+      {
+        name: 'no pane open in the project',
+        run: () => registry.resolveTarget({ projectId: 'proj-1' }) as never,
+      },
+      {
+        name: 'no pane open anywhere (unscoped)',
+        run: () => registry.resolveTarget({ projectId: null }) as never,
+      },
+    ];
+
+    for (const { name, run } of hintCases) {
+      it(`points ${name} at kangentic_browser_open_pane, never the Browser pill`, () => {
+        const result = run();
+        expect(result.ok).toBe(false);
+        expect(result.detail).toContain('kangentic_browser_open_pane');
+        expect(result.detail).not.toContain('Browser pill');
+      });
+    }
+  });
+
   describe('resolveLiveGuest', () => {
     it('returns the live guest when it resolves', () => {
       registry.register(REGISTER_A);

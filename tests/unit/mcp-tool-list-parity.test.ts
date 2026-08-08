@@ -252,15 +252,32 @@ describe('mcp tool annotation parity', () => {
  * interaction, unrelated to the MCP `annotations:` field - so deriving the
  * expected annotation from it (rather than hand-listing tool names) keeps
  * this check honest and self-maintaining as tools are renamed or added.
- * The one non-`drive`-calling tool, kangentic_browser_list_panes, is a pure
- * registry read (discovery), so it is expected read-only too.
+ * Tools that attach no CDP declare no tier, so "no tier" alone cannot tell a
+ * pure registry read apart from a tool that mutates the UI. Those are listed in
+ * NON_DRIVING_TOOL_ANNOTATIONS below with their expected annotation stated by
+ * intent, and a tool that lands there without an entry FAILS - so a future
+ * non-driving tool cannot default its way into read-only.
  */
 describe('mcp browser tool capability-tier annotation parity', () => {
   const BROWSER_TOOLS_PATH = path.join(MCP_HTTP_DIR, 'browser-tools.ts');
 
+  /**
+   * Browser tools that never call the CDP driver, and therefore have no
+   * capability tier to derive an annotation from.
+   *
+   * - `list_panes` reads the pane registry and nothing else.
+   * - `close_pane` clears renderer pane state through an IPC push. It attaches
+   *   no CDP, but it changes what is on the user's screen, so read-only would
+   *   be a lie - and would let it be silently auto-approved in plan mode.
+   */
+  const NON_DRIVING_TOOL_ANNOTATIONS: Record<string, SharedAnnotationToken> = {
+    kangentic_browser_list_panes: 'READ_ONLY_ANNOTATIONS',
+    kangentic_browser_close_pane: 'MUTATING_ANNOTATIONS',
+  };
+
   interface BrowserToolCapability {
     name: string;
-    /** The capability literal passed to drive(), or 'discovery' for the one tool with no drive() call. */
+    /** The declared capability tier, or 'discovery' for a tool that declares none. */
     capability: string;
     annotation: SharedAnnotationToken | null;
   }
@@ -269,7 +286,12 @@ describe('mcp browser tool capability-tier annotation parity', () => {
     const content = fs.readFileSync(BROWSER_TOOLS_PATH, 'utf-8');
     const namePattern = /registerTool\(\s*(['"])([^'"]+)\1/g;
     const annotationPattern = /annotations:\s*(READ_ONLY_ANNOTATIONS|MUTATING_ANNOTATIONS)\b/;
-    const capabilityPattern = /\bdrive(?:<[^>]*>)?\(\s*(['"])([^'"]+)\1/;
+    // Two ways a tool declares its tier: the inline `drive('<tier>', ...)` gate
+    // most of them use, or an explicit `capability: '<tier>'` for a tool whose
+    // withGuest call lives in a helper module (open_pane, whose orchestration is
+    // in browser-pane-opener.ts). Both are load-bearing values the driver gates
+    // on, not annotations restated - so deriving from them stays honest.
+    const capabilityPattern = /\bdrive(?:<[^>]*>)?\(\s*(['"])([^'"]+)\1|\bcapability:\s*(['"])([^'"]+)\3/;
     const matches = [...content.matchAll(namePattern)];
     const results: BrowserToolCapability[] = [];
     for (let index = 0; index < matches.length; index += 1) {
@@ -280,7 +302,7 @@ describe('mcp browser tool capability-tier annotation parity', () => {
       const capabilityMatch = segment.match(capabilityPattern);
       results.push({
         name: matches[index][2],
-        capability: capabilityMatch ? capabilityMatch[2] : 'discovery',
+        capability: capabilityMatch ? (capabilityMatch[2] ?? capabilityMatch[4]) : 'discovery',
         annotation: annotationMatch ? (annotationMatch[1] as SharedAnnotationToken) : null,
       });
     }
@@ -293,14 +315,30 @@ describe('mcp browser tool capability-tier annotation parity', () => {
     expect(collectBrowserToolCapabilities().length).toBeGreaterThan(0);
   });
 
+  it('every tool that declares no capability tier is classified deliberately', () => {
+    // Without this, a new non-driving tool would silently inherit the read-only
+    // default - the exact mis-annotation that gets auto-approved in plan mode.
+    const unclassified = collectBrowserToolCapabilities()
+      .filter((tool) => tool.capability === 'discovery')
+      .map((tool) => tool.name)
+      .filter((name) => !(name in NON_DRIVING_TOOL_ANNOTATIONS))
+      .sort();
+    expect(
+      unclassified,
+      `These kangentic_browser_* tools declare no capability tier (no drive() call and no `
+        + `capability: literal). Either route them through the driver, or add them to `
+        + `NON_DRIVING_TOOL_ANNOTATIONS with the annotation their real effect deserves:\n`
+        + unclassified.join('\n'),
+    ).toEqual([]);
+  });
+
   it('every browser tool is annotated per its documented capability tier', () => {
     const capabilities = collectBrowserToolCapabilities();
     const mismatched = capabilities
       .filter((tool) => {
         const expectedAnnotation: SharedAnnotationToken =
-          tool.capability === 'observe' || tool.capability === 'discovery'
-            ? 'READ_ONLY_ANNOTATIONS'
-            : 'MUTATING_ANNOTATIONS';
+          NON_DRIVING_TOOL_ANNOTATIONS[tool.name]
+          ?? (tool.capability === 'observe' ? 'READ_ONLY_ANNOTATIONS' : 'MUTATING_ANNOTATIONS');
         return tool.annotation !== expectedAnnotation;
       })
       .map((tool) => `${tool.name} (capability=${tool.capability}, annotation=${tool.annotation ?? 'unannotated'})`)

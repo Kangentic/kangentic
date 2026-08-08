@@ -52,8 +52,18 @@ are intentionally not part of this surface.
   (`create` / `update` / `delete` / `move` / `promote` / `link`) is annotated mutating - so a tool
   can never ship unannotated (which would prompt on every plan-mode call) or with a mutation
   dishonestly marked read-only (which would be silently auto-approved in plan mode). Runs in CI via
-  `npm run test:unit`. Because the rule is path-scoped, a brand-new `*-tools.ts` file does not
-  pre-load this rule (the read-trigger gap); the CI test is the real guarantee.
+  `npm run test:unit`.
+
+  The `kangentic_browser_*` family is checked separately, because none of its names carry a
+  recognized mutating verb. Its annotation is derived from the capability tier the tool declares -
+  either the inline `drive('<tier>', ...)` gate or an explicit `capability: '<tier>'` for a tool whose
+  `withGuest` call lives in a helper module. A tool that declares NO tier (it attaches no CDP) must be
+  listed in the test's `NON_DRIVING_TOOL_ANNOTATIONS` with the annotation its real effect deserves, and
+  an unlisted one fails: `list_panes` is a pure registry read (read-only) while `close_pane` mutates
+  renderer pane state (mutating), so "no tier" alone cannot be allowed to default to read-only.
+
+  Because the rule is path-scoped, a brand-new `*-tools.ts` file does not pre-load this rule (the
+  read-trigger gap); the CI test is the real guarantee.
 - **Review:** `/code-review` flags a new `registerTool` call site without a matching manifest entry,
   and the `doc-auditor` agent reports a tool missing from `docs/mcp-server.md`.
 

@@ -322,7 +322,7 @@ All context bar settings are global-only and cannot be overridden per-project.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `browser.enabled` | boolean | `true` | Show the Browser pill in task detail headers. Disable for security-sensitive projects that should not embed external sites. Per-project overridable (stored per-project; not seeded into new projects). |
+| `browser.enabled` | boolean | `true` | Show the Browser pill in task detail headers, and let agents open the pane (`kangentic_browser_open_pane` refuses with `browser-pane-disabled` when off). Disable for security-sensitive projects that should not embed external sites. Per-project overridable (stored per-project; not seeded into new projects). |
 | `browser.defaultUrl` | string \| undefined | `undefined` | Project default URL when a task has no per-task URL override. Auto-saved when the user first navigates the Browser pane. Per-project overridable (stored per-project; not seeded into new projects). |
 
 **Action (not a config key):** the Browser tab also exposes a destructive **Clear Browser Data** button (registry id `browser.clearStorage`) that wipes cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches across the per-worktree embedded browser partitions (`persist:kngbrowser-<hash(worktreePath)>`) plus the legacy shared jar (`persist:kangentic-browser`). Saved URLs are kept. Backed by the `browser:clearStorage` IPC channel; not persisted in `AppConfig`.

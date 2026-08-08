@@ -47,6 +47,8 @@
   let browserCaptureCalls = [];
   let browserPaneCalls = [];
   let browserZoomSubscribers = [];
+  let browserPaneOpenSubscribers = [];
+  let browserPaneCloseSubscribers = [];
   // Pop-out engine call log: open/close/focus invocations, so a test can
   // assert the title-bar / surface-header trigger called the right verb
   // (e.g. focus() instead of toggling the in-app overlay) without a real
@@ -3617,6 +3619,24 @@
           if (index >= 0) browserZoomSubscribers.splice(index, 1);
         };
       },
+      // Main -> renderer pane open/close pushes, behind the
+      // kangentic_browser_open_pane / _close_pane MCP tools. The UI tier has no
+      // main process, so a test drives them through the emit helpers below
+      // (window.__mockBrowser.emitPaneOpenRequest(projectId, taskId)).
+      onPaneOpenRequest: function (callback) {
+        browserPaneOpenSubscribers.push(callback);
+        return function () {
+          const index = browserPaneOpenSubscribers.indexOf(callback);
+          if (index >= 0) browserPaneOpenSubscribers.splice(index, 1);
+        };
+      },
+      onPaneCloseRequest: function (callback) {
+        browserPaneCloseSubscribers.push(callback);
+        return function () {
+          const index = browserPaneCloseSubscribers.indexOf(callback);
+          if (index >= 0) browserPaneCloseSubscribers.splice(index, 1);
+        };
+      },
     },
 
     // Platform string. Defaults to 'win32' (matches the most common dev
@@ -3645,6 +3665,11 @@
       browserCaptureCalls = [];
       browserPaneCalls = [];
       browserZoomSubscribers = [];
+      // NOT reset: the pane open/close subscribers are registered once by
+      // useBrowserPaneRequestBridge at app mount, long before a test calls
+      // reset(). Clearing them here would silently unsubscribe the bridge and
+      // every emitted push would land nowhere. (The zoom subscribers above are
+      // per-pane, so they re-register when a pane remounts.)
       // Also drop any project-level browser default that the empty-state
       // submit path auto-seeded via saveForProject -- otherwise the next
       // test's BrowserPane.useBrowserUrl resolves an effectiveUrl from the
@@ -3673,6 +3698,18 @@
     emitZoomChanged: function (factor, webContentsId) {
       browserZoomSubscribers.slice().forEach(function (callback) {
         callback(factor, webContentsId);
+      });
+    },
+    /** Fire main's "open this task's Browser pane" push (kangentic_browser_open_pane). */
+    emitPaneOpenRequest: function (projectId, taskId) {
+      browserPaneOpenSubscribers.slice().forEach(function (callback) {
+        callback(projectId, taskId);
+      });
+    },
+    /** Fire main's "close these Browser panes" push (kangentic_browser_close_pane). */
+    emitPaneCloseRequest: function (projectId, taskIds) {
+      browserPaneCloseSubscribers.slice().forEach(function (callback) {
+        callback(projectId, taskIds);
       });
     },
   };

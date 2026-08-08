@@ -85,6 +85,7 @@ so either would unmount the `<webview>` and destroy the guest. Auto-save: every 
 
 Shipped MCP tools let an agent drive THIS pane: screenshot, click, type, keypress, query DOM, read console, wait, navigate, and (opt-in) eval against the dev server the user has loaded. This closes the verify loop without a Kangentic-managed preview.
 
+- **Opening and closing the pane:** an agent opens its OWN task's pane with `kangentic_browser_open_pane` and puts panes away with `kangentic_browser_close_pane`, so hitting `no-pane-open` is no longer a dead end that forces it to stop and ask the user. Pane open state is renderer-owned (`browserOpenTasks`) while the MCP server is main-process, so this crosses the process boundary: `src/main/browser/browser-pane-opener.ts` validates every precondition in main (the open project, the per-project `browser.enabled` gate, the task row, the URL), pushes `BROWSER_PANE_OPEN_REQUEST` / `BROWSER_PANE_CLOSE_REQUEST` fire-and-forget, and then awaits the PANE REGISTRY rather than an acknowledgement. That is deliberate: a reply saying "I set the flag" would not mean the pane is driveable, whereas a registered live guest does. The renderer half is `useBrowserPaneRequestBridge` (mounted by `WindowLayer`'s `BoardBridges`), which opens the pane before requesting the window so the window mounts with the pane already showing rather than changing tree shape one commit later. Opening seeds the task's URL sidecar first, because a pane with no URL renders the empty state and registers no guest at all. See [mcp-server.md](mcp-server.md) for the tools' arguments and scoping.
 - **Registration:** the renderer registers each open pane's guest webContents id (`webview.getWebContentsId()`) with the main process on `dom-ready`, via `BROWSER_PANE_REGISTER` / `BROWSER_PANE_UNREGISTER` IPC, and unregisters on unmount. The main-process pane registry (`src/main/browser/browser-pane-registry.ts`) maps the guest to its taskId/sessionId so the tools can target the right pane; main also tracks the guest's own `destroyed` / `did-navigate` so the registry stays honest across a hard reload. The tracked URL is a fallback, not the reported value: `kangentic_browser_list_panes` reads each pane's URL live from the guest, because `did-navigate` never fires for same-document navigation and a dev server's SPA routing, `pushState`, and fragment changes would otherwise leave the cache reporting a URL the pane had left. The cache is used only when the guest is gone or has no URL to report yet.
 - **Driving (in-process):** the driver (`src/main/browser/browser-pane-driver.ts`) resolves the target, attaches Chrome DevTools Protocol to the guest webContents, and runs the shared CDP helpers in `src/main/browser/cdp/` (the same content-agnostic driver the dev inspection bridge uses through a compat shim). No HTTP bridge, no lockfile: the pane is in the same process as the MCP server. Debuggers detach synchronously on `before-quit`.
 - **Gating:** the global **Agent Browser** settings tab (master enable + per-capability switches: interaction, navigation, eval, restrict-to-localhost) is read live per tool call. `eval` is off by default. See [mcp-server.md](mcp-server.md) and `.claude/rules/browser-automation-driver.md`.
@@ -109,7 +110,7 @@ The webview is a regular Chromium browser context. WebSocket, ES modules, fetch 
 ## Settings
 
 - `AppConfig.browser.defaultUrl` (project-overridable) - fallback URL when the task has no override.
-- `AppConfig.browser.enabled` (project-overridable) - when `false`, the Browser pill in `TaskDetailHeader` is hidden. Default `true`.
+- `AppConfig.browser.enabled` (project-overridable) - when `false`, the Browser pill in `TaskDetailHeader` is hidden AND `kangentic_browser_open_pane` refuses with `browser-pane-disabled`. The MCP side is enforced in main rather than left to the UI: `TaskDetailBody` renders the pane on its open flag alone, so a pane opened while this gate is off would show with no pill beside it, and the pill is the user's only way to close it. Default `true`.
 - **Clear Browser Data** - destructive action backed by `IPC.BROWSER_CLEAR_STORAGE` (`src/main/ipc/handlers/browser.ts`). Calls `session.fromPartition(BROWSER_PARTITION).clearStorageData(...)` for cookies, localStorage, IndexedDB, shadercache, cachestorage, and serviceworkers, then `clearCache()` and `clearAuthCache()`. Wrapped in a danger-variant `ConfirmDialog` with `showDontAskAgain: false` (a one-shot destructive action should not be suppressible). Per-task URL overrides (`.kangentic/browser-urls.json`) and the project default URL are intentionally left alone. Those are workflow state, not browsing identity. The success toast prompts the user to reload any open browser pane to apply the cleared state, since `clearStorageData` does not refresh in-flight documents.
 
 The Browser tab in `AppSettingsPanel` (per-project, above the separator) exposes all three. Future additions (per-task draw color, capture history) belong here.
@@ -160,6 +161,7 @@ src/main/
   pty/write-queue.ts                        bracketed-paste-aware chunking
   browser/browser-url-store.ts              per-task URL overrides
   browser/browser-pane-registry.ts          open panes by sessionId; caller-scoped target resolution
+  browser/browser-pane-opener.ts            open/close a pane for the caller's task (MCP lifecycle tools)
   browser/browser-pane-driver.ts            withGuest: policy gate, resolve, CDP attach, error envelope
   browser/browser-automation-config.ts      resolved Agent Browser policy
   browser/cdp/                              the single shared CDP driver (+ bounded screenshot)
@@ -176,6 +178,7 @@ src/renderer/components/browser/
 
 src/renderer/window-manager/
   bridge/retained-task-snapshots.ts         frozen task rows a retained window renders from
+  bridge/useBrowserPaneRequestBridge.ts     applies main's open/close pane pushes to browserOpenTasks
   components/
   TaskDetailWindow.tsx                      browser/changes mutually exclusive (task detail is now a modeless window)
 src/renderer/components/dialogs/

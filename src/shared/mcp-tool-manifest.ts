@@ -96,6 +96,8 @@ export const MCP_TOOL_MANIFEST: McpToolManifestEntry[] = [
 
   // ── Browser Automation (browser-tools.ts) ──
   { name: 'kangentic_browser_list_panes', label: 'List Browser Panes', blurb: 'open embedded Browser panes and their URLs', category: 'browser' },
+  { name: 'kangentic_browser_open_pane', label: 'Open Browser Pane', blurb: "open the agent's own task Browser pane and load a URL", category: 'browser' },
+  { name: 'kangentic_browser_close_pane', label: 'Close Browser Pane', blurb: 'put Browser panes away, one or all in the project', category: 'browser' },
   { name: 'kangentic_browser_navigate', label: 'Navigate', blurb: 'point a task Browser pane at a URL', category: 'browser' },
   { name: 'kangentic_browser_screenshot', label: 'Screenshot', blurb: 'capture the Browser pane as an image', category: 'browser' },
   { name: 'kangentic_browser_screenshot_element', label: 'Screenshot Element', blurb: 'capture a single element in the Browser pane', category: 'browser' },

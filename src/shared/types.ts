@@ -5020,6 +5020,23 @@ export interface ElectronAPI {
     /** Ctrl+wheel zoom applied to a guest. `webContentsId` identifies WHICH pane,
      *  since one window can host several and each must ignore the others'. */
     onZoomChanged: (callback: (factor: number, webContentsId: number) => void) => () => void;
+    /**
+     * Main asking this renderer to open a task's Browser pane, on behalf of the
+     * `kangentic_browser_open_pane` MCP tool. Main has already validated the
+     * project, the per-project browser gate, the task, and the URL (which it
+     * seeded into the task sidecar), so the handler's only job is to set the
+     * pane open and make sure a task-detail window exists for it.
+     */
+    onPaneOpenRequest: (callback: (projectId: string, taskId: string) => void) => () => void;
+    /**
+     * Main asking this renderer to close Browser panes, on behalf of
+     * `kangentic_browser_close_pane`. The taskIds are computed by main from the
+     * pane registry: the renderer must not re-derive them, because
+     * `browserOpenTasks` is not project-keyed and the board store only holds the
+     * OPEN project's tasks, so a backgrounded project's retained pane would be
+     * invisible to a board lookup.
+     */
+    onPaneCloseRequest: (callback: (projectId: string, taskIds: string[]) => void) => () => void;
   };
 
   // Search

@@ -810,16 +810,48 @@ Enumerate worktrees for one or every registered project. Each `WorktreeRecord` c
 
 These **shipped** tools let an agent drive the embedded **Browser pane** of a task (an Electron `<webview>` showing the user's own dev server, e.g. `ng serve` on `http://localhost:4200`). They are distinct from the dev-only `kangentic_devtools_*` tools below, which debug Kangentic itself. They attach Chrome DevTools Protocol to the pane's guest webContents in-process (no HTTP bridge, no lockfile). Implementation: `src/main/agent/mcp-http/browser-tools.ts` plus `src/main/browser/` (pane registry, driver, shared CDP driver).
 
-Targeting is scoped to the connection's own project (the `<projectId>` segment of the MCP URL). Every tool takes an optional `sessionId` or `taskId`, which must name a pane in that project; one in another project is refused with the `foreign-project` error kind. Omit both and resolution walks a precedence chain: the pane registered under the caller's own sessionId, then the caller's own taskId (a separate step so a session rotation such as `/clear` still finds the task's pane), then the single pane open in the project (errors with candidates when more than one is open). A step that matches nothing falls through to the next, so a caller with no session segment (a human-driven client, or the two-segment `.kangentic/mcp-config.json` URL) still resolves normally. The family deliberately has no `project` argument, so there is no way to reach another project's pane. `kangentic_browser_list_panes` lists the panes you can drive.
+Targeting is scoped to the connection's own project (the `<projectId>` segment of the MCP URL). Every tool that targets an existing pane takes an optional `sessionId` or `taskId`, which must name a pane in that project; one in another project is refused with the `foreign-project` error kind. (`kangentic_browser_open_pane` is the exception: it takes neither, because it always targets the caller's own task - see below.) Omit both and resolution walks a precedence chain: the pane registered under the caller's own sessionId, then the caller's own taskId (a separate step so a session rotation such as `/clear` still finds the task's pane), then the single pane open in the project (errors with candidates when more than one is open). A step that matches nothing falls through to the next, so a caller with no session segment (a human-driven client, or the two-segment `.kangentic/mcp-config.json` URL) still resolves normally. The family deliberately has no `project` argument, so there is no way to reach another project's pane. `kangentic_browser_list_panes` lists the panes you can drive.
 
 Gating: the global **Agent Browser** settings tab controls the family, read live per request. `browserAutomation.enabled` is the master switch: when off, the entire `kangentic_browser_*` family is not registered, so the tools never appear in `tools/list` and the instructions omit their guidance section (they would be unusable anyway, and advertising them is wasted context). When `enabled` is on, the sub-capability gates apply: `allowInteraction` gates click/type/keypress/drag (off = observe-only); `allowNavigation` gates navigate; `allowEval` gates eval (off by default); `restrictNavigationToLocalhost` confines navigation to localhost/private hosts (off by default). With `enabled` on, each tool returns an actionable `{ kind, detail }` error when one of those sub-capabilities is gated off, when no driveable pane exists (`no-pane-open`), when the named pane belongs to another project (`foreign-project`), or when the window holding the pane is minimized and therefore composites no frames (`pane-not-rendering`). Screenshots have a further constraint: a window that is hidden or fully occluded also stops compositing, and Electron cannot report that to the main process, so `pane-not-rendering` does not catch it. Those captures instead fail after a short bound with a `driver-error` telling the user to bring the window to the front. Non-pixel tools (`query_dom`, `click`, `type`, and the rest) are unaffected and keep working against a backgrounded pane.
 
-Tool categories (14 tools):
+Tool categories (16 tools):
 - **Discovery:** `kangentic_browser_list_panes` - list the Browser panes open in your project and their URLs. Each entry carries `sameProject` and `driveable`, and the response reports `otherProjectPaneCount` / `unknownProjectPaneCount` so an empty list is never mistaken for an idle machine. Pass `includeOtherProjects: true` to also list other projects' panes, which are visible but not driveable
+- **Lifecycle:** `kangentic_browser_open_pane`, `kangentic_browser_close_pane` - open and put away panes (below)
 - **Navigate:** `kangentic_browser_navigate` - point the pane at an http(s) URL
 - **Observe:** `kangentic_browser_screenshot`, `kangentic_browser_screenshot_element`, `kangentic_browser_query_dom`, `kangentic_browser_query_all`, `kangentic_browser_bounding_box`, `kangentic_browser_console`, `kangentic_browser_wait`
 - **Interact:** `kangentic_browser_click`, `kangentic_browser_type`, `kangentic_browser_keypress`, `kangentic_browser_drag`
 - **Eval:** `kangentic_browser_eval` - evaluate a JavaScript expression in the loaded page; gated by `browserAutomation.allowEval`
+
+### Opening and closing a pane
+
+`kangentic_browser_open_pane` opens the Browser pane for the **caller's own task** and loads a URL, so an agent that hits `no-pane-open` can get itself unstuck instead of stopping to ask the user. It takes no `sessionId` / `taskId`: naming another task is exactly the cross-project hole the caller-scoping work closed, so the target is always the caller's own task and there is no argument that can widen it.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `url` | string | No | Absolute http(s) URL to load. Falls back to the task's saved Browser URL, then the project default. |
+
+The URL is part of the same call by necessity: a pane with no URL renders the empty state and registers no `<webview>` guest, so it is invisible to `list_panes`, `navigate`, `screenshot`, and every other tool in the family. An open-without-navigate would strand the agent in a state nothing can act on. When no `url` is passed and neither fallback exists, the tool fails with `no-url` rather than opening an unusable pane.
+
+Behavior worth knowing:
+
+- **It opens the task's detail window if one is not already open.** That changes what is on the user's screen, which is deliberate: refusing would put the agent right back at the dead end this tool exists to remove.
+- **It returns only once the pane is registered and driveable**, resolved through the same `withGuest` chokepoint every driving tool uses, so the agent's very next call cannot race it. The wait is bounded (10s), after which it fails with `pane-open-timeout`. The one exception is a call that navigates nothing (the pane is already open and no `url` was passed): that returns the pane's registry status directly, having confirmed the guest is live but not that it is driveable.
+- **It is idempotent.** Called again with a different `url`, it navigates the existing pane rather than reopening it; the response's `opened` / `navigated` flags say which happened.
+- **It carries the `navigate` capability tier**, since it always loads a URL. Turning off "Allow navigation" in the Agent Browser settings therefore disables this tool too. The tier is checked before anything happens, so a gated-off call never opens a window or seeds a URL first.
+- Refusals it can return besides the shared ones: `no-caller-task` (the connection is not bound to a task, e.g. a Command Terminal), `project-not-open` (the caller's project is not the one currently open in Kangentic, so no window can be mounted for its tasks), `browser-pane-disabled` (the project has the Browser pane turned off), `task-not-found`, and `no-url`.
+
+`kangentic_browser_close_pane` puts panes away exactly as the user's Browser pill does. It closes the pane, never the task-detail window hosting it.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `sessionId` | string | No | Close the pane for this session. |
+| `taskId` | string | No | Close the pane for this task. |
+| `all` | boolean | No | Close every pane in scope instead of a single target. Use for "close all browsers". Takes precedence over `sessionId` / `taskId`, which are ignored when set. |
+| `includeOtherProjects` | boolean | No | Also close panes belonging to other projects. Widens `all` and an explicitly named target; it does not widen a bare no-argument call, which always means "my own pane". Default false. |
+
+With no arguments it resolves the caller's own pane through the same precedence chain the driving tools use. Unlike opening, it does **not** require the caller's project to be the one currently open: retention keeps a backgrounded project's panes alive, and those are exactly what a "close everything" request should reach.
+
+Scope is the caller's project by default, and the response always names the scope it applied (`this-project` / `all-projects`) plus `otherProjectPaneCount` for what it left alone, so a partial close is never reported as complete. `includeOtherProjects: true` is the explicit opt-in for a genuinely global close; it is off by default because another project may have an agent mid-verification in its pane. The response's `closed` and `skipped` arrays report what actually happened rather than what was attempted: a pane detached into its own pop-out window is the expected straggler, since it is mutually exclusive with the in-app mount and clearing the open flag does not unmount it.
 
 Cookie isolation is per worktree (`persist:kngbrowser-<hash(worktreePath)>`) so concurrent worktrees' dev environments never share a `localhost` cookie jar. See [embedded-browser.md](embedded-browser.md).
 

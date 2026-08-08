@@ -402,7 +402,7 @@ Detach a registered UI surface (usage stats, git changes, the task Browser pane,
 | `clipboard:readImage` | invoke | Read the native clipboard image, save it to a temp file, returns file path or null |
 | `clipboard:writeText` | invoke | Write text to the native clipboard (focus-independent; used by terminal copy and the OSC 52 handler) |
 
-### Browser pane (8 channels)
+### Browser pane (10 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `browser:captureSend` | invoke | Composite the embedded webview frame + draw overlay + picked element into a PNG, write it to the session captures dir, and submit a structured prompt to the agent's PTY via PasteEngine |
@@ -413,6 +413,8 @@ Detach a registered UI surface (usage stats, git changes, the task Browser pane,
 | `browser:zoomChanged` | push | Broadcast the new zoom factor after Ctrl+wheel is applied in the main process (the webview's `zoom-changed` event lives on WebContents, not the DOM tag, so the renderer learns about wheel zoom only via this push). Carries the guest's `webContentsId` alongside the factor: one window can host several panes, and a factor-only broadcast made all of them adopt a zoom applied to just one |
 | `browser:paneRegister` | invoke | Register an open Browser pane's guest webContents (taskId, sessionId, webContentsId, url) with the main-process pane registry so the `kangentic_browser_*` MCP tools can target it. The handler backfills `projectId` from the session registry rather than trusting the renderer's ambient current project, since that is the field cross-project scoping is enforced on |
 | `browser:paneUnregister` | invoke | Unregister a Browser pane on unmount, scoped to the webContentsId that instance registered with (compare-and-delete) so an out-of-order unmount between the in-app pane and its pop-out cannot clobber a newer registration; the guest's own `destroyed` event is the backstop |
+| `browser:paneOpenRequest` | push | Main asking the renderer to open a task's Browser pane, behind `kangentic_browser_open_pane`. Pane open state is renderer-owned (`browserOpenTasks`), so main cannot set it directly. Fire-and-forget: main validates every precondition itself (the open project, the per-project `browser.enabled` gate, the task row, the URL it seeds first) and then awaits the pane REGISTRY rather than a reply, because only a registered live guest proves the pane is driveable |
+| `browser:paneCloseRequest` | push | Main asking the renderer to close Browser panes, behind `kangentic_browser_close_pane`. Carries the taskIds main computed from the pane registry: the renderer must not re-derive them, since `browserOpenTasks` is not project-keyed and the board store holds only the open project's tasks, so a retained backgrounded pane would be invisible to a board lookup |
 
 ### Updater (3 channels)
 | Channel | Pattern | Purpose |
