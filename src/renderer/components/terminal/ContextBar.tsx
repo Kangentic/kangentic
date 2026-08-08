@@ -38,6 +38,17 @@ function parseAgentVersion(version: string | null | undefined): string | null {
 // the pills render from the first frame. The bar's popovers (model / effort picker,
 // token breakdown) BODY-PORTAL with `strategy: 'fixed'`, so they escape this layer's
 // stacking context / hit-test clip rather than overflowing it.
+//
+// Every root using this class also carries `data-no-dismiss`. In the bottom panel the bar is a
+// SIBLING of the terminal pane, so it is outside both the pane wrapper's marker and `.xterm`;
+// without its own marker a click on the bar's padding, its inter-pill gaps, or any text-only
+// pill (shell, version, cost, tokens, elapsed, the "Starting agent..." spinner) is dead space
+// inside the board's dismiss layer and would close an open task-detail window instead - which
+// also releases that window's session claim and re-creates the xterm. None of those pills has a
+// pointer cursor, so the cursor heuristic in `useClickOutsideToClose.ts` cannot exclude them.
+// The picker triggers are unaffected: the marker opts out of light dismiss, never of their own
+// clicks. Harmless in the task-detail and command-terminal hosts, which are already excluded
+// wholesale by `data-window-layer-root`.
 const containerClass = 'min-h-8 bg-surface/80 border-t border-edge flex flex-wrap items-center px-3 py-1.5 gap-x-2 gap-y-2 text-xs flex-shrink-0 [transform:translateZ(0)]';
 
 function formatResetTime(epochSeconds: number): string {
@@ -239,6 +250,7 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
           className={containerClass}
           data-testid="usage-bar"
           data-live-telemetry="unsupported"
+          data-no-dismiss
         >
           <span
             className={`${pill} text-fg-muted`}
@@ -254,6 +266,7 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
       <div
         className={containerClass}
         data-testid="usage-bar"
+        data-no-dismiss
       >
         <span className={`${pill} text-fg-muted flex items-center gap-1.5`}>
           <Loader2 size={12} className="animate-spin" />
@@ -347,6 +360,7 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
     <div
       className={containerClass}
       data-testid="usage-bar"
+      data-no-dismiss
     >
       {/* First in the row: the profile determines the agent/model/effort to its
           right. Task-scoped only - the transient Command Terminal variant below

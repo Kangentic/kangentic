@@ -281,9 +281,9 @@ function MonitorDetailBridge(): null {
   // closes it per the user's "Close on Outside Click" setting. The board gets this
   // from its own layer bridges; without mounting it here the monitor's windows
   // would silently ignore a setting the user has already chosen. The `monitor`
-  // scope is load-bearing: it binds this instance to the monitor's own dismiss
-  // surface AND to the monitor's window store (via the layer context), so it
-  // closes these windows rather than the board's underneath.
+  // scope is load-bearing: it binds this instance to the monitor's own
+  // `data-dismiss-layer` subtree AND to the monitor's window store (via the layer
+  // context), so it closes these windows rather than the board's underneath.
   //
   // Ownership is deliberately NOT here. Mounting / closing on main's instruction and
   // reporting what is mounted all live in `useMonitorDetailOwnership`, mounted for the
