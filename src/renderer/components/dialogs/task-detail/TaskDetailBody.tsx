@@ -85,6 +85,13 @@ interface TaskDetailBodyProps {
   browserOpen: boolean;
   /** Whether the description peek is open (only relevant when hasSessionContext is true). */
   descriptionPeekOpen?: boolean;
+  /** The OWNING project's id when this window is retained for a BACKGROUNDED
+   *  project: mounted only so its Browser pane's `<webview>` guest survives.
+   *  Drops the terminal (an xterm parsing PTY output for a project the user is
+   *  not looking at is pure cost) while leaving every surrounding element in
+   *  place, and keeps the pane resolving against its OWN project rather than the
+   *  open board's, which the host context supplies. */
+  retainedProjectId?: string;
 }
 
 export function TaskDetailBody({
@@ -110,7 +117,9 @@ export function TaskDetailBody({
   onResetSession,
   browserOpen,
   descriptionPeekOpen = false,
+  retainedProjectId,
 }: TaskDetailBodyProps) {
+  const retained = retainedProjectId !== undefined;
   // Project-scoped values come from the HOST, never from the open board: this
   // surface can be hosted by the Agent Monitor for a task in another project.
   // Default-agent tasks leave `task.agent` null; falling back to the hosting
@@ -121,7 +130,13 @@ export function TaskDetailBody({
     defaultAgent: projectDefaultAgent,
     config: { labelColors, defaultBaseBranch },
   } = useTaskDetailHost();
-  const browserPopOut = usePopOut('browser', { taskId: task.id, projectId });
+  // The pane's project is the TASK's, not the open board's. They differ only for
+  // a retained window, whose project is backgrounded while the host context still
+  // reports whatever board is now open. Getting this wrong points the task-URL
+  // lookup at the wrong project's sidecar, which empties the pane and unmounts
+  // the guest retention exists to preserve.
+  const paneProjectId = retainedProjectId ?? projectId;
+  const browserPopOut = usePopOut('browser', { taskId: task.id, projectId: paneProjectId });
   const changesPopOut = usePopOut('changes', { taskId: task.id, projectId });
   const changesViewMode = useSessionStore((state) => state.changesViewMode[task.id] ?? 'split');
   const setChangesViewMode = useSessionStore((state) => state.setChangesViewMode);
@@ -304,6 +319,7 @@ export function TaskDetailBody({
               sessionId={sessionId}
               taskId={task.id}
               cwd={task.worktree_path ?? projectPath}
+              projectId={paneProjectId}
             />
           ) : changesPresent ? (
             changesContent
@@ -323,16 +339,28 @@ export function TaskDetailBody({
               style={rightPanelPresent ? { flexBasis: `${splitRatio * 100}%` } : undefined}
             >
               <div className="absolute inset-0">
-                <TerminalTab
-                  key={sessionId}
-                  sessionId={sessionId}
-                  taskId={task.id}
-                  active={true}
-                  releaseEscapeWhenPointerOutside={true}
-                  // The task-detail surface is window-hosted: refit immediately on
-                  // the window's resize/snap/maximize/divider dispatch (no 50ms lag).
-                  immediatePanelResize={true}
-                />
+                {/* A retained window is mounted ONLY to keep its Browser pane's
+                    <webview> guest alive while its project is backgrounded, so
+                    the terminal comes down: an xterm parsing PTY output for a
+                    surface nobody can see is pure cost, and it remounts from
+                    scrollback on return exactly as the ownership handoff already
+                    does. Swapping the child here (rather than dropping the
+                    wrapping divs) is deliberate: the sibling slots around
+                    `rightPanelElement` must keep their positions, because React
+                    matches these fixed children by index and a shifted index
+                    would remount BrowserPane and destroy the guest. */}
+                {retained ? null : (
+                  <TerminalTab
+                    key={sessionId}
+                    sessionId={sessionId}
+                    taskId={task.id}
+                    active={true}
+                    releaseEscapeWhenPointerOutside={true}
+                    // The task-detail surface is window-hosted: refit immediately on
+                    // the window's resize/snap/maximize/divider dispatch (no 50ms lag).
+                    immediatePanelResize={true}
+                  />
+                )}
               </div>
             </div>
           )}

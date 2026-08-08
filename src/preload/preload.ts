@@ -604,14 +604,15 @@ const api: ElectronAPI = {
 
   browser: {
     captureAndSend: (input) => ipcRenderer.invoke(IPC.BROWSER_CAPTURE_SEND, input),
-    getUrls: (taskId) => ipcRenderer.invoke(IPC.BROWSER_URL_GET, taskId),
-    setTaskUrl: (taskId, url) => ipcRenderer.invoke(IPC.BROWSER_URL_SET_TASK, taskId, url),
-    clearTaskUrl: (taskId) => ipcRenderer.invoke(IPC.BROWSER_URL_CLEAR_TASK, taskId),
+    getUrls: (taskId, projectId) => ipcRenderer.invoke(IPC.BROWSER_URL_GET, taskId, projectId),
+    setTaskUrl: (taskId, url, projectId) => ipcRenderer.invoke(IPC.BROWSER_URL_SET_TASK, taskId, url, projectId),
+    clearTaskUrl: (taskId, projectId) => ipcRenderer.invoke(IPC.BROWSER_URL_CLEAR_TASK, taskId, projectId),
     clearStorage: () => ipcRenderer.invoke(IPC.BROWSER_CLEAR_STORAGE),
     registerPane: (input) => ipcRenderer.invoke(IPC.BROWSER_PANE_REGISTER, input),
     unregisterPane: (sessionId, webContentsId) => ipcRenderer.invoke(IPC.BROWSER_PANE_UNREGISTER, sessionId, webContentsId),
     onZoomChanged: (callback) => {
-      const handler = (_event: Electron.IpcRendererEvent, factor: number) => callback(factor);
+      const handler = (_event: Electron.IpcRendererEvent, factor: number, webContentsId: number) =>
+        callback(factor, webContentsId);
       ipcRenderer.on(IPC.BROWSER_ZOOM_CHANGED, handler);
       return () => ipcRenderer.removeListener(IPC.BROWSER_ZOOM_CHANGED, handler);
     },

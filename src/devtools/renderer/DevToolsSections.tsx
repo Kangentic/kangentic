@@ -77,7 +77,9 @@ export function DevToolsSections({ globalConfig }: { globalConfig: AppConfig }) 
         />
         <Description>
           Off by default. Three high-risk endpoints are gated behind this toggle:{' '}
-          <strong>eval</strong> (run any JavaScript in the renderer process),{' '}
+          <strong>devtools eval</strong> (<Code>kangentic_devtools_eval</Code>, which runs any
+          JavaScript in Kangentic&apos;s own renderer process; the agent browser&apos;s eval is a
+          separate setting under Agent Browser),{' '}
           <strong>inject session event</strong> (synthesize fake activity-engine events to test
           watchdogs and predicates without spawning a real CLI), and{' '}
           <strong>raw PTY input</strong> (write any byte sequence directly to a session's terminal,

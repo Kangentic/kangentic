@@ -4968,9 +4968,15 @@ export interface ElectronAPI {
   // Browser pane: embedded webview capture-and-send
   browser: {
     captureAndSend: (input: BrowserCaptureInput) => Promise<{ filePath: string }>;
-    getUrls: (taskId: string) => Promise<{ projectDefault: string | null; taskOverride: string | null }>;
-    setTaskUrl: (taskId: string, url: string) => Promise<void>;
-    clearTaskUrl: (taskId: string) => Promise<void>;
+    /**
+     * Per-task Browser pane URLs. `projectId` is the project of the TASK, not
+     * the open board's: a popped-out pane outlives a project switch, so
+     * resolving these against the ambient current project wrote one project's
+     * task URL into another project's sidecar.
+     */
+    getUrls: (taskId: string, projectId?: string | null) => Promise<{ projectDefault: string | null; taskOverride: string | null }>;
+    setTaskUrl: (taskId: string, url: string, projectId?: string | null) => Promise<void>;
+    clearTaskUrl: (taskId: string, projectId?: string | null) => Promise<void>;
     clearStorage: () => Promise<void>;
     /** Register an open Browser pane's guest webContents for kangentic_browser_* targeting. */
     registerPane: (input: BrowserPaneRegisterInput) => Promise<void>;
@@ -4986,7 +4992,9 @@ export interface ElectronAPI {
      * webview. The main process applies the zoom and broadcasts the resulting
      * factor so the toolbar % can stay in sync.
      */
-    onZoomChanged: (callback: (factor: number) => void) => () => void;
+    /** Ctrl+wheel zoom applied to a guest. `webContentsId` identifies WHICH pane,
+     *  since one window can host several and each must ignore the others'. */
+    onZoomChanged: (callback: (factor: number, webContentsId: number) => void) => () => void;
   };
 
   // Search

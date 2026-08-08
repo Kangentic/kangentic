@@ -167,6 +167,29 @@ function evictWindowFromTiling(
   return { tileTree: null, windows: nextWindows, tileTreeRect: FULL_TILE_RECT };
 }
 
+/**
+ * Rewrite tile-leaf `windowId`s through `idRemap`. Used when a restored window
+ * is adopted by a retained one: the tree comes back referencing the discarded
+ * restored ids, so its leaves must point at the retained ids that replaced them
+ * or the tiling invariant (tree membership <-> state <-> leafId) breaks.
+ */
+function remapTileTreeWindowIds(node: TileNode | null, idRemap: Map<string, string>): TileNode | null {
+  if (!node || idRemap.size === 0) return node;
+  return remapTileNodeWindowIds(node, idRemap);
+}
+
+/** The recursive half, typed non-nullable so no child needs a cast. */
+function remapTileNodeWindowIds(node: TileNode, idRemap: Map<string, string>): TileNode {
+  if (node.kind === 'leaf') {
+    const replacement = idRemap.get(node.windowId);
+    return replacement ? { ...node, windowId: replacement } : node;
+  }
+  return {
+    ...node,
+    children: node.children.map((child) => remapTileNodeWindowIds(child, idRemap)),
+  };
+}
+
 interface OpenWindowInput {
   /** Window content kind. Defaults to the store's configured kind when omitted. */
   kind?: WindowContentKind;
@@ -249,6 +272,23 @@ export interface WindowStoreState {
     resolveSessionId: (anchor: string, kind: WindowContentKind) => string | null,
     isKnownAnchor: (anchor: string, kind: WindowContentKind) => boolean,
   ) => void;
+  /**
+   * Mark the given anchors as retained for `projectId`. Called on a project
+   * switch with the outgoing project's windows that must stay alive (today:
+   * those hosting an open Browser pane, whose `<webview>` guest cannot survive
+   * an unmount).
+   *
+   * Clears retention from windows retained for THIS project that are no longer
+   * named; windows retained for a DIFFERENT project are left untouched, since
+   * several projects can be backgrounded at once and a window's owning project
+   * never changes. Callers must not pass an anchor belonging to another
+   * project's retained window (see `planWindowRetention`).
+   *
+   * Retention is a marking, never a move: the windows stay exactly where they
+   * are in `windows` so their DOM nodes are untouched. A newly retained window
+   * gives up focus, because a retained window's keyboard handlers must not fire.
+   */
+  retainWindows: (projectId: string, anchors: readonly string[]) => void;
 }
 
 /** Per-layer configuration for a window-manager instance. */
@@ -803,12 +843,75 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
       // switch. Restore's `isKnownAnchor` is kind-aware (a conversation leaf's
       // session-id anchor is never mistaken for a taskId), so a persisted
       // conversation leaf no longer needs to be pruned from the tile tree here.
+      // Retained windows belong to a BACKGROUNDED project and are excluded. The
+      // saver reads the layout and the current project id together at persist
+      // time, so a drag / resize / tile (or the shutdown flush) while another
+      // project's pane is retained would otherwise write that window into THIS
+      // project's blob, and reopening it would restore a phantom window for a
+      // task the board cannot resolve. The outgoing project's own layout was
+      // already captured before retention was applied.
       return toSerializedWorkspace(
-        Object.values(current.windows),
+        Object.values(current.windows).filter((window) => window.retainedProjectId === undefined),
         current.tileTree,
         current.tileTreeRect,
         current.focusedWindowId,
       );
+    },
+
+    retainWindows: (projectId, anchors) => {
+      const retainedAnchors = new Set(anchors);
+      set((current) => {
+        // Untile anything being retained BEFORE marking it. A retained window is
+        // invisible, and the tile tree it belongs to is the OUTGOING project's -
+        // `applyWorkspace` is about to replace that tree (or, when the
+        // destination has no saved layout, leave the old one standing). Either
+        // way a retained window holding a `leafId` into a tree that no longer
+        // contains it breaks the tiling invariant (tree <-> state <-> leafId)
+        // that the dev tripwire asserts after every mutation. Evicting also lets
+        // the surviving panes re-flow, which is what the user wants to see.
+        let windows = current.windows;
+        let tileTree = current.tileTree;
+        let tileTreeRect = current.tileTreeRect;
+        for (const managedWindow of Object.values(current.windows)) {
+          if (!retainedAnchors.has(managedWindow.anchor)) continue;
+          if (managedWindow.state !== 'tiled') continue;
+          const evicted = evictWindowFromTiling(windows, tileTree, tileTreeRect, managedWindow.id);
+          windows = evicted.windows;
+          tileTree = evicted.tileTree;
+          tileTreeRect = evicted.tileTreeRect;
+        }
+
+        const nextWindows: Record<string, ManagedWindow> = {};
+        for (const [id, managedWindow] of Object.entries(windows)) {
+          const shouldRetain = retainedAnchors.has(managedWindow.anchor);
+          if (shouldRetain === (managedWindow.retainedProjectId === projectId)) {
+            nextWindows[id] = managedWindow;
+            continue;
+          }
+          if (shouldRetain) {
+            nextWindows[id] = { ...managedWindow, retainedProjectId: projectId };
+          } else {
+            const { retainedProjectId: _dropped, ...rest } = managedWindow;
+            nextWindows[id] = rest;
+          }
+        }
+
+        // A retained window must not stay FOCUSED. It is invisible and inert,
+        // but `inert` only blocks pointer and DOM focus - it does not stop the
+        // document-level `keydown` listener `TaskDetailWindow` registers while
+        // `isFocused`, nor its `enabled: isFocused` window keybindings. Leaving
+        // the pointer here means the next Escape runs that window's guarded
+        // close, unmounting it and destroying the `<webview>` guest retention
+        // exists to keep alive. `applyWorkspace` cannot be relied on to reassign
+        // focus afterwards: it early-returns when the destination project has no
+        // saved layout, so a stale pointer would survive indefinitely.
+        const focusedWindowId =
+          current.focusedWindowId !== null
+          && nextWindows[current.focusedWindowId]?.retainedProjectId !== undefined
+            ? null
+            : current.focusedWindowId;
+        return { windows: nextWindows, tileTree, tileTreeRect, focusedWindowId };
+      });
     },
 
     applyWorkspace: (workspace, resolveSessionId, isKnownAnchor) => {
@@ -820,13 +923,101 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
         makeTileId: nextTileId,
       });
       if (!restored) return;
-      set({
-        windows: restored.windows,
-        order: restored.order,
-        focusedWindowId: restored.focusedWindowId,
-        zCounter: Object.keys(restored.windows).length,
-        tileTree: restored.tileTree,
-        tileTreeRect: restored.tileTreeRect,
+      set((current) => {
+        // Retained windows survive the replacement, and a restored window for an
+        // anchor a retained window already holds is ADOPTED rather than added:
+        // deserializeWorkspace mints fresh ids, so letting the restored copy win
+        // would unmount the retained node and destroy its <webview> guest, and
+        // keeping both would show one task twice. Adoption keeps the retained
+        // window's identity (its id, and therefore its DOM node) and takes only
+        // the persisted geometry, so returning to a project restores the layout
+        // around a pane that never stopped running.
+        const retained = Object.values(current.windows).filter(
+          (managedWindow) => managedWindow.retainedProjectId !== undefined,
+        );
+        if (retained.length === 0) {
+          return {
+            windows: restored.windows,
+            order: restored.order,
+            focusedWindowId: restored.focusedWindowId,
+            zCounter: Object.keys(restored.windows).length,
+            tileTree: restored.tileTree,
+            tileTreeRect: restored.tileTreeRect,
+          };
+        }
+
+        const retainedByAnchor = new Map(
+          retained.map((managedWindow) => [`${managedWindow.kind}:${managedWindow.anchor}`, managedWindow]),
+        );
+        const adoptedIds = new Set<string>();
+        const nextWindows: Record<string, ManagedWindow> = {};
+
+        for (const restoredWindow of Object.values(restored.windows)) {
+          const key = `${restoredWindow.kind}:${restoredWindow.anchor}`;
+          const match = retainedByAnchor.get(key);
+          if (!match) {
+            nextWindows[restoredWindow.id] = restoredWindow;
+            continue;
+          }
+          adoptedIds.add(match.id);
+          // Keep the retained id/node; take the restored layout. Retention ends
+          // here, so the content goes back to the live board lookup instead of
+          // its frozen snapshot.
+          const { retainedProjectId: _cleared, ...rest } = match;
+          nextWindows[match.id] = {
+            ...rest,
+            geometry: restoredWindow.geometry,
+            state: restoredWindow.state,
+            restoreGeometry: restoredWindow.restoreGeometry,
+            leafId: restoredWindow.leafId,
+            sessionId: restoredWindow.sessionId,
+            sessionStatus: restoredWindow.sessionStatus,
+            title: restoredWindow.title,
+            skipEnterAnimation: true,
+          };
+        }
+
+        // Retained windows for OTHER projects stay retained and stay mounted.
+        for (const managedWindow of retained) {
+          if (adoptedIds.has(managedWindow.id)) continue;
+          nextWindows[managedWindow.id] = managedWindow;
+        }
+
+        // A restored window that got adopted contributes its retained id to the
+        // order instead of the discarded restored id; still-retained windows go
+        // last so they never sit above the active project's windows.
+        const order = restored.order.map((restoredId) => {
+          const restoredWindow = restored.windows[restoredId];
+          const match = restoredWindow
+            ? retainedByAnchor.get(`${restoredWindow.kind}:${restoredWindow.anchor}`)
+            : undefined;
+          return match ? match.id : restoredId;
+        });
+        for (const managedWindow of retained) {
+          if (adoptedIds.has(managedWindow.id)) continue;
+          order.push(managedWindow.id);
+        }
+
+        // Adopted windows keep the restored tile membership, so remap the tree's
+        // leaf ids from restored ids to the retained ids that replaced them.
+        const idRemap = new Map<string, string>();
+        for (const restoredWindow of Object.values(restored.windows)) {
+          const match = retainedByAnchor.get(`${restoredWindow.kind}:${restoredWindow.anchor}`);
+          if (match) idRemap.set(restoredWindow.id, match.id);
+        }
+
+        return {
+          windows: nextWindows,
+          order,
+          focusedWindowId: restored.focusedWindowId
+            ? idRemap.get(restored.focusedWindowId) ?? restored.focusedWindowId
+            : null,
+          // Counts every window that survived, not just the restored ones, or a
+          // later focus would hand out a zIndex that collides with a retained window.
+          zCounter: Object.keys(nextWindows).length,
+          tileTree: remapTileTreeWindowIds(restored.tileTree, idRemap),
+          tileTreeRect: restored.tileTreeRect,
+        };
       });
     },
   }));

@@ -217,6 +217,7 @@ test.describe('BrowserPaneActive - webContents registration', () => {
       return {
         sessionId: entry.input.sessionId,
         taskId: entry.input.taskId,
+        projectId: entry.input.projectId,
         webContentsId: entry.input.webContentsId,
       };
     });
@@ -224,6 +225,10 @@ test.describe('BrowserPaneActive - webContents registration', () => {
     expect(registerPayload?.sessionId).toBe(SESSION_ID);
     expect(registerPayload?.taskId).toBe(TASK_ID);
     expect(registerPayload?.webContentsId).toBe(MOCK_WEB_CONTENTS_ID);
+    // The pane registry scopes MCP access by projectId, so the renderer must
+    // send the hosted task's project rather than omitting it. Main backfills
+    // from the session registry, but a missing field here would silently rot.
+    expect(registerPayload?.projectId).toBe(PROJECT_ID);
 
     // Close the task-detail dialog by dispatching Escape at document level.
     // This uses document.dispatchEvent (anti-pattern 10 mitigation) so the
@@ -248,5 +253,66 @@ test.describe('BrowserPaneActive - webContents registration', () => {
       }, SESSION_ID),
       { timeout: 5000 },
     ).toBe(true);
+  });
+
+  // A retained pane's whole purpose is that the SAME guest keeps running. A
+  // DOM-presence check cannot prove that: React would happily render a brand new
+  // <webview> at the same spot, and the agent's CDP session would be gone with
+  // no visible difference. The only assertion that distinguishes "survived" from
+  // "silently replaced" is the registered webContentsId, so this test reads the
+  // register/unregister log rather than the DOM.
+  test('a mounted pane keeps its webContentsId, and ignores another pane\'s zoom broadcast', async () => {
+    await openBrowserPane(sharedPage);
+    await sharedPage.locator('[data-testid="browser-webview"]').waitFor({ state: 'attached', timeout: 5000 });
+
+    await sharedPage.evaluate((webContentsId: number) => {
+      const element = document.querySelector('[data-testid="browser-webview"]');
+      if (!element) throw new Error('browser-webview element not found in DOM');
+      const stub = element as HTMLElement & {
+        getWebContentsId: () => number;
+        getURL: () => string;
+        setZoomFactor?: (factor: number) => void;
+      };
+      stub.getWebContentsId = () => webContentsId;
+      stub.getURL = () => 'http://localhost:5173/';
+      element.dispatchEvent(new Event('dom-ready'));
+    }, MOCK_WEB_CONTENTS_ID);
+
+    await expect.poll(
+      () => sharedPage.evaluate(() => (window.__mockBrowser?.getPaneCalls() ?? []).filter((call) => call.type === 'register').length),
+      { timeout: 5000 },
+    ).toBeGreaterThan(0);
+
+    const zoomLabel = sharedPage.locator('[data-testid="browser-zoom-reset"]');
+    const zoomBefore = await zoomLabel.textContent();
+
+    // A zoom applied to a DIFFERENT guest must not move this pane's readout. The
+    // foreign factor is deliberately NOT the one broadcast below, so a leak is
+    // distinguishable from this pane's own zoom rather than landing on the same
+    // readout and reading as success.
+    await sharedPage.evaluate((otherId: number) => {
+      window.__mockBrowser?.emitZoomChanged(2, otherId);
+    }, MOCK_WEB_CONTENTS_ID + 1);
+    await expect.poll(() => zoomLabel.textContent(), { timeout: 2000 }).toBe(zoomBefore);
+
+    // This pane's own guest still applies.
+    await sharedPage.evaluate((ownId: number) => {
+      window.__mockBrowser?.emitZoomChanged(1.5, ownId);
+    }, MOCK_WEB_CONTENTS_ID);
+    await expect.poll(() => zoomLabel.textContent(), { timeout: 5000 }).not.toBe(zoomBefore);
+
+    // The guest was never torn down and rebuilt: exactly one register, no
+    // unregister, and the id is unchanged throughout.
+    const log = await sharedPage.evaluate(() => window.__mockBrowser?.getPaneCalls() ?? []);
+    const registers = log.filter((call) => call.type === 'register');
+    expect(registers).toHaveLength(1);
+    expect(registers[0].type === 'register' && registers[0].input.webContentsId).toBe(MOCK_WEB_CONTENTS_ID);
+    // Scoped to THIS guest's id on purpose. StrictMode double-invokes mount
+    // effects, so the log also carries an unregister from the throwaway first
+    // mount, which never registered and so passes `undefined`. What must never
+    // appear is an unregister for the id that is actually driving the pane.
+    expect(
+      log.filter((call) => call.type === 'unregister' && call.webContentsId === MOCK_WEB_CONTENTS_ID),
+    ).toHaveLength(0);
   });
 });

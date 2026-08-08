@@ -406,12 +406,12 @@ Detach a registered UI surface (usage stats, git changes, the task Browser pane,
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `browser:captureSend` | invoke | Composite the embedded webview frame + draw overlay + picked element into a PNG, write it to the session captures dir, and submit a structured prompt to the agent's PTY via PasteEngine |
-| `browser:urlGet` | invoke | Get the project default URL and per-task URL override for a given task |
-| `browser:urlSetTask` | invoke | Persist a per-task URL override |
-| `browser:urlClearTask` | invoke | Remove the per-task URL override (falls back to project default) |
+| `browser:urlGet` | invoke | Get the project default URL and per-task URL override for a given task. Takes a trailing `projectId` (the TASK's project, not the open board's) resolved via `resolveProjectContext`: a popped-out or retained pane outlives a project switch, so the ambient current project would route it to the wrong sidecar |
+| `browser:urlSetTask` | invoke | Persist a per-task URL override. Same trailing `projectId` |
+| `browser:urlClearTask` | invoke | Remove the per-task URL override (falls back to project default). Same trailing `projectId` |
 | `browser:clearStorage` | invoke | Wipe cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches across the per-worktree embedded browser partitions (and the legacy shared jar). Saved URLs are kept. |
-| `browser:zoomChanged` | push | Broadcast the new zoom factor after Ctrl+wheel is applied in the main process (the webview's `zoom-changed` event lives on WebContents, not the DOM tag, so the renderer learns about wheel zoom only via this push) |
-| `browser:paneRegister` | invoke | Register an open Browser pane's guest webContents (taskId, sessionId, webContentsId, url) with the main-process pane registry so the `kangentic_browser_*` MCP tools can target it |
+| `browser:zoomChanged` | push | Broadcast the new zoom factor after Ctrl+wheel is applied in the main process (the webview's `zoom-changed` event lives on WebContents, not the DOM tag, so the renderer learns about wheel zoom only via this push). Carries the guest's `webContentsId` alongside the factor: one window can host several panes, and a factor-only broadcast made all of them adopt a zoom applied to just one |
+| `browser:paneRegister` | invoke | Register an open Browser pane's guest webContents (taskId, sessionId, webContentsId, url) with the main-process pane registry so the `kangentic_browser_*` MCP tools can target it. The handler backfills `projectId` from the session registry rather than trusting the renderer's ambient current project, since that is the field cross-project scoping is enforced on |
 | `browser:paneUnregister` | invoke | Unregister a Browser pane on unmount, scoped to the webContentsId that instance registered with (compare-and-delete) so an out-of-order unmount between the in-app pane and its pop-out cannot clobber a newer registration; the guest's own `destroyed` event is the backstop |
 
 ### Updater (3 channels)

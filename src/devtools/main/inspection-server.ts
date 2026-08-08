@@ -320,7 +320,7 @@ async function handlePostRequest(
         response,
         403,
         'eval-disabled',
-        'Settings → Developer → Allow Eval is off.',
+        'Settings → Developer → Allow Unsafe Operations is off (gates kangentic_devtools_eval; the agent browser has its own Allow Eval under Agent Browser).',
       );
     }
     return respondEval(window, body, response);
@@ -332,7 +332,7 @@ async function handlePostRequest(
         response,
         403,
         'eval-disabled',
-        'Settings → Developer → Allow Eval is off (gates session-event injection).',
+        'Settings → Developer → Allow Unsafe Operations is off (gates session-event injection).',
       );
     }
     return respondInjectSessionEvent(options, body, response);
@@ -1638,7 +1638,7 @@ async function respondPtyInput(
         response,
         403,
         'eval-disabled',
-        'Raw `bytes` form requires Settings → Developer → Allow Eval.',
+        'Raw `bytes` form requires Settings → Developer → Allow Unsafe Operations.',
       );
     }
     toWrite = Buffer.from(params.bytes, 'base64').toString('utf-8');

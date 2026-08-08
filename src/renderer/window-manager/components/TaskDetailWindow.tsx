@@ -61,6 +61,15 @@ interface TaskDetailWindowProps {
   titleBarPointerDown: (event: React.PointerEvent) => void;
   /** Animated, guard-aware window close (overlay-phase exit -> closeWindow). */
   requestClose: () => void;
+  /** The OWNING project's id while that project is backgrounded. The window stays
+   *  mounted only to keep its Browser pane's `<webview>` guest alive, so it renders
+   *  from a frozen task row and drops its terminal.
+   *
+   *  It is the id, not a boolean, because the host context supplies the OPEN
+   *  board's project to every window in the layer. A retained window's pane must
+   *  keep resolving against its own project or its task URL lookup misses, the
+   *  pane falls back to the empty state, and the unmount destroys the guest. */
+  retainedProjectId?: string;
 }
 
 /**
@@ -96,6 +105,7 @@ export function TaskDetailWindow({
   initialEdit,
   titleBarPointerDown,
   requestClose,
+  retainedProjectId,
 }: TaskDetailWindowProps) {
   // Everything project-scoped comes from the HOST, so this window renders the
   // same whether the board mounted it for the open project or the Agent Monitor
@@ -750,6 +760,7 @@ export function TaskDetailWindow({
               onResetSession={actions.handleResetSession}
               browserOpen={browserOpen}
               descriptionPeekOpen={descriptionPeekOpen}
+              retainedProjectId={retainedProjectId}
             />
           )}
         </div>

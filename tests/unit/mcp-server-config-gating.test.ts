@@ -98,6 +98,10 @@ async function listToolNames(
     fakeTaskCounter,
     configReader(browserEnabled),
     steering,
+    // Caller scope for the browser family. Required, so a server can never be
+    // built with unscoped browser tools; the scoping behavior itself is covered
+    // by mcp-browser-tools-project-scope.test.ts.
+    { projectId: 'p1' },
   );
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'guard', version: '1.0.0' });

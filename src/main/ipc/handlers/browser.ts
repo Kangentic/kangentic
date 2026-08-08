@@ -5,6 +5,7 @@ import { IPC } from '../../../shared/ipc-channels';
 import { BROWSER_PARTITION, browserPartitionForWorktree } from '../../../shared/browser-partition';
 import type { BrowserCaptureInput, BrowserPaneRegisterInput } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
+import { resolveProjectContext } from '../helpers/project-repos';
 import { browserUrlStore } from '../../browser/browser-url-store';
 import { browserPaneRegistry } from '../../browser/browser-pane-registry';
 import { PasteSubmitError } from '../../pty/terminal-submit';
@@ -122,8 +123,14 @@ export function registerBrowserHandlers(context: IpcContext): void {
   });
 
   // === URL persistence ===
-  ipcMain.handle(IPC.BROWSER_URL_GET, (_event, taskId: string) => {
-    const projectPath = context.currentProjectPath;
+  // These carry an explicit projectId (see .claude/rules/project-scoped-ipc.md).
+  // The pane that owns a task URL is not always in the foreground project: a
+  // popped-out pane outlives a project switch, and a navigation there resolved
+  // against the ambient current project wrote that task's URL into the OTHER
+  // project's browser-urls.json. Nothing surfaced the mix-up; the task just
+  // reopened on a page from a different project.
+  ipcMain.handle(IPC.BROWSER_URL_GET, (_event, taskId: string, projectId?: string | null) => {
+    const { projectPath } = resolveProjectContext(context, projectId);
     if (!projectPath) return { projectDefault: null, taskOverride: null };
     const overrides = context.configManager.loadProjectOverrides(projectPath);
     const projectDefault = overrides?.browser?.defaultUrl ?? null;
@@ -131,15 +138,15 @@ export function registerBrowserHandlers(context: IpcContext): void {
     return { projectDefault, taskOverride };
   });
 
-  ipcMain.handle(IPC.BROWSER_URL_SET_TASK, (_event, taskId: string, url: string) => {
-    const projectPath = context.currentProjectPath;
+  ipcMain.handle(IPC.BROWSER_URL_SET_TASK, (_event, taskId: string, url: string, projectId?: string | null) => {
+    const { projectPath } = resolveProjectContext(context, projectId);
     if (!projectPath) throw new Error('No project open');
     if (!url) throw new Error('URL is required');
     browserUrlStore.set(projectPath, taskId, url);
   });
 
-  ipcMain.handle(IPC.BROWSER_URL_CLEAR_TASK, (_event, taskId: string) => {
-    const projectPath = context.currentProjectPath;
+  ipcMain.handle(IPC.BROWSER_URL_CLEAR_TASK, (_event, taskId: string, projectId?: string | null) => {
+    const { projectPath } = resolveProjectContext(context, projectId);
     if (!projectPath) return;
     browserUrlStore.clear(projectPath, taskId);
   });
@@ -198,10 +205,18 @@ export function registerBrowserHandlers(context: IpcContext): void {
     if (!Number.isInteger(input.webContentsId) || input.webContentsId <= 0) {
       throw new Error('registerPane received an invalid webContentsId');
     }
+    // The session registry is the authoritative owner of a session's project:
+    // it is stamped at spawn and cannot drift. The renderer's value is ambient
+    // (`currentProject`), which a pop-out window's separate store holds stale
+    // across a project switch, so it is only a fallback for a session the
+    // registry does not know. Getting this wrong is not cosmetic: resolveTarget
+    // refuses cross-project targets by comparing against this field.
+    const resolvedProjectId =
+      context.sessionManager.getSessionProjectId(input.sessionId) ?? input.projectId ?? null;
     browserPaneRegistry.register({
       sessionId: input.sessionId,
       taskId: input.taskId,
-      projectId: input.projectId ?? null,
+      projectId: resolvedProjectId,
       webContentsId: input.webContentsId,
       url: input.url ?? null,
     });

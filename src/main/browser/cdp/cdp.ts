@@ -153,19 +153,56 @@ export interface ScreenshotOptions {
   fullPage?: boolean;
 }
 
+/**
+ * `Page.captureScreenshot` waits for a composited frame, so it NEVER RESOLVES
+ * when the guest is not being composited: a minimized or fully occluded host
+ * window, a `visibility: hidden` or offscreen subtree. Worse than the missing
+ * image, the un-settled command wedges that guest's CDP queue and every later
+ * command stacks behind it, so one screenshot at the wrong moment bricks the
+ * pane for the rest of the session.
+ *
+ * Measured on Electron 41: minimized and occluded hosts both hang indefinitely,
+ * while an `opacity: 0` subtree in a visible window still composites and
+ * captures normally. Occlusion is not observable from the main process, so a
+ * precondition check cannot cover every case and this bound is the real
+ * guarantee: the call fails cleanly and the agent gets an actionable error
+ * rather than a tool call that never returns.
+ */
+export const SCREENSHOT_TIMEOUT_MS = 5000;
+
+export class ScreenshotNotComposited extends Error {
+  constructor() {
+    // The bound is interpolated, never restated: the agent-facing message, the
+    // race below, and the test all have to move together when it changes.
+    super(
+      `The Browser pane produced no frame within ${SCREENSHOT_TIMEOUT_MS / 1000}s, which means its window is not being composited (minimized, or fully covered by another window). Ask the user to bring the Kangentic window to the front, then retry. Other tools that do not need pixels, such as query_dom and click, still work.`,
+    );
+    this.name = 'ScreenshotNotComposited';
+  }
+}
+
 export async function captureScreenshot(
   webContents: WebContents,
   options: ScreenshotOptions = {},
 ): Promise<string | null> {
-  const result = (await webContents.debugger.sendCommand('Page.captureScreenshot', {
+  let timer: NodeJS.Timeout | undefined;
+  const capture = webContents.debugger.sendCommand('Page.captureScreenshot', {
     format: options.format ?? 'png',
     quality: options.quality,
     clip: options.clip
       ? { ...options.clip, scale: options.clip.scale ?? 1 }
       : undefined,
     captureBeyondViewport: options.fullPage ?? false,
-  })) as { data: string };
-  return result.data ?? null;
+  }) as Promise<{ data: string }>;
+  const bounded = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new ScreenshotNotComposited()), SCREENSHOT_TIMEOUT_MS);
+  });
+  try {
+    const result = await Promise.race([capture, bounded]);
+    return result.data ?? null;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 export interface LayoutMetrics {

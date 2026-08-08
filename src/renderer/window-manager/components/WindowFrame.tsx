@@ -78,6 +78,7 @@ function WindowFrameInner({ managedWindow, containerSize, overlayRef, tiledRect 
 
   const isMaximized = managedWindow.state === 'maximized';
   const isTiled = managedWindow.state === 'tiled';
+  const isRetained = managedWindow.retainedProjectId !== undefined;
   // A tiled window's rect comes from the tile tree (resolved by WindowLayer), not
   // its own geometry. Falls back to geometry if the resolved rect is missing.
   const pixelRect =
@@ -126,6 +127,13 @@ function WindowFrameInner({ managedWindow, containerSize, overlayRef, tiledRect 
       onPointerUp={handleFramePointerUp}
       onPointerCancel={handleFramePointerCancel}
       onAnimationEnd={onAnimationEnd}
+      // A retained window belongs to a backgrounded project and exists only to
+      // keep its Browser pane's <webview> guest alive. It is hidden with
+      // `opacity: 0`, NOT `visibility: hidden` and NOT by moving it offscreen:
+      // both of those stop the guest compositing, which makes CDP
+      // Page.captureScreenshot never resolve and wedges every later command for
+      // that guest (measured on Electron 41). An opacity-0 subtree keeps
+      // compositing, so the agent can still screenshot its own pane.
       style={{
         position: 'absolute',
         left: pixelRect.left,
@@ -133,7 +141,12 @@ function WindowFrameInner({ managedWindow, containerSize, overlayRef, tiledRect 
         width: pixelRect.width,
         height: pixelRect.height,
         zIndex: managedWindow.zIndex,
+        ...(isRetained
+          ? { opacity: 0, pointerEvents: 'none' as const }
+          : {}),
       }}
+      aria-hidden={isRetained || undefined}
+      inert={isRetained || undefined}
       className={`pointer-events-auto group bg-surface-raised border border-edge focus-within:border-accent/40 ${
         isMaximized || isTiled ? 'rounded-none' : 'rounded-lg'
       } ${isTiled ? '' : 'shadow-2xl'} flex flex-col overflow-hidden ${contentClassName}`}

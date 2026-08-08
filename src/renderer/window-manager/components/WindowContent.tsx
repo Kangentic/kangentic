@@ -20,6 +20,7 @@ import { useWindowManager } from '../context';
 import { TaskDetailWindow } from './TaskDetailWindow';
 import { ConversationWindow } from './ConversationWindow';
 import type { ManagedWindow } from '../store/types';
+import { getRetainedTask } from '../bridge/retained-task-snapshots';
 
 const CommandTerminalWindow = lazy(() =>
   import('../../components/command-bar/CommandTerminalWindow').then((module) => ({ default: module.CommandTerminalWindow })),
@@ -119,18 +120,33 @@ function BoardTaskDetailContent({
   titleBarPointerDown,
   requestClose,
 }: WindowContentProps) {
-  const task = useBoardStore((state) =>
-    state.tasks.find((candidate) => candidate.id === managedWindow.anchor)
-    ?? state.archivedTasks.find((candidate) => candidate.id === managedWindow.anchor)
-    ?? null,
+  const retained = managedWindow.retainedProjectId !== undefined;
+  // Skipped entirely for a retained window: its project is backgrounded, so this
+  // scan can only ever miss, yet it would still run over the FOREGROUND
+  // project's whole board on every board write. A retained window is meant to be
+  // idle, not merely invisible.
+  const liveTask = useBoardStore((state) =>
+    retained
+      ? null
+      : state.tasks.find((candidate) => candidate.id === managedWindow.anchor)
+        ?? state.archivedTasks.find((candidate) => candidate.id === managedWindow.anchor)
+        ?? null,
   );
+  // A retained window's project is backgrounded, so the project-scoped board
+  // store no longer holds its row. Falling back to the frozen snapshot keeps the
+  // subtree rendering, which is the only thing keeping its Browser pane's
+  // <webview> guest alive. The fallback is gated on `retained` rather than on
+  // `liveTask === null` so the deep-archive self-heal below still runs for an
+  // ordinary window, and so un-retaining returns to live data with nothing stale
+  // left behind.
+  const task = liveTask ?? (retained ? getRetainedTask(managedWindow.anchor) : null);
 
   // Deep-archive self-heal: a window anchored to an archived task older than the
   // board's newest-N preview misses both lists. Pull the full archive so it can
   // resolve, and hold a viewer for the duration so hydration keeps the full list
   // loaded until this window closes or the task resolves. Normal (non-archived)
   // windows resolve from `tasks` immediately and never trigger this.
-  const anchorUnresolved = task === null;
+  const anchorUnresolved = task === null && !retained;
   useEffect(() => {
     if (!anchorUnresolved) return;
     useBoardStore.getState().acquireArchiveView();
@@ -166,6 +182,7 @@ function BoardTaskDetailContent({
       initialEdit={managedWindow.initialEdit}
       titleBarPointerDown={titleBarPointerDown}
       requestClose={requestClose}
+      retainedProjectId={managedWindow.retainedProjectId}
     />
   );
 }

@@ -31,6 +31,12 @@ export function useWindowAutoCloseOnDone(): void {
       if (managedWindow.kind !== 'task-detail') continue;
       // Opened on an already-done/archived task -> leave it (Completed-Tasks review).
       if (managedWindow.openedDone) continue;
+      // Retained for a BACKGROUNDED project: its task is absent from `tasks`
+      // because the board belongs to a different project now, not because it left
+      // the board. Closing it would unmount the window and destroy the Browser
+      // pane's <webview> guest, which is the one thing retention exists to
+      // prevent. Its own project's board decides its fate when it comes back.
+      if (managedWindow.retainedProjectId !== undefined) continue;
       const task = tasks.find((candidate) => candidate.id === managedWindow.anchor);
       // Close on the EARLIEST off-board signal so the window never lingers:
       //  - a drag onto Done arms `completingTaskIds` synchronously (before the fly

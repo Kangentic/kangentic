@@ -7,7 +7,6 @@ import { useBrowserUrl } from './useBrowserUrl';
 import { INSPECT_SCRIPT, CLEAR_PICK_SCRIPT } from './inspectScript';
 import { AttachmentChips } from './AttachmentChips';
 import { useToastStore } from '../../stores/toast-store';
-import { useProjectStore } from '../../stores/project-store';
 import { useKeybinding } from '../../hooks/useKeybinding';
 import { PopOutButton } from '../../pop-out/PopOutButton';
 import { browserPartitionForWorktree } from '../../../shared/browser-partition';
@@ -31,16 +30,26 @@ interface BrowserPaneProps {
    * relative path in the @-mention computed from this cwd.
    */
   cwd: string;
+  /**
+   * The project the HOSTED TASK belongs to, not the open board's. Passed in
+   * rather than read from `useProjectStore` because this component mounts in
+   * three places where ambient state is wrong: a pop-out window (a separate
+   * renderer with its own store, which .claude/rules/pop-out-surface-registry.md
+   * forbids trusting), an Agent Monitor host showing a cross-project task, and a
+   * pane whose project is backgrounded. The pane registry scopes MCP access by
+   * this value, so a wrong one is a cross-project reachability bug.
+   */
+  projectId: string | null;
 }
 
-export function BrowserPane({ sessionId, taskId, cwd }: BrowserPaneProps) {
+export function BrowserPane({ sessionId, taskId, cwd, projectId }: BrowserPaneProps) {
   const {
     loading: urlLoading,
     effectiveUrl,
     projectDefault,
     saveForProject,
     recordNavigation,
-  } = useBrowserUrl(taskId);
+  } = useBrowserUrl(taskId, projectId);
 
   if (urlLoading) {
     return (
@@ -67,6 +76,7 @@ export function BrowserPane({ sessionId, taskId, cwd }: BrowserPaneProps) {
       sessionId={sessionId}
       taskId={taskId}
       cwd={cwd}
+      projectId={projectId}
       effectiveUrl={effectiveUrl}
       projectDefault={projectDefault}
       saveForProject={saveForProject}
@@ -79,6 +89,7 @@ interface BrowserPaneActiveProps {
   sessionId: string;
   taskId: string;
   cwd: string;
+  projectId: string | null;
   effectiveUrl: string;
   projectDefault: string | null;
   saveForProject: (url: string) => Promise<void>;
@@ -89,6 +100,7 @@ function BrowserPaneActive({
   sessionId,
   taskId,
   cwd,
+  projectId,
   effectiveUrl,
   projectDefault,
   saveForProject,
@@ -120,7 +132,6 @@ function BrowserPaneActive({
   // flashed in as the pane slid open. We cover it with the app's surface color
   // (plus a spinner) and lift the cover on the first dom-ready / stop-loading.
   const [pageReady, setPageReady] = useState(false);
-  const projectId = useProjectStore((state) => state.currentProject?.id ?? null);
 
   const webviewRef = useRef<WebviewElement | null>(null);
   const overlayContainerRef = useRef<HTMLDivElement | null>(null);
@@ -189,7 +200,6 @@ function BrowserPaneActive({
       if (!Number.isInteger(webContentsId) || webContentsId <= 0) return;
       registered = true;
       registeredWebContentsIdRef.current = webContentsId;
-      const projectId = useProjectStore.getState().currentProject?.id ?? null;
       let url: string | null = null;
       try {
         url = webview.getURL() || null;
@@ -208,7 +218,7 @@ function BrowserPaneActive({
       // clobber the newer registration - see unregisterIfMatches.
       void window.electronAPI.browser.unregisterPane(sessionId, registeredWebContentsIdRef.current ?? undefined);
     };
-  }, [sessionId, taskId]);
+  }, [sessionId, taskId, projectId]);
 
   // Lift the dark loading cover once the webview paints. One-shot: it stays
   // lifted across later navigations (the old page remains visible until the new
@@ -260,7 +270,13 @@ function BrowserPaneActive({
   // emit zoom-changed (it's a WebContents event, not a DOM event), so this
   // IPC path is the only way to keep the toolbar % synced with wheel zoom.
   useEffect(() => {
-    const unsubscribe = window.electronAPI.browser.onZoomChanged((factor) => {
+    const unsubscribe = window.electronAPI.browser.onZoomChanged((factor, webContentsId) => {
+      // The broadcast reaches every pane in the host window, so take only this
+      // pane's own guest. Accept when either id is unknown: the pane has not
+      // registered yet (or a caller sent no id), and the pre-multi-pane
+      // behaviour of applying it is better than dropping the readout.
+      const own = registeredWebContentsIdRef.current;
+      if (typeof webContentsId === 'number' && own !== null && webContentsId !== own) return;
       setZoomFactorState(factor);
     });
     return unsubscribe;
@@ -435,8 +451,14 @@ function BrowserPaneActive({
   // Browser-pane shortcuts from the central keybinding registry. Document +
   // capture phase, preventDefault only (no stopPropagation), and skipped when a
   // form field is focused so typing `i`/`d` in the note input doesn't trigger
-  // them. Zoom additionally requires the pane to be active (mouse over it OR
-  // focus inside) so e.g. Ctrl+0 from elsewhere doesn't reset browser zoom.
+  // them.
+  //
+  // EVERY one of them requires the pane to be active (mouse over it OR focus
+  // inside), not just zoom. These are document-level listeners and more than one
+  // BrowserPane can now be mounted at once - a second task's pane in another
+  // window, a pane retained for a backgrounded project - so a bare `notFormField`
+  // gate fires the shortcut on all of them simultaneously, starting Inspect or
+  // toggling draw mode on panes the user is not pointing at.
   const notFormField = (event: KeyboardEvent | PointerEvent): boolean => {
     const target = event.target as HTMLElement | null;
     return !(!!target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA'));
@@ -448,11 +470,11 @@ function BrowserPaneActive({
     return hoveredRef.current || focusInside;
   };
   const browserKeyOptions = { target: 'document', capture: true, stopPropagation: false } as const;
-  useKeybinding('browser.inspect', () => void startInspect(), { ...browserKeyOptions, when: notFormField });
+  useKeybinding('browser.inspect', () => void startInspect(), { ...browserKeyOptions, when: paneActive });
   useKeybinding('browser.draw', () => setDrawMode((previous) => {
     if (!previous) cancelInspect();
     return !previous;
-  }), { ...browserKeyOptions, when: notFormField });
+  }), { ...browserKeyOptions, when: paneActive });
   useKeybinding('browser.zoomIn', () => zoomIn(), { ...browserKeyOptions, when: paneActive });
   useKeybinding('browser.zoomOut', () => zoomOut(), { ...browserKeyOptions, when: paneActive });
   useKeybinding('browser.zoomReset', () => resetZoom(), { ...browserKeyOptions, when: paneActive });

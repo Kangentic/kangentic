@@ -142,8 +142,16 @@ function makeContext() {
     configManager: {
       loadProjectOverrides: vi.fn(() => null),
     },
+    // registerPane backfills the pane's project from the session registry, the
+    // only authoritative source (the renderer's value is ambient and goes stale
+    // in a pop-out). Tests override the return per case.
+    sessionManager: {
+      getSessionProjectId: fakeGetSessionProjectId,
+    },
   };
 }
+
+const fakeGetSessionProjectId = vi.fn<(sessionId: string) => string | undefined>(() => undefined);
 
 async function invokeClearStorage(): Promise<unknown> {
   const handler = capturedHandlers.get('browser:clearStorage');
@@ -359,13 +367,10 @@ describe('BROWSER_PANE_REGISTER IPC handler', () => {
     capturedHandlers.clear();
     fakeRegistryRegister.mockClear();
     fakeRegistryUnregister.mockClear();
+    fakeGetSessionProjectId.mockReset();
+    fakeGetSessionProjectId.mockReturnValue(undefined);
 
-    const context = {
-      currentProjectPath: null,
-      currentProjectId: null,
-      configManager: { loadProjectOverrides: vi.fn(() => null) },
-    };
-    registerBrowserHandlers(context as Parameters<typeof registerBrowserHandlers>[0]);
+    registerBrowserHandlers(makeContext() as unknown as Parameters<typeof registerBrowserHandlers>[0]);
   });
 
   it('throws on null input', async () => {
@@ -436,6 +441,38 @@ describe('BROWSER_PANE_REGISTER IPC handler', () => {
       url: null,
     });
   });
+
+  // The registered projectId is what resolveTarget scopes MCP access by, so it
+  // must come from the session registry (stamped at spawn) rather than the
+  // renderer's ambient currentProject, which a pop-out window holds stale
+  // across a project switch.
+  it('prefers the session registry project over a stale renderer value', async () => {
+    fakeGetSessionProjectId.mockReturnValue('proj-real');
+    await invokeRegisterPane({
+      sessionId: VALID_SESSION_ID,
+      taskId: 'task-1',
+      projectId: 'proj-stale',
+      webContentsId: 42,
+      url: null,
+    });
+    expect(fakeRegistryRegister).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: 'proj-real' }),
+    );
+  });
+
+  it('falls back to the renderer value for a session the registry does not know', async () => {
+    fakeGetSessionProjectId.mockReturnValue(undefined);
+    await invokeRegisterPane({
+      sessionId: VALID_SESSION_ID,
+      taskId: 'task-1',
+      projectId: 'proj-from-renderer',
+      webContentsId: 42,
+      url: null,
+    });
+    expect(fakeRegistryRegister).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: 'proj-from-renderer' }),
+    );
+  });
 });
 
 describe('BROWSER_PANE_UNREGISTER IPC handler', () => {
@@ -443,12 +480,7 @@ describe('BROWSER_PANE_UNREGISTER IPC handler', () => {
     capturedHandlers.clear();
     fakeRegistryUnregister.mockClear();
 
-    const context = {
-      currentProjectPath: null,
-      currentProjectId: null,
-      configManager: { loadProjectOverrides: vi.fn(() => null) },
-    };
-    registerBrowserHandlers(context as Parameters<typeof registerBrowserHandlers>[0]);
+    registerBrowserHandlers(makeContext() as unknown as Parameters<typeof registerBrowserHandlers>[0]);
   });
 
   it('returns without calling unregister when sessionId is malformed', async () => {

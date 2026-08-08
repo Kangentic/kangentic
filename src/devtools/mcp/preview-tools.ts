@@ -986,7 +986,7 @@ export function registerDevtoolsPreviewTools(server: McpServer): void {
     'kangentic_devtools_script',
     {
       description:
-        'Execute an array of UI steps in order against the inspected preview. Each step: { type: "click" | "type" | "keypress" | "drag" | "wait" | "screenshot" | "eval", ...stepArgs }. Returns a step-by-step trace with ok/durationMs/error. `screenshot` steps persist to disk and the trace entry carries `screenshotPath` + `screenshotUri` (read via Read). `eval` steps carry the serialized return value as `value` on their trace entry (requires the Allow Eval setting). Selectors accept CSS, `text="..."`, or `aria="..."`. Cuts MCP latency dramatically vs. one tool call per step. Dev-only.',
+        'Execute an array of UI steps in order against the inspected preview. Each step: { type: "click" | "type" | "keypress" | "drag" | "wait" | "screenshot" | "eval", ...stepArgs }. Returns a step-by-step trace with ok/durationMs/error. `screenshot` steps persist to disk and the trace entry carries `screenshotPath` + `screenshotUri` (read via Read). `eval` steps carry the serialized return value as `value` on their trace entry (requires Settings -> Developer -> Allow Unsafe Operations). Selectors accept CSS, `text="..."`, or `aria="..."`. Cuts MCP latency dramatically vs. one tool call per step. Dev-only.',
       inputSchema: z.object({
         steps: z
           .array(
@@ -1023,7 +1023,7 @@ export function registerDevtoolsPreviewTools(server: McpServer): void {
     'kangentic_devtools_eval',
     {
       description:
-        'Evaluate a JavaScript expression in the inspected preview\'s renderer and return its serialized value (e.g. `{ value: 2 }` for "1 + 1", or an array of element measurements). The return value must be JSON-serializable - DOM nodes and functions do not round-trip; return their measured/string form instead. Requires Settings -> Developer -> Allow Eval (returns an `eval-disabled` error otherwise). For reading store state prefer kangentic_devtools_store_state; for multi-element measurement prefer kangentic_devtools_query_all - both work without the Allow Eval setting. Dev-only.',
+        'Evaluate a JavaScript expression in the inspected preview\'s renderer and return its serialized value (e.g. `{ value: 2 }` for "1 + 1", or an array of element measurements). The return value must be JSON-serializable - DOM nodes and functions do not round-trip; return their measured/string form instead. Requires Settings -> Developer -> Allow Unsafe Operations (returns an `eval-disabled` error otherwise). That toggle is NOT the same as Settings -> Agent Browser -> Allow Eval, which gates kangentic_browser_eval in a task\'s Browser pane. For reading store state prefer kangentic_devtools_store_state; for multi-element measurement prefer kangentic_devtools_query_all - both work without it. Dev-only.',
       inputSchema: z.object({
         expression: z.string().describe('JavaScript expression to evaluate. Its value is returned (awaited if a Promise).'),
         instanceId: z.string().optional().describe(INSTANCE_ARG_DESCRIPTION),
@@ -1076,7 +1076,7 @@ export function registerDevtoolsPreviewTools(server: McpServer): void {
       inputSchema: z.object({
         sessionId: z.string().describe('Kangentic session id (UUID).'),
         keys: z.string().optional().describe('Named key or literal text (XOR with bytes).'),
-        bytes: z.string().optional().describe('Base64-encoded raw bytes. Requires Allow Eval setting.'),
+        bytes: z.string().optional().describe('Base64-encoded raw bytes. Requires Settings -> Developer -> Allow Unsafe Operations.'),
         instanceId: z.string().optional().describe(INSTANCE_ARG_DESCRIPTION),
       }),
       annotations: MUTATING_ANNOTATIONS,

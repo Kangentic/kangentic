@@ -35,6 +35,32 @@ the two surfaces forking the CDP driver (so click/type/screenshot semantics drif
   registry (no CDP attach, no `sendCommand`) and enumerates every pane rather than resolving one target,
   so the single-target `withGuest` path does not apply. It echoes `automationEnabled` so the agent sees
   the policy state. A new tool that drives a pane must still go through `withGuest`.
+- **Every pane target is caller-scoped.** `registerBrowserTools` takes a `BrowserToolDependencies`
+  carrying the URL-path `projectId` (always present) and the optional `callerSessionId`, mirroring
+  `registerSteeringTools`. `ResolveTargetSelector.projectId` is required and explicitly nullable, so
+  every branch of `resolveTarget` refuses a pane outside the caller's project with the
+  `foreign-project` kind, and a new call site cannot fall back to process-wide behavior by omission
+  (`null` is the deliberate unscoped path, for main-process internal callers only). The family
+  deliberately has NO `project` argument and is deliberately NOT handed the `RequestResolver`, so
+  "there is no path to another project's pane" is a type-level guarantee rather than a convention.
+  The `list_panes` exception above is only an exception to `withGuest`: it must still scope to the
+  caller's project by default. The pane's registered `projectId` is backfilled in
+  `BROWSER_PANE_REGISTER` from the session registry, since the renderer's value is ambient
+  `currentProject` and a pop-out window's separate store holds it stale across a project switch.
+- **A capture against a non-composited pane must fail fast, never hang.** Chromium stops
+  compositing a window that is minimized, hidden, or fully occluded, and `Page.captureScreenshot`
+  then never resolves: every later command for that guest queues behind it, wedging the pane for
+  good. Two layers, and only the second is a guarantee:
+  1. `withGuest` refuses up front with `pane-not-rendering` when
+     `BrowserWindow.fromWebContents(guest.hostWebContents)?.isMinimized()`. Minimized is the only
+     case main can observe, so this is a nicety that yields a clearer error, not coverage.
+  2. `captureScreenshot` races the command against `SCREENSHOT_TIMEOUT_MS` (`cdp/cdp.ts`). This is
+     the real backstop, because a merely hidden or occluded window is indistinguishable from a
+     visible one through Electron's main-process API (`isVisible()` stays true). Do not remove the
+     bound on the strength of the precondition check.
+  The same physics is why a retained background pane must be hidden with `opacity: 0` rather than
+  `visibility: hidden` or offscreen positioning: those stop compositing, an `opacity: 0` subtree
+  does not.
 - **`eval` is gated off by default.** `kangentic_browser_eval` uses the `eval` capability, which the
   driver blocks unless `AppConfig.browserAutomation.allowEval` is on. Do not ship an ungated
   arbitrary-JS path.
@@ -47,9 +73,13 @@ the two surfaces forking the CDP driver (so click/type/screenshot semantics drif
   `webContents.debugger.*` call appears outside `src/main/browser/cdp/cdp.ts`, or if shipped
   browser-automation code imports `src/devtools/`. `tests/unit/browser-pane-registry.test.ts` and
   `browser-pane-driver.test.ts` lock target resolution, self-healing eviction, capability gating, and
-  the navigation-URL policy. Run in CI via `npm run test:unit`.
+  the navigation-URL policy. `tests/unit/mcp-browser-tools-project-scope.test.ts` is the
+  caller-scoping guard: it enumerates the REGISTERED tools at runtime and fails when one has no
+  entry in its args map, so a newly added browser tool cannot ship unscoped even though this rule
+  may not be loaded when it is written. Run in CI via `npm run test:unit`.
 - **Review:** `/code-review` flags a new `kangentic_browser_*` tool that bypasses `withGuest`, an
-  ungated eval path, or a shipped import of `src/devtools/`.
+  ungated eval path, a shipped import of `src/devtools/`, or a `resolveTarget` / `withGuest` call
+  site that passes `projectId: null` without being a main-process internal caller.
 
 ## Drift over time
 

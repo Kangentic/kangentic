@@ -27,5 +27,16 @@ export function PopOutBrowserRoot({ params }: { params: PopOutTaskParams }) {
     );
   }
 
-  return <BrowserPane sessionId={sessionId} taskId={task.id} cwd={task.worktree_path ?? projectPath} />;
+  // projectId comes from `params`, never this window's own project store: a
+  // pop-out is a separate renderer whose ambient `currentProject` tracks the
+  // MAIN window's board and goes stale the moment the user switches projects.
+  // See .claude/rules/pop-out-surface-registry.md.
+  return (
+    <BrowserPane
+      sessionId={sessionId}
+      taskId={task.id}
+      cwd={task.worktree_path ?? projectPath}
+      projectId={params.projectId}
+    />
+  );
 }

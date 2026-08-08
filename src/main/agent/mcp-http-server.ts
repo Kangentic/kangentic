@@ -51,7 +51,11 @@ import { registerProjectTools } from './mcp-http/project-tools';
 import { registerSearchTools } from './mcp-http/search-tools';
 import { registerDiagnosticsTools } from './mcp-http/diagnostics-tools';
 import { registerUsageTools } from './mcp-http/usage-tools';
-import { registerBrowserTools, type AutomationConfigReader } from './mcp-http/browser-tools';
+import {
+  registerBrowserTools,
+  type AutomationConfigReader,
+  type BrowserToolDependencies,
+} from './mcp-http/browser-tools';
 import { registerSteeringTools, type SteeringToolDependencies, type SteeringSessionLookup } from './mcp-http/steering-tools';
 import {
   createSessionSendCoordinator,
@@ -150,8 +154,21 @@ export async function startMcpHttpServer(
     return { coordinator: sessionSendCoordinator, sessions: steeringContext.sessionManager, callerSessionId };
   };
 
+  // Caller scope for the browser family. Mirrors resolveSteering: both read the
+  // same parseMcpRequestPath result, so the two cannot disagree about who is
+  // calling. projectId is always present (buildContext already 404'd an unknown
+  // one); the session lookup is read lazily for the same reason as above.
+  const resolveBrowser = (
+    projectId: string,
+    callerSessionId?: string,
+  ): BrowserToolDependencies => ({
+    projectId,
+    callerSessionId,
+    sessions: getSteeringContext()?.sessionManager ?? null,
+  });
+
   const httpServer: Server = createServer((req, res) => {
-    handleHttpRequest(req, res, expectedTokenBuffer, buildContext, taskCounter, getBrowserAutomationConfig, networkConfig, resolveSteering)
+    handleHttpRequest(req, res, expectedTokenBuffer, buildContext, taskCounter, getBrowserAutomationConfig, networkConfig, resolveSteering, resolveBrowser)
       .catch((error) => {
         console.error('[mcp-http] Request handler crashed:', error);
         if (!res.headersSent) {
@@ -312,7 +329,11 @@ export function buildConfiguredMcpServer(
   resolver: RequestResolver,
   taskCounter: TaskCounter,
   getBrowserAutomationConfig: AutomationConfigReader,
-  steering?: SteeringToolDependencies | null,
+  steering: SteeringToolDependencies | null | undefined,
+  // Required, unlike `steering`: a browser tool family built without caller
+  // scope is the cross-project pane leak this parameter exists to prevent, so
+  // there is deliberately no way to omit it.
+  browser: BrowserToolDependencies,
 ): McpServer {
   const browserAutomationEnabled = getBrowserAutomationConfig().enabled;
   const instructions = buildServerInstructions(resolver, browserAutomationEnabled);
@@ -328,7 +349,7 @@ export function buildConfiguredMcpServer(
   registerUsageTools(mcpServer, resolver);
   registerDiagnosticsTools(mcpServer, resolver);
   if (browserAutomationEnabled) {
-    registerBrowserTools(mcpServer, getBrowserAutomationConfig);
+    registerBrowserTools(mcpServer, getBrowserAutomationConfig, browser);
   }
   // Steering needs live main-process singletons. They are absent only before
   // the IPC context exists (the server starts ahead of createWindow), which is
@@ -357,6 +378,7 @@ async function handleHttpRequest(
   getBrowserAutomationConfig: AutomationConfigReader,
   networkConfig: McpServerNetworkConfig,
   resolveSteering: (callerSessionId?: string) => SteeringToolDependencies | null,
+  resolveBrowser: (projectId: string, callerSessionId?: string) => BrowserToolDependencies,
 ): Promise<void> {
   // Token check first -- cheapest reject path. Constant-time compare so a
   // local timing oracle can't byte-by-byte recover the token. When bound to
@@ -409,6 +431,7 @@ async function handleHttpRequest(
     taskCounter,
     getBrowserAutomationConfig,
     resolveSteering(callerSessionId),
+    resolveBrowser(projectId, callerSessionId),
   );
 
   const transport = new StreamableHTTPServerTransport({

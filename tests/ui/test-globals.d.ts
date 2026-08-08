@@ -16,9 +16,13 @@ declare global {
       getCaptureCalls: () => unknown[];
       getPaneCalls: () => Array<
         | { type: 'register'; input: { sessionId: string; taskId: string; projectId: string | null; webContentsId: number; url: string | null } }
-        | { type: 'unregister'; sessionId: string }
+        | { type: 'unregister'; sessionId: string; webContentsId?: number }
       >;
       seedTaskUrl: (taskId: string, url: string) => void;
+      /** The project a task URL was last saved against (null if never saved). */
+      getTaskUrlProject: (taskId: string) => string | null;
+      /** Fire the main-process zoom broadcast at one specific guest. */
+      emitZoomChanged: (factor: number, webContentsId: number) => void;
     };
 
     /** Captures the URL most recently submitted by BrowserEmptyState mounts. */

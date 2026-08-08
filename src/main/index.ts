@@ -338,7 +338,11 @@ app.on('web-contents-created', (_event, contents) => {
     // the only listener, and the main window's in-app pane is unmounted while popped out).
     const hostWindow = BrowserWindow.fromWebContents(contents.hostWebContents ?? contents);
     if (hostWindow && !hostWindow.isDestroyed()) {
-      hostWindow.webContents.send(IPC.BROWSER_ZOOM_CHANGED, clampedFactor);
+      // Carry the guest's own id: one window can host SEVERAL Browser panes (a
+      // second task's window, or a pane retained for a backgrounded project), and
+      // a factor-only broadcast makes every one of them adopt a zoom the user
+      // applied to just one.
+      hostWindow.webContents.send(IPC.BROWSER_ZOOM_CHANGED, clampedFactor, contents.id);
     }
   });
 

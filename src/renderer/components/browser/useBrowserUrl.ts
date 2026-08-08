@@ -31,27 +31,41 @@ export interface UseBrowserUrlResult {
   recordNavigation: (url: string) => void;
 }
 
-export function useBrowserUrl(taskId: string): UseBrowserUrlResult {
+export function useBrowserUrl(taskId: string, projectId: string | null): UseBrowserUrlResult {
   const [projectDefault, setProjectDefault] = useState<string | null>(null);
   const [taskOverride, setTaskOverride] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const projectDefaultRef = useRef<string | null>(null);
   projectDefaultRef.current = projectDefault;
 
+  // True once a URL has resolved at least once. A REFETCH must not drop back to
+  // the loading state: `BrowserPane` renders its active subtree only while an
+  // effective URL exists, so a transient `loading` unmounts the <webview> and
+  // destroys the guest, taking the agent's CDP session with it. That is not
+  // hypothetical - a project switch re-runs this effect (child effects run
+  // before the parent effect that marks the window retained), and the resulting
+  // one-commit flicker recreated the guest with a new webContentsId.
+  const hasResolvedRef = useRef(false);
+
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
+    if (!hasResolvedRef.current) setLoading(true);
     window.electronAPI.browser
-      .getUrls(taskId)
+      .getUrls(taskId, projectId)
       .then((result) => {
         if (cancelled) return;
+        // A refetch that finds nothing must not blank a pane that is already
+        // showing a page: same reasoning as the loading guard above, since a
+        // null effective URL unmounts the guest just as surely.
+        if (hasResolvedRef.current && result.projectDefault === null && result.taskOverride === null) return;
+        hasResolvedRef.current = true;
         setProjectDefault(result.projectDefault);
         setTaskOverride(result.taskOverride);
       })
       .catch(() => { /* leave defaults; UI shows empty state */ })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [taskId]);
+  }, [taskId, projectId]);
 
   const saveForProject = useCallback(async (url: string) => {
     const existing = await window.electronAPI.config.getProjectOverrides();
@@ -68,14 +82,14 @@ export function useBrowserUrl(taskId: string): UseBrowserUrlResult {
   }, []);
 
   const saveForTask = useCallback(async (url: string) => {
-    await window.electronAPI.browser.setTaskUrl(taskId, url);
+    await window.electronAPI.browser.setTaskUrl(taskId, url, projectId);
     setTaskOverride(url);
-  }, [taskId]);
+  }, [taskId, projectId]);
 
   const clearTaskOverride = useCallback(async () => {
-    await window.electronAPI.browser.clearTaskUrl(taskId);
+    await window.electronAPI.browser.clearTaskUrl(taskId, projectId);
     setTaskOverride(null);
-  }, [taskId]);
+  }, [taskId, projectId]);
 
   const lastRecordedUrlRef = useRef<string | null>(null);
   const recordNavigation = useCallback((url: string) => {

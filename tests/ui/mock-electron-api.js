@@ -41,8 +41,12 @@
   // a call log so tests can assert the prompt payload that would have been
   // shipped to the agent.
   let browserUrls = {};
+  // Which project each task URL was saved against, so a test can assert a
+  // popped-out or backgrounded pane wrote to its OWN project's sidecar.
+  let browserUrlProjects = {};
   let browserCaptureCalls = [];
   let browserPaneCalls = [];
+  let browserZoomSubscribers = [];
   // Pop-out engine call log: open/close/focus invocations, so a test can
   // assert the title-bar / surface-header trigger called the right verb
   // (e.g. focus() instead of toggling the in-app overlay) without a real
@@ -3562,8 +3566,12 @@
         browserCaptureCalls.push(input);
         return { filePath: '/mock/captures/capture-' + Date.now() + '.png' };
       },
-      getUrls: async function (taskId) {
-        var currentProject = projects.find(function (p) { return p.id === currentProjectId; });
+      // projectId is the TASK's project (a popped-out pane outlives a project
+      // switch). The mock resolves the project default from it, falling back to
+      // the current project the way resolveProjectContext does in main.
+      getUrls: async function (taskId, projectId) {
+        var lookupId = projectId || currentProjectId;
+        var currentProject = projects.find(function (p) { return p.id === lookupId; });
         var overrides = currentProject ? projectConfigs[currentProject.path] : null;
         // Empty string means "no project default" -- mirrors useBrowserUrl's
         // `||` fallthrough and BrowserTab's documented sentinel for cleared
@@ -3575,10 +3583,12 @@
           taskOverride: browserUrls[taskId] || null,
         };
       },
-      setTaskUrl: async function (taskId, url) {
+      setTaskUrl: async function (taskId, url, projectId) {
+        browserUrlProjects[taskId] = projectId || currentProjectId;
         browserUrls[taskId] = url;
       },
       clearTaskUrl: async function (taskId) {
+        delete browserUrlProjects[taskId];
         delete browserUrls[taskId];
       },
       // Stub for the Clear Browser Data action in the Browser settings tab.
@@ -3591,7 +3601,16 @@
       // Ctrl+wheel zoom is applied in the main process and broadcast back.
       // The UI tier has no main process, so the mock just registers the
       // callback and returns a no-op unsubscribe.
-      onZoomChanged: function (_callback) { return function () { /* no-op */ }; },
+      // Records subscribers so a test can fire a zoom broadcast at ONE pane and
+      // assert the others ignore it (the payload carries the guest's id because
+      // a window can host several panes).
+      onZoomChanged: function (callback) {
+        browserZoomSubscribers.push(callback);
+        return function () {
+          const index = browserZoomSubscribers.indexOf(callback);
+          if (index >= 0) browserZoomSubscribers.splice(index, 1);
+        };
+      },
     },
 
     // Platform string. Defaults to 'win32' (matches the most common dev
@@ -3616,8 +3635,10 @@
   window.__mockBrowser = {
     reset: function () {
       browserUrls = {};
+      browserUrlProjects = {};
       browserCaptureCalls = [];
       browserPaneCalls = [];
+      browserZoomSubscribers = [];
       // Also drop any project-level browser default that the empty-state
       // submit path auto-seeded via saveForProject -- otherwise the next
       // test's BrowserPane.useBrowserUrl resolves an effectiveUrl from the
@@ -3637,6 +3658,16 @@
     },
     seedTaskUrl: function (taskId, url) {
       browserUrls[taskId] = url;
+    },
+    /** The project a task URL was last saved against (null if never saved). */
+    getTaskUrlProject: function (taskId) {
+      return browserUrlProjects[taskId] || null;
+    },
+    /** Fire the main-process zoom broadcast at a specific guest. */
+    emitZoomChanged: function (factor, webContentsId) {
+      browserZoomSubscribers.slice().forEach(function (callback) {
+        callback(factor, webContentsId);
+      });
     },
   };
 

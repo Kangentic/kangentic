@@ -69,6 +69,13 @@ export function deriveOwnedDetails(
     // Only task-detail windows own a detail. A conversation window's anchor is a
     // session id and a command terminal's is a slot.
     if (managedWindow.kind !== 'task-detail') continue;
+    // A window retained for a backgrounded project does NOT own its detail. It
+    // is mounted only to keep its Browser pane's <webview> guest alive and has
+    // dropped its terminal, so it holds nothing the ownership registry arbitrates
+    // over. Excluding it is what lets the user open that same task in the Agent
+    // Monitor while its project is backgrounded; because there is no xterm in a
+    // retained window, doing so cannot produce two terminals on one PTY.
+    if (managedWindow.retainedProjectId !== undefined) continue;
     const detail = anchorToDetail(managedWindow.anchor);
     if (!detail) continue;
     const key = `${detail.projectId}:${detail.taskId}`;

@@ -77,6 +77,21 @@ export interface ManagedWindow {
    *  restore (project switch) so they paint flat with NO entrance animation,
    *  unlike a fresh user-opened window. Re-derived on every restore. */
   skipEnterAnimation?: boolean;
+  /** Set to the OWNING project's id while that project is backgrounded.
+   *
+   *  A retained window stays in `windows` and keeps rendering at its existing
+   *  DOM position, invisible and inert. That is the whole mechanism: an Electron
+   *  `<webview>` guest dies the moment its DOM node moves, so the only way a
+   *  Browser pane can outlive a project switch is for its window never to be
+   *  unmounted or re-parented. `WindowLayer` already renders in stable insertion
+   *  order and stacks purely by `zIndex`, so simply leaving the entry in the map
+   *  is sufficient - do not "tidy" retained windows into a separate container or
+   *  list, which would re-parent them and destroy the guest.
+   *
+   *  Transient, never persisted: retention is re-derived on each project switch.
+   *  Content-agnostic by design (a project id, not a task), so the generic engine
+   *  gains no board dependency; the board layer owns the frozen task snapshot. */
+  retainedProjectId?: string;
 }
 
 /**

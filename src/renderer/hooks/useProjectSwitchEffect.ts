@@ -34,6 +34,7 @@ import {
   getProjectSnapshot,
 } from '../stores/project-cache';
 import { restoreWorkspaceForProject } from '../window-manager/persistence/restore-workspace';
+import { captureRetainedTasks, pruneRetainedTasks, planWindowRetention } from '../window-manager/bridge/retained-task-snapshots';
 import { useWindowStore } from '../window-manager/store/window-store';
 
 export function useProjectSwitchEffect(currentProject: Project | null): void {
@@ -93,6 +94,31 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
           closeWindow(managedWindow.id);
         }
       }
+
+      // Retain the outgoing project's task-detail windows that host an OPEN
+      // Browser pane. An Electron <webview> guest dies the moment its DOM node
+      // is unmounted, so this is the only way an agent in a backgrounded project
+      // can keep driving its own pane. Everything else still closes: retention
+      // is bounded to a surface the user deliberately opened, and a retained
+      // window drops its terminal, so the standing cost is one composited
+      // zero-opacity webview per pane and nothing else.
+      // `retainAnchors` and `snapshotTaskIds` are deliberately different sets:
+      // only THIS project's windows may be newly retained, but every already-
+      // retained window's frozen row must survive the prune. See
+      // `planWindowRetention` for why collapsing them breaks retention.
+      const { retainAnchors, snapshotTaskIds } = planWindowRetention(
+        Object.values(useWindowStore.getState().windows),
+        useSessionStore.getState().browserOpenTasks,
+      );
+      // Freeze the rows these windows will render from: the board store is
+      // project-scoped and is about to stop holding them. Only the outgoing
+      // project's own rows are present here, so an already-retained window's
+      // snapshot is carried by the prune set rather than re-captured.
+      captureRetainedTasks(
+        useBoardStore.getState().tasks.filter((candidate) => snapshotTaskIds.has(candidate.id)),
+      );
+      pruneRetainedTasks(snapshotTaskIds);
+      useWindowStore.getState().retainWindows(previousProjectId, retainAnchors);
 
       const boardState = useBoardStore.getState();
       const backlogState = useBacklogStore.getState();
