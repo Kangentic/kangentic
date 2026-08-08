@@ -333,10 +333,13 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   clear replays a clear with nothing after it. The parsed-grid snapshot above is the safe shape,
   not a byte-offset heuristic; and since the byte path now serves normal-buffer sessions, a trim
   there would discard genuine user-scrollable history, not just a TUI's redraw bytes.
-- **One grid width per mount (deterministic fit).** `proposeDimensions` (`src/renderer/addons/fit-addon.ts`)
-  is a pure function of container geometry. It must not read anything that can change while a
-  terminal is mounting, because every distinct column count costs a PTY resize and a full agent
-  repaint the user watches land. The rule exists because the fit used to reclaim the scrollbar
+- **One grid width per mount (deterministic fit).** `describeProposedDimensions`
+  (`src/renderer/addons/fit-addon.ts`, the single implementation that both `proposeDimensions` and
+  `fit` read) is a pure function of two inputs and no others: the container geometry, and the ACTIVE
+  renderer's cell metric. It must not read anything else that can change while a terminal is
+  mounting, because every distinct column count costs a PTY resize and a full agent
+  repaint the user watches land. Holding the second input still across a mount or a reveal is the
+  next bullet's subject. The rule exists because the fit used to reclaim the scrollbar
   gutter whenever the alternate screen buffer was active: the scrollback replay writes the TUI's
   alt-screen enter mid-mount, so the mount fit and the post-replay refit disagreed by two columns on
   every open (always, under Claude Code's `/tui fullscreen`). That produced the "opens mis-sized,
@@ -348,6 +351,32 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   alt-buffer reclaim was mistakenly written to fix. Gated by
   `tests/e2e/terminal-fit-invariant.spec.ts` (one distinct grid width per open, and the grid never
   wider than its viewport) and `tests/unit/fit-addon.test.ts`.
+- **Fit only on the renderer the terminal keeps.** The container is not the fit's only input: the
+  cell metric is, and that comes from whichever renderer is attached
+  (`_renderService.dimensions.css.cell.width`). Parking a terminal disposes its WebGL addon for the
+  GPU budget, and the DOM renderer it falls back to measures a WIDER cell, so an unchanged container
+  proposes ~10% FEWER columns while suspended (measured: 210 attached, 191 suspended, at
+  hostWidth 1483). `useFocusedSessionsSync` therefore applies the WebGL attachment plan BEFORE it
+  publishes the parked set, because `syncParkedTerminals` fires reveal listeners synchronously and
+  each one fits itself on the spot; the mount path already had this order
+  (`attachWebglRenderer`, then the initial fit). With the order inverted, a Board -> Backlog ->
+  Board round trip wrote main's full-width frame into the narrow grid and the refit widened it back
+  WITHOUT reflowing - xterm reflows the normal buffer on resize and never the alternate one, so a
+  full-screen agent TUI stayed hard-wrapped until something forced a repaint. As a backstop for
+  the other ways the width can move across a REVEAL replay's async gap, `resolveReplayWidthAction`
+  (`useTerminal.ts`) compares the grid width at the write against the width after the post-write
+  refit and re-issues the replay once on a mismatch. It is wired into `reloadScrollback` only. The
+  mount replay has the same structural gap but is usually not exposed to it: its fit runs after the
+  WebGL attach, and it sends a real resize, so main serializes at the width it fitted to. The
+  exception is a mount taken while the page is already at `WEBGL_ATTACH_BUDGET` - that terminal
+  starts SUSPENDED, so its fit reads the DOM cell, and the coordinator's next plan can promote it to
+  WebGL mid-replay, which is the same uncovered corruption. Widening the backstop to the mount path
+  is left undone deliberately. `fit()` returns an applied/declined outcome so
+  a silent bail (a collapsed container, an unmeasured cell) is distinguishable from a real resize in
+  the `fit` trace. Gated by `tests/unit/replay-width-invariant.test.ts` and
+  `tests/ui/window-reveal-grid-width.spec.ts`, which deliberately keeps WebGL on and asserts on the
+  renderer trace ring, because the specs that read terminal CONTENT pass `--disable-webgl` and so
+  cannot reproduce a renderer swap at all.
 - **A session nobody is showing goes back to the spawn grid (the resting grid).** A PTY has ONE
   grid and every surface fits it to its own box, so a session last shown in the bottom panel was
   left at that panel's strip - measured live at 306x14 - with nothing to give it back. The agent

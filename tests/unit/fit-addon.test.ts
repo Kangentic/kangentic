@@ -352,3 +352,92 @@ describe('FitAddon.proposeDimensions -- NaN parent box bails instead of clamping
     expect(fitAddon.proposeDimensions()).toBeUndefined();
   });
 });
+
+describe('FitAddon.fit - reports what it did, and why it declined', () => {
+  // fit() used to return void and proposeDimensions() collapsed all four bails
+  // to `undefined`, so "the grid was resized to N" and "the fit declined and the
+  // grid kept an older N" were indistinguishable from the outside. That is the
+  // difference between the two repairs a mis-sized replay needs, and getting it
+  // wrong is actively harmful: acting on a declined fit's stale columns would
+  // ship that width to the PTY. The reload fit traces in useTerminal are the
+  // consumer; without the outcome they could only report the number.
+  let fitAddon: FitAddon;
+  const { parentEl, elementEl } = makeElements();
+
+  beforeEach(() => {
+    fitAddon = new FitAddon();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('reports the applied grid, matching what it passed to terminal.resize', () => {
+    vi.stubGlobal('window', makeWindowStub(parentEl));
+    const terminal = makeTerminalStub(elementEl);
+    const resize = vi.fn();
+    (terminal as unknown as { resize: typeof resize }).resize = resize;
+    fitAddon.activate(terminal);
+    expect(fitAddon.fit()).toEqual({ applied: true, cols: 99, rows: 37 });
+    expect(resize).toHaveBeenCalledWith(99, 37);
+  });
+
+  it('names a collapsed container as no-parent-box', () => {
+    vi.stubGlobal('window', makeCollapsedWindowStub(parentEl, 'both'));
+    fitAddon.activate(makeTerminalStub(elementEl));
+    expect(fitAddon.fit()).toEqual({ applied: false, reason: 'no-parent-box' });
+  });
+
+  it('names a NaN container as no-parent-box too (same guard, same stale grid)', () => {
+    vi.stubGlobal('window', makeNaNWindowStub(parentEl, 'both'));
+    fitAddon.activate(makeTerminalStub(elementEl));
+    expect(fitAddon.fit()).toEqual({ applied: false, reason: 'no-parent-box' });
+  });
+
+  it('names an unmeasured cell as zero-cell', () => {
+    // A render service mid-swap (the WebGL addon attaching or being disposed)
+    // or a font not yet applied. THE state behind the reveal-width incident's
+    // sibling failure mode: a fit taken here silently keeps the old grid.
+    vi.stubGlobal('window', makeWindowStub(parentEl));
+    const terminal = makeTerminalStub(elementEl);
+    (terminal as unknown as { _core: { _renderService: { dimensions: { css: { cell: { width: number; height: number } } } } } })
+      ._core._renderService.dimensions.css.cell = { width: 0, height: 0 };
+    fitAddon.activate(terminal);
+    expect(fitAddon.fit()).toEqual({ applied: false, reason: 'zero-cell' });
+  });
+
+  it('names a detached terminal as no-element', () => {
+    vi.stubGlobal('window', makeWindowStub(parentEl));
+    // Never activated, so there is no terminal at all - the same branch a
+    // terminal disposed mid-replay takes.
+    expect(fitAddon.fit()).toEqual({ applied: false, reason: 'no-element' });
+  });
+
+  it('names non-finite proposed dimensions, distinct from a missing parent box', () => {
+    // The padding reads can be NaN of their own while the parent box is valid,
+    // and Math.max propagates that rather than clamping it. This used to be
+    // fit()'s private isNaN guard, invisible to proposeDimensions().
+    vi.stubGlobal('window', {
+      getComputedStyle: (element: unknown) => ({
+        getPropertyValue: (prop: string): string => {
+          if (element === parentEl) {
+            if (prop === 'width') return String(PARENT_WIDTH);
+            if (prop === 'height') return '600';
+          }
+          // The terminal element answers '' for padding, as a computed style
+          // can before layout.
+          return '';
+        },
+      }),
+    });
+    const terminal = makeTerminalStub(elementEl);
+    const resize = vi.fn();
+    (terminal as unknown as { resize: typeof resize }).resize = resize;
+    fitAddon.activate(terminal);
+    expect(fitAddon.fit()).toEqual({ applied: false, reason: 'non-finite-dims' });
+    expect(resize).not.toHaveBeenCalled();
+    // And the lossy public view still collapses it to undefined, so the two
+    // stay consistent about which inputs are fittable.
+    expect(fitAddon.proposeDimensions()).toBeUndefined();
+  });
+});

@@ -25,21 +25,23 @@ import {
  * derives one visibility plan (utils/terminal-visibility.ts) and applies its
  * three outputs in order:
  *
- * 1. The PARKED set (utils/parked-terminals.ts): sessions whose terminal
- *    window is off-view (board layer parked on Backlog, or occluded by a
- *    maximized same-layer window). Publishing the set fires reveal listeners
- *    for parked -> visible edges, which trigger each terminal's scrollback
- *    catch-up repaint.
- * 2. The FOCUSED set, pushed to the main process. Main drops PTY data IPC for
- *    any session not in this set (see src/main/pty/session-manager.ts), so any
- *    terminal visible to the user must be listed here or its output will be
- *    silently suppressed. Parked sessions are filtered out so main stops
- *    emitting for them at the source.
- * 3. The WebGL attachment plan (utils/terminal-webgl.ts): the budgeted top-K
+ * 1. The WebGL attachment plan (utils/terminal-webgl.ts): the budgeted top-K
  *    terminals by focus recency keep live WebGL contexts; the rest are
  *    temporarily suspended to the DOM renderer. A second subscription
  *    re-applies the last plan whenever an attachment registers (terminal init
  *    is ResizeObserver-deferred, so a terminal can mount after the plan ran).
+ *    This runs FIRST, and the reason is load-bearing - see the comment on the
+ *    call itself.
+ * 2. The PARKED set (utils/parked-terminals.ts): sessions whose terminal
+ *    window is off-view (board layer parked on Backlog, or occluded by a
+ *    maximized same-layer window). Publishing the set fires reveal listeners
+ *    for parked -> visible edges, which trigger each terminal's scrollback
+ *    catch-up repaint.
+ * 3. The FOCUSED set, pushed to the main process. Main drops PTY data IPC for
+ *    any session not in this set (see src/main/pty/session-manager.ts), so any
+ *    terminal visible to the user must be listed here or its output will be
+ *    silently suppressed. Parked sessions are filtered out so main stops
+ *    emitting for them at the source.
  *
  * This must live in an always-mounted component (AppLayout). Previously this
  * effect lived inside TerminalPanel, which is unmounted on the Backlog view -
@@ -196,10 +198,39 @@ export function useFocusedSessionsSync(panelShowsTerminal: boolean): void {
     });
     const parkedSessionIds = new Set(plan.parkedSessionIds);
 
-    // Order matters: publish the parked set FIRST so reveal listeners kick off
-    // their scrollback catch-up (their scrollbackPendingRef holds any live
-    // bytes until the replay paints), THEN publish the focused set and re-focus
-    // the sessions so main resumes emitting, THEN swap the WebGL attachments.
+    // Swap the WebGL attachments FIRST, because a revealed terminal's catch-up
+    // replay fits itself synchronously and a fit is only valid on the renderer
+    // the terminal is going to KEEP.
+    //
+    // FitAddon derives columns from `_renderService.dimensions.css.cell.width`,
+    // and that service is swapped wholesale when the WebGL addon attaches or is
+    // disposed. A terminal parked off the board has its addon disposed
+    // (`webgl-suspend`, the GPU budget), and the DOM fallback it lands on
+    // measures a WIDER cell, so the same container proposes fewer columns.
+    // Measured on a 1483px task-detail window: 210 columns attached, 191
+    // suspended, with a byte-identical hostWidth.
+    //
+    // With the reveal published first, that 191 was the width the catch-up
+    // replay wrote main's 210-column frame at, and the refit afterwards widened
+    // the grid back to 210 WITHOUT reflowing it - xterm reflows the normal
+    // buffer on resize and never the alternate one, so a full-screen agent TUI
+    // stayed hard-wrapped until something made it repaint. Attaching first is
+    // the same order the mount path already uses (attachWebglRenderer, then the
+    // initial fit, in initTerminal).
+    //
+    // Nothing else depends on this running last: the plan is fully computed
+    // above, and applying it touches only renderer attachments, not the parked
+    // or focused sets.
+    lastWebglPlanRef.current = {
+      attachKeys: new Set(plan.webglAttachSessionIds),
+      suspendKeys: new Set(plan.webglSuspendSessionIds),
+    };
+    applyWebglAttachmentPlan(lastWebglPlanRef.current);
+
+    // Then publish the parked set, so reveal listeners kick off their scrollback
+    // catch-up (their scrollbackPendingRef holds any live bytes until the replay
+    // paints), and only THEN publish the focused set and re-focus the sessions
+    // so main resumes emitting.
     syncParkedTerminals(parkedSessionIds);
 
     // Sessions a detail window in ANOTHER renderer owns. Resolved from task ids
@@ -236,12 +267,6 @@ export function useFocusedSessionsSync(panelShowsTerminal: boolean): void {
     // which is exactly what the replay's queue reset exists to discard.
     syncFocusedTerminals(new Set(focusedIds));
     window.electronAPI.sessions.setFocused(focusedIds);
-
-    lastWebglPlanRef.current = {
-      attachKeys: new Set(plan.webglAttachSessionIds),
-      suspendKeys: new Set(plan.webglSuspendSessionIds),
-    };
-    applyWebglAttachmentPlan(lastWebglPlanRef.current);
   }, [
     activeView,
     terminalPanelVisible,

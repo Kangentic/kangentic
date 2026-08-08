@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { Terminal } from '@xterm/xterm';
-import { FitAddon } from '../addons/fit-addon';
+import { FitAddon, type FitOutcome } from '../addons/fit-addon';
 import { attachWebglRenderer, notifyFontChanged } from '../utils/terminal-webgl';
 import { copySelectionToClipboard, enableTerminalClipboard, stripOsc52Sequences } from '../utils/terminal-clipboard';
 import { createTerminalLinkHandler } from '../utils/terminal-link-handler';
@@ -44,6 +44,48 @@ function describeScrollRegion(sessionId: string | null | undefined): Record<stri
     scrollRegionBottom: bottom,
     scrollRegionFull:
       top === null || bottom === null || rows === null ? null : top <= 0 && bottom >= rows - 1,
+  };
+}
+
+/**
+ * Detail for a `fit` trace entry: what the fit did, and the container geometry
+ * it decided against.
+ *
+ * ALWAYS call this inside a trace THUNK. Every field but the outcome is a layout
+ * read taken directly after `fit()` wrote to the DOM, so building it eagerly
+ * forces a synchronous reflow on paths that run in production, where the trace
+ * is compiled out.
+ *
+ * The three fields that answer a mis-sized grid, in the order to read them:
+ * - `applied` false means the fit DECLINED (see FitBailReason) and the grid kept
+ *   whatever width it already had. A frame written next is sized for the PTY,
+ *   not for this grid.
+ * - `changed` true with a stable `hostWidth` means the cell metric moved under a
+ *   fixed container (a renderer swap, a font apply), not the layout.
+ * - `altScreen` says whether the wraps a mismatch causes are recoverable. xterm
+ *   reflows the normal buffer on resize and NEVER the alternate one, so a
+ *   too-narrow write into an alt-screen grid is permanent until something makes
+ *   the agent repaint.
+ */
+function describeFit(
+  terminal: Terminal | null,
+  phase: string,
+  colsBefore: number | null,
+  outcome: FitOutcome,
+): Record<string, unknown> {
+  const cols = terminal?.cols ?? null;
+  return {
+    phase,
+    colsBefore,
+    cols,
+    rows: terminal?.rows ?? null,
+    changed: colsBefore !== cols,
+    applied: outcome.applied,
+    bailReason: outcome.applied ? null : outcome.reason,
+    altScreen: terminal?.buffer.active.type === 'alternate',
+    hostWidth: terminal?.element?.parentElement?.getBoundingClientRect().width ?? null,
+    viewportClientWidth:
+      (terminal?.element?.querySelector('.xterm-viewport') as HTMLElement | null)?.clientWidth ?? null,
   };
 }
 
@@ -92,6 +134,13 @@ const SCROLLBACK_WATCHDOG_MS = 5000;
  *  scrollback read genuinely never resolves cannot spin. Reset by every replay
  *  that completes, so a healthy terminal always has its recovery available. */
 const MAX_STUCK_REPLAY_RECOVERIES = 1;
+
+/** How many times one replay may be re-issued because its frame landed at a
+ *  width the grid no longer has. One is enough for every cause seen: the width
+ *  moves once, during the replay's own async gap, and the re-issue runs after
+ *  the fit has settled. A hard cap means two surfaces disagreeing about the
+ *  width can never spin. Reset by every replay whose width held. */
+const MAX_REPLAY_WIDTH_REPLAYS = 1;
 
 /** Live xterm scrollback cap (lines), applied to every session terminal.
  *  Every terminal (re)creation - mount, tab/window switch, resize,
@@ -363,6 +412,99 @@ export function resolvePtyEchoReassert(input: PtyEchoReassertInput): PtyEchoReas
   };
 }
 
+/** Options for `reloadScrollback` (and the ref the watchdog re-issues through).
+ *  Declared once so the ref's type and the callback's cannot drift. */
+interface ReloadScrollbackOptions {
+  /** Re-render at the CURRENT (already-synced) width, sending no SIGWINCH. */
+  skipResize?: boolean;
+  /** Suppress the end-of-reload focus steal. */
+  skipFocus?: boolean;
+  /** Internal: this call is the width re-issue in `afterWrite`, not a fresh
+   *  request. Only a fresh request resets the re-issue budget. */
+  reissue?: boolean;
+}
+
+export type ReplayWidthAcceptReason =
+  | 'unknown-width'
+  | 'width-held'
+  | 'normal-buffer'
+  | 'attempt-cap';
+
+export type ReplayWidthDecision =
+  /** `refundBudget` restores the caller's re-issue budget WITHIN the current
+   *  chain. True for every accept except the cap itself, which must stay spent
+   *  for the rest of that chain - a cap that refunded on the way out would not
+   *  be a cap. It is NOT the same question as `width-held`: `normal-buffer` and
+   *  `unknown-width` are ordinary healthy outcomes, and leaving the counter
+   *  spent after one would hand a later mismatch in the same chain a single
+   *  attempt and then give up on it.
+   *
+   *  Scope is the chain, not the terminal: `reloadScrollback` zeroes the counter
+   *  on every FRESH request (only the re-issue passes `reissue`), so a spent cap
+   *  never carries into an unrelated later replay. */
+  | { action: 'accept'; reason: ReplayWidthAcceptReason; refundBudget: boolean }
+  | { action: 'replay'; nextAttempts: number };
+
+export interface ReplayWidthInput {
+  /** xterm.cols at the instant the frame was written, before any refit. */
+  colsAtWrite: number | null;
+  /** xterm.cols after the post-write refit. */
+  colsNow: number | null;
+  /** buffer.active.type === 'alternate' after the write. */
+  altScreen: boolean;
+  /** Width re-issues already spent on this terminal since one held. */
+  attempts: number;
+}
+
+/**
+ * Should a finished replay be thrown away and re-issued, because the frame it
+ * wrote was laid out for a width the grid no longer has?
+ *
+ * A replay writes a frame main serialized at ITS grid's width into an xterm
+ * fitted to the container. Those two numbers are supposed to be the same, and
+ * every mechanism that makes them differ has the same signature: the width
+ * moves across the replay's own async gap, so the write lands at one width and
+ * the refit that follows reports another. The frame is then hard-wrapped, and
+ * nothing later repairs it - which is the whole reason this exists rather than
+ * trusting the refit. Pure and exported for unit tests (precedent:
+ * resolvePtyEchoReassert above).
+ *
+ * Guard order is load-bearing, most-specific first, so the trace names the REAL
+ * reason rather than whichever mechanical guard was checked first:
+ * - `unknown-width`: the terminal went away mid-replay; there is nothing to judge.
+ * - `width-held`: the common case. The write and the grid agree, so the frame is
+ *   correct and the budget is refunded by the caller.
+ * - `normal-buffer`: xterm REFLOWS the normal buffer on resize, so a frame
+ *   written narrow there has already re-wrapped itself correctly and a re-issue
+ *   would be pure churn. Only the ALTERNATE buffer (a full-screen agent TUI) is
+ *   never reflowed, and that is exactly where a stale width is permanent.
+ * - `attempt-cap`: the budget is spent. Accepting a visibly wrong frame is worse
+ *   than one more round trip but far better than an unbounded loop.
+ *
+ * SCOPE: wired into reloadScrollback only. initTerminal's mount replay has the
+ * same structural gap (its post-write refit at `phase: 'after-replay'` can also
+ * report a different width) but usually not the same exposure: its fit runs
+ * after the WebGL attach, and it sends a real resize, so main serializes at the
+ * width it fitted to. The exception is a mount taken while the page is already
+ * at WEBGL_ATTACH_BUDGET: attachWebglRenderer starts that terminal SUSPENDED, so
+ * the mount fit measures the DOM cell, and the coordinator's next plan can
+ * promote it to WebGL mid-replay. Widening this to the mount path is
+ * deliberately left undone rather than assumed unnecessary.
+ */
+export function resolveReplayWidthAction(input: ReplayWidthInput): ReplayWidthDecision {
+  if (input.colsAtWrite === null || input.colsNow === null) {
+    return { action: 'accept', reason: 'unknown-width', refundBudget: true };
+  }
+  if (input.colsAtWrite === input.colsNow) {
+    return { action: 'accept', reason: 'width-held', refundBudget: true };
+  }
+  if (!input.altScreen) return { action: 'accept', reason: 'normal-buffer', refundBudget: true };
+  if (input.attempts >= MAX_REPLAY_WIDTH_REPLAYS) {
+    return { action: 'accept', reason: 'attempt-cap', refundBudget: false };
+  }
+  return { action: 'replay', nextAttempts: input.attempts + 1 };
+}
+
 export function useTerminal(options: UseTerminalOptions) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
@@ -379,10 +521,13 @@ export function useTerminal(options: UseTerminalOptions) {
   /** Set once reloadScrollback is defined further down, so the watchdog (armed
    *  from initTerminal, which is declared above it) can re-issue a replay
    *  without a circular declaration. */
-  const reloadScrollbackRef = useRef<((reloadOptions?: { skipResize?: boolean; skipFocus?: boolean }) => void) | null>(null);
+  const reloadScrollbackRef = useRef<((reloadOptions?: ReloadScrollbackOptions) => void) | null>(null);
   /** Stuck-replay recoveries spent since the last replay that completed
    *  (see MAX_STUCK_REPLAY_RECOVERIES). */
   const stuckReplayRecoveriesRef = useRef(0);
+  /** Width re-issues spent since a replay's width last held
+   *  (see MAX_REPLAY_WIDTH_REPLAYS / resolveReplayWidthAction). */
+  const replayWidthAttemptsRef = useRef(0);
   /** Resumes the incoming-write queue's held drain (set by the queue effect
    *  below). Used by the watchdog to flush replay-held live bytes when a
    *  stuck replay is force-cleared. */
@@ -706,25 +851,15 @@ export function useTerminal(options: UseTerminalOptions) {
 
       // Fit immediately to calculate actual container cols/rows
       const colsBeforeFit = terminal.cols;
-      fitAddon.fit();
+      const fitOutcome = fitAddon.fit();
       const { cols, rows } = terminal;
       // The container geometry this fit was computed against, recorded next to its
       // result. A second fit later producing a DIFFERENT cols is what forces an
       // extra PTY resize (and so an extra agent repaint) on a mount; comparing the
       // container widths across the two says whether the layout moved or the fit
       // math changed under it.
-      // Thunked: these are layout reads taken right after `fit()` wrote to the DOM,
-      // so building them eagerly forces a synchronous reflow on every mount even in
-      // production, where the trace is compiled out.
-      traceTerminalRenderer(options.sessionId, 'fit', () => ({
-        phase: 'initial',
-        colsBefore: colsBeforeFit,
-        cols,
-        rows,
-        hostWidth: terminal.element?.parentElement?.getBoundingClientRect().width ?? null,
-        viewportClientWidth:
-          (terminal.element?.querySelector('.xterm-viewport') as HTMLElement | null)?.clientWidth ?? null,
-      }));
+      traceTerminalRenderer(options.sessionId, 'fit', () =>
+        describeFit(terminal, 'initial', colsBeforeFit, fitOutcome));
 
       // Parallel IPCs: resize forwards SIGWINCH on main; getScrollback is a
       // pure in-memory read. Firing them together is safe because main
@@ -773,25 +908,14 @@ export function useTerminal(options: UseTerminalOptions) {
               clearTimeout(scrollbackWatchdogRef.current);
               scrollbackWatchdogRef.current = null;
             }
-            // Re-fit to handle any layout shifts during the async gap
+            // Re-fit to handle any layout shifts during the async gap. A
+            // `changed: true` here means the mount needed TWO PTY widths, so the
+            // agent repaints twice and the user sees the second one land.
             if (fitAddonRef.current) {
               const colsBeforeRefit = xtermRef.current?.cols ?? null;
-              fitAddonRef.current.fit();
-              const colsAfterRefit = xtermRef.current?.cols ?? null;
-              // Thunked for the same reason as the initial fit above: layout reads
-              // taken directly after a write, on a path that runs in production.
-              traceTerminalRenderer(options.sessionId, 'fit', () => ({
-                phase: 'after-replay',
-                colsBefore: colsBeforeRefit,
-                cols: colsAfterRefit,
-                // A change here means the mount needed TWO PTY widths, so the agent
-                // repaints twice and the user sees the second one land.
-                changed: colsBeforeRefit !== colsAfterRefit,
-                hostWidth: xtermRef.current?.element?.parentElement?.getBoundingClientRect().width ?? null,
-                viewportClientWidth:
-                  (xtermRef.current?.element?.querySelector('.xterm-viewport') as HTMLElement | null)
-                    ?.clientWidth ?? null,
-              }));
+              const refitOutcome = fitAddonRef.current.fit();
+              traceTerminalRenderer(options.sessionId, 'fit', () =>
+                describeFit(xtermRef.current, 'after-replay', colsBeforeRefit, refitOutcome));
             }
             // Restore saved scroll position (HMR) or pin to bottom (cold start)
             if (xtermRef.current) {
@@ -1308,7 +1432,7 @@ export function useTerminal(options: UseTerminalOptions) {
   // parked -> visible reveal catch-up: a Backlog -> Board switch can reveal
   // many windows at once, and N terminals must not fight over focus (and a
   // quiet arrival should not move focus at all - restore-no-animation-replay).
-  const reloadScrollback = useCallback((reloadOptions?: { skipResize?: boolean; skipFocus?: boolean }) => {
+  const reloadScrollback = useCallback((reloadOptions?: ReloadScrollbackOptions) => {
     if (!options.sessionId || !xtermRef.current || !fitAddonRef.current) {
       // Traced, not silent. Callers treat this as a harmless no-op ("the terminal
       // has not initialized yet, the mount-time replay will paint instead"), and
@@ -1324,6 +1448,14 @@ export function useTerminal(options: UseTerminalOptions) {
     }
     const skipResize = reloadOptions?.skipResize ?? false;
     const skipFocus = reloadOptions?.skipFocus ?? false;
+    // The re-issue budget belongs to ONE decision chain, not to the hook
+    // instance, so every fresh request starts it full. Refunding only on a
+    // completed afterWrite is not enough: five exits skip that line (the three
+    // generation aborts, the IPC catch, and the watchdog's force-clear), and any
+    // of them would strand the counter at its cap on a live terminal - so the
+    // NEXT genuine mismatch would be capped on arrival and never get the one
+    // re-issue this mechanism exists to give it.
+    if (!reloadOptions?.reissue) replayWidthAttemptsRef.current = 0;
     scrollbackPendingRef.current = true;
     const scrollbackGeneration = ++scrollbackGenerationRef.current;
     traceReplay('replay-start', { trigger: 'reload', generation: scrollbackGeneration, skipResize });
@@ -1341,9 +1473,15 @@ export function useTerminal(options: UseTerminalOptions) {
     // fetching scrollback (clears stale buffer if cols changed). When
     // skipResize, the PTY is already synced; fit() is a no-op at the stable
     // width and we send no SIGWINCH.
-    fitAddonRef.current.fit();
+    const colsBeforeFit = xtermRef.current.cols;
+    const fitOutcome = fitAddonRef.current.fit();
     const { cols, rows } = xtermRef.current;
     const sessionId = options.sessionId;
+    // Traced for the same reason as the mount path's two fits, and for one more:
+    // on a skipResize reload nothing else records a width at all, so a grid that
+    // was the wrong size at write time left no evidence anywhere. See describeFit.
+    traceTerminalRenderer(sessionId, 'fit', () =>
+      describeFit(xtermRef.current, 'reload-initial', colsBeforeFit, fitOutcome));
 
     // Parallel IPCs: same shape as initTerminal's mount-time path. Resize
     // forwards SIGWINCH on main; getScrollback is an in-memory read. When the
@@ -1374,6 +1512,10 @@ export function useTerminal(options: UseTerminalOptions) {
 
         dropHeldBytesSupersededBySample('reload', scrollbackGeneration, scrollback);
 
+        /** The grid width the frame was actually laid out at, sampled in the
+         *  same synchronous beat as the write. Null when nothing was written. */
+        let colsAtWrite: number | null = null;
+
         const afterWrite = () => {
           // A newer replay may have started (and armed its own watchdog,
           // which already canceled ours) while this chunked write was in
@@ -1389,9 +1531,28 @@ export function useTerminal(options: UseTerminalOptions) {
             clearTimeout(scrollbackWatchdogRef.current);
             scrollbackWatchdogRef.current = null;
           }
-          if (fitAddonRef.current) fitAddonRef.current.fit();
-          // Restore saved scroll position (HMR) or pin to bottom
-          if (xtermRef.current) {
+          if (fitAddonRef.current) {
+            const colsBeforeRefit = xtermRef.current?.cols ?? null;
+            const refitOutcome = fitAddonRef.current.fit();
+            traceTerminalRenderer(sessionId, 'fit', () =>
+              describeFit(xtermRef.current, 'reload-after-replay', colsBeforeRefit, refitOutcome));
+          }
+          // Did the frame we just wrote survive the refit? See
+          // resolveReplayWidthAction: a width that moved across the async gap
+          // leaves an alt-screen frame permanently hard-wrapped, and the refit
+          // above is what reveals it rather than what repairs it.
+          const widthDecision = resolveReplayWidthAction({
+            colsAtWrite,
+            colsNow: xtermRef.current?.cols ?? null,
+            altScreen: xtermRef.current?.buffer.active.type === 'alternate',
+            attempts: replayWidthAttemptsRef.current,
+          });
+          // Restore saved scroll position (HMR) or pin to bottom. NOT on a pass
+          // that is about to be discarded: restoreScrollPosition CONSUMES the
+          // saved entry (it deletes on read), and the re-issue's reset() wipes
+          // the position anyway - so spending it here would leave the re-issued
+          // replay with nothing to restore and snap the user to the bottom.
+          if (xtermRef.current && widthDecision.action !== 'replay') {
             isAtBottomRef.current = restoreScrollPosition(xtermRef.current, options.sessionId);
           }
           stuckReplayRecoveriesRef.current = 0;
@@ -1399,12 +1560,37 @@ export function useTerminal(options: UseTerminalOptions) {
             trigger: 'reload',
             generation: scrollbackGeneration,
             cols: xtermRef.current?.cols ?? null,
+            colsAtWrite,
+            widthAction: widthDecision.action,
+            widthReason: widthDecision.action === 'accept' ? widthDecision.reason : null,
             ...describeScrollRegion(options.sessionId),
           }));
           // Flush any live bytes the incoming queue held during the reload
           // (see shouldHold in the queue effect below) now that the replay
-          // frame is fully painted, so they apply strictly after it.
+          // frame is fully painted, so they apply strictly after it. Done before
+          // any re-issue below, which sets the flag again for its own round.
           settleScrollback(true);
+          if (widthDecision.action === 'replay') {
+            replayWidthAttemptsRef.current = widthDecision.nextAttempts;
+            // NOT skipResize, whichever caller we are serving. The grid has
+            // settled at a width main may not know, and asserting it is what
+            // makes this converge: main short-circuits a same-dims resize (no
+            // SIGWINCH, no repaint), and when the widths do differ it reshapes
+            // its own parsed grid and waits for the agent's repaint, so the next
+            // sample is a frame drawn for THIS grid. That includes the
+            // deferred-resize settle caller (TerminalTab's onDeferredResizeSettled),
+            // whose skipResize means "resizing has settled, do not provoke more
+            // redraws" - reaching here is proof it had not settled.
+            //
+            // skipFocus is forwarded rather than applied here, so a chain focuses
+            // exactly once, at the end, on the frame the user actually keeps. The
+            // gap that leaves: if the re-issue is itself superseded or bails, a
+            // caller that asked for focus never gets it. Non-destructive (the user
+            // clicks), and narrower than focusing a frame about to be discarded.
+            reloadScrollbackRef.current?.({ skipFocus, reissue: true });
+            return;
+          }
+          if (widthDecision.refundBudget) replayWidthAttemptsRef.current = 0;
           // Focus after the reload completes (unless the caller opted out).
           // No corrective resize: when a resize was sent above, main sampled
           // the settled frame; a same-dims resize is a no-op either way.
@@ -1421,7 +1607,16 @@ export function useTerminal(options: UseTerminalOptions) {
           // guaranteed to refill it. Skipped entirely when there is nothing to
           // write (below), which is what makes a failed read non-destructive.
           xtermRef.current.reset();
-          traceReplay('replay-write', { trigger: 'reload', generation: scrollbackGeneration, bytes: scrollback.length });
+          // The width the frame is being laid out at. Main serialized it at ITS
+          // grid's width, which is only the same number if this terminal's fit
+          // and the PTY agree - see the width check in afterWrite.
+          colsAtWrite = xtermRef.current.cols;
+          traceReplay('replay-write', {
+            trigger: 'reload',
+            generation: scrollbackGeneration,
+            bytes: scrollback.length,
+            cols: colsAtWrite,
+          });
           // Chunked so a 512KB replay (tab/window switch, resize) doesn't parse
           // in one synchronous write that stalls the renderer mid-drag.
           // Strip OSC 52 so replaying recorded output never clobbers the live clipboard.

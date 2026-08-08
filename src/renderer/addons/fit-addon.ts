@@ -9,7 +9,10 @@
  * - No _renderService.clear() before resize. The upstream master has
  *   already removed this call.
  *
- * API-compatible: activate(), dispose(), fit(), proposeDimensions().
+ * API-compatible: activate(), dispose(), fit(), proposeDimensions(). fit()
+ * additionally RETURNS its outcome (see FitOutcome); every existing caller
+ * ignores it, so that is source-compatible. describeProposedDimensions() is an
+ * addition beyond that surface, not part of the compatible one.
  */
 import type { Terminal, ITerminalAddon } from '@xterm/xterm';
 
@@ -17,6 +20,35 @@ export interface ITerminalDimensions {
   rows: number;
   cols: number;
 }
+
+/** Why a fit declined to resize. Each maps to one guard in
+ *  describeProposedDimensions(); see the comments there. */
+export type FitBailReason =
+  /** No terminal, no element, or the element is not in a parent yet. */
+  | 'no-element'
+  /** The render service has not measured a cell yet (mid renderer swap, or
+   *  before the font has been applied). */
+  | 'zero-cell'
+  /** The parent box measures 0 or NaN: a collapsed or mid-transition container. */
+  | 'no-parent-box'
+  /** The proposed grid came out NaN (a computed style returned '' or 'auto'). */
+  | 'non-finite-dims';
+
+/**
+ * The outcome of a fit, made explicit so callers can tell "resized to N columns"
+ * apart from "declined, the grid still holds whatever it held".
+ *
+ * fit() used to return void, and all four bails above were silent. That is a
+ * real diagnostic hole rather than a theoretical one: a bailed fit before a
+ * scrollback replay writes a frame sized for the PTY's width into a grid that
+ * kept some older width, and because xterm never reflows the ALTERNATE buffer,
+ * those wraps are permanent. From the outside that is indistinguishable from a
+ * fit that ran and genuinely proposed the narrower width, and the two need
+ * opposite repairs. See useTerminal's reload fit traces.
+ */
+export type FitOutcome =
+  | { applied: true; cols: number; rows: number }
+  | { applied: false; reason: FitBailReason };
 
 const MINIMUM_COLS = 2;
 const MINIMUM_ROWS = 1;
@@ -37,22 +69,31 @@ export class FitAddon implements ITerminalAddon {
     this._terminal = undefined;
   }
 
-  public fit(): void {
-    const dims = this.proposeDimensions();
-    if (!dims || !this._terminal || isNaN(dims.cols) || isNaN(dims.rows)) {
-      return;
-    }
+  public fit(): FitOutcome {
+    const outcome = this.describeProposedDimensions();
+    if (!outcome.applied || !this._terminal) return outcome;
     // Always call resize(). xterm.Terminal.resize() internally no-ops
     // when dimensions haven't changed, which is the correct behavior.
     // The official addon has its own same-dimension guard that skips
     // resize() entirely (including renderService.clear()), which forces
     // callers to use perturbation tricks to bypass it.
-    this._terminal.resize(dims.cols, dims.rows);
+    this._terminal.resize(outcome.cols, outcome.rows);
+    return outcome;
   }
 
   public proposeDimensions(): ITerminalDimensions | undefined {
+    const outcome = this.describeProposedDimensions();
+    return outcome.applied ? { cols: outcome.cols, rows: outcome.rows } : undefined;
+  }
+
+  /**
+   * proposeDimensions() with the bail reason kept instead of collapsed to
+   * `undefined`. The single implementation of the fit math; proposeDimensions()
+   * is the lossy public view of it.
+   */
+  public describeProposedDimensions(): FitOutcome {
     if (!this._terminal || !this._terminal.element || !this._terminal.element.parentElement) {
-      return undefined;
+      return { applied: false, reason: 'no-element' };
     }
 
     // xterm 6.0 doesn't expose terminal.dimensions publicly.
@@ -64,7 +105,7 @@ export class FitAddon implements ITerminalAddon {
     const cellHeight: number = renderDimensions.css.cell.height;
 
     if (cellWidth === 0 || cellHeight === 0) {
-      return undefined;
+      return { applied: false, reason: 'zero-cell' };
     }
 
     const scrollbarWidth = this._measureScrollbarGutter();
@@ -81,7 +122,7 @@ export class FitAddon implements ITerminalAddon {
     // real resize/refit (once the container has real dimensions again)
     // supplies the true grid. `> 0` also rejects NaN.
     if (!(parentWidth > 0) || !(parentHeight > 0)) {
-      return undefined;
+      return { applied: false, reason: 'no-parent-box' };
     }
 
     const elementStyle = window.getComputedStyle(this._terminal.element);
@@ -93,10 +134,17 @@ export class FitAddon implements ITerminalAddon {
     const availableHeight = parentHeight - paddingVertical;
     const availableWidth = parentWidth - paddingHorizontal - scrollbarWidth;
 
-    return {
-      cols: Math.max(MINIMUM_COLS, Math.floor(availableWidth / cellWidth)),
-      rows: Math.max(MINIMUM_ROWS, Math.floor(availableHeight / cellHeight)),
-    };
+    const cols = Math.max(MINIMUM_COLS, Math.floor(availableWidth / cellWidth));
+    const rows = Math.max(MINIMUM_ROWS, Math.floor(availableHeight / cellHeight));
+    // The padding reads above can be NaN of their own (a computed style that
+    // answers '' or 'auto'), which Math.max propagates rather than clamps. This
+    // was fit()'s own isNaN guard; it lives here so proposeDimensions() and
+    // fit() bail on exactly the same inputs.
+    if (!Number.isFinite(cols) || !Number.isFinite(rows)) {
+      return { applied: false, reason: 'non-finite-dims' };
+    }
+
+    return { applied: true, cols, rows };
   }
 
   /**
