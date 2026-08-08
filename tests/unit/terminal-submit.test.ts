@@ -278,6 +278,40 @@ describe('TerminalSubmit', () => {
       sessionManager.dispose();
     });
 
+    it('confirms a plain-prose auto_command under the submitted mode, and never sends Esc', async () => {
+      // injection-plan.ts tags every user auto_command `verify: 'submitted'`
+      // regardless of whether it is a slash command or plain prose (see
+      // `prepareInjectionPlan`). The byte-contract test above pins "no Esc for
+      // prose" with `verify: 'none'`, which never reaches the verifier at all;
+      // this pins the two facts together end-to-end - no `\x1b` byte AND a
+      // real 'submitted' confirmation - which is the actual path a prose
+      // auto_command takes in production.
+      const { submit, sessionManager } = makeSubmit();
+      const modes: string[] = [];
+      const verifier: CommandVerifier = async (command, sentAt, mode) => {
+        modes.push(mode);
+        return sessionManager.tui.submissions.some(
+          (entry) => entry.text === command && entry.at >= sentAt - 50,
+        );
+      };
+
+      const result = await submit.submitKeystrokes(
+        SESSION_ID,
+        [{ text: 'implement the feature', verify: 'submitted' }],
+        { verifier },
+      );
+
+      expect(sessionManager.writes).not.toContain('\x1b');
+      expect(result.outcome).toBe('confirmed');
+      // The verifier may poll more than once before the submission lands (real
+      // timing, not a stub that always answers true on the first call), but
+      // every poll must carry the 'submitted' mode - never 'command-match'.
+      expect(modes.length).toBeGreaterThan(0);
+      expect(modes.every((mode) => mode === 'submitted')).toBe(true);
+      expect(sessionManager.tui.submissions.map((entry) => entry.text)).toEqual(['implement the feature']);
+      sessionManager.dispose();
+    });
+
     it('never calls the verifier for a command declared unverifiable', async () => {
       const { submit, sessionManager } = makeSubmit();
       let calls = 0;

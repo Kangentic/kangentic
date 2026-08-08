@@ -112,7 +112,9 @@ Drag a task from To Do to any active column (Planning, Executing, etc.). Kangent
 
 ### Move Between Active Columns
 
-Dragging between active columns (e.g., Executing to Code Review) keeps the session alive when the target has no `auto_command`. If the target column has an `auto_command` configured (e.g., `/code-review`), the session is suspended and resumed with the command as the resume prompt. Permission mode differences alone do not cause a suspend/resume cycle.
+Dragging between active columns (e.g., Executing to Code Review) keeps the session alive. If the target column has an `auto_command` configured (e.g., `/code-review`), it is typed straight into the running agent as keystrokes - no suspend, no restart. A suspend and respawn happens only when the move needs one for its own reasons (a permission-mode change, or a model/effort change the agent cannot swap live); in that case the `auto_command` rides along as the resume prompt instead.
+
+Each column chooses WHEN its command arrives via **Auto-command timing**: `immediate` sends it on arrival (the agent queues it if mid-turn), while `deferred` holds it until the current turn genuinely finishes.
 
 ### Complete a Task
 

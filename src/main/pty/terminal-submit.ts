@@ -232,9 +232,10 @@ export class TerminalSubmit {
    * so sending it there risks clearing the very text we just typed.
    *
    * When a command is verifiable and confirmation does not arrive, the retry
-   * re-sends Esc AND Enter, not Enter alone. Re-firing Enter into a picker
-   * that is still open just gets eaten again; the Esc is what clears the
-   * condition. This is the single most load-bearing detail in the retry loop.
+   * re-presses Enter ALONE. Esc is not repeated: Claude Code documents it as
+   * "stop Claude while it is generating output", and on a non-empty prompt with
+   * no picker the first press prints "Esc again to clear", so a second one would
+   * delete the very command being submitted. See the attempt loop below.
    *
    * On exhaustion we do NOT write Ctrl+C. If the command actually did submit
    * and verification merely lagged, that Ctrl+C would kill the turn it just

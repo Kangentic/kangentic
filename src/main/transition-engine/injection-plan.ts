@@ -308,8 +308,8 @@ export function buildCommandInjectionVerifier(
     // /clear mid-burst forks the live conversation to a new id (persisted by
     // the live status-file reconcile), and the slash entries being verified
     // land in the NEW transcript. Polling only the plan-build-time id would
-    // never confirm, ending in stray retry Enters plus a Ctrl+C fired into the
-    // live session.
+    // never confirm, so the burst would spend its whole retry budget pressing
+    // Enter into a session whose evidence is being written somewhere else.
     //
     // Re-resolved on a TTL rather than on every poll. `findByAnyId` calls
     // `db.prepare` inline, so better-sqlite3 recompiles the SQL each time, and

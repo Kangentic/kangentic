@@ -325,8 +325,11 @@ Task moved to active column (e.g., Planning)
   → File watchers emit usage/activity/events to UI
 
 Task moved between active columns (e.g., Planning → Code Review)
-  → If no auto_command: session stays alive (regardless of permission mode)
-  → If auto_command configured on target: suspend and resume with command as prompt
+  → Session stays alive; an auto_command on the target is injected as keystrokes
+    (timing per the column's auto_command_mode: immediate or deferred)
+  → Only a permission-mode change, or a model/effort change the agent cannot
+    swap live, forces suspend + respawn - and then the auto_command rides along
+    as the resume prompt instead of being typed
 
 Task moved to Done
   → Confirmation dialog ONLY when the worktree has uncommitted files or unpushed

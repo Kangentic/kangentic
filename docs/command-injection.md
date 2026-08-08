@@ -1,6 +1,6 @@
 # Command Injection
 
-Kangentic injects per-column "auto-commands" and per-column model/effort settings into a live agent session when a task moves between columns. `TerminalSubmitScheduler` (`src/main/transition-engine/terminal-submit-scheduler.ts`) schedules each task's burst and decides whether the burst is prefixed with a `Ctrl+C` (live-injection) or not (fresh-spawn). `TerminalSubmit.submitKeystrokes` (`src/main/pty/terminal-submit.ts`) executes the byte-level keystroke sequence (`Ctrl+C? → text → Esc → Enter` per command). This document covers how the **command-injection** verification context confirms each chained command lands cleanly on the agent's TUI.
+Kangentic injects per-column "auto-commands" and per-column model/effort settings into a live agent session when a task moves between columns. `TerminalSubmitScheduler` (`src/main/transition-engine/terminal-submit-scheduler.ts`) schedules each task's burst, decides WHEN it is delivered, and records the outcome. `TerminalSubmit.submitKeystrokes` (`src/main/pty/terminal-submit.ts`) executes the byte-level sequence (`Ctrl+U? → text → Esc? → Enter` per command), where the leading `Ctrl+U` clears any draft on a warm session and the `Esc` fires only for a `/`-prefixed command, at most once, and never during a live turn. Each step is a drain plus output-settle handshake rather than a fixed sleep. This document covers how the **command-injection** verification context confirms each chained command lands cleanly on the agent's TUI.
 
 ## What gets injected (the settings delta)
 
@@ -59,20 +59,33 @@ type SubmissionContextType = 'paste' | 'command-injection';
 
 type SubmissionContext =
   | { type: 'paste' }
-  | { type: 'command-injection'; text: string; agentSessionId?: string; cwd?: string; sentAt?: number };
+  | {
+      type: 'command-injection';
+      text: string;
+      agentSessionId?: string;
+      cwd?: string;
+      sentAt?: number;
+      mode?: 'command-match' | 'submitted';
+    };
 
 type SubmissionVerifier = (context: SubmissionContext) => Promise<boolean>;
 ```
 
-For the `'command-injection'` context, the verifier receives the literal command text plus session metadata (the `agent_session_id`, the session `cwd`, and `sentAt` - the wall-clock timestamp of the most recent Enter the verifier should match against) and returns `true` once it confirms the command was processed. `sentAt` advances on each retry-Enter so stale transcript entries from previous attempts cannot satisfy the current verification.
+For the `'command-injection'` context, the verifier receives the literal command text plus session metadata (the `agent_session_id`, the session `cwd`, and `sentAt` - the wall-clock timestamp of the most recent Enter the verifier should match against) and returns `true` once it confirms the command was processed. `sentAt` advances on each retry-Enter so stale transcript entries from previous attempts cannot satisfy the current verification. `mode` selects HOW strongly the command must be confirmed; see "Per-command verification modes" below.
 
 The `agent_session_id` is NOT captured once at plan-build time: `buildCommandInjectionVerifier`
 re-reads the session record by primary key (`findByAnyId(recordId)`) on every poll, and when the
 record's id has changed mid-burst it accepts a match under either the current or the
 plan-build-time id. A `/clear` during an in-flight burst forks the live conversation to a new id
 (see docs/adapter-session-history.md, "Mid-session fork reconcile"); polling only the
-plan-build-time id would never confirm, ending in stray retry Enters plus a Ctrl+C fired into
-the live session.
+plan-build-time id would never confirm, so the burst would spend its whole retry budget pressing
+Enter into a session whose evidence is being written somewhere else.
+
+The record is re-read on a 250ms TTL rather than on every poll. `findByAnyId` calls `db.prepare`
+inline and better-sqlite3 is synchronous, so polling it at the 25ms verify cadence would put 40
+blocking DB round trips per second per in-flight burst on the thread that services IPC. The TTL
+stays well inside a single 400ms retry attempt, so a fork is still picked up in the attempt that
+follows it.
 
 ## Claude's JSONL-polling implementation
 
@@ -141,7 +154,7 @@ Three details are load-bearing:
 
 ### Retry, and what happens on exhaustion
 
-For a verifiable command, each attempt polls the verifier for 400ms; up to 5 attempts. **The retry re-sends Esc AND Enter, not Enter alone** - re-firing Enter into a picker that is still open just gets eaten again; the Esc is what clears the condition.
+For a verifiable command, each attempt polls the verifier for 400ms; up to 5 attempts. **Retries re-press Enter alone.** Esc is sent at most once, on the first attempt only, because it is not a picker-scoped key: Claude Code documents it as "stop Claude while it is generating output", and on a non-empty prompt with no picker the first press prints "Esc again to clear", so a second press would delete the very command being submitted.
 
 On exhaustion the code does **not** write `Ctrl+C`. If the command actually did submit and verification merely lagged, that Ctrl+C would kill the turn it just started, and it was the only path that could produce two consecutive Ctrl+C presses and exit the CLI. Exhaustion reports a failure, and the scheduler escalates.
 
@@ -187,10 +200,13 @@ Every scheduled injection ends in exactly one recorded outcome, persisted on the
 
 | Outcome | Meaning | Notifies? |
 |---|---|---|
-| `confirmed` | seen in the transcript | only if it discarded a draft, interrupted a turn, or required a restart |
+| `confirmed` | seen in the transcript | only if it discarded a draft |
 | `unconfirmed` | nothing could be checked | no |
-| `failed` | a verifiable command exhausted its retries | yes |
+| `escalated` | keystrokes went unconfirmed, so the command was delivered by restarting the session with it as the argv prompt | yes - a session respawn is never silent |
+| `failed` | a verifiable command exhausted its retries, and no restart delivered it either | yes |
 | `cancelled` | superseded or the session went away | no |
+
+`escalated` is checked BEFORE `confirmed` in `toState()` (`src/main/ipc/helpers/auto-command-outcome.ts`), so a delivery that required a restart is never reported as `confirmed`. Escalation resolving means the restart was ISSUED and argv delivery is guaranteed by the spawn; it does not mean a verifier watched it land, which is why it is neither `confirmed` nor `failed`.
 
 `unconfirmed` is **not** a failure. Only Claude implements a `command-injection` verifier, so on every other agent every delivery lands there; conflating the two would make the field meaningless off Claude and turn a normal delivery into an error notice for most users.
 
