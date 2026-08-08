@@ -493,6 +493,11 @@ test.describe('Mobile Devices settings tab', () => {
   test('Test connection renders the reachable and no-response trailing states', async () => {
     await openMobileTab();
 
+    // Signal, not the old Server glyph: agent-execution-fields.tsx's identical
+    // Test connection button must keep this same icon (see its own comment),
+    // so a drift here would silently break that lockstep.
+    await expect(page.locator('[data-testid="mobile-relay-test-connection"] .lucide-signal')).toBeVisible();
+
     await page.evaluate(() => {
       (window as unknown as { __mockTestRelay: (relayUrl: string) => Promise<{ reachable: boolean; version?: string | null; latencyMs?: number; reason?: string }> }).__mockTestRelay =
         () => Promise.resolve({ reachable: true, version: '0.4.0', latencyMs: 42 });

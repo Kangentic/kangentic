@@ -265,6 +265,12 @@ describe('registerMobileBridgeHandlers - MOBILE_TEST_RELAY', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    // Restores vi.spyOn(performance, 'now') from the latency-timing test below.
+    // Belongs here rather than an inline call at the end of that test body: if
+    // an assertion above it throws, an inline mockRestore() never runs and the
+    // spy leaks into every later test in this file (unstubAllGlobals does not
+    // undo vi.spyOn, and this project's vitest.config.ts sets no restoreMocks).
+    vi.restoreAllMocks();
   });
 
   it('rejects an invalid relay URL server-side without ever calling fetch', async () => {
@@ -347,6 +353,49 @@ describe('registerMobileBridgeHandlers - MOBILE_TEST_RELAY', () => {
     const result = await invokeHandler(IPC.MOBILE_TEST_RELAY, 'wss://relay.example.com');
 
     expect(result).toEqual({ reachable: true, version: '0.4.0', latencyMs: expect.any(Number) });
+  });
+
+  it('measures latency up through the response headers, before the body is parsed', async () => {
+    // Black-box pin for the handler's comment ("read the clock the moment the
+    // headers land, before the body is consumed"): if a future refactor moved
+    // the `performance.now()` read to after `await response.json()`, a slow
+    // or large body would inflate the reported latency with parse/stream time
+    // that has nothing to do with dialing the relay. Deterministic (no real
+    // clock, no waitForTimeout) - it only asserts the ORDER of two mocked
+    // calls, never a numeric duration.
+    const callOrder: string[] = [];
+    let nowCallCount = 0;
+    // Restored by the describe's shared afterEach (vi.restoreAllMocks()), not
+    // inline here, so a thrown assertion below still cleans up the spy.
+    vi.spyOn(performance, 'now').mockImplementation(() => {
+      nowCallCount += 1;
+      callOrder.push(`performance.now#${nowCallCount}`);
+      return nowCallCount * 10;
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => {
+          callOrder.push('json() invoked');
+          return { version: '1.0.0' };
+        },
+      })),
+    );
+    const context = makeContext();
+    registerMobileBridgeHandlers(context);
+
+    const result = await invokeHandler(IPC.MOBILE_TEST_RELAY, 'wss://relay.example.com');
+
+    expect(result).toEqual({ reachable: true, version: '1.0.0', latencyMs: expect.any(Number) });
+    // The second performance.now() read (the one latencyMs is computed from)
+    // must happen before response.json() is ever called.
+    const secondNowCallIndex = callOrder.indexOf('performance.now#2');
+    const jsonInvokedIndex = callOrder.indexOf('json() invoked');
+    expect(secondNowCallIndex).toBeGreaterThanOrEqual(0);
+    expect(jsonInvokedIndex).toBeGreaterThanOrEqual(0);
+    expect(secondNowCallIndex).toBeLessThan(jsonInvokedIndex);
   });
 
   it('reports no latency on an unreachable relay (there is no response to have timed)', async () => {

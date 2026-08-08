@@ -116,6 +116,10 @@ test.describe('AgentTab - Remote Execution fields', () => {
     await expect(page.locator('[data-testid="execution-server-password-opencode"]')).toBeVisible();
     await expect(page.locator('[data-testid="execution-working-directory-opencode"]')).toBeVisible();
     await expect(page.locator('[data-testid="execution-server-url-opencode"]')).toHaveAttribute('placeholder', 'http://10.0.0.5:4096');
+    // Signal, not the old Server glyph: kept in lockstep with the relay's
+    // identical Test connection button in MobileDevicesTab (see that file's
+    // comment on the icon choice).
+    await expect(page.locator('[data-testid="execution-test-connection-opencode"] .lucide-signal')).toBeVisible();
 
     await closeSettings(page);
   });
@@ -146,6 +150,39 @@ test.describe('AgentTab - Remote Execution fields', () => {
     await page.locator('[data-testid="execution-test-connection-opencode"]').click();
 
     await expect(page.locator('text=Unreachable')).toBeVisible();
+
+    await closeSettings(page);
+  });
+
+  test('reachable and unreachable verdicts use the active/attention tokens, not hardcoded green/amber', async () => {
+    // The token swap is the whole point of this change (agent-execution-fields.tsx
+    // dropped text-green-400 / text-amber-400 for text-active / text-attention, in
+    // lockstep with the relay's identical verdict in MobileDevicesTab). A plain
+    // "is the text visible" assertion (as the two tests above already do) would
+    // stay green even if the token swap were reverted, so this pins the class.
+    ({ browser, page } = await launch());
+    await openAgentSettingsTabAs(page, 'opencode');
+
+    await page.locator('[data-testid="execution-mode-opencode"]').selectOption('remote');
+    await page.locator('[data-testid="execution-server-url-opencode"]').fill('http://10.0.0.5:4096');
+    await page.locator('[data-testid="execution-test-connection-opencode"]').click();
+
+    const serverUrlRow = page.locator('[data-testid="setting-row-agent.executionServerUrl"]');
+    const reachableVerdict = serverUrlRow.locator('span.text-active');
+    await expect(reachableVerdict).toBeVisible();
+    await expect(reachableVerdict).toHaveText('v1.14.25');
+    await expect(reachableVerdict).not.toHaveClass(/text-green-400/);
+
+    await page.evaluate(() => {
+      (window as Record<string, unknown>).__mockProbeExecutionServer = () =>
+        Promise.resolve({ reachable: false, reason: 'ECONNREFUSED' });
+    });
+    await page.locator('[data-testid="execution-test-connection-opencode"]').click();
+
+    const unreachableVerdict = serverUrlRow.locator('span.text-attention');
+    await expect(unreachableVerdict).toBeVisible();
+    await expect(unreachableVerdict).toHaveText('Unreachable');
+    await expect(unreachableVerdict).not.toHaveClass(/text-amber-400/);
 
     await closeSettings(page);
   });
