@@ -693,7 +693,7 @@ test.describe('window light-dismiss (click-outside-to-close)', () => {
     // The status bar carries its OWN scope marker, because it sits outside AppLayout's
     // marked content row rather than inside it. If that marker is ever dropped, this goes
     // red while every other shell region keeps working.
-    await dispatchCleanClickOn(page, '[data-testid="status-bar"]');
+    await dispatchCleanClickOn(page, '[data-testid="app-status-bar"]');
 
     await pollWindowCount(page, 0);
   });

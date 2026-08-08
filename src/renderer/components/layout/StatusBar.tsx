@@ -43,7 +43,10 @@ export function StatusBar() {
   // leaves the status bar exposed, and a click here closes a board window the user cannot
   // currently see. That matches the behavior before the denylist inversion.
   return (
-    <div className="h-9 bg-surface border-t border-edge flex items-center px-3 text-xs text-fg-faint select-none flex-shrink-0" data-testid="status-bar" data-dismiss-layer="board">
+    // `app-status-bar`, not `status-bar`: the bare name is already asserted ABSENT by
+    // task-activity-indicators.spec.ts (the task-detail "initializing" bar), so claiming it
+    // here made that absence check resolve to this always-visible element and fail.
+    <div className="h-9 bg-surface border-t border-edge flex items-center px-3 text-xs text-fg-faint select-none flex-shrink-0" data-testid="app-status-bar" data-dismiss-layer="board">
       {currentProject && (
         <div className="flex items-center gap-4">
           <span className="flex items-center gap-1.5" data-testid="session-count">
