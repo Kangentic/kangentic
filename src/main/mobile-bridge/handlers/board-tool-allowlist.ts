@@ -15,12 +15,17 @@
  * verb each.
  *
  * Deliberately excluded rather than reachable-by-omission:
- * - `move_task`, `list_tasks`, `list_columns`, `list_backlog` - NOT unsafe,
- *   but duplicates: the dedicated `move-task` and `read-board` verbs
+ * - `move_task`, `reorder_tasks`, `list_tasks`, `list_columns`, `list_backlog` -
+ *   NOT unsafe, but duplicates: the dedicated `move-task` and `read-board` verbs
  *   already cover moving a task and listing tasks/columns/backlog, with a
  *   cleaner contract (swimlaneId not column-name resolution; full Task/
  *   Swimlane objects, not LLM-prose-oriented summaries) and, for
  *   read-board, a live subscription these one-shot tools do not have.
+ *   `move-task` carries a `targetPosition`, so within-column placement is
+ *   already a phone capability through it; `reorder_tasks` would be a second
+ *   contract for that same action, differing only in doing a whole column at
+ *   once. If bulk re-sequencing from a phone is ever wanted, it belongs in
+ *   `move-task`'s verb family with a real schema, not reached by omission here.
  *   Keeping them reachable through BOTH paths would mean two different
  *   contracts for the same action with no reason to prefer one - excluding
  *   them here keeps exactly one path per capability.
@@ -64,12 +69,13 @@ export const MOBILE_BOARD_TOOL_ACCESS: Readonly<Record<string, BoardToolAccess>>
   ...BOARD_TOOL_WRITE_NAMES.map((name): [string, BoardToolAccess] => [name, 'mutate']),
 ]);
 
-/** query_db is unsafe; create_column/delete_column are unvalidated board-structure edits; move_task/list_tasks/list_columns/list_backlog are safe but duplicate the dedicated move-task/read-board verbs - see the module doc comment. */
+/** query_db is unsafe; create_column/delete_column are unvalidated board-structure edits; move_task/reorder_tasks/list_tasks/list_columns/list_backlog are safe but duplicate the dedicated move-task/read-board verbs - see the module doc comment. */
 export const MOBILE_EXCLUDED_BOARD_TOOLS: ReadonlySet<string> = new Set([
   'query_db',
   'create_column',
   'delete_column',
   'move_task',
+  'reorder_tasks',
   'list_tasks',
   'list_columns',
   'list_backlog',
