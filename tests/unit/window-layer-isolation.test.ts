@@ -148,8 +148,96 @@ describe('window-manager layer isolation', () => {
     });
   });
 
-  describe('light-dismiss surfaces are scoped to a layer', () => {
-    it('every data-dismiss-surface names its layer', () => {
+  describe('light-dismiss scopes are named per layer', () => {
+    /** The hook READS the marker (`closest('[data-dismiss-layer]')`); it does not declare one,
+     *  so it is not a marker site and must not be scanned as one. Matched by path suffix: if
+     *  the hook is ever moved or renamed, update this too, or the scan reads its bare
+     *  `closest('[data-dismiss-layer]')` as an unscoped declaration and fails with a
+     *  "name the layer" message that points nowhere near the real cause. */
+    const MARKER_CONSUMER = 'window-manager/bridge/useClickOutsideToClose.ts';
+
+    /** Every `data-dismiss-layer` DECLARATION in the renderer, as `path:line: source`. */
+    const collectScopeMarkerLines = (): string[] => {
+      const RENDERER = path.join(REPO_ROOT, 'src/renderer');
+      const found: string[] = [];
+
+      const walk = (directory: string): void => {
+        for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+          const entryPath = path.join(directory, entry.name);
+          if (entry.isDirectory()) { walk(entryPath); continue; }
+          if (!/\.tsx?$/.test(entry.name)) continue;
+          if (entryPath.replace(/\\/g, '/').endsWith(MARKER_CONSUMER)) continue;
+
+          const lines = fs.readFileSync(entryPath, 'utf-8').split('\n');
+          lines.forEach((line, index) => {
+            const trimmed = line.trim();
+            // Prose about the attribute (line comments, block comments, JSX
+            // comments, and backtick-quoted mentions inside them) is not a usage.
+            // The prefix check below only sees how THIS line starts, so a continuation
+            // line inside a multi-line `{/* ... */}` block does not read as a comment. The
+            // backtick strip below is what actually covers those, which makes
+            // backtick-wrapping every prose mention of the attribute load-bearing for
+            // this scan: an unwrapped mention on a continuation line counts as a
+            // declaration and fails the exact-file-set assertion below.
+            if (/^(\/\/|\*|\/\*|\{\/\*)/.test(trimmed)) return;
+            const code = line.replace(/`[^`]*`/g, '');
+            if (!/data-dismiss-layer/.test(code)) return;
+            found.push(`${path.relative(REPO_ROOT, entryPath).replace(/\\/g, '/')}:${index + 1}: ${trimmed}`);
+          });
+        }
+      };
+      walk(RENDERER);
+      return found;
+    };
+
+    it('every data-dismiss-layer names its layer', () => {
+      // Valid: `data-dismiss-layer="board"`, or a conditional resolving to a scope
+      // string. Invalid: the bare boolean attribute, which matches EVERY layer's hook
+      // and let one layer dismiss another's windows.
+      const offenders = collectScopeMarkerLines().filter(
+        (entry) => !/data-dismiss-layer\s*=/.test(entry),
+      );
+
+      expect(
+        offenders,
+        'A bare `data-dismiss-layer` is layer-agnostic, so a click on it dismisses windows in '
+        + 'EVERY layer - including layers stacked above or below the surface the user clicked. '
+        + 'Name the layer: `data-dismiss-layer="board"`. Offenders:\n' + offenders.join('\n'),
+      ).toEqual([]);
+    });
+
+    it('the scope marker is actually present, so the scan cannot pass vacuously', () => {
+      // Light dismiss is a DENYLIST: the marked subtree dismisses unless an element is
+      // excluded. So the marker's ABSENCE is not the safe state it was under the old
+      // allowlist - it silently disables background-close for that whole layer, and the
+      // bare-attribute scan above would still pass on zero occurrences. Pin the sites.
+      const markerLines = collectScopeMarkerLines();
+      const markedFiles = new Set(markerLines.map((entry) => entry.split(':')[0]));
+
+      // One marker per HOST, not per component. The monitor has TWO hosts that do not share a
+      // root: the in-app overlay (MonitorPage) and the pop-out window (PopOutMonitorRoot,
+      // which renders LazyMonitor + MonitorDetailLayer WITHOUT MonitorPage). Both mount the
+      // hook via MonitorDetailLayer, so both need a scope root or one of them silently stops
+      // dismissing - which is exactly what happened when the marker was moved up off
+      // MonitorBody's scroller, the one element both hosts did share.
+      expect(
+        [...markedFiles].sort(),
+        'The light-dismiss scope marker must exist on the board shell (AppLayout\'s content row '
+        + 'and StatusBar, which sits outside it) and on BOTH monitor hosts (the in-app overlay '
+        + 'and the pop-out root). Losing one silently turns background-close off for that host. '
+        + 'Found:\n' + markerLines.join('\n'),
+      ).toEqual([
+        'src/renderer/components/layout/AppLayout.tsx',
+        'src/renderer/components/layout/StatusBar.tsx',
+        'src/renderer/components/monitor/MonitorPage.tsx',
+        'src/renderer/pop-out/roots/PopOutMonitorRoot.tsx',
+      ]);
+    });
+
+    it('the retired allowlist attribute does not come back', () => {
+      // `data-dismiss-surface` was the OPPOSITE polarity: an allowlist of five regions
+      // that dismissed, with everything else inert. Reintroducing it alongside the
+      // denylist would leave two disagreeing mechanisms, and the hook no longer reads it.
       const RENDERER = path.join(REPO_ROOT, 'src/renderer');
       const offenders: string[] = [];
 
@@ -162,15 +250,9 @@ describe('window-manager layer isolation', () => {
           const lines = fs.readFileSync(entryPath, 'utf-8').split('\n');
           lines.forEach((line, index) => {
             const trimmed = line.trim();
-            // Prose about the attribute (line comments, block comments, JSX
-            // comments, and backtick-quoted mentions inside them) is not a usage.
             if (/^(\/\/|\*|\/\*|\{\/\*)/.test(trimmed)) return;
             const code = line.replace(/`[^`]*`/g, '');
             if (!/data-dismiss-surface/.test(code)) return;
-            // Valid: `data-dismiss-surface="board"` or a conditional resolving to a
-            // scope string. Invalid: the bare boolean attribute, which matched every
-            // layer's hook and let one layer dismiss another's windows.
-            if (/data-dismiss-surface\s*=/.test(code)) return;
             offenders.push(`${path.relative(REPO_ROOT, entryPath).replace(/\\/g, '/')}:${index + 1}: ${trimmed}`);
           });
         }
@@ -179,9 +261,9 @@ describe('window-manager layer isolation', () => {
 
       expect(
         offenders,
-        'A bare `data-dismiss-surface` is layer-agnostic, so a click on it dismisses windows in '
-        + 'EVERY layer - including layers stacked above or below the surface the user clicked. '
-        + 'Name the layer: `data-dismiss-surface="board"`. Offenders:\n' + offenders.join('\n'),
+        '`data-dismiss-surface` is retired. Light dismiss is now a denylist scoped by '
+        + '`data-dismiss-layer`; nothing reads the old allowlist attribute. Offenders:\n'
+        + offenders.join('\n'),
       ).toEqual([]);
     });
   });

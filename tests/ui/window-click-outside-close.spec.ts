@@ -2,21 +2,31 @@
  * UI tests for the click-outside (light-dismiss) feature for modeless
  * task-detail windows.
  *
- * The feature (`useClickOutsideToClose`, mounted once in `WindowLayer`) listens
- * for a "clean click" on dead (non-action) space anywhere in the app shell - a
- * pointerdown + pointerup pair, < 4px travel, whose target is not a card, a
- * window/popover, a control or `[data-no-dismiss]` element (e.g. a column header),
- * or an element showing a pointer cursor (the terminal panel is excluded by being
- * unmarked, not by `[data-no-dismiss]`), and with no dismissable-layer open at
+ * The feature (`useClickOutsideToClose`, mounted once per LAYER) listens for a
+ * "clean click" on dead (non-action) space anywhere in the app shell - a
+ * pointerdown + pointerup pair, < 4px travel, with no dismissable-layer open at
  * pointerdown - and then closes windows per the `windowLightDismiss` policy.
  * Closing routes through each window's unsaved-edits guard (`closeWithGuard`)
  * without touching the underlying PTY/session.
  *
+ * Detection is a DENYLIST: the whole marked shell subtree dismisses, and the
+ * target must not be a task card, a window/popover, a real control, a live
+ * terminal (`.xterm`), a `[data-no-dismiss]` element (a column header, a drag
+ * handle), or anything showing a pointer cursor. `data-dismiss-layer` marks which
+ * LAYER owns a subtree, so a click resolves to the right window store; it does not
+ * decide whether a click dismisses. Anything with no scope root above it is inert,
+ * which is what keeps overlays (the settings panel, palettes, dialogs) and
+ * `document.body` portals from closing a window beneath them.
+ *
  * Policy values:
  *  - `off`      never dismisses
- *  - `single`   dismisses the sole window in any state (default)
- *  - `focused`  dismisses the focused window regardless of how many are open
+ *  - `single`   dismisses the sole window in any state, and nothing at all once a
+ *               second window is open
+ *  - `focused`  dismisses the focused window regardless of how many are open (default)
  *  - `all`      dismisses every open window
+ *
+ * Because the default is `focused`, a test that depends on `single`'s
+ * count-dependence must set the policy explicitly rather than inherit it.
  *
  * These tests prove the count-based and detection-based behaviour of the hook.
  * The pure policy resolver (`resolveLightDismissTargets`) is already exhaustively
@@ -322,7 +332,7 @@ test.describe('window light-dismiss (click-outside-to-close)', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Policy: `single` (default)
+  // Policy: `single` (no longer the default - `focused` is, so these set it)
   // -------------------------------------------------------------------------
 
   test('single: one floating window is closed by a clean empty-board click', async () => {
@@ -392,6 +402,15 @@ test.describe('window light-dismiss (click-outside-to-close)', () => {
     await clickEmptyBoard(page);
     // One window should close; the other stays.
     await pollWindowCount(page, 1);
+
+    // Clicking again closes the NEXT one, so repeated background clicks drain the stack
+    // in focus order. This is the property that makes `focused` a usable default: the
+    // survivor has to inherit focus when its predecessor closes, or the second click
+    // resolves to no target and the remaining windows become unclosable this way.
+    await clickEmptyBoard(page);
+    await pollWindowCount(page, 0);
+
+    await setPolicy(page, 'single');
   });
 
   // -------------------------------------------------------------------------
@@ -617,16 +636,19 @@ test.describe('window light-dismiss (click-outside-to-close)', () => {
     await pollWindowCount(page, 1);
   });
 
-  test('clicking outside every marked surface (an overlay/backdrop region) does NOT dismiss', async () => {
+  test('clicking outside every layer scope (an overlay/backdrop region) does NOT dismiss', async () => {
     await closeAllWindows(page);
     await setPolicy(page, 'single');
     await openWindow(page, 'Task Alpha');
     await pollWindowCount(page, 1);
 
-    // `document.body` has no `[data-dismiss-surface]` ancestor - it stands in for any
-    // element OUTSIDE the five shell surfaces, e.g. the settings panel / command-bar /
-    // search-palette backdrops, which render as AppLayout-root siblings. A click there
-    // must never dismiss the window beneath (the whole point of the allowlist).
+    // `document.body` has no `[data-dismiss-layer]` ancestor, so it stands in for anything
+    // OUTSIDE the marked shell subtree: the settings panel, stats page, search palette,
+    // command-terminal layer, walkthrough, toasts, and every dialog, all of which mount as
+    // AppLayout-root siblings, plus every `document.body` portal. A click there must never
+    // dismiss the window beneath. Under a denylist this is the load-bearing fail-safe: it is
+    // what makes a NEW overlay inert on arrival instead of a hole that must be found and
+    // marked, so it survived the polarity inversion with its assertion unchanged.
     await page.evaluate(() => {
       const init: PointerEventInit = {
         bubbles: true, cancelable: true, button: 0, buttons: 1,
@@ -639,6 +661,99 @@ test.describe('window light-dismiss (click-outside-to-close)', () => {
     // Intentional fixed wait - cannot poll for non-occurrence.
     await page.waitForTimeout(400);
     await pollWindowCount(page, 1);
+  });
+
+  // -------------------------------------------------------------------------
+  // Denylist inversion: shell regions that dismiss, and the exclusions that hold
+  // -------------------------------------------------------------------------
+
+  test('sidebar dead space DOES dismiss the lone window', async () => {
+    await closeAllWindows(page);
+    await setPolicy(page, 'single');
+    await openWindow(page, 'Task Alpha');
+    await pollWindowCount(page, 1);
+
+    // The project-list scroller's own body (below the rows) is dead space. It dismisses
+    // because it sits inside AppLayout's `data-dismiss-layer="board"` subtree, with no
+    // per-region marking of its own. Its project ROWS stay excluded by their pointer
+    // cursor - covered by the sidebar-row test above.
+    await dispatchCleanClickOn(page, '[data-testid="sidebar-project-list"]');
+
+    await pollWindowCount(page, 0);
+  });
+
+  test('status bar dead space DOES dismiss the lone window', async () => {
+    await closeAllWindows(page);
+    await setPolicy(page, 'single');
+    await openWindow(page, 'Task Alpha');
+    await pollWindowCount(page, 1);
+
+    // The status bar carries its OWN scope marker, because it sits outside AppLayout's
+    // marked content row rather than inside it. If that marker is ever dropped, this goes
+    // red while every other shell region keeps working.
+    await dispatchCleanClickOn(page, '[data-testid="status-bar"]');
+
+    await pollWindowCount(page, 0);
+  });
+
+  test('the sidebar resize handle (a drag target) does NOT dismiss', async () => {
+    await closeAllWindows(page);
+    await setPolicy(page, 'single');
+    await openWindow(page, 'Task Alpha');
+    await pollWindowCount(page, 1);
+
+    // `cursor-col-resize` is not `pointer`, so the cursor heuristic cannot exclude this
+    // handle - it needs `data-no-dismiss`. It also lights up on hover, so dismissing here
+    // would make that hover state promise an action the click does not deliver.
+    await dispatchCleanClickOn(page, '[data-testid="sidebar-resize-handle"]');
+
+    // Intentional fixed wait - cannot poll for non-occurrence.
+    await page.waitForTimeout(400);
+    await pollWindowCount(page, 1);
+  });
+
+  test('the terminal resize handle (a drag target) does NOT dismiss', async () => {
+    await closeAllWindows(page);
+    await setPolicy(page, 'single');
+    // Task Gamma deliberately, not Alpha: Alpha owns a running session, so its window claims
+    // it and `shouldForceCollapseTerminal` collapses the panel, unmounting this handle. Gamma
+    // claims nothing, so the panel stays expanded with the other sessions' tabs.
+    await openWindow(page, 'Task Gamma');
+    await pollWindowCount(page, 1);
+
+    // Same shape as the sidebar handle, with a second hover source: `.resize-handle:hover`
+    // in index.css on top of the Tailwind `hover:bg-fg-faint`.
+    await dispatchCleanClickOn(page, '[data-testid="terminal-resize-handle"]');
+
+    // Intentional fixed wait - cannot poll for non-occurrence.
+    await page.waitForTimeout(400);
+    await pollWindowCount(page, 1);
+  });
+
+  test('an open overlay layer does NOT dismiss the window beneath it', async () => {
+    await closeAllWindows(page);
+    await setPolicy(page, 'single');
+    await openWindow(page, 'Task Alpha');
+    await pollWindowCount(page, 1);
+
+    // The real fail-safe test, stronger than the `document.body` case above: open an actual
+    // overlay and click ITS dead space. The settings panel mounts as a SIBLING of the marked
+    // shell subtree, so it resolves to no scope and cannot dismiss. Under the old allowlist a
+    // missed overlay was merely inert; under a denylist it would close the window behind it,
+    // so this is the guard on the whole placement decision.
+    await page.locator('[data-testid="settings-button"]').click();
+    await page.locator('[data-testid="settings-panel"]').waitFor({ state: 'visible', timeout: 3000 });
+
+    // The tab-nav column's own body (below the tab buttons) is dead space INSIDE the panel:
+    // not a control, no pointer cursor. Exactly the shape that dismisses out on the board.
+    await dispatchCleanClickOn(page, '[data-testid="settings-tab-list"]');
+
+    // Intentional fixed wait - cannot poll for non-occurrence.
+    await page.waitForTimeout(400);
+    await pollWindowCount(page, 1);
+
+    await page.keyboard.press('Escape');
+    await page.locator('[data-testid="settings-panel"]').waitFor({ state: 'hidden', timeout: 3000 });
   });
 
   // -------------------------------------------------------------------------

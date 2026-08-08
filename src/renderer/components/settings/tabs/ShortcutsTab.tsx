@@ -123,6 +123,10 @@ function SortableActionItem({
         className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-surface-hover/50 rounded-lg transition-colors"
         onClick={onToggleEdit}
       >
+        {/* light-dismiss-ok: the settings panel mounts as a SIBLING of AppLayout's marked shell
+            subtree, so a click anywhere in it resolves to no `data-dismiss-layer` scope and
+            cannot dismiss a task window. That is the fail-safe the marker placement buys; this
+            `cursor-grab` handle needs no marker of its own. */}
         <div
           className="flex-shrink-0 cursor-grab active:cursor-grabbing text-fg-disabled hover:text-fg-muted"
           {...attributes}

@@ -76,6 +76,10 @@ export function ColorPickerPopover({
   return (
     <div
       ref={popoverRef}
+      // `data-dismissable-layer`: renders in flow inside the board toolbar's labels popover,
+      // which the board layer owns for light dismiss, so without the marker a click on this
+      // popover's own padding would close an open task window behind it.
+      data-dismissable-layer
       className="fixed z-[60] bg-surface-raised border border-edge rounded-lg shadow-xl p-2"
       style={{ top: position.top, left: position.left }}
       onClick={(event) => event.stopPropagation()}

@@ -394,7 +394,18 @@ export function AppLayout() {
         canSpawnMoreTerminals={commandWindowCount < MAX_COMMAND_TERMINALS}
       />
 
-      <div className="flex flex-1 min-h-0">
+      {/* `data-dismiss-layer`: the board layer owns this whole subtree, so a clean click on
+          any dead space in it light-dismisses an open task window (see
+          `useClickOutsideToClose.ts`). The marker declares OWNERSHIP, not dismissibility -
+          it answers whose window closes, not whether one closes. Placing it here rather
+          than on the root above is what keeps the overlay block below (settings, stats,
+          search palette, command terminal, walkthrough, toasts, dictation, dialogs) OUT of
+          the dismiss surface: those mount as siblings, resolve to no scope, and are inert
+          on arrival. Do not hoist it to the root, and mount new overlays as siblings.
+          A clickable child added inside here must carry `cursor-pointer` (or
+          `data-no-dismiss` if it shows some other action cursor), or a click on it will
+          dismiss instead of acting - and its hover state would then be a lie. */}
+      <div className="flex flex-1 min-h-0" data-dismiss-layer="board">
         {/* Hide sidebar entirely when no projects (welcome screen is primary UI) */}
         {hydrated && projects.length > 0 && (
           <>
@@ -425,11 +436,17 @@ export function AppLayout() {
             </div>
 
             {/* Sidebar resize handle - drag to resize, drag past the threshold to collapse.
-                A plain click is a no-op (collapse is the PROJECTS-panel chevron only). */}
+                A plain click is a no-op (collapse is the PROJECTS-panel chevron only).
+                `data-no-dismiss`: it shows `cursor-col-resize` and lights up on hover, so
+                it reads as interactive - and it is, as a drag target. Without the marker a
+                click would light-dismiss a task window instead, making that hover state a
+                promise the click does not keep. Its cursor is not `pointer`, so the cursor
+                check in `useClickOutsideToClose.ts` cannot exclude it. */}
             <div
               data-testid="sidebar-resize-handle"
               className="flex-shrink-0 cursor-col-resize transition-colors w-1 bg-edge hover:bg-fg-faint"
               onMouseDown={sidebar.onResizeStart}
+              data-no-dismiss
             />
           </>
         )}
@@ -448,11 +465,17 @@ export function AppLayout() {
                   {/* Terminal panel -- completely hidden when disabled in Appearance settings */}
                   {config.terminalPanelVisible !== false && (
                     <>
-                      {/* Resize handle -- hidden when collapsed */}
+                      {/* Resize handle - hidden when collapsed.
+                          `data-no-dismiss` for the same reason as the sidebar handle above:
+                          a drag target whose cursor is not `pointer`, which also lights up
+                          on hover (twice over - `hover:bg-fg-faint` here plus
+                          `.resize-handle:hover` in index.css). */}
                       {!terminal.collapsed && (
                         <div
+                          data-testid="terminal-resize-handle"
                           className="resize-handle h-1 bg-edge flex-shrink-0 cursor-row-resize hover:bg-fg-faint transition-colors"
                           onMouseDown={terminal.onResizeStart}
+                          data-no-dismiss
                         />
                       )}
 

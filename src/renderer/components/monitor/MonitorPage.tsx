@@ -74,9 +74,16 @@ export function MonitorPage() {
   }, []);
 
   return (
+    // `data-dismiss-layer="monitor"`: this overlay hosts task-detail windows of its own
+    // (MonitorDetailLayer below), so its dead space is genuinely "behind" them and must
+    // light-dismiss like a board background. Scoped to `monitor` because this overlay
+    // COVERS the board: a click here is not a click on the board and must never close the
+    // board's windows underneath. Declared on the root rather than on MonitorBody's
+    // scroller so the header, summary cards, and toolbar dead space dismiss too.
     <div
       className={`fixed left-0 right-0 top-10 ${statusBarVisible ? 'bottom-9' : 'bottom-0'} z-[42]`}
       data-testid="monitor-page"
+      data-dismiss-layer="monitor"
     >
       <div
         className={`h-full bg-surface border-t border-edge flex flex-col ${overlay.contentClassName}`}

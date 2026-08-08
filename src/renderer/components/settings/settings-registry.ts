@@ -132,7 +132,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'agent.idleTimeoutMinutes', tabId: 'behavior', label: 'Idle Timeout (minutes)', description: 'Auto-suspend sessions after this many minutes idle. 0 to disable.', scope: 'global', section: 'Sessions', keywords: ['suspend', 'minutes'] },
 
   // ── Behavior > Windows ──
-  { id: 'windowLightDismiss', tabId: 'behavior', label: 'Close on Outside Click', description: 'Click empty space outside a task window to dismiss it. The agent keeps running and reattaches when you reopen the task.', scope: 'global', section: 'Windows', keywords: ['dismiss', 'click outside', 'window', 'peek', 'close', 'light dismiss', 'task window'] },
+  { id: 'windowLightDismiss', tabId: 'behavior', label: 'Close on Outside Click', description: 'Click empty space outside a task window to close it. Controls, task cards, and running terminals still act on the first click. The agent keeps running and reattaches when you reopen the task.', scope: 'global', section: 'Windows', keywords: ['dismiss', 'click outside', 'window', 'peek', 'close', 'light dismiss', 'task window'] },
   { id: 'restoreWindowPosition', tabId: 'behavior', label: 'Restore Window Position', description: 'Remember window size and position between launches', scope: 'global', section: 'Windows', keywords: ['size', 'bounds', 'remember'] },
 
   // ── Notifications > Events ──

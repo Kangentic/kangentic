@@ -1985,8 +1985,10 @@ export interface NotificationConfig {
 }
 
 /** Click-outside (light-dismiss) policy for modeless task-detail windows. `off`
- *  disables it; `single` closes only a lone floating window (the peek case);
- *  `focused` closes the focused window in any state; `all` closes every window. */
+ *  disables it; `single` closes a lone window in any state (the peek case), and so
+ *  does nothing at all once a second window is open; `focused` closes the focused
+ *  window in any state, whether one or five are open (the default); `all` closes
+ *  every window. */
 export type WindowLightDismiss = 'off' | 'single' | 'focused' | 'all';
 
 // === Dictation (voice-to-text) ===
@@ -2709,7 +2711,7 @@ export interface AppConfig {
   skipDeleteConfirm: boolean;
   skipBoardConfigConfirm: boolean;
   autoFocusIdleSession: boolean;
-  /** Click-outside dismiss policy for modeless task-detail windows. Default `single`. */
+  /** Click-outside dismiss policy for modeless task-detail windows. Default `focused`. */
   windowLightDismiss: WindowLightDismiss;
   /** Task IDs that have already been offered an auto-rename suggestion. Persisted so a
    *  dismissed suggestion does not reappear on the next app launch. Drained on task
@@ -2958,7 +2960,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   skipDeleteConfirm: false,
   skipBoardConfigConfirm: false,
   autoFocusIdleSession: false,
-  windowLightDismiss: 'single',
+  windowLightDismiss: 'focused',
   autoNameAskedTaskIds: [],
   autoNameRateLimitPerHour: 60,
   restoreWindowPosition: true,

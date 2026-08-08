@@ -82,9 +82,13 @@ export const DoneSwimlane = React.memo(function DoneSwimlane({ swimlane, tasks }
         style={{ backgroundColor: swimlane.color }}
       />
 
-      {/* Column header */}
+      {/* Column header. Unlike `Swimlane`'s, this strip has NO onClick - its actions are the
+          name and edit buttons below. It used to light up on hover anyway, which promised an
+          action the gaps between those buttons could not deliver; with light dismiss inverted
+          a click there closes an open task window instead. The highlight now lives on the
+          button that actually acts, so what lights up is exactly what responds. */}
       <div
-        className="px-3 py-2 flex items-center gap-2 border-b border-edge/50 w-full text-left hover:bg-surface-hover/30 transition-colors"
+        className="px-3 py-2 flex items-center gap-2 border-b border-edge/50 w-full text-left"
         title={swimlane.description ?? undefined}
       >
         {(() => {
@@ -102,7 +106,7 @@ export const DoneSwimlane = React.memo(function DoneSwimlane({ swimlane, tasks }
         <button
           type="button"
           onClick={() => openBoardManager(swimlane.id)}
-          className="flex items-center gap-2 flex-1 min-w-0"
+          className="flex items-center gap-2 flex-1 min-w-0 rounded hover:bg-surface-hover/30 transition-colors"
         >
           <span className="text-sm font-medium truncate text-fg">
             {swimlane.name}

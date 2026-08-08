@@ -97,9 +97,13 @@ export function TitleBar({
   };
 
   return (
-    // The title bar is intentionally NOT a `data-dismiss-surface`: it is the OS
-    // window-drag region (`-webkit-app-region: drag`), so the OS swallows clicks here
-    // to move the window before the renderer ever sees them. A click cannot dismiss.
+    // The title bar carries no `data-dismiss-layer`, and neither does AppLayout's root
+    // above it, so a click here resolves to no light-dismiss scope and closes nothing.
+    // That is the right outcome for an independent reason: this is the OS window-drag
+    // region (`-webkit-app-region: drag`), so the OS swallows clicks here to move the
+    // window before the renderer ever sees them. A click cannot dismiss either way. The
+    // interactive children opt out of the drag region and are <button>s, which the
+    // denylist excludes, so they still act on the first click.
     <div className={`relative h-10 bg-surface border-b border-edge flex items-center select-none flex-shrink-0 ${isMac ? 'pl-20 pr-3' : 'px-3'}`}
          style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
       {/* Branding -- logo + app name */}

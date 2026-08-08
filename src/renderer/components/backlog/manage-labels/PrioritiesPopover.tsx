@@ -293,7 +293,12 @@ function PriorityRow({
       className="flex items-center gap-2.5 h-9 px-1.5 rounded hover:bg-surface-hover/30"
     >
       {!isLocked ? (
-        <div {...attributes} {...listeners} className="cursor-grab text-fg-disabled hover:text-fg-muted flex-shrink-0">
+        // `data-no-dismiss`: this popover renders IN FLOW inside the board toolbar, which the
+        // board layer owns for light dismiss. `cursor-grab` is not `pointer`, so the cursor
+        // heuristic cannot exclude the handle, and it lights up on hover. Protected locally
+        // rather than leaning on the enclosing OverlayPopover's `data-dismissable-layer`, so
+        // the guarantee does not depend on an ancestor two components away.
+        <div {...attributes} {...listeners} data-no-dismiss className="cursor-grab text-fg-disabled hover:text-fg-muted flex-shrink-0">
           <GripVertical size={13} />
         </div>
       ) : (

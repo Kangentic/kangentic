@@ -97,6 +97,10 @@ function ColumnRailRow({ row, active, sortable, onSelect, showDelete = false, on
   return (
     <div ref={setNodeRef} style={style} className="flex items-stretch gap-0.5 relative">
       {sortable ? (
+        /* light-dismiss-ok: the board manager is a BaseDialog, which stamps
+           `data-dismissable-layer` on its backdrop, and light dismiss abandons any press made
+           while a dismissable layer is open. So this `cursor-grab` handle cannot close a task
+           window behind the dialog even though its cursor is not `pointer`. */
         <div
           {...attributes}
           {...listeners}

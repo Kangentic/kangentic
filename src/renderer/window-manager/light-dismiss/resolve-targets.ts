@@ -11,15 +11,20 @@ import type { ManagedWindow } from '../store/types';
  *
  *  - `off`     never closes anything.
  *  - `single`  closes the lone window whenever exactly one is open, in ANY state
- *              (the peek case). With a single window there are no siblings to
- *              reflow, so the old floating-only gate was too strict: a window left
- *              `snapped` after its dock partner closed (evictWindowFromTiling keeps
- *              the lone survivor snapped, by design) still leaves empty board to
- *              click, and a lone maximized window covers only the board while the
- *              toolbar, sidebar, and status bar (all dismiss surfaces) stay exposed
- *              beside it, so a click there still dismisses it as intended.
+ *              (the peek case). Note this makes dismissal COUNT-DEPENDENT: opening
+ *              a second task silently turns background-close off with no visible
+ *              cause, which is why `focused` is the default instead. With a single
+ *              window there are no siblings to reflow, so the old floating-only gate
+ *              was too strict: a window left `snapped` after its dock partner closed
+ *              (evictWindowFromTiling keeps the lone survivor snapped, by design)
+ *              still leaves empty board to click, and a lone maximized window covers
+ *              only the board while the toolbar, sidebar, and status bar (all inside
+ *              the board's dismiss scope) stay exposed beside it, so a click there
+ *              still dismisses it as intended.
  *  - `focused` closes the focused window, regardless of how many are open and
- *              regardless of its state (the explicit aggressive choice).
+ *              regardless of its state. THE DEFAULT: it removes `single`'s
+ *              count-dependence, so the focused window closes whether one or five
+ *              are open and repeated clicks close them in order.
  *  - `all`     closes every open window, regardless of state.
  */
 export function resolveLightDismissTargets(

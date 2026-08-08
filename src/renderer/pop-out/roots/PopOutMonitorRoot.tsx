@@ -18,13 +18,20 @@ import { useMonitorDetailOwnership } from '../../components/monitor/useMonitorDe
  *  Ownership is mounted HERE rather than in the layer, for this renderer's whole
  *  lifetime: the layer is allowed to come and go, but whoever reports what is mounted
  *  must outlive it, or a window left in the store becomes an owner nothing can close.
- *  See `useMonitorDetailOwnership`. */
+ *  See `useMonitorDetailOwnership`.
+ *
+ *  `data-dismiss-layer="monitor"`: light dismiss needs a scope root per HOST, and this
+ *  root does NOT render `MonitorPage` (which declares the in-app overlay's), so without
+ *  its own marker a click in this window would resolve to no scope and the detail windows
+ *  here would never light-dismiss. `MonitorDetailLayer` mounts the hook in both hosts. */
 export function PopOutMonitorRoot() {
   useMonitorDetailOwnership();
   return (
-    <>
+    // `flex-1 min-h-0 flex flex-col` re-establishes the column context PopOutWindowFrame's
+    // content box gave LazyMonitor directly, so adding this wrapper changes no layout.
+    <div className="flex-1 min-h-0 flex flex-col" data-dismiss-layer="monitor">
       <LazyMonitor />
       <MonitorDetailLayer />
-    </>
+    </div>
   );
 }

@@ -270,20 +270,14 @@ export function MonitorBody() {
       {/* `pt-3` belongs HERE, not on the group header. With grouping switched off
           there is no header, and the first card sat flush against the filter
           bar's rule with no breathing room at all. */}
+      {/* The monitor's light-dismiss scope is declared once, on MonitorPage's root
+          (`data-dismiss-layer="monitor"`), so it covers this scroller AND the header,
+          summary cards, and toolbar above it. It used to live on this element alone,
+          which meant dead space in the monitor's own chrome dismissed nothing. */}
       <div
         ref={scrollRef}
         className="flex-1 min-h-0 overflow-y-auto px-4 pt-3 pb-4"
         data-testid="monitor-scroll"
-        // Light-dismiss surface for the monitor's OWN task-detail windows, the
-        // same way the board's columns are for the board's. Overlays are
-        // deliberately unmarked so a click on one never closes a window beneath
-        // it - but this overlay hosts windows itself, so its dead space is
-        // genuinely "behind" them and must dismiss like a board background.
-        //
-        // Scoped to `monitor` so it dismisses only the MONITOR's windows: this
-        // overlay covers the board, so a click here is not a click on the board
-        // and must not close the board's windows underneath.
-        data-dismiss-surface="monitor"
       >
         {/* @container is what makes the card grid reflow by THIS box's width
             rather than the viewport's, so the pop-out lays out by its own size. */}

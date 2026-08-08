@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { resolveLightDismissTargets } from '../../src/renderer/window-manager/light-dismiss/resolve-targets';
+import { DEFAULT_CONFIG } from '../../src/shared/types';
 import type { ManagedWindow, WindowState } from '../../src/renderer/window-manager/store/types';
 
 function makeWindow(id: string, state: WindowState): ManagedWindow {
@@ -26,6 +27,24 @@ function windowSet(...entries: Array<[string, WindowState]>): Record<string, Man
 const ALL_STATES: WindowState[] = ['floating', 'snapped', 'tiled', 'maximized'];
 
 describe('resolveLightDismissTargets', () => {
+  describe('the shipped default', () => {
+    it('is `focused`, so dismissal is not count-dependent', () => {
+      // `single` was the old default and returns NOTHING once a second window is open,
+      // so opening a second task silently turned background-close off with no visible
+      // cause. `focused` closes the focused window whether one or five are open.
+      // Asserted here because nothing else pins it: `tests/ui/mock-electron-api.js`
+      // seeds its own independent literal, and the UI tier's `updateConfig` cannot
+      // express "whatever the default is".
+      expect(DEFAULT_CONFIG.windowLightDismiss).toBe('focused');
+    });
+
+    it('closes the focused window with several open, where `single` closed none', () => {
+      const windows = windowSet(['a', 'floating'], ['b', 'floating']);
+      expect(resolveLightDismissTargets(DEFAULT_CONFIG.windowLightDismiss, windows, 'b')).toEqual(['b']);
+      expect(resolveLightDismissTargets('single', windows, 'b')).toEqual([]);
+    });
+  });
+
   describe('off', () => {
     it('never returns a target, no matter the window set', () => {
       expect(resolveLightDismissTargets('off', {}, null)).toEqual([]);

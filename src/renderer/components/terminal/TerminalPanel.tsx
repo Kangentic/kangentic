@@ -158,7 +158,6 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
       <div
         data-testid="terminal-panel-empty"
         data-state={detached ? 'detached' : 'no-sessions'}
-        data-dismiss-surface="board"
         className="h-full bg-surface flex items-center justify-center text-fg-disabled text-sm"
       >
         {detached ? null : 'No active sessions. Drag a task into a column that starts an agent.'}
@@ -167,18 +166,20 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
   }
 
   const isActivityActive = effectiveActiveId === ACTIVITY_TAB;
-  // A live xterm pane (and its ContextBar) is mounted only when content is shown and a real
-  // session tab is active. Only in that state must the panel NOT dismiss the window on a
-  // dead-space click; otherwise (empty tab bar / collapsed strip / Activity tab) it is a
-  // dismiss surface like the rest of the app shell. As with every other marked surface, a new
-  // clickable child here must carry `cursor-pointer` or `data-no-dismiss`, or a click on it will
-  // also dismiss.
-  const hasLiveTerminal = showContent && effectiveActiveId != null && !isActivityActive;
 
   return (
-    <div className="h-full flex flex-col bg-surface" data-dismiss-surface={hasLiveTerminal ? undefined : 'board'}>
-      {/* Tab bar */}
-      <div className="flex items-center border-b border-edge flex-shrink-0">
+    <div className="h-full flex flex-col bg-surface">
+      {/* Tab bar. `data-no-dismiss` is DEFENSIVE here, not a live fix: today the tabs, the
+          `cursor-pointer` spacer and the toggle tile the whole row (tab buttons and the toggle
+          both compute to 28px - `py-1.5` around a 16px line box - so the strip leaves no band
+          above or below itself), and every one of them is already excluded. What is not
+          structural is that the spacer and the toggle are BOTH conditional on
+          `onToggleCollapse`: a second mount site that omits it would expose the entire
+          right-hand remainder as dead space directly above a live terminal. AppLayout is the
+          only mount site and always passes it, so that is latent. Marking the row makes the
+          guarantee independent of the prop, and nothing here loses a click, since the marker
+          opts out of light dismiss only. */}
+      <div className="flex items-center border-b border-edge flex-shrink-0" data-no-dismiss>
         <div className="flex items-center overflow-x-auto flex-shrink min-w-0">
           {/* Activity tab -- visible when 1+ sessions */}
           {showActivityTab && (
@@ -294,10 +295,26 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
                 return isActiveTab && !ownedByWindow;
               })
               .map((session) => (
+                // `data-no-dismiss`: clicking a running terminal must never light-dismiss an
+                // open task window. This marker is what actually carries that here. It covers
+                // everything `.xterm` does not reach: the pane's NON-xterm children
+                // (LaunchOverlay - opaque, event-receiving, default cursor, so it would dismiss
+                // while an agent is still starting - and FileDropOverlay), plus the horizontal
+                // remainder of the pane, since `index.css` sizes `.xterm` to `height: 100%` but
+                // not width. `.xterm` in useClickOutsideToClose's excluded selector is a SECOND
+                // guarantee, not the primary one: every xterm host is already covered by an
+                // ancestor marker (this wrapper here, `data-window-layer-root` for the task
+                // detail and command terminal). Keep both - the cursor heuristic can stand in
+                // for neither, because xterm's CSS sets `cursor: text` / `default`.
+                // The wrapper only renders for a live, non-window-owned session, so marking it
+                // unconditionally needs no `hasLiveTerminal` conditional to stay in sync. It is
+                // NOT the whole live-panel exclusion though: the tab bar above and the
+                // ContextBar below are siblings and carry their own markers.
                 <div
                   key={session.id}
                   data-testid="terminal-session-pane"
                   className="absolute inset-0"
+                  data-no-dismiss
                 >
                   <TerminalTab
                     sessionId={session.id}

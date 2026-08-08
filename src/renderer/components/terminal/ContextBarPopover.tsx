@@ -201,6 +201,11 @@ export function ContextBarPopover({
       // the button's title attribute.
       className="fixed z-50 bg-surface-raised border border-edge rounded-lg shadow-xl py-1 w-max max-w-[420px] max-h-[340px] overflow-y-auto overlay-popover-in"
       data-testid={testId}
+      // `data-dismissable-layer`: consistency with every other menu (portaled ones get it
+      // from `OverlayPopover`). The body portal above already puts this outside the board
+      // layer's subtree, so light dismiss cannot reach it either way, but declaring it keeps
+      // the marker meaningful for anything that reads "is a menu open right now".
+      data-dismissable-layer
     >
       <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-fg-faint">
         {title}

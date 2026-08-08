@@ -52,6 +52,10 @@ export function BacklogContextMenu({
   return (
     <div
       ref={menuRef}
+      // `data-dismissable-layer`: renders in flow inside the backlog view, which the board
+      // layer owns for light dismiss, so without the marker a click on the menu's own padding
+      // would close an open task window behind it.
+      data-dismissable-layer
       className="fixed z-50 bg-surface-raised border border-edge rounded-lg shadow-xl py-1 min-w-[180px] overlay-popover-in"
       style={{ ...menuStyle, transformOrigin: 'top left' }}
     >

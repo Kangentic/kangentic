@@ -1,19 +1,37 @@
 /**
  * UI tests for light-dismissing an open task-detail window via the bottom
- * terminal panel's dead space.
+ * terminal panel, and for the one thing in it that must NEVER dismiss.
  *
- * The terminal panel is normally excluded from the click-outside
- * (light-dismiss) surface set (`useClickOutsideToClose.ts`, the
- * `[data-dismiss-surface]` allowlist) so that clicking into a live terminal
- * never closes an open task-detail window. That exclusion used to be
- * unconditional: it also blocked dismissal when the panel had no live
- * terminal to interact with (the empty "No active sessions" state).
- * `TerminalPanel.tsx` now marks its dead space as a dismiss surface only when
- * no live terminal pane is mounted (`hasLiveTerminal`).
+ * Click-outside (light-dismiss) is a DENYLIST (`useClickOutsideToClose.ts`):
+ * a clean click on dead space anywhere in the app shell closes the focused
+ * task-detail window, unless the target is excluded. The terminal panel is
+ * ordinary shell like the toolbar or the status bar, and needs no marker to
+ * dismiss - so the interesting case here is the exclusion, not the dismissal.
  *
- * Test A proves the fix: the empty panel dismisses like the rest of the app
- * shell. Test B is the regression guard: a mounted live terminal pane must
- * still never dismiss.
+ * A live panel is excluded by three sibling markers plus one selector, and the
+ * split is deliberate. `data-no-dismiss` sits on the tab-bar row, the session-pane
+ * wrapper, and the ContextBar, because those are SIBLINGS - no one of them contains
+ * the others, so each needs its own. `.xterm` in the hook's excluded-control
+ * selector is a second guarantee under the pane wrapper. See the comments in
+ * `TerminalPanel.tsx` and `useClickOutsideToClose.ts` for why each is kept; do not
+ * re-derive xterm's cursor CSS here.
+ *
+ * Test A: the empty panel dismisses. This passes because EVERYTHING in the shell
+ * dismisses now, not because of any per-state marking on the panel. (It predates
+ * the inversion, when the panel opted into being a dismiss surface only while no
+ * live pane was mounted, via a `hasLiveTerminal` conditional that no longer
+ * exists. Same outcome, different reason.)
+ * Test B: a mounted live terminal pane must never dismiss. This is the
+ * load-bearing guard for both exclusions above.
+ * Test B2: the ContextBar below the pane - a SIBLING, not a child, so the pane
+ * wrapper's own `data-no-dismiss` never covered it - must never dismiss either.
+ * Regression guard: when the inversion landed, the root-level `hasLiveTerminal`
+ * exclusion that used to cover the whole live panel was deleted and replaced with
+ * `data-no-dismiss` on the pane wrapper alone, which silently left the ContextBar's
+ * padding, its inter-pill gaps, and every text-only pill (shell, version, cost,
+ * tokens, elapsed, the "Starting agent..." spinner) as dismissible dead space.
+ * Test C: with the Activity tab active no pane wrapper is mounted at all, so its
+ * dead space dismisses like the rest of the shell.
  */
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
@@ -163,6 +181,9 @@ test('empty terminal panel dead space light-dismisses the open task-detail windo
     // No running sessions anywhere -> the panel shows its empty state.
     await page.locator('[data-testid="terminal-panel-empty"]').waitFor({ state: 'visible', timeout: 5000 });
 
+    // Dismisses because the panel is ordinary shell inside AppLayout's
+    // `data-dismiss-layer="board"` subtree, and nothing here is excluded - NOT because the
+    // panel opts into being a dismiss surface in this particular state.
     await dispatchCleanClickOn(page, '[data-testid="terminal-panel-empty"]');
     await pollWindowCount(page, 0);
   } finally {
@@ -277,7 +298,24 @@ test('a live terminal pane in the bottom panel does NOT dismiss the open task-de
     // force-collapsed).
     await page.locator('[data-testid="terminal-session-pane"]').waitFor({ state: 'visible', timeout: 5000 });
 
+    // The pane wrapper: covered by its `data-no-dismiss`, which is what protects the
+    // pane's non-xterm children (LaunchOverlay, FileDropOverlay).
     await dispatchCleanClickOn(page, '[data-testid="terminal-session-pane"]');
+
+    // Intentional fixed wait - we cannot poll for non-occurrence.
+    await page.waitForTimeout(400);
+    await pollWindowCount(page, 1);
+
+    // The xterm element itself - the click a user makes to focus a running agent's terminal
+    // and type. Note this does NOT isolate the `.xterm` exclusion: `closest()` walks up to the
+    // wrapper's `data-no-dismiss` too, so deleting `.xterm` from the hook's selector leaves
+    // this assertion green. The `.xterm` branch is a second guarantee for the day the wrapper
+    // marker is dropped, and only `tests/unit/light-dismiss-action-cursor.test.ts` pins that
+    // it still exists. Asserted here anyway because this exact target is the one that must
+    // never dismiss, whichever exclusion catches it.
+    await page.locator('[data-testid="terminal-session-pane"] .xterm').first()
+      .waitFor({ state: 'visible', timeout: 5000 });
+    await dispatchCleanClickOn(page, '[data-testid="terminal-session-pane"] .xterm');
 
     // Intentional fixed wait - we cannot poll for non-occurrence.
     await page.waitForTimeout(400);
@@ -288,8 +326,53 @@ test('a live terminal pane in the bottom panel does NOT dismiss the open task-de
 });
 
 // ---------------------------------------------------------------------------
-// Test C: selecting the Activity tab makes the dead space a dismiss surface
-// again (covers the `!isActivityActive` term of `hasLiveTerminal`)
+// Test B2: the ContextBar itself (not just the pane wrapper) never dismisses
+// (regression guard - see the file header for what this pins).
+// ---------------------------------------------------------------------------
+
+test('the bottom panel\'s ContextBar dead space does NOT dismiss the open task-detail window (regression guard)', async () => {
+  const { browser, page } = await launchWithState(buildLiveTerminalPreConfig());
+  try {
+    await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+    await setPolicy(page, 'single');
+
+    await openWindow(page, 'No Session Task');
+    await pollWindowCount(page, 1);
+
+    // Same fixture as Test B: the live session auto-selects as the active tab, which
+    // mounts both the pane and its sibling ContextBar below it.
+    await page.locator('[data-testid="terminal-session-pane"]').waitFor({ state: 'visible', timeout: 5000 });
+
+    // Scoped to the BOTTOM PANEL's instance. The task-detail dialog renders its own
+    // ContextBar too (also `data-testid="usage-bar"`), already excluded wholesale by
+    // `data-window-layer-root` - anchoring on `terminal-panel-container` (AppLayout's
+    // wrapper around TerminalPanel) is what proves the click below lands on the panel's
+    // copy, not the dialog's.
+    const panelUsageBar = page.locator('[data-testid="terminal-panel-container"] [data-testid="usage-bar"]');
+    await panelUsageBar.waitFor({ state: 'visible', timeout: 5000 });
+    await expect(panelUsageBar).toHaveCount(1);
+    // The open window here is the NO-session task, so its dialog renders no ContextBar of
+    // its own - confirms the count above cannot be passing vacuously against a second,
+    // dialog-hosted match.
+    await expect(page.locator('[data-testid="task-detail-dialog"] [data-testid="usage-bar"]')).toHaveCount(0);
+
+    // Dispatched on the bar's OWN root (not a pill inside it) - exactly the element
+    // `data-no-dismiss` sits on. None of its pills show a pointer cursor, so the cursor
+    // heuristic in useClickOutsideToClose.ts cannot exclude them without this marker.
+    await dispatchCleanClickOn(page, '[data-testid="terminal-panel-container"] [data-testid="usage-bar"]');
+
+    // Intentional fixed wait - we cannot poll for non-occurrence.
+    await page.waitForTimeout(400);
+    await pollWindowCount(page, 1);
+  } finally {
+    await browser.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Test C: with the Activity tab active, no terminal pane wrapper is mounted, so
+// the panel's dead space dismisses like the rest of the shell. This is the
+// boundary of the exclusion: it must cover a live pane and nothing more.
 // ---------------------------------------------------------------------------
 
 const ACTIVITY_PROJECT_ID = `proj-term-activity-dismiss-${RUN_SUFFIX}`;
@@ -394,8 +477,8 @@ test('selecting the Activity tab makes the panel dead space light-dismiss the op
     await page.locator('[data-testid="terminal-session-pane"]').waitFor({ state: 'visible', timeout: 5000 });
 
     // Switch to the Activity tab: effectiveActiveId becomes the ACTIVITY_TAB
-    // sentinel, isActivityActive flips true, hasLiveTerminal flips false, and
-    // the terminal pane unmounts (only the active tab's pane is ever mounted).
+    // sentinel and the terminal pane unmounts (only the active tab's pane is ever
+    // mounted), taking its `data-no-dismiss` wrapper and its `.xterm` with it.
     await page.getByRole('button', { name: 'Activity', exact: true }).click();
     await page.locator('[data-testid="terminal-session-pane"]').waitFor({ state: 'hidden', timeout: 5000 });
 
@@ -412,19 +495,16 @@ test('selecting the Activity tab makes the panel dead space light-dismiss the op
   }
 });
 
-// NOTE: an earlier revision of this file included a "Test D" targeting the
-// `!dialogSessionIds.includes(effectiveActiveId)` term of `hasLiveTerminal`
-// (a session claimed by its own task-detail window). It was removed: that
-// term can only be false while `showContent` stays true during the ~200ms
-// force-collapse CSS transition (`AppLayout.tsx`'s `shouldForceCollapseTerminal`
-// unconditionally force-collapses the whole panel the instant
-// `dialogSessionIds.length > 0`, independent of which session is active), so
-// the state is architecturally transient, not a stable one a test can wait
-// for without racing the transition. It failed intermittently on CI
-// (`TimeoutError` waiting for the pane container, because by the time the
-// test reached the click the transition had already finished and the whole
-// `{showContent && (...)}` block had unmounted). The term is still
-// implicitly protected: Test B exercises the same boolean expression with
-// this term true (session NOT owned), and the panel's actual force-collapse
-// behavior this term is coupled to is covered by
-// `tests/ui/terminal-no-flash-on-switch.spec.ts`.
+// NOTE: an earlier revision of this file included a "Test D" for the case where the
+// active session is claimed by its own task-detail window. It was removed because that
+// state is architecturally transient rather than one a test can wait for: AppLayout's
+// `shouldForceCollapseTerminal` force-collapses the whole panel the instant
+// `dialogSessionIds.length > 0`, so the window to click closes with the ~200ms CSS
+// transition. It failed intermittently on CI (`TimeoutError` waiting for the pane
+// container, because the transition had already finished and the whole
+// `{showContent && (...)}` block had unmounted).
+//
+// It is a non-issue under the denylist. A window-owned session renders no pane wrapper at
+// all, so there is nothing to exclude and nothing to keep in sync - the old
+// `hasLiveTerminal` conditional this test chased has been deleted. The panel's actual
+// force-collapse behavior is covered by `tests/ui/terminal-no-flash-on-switch.spec.ts`.

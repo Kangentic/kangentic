@@ -642,6 +642,9 @@ function ActivityDebugOverlayContent() {
       }}
       data-testid="activity-debug-overlay"
     >
+      {/* light-dismiss-ok: this dev overlay mounts in App.tsx, OUTSIDE AppLayout entirely, so a
+          click on it resolves to no `data-dismiss-layer` scope and cannot dismiss a task window
+          despite this header's `cursor-grab`. */}
       <div
         className="flex items-center gap-2 px-3 py-2 border-b border-edge cursor-grab active:cursor-grabbing"
         onPointerDown={onHeaderPointerDown}

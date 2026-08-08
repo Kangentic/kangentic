@@ -81,12 +81,8 @@ export const ViewToggle = React.memo(function ViewToggle() {
     }
   }, [boardSearchFocusNonce, activeView]);
 
-  // `data-dismiss-surface`: dead space in the board toolbar (dividers, gaps) light-
-  // dismisses an open task window; its buttons and the search input are excluded as
-  // actions (real controls / pointer cursor). A new clickable child must carry
-  // `cursor-pointer` or `data-no-dismiss`, or a click on it will also dismiss.
   return (
-    <div className="flex items-center px-4 pt-2 pb-2 border-b border-edge" data-testid="view-toggle" data-dismiss-surface="board">
+    <div className="flex items-center px-4 pt-2 pb-2 border-b border-edge" data-testid="view-toggle">
       {/* `ground="raised"`: this sits on the app ground, not in a form row, so the
           thumb takes `surface-raised` (lighter than its track in every theme)
           rather than the `surface-hover` fill the settings-row variant shares

@@ -160,13 +160,19 @@ function SortableRow<TRow, TKey extends string>({
       data-testid={rowTestId}
       data-row-id={rowId}
     >
-      {/* Drag handle cell */}
+      {/* Drag handle cell. `data-no-dismiss`: `cursor-grab` OVERRIDES the row's inherited
+          `cursor-pointer`, so the row's own light-dismiss exemption does not reach this
+          handle - and it lights up on hover, so a click that dismissed a task window instead
+          of grabbing would be a promise the UI does not keep. Same shape as the swimlane
+          column header's drag handle. */}
       <td className="w-[32px] px-1 py-2.5">
         <div
           {...attributes}
           {...listeners}
           className="flex items-center justify-center text-fg-disabled hover:text-fg-muted cursor-grab active:cursor-grabbing"
           title="Drag to reorder"
+          data-testid="row-drag-handle"
+          data-no-dismiss
         >
           <GripVertical size={14} />
         </div>

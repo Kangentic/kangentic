@@ -359,6 +359,7 @@ session; rules with one load when you touch matching files. Each rule names its 
 - `hmr-patterns.md` - dev-mode HMR parity patterns A through D (`src/renderer/`).
 - `ui-conventions.md` - shared UI primitives, selectors, font floor, no hover-only controls, brief accurate copy (`src/renderer/`).
 - `popover-escapes-clipping.md` - a menu popover portals to `document.body` with `strategy: 'fixed'`; `z-index` never escapes an ancestor's overflow clip (`src/renderer/`).
+- `light-dismiss-denylist.md` - clicking outside a task window closes it unless excluded; overlays mount outside the `data-dismiss-layer` shell subtree, action cursors need `data-no-dismiss`, and hover must not promise what the click will not do (`src/renderer/`).
 - `synchronous-shutdown.md` - the `before-quit` path must be synchronous (`src/main/` shutdown).
 - `utc-timestamps.md` - DB writes use `new Date().toISOString()` (`src/main/db/`).
 - `ipc-7-layer-parity.md` - wire an IPC endpoint through all 7 layers.

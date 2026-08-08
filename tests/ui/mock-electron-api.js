@@ -187,7 +187,10 @@
     skipDeleteConfirm: false,
     skipBoardConfigConfirm: false,
     autoFocusIdleSession: false,
-    windowLightDismiss: 'single',
+    // Mirrors DEFAULT_CONFIG.windowLightDismiss in src/shared/types.ts. This is an
+    // independent literal, so a change there does not turn this red on its own - keep
+    // them in step or every UI test silently runs under the wrong policy.
+    windowLightDismiss: 'focused',
     autoNameAskedTaskIds: [],
     autoNameRateLimitPerHour: 60,
     restoreWindowPosition: true,

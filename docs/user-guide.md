@@ -493,7 +493,7 @@ These are global-only settings that apply to the entire app.
 | Auto-Focus Idle Sessions | Automatically switch the bottom panel to idle sessions. Idle tabs stay highlighted either way. |
 | Auto-Resume Agents on Restart | Resume agent sessions that were running when the project last closed. Turn off if resuming many at once slows your machine. |
 | Idle Timeout (minutes) | Auto-suspend sessions after N minutes idle; 0 to disable |
-| Close on Outside Click | Click-outside (light-dismiss) policy for modeless task-detail windows. Closing a window does not kill its session. |
+| Close on Outside Click | Click empty space outside a task window to close it. Controls, task cards, and running terminals still act on the first click. Closing a window does not kill its session. |
 | Restore Window Position | Remember window size and position between launches |
 
 The Board tab has its own Auto-Apply Board Config Changes toggle - see [Applying Changes](#applying-changes) below.
@@ -727,6 +727,8 @@ You choose how it looks, and the choice is remembered (including across a restar
 - **Filters** - a text filter across title, project, column, agent, model, ticket number and labels, plus a "Live only" toggle that drops paused and recently finished sessions.
 
 Clicking a row opens that task's full detail - terminal included - **in the monitor**, so several agents across several projects can be watched and driven from one surface without leaving for another project's board. Right-click a row and choose **Open on board** for the old behavior. A task's detail is only ever open in one place: opening it somewhere else moves it rather than making a second copy, and its tab leaves the bottom panel while it is open.
+
+Clicking empty space anywhere in the monitor - its list, header, summary cards, or filter bar - closes a detail open there, following your [Close on Outside Click](#behavior-settings) setting. It is scoped to the monitor, so it never reaches through to a task window open on the board underneath.
 
 The pop-out button detaches the monitor into its own window, which is the intended way to keep it on a second monitor. The detached window lays out by its own width, so it stays readable narrow while the in-app view fills a wide screen.
 

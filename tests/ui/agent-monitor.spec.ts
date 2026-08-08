@@ -1085,9 +1085,11 @@ test.describe('agent monitor', () => {
       await page.locator('[data-session-id="sess-other-project"] [data-testid="monitor-card-title"]').click();
       await expect.poll(monitorWindows, { timeout: 10000 }).toBe(1);
 
-      // A click on the monitor's dead space is not a click on the board: the
-      // monitor overlay COVERS the board. Before the dismiss surfaces were scoped
-      // per layer, this reached straight through and closed the board's window.
+      // A click on the monitor's dead space is not a click on the board: the monitor
+      // overlay COVERS the board. Before light dismiss was scoped per layer, this reached
+      // straight through and closed the board's window. The scope now comes from
+      // `data-dismiss-layer="monitor"` on MonitorPage's ROOT (it used to sit on this
+      // scroller), so the monitor's header and summary cards are covered too.
       await page.locator('[data-testid="monitor-scroll"]').click({ position: { x: 8, y: 8 } });
 
       await expect.poll(monitorWindows, { timeout: 10000 }).toBe(0);
