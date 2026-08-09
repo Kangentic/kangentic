@@ -311,10 +311,22 @@ describe('handleMoveTask across columns', () => {
 });
 
 describe('handleMoveTask position validation', () => {
-  it.each([
+  // `parseSlotParam` deliberately does not use `Number(value)`, because that
+  // coerces junk into a real slot instead of an error: '', [], and '   ' all
+  // become 0, and `true` becomes 1. The devtools proxy forwards raw JSON
+  // straight into `commandHandlers` with no schema in front of it, so these
+  // are the exact inputs that guard is for - not just the already-numeric
+  // out-of-range cases above.
+  const junkPositions: Array<[string, unknown]> = [
     ['a negative slot', -1],
     ['a fractional slot', 1.5],
-  ])('rejects %s without writing anything', (_label, position) => {
+    ['a boolean, which Number() would coerce to 1', true],
+    ['an empty string, which Number() would coerce to 0', ''],
+    ['an empty array, which Number() would coerce to 0', []],
+    ['a whitespace-only string, which Number() would coerce to 0', '   '],
+  ];
+
+  it.each(junkPositions)('rejects %s without writing anything', (_label, position) => {
     const response = handleMoveTask({ taskId: 'uuid-a', column: 'Review', position }, context);
 
     expect(response.success).toBe(false);
@@ -408,6 +420,39 @@ describe('handleReorderTasks', () => {
 
     expect(response.success).toBe(false);
     expect(response.error).toContain('is not in To Do');
+    expect(mockTaskRepoReorderWithinSwimlane).not.toHaveBeenCalled();
+  });
+
+  it('rejects an archived task with the archived message, not the wrong-column message', () => {
+    // `archive()` leaves swimlane_id alone, so an archived To Do task still
+    // resolves to To Do via getById/getByDisplayId while `list()` (which
+    // filters archived rows) no longer contains it. That is a DIFFERENT
+    // situation from "lives in another column" and must say so - saying "is
+    // not in To Do" about a task whose swimlane_id IS To Do would be flatly
+    // false. Mirrors the same guard already covered on handleMoveTask's
+    // reposition path in task-ordering-sql.test.ts.
+    //
+    // Override just the two lookups (not the shared ALL_TASKS fixture, which
+    // other tests in this file depend on for their exact position math) so
+    // getById/getByDisplayId can resolve an id that mockTaskRepoList's To Do
+    // filter still excludes.
+    const archivedTodoTask: FixtureTask = {
+      id: 'uuid-archived',
+      display_id: 15,
+      title: 'Echo',
+      swimlane_id: TODO_LANE.id,
+      position: 3,
+    };
+    mockTaskRepoGetById.mockImplementation((id: string) =>
+      [...ALL_TASKS, archivedTodoTask].find((task) => task.id === id));
+    mockTaskRepoGetByDisplayId.mockImplementation((displayId: number) =>
+      [...ALL_TASKS, archivedTodoTask].find((task) => task.display_id === displayId));
+
+    const response = handleReorderTasks({ column: 'To Do', taskIds: ['uuid-archived'] }, context);
+
+    expect(response.success).toBe(false);
+    expect(response.error).toContain('is archived, so it has no position in To Do');
+    expect(response.error).not.toContain('is not in To Do');
     expect(mockTaskRepoReorderWithinSwimlane).not.toHaveBeenCalled();
   });
 
