@@ -47,7 +47,7 @@ Work this order. Each step narrows to a single session, then to a single transit
 
 The trigger-label and counter-delta reference is in `docs/activity-detection.md`, section "Reading a transition trace". Interpretation that is playbook, not reference:
 
-- **All six compensation counters read 0 in a clean session.** Any non-zero counter names the silent recovery path that fired (`bgShellHatch`, `staleThinking`, `stuckPendingTools`, `forceThinking`, `forceIdle`, `unmatchedBgShellEnd`) - start there.
+- **All eight compensation counters read 0 in a clean session.** Any non-zero counter names the silent recovery path that fired (`bgShellHatch`, `staleThinking`, `stuckPendingTools`, `stuckSubagent`, `forceThinking`, `forceIdle`, `unmatchedBgShellEnd`, `ignoredInnerSubagentStop`) - start there.
 - **In a bg-shell incident, the first thing to check is the end-label variant:** `event:bg-shell-ended:<shellId>` is a Tier A PID-exit drain (the watcher saw the OS process leave) OR the output-quiescence reclaim (#225); `event:bg-shell-ended:transcript` is the definitive drain from a tracked shell's own terminal `<task-notification>` observed directly in the durable session transcript (#386); `event:bg-shell-ended:watcher` is the anonymous count-heuristic drain. A named shell that vanished via the cap rather than any of the above is the #216 signature.
 - The counter-delta string on each transition shows what shifted: `prompt` carries `turn yes`, `idle` carries `turn no`, tool/shell changes show signed deltas (`tools +1`, `bg -1`).
 
@@ -123,7 +123,7 @@ Durable pins (committed fixtures, run by the harness): `session-009-phantom-bg-s
 - `src/main/activity-engine/engine/predicate.ts` - the single predicate (`derivePredicate`, `deriveReasonForActivity`, `idleHintEndsTurn`).
 - `src/main/activity-engine/engine/activity-engine.ts` - orchestration, transition recording, force-thinking/idle, bg-shell-end labels.
 - `src/main/activity-engine/engine/event-handlers.ts` - per-event counter mutations and the permission flag.
-- `src/main/activity-engine/engine/watchdog.ts` - the four watchdog holds, predicates, thresholds, anchors.
+- `src/main/activity-engine/engine/watchdog.ts` - the five watchdog holds, predicates, thresholds, anchors.
 - `src/main/activity-engine/engine/shapes.ts` - core types, `TransitionTrigger`, `CompensationCounters`, `DEFAULT_*` constants.
 - `src/main/activity-engine/engine/counter-snapshot.ts` - `formatCounterDelta` (the trace delta strings).
 - `src/main/activity-engine/background-shell/watcher.ts` - Tier A PID capture / liveness, Tier B count heuristic, named-drain deficit branch, the transcript-drain integration point in `cycleSession` (#386).

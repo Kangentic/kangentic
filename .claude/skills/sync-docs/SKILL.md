@@ -247,7 +247,7 @@ Each entry has a one-line rationale so future edits know what the entry was prot
   WHY: the TransitionTrigger label vocabulary and ActivityEngineOptions default thresholds are enumerated in activity-detection.md ("Reading a transition trace", "Configuration").
 
 - `src/main/activity-engine/engine/watchdog.ts`
-  WHY: the four watchdog holds (predicates, thresholds, anchors) are enumerated in activity-detection.md "Four safety nets (the watchdog table)".
+  WHY: the five watchdog holds (predicates, thresholds, anchors) are enumerated in activity-detection.md "Five safety nets (the watchdog table)".
 
 - `src/renderer/components/settings/AppSettingsPanel.tsx`
   WHY: settings tab order, separator position, and visibility rules are mirrored in user-guide.md and configuration.md.

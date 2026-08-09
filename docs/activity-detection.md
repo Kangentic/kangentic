@@ -557,7 +557,7 @@ The engine itself emits synthetic events into the activity log via the `onSynthe
 
 ## Test infrastructure
 
-Three test tiers:
+Four test tiers:
 
 1. **Unit** (`tests/unit/activity-engine.test.ts`, `bg-shell-watcher.test.ts`, `process-tree.test.ts`): direct engine + watcher tests with mock probe. Two parity guards ride alongside them: `activity-stats-snapshot-parity.test.ts` (the snapshot's engine and IPC copies) and `no-activity-hold-sentinel-parity.test.ts` (the no-activity-hold flag's three hand-duplicated copies).
 2. **Property** (`tests/unit/activity-engine-property.test.ts`): fast-check generates random event sequences, asserts invariants (counters never negative, activity matches reason kind, dispose is idempotent, multi-session isolation).
