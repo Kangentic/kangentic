@@ -66,9 +66,17 @@ the two surfaces forking the CDP driver (so click/type/screenshot semantics drif
   `registerSteeringTools`. `ResolveTargetSelector.projectId` is required and explicitly nullable, so
   every branch of `resolveTarget` refuses a pane outside the caller's project with the
   `foreign-project` kind, and a new call site cannot fall back to process-wide behavior by omission
-  (`null` is the deliberate unscoped path, for main-process internal callers only). The family
-  deliberately has NO `project` argument and is deliberately NOT handed the `RequestResolver`, so
-  "there is no path to another project's pane" is a type-level guarantee rather than a convention.
+  (`null` is the deliberate unscoped path: main-process internal callers, plus the ONE opt-in below).
+  The family deliberately has NO `project` argument and is deliberately NOT handed the
+  `RequestResolver`, so "there is no path to DRIVING another project's pane" is a type-level
+  guarantee rather than a convention.
+
+  The single opt-in is `kangentic_browser_close_pane`'s `includeOtherProjects`, which passes
+  `projectId: null` for an explicitly named target. It is scoped as narrowly as the feature allows:
+  closing is not reading or controlling someone else's page, the flag is off by default, and it
+  never widens a DRIVING call. A foreign pane can therefore be seen (`list_panes`) and closed, never
+  driven. Any OTHER new `projectId: null` call site on this path is the bug this rule exists to
+  catch.
   The `list_panes` exception above is only an exception to `withGuest`: it must still scope to the
   caller's project by default. The pane's registered `projectId` is backfilled in
   `BROWSER_PANE_REGISTER` from the session registry, since the renderer's value is ambient
