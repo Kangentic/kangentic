@@ -566,6 +566,8 @@ export function TaskDetailWindow({
     wasMaximizedRef.current = isMaximized;
     const frame = document.querySelector(`[data-testid="window-frame-${windowId}"]`);
     const textarea = frame?.querySelector('.xterm-helper-textarea');
+    // arrival-focus-ok: follows the user's own maximize/restore toggle, and the ref
+    // above skips the initial mount, so this is never an arrival.
     if (textarea instanceof HTMLElement) textarea.focus();
   }, [isMaximized, windowId]);
 

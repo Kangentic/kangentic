@@ -121,6 +121,7 @@ function WindowFrameInner({ managedWindow, containerSize, overlayRef, tiledRect 
         if (target.closest('.xterm')) return;
         if (target.closest('[data-testid="conversation-view"]')) return;
         event.preventDefault();
+        // arrival-focus-ok: a literal pointer-down on THIS window's chrome.
         frameRef.current?.querySelector<HTMLElement>('.xterm-helper-textarea')?.focus();
       }}
       onPointerMove={handleFramePointerMove}

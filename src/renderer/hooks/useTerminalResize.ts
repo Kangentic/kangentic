@@ -1,6 +1,11 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import type { AppConfig } from '../../shared/types';
 import { startPanelDrag } from './panel-drag';
+import { claimArrivalFocus } from '../utils/terminal-arrival-focus';
+import { derivePanelSessions } from '../utils/panel-sessions';
+import { derivePanelSessionId } from '../utils/focused-sessions';
+import { useSessionStore } from '../stores/session-store';
+import { useProjectStore } from '../stores/project-store';
 
 const MIN_HEIGHT = 100;
 export const COLLAPSED_HEIGHT = 36;
@@ -56,6 +61,31 @@ export interface TerminalResizeState {
   handleTransitionEnd: () => void;
 }
 
+/**
+ * The session the bottom panel is about to mount a terminal for, read from the
+ * live stores. Runs the same two derivations the panel itself renders from, so a
+ * claim can never name a session the panel is not going to show. `panelShowsTerminal`
+ * is deliberately left at its default: the caller is in the act of showing it.
+ */
+function panelArrivalSessionId(): string | null {
+  const sessionState = useSessionStore.getState();
+  const currentProjectId = useProjectStore.getState().currentProject?.id ?? null;
+  const { owned } = derivePanelSessions({
+    sessions: sessionState.sessions,
+    currentProjectId,
+    dialogSessionIds: sessionState.dialogSessionIds,
+    remoteDetailTaskIds: sessionState.remoteDetailTaskIds,
+    mobileTerminalStreamedSessionIds: sessionState.mobileTerminalStreamedSessionIds,
+  });
+  return derivePanelSessionId({
+    activeSessionId: sessionState.activeSessionId,
+    sessions: sessionState.sessions,
+    currentProjectId,
+    sessionActivity: sessionState.sessionActivity,
+    ownedSessionIds: owned,
+  });
+}
+
 /** `switchKey` is the current project id; a change to it triggers the snap-across-switch
  *  behavior (suppress the height transition for one settle window). */
 export function useTerminalResize(
@@ -88,6 +118,11 @@ export function useTerminalResize(
   const terminalConfigRef = useRef(config.terminal);
   terminalConfigRef.current = config.terminal;
   const effectiveCollapsedRef = useRef(effectiveCollapsed);
+  // Mirrored for `onToggleCollapse`, which has no deps and would otherwise close
+  // over a stale value. A toggle while `forceCollapsed` holds flips only the
+  // user's preference, so no terminal mounts and nothing arrives.
+  const forceCollapsedRef = useRef(forceCollapsed);
+  forceCollapsedRef.current = forceCollapsed;
   const availableHeightRef = useRef(0);
   const contentColRef = useRef<HTMLDivElement>(null);
   const contentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -208,6 +243,23 @@ export function useTerminalResize(
   }, [clampHeight]);
 
   const onToggleCollapse = useCallback(() => {
+    // Expanding REMOUNTS the panel's TerminalTab (`showContent` gates whether it
+    // renders one at all), which is an arrival. Claim focus for it, because the
+    // bottom panel is not a window: expanding moves no layer's `focusedWindowId`,
+    // so with a detail window open the arbiter would otherwise leave focus there
+    // and the freshly expanded terminal would need a click before it could be
+    // typed into. Read from the ref rather than `collapsed`, which this callback
+    // closes over stale (it has no deps, by design). A claim whose session never
+    // mounts simply expires.
+    // Only when the toggle will actually un-collapse. While `forceCollapsed`
+    // holds (a project switch with detail windows still restoring), the panel
+    // stays collapsed and mounts nothing, so a claim here would name a terminal
+    // that never arrives - and tier 1 is EXCLUSIVE, so that dangling claim would
+    // deny the restoring windows' own terminals for the full TTL.
+    if (effectiveCollapsedRef.current && !forceCollapsedRef.current) {
+      claimArrivalFocus(panelArrivalSessionId());
+    }
+
     // Only the user's preference flips here; the showContent timing is driven by
     // the effectiveCollapsed effect above (which also reacts to windows opening).
     setCollapsed((prev) => {

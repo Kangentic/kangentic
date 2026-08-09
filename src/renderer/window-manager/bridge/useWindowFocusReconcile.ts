@@ -33,6 +33,8 @@ export function useWindowFocusReconcile(): void {
     const next = entries.reduce((top, candidate) => (candidate.zIndex > top.zIndex ? candidate : top));
     const frame = document.querySelector(`[data-testid="window-frame-${next.id}"]`);
     const textarea = frame?.querySelector('.xterm-helper-textarea');
+    // arrival-focus-ok: repairs focus a window CLOSE orphaned, and the guard above
+    // already abstains unless activeElement fell back to <body>.
     if (textarea instanceof HTMLElement) textarea.focus();
   }, [windows]);
 }

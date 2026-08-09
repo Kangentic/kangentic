@@ -1,5 +1,7 @@
 /**
- * Unit tests for `resolveFocusedCommandSessionId` in dictation-target.ts.
+ * Unit tests for dictation-target.ts: `resolveFocusedCommandSessionId`, the
+ * `resolveDictationTarget` priority chain, and the shared
+ * `resolveFocusedWindowTerminal` resolver the arrival-focus arbiter also consumes.
  *
  * Covers the fix for "Command Terminal voice dictation doesn't work": priority 1
  * of `resolveDictationTarget()` used to read `focusedWindow.sessionId` from the
@@ -11,9 +13,14 @@
  * focusedWindowId alive, so an unguarded resolve would let a hidden terminal
  * steal dictation from a visible board window).
  */
-import { describe, it, expect, beforeEach, afterAll } from 'vitest';
-import { resolveFocusedCommandSessionId, resolveDictationTarget } from '../../src/renderer/utils/dictation-target';
-import { boardWindowManager, commandWindowManager } from '../../src/renderer/window-manager';
+import { describe, it, expect, beforeEach, afterEach, afterAll } from 'vitest';
+import {
+  resolveFocusedCommandSessionId,
+  resolveDictationTarget,
+  resolveFocusedWindowTerminal,
+} from '../../src/renderer/utils/dictation-target';
+import { boardWindowManager, commandWindowManager, monitorWindowManager } from '../../src/renderer/window-manager';
+import { markLayerMounted } from '../../src/renderer/window-manager/store/layer-mount-registry';
 import { useSessionStore } from '../../src/renderer/stores/session-store';
 import { useProjectStore } from '../../src/renderer/stores/project-store';
 import { transientKey, type TransientSessionEntry } from '../../src/renderer/stores/session-store/transient-session-slice';
@@ -89,6 +96,14 @@ function resetIntegrationStores(): void {
     tileTree: null,
     tileTreeRect: { x: 0, y: 0, w: 1, h: 1 },
   });
+  monitorWindowManager.store.setState({
+    windows: {},
+    order: [],
+    focusedWindowId: null,
+    zCounter: 0,
+    tileTree: null,
+    tileTreeRect: { x: 0, y: 0, w: 1, h: 1 },
+  });
   useSessionStore.setState({
     sessions: [],
     commandBarVisible: false,
@@ -96,6 +111,25 @@ function resetIntegrationStores(): void {
     activeSessionId: null,
   });
   useProjectStore.setState({ currentProject: null });
+}
+
+/**
+ * Mark the window layers mounted, the way `WindowManagerLayer` does whenever its
+ * surface is on screen. `resolveFocusedWindowTerminal` SKIPS an unmounted layer:
+ * a layer's store deliberately outlives its React subtree, and a layer with no
+ * subtree hosts no xterm, so a stale `focusedWindowId` there must not resolve.
+ * Without this, the integration tests below would model a state that cannot occur
+ * while a window is actually on screen.
+ */
+let unmountLayers: Array<() => void> = [];
+
+function mountAllLayers(): void {
+  unmountLayers = [boardWindowManager, commandWindowManager, monitorWindowManager].map(markLayerMounted);
+}
+
+function unmountAllLayers(): void {
+  for (const unmount of unmountLayers) unmount();
+  unmountLayers = [];
 }
 
 describe('resolveFocusedCommandSessionId', () => {
@@ -183,10 +217,10 @@ describe('resolveFocusedCommandSessionId', () => {
 
 /**
  * Integration coverage for `resolveDictationTarget()`'s priority-1 leg
- * (the private `focusedCommandSessionId()` wrapper), exercised against the
+ * (the shared `resolveFocusedWindowTerminal()` resolver), exercised against the
  * REAL Zustand stores rather than a hand-built input object. This is the part
  * `resolveFocusedCommandSessionId`'s unit tests above cannot reach: the
- * wrapper's own store reads (`commandWindowManager.store.getState().windows[
+ * resolver's own store reads (`commandWindowManager.store.getState().windows[
  * focusedWindowId].anchor`, `useSessionStore.getState().commandBarVisible` /
  * `.transientSessions`, `useProjectStore.getState().currentProject?.id`) and
  * the fact that `resolveDictationTarget()` actually calls this wrapper FIRST
@@ -199,7 +233,11 @@ describe('resolveFocusedCommandSessionId', () => {
  * null instead of the seeded command session id.
  */
 describe('resolveDictationTarget - Command Terminal priority (real stores)', () => {
-  beforeEach(resetIntegrationStores);
+  beforeEach(() => {
+    resetIntegrationStores();
+    mountAllLayers();
+  });
+  afterEach(unmountAllLayers);
   afterAll(resetIntegrationStores);
 
   it('resolves the focused command-terminal window session when the command layer is visible', () => {
@@ -350,5 +388,186 @@ describe('resolveDictationTarget - Command Terminal priority (real stores)', () 
     });
 
     expect(resolveDictationTarget()).toBe(commandSessionId);
+  });
+});
+
+/**
+ * `resolveFocusedWindowTerminal()` is the shared answer to "which terminal-hosting
+ * window holds window-layer focus", used by BOTH `resolveDictationTarget()` (which
+ * falls through when it names no running session) and the terminal arrival-focus
+ * arbiter (which abstains instead). The two policies differ, so the resolver is
+ * pinned here on its own rather than only through dictation's chain.
+ *
+ * Red conditions this guards:
+ *  - Read `ManagedWindow.sessionId` instead of resolving by anchor, and the
+ *    "no session at open" and "respawned" cases below both return null.
+ *  - Walk only `boardWindowManager` (the pre-extraction behavior) and the monitor
+ *    case below returns null, so a focused monitor detail window is invisible.
+ *  - Drop the `isLayerMounted` gate and the unmounted-layer case below resolves a
+ *    window with no xterm on screen.
+ */
+describe('resolveFocusedWindowTerminal (real stores)', () => {
+  beforeEach(() => {
+    resetIntegrationStores();
+    mountAllLayers();
+  });
+  afterEach(unmountAllLayers);
+  afterAll(resetIntegrationStores);
+
+  it('resolves a board window by ANCHOR, not the stored sessionId', () => {
+    // The window was opened before the task had a session, so its stored
+    // `sessionId` is null forever - the store never writes it back on spawn.
+    // Anchor resolution still finds the session that spawned afterwards.
+    boardWindowManager.store.getState().openWindow({
+      anchor: 'task-1',
+      sessionId: null,
+      title: 'Task One',
+    });
+    useSessionStore.setState({
+      sessions: [makeSession({ id: 'sess-spawned-later', taskId: 'task-1', status: 'running' })],
+    });
+
+    expect(resolveFocusedWindowTerminal()).toEqual({ sessionId: 'sess-spawned-later' });
+  });
+
+  it('resolves the live session when the stored sessionId went stale after a respawn', () => {
+    boardWindowManager.store.getState().openWindow({
+      anchor: 'task-1',
+      sessionId: 'sess-old',
+      title: 'Task One',
+    });
+    useSessionStore.setState({
+      sessions: [makeSession({ id: 'sess-respawned', taskId: 'task-1', status: 'running' })],
+    });
+
+    expect(resolveFocusedWindowTerminal()).toEqual({ sessionId: 'sess-respawned' });
+  });
+
+  it('reports a focused window whose task has no session as sessionId null, NOT as "no window"', () => {
+    // The distinction is load-bearing for the arbiter: a window owning the
+    // user's attention with no terminal yet must still deny other terminals,
+    // which a null return would not do.
+    boardWindowManager.store.getState().openWindow({
+      anchor: 'task-unspawned',
+      sessionId: null,
+      title: 'Task Unspawned',
+    });
+
+    expect(resolveFocusedWindowTerminal()).toEqual({ sessionId: null });
+  });
+
+  it('resolves a focused monitor detail window', () => {
+    monitorWindowManager.store.getState().openWindow({
+      anchor: 'proj-1:task-mon',
+      sessionId: null,
+      title: 'Monitor Task',
+    });
+    useSessionStore.setState({
+      sessions: [makeSession({ id: 'sess-mon', taskId: 'task-mon', status: 'running' })],
+    });
+
+    expect(resolveFocusedWindowTerminal()).toEqual({ sessionId: 'sess-mon' });
+  });
+
+  it('returns null when no layer has a focused window', () => {
+    expect(resolveFocusedWindowTerminal()).toBeNull();
+  });
+
+  it('skips an UNMOUNTED layer even though its store still names a focused window', () => {
+    monitorWindowManager.store.getState().openWindow({
+      anchor: 'proj-1:task-mon',
+      sessionId: null,
+      title: 'Monitor Task',
+    });
+    useSessionStore.setState({
+      sessions: [makeSession({ id: 'sess-mon', taskId: 'task-mon', status: 'running' })],
+    });
+    // Closing the Agent Monitor unmounts its layer but keeps its windows and
+    // focus pointer. Without the mount gate that stale pointer would resolve
+    // forever, and for the arbiter it would deny every other terminal focus.
+    unmountAllLayers();
+    unmountLayers = [boardWindowManager, commandWindowManager].map(markLayerMounted);
+
+    expect(resolveFocusedWindowTerminal()).toBeNull();
+  });
+
+  it('skips a focused conversation window (read-only transcript, no input surface)', () => {
+    boardWindowManager.store.getState().openWindow({
+      kind: 'conversation',
+      anchor: 'sess-conv',
+      sessionId: 'sess-conv',
+      title: 'Conversation',
+    });
+    useSessionStore.setState({
+      sessions: [makeSession({ id: 'sess-conv', taskId: 'task-conv', status: 'running' })],
+    });
+
+    expect(resolveFocusedWindowTerminal()).toBeNull();
+  });
+
+  it('prefers the visible command layer over a focused monitor and board window', () => {
+    const projectId = 'proj-priority';
+    useProjectStore.setState({ currentProject: makeProject(projectId) });
+
+    boardWindowManager.store.getState().openWindow({
+      anchor: 'task-board',
+      sessionId: null,
+      title: 'Board Task',
+    });
+    monitorWindowManager.store.getState().openWindow({
+      anchor: `${projectId}:task-mon`,
+      sessionId: null,
+      title: 'Monitor Task',
+    });
+    commandWindowManager.store.getState().openWindow({
+      anchor: 'slot-1',
+      sessionId: null,
+      title: 'Command Terminal',
+    });
+
+    useSessionStore.setState({
+      commandBarVisible: true,
+      transientSessions: {
+        [transientKey(projectId, 'slot-1')]: {
+          projectId,
+          slot: 'slot-1',
+          sessionId: 'sess-cmd',
+          branch: 'main',
+        },
+      },
+      sessions: [
+        makeSession({ id: 'sess-cmd', projectId, transient: true, status: 'running' }),
+        makeSession({ id: 'sess-mon', projectId, taskId: 'task-mon', status: 'running' }),
+        makeSession({ id: 'sess-board', projectId, taskId: 'task-board', status: 'running' }),
+      ],
+    });
+
+    expect(resolveFocusedWindowTerminal()).toEqual({ sessionId: 'sess-cmd' });
+  });
+
+  it('falls past a HIDDEN command layer to the monitor, rather than resolving it to null', () => {
+    // Resolving a hidden command layer to `{ sessionId: null }` would wrongly
+    // claim the user's attention for a terminal nobody can see, and would starve
+    // every layer beneath it.
+    const projectId = 'proj-hidden-cmd';
+    useProjectStore.setState({ currentProject: makeProject(projectId) });
+
+    monitorWindowManager.store.getState().openWindow({
+      anchor: `${projectId}:task-mon`,
+      sessionId: null,
+      title: 'Monitor Task',
+    });
+    commandWindowManager.store.getState().openWindow({
+      anchor: 'slot-1',
+      sessionId: null,
+      title: 'Command Terminal',
+    });
+
+    useSessionStore.setState({
+      commandBarVisible: false,
+      sessions: [makeSession({ id: 'sess-mon', projectId, taskId: 'task-mon', status: 'running' })],
+    });
+
+    expect(resolveFocusedWindowTerminal()).toEqual({ sessionId: 'sess-mon' });
   });
 });

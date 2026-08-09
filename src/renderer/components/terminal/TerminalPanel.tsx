@@ -313,6 +313,10 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
                 <div
                   key={session.id}
                   data-testid="terminal-session-pane"
+                  // Which session this pane hosts. The panel swaps the mounted
+                  // pane when its selection changes, so a test that waits on the
+                  // bare testid can be satisfied by the OUTGOING pane.
+                  data-session-id={session.id}
                   className="absolute inset-0"
                   data-no-dismiss
                 >

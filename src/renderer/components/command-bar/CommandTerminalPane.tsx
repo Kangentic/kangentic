@@ -16,8 +16,9 @@
  * Gating means the pane only ever exists with a real session id, so
  * `sessionId` here is non-nullable.
  */
-import { useEffect, useRef, type RefObject } from 'react';
+import { useCallback, useEffect, useRef, type RefObject } from 'react';
 import { useTerminal } from '../../hooks/useTerminal';
+import { mayTakeArrivalFocus } from '../../utils/terminal-arrival-focus';
 import { useTerminalRefit } from '../../hooks/useTerminalRefit';
 import { useDeferredTerminalInit } from '../../hooks/useDeferredTerminalInit';
 import { useTerminalFileDrop } from '../../hooks/useTerminalFileDrop';
@@ -52,6 +53,12 @@ export function CommandTerminalPane({ sessionId, isMaximized, gridGetterRef }: C
     (s) => s.sessions.find((session) => session.id === sessionId)?.shell,
   );
 
+  // Arrival-focus policy, shared with TerminalTab. A Command Terminal window can
+  // be remounted by the project-switch reconcile rather than by a user gesture,
+  // so its arrivals are arbitrated like any other. A real Ctrl+Shift+P still
+  // focuses: opening the layer focuses its window, which the arbiter resolves.
+  const mayFocusOnArrival = useCallback(() => mayTakeArrivalFocus(sessionId), [sessionId]);
+
   const { terminalRef, initTerminal, fit, flushResize, focus, getDimensions } = useTerminal({
     sessionId,
     fontFamily: config.terminal.fontFamily,
@@ -61,6 +68,7 @@ export function CommandTerminalPane({ sessionId, isMaximized, gridGetterRef }: C
     shellName: commandTerminalShell ?? undefined,
     pasteImageTemplate,
     backspaceSendsCtrlH: config.terminal.backspaceSendsCtrlH,
+    mayTakeArrivalFocus: mayFocusOnArrival,
   });
 
   const fileDrop = useTerminalFileDrop(sessionId, focus, commandTerminalShell ?? undefined, pasteImageTemplate);
@@ -87,7 +95,7 @@ export function CommandTerminalPane({ sessionId, isMaximized, gridGetterRef }: C
     initTerminal,
     onInit: () => {
       fit();
-      focus();
+      if (mayFocusOnArrival()) focus();
     },
   });
 
@@ -117,6 +125,8 @@ export function CommandTerminalPane({ sessionId, isMaximized, gridGetterRef }: C
   useEffect(() => {
     if (wasMaximizedRef.current === isMaximized) return;
     wasMaximizedRef.current = isMaximized;
+    // arrival-focus-ok: follows the user's own maximize/restore toggle, and the ref
+    // above skips the initial mount, so this is never an arrival.
     if (initialized.current) focus();
     // `initialized` is the stable ref returned by useDeferredTerminalInit -
     // listed for exhaustive-deps (which cannot see through the hook), never

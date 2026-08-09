@@ -8,6 +8,7 @@ import { buildSessionByTaskId } from './session-store/session-index';
 import { createTaskChangesPanelSlice } from './session-store/task-changes-panel-slice';
 import { createTransientSessionSlice, transientKey, type TransientSessionEntry } from './session-store/transient-session-slice';
 import { mergeRateLimitSnapshot } from '../utils/rate-limit-window';
+import { claimArrivalFocus } from '../utils/terminal-arrival-focus';
 
 const MAX_EVENTS_PER_SESSION = 500;
 
@@ -560,6 +561,13 @@ export const useSessionStore = create<SessionStore>((set, get, api) => ({
   setActiveSession: (id) => set({ activeSessionId: id }),
 
   selectActiveSession: (id) => {
+    // A tab click is a user gesture naming a terminal that has not mounted yet,
+    // so it claims arrival focus. The bottom panel is not a window: clicking its
+    // tab moves no layer's `focusedWindowId`, so without this claim the arbiter
+    // would keep handing focus to an open detail window and the newly selected
+    // tab would mount unfocused. ACTIVITY_TAB names no session, and passing null
+    // clears any standing claim.
+    claimArrivalFocus(id === ACTIVITY_TAB ? null : id);
     set({ activeSessionId: id });
     // Persist the user's tab choice to AppConfig so it survives project switch
     // and app restart. Skip non-persistable selections: null, the activity tab

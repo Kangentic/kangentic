@@ -272,6 +272,19 @@ interface UseTerminalOptions {
    *  firing to lift its replay veil so only the settled frame is ever shown.
    *  Read live via a ref, so the callback never goes stale. */
   onScrollbackSettled?: () => void;
+  /** Host policy: may this terminal take keyboard focus on ARRIVAL (the mount
+   *  replay, or a reload the caller did not opt out of with `skipFocus`)?
+   *
+   *  Arrival focus is arbitrated because two terminals can mount together and
+   *  each finish its replay at an unpredictable moment, so an unconditional
+   *  focus makes the winner a coin toss (see `terminal-arrival-focus.ts`). The
+   *  policy lives in the HOST rather than here so this hook stays surface-
+   *  agnostic - it knows nothing about windows, panels, or layers.
+   *
+   *  Read live via a ref (same pattern as onScrollbackSettled) and evaluated
+   *  INSIDE the focus frame, so the answer is the one at focus time rather than
+   *  at render time. Absent means allow; both live hosts pass it. */
+  mayTakeArrivalFocus?: () => boolean;
 }
 
 /** Restore a saved scroll position (from HMR) or pin to the bottom.
@@ -588,6 +601,10 @@ export function useTerminal(options: UseTerminalOptions) {
    *  current callback. */
   const onScrollbackSettledRef = useRef(options.onScrollbackSettled);
   onScrollbackSettledRef.current = options.onScrollbackSettled;
+  /** Updated every render (same pattern as onScrollbackSettledRef) so the two
+   *  arrival-focus frames below ask the host's CURRENT policy. */
+  const mayTakeArrivalFocusRef = useRef(options.mayTakeArrivalFocus);
+  mayTakeArrivalFocusRef.current = options.mayTakeArrivalFocus;
 
   /** Single chokepoint for "a scrollback operation has settled". Ordering is
    *  load-bearing: pending must clear BEFORE the kick (the incoming queue's
@@ -934,12 +951,21 @@ export function useTerminal(options: UseTerminalOptions) {
             // (see shouldHold in the queue effect below) now that the replay
             // frame is fully painted, so they apply strictly after it.
             settleScrollback(true);
-            // Focus the terminal after the full init chain completes. No
+            // Focus the terminal after the full init chain completes, if the host
+            // says this arrival may take focus - a background terminal finishing
+            // its replay must not pull focus off the surface the user opened. No
             // corrective resize: main already sampled the settled frame at the
             // fitted width, and a same-dims resize is a documented no-op (POSIX
             // sends SIGWINCH only on a real size change; ConPTY likewise).
             requestAnimationFrame(() => {
-              xtermRef.current?.focus();
+              // Terminal first: the policy is not a pure query (it records the
+              // grant that suppresses a competing tier-3 arrival), so asking it
+              // for a host that unmounted between the settle and this frame
+              // would deny a live terminal on behalf of a disposed one.
+              const terminal = xtermRef.current;
+              if (!terminal) return;
+              if (mayTakeArrivalFocusRef.current?.() === false) return;
+              terminal.focus();
             });
           };
           if (scrollback && xtermRef.current) {
@@ -1591,12 +1617,21 @@ export function useTerminal(options: UseTerminalOptions) {
             return;
           }
           if (widthDecision.refundBudget) replayWidthAttemptsRef.current = 0;
-          // Focus after the reload completes (unless the caller opted out).
+          // Focus after the reload completes, unless the caller opted out or the
+          // host's arrival policy declines. The two gates are separate on
+          // purpose: `skipFocus` is a CALLER saying "this reload is a repair, not
+          // an arrival", while the policy is the HOST arbitrating between
+          // terminals that all believe they are arriving.
           // No corrective resize: when a resize was sent above, main sampled
           // the settled frame; a same-dims resize is a no-op either way.
           if (!skipFocus) {
             requestAnimationFrame(() => {
-              xtermRef.current?.focus();
+              // Terminal first, for the same reason as the mount-replay frame:
+              // the policy records a grant, so a disposed host must not consult it.
+              const terminal = xtermRef.current;
+              if (!terminal) return;
+              if (mayTakeArrivalFocusRef.current?.() === false) return;
+              terminal.focus();
             });
           }
         };
@@ -1705,6 +1740,9 @@ export function useTerminal(options: UseTerminalOptions) {
   }, [options.sessionId, reloadScrollback]);
 
   const focus = useCallback(() => {
+    // arrival-focus-ok: the imperative handle its callers use after a real gesture
+    // (frame pointer-down, file drop, maximize re-homing). The ARRIVAL paths that
+    // must be arbitrated are the two rAF frames above, not this.
     xtermRef.current?.focus();
   }, []);
 

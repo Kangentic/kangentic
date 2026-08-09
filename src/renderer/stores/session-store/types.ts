@@ -169,11 +169,13 @@ export interface CoreSessionSlice {
    */
   reconcileSession: (taskId: string) => Promise<Session | null>;
   setActiveSession: (id: string | null) => void;
-  /** User-gesture variant of setActiveSession. Updates state AND persists the
+  /** User-gesture variant of setActiveSession. Updates state, persists the
    *  selection to AppConfig.lastActiveTaskByProject so it survives app restart
-   *  and project switch. Used by tab-click handlers; the auto-select fallback
-   *  in TerminalPanel uses setActiveSession directly so default picks don't
-   *  overwrite the remembered value. */
+   *  and project switch, AND claims arrival focus for the chosen session (see
+   *  utils/terminal-arrival-focus.ts) so the tab the user just clicked is the
+   *  terminal that takes focus when it mounts. Used by tab-click handlers; the
+   *  auto-select fallback in TerminalPanel uses setActiveSession directly so
+   *  default picks neither overwrite the remembered value nor claim focus. */
   selectActiveSession: (id: string | null) => void;
   /** A task-detail window claims its session (one xterm per PTY: the panel drops
    *  it while a window owns it). Idempotent. */

@@ -1,4 +1,12 @@
-import { boardWindowManager, commandWindowManager } from '../window-manager';
+// The managers come from the deep path, not the `../window-manager` barrel: the
+// barrel also re-exports the layer COMPONENTS, which reach the task-detail tree
+// and back to session-store. Since session-store now imports the arrival-focus
+// arbiter, which imports this module, going through the barrel would put that
+// whole component tree in the store's import graph - and neither module
+// self-accepts, so a Fast Refresh anywhere in it would re-evaluate the store and
+// hand a second instance to a mounted tree (hmr-patterns Pattern E).
+import { boardWindowManager, commandWindowManager, monitorWindowManager } from '../window-manager/store/window-store';
+import { isLayerMounted } from '../window-manager/store/layer-mount-registry';
 import { useSessionStore } from '../stores/session-store';
 import { useProjectStore } from '../stores/project-store';
 import { derivePanelSessionId } from './focused-sessions';
@@ -10,6 +18,13 @@ import { transientKey, type TransientSessionEntry } from '../stores/session-stor
  * panel, task-detail windows, and Command Terminal windows); the main process
  * only tracks a focused SET. So we resolve here and pass the chosen session id
  * explicitly on the commit IPC, and refuse to guess when nothing resolves.
+ *
+ * `resolveFocusedWindowTerminal` is the shared half of that question ("which
+ * terminal-hosting window holds window-layer focus"), also consumed by the
+ * arrival-focus arbiter in `terminal-arrival-focus.ts`. The two differ in POLICY,
+ * not in the resolution: dictation must resolve something and so falls through to a
+ * wider chain, while arrival focus must abstain and so stops there. Keeping one
+ * resolver is what stops those two answers drifting apart.
  */
 
 // Last terminal whose xterm gained focus, across all layers. The window-manager
@@ -39,16 +54,71 @@ function isRunningSession(sessionId: string | null): sessionId is string {
     .sessions.some((session) => session.id === sessionId && session.status === 'running');
 }
 
-/** The session id owned by a window layer's currently focused window, if any.
- *  Conversation windows are read-only transcript viewers with no input surface,
- *  so their anchored session id must never become a dictation injection target. */
-function focusedWindowSessionId(manager: typeof boardWindowManager): string | null {
-  const state = manager.store.getState();
-  const focusedId = state.focusedWindowId;
-  if (!focusedId) return null;
-  const focusedWindow = state.windows[focusedId];
-  if (!focusedWindow || focusedWindow.kind === 'conversation') return null;
-  return focusedWindow.sessionId ?? null;
+/** A terminal-hosting window holding window-layer focus. `sessionId` is null when
+ *  that window's task has not spawned a session yet, which is NOT the same as
+ *  "no window is focused" - the window still owns the user's attention. */
+export interface FocusedWindowTerminal {
+  sessionId: string | null;
+}
+
+/** Layers in paint order, front-most first: the Command Terminal layer renders
+ *  over the Agent Monitor, which renders over the board. */
+const TERMINAL_WINDOW_LAYERS = [commandWindowManager, monitorWindowManager, boardWindowManager];
+
+/**
+ * The terminal-hosting window that currently holds window-layer focus, across
+ * EVERY layer. Returns null when no layer has one; that is the "nothing
+ * resolves" signal, and each caller applies its own policy to it - dictation
+ * falls through to a wider chain, arrival focus abstains.
+ *
+ * `sessionId` is resolved by ANCHOR, never read from `ManagedWindow.sessionId`.
+ * That field is captured at open time and is never written back on spawn or
+ * respawn, so a window opened on a task with no session keeps `null` forever and
+ * a respawned session leaves it stale. Same resolution `useWindowSessionClaims`
+ * uses, for the same reason.
+ *
+ * Exclusions: conversation windows (read-only transcript, no input surface),
+ * unmounted layers (the stores deliberately outlive their subtrees, and an
+ * unmounted layer hosts no xterm), and a hidden Command Terminal layer (hiding
+ * keeps its windows, focus pointer, and PTYs alive, but a terminal nobody can
+ * see must never win).
+ */
+export function resolveFocusedWindowTerminal(): FocusedWindowTerminal | null {
+  for (const manager of TERMINAL_WINDOW_LAYERS) {
+    if (!isLayerMounted(manager)) continue;
+    const state = manager.store.getState();
+    const focusedId = state.focusedWindowId;
+    if (!focusedId) continue;
+    const focusedWindow = state.windows[focusedId];
+    if (!focusedWindow || focusedWindow.kind === 'conversation') continue;
+    // Defensive: `retainWindows` already clears `focusedWindowId` when the focused
+    // window becomes retained, so a retained window cannot be focused today.
+    if (focusedWindow.retainedProjectId !== undefined) continue;
+
+    if (focusedWindow.kind === 'command-terminal') {
+      const sessionState = useSessionStore.getState();
+      // Not visible means this layer is not the user's surface at all, so fall
+      // through to the layers beneath rather than resolving it to null (which
+      // would wrongly claim the user's attention for a hidden terminal).
+      if (!sessionState.commandBarVisible) continue;
+      return {
+        sessionId: resolveFocusedCommandSessionId({
+          commandBarVisible: sessionState.commandBarVisible,
+          focusedCommandAnchor: focusedWindow.anchor,
+          currentProjectId: useProjectStore.getState().currentProject?.id ?? null,
+          transientSessions: sessionState.transientSessions,
+        }),
+      };
+    }
+
+    const toTaskId = manager.options.anchorToTaskId;
+    const taskId = toTaskId ? toTaskId(focusedWindow.anchor) : focusedWindow.anchor;
+    const session = useSessionStore
+      .getState()
+      .sessions.find((candidate) => candidate.taskId === taskId);
+    return { sessionId: session?.id ?? null };
+  }
+  return null;
 }
 
 /** Resolve the focused Command Terminal window's live session by its durable slot
@@ -69,37 +139,22 @@ export function resolveFocusedCommandSessionId(input: {
   return entry?.sessionId ?? null;
 }
 
-function focusedCommandSessionId(): string | null {
-  const windowState = commandWindowManager.store.getState();
-  const focusedId = windowState.focusedWindowId;
-  const focusedWindow = focusedId ? windowState.windows[focusedId] : null;
-  const sessionState = useSessionStore.getState();
-  return resolveFocusedCommandSessionId({
-    commandBarVisible: sessionState.commandBarVisible,
-    focusedCommandAnchor: focusedWindow?.anchor ?? null,
-    currentProjectId: useProjectStore.getState().currentProject?.id ?? null,
-    transientSessions: sessionState.transientSessions,
-  });
-}
-
 /**
  * Resolve the single injection target via a priority chain. Returns null when
  * no live terminal can be determined, so the caller can refuse to commit rather
  * than inject into the wrong terminal.
  */
 export function resolveDictationTarget(): string | null {
-  // 1. The focused Command Terminal window.
-  const commandTarget = focusedCommandSessionId();
-  if (isRunningSession(commandTarget)) return commandTarget;
+  // 1. The focused terminal-hosting window, in any layer (Command Terminal,
+  //    Agent Monitor, or board). Falls through when it names no running session,
+  //    which covers both "no focused window" and "focused window, no session yet".
+  const focusedWindowSessionId = resolveFocusedWindowTerminal()?.sessionId ?? null;
+  if (isRunningSession(focusedWindowSessionId)) return focusedWindowSessionId;
 
-  // 2. The focused task-detail (board) window.
-  const boardTarget = focusedWindowSessionId(boardWindowManager);
-  if (isRunningSession(boardTarget)) return boardTarget;
-
-  // 3. The last terminal the user focused anywhere.
+  // 2. The last terminal the user focused anywhere.
   if (isRunningSession(lastFocusedTerminalSessionId)) return lastFocusedTerminalSessionId;
 
-  // 4. The bottom panel's derived session.
+  // 3. The bottom panel's derived session.
   const currentProjectId = useProjectStore.getState().currentProject?.id ?? null;
   const sessionState = useSessionStore.getState();
   const panelSessionId = derivePanelSessionId({

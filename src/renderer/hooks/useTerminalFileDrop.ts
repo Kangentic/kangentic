@@ -112,6 +112,8 @@ export function useTerminalFileDrop(
     }
     if (paths.length > 0) {
       window.electronAPI.sessions.write(sessionId, paths.join(' '));
+      // arrival-focus-ok: the user just dropped files on THIS terminal and its paths
+      // were written to that PTY, so focus belongs here.
       focusTerminal();
     }
   }, [sessionId, focusTerminal, shellName, pasteImageTemplate]);

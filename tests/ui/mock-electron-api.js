@@ -1620,7 +1620,17 @@
       list: async function () {
         return sessions;
       },
-      getScrollback: async function () {
+      // Per-session replay delay, in ms, via window.__mockScrollbackDelayMs
+      // keyed by session id. Real main deliberately waits 150-400ms here while
+      // the agent TUI's repaint settles (see pty-buffer-manager.ts), and that
+      // wait is what makes the ORDER in which two concurrently mounting
+      // terminals finish replaying nondeterministic. Without a way to control
+      // that order a spec cannot reproduce the arrival-focus race at all.
+      getScrollback: async function (sessionId) {
+        var delay = (window.__mockScrollbackDelayMs || {})[sessionId] || 0;
+        if (delay > 0) {
+          await new Promise(function (resolve) { setTimeout(resolve, delay); });
+        }
         return '';
       },
       getFirstOutput: async function () {

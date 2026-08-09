@@ -9,6 +9,7 @@ import { LaunchOverlay } from '../LaunchOverlay';
 import { useTerminalOverlay } from '../../utils/task-progress';
 import { useTerminalRefit } from '../../hooks/useTerminalRefit';
 import { useDeferredTerminalInit } from '../../hooks/useDeferredTerminalInit';
+import { mayTakeArrivalFocus } from '../../utils/terminal-arrival-focus';
 
 const FIT_DELAY_MS = 100;
 
@@ -95,6 +96,13 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
   const [replaySettled, setReplaySettled] = useState(false);
   const handleScrollbackSettled = useCallback(() => setReplaySettled(true), []);
 
+  // Arrival-focus policy for every programmatic focus this tab can produce. A
+  // TerminalTab mounts in the bottom panel AND in a task-detail window, and both
+  // pass `active` hardcoded true, so `active` carries no information about which
+  // surface the user is actually on - the arbiter answers that from user-intent
+  // state instead. See terminal-arrival-focus.ts.
+  const mayFocusOnArrival = useCallback(() => mayTakeArrivalFocus(sessionId), [sessionId]);
+
   const { terminalRef, initTerminal, fit, flushResize, focus, reloadScrollback, scrollbackPending, suppressDataRef } = useTerminal({
     sessionId,
     fontFamily: config.terminal.fontFamily,
@@ -106,6 +114,7 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
     pasteImageTemplate,
     backspaceSendsCtrlH: config.terminal.backspaceSendsCtrlH,
     onScrollbackSettled: handleScrollbackSettled,
+    mayTakeArrivalFocus: mayFocusOnArrival,
   });
 
   // Sync suppressDataRef with overlay state: suppress all PTY data while overlay is showing.
@@ -207,7 +216,11 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
       if (initialized.current && !scrollbackPending.current) {
         fit();
       }
-      if (initialized.current) {
+      // Arbitrated, not unconditional. On a SOLO mount this frame runs with
+      // `initialized` already true, so it focuses about one frame after mount -
+      // well before any replay settles. Gating only the replay would therefore
+      // leave the race intact, just decided earlier.
+      if (initialized.current && mayFocusOnArrival()) {
         focus();
       }
     });
@@ -228,7 +241,7 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
     // `initialized` is the stable ref returned by useDeferredTerminalInit -
     // listed for exhaustive-deps (which cannot see through the hook), never
     // a re-run trigger.
-  }, [active, fit, focus, scrollbackPending, initialized]);
+  }, [active, fit, focus, mayFocusOnArrival, scrollbackPending, initialized]);
 
   // Container refit while active: persistent gate-aware ResizeObserver plus the
   // terminal-panel-resize handling, shared with CommandTerminalWindow via
