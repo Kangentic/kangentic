@@ -88,6 +88,44 @@ describe('window-manager layer isolation', () => {
       }
     });
 
+    it('TERMINAL_WINDOW_LAYERS covers every manager in allWindowManagers', () => {
+      // `dictation-target.ts` keeps its OWN ordered list rather than iterating
+      // allWindowManagers, because the order is load-bearing there: it resolves
+      // the front-most focused layer first (command over monitor over board),
+      // while allWindowManagers is an unordered set. The ORDER may differ; the
+      // MEMBERSHIP may not. A manager missing from the terminal list makes
+      // `resolveFocusedWindowTerminal()` blind to that layer, which costs twice:
+      // dictation's priority 1 skips it, and the arrival-focus arbiter's tier 2
+      // reports "no focused window" for a window the user is actually working
+      // in, falls through to tier 3, and lets an unrelated arriving terminal
+      // steal focus - the exact race terminal-arrival-focus.ts exists to close.
+      const windowStore = read('src/renderer/window-manager/store/window-store.ts');
+      const dictationTarget = read('src/renderer/utils/dictation-target.ts');
+
+      // Same extraction as the membership test above: the exported instance
+      // names, not a loose scan of the list body (which also matches the bare
+      // `WindowManager` type annotation and would pass vacuously).
+      const exportedManagers = [...windowStore.matchAll(/^export const (\w*[Ww]indowManager) =/gm)]
+        .map((match) => match[1]);
+      expect(exportedManagers.length).toBeGreaterThanOrEqual(3);
+
+      const terminalListBody = dictationTarget.split('const TERMINAL_WINDOW_LAYERS')[1]?.split('];')[0] ?? '';
+      expect(
+        terminalListBody,
+        'TERMINAL_WINDOW_LAYERS is missing or malformed in dictation-target.ts',
+      ).not.toBe('');
+
+      for (const manager of exportedManagers) {
+        expect(
+          terminalListBody,
+          `${manager} is in allWindowManagers but not in TERMINAL_WINDOW_LAYERS `
+          + '(src/renderer/utils/dictation-target.ts). resolveFocusedWindowTerminal() would not '
+          + 'walk that layer, so a focused window there is invisible to BOTH voice dictation and '
+          + 'the arrival-focus arbiter, and an unrelated terminal can steal its keyboard focus.',
+        ).toContain(manager);
+      }
+    });
+
     it('useWindowSessionClaims reconciles across all managers, not one store', () => {
       const source = stripComments(read('src/renderer/window-manager/bridge/useWindowSessionClaims.ts'));
 
