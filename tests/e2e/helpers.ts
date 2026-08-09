@@ -351,8 +351,20 @@ export async function closeApp(app: ElectronApplication | undefined): Promise<vo
       `${CLOSE_TIMEOUT_MS}ms - force-killing Electron process`,
   );
 
-  const electronProcess = app.process();
-  const pid = electronProcess?.pid;
+  // `process()` THROWS rather than returning undefined once Playwright has torn
+  // down its handle, which is exactly what happens when the app died on its own
+  // while `app.close()` was still hanging - the case this force-kill path exists
+  // for. Uncaught, that turns a teardown into a failed test: it surfaces as
+  // "Cannot read properties of undefined (reading '_object')" attributed to
+  // whichever test ran last, which is a flake, not a product regression.
+  // Treat it as the same "nothing left to kill" state the !pid branch handles.
+  let pid: number | undefined;
+  try {
+    pid = app.process()?.pid;
+  } catch (error) {
+    console.warn('[E2E closeApp] Electron process handle already gone - nothing to kill:', error);
+    return;
+  }
 
   if (!pid) {
     console.warn('[E2E closeApp] Could not obtain Electron PID - nothing to kill');
