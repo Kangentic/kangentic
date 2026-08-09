@@ -1626,8 +1626,18 @@
       // wait is what makes the ORDER in which two concurrently mounting
       // terminals finish replaying nondeterministic. Without a way to control
       // that order a spec cannot reproduce the arrival-focus race at all.
+      // Every call is logged to window.__mockScrollbackCalls as
+      // { sessionId, delay }, so a spec can prove AFTER the fact that a replay
+      // it meant to delay actually took the delayed path. That matters because
+      // the assertions a delay enables ("the late terminal did not steal
+      // focus") all still pass if the delay silently stops applying - a renamed
+      // session id, a changed mock - leaving the race unexercised and the spec
+      // vacuously green. Checking the log is deterministic; watching for the
+      // transient replay veil to prove the same thing is not, and fails on CI.
       getScrollback: async function (sessionId) {
         var delay = (window.__mockScrollbackDelayMs || {})[sessionId] || 0;
+        window.__mockScrollbackCalls = window.__mockScrollbackCalls || [];
+        window.__mockScrollbackCalls.push({ sessionId: sessionId, delay: delay });
         if (delay > 0) {
           await new Promise(function (resolve) { setTimeout(resolve, delay); });
         }

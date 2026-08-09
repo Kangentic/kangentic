@@ -244,15 +244,6 @@ test('a delayed background replay does not steal focus from a just-opened task d
     // pass simply because no competing terminal ever existed.
     await fallbackTextarea.waitFor({ state: 'attached', timeout: STEP_TIMEOUT_MS });
 
-    // ...and its replay is genuinely still IN FLIGHT. This is the spec's own
-    // self-defense: `toHaveCount(0)` below is also satisfied by a veil that was
-    // never there, so if the forced delay ever stopped applying (a mock-API
-    // change, a renamed session id) the race would go unexercised while every
-    // assertion still passed. Checked here, at the earliest moment the pane
-    // exists and before any wait on the detail's own replay, so the delay window
-    // is barely consumed.
-    await fallbackVeil.waitFor({ state: 'attached', timeout: STEP_TIMEOUT_MS });
-
     // The detail's replay settles first (the fallback's is delayed).
     await expect(frame.locator('[data-testid="terminal-replay-veil"]')).toHaveCount(0, { timeout: STEP_TIMEOUT_MS });
 
@@ -267,6 +258,21 @@ test('a delayed background replay does not steal focus from a just-opened task d
 
     await expect(detailTextarea).toBeFocused();
     await expect(fallbackTextarea).not.toBeFocused();
+
+    // Anti-vacuity, checked from the mock's own call log rather than by racing
+    // the transient replay veil. Every assertion above still passes if the
+    // forced delay silently stops applying (a renamed session id, a changed
+    // mock), which would leave the losing order unexercised and this spec green
+    // for the wrong reason. The log proves the fallback's replay really did take
+    // the delayed path, so it really did resolve after the detail's.
+    const delayedCalls = await page.evaluate((sessionId) => {
+      const calls = (window as unknown as {
+        __mockScrollbackCalls?: { sessionId: string; delay: number }[];
+      }).__mockScrollbackCalls ?? [];
+      return calls.filter((call) => call.sessionId === sessionId).map((call) => call.delay);
+    }, SESSION_FALLBACK);
+    expect(delayedCalls.length).toBeGreaterThan(0);
+    expect(Math.max(...delayedCalls)).toBe(FALLBACK_REPLAY_DELAY_MS);
   } finally {
     await browser.close();
   }
