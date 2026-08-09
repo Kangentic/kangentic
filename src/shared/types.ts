@@ -890,6 +890,11 @@ export interface ActivityStatsSnapshot {
   subagentDepth: number;
   backgroundShellIds: readonly string[];
   anonymousBackgroundShellCount: number;
+  /** Named bg shells that opted out of holding the session active by carrying
+   *  `NO_ACTIVITY_HOLD_FLAG` in their launching command (today: `/preview`'s
+   *  watcher). Tracked for liveness by the process-tree watcher, but excluded
+   *  from the predicate's background-shell term. */
+  exemptBackgroundShellIds: readonly string[];
   turnActive: boolean;
   permissionPending: boolean;
   /** The tool_use_id awaiting a permission decision when `permissionPending` is true, else null. */

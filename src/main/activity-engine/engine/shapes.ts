@@ -53,6 +53,22 @@ export const DEFAULT_BG_SHELL_ESCAPE_HATCH_MS = 5 * 60_000;
 export const DEFAULT_BG_SHELL_ONLY_GRACE_MS = 30_000;
 
 /**
+ * FIFO cap on `pendingExemptShellToolIds`.
+ *
+ * An entry lives only for the window between a bg shell's PreToolUse and its
+ * PostToolUse (1.7s in the captured evidence), so in practice the set holds at
+ * most one or two. A DROPPED PostToolUse would strand its entry indefinitely
+ * though: only `forceIdle` clears the memo, and it does not fire in the steady
+ * state - the exempt-shell case is by definition a session that sits quiet for
+ * hours. A stranded entry is inert (no counter, no predicate term, and
+ * `toolId`s are unique per tool call so it can never false-match a later
+ * shell), but the bound should be real rather than assumed. This cap is the
+ * ONLY bound on the memo, which is why `resetInFlightCounters` can safely
+ * leave it alone - see the comment there for why it must.
+ */
+export const MAX_PENDING_EXEMPT_SHELL_TOOL_IDS = 16;
+
+/**
  * Default stale-thinking safety net for hook loss. If a session is
  * stuck in `'thinking'` because `turnActive=true` (a thinking event
  * fired but the matching Idle hook never arrived) we force-idle it
@@ -299,6 +315,46 @@ export interface SessionEngineState {
    */
   anonymousBackgroundShellCount: number;
   /**
+   * Named bg shells that declared themselves NON-HOLDING via
+   * `NO_ACTIVITY_HOLD_FLAG` in their launching command (today: `/preview`'s
+   * watcher, which blocks for the preview's whole lifetime).
+   *
+   * Deliberately a SEPARATE set rather than a side-flag on
+   * `activeBackgroundShellIds`: every activity site is written in terms of
+   * `activeBackgroundShellIds` and `anonymousBackgroundShellCount` and nothing
+   * else - `derivePredicate`, `idleHintEndsTurn`, the reason ladder, and
+   * `snapshotCounters` sum the two, while the two bg-shell watchdog holds each
+   * test one term and the other three require the sum to be zero. A set that
+   * appears in none of those expressions is invisible to all of them by
+   * construction, so none of them needed an edit.
+   *
+   * NOT invisible to the watcher: `getActiveShellCount` and `getNamedShellIds`
+   * in `session-telemetry.ts` sum BOTH sets, so Tier A PID capture, the
+   * transcript drain, and the `expected = preExistingHelpers + tracked`
+   * deficit math keep working and the shell drains normally when the preview
+   * exits. Dropping an exempt id from `tracked` while its process is alive
+   * would take the watcher's surplus branch and permanently fold a real
+   * process into `preExistingHelpers`.
+   */
+  exemptBackgroundShellIds: Set<string>;
+  /**
+   * `toolId`s whose PreToolUse `background_shell_start` carried
+   * `NO_ACTIVITY_HOLD_FLAG`, awaiting their PostToolUse promotion.
+   *
+   * A correlation memo, NOT a counter: the exempt shell is still counted in
+   * `anonymousBackgroundShellCount` during the sub-second window between the
+   * two events, so every existing anonymous drain path stays untouched.
+   *
+   * The memo is required because the anonymous-to-named promotion is a shape
+   * heuristic, not a `toolId` correlation, and the exemption cannot be
+   * re-derived at PostToolUse: that event's `detail` is the shell id, and the
+   * command string carrying the flag is gone by then.
+   *
+   * Bounded at `MAX_PENDING_EXEMPT_SHELL_TOOL_IDS` (FIFO) so a dropped
+   * PostToolUse cannot strand entries indefinitely.
+   */
+  pendingExemptShellToolIds: Set<string>;
+  /**
    * Sticky flag set when an Idle event with `detail=permission` fires.
    * Cleared by Prompt, Interrupted, SubagentStart, depth-0 ToolStart,
    * depth-0 ToolEnd, a ToolStart/ToolEnd carrying
@@ -541,6 +597,10 @@ export interface ActivityStatsSnapshot {
   subagentDepth: number;
   backgroundShellIds: readonly string[];
   anonymousBackgroundShellCount: number;
+  /** Named bg shells that opted out of holding the session active via
+   *  `NO_ACTIVITY_HOLD_FLAG`. Tracked for liveness, excluded from the
+   *  predicate. See `SessionEngineState.exemptBackgroundShellIds`. */
+  exemptBackgroundShellIds: readonly string[];
   turnActive: boolean;
   permissionPending: boolean;
   /** The tool_use_id awaiting a permission decision when `permissionPending` is true, else null. See `SessionEngineState.permissionAwaitedToolId`. */

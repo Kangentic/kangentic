@@ -1,7 +1,31 @@
 import { EventType, IdleReason } from '../../../shared/types';
 import type { SessionEvent } from '../../../shared/types';
-import type { SessionEngineState } from './shapes';
+import { NO_ACTIVITY_HOLD_FLAG } from '../../../shared/background-shell-hold';
+import { MAX_PENDING_EXEMPT_SHELL_TOOL_IDS, type SessionEngineState } from './shapes';
 import { looksLikeShellId } from '../background-shell/looks-like-shell-id';
+
+/**
+ * Record that this bg shell's launching command declared itself non-holding,
+ * so the PostToolUse promotion can route the assigned shell id into
+ * `exemptBackgroundShellIds` instead of `activeBackgroundShellIds`.
+ *
+ * Keyed by `toolId` because the promotion is a detail-SHAPE heuristic, not a
+ * `toolId` correlation, and the flag cannot be re-read at PostToolUse (that
+ * event's detail is the shell id; the command string is gone).
+ *
+ * No `toolId` means no exemption. That fails CLOSED - the shell keeps holding,
+ * exactly as it does today - because the opposite failure is a false idle,
+ * which silently hides an agent that needs the user.
+ */
+function rememberExemptShellToolId(state: SessionEngineState, toolId: string): void {
+  // FIFO evict so a dropped PostToolUse cannot strand entries forever. `Set`
+  // iterates in insertion order, so the first key is the oldest.
+  if (state.pendingExemptShellToolIds.size >= MAX_PENDING_EXEMPT_SHELL_TOOL_IDS) {
+    const oldest = state.pendingExemptShellToolIds.values().next().value;
+    if (oldest !== undefined) state.pendingExemptShellToolIds.delete(oldest);
+  }
+  state.pendingExemptShellToolIds.add(toolId);
+}
 
 /**
  * Pure event-to-state mutations for the activity engine.
@@ -189,9 +213,34 @@ export function updateCounters(state: SessionEngineState, event: SessionEvent): 
       // without a prior anonymous slot (e.g., a hook chain that
       // only fires PostToolUse), the named entry is added without
       // promotion - that scenario doesn't double-count either.
+      //
+      // The sentinel is read here rather than in the `else` arm because
+      // `looksLikeShellId` is a `value is string` predicate: inside its `else`
+      // TypeScript narrows `event.detail` to `undefined`, which makes the
+      // command-string case (a real string that simply is not id-shaped)
+      // unreachable to the checker even though it is the common one.
+      const declaresNoActivityHold = event.detail?.includes(NO_ACTIVITY_HOLD_FLAG) === true;
       if (looksLikeShellId(event.detail)) {
-        if (state.activeBackgroundShellIds.has(event.detail)) {
+        if (
+          state.activeBackgroundShellIds.has(event.detail)
+          || state.exemptBackgroundShellIds.has(event.detail)
+        ) {
           // Duplicate - same shell_id seen before. No-op.
+          break;
+        }
+        // EXEMPT promotion. This shell's PreToolUse carried
+        // NO_ACTIVITY_HOLD_FLAG, so the caller declared it non-holding (see
+        // `background-shell-hold.ts`). Drain the anonymous slot it has been
+        // occupying since PreToolUse and park the named id in the exempt set,
+        // which no activity site sums - so the shell stays fully tracked for
+        // liveness while contributing nothing to the predicate.
+        const exemptToolId = event.toolId;
+        if (exemptToolId !== undefined && state.pendingExemptShellToolIds.has(exemptToolId)) {
+          state.pendingExemptShellToolIds.delete(exemptToolId);
+          if (state.anonymousBackgroundShellCount > 0) {
+            state.anonymousBackgroundShellCount -= 1;
+          }
+          state.exemptBackgroundShellIds.add(event.detail);
           break;
         }
         if (state.anonymousBackgroundShellCount > 0) {
@@ -200,7 +249,14 @@ export function updateCounters(state: SessionEngineState, event: SessionEvent): 
         }
         state.activeBackgroundShellIds.add(event.detail);
       } else {
+        // Anonymous PreToolUse arrival. Count it exactly as before - including
+        // for an exempt shell, whose sub-second wait for its id is not worth a
+        // parallel counter and whose every drain path would then need one.
+        // Only the memo is extra.
         state.anonymousBackgroundShellCount += 1;
+        if (declaresNoActivityHold && event.toolId !== undefined) {
+          rememberExemptShellToolId(state, event.toolId);
+        }
       }
       break;
     }
@@ -225,6 +281,10 @@ export function updateCounters(state: SessionEngineState, event: SessionEvent): 
       if (shellId !== undefined) {
         if (state.activeBackgroundShellIds.has(shellId)) {
           state.activeBackgroundShellIds.delete(shellId);
+        } else if (state.exemptBackgroundShellIds.has(shellId)) {
+          // An exempt shell exiting is a normal drain, not an unattributable
+          // end - it was tracked all along, just not in the predicate's set.
+          state.exemptBackgroundShellIds.delete(shellId);
         } else {
           state.compensationCounters.unmatchedBgShellEnd += 1;
         }

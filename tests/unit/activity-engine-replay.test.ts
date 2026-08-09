@@ -21,6 +21,7 @@ import * as path from 'node:path';
 import { ActivityEngine } from '../../src/main/activity-engine/engine';
 import { EventType } from '../../src/shared/types';
 import type { ActivityState, SessionEvent } from '../../src/shared/types';
+import { NO_ACTIVITY_HOLD_FLAG } from '../../src/shared/background-shell-hold';
 
 const FIXTURES_DIR = path.join(__dirname, '..', 'fixtures', 'replay');
 const SESSION_ID = 'replay-session';
@@ -35,6 +36,9 @@ interface ReplayResult {
     subagentDepth: number;
     activeBackgroundShellIds: string[];
     anonymousBackgroundShellCount: number;
+    /** Shells that opted out of holding the session active via
+     *  `NO_ACTIVITY_HOLD_FLAG`. Tracked, but not summed by the predicate. */
+    exemptBackgroundShellIds: string[];
     turnActive: boolean;
     permissionPending: boolean;
   };
@@ -93,6 +97,7 @@ function replay(events: SessionEvent[]): ReplayResult {
       subagentDepth: state.subagentDepth,
       activeBackgroundShellIds: Array.from(state.activeBackgroundShellIds),
       anonymousBackgroundShellCount: state.anonymousBackgroundShellCount,
+      exemptBackgroundShellIds: Array.from(state.exemptBackgroundShellIds),
       turnActive: state.turnActive,
       permissionPending: state.permissionPending,
     },
@@ -1068,6 +1073,121 @@ describe('ActivityEngine replay tests', () => {
     });
   });
 
+  describe('session-027-preview-watcher (bg shell opting out of the activity hold)', () => {
+    // Captured live (session 7b317a63, events.jsonl lines 245/246). `/preview`
+    // launches its exit watcher as `Bash(run_in_background: true)`, and that
+    // shell blocks for the preview's ENTIRE lifetime - hours. It therefore held
+    // the predicate's background-shell term the whole time, so the board showed
+    // the task ACTIVE and it never read idle. The agent literally emitted
+    // "Claude is waiting for your input" while the engine still said thinking.
+    //
+    // The engine cannot infer this: the shell is genuinely alive and correctly
+    // detected, exactly like a real `npm install`. Only the caller knows which
+    // is which, so the caller declares it by putting NO_ACTIVITY_HOLD_FLAG in
+    // the launching command.
+    //
+    // The two fixtures are byte-identical except for that flag, which is what
+    // makes this a controlled red-green pair rather than two separate captures.
+    const HOLDS = 'session-027-preview-watcher-holds-active.jsonl';
+    const EXEMPT = 'session-027-preview-watcher-exempt.jsonl';
+
+    it('pins the captured bug: an unflagged watcher holds the session thinking forever', () => {
+      const result = replay(loadFixture(HOLDS));
+      expect(result.finalActivity).toBe('thinking');
+      // Nothing else is holding it. The turn ended (the `idle` event landed)
+      // and no tool or subagent is in flight - the lone background shell is the
+      // entire reason this session reads active.
+      expect(result.finalState.turnActive).toBe(false);
+      expect(result.finalState.pendingToolCount).toBe(0);
+      expect(result.finalState.subagentDepth).toBe(0);
+      expect(result.finalState.activeBackgroundShellIds).toEqual(['bw37v13wm']);
+      expect(result.finalState.exemptBackgroundShellIds).toEqual([]);
+    });
+
+    it('reads idle when the same watcher declares the no-activity-hold flag', () => {
+      const result = replay(loadFixture(EXEMPT));
+      expect(result.finalActivity).toBe('idle');
+      // The shell is still TRACKED - it just moved to the set the predicate
+      // does not sum. Losing it entirely would break the process-tree watcher's
+      // deficit math (see session-telemetry.ts).
+      expect(result.finalState.exemptBackgroundShellIds).toEqual(['bw37v13wm']);
+      expect(result.finalState.activeBackgroundShellIds).toEqual([]);
+      // The promotion drained the anonymous slot the PreToolUse opened, so the
+      // exemption did not leak a phantom count into the predicate's other term.
+      expect(result.finalState.anonymousBackgroundShellCount).toBe(0);
+      expect(result.unmatchedBgShellEndCompensations).toBe(0);
+    });
+
+    it('drains the exempt shell when the preview actually exits', () => {
+      // The inverse of the fix: exempting a shell from the PREDICATE must not
+      // exempt it from BOOKKEEPING. When the watcher reports the exit, the id
+      // has to resolve, or it would count as an unattributable end and leak.
+      const events = loadFixture(EXEMPT);
+      const lastEvent = events[events.length - 1];
+      const result = replay([
+        ...events,
+        { ts: lastEvent.ts + 3_600_000, type: EventType.BackgroundShellEnd, detail: 'bw37v13wm' },
+      ]);
+      expect(result.finalActivity).toBe('idle');
+      expect(result.finalState.exemptBackgroundShellIds).toEqual([]);
+      expect(result.unmatchedBgShellEndCompensations).toBe(0);
+    });
+
+    it('does not exempt a shell whose PreToolUse never carried the flag', () => {
+      // Guards the correlation itself. The promotion is a detail-SHAPE
+      // heuristic with no toolId correlation of its own, so if the exemption
+      // were keyed on anything looser than the launching toolId, an ordinary
+      // background shell running alongside a preview would inherit it - a false
+      // IDLE, the mirror of the bug being fixed here.
+      const events = loadFixture(EXEMPT).map((event) =>
+        event.type === EventType.BackgroundShellStart && event.detail?.includes('--wait')
+          ? { ...event, toolId: 'toolu_01UnrelatedOtherShell0001' }
+          : event,
+      );
+      const result = replay(events);
+      expect(result.finalActivity).toBe('thinking');
+      expect(result.finalState.activeBackgroundShellIds).toEqual(['bw37v13wm']);
+      expect(result.finalState.exemptBackgroundShellIds).toEqual([]);
+    });
+
+    it('keeps the exemption when a turn-ending event lands mid-promotion', () => {
+      // The exemption is carried from PreToolUse to PostToolUse by a toolId
+      // memo, and those two events are ~1.7s apart. A user Esc (or a
+      // TurnFailed) inside that window runs `resetInFlightCounters`, so if
+      // that reset drops the memo, the arriving PostToolUse finds no record
+      // of the exemption and files the shell in the HOLDING set instead -
+      // and `BackgroundShellStart` re-arms `turnActive`, so the preview
+      // watcher pins the session thinking for its whole lifetime. That is
+      // exactly the bug this feature exists to fix, silently reintroduced
+      // on a plausible interleaving with no compensation counter to show it.
+      //
+      // The shell's OS process is still alive across a turn end (the reset
+      // preserves `exemptBackgroundShellIds` for precisely that reason), so
+      // its pending exemption must survive too.
+      const events = loadFixture(EXEMPT);
+      const preToolUseIndex = events.findIndex(
+        (candidate) => candidate.type === EventType.BackgroundShellStart
+          && candidate.detail?.includes(NO_ACTIVITY_HOLD_FLAG) === true,
+      );
+      expect(preToolUseIndex).toBeGreaterThanOrEqual(0);
+
+      const interrupted: SessionEvent = {
+        ts: events[preToolUseIndex].ts + 200,
+        type: EventType.Interrupted,
+        detail: 'user-ctrl-c',
+      };
+      const result = replay([
+        ...events.slice(0, preToolUseIndex + 1),
+        interrupted,
+        ...events.slice(preToolUseIndex + 1),
+      ]);
+
+      expect(result.finalState.exemptBackgroundShellIds).toEqual(['bw37v13wm']);
+      expect(result.finalState.activeBackgroundShellIds).toEqual([]);
+      expect(result.finalActivity).toBe('idle');
+    });
+  });
+
   describe('cross-fixture invariants', () => {
     it('all fixtures produce a deterministic outcome (no flakiness)', () => {
       const fixtures = [
@@ -1090,6 +1210,8 @@ describe('ActivityEngine replay tests', () => {
         'session-023-false-idle-server-error-retry.jsonl',
         'session-025-false-idle-monitor-untracked.jsonl',
         'session-026-false-active-injected-ctrl-c-kills-subagent.jsonl',
+        'session-027-preview-watcher-holds-active.jsonl',
+        'session-027-preview-watcher-exempt.jsonl',
       ];
       for (const name of fixtures) {
         const events = loadFixture(name);

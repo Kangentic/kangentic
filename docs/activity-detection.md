@@ -4,7 +4,9 @@ Kangentic tracks whether each agent session is **thinking** (working on a turn),
 
 ## Why this matters
 
-The "task done" notification is one of Kangentic's core differentiators. Agents that have started backgrounded work (`Bash(run_in_background:true)`) are still working until those processes exit, even after the agent's hook stream has gone quiet. A session that prematurely shows "idle" causes a false notification; one that's stuck in "thinking" never notifies at all. Both are user-visible bugs.
+The "task done" notification is one of Kangentic's core differentiators. Agents that have started backgrounded work (`Bash(run_in_background:true)`) are usually still working until those processes exit, even after the agent's hook stream has gone quiet. A session that prematurely shows "idle" causes a false notification; one that's stuck in "thinking" never notifies at all. Both are user-visible bugs.
+
+"Usually", because a background shell can also be one the agent is merely OBSERVING rather than working through - `/preview`'s watcher blocks for hours on a service the user controls. Those opt out explicitly; see [Opting a background shell out of the hold](#opting-a-background-shell-out-of-the-hold).
 
 This subsystem aims to be near-100% accurate: notification fires within seconds of the agent (and all its background work) actually being done.
 
@@ -249,6 +251,8 @@ The engine exposes ONE predicate:
 
 Notably absent: `pendingToolCount` is NOT in the predicate. An explicit `Idle` event (Stop hook) must transition to idle even if a tool's PostToolUse never arrived. `pendingToolCount` only drives the `'tool'` reason for UI tooltips.
 
+Also absent, and deliberately so: `exemptBackgroundShellIds`. See [Opting a background shell out of the hold](#opting-a-background-shell-out-of-the-hold).
+
 ### turnActive
 
 Set on any "thinking-initiating" event (`ToolStart`, `Prompt`, `SubagentStart`, `Compact`, `WorktreeCreate`, `BackgroundShellStart`). Cleared by `Interrupted`, and by `Idle` **only when `subagentDepth === 0`** (an `Idle` arriving while a subagent is live is the subagent's own inner Stop and must not end the parent turn - see [Subagent depth](#subagent-depth)). Also re-armed when a permission pause resolves (see [Permission flag](#permission-flag)). Persists across the silent gaps between tool calls so the spinner doesn't flicker.
@@ -263,10 +267,36 @@ Why the empty-string skip: a real capture (session `87524f38`, task #234 running
 
 Two storage modes:
 
-- **`activeBackgroundShellIds: Set<string>`** - when the hook directive extracted a `shell_id` (today: KillBash events), the engine tracks shells by id. `markBackgroundShellEnded(sessionId, shellId)` removes the matching id.
-- **`anonymousBackgroundShellCount: number`** - fallback for shells whose start-event lacked a shell_id (the common case today; production hooks emit the command string as detail, not a shell_id). The watcher's count-based heuristic decrements this.
+- **`activeBackgroundShellIds: Set<string>`** - shells tracked by their assigned `shell_id`. This is the normal steady state. A `Bash(run_in_background: true)` fires the hook TWICE: PreToolUse has no id yet (Claude has not assigned one), then PostToolUse carries the id in `tool_response.shellId` and the adapter remaps that event to `background_shell_start` too. The engine treats the second arrival as a PROMOTION, converting one anonymous slot into a named entry so the total never double-counts. `markBackgroundShellEnded(sessionId, shellId)` removes the matching id.
+- **`anonymousBackgroundShellCount: number`** - the sub-second window before that promotion, plus any shell whose id never arrives (a dropped PostToolUse, or a hook chain that only fires one side). The watcher's count-based heuristic decrements this.
 
 The predicate uses `set.size + anonymousCount > 0` so both modes coexist.
+
+Which mode a start-event lands in is decided purely by the SHAPE of its `detail` (`looksLikeShellId`): id-shaped (1-64 chars of `[\w-]`) is named, anything else - typically the long command string Claude falls back to at PreToolUse - is anonymous.
+
+### Opting a background shell out of the hold
+
+A third set, **`exemptBackgroundShellIds: Set<string>`**, holds shells that declared themselves NON-HOLDING. The predicate never sums it, so those shells contribute nothing to activity.
+
+This exists because the engine cannot distinguish two genuinely different things that produce identical events. A background `npm install` is real agent work and must hold the session active. `/preview`'s exit watcher is a user-facing service the agent is only observing, and it blocks for the preview's entire lifetime - hours. Both are alive, both are correctly detected. Only the CALLER knows which is which, so the caller says so by putting `NO_ACTIVITY_HOLD_FLAG` (`--kangentic-no-activity-hold`, defined in `src/shared/background-shell-hold.ts`) in the command it launches:
+
+```
+node scripts/worktree-preview.js --wait --port=5174 --kangentic-no-activity-hold
+```
+
+Mechanics, and why they are shaped this way:
+
+- The flag rides in `tool_input.command`, which the PreToolUse hook already surfaces as the event `detail`. No new hook, no registry file, no extra IPC.
+- The exemption is recorded at PreToolUse against the event's `toolId` (`pendingExemptShellToolIds`), because the anonymous-to-named promotion is a detail-shape heuristic with no `toolId` correlation of its own, and the flag CANNOT be re-read at PostToolUse - that event's detail is the shell id, and the command string is gone. A start with no `toolId` is never exempted; that particular miss fails toward a shell that keeps holding (today's behavior) rather than a false idle.
+- That memo must survive a turn end. The two events are ~1.7s apart, so an `Interrupted` or `TurnFailed` can land between them; if the reset dropped the memo, the arriving PostToolUse would have no record of the exemption and would file the still-running shell in the HOLDING set, pinning the session thinking for the preview's whole lifetime. `resetInFlightCounters` therefore leaves BOTH the memo and `exemptBackgroundShellIds` alone (the CLI process is still alive on every one of its callers), and `MAX_PENDING_EXEMPT_SHELL_TOOL_IDS` is what bounds the memo instead. Pinned by the `mid-promotion` replay case.
+- The flag is matched as a plain substring of the command, so it is not proof the shell IS the preview watcher: any background command whose text happens to contain the literal (a `grep` for it over this repo, say) is also exempted. The blast radius is one shell, which stays fully tracked for liveness and simply does not hold activity, and no foreground command is affected. Tightening this to an argv-token match would not close it either, since the realistic collisions pass the flag as a delimited argument.
+- Exempt shells are excluded from the PREDICATE, not from TRACKING. `session-telemetry.ts`'s `getActiveShellCount` and `getNamedShellIds` sum both sets, so Tier A PID capture, liveness confirmation, the transcript drain, and the `expected = preExistingHelpers + tracked` deficit math all keep working, and the shell drains normally when the preview exits. Dropping an exempt id from `tracked` while its process is alive would take the watcher's surplus branch and permanently fold a real process into the helper baseline.
+- Because a separate set is invisible to the predicate's sum, an exempt shell also RE-ARMS the three watchdog holds that gate on that sum being zero (stuck-pending-tools, stale-thinking, stuck-subagent). Intended: an exempt shell must behave exactly as if it did not exist.
+- Nothing persists across an app restart, and nothing needs to. A resumed session's history reader starts at EOF, so neither start event replays and the engine's bg-shell state simply begins empty.
+
+The flag is agent-typed (an agent wrote the command string), which puts it on the same trust boundary as every other hook-sourced field here.
+
+Pinned by the `session-027-preview-watcher-holds-active` / `-exempt` replay fixture pair (byte-identical but for the flag, opposite outcomes) and `tests/unit/no-activity-hold-sentinel-parity.test.ts`, which keeps the flag's three hand-duplicated copies (the TS constant, `scripts/worktree-preview.js`, and `.claude/skills/preview/SKILL.md`) in sync.
 
 ### Permission flag
 
@@ -439,6 +469,8 @@ An unattributable end (an id-shaped `detail` that matches no tracked named shell
 
 The watcher only polls when at least one session has `getActiveShellCount() > 0`. Idle Kangentic = zero polls.
 
+One caveat since exempt shells were added: `getActiveShellCount` sums them (it has to - the watcher is what confirms their liveness and drains them on exit), so a session holding only an exempt shell keeps polling every ~2s for that shell's whole lifetime while the board reads IDLE. "The watcher is polling this session" and "the board shows this session active" used to be the same fact; for `/preview`'s watcher they are not. The cost is the same one poll cycle the session would have paid anyway had the shell not been exempt, so this is a reporting nuance rather than a new expense - but do not read a quiet board as proof the watcher has stopped.
+
 ### Cross-platform
 
 - **Windows:** `powershell.exe -NoProfile -NonInteractive -Command "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name | ConvertTo-Csv -NoTypeInformation"`. Walks the parent map in JS. Times out at 1.5s.
@@ -527,7 +559,7 @@ The engine itself emits synthetic events into the activity log via the `onSynthe
 
 Three test tiers:
 
-1. **Unit** (`tests/unit/activity-engine.test.ts`, `bg-shell-watcher.test.ts`, `process-tree.test.ts`, `bg-shell-resume.test.ts`): direct engine + watcher tests with mock probe.
+1. **Unit** (`tests/unit/activity-engine.test.ts`, `bg-shell-watcher.test.ts`, `process-tree.test.ts`): direct engine + watcher tests with mock probe. Two parity guards ride alongside them: `activity-stats-snapshot-parity.test.ts` (the snapshot's engine and IPC copies) and `no-activity-hold-sentinel-parity.test.ts` (the no-activity-hold flag's three hand-duplicated copies).
 2. **Property** (`tests/unit/activity-engine-property.test.ts`): fast-check generates random event sequences, asserts invariants (counters never negative, activity matches reason kind, dispose is idempotent, multi-session isolation).
 3. **Replay** (`tests/unit/activity-engine-replay.test.ts`): drives sanitized real production `events.jsonl` files through the engine and pins expected end-state. Fixtures live at `tests/fixtures/replay/`. Sanitization helper at `tests/fixtures/replay/_sanitize.mjs`.
 4. **E2E** (`tests/e2e/background-shell-idle.spec.ts`): real Electron + mock Claude CLI exercising the full pipeline with actual bg processes.

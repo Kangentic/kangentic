@@ -1,0 +1,8 @@
+{"ts":1786206940112,"type":"session_start"}
+{"ts":1786206941004,"type":"prompt"}
+{"ts":1786206942330,"type":"tool_start","tool":"Bash","toolId":"toolu_01Qk4mWpZr8TnBvXcLdHs2Ye","detail":"node scripts/worktree-preview.js"}
+{"ts":1786206960118,"type":"tool_end","tool":"Bash","toolId":"toolu_01Qk4mWpZr8TnBvXcLdHs2Ye"}
+{"ts":1786206961445,"type":"background_shell_start","tool":"Bash","toolId":"toolu_01DvQLExSWKNxdrkqopLRmhA","detail":"node scripts/worktree-preview.js --wait --port=5174"}
+{"ts":1786206963182,"type":"background_shell_start","tool":"Bash","toolId":"toolu_01DvQLExSWKNxdrkqopLRmhA","detail":"bw37v13wm"}
+{"ts":1786207131741,"type":"idle"}
+{"ts":1786207191895,"type":"idle_hint","detail":"Claude is waiting for your input"}

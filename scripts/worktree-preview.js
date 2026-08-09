@@ -25,6 +25,22 @@ const { readExitRecord, clearExitRecord, classifyPreviewExit, exitRecordPath } =
 
 const WORKTREE_MARKER = '.kangentic/worktrees/';
 
+// Tells Kangentic's activity engine that the watcher background shell must NOT
+// hold its session ACTIVE. Without it the board reads the task as working for
+// the preview's whole lifetime (hours) and never goes idle, which destroys the
+// one signal that says which agent needs the user.
+//
+// This script does not parse the flag - argv is matched by membership tests, so
+// unknown flags are ignored. It exists only to be READ out of `tool_input.command`
+// by the PreToolUse hook. It must appear in the printed `Watch:` command below,
+// because the /preview skill instructs the agent to run what was printed.
+//
+// Hand-duplicated from `src/shared/background-shell-hold.ts`, which this
+// CommonJS script cannot import (same as WORKTREE_MARKER above vs
+// `src/shared/git-utils.ts`). `tests/unit/no-activity-hold-sentinel-parity.test.ts`
+// pins the copies together.
+const NO_ACTIVITY_HOLD_FLAG = '--kangentic-no-activity-hold';
+
 function findRootProject(worktreeDir) {
   const normalized = worktreeDir.replace(/\\/g, '/');
   const idx = normalized.indexOf(WORKTREE_MARKER);
@@ -524,7 +540,7 @@ async function main() {
   } else {
     console.log('[preview]   PID:     unknown (dev server did not report one within 30s - check the terminal window)');
   }
-  console.log(`[preview]   Watch:   node scripts/worktree-preview.js --wait --port=${port}`);
+  console.log(`[preview]   Watch:   node scripts/worktree-preview.js --wait --port=${port} ${NO_ACTIVITY_HOLD_FLAG}`);
 }
 
 main().catch((err) => {

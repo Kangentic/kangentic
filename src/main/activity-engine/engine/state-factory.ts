@@ -13,6 +13,8 @@ export function createSessionEngineState(): SessionEngineState {
     subagentDepth: 0,
     activeBackgroundShellIds: new Set<string>(),
     anonymousBackgroundShellCount: 0,
+    exemptBackgroundShellIds: new Set<string>(),
+    pendingExemptShellToolIds: new Set<string>(),
     permissionPending: false,
     permissionAwaitedToolId: null,
     lastSignalAt: null,

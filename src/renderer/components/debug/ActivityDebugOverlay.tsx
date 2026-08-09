@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Bug, GripVertical, X, Loader2, Mail, Lock, Wrench, Users, Terminal, RotateCw } from 'lucide-react';
 import type { ActivityStatsSnapshot, ActivityReason, ActivityState } from '../../../shared/types';
+import { NO_ACTIVITY_HOLD_FLAG } from '../../../shared/background-shell-hold';
 import { useConfigStore } from '../../stores/config-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useProjectStore } from '../../stores/project-store';
@@ -169,6 +170,10 @@ export function snapshotsContentEqual(a: ActivityStatsSnapshot, b: ActivityStats
   if (a.backgroundShellIds.length !== b.backgroundShellIds.length) return false;
   for (let index = 0; index < a.backgroundShellIds.length; index++) {
     if (a.backgroundShellIds[index] !== b.backgroundShellIds[index]) return false;
+  }
+  if (a.exemptBackgroundShellIds.length !== b.exemptBackgroundShellIds.length) return false;
+  for (let index = 0; index < a.exemptBackgroundShellIds.length; index++) {
+    if (a.exemptBackgroundShellIds[index] !== b.exemptBackgroundShellIds[index]) return false;
   }
   if (!reasonsEqual(a.reason, b.reason)) return false;
   if (a.recentTransitions.length !== b.recentTransitions.length) return false;
@@ -824,7 +829,12 @@ const SnapshotRow = memo(function SnapshotRow({ snapshot, label, pollNow }: { sn
         <CounterRow
           label="Background shells"
           value={bgShellCount}
-          tooltip="Bash(run_in_background:true) calls plus shells the watcher adopted from the OS process tree"
+          tooltip="Bash(run_in_background:true) calls plus shells the watcher adopted from the OS process tree. These hold the session active."
+        />
+        <CounterRow
+          label="Background shells (exempt)"
+          value={snapshot.exemptBackgroundShellIds.length}
+          tooltip={`Shells launched with ${NO_ACTIVITY_HOLD_FLAG} (today: /preview's watcher). Still tracked for liveness, but excluded from the predicate, so they never hold the session active.`}
         />
         <FlagRow
           label="Turn active"
@@ -946,7 +956,7 @@ const TRIGGER_EXACT_EXPLANATIONS: Record<string, string> = {
   'interrupted': 'User pressed Esc - all counters reset and session forced to idle',
   'timer:stability': 'The 400ms idle stability window expired and the queued idle commit fired',
   'timer:stale-thinking': 'The 180s stale-thinking watchdog forced idle (turn was active but no other counters held it)',
-  'timer:bg-shell-hatch': 'The 5-min orphan-bg-shell escape hatch fired (only bg shells were holding thinking, no signals received)',
+  'timer:bg-shell-hatch': 'The orphan-bg-shell escape hatch fired (only bg shells were holding thinking, no watcher-confirmed liveness). Shared trigger: 5 min once any shell is named, 30s while all are anonymous.',
   'event:bg-shells-adopted': 'Watcher saw shell-like processes the hooks did not fire for and adopted them as anonymous bg shells',
 };
 

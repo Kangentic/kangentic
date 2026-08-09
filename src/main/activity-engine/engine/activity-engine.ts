@@ -202,6 +202,7 @@ export class ActivityEngine {
       subagentDepth: state.subagentDepth,
       backgroundShellIds: Array.from(state.activeBackgroundShellIds),
       anonymousBackgroundShellCount: state.anonymousBackgroundShellCount,
+      exemptBackgroundShellIds: Array.from(state.exemptBackgroundShellIds),
       turnActive: state.turnActive,
       permissionPending: state.permissionPending,
       permissionAwaitedToolId: state.permissionAwaitedToolId,
@@ -387,6 +388,24 @@ export class ActivityEngine {
     state.subagentDepth = 0;
     state.activeBackgroundShellIds.clear();
     state.anonymousBackgroundShellCount = 0;
+    // Neither `exemptBackgroundShellIds` nor `pendingExemptShellToolIds` is
+    // cleared here. Every caller of this method leaves the agent CLI process
+    // RUNNING - `applyInterruptedBypass` hard-ends the turn, and
+    // `applyRetryableFailureHold` deliberately keeps it alive across a retry -
+    // so an exempt shell's OS process is still up either way. Dropping a live
+    // shell out of `getActiveShellCount` shrinks the watcher's `expected`,
+    // takes its surplus branch, and permanently folds a real process into
+    // `preExistingHelpers`. Same reasoning as the watchdog resets. Only
+    // `forceIdle`, whose caller is a dead root process, clears them.
+    //
+    // The memo is held to the same rule, and must be: a bg shell's PreToolUse
+    // and PostToolUse are ~1.7s apart, so an interrupt landing between them
+    // would drop the memo, leave the arriving PostToolUse no record of the
+    // exemption, and file the still-running shell in the HOLDING set - pinning
+    // the session thinking for the preview's whole lifetime, which is the bug
+    // the exemption exists to prevent. `MAX_PENDING_EXEMPT_SHELL_TOOL_IDS`
+    // already bounds the memo, so clearing it here bought no safety.
+    // Pinned by the `mid-promotion` case in `activity-engine-replay.test.ts`.
     state.currentTool = null;
     state.idleHintPending = false;
     state.retryFailurePending = false;
@@ -500,6 +519,23 @@ export class ActivityEngine {
     state.subagentDepth = 0;
     state.activeBackgroundShellIds.clear();
     state.anonymousBackgroundShellCount = 0;
+    // Unlike `resetInFlightCounters`, this path is reached with a dead agent
+    // process, so every descendant shell is gone too - including the exempt
+    // ones. Clearing them here keeps the watcher's `expected` honest rather
+    // than corrupting it.
+    //
+    // `forceIdle` has two other callers (`handlePtyIdle` and `forceActivity`)
+    // that do NOT imply a dead process, so that premise is about which of them
+    // can reach a session holding exempt shells, not about the method at
+    // large: only a hooks-driven agent can populate the exempt set, and for
+    // those the PTY and history paths are both inert (the adapter declares
+    // `ActivityDetection.hooks()`, which gates `notifyPtyIdle`, and its history
+    // parser never emits an activity). So in practice `onRootProcessDied` is
+    // the only caller that reaches a non-empty exempt set. Should a
+    // PTY-driven agent ever gain this flag, revisit this clear - it would then
+    // be dropping live shells, the corruption the sibling reset avoids.
+    state.exemptBackgroundShellIds.clear();
+    state.pendingExemptShellToolIds.clear();
     state.currentTool = null;
     state.pendingIdleAt = null;
     state.idleHintPending = false;
@@ -693,8 +729,18 @@ export class ActivityEngine {
       // Identity-aware decrement. If the shell isn't tracked under
       // this id, treat as no-op - the caller named a specific shell,
       // falling through would silently corrupt the anonymous count.
-      if (!state.activeBackgroundShellIds.has(shellId)) return;
-      state.activeBackgroundShellIds.delete(shellId);
+      //
+      // Exempt shells drain through here too: this is the path every
+      // watcher-driven exit takes (Tier A PID exit, transcript termination,
+      // quiescence reclaim), so it is what actually releases the preview
+      // watcher when the preview stops.
+      if (state.activeBackgroundShellIds.has(shellId)) {
+        state.activeBackgroundShellIds.delete(shellId);
+      } else if (state.exemptBackgroundShellIds.has(shellId)) {
+        state.exemptBackgroundShellIds.delete(shellId);
+      } else {
+        return;
+      }
     } else {
       // Anonymous decrement (count-based heuristic from the watcher).
       // The watcher saw N fewer descendants - SOMETHING ended. We drain

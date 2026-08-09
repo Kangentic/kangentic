@@ -28,6 +28,8 @@ thinking IFF (turnActive OR subagentDepth > 0 OR bgShells > 0) AND NOT permissio
 
 `src/main/activity-engine/engine/predicate.ts` (`derivePredicate`); `bgShells` = named (`activeBackgroundShellIds`) + anonymous (`anonymousBackgroundShellCount`). `permissionPending` forces `permission`. Every wrong indicator is one of two things: a predicate input is wrong (a counter stuck high or cleared early), or a watchdog / forced transition overrode the predicate. Triage is identifying which.
 
+**A third set is deliberately NOT in that sum:** `exemptBackgroundShellIds` holds shells whose launching command carried `--kangentic-no-activity-hold` (today: `/preview`'s exit watcher, which blocks for hours). They are tracked for liveness but contribute nothing to activity, and the debug overlay reports them on their own "Background shells (exempt)" row. **An exempt shell showing up while the session reads idle is the feature working, not the bug** - do not "fix" it. Full mechanics: [Opting a background shell out of the hold](../../../docs/activity-detection.md#opting-a-background-shell-out-of-the-hold). Note that exempting a shell also re-arms the three watchdog holds that gate on `bgShells === 0`, so a session running one can legitimately hit stale-thinking / stuck-pending-tools / stuck-subagent.
+
 ## Evidence-gathering ladder
 
 Work this order. Each step narrows to a single session, then to a single transition.

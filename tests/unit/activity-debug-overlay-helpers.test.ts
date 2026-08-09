@@ -60,6 +60,8 @@ const EMPTY_COMPENSATION_COUNTERS: ActivityStatsSnapshot['compensationCounters']
   forceThinking: 0,
   forceIdle: 0,
   unmatchedBgShellEnd: 0,
+  ignoredInnerSubagentStop: 0,
+  stuckSubagent: 0,
 };
 
 function makeSnapshot(overrides: Partial<ActivityStatsSnapshot> = {}): ActivityStatsSnapshot {
@@ -71,6 +73,7 @@ function makeSnapshot(overrides: Partial<ActivityStatsSnapshot> = {}): ActivityS
     subagentDepth: 0,
     backgroundShellIds: [],
     anonymousBackgroundShellCount: 0,
+    exemptBackgroundShellIds: [],
     turnActive: false,
     permissionPending: false,
     msSinceLastSignal: null,
@@ -376,6 +379,36 @@ describe('snapshotsContentEqual', () => {
       const snapshotA = makeSnapshot({ backgroundShellIds: ['s1', 's2'] });
       const snapshotB = makeSnapshot({ backgroundShellIds: ['s1', 's3'] });
       expect(snapshotsContentEqual(snapshotA, snapshotB)).toBe(false);
+    });
+  });
+
+  describe('exemptBackgroundShellIds comparison', () => {
+    // Exempt shells do not move the ACTIVITY, so nothing else in the snapshot
+    // changes when one starts or exits. That makes this comparison the only
+    // thing that re-renders the overlay's exempt counter - without it, a
+    // preview watcher could come and go with the tile frozen at its old value.
+    it('returns true when both have the same ids in order', () => {
+      const snapshotA = makeSnapshot({ exemptBackgroundShellIds: ['s1', 's2'] });
+      const snapshotB = makeSnapshot({ exemptBackgroundShellIds: ['s1', 's2'] });
+      expect(snapshotsContentEqual(snapshotA, snapshotB)).toBe(true);
+    });
+
+    it('returns false when exemptBackgroundShellIds length differs', () => {
+      const snapshotA = makeSnapshot({ exemptBackgroundShellIds: [] });
+      const snapshotB = makeSnapshot({ exemptBackgroundShellIds: ['s1'] });
+      expect(snapshotsContentEqual(snapshotA, snapshotB)).toBe(false);
+    });
+
+    it('returns false when exemptBackgroundShellIds content differs', () => {
+      const snapshotA = makeSnapshot({ exemptBackgroundShellIds: ['s1'] });
+      const snapshotB = makeSnapshot({ exemptBackgroundShellIds: ['s2'] });
+      expect(snapshotsContentEqual(snapshotA, snapshotB)).toBe(false);
+    });
+
+    it('does not confuse an exempt shell with a holding one', () => {
+      const holding = makeSnapshot({ backgroundShellIds: ['s1'] });
+      const exempt = makeSnapshot({ exemptBackgroundShellIds: ['s1'] });
+      expect(snapshotsContentEqual(holding, exempt)).toBe(false);
     });
   });
 

@@ -204,15 +204,25 @@ export class SessionTelemetry {
         probe: options.processTreeProbe ?? createProcessTreeProbe(),
         callbacks: {
           getRootPid: (sessionId) => callbacks.getSessionRootPid?.(sessionId),
+          // Both getters deliberately include `exemptBackgroundShellIds`. An
+          // exempt shell is excluded from the PREDICATE, not from tracking:
+          // its process is real and alive, so the watcher must keep capturing
+          // its PID, confirming its liveness, and draining it on exit. Leaving
+          // it out here would shrink `expected = preExistingHelpers + tracked`
+          // below the observed process count, take the watcher's surplus
+          // branch, and permanently fold a real shell into the helper baseline
+          // - corrupting deficit detection for the rest of the session.
           getActiveShellCount: (sessionId) => {
             const state = this.activityEngine.getState(sessionId);
             if (!state) return 0;
-            return state.activeBackgroundShellIds.size + state.anonymousBackgroundShellCount;
+            return state.activeBackgroundShellIds.size
+              + state.exemptBackgroundShellIds.size
+              + state.anonymousBackgroundShellCount;
           },
           getNamedShellIds: (sessionId) => {
             const state = this.activityEngine.getState(sessionId);
             if (!state) return [];
-            return Array.from(state.activeBackgroundShellIds);
+            return [...state.activeBackgroundShellIds, ...state.exemptBackgroundShellIds];
           },
           getPendingToolCount: (sessionId) => {
             const state = this.activityEngine.getState(sessionId);
