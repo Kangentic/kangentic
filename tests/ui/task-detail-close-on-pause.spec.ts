@@ -552,10 +552,21 @@ async function tileTwoThenClose(page: Page, how: 'pause' | 'x'): Promise<LayoutS
   const panes = page.locator('[data-testid="task-detail-dialog"]');
   await expect(panes).toHaveCount(2);
 
+  // `dockIntoWindow` is exactly what a drag-to-dock commits, so the pair is built
+  // the same way a user builds it - and it marks both windows tiled.
   await page.evaluate(() => {
-    (window as unknown as {
-      __zustandStores: { window: { getState: () => { applyTilePreset: (preset: string) => void } } };
-    }).__zustandStores.window.getState().applyTilePreset('columns');
+    const store = (window as unknown as {
+      __zustandStores: {
+        window: {
+          getState: () => {
+            windows: Record<string, unknown>;
+            dockIntoWindow: (draggedId: string, targetId: string, side: string) => void;
+          };
+        };
+      };
+    }).__zustandStores.window.getState();
+    const [firstId, secondId] = Object.keys(store.windows);
+    store.dockIntoWindow(secondId, firstId, 'right');
   });
   await expect
     .poll(async () => (await snapshotLayout(page)).states.filter((state) => state === 'tiled').length)

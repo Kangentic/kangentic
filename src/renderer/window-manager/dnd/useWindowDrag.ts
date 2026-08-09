@@ -12,20 +12,28 @@
  *  - Pointer capture is deferred until the drag actually activates, so a
  *    stationary double-click on the title bar still fires (maximize/restore).
  *  - The window follows the pointer FREELY during the drag (it may go fully
- *    off-screen), then HARD-snaps back inside the frame on release. Snap reads
- *    the container's own edges, so going off-screen still arms the dock.
+ *    off-screen), then HARD-snaps back inside the frame on release.
+ *  - EVERY dock reads the POINTER, so there is one rule to learn: wherever the
+ *    cursor is decides what happens. A SCREEN dock (half / maximize) arms on the
+ *    cursor reaching an overlay edge; a WINDOW dock arms on the pane under the
+ *    cursor. They differ only in commitment - a screen dock's trigger cannot be
+ *    true at rest, a window dock's can, so only the latter is gated by a travel
+ *    budget. Layering that budget over both made maximize unreachable for a window
+ *    already near the top; see `snap.ts`.
  *  - Dragging a maximized window un-maximizes it under the cursor (Windows-style).
  *  - If focus leaves Kangentic mid-drag (alt-tab, screenshot, popup) the drag is
  *    finished at the last position rather than staying glued to the cursor.
+ *  - Escape abandons the drag: the window returns to where the gesture started and
+ *    nothing docks. This is also the always-available way to decline a dock.
  */
 
 import { useCallback, useEffect, useRef } from 'react';
 import type { RefObject } from 'react';
 import { clamp, pixelsToFractional } from '../store/geometry';
 import type { PixelRect } from '../store/geometry';
-import { detectSnapEdge, snapEdgeToGeometry } from './snap';
-import { collectCandidatePanes, detectDropTarget, detectTiledDropTarget } from './drop-zone';
-import type { CandidatePane, DropTarget, TreeBounds } from './drop-zone';
+import { detectScreenDockEdge, snapEdgeToGeometry } from './snap';
+import { collectCandidatePanes, resolveDockTarget } from './drop-zone';
+import type { CandidatePane, DropTarget } from './drop-zone';
 import { resolveTileLayout } from '../tiling/resolve-layout';
 import { insertWindowIntoTree, treeContainsWindow } from '../tiling/tree-ops';
 import { useWindowManager } from '../context';
@@ -34,13 +42,6 @@ import type { SnapEdge, FractionalRect } from '../store/types';
 /** Pointer travel (px) before a press becomes a drag, so a plain click/double
  *  click that only raises or maximizes the window does not nudge its geometry. */
 const DRAG_ACTIVATION_PX = 4;
-
-/** When the cursor is within this many px of the overlay's left/right edge it is
- *  treated as "shoved against the screen edge" - the user has run out of monitor
- *  room to drag the window's reference further, so that edge's dock is armed
- *  directly (Aero-Snap feel). The overlay spans the full window width, so its edge
- *  is the monitor edge when maximized. */
-const EDGE_PIN_PX = 6;
 
 /** A tiled group whose footprint covers (within this fraction of) the whole
  *  overlay has nowhere to move, so dragging a pane pops it OUT instead of moving
@@ -75,16 +76,14 @@ interface DragSession {
   lastClientY: number;
   /** Frame rect relative to the overlay's top-left at drag start. */
   startRect: PixelRect;
-  /** The pruned tile tree's pixel footprint + root split axis, snapshotted at
-   *  activation (after un-dock removes the dragged window). Drives the outer-slot
-   *  edge zones. Both null when there is no multi-pane tree to dock into. */
-  treeBounds: TreeBounds | null;
-  rootDirection: 'horizontal' | 'vertical' | null;
   overlay: OverlayBounds;
   activated: boolean;
   snapEdge: SnapEdge | null;
-  /** Drag-to-dock target under the cursor (3b), or null. Takes precedence over
-   *  `snapEdge` when armed (the cursor is over a pane, not flung to a screen edge). */
+  /** Drag-to-dock target under the cursor, or null. Mutually exclusive with
+   *  `snapEdge` by construction: `framePointerMove` tests the SCREEN dock first
+   *  and returns early when it arms, so a screen dock wins outright and only one
+   *  of the two is ever set. `finishDrag` reads `dropTarget` first, which is
+   *  correct only while that exclusivity holds - nothing else pins it. */
   dropTarget: DropTarget | null;
   /** Dockable panes (others' rects), snapshotted once on activation. No store
    *  writes happen during a drag, so these rects stay valid for the whole gesture. */
@@ -192,6 +191,10 @@ export function useWindowDrag({ windowId, frameRef, overlayRef }: UseWindowDragA
       // pre-snap size so dragging away restores it.
       actions.dockWindow(windowId, drag.snapEdge);
       enforceMin();
+    } else if (drag.snapEdge === 'bottom') {
+      // A plain snap, not dockWindow: that only pairs opposite HORIZONTAL halves
+      // into a tile group, so a bottom half has no partner to seam with.
+      actions.snapWindow(windowId, snapEdgeToGeometry('bottom'));
     } else {
       // HARD clamp: snap the window fully back inside the frame.
       const clamped = clampToOverlay(
@@ -211,6 +214,69 @@ export function useWindowDrag({ windowId, frameRef, overlayRef }: UseWindowDragA
     // effect schedules the single coalesced terminal resize. A pure move does
     // not change size, so no resize is needed.
   }, [windowId, frameRef, store, snap, layer.minSize.width, layer.minSize.height]);
+
+  /** Abandon the active drag: drop every transform, commit NOTHING. The window
+   *  lands back where the drag started, and no dock or snap is applied.
+   *
+   *  Nothing to undo on the store side, because a drag writes geometry exactly
+   *  once, at drop - the movement itself is transform-only. The one exception is
+   *  `undockUnderCursor`, which floats a maximized / snapped / tiled window at
+   *  activation: cancelling after that returns the window to where the undock put
+   *  it, not back into its group. Cancel undoes the MOVE, not the undock, and
+   *  re-entering an arbitrary tile position is not reversible without snapshotting
+   *  the whole tree.
+   *
+   *  Returns whether a drag was actually cancelled, so the key handler knows
+   *  whether to swallow the keystroke. */
+  const cancelDrag = useCallback((): boolean => {
+    const drag = dragRef.current;
+    if (!drag || !drag.activated) return false;
+    dragRef.current = null;
+    snap.hide();
+    const frame = frameRef.current;
+    if (frame) {
+      if (frame.hasPointerCapture(drag.pointerId)) frame.releasePointerCapture(drag.pointerId);
+      frame.style.transform = '';
+    }
+    for (const element of drag.groupMove?.frames ?? []) element.style.transform = '';
+    return true;
+  }, [frameRef, snap]);
+
+  // Escape abandons an in-flight drag, the way it does in every other drag UI.
+  //
+  // Hand-written rather than `useKeybinding`, as the structural-Escape exception in
+  // `.claude/rules/keybindings-registry.md` allows: same shape as BrowserPane's
+  // Esc-cancels-Inspect, a transient in-gesture key that needs capture-phase
+  // ordering and `stopImmediatePropagation`. Escape is already in the registry as
+  // the non-rebindable `dialog.dismiss`; a second entry would only invent a
+  // phantom conflict.
+  //
+  // CAPTURE phase, and it swallows the event: the focused window closes itself on
+  // a BUBBLE-phase document Escape (`TaskDetailWindow`'s structural listener), so
+  // without this a mid-drag Escape closed the user's task window instead of
+  // cancelling the gesture. Capture on `window` runs strictly before any
+  // document-bubble listener, so the ordering does not depend on which component
+  // mounted first. Gated on an ACTIVATED drag, so a plain Escape - or one while a
+  // press has not yet become a drag - still reaches the window and the terminal.
+  //
+  // hmr-note: a Fast Refresh mid-drag fires no pointerup, and `clearSnapPreviewDom`
+  // (Pattern D, `window-manager/hmr.ts`) clears the DOM but cannot reach this
+  // per-instance `dragRef`. So a stale activated drag can survive an update and
+  // swallow ONE Escape without closing the window. It self-heals - `cancelDrag`
+  // nulls the ref before returning, so the next Escape behaves normally. Dev-only.
+  // Do NOT "fix" this with a module-scope registry of live drags: that trades a
+  // one-keystroke quirk for new mutable module state that would itself owe Pattern A.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (!cancelDrag()) return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [cancelDrag]);
 
   // End the drag if focus leaves Kangentic (alt-tab, screenshot, popup) or the
   // tab is hidden, so the window is dropped where it was rather than staying
@@ -249,8 +315,6 @@ export function useWindowDrag({ windowId, frameRef, overlayRef }: UseWindowDragA
         width: frameRect.width,
         height: frameRect.height,
       },
-      treeBounds: null,
-      rootDirection: null,
       overlay: { left: overlayRect.left, top: overlayRect.top, width: overlayRect.width, height: overlayRect.height },
       activated: false,
       snapEdge: null,
@@ -391,18 +455,6 @@ export function useWindowDrag({ windowId, frameRef, overlayRef }: UseWindowDragA
           { width: drag.overlay.width, height: drag.overlay.height },
           snapshot.tileTreeRect,
         );
-        // Snapshot the pruned tree's footprint + root axis for the outer-slot edge
-        // zones (only a multi-pane split root has extremes to push into).
-        const tree = snapshot.tileTree;
-        drag.rootDirection = tree && tree.kind === 'split' ? tree.direction : null;
-        drag.treeBounds = tree
-          ? {
-              left: snapshot.tileTreeRect.x * drag.overlay.width,
-              top: snapshot.tileTreeRect.y * drag.overlay.height,
-              right: (snapshot.tileTreeRect.x + snapshot.tileTreeRect.w) * drag.overlay.width,
-              bottom: (snapshot.tileTreeRect.y + snapshot.tileTreeRect.h) * drag.overlay.height,
-            }
-          : null;
       }
     }
 
@@ -422,79 +474,56 @@ export function useWindowDrag({ windowId, frameRef, overlayRef }: UseWindowDragA
     // on release). GPU transform: no store write, no render, no reflow.
     frame.style.transform = `translate3d(${deltaX}px, ${deltaY}px, 0)`;
 
-    // Cursor shoved against the overlay's left/right edge: the user has run out of
-    // monitor room to drag the window's reference further (the maximized edge case).
-    // Arm that edge's half-snap directly, taking precedence over the body-center
-    // tiling - which a wide window cannot push to the side third when the cursor is
-    // bounded by the screen. The cursor always reaches the screen edge regardless of
-    // window size or grab, so this is the reliable way to dock left/right there.
-    const pointerOverlayX = event.clientX - drag.overlay.left;
-    const pinnedEdge: SnapEdge | null =
-      pointerOverlayX <= EDGE_PIN_PX ? 'left' : pointerOverlayX >= drag.overlay.width - EDGE_PIN_PX ? 'right' : null;
+    // EVERY dock reads the POINTER, so the whole gesture has one input: wherever
+    // the cursor is decides what happens. Two families, differing only in the
+    // commitment each trigger can carry on its own.
+    const pointerX = event.clientX - drag.overlay.left;
+    const pointerY = event.clientY - drag.overlay.top;
 
-    // Drag-to-dock (3b) takes precedence over the screen-edge fling (unless the
-    // cursor is pinned at an edge, above). Two-signal targeting (drop-zone.ts), all
-    // keyed off the window itself so it is grab-INDEPENDENT - where on the header you
-    // grabbed never changes the result:
-    //  - INTERIOR slots use the window's BODY CENTER, so the trigger fires when the
-    //    body looks centered over the gap (matches what the user sees).
-    //  - The tree's OUTER slots (a stack's very top/bottom, a row's far left/right)
-    //    are armed when the window's LEADING EDGE reaches the tree boundary, since
-    //    the body center alone cannot reach them (the window is bigger than a pane).
-    // With no tree (floating candidates) the body center is enough on its own.
-    const draggedRect = {
-      left: drag.startRect.left + deltaX,
-      top: drag.startRect.top + deltaY,
-      width: drag.startRect.width,
-      height: drag.startRect.height,
-    };
-    const dropTarget = pinnedEdge
-      ? null
-      : drag.treeBounds && drag.rootDirection
-        ? detectTiledDropTarget(draggedRect, drag.candidatePanes, drag.rootDirection, drag.treeBounds)
-        : detectDropTarget(
-            draggedRect.left + draggedRect.width / 2,
-            draggedRect.top + draggedRect.height / 2,
-            drag.candidatePanes,
-          );
-    if (dropTarget) {
-      drag.dropTarget = dropTarget;
-      drag.snapEdge = null;
-      // Preview the ACTUAL landing rect, not a generic half of the target pane.
-      // Docking onto a tiled pane along its container's axis inserts a new EQUAL
-      // sibling (e.g. a third row repartitions to thirds), so the new window's
-      // real slot is not "half the target" - simulate the insert and show where
-      // it actually lands.
-      snap.show(previewLandingRect(dropTarget, drag.overlay));
-      return;
-    }
-    drag.dropTarget = null;
-
-    // A cursor pinned at the edge wins outright; otherwise the screen-edge fling
-    // keys off the CONTAINER'S own edge dragged past the boundary (not the pointer).
-    const edge =
-      pinnedEdge ??
-      detectSnapEdge(
-        {
-          left: drag.startRect.left + deltaX,
-          top: drag.startRect.top + deltaY,
-          width: drag.startRect.width,
-          height: drag.startRect.height,
-        },
-        { width: drag.overlay.width, height: drag.overlay.height },
-      );
-    drag.snapEdge = edge;
-    if (edge) {
-      const snapGeometry = snapEdgeToGeometry(edge);
+    // 1. SCREEN DOCK - the pointer buried in an overlay edge. Self-committing (you
+    //    do not run the cursor into the screen edge by accident) and always
+    //    reachable from any window position, so it takes no free-move budget and
+    //    wins outright when armed. See `snap.ts`.
+    const screenEdge = detectScreenDockEdge(pointerX, pointerY, {
+      width: drag.overlay.width,
+      height: drag.overlay.height,
+    });
+    if (screenEdge) {
+      drag.dropTarget = null;
+      drag.snapEdge = screenEdge;
+      const snapGeometry = snapEdgeToGeometry(screenEdge);
       snap.show({
         left: snapGeometry.x * drag.overlay.width,
         top: snapGeometry.y * drag.overlay.height,
         width: snapGeometry.w * drag.overlay.width,
         height: snapGeometry.h * drag.overlay.height,
       });
-    } else {
-      snap.hide();
+      return;
     }
+    drag.snapEdge = null;
+
+    // 2. WINDOW DOCK - tile onto the pane under the cursor, on the side its
+    //    priority bands resolve. Unlike a screen dock this CAN already be true at
+    //    pointer-down (grab a header that sits over another window), so position
+    //    alone carries no intent and this family, only, is gated by the free-move
+    //    budget in `resolveDockTarget`.
+    const dropTarget = resolveDockTarget({
+      pointerX,
+      pointerY,
+      candidates: drag.candidatePanes,
+      deltaX,
+      deltaY,
+    });
+    drag.dropTarget = dropTarget;
+    if (!dropTarget) {
+      snap.hide();
+      return;
+    }
+    // Preview the ACTUAL landing rect, not a generic half of the target pane.
+    // Docking onto a tiled pane along its container's axis inserts a new EQUAL
+    // sibling (e.g. a third row repartitions to thirds), so the new window's real
+    // slot is not "half the target" - simulate the insert and show where it lands.
+    snap.show(previewLandingRect(dropTarget, drag.overlay));
   };
 
   const endDrag = (event: React.PointerEvent) => {

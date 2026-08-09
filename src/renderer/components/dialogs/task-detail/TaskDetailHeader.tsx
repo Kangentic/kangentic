@@ -18,8 +18,6 @@ import { useTaskDetailHost } from './task-detail-host';
 import { useSessionStore } from '../../../stores/session-store';
 import { captureTerminalScrollback } from '../../../utils/terminal-capture-registry';
 import type { Task, AgentCommand, ShortcutConfig, Swimlane } from '../../../../shared/types';
-import { type TilePreset } from '../../../window-manager/tiling/presets';
-import { WindowLayoutMenu } from '../WindowLayoutMenu';
 
 /**
  * The pause/resume button glyph. The pause stays centered and visible for a
@@ -119,11 +117,6 @@ interface TaskDetailHeaderProps {
   /** When provided (the window is tiled), render a "pop out" control that floats
    *  this pane out of the tiling - the only reliable undock in a full layout. */
   onUndock?: () => void;
-  /** Apply a one-shot tiling preset to the open windows (window mode only). When
-   *  omitted, the tile-layout control is hidden. */
-  onApplyTilePreset?: (preset: TilePreset) => void;
-  /** Whether 2+ windows are open, so the columns / grid presets are usable. */
-  canTileMultiple?: boolean;
 }
 
 /**
@@ -205,8 +198,6 @@ export function TaskDetailHeader({
   isMaximized,
   onToggleMaximized,
   onUndock,
-  onApplyTilePreset,
-  canTileMultiple,
 }: TaskDetailHeaderProps) {
   const headerRef = useRef<HTMLDivElement>(null);
   const leadingRef = useRef<HTMLDivElement>(null);
@@ -480,11 +471,8 @@ export function TaskDetailHeader({
           )}
         </KebabMenu>
 
-        {/* Divider + Tile layout + Pop out (tiled only) + Maximize + Close */}
+        {/* Divider + Pop out (tiled only) + Maximize + Close */}
         <div className="w-px h-5 bg-surface-hover flex-shrink-0" />
-        {onApplyTilePreset && (
-          <WindowLayoutMenu onApply={onApplyTilePreset} canTileMultiple={canTileMultiple ?? false} />
-        )}
         {onUndock && (
           <button
             onClick={onUndock}

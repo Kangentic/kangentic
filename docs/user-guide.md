@@ -680,7 +680,7 @@ The Command Terminal provides quick, ephemeral access to Claude Code without cre
 - It opens as a **window** over a slight backdrop blur: drag it by the header, resize it from any edge or corner, maximize / restore it (double-click the header or use the maximize button), and snap it to a screen half or full screen (Windows-style). The layout (size, position, maximized state) **persists globally** across all projects and app restarts.
 - **Run more than one at once.** While the layer is open, a second terminal icon (with a `+` in its center) appears in the title bar just to the left of the main terminal icon - click it to open another terminal (up to four); it disables once you hit the cap. New terminals split into the current window's footprint (side by side, keeping the size you set) so you can keep two ad-hoc tasks cooking and glance between them; drag the seam to rebalance, or maximize one to focus it.
 - **Each window is numbered.** A terminal titles itself `Command Terminal 1`, `Command Terminal 2`, and so on, from its durable window slot - so two side-by-side terminals are tellable apart, and the number stays put when a sibling opens or closes. The same title identifies that terminal on its Agent Monitor row. Once you send a first prompt, the title becomes a short auto-derived name for what you asked instead.
-- **Layout controls (same as task windows).** The header's tile-layout button offers one-click snap (left / right / top / bottom) and tilings (columns / grid). When a terminal is tiled, a **pop-out** button floats it back out of the tile group. The title always wins the header's space: the quick-action pills (Commands, Project, Changes, shortcuts) fold into the `...` menu as the window narrows.
+- **Layout controls (same as task windows).** When a terminal is tiled, a **pop-out** button floats it back out of the tile group. The title always wins the header's space: the quick-action pills (Commands, Project, Changes, shortcuts) fold into the `...` menu as the window narrows.
 - The **branch picker** in the header lets you switch branches - selecting a new branch kills that terminal's session and respawns it on the selected branch
 - A shimmer overlay shows while Claude Code initializes, then lifts to reveal the clean TUI
 - Transient sessions are fully independent of task sessions - they don't appear in the terminal panel tabs, don't count toward session limits, and produce no toasts on exit
@@ -766,7 +766,9 @@ Task detail (whichever panel is open):
 Windows (modeless task-detail windows):
 
 - **Mod+Shift+Left** / **Mod+Shift+Right** - Snap the focused window to the left / right half of the board area
-- **Mod+Shift+Up** / **Mod+Shift+Down** - Snap the focused window to the top / bottom half
+- **Mod+Shift+Up** / **Mod+Shift+Down** - Stateful snap: Up maximizes a floating window and moves a half-snapped one to its top corner; Down restores a maximized window and moves a half-snapped one to its bottom corner
+- **Drag by the header** - Wherever your cursor goes decides what happens: run it into the left, right or bottom edge of the board area to snap that half, into the top edge to maximize, or over another window to tile beside it. Over a window, the left and right thirds dock to that side at any height, and the middle third docks above or below depending on which half of the window you point at. Dragging onto another window only tiles once you have moved a fair distance, so a nudge just repositions; the screen edges arm as soon as the cursor reaches them.
+- **Escape while dragging** - Abandon the drag: the window returns to where it started and nothing docks
 
 Terminal:
 

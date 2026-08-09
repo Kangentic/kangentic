@@ -27,7 +27,6 @@ import { HeaderActionButton } from '../HeaderActionButton';
 import { KebabMenu, KebabMenuItem, KebabMenuDivider } from '../KebabMenu';
 import { CommandPalettePopover } from '../dialogs/task-detail/CommandPalettePopover';
 import { useHeaderPillOverflow, type HeaderPillSpec } from '../dialogs/task-detail/useHeaderPillOverflow';
-import { WindowLayoutMenu } from '../dialogs/WindowLayoutMenu';
 import { resolveTerminalBackground } from '../../hooks/useTerminal';
 import { useKeybinding, useFormattedCombo } from '../../hooks/useKeybinding';
 import { ContextBar } from '../terminal/ContextBar';
@@ -101,11 +100,9 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
   const useStore = useLayerStore();
   const toggleMaximizeWindow = useStore((state) => state.toggleMaximizeWindow);
   const closeWindow = useStore((state) => state.closeWindow);
-  // Window-layout parity with the task-detail window: tile presets, pop-out
-  // (untile back to floating), and the multi-window gate for columns/grid.
-  const applyTilePreset = useStore((state) => state.applyTilePreset);
+  // Window-layout parity with the task-detail window: pop-out (untile back to
+  // floating) for a pane that is currently part of a tile group.
   const untileWindow = useStore((state) => state.untileWindow);
-  const windowCount = useStore((state) => Object.keys(state.windows).length);
   const isTiled = useStore((state) => state.windows[windowId]?.leafId != null);
   const { hideLayer } = useCommandTerminalLayer();
 
@@ -464,9 +461,9 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
         </div>
 
         {/* Trailing window controls (always protected, so they never get clipped):
-            kebab, layout menu, pop-out (when tiled), maximize. There is no per-window
-            hide/X - Stop destroys this terminal; the backdrop / Ctrl+Shift+W /
-            Ctrl+Shift+P hide the whole layer. */}
+            kebab, pop-out (when tiled), maximize. There is no per-window hide/X -
+            Stop destroys this terminal; the backdrop / Ctrl+Shift+W / Ctrl+Shift+P
+            hide the whole layer. */}
         <div ref={trailingRef} className="flex items-center gap-3 flex-shrink-0">
           <div ref={kebabWrapRef} className="flex-shrink-0">
             <KebabMenu>
@@ -540,12 +537,10 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
             anchorRef={kebabWrapRef}
           />
 
-          {/* Divider + window controls: tile layout + pop-out (tiled only) +
-              maximize. Mirrors TaskDetailHeader's divider placement (right
-              after the kebab, before the window-frame cluster). */}
+          {/* Divider + window controls: pop-out (tiled only) + maximize. Mirrors
+              TaskDetailHeader's divider placement (right after the kebab, before
+              the window-frame cluster). */}
           <div className="w-px h-5 bg-surface-hover flex-shrink-0" />
-
-          <WindowLayoutMenu onApply={applyTilePreset} canTileMultiple={windowCount >= 2} />
 
           {isTiled && (
             <button

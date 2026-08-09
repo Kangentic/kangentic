@@ -1,30 +1,56 @@
 /**
- * Pure drag-to-dock drop-zone math (3b). No React, no store, no DOM.
+ * Window-dock drop-zone math: which pane a drag would tile onto, and on which
+ * side. Pure - no React, no store, no DOM.
  *
- * INTERIOR slots use the dragged window's BODY CENTER: whenever it is over another
- * pane, that pane offers a dock zone (no dead area), carved into PRIORITY BANDS, not
- * diagonals - the left and right thirds are FULL-HEIGHT (so "the center is on the
- * left side" always means dock LEFT, at any height), and only the center column
- * splits top vs bottom at the horizontal midline. Diagonals were unpredictable: near
- * the vertical middle a small move flipped left <-> top/bottom. Straight band edges
- * make the choice predictable. Keying off the window's BODY CENTER (not the grab
- * point, not the header) is grab-INDEPENDENT and matches where the window visually
- * sits, so the trigger fires when the body looks centered over the target.
+ * EVERYTHING KEYS OFF THE POINTER. Together with `snap.ts` (screen docks) that
+ * gives the whole drag one input: wherever the cursor is decides what happens.
+ * One rule to learn, and the thing that decides is the thing the user is looking
+ * at and steering.
  *
- * The body center alone cannot reach a stack's FIRST or LAST slot: the dragged window
- * is taller (or wider) than a pane, so its center would have to leave the screen. So
- * the tree's OUTER slots get a second signal - the dragged window's LEADING EDGE
- * reaching the tree's outer boundary (see `detectTiledDropTarget`): push the window's
- * top edge to the stack top to insert at the very top, etc. Reachable, and the body
- * keeps driving every interior slot. To drop a window FLOATING over another (no
- * tile), keep its center off the other panes. Discovery mechanism for N-way tiling.
+ * This used to key off the dragged window's BODY CENTER, for a defensible reason -
+ * it is independent of where on the header you grabbed, and it matches where the
+ * window visually sits. It cost more than it bought:
+ *
+ *  - **The center cannot reach a stack's first or last slot.** A dragged window is
+ *    bigger than a pane, so putting its center above the top pane's midline means
+ *    pushing the window mostly off-screen. That single gap is what forced a whole
+ *    SECOND targeting signal into existence (the window's leading edge reaching the
+ *    tile tree's outer boundary, with its own edge-zone constant, extreme-pane
+ *    search, root-axis plumbing and an over-the-footprint guard). A cursor points
+ *    at the top pane's top band directly, so every slot is reachable from the bands
+ *    alone and that entire second path is deleted, not reimplemented.
+ *  - **The trigger was invisible.** A user cannot see a body center; they can see
+ *    their cursor. "No dead zone" reads as unpredictable when the thing being
+ *    hit-tested is imaginary.
+ *  - **It made behavior depend on window size**, which is not something the user is
+ *    thinking about when they aim.
+ *
+ * The outcome stays grab-independent in the sense that matters: the same cursor
+ * position resolves the same dock regardless of where the header was grabbed. What
+ * changes is that the dragged window's body may sit visually offset from the
+ * preview - the cursor is the anchor, the way it is when dragging anything else.
+ *
+ * Within a pane the side is picked by PRIORITY BANDS, not diagonals: the left and
+ * right thirds are FULL-HEIGHT (so "the cursor is on the left side" always means
+ * dock LEFT, at any height), and only the center third splits top vs bottom at the
+ * midline. Diagonals were unpredictable - near the vertical middle a small move
+ * flipped left <-> top/bottom. Straight band edges make the choice predictable, and
+ * there is deliberately NO positional dead zone inside a pane, because one would
+ * reintroduce exactly that flip-flopping.
+ *
+ * Free movement comes from a TRAVEL BUDGET instead (`resolveDockTarget`): the drag
+ * must displace the pointer past `FREE_MOVE_RADIUS_PX` before any window dock arms.
+ * Grab a header that happens to sit over another window and the dock condition is
+ * already true at pointer-down, so position alone carries no intent; the budget is
+ * what separates a nudge from an aim. Screen docks (`snap.ts`) need no such budget -
+ * their trigger cannot be true at rest, since a released window is always clamped
+ * fully inside the overlay.
  *
  * Pure steps, unit-tested:
  *  - `collectCandidatePanes` projects the windows to pixel rects (tiled panes from
  *    the tree; otherwise each floating window's geometry).
- *  - `detectDropTarget` hit-tests the body-center point against those panes (interior
- *    bands). `detectTiledDropTarget` wraps it with the outer-slot edge zones for a
- *    drag over an existing tree.
+ *  - `detectDropTarget` hit-tests a point against those panes and picks the side.
+ *  - `resolveDockTarget` is what a drag calls: the travel budget in front of it.
  */
 
 import type { FractionalRect, ManagedWindow, TileNode } from '../store/types';
@@ -37,6 +63,20 @@ import type { TileInsertSide } from '../tiling/tree-ops';
  *  third on each side docks left/right at any height; the center third splits
  *  top vs bottom. Tunable: larger = easier left/right, smaller center column. */
 const SIDE_BAND_FRACTION = 1 / 3;
+
+/** How far the pointer must travel before a window dock can arm. Below it the
+ *  gesture is a free move, so grabbing a header that overlaps another window and
+ *  nudging repositions instead of docking.
+ *
+ *  A flat distance, deliberately: the trigger is now a cursor position, so nothing
+ *  about it scales with the window, and a budget that did would be a leftover from
+ *  the body-center model rather than a property of this one. Sits well above
+ *  `DRAG_ACTIVATION_PX` (4), the travel that merely turns a press into a drag.
+ *
+ *  Checked per pointermove and NOT latched: a drag that overshoots and comes back
+ *  inside the radius must drop as a plain move, not commit a dock the user backed
+ *  out of. Do not "fix" flicker at the boundary by latching. */
+export const FREE_MOVE_RADIUS_PX = 120;
 
 export interface CandidatePane {
   windowId: string;
@@ -119,25 +159,27 @@ function previewRectFor(pane: PixelRect, side: TileInsertSide): PixelRect {
 }
 
 /**
- * Resolve the INTERIOR drop target for a reference point (the dragged window's body
- * center), or null only when it is over no pane at all. When it IS over a pane,
- * priority bands pick the side deterministically (no dead zone, no diagonals): the
- * left third docks LEFT and the right third docks RIGHT at any height; the center
- * third docks TOP above the midline and BOTTOM below it. Picks the front-most
- * (highest zIndex) pane under the point. Outer-slot reachability is added by
- * `detectTiledDropTarget`.
+ * Resolve the drop target for a pointer position, or null when it is over no pane
+ * at all. When it IS over a pane, priority bands pick the side deterministically:
+ * the left third docks LEFT and the right third docks RIGHT at any height; the
+ * center third docks TOP above the midline and BOTTOM below it. Picks the
+ * front-most (highest zIndex) pane under the point.
+ *
+ * Every insertion slot in a tile tree is reachable from this alone: a stack's very
+ * top slot is the top band of its topmost pane, its very bottom slot the bottom
+ * band of its bottommost, and each interior seam is a band on either side of it.
  */
-export function detectDropTarget(referenceX: number, referenceY: number, candidates: CandidatePane[]): DropTarget | null {
+export function detectDropTarget(pointerX: number, pointerY: number, candidates: CandidatePane[]): DropTarget | null {
   let pane: CandidatePane | null = null;
   for (const candidate of candidates) {
-    if (!rectContainsPoint(candidate.rect, referenceX, referenceY)) continue;
+    if (!rectContainsPoint(candidate.rect, pointerX, pointerY)) continue;
     if (!pane || candidate.zIndex > pane.zIndex) pane = candidate;
   }
   if (!pane || pane.rect.width <= 0 || pane.rect.height <= 0) return null;
 
   // Normalised position within the pane (0..1 on each axis).
-  const normalizedX = (referenceX - pane.rect.left) / pane.rect.width;
-  const normalizedY = (referenceY - pane.rect.top) / pane.rect.height;
+  const normalizedX = (pointerX - pane.rect.left) / pane.rect.width;
+  const normalizedY = (pointerY - pane.rect.top) / pane.rect.height;
   // Full-height left/right bands take priority over top/bottom, so being on the
   // left side always docks left regardless of vertical position; only the center
   // column resolves top vs bottom by the midline.
@@ -149,87 +191,29 @@ export function detectDropTarget(referenceX: number, referenceY: number, candida
   return { targetWindowId: pane.windowId, side, previewRect: previewRectFor(pane.rect, side) };
 }
 
-/** The tile tree's outer pixel boundary (its footprint), for the edge zones. */
-export interface TreeBounds {
-  left: number;
-  top: number;
-  right: number;
-  bottom: number;
+/** Whether a drag has moved far enough for a window dock to arm. `deltaX` /
+ *  `deltaY` are the displacement from the drag's anchor point, NOT cumulative path
+ *  length, so jiggling in place never opens the gate. */
+export function hasClearedFreeMove(deltaX: number, deltaY: number): boolean {
+  return Math.hypot(deltaX, deltaY) > FREE_MOVE_RADIUS_PX;
 }
 
-/** Within this distance (px) of the tree's outer boundary, the dragged window's
- *  leading edge counts as "pushed to the edge", arming an outer-slot insert.
- *  Tunable: larger = the extreme slots arm sooner / are easier to hit. */
-const EDGE_ZONE_PX = 28;
-
-/** The extreme pane along an axis: topmost / bottommost / leftmost / rightmost. */
-function extremePane(candidates: CandidatePane[], edge: TileInsertSide): CandidatePane | null {
-  let chosen: CandidatePane | null = null;
-  for (const candidate of candidates) {
-    if (!chosen) {
-      chosen = candidate;
-      continue;
-    }
-    const next = candidate.rect;
-    const best = chosen.rect;
-    if (edge === 'top' && next.top < best.top) chosen = candidate;
-    else if (edge === 'bottom' && next.top + next.height > best.top + best.height) chosen = candidate;
-    else if (edge === 'left' && next.left < best.left) chosen = candidate;
-    else if (edge === 'right' && next.left + next.width > best.left + best.width) chosen = candidate;
-  }
-  return chosen;
+export interface DockResolveInput {
+  /** Pointer position in overlay pixels. */
+  pointerX: number;
+  pointerY: number;
+  candidates: CandidatePane[];
+  /** Displacement from the drag's anchor point (see `hasClearedFreeMove`). */
+  deltaX: number;
+  deltaY: number;
 }
 
 /**
- * Drop target for a dragged window over an EXISTING tile tree. Two-signal model:
- *  - The tree's OUTER slots (the stack's extremes) are armed when the dragged
- *    window's LEADING EDGE reaches the tree's outer boundary on the root axis -
- *    reachable by pushing the window's edge to the edge. `rootDirection` picks the
- *    axis: a vertical root (stack) owns top/bottom; a horizontal root (row) owns
- *    left/right. The window's body center must be over the tree on the cross axis
- *    (and in the matching half, so a window taller than the whole tree resolves to
- *    one extreme, not both) before an edge zone arms - a window flung to an empty
- *    corner never falsely grabs an extreme.
- *  - Every INTERIOR slot falls through to `detectDropTarget`'s body-center bands,
- *    so the trigger matches where the window visually sits.
+ * The armed WINDOW dock for a drag, or null: the travel budget in front of the
+ * pointer hit-test. Screen docks (half / maximize) are a separate family with
+ * their own commitment signal and are NOT gated here - see `snap.ts`.
  */
-export function detectTiledDropTarget(
-  draggedRect: PixelRect,
-  candidates: CandidatePane[],
-  rootDirection: 'horizontal' | 'vertical',
-  treeBounds: TreeBounds,
-): DropTarget | null {
-  const centerX = draggedRect.left + draggedRect.width / 2;
-  const centerY = draggedRect.top + draggedRect.height / 2;
-  // The window's body center must be OVER the tree's footprint (both axes) for an
-  // outer slot to arm. Without the main-axis bound, a CONFINED tree (footprint
-  // shrunk to mid-screen after a pop-out) armed its extreme insert for a large
-  // window dragged well past it - its leading edge trivially clears the now
-  // mid-screen boundary. Requiring the center inside the footprint means dragging
-  // the window away from a confined group no longer re-docks it.
-  const overTree =
-    centerX >= treeBounds.left && centerX <= treeBounds.right &&
-    centerY >= treeBounds.top && centerY <= treeBounds.bottom;
-  if (rootDirection === 'vertical') {
-    const midY = (treeBounds.top + treeBounds.bottom) / 2;
-    if (overTree && centerY < midY && draggedRect.top <= treeBounds.top + EDGE_ZONE_PX) {
-      const pane = extremePane(candidates, 'top');
-      if (pane) return { targetWindowId: pane.windowId, side: 'top', previewRect: previewRectFor(pane.rect, 'top') };
-    }
-    if (overTree && centerY >= midY && draggedRect.top + draggedRect.height >= treeBounds.bottom - EDGE_ZONE_PX) {
-      const pane = extremePane(candidates, 'bottom');
-      if (pane) return { targetWindowId: pane.windowId, side: 'bottom', previewRect: previewRectFor(pane.rect, 'bottom') };
-    }
-  } else {
-    const midX = (treeBounds.left + treeBounds.right) / 2;
-    if (overTree && centerX < midX && draggedRect.left <= treeBounds.left + EDGE_ZONE_PX) {
-      const pane = extremePane(candidates, 'left');
-      if (pane) return { targetWindowId: pane.windowId, side: 'left', previewRect: previewRectFor(pane.rect, 'left') };
-    }
-    if (overTree && centerX >= midX && draggedRect.left + draggedRect.width >= treeBounds.right - EDGE_ZONE_PX) {
-      const pane = extremePane(candidates, 'right');
-      if (pane) return { targetWindowId: pane.windowId, side: 'right', previewRect: previewRectFor(pane.rect, 'right') };
-    }
-  }
-  return detectDropTarget(centerX, centerY, candidates);
+export function resolveDockTarget(input: DockResolveInput): DropTarget | null {
+  if (!hasClearedFreeMove(input.deltaX, input.deltaY)) return null;
+  return detectDropTarget(input.pointerX, input.pointerY, input.candidates);
 }

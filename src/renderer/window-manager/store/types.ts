@@ -131,4 +131,4 @@ export interface TileSplit {
 export type TileNode = TileLeaf | TileSplit;
 
 /** Screen-edge snap targets recognised while dragging a window. */
-export type SnapEdge = 'left' | 'right' | 'maximize';
+export type SnapEdge = 'left' | 'right' | 'bottom' | 'maximize';

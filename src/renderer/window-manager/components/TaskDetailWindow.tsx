@@ -129,8 +129,6 @@ export function TaskDetailWindow({
   const useStore = useLayerStore();
   const toggleMaximizeWindow = useStore((s) => s.toggleMaximizeWindow);
   const dockWindow = useStore((s) => s.dockWindow);
-  const applyTilePreset = useStore((s) => s.applyTilePreset);
-  const windowCount = useStore((s) => Object.keys(s.windows).length);
   const maximizeWindow = useStore((s) => s.maximizeWindow);
   const restoreWindow = useStore((s) => s.restoreWindow);
   const setGeometry = useStore((s) => s.setGeometry);
@@ -622,8 +620,6 @@ export function TaskDetailWindow({
       isMaximized={isMaximized}
       onToggleMaximized={handleToggleMaximized}
       onUndock={isTiled ? handleUndock : undefined}
-      onApplyTilePreset={applyTilePreset}
-      canTileMultiple={windowCount >= 2}
     />
   );
 

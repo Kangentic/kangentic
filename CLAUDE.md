@@ -104,11 +104,13 @@ won't be found.
   NO per-window X/hide button (removed to avoid the task-detail "close this window" confusion). A
   window's Stop control destroys THAT window's session and closes the window; Stopping the last
   window hides the layer. The header is responsive (priority-plus via `useHeaderPillOverflow`): only
-  Stop + title + the window controls (kebab, layout menu, pop-out, maximize) are protected; the
+  Stop + title + the window controls (kebab, pop-out, maximize) are protected; the
   pills AND the branch picker fold into the kebab as the window narrows, down to the min width.
-  The divider precedes the window-frame cluster (kebab, THEN divider, THEN tile-layout/pop-out/
-  maximize), mirroring `TaskDetailHeader`'s divider placement - not a divider isolating just the
-  last control. Each window has full task-detail parity: tile-layout menu, pop-out
+  The divider precedes the window-frame cluster (kebab, THEN divider, THEN pop-out/maximize),
+  mirroring `TaskDetailHeader`'s divider placement: it separates the actions menu from the
+  window-frame controls, wherever that boundary falls. It is NOT a "second-to-last control"
+  rule - this header has no close button, so an untiled terminal legitimately reads
+  kebab | maximize. Each window has full task-detail parity: pop-out
   (`untileWindow`: the clicked pane floats at its current rect; the survivors STAY DOCKED and keep
   their absolute widths by shrinking the footprint - no rescale - except a 2-pane group fully
   dissolves so both float), and a min-pane-width floor on tiling (seam-drag clamp in

@@ -1411,30 +1411,10 @@ test.describe('Command Terminal', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Window layout parity - the command terminal window has the same tile-layout
-  // menu and pop-out (untile back to floating) as the task-detail window.
+  // Window layout parity - the command terminal window has the same pop-out
+  // (untile back to floating) control as the task-detail window.
   // ---------------------------------------------------------------------------
   test.describe('Window layout parity', () => {
-    test('the tile-layout menu lists snap and tiling presets', async () => {
-      const { browser, page } = await launchWithState(multiTerminalPreConfig());
-      try {
-        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
-        await page.keyboard.press('Control+Shift+P');
-        await expect(page.getByTestId('command-terminal-window')).toBeVisible();
-
-        const layoutButton = page.getByTestId('window-tile-layout').first();
-        await expect(layoutButton).toBeVisible();
-        await layoutButton.click();
-
-        // The menu surfaces the snap halves and the multi-window tilings.
-        await expect(page.getByTestId('tile-preset-left-half')).toBeVisible({ timeout: 3000 });
-        await expect(page.getByTestId('tile-preset-columns')).toBeVisible();
-        await expect(page.getByTestId('tile-preset-grid')).toBeVisible();
-      } finally {
-        await browser.close();
-      }
-    });
-
     test('pop-out appears once a terminal is tiled and floats it back', async () => {
       const { browser, page } = await launchWithState(multiTerminalPreConfig());
       try {

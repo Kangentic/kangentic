@@ -29,8 +29,6 @@ import {
   wrapTreeWithRoot,
 } from '../tiling/tree-ops';
 import type { TileInsertSide } from '../tiling/tree-ops';
-import { buildPresetTree, presetHalfGeometry } from '../tiling/presets';
-import type { TilePreset } from '../tiling/presets';
 import { serializeWorkspace as toSerializedWorkspace, deserializeWorkspace } from '../persistence/workspace';
 import { findWindowTreeViolations } from './tree-invariants';
 import { monitorAnchorToTaskId } from './monitor-anchor';
@@ -241,10 +239,6 @@ export interface WindowStoreState {
    *  the existing tree when the target is already tiled (arbitrary N-way), else
    *  seeds a fresh two-pane split between the two windows. */
   dockIntoWindow: (draggedId: string, targetId: string, side: TileInsertSide) => void;
-  /** Arrange the open windows with a one-shot tiling preset (like Win11 snap
-   *  layouts): a half-snap of the focused window, or a columns / grid tree of all
-   *  open windows. */
-  applyTilePreset: (preset: TilePreset) => void;
   /** Resize one seam: the boundary between children `index` and `index + 1` of
    *  the split with `splitId`. `pairRatio` is the first pane's share of the pair. */
   setSeamRatio: (splitId: string, index: number, pairRatio: number) => void;
@@ -633,44 +627,6 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
       // so docking does not blow the layout up to full width.
       const footprint = target.state === 'maximized' ? FULL_TILE_RECT : clampGeometry(target.geometry);
       set((state) => ({ tileTree: pairTree, tileTreeRect: footprint, windows: markBoth(state) }));
-    },
-
-    applyTilePreset: (preset) => {
-      const current = get();
-      // Half presets act on a single window: the focused one, else the top-most.
-      const halfGeometry = presetHalfGeometry(preset);
-      if (halfGeometry) {
-        const focusedId = current.focusedWindowId;
-        const targetId =
-          focusedId && current.windows[focusedId]
-            ? focusedId
-            : Object.values(current.windows).sort((first, second) => second.zIndex - first.zIndex)[0]?.id ?? null;
-        if (!targetId) return;
-        // Left / right DOCK (so snapping one then the other pairs them into a tile,
-        // exactly like the keyboard snap + drag-to-edge); top / bottom are a plain
-        // snap (dockWindow only pairs horizontal halves).
-        if (preset === 'left-half') get().dockWindow(targetId, 'left');
-        else if (preset === 'right-half') get().dockWindow(targetId, 'right');
-        else get().snapWindow(targetId, halfGeometry);
-        return;
-      }
-      // Multi presets tile EVERY open window (focused first, so it lands top-left),
-      // replacing any existing tiling so no window is left orphaned.
-      const orderedWindowIds = Object.values(current.windows)
-        .sort((first, second) => second.zIndex - first.zIndex)
-        .map((window) => window.id);
-      const built = buildPresetTree(preset, orderedWindowIds, {
-        leaf: () => nextTileId('leaf'),
-        split: () => nextTileId('split'),
-      });
-      if (!built) return;
-      set((state) => {
-        const nextWindows = { ...state.windows };
-        for (const { windowId, leafId } of built.leaves) {
-          if (nextWindows[windowId]) nextWindows[windowId] = markWindowTiled(nextWindows[windowId], leafId);
-        }
-        return { tileTree: built.tree, tileTreeRect: FULL_TILE_RECT, windows: nextWindows };
-      });
     },
 
     setSeamRatio: (splitId, index, pairRatio) => {

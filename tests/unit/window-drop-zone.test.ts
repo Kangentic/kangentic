@@ -2,9 +2,11 @@ import { describe, it, expect } from 'vitest';
 import {
   collectCandidatePanes,
   detectDropTarget,
-  detectTiledDropTarget,
+  hasClearedFreeMove,
+  resolveDockTarget,
+  FREE_MOVE_RADIUS_PX,
 } from '../../src/renderer/window-manager/dnd/drop-zone';
-import type { CandidatePane, TreeBounds } from '../../src/renderer/window-manager/dnd/drop-zone';
+import type { CandidatePane } from '../../src/renderer/window-manager/dnd/drop-zone';
 import type { ManagedWindow, TileNode } from '../../src/renderer/window-manager/store/types';
 
 const CONTAINER = { width: 1000, height: 800 };
@@ -151,7 +153,10 @@ describe('detectDropTarget', () => {
     expect(detectDropTarget(850, 720, [PANE])?.side).toBe('right');
   });
 
-  it('ALWAYS docks while over a pane - no dead zone; the center column splits at the midline', () => {
+  it('the POINT test has no dead zone - it always resolves a side while over a pane', () => {
+    // Deliberately no positional dead zone: one would reintroduce the flip-flopping
+    // the priority bands fixed. Free movement comes from the TRAVEL budget in
+    // `resolveDockTarget` instead, which is what a drag actually calls.
     // Center column (x in the middle third): top above the midline, bottom below.
     expect(detectDropTarget(500, 400, [PANE])).not.toBeNull();
     expect(detectDropTarget(500, 360, [PANE])?.side).toBe('top');
@@ -170,72 +175,106 @@ describe('detectDropTarget', () => {
   });
 });
 
-describe('detectTiledDropTarget', () => {
-  // A vertical stack of three full-width panes (each 300 tall) over a 1000x900 tree.
+describe('every tile-tree slot is reachable from the bands alone', () => {
+  // This is the test that lets the second targeting signal be DELETED rather than
+  // reimplemented. A body center could not reach a stack's first or last slot (the
+  // dragged window is bigger than a pane), which is what forced an entire parallel
+  // path into existence - tree bounds, edge zones, extreme-pane search, root-axis
+  // plumbing. A pointer reaches all of them, so the bands are sufficient.
   const STACK: CandidatePane[] = [
     { windowId: 'a', zIndex: 1, rect: { left: 0, top: 0, width: 1000, height: 300 } },
     { windowId: 'b', zIndex: 2, rect: { left: 0, top: 300, width: 1000, height: 300 } },
     { windowId: 'c', zIndex: 3, rect: { left: 0, top: 600, width: 1000, height: 300 } },
   ];
-  const STACK_BOUNDS: TreeBounds = { left: 0, top: 0, right: 1000, bottom: 900 };
+  const centerColumnX = 500; // the middle third, where top/bottom resolve
 
-  it('arms the TOP extreme when the dragged window TOP EDGE reaches the stack top', () => {
-    // Window pushed to the top: top edge at 0, center in the upper half.
-    const dragged = { left: 250, top: 0, width: 500, height: 350 };
-    const target = detectTiledDropTarget(dragged, STACK, 'vertical', STACK_BOUNDS);
-    expect(target).toMatchObject({ targetWindowId: 'a', side: 'top' });
+  it('reaches a vertical stack: above the first pane, every seam, below the last', () => {
+    // Above A - the slot a body center could never reach.
+    expect(detectDropTarget(centerColumnX, 20, STACK)).toMatchObject({ targetWindowId: 'a', side: 'top' });
+    // The A/B seam, from either side of it.
+    expect(detectDropTarget(centerColumnX, 280, STACK)).toMatchObject({ targetWindowId: 'a', side: 'bottom' });
+    expect(detectDropTarget(centerColumnX, 320, STACK)).toMatchObject({ targetWindowId: 'b', side: 'top' });
+    // Below C - the other formerly unreachable extreme.
+    expect(detectDropTarget(centerColumnX, 880, STACK)).toMatchObject({ targetWindowId: 'c', side: 'bottom' });
   });
 
-  it('arms the BOTTOM extreme when the dragged window BOTTOM EDGE reaches the stack bottom', () => {
-    const dragged = { left: 250, top: 550, width: 500, height: 350 }; // bottom edge at 900
-    const target = detectTiledDropTarget(dragged, STACK, 'vertical', STACK_BOUNDS);
-    expect(target).toMatchObject({ targetWindowId: 'c', side: 'bottom' });
-  });
-
-  it('uses the BODY CENTER for interior gaps, even when the window is TALLER than a pane', () => {
-    // 350-tall window (taller than a 300 pane), centered in pane B, not near an edge.
-    const dragged = { left: 250, top: 300, width: 500, height: 350 }; // center y = 475
-    const target = detectTiledDropTarget(dragged, STACK, 'vertical', STACK_BOUNDS);
-    // 475 sits in pane B's lower half -> insert BELOW B (the B/C gap), via body center.
-    expect(target).toMatchObject({ targetWindowId: 'b', side: 'bottom' });
-  });
-
-  it('does NOT arm an extreme when the window is flung off the stack (cross-axis guard)', () => {
-    // Top edge at the boundary, but the center is far left of the stack.
-    const dragged = { left: -800, top: 0, width: 500, height: 350 };
-    expect(detectTiledDropTarget(dragged, STACK, 'vertical', STACK_BOUNDS)).toBeNull();
-  });
-
-  it('a HORIZONTAL root owns left/right extremes: left edge to the row left arms LEFT', () => {
-    const row: CandidatePane[] = [
+  it('reaches a horizontal row: outside the first pane, the seam, outside the last', () => {
+    const ROW: CandidatePane[] = [
       { windowId: 'l', zIndex: 1, rect: { left: 0, top: 0, width: 500, height: 800 } },
       { windowId: 'r', zIndex: 2, rect: { left: 500, top: 0, width: 500, height: 800 } },
     ];
-    const rowBounds: TreeBounds = { left: 0, top: 0, right: 1000, bottom: 800 };
-    const dragged = { left: 0, top: 200, width: 350, height: 400 }; // left edge at 0
-    const target = detectTiledDropTarget(dragged, row, 'horizontal', rowBounds);
-    expect(target).toMatchObject({ targetWindowId: 'l', side: 'left' });
+    expect(detectDropTarget(20, 400, ROW)).toMatchObject({ targetWindowId: 'l', side: 'left' });
+    expect(detectDropTarget(450, 400, ROW)).toMatchObject({ targetWindowId: 'l', side: 'right' });
+    expect(detectDropTarget(980, 400, ROW)).toMatchObject({ targetWindowId: 'r', side: 'right' });
   });
 
-  // A CONFINED row (e.g. left after a pop-out): footprint right edge is mid-screen
-  // (666), not the screen edge. A large window dragged PAST it must not re-dock.
-  const CONFINED_ROW: CandidatePane[] = [
-    { windowId: 'l', zIndex: 1, rect: { left: 0, top: 0, width: 333, height: 800 } },
-    { windowId: 'r', zIndex: 1, rect: { left: 333, top: 0, width: 333, height: 800 } },
-  ];
-  const CONFINED_BOUNDS: TreeBounds = { left: 0, top: 0, right: 666, bottom: 800 };
+  it('a pointer off every pane docks nothing, however the windows are arranged', () => {
+    // Replaces the old confined-tree guard: dragging away from a group simply
+    // leaves the cursor over no pane, with no footprint bookkeeping involved.
+    expect(detectDropTarget(1400, 400, STACK)).toBeNull();
+  });
+});
 
-  it('does NOT arm a confined-tree extreme when the window is dragged PAST its mid-screen boundary', () => {
-    // Center at x=900, well past the footprint's right edge (666), even though the
-    // window's leading edge clears the boundary - dragging away must not re-dock.
-    const dragged = { left: 700, top: 200, width: 400, height: 400 }; // center x = 900
-    expect(detectTiledDropTarget(dragged, CONFINED_ROW, 'horizontal', CONFINED_BOUNDS)).toBeNull();
+describe('hasClearedFreeMove', () => {
+  // Everything derives from FREE_MOVE_RADIUS_PX so retuning the feel constant never
+  // turns into a test edit.
+  it('stays closed for no movement and up to and including the radius', () => {
+    expect(hasClearedFreeMove(0, 0)).toBe(false);
+    expect(hasClearedFreeMove(FREE_MOVE_RADIUS_PX / 2, 0)).toBe(false);
+    expect(hasClearedFreeMove(FREE_MOVE_RADIUS_PX, 0)).toBe(false);
+    expect(hasClearedFreeMove(0, -FREE_MOVE_RADIUS_PX)).toBe(false);
   });
 
-  it('arms a confined-tree right extreme once the window center is back OVER the footprint', () => {
-    // Center at x=500 (inside [0, 666]); right edge past the boundary -> re-docks right.
-    const dragged = { left: 300, top: 200, width: 400, height: 400 }; // center x = 500, right edge 700
-    const target = detectTiledDropTarget(dragged, CONFINED_ROW, 'horizontal', CONFINED_BOUNDS);
-    expect(target).toMatchObject({ targetWindowId: 'r', side: 'right' });
+  it('opens just past the radius, on either axis and in either direction', () => {
+    expect(hasClearedFreeMove(FREE_MOVE_RADIUS_PX + 1, 0)).toBe(true);
+    expect(hasClearedFreeMove(-(FREE_MOVE_RADIUS_PX + 1), 0)).toBe(true);
+    expect(hasClearedFreeMove(0, FREE_MOVE_RADIUS_PX + 1)).toBe(true);
+  });
+
+  it('measures Euclidean distance, so a diagonal nudge clears sooner than either axis', () => {
+    // 0.8r on each axis is 1.13r of travel (clears); 0.7r each is 0.99r (does not).
+    const diagonal = (factor: number) =>
+      hasClearedFreeMove(FREE_MOVE_RADIUS_PX * factor, FREE_MOVE_RADIUS_PX * factor);
+    expect(diagonal(0.8)).toBe(true);
+    expect(diagonal(0.7)).toBe(false);
+  });
+
+  it('does not depend on the window being dragged - the trigger is a cursor position', () => {
+    // The budget used to scale with the dragged window's size, a leftover from the
+    // body-center model. Nothing about a pointer trigger scales with the window.
+    expect(hasClearedFreeMove(FREE_MOVE_RADIUS_PX + 1, 0)).toBe(true);
+  });
+});
+
+describe('resolveDockTarget (free-move budget)', () => {
+  // Grabbing a header that happens to sit over another window: the dock condition
+  // is already true at pointer-down, so position alone carries no intent.
+  const OTHER: CandidatePane = { windowId: 'other', zIndex: 1, rect: { left: 100, top: 100, width: 800, height: 600 } };
+  const POINTER = { x: 500, y: 350 }; // inside OTHER's center column, upper half
+  const NUDGE = FREE_MOVE_RADIUS_PX * 0.5;
+  const THROW = FREE_MOVE_RADIUS_PX * 2;
+
+  const call = (deltaX: number) =>
+    resolveDockTarget({ pointerX: POINTER.x, pointerY: POINTER.y, candidates: [OTHER], deltaX, deltaY: 0 });
+
+  it('a nudge with the cursor over another window arms NOTHING', () => {
+    // The position alone would dock - the budget is the only thing holding it back.
+    expect(detectDropTarget(POINTER.x, POINTER.y, [OTHER])).not.toBeNull();
+    expect(call(NUDGE)).toBeNull();
+  });
+
+  it('a deliberate move docks, resolving exactly the side the bands resolve', () => {
+    expect(call(THROW)).toEqual(detectDropTarget(POINTER.x, POINTER.y, [OTHER]));
+  });
+
+  it('opens just past the radius, not at it', () => {
+    expect(call(FREE_MOVE_RADIUS_PX)).toBeNull();
+    expect(call(FREE_MOVE_RADIUS_PX + 1)).not.toBeNull();
+  });
+
+  it('past the budget, the cursor being off every pane still docks nothing', () => {
+    expect(
+      resolveDockTarget({ pointerX: 5000, pointerY: 5000, candidates: [OTHER], deltaX: THROW, deltaY: 0 }),
+    ).toBeNull();
   });
 });

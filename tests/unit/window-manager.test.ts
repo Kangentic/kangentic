@@ -5,7 +5,7 @@ import {
   clampGeometry,
   defaultWindowGeometry,
 } from '../../src/renderer/window-manager/store/geometry';
-import { detectSnapEdge, snapEdgeToGeometry } from '../../src/renderer/window-manager/dnd/snap';
+import { detectScreenDockEdge, snapEdgeToGeometry, SCREEN_DOCK_EDGE_PX } from '../../src/renderer/window-manager/dnd/snap';
 import { useWindowStore } from '../../src/renderer/window-manager/store/window-store';
 import { findWindowTreeViolations } from '../../src/renderer/window-manager/store/tree-invariants';
 import type { ManagedWindow, TileNode } from '../../src/renderer/window-manager/store/types';
@@ -57,40 +57,80 @@ describe('window-manager geometry', () => {
 
 const OVERLAY_SIZE = { width: 1000, height: 800 };
 
-describe('window-manager snap', () => {
-  it('arms left only when the container left edge is dragged past the boundary (grab point irrelevant)', () => {
-    expect(detectSnapEdge({ left: -60, top: 300, width: 400, height: 300 }, OVERLAY_SIZE)).toBe('left');
+describe('window-manager screen docks', () => {
+  const at = (x: number, y: number) => detectScreenDockEdge(x, y, OVERLAY_SIZE);
+  const INSIDE = SCREEN_DOCK_EDGE_PX + 1;
+
+  it('arms an edge only once the pointer reaches it', () => {
+    expect(at(0, 400)).toBe('left');
+    expect(at(SCREEN_DOCK_EDGE_PX, 400)).toBe('left');
+    expect(at(OVERLAY_SIZE.width, 400)).toBe('right');
+    expect(at(400, 0)).toBe('maximize');
+    expect(at(400, OVERLAY_SIZE.height)).toBe('bottom');
   });
 
-  it('does NOT arm a dock at the edge or only slightly past it (casual movement)', () => {
-    // Flush at the edge: no dock.
-    expect(detectSnapEdge({ left: 0, top: 300, width: 400, height: 300 }, OVERLAY_SIZE)).toBeNull();
-    // 20px past: still within the buffer, no dock.
-    expect(detectSnapEdge({ left: -20, top: 300, width: 400, height: 300 }, OVERLAY_SIZE)).toBeNull();
+  it('does NOT arm just short of an edge', () => {
+    expect(at(INSIDE, 400)).toBeNull();
+    expect(at(OVERLAY_SIZE.width - INSIDE, 400)).toBeNull();
+    expect(at(400, INSIDE)).toBeNull();
+    expect(at(400, OVERLAY_SIZE.height - INSIDE)).toBeNull();
   });
 
-  it('arms right when the container right edge is dragged past the boundary', () => {
-    // left + width = 660 + 400 = 1060, overlay 1000 -> right edge 60px past.
-    expect(detectSnapEdge({ left: 660, top: 300, width: 400, height: 300 }, OVERLAY_SIZE)).toBe('right');
+  it('every edge is half-open, so a fast drag past it cannot skip the band', () => {
+    // The app window is not always maximized, so the pointer CAN travel beyond an
+    // overlay edge between two pointermove samples. Each test is `<=` / `>=` rather
+    // than a closed band for exactly that reason.
+    expect(at(-200, 400)).toBe('left');
+    expect(at(OVERLAY_SIZE.width + 200, 400)).toBe('right');
+    expect(at(400, OVERLAY_SIZE.height + 200)).toBe('bottom');
   });
 
-  it('arms maximize when the container top edge is dragged past the top boundary', () => {
-    expect(detectSnapEdge({ left: 300, top: -60, width: 400, height: 300 }, OVERLAY_SIZE)).toBe('maximize');
+  it('arms the top edge from ABOVE the overlay (the pointer is over the app toolbar)', () => {
+    // Dragging a window up carries the pointer out of the overlay entirely. That
+    // still reads as the top edge, or maximize would be unreachable from there.
+    expect(at(400, -80)).toBe('maximize');
   });
 
-  it('does NOT maximize a full-height window dragged sideways (top edge at 0, not past)', () => {
-    // A left-snapped window: top edge at 0, full height, left edge 60px past.
-    expect(detectSnapEdge({ left: -60, top: 0, width: 500, height: 800 }, OVERLAY_SIZE)).toBe('left');
+  it('resolves corners by a fixed precedence: top, then the sides, then bottom', () => {
+    // The pointer satisfies two edges at once here, so precedence is a real
+    // decision this function owns rather than an accident of ordering.
+    expect(at(0, 0)).toBe('maximize');
+    expect(at(OVERLAY_SIZE.width, 0)).toBe('maximize');
+    // A bottom corner takes the SIDE half - the commoner intent - over bottom.
+    expect(at(0, OVERLAY_SIZE.height)).toBe('left');
+    expect(at(OVERLAY_SIZE.width, OVERLAY_SIZE.height)).toBe('right');
   });
 
   it('returns null in the interior', () => {
-    expect(detectSnapEdge({ left: 300, top: 300, width: 400, height: 200 }, OVERLAY_SIZE)).toBeNull();
+    expect(at(500, 400)).toBeNull();
+  });
+
+  it('is independent of where the window was grabbed - it reads only the pointer', () => {
+    // The whole point of moving off the window's own edge: the same cursor
+    // position resolves the same dock whatever the window is doing.
+    expect(at(2, 400)).toBe('left');
+    expect(at(2, 400)).toBe(at(2, 400));
   });
 
   it('maps each edge to the expected half / full geometry', () => {
     expect(snapEdgeToGeometry('left')).toEqual({ x: 0, y: 0, w: 0.5, h: 1 });
     expect(snapEdgeToGeometry('right')).toEqual({ x: 0.5, y: 0, w: 0.5, h: 1 });
+    expect(snapEdgeToGeometry('bottom')).toEqual({ x: 0, y: 0.5, w: 1, h: 0.5 });
     expect(snapEdgeToGeometry('maximize')).toEqual({ x: 0, y: 0, w: 1, h: 1 });
+  });
+
+  it('the four overlay edges resolve to four distinct docks', () => {
+    // Deliberately NOT a keyboard-parity claim. The two input paths do not cover
+    // the same set and never did: the pointer reaches a full-width BOTTOM half,
+    // which the keyboard ladder cannot (`nextSnap(zone, 'down')` in snap-zones.ts
+    // yields a bottom CORNER from a side half, and nothing at all from floating -
+    // there is no 'bottom-half' SnapZone). Conversely the keyboard reaches a top
+    // half, where the pointer's top edge maximizes. So this pins only that each
+    // edge maps to its own dock, with no two edges collapsing onto one.
+    const reachable = new Set(
+      [at(0, 400), at(OVERLAY_SIZE.width, 400), at(400, 0), at(400, OVERLAY_SIZE.height)],
+    );
+    expect(reachable).toEqual(new Set(['left', 'right', 'maximize', 'bottom']));
   });
 });
 
@@ -509,29 +549,41 @@ describe('window-store tiling', () => {
     expect(leaves.sort()).toEqual([a, b].sort());
   });
 
-  it('snap-menu presets never corrupt the tree (no duplicate or stale leaves)', () => {
-    // The snap menu (Snap left/right/top/bottom, Columns, Grid) maps to applyTilePreset.
-    // Hammer cumulative sequences over 3 windows and assert the tree invariant after
-    // every step: each leaf is unique AND maps to a window whose state is 'tiled'. A
-    // duplicate or stale leaf is the "phantom empty pane / invisible wall" corruption.
+  it('long layout sequences never corrupt the tree (no duplicate or stale leaves)', () => {
+    // Hammer a cumulative sequence of the reachable layout ops (keyboard snap,
+    // drag-to-edge dock, drag-to-dock, pop-out) over 3 windows and assert the tree
+    // invariant after every step: each leaf is unique AND maps to a window whose
+    // state is 'tiled'. A duplicate or stale leaf is the "phantom empty pane /
+    // invisible wall" corruption. Maximize is deliberately absent: a maximized pane
+    // stays in the tree by design (restoreWindow returns it to its docked slot), so
+    // it reads 'maximized' here. The assertClean suite covers that path instead.
     const a = useWindowStore.getState().openWindow({ anchor: 'a', sessionId: 's1', title: 'A' });
     const b = useWindowStore.getState().openWindow({ anchor: 'b', sessionId: 's2', title: 'B' });
     const c = useWindowStore.getState().openWindow({ anchor: 'c', sessionId: 's3', title: 'C' });
     const ids = new Set([a, b, c]);
-    const presets = [
-      'columns', 'left-half', 'right-half', 'grid', 'top-half', 'bottom-half',
-      'columns', 'left-half', 'left-half', 'right-half', 'grid', 'columns',
-    ] as const;
-    for (const preset of presets) {
-      useWindowStore.getState().applyTilePreset(preset);
+    const store = useWindowStore.getState;
+    const steps: Array<() => void> = [
+      () => store().snapWindow(a, { x: 0, y: 0, w: 0.5, h: 1 }),
+      () => store().dockWindow(b, 'right'),
+      () => store().dockIntoWindow(c, b, 'bottom'),
+      () => store().dockIntoWindow(a, c, 'right'),
+      () => store().untileWindow(b),
+      () => store().dockIntoWindow(b, a, 'left'),
+      () => store().snapWindow(a, { x: 0, y: 0, w: 1, h: 0.5 }),
+      () => store().dockWindow(a, 'left'),
+      () => store().dockIntoWindow(c, a, 'top'),
+      () => store().untileWindow(c),
+    ];
+    for (const [index, step] of steps.entries()) {
+      step();
       const tree = useWindowStore.getState().tileTree;
       const leaves = collectLeafWindowIds(tree);
       // No duplicates.
-      expect(leaves.length).toBe(new Set(leaves).size);
+      expect(leaves.length, `step ${index}`).toBe(new Set(leaves).size);
       // Every leaf maps to a known window that is actually 'tiled' (no stale ref).
       for (const id of leaves) {
-        expect(ids.has(id)).toBe(true);
-        expect(useWindowStore.getState().windows[id].state).toBe('tiled');
+        expect(ids.has(id), `step ${index}`).toBe(true);
+        expect(useWindowStore.getState().windows[id].state, `step ${index}`).toBe('tiled');
       }
     }
   });
@@ -797,15 +849,25 @@ describe('window-store maintains the tiling invariant across every operation', (
     assertClean('restore floating D');
   });
 
-  it('stays consistent under cumulative snap-menu presets over three windows', () => {
+  it('stays consistent under a cumulative layout sequence over three windows', () => {
     const store = useWindowStore.getState;
-    store().openWindow({ anchor: 'a', sessionId: 's1', title: 'A' });
-    store().openWindow({ anchor: 'b', sessionId: 's2', title: 'B' });
-    store().openWindow({ anchor: 'c', sessionId: 's3', title: 'C' });
-    const presets = ['columns', 'left-half', 'right-half', 'grid', 'top-half', 'bottom-half', 'columns', 'grid'] as const;
-    for (const preset of presets) {
-      store().applyTilePreset(preset);
-      assertClean(`applyTilePreset ${preset}`);
+    const a = store().openWindow({ anchor: 'a', sessionId: 's1', title: 'A' });
+    const b = store().openWindow({ anchor: 'b', sessionId: 's2', title: 'B' });
+    const c = store().openWindow({ anchor: 'c', sessionId: 's3', title: 'C' });
+    const steps: Array<[string, () => void]> = [
+      ['snap A left', () => store().snapWindow(a, { x: 0, y: 0, w: 0.5, h: 1 })],
+      ['dock B right', () => store().dockWindow(b, 'right')],
+      ['dock C below B', () => store().dockIntoWindow(c, b, 'bottom')],
+      ['re-dock A onto C', () => store().dockIntoWindow(a, c, 'right')],
+      ['pop B out', () => store().untileWindow(b)],
+      ['dock B left of A', () => store().dockIntoWindow(b, a, 'left')],
+      ['snap A to the top half', () => store().snapWindow(a, { x: 0, y: 0, w: 1, h: 0.5 })],
+      ['dock A left', () => store().dockWindow(a, 'left')],
+      ['dock C above A', () => store().dockIntoWindow(c, a, 'top')],
+    ];
+    for (const [label, step] of steps) {
+      step();
+      assertClean(label);
     }
   });
 

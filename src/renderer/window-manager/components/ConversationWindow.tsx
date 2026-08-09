@@ -32,7 +32,6 @@ import { useSessionStore } from '../../stores/session-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useKeybinding } from '../../hooks/useKeybinding';
 import { MaximizeToggleButton } from '../../components/dialogs/dialog-maximize';
-import { WindowLayoutMenu } from '../../components/dialogs/WindowLayoutMenu';
 import { KebabMenu, KebabMenuItem } from '../../components/KebabMenu';
 import { HeaderActionButton } from '../../components/HeaderActionButton';
 import { ConversationView, type InitialPosition } from '../../components/conversation/ConversationView';
@@ -124,10 +123,8 @@ export function ConversationWindow({
 
   const useStore = useLayerStore();
   const toggleMaximizeWindow = useStore((state) => state.toggleMaximizeWindow);
-  const applyTilePreset = useStore((state) => state.applyTilePreset);
   const untileWindow = useStore((state) => state.untileWindow);
   const isTiled = useStore((state) => state.windows[managedWindow.id]?.state === 'tiled');
-  const windowCount = useStore((state) => Object.keys(state.windows).length);
 
   const [response, setResponse] = useState<TranscriptGetResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -402,7 +399,6 @@ export function ConversationWindow({
           </KebabMenu>
 
           <div className="w-px h-5 bg-surface-hover flex-shrink-0" />
-          <WindowLayoutMenu onApply={applyTilePreset} canTileMultiple={windowCount >= 2} />
           {isTiled && (
             <button
               type="button"
