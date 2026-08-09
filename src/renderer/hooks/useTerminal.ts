@@ -743,6 +743,74 @@ export function useTerminal(options: UseTerminalOptions) {
   const initTerminal = useCallback(() => {
     if (!terminalRef.current || xtermRef.current) return;
 
+    // Phase timing for one terminal init, split by what a given optimization
+    // could actually remove.
+    //
+    // Terminal init is the largest single renderer long-task source. That
+    // top-line claim and its aggregate numbers already live in
+    // terminal-init-queue.ts and useDeferredTerminalInit.ts; the figures here
+    // are a later phase-split pass over the same fact, not a second source of
+    // truth, so the three sets are snapshots of one measurement rather than
+    // numbers that ought to match. Measured on the live app via the long-frame
+    // ring, this script (`pumpInitQueue`) runs mean 81ms / median 107ms / max
+    // 120ms and is the biggest script in most of the frames it lands in - and a
+    // task-detail open/close pays it TWICE, once per ownership handoff. The
+    // split matters because the three spans behave differently: `construct` and
+    // `webgl` are per-INSTANCE and could in principle be avoided by reusing a
+    // terminal, while `fit` is per-HOST and cannot, since the panel and a detail
+    // window have genuinely different grids and xterm never reflows the
+    // alternate buffer. Measured here on the real GPU, construct + webgl is
+    // 82-87% of the beat.
+    //
+    // `syncTotalMs` is the number to compare against the long frame this init
+    // lands in, because it is the whole synchronous beat - that block is what a
+    // blocked main thread is actually felt as. Do NOT add the chunked replay
+    // write to it: writeChunkedToTerminal paces slices on xterm's write
+    // callback, so it is interruptible by design and was never part of the
+    // block. Its wall clock is already derivable from the replay-write ->
+    // replay-done trace timestamps.
+    //
+    // Absolute values only mean anything on a real instance. The UI harness
+    // reports roughly a tenth of these (SwiftShader plus a far smaller DOM), so
+    // it is trustworthy for the RATIO between spans and useless for the ms.
+    //
+    // Dev-gated down to the performance.now() calls themselves, and emitted
+    // through a THUNK so production never even builds the detail object (see
+    // traceTerminalRenderer's contract).
+    const readClock = (): number => (__KANGENTIC_DEV__ ? performance.now() : 0);
+    const initStartedAt = readClock();
+    let constructEndedAt = initStartedAt;
+    let webglElapsedMs = 0;
+    let fitElapsedMs = 0;
+    const traceInitTiming = (branch: 'session' | 'session-less'): void => {
+      const roundMs = (value: number): number => Math.round(value * 10) / 10;
+      traceTerminalRenderer(options.sessionId, 'init-timing', () => {
+        // ONE clock read for the end of the beat, reused by both the duration
+        // and the bound. Reading it twice sampled two different instants for
+        // what is one moment, so a reader deriving the interval from
+        // `endedAtMs - startedAtMs` got a different answer than `syncTotalMs`.
+        const initEndedAt = readClock();
+        return {
+          branch,
+          constructMs: roundMs(constructEndedAt - initStartedAt),
+          webglMs: roundMs(webglElapsedMs),
+          fitMs: roundMs(fitElapsedMs),
+          /** construct + webgl: the per-instance part, i.e. the ceiling on what
+           *  reusing a terminal across a handoff could ever save. */
+          reusableMs: roundMs(constructEndedAt - initStartedAt + webglElapsedMs),
+          /** The whole synchronous beat. Compare against the long frame, not against the span sum. */
+          syncTotalMs: roundMs(initEndedAt - initStartedAt),
+          /** `performance.now()` bounds of that beat, so a reader can join this init
+           *  to the `long-animation-frame` entry that CONTAINS it. The ring's own
+           *  `ts` is `Date.now()`, which is the wrong clock domain for LoAF.
+           *  Each field is rounded on its own, so re-deriving the duration from
+           *  these two can still differ from `syncTotalMs` by a rounding unit. */
+          startedAtMs: roundMs(initStartedAt),
+          endedAtMs: roundMs(initEndedAt),
+        };
+      });
+    };
+
     const xtermTheme = buildTerminalTheme({
       background: customBackground,
       foreground: customForeground,
@@ -769,6 +837,7 @@ export function useTerminal(options: UseTerminalOptions) {
     terminal.loadAddon(fitAddon);
 
     terminal.open(terminalRef.current);
+    constructEndedAt = readClock();
 
     // Record this terminal as the last-focused one for dictation injection
     // target resolution. The textarea is xterm's focusable element, so this
@@ -812,7 +881,9 @@ export function useTerminal(options: UseTerminalOptions) {
     // logged, renderer type tracked). Keyed by session id, or a stable transient
     // key for a session-less pane so the devtools report can distinguish them.
     const rendererKey = options.sessionId ?? `transient-${nextTransientRendererKey()}`;
+    const webglStartedAt = readClock();
     disposeWebglRef.current = attachWebglRenderer(terminal, rendererKey);
+    webglElapsedMs = readClock() - webglStartedAt;
     rendererKeyRef.current = rendererKey;
 
     xtermRef.current = terminal;
@@ -868,7 +939,9 @@ export function useTerminal(options: UseTerminalOptions) {
 
       // Fit immediately to calculate actual container cols/rows
       const colsBeforeFit = terminal.cols;
+      const fitStartedAt = readClock();
       const fitOutcome = fitAddon.fit();
+      fitElapsedMs = readClock() - fitStartedAt;
       const { cols, rows } = terminal;
       // The container geometry this fit was computed against, recorded next to its
       // result. A second fit later producing a DIFFERENT cols is what forces an
@@ -1004,9 +1077,15 @@ export function useTerminal(options: UseTerminalOptions) {
           }
           settleScrollback(false);
         });
+      // Last statement of the synchronous body: the promise chain above is only
+      // REGISTERED here, so this is where the beat the long frame measures ends.
+      traceInitTiming('session');
     } else {
       // No session -- just fit immediately
+      const fitStartedAt = readClock();
       fitAddon.fit();
+      fitElapsedMs = readClock() - fitStartedAt;
+      traceInitTiming('session-less');
     }
   }, [options.sessionId, options.fontFamily, options.fontSize, options.cursorStyle, customBackground, customForeground, customCursor, options.shellName, options.releaseEscapeWhenPointerOutside, settleScrollback, armScrollbackWatchdog, traceReplay, dropHeldBytesSupersededBySample]);
 

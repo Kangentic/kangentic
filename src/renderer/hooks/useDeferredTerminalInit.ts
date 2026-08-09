@@ -11,7 +11,10 @@
  *   mounted mid-drag (task #468). That construction was documented here as
  *   "~10ms"; measured later against the live app via the long-frame ring, it
  *   averages ~75ms and peaks at 130ms, of which the WebGL context alone is
- *   13-29ms. The deferral matters more than the original estimate implied.
+ *   13-29ms on a COLD first context and 7.4-9.6ms once the GPU process is warm.
+ *   The deferral matters more than the original estimate implied. For the
+ *   per-phase split of one init (and how much of it a reused terminal could
+ *   skip), see the `init-timing` trace in useTerminal.ts's initTerminal.
  * - StrictMode's mount -> unmount -> remount constructs ONE terminal instead
  *   of two: the first mount's cleanup cancels its scheduled init before it
  *   ever runs. The synchronous init CommandTerminalPane hand-rolled instead
