@@ -57,6 +57,7 @@ describe.runIf(CAN_RUN)('handleCreateColumn / handleDeleteColumn', () => {
       onTaskUpdated: vi.fn(),
       onTaskDeleted: vi.fn(),
       onTaskMove: vi.fn().mockResolvedValue(undefined),
+      onTasksReordered: vi.fn(),
       onSwimlaneUpdated: vi.fn(),
       onSwimlaneDeleted: vi.fn(),
       onBacklogChanged: vi.fn(),

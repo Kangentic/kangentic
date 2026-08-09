@@ -113,6 +113,7 @@ const MUTATING_NAME_PREFIXES = [
   'kangentic_delete_',
   'kangentic_remove_',
   'kangentic_move_',
+  'kangentic_reorder_',
   'kangentic_promote_',
   'kangentic_link_',
   'kangentic_send_',

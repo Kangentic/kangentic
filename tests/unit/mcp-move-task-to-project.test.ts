@@ -72,6 +72,7 @@ function makeContext(db: InstanceType<typeof DatabaseType>, projectPath: string)
     onTaskUpdated: vi.fn(),
     onTaskDeleted: vi.fn(),
     onTaskMove: vi.fn(async () => {}),
+    onTasksReordered: vi.fn(),
     onSwimlaneUpdated: vi.fn(),
     onSwimlaneDeleted: vi.fn(),
     onBacklogChanged: vi.fn(),

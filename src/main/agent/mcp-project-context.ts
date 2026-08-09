@@ -139,6 +139,25 @@ export function buildCommandContextForProject(
       }
     },
 
+    onTasksReordered: (swimlane, orderedTaskIds) => {
+      // SWIMLANE_UPDATED_BY_AGENT, not TASK_UPDATED_BY_AGENT, and the channel
+      // rather than `onSwimlaneUpdated`.
+      //
+      // The channel: the renderer fires a toast per push, and the task one
+      // names a single card ("Task updated by agent: X"), so an eight-card
+      // reorder would announce one arbitrary card. The swimlane handler is
+      // deliberately kind-agnostic ("Column changed by agent") - see the
+      // comment on it in `useAgentDrivenInvalidation` - which is exactly right
+      // for a reorder, and it runs the same `scheduleBoardReload()` that
+      // refetches tasks.
+      //
+      // Not the callback: `onSwimlaneUpdated` also writes back to
+      // `kangentic.json` and propagates column strategy to live sessions. A
+      // reorder changes neither the column's config nor any session.
+      sendToRenderer(ipcContext.mainWindow, IPC.SWIMLANE_UPDATED_BY_AGENT, swimlane.id, swimlane.name, projectId);
+      ipcContext.boardEvents.emitBoardChanged({ projectId, change: 'task-updated', ids: orderedTaskIds });
+    },
+
     onSwimlaneUpdated: (swimlane, previous) => {
       sendToRenderer(ipcContext.mainWindow, IPC.SWIMLANE_UPDATED_BY_AGENT, swimlane.id, swimlane.name, projectId);
       ipcContext.boardEvents.emitBoardChanged({ projectId, change: 'swimlane-updated', ids: [swimlane.id] });

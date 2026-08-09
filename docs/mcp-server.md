@@ -26,7 +26,7 @@ Claude Code agent calls MCP tool (e.g. kangentic_create_task)
 | Component | File | Purpose |
 |-----------|------|---------|
 | MCP HTTP Server | `src/main/agent/mcp-http-server.ts` | In-process Node `http` server using `@modelcontextprotocol/sdk` Streamable HTTP transport. Binds 127.0.0.1 by default (configurable via `mcpServer.bindAddress`), random `:0` port, random per-launch token validated via `X-Kangentic-Token`. See [Network Access](#network-access). |
-| Task Tools | `src/main/agent/mcp-http/task-tools.ts` | Board/task/column mutations + related reads (`kangentic_create_task`, `kangentic_move_task`, `kangentic_update_task`, `kangentic_link_pr`, `kangentic_update_column`, `kangentic_create_column`, `kangentic_delete_column`, `kangentic_delete_task`, `kangentic_list_columns`, `kangentic_find_task`, `kangentic_get_current_task`, etc.). |
+| Task Tools | `src/main/agent/mcp-http/task-tools.ts` | Board/task/column mutations + related reads (`kangentic_create_task`, `kangentic_move_task`, `kangentic_reorder_tasks`, `kangentic_update_task`, `kangentic_link_pr`, `kangentic_update_column`, `kangentic_create_column`, `kangentic_delete_column`, `kangentic_delete_task`, `kangentic_list_columns`, `kangentic_find_task`, `kangentic_get_current_task`, etc.). |
 | Profile Tools | `src/main/agent/mcp-http/profile-tools.ts` | Board Profile read + authoring (`kangentic_list_board_profiles`, `kangentic_create_board_profile`, `kangentic_update_board_profile`, `kangentic_delete_board_profile`). Entries are keyed by column NAME so a profile can be copied between projects; see [Board Profiles](#board-profiles). |
 | Session Tools | `src/main/agent/mcp-http/session-tools.ts` | Session inspection, backlog, read-only SQL (`kangentic_list_sessions`, `kangentic_get_transcript`, `kangentic_get_session_files`, `kangentic_get_session_events`, `kangentic_get_activity_intervals`, `kangentic_query_db`, `kangentic_list_backlog`, etc.). |
 | Steering Tools | `src/main/agent/mcp-http/steering-tools.ts` | The write side of the session surface (`kangentic_send_session_message`) plus its debugging read (`kangentic_get_session_messages_sent`). Kept out of `session-tools.ts` because the send needs live main-process singletons (SessionManager, TerminalSubmit) that `CommandContext` does not carry. |
@@ -39,6 +39,7 @@ Claude Code agent calls MCP tool (e.g. kangentic_create_task)
 | Usage Tools | `src/main/agent/mcp-http/usage-tools.ts` | Aggregated usage statistics (`kangentic_get_usage_stats`): tokens, cost, burn rate, and by-model / by-agent / by-effort breakdowns, per project or app-wide, over the shared time ranges. Reads the same usage-stats service as the in-app dashboard. |
 | Command Handlers | `src/main/agent/commands/` | Per-domain handlers shared by the HTTP tools: task, column, profile (`profile-commands.ts`: the four `*_board_profile` commands plus the shared `resolveProfileSelector` used by create/update task), inventory, search, analytics, usage, backlog, handoff, inspect (`get_transcript`, `query_db`), session-files (`get_session_files`, `get_session_events`), and activity-interval (`get_activity_intervals`) commands. |
 | Column Resolver | `src/main/agent/commands/column-resolver.ts` | Shared case-insensitive column name to swimlane lookup used by multiple handlers. |
+| Task Ordering | `src/main/agent/commands/task-ordering.ts` | Pure ordinal-slot arithmetic shared by `handleMoveTask`'s same-column reposition and `handleReorderTasks`: slot clamping, prefix-merge reordering, and ordinal-to-raw-position translation. |
 | MCP Config Delivery | `src/main/agent/adapters/claude/command-builder.ts` | Writes session `mcp.json` (with the per-launch URL + token) and adds `--mcp-config` flag to CLI command. |
 | Trust Manager | `src/main/agent/adapters/claude/trust-manager.ts` | Pre-approves kangentic MCP server in `~/.claude.json`. |
 | Board Refresh | `src/main/ipc/handlers/sessions.ts` | Forwards task-created/updated/backlog-changed events to renderer via IPC. |
@@ -249,11 +250,18 @@ flip, and the live session there is suspended (resumable by hand) rather than le
 
 ### kangentic_list_tasks
 
-List tasks, optionally filtered by column.
+List tasks, optionally filtered by column. Tasks come back in board order (top to bottom within each column).
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `column` | string | No | Filter by column name. If omitted, returns all tasks. |
+
+Each task reports a `position`: its zero-based ordinal slot within its own column, counting only
+non-archived tasks. This is the same slot vocabulary
+[kangentic_move_task](#kangentic_move_task)'s `position` and
+[kangentic_reorder_tasks](#kangentic_reorder_tasks) accept, so the listing can be read and handed
+straight back. It is deliberately not the raw stored `tasks.position` value, which develops gaps
+as tasks are archived.
 
 ### kangentic_search_tasks
 
@@ -357,6 +365,12 @@ Get detailed column configuration: description, auto-spawn, permission mode, pla
 |-----------|------|----------|-------------|
 | `column` | string | Yes | Column name (case-insensitive) |
 
+Also returns `taskOrder`: the column's tasks top to bottom, each with its `position` (the
+zero-based ordinal slot described under [kangentic_list_tasks](#kangentic_list_tasks)). That makes
+this a complete read-before-write call for
+[kangentic_reorder_tasks](#kangentic_reorder_tasks). The rendered message caps the listing at 50
+tasks and says how many were omitted; `data.taskOrder` always carries the whole column.
+
 ### kangentic_update_task
 
 Update a task's title, description (full replace, in-place find/replace edits, or append), PR info, agent assignment, model/effort/permission overrides, priority, labels, base branch, worktree toggle, or attachments. To move a task between columns, use `kangentic_move_task` instead.
@@ -410,12 +424,54 @@ Returns the linked PR (number, url, state) on success, or a message when no PR i
 
 ### kangentic_move_task
 
-Move a task to a different column. Triggers the same lifecycle as a UI drag: spawning/suspending agents, creating/cleaning up worktrees, and running configured transition actions. Moving to the Done column auto-archives the task. Moving to To Do kills the session and removes the worktree.
+Move a task to a different column, optionally placing it at a chosen slot in that column. Triggers the same lifecycle as a UI drag: spawning/suspending agents, creating/cleaning up worktrees, and running configured transition actions. Moving to the Done column auto-archives the task. Moving to To Do kills the session and removes the worktree.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `taskId` | string | Yes | Task ID (numeric display ID or full UUID) |
 | `column` | string | Yes | Target column name (case-insensitive, e.g. `"Review"`, `"Done"`) |
+| `position` | number | No | Zero-based ordinal slot among the column's tasks (not a raw stored position); the tasks at and below it shift down. Clamped to the column, so a value past the end lands last. Omit to append to the end of the column, which is the default. |
+
+Naming the task's **current** column together with `position` repositions it in place. That path is
+presentation only: it does not change the task's column, session, worktree, or `session_id`, and it
+deliberately does not run the move lifecycle at all - so it cannot disturb a drag the user has in
+flight for the same card. Repositioning counts slots among the *other* tasks in the column, so
+`position: 0` is the top and the highest legal slot is one less than the column's length; moving
+*into* a different column counts slots among that column's existing tasks, where the column's length
+is the appending slot.
+
+`position` has no useful effect when moving into Done, which archives the task and takes it off the
+board.
+
+To re-sequence several tasks at once, use [kangentic_reorder_tasks](#kangentic_reorder_tasks).
+
+### kangentic_reorder_tasks
+
+Set the order of tasks within one column, top to bottom, in a single atomic call. This is the tool
+for sequencing a column by priority or execution order ("order To Do so the auth work comes first").
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `column` | string | Yes | Column name whose tasks are being reordered (case-insensitive) |
+| `taskIds` | string[] | Yes | Task IDs (numeric display IDs or full UUIDs), in the order they should appear from the top. Every ID must already be in that column. |
+| `project` | string | No | Project selector to target a different project |
+
+**Prefix semantics.** The listed tasks take the top slots in the order given; any task in the column
+you do not list keeps its relative order below them. So passing every ID sets the column's full
+order, and passing three IDs pins those three to the top. Being a prefix rather than a strict
+full-list contract is what makes the call safe against a live board: a task created between your
+read and your write simply sinks below the ones you named instead of failing the call.
+
+Read the current order first with [kangentic_list_tasks](#kangentic_list_tasks) or
+[kangentic_get_column_detail](#kangentic_get_column_detail).
+
+Reordering is presentation only. It never changes a task's column and never spawns, suspends, or
+otherwise touches a session or worktree - use [kangentic_move_task](#kangentic_move_task) to change
+a task's column. An ID that names a task in another column (or an archived one) is rejected rather
+than silently moved. Duplicate IDs are rejected too.
+
+Returns the column's resulting order as `{ id, displayId, position }` entries; the rendered message
+echoes the first 25 display IDs.
 
 ### kangentic_move_task_to_project
 

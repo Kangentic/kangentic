@@ -60,6 +60,7 @@ import type { CommandContext } from '../../src/main/agent/commands/types';
 function makeContext(db: InstanceType<typeof DatabaseType>, projectPath: string): CommandContext & {
   onTaskCreated: ReturnType<typeof vi.fn>;
   onTaskMove: ReturnType<typeof vi.fn>;
+  onTasksReordered: ReturnType<typeof vi.fn>;
 } {
   return {
     getProjectDb: () => db as unknown as ReturnType<CommandContext['getProjectDb']>,
@@ -68,6 +69,7 @@ function makeContext(db: InstanceType<typeof DatabaseType>, projectPath: string)
     onTaskUpdated: vi.fn(),
     onTaskDeleted: vi.fn(),
     onTaskMove: vi.fn(async () => {}),
+    onTasksReordered: vi.fn(),
     onSwimlaneUpdated: vi.fn(),
     onSwimlaneDeleted: vi.fn(),
     onBacklogChanged: vi.fn(),

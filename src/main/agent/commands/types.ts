@@ -28,6 +28,17 @@ export interface CommandContext {
   onTaskDeleted: (task: Task) => void;
   onTaskMove: (input: { taskId: string; targetSwimlaneId: string; targetPosition: number }) => Promise<void>;
   /**
+   * Tasks were re-sequenced WITHIN one column. Distinct from `onTaskMove`
+   * because a reorder is presentation only: no column change, no session
+   * spawn/suspend, no worktree. It must not go through `handleTaskMove`, which
+   * aborts any in-flight move for the task before it takes the lock and would
+   * therefore kill a user's concurrent cross-column drag of the same card.
+   *
+   * Takes the column and the ids in their new order, so the push can name the
+   * column rather than an arbitrary card.
+   */
+  onTasksReordered: (swimlane: Swimlane, orderedTaskIds: string[]) => void;
+  /**
    * Also used for a newly CREATED column: both mean "this board's columns changed".
    *
    * `previous` is the pre-edit row, and the implementation needs it to work out

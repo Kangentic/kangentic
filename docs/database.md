@@ -611,7 +611,7 @@ Listed in execution order (idempotent, gated on `IF NOT EXISTS` / `pragma table_
 
 ## Repository Pattern
 
-One repository class per table. All queries are synchronous (better-sqlite3). Transactions are used for position shifts (task move, swimlane reorder, project reorder) to ensure consistent ordering.
+One repository class per table. All queries are synchronous (better-sqlite3). Transactions are used for position shifts (task move, task reorder, swimlane reorder, project reorder) to ensure consistent ordering. Task move and task reorder differ: `move()` shifts positions arithmetically and can leave gaps (archiving never renumbers), while `reorderWithinSwimlane()` rewrites a swimlane's positions densely to 0..N-1 in one pass, healing any gaps in the column it touches.
 
 ### ProjectRepository
 
@@ -638,11 +638,13 @@ Operates on a per-project DB.
 | `getById(id)` | Single task by ID (includes `attachment_count`) |
 | `getBySessionId(sessionId)` | Find the active (non-archived) task that owns a given PTY session |
 | `create(input)` | Insert at the end of the target swimlane (next position). Transactional: allocates a monotonic `display_id` from `project_meta` in the same transaction as the INSERT |
+| `nextPositionInSwimlane(swimlaneId)` | The raw append position past everything in a swimlane, archived rows included. `create()`'s append anchor, and what MCP task placement resolves an out-of-range ordinal slot against |
 | `update(input)` | Partial update -- only provided fields are changed |
 | `recordWorktree(id, path, branch, folder)` | Transactional write of `worktree_path`, `branch_name` and the write-once `worktree_folder` together. Separate statements would leave a crash window where the path is set and the folder is not, which a later Done move would turn into permanent loss |
 | `setWorktreeFolder(id, folder)` | Record the worktree's directory name. Write-once: guarded on `worktree_folder IS NULL`, so a task's worktree can never be relocated by a later write |
 | `recoverLegacyWorktreeFolder(taskId, worktreesRoot)` | For a pre-numeric-scheme task whose `worktree_path` was already cleared by a Done move, recover and persist its original directory name from the newest `sessions.cwd`. Accepts only a direct child of `worktreesRoot`, so a project that is itself checked out at a worktree path cannot claim the enclosing worktree's name |
 | `move(input)` | Transactional move: shift positions in old and new swimlanes, update task |
+| `reorderWithinSwimlane(swimlaneId, orderedTaskIds)` | Dense rewrite of one swimlane's task order to 0..N-1 in a single transaction. The write behind `kangentic_reorder_tasks` and `kangentic_move_task`'s same-column `position`. Unlike `move()`'s two-shift arithmetic it heals position gaps left by archiving; a stray id from another swimlane is a no-op (`swimlane_id` guard), and re-issuing the same order writes nothing (`position != ?` guard, so `updated_at` moves only on rows that actually shift) |
 | `archive(id)` | Set `archived_at` to now (soft-delete for Done column) |
 | `unarchive(id, targetSwimlaneId, position)` | Clear `archived_at`, move to target swimlane and position |
 | `listArchived()` | All archived tasks ordered by `archived_at` DESC |

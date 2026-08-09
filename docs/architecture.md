@@ -161,7 +161,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `swimlane:update` | invoke | Update swimlane properties |
 | `swimlane:delete` | invoke | Delete swimlane (blocked if has tasks) |
 | `swimlane:reorder` | invoke | Reorder swimlanes by ID array |
-| `swimlane:updatedByAgent` | on | Push event when an MCP agent updates a swimlane |
+| `swimlane:updatedByAgent` | on | Push event when an MCP agent changes a project's columns: a column create, update, or delete, or (reusing the same deliberately kind-agnostic signal) a same-column task reorder via `kangentic_reorder_tasks` / `kangentic_move_task`'s `position`, where no swimlane field itself changed |
 
 ### Actions (4 channels)
 | Channel | Pattern | Purpose |
@@ -508,7 +508,7 @@ Created on project open. Stored in the global config directory (not inside the p
 - **handoffs** -- Cross-agent handoff records. Tracks from/to agents and sessions, stores serialized `ContextPacket` (transcript excluded). FK on task_id with CASCADE delete.
 - **usage_history** -- Append-only ledger of finalized session usage (cost, tokens, duration, tool count, git stats, model, agent). No FK to `tasks` or `sessions`, so rows survive task deletion, bulk-archive cleanup, and revert-to-backlog. Backs the usage dashboard's period totals, cost-per-day series, and by-model / by-agent breakdowns (Live/Today/Week/Month/All Time) via `usage:getDashboardStats` and the `kangentic_get_usage_stats` MCP tool. Written by `captureSessionMetrics` (UPSERT on `session_record_id`) and `captureGitChurn` (`src/main/ipc/handlers/git-stats-capture.ts`, fired on every session finalization - suspend, move, handoff, respawn, natural exit - not just move-to-Done; writes to exactly one record per task lineage via `setTaskGitStats` to avoid double-counting branch-cumulative churn across `--resume` records). The dashboard's SESSIONS KPI and Live view additionally merge in-flight sessions from the live `SessionManager` (deduped by `session_record_id` against the ledger) so running sessions are not undercounted before they finalize.
 
-Repositories follow a simple pattern -- one class per table, all queries are synchronous (better-sqlite3). Transactions used for position shifts (task move, swimlane reorder).
+Repositories follow a simple pattern -- one class per table, all queries are synchronous (better-sqlite3). Transactions used for position shifts (task move, task reorder, swimlane reorder). Task reorder (`reorderWithinSwimlane`) is a dense 0..N-1 rewrite that heals the position gaps `move()`'s arithmetic shift leaves behind.
 
 ## Agent Resolution
 

@@ -190,7 +190,7 @@ export function registerTaskTools(
   server.registerTool(
     'kangentic_list_tasks',
     {
-      description: 'List tasks on the Kangentic board. Optionally filter by column name. Pass `project` to list tasks from a different project.',
+      description: 'List tasks on the Kangentic board, in board order (top to bottom within each column). Optionally filter by column name. Each task reports `position`, its zero-based ordinal slot within its own column - the same slot kangentic_move_task and kangentic_reorder_tasks accept, so a listing can be read and handed straight back. Pass `project` to list tasks from a different project.',
       inputSchema: z.object({
         column: z.string().optional().describe('Filter by column name. If omitted, returns all tasks.'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
@@ -202,7 +202,7 @@ export function registerTaskTools(
       if (!response.success) {
         return { content: [{ type: 'text' as const, text: `Failed to list tasks: ${response.error}` }], isError: true };
       }
-      const tasks = response.data as Array<{ id: string; displayId: number; title: string; description: string; column: string }>;
+      const tasks = response.data as Array<{ id: string; displayId: number; title: string; description: string; column: string; position: number }>;
       if (tasks.length === 0) {
         const filterNote = column ? ` in "${column}"` : '';
         return { content: [{ type: 'text' as const, text: `No tasks found${filterNote}.` }] };
@@ -211,7 +211,7 @@ export function registerTaskTools(
         const descriptionPreview = task.description
           ? ` - ${task.description.slice(0, 100)}${task.description.length > 100 ? '...' : ''}`
           : '';
-        return `- [${task.column}] ${task.title}${descriptionPreview} (#${task.displayId}, id: ${task.id})`;
+        return `- [${task.column}] ${task.title}${descriptionPreview} (#${task.displayId}, id: ${task.id}, position: ${task.position})`;
       });
       return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
     }),
@@ -388,7 +388,7 @@ export function registerTaskTools(
   server.registerTool(
     'kangentic_get_column_detail',
     {
-      description: 'Get detailed configuration for a board column: automation settings (auto-spawn, auto-command, permission mode), plan exit target, role, and visual settings. Pass `project` to inspect a column in a different project.',
+      description: 'Get detailed configuration for a board column: automation settings (auto-spawn, auto-command, permission mode), plan exit target, role, and visual settings. Also returns `taskOrder`, the column\'s tasks top to bottom with their zero-based ordinal `position`, which makes this a complete read-before-write call for kangentic_reorder_tasks. Pass `project` to inspect a column in a different project.',
       inputSchema: z.object({
         column: z.string().describe('Column name (case-insensitive).'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
@@ -502,15 +502,31 @@ export function registerTaskTools(
   server.registerTool(
     'kangentic_move_task',
     {
-      description: 'Move a task to a different column. Triggers the same lifecycle as a UI drag: spawning/suspending agents, creating/cleaning up worktrees, and running configured transition actions. Moving to the Done column auto-archives the task. Moving to To Do kills the session and removes the worktree. If the user\'s prompt names a different Kangentic project, pass that name as `project` to route the move to that project instead of the active default. The name counts however it is phrased: "move task #7 in X to Done", "on the X board", and "in X" all target project X.',
+      description: 'Move a task to a different column, optionally placing it at a chosen slot in that column. Triggers the same lifecycle as a UI drag: spawning/suspending agents, creating/cleaning up worktrees, and running configured transition actions. Moving to the Done column auto-archives the task. Moving to To Do kills the session and removes the worktree. Naming the task\'s CURRENT column together with `position` repositions it in place, which changes nothing but its order - no session, worktree, or lifecycle effects. To re-sequence several tasks at once, use kangentic_reorder_tasks. If the user\'s prompt names a different Kangentic project, pass that name as `project` to route the move to that project instead of the active default. The name counts however it is phrased: "move task #7 in X to Done", "on the X board", and "in X" all target project X.',
       inputSchema: z.object({
         taskId: z.string().describe('Task ID (numeric display ID like "42" or full UUID).'),
         column: z.string().describe('Target column name (case-insensitive, e.g. "Review", "In Progress", "Done").'),
+        position: z.number().int().min(0).optional().describe('Zero-based ordinal slot among the column\'s tasks (not a raw stored position); the tasks at and below it shift down. Clamped to the column, so a value past the end lands last. Repositioning within the task\'s current column counts slots among the OTHER tasks there, so 0 is the top. Omit to append to the end of the column, which is the default. Has no useful effect when moving into Done, which archives the task.'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ taskId, column, project }) => withProject(resolver, project, (ctx) => callHandler('move_task', { taskId, column }, ctx, 'Failed to move task')),
+    async ({ taskId, column, position, project }) => withProject(resolver, project, (ctx) => callHandler('move_task', { taskId, column, position: position ?? null }, ctx, 'Failed to move task')),
+  );
+
+  // --- kangentic_reorder_tasks ---
+  server.registerTool(
+    'kangentic_reorder_tasks',
+    {
+      description: 'Set the order of tasks within one column, top to bottom, in a single call. Use this to sequence a column by priority or execution order ("order To Do so the auth work comes first"). The listed tasks take the top slots in the order given; any task in the column you do not list keeps its relative order below them, so you can pass every task to set the full order or just a few to pin them to the top. Read the current order first with kangentic_list_tasks or kangentic_get_column_detail. This never moves a task between columns and never spawns, suspends, or otherwise touches a session or worktree - use kangentic_move_task to change a task\'s column. Pass `project` to reorder a column in a different project.',
+      inputSchema: z.object({
+        column: z.string().describe('Column name whose tasks are being reordered (case-insensitive).'),
+        taskIds: z.array(z.string()).min(1).describe('Task IDs (numeric display IDs like "42" or full UUIDs), in the order they should appear from the top of the column. Every ID must already be in that column.'),
+        project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
+      }),
+      annotations: MUTATING_ANNOTATIONS,
+    },
+    async ({ column, taskIds, project }) => withProject(resolver, project, (ctx) => callHandler('reorder_tasks', { column, taskIds }, ctx, 'Failed to reorder tasks')),
   );
 
   // --- kangentic_move_task_to_project ---

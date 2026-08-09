@@ -44,18 +44,24 @@ export const handleListTasks: CommandHandler = (
     targetSwimlanes = [matched];
   }
 
-  const tasks: Array<{ id: string; displayId: number; title: string; description: string; column: string }> = [];
+  const tasks: Array<{ id: string; displayId: number; title: string; description: string; column: string; position: number }> = [];
   for (const swimlane of targetSwimlanes) {
+    // `list()` is ORDER BY position ASC, so the loop index IS the task's
+    // zero-based slot in its column. Report that ordinal rather than the raw
+    // `tasks.position` value: the two diverge once archiving has gapped the
+    // column, and the ordinal is what the placement tools
+    // (kangentic_move_task's `position`, kangentic_reorder_tasks) consume.
     const swimlaneTasks = taskRepo.list(swimlane.id);
-    for (const task of swimlaneTasks) {
+    swimlaneTasks.forEach((task, slot) => {
       tasks.push({
         id: task.id,
         displayId: task.display_id,
         title: task.title,
         description: task.description,
         column: swimlane.name,
+        position: slot,
       });
-    }
+    });
   }
 
   return { success: true, data: tasks };

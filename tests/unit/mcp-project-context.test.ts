@@ -467,3 +467,84 @@ describe('buildCommandContextForProject - onSwimlaneUpdated strategy propagation
     expect(buildColumnStrategyChanges).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// onTasksReordered
+//
+// Fired after `kangentic_reorder_tasks` or a same-column `kangentic_move_task`.
+// Every other test in this file stubs the callback as a bare `vi.fn()`, so its
+// real body has never been exercised. Three deliberate decisions are pinned
+// here (see the comment on the callback in mcp-project-context.ts):
+//
+//   - it announces the change through SWIMLANE_UPDATED_BY_AGENT, not
+//     TASK_UPDATED_BY_AGENT - a task push names one arbitrary card, which is
+//     wrong for an N-card reorder;
+//   - the board-changed event carries the FULL ordered id list, not just one
+//     id;
+//   - it does NOT delegate to onSwimlaneUpdated, which would also write back
+//     kangentic.json and propagate column strategy to live sessions - neither
+//     applies to a presentation-only reorder.
+// ---------------------------------------------------------------------------
+
+describe('buildCommandContextForProject - onTasksReordered', () => {
+  const PROJECT_PATH = '/projects/example';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function makeReorderContext() {
+    const project = makeProject({ id: DEFAULT_ID, path: PROJECT_PATH });
+    const send = vi.fn();
+    const writeBackForProject = vi.fn();
+    const emitBoardChanged = vi.fn();
+    const ipcContext = {
+      projectRepo: { getById: vi.fn(() => project), list: vi.fn(() => [project]) },
+      mainWindow: { isDestroyed: () => false, webContents: { send } },
+      boardConfigManager: { writeBackForProject },
+      boardEvents: { emitBoardChanged },
+    } as unknown as IpcContext;
+    return { ipcContext, send, writeBackForProject, emitBoardChanged };
+  }
+
+  // onTasksReordered only reads id + name off the swimlane, same as
+  // onSwimlaneUpdated's own renderer push.
+  const fakeSwimlane = (): Swimlane => ({ id: 'lane-1', name: 'To Do' }) as unknown as Swimlane;
+
+  it('sends SWIMLANE_UPDATED_BY_AGENT, not TASK_UPDATED_BY_AGENT, for an N-card reorder', () => {
+    const { ipcContext, send } = makeReorderContext();
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID)!;
+
+    context.onTasksReordered(fakeSwimlane(), ['task-a', 'task-b', 'task-c']);
+
+    expect(send).toHaveBeenCalledWith('SWIMLANE_UPDATED_BY_AGENT', 'lane-1', 'To Do', DEFAULT_ID);
+    expect(send).not.toHaveBeenCalledWith(
+      'TASK_UPDATED_BY_AGENT', expect.anything(), expect.anything(), expect.anything(),
+    );
+  });
+
+  it('emits a task-updated board event carrying the FULL ordered id list', () => {
+    const { ipcContext, emitBoardChanged } = makeReorderContext();
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID)!;
+
+    context.onTasksReordered(fakeSwimlane(), ['task-a', 'task-b', 'task-c']);
+
+    expect(emitBoardChanged).toHaveBeenCalledWith({
+      projectId: DEFAULT_ID,
+      change: 'task-updated',
+      ids: ['task-a', 'task-b', 'task-c'],
+    });
+  });
+
+  it('does not delegate to onSwimlaneUpdated: no kangentic.json write-back', () => {
+    // writeBackForProject is unconditional inside onSwimlaneUpdated, so its
+    // absence here is the sharpest signal a reorder took a different path - a
+    // reorder changes neither the column's config nor any live session.
+    const { ipcContext, writeBackForProject } = makeReorderContext();
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID)!;
+
+    context.onTasksReordered(fakeSwimlane(), ['task-a']);
+
+    expect(writeBackForProject).not.toHaveBeenCalled();
+  });
+});

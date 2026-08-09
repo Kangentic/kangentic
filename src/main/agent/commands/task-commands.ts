@@ -7,6 +7,12 @@ import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { readFileAsAttachment } from '../../db/repositories/attachment-utils';
 import { resolveColumn } from './column-resolver';
 import { resolveTask } from './task-resolver';
+import {
+  clampSlot,
+  computeIdsWithTaskAtSlot,
+  computeReorderedIds,
+  resolveRawPosition,
+} from './task-ordering';
 import { handleCreateBacklogTask, BACKLOG_DESCRIPTION_MAX_LENGTH } from './backlog-commands';
 import { resolveProfileSelector } from './profile-commands';
 import { linkPRForTask } from '../../pr/pr-linking';
@@ -573,6 +579,25 @@ export const handleLinkPr: CommandHandler = async (
   }
 };
 
+/**
+ * Parse the optional `position` argument shared by `move_task`. Returns null
+ * when omitted, so the caller keeps its existing append placement, and mirrors
+ * `handleCreateColumn`'s rejection wording for a bad value.
+ */
+function parseSlotParam(value: unknown): { slot: number } | { error: string } | null {
+  if (value === undefined || value === null) return null;
+  // Not `Number(value)`: that coerces '', [], and '   ' to 0 and `true` to 1,
+  // so a junk argument would silently become a real slot instead of an error.
+  // The MCP schema already guarantees a number here, but the dev-only devtools
+  // proxy forwards raw JSON straight into `commandHandlers` and does not.
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+    return {
+      error: `Invalid position "${String(value)}". Provide a whole number >= 0, or omit it to place the task at the end of the column.`,
+    };
+  }
+  return { slot: value };
+}
+
 export const handleMoveTask: CommandHandler = (
   params: Record<string, unknown>,
   context: CommandContext,
@@ -585,6 +610,11 @@ export const handleMoveTask: CommandHandler = (
   }
   if (!columnName) {
     return { success: false, error: 'column is required' };
+  }
+
+  const parsedSlot = parseSlotParam(params.position);
+  if (parsedSlot && 'error' in parsedSlot) {
+    return { success: false, error: parsedSlot.error };
   }
 
   const db = context.getProjectDb();
@@ -601,16 +631,62 @@ export const handleMoveTask: CommandHandler = (
   const { swimlane: targetSwimlane } = resolution;
 
   if (task.swimlane_id === targetSwimlane.id) {
+    // Already here, and no slot named: the long-standing no-op.
+    if (!parsedSlot) {
+      return {
+        success: true,
+        message: `Task "${task.title}" is already in ${targetSwimlane.name}.`,
+        data: { id: task.id, displayId: task.display_id, column: targetSwimlane.name },
+      };
+    }
+
+    // Already here WITH a slot: a reposition, and deliberately not routed
+    // through `onTaskMove`. `handleTaskMove` aborts any in-flight move for this
+    // task before it takes the lock, so an agent nudging a card inside To Do
+    // would kill a user's concurrent cross-column drag of that same card along
+    // with the spawn it was about to run. Nothing is lost by bypassing it:
+    // `handleTaskMove` returns for a same-lane move before every one of its
+    // lifecycle branches, so a within-column drag already spawns nothing,
+    // suspends nothing, and runs no transition action. Only the WRITE differs,
+    // and deliberately - `handleTaskMove` reaches `move()`, a sparse two-shift
+    // update, where this path does a dense, gap-healing, position-only rewrite.
+    const laneIds = taskRepo.list(targetSwimlane.id).map((laneTask) => laneTask.id);
+    // An ARCHIVED task still reports the column it was archived from, and Done
+    // resolves by name via includeArchivedDone - but `list()` filters archived
+    // rows out, so the task has no slot to take. Reject instead of renumbering
+    // the live cards around a card that is not on the board and then reporting a
+    // position it does not have.
+    if (!laneIds.includes(task.id)) {
+      return {
+        success: false,
+        error: `Task "${task.title}" (#${task.display_id}) is archived, so it has no position in ${targetSwimlane.name}.`,
+      };
+    }
+    // Slot is evaluated against the column WITHOUT this task, so the last legal
+    // slot is one less than the column's length.
+    const slot = clampSlot(parsedSlot.slot, laneIds.length - 1);
+    const orderedIds = computeIdsWithTaskAtSlot(laneIds, task.id, slot);
+    taskRepo.reorderWithinSwimlane(targetSwimlane.id, orderedIds);
+    context.onTasksReordered(targetSwimlane, orderedIds);
+
     return {
       success: true,
-      message: `Task "${task.title}" is already in ${targetSwimlane.name}.`,
-      data: { id: task.id, displayId: task.display_id, column: targetSwimlane.name },
+      message: `Moved "${task.title}" (#${task.display_id}) to position ${slot} of ${targetSwimlane.name}.`,
+      data: { id: task.id, displayId: task.display_id, column: targetSwimlane.name, position: slot },
     };
   }
 
-  // Position at end of target column
+  // Cross-column. The task is not in the target lane yet, so its length is a
+  // legal (appending) slot. An ordinal has to be translated into a RAW position
+  // before it reaches the repository: the two diverge as soon as archiving has
+  // left the lane's positions gapped. See `resolveRawPosition`.
   const targetTasks = taskRepo.list(targetSwimlane.id);
-  const targetPosition = targetTasks.length;
+  const slot = parsedSlot ? clampSlot(parsedSlot.slot, targetTasks.length) : targetTasks.length;
+  const targetPosition = resolveRawPosition(
+    targetTasks.map((laneTask) => laneTask.position),
+    slot,
+    taskRepo.nextPositionInSwimlane(targetSwimlane.id),
+  );
 
   // Fire-and-forget the async move (transition engine, agent spawn/suspend, worktree management).
   // The MCP response confirms intent; the LLM should re-query to verify state if needed.
@@ -622,10 +698,112 @@ export const handleMoveTask: CommandHandler = (
     console.error(`[move_task] Failed for task ${task.id.slice(0, 8)}:`, error);
   });
 
+  const placement = parsedSlot ? ` at position ${slot}` : '';
   return {
     success: true,
-    message: `Moving "${task.title}" (#${task.display_id}) to ${targetSwimlane.name}.`,
-    data: { id: task.id, displayId: task.display_id, column: targetSwimlane.name },
+    message: `Moving "${task.title}" (#${task.display_id}) to ${targetSwimlane.name}${placement}.`,
+    data: { id: task.id, displayId: task.display_id, column: targetSwimlane.name, position: slot },
+  };
+};
+
+/** Cap on how many tasks a reorder echoes back before truncating. */
+const REORDER_ECHO_LIMIT = 25;
+
+/**
+ * Re-sequence tasks within a single column.
+ *
+ * Presentation only: it never changes a task's column, session, or worktree,
+ * which is exactly why it does not go anywhere near `onTaskMove`. See
+ * `computeReorderedIds` for the prefix semantics and
+ * `TaskRepository.reorderWithinSwimlane` for why the write is a dense rewrite
+ * and why it is not under `withTaskLock`.
+ */
+export const handleReorderTasks: CommandHandler = (
+  params: Record<string, unknown>,
+  context: CommandContext,
+): CommandResponse => {
+  const columnName = params.column as string | null;
+  const requestedIdParams = params.taskIds;
+
+  if (!columnName) {
+    return { success: false, error: 'column is required' };
+  }
+  if (!Array.isArray(requestedIdParams) || requestedIdParams.length === 0) {
+    return { success: false, error: 'taskIds is required and must list at least one task.' };
+  }
+
+  const db = context.getProjectDb();
+  const taskRepo = new TaskRepository(db);
+
+  const resolution = resolveColumn(db, columnName, 'todo', { includeArchivedDone: true });
+  if ('error' in resolution) {
+    return { success: false, error: resolution.error };
+  }
+  const { swimlane } = resolution;
+
+  const laneTasks = taskRepo.list(swimlane.id);
+  const laneIds = laneTasks.map((laneTask) => laneTask.id);
+  const laneTaskById = new Map(laneTasks.map((laneTask) => [laneTask.id, laneTask]));
+
+  // Resolve every id to a UUID BEFORE testing membership: `resolveTask` accepts
+  // a numeric display ID, and the lane holds UUIDs, so comparing the raw input
+  // would reject every "#42"-style id the agent is most likely to send.
+  const requestedIds: string[] = [];
+  const seenIds = new Set<string>();
+  for (const requestedIdParam of requestedIdParams) {
+    const idParam = String(requestedIdParam);
+    const requestedTask = resolveTask(taskRepo, idParam);
+    if (!requestedTask) {
+      return { success: false, error: `Task "${idParam}" not found` };
+    }
+    if (!laneTaskById.has(requestedTask.id)) {
+      // An ARCHIVED task still reports the column it was archived from, and Done
+      // resolves by name via includeArchivedDone, so a task can name this very
+      // column and still be absent from `list()`. Say THAT, rather than the
+      // wrong-column message below, which would be flatly false. Mirrors the
+      // same guard on `handleMoveTask`'s reposition path.
+      if (requestedTask.swimlane_id === swimlane.id) {
+        return {
+          success: false,
+          error: `Task "${idParam}" (#${requestedTask.display_id}) is archived, so it has no position in ${swimlane.name}.`,
+        };
+      }
+      return {
+        success: false,
+        error: `Task "${idParam}" (#${requestedTask.display_id}) is not in ${swimlane.name}. Reordering never moves a task between columns - use kangentic_move_task for that.`,
+      };
+    }
+    if (seenIds.has(requestedTask.id)) {
+      return {
+        success: false,
+        error: `Task "${idParam}" (#${requestedTask.display_id}) is listed more than once in taskIds.`,
+      };
+    }
+    seenIds.add(requestedTask.id);
+    requestedIds.push(requestedTask.id);
+  }
+
+  const orderedIds = computeReorderedIds(laneIds, requestedIds);
+  taskRepo.reorderWithinSwimlane(swimlane.id, orderedIds);
+  context.onTasksReordered(swimlane, orderedIds);
+
+  const displayOrder = orderedIds.map((id) => `#${laneTaskById.get(id)!.display_id}`);
+  const echoed = displayOrder.slice(0, REORDER_ECHO_LIMIT).join(', ');
+  const overflowSuffix = displayOrder.length > REORDER_ECHO_LIMIT
+    ? `, and ${displayOrder.length - REORDER_ECHO_LIMIT} more`
+    : '';
+
+  return {
+    success: true,
+    message: `Reordered ${swimlane.name}. New order: ${echoed}${overflowSuffix}.`,
+    data: {
+      column: swimlane.name,
+      order: orderedIds.map((id, index) => ({
+        id,
+        displayId: laneTaskById.get(id)!.display_id,
+        position: index,
+      })),
+    },
   };
 };
 

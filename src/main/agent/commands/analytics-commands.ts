@@ -404,6 +404,13 @@ export async function handleGetSessionHistory(
   };
 }
 
+/**
+ * Cap on how many tasks the column's running order echoes into the message.
+ * The full ordering still ships in `data.taskOrder`; this only bounds the
+ * rendered text so a 200-card column does not swamp the tool response.
+ */
+const COLUMN_DETAIL_TASK_LIMIT = 50;
+
 export const handleGetColumnDetail: CommandHandler = (
   params: Record<string, unknown>,
   context: CommandContext,
@@ -454,6 +461,27 @@ export const handleGetColumnDetail: CommandHandler = (
   lines.push(`  Color: ${matched.color}`);
   if (matched.icon) lines.push(`  Icon: ${matched.icon}`);
 
+  // The column's running order, so this is a complete read-before-reorder call
+  // for kangentic_reorder_tasks and kangentic_move_task's `position`. `list()`
+  // is ORDER BY position ASC, so the index IS each task's zero-based slot;
+  // report that ordinal, not the raw stored position, which diverges from it
+  // once archiving has gapped the column.
+  const taskOrder = tasks.map((task, slot) => ({
+    id: task.id,
+    displayId: task.display_id,
+    title: task.title,
+    position: slot,
+  }));
+  if (taskOrder.length > 0) {
+    lines.push('  Task order (top to bottom):');
+    for (const entry of taskOrder.slice(0, COLUMN_DETAIL_TASK_LIMIT)) {
+      lines.push(`    ${entry.position}. #${entry.displayId} ${entry.title}`);
+    }
+    if (taskOrder.length > COLUMN_DETAIL_TASK_LIMIT) {
+      lines.push(`    ... and ${taskOrder.length - COLUMN_DETAIL_TASK_LIMIT} more (use kangentic_list_tasks for the full column)`);
+    }
+  }
+
   return {
     success: true,
     message: lines.join('\n'),
@@ -463,6 +491,7 @@ export const handleGetColumnDetail: CommandHandler = (
       description: matched.description,
       role: matched.role,
       taskCount: tasks.length,
+      taskOrder,
       autoSpawn: matched.auto_spawn,
       permissionMode: matched.permission_mode,
       autoCommand: matched.auto_command,

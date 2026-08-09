@@ -144,6 +144,7 @@ function makeContext(overrides: Partial<CommandContext> = {}): CommandContext {
     onTaskUpdated: vi.fn(),
     onTaskDeleted: vi.fn(),
     onTaskMove: vi.fn(async () => {}),
+    onTasksReordered: vi.fn(),
     onSwimlaneUpdated: vi.fn(),
     onSwimlaneDeleted: vi.fn(),
     ...overrides,

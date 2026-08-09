@@ -228,13 +228,25 @@ export class TaskRepository {
     return this.db.transaction(() => this.createWithinTransaction(input))();
   }
 
+  /**
+   * The raw `position` that appends past everything currently in a swimlane.
+   *
+   * Counts ARCHIVED rows too, unlike `list()`. That asymmetry is deliberate and
+   * long-standing: archiving leaves `position` untouched, so an append that
+   * ignored archived rows could reuse a position an archived task still holds.
+   * Callers placing a task by ordinal slot need this as their append anchor -
+   * see `resolveRawPosition` in `agent/commands/task-ordering.ts`.
+   */
+  nextPositionInSwimlane(swimlaneId: string): number {
+    const maxPosition = this.db.prepare('SELECT COALESCE(MAX(position), -1) as max FROM tasks WHERE swimlane_id = ?').get(swimlaneId) as { max: number };
+    return maxPosition.max + 1;
+  }
+
   private createWithinTransaction(input: TaskCreateInput): Task {
     const now = new Date().toISOString();
     const createdAt = input.createdAt ?? now;
     const id = uuidv4();
-    // Get next position in the target swimlane
-    const maxPos = this.db.prepare('SELECT COALESCE(MAX(position), -1) as max FROM tasks WHERE swimlane_id = ?').get(input.swimlane_id) as { max: number };
-    const position = maxPos.max + 1;
+    const position = this.nextPositionInSwimlane(input.swimlane_id);
 
     const displayId = this.allocateDisplayId();
 
@@ -384,6 +396,64 @@ export class TaskRepository {
       // Move the task
       this.db.prepare('UPDATE tasks SET swimlane_id = ?, position = ?, updated_at = ? WHERE id = ?')
         .run(targetSwimlaneId, targetPosition, new Date().toISOString(), taskId);
+    });
+    tx();
+  }
+
+  /**
+   * Rewrite a column's task order as dense positions (0..n-1) in one
+   * transaction. This is the write behind the MCP placement surface:
+   * `kangentic_reorder_tasks`, and `kangentic_move_task`'s same-column
+   * `position`.
+   *
+   * A dense rewrite rather than a sequence of `move()` calls, for three
+   * reasons. It is atomic. It is immune to the ordinal-vs-raw hazard `move()`
+   * inherits from gapped positions (`archive()` leaves `position` untouched and
+   * `create` takes `MAX(position) + 1` over archived rows, so a column's live
+   * cards can sit at 0, 5, 9). And it HEALS those gaps, in any column where
+   * every id passed is a member of that column - which is what both callers
+   * guarantee. A stray id consumes its slot as a no-op (the `swimlane_id`
+   * guard), so a caller that skipped that check would leave the column gapped
+   * rather than dense.
+   *
+   * It writes `position` and NOTHING ELSE - deliberately, and this is
+   * load-bearing rather than an omission. `move()` bumps `updated_at` only on
+   * the row that actually moved; its two position-shift UPDATEs leave siblings
+   * alone. `lane-pins.ts` builds on exactly that: a lane pin holds while the
+   * server keeps telling the pre-move story, and it drops the moment a payload
+   * differs in {presence, lane, `updated_at`}, so a sibling merely shifting
+   * position must not carry a fresh stamp or it spuriously drops a pin and the
+   * user's in-flight card snaps back mid-drag. Stamping every reordered row
+   * would break that. The board still repaints, because
+   * `structural-sharing.ts` compares `position` field-by-field rather than
+   * keying off `updated_at`. The `position != ?` guard keeps re-issuing the
+   * same order a no-write, and the `swimlane_id` guard makes an id from another
+   * column a no-op rather than a cross-column corruption.
+   *
+   * Deliberately NOT wrapped in `withTaskLock`
+   * (`.claude/rules/task-lifecycle-lock.md`, which is path-scoped to
+   * `src/main/ipc/**` and so does not auto-load at the call sites): that lock is
+   * per-task and documented non-reentrant, so there is no correct way to hold it
+   * for the N tasks a reorder mutates. The rule's own carve-out covers this
+   * instead - the whole rewrite is synchronous, so it cannot interleave with
+   * anything and there is no race to serialize. Two accepted residuals, both
+   * presentation-only and both self-healing on the next drag or reorder:
+   * `handleTaskMove` captures a task's `originalPosition` before its unlocked
+   * git I/O and restores it on rollback, so a reorder landing inside that window
+   * makes the rollback restore a stale position; and `handleMoveTask`'s
+   * CROSS-column path resolves an ordinal to a raw anchor synchronously but
+   * hands it to a fire-and-forget `onTaskMove`, so a reorder of the destination
+   * lane before that write lands leaves the incoming card beside a different
+   * neighbour than the one the anchor named.
+   */
+  reorderWithinSwimlane(swimlaneId: string, orderedTaskIds: string[]): void {
+    const updatePositionStatement = this.db.prepare(
+      'UPDATE tasks SET position = ? WHERE id = ? AND swimlane_id = ? AND position != ?',
+    );
+    const tx = this.db.transaction(() => {
+      orderedTaskIds.forEach((taskId, index) => {
+        updatePositionStatement.run(index, taskId, swimlaneId, index);
+      });
     });
     tx();
   }
