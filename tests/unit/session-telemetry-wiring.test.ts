@@ -20,6 +20,7 @@ import type { ProcessInfo, ProcessTreeProbe } from '../../src/main/activity-engi
 import { looksLikeShellId } from '../../src/main/activity-engine/background-shell/looks-like-shell-id';
 import { EventType } from '../../src/shared/types';
 import type { ActivityState, ActivityReason, SessionUsage, SessionEvent } from '../../src/shared/types';
+import { NO_ACTIVITY_HOLD_FLAG } from '../../src/shared/background-shell-hold';
 
 // ==== Minimal mock process-tree probe ====
 
@@ -1037,5 +1038,130 @@ describe('SessionTelemetry: hydrateKnownWindows -> UsageAccumulator.hydrateKnown
 
     const unrelatedReemit = usageChanges.find((entry) => entry.sessionId === 'session-other-model');
     expect(unrelatedReemit).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getNamedShellIds must include exemptBackgroundShellIds too
+// (preview-watcher no-activity-hold exemption)
+// ---------------------------------------------------------------------------
+
+describe('SessionTelemetry: BgShellWatcherCallbacks.getNamedShellIds includes exemptBackgroundShellIds', () => {
+  // `getActiveShellCount` and `getNamedShellIds` (session-telemetry.ts) are
+  // both documented to sum `activeBackgroundShellIds` AND
+  // `exemptBackgroundShellIds` - dropping the exempt set from either would
+  // shrink the watcher's `expected` count and permanently fold a live
+  // process into `preExistingHelpers` (see the comment on the
+  // `getActiveShellCount` callback at the BgShellWatcher construction site).
+  // That corruption is NOT reliably observable through the watcher's
+  // surplus/deficit heuristic - the two closures' errors happen to cancel out
+  // in `expected = preExistingHelpers + tracked` for a lone exempt shell, and
+  // Tier A PID capture can race ahead of either closure regardless of the
+  // bug. `getNamedShellIds` has one reliably observable consumer that runs
+  // BEFORE any of that arithmetic, though: the watcher's transcript-drain
+  // block (`cycleSession`, `watcher.ts`) offers every PID-less NAMED shell to
+  // `reportTerminatedShellsFromTranscript` on every cycle, unconditionally,
+  // before the process-tree walk or any surplus/deficit branch runs. If
+  // `getNamedShellIds` excluded the exempt set, the exempt shell would never
+  // be offered - and the drain the doc comment on `exemptBackgroundShellIds`
+  // promises ("the shell drains normally when the preview exits") would
+  // never fire for it.
+  //
+  // Red-green: removing `...state.exemptBackgroundShellIds` from
+  // `getNamedShellIds`'s spread in session-telemetry.ts leaves
+  // reportTerminatedBackgroundShells never called for the exempt shell, so
+  // assertion (a) below fails, and the shell is never drained (assertion (b)
+  // fails too).
+
+  const EXEMPT_TOOL_ID = 'toolu_preview_watch';
+  const EXEMPT_SHELL_ID = 'bw37v13wm';
+
+  let probe: MockProcessTreeProbe;
+  let rootPids: Map<string, number>;
+  let log: CallbackLog;
+  let telemetry: SessionTelemetry;
+  let reportTerminatedBackgroundShells: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    probe = new MockProcessTreeProbe();
+    rootPids = new Map();
+    log = { activityChanges: [], events: [], usageChanges: [] };
+    const callbacks = makeCallbacks(log);
+    // Report every offered id as transcript-terminated, so a successful
+    // offer also proves the drain wiring end to end (a bonus over merely
+    // checking the offer was made).
+    reportTerminatedBackgroundShells = vi.fn((_sessionId: string, shellIds: string[]) => shellIds);
+
+    telemetry = new SessionTelemetry(
+      {
+        ...callbacks,
+        getSessionRootPid: (sessionId) => rootPids.get(sessionId),
+        reportTerminatedBackgroundShells,
+      },
+      {
+        processTreeProbe: probe,
+        disableBgShellWatcher: false,
+        activityEngineOptions: {
+          bgShellEscapeHatchMs: 300_000,
+          staleThinkingTimeoutMs: 300_000,
+          idleStabilityWindowMs: 0,
+        },
+      },
+    );
+  });
+
+  afterEach(() => {
+    telemetry.dispose();
+    vi.useRealTimers();
+  });
+
+  it('offers a PID-less exempt shell to the transcript drain and drains it once confirmed terminated', async () => {
+    const rootPid = 9101;
+    rootPids.set('s-exempt', rootPid);
+    probe.alive.add(rootPid);
+    probe.trees.set(rootPid, []);
+
+    telemetry.initSession('s-exempt');
+
+    // The exempt-shell promotion: PreToolUse (anonymous, sentinel command +
+    // toolId), then PostToolUse (named, same toolId) - matches the shape
+    // captured in session-027's fixtures.
+    telemetry.ingestEvents('s-exempt', [
+      { ts: Date.now(), type: EventType.Prompt },
+      {
+        ts: Date.now(),
+        type: EventType.BackgroundShellStart,
+        toolId: EXEMPT_TOOL_ID,
+        detail: `node scripts/worktree-preview.js --wait --port=5174 ${NO_ACTIVITY_HOLD_FLAG}`,
+      },
+      { ts: Date.now(), type: EventType.BackgroundShellStart, toolId: EXEMPT_TOOL_ID, detail: EXEMPT_SHELL_ID },
+      { ts: Date.now(), type: EventType.Idle },
+    ]);
+
+    const stateAfterIngest = telemetry.activityEngine.getState('s-exempt');
+    expect(stateAfterIngest?.exemptBackgroundShellIds.has(EXEMPT_SHELL_ID)).toBe(true);
+    expect(stateAfterIngest?.activeBackgroundShellIds.size).toBe(0);
+    // The exempt shell alone does not hold the predicate - the whole point of
+    // the exemption, mirrored in activity-engine-replay.test.ts.
+    expect(stateAfterIngest?.activity).toBe('idle');
+
+    // The watcher's very first cycle runs the transcript-drain block before
+    // any process-tree walk, so it needs no live descendant and no prior
+    // anchor cycle to prove the offer.
+    await telemetry.bgShellWatcher!.pollNow();
+
+    // a) The exempt shell was offered to the transcript drain - proves
+    // getNamedShellIds includes exemptBackgroundShellIds.
+    expect(reportTerminatedBackgroundShells).toHaveBeenCalledWith('s-exempt', [EXEMPT_SHELL_ID]);
+
+    // b) Because the spy confirmed it terminated, the watcher drained it -
+    // the transcript-drain wiring works end to end for an exempt shell too.
+    const drainEvents = log.events.filter(
+      (entry) => entry.sessionId === 's-exempt' && entry.event.type === EventType.BackgroundShellEnd,
+    );
+    expect(drainEvents).toHaveLength(1);
+    expect(drainEvents[0]?.event.detail).toBe(EXEMPT_SHELL_ID);
+    expect(telemetry.activityEngine.getState('s-exempt')?.exemptBackgroundShellIds.size).toBe(0);
   });
 });

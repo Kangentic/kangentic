@@ -29,8 +29,10 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ActivityEngine, type ActivityEngineOptions } from '../../src/main/activity-engine/engine';
+import { MAX_PENDING_EXEMPT_SHELL_TOOL_IDS } from '../../src/main/activity-engine/engine/shapes';
 import { EventType, IdleReason } from '../../src/shared/types';
 import type { ActivityState, ActivityReason, SessionEvent } from '../../src/shared/types';
+import { NO_ACTIVITY_HOLD_FLAG } from '../../src/shared/background-shell-hold';
 
 /** Load a sanitized real-capture replay fixture (one JSON event per line). */
 function loadReplayFixture(name: string): SessionEvent[] {
@@ -103,6 +105,33 @@ function event(type: EventType, opts?: { detail?: string; tool?: string; toolId?
 }
 
 const SESSION_ID = 'session-1';
+
+/**
+ * A realistic `/preview` watcher launch command carrying the no-activity-hold
+ * sentinel, matching the shape captured in session-027's fixtures.
+ */
+function previewWatcherCommand(): string {
+  return `node scripts/worktree-preview.js --wait --port=5174 ${NO_ACTIVITY_HOLD_FLAG}`;
+}
+
+/**
+ * Drive the two-event exempt-shell promotion: a PreToolUse arrival whose
+ * command carries `NO_ACTIVITY_HOLD_FLAG` (anonymous, memoized by `toolId`),
+ * then a PostToolUse arrival with the assigned shell id (same `toolId`),
+ * which promotes the memo into `exemptBackgroundShellIds`.
+ */
+function promoteExemptShell(
+  target: ActivityEngine,
+  sessionId: string,
+  toolId: string,
+  shellId: string,
+): void {
+  target.processEvent(sessionId, event(EventType.BackgroundShellStart, {
+    toolId,
+    detail: previewWatcherCommand(),
+  }));
+  target.processEvent(sessionId, event(EventType.BackgroundShellStart, { toolId, detail: shellId }));
+}
 
 /** Type-narrow ActivityReason to a specific kind for assertions. */
 function asTool(reason: ActivityReason) {
@@ -3103,6 +3132,135 @@ describe('ActivityEngine', () => {
       expect(state.pendingToolCount).toBe(1);
       expect(state.currentTool).toBe('Read');
       expect(state.activeBackgroundShellIds.has('bx6k8r2cr')).toBe(true);
+    });
+  });
+
+  describe('exempt-shell toolId memo FIFO cap (MAX_PENDING_EXEMPT_SHELL_TOOL_IDS)', () => {
+    beforeEach(() => {
+      engine.initSession(SESSION_ID);
+    });
+
+    it('evicts the oldest pending toolId once the memo is full, so its later PostToolUse fails closed while a still-memoized one still promotes', () => {
+      // MAX_PENDING_EXEMPT_SHELL_TOOL_IDS + 1 sentinel-carrying PreToolUse
+      // arrivals, each a distinct toolId, none ever followed by its
+      // PostToolUse. The (MAX+1)th push must evict the oldest (toolIds[0]).
+      const toolIds = Array.from(
+        { length: MAX_PENDING_EXEMPT_SHELL_TOOL_IDS + 1 },
+        (_unused, index) => `toolu_pending_${index}`,
+      );
+      for (const toolId of toolIds) {
+        engine.processEvent(SESSION_ID, event(EventType.BackgroundShellStart, {
+          toolId,
+          detail: previewWatcherCommand(),
+        }));
+      }
+      const state = engine.getState(SESSION_ID)!;
+      expect(state.pendingExemptShellToolIds.size).toBe(MAX_PENDING_EXEMPT_SHELL_TOOL_IDS);
+      expect(state.pendingExemptShellToolIds.has(toolIds[0])).toBe(false);
+      expect(state.pendingExemptShellToolIds.has(toolIds[toolIds.length - 1])).toBe(true);
+
+      // Positive control 1: the EVICTED toolId's PostToolUse finds no memo
+      // entry, so it fails CLOSED into the HOLDING set - exactly like a shell
+      // whose command never carried the flag at all. This is the assertion
+      // that catches a broken memo that never stores anything in the first
+      // place (an eviction-only check would pass against that too).
+      engine.processEvent(SESSION_ID, event(EventType.BackgroundShellStart, {
+        toolId: toolIds[0],
+        detail: 'bevicted01',
+      }));
+      const afterEvicted = engine.getState(SESSION_ID)!;
+      expect(afterEvicted.activeBackgroundShellIds.has('bevicted01')).toBe(true);
+      expect(afterEvicted.exemptBackgroundShellIds.has('bevicted01')).toBe(false);
+
+      // Positive control 2: a toolId still inside the cap correctly promotes.
+      const recentToolId = toolIds[toolIds.length - 1];
+      engine.processEvent(SESSION_ID, event(EventType.BackgroundShellStart, {
+        toolId: recentToolId,
+        detail: 'brecent01',
+      }));
+      const afterRecent = engine.getState(SESSION_ID)!;
+      expect(afterRecent.exemptBackgroundShellIds.has('brecent01')).toBe(true);
+      expect(afterRecent.activeBackgroundShellIds.has('brecent01')).toBe(false);
+    });
+  });
+
+  describe('exempt background shell survives every in-flight-counter reset except forceIdle', () => {
+    const EXEMPT_TOOL_ID = 'toolu_exempt_reset';
+    const EXEMPT_SHELL_ID = 'bexemptreset1';
+
+    beforeEach(() => {
+      engine.initSession(SESSION_ID);
+    });
+
+    /** Promote an exempt shell and confirm the starting shape before each case. */
+    function seedExemptShell(): void {
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+      promoteExemptShell(engine, SESSION_ID, EXEMPT_TOOL_ID, EXEMPT_SHELL_ID);
+      const state = engine.getState(SESSION_ID)!;
+      expect(state.exemptBackgroundShellIds.has(EXEMPT_SHELL_ID)).toBe(true);
+      expect(state.activeBackgroundShellIds.size).toBe(0);
+      expect(state.anonymousBackgroundShellCount).toBe(0);
+    }
+
+    // Every caller of resetInFlightCounters (applyInterruptedBypass for
+    // Interrupted/TurnFailed/a terminal TurnRetrying, and
+    // applyRetryableFailureHold for a LIVE TurnRetrying) leaves the agent CLI
+    // process running, so an exempt shell's OS process is still up. Dropping
+    // it here would shrink the watcher's `expected` and permanently fold a
+    // live process into `preExistingHelpers` (see the comment on
+    // resetInFlightCounters in activity-engine.ts).
+    const RESET_TRIGGERING_EVENTS: Array<[string, () => void]> = [
+      ['a synthetic Interrupted (user Ctrl+C)', () =>
+        engine.processEvent(SESSION_ID, event(EventType.Interrupted, { detail: 'user-ctrl-c' }))],
+      ['a TurnFailed (Claude service-error abort)', () =>
+        engine.processEvent(SESSION_ID, event(EventType.TurnFailed, { detail: 'overloaded' }))],
+      ['a terminal TurnRetrying (turn already wound down via a preceding idle_hint)', () => {
+        engine.processEvent(SESSION_ID, event(EventType.IdleHint, { detail: 'Claude is waiting for your input' }));
+        engine.processEvent(SESSION_ID, event(EventType.TurnRetrying, { detail: 'server_error' }));
+      }],
+      ['a LIVE TurnRetrying (turn still active, held via applyRetryableFailureHold)', () =>
+        engine.processEvent(SESSION_ID, event(EventType.TurnRetrying, { detail: 'server_error' }))],
+    ];
+
+    it.each(RESET_TRIGGERING_EVENTS)(
+      '%s resets in-flight counters but leaves the exempt shell tracked, not folded into the holding set',
+      (_label, fireResetTriggeringEvent) => {
+        seedExemptShell();
+        fireResetTriggeringEvent();
+        const state = engine.getState(SESSION_ID)!;
+        // The exempt shell survives...
+        expect(state.exemptBackgroundShellIds.has(EXEMPT_SHELL_ID)).toBe(true);
+        // ...and specifically does NOT get relocated into the holding set.
+        expect(state.activeBackgroundShellIds.size).toBe(0);
+        // Every OTHER in-flight counter really was reset - proves this
+        // exercises resetInFlightCounters, not a no-op path.
+        expect(state.pendingToolCount).toBe(0);
+        expect(state.subagentDepth).toBe(0);
+        expect(state.anonymousBackgroundShellCount).toBe(0);
+      },
+    );
+
+    it('forceIdle clears the exempt shell (unlike every resetInFlightCounters caller): the root process is dead, so its OS process is gone too', () => {
+      seedExemptShell();
+
+      engine.forceIdle(SESSION_ID);
+
+      const state = engine.getState(SESSION_ID)!;
+      expect(state.exemptBackgroundShellIds.size).toBe(0);
+      expect(state.activity).toBe('idle');
+    });
+
+    it('forceIdle also clears an in-flight (not-yet-promoted) exempt-shell memo entry', () => {
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+      engine.processEvent(SESSION_ID, event(EventType.BackgroundShellStart, {
+        toolId: 'toolu_pending_forceidle',
+        detail: previewWatcherCommand(),
+      }));
+      expect(engine.getState(SESSION_ID)?.pendingExemptShellToolIds.has('toolu_pending_forceidle')).toBe(true);
+
+      engine.forceIdle(SESSION_ID);
+
+      expect(engine.getState(SESSION_ID)?.pendingExemptShellToolIds.size).toBe(0);
     });
   });
 });
