@@ -6,6 +6,11 @@
  *   - happy path: updates activeSessionId AND persists to configStore + fires config.set
  *   - no-op guard: same taskId already stored -- must NOT call config.set again
  *   - skip cases: null, ACTIVITY_TAB, transient session, session in another project
+ *   - claimArrivalFocus wiring: a tab click claims arrival focus for the clicked
+ *     session (see .claude/rules/terminal-arrival-focus.md); ACTIVITY_TAB and null
+ *     must translate to a clearing `null` claim rather than naming the sentinel
+ *     itself, which can never mount and would deny every real terminal for the
+ *     arbiter's tier-1 TTL.
  *
  * deleteProject cleanup (project-store.ts):
  *   - entry exists: strips from both config/globalConfig and fires config.set
@@ -20,6 +25,18 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ACTIVITY_TAB } from '../../src/shared/types';
 import { DEFAULT_CONFIG } from '../../src/shared/types';
 import type { Session } from '../../src/shared/types';
+
+// Mocked so this file's assertions land on the WIRING (selectActiveSession calls
+// claimArrivalFocus with the right argument) rather than on the arbiter's own
+// decision table, which terminal-arrival-focus.test.ts already owns. A minimal
+// factory - session-store.ts imports nothing else from this module - also keeps
+// the window-manager / dictation-target import graph out of this file.
+// vi.mock is hoisted above the imports below by vitest's transform, so this
+// composes fine with the pre-import `globalThis.window` stub further down.
+const { claimArrivalFocusSpy } = vi.hoisted(() => ({ claimArrivalFocusSpy: vi.fn() }));
+vi.mock('../../src/renderer/utils/terminal-arrival-focus', () => ({
+  claimArrivalFocus: claimArrivalFocusSpy,
+}));
 
 // ---------------------------------------------------------------------------
 // Stub window.electronAPI before importing any store that touches it.
@@ -343,6 +360,48 @@ describe('selectActiveSession - skip cases', () => {
     useSessionStore.getState().selectActiveSession('sess-unknown');
 
     expect(configSetSpy).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// selectActiveSession - claimArrivalFocus wiring
+// ---------------------------------------------------------------------------
+
+describe('selectActiveSession - claimArrivalFocus wiring', () => {
+  beforeEach(() => {
+    configSetSpy.mockClear();
+    claimArrivalFocusSpy.mockClear();
+    resetStores({ currentProjectId: 'proj-alpha' });
+  });
+
+  it('claims arrival focus for the clicked session id', () => {
+    const session = makeSession({ id: 'sess-1', taskId: 'task-1', projectId: 'proj-alpha' });
+    useSessionStore.setState({
+      sessions: [session],
+      _sessionByTaskId: buildSessionByTaskId([session]),
+    });
+
+    useSessionStore.getState().selectActiveSession('sess-1');
+
+    expect(claimArrivalFocusSpy).toHaveBeenCalledOnce();
+    expect(claimArrivalFocusSpy).toHaveBeenCalledWith('sess-1');
+  });
+
+  it('claims null (clearing the claim) for the ACTIVITY_TAB sentinel, not the sentinel itself', () => {
+    // ACTIVITY_TAB names no session and can never mount a terminal. Claiming it
+    // literally would set a live tier-1 claim that DENIES every real terminal's
+    // arrival for the arbiter's TTL, since tier 1 is exclusive.
+    useSessionStore.getState().selectActiveSession(ACTIVITY_TAB);
+
+    expect(claimArrivalFocusSpy).toHaveBeenCalledOnce();
+    expect(claimArrivalFocusSpy).toHaveBeenCalledWith(null);
+  });
+
+  it('claims null for a null selection', () => {
+    useSessionStore.getState().selectActiveSession(null);
+
+    expect(claimArrivalFocusSpy).toHaveBeenCalledOnce();
+    expect(claimArrivalFocusSpy).toHaveBeenCalledWith(null);
   });
 });
 
