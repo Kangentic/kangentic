@@ -17,6 +17,22 @@ export interface AgentDetectorConfig {
   binaryName: string;
 
   /**
+   * Additional PATH names to try, in order, when `binaryName` is absent
+   * or fails its version probe. Default: none.
+   *
+   * This exists for CLIs that publish more than one shim and whose
+   * shortest name is not theirs alone. Cursor installs BOTH `cursor-agent`
+   * and `agent`; xAI's Grok CLI also installs `agent`, and on Windows its
+   * `agent.exe` beats Cursor's `agent.cmd` in PATHEXT order. Probing the
+   * unambiguous name first is what stops one vendor's generic shim from
+   * deciding whether another vendor's CLI is installed.
+   *
+   * `parseVersion` still guards every candidate, so an alias can only ever
+   * resolve a binary that produces THIS agent's version format.
+   */
+  binaryAliases?: string[];
+
+  /**
    * Additional absolute paths to check when the user has not
    * configured an override and PATH-based `which()` lookup fails.
    * Needed for the macOS GUI launch case where Electron launched
@@ -122,16 +138,27 @@ export class AgentDetector {
     // 2. PATH-based discovery via `which()`. Works when Electron is
     //    launched from a terminal that inherited the user's shell PATH,
     //    OR when restoreShellEnv() successfully restored it at startup.
-    try {
-      const whichPath = await which(name);
-      const version = await this.extractVersion(whichPath);
-      if (version !== null) {
-        console.log(`[agent-detect] ${name}: found via PATH at ${whichPath} (${version})`);
-        this.cached = { found: true, path: whichPath, version };
-        return this.cached;
+    //    Candidates are tried in order, the unambiguous name first. A name
+    //    that resolves but fails its version probe does NOT stop the search:
+    //    that is the shared-shim case (Grok's `agent.exe` shadowing Cursor's
+    //    `agent.cmd`), where the right answer is to keep looking rather than
+    //    conclude the agent is missing.
+    for (const candidate of [name, ...(this.config.binaryAliases ?? [])]) {
+      try {
+        const whichPath = await which(candidate);
+        const version = await this.extractVersion(whichPath);
+        if (version !== null) {
+          console.log(`[agent-detect] ${name}: found via PATH at ${whichPath} (${version})`);
+          this.cached = { found: true, path: whichPath, version };
+          return this.cached;
+        }
+        console.warn(
+          `[agent-detect] ${name}: "${candidate}" resolved to ${whichPath} but its --version output `
+          + 'did not match this agent (likely a different tool publishing the same name); trying the next candidate.',
+        );
+      } catch {
+        // This name is not on PATH - try the next candidate.
       }
-    } catch {
-      // Binary not on PATH - continue to fallback paths.
     }
 
     // 3. Well-known fallback locations. Needed when Electron is launched

@@ -103,17 +103,29 @@ export class CursorAdapter implements AgentAdapter {
   readonly defaultPermission: PermissionMode = 'bypassPermissions';
 
   // Cursor CLI uses the shared AgentDetector via composition.
-  // The binary is called `agent` - a generic name that may collide
-  // with other tools, so parseVersion validates the output.
+  //
+  // Cursor installs TWO shims, `cursor-agent` and `agent`, and `agent` is not
+  // its alone: xAI's Grok CLI installs `agent` too. On Windows Grok's
+  // `agent.exe` beats Cursor's `agent.cmd` in PATHEXT order, so probing
+  // `agent` first made Cursor undetectable on any machine that also had Grok -
+  // `agent --version` answered `grok 1.0.0 (...) [stable]`, parseVersion
+  // correctly refused it, and detection reported Cursor missing even though it
+  // was installed. Probe the unambiguous name first and keep `agent` only as a
+  // fallback for installs that predate it.
   private readonly detector = new AgentDetector({
-    binaryName: 'agent',
+    binaryName: 'cursor-agent',
+    binaryAliases: ['agent'],
     parseVersion: (raw) => {
-      // `agent --version` output format is not yet confirmed.
-      // Accept common patterns: "1.0.0", "agent 1.0.0", "Cursor Agent 1.0.0"
+      // Real output, verified against cursor-agent 2026.04.29: a CalVer date
+      // plus a short commit hash, e.g. `2026.04.29-c83a488`. Older/other
+      // builds may print `1.0.0`, `agent 1.0.0`, or `Cursor Agent 1.0.0`.
       const cleaned = raw
         .replace(/^(?:cursor\s+)?agent\s*/i, '')
         .trim();
-      // Return null if the output doesn't look like a version
+      // Requiring a leading DIGIT is what rejects a foreign tool answering on
+      // the shared `agent` name: Grok replies `grok 1.0.0 ...`, which survives
+      // the prefix strip and then fails here. Keep this guard - without it the
+      // alias above would let one vendor's CLI masquerade as another's.
       return /^\d/.test(cleaned) ? cleaned : null;
     },
   });
