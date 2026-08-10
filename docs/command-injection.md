@@ -441,6 +441,7 @@ Every "before" failure in the picker sweep fell in the 100-200ms band - exactly 
 - `tests/unit/copilot-command-injection-verifier.test.ts` - Copilot's newest-first global history, the partial-write case, and the exactness property.
 - `tests/unit/command-injection-real-capture-extractors.test.ts` - every extractor run over a REAL captured history file, asserting it recovers the user's text exactly. Covers Codex, Qwen, Kimi, and Aider; Copilot and OpenCode have no committed capture, which is part of why they stay confirm-only.
 - `tests/unit/confirm-only-command-injection-verifiers.test.ts` - the Kimi / Aider / OpenCode record shapes and the guards standing in for their missing measurements.
+- `tests/unit/opencode-command-injection-query-bound.test.ts` - that OpenCode's `part` query stays bounded to the message ids already fetched, and is skipped entirely when there are none. Unbounded, it scanned and JSON-parsed every part row in the session on every 25ms poll, synchronously, on the thread that services IPC.
 - `tests/unit/cursor-grok-binary-collision.test.ts` - that `cursor-agent` is preferred over the `agent` shim Grok also publishes.
 - `tests/unit/auto-command-escalation-gate.test.ts` and `tests/unit/auto-command-escalation.test.ts` - when escalation may fire at all.
 - `tests/unit/gemini-session-file-format.test.ts` - the `.json` / `.jsonl` generations for locate, capture, and telemetry parse.
