@@ -198,6 +198,23 @@ Ship It column runs `/merge-pull-request` (which merges the green PR). The inter
 git worktrees, and agent skills are documented in [CLAUDE.md](CLAUDE.md) and are not something a
 contributor is expected to set up.
 
+### Agent-specific contributions
+
+Kangentic supports twelve agent CLIs, and we do not hold a subscription to all of them. Anything
+that needs a live, authenticated CLI is measured where we can and recorded honestly where we
+cannot, so the gaps are written down rather than hidden. If you use one of these agents daily, you
+are better placed than we are to close them.
+
+The clearest example is auto_command delivery. Kangentic confirms that an injected command actually
+became a user turn, and an agent only earns the last-resort recovery (restarting the session) once
+two things have been proven for it. The per-agent status, what each one is still missing, and a
+step-by-step recipe are in
+[docs/command-injection.md](docs/command-injection.md#per-adapter-support-matrix). Partial results
+are welcome: measuring an agent and reporting the numbers is a useful PR on its own.
+
+Bug reports for this area are most useful with the agent name, the task's `auto_command_state`, and
+whether the session was local or remote.
+
 ## Finding Work
 
 Look for issues labeled **good first issue** for approachable tasks. If you want to take on something larger, open an issue first to discuss the approach.

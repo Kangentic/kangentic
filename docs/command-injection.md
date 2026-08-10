@@ -322,18 +322,22 @@ Mechanically: `canEscalateOnVerificationFailure() === false` makes `prepareInjec
 
 ### Graduating an adapter (the contributor recipe)
 
-Both steps cost zero agent quota. Do them in order; step 2 is the one that has actually caught bugs.
+This is written for someone who already uses the agent in question - the numbers below could not be taken here for exactly the agents you may have installed. Do the steps in order; step 2 is the one that has actually caught bugs.
 
 **1. Measure the CLI.** `node scripts/measure-injection-flush.mjs --agent <name>`, on a machine where that CLI is authenticated and responsive. Run `--agent claude` first as a control: Claude's verifier ships and works, so a harness that fails Claude is broken and no other verdict from it can be trusted. Record the short/long/slash numbers in the latency table above. The bar is the ~2000ms delivery budget, applied to the WORST observation.
 
-**2. Prove the adapter's own verifier in the app.** Point `agent.cliPaths.<agent>` at a mock CLI that writes a real-shaped record into that agent's real history location (read the working directory off the CLI's own argument rather than `process.cwd()` - Codex records the `-C` value, and getting that wrong silently writes to the wrong slug). Create a task with `agent_override` set to that agent, move it into a column carrying an `auto_command`, and read the task's `auto_command_state` back out of the project DB.
+**2. Prove the adapter's own verifier in the app.** Create a task with `agent_override` set to that agent, move it into a column carrying an `auto_command`, and read the task's `auto_command_state` back out of the project DB. Expect `confirmed`. With the real CLI installed that is the whole of it, and it costs one ordinary turn.
 
-   - Expect `confirmed`.
-   - Then disable the mock's record write and repeat. A confirm-only adapter must land on `failed` with the session still alive; an escalating one must land on `escalated` with a restart.
+To force the negative case, or to avoid spending a turn at all, point `agent.cliPaths.<agent>` at a mock CLI that writes a real-shaped record into that agent's real history location, then run the same move twice - once with the record write on, once off. One caveat if you write a mock: read the working directory off the CLI's own argument rather than `process.cwd()`. Codex records the `-C` value, and getting that wrong silently writes to the wrong slug and looks like a verifier bug.
 
-**3. Flip the flag and say why.** Drop that adapter's `canEscalateOnVerificationFailure` override, update its row in the matrix above and its entry in `agent-submission-verifier-shape.test.ts`, and record what you ran. **Do not drop the override because the parser tests pass** - the parser was never the risky part.
+   - Record write on: expect `confirmed`.
+   - Record write off: a confirm-only adapter must land on `failed` with the session still alive; an escalating one must land on `escalated` with a restart.
 
-If you only get through step 1, that is still worth a PR: the numbers go in the table and the adapter keeps its confirm-only verifier. And if an adapter misbehaves for you, the useful bug report is its `auto_command_state`, the agent, and whether the session was local or remote.
+**3. Add a real capture, if the adapter has none.** Sanitize one of that agent's own history files into `tests/fixtures/` and extend `tests/unit/command-injection-real-capture-extractors.test.ts`. This is what proves the CLI does not wrap or decorate the stored text, and it is the cheapest single contribution for Copilot or OpenCode.
+
+**4. Flip the flag and say why.** Drop that adapter's `canEscalateOnVerificationFailure` override, update its row in the matrix above and its entry in `agent-submission-verifier-shape.test.ts`, and record what you ran. **Do not drop the override because the parser tests pass** - the parser was never the risky part.
+
+Any subset of this is worth a PR. Step 1 alone puts numbers in the table; step 3 alone strengthens an adapter without touching its tier. And if an adapter simply misbehaves for you, the useful bug report is the agent, the task's `auto_command_state`, and whether the session was local or remote.
 
 Run to date, against a mock CLI writing a real rollout file, driving actual column moves:
 
