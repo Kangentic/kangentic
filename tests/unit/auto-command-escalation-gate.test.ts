@@ -208,4 +208,67 @@ describe('TerminalSubmitScheduler.escalate() - turn-completion safety gate', () 
     expect(reports).toHaveLength(1);
     expect(reports[0].escalated).toBe(true);
   });
+
+  it('suppresses escalation when the command is marked non-escalatable (confirm-only adapter)', async () => {
+    // Confirm-only adapters (aider, codex, copilot, kimi, opencode, qwen-code) mark their
+    // auto_command `escalatable: false` because their verifier has never been proven end to
+    // end. escalate() must never restart a session on their say-so, even with the turn already
+    // idle - a restart here would destroy live agent work on nothing more than a guess.
+    sessionManager.registry.set('s1', { status: 'running' });
+    sessionManager.activity.s1 = 'idle';
+    const escalate = vi.fn(async () => true);
+    const reports: InjectionReport[] = [];
+
+    scheduler.scheduleKeystrokes(
+      'task-1',
+      's1',
+      [{ text: '/code-review', verify: 'submitted', escalatable: false }],
+      {
+        escalate,
+        onOutcome: (report) => reports.push(report),
+      },
+    );
+    await tick();
+    terminalSubmit.finishLatest({ outcome: 'failed', unconfirmedCommands: ['/code-review'] });
+    await tick();
+
+    expect(escalate).not.toHaveBeenCalled();
+    expect(reports).toHaveLength(1);
+    expect(reports[0].outcome).toBe('failed');
+    expect(reports[0].escalated).toBe(false);
+    expect(reports[0].reason).toBe('The command could not be confirmed in the agent transcript.');
+  });
+
+  it('paired positive control: escalates when escalatable is omitted (the adapter default)', async () => {
+    // Same command, same failure, same idle activity as the suppression test above - the only
+    // difference is that `escalatable` is left unset. `prepareInjectionPlan` never writes
+    // `escalatable: true` (see injection-plan.test.ts); "omitted" IS the "may escalate" state.
+    // Without this test, the suppression test above would pass vacuously even if
+    // `command.escalatable !== false` were inverted to `command.escalatable === true`, since
+    // that inversion also suppresses the omitted-field case it should allow.
+    sessionManager.registry.set('s1', { status: 'running' });
+    sessionManager.activity.s1 = 'idle';
+    const escalate = vi.fn(async () => true);
+    const reports: InjectionReport[] = [];
+
+    scheduler.scheduleKeystrokes(
+      'task-1',
+      's1',
+      [{ text: '/code-review', verify: 'submitted' }],
+      {
+        escalate,
+        onOutcome: (report) => reports.push(report),
+      },
+    );
+    await tick();
+    terminalSubmit.finishLatest({ outcome: 'failed', unconfirmedCommands: ['/code-review'] });
+    await tick();
+    // Let the turn-completion quiet window elapse, same as the existing positive control.
+    vi.advanceTimersByTime(1600);
+    await tick();
+
+    expect(escalate).toHaveBeenCalledWith(['/code-review']);
+    expect(reports).toHaveLength(1);
+    expect(reports[0].escalated).toBe(true);
+  });
 });

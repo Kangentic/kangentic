@@ -483,7 +483,13 @@ function normalizeCommands(commands: ReadonlyArray<string | InjectionCommand>): 
     const raw = typeof entry === 'string' ? { text: entry, verify: 'none' as const } : entry;
     const text = sanitizeForPty(raw.text);
     if (text.length === 0) continue;
-    normalized.push({ text, verify: raw.verify });
+    // Carry `escalatable` through. Nothing in this file reads it today (the
+    // scheduler filters the caller's own array), but rebuilding the object
+    // without it makes the conversion lossy: the first code here that ever
+    // consults the flag would silently see `undefined`, which the field's
+    // contract reads as "escalation allowed" - the opposite of what a
+    // confirm-only adapter declared.
+    normalized.push({ text, verify: raw.verify, escalatable: raw.escalatable });
   }
   return normalized;
 }

@@ -11,8 +11,26 @@
  * its differences: GLOBAL across all sessions and projects, NEWEST FIRST, no
  * timestamps, no session id, rewritten in place.
  */
-import { describe, it, expect } from 'vitest';
-import { readRecentCopilotCommands } from '../../src/main/agent/adapters/copilot/command-injection-verifier';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+let tmpHome: string;
+vi.mock('node:os', async () => {
+  const actual = await vi.importActual<typeof import('node:os')>('node:os');
+  return {
+    ...actual,
+    default: { ...actual, homedir: () => tmpHome },
+    homedir: () => tmpHome,
+  };
+});
+
+import {
+  readRecentCopilotCommands,
+  resolveCopilotHistoryPath,
+  createCopilotCommandInjectionVerifier,
+} from '../../src/main/agent/adapters/copilot/command-injection-verifier';
 
 /** The real on-disk shape, newest first (verified against live probe data). */
 function historyFile(commands: string[]): string {
@@ -75,5 +93,97 @@ describe('exactness', () => {
       'older thing',
     ]))!;
     expect(recent.some((entry) => entry.trim() === '/pull-request')).toBe(true);
+  });
+});
+
+describe('createCopilotCommandInjectionVerifier', () => {
+  // Drives the REAL assembled verifier, not just readRecentCopilotCommands.
+  // This is the only place the mtime guard (command-injection-verifier.ts,
+  // `if (mtimeMs < sentAt - SENT_AT_TOLERANCE_MS) return false;`) is exercised:
+  // it is what stops the verifier from confirming a months-old identical entry
+  // in Copilot's GLOBAL, no-per-record-timestamp history file as evidence for a
+  // submission that never happened.
+  let tmpBase: string;
+
+  beforeEach(() => {
+    tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-copilot-verifier-'));
+    tmpHome = path.join(tmpBase, 'home');
+    fs.mkdirSync(tmpHome, { recursive: true });
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpBase, { recursive: true, force: true });
+  });
+
+  /** Writes the history file and stamps its mtime explicitly, never relying on wall-clock ordering. */
+  function writeHistoryFileWithMtime(commands: string[], mtimeMs: number): string {
+    const filePath = resolveCopilotHistoryPath();
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, historyFile(commands));
+    const mtimeSeconds = mtimeMs / 1000;
+    fs.utimesSync(filePath, mtimeSeconds, mtimeSeconds);
+    return filePath;
+  }
+
+  it('does NOT confirm an exact match whose file predates this submission (the mtime guard)', async () => {
+    // The hazard the guard exists for: the newest entry is an EXACT match for
+    // the text we submitted, but the file itself was last written 90 days
+    // before `sentAt` - so this could only be a leftover entry from an
+    // earlier, unrelated submission (the "months-old identical entry" hazard
+    // this guard exists to close). Without the mtime guard this reads as
+    // confirmed even though nothing was written for THIS submission.
+    const sentAt = Date.now();
+    const ninetyDaysInMs = 90 * 24 * 60 * 60 * 1000;
+    writeHistoryFileWithMtime(['/pull-request'], sentAt - ninetyDaysInMs);
+
+    const verifier = createCopilotCommandInjectionVerifier();
+    expect(await verifier({
+      type: 'command-injection',
+      text: '/pull-request',
+      sentAt,
+      mode: 'submitted',
+    })).toBe(false);
+  });
+
+  it('confirms the same exact match once the file was actually rewritten at/after sentAt', async () => {
+    // Paired positive control: identical fixture content to the stale case
+    // above, differing only in mtime. Proves the stale test fails for the
+    // mtime guard specifically, not because the fixture never matches anything.
+    const sentAt = Date.now();
+    writeHistoryFileWithMtime(['/pull-request'], sentAt + 10);
+
+    const verifier = createCopilotCommandInjectionVerifier();
+    expect(await verifier({
+      type: 'command-injection',
+      text: '/pull-request',
+      sentAt,
+      mode: 'submitted',
+    })).toBe(true);
+  });
+
+  it('does not confirm when the file is fresh but the newest entries do not exactly match', async () => {
+    // The swallowed-Enter bug verbatim, driven through the real verifier: a
+    // freshly-rewritten file whose newest entry only CONTAINS the submitted
+    // text must not confirm.
+    const sentAt = Date.now();
+    writeHistoryFileWithMtime(['instead can we/pull-request'], sentAt + 10);
+
+    const verifier = createCopilotCommandInjectionVerifier();
+    expect(await verifier({
+      type: 'command-injection',
+      text: '/pull-request',
+      sentAt,
+      mode: 'submitted',
+    })).toBe(false);
+  });
+
+  it('treats a missing history file as "keep polling", not a failure', async () => {
+    const verifier = createCopilotCommandInjectionVerifier();
+    expect(await verifier({
+      type: 'command-injection',
+      text: '/pull-request',
+      sentAt: Date.now(),
+      mode: 'submitted',
+    })).toBe(false);
   });
 });

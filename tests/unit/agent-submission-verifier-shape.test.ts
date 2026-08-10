@@ -1,6 +1,8 @@
 /**
  * Pins each agent adapter's `getSubmissionVerifier` VERDICT for both the
- * 'paste' and 'command-injection' contexts, AND its escalation tier.
+ * 'paste' and 'command-injection' contexts, its escalation tier, whether it
+ * can verify a SLASH-prefixed submission, and whether its verifier requires a
+ * captured agent session id.
  *
  * This test's value is that `null` is a DECLARED ANSWER, not an omission. A
  * verifier is what authorizes escalation, and escalation restarts the session
@@ -15,8 +17,17 @@
  * questions have to be answered live before a false negative is unlikely
  * enough to hand it a restart. See the tier table in docs/command-injection.md.
  *
+ * `verifiesSlashSubmission` and `requiresAgentSessionId` pin the two other
+ * declared capabilities that `prepareInjectionPlan`
+ * (`src/main/transition-engine/injection-plan.ts`) reads directly off the
+ * adapter, independent of whether a verifier exists at all - they describe the
+ * SHAPE of the adapter's history, not whether it currently has one wired up.
+ * Both default to `true` ("omitted or true means yes" per the interface doc
+ * comment); only a handful of adapters declare the `false` opt-out.
+ *
  * Adding a verifier without a measurement fails this test, and so does flipping
- * `escalates` without the in-app proof. That is the point: it forces the
+ * `escalates`, `verifiesSlashSubmission`, or `requiresAgentSessionId` without
+ * evidence in the adapter's own doc comment. That is the point: it forces the
  * evidence to exist first.
  */
 import { describe, it, expect } from 'vitest';
@@ -25,61 +36,73 @@ const ADAPTER_CLASSES = [
   {
     name: 'claude', importPath: '../../src/main/agent/adapters/claude/claude-adapter', className: 'ClaudeAdapter',
     commandInjection: 'verifier', escalates: true,
+    verifiesSlashSubmission: true, requiresAgentSessionId: true,
     reason: 'transcript JSONL records slash invocations and user turns on submit; the shipped reference implementation',
   },
   {
     name: 'codex', importPath: '../../src/main/agent/adapters/codex/codex-adapter', className: 'CodexAdapter',
     commandInjection: 'verifier', escalates: true,
+    verifiesSlashSubmission: false, requiresAgentSessionId: true,
     reason: 'measured 61-108ms flat against a 4.6s turn, proven in-app (confirmed a real record, escalated a forced miss), extractor pinned to a real rollout capture',
   },
   {
     name: 'gemini', importPath: '../../src/main/agent/adapters/gemini/gemini-adapter', className: 'GeminiAdapter',
     commandInjection: 'null', escalates: false,
+    verifiesSlashSubmission: true, requiresAgentSessionId: true,
     reason: 'measured 5504ms / 6302ms and twice never within 25s: writes on message completion',
   },
   {
     name: 'qwen', importPath: '../../src/main/agent/adapters/qwen-code/qwen-adapter', className: 'QwenAdapter',
     commandInjection: 'verifier', escalates: false,
+    verifiesSlashSubmission: true, requiresAgentSessionId: true,
     reason: 'measured 443-696ms, but the resolver builds its path from a CAPTURED session id and has never run against a live Qwen session in-app',
   },
   {
     name: 'opencode', importPath: '../../src/main/agent/adapters/opencode/opencode-adapter', className: 'OpenCodeAdapter',
     commandInjection: 'verifier', escalates: false,
+    verifiesSlashSubmission: false, requiresAgentSessionId: true,
     reason: 'measured 64-95ms, but a REMOTE session has no local row and would report failed on every delivery',
   },
   {
     name: 'copilot', importPath: '../../src/main/agent/adapters/copilot/copilot-adapter', className: 'CopilotAdapter',
     commandInjection: 'verifier', escalates: false,
+    verifiesSlashSubmission: true, requiresAgentSessionId: false,
     reason: 'measured 36-38ms, but the harness matched a nonce SUBSTRING and no real capture pins the exact-match extractor',
   },
   {
     name: 'aider', importPath: '../../src/main/agent/adapters/aider/aider-adapter', className: 'AiderAdapter',
     commandInjection: 'verifier', escalates: false,
+    verifiesSlashSubmission: true, requiresAgentSessionId: false,
     reason: 'markdown format known from a real fixture; not installed here, so unmeasured',
   },
   {
     name: 'cursor', importPath: '../../src/main/agent/adapters/cursor/cursor-adapter', className: 'CursorAdapter',
     commandInjection: 'null', escalates: false,
+    verifiesSlashSubmission: true, requiresAgentSessionId: true,
     reason: 'measured turn-end flushed: 5766ms/5446ms appends landing within ~40ms of the turn ending',
   },
   {
     name: 'droid', importPath: '../../src/main/agent/adapters/droid/droid-adapter', className: 'DroidAdapter',
     commandInjection: 'null', escalates: false,
+    verifiesSlashSubmission: true, requiresAgentSessionId: true,
     reason: 'measured unreliable: 564ms best against a 3202ms worst, unrelated to turn length',
   },
   {
     name: 'kimi', importPath: '../../src/main/agent/adapters/kimi/kimi-adapter', className: 'KimiAdapter',
     commandInjection: 'verifier', escalates: false,
+    verifiesSlashSubmission: true, requiresAgentSessionId: true,
     reason: 'wire.jsonl shape pinned against real captures; never reached a usable TUI, so unmeasured',
   },
   {
     name: 'warp', importPath: '../../src/main/agent/adapters/warp/warp-adapter', className: 'WarpAdapter',
     commandInjection: 'null', escalates: false,
+    verifiesSlashSubmission: true, requiresAgentSessionId: true,
     reason: 'no history file accessible via CLI',
   },
   {
     name: 'ollama', importPath: '../../src/main/agent/adapters/ollama/ollama-adapter', className: 'OllamaAdapter',
     commandInjection: 'null', escalates: false,
+    verifiesSlashSubmission: true, requiresAgentSessionId: true,
     reason: '`ollama run` keeps no session history',
   },
 ] as const;
@@ -113,10 +136,10 @@ describe('Adapter getSubmissionVerifier implementation', () => {
       if (commandInjection === 'verifier') {
         // A regression to null silently degrades this adapter to time-based
         // settle, losing retry-on-Enter recovery and escalation.
-        expect(typeof commandVerifier).toBe(
-          'function',
+        expect(
+          typeof commandVerifier,
           `${name} should return a command-injection verifier (${reason})`,
-        );
+        ).toBe('function');
       } else {
         // A regression to non-null means a verifier was added WITHOUT a
         // measurement, which is how a false `failed` reaches escalation and
@@ -169,10 +192,86 @@ describe('Adapter getSubmissionVerifier implementation', () => {
       // its CLI was measured. If this test failed because you flipped a flag,
       // run the mock-CLI recipe in docs/command-injection.md first and record
       // the result there in the same change.
-      expect(escalates).toBe(
-        shouldEscalate,
+      expect(
+        escalates,
         `${name} escalation tier changed: ${reasonFor(name)}`,
-      );
+      ).toBe(shouldEscalate);
+    },
+  );
+
+  it.each(ADAPTER_CLASSES)(
+    '$name adapter matches its recorded slash-submission verifiability',
+    async ({ importPath, className, name, verifiesSlashSubmission: shouldVerifySlashSubmission }) => {
+      const module = await import(importPath);
+      const AdapterClass = module[className] as new () => {
+        canVerifySlashSubmission?: () => boolean;
+      };
+      const adapter = new AdapterClass();
+
+      // EFFECTIVE value, mirroring exactly how `prepareInjectionPlan`
+      // (src/main/transition-engine/injection-plan.ts) reads it: omitted or
+      // `true` means the adapter's history can confirm a slash submission, so
+      // only an explicit `false` opts out. Deliberately NOT gated on whether a
+      // verifier exists today (unlike `escalates` above) - this flag describes
+      // the SHAPE of the adapter's history, not today's verifier wiring.
+      const verifiesSlashSubmission = adapter.canVerifySlashSubmission?.() !== false;
+
+      // THE SAFETY INVARIANT, in both directions.
+      //
+      // Losing the `false` declaration (Codex or OpenCode regressing back to
+      // the default) makes prepareInjectionPlan treat their slash
+      // auto_commands as verifiable again. Both CLIs handle slash input
+      // entirely in the TUI and never write it to their history, so absence
+      // is ambiguous between "the CLI rejected it" and "the CLI ran it
+      // client-side" - and misreading the second as a failure escalates to a
+      // session restart that destroys live work.
+      //
+      // Gaining an unwarranted `false` on any other adapter silently tags its
+      // slash auto_commands `verify: 'none'` for an adapter that could
+      // actually confirm them, losing the retry-on-Enter recovery for no
+      // reason.
+      expect(
+        verifiesSlashSubmission,
+        `${name} slash-submission verifiability changed; see canVerifySlashSubmission on the adapter and docs/command-injection.md`,
+      ).toBe(shouldVerifySlashSubmission);
+    },
+  );
+
+  it.each(ADAPTER_CLASSES)(
+    '$name adapter matches its recorded agent-session-id requirement for verification',
+    async ({ importPath, className, name, requiresAgentSessionId: shouldRequireAgentSessionId }) => {
+      const module = await import(importPath);
+      const AdapterClass = module[className] as new () => {
+        requiresAgentSessionIdForVerification?: () => boolean;
+      };
+      const adapter = new AdapterClass();
+
+      // EFFECTIVE value, mirroring exactly how the shared command-injection
+      // wrapper (src/main/transition-engine/injection-plan.ts) reads it:
+      // omitted or `true` is the norm, since almost every adapter keys its
+      // transcript by session id. Deliberately NOT gated on whether a
+      // verifier exists today, for the same reason as above - this flag
+      // describes the SHAPE of the adapter's history.
+      const requiresAgentSessionId = adapter.requiresAgentSessionIdForVerification?.() !== false;
+
+      // THE SAFETY INVARIANT, in both directions.
+      //
+      // Losing the `false` declaration (Aider or Copilot regressing back to
+      // the default) makes the shared wrapper short-circuit before their
+      // verifier ever runs, because neither has a captured agent_session_id
+      // to gate on (Aider keeps one history file per project directory;
+      // Copilot's history is a single global file with no session id in it
+      // at all). A short-circuited verifier is worse than no verifier: the
+      // burst still retries and then reports `failed` instead of staying
+      // silently `unconfirmed`.
+      //
+      // Gaining an unwarranted `false` on any other adapter lets its verifier
+      // run before a session id is resolved, scanning without one and reading
+      // the wrong history file.
+      expect(
+        requiresAgentSessionId,
+        `${name} agent-session-id requirement changed; see requiresAgentSessionIdForVerification on the adapter and docs/command-injection.md`,
+      ).toBe(shouldRequireAgentSessionId);
     },
   );
 

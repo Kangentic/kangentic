@@ -89,7 +89,7 @@ follows it.
 
 ## Claude's JSONL-polling implementation
 
-Claude's is the richest verifier, and the only one that matches on a structured slash-invocation record rather than on the submitted text. Six adapters provide a `'command-injection'` verifier today (see the matrix below); the other five reuse the shared submitted-text scan.
+Claude's is the richest verifier, and the only one that matches on a structured slash-invocation record rather than on the submitted text. Seven adapters provide a `'command-injection'` verifier today (see the matrix below). Of the six besides Claude, three (Codex, Qwen, Kimi) reuse the shared submitted-text scan; Copilot, OpenCode, and Aider each ship a bespoke verifier, because their history formats cannot support that scan safely.
 
 Claude Code writes every successful slash invocation to its session JSONL transcript as a `local_command` system entry whose `<command-name>` matches the slash and whose `<command-args>` matches exactly what was sent. The verifier (`src/main/agent/adapters/claude/slash-command-verifier.ts`) tail-scans this file for an entry matching both fields exactly:
 
@@ -461,7 +461,7 @@ Every "before" failure in the picker sweep fell in the 100-200ms band - exactly 
 - `src/main/agent/adapters/codex/command-injection-verifier.ts` - Codex resolver (memoised readdir scan) and rollout record shape.
 - `src/main/agent/adapters/qwen-code/command-injection-verifier.ts` - Qwen resolver (direct path construction) and chats record shape.
 - `src/main/agent/adapters/kimi/command-injection-verifier.ts` - CONFIRM-ONLY. `wire.jsonl` resolver plus the unix-SECONDS timestamp conversion.
-- `src/main/agent/adapters/aider/command-injection-verifier.ts` - CONFIRM-ONLY. The only verifier not using the shared scan: no per-entry timestamps, so it guards on file mtime and matches the LAST user block only.
+- `src/main/agent/adapters/aider/command-injection-verifier.ts` - CONFIRM-ONLY. One of the three bespoke verifiers that cannot use the shared scan (with OpenCode and Copilot): no per-entry timestamps, so it guards on file mtime and matches the LAST user block only.
 - `src/main/agent/adapters/opencode/command-injection-verifier.ts` - CONFIRM-ONLY, and the only SQL-backed verifier; a remote session has no local row and is reported `failed`.
 - `src/main/agent/adapters/copilot/command-injection-verifier.ts` - CONFIRM-ONLY. Reads the GLOBAL `command-history-state.json` newest-first, guarded by file mtime and a bounded recent-entry window.
 - `scripts/measure-injection-flush.mjs` - the manual measurement harness that gates every verifier above.

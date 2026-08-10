@@ -150,11 +150,22 @@ function queryForSubmittedText(
       .all(sessionId, sentAt - SENT_AT_TOLERANCE_MS);
     if (messageRows.length === 0) return false;
 
+    // Bounded to the messages just fetched. `part` holds one row per streamed
+    // chunk for EVERY message in the session, so it grows with the whole
+    // conversation while the scan only ever reads parts belonging to a
+    // `messageRows` entry - every other row was fetched and JSON-parsed for
+    // nothing. The identical query in `transcript-parser.ts` is a one-shot
+    // transcript read and can afford that; this one runs on a 25ms poll, and
+    // better-sqlite3 is synchronous, so an unbounded scan blocks the thread
+    // that services IPC up to 40 times a second per in-flight burst.
+    const messageIdPlaceholders = messageRows.map(() => '?').join(', ');
     const partRows = database
-      .prepare<[string], PartRow>(
-        'SELECT message_id, data FROM part WHERE session_id = ? ORDER BY time_created ASC',
+      .prepare<string[], PartRow>(
+        `SELECT message_id, data FROM part
+         WHERE session_id = ? AND message_id IN (${messageIdPlaceholders})
+         ORDER BY time_created ASC`,
       )
-      .all(sessionId);
+      .all(sessionId, ...messageRows.map((messageRow) => messageRow.id));
 
     return findOpenCodeSubmittedText(messageRows, partRows, text, sentAt);
   } catch {
