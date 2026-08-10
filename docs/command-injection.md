@@ -290,7 +290,7 @@ There are three tiers, and the line between the first two is a safety property, 
 | Adapter | `'paste'` | `'command-injection'` | Tier | What it has, and what it lacks |
 |---------|-----------|----------------------|------|-------|
 | Claude | `null` | JSONL-polling verifier | **verified** | the shipped reference implementation; records slash invocations and user turns on submit |
-| Codex | `null` | verifier (`submitted` only) | **verified** | 108ms worst, and proven in-app both ways (confirmed a real record, escalated a forced miss); declines SLASH commands, see below |
+| Codex | `null` | verifier (`submitted` only) | **verified** | 108ms worst, proven in-app both ways (confirmed a real record, escalated a forced miss), and its extractor pinned to a real rollout capture; declines SLASH commands, see below |
 | Copilot | `null` | verifier | confirm-only | 38ms worst, the fastest measured. Lacks a real capture of `command-history-state.json` to pin its exact-match extractor against |
 | OpenCode | `null` | verifier (SQL) | confirm-only | 95ms worst via a read-only query. Has a KNOWN wrong answer for remote sessions, below; declines SLASH commands, same as Codex |
 | Qwen | `null` | verifier | confirm-only | 696ms worst, slash included. Builds its path from a CAPTURED session id and has never run against a live Qwen session in-app |
@@ -315,6 +315,8 @@ The harness answers one question: *does the CLI write the record fast enough?* I
 - whether the CLI **wraps or decorates** the stored text. Cursor stores `<user_query>\n<task>...</task>\n</user_query>`, which a nonce substring search finds happily and exact trim-equality never matches.
 
 Both of those produce a **permanent** false negative rather than an intermittent one, so they would escalate *every* auto_command the adapter ever receives. That is why the second proof is a run inside the app, and why an adapter stays confirm-only until it has one, even with a clean measurement.
+
+The wrapping half of that risk is partly mechanised: `tests/unit/command-injection-real-capture-extractors.test.ts` runs each extractor over a real captured history file committed under `tests/fixtures/` and asserts it hands back text that trim-equals what was typed. A hand-authored fixture cannot do this - it pins our belief about the shape rather than the shape itself. Codex, Qwen, Kimi, and Aider have such a capture; Copilot and OpenCode do not, and adding one is the cheapest single contribution toward graduating either.
 
 Mechanically: `canEscalateOnVerificationFailure() === false` makes `prepareInjectionPlan` mark the auto_command `escalatable: false`, and `TerminalSubmitScheduler.escalate` filters it out. Worst case for a confirm-only adapter is a `failed` outcome and a notice, never a respawn. The tiers are pinned per adapter in `tests/unit/agent-submission-verifier-shape.test.ts`, so flipping one without recording the evidence fails CI.
 
@@ -433,6 +435,7 @@ Every "before" failure in the picker sweep fell in the 100-200ms band - exactly 
 - `tests/unit/codex-command-injection-verifier.test.ts` - Codex record shape, exact-match, and read cost.
 - `tests/unit/qwen-command-injection-verifier.test.ts` - Qwen record shape, exact-match, and the missing-file case.
 - `tests/unit/copilot-command-injection-verifier.test.ts` - Copilot's newest-first global history, the partial-write case, and the exactness property.
+- `tests/unit/command-injection-real-capture-extractors.test.ts` - every extractor run over a REAL captured history file, asserting it recovers the user's text exactly. Covers Codex, Qwen, Kimi, and Aider; Copilot and OpenCode have no committed capture, which is part of why they stay confirm-only.
 - `tests/unit/confirm-only-command-injection-verifiers.test.ts` - the Kimi / Aider / OpenCode record shapes and the guards standing in for their missing measurements.
 - `tests/unit/cursor-grok-binary-collision.test.ts` - that `cursor-agent` is preferred over the `agent` shim Grok also publishes.
 - `tests/unit/auto-command-escalation-gate.test.ts` and `tests/unit/auto-command-escalation.test.ts` - when escalation may fire at all.

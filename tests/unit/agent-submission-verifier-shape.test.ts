@@ -30,7 +30,7 @@ const ADAPTER_CLASSES = [
   {
     name: 'codex', importPath: '../../src/main/agent/adapters/codex/codex-adapter', className: 'CodexAdapter',
     commandInjection: 'verifier', escalates: true,
-    reason: 'measured 61-108ms flat against a 4.6s turn, AND proven in-app: confirmed a real record, escalated a forced miss',
+    reason: 'measured 61-108ms flat against a 4.6s turn, proven in-app (confirmed a real record, escalated a forced miss), extractor pinned to a real rollout capture',
   },
   {
     name: 'gemini', importPath: '../../src/main/agent/adapters/gemini/gemini-adapter', className: 'GeminiAdapter',
