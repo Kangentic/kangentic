@@ -223,8 +223,8 @@ During cross-agent handoff, each adapter's `locateSessionHistoryFile()` finds th
 |-------|-------------|--------|
 | Claude Code | `~/.claude/projects/<slug>/<sessionId>.jsonl` | Direct path computation |
 | Codex CLI | `~/.codex/sessions/<YYYY>/<MM>/<DD>/rollout-<ts>-<uuid>.jsonl` | Directory scan with polling |
-| Gemini CLI | `~/.gemini/tmp/<projectDir>/chats/session-<id>.json` | Directory scan with polling |
-| Qwen Code | `~/.qwen/tmp/<projectDir>/chats/session-<id>.json` | Directory scan with polling (inherited from gemini-cli fork) |
+| Gemini CLI | `~/.gemini/tmp/<projectDir>/chats/session-<id>.json` **or** `.jsonl` | Directory scan with polling. Both extensions are live (Gemini cut over on 2026-04-28); an anchored `\.json$` matches nothing on a current install |
+| Qwen Code | `~/.qwen/projects/<sanitized-cwd>/chats/<sessionId>.jsonl` | Direct path construction (the session id is caller-owned via `--session-id`). Despite being a gemini-cli fork, Qwen does NOT inherit Gemini's `tmp/<basename>/chats/session-<timestamp><shortId>.json` scheme |
 | Cursor CLI | N/A | Returns null - the location IS known (`~/.cursor/projects/<cwd-slug>/agent-transcripts/<id>/<id>.jsonl`, see [Command Injection](command-injection.md#cursor-located-not-yet-verified)) but is not wired in: the records carry no timestamp and the stored text is wrapped |
 | GitHub Copilot CLI | N/A | Returns null (not yet empirically verified; activity flows through hooks JSONL) |
 | Aider | N/A | Returns null (no native session files) |
@@ -548,11 +548,20 @@ Qwen Code reads settings from `.qwen/settings.json` in the project directory. Li
 
 ### Session History
 
-Native chat session JSON file:
+Native chat session JSONL file:
 
 ```
-~/.qwen/tmp/<basename(cwd)>/chats/session-<timestamp><shortId>.json
+~/.qwen/projects/<sanitized-cwd>/chats/<sessionId>.jsonl
 ```
+
+`<sanitized-cwd>` is the cwd lowercased (on Windows) with every non-alphanumeric character replaced
+by `-`, so `C:\Users\dev\proj` becomes `c--users-dev-proj`. The filename is exactly the session UUID
+with no prefix or timestamp, and since Kangentic supplies that UUID via `--session-id`, `locate()`
+is direct path construction rather than a directory scan.
+
+Verified against Qwen Code 0.15.3 on disk. Qwen is a gemini-cli fork but moved chat persistence
+entirely: it does NOT use Gemini's `~/.gemini/tmp/<basename>/chats/session-<timestamp><shortId>.json`
+layout. See the note at the top of `qwen-code/session-history-parser.ts`.
 
 The parser walks the `messages[]` array backwards to find the most recent assistant message and reads its `model` + `tokens` fields. Both `type: 'qwen'` (rebranded build) and `type: 'gemini'` (some forks retain the upstream literal) are accepted.
 

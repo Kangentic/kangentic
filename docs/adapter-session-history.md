@@ -63,7 +63,7 @@ All three fields are optional in the sense that any combination is valid - parse
 
 **Format**: append-only JSONL. One JSON object per line. CRLF or LF line endings tolerated. `isFullRewrite: false` - parser receives newly-appended bytes on each file-change event.
 
-**Parser**: `src/main/agent/adapters/codex/log-parser.ts`
+**Parser**: `src/main/agent/adapters/codex/session-history-parser.ts`
 
 ### Line entries we depend on
 
@@ -92,8 +92,13 @@ If a Codex release breaks any of these, the parser will silently return null/emp
 
 ## Gemini
 
-**File path**: `~/.gemini/tmp/<projectDirName>/chats/session-<sessionId>.jsonl` on current builds,
-`session-<sessionId>.json` on older ones. **Both generations are live and both must be matched.**
+**File path**: `~/.gemini/tmp/<projectDirName>/chats/session-<timestamp><shortId>.jsonl` on current
+builds, `.json` on older ones. **Both generations are live and both must be matched.**
+
+`<shortId>` is only the FIRST 8 CHARACTERS of the session UUID, so
+`session-2026-04-09T19-18-08889b8d.jsonl` belongs to session `08889b8d-c485-...`. A pattern built
+from the full UUID matches nothing; `locate()` keeps a full-UUID branch only as a defensive
+fallback that has never fired.
 
 Gemini cut over to append-only `.jsonl` on 2026-04-28; on a real machine every chat file written
 since is `.jsonl`. Kangentic's patterns anchored on `\.json$`, whose `$` cannot match `.jsonl`, so
@@ -115,7 +120,7 @@ The `<projectDirName>` is the **lowercased basename** of the cwd, NOT a hash - d
 **Format**: two generations. `isFullRewrite: true` either way - the parser receives the whole file
 content on each change, and `collectGeminiMessages()` normalizes both into one `messages[]` array.
 
-**Parser**: `src/main/agent/adapters/gemini/log-parser.ts`
+**Parser**: `src/main/agent/adapters/gemini/session-history-parser.ts`
 
 ### Current generation: append-only JSONL
 
@@ -185,7 +190,7 @@ metadata lives in the header line, not in a whole-file object.
 | `gemini-2.0*` | 1,000,000 |
 | (default) | 1,000,000 |
 
-Source: Google's published model cards. Update the table in `gemini/log-parser.ts` when Google publishes new model specs.
+Source: Google's published model cards. Update the table in `gemini/session-history-parser.ts` when Google publishes new model specs.
 
 ### Assumptions that could break on CLI upgrades
 

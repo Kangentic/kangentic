@@ -1,8 +1,11 @@
 import fs from 'node:fs/promises';
 
 /**
- * Bounded tail reader with an LRU content-identity cache, shared by every
- * adapter's submission verifier.
+ * Bounded tail reader with an LRU content-identity cache, shared by the
+ * submission verifiers that read an appendable TEXT history: Claude and Aider
+ * import it directly, Codex / Qwen / Kimi reach it through
+ * `submitted-text-verifier.ts`. Copilot (a global JSON blob it must re-read
+ * whole) and OpenCode (a SQL query) have nothing to tail and bypass it.
  *
  * This is generic file reading, not per-agent parsing: `agent-adapters-boundary`
  * constrains where agent-specific RECORD SHAPES live, and those stay in each
