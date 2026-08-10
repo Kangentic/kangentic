@@ -566,3 +566,215 @@ test('a deliberate drag onto another window still docks', async () => {
     await browser.close();
   }
 });
+
+// ---------------------------------------------------------------------------
+// The two helpers + tests below cover pre-existing `useWindowDrag` branches
+// (undock-under-cursor's re-anchor, group-move cancellation) whose MEANING
+// changed with this rewrite even though their own code did not: the free-move
+// budget reads `drag.startClientX/Y`, which `undockUnderCursor` re-anchors, and
+// the new Escape-cancels-drag path has to unwind a group move the same way
+// `finishDrag` does. Neither had any coverage before this file existed.
+// ---------------------------------------------------------------------------
+
+/** The overlay's viewport-relative bounds, read live. Used by the tests below
+ *  that steer raw client-coordinate pointer moves rather than store geometry. */
+async function overlayBounds(page: Page, windowId: string) {
+  return page.evaluate((id) => {
+    const frame = document.querySelector(`[data-testid="window-frame-${id}"]`) as HTMLElement;
+    const box = (frame.parentElement as HTMLElement).getBoundingClientRect();
+    return { left: box.left, top: box.top, width: box.width, height: box.height };
+  }, windowId);
+}
+
+/** The task-detail window id for a given task, or throws - a fixture bug should
+ *  fail loudly rather than silently degrade an assertion elsewhere. */
+async function windowIdForTask(page: Page, taskId: string): Promise<string> {
+  const id = await page.evaluate((tid) => {
+    const store = (window as unknown as {
+      __zustandStores: {
+        window: { getState: () => { windows: Record<string, { id: string; kind: string; anchor: string }> } };
+      };
+    }).__zustandStores.window.getState();
+    const found = Object.values(store.windows).find(
+      (managed) => managed.kind === 'task-detail' && managed.anchor === tid,
+    );
+    return found?.id ?? null;
+  }, taskId);
+  if (!id) throw new Error(`no task-detail window found for task ${taskId}`);
+  return id;
+}
+
+async function maximizeWindowAction(page: Page, windowId: string) {
+  await page.evaluate((id) => {
+    (window as unknown as {
+      __zustandStores: { window: { getState: () => { maximizeWindow: (id: string) => void } } };
+    }).__zustandStores.window.getState().maximizeWindow(id);
+  }, windowId);
+}
+
+async function dockIntoWindowAction(page: Page, draggedId: string, targetId: string, side: string) {
+  await page.evaluate(
+    ({ draggedId, targetId, side }) => {
+      (window as unknown as {
+        __zustandStores: {
+          window: { getState: () => { dockIntoWindow: (a: string, b: string, side: string) => void } };
+        };
+      }).__zustandStores.window.getState().dockIntoWindow(draggedId, targetId, side);
+    },
+    { draggedId, targetId, side },
+  );
+}
+
+async function tileTreeRect(page: Page) {
+  return page.evaluate(() => {
+    const store = (window as unknown as {
+      __zustandStores: {
+        window: { getState: () => { tileTreeRect: { x: number; y: number; w: number; h: number } } };
+      };
+    }).__zustandStores.window.getState();
+    return store.tileTreeRect;
+  });
+}
+
+test('the free-move budget re-anchors at undock, not the original press point', async () => {
+  // `undockUnderCursor` (pre-existing, unchanged by this rewrite) re-anchors
+  // `drag.startClientX/Y` to the pointer's position at the moment a maximized /
+  // snapped / tiled window floats out from under the cursor. The free-move
+  // budget (new in this rewrite) reads that exact same anchor via
+  // `event.clientX - drag.startClientX`, so a window that starts maximized has
+  // its budget measured from where it LANDED after undocking, not from the
+  // original press. If that re-anchor were dropped, the budget would instead
+  // measure from the press point, and a window dock would arm far sooner than
+  // intended for every window that starts maximized/snapped/tiled.
+  const { browser, page } = await launchWithTwoTasks();
+  try {
+    const draggedWindowId = await openTwoOverlappingWindows(page);
+    const targetId = await windowIdForTask(page, TARGET_TASK_ID);
+    await setGeometry(page, draggedWindowId, DRAGGED_GEOMETRY);
+    await maximizeWindowAction(page, draggedWindowId);
+    await expect
+      .poll(async () => (await snapshotWindows(page, draggedWindowId)).draggedState, { timeout: 5000 })
+      .toBe('maximized');
+
+    const titleBar = page.locator(`[data-testid="window-frame-${draggedWindowId}"] [data-testid="task-detail-titlebar"]`);
+    const box = await waitForStableBoundingBox(titleBar);
+    const overlay = await overlayBounds(page, draggedWindowId);
+    const grabX = box.x + box.width / 2;
+    const grabY = box.y + box.height / 2;
+    const grabOverlayX = grabX - overlay.left;
+    const grabOverlayY = grabY - overlay.top;
+
+    // JUMP crosses activation in one step (so undock's re-anchor happens on this
+    // exact event) and is itself well past the activation threshold. The two
+    // EXTRA distances are measured from the re-anchor point, one comfortably
+    // under FREE_MOVE_RADIUS_PX and one comfortably over.
+    const JUMP = Math.round(FREE_MOVE_RADIUS_PX * 0.83);
+    const UNDER_BUDGET_EXTRA = Math.round(FREE_MOVE_RADIUS_PX * 0.42);
+    const OVER_BUDGET_EXTRA = Math.round(FREE_MOVE_RADIUS_PX * 1.5);
+    // Sanity the two totals-from-press this design depends on: gesture 1 must
+    // clear the radius from press (so a budget that forgot to re-anchor would
+    // still arm), yet gesture 1's re-anchor-relative travel must stay under it.
+    expect(JUMP + UNDER_BUDGET_EXTRA).toBeGreaterThan(FREE_MOVE_RADIUS_PX);
+    expect(UNDER_BUDGET_EXTRA).toBeLessThan(FREE_MOVE_RADIUS_PX);
+
+    // A target rect wide enough to cover both gestures' endpoints, so "no dock"
+    // below is the budget, not the pointer missing the pane.
+    const gesture1EndX = grabOverlayX + JUMP + UNDER_BUDGET_EXTRA;
+    const gesture2EndX = grabOverlayX + JUMP + OVER_BUDGET_EXTRA;
+    const targetLeftPx = Math.min(gesture1EndX, gesture2EndX) - 40;
+    const targetRightPx = Math.max(gesture1EndX, gesture2EndX) + 40;
+    const targetBottomPx = grabOverlayY + 100;
+    await setGeometry(page, targetId, {
+      x: targetLeftPx / overlay.width,
+      y: 0,
+      w: (targetRightPx - targetLeftPx) / overlay.width,
+      h: targetBottomPx / overlay.height,
+    });
+
+    // Gesture 1: jump JUMP (activates + undocks + re-anchors), then a further
+    // UNDER_BUDGET_EXTRA - past the radius measured from the ORIGINAL press, but
+    // under it measured from the re-anchor. Release: must NOT dock.
+    await page.mouse.move(grabX, grabY);
+    await page.mouse.down();
+    await page.mouse.move(grabX + JUMP, grabY, { steps: 1 });
+    await page.mouse.move(grabX + JUMP + UNDER_BUDGET_EXTRA, grabY, { steps: 4 });
+    await page.mouse.up();
+
+    await expect
+      .poll(async () => await snapshotWindows(page, draggedWindowId), { timeout: 5000 })
+      .toMatchObject({ draggedState: 'floating', hasTileTree: false });
+
+    // Positive control: re-maximize and repeat the same re-anchoring jump, this
+    // time travelling OVER_BUDGET_EXTRA past the re-anchor point - proving the
+    // pointer path and target rect really do reach a dockable pane, so the "no
+    // dock" result above is the budget and not a geometry miss.
+    await maximizeWindowAction(page, draggedWindowId);
+    await expect
+      .poll(async () => (await snapshotWindows(page, draggedWindowId)).draggedState, { timeout: 5000 })
+      .toBe('maximized');
+    const box2 = await waitForStableBoundingBox(titleBar);
+    const grabX2 = box2.x + box2.width / 2;
+    const grabY2 = box2.y + box2.height / 2;
+    await page.mouse.move(grabX2, grabY2);
+    await page.mouse.down();
+    await page.mouse.move(grabX2 + JUMP, grabY2, { steps: 1 });
+    await page.mouse.move(grabX2 + JUMP + OVER_BUDGET_EXTRA, grabY2, { steps: 4 });
+    await page.mouse.up();
+
+    await expect
+      .poll(async () => await snapshotWindows(page, draggedWindowId), { timeout: 5000 })
+      .toMatchObject({ draggedState: 'tiled', hasTileTree: true });
+  } finally {
+    await browser.close();
+  }
+});
+
+test('Escape during a tiled-group move clears every pane transform and leaves the tree untouched', async () => {
+  // `cancelDrag` is new. Its group-move branch clears `style.transform` on every
+  // frame in `drag.groupMove.frames` - which includes the OTHER pane in the tile
+  // group, not just the one whose header was grabbed (that one's frame is also
+  // cleared via `frameRef.current`, so it alone would not catch a missing loop).
+  // If that loop were dropped, the group's partner pane would keep a stale
+  // `translate3d` transform forever after an Escape-cancelled group drag, while
+  // the store still reports its pre-drag position.
+  const { browser, page } = await launchWithTwoTasks();
+  try {
+    const draggedWindowId = await openTwoOverlappingWindows(page);
+    const targetId = await windowIdForTask(page, TARGET_TASK_ID);
+
+    // Seed a tile pair confined to the TARGET's footprint (TARGET_GEOMETRY is
+    // 0.45 wide - nowhere near `footprintFillsOverlay`'s tolerance), so dragging
+    // either pane's header GROUP-MOVES instead of popping out.
+    await dockIntoWindowAction(page, draggedWindowId, targetId, 'right');
+    await expect
+      .poll(async () => await snapshotWindows(page, draggedWindowId), { timeout: 5000 })
+      .toMatchObject({ draggedState: 'tiled', targetState: 'tiled', hasTileTree: true });
+    const footprintBefore = await tileTreeRect(page);
+
+    const titleBar = page.locator(`[data-testid="window-frame-${draggedWindowId}"] [data-testid="task-detail-titlebar"]`);
+    const box = await waitForStableBoundingBox(titleBar);
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    // Past DRAG_ACTIVATION_PX so the group-move branch actually engages.
+    await page.mouse.move(box.x + box.width / 2 + 60, box.y + box.height / 2 + 40, { steps: 6 });
+    await page.keyboard.press('Escape');
+    await page.mouse.up();
+
+    const transforms = await page.evaluate(
+      ({ draggedId, targetId }) => {
+        const draggedFrame = document.querySelector(`[data-testid="window-frame-${draggedId}"]`) as HTMLElement | null;
+        const targetFrame = document.querySelector(`[data-testid="window-frame-${targetId}"]`) as HTMLElement | null;
+        return { dragged: draggedFrame?.style.transform ?? null, target: targetFrame?.style.transform ?? null };
+      },
+      { draggedId: draggedWindowId, targetId },
+    );
+    expect(transforms).toEqual({ dragged: '', target: '' });
+
+    await expect
+      .poll(async () => await snapshotWindows(page, draggedWindowId), { timeout: 5000 })
+      .toMatchObject({ draggedState: 'tiled', targetState: 'tiled', hasTileTree: true });
+    expect(await tileTreeRect(page)).toEqual(footprintBefore);
+  } finally {
+    await browser.close();
+  }
+});
