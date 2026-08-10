@@ -357,6 +357,81 @@ export interface AgentAdapter {
   getSubmissionVerifier?(contextType: SubmissionContextType): SubmissionVerifier | null;
 
   /**
+   * Optional: whether a SLASH-prefixed `auto_command` can be verified in this
+   * agent's session history. Omitted or `true` means yes.
+   *
+   * Declaring `false` makes `prepareInjectionPlan` tag that command
+   * `verify: 'none'`, so the burst neither retries nor escalates on it and the
+   * outcome stays `unconfirmed`. This exists because "the text is absent from
+   * the history file" is AMBIGUOUS for agents that handle slash input entirely
+   * in the TUI, and the two readings need opposite responses:
+   *
+   *   - the CLI REJECTED it (Codex prints "Unrecognized command") - nothing ran,
+   *   - the CLI RAN it client-side (`/status`, `/compact`) - it worked, and
+   *     simply never becomes a conversation turn.
+   *
+   * A verifier cannot tell those apart, and treating the second as a failure
+   * escalates to a session restart that destroys live work. Declining is the
+   * honest, non-destructive answer.
+   *
+   * This is a declared capability rather than an agent-name check on purpose,
+   * per `agent-adapters-boundary`: the transition engine must never learn which
+   * agent it is talking to.
+   */
+  canVerifySlashSubmission?(): boolean;
+
+  /**
+   * Optional: whether a verification FAILURE from this adapter's verifier may
+   * escalate to a session restart. Omitted or `true` means yes.
+   *
+   * Declaring `false` marks the verifier CONFIRM-ONLY. It still confirms
+   * deliveries and still drives retry-on-Enter, which is the rung that closes
+   * the measured 92.9% -> 100% delivery gap; it simply never authorizes the
+   * restart. The worst case for a confirm-only adapter is a `failed` outcome
+   * and a notice, never a respawn.
+   *
+   * ESCALATION TAKES TWO PROOFS, AND MEASUREMENT IS ONLY THE FIRST.
+   *
+   *   1. Flush latency measured live inside the delivery budget
+   *      (`scripts/measure-injection-flush.mjs`, numbers recorded in
+   *      `docs/command-injection.md`). This answers "does the CLI write the
+   *      record fast enough?"
+   *   2. This adapter's OWN verifier proven end to end in a running app: it
+   *      confirmed a real submission, and a forced miss escalated. This answers
+   *      "does THIS resolver find THAT record?" - a different question, and the
+   *      one that catches a broken path derivation or a session id that never
+   *      got captured. Both produce a permanent false negative, and a permanent
+   *      false negative escalates every auto_command the adapter ever receives.
+   *
+   * The harness satisfies (1) only. It hunts a nonce with its own file reader,
+   * so a green measurement says nothing about whether the adapter's resolver
+   * points at that file or whether the CLI wrapped the stored text (Cursor
+   * stores `<user_query>...</user_query>`, which would never trim-equal the
+   * submitted text). `docs/command-injection.md` has the mock-CLI recipe for
+   * (2); it costs no agent quota.
+   *
+   * Do not remove this override on the strength of the parser tests passing.
+   * The parser was never the risky part.
+   */
+  canEscalateOnVerificationFailure?(): boolean;
+
+  /**
+   * Optional: whether this adapter's `command-injection` verifier needs a
+   * captured `agent_session_id` to locate its history. Omitted or `true` means
+   * it does, which is the norm - almost every agent keys its transcript by
+   * session id, and scanning without one would read the wrong file.
+   *
+   * Aider is the exception and the reason this exists: it has NO session id at
+   * all (no `sessionIdCapture` in its runtime) because it keeps a single
+   * `.aider.chat.history.md` per project directory. `cwd` alone identifies its
+   * history. Without this opt-out the shared wrapper short-circuits on the
+   * missing id and the verifier can never confirm - which is worse than having
+   * no verifier, since the burst still retries and then reports `failed`
+   * instead of staying silently `unconfirmed`.
+   */
+  requiresAgentSessionIdForVerification?(): boolean;
+
+  /**
    * Optional: translate a column-level settings change (model / effort)
    * into the sequence of writes the TerminalSubmitScheduler should push onto
    * the live PTY to apply it. Pairs with

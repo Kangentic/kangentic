@@ -320,6 +320,143 @@ describe('prepareInjectionPlan', () => {
     ]);
   });
 
+  it('marks a SLASH auto_command unverifiable when the adapter declares it cannot verify one', () => {
+    // Codex is the measured case: it handles slash input in the TUI and never
+    // writes it to the rollout file (an unrecognized `/...` printed
+    // "Unrecognized command" and produced no record at all). Absence therefore
+    // cannot distinguish "the CLI rejected it" from "the CLI ran it
+    // client-side" - and treating the second as a failure escalates to a
+    // session restart that destroys live work. `none` keeps the outcome
+    // `unconfirmed`, which neither retries nor escalates.
+    const adapter = fakeAdapter({
+      getInjectionSequence: () => [],
+      canVerifySlashSubmission: () => false,
+    });
+    const plan = prepareInjectionPlan({
+      adapter,
+      sessionRepo: sessionRepoWith({ applied_model: null, applied_effort: null }),
+      task: { id: 't1', agent: 'fake' },
+      toLane: lane({}),
+      autoCommand: '/compact',
+    });
+    expect(plan?.sequence).toEqual([{ text: '/compact', verify: 'none' }]);
+  });
+
+  it('still verifies PROSE on an adapter that cannot verify slash commands', () => {
+    // The opt-out is scoped to slash text only. Prose auto_commands are exactly
+    // what the verifier handles well, so declining them too would throw away
+    // the retry-on-Enter recovery the verifier exists to provide.
+    const adapter = fakeAdapter({
+      getInjectionSequence: () => [],
+      canVerifySlashSubmission: () => false,
+    });
+    const plan = prepareInjectionPlan({
+      adapter,
+      sessionRepo: sessionRepoWith({ applied_model: null, applied_effort: null }),
+      task: { id: 't1', agent: 'fake' },
+      toLane: lane({}),
+      autoCommand: 'review the diff',
+    });
+    expect(plan?.sequence).toEqual([{ text: 'review the diff', verify: 'submitted' }]);
+  });
+
+  it('keeps a slash auto_command verifiable when the adapter says nothing', () => {
+    // Omitting the capability must not silently weaken existing adapters:
+    // Claude and Qwen both record slash invocations and keep `submitted`.
+    const adapter = fakeAdapter({ getInjectionSequence: () => [] });
+    const plan = prepareInjectionPlan({
+      adapter,
+      sessionRepo: sessionRepoWith({ applied_model: null, applied_effort: null }),
+      task: { id: 't1', agent: 'fake' },
+      toLane: lane({}),
+      autoCommand: '/pull-request',
+    });
+    expect(plan?.sequence).toEqual([{ text: '/pull-request', verify: 'submitted' }]);
+  });
+
+  it('marks the auto_command non-escalatable for a CONFIRM-ONLY verifier', () => {
+    // A confirm-only verifier is one whose adapter has not proven it end to end
+    // in a running app (every adapter here except Claude and Codex). It may
+    // confirm and it may drive retry-on-Enter, both pure upside. It must not
+    // authorize escalation, because escalation restarts the session and destroys
+    // live work, and a false negative from an unproven verifier is a guess.
+    const adapter = fakeAdapter({
+      getInjectionSequence: () => [],
+      canEscalateOnVerificationFailure: () => false,
+    });
+    const plan = prepareInjectionPlan({
+      adapter,
+      sessionRepo: sessionRepoWith({ applied_model: null, applied_effort: null }),
+      task: { id: 't1', agent: 'fake' },
+      toLane: lane({}),
+      autoCommand: 'review the diff',
+    });
+    // Still `submitted`, so it is still verified and still retried.
+    expect(plan?.sequence).toEqual([
+      { text: 'review the diff', verify: 'submitted', escalatable: false },
+    ]);
+  });
+
+  it('leaves the auto_command escalatable for a MEASURED verifier', () => {
+    // The field is omitted rather than set to true: its contract is
+    // "omitted or true means escalatable", so an ordinary command carries no
+    // redundant key.
+    const adapter = fakeAdapter({ getInjectionSequence: () => [] });
+    const plan = prepareInjectionPlan({
+      adapter,
+      sessionRepo: sessionRepoWith({ applied_model: null, applied_effort: null }),
+      task: { id: 't1', agent: 'fake' },
+      toLane: lane({}),
+      autoCommand: 'review the diff',
+    });
+    expect(plan?.sequence).toEqual([{ text: 'review the diff', verify: 'submitted' }]);
+    expect(plan?.sequence[0].escalatable).toBeUndefined();
+  });
+
+  it('still verifies a cwd-keyed adapter that has no agent_session_id', async () => {
+    // Aider is the case: it declares no `sessionIdCapture` because it keeps ONE
+    // `.aider.chat.history.md` per project directory, so a session never gets
+    // an agent_session_id. Without the opt-out the wrapper short-circuits on
+    // the missing id and the verifier can NEVER confirm - which is strictly
+    // worse than having no verifier, because the burst still retries and then
+    // reports `failed` where it used to stay silently `unconfirmed`.
+    const seen: Array<{ agentSessionId?: string; cwd?: string }> = [];
+    const adapter = fakeAdapter({
+      getInjectionSequence: () => [],
+      requiresAgentSessionIdForVerification: () => false,
+      getSubmissionVerifier: () => async (context) => {
+        if (context.type !== 'command-injection') return false;
+        seen.push({ agentSessionId: context.agentSessionId, cwd: context.cwd });
+        return true;
+      },
+    });
+    const verifier = buildCommandInjectionVerifier(
+      adapter,
+      sessionRepoWith({ id: 's1', agent_session_id: null, cwd: '/mock/project' }),
+      't1',
+    );
+    expect(verifier).not.toBeNull();
+    expect(await verifier!('review the diff', Date.now(), 'submitted')).toBe(true);
+    expect(seen).toEqual([{ agentSessionId: undefined, cwd: '/mock/project' }]);
+  });
+
+  it('still requires an agent_session_id for every other adapter', async () => {
+    // The opt-out must not weaken the norm: without a session id, scanning
+    // would read some other session's transcript.
+    let called = false;
+    const adapter = fakeAdapter({
+      getInjectionSequence: () => [],
+      getSubmissionVerifier: () => async () => { called = true; return true; },
+    });
+    const verifier = buildCommandInjectionVerifier(
+      adapter,
+      sessionRepoWith({ id: 's1', agent_session_id: null, cwd: '/mock/project' }),
+      't1',
+    );
+    expect(await verifier!('review the diff', Date.now(), 'submitted')).toBe(false);
+    expect(called).toBe(false);
+  });
+
   it('verifier is null when adapter does not implement getSubmissionVerifier', () => {
     const adapter = fakeAdapter({
       getInjectionSequence: () => ['/x'],

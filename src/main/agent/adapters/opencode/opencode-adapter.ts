@@ -4,6 +4,7 @@ import path from 'node:path';
 import { OpenCodeDetector } from './detector';
 import { OpenCodeCommandBuilder } from './command-builder';
 import { OpenCodeSessionHistoryParser } from './session-history-parser';
+import { createOpenCodeCommandInjectionVerifier } from './command-injection-verifier';
 import { parseOpenCodeTranscript, openCodeTranscriptSourcePath, mapOpenCodeRemoteEntries } from './transcript-parser';
 import { migrateOpenCodeProjectData } from './project-relocation';
 import { removeHooks as removeOpenCodeHooks } from './hook-manager';
@@ -359,12 +360,50 @@ export class OpenCodeAdapter implements AgentAdapter {
     removeOpenCodeHooks(directory);
   }
 
-  getSubmissionVerifier(_contextType: SubmissionContextType): SubmissionVerifier | null {
-    // OpenCode plugin fires hooks and emits JSONL events, but coordinating
-    // hook-based paste confirmation with command-injection JSONL parsing
-    // is complex. Callers fall back to time-based settle (paste) or
-    // time-settle (command-injection).
+  getSubmissionVerifier(contextType: SubmissionContextType): SubmissionVerifier | null {
+    if (contextType === 'command-injection') {
+      // MEASURED (64-95ms, flat against a 7.3s turn). The only adapter that
+      // queries SQL rather than reading a history file. A REMOTE session has no
+      // local row and is therefore reported `failed` however well it was
+      // delivered - a known limitation, contained by keeping escalation off.
+      // See `canEscalateOnVerificationFailure` below.
+      return createOpenCodeCommandInjectionVerifier();
+    }
+    // 'paste': the OpenCode plugin fires hooks and emits JSONL events, but
+    // coordinating hook-based paste confirmation with this is complex; the
+    // paste engine's activity and data-floor backstops cover it.
     return null;
+  }
+
+  /**
+   * Like Codex, OpenCode handles slash input in the TUI and never writes it to
+   * the database. Measured: with the leading `/` intact, a `/...` probe produced
+   * no user message at all. Absence therefore cannot distinguish "rejected"
+   * from "ran client-side", so slash auto_commands are left unverified rather
+   * than risking an escalation that restarts a working session.
+   */
+  canVerifySlashSubmission(): boolean {
+    return false;
+  }
+
+  /**
+   * CONFIRM-ONLY, and this one has a KNOWN wrong answer rather than merely an
+   * unproven one. A REMOTE session keeps no local row, so the query finds
+   * nothing and the verifier returns false for the whole burst - reporting
+   * `failed` on an auto_command that was delivered perfectly well.
+   *
+   * `locateSessionHistoryFile` guards that case by checking `remoteTargetsByCwd`;
+   * `getSubmissionVerifier` cannot, because it receives only a context type -
+   * no `cwd` to check the map with. Nor can the verifier signal the difference
+   * once it runs: its contract is a boolean, and "cannot observe" and "observed
+   * absence" both have to come back false so the caller keeps polling.
+   *
+   * So escalation stays off here regardless of the 95ms measurement. With it
+   * off, a remote session costs one spurious notice; with it on, it would
+   * restart a healthy session on every single delivery.
+   */
+  canEscalateOnVerificationFailure(): boolean {
+    return false;
   }
 
   clearSettingsCache(): void {

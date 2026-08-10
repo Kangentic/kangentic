@@ -5,6 +5,7 @@ import { AgentDetector } from '../../shared/agent-detector';
 import { standardUnixFallbackPaths } from '../../shared/fallback-paths';
 import { KimiCommandBuilder } from './command-builder';
 import { KimiSessionHistoryParser } from './session-history-parser';
+import { createKimiCommandInjectionVerifier } from './command-injection-verifier';
 import { parseKimiTranscript, locateKimiTranscriptFile } from './transcript-parser';
 import { migrateKimiProjectData } from './project-relocation';
 import { discoverKimiCapabilities } from './capability-discovery';
@@ -186,10 +187,24 @@ export class KimiAdapter implements AgentAdapter {
     // No hook cleanup needed.
   }
 
-  getSubmissionVerifier(_contextType: SubmissionContextType): SubmissionVerifier | null {
-    // Kimi has no hooks or structured verification signals.
-    // Callers fall back to time-based settle (paste) or time-settle (command-injection).
+  getSubmissionVerifier(contextType: SubmissionContextType): SubmissionVerifier | null {
+    if (contextType === 'command-injection') {
+      // CONFIRM-ONLY: wire.jsonl's record shape is pinned against real captures,
+      // but Kimi's flush latency is unmeasured (see canEscalateOnVerificationFailure).
+      return createKimiCommandInjectionVerifier();
+    }
+    // 'paste': Kimi exposes no hook or structured signal; the paste engine's
+    // activity and data-floor backstops cover it.
     return null;
+  }
+
+  /**
+   * CONFIRM-ONLY: shape known from real captures, flush latency unmeasured
+   * (Kimi never reached a usable TUI on the measuring machine), so it may
+   * confirm and retry but must never authorize the restart escalation performs.
+   */
+  canEscalateOnVerificationFailure(): boolean {
+    return false;
   }
 
   clearSettingsCache(): void {

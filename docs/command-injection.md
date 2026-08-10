@@ -89,7 +89,9 @@ follows it.
 
 ## Claude's JSONL-polling implementation
 
-Claude is the only adapter that currently provides a `'command-injection'` verifier. Claude Code writes every successful slash invocation to its session JSONL transcript as a `local_command` system entry whose `<command-name>` matches the slash and whose `<command-args>` matches exactly what was sent. The verifier (`src/main/agent/adapters/claude/slash-command-verifier.ts`) tail-scans this file for an entry matching both fields exactly:
+Claude's is the richest verifier, and the only one that matches on a structured slash-invocation record rather than on the submitted text. Six adapters provide a `'command-injection'` verifier today (see the matrix below); the other five reuse the shared submitted-text scan.
+
+Claude Code writes every successful slash invocation to its session JSONL transcript as a `local_command` system entry whose `<command-name>` matches the slash and whose `<command-args>` matches exactly what was sent. The verifier (`src/main/agent/adapters/claude/slash-command-verifier.ts`) tail-scans this file for an entry matching both fields exactly:
 
 - Match `<command-name>` against the slash (e.g. `/model`).
 - Match `<command-args>` against the literal args we sent (e.g. `claude-opus-4-7`).
@@ -208,7 +210,7 @@ Every scheduled injection ends in exactly one recorded outcome, persisted on the
 
 `escalated` is checked BEFORE `confirmed` in `toState()` (`src/main/ipc/helpers/auto-command-outcome.ts`), so a delivery that required a restart is never reported as `confirmed`. Escalation resolving means the restart was ISSUED and argv delivery is guaranteed by the spawn; it does not mean a verifier watched it land, which is why it is neither `confirmed` nor `failed`.
 
-`unconfirmed` is **not** a failure. Only Claude implements a `command-injection` verifier, so on every other agent every delivery lands there; conflating the two would make the field meaningless off Claude and turn a normal delivery into an error notice for most users.
+`unconfirmed` is **not** a failure. It is the normal outcome on every adapter without a verifier, and conflating the two would turn a normal delivery into an error notice for most users. See the per-adapter matrix below for which agents verify today.
 
 ## When to use `'paste'` vs `'command-injection'`
 
@@ -224,20 +226,172 @@ The two contexts solve different problems: `'paste'` confirms one-shot paste sub
 - `'paste'` runs the verifier **in parallel** with the activity-event listener and post-`\r` data path. The first signal to resolve wins. A verifier resolving `false` does not short-circuit the fallbacks - they remain active for the rest of the wait window. This matches the "best-effort confirmation" model: a verifier strengthens evidence but cannot weaken the existing fallback path.
 - `'command-injection'` runs the verifier in a **tight poll loop** inside `TerminalSubmit.pollWithRetries`. On each iteration the verifier is invoked with the current `sentAt`; if it returns `false`, the loop sleeps `pollMs` and retries. Past the retry interval (with no confirmation), Enter is re-fired and `sentAt` advances. This matches the "deterministic chain" model: each command must be confirmed before the next.
 
+## Why a verifier must be measured before it is written
+
+A verifier is what AUTHORIZES escalation, and escalation restarts the session with the command as an argv prompt. That makes the two failure modes wildly asymmetric:
+
+- **No verifier** - the outcome is `unconfirmed`, escalation never fires, and nothing destructive happens.
+- **A too-slow verifier** - a false `failed` escalates, and the restart **destroys live work.**
+
+So a wrong verifier is worse than no verifier, and `getSubmissionVerifier` returning `null` is a declared answer (pinned per adapter in `tests/unit/agent-submission-verifier-shape.test.ts`), not an omission.
+
+Measurement is the gate on WRITING a verifier. It is not on its own the gate on letting one escalate: see [Why escalation takes two proofs](#why-escalation-takes-two-proofs-and-measurement-is-only-the-first).
+
+The trap is that the obvious measurement gives the wrong answer. A trivial prompt ends its turn in under a second, so an agent that flushes its history at TURN-END still reads sub-second and looks like a pass. The discriminator is a **paired short/long trial**: if append latency tracks turn duration, the agent is turn-end flushed and fails the gate. `scripts/measure-injection-flush.mjs` runs that pairing (plus a slash-command trial) against the real CLI under node-pty, and the numbers below come from it.
+
+Two further rules the harness enforces, both learned the hard way here:
+
+- **Measure the file the VERIFIER reads.** Qwen's probe text reaches `~/.qwen/tmp/<hash>/logs.json` in ~130ms but its `chats/<sessionId>.jsonl` in ~500ms. Reporting the first number would have credited the verifier with a latency belonging to a file it never opens.
+- **An offline run can never establish a pass.** With credentials stripped there is no turn to flush at turn-end, so a fast append proves nothing. Offline yields only "absent" or "needs live confirmation".
+
+## Measured flush latency
+
+Live runs, 2026-08-08, Windows. "Worst" is the slowest observation across trials, because the safety-relevant statistic for a restart-authorizing signal is the worst case, never the mean.
+
+| Agent | Short turn | Long turn (turn length) | Worst | Slash recorded? | Verdict |
+|---|---|---|---|---|---|
+| Copilot | 36ms, 37ms | 38ms, 37ms (32.3s, 23.3s) | **38ms** | yes (37ms, 53ms) | **implement** |
+| Codex | 64ms, 108ms | 62ms, 61ms (4.6s, 4.4s) | **108ms** | no | **implement** |
+| OpenCode | 64ms, 64ms | 95ms, 64ms (5.0s, 7.3s) | **95ms** | no | **implement** |
+| Qwen | 443ms, 519ms | 696ms, 479ms (13.5s, 14.1s) | **696ms** | yes (306ms, 355ms) | **implement** |
+| Claude (control) | 775ms, 1876ms | 791ms, 1828ms (11.4s, 6.3s) | **1876ms** | yes | **implement** |
+| Droid | 3202ms, 941ms | 661ms, 636ms (4.5s, 9.9s) | **3202ms** | yes (580ms, 564ms) | **stop** |
+| Cursor | login-gated | 5766ms, 5446ms (5.8s, 5.4s) | **5766ms** | yes (2614ms) | **stop** |
+| Gemini | 5504ms, never (>25s) | never (>25s), 6302ms (16.9s) | **>25s** | not reached | **stop** |
+
+**The bar is the delivery BUDGET, not a margin.** `submitKeystrokes` retries up to 5 times polling 400ms each, so a submission has ~2000ms to become visible before the outcome is `failed`, and `sentAt` advances on every retry. Two earlier attempts to hold reserve (1000ms, then 1500ms) both failed the CLAUDE CONTROL - the reference implementation whose verifier ships and works. Any bar that rejects the known-good adapter is measuring the wrong thing.
+
+**Run the control after touching the harness.** Claude's numbers are bimodal (775/791/779ms or 1812/1828/1876ms, nothing between - a periodic flush caught either side of its interval), which is also why "typical" latency is meaningless here and only the upper mode matters. If `--agent claude` does not pass, the instrument is broken and no other verdict from it can be trusted.
+
+**Cursor is the clearest turn-end flush after Gemini.** Its appends landed 40ms and 42ms either side of the turn ENDING - not correlated with turn length, essentially identical to it. Its first two probes were also login-gated (the harness's auth-gate detector did not recognise Cursor's wording, since phrase matching lags vendors), but that contamination changes nothing: the trials that DID land are disqualifying on their own at nearly 3x the budget.
+
+OpenCode is measured through a read-only SQL query rather than a file scan, because a SQLite page is not observable as text. Getting that number took three runs and exposed a harness bug worth recording: some TUIs drop the first characters of typed input while they finish becoming interactive (OpenCode ate between 6 and 40 of them), which destroyed a front-anchored nonce and read as "never landed". The probe marker now sits at the END of the prompt and the harness settles before typing. Production does not hit this - `submitKeystrokes` runs its own Ctrl+U handshake and settle first - but any future probe must keep the marker trailing.
+
+That contamination only ever produced false NEGATIVES, and it does not touch the verdicts above: Gemini and Droid failed on the latency of trials that DID land (5504ms/6302ms and 3202ms respectively), and every Codex and Qwen trial landed with an exact match.
+
+Codex's append latency is flat against a turn 70x longer, which is what proves the write happens on submit. A read-only pre-screen agreed before any quota was spent: of 114 rollout files on a real machine, five ended in a TORN JSON line and one ended mid-turn on `exec_command_end` - only possible if the process died mid-append, which rules out a turn-end buffer.
+
+Gemini is the case the gate exists for. It writes on message completion (its own parser says so), so two of four probes never landed within 25 seconds. A verifier built on it by analogy with Codex would have reported `failed` on healthy sessions and escalated them into restarts.
+
+A note for anyone re-running this: Droid's numbers below are exactly as measured, but the verdict was corrected by hand afterwards. The saved report from that run records `implement`, because the gate itself had the bug described below and was fixed after the run. The measurement did not change; only the rule applied to it did. A fresh run on the current harness reports `stop`.
+
+Droid fails for a different and more instructive reason: it is not turn-end flushed at all (its LONG turns appended fastest, at ~640ms), it is simply **unreliable** - 564ms at best and 3202ms at worst, with no relation to turn length. 3202ms exceeds the entire ~2s retry budget, so those submissions would have been reported `failed` while the agent was working normally. This is why the bar is the WORST observation rather than the mean, and why the harness gates on every trial rather than only the long-turn ones: an earlier revision checked only the long runs and returned "implement" for Droid while printing a 3202ms worst case.
+
+Qwen passes but with far less margin than Codex, and lands ABOVE the 400ms single-attempt window, so it typically confirms on the second Enter attempt. That is well inside the ~2s budget, but it means any future tightening of `VERIFY_WINDOW_MS` puts Qwen at risk first.
+
 ## Per-adapter support matrix
 
-| Adapter | `'paste'` | `'command-injection'` |
-|---------|-----------|----------------------|
-| Claude | `null` (time-based fallback) | JSONL-polling verifier |
-| Codex / Gemini / Qwen | `null` | `null` |
-| OpenCode / Copilot / Aider | `null` | `null` |
-| Cursor / Droid / Kimi / Warp | `null` | `null` |
+There are three tiers, and the line between the first two is a safety property, not a quality judgement.
+
+- **Verified** - flush latency measured live, AND this adapter's own verifier watched confirming a real submission inside a running app. Confirms, retries, and may escalate to a restart.
+- **Confirm-only** - has a working verifier that confirms and drives retry-on-Enter, but **never escalates**. Each one records exactly which of the two proofs it is missing.
+- **None** - no usable signal at all.
+
+| Adapter | `'paste'` | `'command-injection'` | Tier | What it has, and what it lacks |
+|---------|-----------|----------------------|------|-------|
+| Claude | `null` | JSONL-polling verifier | **verified** | the shipped reference implementation; records slash invocations and user turns on submit |
+| Codex | `null` | verifier (`submitted` only) | **verified** | 108ms worst, and proven in-app both ways (confirmed a real record, escalated a forced miss); declines SLASH commands, see below |
+| Copilot | `null` | verifier | confirm-only | 38ms worst, the fastest measured. Lacks a real capture of `command-history-state.json` to pin its exact-match extractor against |
+| OpenCode | `null` | verifier (SQL) | confirm-only | 95ms worst via a read-only query. Has a KNOWN wrong answer for remote sessions, below; declines SLASH commands, same as Codex |
+| Qwen | `null` | verifier | confirm-only | 696ms worst, slash included. Builds its path from a CAPTURED session id and has never run against a live Qwen session in-app |
+| Kimi | `null` | verifier | confirm-only | `wire.jsonl` shape pinned to real captures. Unmeasured: never reached a usable TUI |
+| Aider | `null` | verifier | confirm-only | markdown shape from a real fixture. Unmeasured: not installed on the measuring machine |
+| Gemini | `null` | `null` | none | measured turn-end flushed and highly variable |
+| Droid | `null` | `null` | none | measured unreliable: 564ms best, 3202ms worst |
+| Cursor | `null` | `null` | none | measured turn-end flushed: appends land within ~40ms of the turn ending |
+| Warp | `null` | `null` | none | no history file accessible via CLI |
+| Ollama | `null` | `null` | none | `ollama run` keeps no session history |
+
+### Why escalation takes two proofs, and measurement is only the first
+
+A verifier does two separable things, and they carry very different risk:
+
+- **Rung 2, retry-on-Enter.** A `false` re-presses Enter. Pure upside: it recovers a submission a picker swallowed, and it is what closes the measured 92.9% -> 100% delivery gap. This is where nearly all the delivery win lives.
+- **Rung 3, escalation.** Exhausting the retries restarts the session with the command as an argv prompt. That **destroys live work** if the verifier was wrong.
+
+The harness answers one question: *does the CLI write the record fast enough?* It hunts a unique nonce with its own file reader, deliberately agent-agnostic so it stays honest even when the app's resolver is broken. That independence is also its limit. It says nothing about:
+
+- whether **this adapter's resolver** points at the file the harness read (a path built from a session id that was never captured resolves to nothing, forever);
+- whether the CLI **wraps or decorates** the stored text. Cursor stores `<user_query>\n<task>...</task>\n</user_query>`, which a nonce substring search finds happily and exact trim-equality never matches.
+
+Both of those produce a **permanent** false negative rather than an intermittent one, so they would escalate *every* auto_command the adapter ever receives. That is why the second proof is a run inside the app, and why an adapter stays confirm-only until it has one, even with a clean measurement.
+
+Mechanically: `canEscalateOnVerificationFailure() === false` makes `prepareInjectionPlan` mark the auto_command `escalatable: false`, and `TerminalSubmitScheduler.escalate` filters it out. Worst case for a confirm-only adapter is a `failed` outcome and a notice, never a respawn. The tiers are pinned per adapter in `tests/unit/agent-submission-verifier-shape.test.ts`, so flipping one without recording the evidence fails CI.
+
+### Graduating an adapter (the contributor recipe)
+
+Both steps cost zero agent quota. Do them in order; step 2 is the one that has actually caught bugs.
+
+**1. Measure the CLI.** `node scripts/measure-injection-flush.mjs --agent <name>`, on a machine where that CLI is authenticated and responsive. Run `--agent claude` first as a control: Claude's verifier ships and works, so a harness that fails Claude is broken and no other verdict from it can be trusted. Record the short/long/slash numbers in the latency table above. The bar is the ~2000ms delivery budget, applied to the WORST observation.
+
+**2. Prove the adapter's own verifier in the app.** Point `agent.cliPaths.<agent>` at a mock CLI that writes a real-shaped record into that agent's real history location (read the working directory off the CLI's own argument rather than `process.cwd()` - Codex records the `-C` value, and getting that wrong silently writes to the wrong slug). Create a task with `agent_override` set to that agent, move it into a column carrying an `auto_command`, and read the task's `auto_command_state` back out of the project DB.
+
+   - Expect `confirmed`.
+   - Then disable the mock's record write and repeat. A confirm-only adapter must land on `failed` with the session still alive; an escalating one must land on `escalated` with a restart.
+
+**3. Flip the flag and say why.** Drop that adapter's `canEscalateOnVerificationFailure` override, update its row in the matrix above and its entry in `agent-submission-verifier-shape.test.ts`, and record what you ran. **Do not drop the override because the parser tests pass** - the parser was never the risky part.
+
+If you only get through step 1, that is still worth a PR: the numbers go in the table and the adapter keeps its confirm-only verifier. And if an adapter misbehaves for you, the useful bug report is its `auto_command_state`, the agent, and whether the session was local or remote.
+
+Run to date, against a mock CLI writing a real rollout file, driving actual column moves:
+
+| Adapter | Tier | Verifier outcome | `auto_command_state` | Session restarted? |
+|---|---|---|---|---|
+| Codex | verified | confirmed 1ms after the record landed | `confirmed` | no |
+| Codex | verified | never recorded (forced) | `escalated` | **yes** |
+| OpenCode | confirm-only | never confirmed | `failed` | **no** |
+
+The last two rows are the whole point of the tier split: identical verifier behaviour, opposite consequences.
+
+### Known limitations, per adapter
+
+Each confirm-only adapter carries a guard standing in for what could not be measured, or a documented wrong answer:
+
+- **OpenCode remote sessions are reported `failed` however well they were delivered.** A remote session keeps no local row, so the query finds nothing on every poll. `locateSessionHistoryFile` guards this case via `remoteTargetsByCwd`, but `getSubmissionVerifier` receives only a context type and has no `cwd` to check it with; and once running, the verifier's boolean contract cannot distinguish "cannot observe" from "observed absence" - both must return false so the caller keeps polling through the normal post-spawn gap. Escalation being off is the containment: a spurious notice instead of a restart on every delivery. Widening the verifier contract is the real fix and is not attempted here.
+- **Copilot's history is GLOBAL** across every session and project, with no timestamps and no session id, so a concurrent injection from another task can push our entry down the list. The verifier accepts a match from the newest few entries rather than strictly `[0]`, which biases the residual error toward a harmless false POSITIVE instead of a false negative. That mitigation is reasoning, not measurement.
+- **Aider** has no per-entry timestamps and one file per project, appended forever, so a previously-run auto_command would otherwise confirm from a months-old entry. It requires the FILE's mtime to be at/after `sentAt` AND matches only the LAST user block. It is also the one adapter with NO session id at all, so it declares `requiresAgentSessionIdForVerification() === false`; without that the shared wrapper short-circuits on the missing id and the verifier can never confirm, which is worse than having none (the burst still retries, then reports `failed` where it would have stayed silently `unconfirmed`).
+- **Kimi** records `timestamp` in unix SECONDS; it is scaled to milliseconds, without which every record reads ~56 years stale and nothing would ever confirm.
+
+**Unmeasured is a real verdict, distinct from a measured "no".** Two adapters have no number yet, and neither has been shown to flush late:
+
+- **Kimi** never reached a usable TUI (it hung past the harness's four-minute per-probe ceiling on a single trial).
+- **Aider** is not installed on the measuring machine.
+
+OpenCode used to sit here too, and how it left is the instructive part: nothing about OpenCode changed, the INSTRUMENT did. Its storage is a SQLite database, so a byte scan of the page file proved nothing either way; once the harness gained a read-only query mode it measured 64-95ms. Treat "unmeasured" as a statement about the harness as much as about the agent.
+
+### Cursor: located, not yet verified
+
+Cursor's entry used to read "session history location is not known". It is now known, and the reason it stayed unknown is worth recording: Cursor was **undetectable** on any machine that also had xAI's Grok CLI, because both publish a PATH shim named `agent` and Grok's `agent.exe` wins PATHEXT order. Nobody could investigate an agent the app could not find. That is fixed (`binaryName: 'cursor-agent'` with `agent` as an alias; see `tests/unit/cursor-grok-binary-collision.test.ts`).
+
+What exists on disk:
+
+- `~/.cursor/projects/<cwd-slug>/agent-transcripts/<sessionId>/<sessionId>.jsonl` - per-session JSONL, records `{"role":"user","message":{"content":[{"type":"text","text":...}]}}`.
+- `~/.cursor/chats/<hash>/<sessionId>/store.db` - a per-session SQLite store alongside it.
+
+Three things must be settled before Cursor earns a verifier, and none is done:
+
+1. **Flush latency is unmeasured.** The harness has no Cursor entry yet.
+2. **The records carry no timestamp.** The shared scan bounds itself with a `sentAt` watermark read off each record; with none, the same guards Aider needs apply (file mtime at/after `sentAt`, and match only the LAST user block). The per-session file at least bounds staleness to one session, unlike Aider's per-project log.
+3. **The stored text is WRAPPED.** The captured turn reads `<user_query>\n<task>...</task>\n</user_query>`, not the raw submitted text, so exact trim-equality would fail unless the extractor unwraps it. Whether a keystroke-injected auto_command is wrapped the same way is itself unverified.
+
+Droid is different: it WAS measured, on an authenticated session, and failed on variance rather than on being unmeasurable. Do not re-litigate it without new numbers.
+
+The harness distinguishes these cases automatically. It detects a CLI parked on a login or device-code prompt and reports `unmeasurable-here` rather than a measured "no" - without that check, Droid drew a confident `stop` verdict while it was actually sitting on a Factory login screen, which is a fabricated measurement.
+
+### Codex declines slash commands specifically
+
+Codex handles slash input in the TUI. A probe of `/kng-probe-<nonce>` printed `Unrecognized command` and produced no record at all, so absence from the rollout file cannot distinguish:
+
+- the CLI **rejected** it (nothing ran), from
+- the CLI **ran it client-side** (`/status`, `/compact`) and simply never made it a conversation turn.
+
+Treating the second as a failure would escalate a command that actually worked into a session restart. So `CodexAdapter.canVerifySlashSubmission()` returns `false`, and `prepareInjectionPlan` tags a slash `auto_command` `verify: 'none'` for it - neither retried nor escalated, outcome `unconfirmed`. Prose auto_commands on Codex are still fully verified. This is a declared capability rather than an agent-name check, per `agent-adapters-boundary`.
 
 When an adapter returns `null`, the caller falls back to:
 - `'paste'`: activity event or any post-`\r` data byte (within 3s).
 - `'command-injection'`: the handshake chain alone, with an outcome of `unconfirmed`.
 
-An adapter with no verifier cannot reach 100% delivery: with no confirmation signal there is nothing to retry against, and no failure to escalate. Measured on the load rig it reaches ~93% against Claude's 100%, and its safety property still holds absolutely (a delivery may be missed, but a wrong one is never submitted). A non-Claude adapter closes that gap by implementing `'command-injection'` verification once its CLI exposes a comparable structured signal.
+An adapter with no verifier cannot reach 100% delivery: with no confirmation signal there is nothing to retry against, and no failure to escalate. Measured on the load rig it reaches ~93% against Claude's 100%, and its safety property still holds absolutely (a delivery may be missed, but a wrong one is never submitted). An adapter closes that gap by implementing `'command-injection'` verification once measurement shows its CLI flushes history on submit.
 
 ## Delivery modes
 
@@ -274,8 +428,16 @@ Every "before" failure in the picker sweep fell in the 100-200ms band - exactly 
 - `tests/unit/turn-completion.test.ts` - the two-signal predicate, including the sustained false-idle cases.
 - `tests/unit/prompt-draft-ledger.test.ts` - draft accounting.
 - `tests/unit/auto-command-outcome.test.ts` - what is persisted vs what notifies.
-- `tests/unit/injection-plan.test.ts` - plan building and per-command verify modes.
-- `tests/unit/agent-submission-verifier-shape.test.ts` - every registered adapter implements `getSubmissionVerifier`.
+- `tests/unit/injection-plan.test.ts` - plan building and per-command verify modes, including the slash opt-out.
+- `tests/unit/agent-submission-verifier-shape.test.ts` - pins each adapter's recorded verdict AND its escalation tier, so adding a verifier without a measurement fails, and so does flipping a tier without the in-app proof.
+- `tests/unit/codex-command-injection-verifier.test.ts` - Codex record shape, exact-match, and read cost.
+- `tests/unit/qwen-command-injection-verifier.test.ts` - Qwen record shape, exact-match, and the missing-file case.
+- `tests/unit/copilot-command-injection-verifier.test.ts` - Copilot's newest-first global history, the partial-write case, and the exactness property.
+- `tests/unit/confirm-only-command-injection-verifiers.test.ts` - the Kimi / Aider / OpenCode record shapes and the guards standing in for their missing measurements.
+- `tests/unit/cursor-grok-binary-collision.test.ts` - that `cursor-agent` is preferred over the `agent` shim Grok also publishes.
+- `tests/unit/auto-command-escalation-gate.test.ts` and `tests/unit/auto-command-escalation.test.ts` - when escalation may fire at all.
+- `tests/unit/gemini-session-file-format.test.ts` - the `.json` / `.jsonl` generations for locate, capture, and telemetry parse.
+- `tests/unit/claude-slash-command-verifier.test.ts` - Claude's matcher, plus the LRU-vs-clear-all burst guarantee.
 
 ## Files
 
@@ -287,4 +449,13 @@ Every "before" failure in the picker sweep fell in the 100-200ms band - exactly 
 - `src/main/pty/prompt-draft-ledger.ts` - unsent-user-text accounting.
 - `src/main/ipc/helpers/auto-command-outcome.ts` - persists the outcome and rations the notice.
 - `src/main/agent/adapters/claude/slash-command-verifier.ts` - Claude's JSONL-polling implementation, including the `submitted` exact-content scan.
+- `src/main/agent/shared/transcript-tail-cache.ts` - the bounded 256KB tail read and its LRU content-identity cache, shared by every adapter's verifier. Must stay ONE module-global instance.
+- `src/main/agent/shared/submitted-text-verifier.ts` - the shared backwards tail walk, `sentAt` watermark, and exact trim-equality. Adapters supply only a synchronous path resolver and a record-shape extractor.
+- `src/main/agent/adapters/codex/command-injection-verifier.ts` - Codex resolver (memoised readdir scan) and rollout record shape.
+- `src/main/agent/adapters/qwen-code/command-injection-verifier.ts` - Qwen resolver (direct path construction) and chats record shape.
+- `src/main/agent/adapters/kimi/command-injection-verifier.ts` - CONFIRM-ONLY. `wire.jsonl` resolver plus the unix-SECONDS timestamp conversion.
+- `src/main/agent/adapters/aider/command-injection-verifier.ts` - CONFIRM-ONLY. The only verifier not using the shared scan: no per-entry timestamps, so it guards on file mtime and matches the LAST user block only.
+- `src/main/agent/adapters/opencode/command-injection-verifier.ts` - CONFIRM-ONLY, and the only SQL-backed verifier; a remote session has no local row and is reported `failed`.
+- `src/main/agent/adapters/copilot/command-injection-verifier.ts` - CONFIRM-ONLY. Reads the GLOBAL `command-history-state.json` newest-first, guarded by file mtime and a bounded recent-entry window.
+- `scripts/measure-injection-flush.mjs` - the manual measurement harness that gates every verifier above.
 - `src/shared/types.ts` - `SubmissionContext`, `SubmissionContextType`, `SubmissionVerifier`, `AutoCommandMode`, `AutoCommandState`, `AutoCommandResultNotice`.

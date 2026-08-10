@@ -1,5 +1,13 @@
-import fs from 'node:fs/promises';
 import type { CommandVerifier, InjectionVerifyMode } from '../../../transition-engine/terminal-submit-scheduler';
+import { readTranscriptTailLines } from '../../shared/transcript-tail-cache';
+
+/**
+ * Re-exported so existing callers and tests keep importing the reset helper
+ * from here. The cache itself is shared across every adapter's verifier and
+ * lives in `shared/transcript-tail-cache.ts`; it MUST stay a single
+ * module-global instance, so never construct a second one.
+ */
+export { clearTranscriptTailCache } from '../../shared/transcript-tail-cache';
 
 /**
  * Builds a verifier that polls Claude's session JSONL for confirmation that
@@ -109,122 +117,9 @@ function parseSlashCommand(command: string): { name: string; args: string } | nu
   };
 }
 
-/**
- * Bytes read from the end of the transcript.
- *
- * The scan walks backwards and stops at the `sentAt` watermark, so it only ever
- * needs entries written in the last few hundred milliseconds. Reading the whole
- * file to look at its tail is what made verification expensive: a long session's
- * JSONL is multiple megabytes, and `pollForConfirmation` asks every 25ms.
- */
-const TAIL_BYTES = 256 * 1024;
-
-/**
- * Parsed tail, keyed by path and invalidated by (size, mtime).
- *
- * Verification polls at 25ms for up to ~2s per command, but the agent writes to
- * the transcript far less often than that, so the overwhelming majority of
- * polls would re-read and re-split bytes that have not changed. A `stat` costs
- * microseconds against a read plus a `split()` over tens of thousands of lines.
- *
- * Cached by CONTENT IDENTITY rather than by query result, which keeps it safe
- * for any (command, sentAt) pair: identical bytes always parse to identical
- * lines, so a later poll for a different command reuses the array without
- * inheriting an answer.
- *
- * This matters most in bursts. Injection concurrency is per task, so dragging
- * several tasks into a column at once starts several poll loops, each of which
- * was independently re-reading a multi-megabyte file 40 times a second in the
- * MAIN process, where the cost lands on IPC and therefore on the UI.
- *
- * MODULE-GLOBAL ON PURPOSE. It cannot be scoped to the verifier closure:
- * `ClaudeAdapter.getSubmissionVerifier` calls `createSlashCommandVerifier`
- * once per POLL (the transcript path is derived from a session id that is
- * re-resolved each time, to survive a mid-burst `/clear` fork), so a
- * closure-local cache would be rebuilt 40 times a second and never hit.
- *
- * EVICTION IS LRU, NOT CLEAR-ALL, and that distinction is the whole point in
- * the case this exists for. A clear-all on overflow degenerates precisely
- * under burst: with more concurrent transcripts than slots, each insert wipes
- * every other burst's entry, they all miss on their next poll, re-read, and
- * evict each other again - turning the cache into pure overhead at exactly
- * the concurrency where it is needed. Least-recently-used eviction keeps every
- * actively-polling burst resident and ages out only finished ones.
- */
-const TAIL_CACHE_LIMIT = 32;
-const tailCache = new Map<string, { size: number; mtimeMs: number; lines: string[] }>();
-
-/**
- * Mark `jsonlPath` most-recently-used and drop the oldest entries past the cap.
- * A Map iterates in insertion order, so delete-then-set moves an entry to the
- * end and `keys().next()` yields the least recently used.
- *
- * The cap is sized against CONCURRENT TRANSCRIPTS, not tasks: the `/clear`-fork
- * fallback in `buildCommandInjectionVerifier` scans two paths per poll (the
- * re-resolved id, then the one captured at plan-build time), so a forked
- * session occupies two slots. 32 leaves room for well past any realistic
- * simultaneous drag. Entries self-invalidate on `(size, mtime)`, so the only
- * cost of a larger bound is retained bytes: at most `TAIL_BYTES` per entry, and
- * far less for the short transcripts a fresh session has.
- */
-function touchCacheEntry(jsonlPath: string, entry: { size: number; mtimeMs: number; lines: string[] }): void {
-  tailCache.delete(jsonlPath);
-  tailCache.set(jsonlPath, entry);
-  while (tailCache.size > TAIL_CACHE_LIMIT) {
-    const leastRecent = tailCache.keys().next();
-    if (leastRecent.done) break;
-    tailCache.delete(leastRecent.value);
-  }
-}
-
-/** Reset between tests so one test's cached tail cannot answer another's poll. */
-export function clearTranscriptTailCache(): void {
-  tailCache.clear();
-}
-
-async function readTranscriptTailLines(jsonlPath: string): Promise<string[] | null> {
-  let stats: Awaited<ReturnType<typeof fs.stat>>;
-  try {
-    stats = await fs.stat(jsonlPath);
-  } catch {
-    return null;
-  }
-
-  const cached = tailCache.get(jsonlPath);
-  if (cached && cached.size === stats.size && cached.mtimeMs === stats.mtimeMs) {
-    // A hit is a use: re-stamp it so a burst that keeps polling never ages out
-    // behind bursts that merely started later.
-    touchCacheEntry(jsonlPath, cached);
-    return cached.lines;
-  }
-
-  let content: string;
-  try {
-    if (stats.size <= TAIL_BYTES) {
-      content = await fs.readFile(jsonlPath, 'utf-8');
-    } else {
-      const handle = await fs.open(jsonlPath, 'r');
-      try {
-        const buffer = Buffer.alloc(TAIL_BYTES);
-        const { bytesRead } = await handle.read(buffer, 0, TAIL_BYTES, stats.size - TAIL_BYTES);
-        // The window starts mid-line, and possibly mid-UTF-8-sequence. Dropping
-        // everything before the first newline discards both, and costs nothing:
-        // a truncated leading entry could not have parsed anyway.
-        const raw = buffer.subarray(0, bytesRead).toString('utf-8');
-        const firstNewline = raw.indexOf('\n');
-        content = firstNewline === -1 ? '' : raw.slice(firstNewline + 1);
-      } finally {
-        await handle.close();
-      }
-    }
-  } catch {
-    return null;
-  }
-
-  const lines = content.split(/\r?\n/);
-  touchCacheEntry(jsonlPath, { size: stats.size, mtimeMs: stats.mtimeMs, lines });
-  return lines;
-}
+// The bounded tail read and its LRU content-identity cache moved to
+// `src/main/agent/shared/transcript-tail-cache.ts` so every adapter's verifier
+// shares ONE cache instance. Claude-specific record parsing stays below.
 
 async function scanForMatch(
   jsonlPath: string,

@@ -6,6 +6,7 @@ import { CopilotStatusParser } from './status-parser';
 import { CopilotStreamParser } from './stream-parser';
 import { migrateCopilotProjectData } from './project-relocation';
 import { discoverCopilotCapabilities } from './capability-discovery';
+import { createCopilotCommandInjectionVerifier } from './command-injection-verifier';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import type { AgentAdapter, AgentInfo, SpawnCommandOptions, SettingsChangeSpec } from '../../agent-adapter';
 import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier, AgentCapabilities } from '../../../../shared/types';
@@ -151,11 +152,46 @@ export class CopilotAdapter implements AgentAdapter {
     }
   }
 
-  getSubmissionVerifier(_contextType: SubmissionContextType): SubmissionVerifier | null {
-    // Copilot's hooks fire on tool/agent boundaries (preToolUse, postToolUse,
-    // agentStop, preCompact) but not on user-prompt submit. Callers fall back
-    // to time-based settle (paste) or time-settle (command-injection).
+  getSubmissionVerifier(contextType: SubmissionContextType): SubmissionVerifier | null {
+    if (contextType === 'command-injection') {
+      // MEASURED at 36-38ms, the fastest of any adapter and flat against a 32s
+      // turn. Copilot's HOOKS still do not fire on user-prompt submit - that
+      // part of the old comment was right - but it keeps
+      // `~/.copilot/command-history-state.json`, which does record every
+      // submission. Slash commands included. See command-injection-verifier.ts.
+      return createCopilotCommandInjectionVerifier();
+    }
+    // 'paste': hooks fire on tool/agent boundaries (preToolUse, postToolUse,
+    // agentStop, preCompact) but not on submit, so the paste engine's activity
+    // and data-floor backstops cover it.
     return null;
+  }
+
+  /**
+   * Copilot's prompt history is a single GLOBAL file with no session id in it,
+   * so `cwd` and the agent session id play no part in locating it.
+   */
+  requiresAgentSessionIdForVerification(): boolean {
+    return false;
+  }
+
+  /**
+   * CONFIRM-ONLY. Copilot measured fastest of any adapter (38ms), and the file
+   * is trivially located, so the usual path-resolution doubt does not apply.
+   * What is unproven is the COMPARISON: the harness matched a nonce SUBSTRING,
+   * while the verifier requires the whole entry to trim-equal the submitted
+   * text, and no real capture of this file is committed to test the extractor
+   * against. If Copilot normalises or decorates what it stores, every entry
+   * misses and every auto_command escalates.
+   *
+   * The concurrency guard points the other way and is deliberate: the file is
+   * global across sessions and projects, so a match is accepted from any of the
+   * newest few entries. That biases the residual error toward a harmless false
+   * POSITIVE. Escalation would convert the opposite error into a restart, which
+   * is why it stays off until the extractor is pinned to a real capture.
+   */
+  canEscalateOnVerificationFailure(): boolean {
+    return false;
   }
 
   clearSettingsCache(): void {

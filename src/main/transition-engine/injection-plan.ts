@@ -216,7 +216,30 @@ export function prepareInjectionPlan(input: InjectionPlanInput): InjectionPlan |
 
   const trimmedAutoCommand = autoCommand?.trim() ?? '';
   if (trimmedAutoCommand) {
-    sequence.push({ text: trimmedAutoCommand, verify: 'submitted' });
+    // A slash-prefixed auto_command is only verifiable on agents that record
+    // slash invocations in their history. Where an adapter declares it cannot
+    // (see `canVerifySlashSubmission`), absence from the file is ambiguous
+    // between "the CLI rejected it" and "the CLI ran it client-side", so
+    // verifying would risk escalating a command that actually worked into a
+    // session restart. `none` keeps the outcome `unconfirmed` instead.
+    const slashUnverifiable = trimmedAutoCommand.startsWith('/')
+      && adapter?.canVerifySlashSubmission?.() === false;
+    // A CONFIRM-ONLY verifier (one whose adapter has not proven it end to end
+    // in a running app) still confirms and still retries, but must never
+    // authorize the restart that escalation performs. See
+    // `canEscalateOnVerificationFailure`.
+    //
+    // Only SET when it is false. The field's contract is "omitted or true means
+    // escalatable", so writing `true` explicitly would add a redundant key to
+    // every ordinary command for no behavioural difference.
+    const command: InjectionCommand = {
+      text: trimmedAutoCommand,
+      verify: slashUnverifiable ? 'none' : 'submitted',
+    };
+    if (adapter?.canEscalateOnVerificationFailure?.() === false) {
+      command.escalatable = false;
+    }
+    sequence.push(command);
   }
 
   // Return null only when there is nothing to do at all: no live writes AND no
@@ -294,6 +317,7 @@ export function buildCommandInjectionVerifier(
   // until the CLI comes alive, and the id is resolved on every poll below, so
   // by the time verification actually runs the id is there.
   if (!record) return null;
+  const needsAgentSessionId = adapter.requiresAgentSessionIdForVerification?.() !== false;
   const recordId = record.id;
   const capturedAgentSessionId = record.agent_session_id;
   const capturedCwd = record.cwd;
@@ -330,11 +354,18 @@ export function buildCommandInjectionVerifier(
     // Still no captured id/cwd: the transcript we would scan does not exist
     // yet, so this poll simply has no answer. Reporting "not confirmed" lets
     // the caller keep retrying rather than treating it as a hard failure.
-    if (!currentAgentSessionId || !currentCwd) return false;
+    //
+    // An adapter whose history is keyed by cwd alone (Aider, which has no
+    // session id at all) opts out of the id requirement - otherwise its
+    // verifier could never confirm, and a verifier that always says no is
+    // worse than none: the burst still retries and then reports `failed`
+    // where it would previously have stayed silently `unconfirmed`.
+    if (!currentCwd) return false;
+    if (needsAgentSessionId && !currentAgentSessionId) return false;
     const verifiedInCurrent = await submissionVerifier({
       type: 'command-injection',
       text: command,
-      agentSessionId: currentAgentSessionId,
+      agentSessionId: currentAgentSessionId ?? undefined,
       cwd: currentCwd,
       sentAt,
       mode,

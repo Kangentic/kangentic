@@ -2,6 +2,7 @@ import { CodexDetector } from './detector';
 import { CodexCommandBuilder } from './command-builder';
 import { removeHooks as removeCodexHooks } from './hook-manager';
 import { CodexSessionHistoryParser } from './session-history-parser';
+import { createCodexCommandInjectionVerifier } from './command-injection-verifier';
 import { parseCodexTranscript, locateCodexTranscriptFile } from './transcript-parser';
 import { migrateCodexProjectData } from './project-relocation';
 import { CodexStatusParser } from './status-parser';
@@ -196,12 +197,29 @@ export class CodexAdapter implements AgentAdapter {
     removeCodexHooks(directory);
   }
 
-  getSubmissionVerifier(_contextType: SubmissionContextType): SubmissionVerifier | null {
-    // Codex's hook pipeline is currently dormant for Kangentic (see runtime
-    // comment above): 0.118 ignored the legacy hooks.json, and 0.128
-    // redesigned hooks into a format we don't write yet. Callers fall back
-    // to time-based settle (paste) or time-settle (command-injection).
+  getSubmissionVerifier(contextType: SubmissionContextType): SubmissionVerifier | null {
+    if (contextType === 'command-injection') {
+      // Codex writes the user turn to its rollout JSONL on SUBMIT, measured at
+      // 61-108ms and flat against a 4.6s turn (see command-injection-verifier.ts
+      // for the numbers and scripts/measure-injection-flush.mjs for the rig).
+      return createCodexCommandInjectionVerifier();
+    }
+    // 'paste': Codex's hook pipeline is currently dormant for Kangentic (see
+    // the runtime comment above): 0.118 ignored the legacy hooks.json, and
+    // 0.128 redesigned hooks into a format we don't write yet. The paste engine
+    // falls back to its activity-event and data-floor backstops.
     return null;
+  }
+
+  /**
+   * Codex handles slash input in the TUI and never writes it to the rollout
+   * file. Measured: an unrecognized `/...` produced "Unrecognized command" and
+   * no record at all. Absence therefore cannot distinguish "rejected" from
+   * "ran client-side", so slash auto_commands are left unverified rather than
+   * risking an escalation that restarts a working session.
+   */
+  canVerifySlashSubmission(): boolean {
+    return false;
   }
 
   clearSettingsCache(): void {

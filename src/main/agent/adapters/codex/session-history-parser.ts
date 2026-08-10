@@ -306,12 +306,12 @@ function parseTimestamp(value: unknown): number {
  * Compute `~/.codex/sessions/<YYYY>/<MM>/<DD>/` using the current UTC
  * date. Cross-platform path construction via path.join.
  */
-function codexSessionsDirForToday(): string {
+export function codexSessionsDirForToday(): string {
   const now = new Date();
   return codexSessionsDirForDate(now);
 }
 
-function codexSessionsDirForYesterday(): string {
+export function codexSessionsDirForYesterday(): string {
   const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
   return codexSessionsDirForDate(yesterday);
 }
@@ -330,7 +330,7 @@ function codexSessionsDirForDate(date: Date): string {
  * Returns the absolute path, or null if the directory doesn't exist
  * or no file matches.
  */
-function findMatchingFile(directory: string, pattern: RegExp): string | null {
+export function findMatchingFile(directory: string, pattern: RegExp): string | null {
   let entries: string[];
   try {
     entries = fs.readdirSync(directory);

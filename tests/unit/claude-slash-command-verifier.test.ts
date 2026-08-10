@@ -306,11 +306,19 @@ describe('transcript scanning cost', () => {
     // the optimization: each insert wipes every other burst's entry, they all
     // miss on their next poll, re-read, and evict each other again - so the
     // cache became pure overhead at exactly the concurrency it was added for.
-    // LRU eviction is what makes the guarantee hold under concurrency.
-    const sessionCount = 12;
-    const paths: string[] = [];
-    for (let session = 0; session < sessionCount; session++) {
-      const sessionPath = path.join(tmpDir, `concurrent-${session}.jsonl`);
+    //
+    // THE WORKLOAD HAS TO EXCEED THE CAP TO PROVE ANYTHING. An earlier version
+    // of this test polled 12 transcripts against a cap of 32, so the eviction
+    // branch never executed and a clear-all implementation passed it too - it
+    // demonstrated caching, not LRU. Here a few HOT transcripts are polled every
+    // round while fresh cold ones keep arriving, which is what a real board does
+    // (several bursts in flight amid session churn) and is the pattern that
+    // separates the two policies: LRU ages out the cold entries and keeps the
+    // hot ones resident, whereas clear-all discards the hot ones on every
+    // overflow and forces them to be re-read.
+    const hotPaths: string[] = [];
+    for (let session = 0; session < 4; session++) {
+      const sessionPath = path.join(tmpDir, `hot-${session}.jsonl`);
       fs.writeFileSync(
         sessionPath,
         JSON.stringify({
@@ -319,26 +327,44 @@ describe('transcript scanning cost', () => {
           timestamp: nowIso(10),
         }) + '\n',
       );
-      paths.push(sessionPath);
+      hotPaths.push(sessionPath);
     }
 
     const readSpy = vi.spyOn(fsPromises, 'readFile');
     const openSpy = vi.spyOn(fsPromises, 'open');
 
     const sentAt = Date.now();
-    // Interleave the polls the way concurrent bursts actually arrive, rather
-    // than draining one session at a time - round-robin is the access pattern
-    // that a clear-all policy degenerates on.
-    for (let poll = 0; poll < 10; poll++) {
-      for (const sessionPath of paths) {
+    const rounds = 8;
+    const coldPerRound = 8;
+    for (let round = 0; round < rounds; round++) {
+      for (const sessionPath of hotPaths) {
         const verifier = createSlashCommandVerifier(sessionPath)!;
         expect(await verifier('/pull-request', sentAt, 'submitted')).toBe(true);
       }
+      // Cold traffic: distinct transcripts that are read once and never again.
+      // 4 hot + 8 per round passes the 32-entry cap partway through, so the
+      // eviction branch runs repeatedly - which is the point.
+      for (let cold = 0; cold < coldPerRound; cold++) {
+        const coldPath = path.join(tmpDir, `cold-${round}-${cold}.jsonl`);
+        fs.writeFileSync(coldPath, JSON.stringify({
+          type: 'user',
+          message: { role: 'user', content: '/other' },
+          timestamp: nowIso(10),
+        }) + '\n');
+        const verifier = createSlashCommandVerifier(coldPath)!;
+        await verifier('/other', sentAt, 'submitted');
+      }
     }
 
-    // 120 polls across 12 unchanged transcripts: one read each, and no more.
-    // Under the old clear-all policy this was 120.
-    expect(readSpy.mock.calls.length + openSpy.mock.calls.length).toBe(sessionCount);
+    // The guarantee, stated directly: an actively-polling burst is read ONCE,
+    // however much unrelated churn passes through the cache around it. Under
+    // clear-all each hot transcript is re-read after every overflow instead.
+    const readsOf = (target: string) =>
+      readSpy.mock.calls.filter((call) => call[0] === target).length
+      + openSpy.mock.calls.filter((call) => call[0] === target).length;
+    for (const hotPath of hotPaths) {
+      expect(readsOf(hotPath)).toBe(1);
+    }
 
     readSpy.mockRestore();
     openSpy.mockRestore();

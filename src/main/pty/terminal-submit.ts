@@ -35,6 +35,23 @@ export type InjectionVerifyMode = 'command-match' | 'submitted' | 'none';
 export interface InjectionCommand {
   text: string;
   verify: InjectionVerifyMode;
+  /**
+   * Whether a verification FAILURE on this command may escalate to a restart.
+   * Omitted or true means yes.
+   *
+   * This exists to separate the two things a verifier does, because they carry
+   * very different risk. A verifier that returns false drives retry-on-Enter
+   * (rung 2), which is pure upside: it recovers a submission a picker swallowed
+   * and is what closes the measured 92.9% -> 100% delivery gap. Exhausting the
+   * retries then escalates to a session restart (rung 3), which DESTROYS live
+   * work if the verifier was wrong.
+   *
+   * An adapter that has not proven its verifier end to end can therefore be
+   * given a CONFIRM-ONLY verifier: it confirms and it retries, but it is never
+   * allowed to authorize the restart. Set from
+   * `AgentAdapter.canEscalateOnVerificationFailure`.
+   */
+  escalatable?: boolean;
 }
 
 /**
@@ -420,10 +437,12 @@ export class TerminalSubmit {
   }
 
   /**
-   * Poll the verifier for one retry window. Unlike the previous
-   * implementation this does NOT re-fire Enter itself; the caller's attempt
-   * loop re-sends Esc AND Enter together, which is what actually recovers a
-   * submission the picker swallowed.
+   * Poll the verifier for one retry window. This does NOT re-fire Enter
+   * itself; the caller's attempt loop re-presses Enter ALONE.
+   *
+   * Esc is sent at most once, on the first attempt only (`attempt === 0`, and
+   * never while interrupting a live turn): a second Esc would clear the command
+   * that is already typed, and an Esc mid-turn interrupts the agent.
    */
   private async pollForConfirmation(
     verifier: CommandVerifier,

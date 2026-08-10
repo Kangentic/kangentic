@@ -2,6 +2,7 @@ import { QwenDetector } from './detector';
 import { QwenCommandBuilder } from './command-builder';
 import { removeHooks as removeQwenHooks } from './hook-manager';
 import { QwenSessionHistoryParser } from './session-history-parser';
+import { createQwenCommandInjectionVerifier } from './command-injection-verifier';
 import { parseQwenTranscript, locateQwenTranscriptFile } from './transcript-parser';
 import { QwenStatusParser } from './status-parser';
 import { discoverQwenCapabilities } from './capability-discovery';
@@ -191,12 +192,33 @@ export class QwenAdapter implements AgentAdapter {
     removeQwenHooks(directory);
   }
 
-  getSubmissionVerifier(_contextType: SubmissionContextType): SubmissionVerifier | null {
-    // Qwen Code inherits Gemini's hook schema (BeforeAgent → EventType.Prompt),
-    // but coordinating hook-based paste confirmation with command-injection
-    // JSONL parsing is complex. Callers fall back to time-based settle (paste)
-    // or time-settle (command-injection).
+  getSubmissionVerifier(contextType: SubmissionContextType): SubmissionVerifier | null {
+    if (contextType === 'command-injection') {
+      // Qwen writes the user turn to chats/<sessionId>.jsonl on SUBMIT,
+      // measured at 443-696ms and flat against a 13.5s turn. Unlike Codex it
+      // also records slash input as a user turn, so slash auto_commands are
+      // verifiable and no `canVerifySlashSubmission` opt-out is needed. See
+      // command-injection-verifier.ts for the numbers.
+      return createQwenCommandInjectionVerifier();
+    }
+    // 'paste': Qwen Code inherits Gemini's hook schema (BeforeAgent →
+    // EventType.Prompt), but coordinating hook-based paste confirmation with
+    // JSONL parsing is complex; the paste engine's activity and data-floor
+    // backstops cover it.
     return null;
+  }
+
+  /**
+   * CONFIRM-ONLY. The latency is measured, but this verifier has never met a
+   * live Qwen session inside the app, and its path is built from a CAPTURED
+   * session id. That is the failure this codebase has already shipped once:
+   * Gemini's capture regex stopped matching when the CLI renamed its files and
+   * nobody noticed, because nothing depended on it. Now something would - a
+   * capture miss means the path never resolves, the verifier never confirms,
+   * and every auto_command escalates into a restart.
+   */
+  canEscalateOnVerificationFailure(): boolean {
+    return false;
   }
 
   clearSettingsCache(): void {

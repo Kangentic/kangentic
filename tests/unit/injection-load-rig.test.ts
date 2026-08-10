@@ -250,7 +250,9 @@ describe('auto_command injection delivery rate', () => {
   }, 30_000);
 
   it('reports the delivery rate for an adapter with no transcript verifier', async () => {
-    // 11 of 12 adapters return null from getSubmissionVerifier, so this is
+    // Most adapters still return null from getSubmissionVerifier (Claude,
+    // Codex, and Qwen are the exceptions, each gated on a measured
+    // submit-time flush), so this remains the bucket many users are in.
     // the bucket most users are actually in. There is no retry signal here:
     // reliability rests entirely on the settle handshake landing Esc after
     // the picker rendered, and on keeping Esc and Enter adjacent. Measured

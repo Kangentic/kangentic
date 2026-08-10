@@ -4,6 +4,7 @@ import { interpolateTemplate } from '../../shared/template-utils';
 import { quoteArg, isUnixLikeShell, toForwardSlash } from '../../../../shared/paths';
 import { resolveBridgeScript } from '../../shared/bridge-utils';
 import { AiderSessionHistoryParser } from './session-history-parser';
+import { createAiderCommandInjectionVerifier } from './command-injection-verifier';
 import type { AgentAdapter, AgentInfo, SpawnCommandOptions } from '../../agent-adapter';
 import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
@@ -164,9 +165,33 @@ export class AiderAdapter implements AgentAdapter {
     return AiderSessionHistoryParser.locate({ agentSessionId, cwd });
   }
 
-  getSubmissionVerifier(_contextType: SubmissionContextType): SubmissionVerifier | null {
-    // Aider has no hooks or structured verification signals.
-    // Callers fall back to time-based settle (paste) or time-settle (command-injection).
+  getSubmissionVerifier(contextType: SubmissionContextType): SubmissionVerifier | null {
+    if (contextType === 'command-injection') {
+      // CONFIRM-ONLY. `.aider.chat.history.md` has no per-entry timestamps and
+      // is shared per project directory, so the verifier guards on the FILE's
+      // mtime and only accepts the LAST user block - see the module comment.
+      return createAiderCommandInjectionVerifier();
+    }
+    // 'paste': Aider exposes no hook or structured signal; the paste engine's
+    // activity and data-floor backstops cover it.
     return null;
+  }
+
+  /**
+   * CONFIRM-ONLY: aider is not installed on the measuring machine, so its flush
+   * latency is unmeasured. It may confirm and retry, but must never authorize
+   * the restart escalation performs.
+   */
+  canEscalateOnVerificationFailure(): boolean {
+    return false;
+  }
+
+  /**
+   * Aider has no session id at all - `runtime` declares no `sessionIdCapture`,
+   * because it keeps ONE `.aider.chat.history.md` per project directory rather
+   * than a per-session transcript. `cwd` alone identifies its history.
+   */
+  requiresAgentSessionIdForVerification(): boolean {
+    return false;
   }
 }
