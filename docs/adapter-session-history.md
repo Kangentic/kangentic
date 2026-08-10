@@ -92,7 +92,15 @@ If a Codex release breaks any of these, the parser will silently return null/emp
 
 ## Gemini
 
-**File path**: `~/.gemini/tmp/<projectDirName>/chats/session-<sessionId>.json`
+**File path**: `~/.gemini/tmp/<projectDirName>/chats/session-<sessionId>.jsonl` on current builds,
+`session-<sessionId>.json` on older ones. **Both generations are live and both must be matched.**
+
+Gemini cut over to append-only `.jsonl` on 2026-04-28; on a real machine every chat file written
+since is `.jsonl`. Kangentic's patterns anchored on `\.json$`, whose `$` cannot match `.jsonl`, so
+for every Gemini session after the cutover `locate()` found nothing and
+`captureSessionIdFromFilesystem` never captured a session id - which silently took out session-id
+capture and all Gemini live telemetry. Both now test `/^session-.*\.jsonl?$/`. Pinned by
+`tests/unit/gemini-session-file-format.test.ts`; do not re-anchor either pattern.
 
 The `<projectDirName>` is the **lowercased basename** of the cwd, NOT a hash - despite the misleading `projectHash` field inside the JSON body (which appears to be a SHA-256 of something else, possibly the absolute path, but is not what Gemini uses to name the directory). Verified empirically against live Gemini directory listings:
 
@@ -104,11 +112,30 @@ The `<projectDirName>` is the **lowercased basename** of the cwd, NOT a hash - d
 
 **Collision risk**: two projects sharing the same basename (e.g. two `app/` directories in different parent paths) will share this Gemini directory. That's Gemini's design choice, not ours. Worktrees created by tools like Kangentic typically have unique hash-suffixed names, so collisions are rare in practice.
 
-**Format**: single JSON object, rewritten atomically on every message. `isFullRewrite: true` - parser receives the full file content on each change.
+**Format**: two generations. `isFullRewrite: true` either way - the parser receives the whole file
+content on each change, and `collectGeminiMessages()` normalizes both into one `messages[]` array.
 
 **Parser**: `src/main/agent/adapters/gemini/log-parser.ts`
 
-### JSON shape we depend on
+### Current generation: append-only JSONL
+
+A header line, then some mixture of `$set` patch lines carrying a whole `messages[]` array and
+standalone message lines. Gemini **re-emits the same message `id` while a reply streams**, so
+`collectGeminiMessages` deduplicates by `id`, last write wins. Without that dedupe a streaming reply
+appears many times over.
+
+```jsonl
+{"sessionId":"<uuid>","projectHash":"<sha256>","startTime":"<iso>","kind":"main"}
+{"$set":{"messages":[{"id":"m1","type":"user","content":[{"text":"..."}]}]}}
+{"id":"m2","type":"gemini","content":"partial...","model":"gemini-3-flash-preview","tokens":{}}
+{"id":"m2","type":"gemini","content":"partial reply, complete","model":"gemini-3-flash-preview","tokens":{"input":11199,"output":47,"cached":0,"thoughts":0,"tool":0,"total":11246}}
+```
+
+### Legacy generation: one JSON object
+
+Written before the 2026-04-28 cutover, still readable. `collectGeminiMessages` tries a whole-file
+`JSON.parse` first and falls back to the JSONL walk, so ordering the attempts this way keeps old
+sessions working.
 
 ```json
 {
@@ -138,7 +165,10 @@ The `<projectDirName>` is the **lowercased basename** of the cwd, NOT a hash - d
 
 ### Parsing strategy
 
-The parser walks `messages[]` backwards to find the most recent `"type": "gemini"` entry and extracts its `model` and `tokens`. This naturally respects mid-session `/model` changes since each assistant message carries its own model identifier.
+Once normalized, the parser walks `messages[]` backwards to find the most recent `"type": "gemini"` entry and extracts its `model` and `tokens`. This naturally respects mid-session `/model` changes since each assistant message carries its own model identifier.
+
+Note that `readGeminiSessionMeta` falls back to the FIRST line when the file is JSONL: the session
+metadata lives in the header line, not in a whole-file object.
 
 ### Context window size
 
@@ -161,8 +191,10 @@ Source: Google's published model cards. Update the table in `gemini/log-parser.t
 
 - The directory structure `~/.gemini/tmp/<dir>/chats/` is stable.
 - The directory naming scheme is lowercased basename of cwd.
-- Filenames start with `session-` and contain the session UUID.
-- The JSON shape (`messages[]`, `type: "gemini"`, `model`, `tokens`) is stable.
+- Filenames start with `session-` and contain the session UUID, ending in `.json` OR `.jsonl`. A
+  third extension, or an anchored `\.json$` pattern reintroduced anywhere, breaks capture silently.
+- The message shape (`messages[]`, `type: "gemini"`, `model`, `tokens`) is stable in both
+  generations, and a streamed message keeps a stable `id` across its re-emissions so dedupe works.
 - `tokens.input` represents cumulative context tokens (not per-turn delta).
 
 If a Gemini release breaks any of these, the parser will silently return null/empty and the card falls back to the minimal pill. Fix: update the field extraction in `gemini/session-history-parser.ts`.

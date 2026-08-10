@@ -456,7 +456,7 @@ Every "before" failure in the picker sweep fell in the 100-200ms band - exactly 
 - `src/main/pty/prompt-draft-ledger.ts` - unsent-user-text accounting.
 - `src/main/ipc/helpers/auto-command-outcome.ts` - persists the outcome and rations the notice.
 - `src/main/agent/adapters/claude/slash-command-verifier.ts` - Claude's JSONL-polling implementation, including the `submitted` exact-content scan.
-- `src/main/agent/shared/transcript-tail-cache.ts` - the bounded 256KB tail read and its LRU content-identity cache, shared by every adapter's verifier. Must stay ONE module-global instance.
+- `src/main/agent/shared/transcript-tail-cache.ts` - the bounded 256KB tail read and its LRU content-identity cache. Used by five of the seven verifiers: Claude and Aider import it directly, Codex/Qwen/Kimi reach it through the shared scan. Copilot and OpenCode do not read an appendable text file at all (a global JSON blob and a SQL query), so they bypass it. Must stay ONE module-global instance.
 - `src/main/agent/shared/submitted-text-verifier.ts` - the shared backwards tail walk, `sentAt` watermark, and exact trim-equality. Adapters supply only a synchronous path resolver and a record-shape extractor.
 - `src/main/agent/adapters/codex/command-injection-verifier.ts` - Codex resolver (memoised readdir scan) and rollout record shape.
 - `src/main/agent/adapters/qwen-code/command-injection-verifier.ts` - Qwen resolver (direct path construction) and chats record shape.

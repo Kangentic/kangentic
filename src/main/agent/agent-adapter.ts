@@ -350,9 +350,19 @@ export interface AgentAdapter {
    *   - 'command-injection': returns a JSONL-polling verifier that exact-matches
    *     the slash command in the session transcript.
    *
-   * Example (Aider, Codex, Gemini, Qwen, etc.):
-   *   - Both contexts: returns null. Activity / data / time-settle fallbacks
-   *     are sufficient given current CLI capabilities.
+   * Example (Codex, Copilot, OpenCode, Qwen, Kimi, Aider):
+   *   - 'paste': returns null, same reasoning as Claude.
+   *   - 'command-injection': returns a verifier that exact-matches the
+   *     SUBMITTED TEXT in that agent's own history, rather than Claude's
+   *     structured slash-invocation record. Whether such a verifier may also
+   *     ESCALATE is a separate declaration - see
+   *     `canEscalateOnVerificationFailure`.
+   *
+   * Example (Gemini, Droid, Cursor, Warp, Ollama):
+   *   - Both contexts: returns null. For the first three that is a MEASURED
+   *     verdict - their history flushes at turn-end or too variably to bound a
+   *     ~2s delivery budget (numbers in `docs/command-injection.md`) - not an
+   *     unexplored gap. Warp and Ollama expose no usable history at all.
    */
   getSubmissionVerifier?(contextType: SubmissionContextType): SubmissionVerifier | null;
 
@@ -421,13 +431,19 @@ export interface AgentAdapter {
    * it does, which is the norm - almost every agent keys its transcript by
    * session id, and scanning without one would read the wrong file.
    *
-   * Aider is the exception and the reason this exists: it has NO session id at
-   * all (no `sessionIdCapture` in its runtime) because it keeps a single
-   * `.aider.chat.history.md` per project directory. `cwd` alone identifies its
-   * history. Without this opt-out the shared wrapper short-circuits on the
-   * missing id and the verifier can never confirm - which is worse than having
-   * no verifier, since the burst still retries and then reports `failed`
-   * instead of staying silently `unconfirmed`.
+   * Two adapters declare `false`, for different reasons:
+   *
+   *   - Aider has NO session id at all (no `sessionIdCapture` in its runtime),
+   *     because it keeps a single `.aider.chat.history.md` per project
+   *     directory. `cwd` alone identifies its history.
+   *   - Copilot HAS a session id, but its prompt history is a single GLOBAL
+   *     `~/.copilot/command-history-state.json` covering every session and
+   *     project, so neither the id nor `cwd` helps locate it.
+   *
+   * Without this opt-out the shared wrapper short-circuits on the missing id
+   * and the verifier can never confirm - which is worse than having no
+   * verifier, since the burst still retries and then reports `failed` instead
+   * of staying silently `unconfirmed`.
    */
   requiresAgentSessionIdForVerification?(): boolean;
 
