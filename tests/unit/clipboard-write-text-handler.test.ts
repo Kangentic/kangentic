@@ -320,4 +320,34 @@ describe('CLIPBOARD_READ_IMAGE IPC handler', () => {
 
     expect(filePath).toBeNull();
   });
+
+  it('degrades to null instead of throwing when writing the capped image fails', () => {
+    // Pre-diff this handler had no try/catch at all: any fs failure (disk full,
+    // a Windows AV scanner holding the just-created temp file, a foreign-owned
+    // /tmp on shared Linux) became a rejected invoke in the renderer. The
+    // handler now wraps the write in try/catch and degrades to the same null an
+    // empty clipboard returns, logging a trace instead. That degrade branch has
+    // no other covering assertion - this pins it directly.
+    const { image } = makeFakeNativeImage(800, 600); // already fits, no resize needed
+    mockClipboard.readImage.mockReturnValue(image);
+
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {
+      throw new Error('ENOSPC: no space left on device, write');
+    });
+
+    let filePath: string | null = null;
+    expect(() => {
+      filePath = invokeClipboardReadImageHandler();
+    }).not.toThrow();
+
+    expect(filePath).toBeNull();
+    // The other half of the documented contract: degrade quietly to the
+    // renderer, but still leave a trace for whoever is debugging a paste that
+    // silently did nothing.
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      '[clipboard] Failed to save pasted image:',
+      expect.any(Error),
+    );
+  });
 });
