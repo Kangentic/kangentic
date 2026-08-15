@@ -1,5 +1,9 @@
 import type { PopOutDescriptor, PopOutKind, PopOutParamsByKind } from './pop-out';
-import type { Announcement } from './announcements';
+import type {
+  Announcement,
+  AnnouncementArchiveEntry,
+  AnnouncementsChangedPayload,
+} from './announcements';
 
 // === Database Models ===
 
@@ -4817,10 +4821,13 @@ export interface ElectronAPI {
     onUpdateDownloaded: (callback: (info: UpdateDownloadedInfo) => void) => () => void;
   };
 
-  // Announcements (remote feed; active = filtered for this client in main)
+  // Announcements (remote feed; active = filtered for this client in main.
+  // history = the local archive sidecar, which also owns per-entry read-state)
   announcements: {
     getActive: () => Promise<Announcement[]>;
-    onChanged: (callback: (active: Announcement[]) => void) => () => void;
+    getHistory: () => Promise<AnnouncementArchiveEntry[]>;
+    markRead: (announcementId: string) => Promise<void>;
+    onChanged: (callback: (payload: AnnouncementsChangedPayload) => void) => () => void;
   };
 
   // Backlog Attachments

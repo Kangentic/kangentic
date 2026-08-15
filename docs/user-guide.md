@@ -592,9 +592,17 @@ The Settings > Notifications panel exposes four configurable events: **Agent Idl
 
 Occasionally Kangentic shows a product announcement (for example, a call for mobile-app beta
 testers) as a slim banner above the board. **Learn more** opens the full message with links and
-a QR code; the **X** dismisses that announcement permanently on this machine. Announcements are
-fetched from a static file on the public GitHub repo - no account, no tracking, and if the feed
-is unreachable (offline or self-hosted setups) the banner simply never appears. See
+a QR code; the **X** hides that banner for good on this machine.
+
+Dismissing does not lose the announcement. The **megaphone** in the title bar is always there and
+opens the full history, newest first, so anything you dismissed or that has since expired stays
+readable. Its badge counts announcements you have not opened yet, and reading one clears it.
+Dismissing is not reading, so an announcement you waved away still shows in the count until you
+open it.
+
+Announcements are fetched from a static file on the public GitHub repo - no account, no tracking,
+and if the feed is unreachable (offline or self-hosted setups) no new ones appear, though your
+history stays available. See
 [Configuration - In-App Announcements](configuration.md#in-app-announcements) for the feed
 mechanics.
 
@@ -675,7 +683,7 @@ The viewer opens positioned at the latest message, or centered on the turn match
 
 The Command Terminal provides quick, ephemeral access to Claude Code without creating a task on the board. Useful for one-off actions like creating releases, running queries, or any ad-hoc interaction.
 
-**Opening:** Press `Ctrl+Shift+P` (or `Cmd+Shift+P` on macOS), or click the terminal icon in the title bar (next to the settings gear). The same button **toggles** the layer closed again, so there is always a one-click way to hide it, even when a window is maximized. The terminal icon reflects activity across your open terminals: its prompt blinks in green while an agent is working, it holds a steady warm amber when one needs your input, and it stays plain when idle.
+**Opening:** Press `Ctrl+Shift+P` (or `Cmd+Shift+P` on macOS), or click the terminal icon in the title bar (the left-most icon in its right-hand button row). The same button **toggles** the layer closed again, so there is always a one-click way to hide it, even when a window is maximized. The terminal icon reflects activity across your open terminals: its prompt blinks in green while an agent is working, it holds a steady warm amber when one needs your input, and it stays plain when idle.
 
 **Behavior:**
 - Spawns Claude Code at the project root on the configured default base branch

@@ -1,11 +1,13 @@
 import React from 'react';
-import { ChartColumn, CloudDownload, Command, Minus, Settings, Square, SquareActivity, X } from 'lucide-react';
+import { ChartColumn, CloudDownload, Command, Megaphone, Minus, Settings, Square, SquareActivity, X } from 'lucide-react';
 import { useProjectStore } from '../../stores/project-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useUpdaterStore } from '../../stores/updater-store';
 import { useUsageDashboardStore } from '../../stores/usage-dashboard-store';
 import { useMonitorStore } from '../../stores/monitor-store';
+import { useAnnouncementsStore, selectUnreadAnnouncementCount } from '../../stores/announcements-store';
+import { CountBadge } from '../CountBadge';
 import { warmStatsDashboard } from '../stats/LazyStatsDashboard';
 import { usePopOut } from '../../pop-out/usePopOut';
 import { selectCommandTerminalSummary } from '../../stores/session-store/transient-session-slice';
@@ -82,6 +84,15 @@ export function TitleBar({
   // toggling the (suppressed) in-app overlay.
   const monitorPopOut = usePopOut('monitor', {});
 
+  const announcementsOpen = useAnnouncementsStore((state) => state.historyOpen);
+  const openAnnouncements = useAnnouncementsStore((state) => state.openHistory);
+  const closeAnnouncements = useAnnouncementsStore((state) => state.closeHistory);
+  // Select the COUNT, not the history array, so Zustand's Object.is equality
+  // skips a re-render when a poll rewrites the array without changing it.
+  const unreadAnnouncements = useAnnouncementsStore(
+    (state) => selectUnreadAnnouncementCount(state.history),
+  );
+
   const isWorktree = currentProject?.path ? isWorktreePath(currentProject.path) : false;
 
   const handleGearClick = () => {
@@ -147,24 +158,6 @@ export function TitleBar({
       <div className="flex-1" />
 
       <div className="flex items-center gap-1" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-        {/* Update-available indicator: LEFT-MOST of all conditionally-mounted
-            controls in this row, for the same reason "New terminal" is (see
-            the comment on that pair below) - this row is right-anchored, so
-            an element's on-screen position is fixed by what comes AFTER it.
-            Placing this first means it appearing/disappearing (when an
-            update lands / is installed) never shifts the "New terminal" /
-            Command Terminal pair or anything to their right. */}
-        {pendingUpdate && (
-          <button
-            onClick={openUpdateModal}
-            className="p-1.5 hover:bg-surface-hover rounded text-attention transition-colors"
-            title={`Version ${pendingUpdate.version} is ready to install`}
-            aria-label="Update available"
-            data-testid="update-available-button"
-          >
-            <CloudDownload size={20} />
-          </button>
-        )}
         {/* "New terminal" + the Command Terminal toggle are the LEFT-MOST icons
             in this row on purpose: this row is right-anchored (the flex-1
             spacer eats the space to its left), so an element's on-screen
@@ -251,9 +244,9 @@ export function TitleBar({
         </button>
         {/* Quick Find sits to the RIGHT of Usage Stats: it is the one control here
             that opens a transient overlay the user dismisses immediately, so it
-            reads as the last step out of the icon cluster before Settings, while
-            the monitor and stats buttons (both surfaces over running work) stay
-            adjacent to each other. */}
+            reads as the step out of the running-work cluster, while the monitor
+            and stats buttons (both surfaces over running work) stay adjacent to
+            each other. */}
         {onOpenSearch && (
           <button
             onClick={onOpenSearch}
@@ -264,6 +257,74 @@ export function TitleBar({
             data-testid="open-search-button"
           >
             <Command size={20} />
+          </button>
+        )}
+        {/* The two "news from upstream" controls, grouped at the right end just
+            before Settings: announcements (what the team is saying) and an
+            update waiting to install. Both are machine-global, both are things
+            the app is telling YOU rather than surfaces over your running work,
+            which is the cluster to their left.
+
+            Announcements mounts UNCONDITIONALLY - a permanent access point is
+            the whole point, since the banner strip is single-use and a
+            dismissed announcement used to be unreachable. Its badge is
+            absolutely positioned, so appearing or clearing moves nothing.
+
+            This is the one control in this row carrying a corner badge.
+            `quick-session-button` argues for "no separate corner badge to
+            clash or clutter" and `update-available-button` beside it tones
+            itself with no badge, but neither of those has a COUNT to state: a
+            tone can say "something is unread", it cannot say how many. Ship
+            the badge and tone the glyph too, muted at zero. */}
+        <button
+          onClick={() => (announcementsOpen ? closeAnnouncements() : openAnnouncements())}
+          className={`relative p-1.5 hover:bg-surface-hover rounded transition-colors ${
+            announcementsOpen
+              ? 'text-fg bg-surface-hover'
+              : unreadAnnouncements > 0
+                ? 'text-attention hover:text-fg'
+                : 'text-fg-muted hover:text-fg'
+          }`}
+          title={unreadAnnouncements > 0
+            ? `Announcements (${unreadAnnouncements} unread)`
+            : 'Announcements'}
+          aria-label="Announcements"
+          data-testid="announcements-button"
+        >
+          <Megaphone size={20} />
+          {unreadAnnouncements > 0 && (
+            // Sized and offset so the megaphone stays readable underneath. The
+            // glyph is 20px inside a 32px button, so barely any corner sits
+            // outside it and an 18px badge at a token offset buried the horn.
+            // The offsets are bounded on both axes and are not free to grow:
+            // the button sits 3.5px below the title bar's top edge, and the
+            // row's gap to its neighbour is 4px, so a larger pull clips
+            // off-screen or lands on that neighbour. `flex` shrink-wraps the
+            // badge, since a plain inline span's line box is taller than it.
+            <span
+              className="absolute -top-0.5 -right-1 flex pointer-events-none"
+              data-testid="announcements-unread-badge"
+            >
+              <CountBadge count={unreadAnnouncements} variant="solid" size="xs" />
+            </span>
+          )}
+        </button>
+        {/* Deliberately NOT left-most, unlike every other conditional control in
+            this row, because it belongs beside announcements. The row is
+            right-anchored, so a conditional mount shifts everything BEFORE it
+            and nothing after: an arriving update therefore leaves Settings and
+            the OS window controls untouched, but does nudge the icons to its
+            left by one slot. That is the accepted price of the grouping, and it
+            is a once-per-release event. */}
+        {pendingUpdate && (
+          <button
+            onClick={openUpdateModal}
+            className="p-1.5 hover:bg-surface-hover rounded text-attention transition-colors"
+            title={`Version ${pendingUpdate.version} is ready to install`}
+            aria-label="Update available"
+            data-testid="update-available-button"
+          >
+            <CloudDownload size={20} />
           </button>
         )}
         <button

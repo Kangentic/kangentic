@@ -98,7 +98,7 @@ These settings appear in both App Settings (as defaults) and Project Settings (a
 | `hasCompletedFirstRun` | boolean | `false` | Legacy: set true on first task creation, kept for schema/fixture compatibility. No onboarding UI reads it, and it is not the walkthrough gate: creating a task is step 3 of the walkthrough, so this flips mid-flow. The walkthrough is suppressed once `onboardedProjectIds` is non-empty. Auto-set, not shown in UI. |
 | `lastSeenReleaseNotesVersion` | string | `''` | The version whose release-notes modal has already been auto-shown (see [Auto-Update Behavior](deployment.md#auto-update-behavior)), so it does not reopen on every relaunch after "Later". Auto-set, not shown in UI. |
 | `lastWhatsNewShownVersion` | string | `''` | The version whose post-update ["What's New" dialog](deployment.md#auto-update-behavior) has already been shown. Deliberately separate from `lastSeenReleaseNotesVersion`, which records the PENDING version when the pre-restart modal is dismissed: a user who clicks "Later" and then quits normally has the update installed by `autoInstallOnAppQuit`, and would relaunch with the new version already marked seen and the notes never read. Written when the dialog OPENS, not when it closes, so quitting with it open does not re-arm it. Seeded to the running version on a fresh install (no `config.json` existed at launch), so a first-time user is not shown notes for software they have never run. Auto-set, not shown in UI. |
-| `dismissedAnnouncementIds` | string[] | `[]` | Ids of [in-app announcements](#in-app-announcements) dismissed from the banner. Pruned on write to ids still present in the active feed, so the array stays bounded with no separate cleanup. Auto-set, not shown in UI. |
+| `dismissedAnnouncementIds` | string[] | `[]` | Ids of [in-app announcements](#in-app-announcements) dismissed from the banner. Pruned on write to ids still present in the active feed, so the array stays bounded with no separate cleanup. That prune is also why READ-state is not stored here: it would drain as soon as an announcement expired. Read-state lives on the [local archive](#the-local-archive) entry instead. Auto-set, not shown in UI. |
 | `onboardedProjectIds` | string[] \| undefined | `undefined` | Project ids whose onboarding checklist the user has dismissed. `undefined` means the one-time upgrade backfill (on first app hydration) has not run yet; `[]` means it has run and nothing is dismissed. Global, keyed by project id like `lastActiveTaskByProject`. **Emptiness, not membership, gates the walkthrough:** the checklist auto-opens only while this list is empty, because the walkthrough teaches the app rather than a repo and must not replay on every newly added project. It becomes non-empty by three routes, all meaning "not a first run": the backfill finding an existing project, a real dismissal, or all five steps completed. A fourth, dev-only route SHRINKS it: the Developer settings tab's "Restart checklist" trigger (`resetOnboarding` in `config-store.ts`) removes one project's id, and if that was the only entry the list is empty again, re-arming the persisted install-scoped auto-open gate until the next dismissal or completion. A per-session latch still applies, so a project already auto-opened this session waits for the next launch; the trigger itself opens the checklist directly rather than relying on auto-open. That trigger is excluded from production builds. Auto-set, not shown in UI. |
 | `onboardingBaseline` | Record\<string, object\> \| undefined | `undefined` | Per-project snapshot of the settings the onboarding checklist watches (`defaultAgent`, `defaultModel`, `defaultEffort`, `permissionMode`, and a `swimlaneSignature` string encoding of the board's shape), captured on first checklist open. Adding a project does not capture one by itself. While `onboardedProjectIds` is still empty, arriving at a project earns one auto-open per session, so a second project added during that first-run window does get a baseline. Once the list is non-empty the install-scoped gate is closed for good, so a project added later has no baseline until the Developer settings tab's dev-only trigger opens the checklist there, and that trigger is not reachable in a production build. Checklist steps 1 and 2 tick when live state DIFFERS from this, so opening a settings screen and closing it unchanged earns no checkmark. Both are guarded on the baseline existing, so a baseline-less project reports them un-ticked rather than complete. Keyed by project id; replaced wholesale on write (a `CONFIG_DICTIONARY_PATHS` entry). That replace semantics is what lets the same dev-only trigger DROP one project's entry so the checklist re-baselines on the next open; the first-write-wins capture never re-baselines on an ordinary reopen. Auto-set, not shown in UI. |
 | `windowBounds` | object \| null | `null` | Persisted window bounds `{x, y, width, height}`. Auto-saved, not shown in UI. |
@@ -642,6 +642,11 @@ unreachable, malformed, or empty feed simply means no banner (offline and self-h
 lose nothing). The poll runs 10 seconds after launch and every 4 hours (`src/main/announcements.ts`),
 is skipped entirely under `NODE_ENV=test`, and never emits error telemetry.
 
+The banner is not the only way in. A **megaphone button in the title bar** (always present, at the
+right end of the icon row just before Settings, beside the update-available indicator) opens the
+announcement history and carries a badge counting unread announcements. Rows open the same
+"Learn more" dialog, so a dismissed or expired announcement stays re-readable.
+
 Feed schema (`src/shared/announcements.ts`): each entry carries `id`, `title` (banner line),
 `body` (markdown intro), `links` (label + https URL; a link flagged `qr: true` renders a large
 scannable QR code above its button, for phone-destined links like store opt-in pages), optional
@@ -659,6 +664,40 @@ cache). Set targeting fields conservatively and put an `expiresAt` on every entr
 parser on every push, so a typo'd entry (which production would silently drop) fails CI on the
 content PR instead of shipping invisible.
 
+**Deleting an expired entry is allowed.** Clients keep their own archive (below), so removing a
+long-expired entry from the feed no longer takes it away from anyone who already saw it. Deleting
+an entry that has NOT expired still retracts it: it leaves the active list, the banner clears, and
+an open banner dialog closes. It stays in the archive of every client that already saw it, and
+never enters the archive of one that did not.
+
+### The local archive
+
+Each client keeps `<configDir>/announcements-archive.json`: every announcement that was ever
+active **for that client**, most recently seen first, capped at 50 entries with the oldest pruned
+on write. Ordering is by when this client first saw an entry, not by the announcement's own
+`publishedAt`, so a high-priority older announcement that arrives on a later poll sorts above
+entries published after it.
+It is written from the same filtered list the banner uses, so targeting is inherited for free (an
+announcement that never matched this client never enters its history), and it is what makes the
+megaphone useful in the three cases the live feed cannot cover: the ~10 seconds before the first
+poll, an offline launch, and an entry deleted upstream. An entry's stored copy is refreshed when
+the feed edits it in place, but its `firstSeenAt` and read-state are not.
+
+**Dismissed and read are different states, stored apart:**
+
+| Concept | Stored where | Effect |
+|---------|--------------|--------|
+| Dismissed | `dismissedAnnouncementIds` in config | hides that announcement's banner strip |
+| Read | `readAt` on its archive entry | stops the megaphone badge counting it |
+
+Opening the dialog from either entry point (the banner's "Learn more" or a history row) marks it
+read. Dismissing the banner does not: a dismissed-but-unread announcement still lights the badge,
+because the megaphone means "there is something you have not read", not "there is a banner". The
+badge counts every unread entry, expired ones included.
+
+Read-state cannot live in `dismissedAnnouncementIds` because that list prunes itself to ids still
+in the active feed on every write, so it would forget an announcement the moment it expired.
+
 **Authoring contract - no scrolling:** an announcement must fit its dialog without a scrollbar
 on a typical desktop window (QR links lay out side by side to help; the dialog's scroll is a
 safety valve for very small windows only, and a UI test pins the contract for a realistic
@@ -666,7 +705,7 @@ two-QR announcement). Keep bodies to a few short paragraphs and QR links to two 
 message wants more, it should be a link to a page, not a longer announcement.
 
 Dismissals persist per-announcement-id in `dismissedAnnouncementIds` (see the
-[Top-Level reference](#top-level)).
+[Top-Level reference](#top-level)). Read-state does not: it lives on the archive entry.
 
 ## Environment Variables
 

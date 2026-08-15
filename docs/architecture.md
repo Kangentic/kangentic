@@ -423,11 +423,13 @@ Detach a registered UI surface (usage stats, git changes, the task Browser pane,
 | `updater:install` | invoke | Install downloaded update (quit and install) |
 | `updater:downloaded` | on | Event: update has been downloaded and is ready to install |
 
-### Announcements (2 channels)
+### Announcements (4 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `announcements:get` | invoke | Current active announcements (remote feed, already filtered for this client's version/platform in main) |
-| `announcements:changed` | on | Event: the filtered active announcement list changed since the last poll |
+| `announcements:getHistory` | invoke | The local announcement archive (every announcement ever active for this client, plus read-state) |
+| `announcements:markRead` | invoke | Stamp `readAt` on one archive entry, clearing it from the megaphone's unread badge |
+| `announcements:changed` | on | Event: the filtered active announcement list changed since the last poll. Carries `{ active, history }`, since both derive from the same poll |
 
 ### Search (1 channel)
 | Channel | Pattern | Purpose |

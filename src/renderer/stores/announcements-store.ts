@@ -1,5 +1,12 @@
 import { create } from 'zustand';
-import type { Announcement } from '../../shared/announcements';
+import {
+  countUnreadAnnouncements,
+  markArchiveEntryRead,
+  reconcileOpenDialog,
+  type Announcement,
+  type AnnouncementArchiveEntry,
+  type AnnouncementDialogSource,
+} from '../../shared/announcements';
 
 interface AnnouncementsState {
   /** Active announcements for this client, filtered and sorted by the main
@@ -8,15 +15,35 @@ interface AnnouncementsState {
    *  selectBannerAnnouncement), so a dismissal is instant with no IPC
    *  round-trip and the dismissal prune can see the full active set. */
   active: Announcement[];
+  /** The local archive, most recently seen first: every announcement ever active
+   *  for this client, plus read-state. Backs the megaphone's history list and
+   *  its unread badge, and unlike `active` it is populated from disk at mount,
+   *  so it is non-empty during the 10s before the first poll and while
+   *  offline. */
+  history: AnnouncementArchiveEntry[];
   /** The announcement the "Learn more" dialog is showing; null = closed. */
   dialogAnnouncement: Announcement | null;
+  /** Where the open dialog was opened from. Load-bearing: receiveActive
+   *  reconciles a 'banner' dialog against the active list but must leave a
+   *  'history' one alone. */
+  dialogSource: AnnouncementDialogSource | null;
+  /** Whether the megaphone's history dialog is showing. */
+  historyOpen: boolean;
 
   /** Pull the current active list (app mount and HMR resync, Pattern B). */
   loadActive: () => Promise<void>;
+  /** Pull the archive (app mount and HMR resync, Pattern B). */
+  loadHistory: () => Promise<void>;
   /** Called from the announcements:changed IPC push. */
   receiveActive: (active: Announcement[]) => void;
-  openDialog: (announcement: Announcement) => void;
+  /** Called from the announcements:changed IPC push. */
+  receiveHistory: (history: AnnouncementArchiveEntry[]) => void;
+  openDialog: (announcement: Announcement, source: AnnouncementDialogSource) => void;
   closeDialog: () => void;
+  /** Stamp an archive entry read. Optimistic, then fire-and-forget over IPC. */
+  markRead: (announcementId: string) => void;
+  openHistory: () => void;
+  closeHistory: () => void;
 }
 
 /**
@@ -31,9 +58,23 @@ export function selectBannerAnnouncement(
   return active.find((announcement) => !dismissedIds.includes(announcement.id)) ?? null;
 }
 
+/**
+ * The megaphone badge count: unread archive entries.
+ *
+ * Deliberately NOT filtered by dismissal. Dismissed hides the banner; read
+ * silences the badge. A dismissed-but-unread announcement still counts, because
+ * the megaphone means "there is something you have not read".
+ */
+export function selectUnreadAnnouncementCount(history: AnnouncementArchiveEntry[]): number {
+  return countUnreadAnnouncements(history);
+}
+
 const createAnnouncementsStore = () => create<AnnouncementsState>((set, get) => ({
   active: [],
+  history: [],
   dialogAnnouncement: null,
+  dialogSource: null,
+  historyOpen: false,
 
   loadActive: async () => {
     // Optional chaining: during Vite HMR full reloads the preload bridge may
@@ -46,22 +87,60 @@ const createAnnouncementsStore = () => create<AnnouncementsState>((set, get) => 
     if (active) get().receiveActive(active);
   },
 
+  loadHistory: async () => {
+    const history = await window.electronAPI.announcements?.getHistory();
+    if (history) get().receiveHistory(history);
+  },
+
   receiveActive: (active) => {
-    const { dialogAnnouncement } = get();
+    const { dialogAnnouncement, dialogSource } = get();
+    // A banner-opened dialog for an announcement that just left the active set
+    // (expired or retracted upstream) closes rather than lingering over content
+    // the feed withdrew. A history-opened one survives: history exists to show
+    // announcements that are no longer active, and this path runs on every poll
+    // AND every HMR resync, so reconciling it would close the dialog out from
+    // under the user on every renderer edit in dev.
+    const keptDialog = reconcileOpenDialog(dialogAnnouncement, dialogSource, active);
     set({
       active,
-      // An open dialog for an announcement that just left the active set
-      // (expired or retracted upstream) closes rather than lingering over
-      // content the feed withdrew.
-      dialogAnnouncement: dialogAnnouncement
-        && active.some((announcement) => announcement.id === dialogAnnouncement.id)
-        ? dialogAnnouncement
-        : null,
+      dialogAnnouncement: keptDialog,
+      dialogSource: keptDialog ? dialogSource : null,
     });
   },
 
-  openDialog: (announcement) => set({ dialogAnnouncement: announcement }),
-  closeDialog: () => set({ dialogAnnouncement: null }),
+  receiveHistory: (history) => set({ history }),
+
+  openDialog: (announcement, source) => {
+    // Opening from ANY entry point marks it read: the badge tracks what the
+    // user has seen, and both the banner's "Learn more" and a history row show
+    // the same full content.
+    get().markRead(announcement.id);
+    set({ dialogAnnouncement: announcement, dialogSource: source });
+  },
+
+  closeDialog: () => set({ dialogAnnouncement: null, dialogSource: null }),
+
+  markRead: (announcementId) => {
+    const { history } = get();
+    const stamped = markArchiveEntryRead(history, announcementId, new Date());
+    // Update optimistically so the badge never lags a round-trip. Identity means
+    // the local copy had nothing to change, so skip the re-render only.
+    if (stamped !== history) set({ history: stamped });
+    // The IPC fires UNCONDITIONALLY, even when the local copy changed nothing.
+    // Main owns the durable archive, and this store's `history` can legitimately
+    // be behind it: mount fires loadActive() and loadHistory() together without
+    // awaiting, so after a renderer reload the banner (served from main's
+    // already-warm cachedActive) can render and be clicked while the archive's
+    // disk read is still in flight. Gating the write on the local copy would
+    // silently drop that read forever. Main's handler no-ops on an unknown or
+    // already-read id, so an extra call is free.
+    // Fire-and-forget: failing to persist must not break the UI (same shape as
+    // dismissAnnouncement in config-store.ts).
+    void window.electronAPI.announcements?.markRead(announcementId).catch(() => undefined);
+  },
+
+  openHistory: () => set({ historyOpen: true }),
+  closeHistory: () => set({ historyOpen: false }),
 }));
 
 // HMR instance pinning (Pattern E, see .claude/rules/hmr-patterns.md): this

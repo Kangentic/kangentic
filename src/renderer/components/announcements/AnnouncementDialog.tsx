@@ -50,16 +50,23 @@ function AnnouncementLinkList({ links }: { links: AnnouncementLink[] }) {
 /**
  * The "Learn more" dialog for an announcement: intro markdown, then any
  * titled sections (each its own message with scoped links), then the
- * announcement-level links. Only ever opens from a user click on the
- * banner's "Learn more", never on its own, so BaseDialog's default focus
- * trap is correct (the updater's autoOpened machinery exists only for
- * unbidden modals). Mounted in AppLayout beside the other app-level dialogs.
+ * announcement-level links.
+ *
+ * Two entry points, both a user click and neither unbidden: the banner's
+ * "Learn more" and a row in AnnouncementHistoryDialog. So BaseDialog's default
+ * focus behavior is correct (the updater's autoOpened machinery exists only for
+ * modals that open on their own), and the focus trap is added only for the
+ * history path, where this dialog is layered over another one. Mounted in
+ * AppLayout beside the other app-level dialogs.
  */
 export function AnnouncementDialog() {
   const announcement = useAnnouncementsStore((state) => state.dialogAnnouncement);
+  const dialogSource = useAnnouncementsStore((state) => state.dialogSource);
   const closeDialog = useAnnouncementsStore((state) => state.closeDialog);
 
   if (!announcement) return null;
+
+  const openedFromHistory = dialogSource === 'history';
 
   return (
     <BaseDialog
@@ -68,6 +75,15 @@ export function AnnouncementDialog() {
       icon={<Megaphone size={16} className="text-accent" />}
       backdropClassName="backdrop-blur-xs"
       className="w-[640px] max-w-[92vw] max-h-[85vh]"
+      // z-[60], not the z-50 default: opened from a history row this dialog
+      // layers OVER AnnouncementHistoryDialog, which is itself a z-50
+      // BaseDialog, so paint order would otherwise depend on JSX order in
+      // AppLayout. Same slot ConfirmDialog uses for the same reason.
+      zIndex="z-[60]"
+      // Only when layered, so the banner path keeps the default focus
+      // behavior its header comment reasons about. Without this, Tab from the
+      // top dialog wanders into the history list underneath.
+      trapFocus={openedFromHistory}
       testId="announcement-dialog"
       footer={
         <div className="flex items-center justify-end">

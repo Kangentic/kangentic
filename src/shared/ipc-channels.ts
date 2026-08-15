@@ -381,6 +381,8 @@ export const IPC = {
 
   // Announcements (remote feed poll; see src/main/announcements.ts)
   ANNOUNCEMENTS_GET: 'announcements:get',
+  ANNOUNCEMENTS_GET_HISTORY: 'announcements:getHistory',
+  ANNOUNCEMENTS_MARK_READ: 'announcements:markRead',
   ANNOUNCEMENTS_CHANGED: 'announcements:changed',
 
   // Search

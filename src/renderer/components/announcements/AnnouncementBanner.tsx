@@ -34,7 +34,7 @@ export function AnnouncementBanner() {
       <button
         type="button"
         data-testid="announcement-learn-more"
-        onClick={() => openDialog(banner)}
+        onClick={() => openDialog(banner, 'banner')}
         className="flex-shrink-0 text-xs text-fg-secondary underline underline-offset-2 hover:text-fg transition-colors cursor-pointer"
       >
         Learn more

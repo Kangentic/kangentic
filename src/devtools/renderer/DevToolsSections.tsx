@@ -1,10 +1,12 @@
-import { Network, Code2, Compass, Sparkles, Rocket } from 'lucide-react';
+import { Network, Code2, Compass, Megaphone, Sparkles, Rocket } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { AppConfig } from '../../shared/types';
+import type { Announcement, AnnouncementArchiveEntry } from '../../shared/announcements';
 import { useScopedUpdate } from '../../renderer/components/settings/shared';
 import { useConfigStore } from '../../renderer/stores/config-store';
 import { useProjectStore } from '../../renderer/stores/project-store';
 import { useUpdaterStore } from '../../renderer/stores/updater-store';
+import { useAnnouncementsStore } from '../../renderer/stores/announcements-store';
 import {
   Code,
   Description,
@@ -22,6 +24,71 @@ const FIXTURE_RELEASE_NOTES = `## What's New
 - Fixed a crash when opening an empty board.
 - \`Escape\` now closes the release-notes modal like every other dialog.
 `;
+
+function isoDaysAgo(days: number): string {
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+}
+
+/**
+ * A feed and archive shaped like a real poll's output, exercising every
+ * announcement surface at once: the banner takes the highest-priority active
+ * entry, the badge counts the two unread, and history additionally carries an
+ * entry that is NO LONGER active, which is the case only the local archive can
+ * produce.
+ *
+ * Ids are stamped per click rather than fixed. Dismissal persists per id in
+ * `dismissedAnnouncementIds`, so a fixed id would hide the banner permanently
+ * after the first dismissal with no UI to undo it. Stale fixture ids drain
+ * themselves on the next dismissal (computeDismissedIdsAfterDismiss prunes to
+ * ids still in the active feed).
+ */
+function buildAnnouncementFixture(): {
+  active: Announcement[];
+  history: AnnouncementArchiveEntry[];
+} {
+  const stamp = Date.now();
+  const headline: Announcement = {
+    id: `dev-fixture-headline-${stamp}`,
+    title: 'Kangentic Mobile is almost here - iOS in review, Android in beta',
+    body: 'The mobile companion app is on its way to **both stores**. Here is where each platform stands.',
+    links: [],
+    sections: [
+      { heading: 'iOS: in App Store review', body: 'Submitted and waiting on Apple. Nothing to do yet.' },
+      {
+        heading: 'Android: open for beta testers',
+        body: 'Two steps: join the group, then become a tester.',
+        links: [
+          { label: 'Join the testers Google Group', url: 'https://groups.google.com/g/kangentic-testers', qr: true },
+        ],
+      },
+    ],
+    publishedAt: isoDaysAgo(2),
+    priority: 5,
+  };
+  const secondary: Announcement = {
+    id: `dev-fixture-secondary-${stamp}`,
+    title: 'Agent Monitor now spans every project',
+    body: 'One view over every running agent on this machine, not just the open project.',
+    links: [{ label: 'Read the docs', url: 'https://kangentic.com/docs/' }],
+    publishedAt: isoDaysAgo(16),
+  };
+  const retired: Announcement = {
+    id: `dev-fixture-retired-${stamp}`,
+    title: 'Command Terminal: multiple terminals, tiled and persistent',
+    body: 'Expired upstream, kept by the local archive. Proves history outlives the feed.',
+    links: [],
+    publishedAt: isoDaysAgo(120),
+  };
+
+  return {
+    active: [headline, secondary],
+    history: [
+      { announcement: headline, firstSeenAt: isoDaysAgo(2), readAt: null },
+      { announcement: secondary, firstSeenAt: isoDaysAgo(16), readAt: null },
+      { announcement: retired, firstSeenAt: isoDaysAgo(120), readAt: isoDaysAgo(119) },
+    ],
+  };
+}
 
 /**
  * A dev-only trigger row: what it opens on the left, the button that opens it
@@ -180,6 +247,32 @@ export function DevToolsSections({ globalConfig }: { globalConfig: AppConfig }) 
         testId="dev-trigger-whats-new-dialog"
         onClick={() => {
           useUpdaterStore.getState().openWhatsNew({ autoOpened: false });
+        }}
+      />
+
+      {/* The announcements poll runs 10s after launch and then every 4 hours
+          against the live feed on `main`, so in dev you wait on the network to
+          see one, and the feed usually holds a single entry - which is not
+          enough to exercise the badge count, the multi-row history, or a
+          history entry that has left the active set.
+
+          This pushes the same two store actions the announcements:changed IPC
+          push calls, exactly as the release-notes trigger above reuses
+          receiveUpdate. It is store-only: the real poll ALSO writes the archive
+          sidecar, so this does not survive an HMR resync or the next real poll,
+          both of which re-read main's copy. Use KANGENTIC_ANNOUNCEMENTS_URL
+          against a local fixture file when you need the persistent path. */}
+      <ActionRow
+        icon={Megaphone}
+        title="Announcements Feed"
+        description="Push two active announcements plus an expired one, so the banner, the megaphone badge, and a multi-row history all have something to show without waiting on the 4-hour poll. Not persisted: a resync or the next real poll replaces it."
+        label="Seed feed"
+        testId="dev-trigger-announcements-feed"
+        onClick={() => {
+          const { active, history } = buildAnnouncementFixture();
+          const store = useAnnouncementsStore.getState();
+          store.receiveActive(active);
+          store.receiveHistory(history);
         }}
       />
 

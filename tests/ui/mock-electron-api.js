@@ -390,15 +390,30 @@
   };
 
   // Announcements test hooks: installed eagerly for the same reason as the
-  // update-downloaded hooks above. `__mockFireAnnouncementsChanged(active)`
-  // also updates `__mockActiveAnnouncements` so a later
-  // announcements.getActive() (e.g. an HMR resync) returns the same list.
+  // update-downloaded hooks above. `__mockFireAnnouncementsChanged(active,
+  // history)` also updates `__mockActiveAnnouncements` /
+  // `__mockAnnouncementHistory` so a later getActive() / getHistory() (e.g. an
+  // HMR resync) returns the same lists. History defaults to one unread archive
+  // entry per active announcement, which is what a real poll produces, so a
+  // spec only passes it explicitly to test expired or already-read entries.
   window.__mockActiveAnnouncements = [];
+  window.__mockAnnouncementHistory = [];
+  // Every announcements.markRead(id) call, in order. Lets a spec assert the
+  // durable write was attempted even when the renderer's local history copy
+  // had nothing to stamp.
+  window.__mockAnnouncementMarkReadCalls = [];
   window.__mockAnnouncementsChangedListeners = [];
-  window.__mockFireAnnouncementsChanged = function (active) {
+  window.__mockFireAnnouncementsChanged = function (active, history) {
     window.__mockActiveAnnouncements = active;
+    window.__mockAnnouncementHistory = history || active.map(function (announcement) {
+      return { announcement: announcement, firstSeenAt: new Date().toISOString(), readAt: null };
+    });
+    var payload = {
+      active: window.__mockActiveAnnouncements,
+      history: window.__mockAnnouncementHistory,
+    };
     var listeners = window.__mockAnnouncementsChangedListeners.slice();
-    listeners.forEach(function (fn) { fn(active); });
+    listeners.forEach(function (fn) { fn(payload); });
   };
 
   // Notification-click test hook (App.tsx's `notifications.onClicked` handler,
@@ -3345,11 +3360,30 @@
       getActive: async function () {
         return window.__mockActiveAnnouncements || [];
       },
+      getHistory: async function () {
+        return window.__mockAnnouncementHistory || [];
+      },
+      markRead: async function (announcementId) {
+        window.__mockAnnouncementMarkReadCalls.push(announcementId);
+        // Stamp the backing array too, not just the store's optimistic copy,
+        // so a later getHistory() (HMR resync) agrees with the badge.
+        window.__mockAnnouncementHistory = (window.__mockAnnouncementHistory || []).map(
+          function (entry) {
+            if (entry.announcement.id !== announcementId || entry.readAt !== null) return entry;
+            return {
+              announcement: entry.announcement,
+              firstSeenAt: entry.firstSeenAt,
+              readAt: new Date().toISOString(),
+            };
+          },
+        );
+      },
       onChanged: function (callback) {
         // Tests fire the changed push via
-        // `window.__mockFireAnnouncementsChanged([announcement, ...])`. The
-        // listener array and the fire hook itself are installed eagerly at
-        // mock-bootstrap time (see top of file), not lazily here.
+        // `window.__mockFireAnnouncementsChanged([announcement, ...])`, which
+        // delivers `{ active, history }`. The listener array and the fire hook
+        // itself are installed eagerly at mock-bootstrap time (see top of
+        // file), not lazily here.
         window.__mockAnnouncementsChangedListeners.push(callback);
         return function () {
           var listeners = window.__mockAnnouncementsChangedListeners || [];

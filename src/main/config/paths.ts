@@ -61,6 +61,11 @@ export const PATHS = {
   get globalDb() { return path.join(this.configDir, 'index.db'); },
   get configFile() { return path.join(this.configDir, 'config.json'); },
   get projectsDir() { return path.join(this.configDir, 'projects'); },
+  /** Local archive of announcements this client has seen, and their read-state.
+   *  A sidecar rather than a config.json key: it holds full markdown bodies,
+   *  and read-state must survive an announcement leaving the active feed (see
+   *  src/main/announcements-archive.ts). */
+  get announcementsArchiveFile() { return path.join(this.configDir, 'announcements-archive.json'); },
   projectDb(projectId: string) { return path.join(this.projectsDir, `${projectId}.db`); },
   /** Downloaded voice-dictation models, one subdirectory per model id (global cache). */
   get modelsDir() { return this.modelCacheDir; },

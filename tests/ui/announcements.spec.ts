@@ -48,21 +48,53 @@ function makeAnnouncement(overrides: Partial<Announcement> & { id: string }): An
   };
 }
 
+/** An archive entry as the mock stores it, mirroring AnnouncementArchiveEntry. */
+interface HistoryEntry {
+  announcement: Announcement;
+  firstSeenAt: string;
+  readAt: string | null;
+}
+
+function makeHistoryEntry(
+  announcement: Announcement,
+  overrides: Partial<Omit<HistoryEntry, 'announcement'>> = {},
+): HistoryEntry {
+  return {
+    announcement,
+    firstSeenAt: new Date().toISOString(),
+    readAt: null,
+    ...overrides,
+  };
+}
+
 /**
  * Fires the announcements-changed push once App.tsx's subscriber is attached.
  * Firing before the mount-effect subscription registers would be a silent
  * no-op (the eager mock hook tolerates zero listeners), so wait for it.
+ *
+ * The push carries `{ active, history }`. Omitting `history` lets the mock
+ * derive one unread entry per active announcement, which is what a real poll
+ * produces; pass it explicitly to model already-read or no-longer-active
+ * entries. Each fire REPLACES the history wholesale, so a test's badge count
+ * never inherits from an earlier test on the same worker page.
  */
-async function fireAnnouncements(active: Announcement[]): Promise<void> {
+async function fireAnnouncements(
+  active: Announcement[],
+  history?: HistoryEntry[],
+): Promise<void> {
   await expect
     .poll(() => page.evaluate(() =>
       (window as unknown as { __mockAnnouncementsChangedListeners: unknown[] })
         .__mockAnnouncementsChangedListeners.length))
     .toBeGreaterThan(0);
-  await page.evaluate((activeList) => {
-    (window as unknown as { __mockFireAnnouncementsChanged: (active: unknown[]) => void })
-      .__mockFireAnnouncementsChanged(activeList);
-  }, active as unknown as unknown[]);
+  await page.evaluate(({ activeList, historyList }) => {
+    (window as unknown as {
+      __mockFireAnnouncementsChanged: (active: unknown[], history?: unknown[]) => void;
+    }).__mockFireAnnouncementsChanged(activeList, historyList);
+  }, {
+    activeList: active as unknown as unknown[],
+    historyList: history as unknown as unknown[] | undefined,
+  });
 }
 
 async function getGlobalConfig(): Promise<AppConfig> {
@@ -237,6 +269,364 @@ test.describe('Announcements banner and dialog', () => {
   });
 });
 
+test.describe('Announcements megaphone and history', () => {
+  const megaphone = () => page.locator('[data-testid="announcements-button"]');
+  const badge = () => page.locator('[data-testid="announcements-unread-badge"]');
+  const historyDialog = () => page.locator('[data-testid="announcement-history-dialog"]');
+  const historyRows = () => page.locator('[data-testid="announcement-history-row"]');
+
+  test('the megaphone badges unread entries and clears as each is read', async () => {
+    const stamp = Date.now();
+    const unread = makeAnnouncement({ id: `badge-unread-${stamp}` });
+    const alsoUnread = makeAnnouncement({ id: `badge-unread-2-${stamp}` });
+    const alreadyRead = makeAnnouncement({ id: `badge-read-${stamp}` });
+    await fireAnnouncements([unread, alsoUnread, alreadyRead], [
+      makeHistoryEntry(unread),
+      makeHistoryEntry(alsoUnread),
+      makeHistoryEntry(alreadyRead, { readAt: new Date().toISOString() }),
+    ]);
+
+    // Two of three unread. The button itself is permanent, the badge is not.
+    await expect(megaphone()).toBeVisible();
+    await expect(badge()).toContainText('2');
+
+    await megaphone().click();
+    await expect(historyDialog()).toBeVisible();
+    await expect(historyRows()).toHaveCount(3);
+
+    // Reading one drops the count without waiting on an IPC round-trip.
+    await historyRows().first().click();
+    await expect(page.locator('[data-testid="announcement-dialog"]')).toBeVisible();
+    await expect(badge()).toContainText('1');
+
+    // The history list stays up underneath, so closing returns to it.
+    await page.locator('[data-testid="announcement-close"]').click();
+    await expect(historyDialog()).toBeVisible();
+    await expect(historyRows().first()).toHaveAttribute('data-unread', 'false');
+
+    await historyRows().nth(1).click();
+    await page.locator('[data-testid="announcement-close"]').click();
+    // Nothing unread left: the badge unmounts entirely rather than showing 0.
+    await expect(badge()).toHaveCount(0);
+    await expect(megaphone()).toBeVisible();
+
+    await historyDialog().locator('[aria-label="Close dialog"]').click();
+    await expect(historyDialog()).toHaveCount(0);
+    await fireAnnouncements([]);
+  });
+
+  test('history lists announcements that are no longer active, and the banner never showed', async () => {
+    const stamp = Date.now();
+    const retired = makeAnnouncement({ id: `history-retired-${stamp}`, title: 'Retired announcement' });
+    // Empty active list with a non-empty archive: exactly the state of a fresh
+    // launch before the first poll, and of an announcement deleted upstream.
+    await fireAnnouncements([], [makeHistoryEntry(retired, { readAt: new Date().toISOString() })]);
+
+    await expect(page.locator('[data-testid="announcement-banner"]')).toHaveCount(0);
+
+    await megaphone().click();
+    await expect(historyRows()).toHaveCount(1);
+    await expect(historyRows().first()).toContainText('Retired announcement');
+
+    await historyDialog().locator('[aria-label="Close dialog"]').click();
+    await fireAnnouncements([]);
+  });
+
+  test('an announcement opened from history survives a poll that drops it', async () => {
+    // The trap this feature had to design around: receiveActive closes an open
+    // dialog whose announcement left the active set, and loadActive routes
+    // through it too, so in dev this fires on EVERY renderer edit. A
+    // history-opened dialog must be exempt.
+    const stamp = Date.now();
+    const expired = makeAnnouncement({ id: `history-survives-${stamp}`, title: 'Opened from history' });
+    await fireAnnouncements([expired]);
+
+    await megaphone().click();
+    await historyRows().first().click();
+    const dialog = page.locator('[data-testid="announcement-dialog"]');
+    await expect(dialog).toBeVisible();
+
+    // The feed drops it entirely while the dialog is open.
+    await fireAnnouncements([], [makeHistoryEntry(expired, { readAt: new Date().toISOString() })]);
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText('Opened from history');
+
+    await page.locator('[data-testid="announcement-close"]').click();
+    await historyDialog().locator('[aria-label="Close dialog"]').click();
+    await fireAnnouncements([]);
+  });
+
+  test('Escape closes only the layered announcement dialog, leaving the history list up', async () => {
+    // Both dialogs register a bubble-phase Escape listener on `document`, and
+    // the first registered (the history list) would otherwise win, dismissing
+    // the LIST and orphaning the announcement on top of nothing.
+    const announcement = makeAnnouncement({ id: `history-escape-${Date.now()}` });
+    await fireAnnouncements([announcement]);
+
+    await megaphone().click();
+    await historyRows().first().click();
+    const dialog = page.locator('[data-testid="announcement-dialog"]');
+    await expect(dialog).toBeVisible();
+
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    await expect(historyDialog()).toBeVisible();
+
+    // A second Escape, now unsuppressed, closes the list.
+    await page.keyboard.press('Escape');
+    await expect(historyDialog()).toHaveCount(0);
+    await fireAnnouncements([]);
+  });
+
+  test('a dismissed announcement stays unread, so the badge keeps counting it', async () => {
+    // Dismissed hides the banner; read silences the badge. They are separate
+    // states in separate stores, and dismissing must not imply reading.
+    const stamp = Date.now();
+    const first = makeAnnouncement({ id: `badge-dismissed-${stamp}`, priority: 5 });
+    const second = makeAnnouncement({ id: `badge-dismissed-2-${stamp}` });
+    await fireAnnouncements([first, second]);
+    await expect(badge()).toContainText('2');
+
+    await page.locator('[data-testid="announcement-dismiss"]').click();
+    await expect(page.locator('[data-testid="announcement-banner"]')).toContainText(second.title);
+    // Banner moved on, badge did not: the first is dismissed but still unread.
+    await expect(badge()).toContainText('2');
+
+    await page.locator('[data-testid="announcement-dismiss"]').click();
+    await expect(page.locator('[data-testid="announcement-banner"]')).toHaveCount(0);
+    // Both dismissed, neither opened. The megaphone is now the ONLY way to
+    // reach them, and it still says there are two unread.
+    await expect(badge()).toContainText('2');
+
+    await megaphone().click();
+    await expect(historyRows()).toHaveCount(2);
+    await historyDialog().locator('[aria-label="Close dialog"]').click();
+    await fireAnnouncements([]);
+  });
+
+  test('the banner marks read durably even before the local archive has loaded', async () => {
+    // Mount fires loadActive() and loadHistory() together without awaiting, so
+    // after a renderer reload the banner (served from main's already-warm
+    // cachedActive) can render and be clicked while the archive read is still
+    // in flight. Modelled here as active-with-empty-history. The mark-read IPC
+    // must still go out, or that read is silently lost forever: main owns the
+    // durable archive and the renderer's copy is only a cache.
+    const announcement = makeAnnouncement({ id: `read-before-history-${Date.now()}` });
+    await page.evaluate(() => {
+      (window as unknown as { __mockAnnouncementMarkReadCalls: string[] })
+        .__mockAnnouncementMarkReadCalls = [];
+    });
+    await fireAnnouncements([announcement], []);
+    await expect(badge()).toHaveCount(0);
+
+    await page.locator('[data-testid="announcement-learn-more"]').click();
+    await expect(page.locator('[data-testid="announcement-dialog"]')).toBeVisible();
+
+    await expect
+      .poll(() => page.evaluate(() =>
+        (window as unknown as { __mockAnnouncementMarkReadCalls: string[] })
+          .__mockAnnouncementMarkReadCalls))
+      .toEqual([announcement.id]);
+
+    await page.locator('[data-testid="announcement-close"]').click();
+    await fireAnnouncements([]);
+  });
+
+  test('the badge stays clear of its neighbours and never clips a 2-digit count', async () => {
+    // The badge is overlaid on a 20px glyph inside a 32px button, so its size
+    // and offsets are bounded on every side: too big or pulled too far and it
+    // either buries the megaphone (the bug this replaced), clips off the top of
+    // the title bar, or lands on Quick Find.
+    const stamp = Date.now();
+    await fireAnnouncements([], Array.from({ length: 12 }, (_unused, index) =>
+      makeHistoryEntry(makeAnnouncement({ id: `badge-geometry-${stamp}-${index}` }))));
+    await expect(badge()).toContainText('12');
+
+    const boxes = await page.evaluate(() => {
+      const button = document.querySelector('[data-testid="announcements-button"]');
+      const badge = document.querySelector('[data-testid="announcements-unread-badge"]');
+      const badgeElement = badge?.querySelector('span');
+      // Read the neighbour off the DOM rather than naming it: this button has
+      // moved along the row before, and the invariant is about whatever
+      // actually sits to its right, not about one specific control.
+      const neighbour = button?.nextElementSibling ?? null;
+      return {
+        button: button ? button.getBoundingClientRect().toJSON() : null,
+        badge: badge ? badge.getBoundingClientRect().toJSON() : null,
+        neighbour: neighbour ? neighbour.getBoundingClientRect().toJSON() : null,
+        clipped: badgeElement
+          ? badgeElement.scrollWidth > badgeElement.clientWidth + 1
+          : true,
+      };
+    });
+
+    if (!boxes.button || !boxes.badge || !boxes.neighbour) throw new Error('missing element');
+    // A 2-digit count widens the pill rather than clipping its own text.
+    expect(boxes.clipped).toBe(false);
+    // Stays inside the title bar rather than being cut off at the top.
+    expect(boxes.badge.top).toBeGreaterThanOrEqual(0);
+    // Does not reach into whatever button sits to its right.
+    expect(boxes.badge.right).toBeLessThanOrEqual(boxes.neighbour.left);
+    // Still small relative to the glyph it sits on, so the megaphone reads.
+    expect(boxes.badge.height).toBeLessThanOrEqual(16);
+
+    await fireAnnouncements([]);
+  });
+
+  test('the history list grows to its content, then caps and scrolls', async () => {
+    // The dialog is max-h, not a fixed height, so a one-entry archive is a
+    // small box rather than a mostly-empty 60vh one. This pins both ends of
+    // that: it must still cap and scroll once the archive is long.
+    const stamp = Date.now();
+    const one = makeAnnouncement({ id: `scroll-one-${stamp}` });
+    await fireAnnouncements([], [makeHistoryEntry(one, { readAt: new Date().toISOString() })]);
+    await megaphone().click();
+
+    const viewportHeight = page.viewportSize()?.height ?? 0;
+    const dialogHeight = async () =>
+      (await historyDialog().boundingBox())?.height ?? 0;
+
+    const shortHeight = await dialogHeight();
+    expect(shortHeight).toBeLessThan(viewportHeight * 0.3);
+    // Nothing to scroll at one entry.
+    await expect
+      .poll(() => page.locator('[data-testid="announcement-history-list"]')
+        .evaluate((element) => element.scrollHeight - element.clientHeight))
+      .toBe(0);
+
+    // A full archive (the cap is 50) must not grow the dialog past 60vh.
+    await fireAnnouncements([], Array.from({ length: 50 }, (_unused, index) =>
+      makeHistoryEntry(makeAnnouncement({ id: `scroll-many-${stamp}-${index}` }))));
+    await expect(historyRows()).toHaveCount(50);
+
+    const tallHeight = await dialogHeight();
+    expect(tallHeight).toBeGreaterThan(shortHeight);
+    // +2 tolerates sub-pixel rounding between Windows and CI's headless Linux.
+    expect(tallHeight).toBeLessThanOrEqual(viewportHeight * 0.6 + 2);
+    await expect
+      .poll(() => page.locator('[data-testid="announcement-history-list"]')
+        .evaluate((element) => element.scrollHeight - element.clientHeight))
+      .toBeGreaterThan(0);
+
+    await historyDialog().locator('[aria-label="Close dialog"]').click();
+    await fireAnnouncements([]);
+  });
+
+  test('the Developer tab seed button fills every announcement surface at once', async () => {
+    // The dev trigger exists because the real poll needs the network and a
+    // 10-second wait, and the live feed usually holds a single entry - not
+    // enough to exercise a badge count, a multi-row history, or a history entry
+    // that has left the active set. It renders only under __KANGENTIC_DEV__,
+    // which the UI tier's Vite dev server sets.
+    await fireAnnouncements([], []);
+    await expect(badge()).toHaveCount(0);
+
+    await page.locator('[data-testid="settings-button"]').click();
+    await page.locator('h2:has-text("Settings")').waitFor({ state: 'visible', timeout: 3000 });
+    await page.getByRole('button', { name: 'Developer', exact: true }).click();
+    await page.locator('[data-testid="dev-trigger-announcements-feed"]').click();
+    await page.keyboard.press('Escape');
+    await page.locator('h2:has-text("Settings")').waitFor({ state: 'hidden', timeout: 3000 });
+
+    // Two active announcements: the banner takes the higher-priority one...
+    await expect(page.locator('[data-testid="announcement-banner"]'))
+      .toContainText('Kangentic Mobile is almost here');
+    // ...both are unread, so the badge counts exactly those two...
+    await expect(badge()).toContainText('2');
+
+    // ...and history carries a third that is NOT active, which only the local
+    // archive can produce.
+    await megaphone().click();
+    await expect(historyRows()).toHaveCount(3);
+    await expect(historyRows().nth(2)).toContainText('Command Terminal');
+    await expect(historyRows().nth(2)).toHaveAttribute('data-unread', 'false');
+    await expect(historyRows().nth(0)).toHaveAttribute('data-unread', 'true');
+
+    await historyDialog().locator('[aria-label="Close dialog"]').click();
+    await fireAnnouncements([]);
+  });
+
+  test('the megaphone button toggles its own history dialog closed on a second activation', async () => {
+    // Isolated page (own browser context), not the shared per-worker `page`
+    // above: `historyOpen` is a single global boolean, shared by every test
+    // this file's `mode: 'parallel'` may schedule concurrently against that
+    // shared page. Every OTHER test in this block closes the dialog through
+    // the deterministic `[aria-label="Close dialog"]` button, which always
+    // closes regardless of ambient state; re-pressing the SAME toggle control
+    // is not idempotent that way; its outcome depends on whatever the shared
+    // boolean happens to be at that instant. That is genuinely racy against a
+    // concurrently-scheduled sibling also opening/closing the dialog -
+    // confirmed empirically: a full-file run observed the dialog already open
+    // before this test's own first action. A dedicated page removes the
+    // shared boolean entirely, following the same isolation this file already
+    // uses for "Announcements mount-time pull" below.
+    //
+    // A real MOUSE click could not exercise the close path either way: once
+    // the history dialog is open, BaseDialog's own `fixed inset-0 z-50`
+    // backdrop covers the whole viewport, including the title bar, so a click
+    // at the megaphone's screen coordinates lands on the backdrop (confirmed
+    // via document.elementFromPoint), not the button, and would be swallowed
+    // by the backdrop's own click-to-close instead of ever reaching the
+    // button's onClick. A keyboard activation (Enter on the focused button)
+    // bypasses hit-testing entirely and reaches the button's handler directly
+    // - the only real-user-reachable path (a keyboard user tabbed here) that
+    // actually proves the button's own open-vs-close ternary, rather than
+    // merely observing the backdrop's independent dismissal.
+    const announcement = makeAnnouncement({ id: `toggle-${Date.now()}` });
+    const historyEntry = makeHistoryEntry(announcement, { readAt: new Date().toISOString() });
+
+    await waitForViteReady(VITE_URL);
+    const isolatedBrowser = await chromium.launch({ headless: true });
+    try {
+      const context = await isolatedBrowser.newContext({ viewport: { width: 1920, height: 1080 } });
+      const isolatedPage = await context.newPage();
+
+      await isolatedPage.addInitScript({ path: MOCK_SCRIPT });
+      await isolatedPage.goto(VITE_URL);
+      await isolatedPage.waitForLoadState('load');
+      await isolatedPage.waitForSelector('text=Kangentic', { timeout: 15000 });
+
+      // Push the archive over the changed feed, same as fireAnnouncements()
+      // does for the shared page above, but scoped to isolatedPage: wait for
+      // App.tsx's mount-effect subscriber to attach before firing, since an
+      // earlier push is a silent no-op.
+      await expect
+        .poll(() => isolatedPage.evaluate(() =>
+          (window as unknown as { __mockAnnouncementsChangedListeners: unknown[] })
+            .__mockAnnouncementsChangedListeners.length))
+        .toBeGreaterThan(0);
+      await isolatedPage.evaluate((entry) => {
+        (window as unknown as {
+          __mockFireAnnouncementsChanged: (active: unknown[], history?: unknown[]) => void;
+        }).__mockFireAnnouncementsChanged([], [entry]);
+      }, historyEntry as unknown as Record<string, unknown>);
+
+      const isolatedMegaphone = isolatedPage.locator('[data-testid="announcements-button"]');
+      const isolatedHistoryDialog = isolatedPage.locator('[data-testid="announcement-history-dialog"]');
+
+      await isolatedMegaphone.press('Enter');
+      await expect(isolatedHistoryDialog).toBeVisible();
+
+      await isolatedMegaphone.press('Enter');
+      await expect(isolatedHistoryDialog).toHaveCount(0);
+    } finally {
+      await isolatedBrowser.close();
+    }
+  });
+
+  test('the megaphone shows an empty state when nothing has ever been archived', async () => {
+    await fireAnnouncements([], []);
+
+    await megaphone().click();
+    await expect(page.locator('[data-testid="announcement-history-empty"]')).toBeVisible();
+    await expect(historyRows()).toHaveCount(0);
+    await expect(badge()).toHaveCount(0);
+
+    await historyDialog().locator('[aria-label="Close dialog"]').click();
+    await expect(historyDialog()).toHaveCount(0);
+  });
+});
+
 test.describe('Announcements mount-time pull', () => {
   // This test manages its own browser/page (not the shared per-worker one
   // above): it needs window.__mockActiveAnnouncements seeded BEFORE React
@@ -268,6 +658,48 @@ test.describe('Announcements mount-time pull', () => {
       const banner = isolatedPage.locator('[data-testid="announcement-banner"]');
       await expect(banner).toBeVisible();
       await expect(banner).toContainText(announcement.title);
+    } finally {
+      await isolatedBrowser.close();
+    }
+  });
+
+  // Sibling to the banner test above, proving the OTHER half of mount-time
+  // Pattern B: the local ARCHIVE pull (loadHistory()), not the active-list pull
+  // (loadActive()). This is what keeps the megaphone badge correct at boot and
+  // while offline, before any poll (and therefore any announcements:changed
+  // push) has ever landed - seed window.__mockAnnouncementHistory only, never
+  // fire __mockFireAnnouncementsChanged, and confirm the badge still counts the
+  // seeded unread entries.
+  test('the megaphone badges an archive that was already recorded before the renderer mounted, with no push', async () => {
+    const stamp = Date.now();
+    const firstUnread = makeAnnouncement({ id: `mount-pull-history-1-${stamp}` });
+    const secondUnread = makeAnnouncement({ id: `mount-pull-history-2-${stamp}` });
+    const alreadyRead = makeAnnouncement({ id: `mount-pull-history-3-${stamp}` });
+    const seededHistory = [
+      makeHistoryEntry(firstUnread),
+      makeHistoryEntry(secondUnread),
+      makeHistoryEntry(alreadyRead, { readAt: new Date().toISOString() }),
+    ];
+
+    await waitForViteReady(VITE_URL);
+    const isolatedBrowser = await chromium.launch({ headless: true });
+    try {
+      const context = await isolatedBrowser.newContext({ viewport: { width: 1920, height: 1080 } });
+      const isolatedPage = await context.newPage();
+
+      await isolatedPage.addInitScript({ path: MOCK_SCRIPT });
+      await isolatedPage.addInitScript((seeded) => {
+        (window as unknown as { __mockAnnouncementHistory: unknown[] }).__mockAnnouncementHistory = seeded;
+      }, seededHistory as unknown as Record<string, unknown>[]);
+
+      await isolatedPage.goto(VITE_URL);
+      await isolatedPage.waitForLoadState('load');
+      await isolatedPage.waitForSelector('text=Kangentic', { timeout: 15000 });
+
+      const isolatedMegaphone = isolatedPage.locator('[data-testid="announcements-button"]');
+      await expect(isolatedMegaphone).toBeVisible();
+      const isolatedBadge = isolatedPage.locator('[data-testid="announcements-unread-badge"]');
+      await expect(isolatedBadge).toContainText('2');
     } finally {
       await isolatedBrowser.close();
     }

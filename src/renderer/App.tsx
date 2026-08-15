@@ -128,11 +128,17 @@ export function App() {
     });
 
     // Announcements: hydrate the active list (the first poll may have landed
-    // before this renderer mounted), then stay live via the changed push.
+    // before this renderer mounted) and the local archive (which, unlike the
+    // in-memory active list, is non-empty before the first poll and offline),
+    // then stay live via the changed push.
     void useAnnouncementsStore.getState().loadActive();
-    const cleanupAnnouncementsChanged = window.electronAPI.announcements?.onChanged((active) => {
-      useAnnouncementsStore.getState().receiveActive(active);
-    });
+    void useAnnouncementsStore.getState().loadHistory();
+    const cleanupAnnouncementsChanged = window.electronAPI.announcements?.onChanged(
+      ({ active, history }) => {
+        useAnnouncementsStore.getState().receiveActive(active);
+        useAnnouncementsStore.getState().receiveHistory(history);
+      },
+    );
 
     return () => {
       if (mountTimerRafId !== undefined) cancelAnimationFrame(mountTimerRafId);
@@ -848,8 +854,11 @@ if (import.meta.hot) {
     }
     // Pop-out windows Pattern B: re-hydrate which surfaces are currently detached.
     usePopOutStore.getState().loadOpen();
-    // Announcements Pattern B: re-pull the active list from main-process truth.
+    // Announcements Pattern B: re-pull the active list and the archive from
+    // main-process truth. loadActive also re-runs the open-dialog
+    // reconciliation, which a history-opened dialog is exempt from.
     void useAnnouncementsStore.getState().loadActive();
+    void useAnnouncementsStore.getState().loadHistory();
     useSessionStore.getState().syncSessions().then((applied) => {
       if (!applied) return;
 

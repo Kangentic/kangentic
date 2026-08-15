@@ -23,6 +23,7 @@ import { ReleaseNotesDialog } from '../dialogs/ReleaseNotesDialog';
 import { WhatsNewDialog } from '../dialogs/WhatsNewDialog';
 import { AnnouncementBanner } from '../announcements/AnnouncementBanner';
 import { AnnouncementDialog } from '../announcements/AnnouncementDialog';
+import { AnnouncementHistoryDialog } from '../announcements/AnnouncementHistoryDialog';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useBoardStore } from '../../stores/board-store';
@@ -538,6 +539,10 @@ export function AppLayout() {
       <ProjectPathMissingDialog />
       <ReleaseNotesDialog />
       <WhatsNewDialog />
+      {/* History first, then the announcement dialog it can open on top. The
+          ordering is cosmetic only: AnnouncementDialog pins itself to z-[60]
+          rather than relying on being second here. */}
+      <AnnouncementHistoryDialog />
       <AnnouncementDialog />
       {onboardingChecklistOpen && <WelcomeChecklistDialog />}
       <WalkthroughLayer />

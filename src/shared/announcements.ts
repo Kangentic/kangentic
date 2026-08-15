@@ -75,6 +75,51 @@ export interface AnnouncementTargetContext {
   now: Date;
 }
 
+/**
+ * One archived announcement. The archive is the client's own copy of every
+ * announcement that was ever active FOR THIS CLIENT, and it owns read-state.
+ *
+ * Read is not dismissed, and the two are stored apart on purpose:
+ *   - dismissed (config.dismissedAnnouncementIds) hides the banner strip;
+ *   - read (`readAt` here) stops the megaphone badge counting it.
+ * Dismissing leaves an announcement unread, so a dismissed-but-unread entry
+ * still lights the badge. The megaphone means "there is something you have not
+ * read", not "there is a banner".
+ *
+ * Read-state cannot live in `dismissedAnnouncementIds` because
+ * computeDismissedIdsAfterDismiss prunes that list to ids still in the ACTIVE
+ * feed on every write, so it would drain the moment an announcement expired.
+ *
+ * The announcement is NESTED rather than spread so a future feed field can
+ * never collide with `firstSeenAt` / `readAt`.
+ */
+export interface AnnouncementArchiveEntry {
+  announcement: Announcement;
+  /** ISO 8601 UTC: when this client first saw it in its targeted active set. */
+  firstSeenAt: string;
+  /** ISO 8601 UTC when its dialog was first opened; null = unread. */
+  readAt: string | null;
+}
+
+/**
+ * The `announcements:changed` push payload. Active and history both derive
+ * from the same poll and change at the same instant, so they travel together
+ * rather than on two channels that could race.
+ */
+export interface AnnouncementsChangedPayload {
+  active: Announcement[];
+  history: AnnouncementArchiveEntry[];
+}
+
+/** Where an open "Learn more" dialog was opened from; null = closed. */
+export type AnnouncementDialogSource = 'banner' | 'history';
+
+/**
+ * Archive size cap. Bounds the file and the badge count with no separate
+ * cleanup pass, the same self-maintaining shape as the dismissal prune.
+ */
+export const ANNOUNCEMENT_ARCHIVE_CAP = 50;
+
 const KNOWN_PLATFORMS: readonly AnnouncementPlatform[] = ['win32', 'darwin', 'linux'];
 
 function isNonEmptyString(value: unknown): value is string {
@@ -285,4 +330,105 @@ export function computeDismissedIdsAfterDismiss(
   const retained = existingDismissedIds.filter(
     (id) => id !== dismissedId && activeAnnouncementIds.includes(id));
   return [...retained, dismissedId];
+}
+
+/**
+ * Fold the current active set into the archive, newest-first.
+ *
+ * Fed from selectActiveAnnouncements output, so client targeting (version,
+ * platform, publish window) is free: an announcement that never matched this
+ * client never enters history.
+ *
+ * Ids not yet archived are prepended, and `active` is walked in REVERSE so the
+ * feed's own priority/publishedAt/id sort survives at the head. Ids already
+ * archived keep their position, `firstSeenAt`, and `readAt`, but their payload
+ * is refreshed so an edited announcement's content updates in place. The tail
+ * past `cap` is dropped.
+ *
+ * `now` is a parameter rather than read internally so callers and tests get a
+ * deterministic result.
+ */
+export function appendToArchive(
+  existing: AnnouncementArchiveEntry[],
+  active: Announcement[],
+  now: Date,
+  cap: number = ANNOUNCEMENT_ARCHIVE_CAP,
+): AnnouncementArchiveEntry[] {
+  const activeById = new Map(active.map((announcement) => [announcement.id, announcement]));
+  const archived = new Set(existing.map((entry) => entry.announcement.id));
+
+  const refreshed = existing.map((entry) => {
+    const current = activeById.get(entry.announcement.id);
+    return current ? { ...entry, announcement: current } : entry;
+  });
+
+  const firstSeenAt = now.toISOString();
+  const head: AnnouncementArchiveEntry[] = [];
+  for (let index = active.length - 1; index >= 0; index -= 1) {
+    const announcement = active[index];
+    if (archived.has(announcement.id)) continue;
+    // Track as we go, not just from `existing`: a feed that repeats an id
+    // within one batch would otherwise archive it twice, permanently (both
+    // copies then match on every later poll, and they collide on the history
+    // list's React key). The committed feed's unique-id check lives in
+    // announcements-json-valid.test.ts, but a self-hosted or overridden feed
+    // (KANGENTIC_ANNOUNCEMENTS_URL) never passes through it.
+    archived.add(announcement.id);
+    head.unshift({ announcement, firstSeenAt, readAt: null });
+  }
+
+  return [...head, ...refreshed].slice(0, Math.max(0, cap));
+}
+
+/**
+ * Stamp `readAt` on one entry. Idempotent: an already-read entry keeps its
+ * original timestamp, so re-opening a dialog never rewrites when it was first
+ * read. An unknown id returns the input untouched (the archive may have pruned
+ * it, and a mark-read is fire-and-forget).
+ */
+export function markArchiveEntryRead(
+  entries: AnnouncementArchiveEntry[],
+  announcementId: string,
+  now: Date,
+): AnnouncementArchiveEntry[] {
+  let changed = false;
+  const stamped = entries.map((entry) => {
+    if (entry.announcement.id !== announcementId || entry.readAt !== null) return entry;
+    changed = true;
+    return { ...entry, readAt: now.toISOString() };
+  });
+  return changed ? stamped : entries;
+}
+
+/**
+ * Badge count: every unread entry, expired ones included. Expiry is not the
+ * same as read, and the archive cap already bounds the number.
+ */
+export function countUnreadAnnouncements(entries: AnnouncementArchiveEntry[]): number {
+  return entries.reduce((total, entry) => (entry.readAt === null ? total + 1 : total), 0);
+}
+
+/**
+ * Which announcement an open dialog should still be showing after a new active
+ * list arrives. A BANNER-opened dialog closes when its announcement leaves the
+ * active set (expired or retracted upstream) rather than lingering over content
+ * the feed withdrew. A HISTORY-opened one is exempt: history exists precisely to
+ * show announcements that are no longer active, and every poll (plus every HMR
+ * resync, which routes through the same path) would otherwise close it out from
+ * under the user.
+ *
+ * Lives here rather than in the store so it is pure and directly unit-testable
+ * (tests/unit/announcements-archive.test.ts), alongside the archive helpers it
+ * reconciles against.
+ */
+export function reconcileOpenDialog(
+  dialogAnnouncement: Announcement | null,
+  dialogSource: AnnouncementDialogSource | null,
+  active: Announcement[],
+): Announcement | null {
+  if (dialogAnnouncement === null) return null;
+  if (dialogSource === 'history') return dialogAnnouncement;
+  return active.some((announcement) => announcement.id === dialogAnnouncement.id)
+    ? dialogAnnouncement
+    : null;
 }
