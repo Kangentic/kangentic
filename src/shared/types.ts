@@ -2705,8 +2705,11 @@ export interface AppConfig {
   /** Per-project snapshot of the settings the onboarding checklist watches, captured on first
    *  checklist OPEN. `WelcomeChecklistDialog`'s mount effect is the only writer, and AppLayout
    *  mounts that dialog only while `onboardingChecklistOpen`, so adding a project does NOT
-   *  capture one: now that the auto-open gate is install-scoped (see `onboardedProjectIds`), a
-   *  second project has no baseline until the Developer tab's dev-only trigger opens the
+   *  capture one by itself. While `onboardedProjectIds` is still empty, arriving at a project
+   *  earns one auto-open per session (AppLayout keys that latch by project id precisely so the
+   *  first-run window can span several), so a second project added during that window does get
+   *  a baseline. Once the list is non-empty the install-scoped gate is closed for good, and a
+   *  project added later has no baseline until the Developer tab's dev-only trigger opens the
    *  checklist there.
    *  Steps 1 and 2 tick by comparing live state against this, so opening a settings screen and
    *  closing it again ticks nothing - only a real change does. Both are guarded on
