@@ -160,7 +160,7 @@ The leftmost tab shows an activity log - structured events from all sessions. Th
 
 ### Clipboard Paste
 
-Press **Ctrl+V** (Cmd+V on macOS) in the terminal to paste. Text on the clipboard is pasted directly. If the clipboard contains an image (and no text), the image is saved to a temporary file; the agent then reliably reads it as a vision input, since a bare file path alone is not recognized as an image by most CLIs. Claude Code receives an explicit "Read this image: ..." instruction pointing at the saved file (this is more reliable than the CLI's own clipboard reader, which can silently miss a Windows Snipping Tool image); other agents receive the bare file path today. Paths are automatically quoted for the active shell (PowerShell, bash, cmd, WSL, etc.).
+Press **Ctrl+V** (Cmd+V on macOS) in the terminal to paste. Text on the clipboard is pasted directly. If the clipboard contains an image (and no text), the image is saved to a temporary file, capped at a 2000px long edge so a 4K or 5K grab does not land on disk at full size; the agent then reliably reads it as a vision input, since a bare file path alone is not recognized as an image by most CLIs. The cap costs no detail - it sits at the point above which the extra pixels are discarded before an agent ever sees them. Saved pastes are pruned by age and count, so the temp directory no longer grows for the life of the install. Claude Code receives an explicit "Read this image: ..." instruction pointing at the saved file (this is more reliable than the CLI's own clipboard reader, which can silently miss a Windows Snipping Tool image); other agents receive the bare file path today. Paths are automatically quoted for the active shell (PowerShell, bash, cmd, WSL, etc.).
 
 ### File Drop to Terminal
 

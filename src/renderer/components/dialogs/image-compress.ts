@@ -1,17 +1,30 @@
 import { useToastStore } from '../../stores/toast-store';
+import { IMAGE_LONG_EDGE_CAP, resolveResizeTarget } from '../../../shared/image-fidelity';
 import { isImageMediaType, resolveMediaType } from './attachment-utils';
 
 /**
  * Anthropic vision API budget:
  *   - 5MB hard cap per image (base64-encoded source bytes)
  *   - 8000x8000 absolute pixel cap, 2000x2000 when sending >20 images
- *   - Auto-downscales to ~1568px long edge, so larger uploads waste bandwidth
+ *
+ * WHAT ACTUALLY COSTS TOKENS: pixel AREA, and nothing else. Re-encoding an image
+ * (the WebP quality ladder below, grayscale, palette reduction, PNG optimization)
+ * shrinks the file and costs the model exactly the same. The ladder is kept for
+ * disk and IPC reasons - a pasted attachment is base64'd across the bridge and
+ * stored - and must not be described as a token optimization.
+ *
+ * ON THE LONG-EDGE CAP: this path shipped 1568px for a long time, on a comment
+ * claiming it matched "the API's own downscale". It did not, and 1568 was
+ * actively costing accuracy: with no option to decline, an agent reading a
+ * 1568px UI screenshot misread a branch hash in 6 of 7 attempts and named the
+ * wrong bar in a three-bar chart in 5 of 7, confidently and without ever
+ * flagging doubt. At the 2000px cap the same 84 probes produced zero errors, and
+ * cost no more, because the chain normalizes above ~2.25MP anyway. See
+ * `src/shared/image-fidelity.ts` for the measurements.
  *
  * We target a 1.5MB blob so the base64 payload (~2MB) fits with comfortable
- * headroom under the 5MB cap, and we resize to 1568px long edge to match
- * the API's own downscale and avoid sending pixels that get discarded.
+ * headroom under the 5MB cap.
  */
-export const LONG_EDGE_TARGET = 1568;
 export const MIN_COMPRESS_BYTES = 500 * 1024;
 export const TARGET_BYTES = 1.5 * 1024 * 1024;
 export const QUALITY_LADDER = [0.85, 0.75, 0.6] as const;
@@ -35,20 +48,34 @@ function renameToWebp(originalName: string): string {
 }
 
 /**
+ * Draw `bitmap` into a canvas at `target`, downscaling if needed.
+ *
+ * `imageSmoothingQuality` is set explicitly because the browser default is
+ * 'low', which is visibly destructive on a large downscale of small UI text -
+ * and reading small UI text is the case this whole pipeline exists to preserve.
+ */
+function renderToCanvas(bitmap: ImageBitmap, longEdge: number): OffscreenCanvas {
+  const target = resolveResizeTarget(bitmap.width, bitmap.height, longEdge)
+    ?? { width: bitmap.width, height: bitmap.height };
+
+  const canvas = new OffscreenCanvas(target.width, target.height);
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('OffscreenCanvas 2d context unavailable');
+
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = 'high';
+  context.drawImage(bitmap, 0, 0, target.width, target.height);
+  return canvas;
+}
+
+/**
  * Pure pipeline used by both the public helper and the calibration harness.
  * Takes an explicit long-edge target and quality so callers can sweep params.
  */
 export async function compressImage(input: File, options: CompressImageOptions): Promise<Blob> {
   const bitmap = await createImageBitmap(input);
   try {
-    const longEdge = Math.max(bitmap.width, bitmap.height);
-    const scale = Math.min(1, options.longEdge / longEdge);
-    const width = Math.max(1, Math.round(bitmap.width * scale));
-    const height = Math.max(1, Math.round(bitmap.height * scale));
-    const canvas = new OffscreenCanvas(width, height);
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('OffscreenCanvas 2d context unavailable');
-    ctx.drawImage(bitmap, 0, 0, width, height);
+    const canvas = renderToCanvas(bitmap, options.longEdge);
     return await canvas.convertToBlob({ type: 'image/webp', quality: options.quality });
   } finally {
     bitmap.close();
@@ -59,12 +86,14 @@ export async function compressImage(input: File, options: CompressImageOptions):
  * Compress a clipboard-pasted image to fit Anthropic's vision API budget.
  *
  * Skip rules: not an image, GIF/SVG (lossy re-encode would damage them), under
- * 500KB (already small), or PNG that already fits the long-edge target (preserves
- * alpha for icons/UI screenshots without an explicit alpha probe).
+ * 500KB (already small), or a PNG that already fits the long-edge cap (preserves
+ * alpha for icons/UI screenshots without an explicit alpha probe, and avoids a
+ * lossy round-trip for an image that is already within budget).
  *
- * Pipeline: createImageBitmap -> resize to LONG_EDGE_TARGET on the long edge ->
- * OffscreenCanvas -> WebP at quality 0.85, falling back to 0.75 then 0.6 if the
- * result still exceeds TARGET_BYTES.
+ * Pipeline: createImageBitmap -> resize to IMAGE_LONG_EDGE_CAP on the long edge
+ * at high resampling quality -> WebP at quality 0.85, falling back to 0.75 then
+ * 0.6 if the result still exceeds TARGET_BYTES. The ladder is a byte budget, not
+ * a token one.
  *
  * Failure handling: any thrown error toasts a single warning and returns the
  * original file. Pastes never silently disappear.
@@ -83,17 +112,11 @@ export async function compressClipboardImage(input: File): Promise<CompressResul
   try {
     const bitmap = await createImageBitmap(input);
     try {
-      const longEdge = Math.max(bitmap.width, bitmap.height);
-      const scale = Math.min(1, LONG_EDGE_TARGET / longEdge);
-      if (scale === 1 && mediaType === 'image/png') {
+      const needsResize = resolveResizeTarget(bitmap.width, bitmap.height, IMAGE_LONG_EDGE_CAP) !== null;
+      if (!needsResize && mediaType === 'image/png') {
         return { file: input, compressed: false };
       }
-      const width = Math.max(1, Math.round(bitmap.width * scale));
-      const height = Math.max(1, Math.round(bitmap.height * scale));
-      const canvas = new OffscreenCanvas(width, height);
-      const ctx = canvas.getContext('2d');
-      if (!ctx) throw new Error('OffscreenCanvas 2d context unavailable');
-      ctx.drawImage(bitmap, 0, 0, width, height);
+      const canvas = renderToCanvas(bitmap, IMAGE_LONG_EDGE_CAP);
 
       let blob: Blob | null = null;
       for (const quality of QUALITY_LADDER) {

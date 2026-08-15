@@ -17,6 +17,7 @@ import { agentRegistry } from '../../agent/agent-registry';
 import { broadcast } from '../../pop-out/window-broadcast';
 import { resolveRelayUrl } from '../../../shared/relay';
 import { EXTERNAL_OPEN_SCHEMES, isAllowedExternalUrl } from '../../../shared/external-url';
+import { capClipboardImage, pruneClipboardTempDir } from '../helpers/clipboard-image';
 import type {
   NotificationInput,
   AgentCommand,
@@ -635,14 +636,33 @@ export function registerSystemHandlers(context: IpcContext): void {
   // clipboard holds no image. Always PNG: a NativeImage is a still bitmap, so an
   // animated GIF copied from a browser is reduced to a single static frame, matching
   // how OS "copy screenshot" already populates the clipboard.
+  //
+  // The image is capped at IMAGE_LONG_EDGE_CAP before it is written, so a raw 4K
+  // or 5K grab does not land on disk and cross the bridge at full size. This
+  // costs no fidelity and saves no tokens: the cap sits at the knee where the
+  // chain normalizes anyway, so the dropped pixels are ones the model would
+  // never have seen. See `src/shared/image-fidelity.ts` for what was measured.
   ipcMain.handle(IPC.CLIPBOARD_READ_IMAGE, (): string | null => {
     const image = clipboard.readImage();
     if (image.isEmpty()) return null;
     const tempDir = path.join(os.tmpdir(), 'kangentic-clipboard');
-    fs.mkdirSync(tempDir, { recursive: true });
-    const filePath = path.join(tempDir, `pasted-image-${Date.now()}.png`);
-    fs.writeFileSync(filePath, image.toPNG());
-    return filePath;
+    try {
+      fs.mkdirSync(tempDir, { recursive: true });
+      // Nothing used to delete these, so the directory grew for the life of the
+      // install. Disk hygiene only - it does not change what an agent is billed.
+      pruneClipboardTempDir(tempDir);
+      const filePath = path.join(tempDir, `pasted-image-${Date.now()}.png`);
+      fs.writeFileSync(filePath, capClipboardImage(image).toPNG());
+      return filePath;
+    } catch (error) {
+      // Degrade to the same null an empty clipboard returns rather than
+      // rejecting the renderer's invoke. The disk can be full, a Windows
+      // antivirus scanner can hold a just-created temp file, and on a shared
+      // Linux /tmp the directory can already belong to another user. None of
+      // those should turn a Ctrl+V into an unhandled rejection.
+      console.error('[clipboard] Failed to save pasted image:', error);
+      return null;
+    }
   });
 
   // Write text to the clipboard natively in the main process rather than via the web

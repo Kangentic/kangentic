@@ -105,6 +105,38 @@ test.describe('Clipboard image compression', () => {
     expect(attachment.size_bytes).toBeLessThan(TARGET_BASE64_BYTES);
   });
 
+  test('an oversized paste is capped on the long edge', async () => {
+    // Real Chromium, because the unit tier stubs OffscreenCanvas and so never
+    // proves the actual draw. 2400x1200 fits 2000 on the long edge at scale
+    // 0.8333 -> 2000x1000.
+    const size = await page.evaluate(async () => {
+      const module = await import('/src/renderer/components/dialogs/image-compress.ts');
+
+      const canvas = new OffscreenCanvas(2400, 1200);
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('no 2d context');
+      const data = context.createImageData(2400, 1200);
+      for (let index = 0; index < data.data.length; index += 4) {
+        data.data[index] = Math.floor(Math.random() * 200);
+        data.data[index + 1] = Math.floor(Math.random() * 200);
+        data.data[index + 2] = Math.floor(Math.random() * 200);
+        data.data[index + 3] = 255;
+      }
+      context.putImageData(data, 0, 0);
+
+      const blob = await canvas.convertToBlob({ type: 'image/png' });
+      const file = new File([blob], 'wide.png', { type: 'image/png' });
+
+      const out = await module.compressImage(file, { longEdge: 2000, quality: 0.85 });
+      const bitmap = await createImageBitmap(out);
+      const measured = { width: bitmap.width, height: bitmap.height };
+      bitmap.close();
+      return measured;
+    });
+
+    expect(size).toEqual({ width: 2000, height: 1000 });
+  });
+
   test('small PNG paste is left untouched', async () => {
     await openNewTaskDialog();
 

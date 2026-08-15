@@ -399,7 +399,7 @@ Detach a registered UI surface (usage stats, git changes, the task Browser pane,
 ### Clipboard (2 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `clipboard:readImage` | invoke | Read the native clipboard image, save it to a temp file, returns file path or null |
+| `clipboard:readImage` | invoke | Read the native clipboard image, cap its long edge at `IMAGE_LONG_EDGE_CAP`, prune stale `pasted-image-*` files from the temp directory (24h age limit, 40-file cap), save it to a temp file, returns file path or null |
 | `clipboard:writeText` | invoke | Write text to the native clipboard (focus-independent; used by terminal copy and the OSC 52 handler) |
 
 ### Browser pane (10 channels)
