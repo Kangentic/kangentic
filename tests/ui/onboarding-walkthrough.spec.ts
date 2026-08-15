@@ -274,6 +274,52 @@ test.describe('Onboarding checklist', () => {
     await expect(page.locator('[data-testid="onboarding-progress"]')).toHaveText('0 of 5 done', { timeout: 5000 });
   });
 
+  test('the Developer trigger opens the checklist only after the reset lands, not before', async () => {
+    // DevToolsSections.tsx chains `resetOnboarding(...).then(() => setOnboardingChecklistOpen(true))`
+    // deliberately: the dialog re-baselines on mount, that capture is first-write-wins, and
+    // opening before the config write lands would let the guard see the OLD baseline and leave
+    // steps 1 and 2 permanently stuck ticked. The mock's config.set() round trip is normally a
+    // same-microtask resolve with no real latency, so this test artificially delays it (same
+    // technique as settings-panel.spec.ts's mid-flight font-family test) to build a real,
+    // observable window and prove the open genuinely waits rather than merely happening to run
+    // after in the common case.
+    ({ browser, page } = await launch());
+    await createProjectKeepingChecklist(page, 'walkthrough-reset-ordering');
+    await page.locator('[data-testid="onboarding-skip"]').click();
+    await expect(page.locator('[data-testid="onboarding-checklist"]')).toBeHidden();
+
+    await openDeveloperTab(page);
+
+    try {
+      await page.evaluate(() => {
+        const original = window.electronAPI.config.set;
+        (window as unknown as { __originalConfigSet: typeof original }).__originalConfigSet = original;
+        window.electronAPI.config.set = (partial: Parameters<typeof original>[0]) =>
+          new Promise((resolve) => {
+            setTimeout(() => resolve(original(partial)), 800);
+          });
+      });
+
+      await page.locator('[data-testid="dev-trigger-onboarding-checklist"]').click();
+
+      // Mid-flight: a single non-retrying snapshot right after the click, not a retrying
+      // assertion (which would just wait out the delay and pass on fire-and-forget code too).
+      const checklistCountMidFlight = await page.locator('[data-testid="onboarding-checklist"]').count();
+      expect(checklistCountMidFlight).toBe(0);
+
+      // Once the reset's write actually lands, the checklist opens.
+      await expect(page.locator('[data-testid="onboarding-checklist"]')).toBeVisible({ timeout: 3000 });
+    } finally {
+      await page.evaluate(() => {
+        const patched = window as unknown as { __originalConfigSet?: typeof window.electronAPI.config.set };
+        if (patched.__originalConfigSet) {
+          window.electronAPI.config.set = patched.__originalConfigSet;
+          delete patched.__originalConfigSet;
+        }
+      });
+    }
+  });
+
   test('step 1 redirects to Settings, keeps its callout, and dims nothing', async () => {
     // Redirect, not spotlight. A ring here was worse than none: scoped to the inputs it
     // sliced through every dropdown chevron, and scoped wider it just outlined a panel
