@@ -220,7 +220,13 @@ describe('prepareAgentSpawn first-spawn override lock', () => {
     expect(tasksUpdate).toHaveBeenCalledWith({
       id: TASK_ID,
       agent_override: 'codex',
-      model_override: 'claude-opus-4-8',
+      // model_override is null, NOT the project's 'claude-opus-4-8': the
+      // locked agent (codex, from the lane) differs from the project default
+      // agent (claude), so the project-level model tier is gated off
+      // (projectModelDefaultsApply, spawn-preamble.ts). effort_override stays
+      // 'low' because it comes from the LANE's own override, which is not
+      // gated - only the project-level fallback is agent-specific.
+      model_override: null,
       effort_override: 'low',
       permission_mode: 'acceptEdits',
     });
@@ -263,5 +269,50 @@ describe('prepareAgentSpawn first-spawn override lock', () => {
     // ...but the spawn runs under 'plan': the lane's plan is a safety
     // guarantee that beats any task pin (resolveEffectivePermissionMode).
     expect(builtCommandOptions().permissionMode).toBe('plan');
+  });
+});
+
+describe('prepareAgentSpawn -- project model/effort gated by agent match (cross-agent)', () => {
+  // Model/effort ids are adapter-specific: a project on `claude` with
+  // `default_model: 'claude-opus-4-8'` must not be applied to a spawn that
+  // actually runs `codex` (projectModelDefaultsApply, spawn-preamble.ts).
+  // This is the startup/crash-recovery chokepoint - the one review found
+  // missing the gate entirely (it inlined the model/effort resolution chain
+  // without the projectFallback check the board and injection-plan paths
+  // already had).
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('drops the project model/effort default when the resolved agent differs from the project default', async () => {
+    const task = makeTask(); // column-settings mode: no task-level overrides
+    const lane = makeSwimlane({ agent_override: 'codex' }); // resolves to codex, not the project default 'claude'
+    const tasksUpdate = vi.fn();
+
+    const result = await runPrepare({ task, swimlane: lane, hasSessionRecord: false, tasksUpdate });
+
+    expect(tasksUpdate).not.toHaveBeenCalled(); // column-settings mode: no lock involved here
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.agent).toBe('codex');
+    const commandOptions = builtCommandOptions();
+    // 'claude-opus-4-8' / 'xhigh' are the PROJECT's defaults for claude, not
+    // codex. Applying them would spawn `codex --model claude-opus-4-8`, which
+    // Codex rejects with a 400.
+    expect(commandOptions.model).toBeUndefined();
+    expect(commandOptions.effort).toBeUndefined();
+  });
+
+  it('control: applies the project model/effort default when the resolved agent matches the project default', async () => {
+    const task = makeTask();
+    const lane = makeSwimlane(); // no agent_override -> resolves to the project default 'claude'
+    const tasksUpdate = vi.fn();
+
+    const result = await runPrepare({ task, swimlane: lane, hasSessionRecord: false, tasksUpdate });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.agent).toBe('claude');
+    const commandOptions = builtCommandOptions();
+    expect(commandOptions.model).toBe('claude-opus-4-8');
+    expect(commandOptions.effort).toBe('xhigh');
   });
 });

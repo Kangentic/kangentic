@@ -178,7 +178,7 @@ vi.mock('simple-git', () => ({
 // Import under test (after mocks)
 // ---------------------------------------------------------------------------
 
-import { WorktreeManager } from '../../src/main/git/worktree-manager';
+import { WorktreeManager, setWorktreeRemovedListener } from '../../src/main/git/worktree-manager';
 
 const WORKTREE_PATH = '/mock/project/.kangentic/worktrees/my-task-abcd1234';
 const PROJECT_PATH = '/mock/project';
@@ -456,5 +456,96 @@ describe('WorktreeManager.removeWorktree - lazy orphan reap on pinned delete', (
     expect(mockReapProcessesForWorktree).toHaveBeenCalledTimes(1);
     // Only the first attempt's manual rm ran; no retry after an empty reap.
     expect(mockRemoveWithRetry).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Worktree-removed listener: the single chokepoint in `removeWorktree`
+// ---------------------------------------------------------------------------
+//
+// `worktreeRemovedListener` is MODULE-LEVEL mutable state (see
+// worktree-manager.ts), so every test that registers one MUST reset it to
+// null afterward or it leaks into later tests in this file and the suite.
+
+describe('WorktreeManager.removeWorktree -- worktree-removed listener', () => {
+  let manager: WorktreeManager;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGitInstances.length = 0;
+    recordedSpawnCalls.length = 0;
+    spawnOverrides.length = 0;
+    mockReapProcessesForWorktree.mockResolvedValue([]);
+    manager = new WorktreeManager(PROJECT_PATH);
+  });
+
+  afterEach(() => {
+    setWorktreeRemovedListener(null);
+  });
+
+  it('notifies a registered listener exactly once when the removal succeeds', async () => {
+    mockExistsSync.mockReturnValue(true);
+    const listener = vi.fn(async () => {});
+    setWorktreeRemovedListener(listener);
+
+    const result = await manager.removeWorktree(WORKTREE_PATH);
+
+    expect(result).toBe(true);
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledWith(WORKTREE_PATH);
+  });
+
+  it('notifies once for a short-circuit removal (path already gone) - "already gone" still counts as removed', async () => {
+    mockExistsSync.mockReturnValue(false);
+    const listener = vi.fn(async () => {});
+    setWorktreeRemovedListener(listener);
+
+    const result = await manager.removeWorktree(WORKTREE_PATH);
+
+    expect(result).toBe(true);
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not notify when the removal fails (both git and the manual fallback fail)', async () => {
+    mockExistsSync.mockReturnValue(true);
+    spawnOverrides.push({
+      match: (args) => args[0] === 'worktree' && args[1] === 'remove',
+      behavior: { exitCode: 1, stderr: 'fatal: unable to remove worktree' },
+    });
+    mockRemoveWithRetry.mockRejectedValue(new Error('EPERM: operation not permitted'));
+    const listener = vi.fn(async () => {});
+    setWorktreeRemovedListener(listener);
+
+    const result = await manager.removeWorktree(WORKTREE_PATH);
+
+    expect(result).toBe(false);
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it('a listener that throws does not fail the removal (best-effort)', async () => {
+    mockExistsSync.mockReturnValue(true);
+    const listener = vi.fn(async () => {
+      throw new Error('adapter blew up dropping trust state');
+    });
+    setWorktreeRemovedListener(listener);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const result = await manager.removeWorktree(WORKTREE_PATH);
+
+    expect(result).toBe(true);
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[WORKTREE] worktree-removed listener failed (non-fatal):',
+      expect.any(Error),
+    );
+    warnSpy.mockRestore();
+  });
+
+  it('is a no-op when no listener is registered', async () => {
+    mockExistsSync.mockReturnValue(true);
+
+    // No setWorktreeRemovedListener call - default state after the afterEach
+    // reset above. Must not throw.
+    await expect(manager.removeWorktree(WORKTREE_PATH)).resolves.toBe(true);
   });
 });

@@ -653,6 +653,53 @@ describe('prepareInjectionPlan -- project-level default_model / default_effort t
   });
 });
 
+describe('prepareInjectionPlan -- project-level default gated by agent match (cross-agent)', () => {
+  // Model/effort ids are adapter-specific: a project on `claude` with
+  // `default_model: 'haiku'` must not be inherited by a destination that runs
+  // a DIFFERENT agent (projectModelDefaultsApply, spawn-preamble.ts). Shipped
+  // symptom: a column overriding the agent to `codex` injected
+  // `/model haiku`, which Codex rejects outright. This mirrors the same gate
+  // pinned for the spawn path (resolveSpawnOverrides, in
+  // project-model-defaults-cross-agent.test.ts) and the first-spawn lock
+  // (lockAdvancedOverridesOnFirstSpawn, in spawn-agent-lock-overrides.test.ts)
+  // - all three must agree, or a move would inject a model the spawn never
+  // applied.
+
+  it('drops the project default model when the destination COLUMN overrides the agent', () => {
+    const adapter = fakeAdapter({}); // no getInjectionSequence (model-only case)
+    const plan = prepareInjectionPlan({
+      adapter,
+      // Fresh spawn: no applied_model recorded yet.
+      sessionRepo: sessionRepoWith(null),
+      task: { id: 't1', agent: 'fake', agent_override: null, model_override: null, effort_override: null },
+      toLane: lane({ agent_override: 'codex' }),
+      project: { default_agent: 'claude', default_model: 'haiku', default_effort: 'low' },
+    });
+    // Target resolves to null (NOT 'haiku'): the resolved agent is codex, which
+    // differs from the project's default agent, so the project tier is gated
+    // off. Source is also null (no applied_model), so there is no delta and no
+    // restart - the plan is null rather than flagging a `--resume --model haiku`
+    // restart for a Codex session.
+    expect(plan).toBeNull();
+  });
+
+  it('control: inherits the project default model when no agent override is present', () => {
+    const adapter = fakeAdapter({});
+    const plan = prepareInjectionPlan({
+      adapter,
+      sessionRepo: sessionRepoWith(null),
+      task: { id: 't1', agent: 'fake', agent_override: null, model_override: null, effort_override: null },
+      toLane: lane({ agent_override: null }),
+      project: { default_agent: 'claude', default_model: 'haiku', default_effort: 'low' },
+    });
+    // The resolved agent (claude, via project.default_agent) matches the
+    // project default, so the tier applies: target 'haiku' differs from the
+    // null source, flagging a restart.
+    expect(plan).not.toBeNull();
+    expect(plan?.needsRestartForModel).toBe(true);
+  });
+});
+
 describe('prepareInjectionPlan -- per-task override wins over column override', () => {
   // The ContextBar popover writes `tasks.model_override` / `tasks.effort_override`
   // and the user-confirmed semantic is "task override fully wins over column

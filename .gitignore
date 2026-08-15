@@ -7,6 +7,9 @@
 .codex/
 .gemini/
 .aider/
+# Droid: Kangentic writes <cwd>/.factory/mcp.json on spawn (the token itself
+# stays in the env, but the file is ours and must not be committed).
+.factory/
 
 # Stray bin shims left behind by accidental `npm install -g <agent-cli>`
 # inside a worktree (npm prefix pointing at cwd emits the trio here instead

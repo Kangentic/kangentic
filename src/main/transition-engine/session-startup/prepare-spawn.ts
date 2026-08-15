@@ -7,7 +7,7 @@ import type { McpHttpServerHandle } from '../../agent/mcp-http-server';
 import { appendCallerSession } from '../../agent/mcp-http/caller-url';
 import type { AppConfig, BoardProfile, Swimlane, Task } from '../../../shared/types';
 import type { TaskRepository } from '../../db/repositories/task-repository';
-import { runSpawnPreamble, resolveEffectivePermissionMode } from '../spawn-preamble';
+import { runSpawnPreamble, resolveEffectivePermissionMode, projectModelDefaultsApply } from '../spawn-preamble';
 import { applyProfileToLane, findTaskProfile } from '../column-strategy';
 import { sessionOutputPaths } from '../session-paths';
 import { reconcileResumeAgentSessionId } from '../resume-id-reconcile';
@@ -149,6 +149,10 @@ export async function prepareAgentSpawn(input: {
   const adapter = agentRegistry.get(agent);
   if (!adapter) return { ok: false, reason: 'unknown-agent' };
 
+  // Model/effort ids are adapter-specific, so the project-level default only
+  // applies when this spawn actually runs the project's default agent.
+  const projectFallback = projectModelDefaultsApply(agent, input.projectDefaultAgent);
+
   const cliPathOverride = config.agent.cliPaths[agent] ?? null;
   const detection = await adapter.detect(cliPathOverride);
   if (!detection.found || !detection.path) return { ok: false, reason: 'cli-not-found' };
@@ -208,8 +212,15 @@ export async function prepareAgentSpawn(input: {
     // swimlane override, which wins over the project-level default - once a
     // user has expressed an explicit per-task preference, it sticks across
     // column moves until they clear it.
-    model: task.model_override ?? swimlane?.model_override ?? input.projectDefaultModel ?? undefined,
-    effort: task.effort_override ?? swimlane?.effort_override ?? input.projectDefaultEffort ?? undefined,
+    //
+    // The project-level tier is gated on the resolved agent, exactly as the
+    // board spawn path does (resolveSpawnOverrides) and the column-move
+    // injection plan does (prepareInjectionPlan). All three must agree, or a
+    // crash-recovery respawn would apply a model the board spawn never did.
+    model: task.model_override ?? swimlane?.model_override
+      ?? (projectFallback ? input.projectDefaultModel : undefined) ?? undefined,
+    effort: task.effort_override ?? swimlane?.effort_override
+      ?? (projectFallback ? input.projectDefaultEffort : undefined) ?? undefined,
     executionTarget: resolveExecutionTarget(agent, config.agent.executionServers, config.agent.execution) ?? undefined,
     launchOptions: resolveLaunchOptions(adapter, config.agent.launchOptions),
   };

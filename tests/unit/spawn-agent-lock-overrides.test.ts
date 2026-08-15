@@ -390,3 +390,47 @@ describe('spawnAgent lock-Advanced-overrides-on-first-spawn', () => {
     expect(deps.engine.resumeSuspendedSession.mock.calls[0][5]).toBe('claude');
   });
 });
+
+describe('spawnAgent lock-Advanced-overrides-on-first-spawn -- project model/effort gated by agent match (cross-agent)', () => {
+  // Model/effort ids are adapter-specific: a project on `claude` with
+  // `default_model: 'claude-opus-4-8'` must not be LOCKED IN for a task whose
+  // locked agent is `codex` (projectModelDefaultsApply, spawn-preamble.ts).
+  // Every test in the parent describe above locks an agent-override task whose
+  // agent happens to equal PROJECT_ROW.default_agent ('claude'), so this gate
+  // was never exercised there.
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('does not lock in the project model/effort when the LOCKED agent differs from the project default', async () => {
+    const task = makeTask({ agent_override: 'codex' });
+    const sourceLane = makeSwimlane({ id: FROM_LANE_ID, name: 'To Do', role: 'todo', auto_spawn: false });
+    const deps = makeDeps({ latestSession: undefined, task });
+
+    await runSpawn(task, makeDestinationLane(), deps, sourceLane);
+
+    expect(deps.tasks.update).toHaveBeenCalledWith({
+      id: TASK_ID,
+      agent_override: 'codex',
+      model_override: null,
+      effort_override: null,
+      permission_mode: 'auto',
+    });
+  });
+
+  it('control: still locks in the project model/effort when the LOCKED agent matches the project default', async () => {
+    const task = makeTask({ agent_override: 'claude' });
+    const sourceLane = makeSwimlane({ id: FROM_LANE_ID, name: 'To Do', role: 'todo', auto_spawn: false });
+    const deps = makeDeps({ latestSession: undefined, task });
+
+    await runSpawn(task, makeDestinationLane(), deps, sourceLane);
+
+    expect(deps.tasks.update).toHaveBeenCalledWith({
+      id: TASK_ID,
+      agent_override: 'claude',
+      model_override: 'claude-opus-4-8',
+      effort_override: 'xhigh',
+      permission_mode: 'auto',
+    });
+  });
+});

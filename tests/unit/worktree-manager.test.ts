@@ -167,7 +167,7 @@ vi.mock('../../src/main/git/node-modules-link', () => ({
 }));
 
 import fs from 'node:fs';
-import { WorktreeManager, GitQueuePriority } from '../../src/main/git/worktree-manager';
+import { WorktreeManager, GitQueuePriority, setWorktreeRemovedListener } from '../../src/main/git/worktree-manager';
 import { isGitRepo, isInsideWorktree, isKangenticWorktree } from '../../src/main/git/git-checks';
 import { clearFetchCache } from '../../src/main/git/fetch-throttle';
 import { linkNodeModules } from '../../src/main/git/node-modules-link';
@@ -947,6 +947,21 @@ describe('WorktreeManager -- stale branch recovery', () => {
     mockWorktreeGit.raw.mockResolvedValue('');
   });
 
+  /**
+   * Simulate the stale-husk clear failing (the Windows pinned-CWD case).
+   *
+   * createWorktree clears a husk through the PRIVATE removeWorktreeInternal,
+   * not the public removeWorktree wrapper, deliberately: the wrapper fires the
+   * worktree-removed listener, and this path is about to recreate a worktree at
+   * that same location. Stub the method that actually performs the removal.
+   */
+  const stubHuskRemovalFailure = (manager: WorktreeManager): void => {
+    vi.spyOn(
+      manager as unknown as { removeWorktreeInternal: () => Promise<boolean> },
+      'removeWorktreeInternal',
+    ).mockResolvedValue(false);
+  };
+
   it('createWorktree reuses auto-generated branch that already exists', async () => {
     vi.mocked(fs.existsSync).mockReturnValue(false);
     vi.mocked(fs.mkdirSync).mockReturnValue(undefined);
@@ -1025,6 +1040,43 @@ describe('WorktreeManager -- stale branch recovery', () => {
     expect(worktreeFolderFromPath(String(removeCall!.args[2]))).toBe('7');
   });
 
+  it('does not fire the worktree-removed listener when clearing a stale husk (real removeWorktreeInternal, not the stub)', async () => {
+    // Unlike stubHuskRemovalFailure above, this drives the REAL, unstubbed
+    // removal (git spawn succeeds by default) so the listener contract is
+    // exercised end to end: createWorktree's husk clear calls the PRIVATE
+    // removeWorktreeInternal, never the public removeWorktree wrapper that
+    // fires the listener. "This path no longer holds a worktree" is not true
+    // a moment later here - a fresh worktree is about to occupy the same
+    // path - so Codex (or any other adapter) must not drop its trust table
+    // for a directory createWorktree is about to reuse.
+    recordedSpawnCalls.length = 0;
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.mkdirSync).mockReturnValue(undefined);
+    mockProjectGit.raw.mockImplementation((args: string[]) => {
+      if (args[0] === 'rev-parse' && args[1] === '--verify') {
+        return Promise.reject(new Error('not found'));
+      }
+      return Promise.resolve('');
+    });
+    const listener = vi.fn(async () => {});
+    setWorktreeRemovedListener(listener);
+
+    try {
+      const mgr = new WorktreeManager('/project');
+      await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'));
+
+      // The real husk removal actually ran (git worktree remove was spawned)...
+      const removeCall = recordedSpawnCalls.find(
+        (call) => call.args[0] === 'worktree' && call.args[1] === 'remove',
+      );
+      expect(removeCall).toBeDefined();
+      // ...but the listener must never have fired for it.
+      expect(listener).not.toHaveBeenCalled();
+    } finally {
+      setWorktreeRemovedListener(null);
+    }
+  });
+
   it('reuses an empty husk with --force when the stale directory cannot be removed', async () => {
     // existsSync true (stale husk on disk), readdirSync [] (emptied husk),
     // removeWorktree returns false (Windows pinned-CWD blocks the final rmdir).
@@ -1035,7 +1087,7 @@ describe('WorktreeManager -- stale branch recovery', () => {
     mockProjectGit.raw.mockResolvedValue('');
 
     const mgr = new WorktreeManager('/project');
-    vi.spyOn(mgr, 'removeWorktree').mockResolvedValue(false);
+    stubHuskRemovalFailure(mgr);
 
     const result = await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'));
 
@@ -1060,7 +1112,7 @@ describe('WorktreeManager -- stale branch recovery', () => {
     mockProjectGit.raw.mockResolvedValue('');
 
     const mgr = new WorktreeManager('/project');
-    vi.spyOn(mgr, 'removeWorktree').mockResolvedValue(false);
+    stubHuskRemovalFailure(mgr);
 
     await expect(mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'))).rejects.toThrow(/preview/);
 
@@ -1078,7 +1130,7 @@ describe('WorktreeManager -- stale branch recovery', () => {
     mockProjectGit.raw.mockResolvedValue('');
 
     const mgr = new WorktreeManager('/project');
-    vi.spyOn(mgr, 'removeWorktree').mockResolvedValue(false);
+    stubHuskRemovalFailure(mgr);
 
     await expect(mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'))).rejects.toThrow(/could not be removed/);
   });
