@@ -351,11 +351,13 @@ Task moved back from Done (into any non-todo, non-done column)
 
 Task moved to To Do
   → Full cleanup: session killed, worktree removed, branch deleted (if config.git.autoCleanup)
+  → Agent adapters notified so they can drop per-directory state (see below)
   → DB references cleared (worktree_path, branch_name set to null)
   → Next activation creates a fresh worktree and branch
 
 Task deleted
   → Full cleanup: session killed, worktree removed, branch deleted (if config.git.autoCleanup)
+  → Agent adapters notified so they can drop per-directory state (see below)
 
 App closed
   → All sessions marked suspended in DB (synchronous)
@@ -368,6 +370,14 @@ App reopened
 ```
 
 ## Cleanup
+
+### Adapter notification on removal
+
+Some agent CLIs record per-directory state in a GLOBAL config file, keyed by absolute path. That state outlives the worktree: Kangentic creates one worktree per task, so an adapter keyed this way accumulates a dead entry per task with nothing to clean it up. Codex is the case that forced this (its directory trust in `~/.codex/config.toml` reached 473 dead entries on one machine); Gemini's `trustedFolders.json` has the same shape.
+
+`WorktreeManager.removeWorktree` is therefore the single notification point: on a successful removal it calls the listener registered at startup (`setWorktreeRemovedListener` in `src/main/index.ts`), which fans out to every adapter's optional `onWorktreeRemoved` (see [Agent Integration](agent-integration.md)). The listener is registered rather than imported so this git module never reaches into the agent registry.
+
+Notifying from the chokepoint is deliberate. Worktree removal is hand-copied across seven call sites (Done move, task delete, archive, MCP delete, project close, startup retry, branch-switch cleanup); an earlier attempt that notified at each site leaked from the ones it missed. The one path that deliberately does NOT notify is `createWorktree`'s husk-clear, which calls the internal removal directly because it is about to reuse the same path rather than vacate it.
 
 ### On Project Open
 
