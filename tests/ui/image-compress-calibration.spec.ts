@@ -3,8 +3,9 @@
  *
  * Sweeps long-edge target x quality across synthetic 1080p, 1440p (2K), and
  * 4K noise screenshots and prints a results table. Use this to re-tune
- * LONG_EDGE_TARGET / TARGET_BYTES / QUALITY_LADDER when monitor sizes shift
- * or the Anthropic vision API budget changes.
+ * IMAGE_LONG_EDGE_CAP (src/shared/image-fidelity.ts) / TARGET_BYTES /
+ * QUALITY_LADDER when monitor sizes shift or the Anthropic vision API budget
+ * changes.
  *
  * Skipped by default because it takes ~20s. Run with:
  *   CALIBRATE_IMAGE_COMPRESS=1 npx playwright test --project=ui tests/ui/image-compress-calibration.spec.ts
@@ -16,7 +17,9 @@
 import { test } from '@playwright/test';
 import { launchPage } from './helpers';
 
-const LONG_EDGES = [1280, 1568, 1920];
+// Brackets the shipped IMAGE_LONG_EDGE_CAP (2000) so a sweep can see one rung
+// either side of it, rather than topping out below the value it exists to tune.
+const LONG_EDGES = [1568, 2000, 2400];
 const QUALITIES = [0.85, 0.75, 0.6];
 const RESOLUTIONS = [
   { name: '1080p', width: 1920, height: 1080 },

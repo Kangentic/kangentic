@@ -32,7 +32,7 @@ New projects start with seven columns:
 
 Click the **+** button on any column header or use the "New Task" button. Enter a title and optional description. You can set a priority level, add labels, and attach files (images, documents, or any file type) by pasting from the clipboard or dragging files onto the dialog. Attachments are included in the agent's prompt.
 
-Pasted screenshots are automatically compressed to fit Claude's per-image budget. Kangentic resizes large pastes to a 1568px long edge (matching the API's own downscale) and re-encodes them as WebP, stepping quality down until each image lands under a ~1.5MB target, so a multi-monitor screen grab does not get rejected by the API. Small pastes (under 500KB), GIFs, and SVGs are attached as-is.
+Pasted screenshots are capped at a 2000px long edge, which bounds a multi-monitor grab without costing the detail an agent needs to read small text. Oversized pastes are re-encoded as WebP, stepping quality down until each image lands under a ~1.5MB target, so a large grab is not rejected by the API. Small pastes (under 500KB), GIFs, SVGs, and PNGs already inside the cap are attached as-is.
 
 In the description field, type `@` to trigger file autocomplete. A dropdown lists files and directories from the project root, which you can navigate with arrow keys and select with Enter to insert the path.
 

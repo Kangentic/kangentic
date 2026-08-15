@@ -1,10 +1,10 @@
 /**
- * Unit tests for the CLIPBOARD_WRITE_TEXT IPC handler in
- * src/main/ipc/handlers/system.ts.
+ * Unit tests for the clipboard IPC handlers in src/main/ipc/handlers/system.ts:
+ * CLIPBOARD_WRITE_TEXT and CLIPBOARD_READ_IMAGE.
  *
- * The handler writes text to the native clipboard via Electron's synchronous,
- * focus-independent `clipboard.writeText`, guarded against non-string and
- * empty-string input:
+ * CLIPBOARD_WRITE_TEXT writes text to the native clipboard via Electron's
+ * synchronous, focus-independent `clipboard.writeText`, guarded against
+ * non-string and empty-string input:
  *
  *   ipcMain.handle(IPC.CLIPBOARD_WRITE_TEXT, (_event, text: string): void => {
  *     if (typeof text !== 'string' || text.length === 0) return;
@@ -18,15 +18,28 @@
  * an empty write to the OS clipboard, and must not throw on a caller sending
  * an unexpected non-string.
  *
+ * CLIPBOARD_READ_IMAGE reads the clipboard's NativeImage, caps it via the real
+ * (unmocked) `capClipboardImage` before writing it to a temp file, and prunes
+ * the temp directory via the real (unmocked) `pruneClipboardTempDir` first.
+ * Those two helpers are unit-tested in isolation in clipboard-image.test.ts;
+ * the tests here cover the WIRING - that the handler actually calls them,
+ * rather than writing `image.toPNG()` straight to disk.
+ *
  * Strategy mirrors keybindings-probe-handler.test.ts: mock electron's ipcMain
- * to capture registered handlers, then invoke the CLIPBOARD_WRITE_TEXT
- * handler directly with controlled inputs and assert against a mocked
- * `clipboard.writeText`.
+ * to capture registered handlers, then invoke the handler directly with
+ * controlled inputs and assert against a mocked `clipboard.writeText` /
+ * `clipboard.readImage`. `os.tmpdir()` is spied so CLIPBOARD_READ_IMAGE writes
+ * under a throwaway test directory instead of the real
+ * `<tmpdir>/kangentic-clipboard` the dogfooding app's own pastes live in.
  *
  * Tier: Unit (vitest, no browser, no Electron).
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { IPC } from '../../src/shared/ipc-channels';
+import { IMAGE_LONG_EDGE_CAP, resolveResizeTarget } from '../../src/shared/image-fidelity';
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks - must be declared before any imports that trigger them.
@@ -141,6 +154,49 @@ function invokeClipboardWriteTextHandler(text: unknown): void {
   handler(undefined, text);
 }
 
+function invokeClipboardReadImageHandler(): string | null {
+  const handler = capturedHandlers.get(IPC.CLIPBOARD_READ_IMAGE);
+  if (!handler) throw new Error(`Handler not registered for ${IPC.CLIPBOARD_READ_IMAGE}`);
+  return handler(undefined) as string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Fake NativeImage for CLIPBOARD_READ_IMAGE - exposes exactly the surface
+// capClipboardImage touches (getSize / resize / isEmpty) plus toPNG, with the
+// resized image carrying its OWN toPNG spy so a test can tell whether the
+// handler wrote the original or the resized bytes to disk.
+// ---------------------------------------------------------------------------
+
+interface FakeNativeImage {
+  getSize: ReturnType<typeof vi.fn>;
+  resize: ReturnType<typeof vi.fn>;
+  isEmpty: ReturnType<typeof vi.fn>;
+  toPNG: ReturnType<typeof vi.fn>;
+}
+
+function makeFakeNativeImage(width: number, height: number): {
+  image: FakeNativeImage;
+  resizedToPng: ReturnType<typeof vi.fn>;
+} {
+  const resizedToPng = vi.fn(() => Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  // getSize/resize are never called on the RESIZED image by capClipboardImage
+  // (only isEmpty/toPNG are); left unimplemented deliberately rather than
+  // faked, so an accidental call surfaces as a clear stub failure.
+  const resizedImage: FakeNativeImage = {
+    getSize: vi.fn(),
+    resize: vi.fn(),
+    isEmpty: vi.fn(() => false),
+    toPNG: resizedToPng,
+  };
+  const image: FakeNativeImage = {
+    getSize: vi.fn(() => ({ width, height })),
+    resize: vi.fn(() => resizedImage),
+    isEmpty: vi.fn(() => false),
+    toPNG: vi.fn(() => Buffer.from([0x89, 0x50, 0x4e, 0x47])),
+  };
+  return { image, resizedToPng };
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -180,5 +236,88 @@ describe('CLIPBOARD_WRITE_TEXT IPC handler', () => {
     invokeClipboardWriteTextHandler(42);
 
     expect(mockClipboard.writeText).not.toHaveBeenCalled();
+  });
+});
+
+describe('CLIPBOARD_READ_IMAGE IPC handler', () => {
+  let testTmpRoot: string;
+  let clipboardTempDir: string;
+
+  beforeEach(() => {
+    // Capture the real tmpdir with the real os.tmpdir() BEFORE spying it, then
+    // redirect the handler's `path.join(os.tmpdir(), 'kangentic-clipboard')`
+    // write target at this throwaway root. Without this, the handler would
+    // write into (and this test's prune assertion would delete from) the same
+    // directory the dogfooding app's own terminal pastes live in.
+    testTmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-clipboard-handler-test-'));
+    vi.spyOn(os, 'tmpdir').mockReturnValue(testTmpRoot);
+    clipboardTempDir = path.join(testTmpRoot, 'kangentic-clipboard');
+
+    capturedHandlers.clear();
+    mockClipboard.readImage.mockReset();
+    registerSystemHandlers(makeContext() as Parameters<typeof registerSystemHandlers>[0]);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    fs.rmSync(testTmpRoot, { recursive: true, force: true });
+  });
+
+  it('caps an oversized clipboard image and writes the RESIZED bytes, not the original', () => {
+    const { image, resizedToPng } = makeFakeNativeImage(4000, 2000);
+    mockClipboard.readImage.mockReturnValue(image);
+
+    const filePath = invokeClipboardReadImageHandler();
+
+    expect(filePath).toBeTruthy();
+    // Proves the write went through the throwaway test root, not the real
+    // clipboard temp directory the dogfooding app uses.
+    expect(filePath as string).toContain(testTmpRoot);
+
+    // Reverting the handler to its old `fs.writeFileSync(filePath,
+    // image.toPNG())` body would call the ORIGINAL image's toPNG, not the
+    // resized one - this is the discriminating assertion for that revert.
+    expect(image.toPNG).not.toHaveBeenCalled();
+    expect(resizedToPng).toHaveBeenCalledOnce();
+
+    // Resize target matches the shared long-edge cap resolver directly, so
+    // this pins the wiring rather than re-deriving the expected numbers.
+    const expectedTarget = resolveResizeTarget(4000, 2000, IMAGE_LONG_EDGE_CAP);
+    expect(image.resize).toHaveBeenCalledWith({ ...expectedTarget, quality: 'best' });
+
+    // The bytes actually on disk are the resized image's PNG output.
+    const writtenBytes = fs.readFileSync(filePath as string);
+    expect(writtenBytes).toEqual(resizedToPng.mock.results[0]?.value);
+  });
+
+  it('prunes stale pasted-image files from the temp dir before writing the new paste', () => {
+    fs.mkdirSync(clipboardTempDir, { recursive: true });
+    const staleFilePath = path.join(clipboardTempDir, 'pasted-image-old.png');
+    fs.writeFileSync(staleFilePath, 'stale-png-bytes');
+    // 48h old - past the 24h default max age pruneClipboardTempDir applies
+    // when the handler calls it with no options.
+    const fortyEightHoursAgoSeconds = (Date.now() - 48 * 60 * 60 * 1000) / 1000;
+    fs.utimesSync(staleFilePath, fortyEightHoursAgoSeconds, fortyEightHoursAgoSeconds);
+
+    const { image } = makeFakeNativeImage(800, 600); // already fits, no resize needed
+    mockClipboard.readImage.mockReturnValue(image);
+
+    const filePath = invokeClipboardReadImageHandler();
+
+    // Reverting the handler to skip pruneClipboardTempDir(tempDir) leaves this
+    // stale file in place - it is the discriminating assertion for that
+    // revert.
+    expect(fs.existsSync(staleFilePath)).toBe(false);
+    // The new paste itself must still have been written.
+    expect(filePath).toBeTruthy();
+    expect(fs.existsSync(filePath as string)).toBe(true);
+  });
+
+  it('returns null when the clipboard holds no image', () => {
+    mockClipboard.readImage.mockReturnValue({ isEmpty: () => true });
+
+    const filePath = invokeClipboardReadImageHandler();
+
+    expect(filePath).toBeNull();
   });
 });
