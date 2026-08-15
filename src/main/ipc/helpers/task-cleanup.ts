@@ -5,7 +5,30 @@ import { SessionRepository } from '../../db/repositories/session-repository';
 import { WorktreeManager, prepareWorktreeForRemoval, GitQueuePriority } from '../../git/worktree-manager';
 import { readWorktreeHead } from '../../git/worktree-head';
 import { getProjectDb } from '../../db/database';
+import { agentRegistry } from '../../agent/agent-registry';
 import type { IpcContext } from '../ipc-context';
+
+/**
+ * Let every adapter drop the per-directory state it recorded for a worktree
+ * Kangentic has just deleted (Codex's directory trust in
+ * `~/.codex/config.toml` is the motivating case). Generic over the registry,
+ * so no agent is named here - see .claude/rules/agent-adapters-boundary.md,
+ * and `onProjectRelocated` in project-relocate.ts for the same shape.
+ *
+ * Best-effort: the worktree is already gone, and a failure only leaves a
+ * stale entry behind. It must never fail the cleanup.
+ */
+export async function notifyAdaptersWorktreeRemoved(worktreePath: string): Promise<void> {
+  for (const adapterName of agentRegistry.list()) {
+    const adapter = agentRegistry.get(adapterName);
+    if (!adapter?.onWorktreeRemoved) continue;
+    try {
+      await adapter.onWorktreeRemoved(worktreePath);
+    } catch (error) {
+      console.warn(`[WORKTREE] ${adapterName} onWorktreeRemoved failed (non-fatal):`, error);
+    }
+  }
+}
 
 /**
  * Kill the PTY session and wipe session records for a task.

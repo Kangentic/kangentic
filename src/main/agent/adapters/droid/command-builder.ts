@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { toForwardSlash, quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import { interpolateTemplate } from '../../shared/template-utils';
 import type { PermissionMode } from '../../../../shared/types';
@@ -22,14 +24,17 @@ import type { PermissionMode } from '../../../../shared/types';
  * by user feedback as unnecessary custom layering. The bare command
  * with cwd + resume + prompt is the production path.
  *
- * MCP is also intentionally manual. Droid CLI exposes no `--mcp-config`
- * flag; the only configuration paths are stateful (`droid mcp add`) or
- * file-based (`~/.factory/mcp.json`, `<projectRoot>/.factory/mcp.json`),
- * neither of which Kangentic writes. Users who want Kangentic's project
- * MCP server in a Droid session run `droid mcp add kangentic <url>` once.
- * See `docs/agent-integration.md` for the exact command. Codex and
- * Gemini behave the same way: only Kimi (inline `--mcp-config`) and
- * Claude (`--settings` merge) auto-wire the in-process MCP server.
+ * MCP used to be manual here, on the grounds that Droid exposes no
+ * `--mcp-config` flag and the alternatives were all stateful. That is no
+ * longer the whole picture: Droid expands `${NAME}` against the process
+ * environment inside `headers` values at connect time, and never rewrites
+ * the file with the expanded value. So Kangentic writes a project-scoped
+ * `<cwd>/.factory/mcp.json` containing only the env var NAME, and supplies
+ * the value through `buildEnv`. No secret reaches disk, and
+ * `~/.factory/mcp.json` is never touched.
+ *
+ * Verified against droid 0.189.0: `droid mcp list` in a directory carrying
+ * the file below reports `kangentic  http  connected  [project]`.
  *
  * Other notes:
  * - Resume uses `droid --resume <uuid>`, NOT the exec-only `-s` flag.
@@ -60,20 +65,35 @@ export interface DroidCommandOptions {
   eventsOutputPath?: string;
   shell?: string;
   /**
-   * Accepted for parity with the shared `SpawnCommandOptions` shape but
-   * discarded by `buildDroidCommand`. Droid has no `--mcp-config` flag;
-   * MCP is wired manually via `droid mcp add` (see JSDoc above and
-   * `docs/agent-integration.md`).
+   * Whether to attach Kangentic's in-process MCP HTTP server. Default-on:
+   * only an explicit `false` suppresses it.
    */
   mcpServerEnabled?: boolean;
   mcpServerUrl?: string;
+  /** Delivered via `buildEnv`; the config file holds only the var NAME. */
   mcpServerToken?: string;
+}
+
+/** Env var Droid expands inside the mcp.json header value at connect time. */
+export const KANGENTIC_MCP_TOKEN_ENV = 'KANGENTIC_MCP_TOKEN';
+
+/** Shared gate for the config write and `buildEnv`, so they cannot drift. */
+export function droidMcpWiringEnabled(
+  options: DroidCommandOptions,
+): options is DroidCommandOptions & { mcpServerUrl: string; mcpServerToken: string } {
+  return (
+    options.mcpServerEnabled !== false
+    && Boolean(options.mcpServerUrl)
+    && Boolean(options.mcpServerToken)
+  );
 }
 
 export class DroidCommandBuilder {
   buildDroidCommand(options: DroidCommandOptions): string {
     const { shell } = options;
     const parts: string[] = [quoteArg(options.droidPath, shell)];
+
+    this.writeMcpConfig(options);
 
     parts.push('--cwd', quoteArg(toForwardSlash(options.cwd), shell));
 
@@ -96,7 +116,94 @@ export class DroidCommandBuilder {
     return parts.join(' ');
   }
 
+  /**
+   * Write the project-scoped `<cwd>/.factory/mcp.json` entry for Kangentic's
+   * MCP server, preserving any servers the user configured there.
+   *
+   * The header value is the literal `${KANGENTIC_MCP_TOKEN}`, which Droid
+   * expands against the process environment when it opens the connection.
+   * Factory documents that the file is never rewritten with the expanded
+   * value, so the token stays out of version control even though this path
+   * is inside the user's repo. `removeMcpConfig` strips the entry on session
+   * exit so a stale URL does not linger.
+   */
+  writeMcpConfig(options: DroidCommandOptions): void {
+    if (!droidMcpWiringEnabled(options)) return;
+
+    const factoryDir = path.join(options.cwd, '.factory');
+    const configPath = path.join(factoryDir, 'mcp.json');
+
+    let existing: { mcpServers?: Record<string, unknown> } = {};
+    try {
+      const parsed = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) existing = parsed;
+    } catch {
+      // No existing config - start fresh.
+    }
+
+    const merged = {
+      ...existing,
+      mcpServers: {
+        ...(existing.mcpServers ?? {}),
+        kangentic: {
+          type: 'http',
+          url: options.mcpServerUrl,
+          headers: { 'X-Kangentic-Token': `\${${KANGENTIC_MCP_TOKEN_ENV}}` },
+        },
+      },
+    };
+
+    try {
+      fs.mkdirSync(factoryDir, { recursive: true });
+      fs.writeFileSync(configPath, JSON.stringify(merged, null, 2));
+    } catch (error) {
+      console.error(`[droid] Failed to write MCP config: ${configPath}`, error);
+    }
+  }
+
+  /**
+   * Environment injected into the Droid PTY, holding the value that the
+   * `${KANGENTIC_MCP_TOKEN}` reference in mcp.json resolves to. Shares
+   * `droidMcpWiringEnabled` with the config write.
+   */
+  buildDroidEnv(options: DroidCommandOptions): Record<string, string> | null {
+    if (!droidMcpWiringEnabled(options)) return null;
+    return { [KANGENTIC_MCP_TOKEN_ENV]: options.mcpServerToken };
+  }
+
   interpolateTemplate(template: string, variables: Record<string, string>): string {
     return interpolateTemplate(template, variables);
+  }
+}
+
+/**
+ * Remove Kangentic's entry from `<directory>/.factory/mcp.json`, leaving any
+ * user-defined servers intact and deleting the file when nothing remains.
+ */
+export function removeMcpConfig(directory: string): void {
+  const configPath = path.join(directory, '.factory', 'mcp.json');
+
+  let parsed: { mcpServers?: Record<string, unknown> };
+  try {
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return;
+    parsed = raw;
+  } catch {
+    return;
+  }
+
+  if (!parsed.mcpServers || !('kangentic' in parsed.mcpServers)) return;
+
+  delete parsed.mcpServers.kangentic;
+  if (Object.keys(parsed.mcpServers).length === 0) delete parsed.mcpServers;
+
+  try {
+    if (Object.keys(parsed).length === 0) {
+      fs.rmSync(configPath, { force: true });
+      return;
+    }
+    fs.writeFileSync(configPath, JSON.stringify(parsed, null, 2));
+  } catch (error) {
+    console.error(`[droid] Failed to clean up MCP config: ${configPath}`, error);
   }
 }

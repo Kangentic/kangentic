@@ -40,6 +40,24 @@ Open a new terminal window running a Kangentic dev server for previewing live co
 
 ## Notes
 
+- **A preview forces the cheap Claude tier.** Every preview project is seeded with
+  `default_agent: claude`, `default_model: haiku`, and `default_effort: low`
+  (`src/devtools/main/ephemeral-projects.ts`), so agent-driven preview testing does not bill the
+  developer's subscription at the committed board's Opus tier.
+
+  Those are Claude family names, and a model id is adapter-specific, so the project default does
+  NOT follow a column or task that overrides the agent: `projectModelDefaultsApply`
+  (`src/main/transition-engine/spawn-preamble.ts`) drops the project tier whenever the resolved
+  agent is not the project's default agent. A Codex column in a preview therefore spawns with no
+  `--model` flag and Codex's own default applies. No per-column override is needed just to make a
+  non-Claude column run.
+
+  Set a column's own model override only when you want a specific model (`gpt-5.5` for Codex),
+  via the Board Manager or `kangentic_devtools_run_command` `update_column`
+  `{"modelOverride": "gpt-5.5"}`. The one case that still inherits `haiku` is changing the
+  preview project's OWN default agent to a non-Claude one, which leaves the seeded Claude model
+  name in place.
+
 - This script must be run from inside a `.kangentic/worktrees/` directory. It will error with a clear message if run from the project root.
 - Creates a filesystem junction (Windows) or symlink (Unix) from `<worktree>/node_modules` → `<root>/node_modules` - no `npm install` or rebuild needed.
 - The preview instance runs on a dynamically assigned port (starting from 5174) so it does not conflict with the root dev server on 5173.

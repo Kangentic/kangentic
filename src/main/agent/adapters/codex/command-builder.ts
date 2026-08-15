@@ -16,8 +16,14 @@ export interface CodexCommandOptions {
   statusOutputPath?: string;
   eventsOutputPath?: string;
   shell?: string;
+  /**
+   * Whether to attach Kangentic's in-process MCP HTTP server. Default-on
+   * (matching Claude and Qwen): only an explicit `false` suppresses it.
+   */
   mcpServerEnabled?: boolean;
+  /** Streamable-HTTP endpoint, `http://127.0.0.1:<port>/mcp/<projectId>/<callerSessionId>`. */
   mcpServerUrl?: string;
+  /** Per-launch MCP token. Delivered via `buildEnv`, NEVER via argv. */
   mcpServerToken?: string;
   model?: string;
   effort?: string;
@@ -54,6 +60,87 @@ function mapPermissionMode(mode: PermissionMode): string[] {
   }
 }
 
+/**
+ * HTTP header the Kangentic MCP server authenticates with, and the name of
+ * the environment variable that carries its value into the Codex process.
+ *
+ * Codex's `env_http_headers` maps a header name to the NAME of an environment
+ * variable; Codex reads the value out of its own process env when it opens the
+ * MCP connection. The token therefore never appears in argv. That matters
+ * because the spawn command is echoed into terminal scrollback the user can
+ * read, and on Windows PowerShell also persists typed lines to
+ * `ConsoleHost_history.txt`, so an argv token would outlive the session in
+ * plaintext on disk. No Kangentic adapter puts the MCP token in argv today.
+ */
+export const KANGENTIC_MCP_TOKEN_HEADER = 'X-Kangentic-Token';
+export const KANGENTIC_MCP_TOKEN_ENV = 'KANGENTIC_MCP_TOKEN';
+
+/**
+ * Single gate shared by the `-c` flag builder and `CodexAdapter.buildEnv`.
+ *
+ * These MUST fire together. Flags without the env var leave Codex resolving an
+ * unset variable and connecting with no auth header, which the server answers
+ * with a 401 that surfaces only as an MCP server that silently does not work.
+ * The env var without the flags is a harmless but pointless leak. Keeping the
+ * predicate in one place makes that drift impossible.
+ *
+ * Default-on (`!== false`) matches Claude (`claude/command-builder.ts`) and
+ * Qwen. Every spawn chokepoint passes an explicit boolean derived from
+ * `config.mcpServer?.enabled ?? true`, so this is production-equivalent to
+ * Copilot's explicit-true gate.
+ */
+export function codexMcpWiringEnabled(
+  options: CodexCommandOptions,
+): options is CodexCommandOptions & { mcpServerUrl: string; mcpServerToken: string } {
+  return (
+    options.mcpServerEnabled !== false
+    && Boolean(options.mcpServerUrl)
+    && Boolean(options.mcpServerToken)
+  );
+}
+
+/**
+ * Build the per-invocation `codex -c <key=value>` overrides that attach
+ * Kangentic's streamable-HTTP MCP server.
+ *
+ * `-c` is Codex's own documented config mechanism and applies to this process
+ * only: it never writes `~/.codex/config.toml` and never mutates global state,
+ * so it satisfies `cli-features-over-custom-layers.md` rather than shadowing a
+ * native control. There is no in-TUI way to attach a session-scoped server
+ * whose URL carries a per-session caller id and whose token rotates on every
+ * Kangentic launch; the alternatives (`codex mcp add`, editing `config.toml`,
+ * redirecting `CODEX_HOME`, which also holds `auth.json`) are all the stateful
+ * global mutation that rule exists to prevent.
+ *
+ * QUOTING CONTRACT. Do not "tidy" these into quoted TOML values. Both payloads
+ * are deliberately free of quotes, braces, and whitespace, so `quoteArg` wraps
+ * each in one flat pair of quotes that every shell parses identically. Codex
+ * accepts them because `-c` falls back to a literal string when the value does
+ * not parse as TOML (documented in `codex --help`), and because TOML bare keys
+ * permit `-`, which lets the header name be a dotted key segment instead of an
+ * inline table.
+ *
+ * Measured against codex-cli 0.141.0: the quoted form `url="http://..."`
+ * becomes `url=\"http://...\"` after quoteArg's Windows escaping, and
+ * PowerShell splits that into multiple argv tokens, so Codex dies with
+ * `error: unexpected argument 'http://...\' found`. The form below was
+ * verified on PowerShell, cmd, and Git Bash via `codex mcp list --json`, and
+ * end to end against a live Kangentic MCP server.
+ */
+function buildMcpConfigArgs(options: CodexCommandOptions): string[] {
+  if (!codexMcpWiringEnabled(options)) return [];
+  const { shell } = options;
+  return [
+    '-c',
+    quoteArg(`mcp_servers.kangentic.url=${options.mcpServerUrl}`, shell),
+    '-c',
+    quoteArg(
+      `mcp_servers.kangentic.env_http_headers.${KANGENTIC_MCP_TOKEN_HEADER}=${KANGENTIC_MCP_TOKEN_ENV}`,
+      shell,
+    ),
+  ];
+}
+
 export class CodexCommandBuilder {
   buildCodexCommand(options: CodexCommandOptions): string {
     const { shell } = options;
@@ -71,26 +158,22 @@ export class CodexCommandBuilder {
     }
 
     const parts: string[] = [];
-
-    // Resume is a subcommand: codex resume <sessionId> -C <cwd>
-    if (options.resume && options.sessionId) {
-      parts.push(quoteArg(options.codexPath, shell));
-      parts.push('resume', quoteArg(options.sessionId, shell));
-      parts.push('-C', quoteArg(toForwardSlash(options.cwd), shell));
-      // Same ChatGPT Apps opt-out as the new-session branch below; a resumed
-      // session boots the connector too, so the flag has to be repeated here.
-      if (options.launchOptions?.disableApps) {
-        parts.push('--disable', 'apps');
-      }
-      return parts.join(' ');
-    }
+    const isResume = Boolean(options.resume && options.sessionId);
 
     parts.push(quoteArg(options.codexPath, shell));
 
-    // Non-interactive: codex -q --json ...
-    if (options.nonInteractive) {
+    if (isResume) {
+      // Resume is a subcommand: codex resume <sessionId> ...
+      parts.push('resume', quoteArg(options.sessionId!, shell));
+    } else if (options.nonInteractive) {
       parts.push('-q', '--json');
     }
+
+    // Every flag below is accepted by BOTH `codex` and `codex resume`
+    // (verified against `codex resume --help` on 0.141.0), so the two branches
+    // share one emission path. They did not always: the resume branch used to
+    // return early after `-C`, silently dropping the permission mode, the
+    // model override, and the MCP wiring from every resumed session.
 
     // Working directory
     parts.push('-C', quoteArg(toForwardSlash(options.cwd), shell));
@@ -109,8 +192,14 @@ export class CodexCommandBuilder {
       parts.push('--model', quoteArg(options.model.trim(), shell));
     }
 
-    // Prompt as positional argument
-    if (options.prompt) {
+    // Kangentic's MCP server. Must precede the positional prompt, since
+    // Codex's grammar is `codex [OPTIONS] [PROMPT]`.
+    parts.push(...buildMcpConfigArgs(options));
+
+    // Prompt as positional argument. Deliberately skipped when resuming: the
+    // resumed conversation already contains it, and re-sending would re-ask
+    // the task prompt on every resume.
+    if (!isResume && options.prompt) {
       const needsDoubleQuoteReplacement = shell
         ? !isUnixLikeShell(shell)
         : process.platform === 'win32';
@@ -121,6 +210,21 @@ export class CodexCommandBuilder {
     }
 
     return parts.join(' ');
+  }
+
+  /**
+   * Environment injected into the Codex PTY.
+   *
+   * Paired with the `env_http_headers` override emitted by
+   * `buildCodexCommand`: that flag names this variable, Codex reads it from
+   * its own process env at MCP-connect time, and the token stays out of argv.
+   * Shares `codexMcpWiringEnabled` with the flag builder so the two can never
+   * disagree. Returns null when MCP is off or incompletely configured, which
+   * the spawn chokepoints coalesce to "no env override at all".
+   */
+  buildCodexEnv(options: CodexCommandOptions): Record<string, string> | null {
+    if (!codexMcpWiringEnabled(options)) return null;
+    return { [KANGENTIC_MCP_TOKEN_ENV]: options.mcpServerToken };
   }
 
   interpolateTemplate(template: string, variables: Record<string, string>): string {

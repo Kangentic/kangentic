@@ -26,6 +26,33 @@ export interface SpawnPreambleProjectDefaults {
  */
 
 /**
+ * Whether a project's `default_model` / `default_effort` apply to a spawn that
+ * will run `resolvedAgent`.
+ *
+ * They do not travel across agents. A model/effort id is adapter-specific (see
+ * `CommandOptions.model`), so a project default chosen for the project's agent
+ * is meaningless - and usually fatal - for a different one: a project on
+ * `claude` with `default_model: "haiku"` and a column overriding the agent to
+ * `codex` used to spawn `codex --model haiku`, which Codex rejects outright
+ * with `The requested model 'haiku' does not exist` (400).
+ *
+ * A TASK or COLUMN model override is not gated this way: those are set
+ * alongside that scope's own agent, so they are already coherent with it. Only
+ * the project-level fallback can be inherited by an agent it was never chosen
+ * for.
+ *
+ * When this returns false the spawn simply carries no model/effort flag and the
+ * agent's own default applies, which is the correct fallback for a scope that
+ * expressed no preference for that agent.
+ */
+export function projectModelDefaultsApply(
+  resolvedAgent: string,
+  projectDefaultAgent: string | null | undefined,
+): boolean {
+  return resolvedAgent === (projectDefaultAgent ?? DEFAULT_AGENT);
+}
+
+/**
  * Lock the Advanced (Agent / Model / Effort / Permission) overrides on a
  * task's very first ever spawn.
  *
@@ -94,8 +121,13 @@ export function lockAdvancedOverridesOnFirstSpawn(options: {
   if (!isFirstEverSpawn || task.run_mode !== 'agent_override') return;
 
   const lockedAgent = task.agent_override ?? settingsLane?.agent_override ?? project?.default_agent ?? DEFAULT_AGENT;
-  const lockedModel = task.model_override ?? settingsLane?.model_override ?? project?.default_model ?? null;
-  const lockedEffort = task.effort_override ?? settingsLane?.effort_override ?? project?.default_effort ?? null;
+  // The project-level model/effort fallback only applies when the locked agent
+  // IS the project's default agent; see projectModelDefaultsApply.
+  const projectFallback = projectModelDefaultsApply(lockedAgent, project?.default_agent);
+  const lockedModel = task.model_override ?? settingsLane?.model_override
+    ?? (projectFallback ? project?.default_model : null) ?? null;
+  const lockedEffort = task.effort_override ?? settingsLane?.effort_override
+    ?? (projectFallback ? project?.default_effort : null) ?? null;
   const lockedPermission = task.permission_mode ?? settingsLane?.permission_mode ?? globalPermissionMode();
 
   tasks.update({

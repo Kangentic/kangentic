@@ -1,4 +1,6 @@
+import { DEFAULT_AGENT } from '../../shared/types';
 import type { Project, SessionRecord, SessionUsage, Swimlane, Task } from '../../shared/types';
+import { projectModelDefaultsApply } from './spawn-preamble';
 import type { AgentAdapter } from '../agent/agent-adapter';
 import type { SessionRepository } from '../db/repositories/session-repository';
 import type { CommandVerifier, InjectionCommand, InjectionVerifyMode } from './terminal-submit-scheduler';
@@ -84,7 +86,7 @@ export interface InjectionPlanInput {
    * a no-op for that field on column transitions - the user's choice wins
    * over the column's setting.
    */
-  task: Pick<Task, 'id' | 'agent' | 'model_override' | 'effort_override'>;
+  task: Pick<Task, 'id' | 'agent' | 'agent_override' | 'model_override' | 'effort_override'>;
   toLane: Swimlane | null;
   /**
    * Project-level model/effort default - the tier below the column and above
@@ -93,7 +95,7 @@ export interface InjectionPlanInput {
    * read a spurious change (source = the project default the session was
    * actually spawned with; target = null without this tier).
    */
-  project?: Pick<Project, 'default_model' | 'default_effort'> | null;
+  project?: Pick<Project, 'default_agent' | 'default_model' | 'default_effort'> | null;
   /** Already-interpolated auto_command from the destination column, or empty. */
   autoCommand?: string;
   /**
@@ -171,14 +173,25 @@ export function prepareInjectionPlan(input: InjectionPlanInput): InjectionPlan |
   // and `needsRestartForModel` below turns that into a suspend + `--resume` PTY
   // restart per column transition. Effort has no such split: both sides draw
   // from the adapter's discovered `effortLevels` vocabulary.
+  // The project-default tier is skipped when the destination runs a different
+  // agent than the project default: those ids are adapter-specific, so
+  // inheriting them across agents would both mis-target the injection and
+  // spuriously read "changed". Mirrors the spawn path's resolution exactly
+  // (projectModelDefaultsApply); the two must agree or a move would inject a
+  // model the spawn never applied.
+  const targetAgent = task.agent_override ?? toLane?.agent_override ?? project?.default_agent ?? DEFAULT_AGENT;
+  const projectFallback = projectModelDefaultsApply(targetAgent, project?.default_agent);
+
   const sourceModel = task.model_override ?? record?.applied_model ?? null;
-  const targetModel = task.model_override ?? toLane?.model_override ?? project?.default_model ?? null;
+  const targetModel = task.model_override ?? toLane?.model_override
+    ?? (projectFallback ? project?.default_model : null) ?? null;
   const sourceEffort = resolveSourceEffort({
     taskEffortOverride: task.effort_override,
     liveEffort,
     appliedEffort: record?.applied_effort,
   });
-  const targetEffort = task.effort_override ?? toLane?.effort_override ?? project?.default_effort ?? null;
+  const targetEffort = task.effort_override ?? toLane?.effort_override
+    ?? (projectFallback ? project?.default_effort : null) ?? null;
 
   const modelChanged = targetModel !== sourceModel;
   const effortChanged = targetEffort !== sourceEffort;

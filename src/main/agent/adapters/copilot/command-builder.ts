@@ -102,6 +102,11 @@ export class CopilotCommandBuilder {
     // Permission mode flags
     parts.push(...mapPermissionMode(options.permissionMode));
 
+    // MCP server configuration. Emitted BEFORE the non-interactive branch
+    // below, which returns early: keeping it further down silently stripped
+    // the Kangentic MCP server from every non-interactive Copilot spawn.
+    parts.push(...this.buildMcpConfigArgs(options));
+
     // Non-interactive mode
     if (options.nonInteractive) {
       parts.push('-p');
@@ -126,34 +131,44 @@ export class CopilotCommandBuilder {
       parts.push('--reasoning-effort', quoteArg(options.effort.trim(), shell));
     }
 
-    // MCP server configuration
-    // Copilot supports --additional-mcp-config which augments (not replaces)
-    // the user's mcp-config.json. Write a proper MCP server config file.
-    if (options.mcpServerEnabled && options.mcpServerUrl && options.mcpServerToken) {
-      const mcpConfigDir = path.dirname(options.eventsOutputPath || options.cwd);
-      const mcpConfigPath = path.join(mcpConfigDir, 'copilot-mcp.json');
-      const mcpConfig = {
-        mcpServers: {
-          kangentic: {
-            type: 'http' as const,
-            url: options.mcpServerUrl,
-            headers: {
-              'X-Kangentic-Token': options.mcpServerToken,
-            },
-          },
-        },
-      };
-      fs.mkdirSync(path.dirname(mcpConfigPath), { recursive: true });
-      fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
-      parts.push('--additional-mcp-config', quoteArg(`@${toForwardSlash(mcpConfigPath)}`, shell));
-    }
-
     // Interactive mode with initial prompt
     if (options.prompt && !options.resume) {
       parts.push('-i', quoteArg(preparePrompt(options.prompt, shell), shell, { multiline: true }));
     }
 
     return parts.join(' ');
+  }
+
+  /**
+   * Write the Kangentic MCP server config and return the flag that loads it.
+   *
+   * Copilot's `--additional-mcp-config` augments (rather than replaces) the
+   * user's own mcp-config.json, so their servers survive alongside ours.
+   * Returns an empty list when MCP is disabled or incompletely configured.
+   */
+  private buildMcpConfigArgs(options: CopilotCommandOptions): string[] {
+    if (!options.mcpServerEnabled || !options.mcpServerUrl || !options.mcpServerToken) {
+      return [];
+    }
+    const mcpConfigDir = path.dirname(options.eventsOutputPath || options.cwd);
+    const mcpConfigPath = path.join(mcpConfigDir, 'copilot-mcp.json');
+    const mcpConfig = {
+      mcpServers: {
+        kangentic: {
+          type: 'http' as const,
+          url: options.mcpServerUrl,
+          headers: {
+            'X-Kangentic-Token': options.mcpServerToken,
+          },
+        },
+      },
+    };
+    fs.mkdirSync(path.dirname(mcpConfigPath), { recursive: true });
+    fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
+    return [
+      '--additional-mcp-config',
+      quoteArg(`@${toForwardSlash(mcpConfigPath)}`, options.shell),
+    ];
   }
 
   interpolateTemplate(template: string, variables: Record<string, string>): string {

@@ -14,7 +14,7 @@ import { DEFAULT_AGENT } from '../../../shared/types';
 import type { Task, Swimlane, Project } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 import { isAbortError } from '../../../shared/abort-utils';
-import { runSpawnPreamble } from '../../transition-engine/spawn-preamble';
+import { runSpawnPreamble, projectModelDefaultsApply } from '../../transition-engine/spawn-preamble';
 import { isResumeEligible } from '../../transition-engine/spawn-intent';
 import { resolveIsolatedSwimlaneId, resolveForceFresh } from '../../transition-engine/session-isolation';
 import { resolveEffectiveAutoCommand, applyProfileToLane } from '../../transition-engine/column-strategy';
@@ -47,13 +47,20 @@ import { runWithProjectLogContext } from '../../diagnostics/project-log-context'
  * threading them as separate parameters.
  */
 export function resolveSpawnOverrides(
-  task: Pick<Task, 'model_override' | 'effort_override'>,
-  lane: Pick<Swimlane, 'id' | 'model_override' | 'effort_override' | 'session_target' | 'session_spawn_strategy'> | null | undefined,
-  project?: Pick<Project, 'default_model' | 'default_effort'> | null,
+  task: Pick<Task, 'agent_override' | 'model_override' | 'effort_override'>,
+  lane: Pick<Swimlane, 'id' | 'agent_override' | 'model_override' | 'effort_override' | 'session_target' | 'session_spawn_strategy'> | null | undefined,
+  project?: Pick<Project, 'default_agent' | 'default_model' | 'default_effort'> | null,
 ): { model: string | null | undefined; effort: string | null | undefined; isolatedSwimlaneId: string | null; forceFresh: boolean } {
+  // The project-level model/effort fallback is skipped when a task or column
+  // overrides the agent away from the project default: those ids are
+  // adapter-specific and do not travel. See projectModelDefaultsApply.
+  const resolvedAgent = task.agent_override ?? lane?.agent_override ?? project?.default_agent ?? DEFAULT_AGENT;
+  const projectFallback = projectModelDefaultsApply(resolvedAgent, project?.default_agent);
   return {
-    model: task.model_override ?? lane?.model_override ?? project?.default_model,
-    effort: task.effort_override ?? lane?.effort_override ?? project?.default_effort,
+    model: task.model_override ?? lane?.model_override
+      ?? (projectFallback ? project?.default_model : undefined),
+    effort: task.effort_override ?? lane?.effort_override
+      ?? (projectFallback ? project?.default_effort : undefined),
     isolatedSwimlaneId: resolveIsolatedSwimlaneId(lane),
     forceFresh: resolveForceFresh(lane),
   };

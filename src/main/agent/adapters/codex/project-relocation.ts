@@ -1,8 +1,16 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as os from 'node:os';
 import { replacePathPrefix } from '../../../../shared/paths';
-import { atomicWriteFileWithBackup, createSerialLock } from '../../shared/relocation-utils';
+import { atomicWriteFileWithBackup } from '../../shared/relocation-utils';
+import {
+  withCodexConfigLock,
+  configTomlPath,
+  parseHeaderLine,
+  stripLongPathPrefix,
+  applyLongPathPrefix,
+  normalizeForCompare,
+  type ParsedHeader,
+} from './config-toml';
 
 /**
  * Migrate Codex CLI's per-project trust entry when a Kangentic project is
@@ -29,19 +37,8 @@ import { atomicWriteFileWithBackup, createSerialLock } from '../../shared/reloca
  * Best-effort and non-destructive under a serial lock; config.toml is backed up
  * and written atomically, and only matching header lines are touched.
  */
-const withCodexConfigLock = createSerialLock();
-
 export async function migrateCodexProjectData(oldProjectPath: string, newProjectPath: string): Promise<void> {
   return withCodexConfigLock(() => migrateCodexProjectDataSync(oldProjectPath, newProjectPath));
-}
-
-// `[projects.` + ( '...' | "..." ) + `]` with optional trailing whitespace / CR.
-const PROJECT_HEADER = /^(\s*\[projects\.)('([^']*)'|"((?:[^"\\]|\\.)*)")(\]\s*\r?)$/;
-// The Windows long-path prefix \\?\ as a literal string (four characters).
-const LONG_PATH_PREFIX = '\\\\?\\';
-
-function configTomlPath(): string {
-  return path.join(os.homedir(), '.codex', 'config.toml');
 }
 
 function migrateCodexProjectDataSync(oldProjectPath: string, newProjectPath: string): void {
@@ -87,44 +84,6 @@ function migrateCodexProjectDataSync(oldProjectPath: string, newProjectPath: str
 
   if (!changed) return;
   atomicWriteFileWithBackup(configTomlPath(), rewrittenLines.join('\n'), { logTag: '[CODEX_RELOCATE]' });
-}
-
-interface ParsedHeader {
-  prefix: string;
-  suffix: string;
-  quote: "'" | '"';
-  innerPath: string;
-  hadLongPathPrefix: boolean;
-}
-
-function parseHeaderLine(line: string): ParsedHeader | null {
-  const match = PROJECT_HEADER.exec(line);
-  if (!match) return null;
-  const isSingle = match[3] !== undefined;
-  // Single-quoted TOML strings are literal; basic (double-quoted) strings
-  // unescape \\ and \" (paths never carry other escapes).
-  const innerPath = isSingle ? match[3] : match[4].replace(/\\"/g, '"').replace(/\\\\/g, '\\');
-  return {
-    prefix: match[1],
-    suffix: match[5],
-    quote: isSingle ? "'" : '"',
-    innerPath,
-    hadLongPathPrefix: innerPath.startsWith(LONG_PATH_PREFIX),
-  };
-}
-
-function stripLongPathPrefix(rawPath: string): string {
-  return rawPath.startsWith(LONG_PATH_PREFIX) ? rawPath.slice(LONG_PATH_PREFIX.length) : rawPath;
-}
-
-function applyLongPathPrefix(nativePath: string, hadPrefix: boolean): string {
-  return hadPrefix ? LONG_PATH_PREFIX + nativePath : nativePath;
-}
-
-function normalizeForCompare(raw: string): string {
-  const stripped = stripLongPathPrefix(raw);
-  const normalized = path.normalize(stripped).replace(/[\\/]+$/, '');
-  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
 }
 
 /**

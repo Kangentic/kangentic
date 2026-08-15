@@ -97,7 +97,10 @@ sessions bypass all of this (not task agents).
    - Resolve permission mode via `resolveEffectivePermissionMode` (lane `plan` always wins,
      else task pin -> lane -> global)
    - Determine CWD (worktree path or project path)
-   - Pre-populate `~/.claude.json` trust for worktree paths
+   - Pre-populate agent-specific trust for the worktree path via `adapter.ensureTrust(cwd)`. The
+     call is generic (no agent-name branching); each adapter writes its own store: Claude
+     `~/.claude.json`, Codex `~/.codex/config.toml` `[projects]`, Gemini and Qwen
+     `trustedFolders.json`. Adapters with no trust system implement it as a no-op.
    - Check for previous suspended session (can resume?)
    - If resuming: reconcile the stored `agent_session_id` against the record's own `status.json` (see [Resume](#resume)), then use it with `--resume`, no prompt
    - If fresh: generate new UUID for `agent_session_id`, use `--session-id`, include prompt

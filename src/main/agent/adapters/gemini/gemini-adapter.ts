@@ -1,6 +1,7 @@
 import { GeminiDetector } from './detector';
 import { GeminiCommandBuilder } from './command-builder';
 import { removeHooks as removeGeminiHooks } from './hook-manager';
+import { ensureWorktreeTrust } from './trust-manager';
 import { GeminiSessionHistoryParser } from './session-history-parser';
 import { parseGeminiTranscript, locateGeminiTranscriptFile } from './transcript-parser';
 import { migrateGeminiProjectData } from './project-relocation';
@@ -49,8 +50,13 @@ export class GeminiAdapter implements AgentAdapter {
     this.detector.invalidateCache();
   }
 
-  async ensureTrust(_workingDirectory: string): Promise<void> {
-    // No-op: Gemini CLI does not have a trust/directory-approval system.
+  async ensureTrust(workingDirectory: string): Promise<void> {
+    // Gemini DOES have a folder-trust system (this was previously documented
+    // here as a no-op because Gemini had none). An untrusted folder disables
+    // every configured MCP server, including ours, so pre-trusting the
+    // worktree is what makes the Kangentic MCP entry take effect. See
+    // trust-manager.ts.
+    await ensureWorktreeTrust(workingDirectory);
   }
 
   buildCommand(options: SpawnCommandOptions): string {
@@ -64,6 +70,11 @@ export class GeminiAdapter implements AgentAdapter {
     // buildGeminiCommand writes hooks into .gemini/settings.json whenever
     // eventsOutputPath is present. Retain a reference for every such spawn
     // so concurrent sessions in the same cwd serialize their cleanup.
+    // An MCP-only spawn (no events pipeline) writes the MCP entry but takes
+    // no reference, so it is not protected by the count: if it shared a cwd
+    // with a holding session, that session exiting would strip its entry.
+    // Every spawn chokepoint supplies eventsOutputPath today, so no such
+    // spawn exists in practice. Same gate as the sibling Qwen adapter.
     if (options.eventsOutputPath) {
       this.retainHooks(options.cwd, options.taskId);
     }

@@ -607,7 +607,7 @@ Listed in execution order (idempotent, gated on `IF NOT EXISTS` / `pragma table_
 1. **`project_groups` table** -- creates the project groups table for organizing projects into named, collapsible sections.
 2. **`group_id` column on projects** -- adds nullable foreign key linking projects to their group.
 3. **`position` column on projects** -- adds explicit project ordering. Backfills positions based on `last_opened DESC` order to preserve the original visual order.
-4. **`default_model` and `default_effort` columns on projects** - adds `default_model TEXT` and `default_effort TEXT` (both nullable, no default). Per-project model/effort defaults mirroring the existing `default_agent`; unlike `default_agent`, NULL is a valid "no project preference" state that falls through to the CLI/agent default. Read at spawn time as the tier between a column's `model_override`/`effort_override` and the CLI default. Idempotent guarded `ALTER TABLE`.
+4. **`default_model` and `default_effort` columns on projects** - adds `default_model TEXT` and `default_effort TEXT` (both nullable, no default). Per-project model/effort defaults mirroring the existing `default_agent`; unlike `default_agent`, NULL is a valid "no project preference" state that falls through to the CLI/agent default. Read at spawn time as the tier between a column's `model_override`/`effort_override` and the CLI default, but only when the agent the spawn resolves to equals `default_agent` - these ids are adapter-specific, so the project tier does not follow a task or column that overrides the agent (`projectModelDefaultsApply`). Idempotent guarded `ALTER TABLE`.
 
 ## Repository Pattern
 

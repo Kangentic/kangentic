@@ -12,6 +12,15 @@ slashes a column transition emits by diffing a **source** against a **target**:
   two override-less columns on a project with a default model/effort set would read source = the
   applied project default (recorded at the last spawn) vs target = null, and spuriously
   restart/re-inject even though nothing actually changed.
+  That project tier is **gated on the destination agent**: it applies only when the agent the
+  destination resolves to (`task.agent_override ?? toLane.agent_override ?? project.default_agent`)
+  equals `project.default_agent`. Model and effort ids are adapter-specific, so a default chosen
+  for the project's agent is meaningless for a different one - a Codex column on a `claude` project
+  with `default_model: "haiku"` would otherwise target `haiku` and inject a model Codex rejects
+  outright. A task's or column's OWN override is never gated: it was chosen alongside that scope's
+  agent. The gate is the shared `projectModelDefaultsApply` predicate
+  (`src/main/transition-engine/spawn-preamble.ts`), and the spawn path applies the identical rule -
+  they must agree, or a move would inject a model the spawn never applied.
 - **Source** is the value the live session is *actually running at*. It is NOT the leaving
   column's config. The leaving column disagrees with reality after an in-flight ContextBar switch
   or a `kangentic.json` column-config edit, and is null on a move with no resolvable

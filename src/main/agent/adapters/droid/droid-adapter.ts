@@ -1,5 +1,5 @@
 import { DroidDetector } from './detector';
-import { DroidCommandBuilder } from './command-builder';
+import { DroidCommandBuilder, removeMcpConfig, droidMcpWiringEnabled } from './command-builder';
 import { captureSessionIdFromFilesystem, locateSessionFile } from './session-id-capture';
 import { droidTranscriptFilePath, parseDroidTranscript } from './transcript-parser';
 import { migrateDroidProjectData } from './project-relocation';
@@ -65,6 +65,13 @@ export class DroidAdapter implements AgentAdapter {
 
   private readonly detector = new DroidDetector();
   private readonly commandBuilder = new DroidCommandBuilder();
+  // Set of taskIds currently relying on `<cwd>/.factory/mcp.json`, keyed by
+  // that cwd. The file is project-shared, so without this a task exiting
+  // would strip the entry out from under a concurrent session in the same
+  // directory. Per-task worktrees usually make that impossible, but a
+  // project with no worktree configured runs every task in the project root.
+  // Same pattern as GeminiAdapter.hookHolders and CodexAdapter.hookHolders.
+  private readonly mcpHolders = new Map<string, Set<string>>();
 
   async detect(overridePath?: string | null): Promise<AgentInfo> {
     return this.detector.detect(overridePath);
@@ -80,7 +87,24 @@ export class DroidAdapter implements AgentAdapter {
 
   buildCommand(options: SpawnCommandOptions): string {
     const { agentPath, ...rest } = options;
-    return this.commandBuilder.buildDroidCommand({ droidPath: agentPath, ...rest });
+    const droidOptions = { droidPath: agentPath, ...rest };
+    const command = this.commandBuilder.buildDroidCommand(droidOptions);
+    // buildDroidCommand writes .factory/mcp.json whenever MCP is wired.
+    // Retain a reference so concurrent sessions in the same cwd serialize
+    // their cleanup.
+    if (droidMcpWiringEnabled(droidOptions)) {
+      this.retainMcpConfig(options.cwd, options.taskId);
+    }
+    return command;
+  }
+
+  private retainMcpConfig(directory: string, taskId: string): void {
+    let holders = this.mcpHolders.get(directory);
+    if (!holders) {
+      holders = new Set<string>();
+      this.mcpHolders.set(directory, holders);
+    }
+    holders.add(taskId);
   }
 
   interpolateTemplate(template: string, variables: Record<string, string>): string {
@@ -123,8 +147,32 @@ export class DroidAdapter implements AgentAdapter {
       'Tracked upstream: Factory-AI/factory (see docs/agent-integration.md).',
   };
 
-  removeHooks(_directory: string, _taskId?: string): void {
-    // No-op: this adapter does not write any hook config.
+  /**
+   * Delivers the Kangentic MCP token to the Droid process. The project's
+   * `.factory/mcp.json` references it as `${KANGENTIC_MCP_TOKEN}`, which
+   * Droid expands at connect time, so the secret never reaches disk.
+   */
+  buildEnv(options: SpawnCommandOptions): Record<string, string> | null {
+    const { agentPath, ...rest } = options;
+    return this.commandBuilder.buildDroidEnv({ droidPath: agentPath, ...rest });
+  }
+
+  removeHooks(directory: string, taskId?: string): void {
+    // This adapter writes no hook config, but it does write a project-scoped
+    // .factory/mcp.json entry that should not outlive the session. Strip it
+    // only once the last task using that directory releases, so a sibling
+    // session in the same cwd does not lose its MCP server mid-run.
+    const holders = this.mcpHolders.get(directory);
+    if (holders && taskId) {
+      holders.delete(taskId);
+      if (holders.size > 0) return;
+    }
+    // Reached either by the last holder releasing or by a no-taskId call (the
+    // project-delete sweep, which force-strips after every session is already
+    // killed). Both mean nothing may still be holding this directory, so drop
+    // the entry rather than leaving a Set that can never be released.
+    this.mcpHolders.delete(directory);
+    removeMcpConfig(directory);
   }
 
   getSubmissionVerifier(_contextType: SubmissionContextType): SubmissionVerifier | null {

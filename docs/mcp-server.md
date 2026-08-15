@@ -2,7 +2,9 @@
 
 ## Overview
 
-Kangentic exposes a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that gives Claude Code agents tools to interact with the Kanban board. Agents can create tasks, search the board, view session statistics, and more - all through structured tool calls during their work.
+Kangentic exposes a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that gives spawned agents tools to interact with the Kanban board. Agents can create tasks, search the board, view session statistics, and more - all through structured tool calls during their work.
+
+Most supported agents are wired automatically; the mechanism differs per CLI. See [Discovery](#discovery) for the per-adapter delivery table.
 
 This enables a key workflow: while working on a task, an agent identifies follow-up work (bugs, refactoring opportunities, improvements) and creates Kangentic tasks for them directly, without the user manually entering each one.
 
@@ -11,7 +13,7 @@ This enables a key workflow: while working on a task, an agent identifies follow
 ### Architecture
 
 ```
-Claude Code agent calls MCP tool (e.g. kangentic_create_task)
+A Kangentic-spawned agent calls an MCP tool (e.g. kangentic_create_task)
   -> HTTP POST http://127.0.0.1:<port>/mcp/<projectId>
      (X-Kangentic-Token header, JSON-RPC body)
   -> In-process MCP HTTP server in Electron main (mcp-http-server.ts)
@@ -40,12 +42,31 @@ Claude Code agent calls MCP tool (e.g. kangentic_create_task)
 | Command Handlers | `src/main/agent/commands/` | Per-domain handlers shared by the HTTP tools: task, column, profile (`profile-commands.ts`: the four `*_board_profile` commands plus the shared `resolveProfileSelector` used by create/update task), inventory, search, analytics, usage, backlog, handoff, inspect (`get_transcript`, `query_db`), session-files (`get_session_files`, `get_session_events`), and activity-interval (`get_activity_intervals`) commands. |
 | Column Resolver | `src/main/agent/commands/column-resolver.ts` | Shared case-insensitive column name to swimlane lookup used by multiple handlers. |
 | Task Ordering | `src/main/agent/commands/task-ordering.ts` | Pure ordinal-slot arithmetic shared by `handleMoveTask`'s same-column reposition and `handleReorderTasks`: slot clamping, prefix-merge reordering, and ordinal-to-raw-position translation. |
-| MCP Config Delivery | `src/main/agent/adapters/claude/command-builder.ts` | Writes session `mcp.json` (with the per-launch URL + token) and adds `--mcp-config` flag to CLI command. |
-| Trust Manager | `src/main/agent/adapters/claude/trust-manager.ts` | Pre-approves kangentic MCP server in `~/.claude.json`. |
+| MCP Config Delivery | Per-adapter, under `src/main/agent/adapters/<agent>/` | Each adapter delivers the per-launch URL + token through its own CLI's mechanism. See the [Discovery](#discovery) table. |
+| Trust Managers | `adapters/claude/trust-manager.ts`, `adapters/codex/trust-manager.ts`, `adapters/gemini/trust-manager.ts`, `adapters/qwen-code/trust-manager.ts` | Pre-approve the spawn directory so the session is not blocked at startup: Claude in `~/.claude.json`, Codex via `[projects.'<path>'] trust_level` in `~/.codex/config.toml`, Gemini and Qwen via `trustedFolders.json` (an untrusted folder disables every configured MCP server). All four leave an explicit user decision alone, in either direction. |
 | Board Refresh | `src/main/ipc/handlers/sessions.ts` | Forwards task-created/updated/backlog-changed events to renderer via IPC. |
 | Dev-only DevTools | `src/devtools/mcp/register.ts`, `src/devtools/mcp/preview-tools.ts` | Registers the `kangentic_devtools_*` tools when `__KANGENTIC_DEV__` is set. Excluded from production builds at compile time. |
 
 ### Discovery
+
+Delivery is per-adapter, because no two of these CLIs accept MCP config the same way. What every path has in common: the URL and token are per-launch, the user's global config is never mutated, and the entry is additive so the user's own MCP servers keep working.
+
+| Agent | Mechanism | Token lands in |
+|-------|-----------|----------------|
+| Claude Code | `--mcp-config <sessionDir>/mcp.json` | session file (gitignored) |
+| Codex CLI | `-c mcp_servers.kangentic.*` per-invocation overrides | process env (`KANGENTIC_MCP_TOKEN`) |
+| Kimi Code | `--mcp-config-file <sessionDir>/mcp.json` | session file (gitignored) |
+| GitHub Copilot CLI | `--additional-mcp-config @<path>` | session-adjacent file |
+| Gemini CLI | `mcpServers` in `<cwd>/.gemini/settings.json` (`httpUrl`) | project file, stripped on exit |
+| Qwen Code | `mcpServers` in `<cwd>/.qwen/settings.json` (`httpUrl`) | project file, stripped on exit |
+| Droid | `<cwd>/.factory/mcp.json` with `${KANGENTIC_MCP_TOKEN}` | process env (file holds only the var name) |
+| OpenCode | `OPENCODE_CONFIG_CONTENT` env var | process env (local spawns only) |
+| Cursor, Oz CLI | Not wired | n/a |
+| Aider, Ollama | Not possible - neither CLI is an MCP client | n/a |
+
+Full per-adapter detail, including the Codex quoting contract and the Gemini folder-trust requirement, lives in [agent-integration.md](agent-integration.md).
+
+#### Claude Code
 
 Claude Code supports a `--mcp-config` flag that accepts a path to a JSON file containing MCP server definitions. Kangentic uses this to deliver its MCP server config without modifying `.mcp.json` (which may be tracked in git). When Kangentic spawns a session:
 

@@ -17,7 +17,7 @@ Every agent implements the `AgentAdapter` interface. Each adapter lives in `src/
 | `buildCommand(options)` | Build the shell command string to spawn the agent |
 | `interpolateTemplate(template, variables)` | Replace `{{key}}` placeholders in prompt templates |
 | `runtime` | `AdapterRuntimeStrategy` declaring activity detection + session ID capture (see below) |
-| `removeHooks(directory, taskId?)` | Remove monitoring hooks on cleanup. `taskId` lets shared-file adapters (Codex, Gemini) reference-count so concurrent sessions do not clobber each other's hooks. |
+| `removeHooks(directory, taskId?)` | Remove the per-directory config an adapter injected, on cleanup. `taskId` lets shared-file adapters (Codex, Gemini, Droid) reference-count so concurrent sessions in the same cwd do not clobber each other. The payload is not only hooks: Gemini also strips its `mcpServers.kangentic` entry (which carries the per-launch token), and Droid's refcount guards `<cwd>/.factory/mcp.json` rather than a hooks file. |
 | `clearSettingsCache()` | Clear cached merged settings |
 | `detectFirstOutput(data)` | Detect when the agent TUI is ready (lifts shimmer overlay) |
 | `getExitSequence()` | Return PTY write sequence for graceful exit |
@@ -43,12 +43,13 @@ Every agent implements the `AgentAdapter` interface. Each adapter lives in `src/
 | `liveTelemetryUnsupported?` | `AgentLiveTelemetryUnsupported` | Set when the agent CLI has no per-session telemetry channel (no status file, session history, or stream output integration is possible). Carries the renderer-facing label and tooltip so all agent-specific copy lives with the adapter. Currently used by Droid. |
 | `reportsRateLimits?` | `boolean` | Set by adapters whose CLI streams account-wide rate-limit windows (plan-usage quotas). The renderer ContextBar shows its rate-limit pill for any session of such an agent, sourced from a shared global snapshot that is merged monotonically per window across sessions (within a fixed window used-percentage only rises, so a session carrying a stale cached report never regresses the displayed values, and a genuine window rollover is taken wholesale). A freshly spawned terminal shows the same limits as its siblings before it has emitted its own status line. Omit (falsy) for adapters with no rate-limit telemetry. Currently set only by Claude. |
 | `pastedImageReferenceTemplate?` | `string` | Set by adapters whose CLI does not reliably auto-attach an image from a bare file path (a typed/pasted path is read as inert text, not auto-recognized as an image). Kangentic saves a pasted-clipboard or dropped image to a temp PNG (reliable even where the CLI's own clipboard reader silently fails, e.g. Claude Code on Windows with Snipping Tool images - claude-code#26679) and injects this template instead of the bare path, so the agent reliably reads the file as an image. `{path}` is replaced with the shell-quoted absolute path; a template lacking `{path}` has the quoted path appended. Omit to inject the bare quoted path (legacy). Currently set only by Claude. |
-| `buildEnv?(options)` | `(SpawnCommandOptions) => Record<string, string> \| null` | Adapter-specific environment variables to inject into the PTY spawn. Used by adapters whose CLI has no flag-based MCP wiring and must deliver the Kangentic MCP server config via env (e.g. OpenCode's `OPENCODE_CONFIG_CONTENT`). |
+| `buildEnv?(options)` | `(SpawnCommandOptions) => Record<string, string> \| null` | Adapter-specific environment variables to inject into the PTY spawn. Used for MCP config an adapter cannot pass on the command line: either because the CLI has no MCP flag at all (OpenCode's `OPENCODE_CONFIG_CONTENT`, carrying the whole config), or because the value is a secret that must not land in argv or in a repo file (Codex and Droid both pass only `KANGENTIC_MCP_TOKEN`, referenced by name from their config). |
 | `getExitSequence?()` | `() => string[]` | Sequence of strings to write to the PTY for a graceful exit. Default is `['\x03']` (Ctrl+C only). Claude overrides with `['\x03', '/exit\r']` to flush conversation state. |
 | `attachSession?(context)` | `(SessionContext) => SessionAttachment \| void` | Per-session lifecycle hook for adapters that need work outside the declarative `runtime` strategy (out-of-band CLI queries, file watchers, etc.). The returned `dispose` is called on session end. |
 | `summarize?(prompt, cliPath, cwd)` | `(string, string, string) => Promise<string>` | One-shot summarization for the auto-name-tasks-from-prompt feature. Spawns the CLI in non-interactive `--print` mode. Adapters without a clean headless mode (Aider, Warp) omit this, as does Ollama (its headless mode is not yet wired). |
 | `parseTranscript?(agentSessionId, cwd)` | `(string, string) => Promise<ParsedTranscript>` | Parse the agent's native session history into agent-agnostic `TranscriptEntry[]` for the MCP `get_transcript` structured format. The adapter owns all format/location knowledge (JSONL file, chat JSONL, SQLite DB), so `handleGetTranscript` never branches on agent name. Must not throw; returns `{ entries: [], sourcePath }` on missing/corrupt history. Implemented by Claude, Droid, Codex, Gemini, Qwen, Kimi, and OpenCode; Aider/Warp/Cursor/Copilot/Ollama omit it (raw format only). See [MCP server - get_transcript](mcp-server.md#kangentic_get_transcript). |
 | `onProjectRelocated?(oldPath, newPath)` | `(string, string) => Promise<void>` | Migrate per-cwd data the agent keeps OUTSIDE the working directory, keyed by the absolute path, when that path changes. Invoked for two relocations with the same (oldPath, newPath) contract: a whole-project move (the `project:relocate` IPC handler, reached via Locate Folder / Change or the one-step "Move..." flow), and a single worktree-cwd rename on the first resume after a task's worktree was recreated at a new path (`migrateResumeCwdIfRenamed` in `src/main/transition-engine/resume-cwd-migration.ts`, which passes one worktree's old/new path so only that cwd's data moves). Called best-effort after the stored paths are settled and the new location exists. Implemented by Claude, Codex, Gemini, Qwen, Copilot, OpenCode, Kimi, and Droid (per-agent details in [Project relocation](#project-relocation) below); the shared mechanics (path-pair collection, directory rename/merge, backup + atomic write, serial lock) live in `src/main/agent/shared/relocation-utils.ts`. Implementations must be non-destructive and never block the caller. Aider, Cursor, Warp, and Ollama omit this (their resumable state is in-project or absent). |
+| `onWorktreeRemoved?(worktreePath)` | `(string) => Promise<void>` | Drop per-directory state the adapter recorded in a GLOBAL config file for a worktree Kangentic has just deleted. Kangentic creates a worktree per task, so an adapter keyed by absolute path accumulates one dead entry per task forever with nothing to clean it up (one machine reached 473). Dispatched from the single chokepoint inside `WorktreeManager.removeWorktree`, via a listener the main process registers at startup (`setWorktreeRemovedListener` -> `notifyAdaptersWorktreeRemoved`), so the git module never imports the agent registry and no removal path can run un-notified. Generic over `agentRegistry.list()` - no agent-name branching. Best-effort and never fatal: the worktree is already gone. Implemented by Codex only (its `~/.codex/config.toml` directory trust); every other adapter's per-directory state lives inside the worktree and disappears with it. |
 | `probeAuth?()` | `() => Promise<boolean \| null>` | See the methods table above. |
 | `remoteExecution?` | `{ info: AgentRemoteExecutionInfo; probeServer(server): Promise<RemoteServerStatus> }` | Declared by adapters whose CLI can attach to an already-running server the user operates, instead of always spawning a local process (e.g. OpenCode's `opencode attach <url> --dir <serverPath>`). `info` (`urlPlaceholder`, `authKind`, `workingDirectoryScope`, `remoteModeCaveat?`) is surfaced to the renderer via `AgentDetectionInfo.remoteExecution` so the Agent settings tab renders remote-mode rows (right after the CLI Path row) only for capability-declaring agents - no agent-name branching, including for the adapter-authored caveat text. `probeServer` replaces `probeAuth` as the reachability check when a project's mode for this agent is `remote`: it must hit the server directly and never throw. Implemented today only by OpenCode. See [configuration.md - Remote Execution](configuration.md#remote-execution). |
 | `launchOptions?` | `readonly AgentLaunchOptionInfo[]` | Declared by adapters whose CLI exposes optional boolean startup toggles (id, label, description, default). Surfaced to the renderer via `AgentDetectionInfo.launchOptions` so the Agent settings tab renders one toggle row per declared option, only for capability-declaring agents. Values are resolved by `resolveLaunchOptions` (`src/main/agent/shared/launch-options.ts`) from `agent.launchOptions[agentName]` (falling back to each option's `default`) and threaded through as `CommandOptions.launchOptions`; only the adapter's own command builder interprets an `id` into a concrete CLI flag - no agent-name branching outside the adapter. Implemented today only by Codex, which declares `disableApps` (maps to `--disable apps`, skipping the optional cloud ChatGPT Apps MCP connector that can hang startup at "Booting MCP server: codex_apps" - openai/codex#20167). See [configuration.md - agent.*](configuration.md#agent) for the config shape. |
@@ -145,20 +146,20 @@ Omit `sessionId` entirely for agents that use caller-owned IDs (Claude via `--se
 
 ## Supported Agents
 
-| Agent | Adapter | CLI Binary | Session Resume | Status/Events | Settings Merge | Trust |
-|-------|---------|-----------|----------------|---------------|----------------|-------|
-| Claude Code | `claude-adapter.ts` | `claude` | `--resume <id>` | Yes (status.json + events.jsonl; transcript fallback for background sessions, see [Adapter Session History](adapter-session-history.md#claude)) | Yes (`--settings`) | Yes (`~/.claude.json`) |
-| Codex CLI | `codex-adapter.ts` | `codex` | `resume <id>` | Partial (events.jsonl only) | No | No |
-| Gemini CLI | `gemini-adapter.ts` | `gemini` | `--resume <id>` | Yes (status.json + events.jsonl) | Yes (`.gemini/settings.json`) | No |
-| Qwen Code | `qwen-adapter.ts` | `qwen` | `--session-id <uuid>` (caller-owned) / `--resume <id>` | Yes (events.jsonl) | Yes (`.qwen/settings.json`) | No |
-| Cursor CLI | `cursor-adapter.ts` | `cursor-agent` (alias `agent`) | `--resume="<id>"` | No | No | No |
-| GitHub Copilot CLI | `copilot-adapter.ts` | `copilot` | `--resume <uuid>` (caller-owned) | Partial (events.jsonl + status parser) | Per-session `--config-dir` | Runtime `--add-dir` |
-| Aider | `aider-adapter.ts` | `aider` | No | No | No | No |
-| Oz CLI (Warp) | `warp-adapter.ts` | `oz` | No | No | No | No |
-| Kimi Code | `kimi-adapter.ts` | `kimi` | `--session <uuid>` (caller-owned) | Yes (`wire.jsonl`) | No | No |
-| Droid | `droid-adapter.ts` | `droid` | `--resume <uuid>` | No (PTY-only) | No (use Droid's TUI: `/model` + Ctrl+D, shift+tab; MCP via manual `droid mcp add`) | No |
-| OpenCode | `opencode-adapter.ts` | `opencode` | Plugin/PTY-captured `ses_<id>` (auto-generated) | Yes (plugin JSONL via `tool.execute.before/after` + `event` `session.*`) | No (`opencode.json` + `OPENCODE_CONFIG_CONTENT` env) | No (auth via `opencode auth login` -> `~/.local/share/opencode/auth.json`) |
-| Ollama | `ollama-adapter.ts` | `ollama` | No | No | No | No |
+| Agent | Adapter | CLI Binary | Session Resume | Status/Events | Settings Merge | Kangentic MCP | Trust |
+|-------|---------|-----------|----------------|---------------|----------------|---------------|-------|
+| Claude Code | `claude-adapter.ts` | `claude` | `--resume <id>` | Yes (status.json + events.jsonl; transcript fallback for background sessions, see [Adapter Session History](adapter-session-history.md#claude)) | Yes (`--settings`) | `--mcp-config <sessionDir>/mcp.json` | Yes (`~/.claude.json`) |
+| Codex CLI | `codex-adapter.ts` | `codex` | `resume <id>` | Partial (events.jsonl only) | No | `-c mcp_servers.*` overrides + `buildEnv` token | Yes (`~/.codex/config.toml` `[projects]`) |
+| Gemini CLI | `gemini-adapter.ts` | `gemini` | `--resume <id>` | Yes (status.json + events.jsonl) | Yes (`.gemini/settings.json`) | `mcpServers` in `.gemini/settings.json` (`httpUrl`) | Yes (`~/.gemini/trustedFolders.json`) |
+| Qwen Code | `qwen-adapter.ts` | `qwen` | `--session-id <uuid>` (caller-owned) / `--resume <id>` | Yes (events.jsonl) | Yes (`.qwen/settings.json`) | `mcpServers` in `.qwen/settings.json` (`httpUrl`) | Yes (`~/.qwen/trustedFolders.json`) |
+| Cursor CLI | `cursor-adapter.ts` | `cursor-agent` (alias `agent`) | `--resume="<id>"` | No | No | Not wired (see Limitations) | No |
+| GitHub Copilot CLI | `copilot-adapter.ts` | `copilot` | `--resume <uuid>` (caller-owned) | Partial (events.jsonl + status parser) | Per-session `--config-dir` | `--additional-mcp-config @<path>` | Runtime `--add-dir` |
+| Aider | `aider-adapter.ts` | `aider` | No | No | No | Not possible (CLI has no MCP client) | No |
+| Oz CLI (Warp) | `warp-adapter.ts` | `oz` | No | No | No | Not wired | No |
+| Kimi Code | `kimi-adapter.ts` | `kimi` | `--session <uuid>` (caller-owned) | Yes (`wire.jsonl`) | No | `--mcp-config-file <sessionDir>/mcp.json` | No |
+| Droid | `droid-adapter.ts` | `droid` | `--resume <uuid>` | No (PTY-only) | No (use Droid's TUI: `/model` + Ctrl+D, shift+tab) | `<cwd>/.factory/mcp.json` + `buildEnv` token | No |
+| OpenCode | `opencode-adapter.ts` | `opencode` | Plugin/PTY-captured `ses_<id>` (auto-generated) | Yes (plugin JSONL via `tool.execute.before/after` + `event` `session.*`) | No (`opencode.json` + `OPENCODE_CONFIG_CONTENT` env) | `OPENCODE_CONFIG_CONTENT` (local spawns only) | No (auth via `opencode auth login` -> `~/.local/share/opencode/auth.json`) |
+| Ollama | `ollama-adapter.ts` | `ollama` | No | No | No | Not possible (CLI has no MCP client) | No |
 
 ## Agent Resolution
 
@@ -424,16 +425,43 @@ Detection follows the same pattern as Claude: check `config.agent.cliPaths.codex
 #### New Session
 
 ```
-codex -C <cwd> --sandbox <level> --ask-for-approval <level> "prompt text"
+codex -C <cwd> --sandbox <level> --ask-for-approval <level> [--model <m>] \
+  -c mcp_servers.kangentic.url=<url> \
+  -c mcp_servers.kangentic.env_http_headers.X-Kangentic-Token=KANGENTIC_MCP_TOKEN \
+  "prompt text"
 ```
 
 #### Resumed Session
 
 ```
-codex resume <sessionId> -C <cwd>
+codex resume <sessionId> -C <cwd> --sandbox <level> --ask-for-approval <level> [--model <m>] \
+  -c <the same two MCP overrides>
 ```
 
-Resume is a subcommand in Codex (not a flag like Claude).
+Resume is a subcommand in Codex (not a flag like Claude). Both forms emit the same flags: `codex resume` accepts `-c`, `-s/--sandbox`, `-a/--ask-for-approval`, `-m/--model`, `-C/--cd`, and `--disable`. The resume branch used to return early after `-C`, so a resumed session silently lost its permission mode, model override, and MCP wiring.
+
+### MCP Wiring
+
+Codex reads MCP servers from the `mcp_servers.<name>` table in `~/.codex/config.toml`. Kangentic applies the same keys with `-c` for that invocation only, so the user's config file is never written. `env_http_headers` maps a header name to the NAME of an environment variable that Codex resolves at MCP-connect time, so the token travels via `CodexAdapter.buildEnv` as `KANGENTIC_MCP_TOKEN` and never appears in argv (argv is echoed into terminal scrollback the user can read).
+
+**The `-c` payloads deliberately contain no quotes, braces, or whitespace.** `quoteArg` escapes embedded double quotes as `\"` on Windows, which PowerShell does not accept when forwarding to a native command, so the natural TOML inline-table form fails there with `error: unexpected argument 'http://...\' found`. Two properties make the quote-free form work: a bare URL fails TOML parsing and is taken as a literal string, and TOML bare keys permit `-`, so the header name works as a dotted key segment. Verified against codex-cli 0.141.0 on PowerShell, cmd, and Git Bash. Do not "tidy" these into quoted TOML.
+
+### Directory Trust
+
+Codex prompts "Do you trust the contents of this directory?" before it will load project-local config, hooks, or exec policies. Kangentic pre-approves the spawn directory in `~/.codex/config.toml` (`src/main/agent/adapters/codex/trust-manager.ts`):
+
+```toml
+[projects.'C:\Users\dev\proj\.kangentic\worktrees\7']
+trust_level = "trusted"
+```
+
+Measured against codex-cli 0.141.0, this cannot be left to the user answering once. Trust is keyed on the **git repo root** and is **not inherited** by nested repositories, and every Kangentic task gets its own worktree, which is its own repo root. Accepting the prompt therefore records only that one worktree and the next task prompts again: there is no answer the user can give that carries forward. The per-invocation `-c` override does not help either, because trust is resolved before config overrides are applied.
+
+The pre-approval never overrules the user. An explicit `trust_level` already recorded for the directory is left as-is (so a deliberate `"untrusted"` survives), and a project root marked `"untrusted"` suppresses approval for the worktrees beneath it.
+
+Path comparison is shared with the relocation migration (`config-toml.ts`), because Codex stores these keys in several interchangeable spellings (single vs double quotes, forward vs back slashes, and an optional `\\?\` long-path prefix) and a missed match would append a duplicate table, which makes `config.toml` unparsable for Codex itself.
+
+The entry is also **removed** when Kangentic deletes the worktree, via the adapter contract's `onWorktreeRemoved` hook (`removeWorktreeTrust`). Without that, a per-directory key that can never be inherited accumulates one dead table per task forever: one developer machine had reached 473 entries before this landed. Only a table whose sole key is `trust_level` is dropped, so anything the user or a future Codex added to it survives. `$CODEX_HOME` is honored on both the write and the removal, so Kangentic always targets the file Codex will actually read.
 
 ### Launch Options
 
@@ -452,13 +480,13 @@ Codex declares one `AgentLaunchOptionInfo` (see [Agent Adapter Interface - Optio
 
 ### Hook Integration
 
-Codex hooks are written to `config.toml` in the project root via `writeCodexHooks()`. Unlike Claude's per-session `--settings` approach, Codex reads hooks from the project directory directly.
+Kangentic writes no Codex hook file. It used to write a project-local `.codex/hooks.json`, but Codex 0.128 redesigned hooks (they now live in `~/.codex/config.toml` or a Codex plugin folder) and no longer parses that file, printing a yellow "failed to parse hooks config" banner instead. `buildHooks` is therefore a cleanup-only sweep that strips Kangentic-owned entries from any pre-upgrade legacy file; see `codex/hook-manager.ts`.
 
 ### Limitations
 
 - No real-time token usage or cost data (no statusLine equivalent)
 - No merged settings file mechanism
-- No trust/directory-approval system
+- No live `/model` or `/reasoning-effort` injection: changing either requires a respawn (`getInjectionSequence` returns `[]`), and effort is `config.toml`-only with no CLI flag
 
 ## Gemini CLI
 
@@ -497,9 +525,20 @@ gemini --resume <sessionId>
 
 ### Settings Merge
 
-Gemini reads settings from `.gemini/settings.json` in the project directory. Unlike Claude's `--settings` flag, Gemini has no way to point to a per-session settings file. Kangentic writes merged settings (with event-bridge hooks) directly to `.gemini/settings.json` in the CWD.
+Gemini reads settings from `.gemini/settings.json` in the project directory. Unlike Claude's `--settings` flag, Gemini has no way to point to a per-session settings file. Kangentic writes merged settings (event-bridge hooks and / or the Kangentic MCP server entry) directly to `.gemini/settings.json` in the CWD.
 
-Because the file is shared, concurrent Gemini sessions in the same project are serialized by a per-task reference counter in `GeminiAdapter.hookHolders`: each `buildCommand` retains a reference keyed by `taskId`, and `removeHooks(directory, taskId)` only strips the file when the last task in that directory releases. Double-calls for the same `taskId` (session-manager invokes `removeHooks` both explicitly in `suspend()` and again from the PTY `onExit` handler) are idempotent. On crash or force-quit, `buildHooks` strips any stale Kangentic entries from the settings file on the next spawn. The same pattern lives in `CodexAdapter.hookHolders` for `.codex/hooks.json`.
+Because the file is shared, concurrent Gemini sessions in the same project are serialized by a per-task reference counter in `GeminiAdapter.hookHolders`: each `buildCommand` retains a reference keyed by `taskId`, and `removeHooks(directory, taskId)` only strips the file when the last task in that directory releases. Double-calls for the same `taskId` (session-manager invokes `removeHooks` both explicitly in `suspend()` and again from the PTY `onExit` handler) are idempotent. On crash or force-quit, `buildHooks` strips any stale Kangentic entries from the settings file on the next spawn. `removeHooks` strips the `mcpServers.kangentic` entry alongside the hooks, so the per-launch token does not outlive the session. The same refcount pattern lives in `CodexAdapter.hookHolders` (for the legacy `.codex/hooks.json` sweep) and `DroidAdapter.mcpHolders` (for `<cwd>/.factory/mcp.json`).
+
+### MCP Wiring
+
+The merged settings carry an `mcpServers.kangentic` entry using the Gemini-family `httpUrl` key (not the Anthropic/fastmcp `url` used by Claude and Kimi), plus a `headers` map with the per-launch token. This is the same shape the Qwen fork writes. User-defined `mcpServers` are preserved, and `removeHooks` strips only our entry.
+
+The settings write is gated on hooks **or** MCP, so an MCP-only spawn (no events pipeline) still produces the file.
+
+Two things make this work that are easy to miss:
+
+- **Folder trust is load-bearing.** Gemini disables every configured MCP server in an untrusted folder (`gemini mcp list` reports "MCP servers are configured but disabled because this folder is untrusted", and user-level servers are suppressed too), so the entry would be silently inert. `GeminiAdapter.ensureTrust` pre-populates `~/.gemini/trustedFolders.json` via `trust-manager.ts`. Unlike the Qwen equivalent it does **not** gate on `security.folderTrust.enabled`, because Gemini 0.54.4 enforces trust with that flag unset. It never overrides a user's `TRUST_PARENT` or `DO_NOT_TRUST`, at the path itself or on any ancestor, so a `DO_NOT_TRUST` on the repo suppresses approval for every worktree Kangentic creates beneath it (the same deny rule Codex applies to its project root). It also skips the write when an ancestor is already trusted, so a per-task worktree does not add a key per task. Ancestor matching folds case only on Windows, since POSIX paths are case-sensitive.
+- **The token is plaintext on disk while the session runs.** `.gemini/settings.json` is project-shared and may be intentionally committed, so it cannot be blanket-gitignored like `.kangentic/`. Tokens rotate per app launch and `removeHooks` strips the entry on exit. Do not commit `.gemini/settings.json` while a Kangentic-spawned Gemini session is running. Droid avoids this class of problem entirely because it supports `${NAME}` env expansion inside header values; Gemini does not.
 
 ## Qwen Code
 
@@ -947,15 +986,25 @@ Empirically validated against Droid 0.109.1 (see `scripts/probe-droid.js`). The 
 
 Droid does not accept a CLI flag for autonomy mode. The adapter surfaces a single `default` mode and the user cycles autonomy in the TUI directly (shift+tab toggles low/medium/high). Kangentic does not translate `permissionMode` into a flag override.
 
-### MCP Setup (Manual)
+### MCP Setup
 
-Droid CLI has no per-spawn `--mcp-config` flag, and Kangentic intentionally does not write to `~/.factory/mcp.json` or `<projectRoot>/.factory/mcp.json`. To expose Kangentic's project MCP server (board/task tools) to a Droid session, run once per machine after enabling MCP in project settings:
+Droid CLI has no per-spawn `--mcp-config` flag, but it does expand `${NAME}` references against the process environment inside `headers` values at connect time, and never rewrites the file with the expanded value. Kangentic uses that: on spawn it writes a project-scoped `<cwd>/.factory/mcp.json` holding only the environment variable NAME, and supplies the value through the adapter's `buildEnv`. `~/.factory/mcp.json` is never touched, and the token never reaches disk even though the file lives inside the user's repo.
 
+```json
+{
+  "mcpServers": {
+    "kangentic": {
+      "type": "http",
+      "url": "<kangenticMcpUrl>",
+      "headers": { "X-Kangentic-Token": "${KANGENTIC_MCP_TOKEN}" }
+    }
+  }
+}
 ```
-droid mcp add kangentic <kangenticMcpUrl> --type http --header "Authorization: Bearer <token>"
-```
 
-The URL and token are visible in **Settings -> MCP**. Droid persists the entry in `~/.factory/mcp.json`; subsequent spawns pick it up automatically. Codex and Gemini behave the same way - Kangentic only auto-wires MCP for Kimi (inline `--mcp-config`) and Claude (`--settings` merge).
+User-defined servers in that file are preserved, and `removeHooks` strips only the `kangentic` entry on session exit (deleting the file when nothing else remains). Verified against droid 0.189.0: `droid mcp list` reports `kangentic  http  connected  [project]`.
+
+Cleanup runs from the PTY exit and suspend paths, so a hard kill (Task Manager, crash, OS reboot) leaves the entry behind pointing at a dead loopback port until the next spawn rewrites it. It holds no secret, but it is a file Kangentic wrote inside the user's tree, so `.factory/` is gitignored alongside `.codex/` and `.gemini/`. A Droid session on a project with worktrees disabled writes it into the project root rather than a worktree, which is what makes that entry matter.
 
 ### Limitations
 

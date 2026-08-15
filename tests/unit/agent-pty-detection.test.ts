@@ -115,6 +115,16 @@ async function captureBoot(
     USERPROFILE: isolatedHome,
     APPDATA: path.join(isolatedHome, 'AppData', 'Roaming'),
     LOCALAPPDATA: path.join(isolatedHome, 'AppData', 'Local'),
+    // HOME / USERPROFILE are not enough for Codex: it resolves its config dir
+    // through the Win32 known-folder API, which those variables do not
+    // override, so it kept reading and WRITING the developer's real
+    // ~/.codex/config.toml. Every local run of this suite therefore appended a
+    // `[projects.'<sandbox>'] trust_level = "trusted"` table (the codex case's
+    // `postIdleInput` answers Codex's trust prompt), and those sandboxes are
+    // deleted immediately afterwards - 463 dead entries had accumulated before
+    // this was caught. CODEX_HOME is the documented override Codex does honor,
+    // and Kangentic's own trust manager reads the same variable, so both agree.
+    CODEX_HOME: path.join(isolatedHome, '.codex'),
     // Force a TTY-like terminal so the CLI paints its TUI (cursor hide,
     // box characters) instead of falling back to plain stdio.
     TERM: 'xterm-256color',
@@ -489,6 +499,16 @@ async function captureHookEvents(
     USERPROFILE: isolatedHome,
     APPDATA: path.join(isolatedHome, 'AppData', 'Roaming'),
     LOCALAPPDATA: path.join(isolatedHome, 'AppData', 'Local'),
+    // HOME / USERPROFILE are not enough for Codex: it resolves its config dir
+    // through the Win32 known-folder API, which those variables do not
+    // override, so it kept reading and WRITING the developer's real
+    // ~/.codex/config.toml. Every local run of this suite therefore appended a
+    // `[projects.'<sandbox>'] trust_level = "trusted"` table (the codex case's
+    // `postIdleInput` answers Codex's trust prompt), and those sandboxes are
+    // deleted immediately afterwards - 463 dead entries had accumulated before
+    // this was caught. CODEX_HOME is the documented override Codex does honor,
+    // and Kangentic's own trust manager reads the same variable, so both agree.
+    CODEX_HOME: path.join(isolatedHome, '.codex'),
     TERM: 'xterm-256color',
     NO_COLOR: '',
   };

@@ -54,6 +54,8 @@ import { prRefreshScheduler } from './pr/pr-refresh-scheduler';
 import { retrievalService } from './retrieval/retrieval-service';
 import { lineCountClient } from './git/line-count/line-count-client';
 import { setProjectDbInitializer } from './db/database';
+import { setWorktreeRemovedListener } from './git/worktree-manager';
+import { notifyAdaptersWorktreeRemoved } from './ipc/helpers/task-cleanup';
 import { loadVecExtension } from './retrieval/vec-extension';
 import { restoreShellEnv } from './shell-env';
 import { isFirstPartyPermissionAllowed } from './permission-policy';
@@ -843,6 +845,14 @@ app.whenReady().then(async () => {
   // migrations). Registered before any project opens so the semantic search
   // layer is available; a load failure degrades to lexical-only.
   setProjectDbInitializer(loadVecExtension);
+
+  // Let agent adapters drop per-directory state for a worktree Kangentic just
+  // deleted (Codex records directory trust in ~/.codex/config.toml keyed by
+  // path, one entry per task worktree). Registered as a listener rather than
+  // imported inside the git module so that low-level module never reaches
+  // into the agent registry. Wired here, before any project opens, so no
+  // removal path can run un-notified.
+  setWorktreeRemovedListener(notifyAdaptersWorktreeRemoved);
 
   // Redundant AUMID call inside whenReady -- ensures the ID is set even if
   // Electron clears it during app initialization on some Windows versions.

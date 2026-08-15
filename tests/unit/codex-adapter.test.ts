@@ -100,14 +100,30 @@ describe('Codex Adapter', () => {
       expect(command).toContain('/home/dev/project');
     });
 
-    it('resume command does not include approval mode', () => {
+    it('resume command carries the column permission mode', () => {
+      // The resume branch used to early-return right after -C, silently
+      // dropping the permission mode from every resumed session. `codex
+      // resume --help` accepts -s/--sandbox and -a/--ask-for-approval, so
+      // both branches now share one flag-emission path.
       const command = adapter.buildCommand(makeOptions({
         resume: true,
         sessionId: 'sess-abc-123',
         permissionMode: 'bypassPermissions',
       }));
+      expect(command).toContain('--dangerously-bypass-approvals-and-sandbox');
+      // The retired pre-0.128 flag spellings must not come back.
       expect(command).not.toContain('--approval-mode');
       expect(command).not.toContain('--full-auto');
+    });
+
+    it('resume command carries the per-column model override', () => {
+      const command = adapter.buildCommand(makeOptions({
+        resume: true,
+        sessionId: 'sess-abc-123',
+        model: 'gpt-5.5',
+      }));
+      expect(command).toContain('--model');
+      expect(command).toContain('gpt-5.5');
     });
 
     it('resume command omits prompt even if provided', () => {
@@ -135,6 +151,166 @@ describe('Codex Adapter', () => {
         launchOptions: { disableApps: false },
       }));
       expect(command).not.toContain('--disable');
+    });
+  });
+
+  describe('Kangentic MCP wiring', () => {
+    const TOKEN = 'tok-deadbeef-0123';
+    const URL = 'http://127.0.0.1:51733/mcp/proj-abc/sess-xyz';
+    const URL_OVERRIDE = `mcp_servers.kangentic.url=${URL}`;
+    const HEADER_OVERRIDE
+      = 'mcp_servers.kangentic.env_http_headers.X-Kangentic-Token=KANGENTIC_MCP_TOKEN';
+
+    const withMcp = (overrides: Partial<SpawnCommandOptions> = {}): SpawnCommandOptions =>
+      makeOptions({
+        mcpServerEnabled: true,
+        mcpServerUrl: URL,
+        mcpServerToken: TOKEN,
+        ...overrides,
+      });
+
+    it('emits both -c overrides when MCP is fully configured', () => {
+      const command = adapter.buildCommand(withMcp());
+      expect(command).toContain(URL_OVERRIDE);
+      expect(command).toContain(HEADER_OVERRIDE);
+    });
+
+    it('emits the overrides when mcpServerEnabled is undefined (default-on, matching Claude)', () => {
+      const command = adapter.buildCommand(withMcp({ mcpServerEnabled: undefined }));
+      expect(command).toContain(URL_OVERRIDE);
+    });
+
+    it('omits the overrides when mcpServerEnabled is false', () => {
+      const command = adapter.buildCommand(withMcp({ mcpServerEnabled: false }));
+      expect(command).not.toContain('mcp_servers');
+    });
+
+    it('omits the overrides when mcpServerUrl is missing', () => {
+      const command = adapter.buildCommand(withMcp({ mcpServerUrl: undefined }));
+      expect(command).not.toContain('mcp_servers');
+    });
+
+    it('omits the overrides when mcpServerToken is missing', () => {
+      // Without a token there is nothing for env_http_headers to resolve, so
+      // Codex would connect unauthenticated and get a 401.
+      const command = adapter.buildCommand(withMcp({ mcpServerToken: undefined }));
+      expect(command).not.toContain('mcp_servers');
+    });
+
+    it('never places the MCP token in the command string', () => {
+      for (const options of [
+        withMcp(),
+        withMcp({ resume: true, sessionId: 'sess-abc-123' }),
+        withMcp({ nonInteractive: true }),
+      ]) {
+        expect(adapter.buildCommand(options)).not.toContain(TOKEN);
+      }
+    });
+
+    it('emits the overrides on the codex resume branch', () => {
+      const command = adapter.buildCommand(withMcp({
+        resume: true,
+        sessionId: 'sess-abc-123',
+        launchOptions: { disableApps: true },
+      }));
+      expect(command).toContain(URL_OVERRIDE);
+      expect(command).toContain(HEADER_OVERRIDE);
+      expect(command).toContain('--disable apps');
+    });
+
+    it('emits the overrides before the positional prompt', () => {
+      // Codex's grammar is `codex [OPTIONS] [PROMPT]`; flags after the
+      // positional would be parsed as extra positionals.
+      const command = adapter.buildCommand(withMcp({ prompt: 'fix the bug' }));
+      expect(command.indexOf('mcp_servers')).toBeLessThan(command.indexOf('fix the bug'));
+    });
+
+    // --- Shell portability. See command-builder.ts's QUOTING CONTRACT. ---
+    // These pin the exact regression that shipped as a PowerShell-only hard
+    // failure: quoteArg escapes embedded double quotes as \", which
+    // PowerShell splits into multiple argv tokens, so the natural TOML
+    // inline-table form made Codex exit 2 with
+    // `error: unexpected argument 'http://...\' found`.
+
+    it('emits -c payloads free of quote, brace, and whitespace characters', () => {
+      for (const shell of ['powershell', 'cmd.exe', 'bash', 'nu']) {
+        const command = adapter.buildCommand(withMcp({ shell }));
+        for (const payload of [URL_OVERRIDE, HEADER_OVERRIDE]) {
+          expect(payload, `payload must stay shell-safe for ${shell}`)
+            .not.toMatch(/["'`${}\s]/);
+          expect(command).toContain(payload);
+        }
+      }
+    });
+
+    it('does not emit a backslash-escaped quote under powershell', () => {
+      const command = adapter.buildCommand(withMcp({ shell: 'powershell' }));
+      expect(command).not.toContain('\\"');
+    });
+
+    it('wraps each -c payload in exactly one pair of shell quotes', () => {
+      const powershellCommand = adapter.buildCommand(withMcp({ shell: 'powershell' }));
+      expect(powershellCommand).toContain(`-c "${URL_OVERRIDE}"`);
+      expect(powershellCommand).toContain(`-c "${HEADER_OVERRIDE}"`);
+
+      const bashCommand = adapter.buildCommand(withMcp({ shell: 'bash' }));
+      expect(bashCommand).toContain(`-c '${URL_OVERRIDE}'`);
+      expect(bashCommand).toContain(`-c '${HEADER_OVERRIDE}'`);
+    });
+
+    it('emits identical payloads across shells, modulo the outer quote character', () => {
+      const payloadsFor = (shell: string) =>
+        [...adapter.buildCommand(withMcp({ shell })).matchAll(/-c ["']([^"']+)["']/g)]
+          .map((match) => match[1]);
+      const baseline = payloadsFor('powershell');
+      expect(baseline).toEqual([URL_OVERRIDE, HEADER_OVERRIDE]);
+      for (const shell of ['cmd.exe', 'bash', 'wsl', 'nu']) {
+        expect(payloadsFor(shell), `payloads diverged for ${shell}`).toEqual(baseline);
+      }
+    });
+
+    // --- buildEnv, the other half of the pair ---
+
+    it('buildEnv returns only the MCP token variable when fully configured', () => {
+      const env = adapter.buildEnv(withMcp());
+      expect(env).toEqual({ KANGENTIC_MCP_TOKEN: TOKEN });
+    });
+
+    it('buildEnv returns null when disabled or incompletely configured', () => {
+      expect(adapter.buildEnv(withMcp({ mcpServerEnabled: false }))).toBeNull();
+      expect(adapter.buildEnv(withMcp({ mcpServerUrl: undefined }))).toBeNull();
+      expect(adapter.buildEnv(withMcp({ mcpServerToken: undefined }))).toBeNull();
+    });
+
+    it('the env_http_headers override names the same variable buildEnv sets', () => {
+      // Renaming one side alone must fail loudly.
+      const command = adapter.buildCommand(withMcp({ shell: 'bash' }));
+      const headerValue = command.match(
+        /mcp_servers\.kangentic\.env_http_headers\.X-Kangentic-Token=([A-Z_]+)/,
+      )?.[1];
+      expect(headerValue).toBe(Object.keys(adapter.buildEnv(withMcp())!)[0]);
+    });
+
+    it('flag emission and buildEnv agree across the whole gate matrix', () => {
+      // One shared predicate backs both. This is what stops a future
+      // hand-copied second condition from drifting them apart.
+      for (const mcpServerEnabled of [true, false, undefined]) {
+        for (const mcpServerUrl of [URL, undefined]) {
+          for (const mcpServerToken of [TOKEN, undefined]) {
+            const options = makeOptions({
+              shell: 'bash',
+              mcpServerEnabled,
+              mcpServerUrl,
+              mcpServerToken,
+            });
+            const cell = `enabled=${mcpServerEnabled} url=${!!mcpServerUrl} token=${!!mcpServerToken}`;
+            expect(
+              adapter.buildCommand(options).includes('mcp_servers'),
+              `flag/env disagreement at ${cell}`,
+            ).toBe(adapter.buildEnv(options) !== null);
+          }
+        }
+      }
     });
   });
 
@@ -405,8 +581,32 @@ describe('Codex Adapter', () => {
   });
 
   describe('ensureTrust', () => {
-    it('is a no-op (resolves without error)', async () => {
-      await expect(adapter.ensureTrust('/some/path')).resolves.toBeUndefined();
+    // Codex's ensureTrust is NOT a no-op: it appends a `[projects.'<path>']`
+    // trust table to config.toml. Redirect CODEX_HOME to a temp dir for the
+    // duration, or this suite writes into the developer's real ~/.codex and
+    // leaves one dead entry behind per run - the exact pollution that had
+    // accumulated 463 entries before agent-pty-detection.test.ts was fixed.
+    let trustHome: string;
+    const originalCodexHome = process.env.CODEX_HOME;
+
+    beforeEach(() => {
+      trustHome = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-adapter-trust-'));
+      process.env.CODEX_HOME = trustHome;
+    });
+
+    afterEach(() => {
+      if (originalCodexHome === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = originalCodexHome;
+      fs.rmSync(trustHome, { recursive: true, force: true });
+    });
+
+    it('records directory trust so the spawn does not stop on the prompt', async () => {
+      const worktree = path.join(trustHome, 'project', '.kangentic', 'worktrees', '1');
+      await expect(adapter.ensureTrust(worktree)).resolves.toBeUndefined();
+
+      const config = fs.readFileSync(path.join(trustHome, 'config.toml'), 'utf-8');
+      expect(config).toContain(`[projects.'${path.resolve(worktree)}']`);
+      expect(config).toContain('trust_level = "trusted"');
     });
   });
 

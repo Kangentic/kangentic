@@ -210,11 +210,128 @@ describe('Droid Adapter', () => {
   });
 
   describe('removeHooks / clearSettingsCache / ensureTrust', () => {
-    it('all run as no-ops without throwing', async () => {
+    it('all run without throwing on a directory with no Kangentic config', async () => {
       expect(() => adapter.removeHooks(tempDir)).not.toThrow();
       expect(() => adapter.removeHooks(tempDir, 'task-x')).not.toThrow();
       expect(() => adapter.clearSettingsCache()).not.toThrow();
       await expect(adapter.ensureTrust(tempDir)).resolves.toBeUndefined();
+    });
+  });
+
+  describe('Kangentic MCP wiring', () => {
+    const URL = 'http://127.0.0.1:5555/mcp/project-123/sess-xyz';
+    const TOKEN = 'secret-token';
+
+    const configPath = () => path.join(tempDir, '.factory', 'mcp.json');
+    const readConfig = () => JSON.parse(fs.readFileSync(configPath(), 'utf-8'));
+
+    const build = (overrides: Partial<SpawnCommandOptions> = {}) =>
+      adapter.buildCommand(makeOptions({
+        cwd: tempDir,
+        mcpServerEnabled: true,
+        mcpServerUrl: URL,
+        mcpServerToken: TOKEN,
+        ...overrides,
+      }));
+
+    it('writes a project-scoped .factory/mcp.json http entry', () => {
+      // Verified against droid 0.189.0: `droid mcp list` in a directory
+      // carrying this file reports "kangentic http connected [project]".
+      build();
+      expect(readConfig().mcpServers.kangentic).toEqual({
+        type: 'http',
+        url: URL,
+        headers: { 'X-Kangentic-Token': '${KANGENTIC_MCP_TOKEN}' },
+      });
+    });
+
+    it('references the token by env var and never writes its value', () => {
+      // .factory/mcp.json lives inside the user's repo, so the secret must
+      // not land there. Droid expands ${NAME} at connect time and never
+      // rewrites the file with the expanded value.
+      build();
+      expect(fs.readFileSync(configPath(), 'utf-8')).not.toContain(TOKEN);
+      expect(adapter.buildEnv(makeOptions({
+        cwd: tempDir,
+        mcpServerEnabled: true,
+        mcpServerUrl: URL,
+        mcpServerToken: TOKEN,
+      }))).toEqual({ KANGENTIC_MCP_TOKEN: TOKEN });
+    });
+
+    it('keeps the token out of the command line too', () => {
+      expect(build()).not.toContain(TOKEN);
+    });
+
+    it('preserves user-defined servers and restores them on cleanup', () => {
+      fs.mkdirSync(path.join(tempDir, '.factory'), { recursive: true });
+      fs.writeFileSync(
+        configPath(),
+        JSON.stringify({ mcpServers: { linear: { type: 'http', url: 'http://example.test/mcp' } } }),
+      );
+      build();
+      expect(readConfig().mcpServers.linear).toBeDefined();
+
+      adapter.removeHooks(tempDir);
+      expect(readConfig().mcpServers).toEqual({
+        linear: { type: 'http', url: 'http://example.test/mcp' },
+      });
+    });
+
+    it('removes the file entirely when only our entry was in it', () => {
+      build();
+      adapter.removeHooks(tempDir);
+      expect(fs.existsSync(configPath())).toBe(false);
+    });
+
+    it('keeps the config alive until the last task in the same cwd releases', () => {
+      // .factory/mcp.json is project-shared. A project with no worktree
+      // configured runs every task in the project root, so an exiting task
+      // must not strip the entry out from under a running sibling.
+      build({ taskId: 'task-a' });
+      build({ taskId: 'task-b' });
+
+      adapter.removeHooks(tempDir, 'task-a');
+      expect(fs.existsSync(configPath())).toBe(true);
+
+      adapter.removeHooks(tempDir, 'task-b');
+      expect(fs.existsSync(configPath())).toBe(false);
+    });
+
+    it('is idempotent when the same task releases twice', () => {
+      // session-manager calls removeHooks explicitly in suspend() and again
+      // from the PTY onExit handler.
+      build({ taskId: 'task-a' });
+      adapter.removeHooks(tempDir, 'task-a');
+      expect(() => adapter.removeHooks(tempDir, 'task-a')).not.toThrow();
+      expect(fs.existsSync(configPath())).toBe(false);
+    });
+
+    it('writes nothing when disabled or incompletely configured', () => {
+      for (const overrides of [
+        { mcpServerEnabled: false },
+        { mcpServerUrl: undefined },
+        { mcpServerToken: undefined },
+      ]) {
+        build(overrides);
+        expect(fs.existsSync(configPath())).toBe(false);
+      }
+    });
+
+    it('buildEnv returns null when disabled or incompletely configured', () => {
+      for (const overrides of [
+        { mcpServerEnabled: false },
+        { mcpServerUrl: undefined },
+        { mcpServerToken: undefined },
+      ]) {
+        expect(adapter.buildEnv(makeOptions({
+          cwd: tempDir,
+          mcpServerEnabled: true,
+          mcpServerUrl: URL,
+          mcpServerToken: TOKEN,
+          ...overrides,
+        }))).toBeNull();
+      }
     });
   });
 
@@ -243,9 +360,9 @@ describe('Droid session-id capture', () => {
 
     it('matches the empirical Droid 0.109 layout for nested temp paths', () => {
       // Empirically confirmed via probe-droid.js:
-      //   `~/.factory/sessions/-C-Users-tyler-AppData-Local-Temp-...-project-c/`
-      const slug = cwdToSessionSlug('C:\\Users\\tyler\\AppData\\Local\\Temp\\foo\\project-c');
-      expect(slug).toBe('-C-Users-tyler-AppData-Local-Temp-foo-project-c');
+      //   `~/.factory/sessions/-C-Users-dev-AppData-Local-Temp-...-project-c/`
+      const slug = cwdToSessionSlug('C:\\Users\\dev\\AppData\\Local\\Temp\\foo\\project-c');
+      expect(slug).toBe('-C-Users-dev-AppData-Local-Temp-foo-project-c');
     });
   });
 

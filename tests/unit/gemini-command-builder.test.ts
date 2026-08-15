@@ -6,9 +6,13 @@
  * Uses an inline test helper to avoid merged settings / hook injection
  * side effects (same pattern as command-builder.test.ts).
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
 import { quoteArg } from '../../src/shared/paths';
 import { GeminiCommandBuilder } from '../../src/main/agent/adapters/gemini';
+import { removeHooks } from '../../src/main/agent/adapters/gemini/hook-manager';
 import type { GeminiCommandOptions } from '../../src/main/agent/adapters/gemini';
 
 /** Minimal options for tests that don't need hooks/settings. */
@@ -41,6 +45,102 @@ describe('GeminiCommandBuilder', () => {
     it('quotes gemini path with spaces', () => {
       const command = buildCommand({ geminiPath: '/path with spaces/gemini' });
       expect(command).toContain(quoteArg('/path with spaces/gemini'));
+    });
+  });
+
+  describe('Kangentic MCP wiring', () => {
+    const URL = 'http://127.0.0.1:5555/mcp/project-123/sess-xyz';
+    const TOKEN = 'secret-token';
+    let tmpDir: string;
+
+    const settingsFile = () => path.join(tmpDir, '.gemini', 'settings.json');
+    const readSettings = () => JSON.parse(fs.readFileSync(settingsFile(), 'utf-8'));
+
+    const build = (overrides: Partial<GeminiCommandOptions> = {}) =>
+      new GeminiCommandBuilder().buildGeminiCommand(baseOptions({
+        cwd: tmpDir,
+        mcpServerEnabled: true,
+        mcpServerUrl: URL,
+        mcpServerToken: TOKEN,
+        ...overrides,
+      }));
+
+    beforeEach(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kng-gemini-mcp-'));
+    });
+
+    afterEach(() => {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('writes an mcpServers.kangentic entry using the Gemini-fork httpUrl key', () => {
+      // Verified against gemini 0.54.4: `httpUrl` + `headers` connects.
+      // Claude's `url` convention is NOT the Gemini-family spelling.
+      build();
+      expect(readSettings().mcpServers).toEqual({
+        kangentic: {
+          httpUrl: URL,
+          headers: { 'X-Kangentic-Token': TOKEN },
+        },
+      });
+    });
+
+    it('writes the settings file for an MCP-only spawn with no eventsOutputPath', () => {
+      // Regression: createMergedSettings used to be gated on eventsOutputPath
+      // alone and returned early without it, so MCP config was never written.
+      build();
+      expect(fs.existsSync(settingsFile())).toBe(true);
+    });
+
+    it('preserves user-defined mcpServers alongside the kangentic entry', () => {
+      fs.mkdirSync(path.join(tmpDir, '.gemini'), { recursive: true });
+      fs.writeFileSync(
+        settingsFile(),
+        JSON.stringify({ mcpServers: { context7: { httpUrl: 'http://example.test/mcp' } } }),
+      );
+      // projectRoot is where base settings are READ from.
+      build({ projectRoot: tmpDir });
+      const written = readSettings().mcpServers;
+      expect(written.context7).toEqual({ httpUrl: 'http://example.test/mcp' });
+      expect(written.kangentic).toBeDefined();
+    });
+
+    it('omits the entry when mcpServerEnabled is false', () => {
+      build({ mcpServerEnabled: false });
+      expect(fs.existsSync(settingsFile())).toBe(false);
+    });
+
+    it('omits the entry when the url or token is missing', () => {
+      build({ mcpServerUrl: undefined });
+      expect(fs.existsSync(settingsFile())).toBe(false);
+      build({ mcpServerToken: undefined });
+      expect(fs.existsSync(settingsFile())).toBe(false);
+    });
+
+    it('removeHooks strips the entry so no token is left on disk', () => {
+      build();
+      expect(fs.readFileSync(settingsFile(), 'utf-8')).toContain(TOKEN);
+      removeHooks(tmpDir);
+      // With nothing else in it the whole file is removed; if a user had
+      // other settings it survives, minus our entry. Either way the token
+      // must be gone.
+      const remaining = fs.existsSync(settingsFile())
+        ? fs.readFileSync(settingsFile(), 'utf-8')
+        : '';
+      expect(remaining).not.toContain(TOKEN);
+    });
+
+    it('removeHooks leaves user-defined mcpServers intact', () => {
+      fs.mkdirSync(path.join(tmpDir, '.gemini'), { recursive: true });
+      fs.writeFileSync(
+        settingsFile(),
+        JSON.stringify({ mcpServers: { context7: { httpUrl: 'http://example.test/mcp' } } }),
+      );
+      build({ projectRoot: tmpDir });
+      removeHooks(tmpDir);
+      expect(readSettings().mcpServers).toEqual({
+        context7: { httpUrl: 'http://example.test/mcp' },
+      });
     });
   });
 

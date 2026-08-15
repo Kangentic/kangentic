@@ -637,7 +637,12 @@ export class WorktreeManager {
     // killed PTY may still be held, and rmSync fails with EPERM.
     let reuseEmptyHusk = false;
     if (fs.existsSync(worktreePath)) {
-      const removed = await this.removeWorktree(worktreePath);
+      // Internal, deliberately: this clears a stale husk so a fresh worktree
+      // can be created at the SAME path. The worktree-removed listener means
+      // "this path no longer holds a worktree", which is not true a moment
+      // later here, so it must not fire (Codex would drop the directory's
+      // trust table immediately before the new worktree starts using it).
+      const removed = await this.removeWorktreeInternal(worktreePath);
       if (!removed) {
         // The directory could not be deleted. On Windows a process holding it
         // as its current directory (an agent terminal, an open editor, the
@@ -844,6 +849,21 @@ export class WorktreeManager {
    * startup retry pass (`retryFailedDoneCleanups`).
    */
   async removeWorktree(
+    worktreePath: string,
+    options?: { timeoutMs?: number; removalProfile?: WorktreeRemovalProfile },
+  ): Promise<boolean> {
+    const removed = await this.removeWorktreeInternal(worktreePath, options);
+    // Single notification point for the whole app. There are seven call sites
+    // for worktree removal (Done move, task delete, archive, MCP delete,
+    // project close, startup retry, branch-switch cleanup), and they are
+    // hand-copied rather than routed through one helper - notifying at each
+    // one is how a leak gets shipped, which is exactly what happened to the
+    // MCP delete path. Notifying HERE is unmissable by construction.
+    if (removed) await notifyWorktreeRemoved(worktreePath);
+    return removed;
+  }
+
+  private async removeWorktreeInternal(
     worktreePath: string,
     options?: { timeoutMs?: number; removalProfile?: WorktreeRemovalProfile },
   ): Promise<boolean> {
@@ -1069,4 +1089,49 @@ export async function prepareWorktreeForRemoval(
     removeOptions: REMOVAL_PROFILE_OPTIONS[profile],
   });
   console.log(`[WORKTREE] remove step=node-modules done in ${Date.now() - nodeModulesStartedAt}ms`);
+}
+
+// ---------------------------------------------------------------------------
+// Worktree-removed listener
+// ---------------------------------------------------------------------------
+
+/**
+ * Notified once per successful worktree removal, from the single chokepoint in
+ * `WorktreeManager.removeWorktree`.
+ *
+ * The contract is "this path no longer holds a worktree", NOT "a live worktree
+ * was just deleted": removal succeeds trivially for a path that was already
+ * gone, and the startup retry pass fires it for exactly that case. A listener
+ * must therefore be idempotent and safe on an absent directory. It is also not
+ * called for the husk clear inside `createWorktree`, where the path is about to
+ * be reused.
+ *
+ * Registered by the main process at startup rather than imported here, so this
+ * low-level git module keeps its dependency direction: it must not reach into
+ * the agent registry (and the resulting import cycle) just to announce that a
+ * directory is gone.
+ *
+ * The consumer is per-directory state an agent CLI keeps in a GLOBAL config
+ * file, which nothing else would ever clean up. Codex is the motivating case:
+ * its directory trust lives in `~/.codex/config.toml` keyed by path and is not
+ * inherited by subdirectories, so Kangentic writes one entry per task worktree
+ * and would otherwise leave one dead entry behind per task, forever.
+ */
+type WorktreeRemovedListener = (worktreePath: string) => Promise<void>;
+
+let worktreeRemovedListener: WorktreeRemovedListener | null = null;
+
+export function setWorktreeRemovedListener(listener: WorktreeRemovedListener | null): void {
+  worktreeRemovedListener = listener;
+}
+
+async function notifyWorktreeRemoved(worktreePath: string): Promise<void> {
+  if (!worktreeRemovedListener) return;
+  try {
+    await worktreeRemovedListener(worktreePath);
+  } catch (error) {
+    // Best-effort: the worktree is already gone, and a failure here only
+    // leaves a stale entry behind. It must never fail the removal.
+    console.warn('[WORKTREE] worktree-removed listener failed (non-fatal):', error);
+  }
 }

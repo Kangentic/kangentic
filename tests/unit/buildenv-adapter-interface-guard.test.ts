@@ -1,13 +1,21 @@
 /**
- * Interface-contract guard: only OpenCode should implement AgentAdapter.buildEnv.
+ * Interface-contract guard: only the adapters that genuinely need it should
+ * implement AgentAdapter.buildEnv.
  *
- * Every other adapter wires MCP via a CLI flag (Claude: --mcp-config) or a
- * settings file (Codex/Gemini: hooks injection). Adding buildEnv to those
- * adapters by mistake would silently double-inject MCP config. This test
- * catches that regression immediately by iterating all registered adapters.
+ * Three adapters do, for different reasons. OpenCode delivers its ENTIRE MCP
+ * config via OPENCODE_CONFIG_CONTENT because its CLI has no MCP flag at all.
+ * Codex delivers only the TOKEN via KANGENTIC_MCP_TOKEN, paired with a
+ * `-c mcp_servers.kangentic.env_http_headers` override in the command, so the
+ * secret never appears in argv (argv is echoed into terminal scrollback).
+ * Droid also delivers only the token: its project `.factory/mcp.json` holds
+ * the literal `${KANGENTIC_MCP_TOKEN}`, which Droid expands at connect time,
+ * keeping the secret out of a file that lives inside the user's repo.
+ * Every other adapter passes its MCP config by flag or settings file, and
+ * adding buildEnv to one of those by mistake would silently double-inject.
+ * This test catches that regression by iterating all registered adapters.
  *
- * If a new adapter legitimately needs buildEnv, add its name to ADAPTERS_WITH_BUILDENV
- * below and document why.
+ * If a new adapter legitimately needs buildEnv, add its name to
+ * ADAPTERS_WITH_BUILDENV below and document why.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -15,13 +23,12 @@ import { agentRegistry } from '../../src/main/agent/agent-registry';
 
 /**
  * Exhaustive list of adapter names that are EXPECTED to implement buildEnv.
- * Currently only OpenCode delivers MCP config via an env var because it has
- * no --mcp-config CLI flag and no shared settings-file hook system.
+ * See the file docstring for why each one is here.
  */
-const ADAPTERS_WITH_BUILDENV: ReadonlySet<string> = new Set(['opencode']);
+const ADAPTERS_WITH_BUILDENV: ReadonlySet<string> = new Set(['opencode', 'codex', 'droid']);
 
 describe('AgentAdapter.buildEnv interface guard', () => {
-  it('only opencode implements buildEnv - all other adapters must not have it', () => {
+  it('exactly the adapters in ADAPTERS_WITH_BUILDENV implement buildEnv', () => {
     const allAdapterNames = agentRegistry.list();
 
     // Sanity: the registry must have at least one adapter registered.
@@ -45,7 +52,7 @@ describe('AgentAdapter.buildEnv interface guard', () => {
     if (unexpectedAdapters.length > 0) {
       throw new Error(
         `Unexpected adapters with buildEnv: ${unexpectedAdapters.join(', ')}. `
-        + `If this adapter intentionally delivers MCP via env var, add it to ADAPTERS_WITH_BUILDENV in this test.`,
+        + `If this adapter intentionally delivers MCP config or its token via env var, add it to ADAPTERS_WITH_BUILDENV in this test.`,
       );
     }
 
@@ -57,21 +64,25 @@ describe('AgentAdapter.buildEnv interface guard', () => {
     }
   });
 
-  it('opencode.buildEnv is callable', () => {
-    const opencodeAdapter = agentRegistry.get('opencode');
-    expect(opencodeAdapter).toBeDefined();
-    expect(typeof opencodeAdapter?.buildEnv).toBe('function');
+  it('every adapter in ADAPTERS_WITH_BUILDENV exposes a callable buildEnv', () => {
+    for (const adapterName of ADAPTERS_WITH_BUILDENV) {
+      const adapter = agentRegistry.get(adapterName);
+      expect(adapter, `Adapter "${adapterName}" is not registered`).toBeDefined();
+      expect(typeof adapter?.buildEnv).toBe('function');
+    }
   });
 
-  it('all non-opencode adapters have buildEnv === undefined', () => {
+  it('every adapter outside ADAPTERS_WITH_BUILDENV has buildEnv === undefined', () => {
     const allAdapterNames = agentRegistry.list();
-    const nonOpenCodeNames = allAdapterNames.filter((adapterName) => adapterName !== 'opencode');
+    const otherNames = allAdapterNames.filter(
+      (adapterName) => !ADAPTERS_WITH_BUILDENV.has(adapterName),
+    );
 
-    for (const adapterName of nonOpenCodeNames) {
+    for (const adapterName of otherNames) {
       const adapter = agentRegistry.get(adapterName)!;
       expect(
         adapter.buildEnv,
-        `Adapter "${adapterName}" unexpectedly implements buildEnv - MCP for this adapter should use --mcp-config or settings-file injection, not env vars`,
+        `Adapter "${adapterName}" unexpectedly implements buildEnv - MCP for this adapter should use flag or settings-file injection, not env vars`,
       ).toBeUndefined();
     }
   });

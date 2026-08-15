@@ -574,4 +574,20 @@ export interface AgentAdapter {
    */
   onProjectRelocated?(oldPath: string, newPath: string): Promise<void>;
 
+  /**
+   * Drop any per-directory state this adapter recorded for a worktree that
+   * Kangentic has just deleted.
+   *
+   * Kangentic creates a worktree per task and removes it when the task
+   * finishes, so an adapter that writes a per-directory entry to a global
+   * config file would otherwise accumulate one dead entry per task forever.
+   * Codex is the case that forced this: its directory trust lives in
+   * `~/.codex/config.toml` keyed by path, is not inherited by subdirectories,
+   * and therefore has to be written per worktree.
+   *
+   * Best-effort and never fatal: the worktree is already gone by the time this
+   * runs, and a failure only leaves a stale entry behind.
+   */
+  onWorktreeRemoved?(worktreePath: string): Promise<void>;
+
 }

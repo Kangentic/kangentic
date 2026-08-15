@@ -7,9 +7,29 @@ import { buildHooks } from './hook-manager';
 import type { GeminiHookEntry } from './hook-manager';
 import type { PermissionMode } from '../../../../shared/types';
 
+/**
+ * Single gate for the Kangentic MCP entry, shared by the "should we write the
+ * settings file at all" check and the block that builds the entry. Keeping one
+ * predicate is what stops the two from drifting into a state where the file is
+ * written with no MCP entry in it (or vice versa). Same shape as
+ * `codexMcpWiringEnabled` / `droidMcpWiringEnabled`.
+ *
+ * Default-on: only an explicit `false` suppresses it.
+ */
+function geminiMcpWiringEnabled(
+  options: GeminiCommandOptions,
+): options is GeminiCommandOptions & { mcpServerUrl: string; mcpServerToken: string } {
+  return (
+    options.mcpServerEnabled !== false
+    && Boolean(options.mcpServerUrl)
+    && Boolean(options.mcpServerToken)
+  );
+}
+
 /** Gemini-specific subset of settings.json that we read/write. */
 interface GeminiSettings {
   hooks?: Record<string, GeminiHookEntry[]>;
+  mcpServers?: Record<string, unknown>;
   [key: string]: unknown;
 }
 
@@ -46,8 +66,9 @@ export class GeminiCommandBuilder {
     const { shell } = options;
     const parts = [quoteArg(options.geminiPath, shell)];
 
-    // Write merged settings with event-bridge hooks when we have output paths
-    if (options.eventsOutputPath) {
+    // Write merged settings with event-bridge hooks and / or the Kangentic
+    // MCP server entry.
+    if (this.shouldWriteMergedSettings(options)) {
       this.createMergedSettings(options);
     }
 
@@ -108,8 +129,11 @@ export class GeminiCommandBuilder {
     let baseSettings: GeminiSettings = {};
     const projectSettingsPath = path.join(projectRoot, '.gemini', 'settings.json');
     try {
-      const raw = fs.readFileSync(projectSettingsPath, 'utf-8');
-      baseSettings = JSON.parse(raw);
+      const parsed = JSON.parse(fs.readFileSync(projectSettingsPath, 'utf-8'));
+      // A settings.json that parses to an array or a scalar would spread into
+      // the merged object as index keys, so only take a plain object. Same
+      // guard the Droid adapter applies to its own config read.
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) baseSettings = parsed;
     } catch {
       // No existing settings - start fresh
     }
@@ -118,10 +142,15 @@ export class GeminiCommandBuilder {
     return structuredClone(baseSettings);
   }
 
+  private shouldWriteMergedSettings(options: GeminiCommandOptions): boolean {
+    return Boolean(options.eventsOutputPath) || geminiMcpWiringEnabled(options);
+  }
+
   /**
-   * Create a merged Gemini settings file that includes event-bridge hooks.
-   * Writes to `.gemini/settings.json` in the cwd since Gemini CLI reads
-   * settings from the project directory (no --settings flag available).
+   * Create a merged Gemini settings file that includes event-bridge hooks
+   * and / or the Kangentic MCP server entry. Writes to
+   * `.gemini/settings.json` in the cwd since Gemini CLI reads settings from
+   * the project directory (no --settings flag available).
    *
    * Gemini has no --settings flag, so hooks live in a project-shared file.
    * Concurrent sessions in the same cwd are serialized by GeminiAdapter's
@@ -129,19 +158,49 @@ export class GeminiCommandBuilder {
    * removeHooks() only strips the file when the count drops to zero. The
    * isKangenticHook() guard prevents affecting user-defined hooks. On crash
    * / force-quit, stripping on the next spawn (buildHooks) cleans up.
+   *
+   * MCP server entry: Gemini natively supports inline `mcpServers` in
+   * settings.json. Verified against gemini 0.54.4 that the Gemini-fork
+   * `httpUrl` key (not the Anthropic/fastmcp `url` used by Claude/Kimi)
+   * plus a `headers` map connects to the in-process MCP HTTP server. This
+   * matches the sibling Qwen fork's wiring exactly. User-defined
+   * `mcpServers` are preserved via spread.
+   *
+   * Security trade-off (identical to Qwen's): `.gemini/settings.json` is
+   * project-shared and may be intentionally committed, so it cannot be
+   * blanket-gitignored like `.kangentic/`. The injected token is therefore
+   * plaintext on disk during the active session. Mitigations: tokens
+   * rotate per app launch (see `mcp-http-server.ts`), and `removeHooks()`
+   * strips the entry on session exit / suspend. Consequence: do not commit
+   * `.gemini/settings.json` while a Kangentic-spawned Gemini session runs.
+   *
+   * That strip does NOT run on app quit: the synchronous shutdown path
+   * disposes each session's PTY listeners before killing it, precisely so no
+   * handler fires on a later tick, and `removeHooks` only runs from the exit
+   * handler. What is left behind is a token whose server died with the app,
+   * so the residue is a stale entry rather than a live credential.
    */
   private createMergedSettings(options: GeminiCommandOptions): void {
     const projectRoot = options.projectRoot || options.cwd;
     const baseSettings = this.readBaseSettings(projectRoot);
 
     const eventsPath = options.eventsOutputPath ? toForwardSlash(options.eventsOutputPath) : null;
-    if (!eventsPath) return;
+    const merged: GeminiSettings = { ...baseSettings };
 
-    const eventBridge = toForwardSlash(resolveBridgeScript('event-bridge'));
-    const merged: GeminiSettings = {
-      ...baseSettings,
-      hooks: buildHooks(eventBridge, eventsPath, baseSettings.hooks || {}),
-    };
+    if (eventsPath) {
+      const eventBridge = toForwardSlash(resolveBridgeScript('event-bridge'));
+      merged.hooks = buildHooks(eventBridge, eventsPath, baseSettings.hooks || {});
+    }
+
+    if (geminiMcpWiringEnabled(options)) {
+      merged.mcpServers = {
+        ...(baseSettings.mcpServers ?? {}),
+        kangentic: {
+          httpUrl: options.mcpServerUrl,
+          headers: { 'X-Kangentic-Token': options.mcpServerToken },
+        },
+      };
+    }
 
     // Write merged settings into the cwd's .gemini/settings.json
     const geminiDir = path.join(options.cwd, '.gemini');
@@ -154,7 +213,10 @@ export class GeminiCommandBuilder {
 
     const settingsPath = path.join(geminiDir, 'settings.json');
     fs.writeFileSync(settingsPath, JSON.stringify(merged, null, 2));
-    console.log(`[gemini] Wrote hooks to ${settingsPath} (${Object.keys(merged.hooks || {}).length} event types, events -> ${eventsPath})`);
+
+    const hookCount = Object.keys(merged.hooks || {}).length;
+    const mcpCount = Object.keys(merged.mcpServers || {}).length;
+    console.log(`[gemini] Wrote settings to ${settingsPath} (${hookCount} hook event types, ${mcpCount} mcp servers, events -> ${eventsPath ?? 'none'})`);
   }
 }
 

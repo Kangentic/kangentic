@@ -5,6 +5,7 @@ import { CodexSessionHistoryParser } from './session-history-parser';
 import { createCodexCommandInjectionVerifier } from './command-injection-verifier';
 import { parseCodexTranscript, locateCodexTranscriptFile } from './transcript-parser';
 import { migrateCodexProjectData } from './project-relocation';
+import { ensureWorktreeTrust, removeWorktreeTrust } from './trust-manager';
 import { CodexStatusParser } from './status-parser';
 import { discoverCodexCapabilities } from './capability-discovery';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
@@ -67,8 +68,13 @@ export class CodexAdapter implements AgentAdapter {
     this.detector.invalidateCache();
   }
 
-  async ensureTrust(_workingDirectory: string): Promise<void> {
-    // Codex does not have a trust dialog - no pre-approval needed.
+  async ensureTrust(workingDirectory: string): Promise<void> {
+    // Codex DOES have a directory-trust dialog (this was previously
+    // documented here as a no-op because it was believed not to). Because
+    // trust is keyed on the git repo root and every task gets its own
+    // worktree, the user would otherwise be prompted on EVERY task with no
+    // answer that carries forward. See trust-manager.ts.
+    await ensureWorktreeTrust(workingDirectory);
   }
 
   buildCommand(options: SpawnCommandOptions): string {
@@ -88,6 +94,23 @@ export class CodexAdapter implements AgentAdapter {
       this.retainHooks(projectRoot, options.taskId);
     }
     return command;
+  }
+
+  /**
+   * Delivers the Kangentic MCP token to the Codex process via the environment
+   * rather than argv. The companion `-c mcp_servers.kangentic.env_http_headers`
+   * override in the built command names this variable; Codex resolves it at
+   * MCP-connect time. See `KANGENTIC_MCP_TOKEN_ENV` in command-builder.ts for
+   * why the token must not appear on the command line.
+   */
+  buildEnv(options: SpawnCommandOptions): Record<string, string> | null {
+    const { agentPath, model, effort, ...rest } = options;
+    return this.commandBuilder.buildCodexEnv({
+      codexPath: agentPath,
+      model,
+      effort,
+      ...rest,
+    });
   }
 
   private retainHooks(directory: string, taskId: string): void {
@@ -271,6 +294,16 @@ export class CodexAdapter implements AgentAdapter {
       prompt: buildSummarizePrompt(prompt),
       cwd,
     });
+  }
+
+  /**
+   * Codex trust is keyed per directory and cannot be inherited, so Kangentic
+   * writes one entry per task worktree. Dropping it here is what keeps
+   * `~/.codex/config.toml` tracking live worktrees instead of growing by one
+   * dead table per task, forever.
+   */
+  async onWorktreeRemoved(worktreePath: string): Promise<void> {
+    await removeWorktreeTrust(worktreePath);
   }
 
   /**

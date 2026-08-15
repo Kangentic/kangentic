@@ -310,6 +310,24 @@ describe('CopilotCommandBuilder', () => {
       });
       expect(command).not.toContain('--additional-mcp-config');
     });
+
+    it('passes --additional-mcp-config in non-interactive mode', () => {
+      // Regression: the nonInteractive branch returns early, and the MCP
+      // block used to sit below it, so every non-interactive Copilot spawn
+      // silently lost the Kangentic MCP server.
+      const eventsOutputPath = path.join(tmpDir, 'events.jsonl');
+      const command = buildCommand({
+        eventsOutputPath,
+        nonInteractive: true,
+        prompt: 'do the thing',
+        mcpServerEnabled: true,
+        mcpServerUrl: 'http://127.0.0.1:5555/mcp/project-123',
+        mcpServerToken: 'secret-token',
+      });
+      expect(command).toContain('--additional-mcp-config');
+      expect(command).toContain('copilot-mcp.json');
+      expect(fs.existsSync(path.join(tmpDir, 'copilot-mcp.json'))).toBe(true);
+    });
   });
 
   // ── interpolateTemplate ──────────────────────────────────────────────────
