@@ -31,7 +31,11 @@ vi.mock('node:os', async () => {
   };
 });
 
-import { ensureGeminiWorktreeTrust } from '../../src/main/agent/adapters/gemini';
+import {
+  ensureGeminiWorktreeTrust,
+  removeGeminiWorktreeTrust,
+  GeminiAdapter,
+} from '../../src/main/agent/adapters/gemini';
 
 function trustedFoldersPath(): string {
   return path.join(tmpHome, '.gemini', 'trustedFolders.json');
@@ -150,5 +154,87 @@ describe('ensureGeminiWorktreeTrust', () => {
     fs.writeFileSync(trustedFoldersPath(), 'not json at all');
     await ensureGeminiWorktreeTrust('/repo/worktree');
     expect(Object.values(readTrustedFolders())).toEqual(['TRUST_FOLDER']);
+  });
+});
+
+describe('GeminiAdapter.ensureTrust', () => {
+  // GeminiAdapter.ensureTrust used to be documented as a no-op ("Gemini CLI
+  // does not have a trust/directory-approval system"). This diff makes it a
+  // real delegate to ensureGeminiWorktreeTrust, above. The describe block
+  // above tests that function directly; this proves the ADAPTER method is
+  // actually wired to it - CodexAdapter got the equivalent assertion in
+  // codex-adapter.test.ts's "records directory trust..." test, and nothing
+  // else in the suite calls GeminiAdapter.ensureTrust at all.
+  //
+  // Reuses this file's top-level os.homedir() mock and tmpHome sandbox
+  // (beforeEach/afterEach above) rather than adding a new one: Gemini's
+  // trust-manager has no CODEX_HOME-style env override, so writing this test
+  // anywhere without that mock would pollute the developer's real
+  // ~/.gemini/trustedFolders.json.
+  it('delegates to ensureGeminiWorktreeTrust so a spawn does not stop on the trust prompt', async () => {
+    const adapter = new GeminiAdapter();
+    const worktree = path.join(tmpHome, 'project', '.kangentic', 'worktrees', '1');
+
+    await expect(adapter.ensureTrust(worktree)).resolves.toBeUndefined();
+
+    const resolvedWorktree = path.resolve(worktree).replace(/\\/g, '/');
+    expect(Object.keys(readTrustedFolders())).toEqual([resolvedWorktree]);
+    expect(readTrustedFolders()[resolvedWorktree]).toBe('TRUST_FOLDER');
+  });
+});
+
+describe('removeGeminiWorktreeTrust', () => {
+  // When no ancestor is already trusted, ensureTrust writes one key per task
+  // worktree. Without removal on cleanup the file grows by a dead entry per
+  // task forever - the same accumulation that reached 473 entries in Codex's
+  // config.toml before its equivalent cleanup existed.
+  const WORKTREE = path.join(path.resolve('/repo'), '.kangentic', 'worktrees', '3');
+
+  it('drops the entry for a removed worktree', async () => {
+    await ensureGeminiWorktreeTrust(WORKTREE);
+    expect(Object.keys(readTrustedFolders())).toHaveLength(1);
+
+    await removeGeminiWorktreeTrust(WORKTREE);
+    expect(Object.keys(readTrustedFolders())).toHaveLength(0);
+  });
+
+  it('does not grow the file across repeated create/remove cycles', async () => {
+    for (let taskIndex = 0; taskIndex < 25; taskIndex += 1) {
+      const worktree = path.join(path.resolve('/repo'), '.kangentic', 'worktrees', String(taskIndex));
+      await ensureGeminiWorktreeTrust(worktree);
+      await removeGeminiWorktreeTrust(worktree);
+    }
+    expect(Object.keys(readTrustedFolders())).toHaveLength(0);
+  });
+
+  it('leaves other projects untouched', async () => {
+    writeTrustedFolders({ '/other/project': 'TRUST_FOLDER' });
+    await ensureGeminiWorktreeTrust(WORKTREE);
+    await removeGeminiWorktreeTrust(WORKTREE);
+    expect(readTrustedFolders()['/other/project']).toBe('TRUST_FOLDER');
+  });
+
+  it('never removes a user decision', async () => {
+    // TRUST_PARENT / DO_NOT_TRUST are the user's, not ours: a later worktree
+    // at the same path must still honor them.
+    for (const level of ['TRUST_PARENT', 'DO_NOT_TRUST']) {
+      writeTrustedFolders({ [WORKTREE]: level });
+      await removeGeminiWorktreeTrust(WORKTREE);
+      expect(readTrustedFolders()[WORKTREE]).toBe(level);
+    }
+  });
+
+  it('is a no-op when there is no file or no matching entry', async () => {
+    await expect(removeGeminiWorktreeTrust(WORKTREE)).resolves.toBeUndefined();
+    writeTrustedFolders({ '/other/project': 'TRUST_FOLDER' });
+    await removeGeminiWorktreeTrust(WORKTREE);
+    expect(readTrustedFolders()['/other/project']).toBe('TRUST_FOLDER');
+  });
+
+  it('is wired to the adapter via onWorktreeRemoved', async () => {
+    const adapter = new GeminiAdapter();
+    await ensureGeminiWorktreeTrust(WORKTREE);
+    await adapter.onWorktreeRemoved(WORKTREE);
+    expect(Object.keys(readTrustedFolders())).toHaveLength(0);
   });
 });

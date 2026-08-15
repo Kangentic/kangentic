@@ -328,6 +328,67 @@ describe('CopilotCommandBuilder', () => {
       expect(command).toContain('copilot-mcp.json');
       expect(fs.existsSync(path.join(tmpDir, 'copilot-mcp.json'))).toBe(true);
     });
+
+    // --- Flag-order invariant ---
+    //
+    // This is a STRUCTURAL claim about command-builder.ts, not a claim about
+    // how the Copilot CLI's parser handles flag order (unverified, unlike
+    // Codex's documented `codex [OPTIONS] [PROMPT]` grammar). What the prior
+    // tests above prove is that --additional-mcp-config is PRESENT in
+    // non-interactive mode; they do not prove it stayed ahead of the
+    // `nonInteractive` early return that used to make it disappear entirely.
+    // A future edit could reintroduce the same bug in a subtler form -
+    // hoisting `-p`/`-i` above the MCP block, or splitting buildMcpConfigArgs
+    // across both branches - without any of the existing assertions
+    // noticing, because `toContain` alone cannot see where in the string the
+    // flag landed. Pinning the position keeps that regression class caught.
+    //
+    // shell: 'bash' pinned explicitly per the command-builder test convention
+    // (CI runs unit tests on Linux; quoteArg's own quote character is
+    // platform-dependent, but flag ORDER is not, so any fixed shell proves
+    // the invariant).
+
+    // Exact-token matching (split on whitespace, look for the whole flag)
+    // rather than command.indexOf('-i' / '-p'): the temp mcp-config path
+    // embedded later in the command is not guaranteed free of a "-i"
+    // substring, which would make a plain indexOf comparison flaky.
+    const flagTokenIndex = (command: string, flag: string): number =>
+      command.split(' ').indexOf(flag);
+
+    it('emits --additional-mcp-config before -p in non-interactive mode', () => {
+      const eventsOutputPath = path.join(tmpDir, 'events.jsonl');
+      const command = buildCommand({
+        eventsOutputPath,
+        shell: 'bash',
+        nonInteractive: true,
+        prompt: 'do the thing',
+        mcpServerEnabled: true,
+        mcpServerUrl: 'http://127.0.0.1:5555/mcp/project-123',
+        mcpServerToken: 'secret-token',
+      });
+      const mcpFlagIndex = flagTokenIndex(command, '--additional-mcp-config');
+      const promptFlagIndex = flagTokenIndex(command, '-p');
+      expect(mcpFlagIndex).toBeGreaterThan(-1);
+      expect(promptFlagIndex).toBeGreaterThan(-1);
+      expect(mcpFlagIndex).toBeLessThan(promptFlagIndex);
+    });
+
+    it('emits --additional-mcp-config before -i in interactive mode', () => {
+      const eventsOutputPath = path.join(tmpDir, 'events.jsonl');
+      const command = buildCommand({
+        eventsOutputPath,
+        shell: 'bash',
+        prompt: 'do the thing',
+        mcpServerEnabled: true,
+        mcpServerUrl: 'http://127.0.0.1:5555/mcp/project-123',
+        mcpServerToken: 'secret-token',
+      });
+      const mcpFlagIndex = flagTokenIndex(command, '--additional-mcp-config');
+      const promptFlagIndex = flagTokenIndex(command, '-i');
+      expect(mcpFlagIndex).toBeGreaterThan(-1);
+      expect(promptFlagIndex).toBeGreaterThan(-1);
+      expect(mcpFlagIndex).toBeLessThan(promptFlagIndex);
+    });
   });
 
   // ── interpolateTemplate ──────────────────────────────────────────────────

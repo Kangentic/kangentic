@@ -1,7 +1,7 @@
 import { GeminiDetector } from './detector';
 import { GeminiCommandBuilder } from './command-builder';
 import { removeHooks as removeGeminiHooks } from './hook-manager';
-import { ensureWorktreeTrust } from './trust-manager';
+import { ensureWorktreeTrust, removeWorktreeTrust } from './trust-manager';
 import { GeminiSessionHistoryParser } from './session-history-parser';
 import { parseGeminiTranscript, locateGeminiTranscriptFile } from './transcript-parser';
 import { migrateGeminiProjectData } from './project-relocation';
@@ -57,6 +57,15 @@ export class GeminiAdapter implements AgentAdapter {
     // worktree is what makes the Kangentic MCP entry take effect. See
     // trust-manager.ts.
     await ensureWorktreeTrust(workingDirectory);
+  }
+
+  /**
+   * When no ancestor is already trusted, `ensureTrust` records one entry per
+   * task worktree, so `~/.gemini/trustedFolders.json` needs the same cleanup
+   * Codex's `config.toml` does or it grows by a dead entry per task forever.
+   */
+  async onWorktreeRemoved(worktreePath: string): Promise<void> {
+    await removeWorktreeTrust(worktreePath);
   }
 
   buildCommand(options: SpawnCommandOptions): string {

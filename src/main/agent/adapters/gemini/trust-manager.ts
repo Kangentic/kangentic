@@ -85,6 +85,56 @@ function ensureWorktreeTrustSync(worktreePath: string): void {
 }
 
 /**
+ * Drop the trust entry for a worktree Kangentic has just deleted.
+ *
+ * Symmetric with Codex's `removeWorktreeTrust`, and needed for the same
+ * reason: when no ancestor is already trusted, `ensureWorktreeTrust` writes
+ * one key per task worktree, so without this the file grows by one dead entry
+ * per task forever. (Codex's equivalent leak reached 473 entries on one
+ * machine before it was noticed.)
+ *
+ * Only an entry we could have written ourselves is removed. `TRUST_PARENT`
+ * and `DO_NOT_TRUST` are user decisions and are left in place even though the
+ * directory is gone, so a later worktree at the same path still honors them.
+ */
+export async function removeWorktreeTrust(worktreePath: string): Promise<void> {
+  return withGeminiTrustLock(() => removeWorktreeTrustSync(worktreePath));
+}
+
+function removeWorktreeTrustSync(worktreePath: string): void {
+  const geminiDir = path.join(os.homedir(), '.gemini');
+  const trustedFoldersPath = path.join(geminiDir, 'trustedFolders.json');
+  const resolvedPath = resolveForwardSlash(worktreePath);
+
+  let entries: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(trustedFoldersPath, 'utf-8'));
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return;
+    entries = parsed as Record<string, unknown>;
+  } catch {
+    return;
+  }
+
+  // Keys are stored in mixed styles, so match on the normalized form rather
+  // than the raw string, the same way the ancestor checks below do.
+  const target = normalizeForCompare(resolvedPath);
+  const doomed = Object.keys(entries).filter(
+    (key) => entries[key] === 'TRUST_FOLDER' && normalizeForCompare(key) === target,
+  );
+  if (doomed.length === 0) return;
+
+  for (const key of doomed) delete entries[key];
+
+  try {
+    fs.writeFileSync(trustedFoldersPath, JSON.stringify(entries, null, 2), 'utf-8');
+  } catch (error) {
+    // Best-effort: the worktree is already gone, so a failure only leaves a
+    // stale entry behind. It must never fail the cleanup.
+    console.error('[gemini] Failed to drop folder trust for a removed worktree', error);
+  }
+}
+
+/**
  * Fold a stored key or a lookup path into a comparable form.
  *
  * Keys are stored in mixed styles (native backslashes from one code path,

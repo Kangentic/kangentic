@@ -610,6 +610,44 @@ describe('Codex Adapter', () => {
     });
   });
 
+  describe('onWorktreeRemoved', () => {
+    // Same CODEX_HOME sandboxing as the ensureTrust block above - this writes
+    // to and reads back the same config.toml. Codex trust is keyed per
+    // directory and cannot be inherited, so a worktree Kangentic deletes must
+    // have its trust table dropped or ~/.codex/config.toml accumulates one
+    // dead entry per task forever (463 entries on one developer machine
+    // before this existed - see codex-trust-manager.test.ts).
+    //
+    // notify-adapters-worktree-removed.test.ts proves the fan-out calls
+    // whatever `onWorktreeRemoved` a mocked adapter exposes; this proves the
+    // REAL CodexAdapter method is actually wired to removeWorktreeTrust,
+    // which nothing else in the suite exercises together.
+    let trustHome: string;
+    const originalCodexHome = process.env.CODEX_HOME;
+
+    beforeEach(() => {
+      trustHome = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-adapter-trust-removed-'));
+      process.env.CODEX_HOME = trustHome;
+    });
+
+    afterEach(() => {
+      if (originalCodexHome === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = originalCodexHome;
+      fs.rmSync(trustHome, { recursive: true, force: true });
+    });
+
+    it('drops the trust table recorded by ensureTrust for the same directory', async () => {
+      const worktree = path.join(trustHome, 'project', '.kangentic', 'worktrees', '1');
+      await adapter.ensureTrust(worktree);
+      const configPath = path.join(trustHome, 'config.toml');
+      expect(fs.readFileSync(configPath, 'utf-8')).toContain(`[projects.'${path.resolve(worktree)}']`);
+
+      await expect(adapter.onWorktreeRemoved!(worktree)).resolves.toBeUndefined();
+
+      expect(fs.readFileSync(configPath, 'utf-8')).not.toContain(`[projects.'${path.resolve(worktree)}']`);
+    });
+  });
+
   describe('clearSettingsCache', () => {
     it('is a no-op (does not throw)', () => {
       expect(() => adapter.clearSettingsCache()).not.toThrow();

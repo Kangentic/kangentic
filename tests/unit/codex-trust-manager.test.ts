@@ -156,6 +156,23 @@ describe('ensureCodexWorktreeTrust', () => {
     await ensureCodexWorktreeTrust(PROJECT);
     expect(trustOf(PROJECT)).toBe('trusted');
   });
+
+  it('writes nothing for a path containing a single quote, rather than emitting an unparsable table', async () => {
+    // trust-manager.ts's single-quoted TOML literal cannot represent an
+    // embedded single quote (TOML 1.0 section 3.2 - no escaping inside a
+    // literal string), and reserializing the user's file as a double-quoted
+    // header just to fix this one path is not worth the risk. So the guard
+    // skips the write entirely rather than emitting a header Codex itself
+    // cannot parse. The failure mode being guarded against is worse than a
+    // re-prompt: an unparsable config.toml, not merely a missed trust entry.
+    // Mirrors the sibling emitHeaderValue guard already pinned as "Gap 1" in
+    // codex-project-relocation.test.ts.
+    const apostropheWorktree = path.join(PROJECT, '.kangentic', 'worktrees', "owner's-task");
+
+    await expect(ensureCodexWorktreeTrust(apostropheWorktree)).resolves.toBeUndefined();
+
+    expect(fs.existsSync(configPath())).toBe(false);
+  });
 });
 
 describe('removeCodexWorktreeTrust', () => {
