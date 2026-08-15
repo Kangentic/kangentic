@@ -44,9 +44,9 @@ export function WelcomeChecklistDialog() {
   const defaultModel = currentProject?.default_model ?? null;
   const defaultEffort = currentProject?.default_effort ?? null;
 
-  // Projects that predate this feature have no baseline, and the title-bar button can open
-  // the checklist on any of them. Capture one on first open so steps 1 and 2 start honest
-  // and tick on the next real change. captureOnboardingBaseline is first-write-wins, so
+  // Projects that predate this feature have no baseline, and the Developer tab's dev-only
+  // trigger can open the checklist on any of them. Capture one on first open so steps 1 and 2
+  // start honest and tick on the next real change. captureOnboardingBaseline is first-write-wins, so
   // reopening never re-baselines away progress the user already made.
   useEffect(() => {
     if (!projectId || defaultAgent === null || swimlanes.length === 0) return;

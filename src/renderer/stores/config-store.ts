@@ -59,6 +59,11 @@ interface ConfigStore {
    *  No-op when a baseline already exists, so re-opening the checklist never re-baselines
    *  (which would silently un-tick work the user already did). */
   captureOnboardingBaseline: (projectId: string, baseline: OnboardingBaseline) => void;
+  /** Clear every trace of onboarding for a project so the flow can be walked again from step
+   *  one: the retired flag, the first-write-wins baseline, the session-recorded steps, and any
+   *  live walkthrough. Dev-only re-entry (the Developer settings tab); nothing in the product
+   *  calls it, because for a real user this would erase work they actually did. */
+  resetOnboarding: (projectId: string) => Promise<void>;
   /** Persist the in-app window layout for a project into global config, keyed by
    *  project id and merged in via `config.set` (so it never clobbers other config).
    *  Decoupled from the Settings panel: the window-manager calls this during normal
@@ -132,7 +137,7 @@ interface ConfigStore {
   // -- Onboarding checklist + walkthrough (ephemeral UI state, like settingsOpen) --
   /** Whether the checklist dialog is on screen. Distinct from `onboardedProjectIds`:
    *  that records dismissal, this records "is it currently showing". Reopening from the
-   *  title bar sets this without un-dismissing the project. */
+   *  Developer settings tab sets this without un-dismissing the project. */
   onboardingChecklistOpen: boolean;
   setOnboardingChecklistOpen: (open: boolean) => void;
   /** The checklist step currently being spotlighted, or null when the walkthrough layer
@@ -313,6 +318,35 @@ export const useConfigStore = create<ConfigStore>((set, get) => {
       // rather than merging into it - send every project's entry, not just this one, or
       // the others are dropped. Same contract as saveWorkspaceForProject.
       get().updateConfig({ onboardingBaseline: { ...existing, [projectId]: baseline } });
+    },
+
+    resetOnboarding: async (projectId) => {
+      set((state) => {
+        const remainingSteps = { ...state.onboardingStepsCompleted };
+        delete remainingSteps[projectId];
+        // Dual-write the module mirror, same as markOnboardingStepCompleted: it is what
+        // survives the Fast Refresh that rebuilds this store, so skipping it would let a
+        // reload resurrect the steps this just cleared.
+        onboardingStepsCompletedHmr = remainingSteps;
+        return { onboardingStepsCompleted: remainingSteps, walkthroughStep: null };
+      });
+
+      const existingBaselines = get().config.onboardingBaseline ?? {};
+      const remainingBaselines = { ...existingBaselines };
+      delete remainingBaselines[projectId];
+
+      // AWAITED by the caller before it opens the checklist. The dialog captures a fresh
+      // baseline on mount and that capture is first-write-wins, so opening ahead of this
+      // write landing would let the guard see the OLD baseline and leave steps 1 and 2
+      // ticked - the exact "it only runs once" symptom this exists to fix.
+      await get().updateConfig({
+        onboardedProjectIds: (get().config.onboardedProjectIds ?? [])
+          .filter((candidateId) => candidateId !== projectId),
+        // `onboardingBaseline` is a CONFIG_DICTIONARY_PATH, so this write REPLACES the map
+        // rather than merging into it - send every OTHER project's entry, or they are
+        // dropped. Same contract as captureOnboardingBaseline.
+        onboardingBaseline: remainingBaselines,
+      });
     },
 
     saveWorkspaceForProject: (projectId, workspace) => {

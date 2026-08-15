@@ -440,10 +440,10 @@ export function WalkthroughLayer() {
   if (!step) return null;
   // The checklist and a coach mark are two answers to the same question, and seeing both at
   // once is disorienting - a modal explaining the flow, plus a floating card explaining one
-  // step of it. Not every path that opens the checklist clears the step - the dev-only "Get
-  // started" button in TitleBar reopens it without touching `walkthroughStep` - so this guard
-  // is load-bearing rather than belt-and-braces, and it also rules the state out no matter
-  // which order two competing writes land in.
+  // step of it. Not every path that opens the checklist clears the step - AppLayout's
+  // install-scoped auto-open effect sets `onboardingChecklistOpen` without touching
+  // `walkthroughStep` - so this guard is load-bearing rather than belt-and-braces, and it
+  // also rules the state out no matter which order two competing writes land in.
   if (checklistOpen) return null;
 
   // The way onward. On every step, and it ticks the step off by itself.

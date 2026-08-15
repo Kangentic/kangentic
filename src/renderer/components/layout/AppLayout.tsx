@@ -374,7 +374,9 @@ export function AppLayout() {
   //
   // Accepted trade-off: this forecloses a per-project "reset onboarding" (removing one id from
   // a list that still holds others reads as retired). That is coherent with onboarding being
-  // install-scoped, and the dev-only title-bar button already reopens the checklist by hand.
+  // install-scoped, and the Developer settings tab's dev-only trigger already restarts the
+  // checklist by hand (it clears this project's entry, but auto-open stays gated on the list
+  // being empty overall, so that trigger opens the checklist itself rather than relying on it).
   const autoOpenedProjectIdsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!currentProject || onboardedProjectIds === undefined) return;

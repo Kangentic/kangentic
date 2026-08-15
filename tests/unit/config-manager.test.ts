@@ -710,6 +710,50 @@ describe('Config Manager -- terminal.colors replace semantics', () => {
   });
 });
 
+describe('Config Manager -- onboardingBaseline replace semantics', () => {
+  // The dev-only "Restart checklist" trigger (src/devtools/renderer/DevToolsSections.tsx ->
+  // config-store's resetOnboarding) re-runs onboarding by DROPPING one project's baseline, so
+  // the checklist re-baselines against current settings and steps 1 and 2 read un-ticked again.
+  // That deletion only takes effect because 'onboardingBaseline' is a CONFIG_DICTIONARY_PATHS
+  // entry; under plain deep-merge the dropped key survives and the flow can only ever be
+  // walked once. The UI tier CANNOT cover this: tests/ui/mock-electron-api.js documents that
+  // its deepMerge "always recurses key-by-key and never replaces flat maps", so a map deletion
+  // is invisible there and this is the guard it points to instead.
+  const baselineFor = (agent: string) => ({
+    defaultAgent: agent,
+    defaultModel: null,
+    defaultEffort: null,
+    permissionMode: 'acceptEdits' as const,
+    swimlaneSignature: 'seed',
+  });
+
+  it('dropping one project key clears that baseline and leaves the other projects intact', async () => {
+    const cm = await createConfigManager();
+
+    cm.save({ onboardingBaseline: { 'project-a': baselineFor('claude'), 'project-b': baselineFor('codex') } });
+    expect(Object.keys(cm.load().onboardingBaseline ?? {})).toEqual(['project-a', 'project-b']);
+
+    // What resetOnboarding sends: every OTHER project's entry, with this one removed.
+    cm.save({ onboardingBaseline: { 'project-b': baselineFor('codex') } });
+
+    const afterReset = cm.load();
+    expect(afterReset.onboardingBaseline?.['project-a']).toBeUndefined();
+    expect(afterReset.onboardingBaseline?.['project-b']).toEqual(baselineFor('codex'));
+
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect(raw.onboardingBaseline).not.toHaveProperty('project-a');
+  });
+
+  it('clearing the only project leaves an empty map, not the stale baseline', async () => {
+    const cm = await createConfigManager();
+
+    cm.save({ onboardingBaseline: { 'project-a': baselineFor('claude') } });
+    cm.save({ onboardingBaseline: {} });
+
+    expect(cm.load().onboardingBaseline).toEqual({});
+  });
+});
+
 describe('Config Manager -- monitorWorkspace replace semantics', () => {
   // 'monitorWorkspace' is a CONFIG_DICTIONARY_PATHS entry (config-manager.ts) for the
   // same reason as its sibling 'commandTerminalWorkspace' above: the renderer always

@@ -68,6 +68,34 @@ async function pressEscapeUntilChecklistReturns(page: Page): Promise<void> {
   }, { timeout: 10000 }).toBe(true);
 }
 
+/**
+ * Bring the checklist back without going through the UI.
+ *
+ * The only re-entry affordance is the dev-only "Restart checklist" trigger on the Developer
+ * settings tab, and reaching it puts the Settings panel on screen - which arms the
+ * return-to-checklist effect in AppLayout for any step that counts Settings as its surface,
+ * and changes which layer owns Escape. The tests below reopen the checklist only to read
+ * progress off it, so they drive the setter directly and leave Settings out of it. The
+ * trigger itself is covered end to end by its own test.
+ */
+async function reopenChecklist(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const stores = (window as unknown as {
+      __zustandStores?: { config: { getState: () => { setOnboardingChecklistOpen: (open: boolean) => void } } };
+    }).__zustandStores;
+    stores?.config.getState().setOnboardingChecklistOpen(true);
+  });
+  await expect(page.locator('[data-testid="onboarding-checklist"]')).toBeVisible({ timeout: 5000 });
+}
+
+/** Open Settings and select the dev-only Developer tab, where the checklist's re-entry lives. */
+async function openDeveloperTab(page: Page): Promise<void> {
+  await page.locator('[data-testid="settings-button"]').click();
+  await expect(page.locator('[data-testid="settings-panel"]')).toBeVisible({ timeout: 5000 });
+  await page.locator('[data-testid="settings-tab-list"] button', { hasText: 'Developer' }).click();
+  await expect(page.locator('[data-testid="dev-trigger-onboarding-checklist"]')).toBeVisible();
+}
+
 /** Force a board-store resync after mutating the mock's data directly (the mock has no push). */
 async function resyncBoard(page: Page): Promise<void> {
   await page.evaluate(() => {
@@ -162,15 +190,88 @@ test.describe('Onboarding checklist', () => {
     await expect(checklist).toBeVisible();
   });
 
-  test('the title-bar button reopens it after it was skipped', async () => {
+  test('the Developer settings tab reopens it after it was skipped', async () => {
+    // The only re-entry point. Onboarding retires itself on skip, so without this trigger a
+    // dev session gets one shot at the flow per install.
     ({ browser, page } = await launch());
     await createProjectKeepingChecklist(page, 'walkthrough-reopen');
 
     await page.locator('[data-testid="onboarding-skip"]').click();
     await expect(page.locator('[data-testid="onboarding-checklist"]')).toBeHidden();
 
-    await page.locator('[data-testid="get-started-button"]').click();
-    await expect(page.locator('[data-testid="onboarding-checklist"]')).toBeVisible();
+    await openDeveloperTab(page);
+    // The no-project reason belongs to the disabled state only.
+    await expect(page.locator('text=Open a project first')).toHaveCount(0);
+    await page.locator('[data-testid="dev-trigger-onboarding-checklist"]').click();
+
+    const checklist = page.locator('[data-testid="onboarding-checklist"]');
+    await expect(checklist).toBeVisible();
+    // The trigger opens the checklist OVER Settings rather than closing it, matching the two
+    // updater triggers beside it, so dismissing the checklist lands back where it was clicked.
+    await expect(page.locator('[data-testid="settings-panel"]')).toBeVisible();
+
+    // Both panels are z-50, so the checklist only wins because AppLayout mounts it AFTER
+    // SettingsPanel. toBeVisible cannot see occlusion, so hit-test it: a reorder that put
+    // Settings on top would leave every assertion above green with the checklist buried.
+    await expect.poll(
+      async () => checklist.evaluate((node) => Number(getComputedStyle(node).opacity)),
+      { timeout: 5000 },
+    ).toBe(1);
+    const centreIsChecklist = await checklist.evaluate((node) => {
+      const box = node.getBoundingClientRect();
+      return node.contains(document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2));
+    });
+    expect(centreIsChecklist).toBe(true);
+  });
+
+  test('the Developer trigger is disabled, with a reason, when no project is open', async () => {
+    // Developer is a system tab, so it renders with no project. Firing the setter there would
+    // leave the store flag true behind a dialog that returns null, with nothing on screen to
+    // unset it.
+    ({ browser, page } = await launch());
+
+    await openDeveloperTab(page);
+
+    await expect(page.locator('[data-testid="dev-trigger-onboarding-checklist"]')).toBeDisabled();
+    await expect(page.locator('text=Open a project first')).toBeVisible();
+  });
+
+  test('the Developer trigger restarts the flow from step one, not just reopens it', async () => {
+    // Reopening alone is useless: onboarding retires itself, so the second run showed a
+    // checklist still ticked from the first and the flow could only ever be walked once.
+    //
+    // This covers the RECORDED half (the steps "Next step" stamps, which is how a walked-through
+    // checklist reaches 5 of 5). The other half - dropping the first-write-wins baseline that
+    // keeps steps 1 and 2 ticked - cannot be asserted here: mock-electron-api.js's deepMerge
+    // "never replaces flat maps", so a dictionary-key deletion is invisible to this tier. It is
+    // guarded in tests/unit/config-manager.test.ts ("onboardingBaseline replace semantics").
+    ({ browser, page } = await launch());
+    await createProjectKeepingChecklist(page, 'walkthrough-restart');
+    await expect(page.locator('[data-testid="onboarding-progress"]')).toHaveText('0 of 5 done');
+
+    // Tick two steps the way the walkthrough's "Next step" does.
+    await page.evaluate(() => {
+      const stores = (window as unknown as {
+        __zustandStores?: {
+          config: { getState: () => { markOnboardingStepCompleted: (projectId: string, step: string) => void } };
+          project: { getState: () => { currentProject: { id: string } | null } };
+        };
+      }).__zustandStores;
+      const projectId = stores!.project.getState().currentProject!.id;
+      stores!.config.getState().markOnboardingStepCompleted(projectId, 'defaultsChosen');
+      stores!.config.getState().markOnboardingStepCompleted(projectId, 'taskDetailOpened');
+    });
+    await expect(page.locator('[data-testid="onboarding-progress"]')).toHaveText('2 of 5 done', { timeout: 5000 });
+
+    await page.locator('[data-testid="onboarding-skip"]').click();
+    await expect(page.locator('[data-testid="onboarding-checklist"]')).toBeHidden();
+
+    await openDeveloperTab(page);
+    await page.locator('[data-testid="dev-trigger-onboarding-checklist"]').click();
+
+    // Back to the beginning rather than the completed list the old trigger reopened.
+    await expect(page.locator('[data-testid="onboarding-checklist"]')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('[data-testid="onboarding-progress"]')).toHaveText('0 of 5 done', { timeout: 5000 });
   });
 
   test('step 1 redirects to Settings, keeps its callout, and dims nothing', async () => {
@@ -270,17 +371,9 @@ test.describe('Onboarding checklist', () => {
     await page.locator('[data-testid="settings-tab-list"] button', { hasText: 'Git' }).click();
     await expect(page.locator('[data-testid="project-default-agent"]')).toHaveCount(0);
 
-    // Bring the checklist back over Settings via the store directly - the title-bar reopen
-    // button lives under Settings' own full-viewport backdrop, and clicking through it is not
-    // what this test is about. AppLayout renders the checklist AFTER Settings, so it stacks on
-    // top and its row is clickable, exactly like clicking "Get started" would leave it.
-    await page.evaluate(() => {
-      const stores = (window as unknown as {
-        __zustandStores?: { config: { getState: () => { setOnboardingChecklistOpen: (open: boolean) => void } } };
-      }).__zustandStores;
-      stores?.config.getState().setOnboardingChecklistOpen(true);
-    });
-    await expect(page.locator('[data-testid="onboarding-checklist"]')).toBeVisible({ timeout: 5000 });
+    // Bring the checklist back over Settings. AppLayout renders it AFTER Settings, so it
+    // stacks on top and its rows stay clickable.
+    await reopenChecklist(page);
     await page.locator('[data-testid="onboarding-step-defaultsChosen"]').click();
 
     // The panel must land on Agent without the user closing it first.
@@ -425,7 +518,7 @@ test.describe('Onboarding checklist', () => {
     // Steps 3 and 4 only: the task exists and sits in an agent-starting column, but nobody
     // has opened it.
     const stepFive = page.locator('[data-testid="onboarding-step-taskDetailOpened"]');
-    await page.locator('[data-testid="get-started-button"]').click();
+    await reopenChecklist(page);
     await expect(page.locator('[data-testid="onboarding-progress"]')).toHaveText('2 of 5 done', { timeout: 5000 });
     await expect(stepFive).toHaveAttribute('data-done', 'false');
     await page.keyboard.press('Escape');
@@ -434,7 +527,10 @@ test.describe('Onboarding checklist', () => {
     await page.locator('[data-swimlane-name="Planning"] [data-task-id]').click();
     await expect(page.locator('[data-testid="task-detail-dialog"]')).toBeVisible({ timeout: 5000 });
 
-    await page.locator('[data-testid="get-started-button"]').click();
+    await reopenChecklist(page);
+    // Reopening must not disturb the detail window, which the assertion after the skip below
+    // still needs open.
+    await expect(page.locator('[data-testid="task-detail-dialog"]')).toBeVisible();
     await expect(page.locator('[data-testid="onboarding-progress"]')).toHaveText('3 of 5 done', { timeout: 5000 });
     // The row itself, not just the counter - those are two independent wirings.
     await expect(stepFive).toHaveAttribute('data-done', 'true');
@@ -449,7 +545,7 @@ test.describe('Onboarding checklist', () => {
     await page.locator('[data-testid="task-detail-close"]').first().click();
     await expect(page.locator('[data-testid="task-detail-dialog"]')).toHaveCount(0);
 
-    await page.locator('[data-testid="get-started-button"]').click();
+    await reopenChecklist(page);
     await expect(page.locator('[data-testid="onboarding-progress"]')).toHaveText('3 of 5 done', { timeout: 5000 });
     await expect(stepFive).toHaveAttribute('data-done', 'true');
   });
@@ -492,10 +588,9 @@ test.describe('Onboarding checklist', () => {
     await waitForBoard(page);
 
     // Opened by hand, not by arriving: onboarding is install-scoped, so this second project
-    // does not auto-open the checklist. The dev-only title-bar button bypasses that gate,
-    // which is what makes the per-project step state below still observable.
-    await page.locator('[data-testid="get-started-button"]').click();
-    await expect(page.locator('[data-testid="onboarding-checklist"]')).toBeVisible({ timeout: 5000 });
+    // does not auto-open the checklist. Opening it directly bypasses that gate, which is what
+    // makes the per-project step state below still observable.
+    await reopenChecklist(page);
     await expect(page.locator('[data-testid="onboarding-step-taskDetailOpened"]'))
       .toHaveAttribute('data-done', 'false');
   });
@@ -511,8 +606,11 @@ test.describe('Onboarding checklist', () => {
     // Visit the surface and leave without touching anything.
     await page.locator('[data-testid="onboarding-step-defaultsChosen"]').click();
     await expect(page.locator('[data-testid="project-default-agent"]')).toBeVisible({ timeout: 5000 });
+    // Closing the step's surface without doing the thing brings the checklist back by itself
+    // (AppLayout's backed-out branch), so there is nothing to reopen here - asserting that is
+    // what keeps a regression in that path from hiding behind a manual reopen.
     await page.keyboard.press('Escape');
-    await page.locator('[data-testid="get-started-button"]').click();
+    await expect(page.locator('[data-testid="onboarding-checklist"]')).toBeVisible({ timeout: 5000 });
     await expect(page.locator('[data-testid="onboarding-progress"]')).toHaveText('0 of 5 done');
 
     // Now change one for real. Closing Settings then carries on to step 2, so back out of
@@ -566,7 +664,7 @@ test.describe('Onboarding checklist', () => {
       .toContainText('Step 4 of 5', { timeout: 5000 });
     await expect(page.locator('[data-testid="onboarding-checklist"]')).toHaveCount(0);
 
-    await page.locator('[data-testid="get-started-button"]').click();
+    await reopenChecklist(page);
     await expect(page.locator('[data-testid="onboarding-progress"]')).toHaveText('1 of 5 done', { timeout: 5000 });
   });
 

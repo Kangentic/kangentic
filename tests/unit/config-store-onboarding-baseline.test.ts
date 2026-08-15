@@ -100,3 +100,104 @@ describe('config-store onboarding baseline', () => {
     expect(written['project-b'].swimlaneSignature).toBe('b-signature');
   });
 });
+
+/**
+ * Coverage for `resetOnboarding`, the dev-only "Restart checklist" trigger that clears every
+ * trace of onboarding for one project so the flow can be walked again from step one.
+ *
+ * Four properties carry the whole action, and each fails SILENTLY if broken:
+ *
+ *  - `onboardedProjectIds` drops the reset project but keeps the rest. Its only consumer is
+ *    AppLayout's auto-open gate (`onboardedProjectIds.length > 0`), which no other test
+ *    exercises, so an unfiltered or over-filtered write would show up only as the checklist
+ *    auto-opening (or refusing to) for the wrong reason.
+ *  - `walkthroughStep` is cleared to null. A stale spotlight surviving the reset would only
+ *    surface as a walkthrough target from a PRIOR run flashing back onto the fresh checklist.
+ *  - `onboardingStepsCompleted` drops the reset project's session-recorded steps in store
+ *    state.
+ *  - `onboardingBaseline` is a CONFIG_DICTIONARY_PATH, so the write REPLACES the map rather
+ *    than merging into it - dropping this project's key without carrying every other
+ *    project's entry through would silently wipe their baselines too. Same hazard
+ *    `captureOnboardingBaseline` above guards against.
+ */
+describe('config-store resetOnboarding', () => {
+  let configSet: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    configSet = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('window', {
+      electronAPI: {
+        config: {
+          set: configSet,
+          setSync: vi.fn(),
+          get: vi.fn().mockResolvedValue({ ...DEFAULT_CONFIG }),
+          getGlobal: vi.fn().mockResolvedValue({ ...DEFAULT_CONFIG }),
+        },
+      },
+    });
+    useConfigStore.setState({
+      config: { ...DEFAULT_CONFIG },
+      globalConfig: { ...DEFAULT_CONFIG },
+      workspaceSeeded: false,
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('drops the project from onboardedProjectIds and carries every other project through the write', async () => {
+    useConfigStore.setState({
+      config: {
+        ...DEFAULT_CONFIG,
+        onboardedProjectIds: ['project-a', 'project-b', 'project-c'],
+      },
+    });
+
+    await useConfigStore.getState().resetOnboarding('project-b');
+
+    const written = configSet.mock.calls[0][0];
+    expect(written.onboardedProjectIds).toEqual(['project-a', 'project-c']);
+  });
+
+  it('clears walkthroughStep so a stale spotlight does not survive the reset', async () => {
+    useConfigStore.setState({ walkthroughStep: 'taskCreated' });
+
+    await useConfigStore.getState().resetOnboarding('project-a');
+
+    expect(useConfigStore.getState().walkthroughStep).toBeNull();
+  });
+
+  it('removes the project entry from onboardingStepsCompleted', async () => {
+    useConfigStore.setState({
+      onboardingStepsCompleted: {
+        'project-a': ['defaultsChosen'],
+        'project-b': ['taskCreated'],
+      },
+    });
+
+    await useConfigStore.getState().resetOnboarding('project-a');
+
+    const stepsAfter = useConfigStore.getState().onboardingStepsCompleted;
+    expect(stepsAfter['project-a']).toBeUndefined();
+    expect(stepsAfter['project-b']).toEqual(['taskCreated']);
+  });
+
+  it('drops the project from onboardingBaseline but carries every other project through the write', async () => {
+    useConfigStore.setState({
+      config: {
+        ...DEFAULT_CONFIG,
+        onboardingBaseline: {
+          'project-a': makeBaseline({ swimlaneSignature: 'a-signature' }),
+          'project-b': makeBaseline({ swimlaneSignature: 'b-signature' }),
+        },
+      },
+    });
+
+    await useConfigStore.getState().resetOnboarding('project-a');
+
+    const written = configSet.mock.calls[0][0].onboardingBaseline;
+    expect(written['project-a']).toBeUndefined();
+    expect(written['project-b']).toEqual(makeBaseline({ swimlaneSignature: 'b-signature' }));
+  });
+});
