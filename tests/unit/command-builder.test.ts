@@ -678,6 +678,21 @@ describe('Windows Path Conversion for Shells (adaptCommandForShell)', () => {
     expect(adaptCommandForShell(cmd, 'bash', 'linux')).toBe(cmd);
     expect(adaptCommandForShell(cmd, 'wsl -d ubuntu', 'darwin')).toBe(cmd);
   });
+
+  it('treats a wsl.exe-prefixed shell spec (hand-edited config) as WSL, converting to /mnt/c/...', () => {
+    // resolveShellArgs now accepts a hand-edited "wsl.exe -d <distro>" config
+    // value in addition to the picker's "wsl -d <distro>". The same shell
+    // string also reaches adaptCommandForShell at the spawn seam (via
+    // session-spawn-flow.ts's `shellName = shell.toLowerCase()`), whose
+    // isWsl gate is `lower.startsWith('wsl')` -- already broad enough to
+    // match the .exe form, but that was never pinned. Guards against a
+    // future "tighten the gate to match resolveShellArgs" edit that adds a
+    // trailing space and silently sends /c/... (Git Bash form) instead of
+    // /mnt/c/... for a WSL shell.
+    const cmd = 'C:\\Users\\dev\\.local\\bin\\claude.EXE --print "hello"';
+    const result = adaptCommandForShell(cmd, 'wsl.exe -d ubuntu', 'win32');
+    expect(result).toBe('/mnt/c/Users/dev/.local/bin/claude.EXE --print "hello"');
+  });
 });
 
 // convertWindowsExePath has no platform guard -- runs on all platforms
@@ -761,6 +776,45 @@ describe('Windows Path Conversion (convertWindowsExePath)', () => {
       );
       expect(result.startsWith("'/c/Users/dev/bin/claude.exe'")).toBe(true);
       expect(result).toContain("'path is C:\\some\\path'");
+    });
+  });
+
+  // The double-quoted and single-quoted branches used to repeat a group
+  // shaped `(?:\\[^"]+)+` (backslash NOT excluded from the inner class) --
+  // classic catastrophic-backtracking shape, equivalent to `(a+)+`. An
+  // unterminated quoted path with a long run of backslashes has no valid
+  // parse, so the engine explored every way to partition the run among
+  // repetitions before giving up -- a cliPath value (project-configurable
+  // via `agent.cliPaths.<agent>`) reaches this regex synchronously on the
+  // main-process spawn path, so this was a real hang vector, not a
+  // theoretical one. Measured against the reverted pre-fix regex with 44
+  // backslashes (the size below): ~2.7s in isolated node, ~8s inside this
+  // vitest run on this machine -- growth is roughly 2.5x per +2 backslashes,
+  // so a 48-char run already costs ~1 CPU-minute under vitest. The hardened
+  // regex excludes `\` from the repeated character class, so each backslash
+  // has exactly one parse and matching stays linear (sub-millisecond even at
+  // thousands of backslashes). The unquoted (bare) branch was never
+  // vulnerable -- nothing follows its repeated group, so the first greedy
+  // match always succeeds with no backtracking -- and is intentionally not
+  // covered here.
+  describe('adversarial input does not cause catastrophic backtracking (ReDoS guard)', () => {
+    it('returns quickly for an unterminated double-quoted path with a long backslash run', () => {
+      const cmd = '"C:' + '\\'.repeat(44); // deliberately missing the closing quote
+      const start = Date.now();
+      const result = convertWindowsExePath(cmd, false);
+      const elapsedMs = Date.now() - start;
+      expect(elapsedMs).toBeLessThan(1000);
+      // No closing quote means the regex never matches: no-op passthrough.
+      expect(result).toBe(cmd);
+    });
+
+    it('returns quickly for an unterminated single-quoted path with a long backslash run', () => {
+      const cmd = "'C:" + '\\'.repeat(44); // deliberately missing the closing quote
+      const start = Date.now();
+      const result = convertWindowsExePath(cmd, false);
+      const elapsedMs = Date.now() - start;
+      expect(elapsedMs).toBeLessThan(1000);
+      expect(result).toBe(cmd);
     });
   });
 });
