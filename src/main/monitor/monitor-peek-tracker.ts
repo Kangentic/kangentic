@@ -15,8 +15,11 @@
  * `SessionManager`'s `data` event is gated on the renderer's focused set, which
  * is exactly wrong here: the monitor's whole job is showing sessions you are NOT
  * looking at. `data-tap` is the documented focus-independent seam for headless
- * consumers, it already fires from the 16ms flush (so it is pre-coalesced), and
- * it deliberately does not feed backpressure.
+ * consumers, and it deliberately does not feed backpressure. It has TWO
+ * feeders: the 16ms flush (pre-coalesced) and the replay-drain report
+ * (un-coalesced - bytes a desktop replay consumed out of the pending buffer;
+ * see PtyBufferManagerCallbacks.onDrain), so a per-emit handler must stay
+ * cheap rather than lean on flush pacing.
  *
  * ## The cost bound, stated rather than implied
  *
