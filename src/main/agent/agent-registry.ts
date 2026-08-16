@@ -12,6 +12,7 @@ import { KimiAdapter } from './adapters/kimi';
 import { DroidAdapter } from './adapters/droid';
 import { OllamaAdapter } from './adapters/ollama';
 import { GrokAdapter } from './adapters/grok';
+import { AntigravityAdapter } from './adapters/antigravity';
 
 class AgentRegistry {
   private adapters = new Map<string, AgentAdapter>();
@@ -67,3 +68,4 @@ agentRegistry.register(new KimiAdapter());
 agentRegistry.register(new DroidAdapter());
 agentRegistry.register(new OllamaAdapter());
 agentRegistry.register(new GrokAdapter());
+agentRegistry.register(new AntigravityAdapter());

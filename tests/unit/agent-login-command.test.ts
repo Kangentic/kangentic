@@ -53,6 +53,10 @@ describe('agentLoginCommand', () => {
     expect(agentLoginCommand('grok')).toBe('grok login');
   });
 
+  it('returns undefined for antigravity (keyring sign-in inside the TUI, no login subcommand)', () => {
+    expect(agentLoginCommand('antigravity')).toBeUndefined();
+  });
+
   it('returns undefined for an unknown agent identifier', () => {
     expect(agentLoginCommand('unknown-agent-xyz')).toBeUndefined();
   });

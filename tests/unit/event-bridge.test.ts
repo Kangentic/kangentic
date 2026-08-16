@@ -15,9 +15,12 @@ import os from 'node:os';
 import { EventType } from '../../src/shared/types';
 import { buildBridgeCommand } from '../../src/main/agent/shared/hook-utils';
 import {
+  captureHookContext,
   extractTool,
   extractToolId,
+  extractToolPath,
   extractDetail,
+  extractDetailPath,
   setDetail,
   setTypeWhen,
   setTypeWhenDetailContains,
@@ -341,9 +344,98 @@ describe('event-bridge', () => {
     expect(line.hookContext).toBeUndefined();
   });
 
-  it('hookContext is only captured on session_start, not other events', () => {
+  it('hookContext is only captured on session_start, not other events (without the opt-in directive)', () => {
     runBridge(JSON.stringify({ session_id: 'abc' }), [outputFile, 'tool_start', extractTool('tool_name')]);
     expect(readEvent().hookContext).toBeUndefined();
+  });
+
+  // --- captureHookContext directive (agents with no once-per-session hook) ---
+
+  it('captureHookContext captures stdin JSON on a non-session_start event', () => {
+    const stdin = JSON.stringify({ conversationId: '3db42741-6af4-4632-99cf-e5f230f7bc94', modelName: 'gemini-3.7-flash-high' });
+    runBridge(stdin, [outputFile, 'prompt', captureHookContext()]);
+    const line = readEvent();
+    expect(line.type).toBe('prompt');
+    const hookCtx = JSON.parse(line.hookContext as string);
+    expect(hookCtx.conversationId).toBe('3db42741-6af4-4632-99cf-e5f230f7bc94');
+  });
+
+  it('captureHookContext omits hookContext when stdin is empty or not JSON', () => {
+    runBridge('', [outputFile, 'prompt', captureHookContext()]);
+    expect(readEvent().hookContext).toBeUndefined();
+  });
+
+  // --- extractToolPath / extractDetailPath (nested-payload agents) ---
+
+  it('extractToolPath extracts a nested tool name (Antigravity PostToolUse pattern)', () => {
+    const stdin = JSON.stringify({
+      toolCall: { name: 'write_to_file', args: { TargetFile: 'C:/ws/probe.txt' } },
+    });
+    runBridge(stdin, [outputFile, 'tool_end',
+      extractToolPath(['toolCall', 'name']),
+      extractDetailPath(['toolCall', 'args'], ['TargetFile', 'CommandLine'])]);
+    const line = readEvent();
+    expect(line.tool).toBe('write_to_file');
+    expect(line.detail).toBe('C:/ws/probe.txt');
+  });
+
+  it('extractToolPath with a missing segment produces no tool', () => {
+    runBridge(JSON.stringify({ other: 'data' }), [outputFile, 'tool_end', extractToolPath(['toolCall', 'name'])]);
+    expect(readEvent().tool).toBeUndefined();
+  });
+
+  it('extractDetailPath falls through fields and skips a missing parent chain', () => {
+    const stdin = JSON.stringify({ toolCall: { args: { CommandLine: 'npm test' } } });
+    runBridge(stdin, [outputFile, 'tool_end',
+      extractDetailPath(['toolCall', 'args'], ['TargetFile', 'CommandLine'])]);
+    expect(readEvent().detail).toBe('npm test');
+
+    fs.writeFileSync(outputFile, '');
+    runBridge(JSON.stringify({}), [outputFile, 'tool_end',
+      extractDetailPath(['toolCall', 'args'], ['TargetFile'])]);
+    expect(readEvent().detail).toBeUndefined();
+  });
+
+  // --- extractToolPath / extractDetailPath: non-object values mid-path ---
+  //
+  // Antigravity's own payload shape (`ctx.toolCall.name`,
+  // `ctx.toolCall.args.TargetFile`) is exactly what extractToolPath /
+  // extractDetailPath walk. If a future agy release ever sends a STRING or
+  // an ARRAY where the bridge expects an object partway down the path, the
+  // walk must degrade to "no extraction" rather than crash the hook process
+  // (which would silently break the whole activity pipeline for that
+  // session) or read through the primitive's own properties as if they were
+  // the nested payload (e.g. a string's `.length`).
+
+  it('extractToolPath with a primitive mid-path value does not crash and does not read through it', () => {
+    // ctx.toolCall is a STRING, not an object. Without the walk's
+    // `typeof value === 'object'` guard, `'hello'['length']` resolves to 5
+    // and would leak as a bogus tool value - this is what pins the guard,
+    // not just the absence of a crash.
+    const stdin = JSON.stringify({ toolCall: 'hello' });
+    runBridge(stdin, [outputFile, 'tool_end', extractToolPath(['toolCall', 'length'])]);
+    expect(readEvent().tool).toBeUndefined();
+  });
+
+  it('extractToolPath walking into an array segment does not crash and produces no bogus tool', () => {
+    // Arrays ARE objects in JS, so the walk's typeof guard admits them; the
+    // no-extraction outcome here comes from the array simply having no
+    // 'name' property, not from a type guard. Pinned as current behavior:
+    // no crash, no bogus extraction.
+    const stdin = JSON.stringify({ toolCall: ['first', 'second'] });
+    runBridge(stdin, [outputFile, 'tool_end', extractToolPath(['toolCall', 'name'])]);
+    expect(readEvent().tool).toBeUndefined();
+  });
+
+  it('extractDetailPath with a primitive at the parent segment produces no detail and does not crash', () => {
+    // The walk lands on ctx.toolCall (a STRING) as the final "container".
+    // The walk's own guard only rejects INTERMEDIATE non-objects, so it is
+    // firstNonNull's separate `typeof container !== 'object'` check that
+    // must reject this container - without it, 'hello'['length'] would leak
+    // as detail: '5'.
+    const stdin = JSON.stringify({ toolCall: 'hello' });
+    runBridge(stdin, [outputFile, 'tool_end', extractDetailPath(['toolCall'], ['length'])]);
+    expect(readEvent().detail).toBeUndefined();
   });
 
   // --- No directives (events that need no extraction) ---

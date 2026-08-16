@@ -19,8 +19,19 @@
  * wire string - use the builders.
  *
  *   extractTool                { field }             -> event.tool = ctx[field]
+ *   extractToolPath            { path[] }            -> event.tool = value at the nested
+ *                                 ctx location (e.g. ['toolCall','name']). Own kind so a
+ *                                 stale copy rejects it via `default` instead of misreading
+ *                                 the payload (see directive-builders.ts).
  *   extractToolId              { fields[], nested? } -> event.toolId = first non-null
  *   extractDetail              { fields[], nested? } -> event.detail = first non-null
+ *   extractDetailPath          { parents[], fields[] } -> event.detail = first non-null of
+ *                                 fields under the nested container at parents
+ *                                 (e.g. ['toolCall','args']). Own kind, same reason.
+ *   captureHookContext         { }                   -> event.hookContext = full stdin JSON
+ *                                 (2048 cap) regardless of event type, for agents whose
+ *                                 hook schema has no once-per-session event to ride the
+ *                                 automatic session_start capture below.
  *   extractDetailWhenTool      { fields[], nested?, whenTool }
  *                                 -> same as extractDetail, but only when
  *                                 ctx.tool_name === whenTool. A SEPARATE kind rather
@@ -148,6 +159,17 @@ process.stdin.on('end', () => {
         if (ctx && payload.field && ctx[payload.field] != null) event.tool = ctx[payload.field];
         break;
       }
+      case 'extractToolPath': {
+        // Nested sibling of extractTool: walk payload.path segments from the
+        // stdin root. Any missing segment makes the whole extraction a no-op.
+        if (!ctx || !Array.isArray(payload.path) || payload.path.length === 0) break;
+        let value = ctx;
+        for (const segment of payload.path) {
+          value = value && typeof value === 'object' ? value[segment] : undefined;
+        }
+        if (value != null) event.tool = value;
+        break;
+      }
       case 'extractToolId': {
         if (event.toolId !== undefined) break;
         const container = payload.nested ? (ctx && ctx[payload.nested]) : ctx;
@@ -168,6 +190,29 @@ process.stdin.on('end', () => {
         const container = payload.nested ? (ctx && ctx[payload.nested]) : ctx;
         const value = firstNonNull(container, payload.fields);
         if (value !== undefined) event.detail = value;
+        break;
+      }
+      case 'extractDetailPath': {
+        // Multi-level sibling of extractDetail's `nested`: walk payload.parents
+        // to the container, then first-non-null over payload.fields.
+        // First-extraction-wins like extractDetail.
+        if (event.detail !== undefined) break;
+        if (!ctx || !Array.isArray(payload.parents) || payload.parents.length === 0) break;
+        let container = ctx;
+        for (const segment of payload.parents) {
+          container = container && typeof container === 'object' ? container[segment] : undefined;
+        }
+        const nestedValue = firstNonNull(container, payload.fields);
+        if (nestedValue !== undefined) event.detail = nestedValue;
+        break;
+      }
+      case 'captureHookContext': {
+        // Opt-in hookContext capture for agents with no once-per-session hook
+        // event (the automatic capture below only fires for session_start).
+        // Same 2048 cap as the automatic path.
+        if (ctx && Object.keys(ctx).length > 0) {
+          event.hookContext = JSON.stringify(ctx).slice(0, 2048);
+        }
         break;
       }
       case 'setDetail': {

@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { execSync, spawn } from 'node:child_process';
 import type { Session, Swimlane, Task } from '../../src/shared/types';
 
-export type AgentName = 'claude' | 'codex' | 'gemini' | 'cursor' | 'warp' | 'opencode' | 'kimi' | 'qwen' | 'droid' | 'grok';
+export type AgentName = 'claude' | 'codex' | 'gemini' | 'cursor' | 'warp' | 'opencode' | 'kimi' | 'qwen' | 'droid' | 'grok' | 'antigravity';
 
 // --- Test data isolation ---
 // Each test run uses its own data directory so E2E tests never pollute
@@ -116,7 +116,7 @@ function ensureGitTemplate(): string {
   return TEMPLATE_DIR;
 }
 
-// Temp project directory for tests -- always starts fresh.
+// Temp project directory for tests - always starts fresh.
 // Path is keyed on process.pid (via TMP_PROJECT_ROOT) so concurrent workers
 // never collide on rmSync/cpSync even when two describes use the same testName.
 export function createTempProject(testName: string): string {
@@ -226,7 +226,7 @@ export async function launchApp(options?: {
     args.push('--no-sandbox');
   }
 
-  // Retry electron.launch() with backoff -- Windows can transiently fail
+  // Retry electron.launch() with backoff - Windows can transiently fail
   // to attach the debugger pipe under resource pressure or AV scans.
   const maxLaunchAttempts = 3;
   const baseRetryDelayMs = 2000;
@@ -407,7 +407,7 @@ export async function waitForBoard(page: Page): Promise<void> {
 
 // Create a project via IPC (native dialog can't be automated in E2E)
 export async function createProject(page: Page, _name: string, projectPath: string): Promise<void> {
-  // Call openByPath directly -- creates the project if needed and opens it
+  // Call openByPath directly - creates the project if needed and opens it
   await page.evaluate((p: string) => window.electronAPI.projects.openByPath(p), projectPath);
   // Reload so the renderer picks up the new current project
   await page.reload();

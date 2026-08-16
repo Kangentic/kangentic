@@ -200,7 +200,7 @@ contributor is expected to set up.
 
 ### Agent-specific contributions
 
-Kangentic supports twelve agent CLIs, and we do not hold a subscription to all of them. Anything
+Kangentic supports fourteen agent CLIs, and we do not hold a subscription to all of them. Anything
 that needs a live, authenticated CLI is measured where we can and recorded honestly where we
 cannot, so the gaps are written down rather than hidden. If you use one of these agents daily, you
 are better placed than we are to close them.

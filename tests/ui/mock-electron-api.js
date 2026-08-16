@@ -2402,6 +2402,26 @@
             defaultPermission: 'acceptEdits',
             supportsSummarize: true,
           },
+          {
+            name: 'antigravity', displayName: 'Antigravity CLI', found: false, path: null, version: null,
+            supportsSummarize: true,
+            // KEEP IN SYNC with AntigravityAdapter.permissions and AntigravityAdapter.liveTelemetryUnsupported
+            // in src/main/agent/adapters/antigravity/antigravity-adapter.ts
+            permissions: [
+              { mode: 'plan', label: 'Plan (Read-Only Research)' },
+              { mode: 'default', label: 'Default (Request Review)' },
+              { mode: 'acceptEdits', label: 'Accept Edits (Auto-Approve Edits)' },
+              { mode: 'bypassPermissions', label: 'Skip Permissions (Auto-Approve All)' },
+            ],
+            defaultPermission: 'acceptEdits',
+            liveTelemetryUnsupported: {
+              unavailableLabel: 'Telemetry: TUI only',
+              unavailableTitle:
+                'Antigravity does not stream live telemetry to Kangentic.\n' +
+                'The agy TUI footer shows the active model and effort; per-thought\n' +
+                'token counts appear inline in its output.',
+            },
+          },
         ];
         return defaults.map(function (agent) {
           var override = overrides[agent.name];

@@ -62,6 +62,7 @@ Delivery is per-adapter, because no two of these CLIs accept MCP config the same
 | Droid | `<cwd>/.factory/mcp.json` with `${KANGENTIC_MCP_TOKEN}` | process env (file holds only the var name) |
 | Grok Build | `[mcp_servers.kangentic]` sentinel block in `<cwd>/.grok/config.toml` with `${KANGENTIC_MCP_URL}` + `${KANGENTIC_MCP_TOKEN}`, plus `--allow "MCPTool(kangentic__*)"` pre-approval | process env (file holds only var names - the URL too, so the block is fully static) |
 | OpenCode | `OPENCODE_CONFIG_CONTENT` env var | process env (local spawns only) |
+| Antigravity CLI | Workspace plugin `<cwd>/.agents/plugins/kangentic/` (`serverUrl` + `X-Kangentic-Token` header; streamable HTTP, connects at the first agent turn) | project file, stripped on exit |
 | Cursor, Oz CLI | Not wired | n/a |
 | Aider, Ollama | Not possible - neither CLI is an MCP client | n/a |
 
@@ -698,9 +699,10 @@ Structured-format support by agent:
 
 | Agent | Structured | Raw |
 |-------|------------|-----|
-| Claude, Droid, Codex, Gemini, Qwen, Kimi, OpenCode, Grok | native parser | yes |
+| Claude, Droid, Codex, Gemini, Qwen, Kimi, OpenCode, Grok, Antigravity | native parser | yes |
 | Aider | no (no per-session native history) | yes |
 | Warp, Cursor, Copilot | no (history location unknown) | yes |
+| Ollama | no (no per-session history for `ollama run`) | yes |
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

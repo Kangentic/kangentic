@@ -11,6 +11,7 @@
  * - adapters/droid/transcript-cleanup.ts
  * - adapters/opencode/transcript-cleanup.ts
  * - adapters/grok/transcript-cleanup.ts
+ * - adapters/antigravity/transcript-cleanup.ts
  *
  * This file provides:
  * 1. The dispatcher (cleanTranscriptForHandoff) that routes to the right adapter
@@ -26,6 +27,7 @@ import { cleanKimiTranscript } from '../adapters/kimi/transcript-cleanup';
 import { cleanDroidTranscript } from '../adapters/droid/transcript-cleanup';
 import { cleanOpenCodeTranscript } from '../adapters/opencode/transcript-cleanup';
 import { cleanGrokTranscript } from '../adapters/grok/transcript-cleanup';
+import { cleanAntigravityTranscript } from '../adapters/antigravity/transcript-cleanup';
 
 // ---------------------------------------------------------------------------
 // Shared utilities (exported for use by adapter transcript-cleanup files)
@@ -117,7 +119,7 @@ export function finalizeTranscript(text: string): string | null {
  * clean conversation from the raw PTY stream.
  *
  * @param rawTranscript - ANSI-stripped PTY output from TranscriptWriter
- * @param sourceAgent - Agent identifier: 'claude', 'codex', 'gemini', 'qwen', 'aider', 'kimi', 'droid', 'opencode', 'grok'
+ * @param sourceAgent - Agent identifier: 'claude', 'codex', 'gemini', 'qwen', 'aider', 'kimi', 'droid', 'opencode', 'grok', 'antigravity'
  * @returns Cleaned transcript text, or null if nothing meaningful remains.
  */
 export function cleanTranscriptForHandoff(
@@ -145,6 +147,8 @@ export function cleanTranscriptForHandoff(
       return cleanOpenCodeTranscript(rawTranscript);
     case 'grok':
       return cleanGrokTranscript(rawTranscript);
+    case 'antigravity':
+      return cleanAntigravityTranscript(rawTranscript);
     default:
       // Unknown agents: no TUI-specific cleanup, just basic finalization
       return finalizeTranscript(rawTranscript);

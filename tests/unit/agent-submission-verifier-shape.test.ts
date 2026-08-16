@@ -111,6 +111,12 @@ const ADAPTER_CLASSES = [
     verifiesSlashSubmission: false, requiresAgentSessionId: true,
     reason: 'measured 313ms flush-on-submit against a 2.1s turn (grok 1.0.0), but records carry no timestamps to bound the match window and the resolver has never been proven in-app; slash input runs in the TUI palette and never becomes a chat_history turn',
   },
+  {
+    name: 'antigravity', importPath: '../../src/main/agent/adapters/antigravity/antigravity-adapter', className: 'AntigravityAdapter',
+    commandInjection: 'verifier', escalates: false,
+    verifiesSlashSubmission: false, requiresAgentSessionId: true,
+    reason: 'measured 2026-08-16 vs agy 1.1.13: 84ms worst transcript append (submit-time flush); slash text is rejected client-side and never recorded',
+  },
 ] as const;
 
 function reasonFor(name: string): string {

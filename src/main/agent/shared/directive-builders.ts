@@ -32,6 +32,51 @@ export function extractTool(field: string): string {
 }
 
 /**
+ * Extract `event.tool` from a NESTED stdin location addressed by `pathSegments`
+ * (e.g. `['toolCall', 'name']` for Antigravity's `ctx.toolCall.name`).
+ *
+ * A SEPARATE kind rather than a `nested` flag on `extractTool`, for the same
+ * fail-closed reason as `extractDetailWhenTool`: an older bridge copy ignores
+ * unknown payload fields, so a flagged `extractTool` would silently read the
+ * LAST segment as a top-level field there - extracting an unrelated value when
+ * the payload happens to carry one under that generic name (`name`). An
+ * unknown KIND instead hits the bridge's `default` arm and is a logged no-op.
+ */
+export function extractToolPath(pathSegments: string[]): string {
+  if (pathSegments.length === 0) throw new Error('extractToolPath requires at least one segment');
+  return encodeDirective('extractToolPath', { path: pathSegments });
+}
+
+/**
+ * Extract `event.detail` from the first non-null of `fields`, read from the
+ * NESTED stdin container addressed by `parents` (e.g. `['toolCall', 'args']`
+ * for Antigravity's `ctx.toolCall.args.TargetFile`). The multi-level sibling
+ * of `extractDetail`'s single-level `nested` option, as its own kind for the
+ * same fail-closed stale-copy reason as `extractToolPath`.
+ */
+export function extractDetailPath(parents: string[], fields: string[]): string {
+  if (parents.length === 0) throw new Error('extractDetailPath requires at least one parent segment');
+  if (fields.length === 0) throw new Error('extractDetailPath requires at least one field');
+  return encodeDirective('extractDetailPath', { parents, fields });
+}
+
+/**
+ * Capture the ENTIRE stdin payload as `event.hookContext` (capped at 2048
+ * chars), regardless of event type. The bridge does this automatically for
+ * `session_start` events; this directive is for agents whose hook schema has
+ * NO once-per-session event (Antigravity's earliest hook is the per-invocation
+ * `PreInvocation`), so the session-id capture path
+ * (`SessionTelemetry.captureHookSessionIds` -> `runtime.sessionId.fromHook`)
+ * still gets a payload to parse. `captureHookSessionIds` is type-agnostic and
+ * one-shot, so repeated captures cost only JSONL bytes, never a re-parse.
+ * Unknown to older bridge copies -> logged no-op, and the adapter's other
+ * capture paths (`fromOutput`) still function.
+ */
+export function captureHookContext(): string {
+  return encodeDirective('captureHookContext', {});
+}
+
+/**
  * Extract `event.toolId` from the first non-null of `fields`, read from the
  * top-level stdin object or - when `nested` is given - from `ctx[nested]`.
  * The first directive (in list order) to resolve a value wins.

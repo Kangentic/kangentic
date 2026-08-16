@@ -41,6 +41,7 @@ function agentDisplayLabel(agent: string): string {
     case 'kimi': return 'Kimi Code';
     case 'droid': return 'Droid';
     case 'grok': return 'Grok Build';
+    case 'antigravity': return 'Antigravity CLI';
     default: return agent;
   }
 }

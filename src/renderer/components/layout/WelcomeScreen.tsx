@@ -326,7 +326,7 @@ export function WelcomeScreen() {
                   Core tooling is a different KIND of prerequisite from the agent
                   CLIs - it is not interchangeable, and the list will grow beyond
                   git - so it gets its own labelled band instead of being tiled in
-                  among twelve agents where it reads as just another one. */}
+                  among fourteen agents where it reads as just another one. */}
               <div className="flex items-center justify-between">
                 <div className="text-xs text-fg-faint uppercase tracking-wider">Core</div>
                 <button

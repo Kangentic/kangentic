@@ -241,7 +241,7 @@ Index: `idx_transitions_from_to` on (from_swimlane_id, to_swimlane_id).
 | tool_breakdown | TEXT | | NULL |
 | compaction_count | INTEGER | NOT NULL | 0 |
 
-Valid session_type values: `claude_agent`, `codex_agent`, `gemini_agent`, `qwen_agent`, `aider_agent`, `cursor_agent`, `copilot_agent`, `warp_agent`, `kimi_agent`, `opencode_agent`, `droid_agent`, `ollama_agent`, `grok_agent`, `run_script`.
+Valid session_type values: `claude_agent`, `codex_agent`, `gemini_agent`, `qwen_agent`, `aider_agent`, `cursor_agent`, `copilot_agent`, `warp_agent`, `kimi_agent`, `opencode_agent`, `droid_agent`, `ollama_agent`, `grok_agent`, `antigravity_agent`, `run_script`.
 
 Valid status values: `running`, `queued`, `suspended`, `exited`, `orphaned`.
 

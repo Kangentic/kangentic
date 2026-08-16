@@ -55,8 +55,13 @@ interface ResumeCase {
   spawnMarker: string;
   resumeMarker: string;
   uuidPattern: RegExp;
-  /** Optional sanity check on hook plumbing - settings file must exist with hooks. */
-  expectSettingsFile?: { relative: string };
+  /**
+   * Optional sanity check on hook plumbing - settings file must exist with
+   * hooks. Default shape is a `hooks` wrapper key (Gemini/Qwen settings.json);
+   * `namedHookKey` instead asserts a top-level named hook (Antigravity's
+   * hooks.json maps hook names at the root).
+   */
+  expectSettingsFile?: { relative: string; namedHookKey?: string };
 }
 
 const CASES: ResumeCase[] = [
@@ -85,6 +90,16 @@ const CASES: ResumeCase[] = [
     resumeMarker: 'MOCK_QWEN_RESUMED:',
     uuidPattern: /MOCK_QWEN_(SESSION|RESUMED):([a-f0-9-]+)/,
     expectSettingsFile: { relative: path.join('.qwen', 'settings.json') },
+  },
+  {
+    // Antigravity prints its conversation id ONLY in the graceful-shutdown
+    // summary (`agy --conversation=<uuid>`), so this case exercises the
+    // suspend-time fromOutput capture path rather than a boot-time header.
+    agent: 'antigravity',
+    spawnMarker: 'MOCK_AGY_SESSION:',
+    resumeMarker: 'MOCK_AGY_RESUMED:',
+    uuidPattern: /MOCK_AGY_(SESSION|RESUMED):([a-f0-9-]+)/,
+    expectSettingsFile: { relative: path.join('.agents', 'hooks.json'), namedHookKey: 'kangentic-events' },
   },
 ];
 
@@ -116,6 +131,7 @@ test.describe('Agent suspend/resume pipeline', () => {
             gemini: mockAgentPath('gemini'),
             kimi: mockAgentPath('kimi'),
             qwen: mockAgentPath('qwen'),
+            antigravity: mockAgentPath('antigravity'),
           },
           permissionMode: 'acceptEdits',
           maxConcurrentSessions: 5,
@@ -160,10 +176,11 @@ test.describe('Agent suspend/resume pipeline', () => {
       if (caseSpec.expectSettingsFile) {
         const settingsPath = path.join(tmpDir, caseSpec.expectSettingsFile.relative);
         expect(fs.existsSync(settingsPath)).toBe(true);
-        const parsed = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) as {
-          hooks?: Record<string, unknown>;
-        };
-        expect(parsed.hooks).toBeTruthy();
+        const parsed = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) as Record<string, unknown>;
+        const hookValue = caseSpec.expectSettingsFile.namedHookKey
+          ? parsed[caseSpec.expectSettingsFile.namedHookKey]
+          : parsed.hooks;
+        expect(hookValue).toBeTruthy();
       }
 
       await moveTaskIpc(page, taskId, swimlaneIds.done);

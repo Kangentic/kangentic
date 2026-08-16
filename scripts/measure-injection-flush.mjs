@@ -235,6 +235,13 @@ const AGENTS = {
     // Claude's known-good behaviour means the instrument drifted.
     note: 'projects/<slug>/<sessionId>.jsonl; the reference implementation, used as a harness control',
   },
+  antigravity: {
+    binary: 'agy',
+    buildArgs: () => [],
+    sessionRoots: () => [path.join(home, '.gemini', 'antigravity-cli', 'brain')],
+    filePattern: /^transcript\.jsonl$/,
+    note: 'brain/<conversationId>/.system_generated/logs/transcript.jsonl; USER_INPUT steps wrap the prompt in <USER_REQUEST>',
+  },
 };
 
 // ---------------------------------------------------------------------------

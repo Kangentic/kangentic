@@ -310,6 +310,8 @@ behavior below is the resume contract.
 | Aider | `aider --restore-chat-history` | `<cwd>/.aider.chat.history.md` | cwd file (no session id) | yes | n/a (no per-session file) |
 | Warp | (no resume) | none | n/a | n/a | n/a |
 | Grok Build | `grok --resume <id>` | `~/.grok/sessions/<encodeURIComponent(cwd)>/<id>/` (updates.jsonl + chat_history.jsonl) | URL-encoded cwd + id | yes | yes |
+| Ollama | (no resume - `ollama run` has no CLI-level session ids) | none | n/a | n/a | n/a |
+| Antigravity | `agy --conversation <id>` | `~/.gemini/antigravity-cli/conversations/<id>.db` (SQLite; the parseable transcript sits beside it under `brain/<id>/`) | conversation id (global store) | no | **no** (the locator returns the brain-dir `transcript.jsonl`, which resume itself does not read) |
 
 Reading the table by class:
 
@@ -317,8 +319,8 @@ Reading the table by class:
   Grok (and Claude). The resume target is a file under a directory derived from the cwd
   (basename, slug, `md5`, or Grok's `encodeURIComponent`), so moving the project to a path with
   a different cwd-derived key, or deleting that file, makes the stored id unresolvable.
-- **id-keyed / global store (cwd-independent):** Codex, OpenCode, Copilot, Cursor. Resume
-  resolves by session id against a global location, so the working directory does not gate it.
+- **id-keyed / global store (cwd-independent):** Codex, OpenCode, Copilot, Cursor, Antigravity.
+  Resume resolves by session id against a global location, so the working directory does not gate it.
   Codex scans `~/.codex/sessions/` by id (`codex-rs find_thread_path_by_id_str`; the per-rollout
   cwd only filters the interactive picker, which has an `--all` escape hatch). OpenCode keys the
   shared SQLite DB by session id. Copilot and Cursor attach by id; for Copilot the saved `cwd`

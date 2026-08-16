@@ -98,7 +98,7 @@ follows it.
 
 ## Claude's JSONL-polling implementation
 
-Claude's is the richest verifier, and the only one that matches on a structured slash-invocation record rather than on the submitted text. Eight adapters provide a `'command-injection'` verifier today (see the matrix below). Of the seven besides Claude, four (Codex, Qwen, Kimi, Grok) reuse the shared submitted-text scan; Copilot, OpenCode, and Aider each ship a bespoke verifier, because their history formats cannot support that scan safely.
+Claude's is the richest verifier, and the only one that matches on a structured slash-invocation record rather than on the submitted text. Nine adapters provide a `'command-injection'` verifier today (see the matrix below). Of the eight besides Claude, five (Codex, Qwen, Kimi, Grok, Antigravity) reuse the shared submitted-text scan; Copilot, OpenCode, and Aider each ship a bespoke verifier, because their history formats cannot support that scan safely.
 
 Claude Code writes every successful slash invocation to its session JSONL transcript as a `local_command` system entry whose `<command-name>` matches the slash and whose `<command-args>` matches exactly what was sent. The verifier (`src/main/agent/adapters/claude/slash-command-verifier.ts`) tail-scans this file for an entry matching both fields exactly:
 
@@ -268,6 +268,7 @@ Live runs, 2026-08-08, Windows. "Worst" is the slowest observation across trials
 | Cursor | login-gated | 5766ms, 5446ms (5.8s, 5.4s) | **5766ms** | yes (2614ms) | **stop** |
 | Gemini | 5504ms, never (>25s) | never (>25s), 6302ms (16.9s) | **>25s** | not reached | **stop** |
 | Grok Build | 313ms, 32ms (2.1s, ~4s turns) | (not yet paired-long measured) | **313ms** | n/a (slash never recorded, by design) | **implement (confirm-only)** |
+| Antigravity (2026-08-16, agy 1.1.13, 1 trial) | 84ms | 74ms (4.1s) | **84ms** | never recorded (rejected client-side: "Unknown command") | **implement** |
 
 Grok's two numbers come from `scripts/probe-grok.js`'s interactive PTY leg (2026-08-16, grok
 1.0.0, Windows) rather than `measure-injection-flush.mjs` - a typed submit polled against
@@ -314,6 +315,7 @@ There are three tiers, and the line between the first two is a safety property, 
 | Kimi | `null` | verifier | confirm-only | `wire.jsonl` shape pinned to real captures. Unmeasured: never reached a usable TUI |
 | Grok Build | `null` | verifier | confirm-only | 313ms/32ms flush-on-submit measured live; extractor unwraps the stored `<user_query>` wrapper and skips `synthetic_reason` records. Lacks the in-app proof, and `chat_history.jsonl` records carry NO timestamps so the scan cannot bound a `sentAt` window - a byte-identical PRIOR submission could false-confirm, harmless for confirm-only, disqualifying for escalation. Declines SLASH commands (TUI palette, never a recorded turn) |
 | Aider | `null` | verifier | confirm-only | markdown shape from a real fixture. Unmeasured: not installed on the measuring machine |
+| Antigravity | `null` | verifier (`submitted` semantics) | confirm-only | 84ms worst against the brain-dir transcript (`USER_INPUT` steps, `<USER_REQUEST>` unwrapped, whole-second timestamps with a 5s tolerance). Lacks the in-app confirmation proof; declines SLASH commands (rejected client-side, never recorded) |
 | Gemini | `null` | `null` | none | measured turn-end flushed and highly variable |
 | Droid | `null` | `null` | none | measured unreliable: 564ms best, 3202ms worst |
 | Cursor | `null` | `null` | none | measured turn-end flushed: appends land within ~40ms of the turn ending |
@@ -411,6 +413,8 @@ Codex handles slash input in the TUI. A probe of `/kng-probe-<nonce>` printed `U
 
 Treating the second as a failure would escalate a command that actually worked into a session restart. So `CodexAdapter.canVerifySlashSubmission()` returns `false`, and `prepareInjectionPlan` tags a slash `auto_command` `verify: 'none'` for it - neither retried nor escalated, outcome `unconfirmed`. Prose auto_commands on Codex are still fully verified. This is a declared capability rather than an agent-name check, per `agent-adapters-boundary`.
 
+Antigravity declares the same `false` for the same measured reason: its slash probe printed `Unknown command` in the TUI and appended nothing to the brain-dir transcript, so absence there is equally ambiguous. Prose auto_commands on Antigravity remain fully verified.
+
 When an adapter returns `null`, the caller falls back to:
 - `'paste'`: activity event or any post-`\r` data byte (within 3s).
 - `'command-injection'`: the handshake chain alone, with an outcome of `unconfirmed`.
@@ -475,7 +479,7 @@ Every "before" failure in the picker sweep fell in the 100-200ms band - exactly 
 - `src/main/pty/prompt-draft-ledger.ts` - unsent-user-text accounting.
 - `src/main/ipc/helpers/auto-command-outcome.ts` - persists the outcome and rations the notice.
 - `src/main/agent/adapters/claude/slash-command-verifier.ts` - Claude's JSONL-polling implementation, including the `submitted` exact-content scan.
-- `src/main/agent/shared/transcript-tail-cache.ts` - the bounded 256KB tail read and its LRU content-identity cache. Used by six of the eight verifiers: Claude and Aider import it directly, Codex/Qwen/Kimi/Grok reach it through the shared scan. Copilot and OpenCode do not read an appendable text file at all (a global JSON blob and a SQL query), so they bypass it. Must stay ONE module-global instance.
+- `src/main/agent/shared/transcript-tail-cache.ts` - the bounded 256KB tail read and its LRU content-identity cache. Used by seven of the nine verifiers: Claude and Aider import it directly, Codex/Qwen/Kimi/Grok/Antigravity reach it through the shared scan. Copilot and OpenCode do not read an appendable text file at all (a global JSON blob and a SQL query), so they bypass it. Must stay ONE module-global instance.
 - `src/main/agent/shared/submitted-text-verifier.ts` - the shared backwards tail walk, `sentAt` watermark, and exact trim-equality. Adapters supply only a synchronous path resolver and a record-shape extractor.
 - `src/main/agent/adapters/codex/command-injection-verifier.ts` - Codex resolver (memoised readdir scan) and rollout record shape.
 - `src/main/agent/adapters/qwen-code/command-injection-verifier.ts` - Qwen resolver (direct path construction) and chats record shape.

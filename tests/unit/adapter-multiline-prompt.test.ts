@@ -9,7 +9,7 @@
  * to multiline mode. Dropping the option from any adapter regresses prompt
  * delivery for tasks with multi-line descriptions.
  *
- * Coverage: codex, aider, opencode, kimi, droid, warp, ollama, grok.
+ * Coverage: codex, aider, opencode, kimi, droid, warp, ollama, grok, antigravity.
  * (claude, gemini, copilot, qwen-code are covered in their own test files.)
  *
  * Strategy: build the command with `shell: 'bash'` and a multi-line XML
@@ -58,6 +58,7 @@ import { DroidCommandBuilder } from '../../src/main/agent/adapters/droid';
 import { WarpAdapter } from '../../src/main/agent/adapters/warp';
 import { OllamaAdapter } from '../../src/main/agent/adapters/ollama';
 import { GrokCommandBuilder } from '../../src/main/agent/adapters/grok';
+import { AntigravityCommandBuilder } from '../../src/main/agent/adapters/antigravity';
 
 // ---------------------------------------------------------------------------
 // Shared test data
@@ -148,6 +149,20 @@ describe('Adapter multiline prompt - regression guard for { multiline: true }', 
     const adapter = new WarpAdapter();
     const command = adapter.buildCommand({
       agentPath: '/usr/bin/oz',
+      taskId: 'task-1',
+      cwd: '/project',
+      permissionMode: 'default',
+      shell: 'bash',
+      prompt: MULTILINE_XML,
+    });
+    expect(command).toContain(EXPECTED_FRAGMENT);
+  });
+
+  it('AntigravityCommandBuilder preserves newlines in prompt under bash', () => {
+    // No eventsOutputPath / MCP options, so the builder performs no file I/O.
+    const builder = new AntigravityCommandBuilder();
+    const command = builder.buildAntigravityCommand({
+      agyPath: '/usr/bin/agy',
       taskId: 'task-1',
       cwd: '/project',
       permissionMode: 'default',

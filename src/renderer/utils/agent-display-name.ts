@@ -88,6 +88,11 @@ const AGENT_META: Record<string, AgentMeta> = {
     installUrl: 'https://github.com/xai-org/grok-build',
     loginCommand: 'grok login',
   },
+  antigravity: {
+    display: 'Antigravity CLI',
+    short: 'Antigravity',
+    installUrl: 'https://antigravity.google/docs/cli/getting-started',
+  },
 };
 
 /**

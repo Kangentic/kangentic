@@ -19,7 +19,7 @@
 
 ---
 
-<p align="center">A Kanban board for AI coding agents. Spawn, suspend, and resume sessions across thirteen agent CLIs from one board, with your own backlog. Local, free, open source. One board shows every agent's status, output, and progress: respond when needed, and let them work autonomously the rest of the time.</p>
+<p align="center">A Kanban board for AI coding agents. Spawn, suspend, and resume sessions across fourteen agent CLIs from one board, with your own backlog. Local, free, open source. One board shows every agent's status, output, and progress: respond when needed, and let them work autonomously the rest of the time.</p>
 
 <p align="center">
   <a href="https://www.kangentic.com"><img src="https://raw.githubusercontent.com/Kangentic/branding/main/resources/mobile/android-feature-graphic-1024x500.png" alt="Kangentic: Kanban board for AI coding agents" width="800" /></a>
@@ -56,11 +56,12 @@
 
 ## Supported Agents
 
-Thirteen coding-agent CLIs, all first-class, on one Kanban board. Mix agents per column and hand off context between them:
+Fourteen coding-agent CLIs, all first-class, on one Kanban board. Mix agents per column and hand off context between them:
 
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (Anthropic)
 - [Codex CLI](https://developers.openai.com/codex/cli) (OpenAI)
 - [Gemini CLI](https://github.com/google-gemini/gemini-cli) (Google)
+- [Antigravity CLI](https://antigravity.google/docs/cli/getting-started) (Google)
 - [Qwen Code](https://github.com/QwenLM/qwen-code) (Alibaba)
 - [Kimi Code](https://github.com/MoonshotAI/kimi-cli) (Moonshot AI)
 - [Grok Build](https://github.com/xai-org/grok-build) (xAI)

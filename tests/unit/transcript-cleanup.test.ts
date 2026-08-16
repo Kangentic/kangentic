@@ -1031,6 +1031,93 @@ describe('cleanTranscriptForHandoff', () => {
     });
   });
 
+  describe('Antigravity CLI', () => {
+    // Assembled from a real agy 1.1.13 PTY capture (E1 rig, 2026-08-16),
+    // ANSI-stripped, with machine paths and the account line scrubbed.
+    // The TUI paints: logo art + sign-in banner + header block, a `>` echoed
+    // prompt, braille "Generating..." spinner frames, the response as bare
+    // lines, a `? for shortcuts` idle footer, and on graceful exit a
+    // "Resume with -c" summary carrying the conversation id.
+    const ANTIGRAVITY_REAL_TRANSCRIPT = [
+      '      ▄▀▀▄',
+      '     ▀▀▀▀▀▀',
+      '    ▀▀▀▀▀▀▀▀',
+      '   ▄▀▀    ▀▀▄',
+      '  ▄▀▀      ▀▀▄',
+      '',
+      ' Welcome to the Antigravity CLI. You are currently not signed in.',
+      '',
+      ' ⣷  Signing in...',
+      '  Antigravity CLI 1.1.13',
+      '  dev@example.com (Antigravity Starter Quota)',
+      '  Gemini 3.7 Flash (High)',
+      '  ~/ws',
+      '',
+      '> Tell me 3 facts about cats',
+      '⣾  Generating...esc to cancel',
+      '────────────────────────────────────────────────────────────────────────',
+      '⣷  Generat',
+      '⣯  Generating...',
+      'Cats are fascinating creatures. Three facts:',
+      '1. Cats sleep 12-16 hours a day.',
+      '2. A cat has a nictitating membrane, a third eyelid.',
+      '3. A purring frequency of 25-150 Hz may promote healing.',
+      '└ Tip: Use /help to see all commands.',
+      '────────────────────────────────────────────────────────────────────────',
+      '>',
+      '? for shortcuts                                  accept-edits · Gemini 3.7 Flash · high',
+      'press ctrl+c again to exit',
+      'Resume with -c (or command below):',
+      'agy --conversation=08939dbf-7975-4a3e-988e-54962828b379',
+    ].join('\n');
+
+    it('extracts the echoed prompt and the final response', () => {
+      const result = cleanTranscriptForHandoff(ANTIGRAVITY_REAL_TRANSCRIPT, 'antigravity');
+      expect(result).not.toBeNull();
+      expect(result).toContain('Tell me 3 facts about cats');
+      expect(result).toContain('Cats are fascinating creatures. Three facts:');
+      expect(result).toContain('nictitating membrane');
+      expect(result).toContain('purring frequency');
+    });
+
+    it('strips logo art, sign-in banner, and the header block', () => {
+      const result = cleanTranscriptForHandoff(ANTIGRAVITY_REAL_TRANSCRIPT, 'antigravity')!;
+      expect(result).not.toMatch(/[▀▄]{2,}/);
+      expect(result).not.toMatch(/Welcome to the Antigravity CLI/);
+      expect(result).not.toMatch(/Signing in/);
+      expect(result).not.toMatch(/Antigravity CLI 1\.1/);
+      expect(result).not.toMatch(/Starter Quota/);
+      expect(result).not.toMatch(/dev@example\.com/);
+    });
+
+    it('strips spinner frames, footer hints, and the status segment', () => {
+      const result = cleanTranscriptForHandoff(ANTIGRAVITY_REAL_TRANSCRIPT, 'antigravity')!;
+      expect(result).not.toMatch(/Generating/);
+      expect(result).not.toMatch(/esc to cancel/);
+      expect(result).not.toMatch(/\? for shortcuts/);
+      expect(result).not.toMatch(/press ctrl\+c again/);
+      expect(result).not.toMatch(/·\s*high/);
+      expect(result).not.toMatch(/Tip: Use \/help/);
+    });
+
+    it('strips the shutdown resume summary (it carries the conversation id)', () => {
+      const result = cleanTranscriptForHandoff(ANTIGRAVITY_REAL_TRANSCRIPT, 'antigravity')!;
+      expect(result).not.toMatch(/Resume with -c/);
+      expect(result).not.toMatch(/agy --conversation=/);
+    });
+
+    it('returns null for pure agy chrome with no conversation content', () => {
+      const noise = [
+        '      ▄▀▀▄',
+        ' ⣷  Signing in...',
+        '⣾  Generating...esc to cancel',
+        '? for shortcuts',
+        '────────────────────────────────────────',
+      ].join('\n');
+      expect(cleanTranscriptForHandoff(noise, 'antigravity')).toBeNull();
+    });
+  });
+
   describe('edge cases', () => {
     it('returns null for empty input', () => {
       expect(cleanTranscriptForHandoff('', 'claude')).toBeNull();
