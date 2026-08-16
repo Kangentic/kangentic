@@ -330,7 +330,8 @@ Reading the table by class:
 - **project-wide reload, no session id:** Aider. `--restore-chat-history` reloads the cwd-local
   `.aider.chat.history.md`; there is no per-session id, so there is nothing to verify or
   downgrade.
-- **no resume at all:** Warp. The `oz` one-shot runner streams and exits.
+- **no resume at all:** Warp and Ollama. The `oz` one-shot runner streams and exits, and
+  `ollama run` has no CLI-level session ids.
 
 ### Why there is no `canResumeSession` transcript-presence guard
 

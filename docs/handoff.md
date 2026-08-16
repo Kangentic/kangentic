@@ -54,7 +54,7 @@ Post-spawn: handoff DB record updated with target session ID
 
 ## Session History File Locations
 
-Each agent adapter implements `locateSessionHistoryFile(agentSessionId, cwd)` to find the native session file. The full per-agent table (file patterns + lookup methods for all 13 supported adapters) lives in [Agent Integration > Session History File Location](agent-integration.md#session-history-file-location); maintained there as the single source of truth.
+Each agent adapter implements `locateSessionHistoryFile(agentSessionId, cwd)` to find the native session file. The full per-agent table (file patterns + lookup methods for all 14 supported adapters) lives in [Agent Integration > Session History File Location](agent-integration.md#session-history-file-location); maintained there as the single source of truth.
 
 ## Prompt Delivery
 
