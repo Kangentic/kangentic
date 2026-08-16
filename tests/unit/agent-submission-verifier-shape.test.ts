@@ -105,6 +105,12 @@ const ADAPTER_CLASSES = [
     verifiesSlashSubmission: true, requiresAgentSessionId: true,
     reason: '`ollama run` keeps no session history',
   },
+  {
+    name: 'grok', importPath: '../../src/main/agent/adapters/grok/grok-adapter', className: 'GrokAdapter',
+    commandInjection: 'verifier', escalates: false,
+    verifiesSlashSubmission: false, requiresAgentSessionId: true,
+    reason: 'measured 313ms flush-on-submit against a 2.1s turn (grok 1.0.0), but records carry no timestamps to bound the match window and the resolver has never been proven in-app; slash input runs in the TUI palette and never becomes a chat_history turn',
+  },
 ] as const;
 
 function reasonFor(name: string): string {

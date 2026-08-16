@@ -998,6 +998,39 @@ describe('cleanTranscriptForHandoff', () => {
     });
   });
 
+  describe('Grok Build', () => {
+    // Real structure from a node-pty capture against grok 1.0.0: the
+    // alt-screen TUI leaves a clean conversation dump in the normal buffer
+    // on /quit - user turns prefixed `> `, then the response, then a
+    // "Resume this session with:" trailer. Welcome-banner and status chrome
+    // only leak when the terminal lacks alt-screen support.
+    const GROK_REAL_TRANSCRIPT = [
+      'Grok Build  1.0.0',
+      '[Click here to Upgrade] or use Ctrl+O',
+      'Help improve Grok',
+      'Reply with exactly: PONG',
+      '> Reply with exactly: PONG',
+      '  PONG',
+      'Resume this session with:',
+      '  grok --resume 01a00b66-92e2-7812-a209-b80885090deb',
+    ].join('\n');
+
+    it('routes through the dispatcher and extracts the last turn', () => {
+      const result = cleanTranscriptForHandoff(GROK_REAL_TRANSCRIPT, 'grok');
+      expect(result).not.toBeNull();
+      expect(result).toContain('Reply with exactly: PONG');
+      expect(result).toContain('PONG');
+    });
+
+    it('strips the resume trailer and welcome/upgrade chrome', () => {
+      const result = cleanTranscriptForHandoff(GROK_REAL_TRANSCRIPT, 'grok')!;
+      expect(result).not.toContain('--resume');
+      expect(result).not.toContain('Upgrade');
+      expect(result).not.toContain('Grok Build  1.0.0');
+      expect(result).not.toContain('Help improve Grok');
+    });
+  });
+
   describe('edge cases', () => {
     it('returns null for empty input', () => {
       expect(cleanTranscriptForHandoff('', 'claude')).toBeNull();

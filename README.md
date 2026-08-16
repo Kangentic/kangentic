@@ -19,7 +19,7 @@
 
 ---
 
-<p align="center">A Kanban board for AI coding agents. Spawn, suspend, and resume sessions across twelve agent CLIs from one board, with your own backlog. Local, free, open source. One board shows every agent's status, output, and progress: respond when needed, and let them work autonomously the rest of the time.</p>
+<p align="center">A Kanban board for AI coding agents. Spawn, suspend, and resume sessions across thirteen agent CLIs from one board, with your own backlog. Local, free, open source. One board shows every agent's status, output, and progress: respond when needed, and let them work autonomously the rest of the time.</p>
 
 <p align="center">
   <a href="https://www.kangentic.com"><img src="https://raw.githubusercontent.com/Kangentic/branding/main/resources/mobile/android-feature-graphic-1024x500.png" alt="Kangentic: Kanban board for AI coding agents" width="800" /></a>
@@ -35,7 +35,7 @@
 - **Usage & cost analytics** - tokens, cost, and burn rate by project, agent, model, and effort, over any time range, down to a per-project ledger with cost share and dollars per million tokens.
 - **Git worktrees & review** - each agent runs in its own worktree, so parallel work never collides. The built-in Changes panel opens a split or inline diff with file tree and commit graph, one click from the card.
 - **Session persistence** - session data is written incrementally, so even a hard crash loses nothing. On relaunch running agents auto-resume with full context, and sessions you paused stay paused.
-- **Handoff context** - move a card from a Claude plan column to a Codex execute column and the next agent starts with the full history. Both directions for Claude, Codex, Gemini, Qwen, Kimi, and OpenCode.
+- **Handoff context** - move a card from a Claude plan column to a Codex execute column and the next agent starts with the full history. Both directions for Claude, Codex, Gemini, Qwen, Kimi, Grok, and OpenCode.
 - **Model & effort routing** - Opus at xhigh for Planning, Sonnet for Executing, another agent for review. Save ladders as named Board Profiles; Kangentic applies them live as cards cross columns.
 - **Project & global settings** - every project carries its own agent, model, effort, permission mode, base branch, and worktree defaults, separate from machine-wide ones, in a searchable settings panel.
 - **Backlog, labels & priorities** - stage work before it hits the board, tag it with custom labels and a fully-customizable priority scale, and batch-promote in one move. The tags keep working as board filters afterward.
@@ -56,13 +56,14 @@
 
 ## Supported Agents
 
-Twelve coding-agent CLIs, all first-class, on one Kanban board. Mix agents per column and hand off context between them:
+Thirteen coding-agent CLIs, all first-class, on one Kanban board. Mix agents per column and hand off context between them:
 
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (Anthropic)
 - [Codex CLI](https://developers.openai.com/codex/cli) (OpenAI)
 - [Gemini CLI](https://github.com/google-gemini/gemini-cli) (Google)
 - [Qwen Code](https://github.com/QwenLM/qwen-code) (Alibaba)
 - [Kimi Code](https://github.com/MoonshotAI/kimi-cli) (Moonshot AI)
+- [Grok Build](https://github.com/xai-org/grok-build) (xAI)
 - [OpenCode](https://opencode.ai/docs) (sst)
 - [Droid](https://docs.factory.ai/cli/getting-started/overview) (Factory)
 - [Cursor CLI](https://cursor.com/docs/cli/overview)

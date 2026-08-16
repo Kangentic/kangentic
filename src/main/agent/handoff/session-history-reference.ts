@@ -40,6 +40,7 @@ function agentDisplayLabel(agent: string): string {
     case 'aider': return 'Aider';
     case 'kimi': return 'Kimi Code';
     case 'droid': return 'Droid';
+    case 'grok': return 'Grok Build';
     default: return agent;
   }
 }

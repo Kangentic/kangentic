@@ -2388,6 +2388,20 @@
             ],
             defaultPermission: 'default',
           },
+          {
+            name: 'grok', displayName: 'Grok Build', found: false, path: null, version: null,
+            // KEEP IN SYNC with GrokAdapter.permissions in src/main/agent/adapters/grok/grok-adapter.ts
+            permissions: [
+              { mode: 'plan', label: 'Plan Mode (read-only)' },
+              { mode: 'default', label: 'Default (ask for approval)' },
+              { mode: 'acceptEdits', label: 'Accept Edits' },
+              { mode: 'auto', label: 'Auto (model decides when to ask)' },
+              { mode: 'dontAsk', label: 'Never Ask (auto-deny)' },
+              { mode: 'bypassPermissions', label: 'Dangerous Full Access' },
+            ],
+            defaultPermission: 'acceptEdits',
+            supportsSummarize: true,
+          },
         ];
         return defaults.map(function (agent) {
           var override = overrides[agent.name];

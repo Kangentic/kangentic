@@ -9,7 +9,7 @@
  * to multiline mode. Dropping the option from any adapter regresses prompt
  * delivery for tasks with multi-line descriptions.
  *
- * Coverage: codex, aider, opencode, kimi, droid, warp, ollama.
+ * Coverage: codex, aider, opencode, kimi, droid, warp, ollama, grok.
  * (claude, gemini, copilot, qwen-code are covered in their own test files.)
  *
  * Strategy: build the command with `shell: 'bash'` and a multi-line XML
@@ -57,6 +57,7 @@ import { KimiCommandBuilder } from '../../src/main/agent/adapters/kimi';
 import { DroidCommandBuilder } from '../../src/main/agent/adapters/droid';
 import { WarpAdapter } from '../../src/main/agent/adapters/warp';
 import { OllamaAdapter } from '../../src/main/agent/adapters/ollama';
+import { GrokCommandBuilder } from '../../src/main/agent/adapters/grok';
 
 // ---------------------------------------------------------------------------
 // Shared test data
@@ -160,6 +161,21 @@ describe('Adapter multiline prompt - regression guard for { multiline: true }', 
     const adapter = new OllamaAdapter();
     const command = adapter.buildCommand({
       agentPath: '/usr/bin/ollama',
+      taskId: 'task-1',
+      cwd: '/project',
+      permissionMode: 'default',
+      shell: 'bash',
+      prompt: MULTILINE_XML,
+    });
+    expect(command).toContain(EXPECTED_FRAGMENT);
+  });
+
+  it('GrokCommandBuilder preserves newlines in prompt under bash', () => {
+    // No eventsOutputPath / MCP options, so the builder's gated file writes
+    // (hooks file, config block) are never reached - no mocking needed.
+    const builder = new GrokCommandBuilder();
+    const command = builder.buildGrokCommand({
+      grokPath: '/usr/bin/grok',
       taskId: 'task-1',
       cwd: '/project',
       permissionMode: 'default',

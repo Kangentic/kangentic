@@ -56,6 +56,11 @@ describe('Adapter getInjectionSequence (drives task:setRuntimeOverride)', () => 
     { name: 'kimi',     importPath: '../../src/main/agent/adapters/kimi/kimi-adapter',         className: 'KimiAdapter' },
     { name: 'opencode', importPath: '../../src/main/agent/adapters/opencode/opencode-adapter', className: 'OpenCodeAdapter' },
     { name: 'droid',    importPath: '../../src/main/agent/adapters/droid/droid-adapter',       className: 'DroidAdapter' },
+    // Grok HAS /model + /effort slash commands, but declares
+    // canVerifySlashSubmission false (slash input runs in the TUI palette and
+    // never becomes a chat_history turn), so an injection could not be
+    // confirmed - the respawn fallback applies overrides deterministically.
+    { name: 'grok',     importPath: '../../src/main/agent/adapters/grok/grok-adapter',         className: 'GrokAdapter' },
   ] as const;
 
   it.each(ADAPTERS_WITHOUT_LIVE_SWITCH)(

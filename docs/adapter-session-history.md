@@ -22,7 +22,7 @@ Runtime flow:
 1. An agent adapter declares a `sessionHistory` block in its `runtime` strategy (`src/shared/types.ts` - `AdapterRuntimeStrategy.sessionHistory`).
 2. On PTY spawn, the adapter's full runtime strategy is stored on `ManagedSession.agentParser` - SessionManager does nothing session-history-specific.
 3. The agent's session ID is captured via one of four paths (whichever fires first):
-   - **Spawn-time short-circuit** (caller-owned IDs): when the adapter declares `supportsCallerSessionId = true`, the spawn pipeline pre-generates a UUID and passes it via `SpawnSessionInput.agentSessionId`. `session-spawn-flow.ts` calls `sessionHistoryReader.attach(...)` directly during spawn. Used by Claude (when `runtime.sessionHistory` is wired), Qwen, and Kimi.
+   - **Spawn-time short-circuit** (caller-owned IDs): when the adapter declares `supportsCallerSessionId = true`, the spawn pipeline pre-generates a UUID and passes it via `SpawnSessionInput.agentSessionId`. `session-spawn-flow.ts` calls `sessionHistoryReader.attach(...)` directly during spawn. Used by Claude (when `runtime.sessionHistory` is wired), Qwen, Kimi, and Grok.
    - `runtime.sessionId.fromHook` (Gemini hook stdin)
    - `runtime.sessionId.fromOutput` (PTY scraper)
    - `runtime.sessionId.fromFilesystem` (Codex rollout directory scan)
@@ -309,13 +309,14 @@ behavior below is the resume contract.
 | Cursor | `agent --resume=<id>` | `~/.cursor/chats/<chat-id-hash>/` | chat id (global) | no | **no** (locator returns null) |
 | Aider | `aider --restore-chat-history` | `<cwd>/.aider.chat.history.md` | cwd file (no session id) | yes | n/a (no per-session file) |
 | Warp | (no resume) | none | n/a | n/a | n/a |
+| Grok Build | `grok --resume <id>` | `~/.grok/sessions/<encodeURIComponent(cwd)>/<id>/` (updates.jsonl + chat_history.jsonl) | URL-encoded cwd + id | yes | yes |
 
 Reading the table by class:
 
-- **cwd-keyed per-session file that `--resume` reads (Claude-like):** Gemini, Qwen, Kimi, Droid
-  (and Claude). The resume target is a file under a directory derived from the cwd (basename,
-  slug, or `md5`), so moving the project to a path with a different cwd-derived key, or deleting
-  that file, makes the stored id unresolvable.
+- **cwd-keyed per-session file that `--resume` reads (Claude-like):** Gemini, Qwen, Kimi, Droid,
+  Grok (and Claude). The resume target is a file under a directory derived from the cwd
+  (basename, slug, `md5`, or Grok's `encodeURIComponent`), so moving the project to a path with
+  a different cwd-derived key, or deleting that file, makes the stored id unresolvable.
 - **id-keyed / global store (cwd-independent):** Codex, OpenCode, Copilot, Cursor. Resume
   resolves by session id against a global location, so the working directory does not gate it.
   Codex scans `~/.codex/sessions/` by id (`codex-rs find_thread_path_by_id_str`; the per-rollout
@@ -426,7 +427,9 @@ and a 1,557-session-dir scan across versions v2.1.187-v2.1.220):
   from stored id" cleanly means a fork, never routine resume noise.
 
 Kangentic tracks the fork at two layers, neither of which is agent-name-branched (both ride the
-generic `runtime.statusFile` capability, which only Claude implements today):
+generic `runtime.statusFile` capability's status channel - i.e. a `parseStatus` that returns a
+live payload, which only Claude's does today; Copilot's and Grok's `statusFile` declarations
+carry only the events channel):
 
 1. **Live reconcile.** `SessionTelemetry.processStatusUpdate`'s agent-session-id capture is
    **change-sensitive on the status-file channel**: it re-fires `onAgentSessionId` whenever the

@@ -54,7 +54,7 @@ Post-spawn: handoff DB record updated with target session ID
 
 ## Session History File Locations
 
-Each agent adapter implements `locateSessionHistoryFile(agentSessionId, cwd)` to find the native session file. The full per-agent table (file patterns + lookup methods for all 12 supported adapters) lives in [Agent Integration > Session History File Location](agent-integration.md#session-history-file-location); maintained there as the single source of truth.
+Each agent adapter implements `locateSessionHistoryFile(agentSessionId, cwd)` to find the native session file. The full per-agent table (file patterns + lookup methods for all 13 supported adapters) lives in [Agent Integration > Session History File Location](agent-integration.md#session-history-file-location); maintained there as the single source of truth.
 
 ## Prompt Delivery
 
@@ -91,7 +91,7 @@ Handoff records are stored in the `handoffs` table for audit trail:
 
 ## MCP Access
 
-Claude Code sessions can access handoff metadata via the `kangentic_get_handoff_context` MCP tool, which returns the session history file path and handoff metadata. The `kangentic_get_transcript` tool provides structured access to session transcripts for Claude, Droid, Codex, Gemini, Qwen, Kimi, and OpenCode sessions (other agents fall back to raw scrollback). See [MCP Server](mcp-server.md) for details.
+Claude Code sessions can access handoff metadata via the `kangentic_get_handoff_context` MCP tool, which returns the session history file path and handoff metadata. The `kangentic_get_transcript` tool provides structured access to session transcripts for Claude, Droid, Codex, Gemini, Qwen, Kimi, OpenCode, and Grok sessions (other agents fall back to raw scrollback). See [MCP Server](mcp-server.md) for details.
 
 ## Disabling Session History Passthrough
 
@@ -103,7 +103,7 @@ The toggle is a per-column setting in the Edit Column dialog, under the Agent se
 
 ## Per-Agent Transcript Cleanup
 
-TUI agents (Claude Code, Codex CLI, Gemini CLI, Qwen Code, Aider, Kimi Code, Droid, OpenCode) produce raw PTY output with agent-specific rendering artifacts. Cleanup utilities in `src/main/agent/handoff/transcript-cleanup.ts` provide shared functions (`filterNoiseLines`, `finalizeTranscript`) used by per-adapter transcript cleanup files. Each agent's cleanup lives in its adapter folder: `src/main/agent/adapters/<name>/transcript-cleanup.ts`.
+TUI agents (Claude Code, Codex CLI, Gemini CLI, Qwen Code, Aider, Kimi Code, Droid, OpenCode, Grok Build) produce raw PTY output with agent-specific rendering artifacts. Cleanup utilities in `src/main/agent/handoff/transcript-cleanup.ts` provide shared functions (`filterNoiseLines`, `finalizeTranscript`) used by per-adapter transcript cleanup files. Each agent's cleanup lives in its adapter folder: `src/main/agent/adapters/<name>/transcript-cleanup.ts`.
 
 GitHub Copilot CLI is also a TUI agent but does not yet ship its own `transcript-cleanup.ts`, so its handoff transcripts may contain rendering artifacts until one is added. Cursor CLI, Oz CLI (Warp), and Ollama stream plain text output (no alternate screen buffer) and do not need per-adapter cleanup.
 

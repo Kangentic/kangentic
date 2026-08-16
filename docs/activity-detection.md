@@ -79,7 +79,7 @@ Surrounding infrastructure:
 | `src/main/activity-engine/background-shell/process-tree.ts` | Cross-platform descendant enumeration; `listAllProcesses` shared once per cycle |
 | `src/main/activity-engine/background-shell/resume.ts` | Resume-time orphan adoption |
 | `src/main/activity-engine/background-shell/looks-like-shell-id.ts` | Shell-id shape gate |
-| `src/main/agent/event-bridge.js` | Generic hook-to-JSONL bridge; decodes typed `<kind>:<base64(JSON)>` directives (extractTool, extractDetail, setTypeWhen, ...) built by `src/main/agent/shared/directive-builders.ts` |
+| `src/main/agent/event-bridge.js` | Generic hook-to-JSONL bridge; decodes typed `<kind>:<base64(JSON)>` directives (extractTool, extractDetail, setTypeWhen, ...) built by `src/main/agent/shared/directive-builders.ts`. The events-path argument is either a literal path or the sentinel `env:<NAME>`, resolved from the hook process environment at run time - used by adapters whose CLI has no per-session settings mechanism (Grok): one static per-cwd hook file routes each session's events via that session's own spawn env, and a session without the variable (the user's own manual CLI run) is a silent no-op |
 | `src/main/agent/adapters/claude/hook-manager.ts` | Claude Code hook configuration |
 | `src/shared/types.ts` | `ActivityState`, `ActivityReason`, `EventType`, `SessionEvent.toolId` |
 
@@ -233,7 +233,7 @@ Each adapter declares one strategy via its `runtime.activity` field (constructed
 |------|-------------|---------------|---------|-----------|
 | `hooks` | Yes (sole source of truth) | No | Claude Code | Activity state is driven exclusively by hook deliveries. PTY traffic is ignored for state transitions. |
 | `pty` | No | Yes | Aider, Cursor, Warp, Droid, Codex, Kimi, Ollama (today) | No hook protocol available. The PTY tracker emits `forceIdle` after a silence window, optionally short-circuited by an adapter-supplied `detectIdle(data)` regex that matches the agent's input prompt. Kimi gets authoritative `TurnBegin`/`TurnEnd` transitions from `runtime.sessionHistory` (wire.jsonl), not the hook pipeline. |
-| `hooks_and_pty` | Yes (primary) | Yes (fallback) | Gemini, Qwen, OpenCode, Copilot | Hooks are authoritative when they fire; the PTY tracker is auto-suppressed on the first hook event and re-engages only if hooks stop arriving. |
+| `hooks_and_pty` | Yes (primary) | Yes (fallback) | Gemini, Qwen, OpenCode, Copilot, Grok | Hooks are authoritative when they fire; the PTY tracker is auto-suppressed on the first hook event and re-engages only if hooks stop arriving. For Grok the fallback is load-bearing by design: its project hooks are folder-trust-gated and silently skipped in an untrusted directory, so the PTY tracker carries activity until trust lands. |
 
 Both `pty` and `hooks_and_pty` may pass an optional `detectIdle(data: string) => boolean` for instant idle detection from the input-prompt regex. Without it, idle is inferred from a silence timer.
 

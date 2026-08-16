@@ -29,10 +29,11 @@ const BRIDGE = path.resolve(__dirname, '../../src/main/agent/event-bridge.js');
 let tmpDir: string;
 let outputFile: string;
 
-function runBridge(stdin: string, args: string[]): void {
+function runBridge(stdin: string, args: string[], env?: Record<string, string>): void {
   execFileSync(process.execPath, [BRIDGE, ...args], {
     input: stdin,
     timeout: 5000,
+    env: env ? { ...process.env, ...env } : process.env,
   });
 }
 
@@ -77,6 +78,31 @@ describe('event-bridge', () => {
 
   it('no output path does not crash', () => {
     runBridge('{}', []);
+    expect(fs.existsSync(outputFile)).toBe(false);
+  });
+
+  // --- env: sentinel (per-session routing for static per-cwd hook files) ---
+  // Adapters whose CLI has no per-session settings mechanism (Grok) write ONE
+  // static hook file whose commands carry `env:<NAME>`; each spawn supplies
+  // its own value through the PTY env, and a session without the variable
+  // (the user's own manual CLI run in that cwd) must be a silent no-op.
+
+  it('env: sentinel resolves the events path from the process environment', () => {
+    runBridge('{}', ['env:KANGENTIC_EVENTS_PATH_TEST', 'idle'], {
+      KANGENTIC_EVENTS_PATH_TEST: outputFile,
+    });
+    expect(readEvent().type).toBe('idle');
+  });
+
+  it('env: sentinel with the variable unset is a silent no-op', () => {
+    runBridge('{}', ['env:KANGENTIC_EVENTS_PATH_UNSET_TEST', 'idle']);
+    expect(fs.existsSync(outputFile)).toBe(false);
+  });
+
+  it('env: sentinel with an empty variable is a silent no-op', () => {
+    runBridge('{}', ['env:KANGENTIC_EVENTS_PATH_TEST', 'idle'], {
+      KANGENTIC_EVENTS_PATH_TEST: '',
+    });
     expect(fs.existsSync(outputFile)).toBe(false);
   });
 

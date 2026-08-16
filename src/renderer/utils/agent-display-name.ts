@@ -82,6 +82,12 @@ const AGENT_META: Record<string, AgentMeta> = {
     short: 'Cursor',
     installUrl: 'https://cursor.com/cli',
   },
+  grok: {
+    display: 'Grok Build',
+    short: 'Grok',
+    installUrl: 'https://github.com/xai-org/grok-build',
+    loginCommand: 'grok login',
+  },
 };
 
 /**

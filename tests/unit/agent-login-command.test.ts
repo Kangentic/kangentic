@@ -49,6 +49,10 @@ describe('agentLoginCommand', () => {
     expect(agentLoginCommand('ollama')).toBeUndefined();
   });
 
+  it('returns "grok login" for the grok agent', () => {
+    expect(agentLoginCommand('grok')).toBe('grok login');
+  });
+
   it('returns undefined for an unknown agent identifier', () => {
     expect(agentLoginCommand('unknown-agent-xyz')).toBeUndefined();
   });

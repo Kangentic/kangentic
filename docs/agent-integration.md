@@ -1,6 +1,6 @@
 # Agent Integration
 
-Kangentic supports twelve AI coding agents: Claude Code, Codex CLI, Gemini CLI, Qwen Code, Cursor CLI, GitHub Copilot CLI, OpenCode, Aider, Oz CLI (Warp), Kimi Code, Droid, and Ollama. Each agent is wrapped behind a common `AgentAdapter` interface that handles CLI detection, command building, permission mapping, session lifecycle hooks, and cross-agent handoff. This doc covers the adapter system, agent-specific details, and shared infrastructure.
+Kangentic supports thirteen AI coding agents: Claude Code, Codex CLI, Gemini CLI, Qwen Code, Cursor CLI, GitHub Copilot CLI, OpenCode, Aider, Oz CLI (Warp), Kimi Code, Droid, Ollama, and Grok Build. Each agent is wrapped behind a common `AgentAdapter` interface that handles CLI detection, command building, permission mapping, session lifecycle hooks, and cross-agent handoff. This doc covers the adapter system, agent-specific details, and shared infrastructure.
 
 ## Agent Adapter Interface
 
@@ -13,7 +13,7 @@ Every agent implements the `AgentAdapter` interface. Each adapter lives in `src/
 | `detect(overridePath?)` | Locate the CLI binary and return path + version |
 | `invalidateDetectionCache()` | Reset cached detection (e.g. after user changes CLI path) |
 | `ensureTrust(workingDirectory)` | Pre-approve a directory so the agent doesn't prompt for trust |
-| `probeAuth?()` | Optional. Check whether the agent is authenticated. Returns `true` (logged in), `false` (installed but not authenticated), or `null` (probe unavailable / I/O error). Only called by IPC after `detect()` reports `found: true`. Must never throw. Currently implemented only by Kimi (see [Kimi Code -> Authentication](#authentication)). |
+| `probeAuth?()` | Optional. Check whether the agent is authenticated. Returns `true` (logged in), `false` (installed but not authenticated), or `null` (probe unavailable / I/O error). Only called by IPC after `detect()` reports `found: true`. Must never throw. Currently implemented by Kimi (see [Kimi Code -> Authentication](#authentication)) and Grok (`grok models`, whose output says "not authenticated" from local state). |
 | `buildCommand(options)` | Build the shell command string to spawn the agent |
 | `interpolateTemplate(template, variables)` | Replace `{{key}}` placeholders in prompt templates |
 | `runtime` | `AdapterRuntimeStrategy` declaring activity detection + session ID capture (see below) |
@@ -27,7 +27,7 @@ Every agent implements the `AgentAdapter` interface. Each adapter lives in `src/
 
 | Property | Type | Purpose |
 |----------|------|---------|
-| `name` | `string` | Unique identifier (`'claude'`, `'codex'`, `'gemini'`, `'qwen'`, `'cursor'`, `'copilot'`, `'opencode'`, `'aider'`, `'warp'`, `'kimi'`, `'droid'`, `'ollama'`) |
+| `name` | `string` | Unique identifier (`'claude'`, `'codex'`, `'gemini'`, `'qwen'`, `'cursor'`, `'copilot'`, `'opencode'`, `'aider'`, `'warp'`, `'kimi'`, `'droid'`, `'ollama'`, `'grok'`) |
 | `displayName` | `string` | Human-readable product name |
 | `sessionType` | `SessionRecord['session_type']` | Value stored in the sessions DB table |
 | `supportsCallerSessionId` | `boolean` | True when the CLI accepts a caller-supplied session ID via `--session-id` (Claude). When false, Kangentic captures the agent's own ID via `runtime.sessionId` for `--resume`. |
@@ -39,28 +39,28 @@ Every agent implements the `AgentAdapter` interface. Each adapter lives in `src/
 
 | Property | Type | Purpose |
 |----------|------|---------|
-| `getSubmissionVerifier?(contextType)` | `(SubmissionContextType) => SubmissionVerifier \| null` | Returns a context-specific verification callback used in two flows: `'paste'` (post-`\r` confirmation in `TerminalSubmit.submitContent`) and `'command-injection'` (per-command confirmation in `TerminalSubmit.submitKeystrokes`, scheduled by `TerminalSubmitScheduler.scheduleKeystrokes`). The callback receives a `SubmissionContext` and returns `Promise<boolean>`. Adapters return `null` for contexts they cannot verify; every adapter returns `null` for `'paste'` today, falling back to the activity + data-floor backstops. Seven return a `'command-injection'` verifier: Claude (JSONL slash-invocation matching) and Codex, both VERIFIED and allowed to escalate; plus Copilot, OpenCode (via a read-only SQL query rather than a file read), Qwen, Kimi, and Aider, all CONFIRM-ONLY - they confirm and drive retry-on-Enter but are barred from escalation via `canEscalateOnVerificationFailure`. A verifier must only be added for an agent whose history is MEASURED to flush on submit; see [command-injection.md](command-injection.md) and [Embedded Browser - Paste Engine](embedded-browser.md#paste-engine). |
+| `getSubmissionVerifier?(contextType)` | `(SubmissionContextType) => SubmissionVerifier \| null` | Returns a context-specific verification callback used in two flows: `'paste'` (post-`\r` confirmation in `TerminalSubmit.submitContent`) and `'command-injection'` (per-command confirmation in `TerminalSubmit.submitKeystrokes`, scheduled by `TerminalSubmitScheduler.scheduleKeystrokes`). The callback receives a `SubmissionContext` and returns `Promise<boolean>`. Adapters return `null` for contexts they cannot verify; every adapter returns `null` for `'paste'` today, falling back to the activity + data-floor backstops. Eight return a `'command-injection'` verifier: Claude (JSONL slash-invocation matching) and Codex, both VERIFIED and allowed to escalate; plus Copilot, OpenCode (via a read-only SQL query rather than a file read), Qwen, Kimi, Aider, and Grok, all CONFIRM-ONLY - they confirm and drive retry-on-Enter but are barred from escalation via `canEscalateOnVerificationFailure`. A verifier must only be added for an agent whose history is MEASURED to flush on submit; see [command-injection.md](command-injection.md) and [Embedded Browser - Paste Engine](embedded-browser.md#paste-engine). |
 | `liveTelemetryUnsupported?` | `AgentLiveTelemetryUnsupported` | Set when the agent CLI has no per-session telemetry channel (no status file, session history, or stream output integration is possible). Carries the renderer-facing label and tooltip so all agent-specific copy lives with the adapter. Currently used by Droid. |
 | `reportsRateLimits?` | `boolean` | Set by adapters whose CLI streams account-wide rate-limit windows (plan-usage quotas). The renderer ContextBar shows its rate-limit pill for any session of such an agent, sourced from a shared global snapshot that is merged monotonically per window across sessions (within a fixed window used-percentage only rises, so a session carrying a stale cached report never regresses the displayed values, and a genuine window rollover is taken wholesale). A freshly spawned terminal shows the same limits as its siblings before it has emitted its own status line. Omit (falsy) for adapters with no rate-limit telemetry. Currently set only by Claude. |
 | `pastedImageReferenceTemplate?` | `string` | Set by adapters whose CLI does not reliably auto-attach an image from a bare file path (a typed/pasted path is read as inert text, not auto-recognized as an image). Kangentic saves a pasted-clipboard or dropped image to a temp PNG (reliable even where the CLI's own clipboard reader silently fails, e.g. Claude Code on Windows with Snipping Tool images - claude-code#26679) and injects this template instead of the bare path, so the agent reliably reads the file as an image. `{path}` is replaced with the shell-quoted absolute path; a template lacking `{path}` has the quoted path appended. Omit to inject the bare quoted path (legacy). Currently set only by Claude. |
-| `buildEnv?(options)` | `(SpawnCommandOptions) => Record<string, string> \| null` | Adapter-specific environment variables to inject into the PTY spawn. Used for MCP config an adapter cannot pass on the command line: either because the CLI has no MCP flag at all (OpenCode's `OPENCODE_CONFIG_CONTENT`, carrying the whole config), or because the value is a secret that must not land in argv or in a repo file (Codex and Droid both pass only `KANGENTIC_MCP_TOKEN`, referenced by name from their config). |
+| `buildEnv?(options)` | `(SpawnCommandOptions) => Record<string, string> \| null` | Adapter-specific environment variables to inject into the PTY spawn. Used for MCP config an adapter cannot pass on the command line: either because the CLI has no MCP flag at all (OpenCode's `OPENCODE_CONFIG_CONTENT`, carrying the whole config), or because the value is a secret that must not land in argv or in a repo file (Codex and Droid both pass only `KANGENTIC_MCP_TOKEN`, referenced by name from their config). Grok extends the pattern furthest: its env carries the MCP URL and token (`KANGENTIC_MCP_URL` / `KANGENTIC_MCP_TOKEN`, dereferenced by grok's `${VAR}` expansion so its `.grok/config.toml` block stays fully static) plus `KANGENTIC_EVENTS_PATH` for the hook bridge's `env:` sentinel. |
 | `getExitSequence?()` | `() => string[]` | Sequence of strings to write to the PTY for a graceful exit. Default is `['\x03']` (Ctrl+C only). Claude overrides with `['\x03', '/exit\r']` to flush conversation state. |
 | `attachSession?(context)` | `(SessionContext) => SessionAttachment \| void` | Per-session lifecycle hook for adapters that need work outside the declarative `runtime` strategy (out-of-band CLI queries, file watchers, etc.). The returned `dispose` is called on session end. |
 | `summarize?(prompt, cliPath, cwd)` | `(string, string, string) => Promise<string>` | One-shot summarization for the auto-name-tasks-from-prompt feature. Spawns the CLI in non-interactive `--print` mode. Adapters without a clean headless mode (Aider, Warp) omit this, as does Ollama (its headless mode is not yet wired). |
-| `parseTranscript?(agentSessionId, cwd)` | `(string, string) => Promise<ParsedTranscript>` | Parse the agent's native session history into agent-agnostic `TranscriptEntry[]` for the MCP `get_transcript` structured format. The adapter owns all format/location knowledge (JSONL file, chat JSONL, SQLite DB), so `handleGetTranscript` never branches on agent name. Must not throw; returns `{ entries: [], sourcePath }` on missing/corrupt history. Implemented by Claude, Droid, Codex, Gemini, Qwen, Kimi, and OpenCode; Aider/Warp/Cursor/Copilot/Ollama omit it (raw format only). See [MCP server - get_transcript](mcp-server.md#kangentic_get_transcript). |
-| `onProjectRelocated?(oldPath, newPath)` | `(string, string) => Promise<void>` | Migrate per-cwd data the agent keeps OUTSIDE the working directory, keyed by the absolute path, when that path changes. Invoked for two relocations with the same (oldPath, newPath) contract: a whole-project move (the `project:relocate` IPC handler, reached via Locate Folder / Change or the one-step "Move..." flow), and a single worktree-cwd rename on the first resume after a task's worktree was recreated at a new path (`migrateResumeCwdIfRenamed` in `src/main/transition-engine/resume-cwd-migration.ts`, which passes one worktree's old/new path so only that cwd's data moves). Called best-effort after the stored paths are settled and the new location exists. Implemented by Claude, Codex, Gemini, Qwen, Copilot, OpenCode, Kimi, and Droid (per-agent details in [Project relocation](#project-relocation) below); the shared mechanics (path-pair collection, directory rename/merge, backup + atomic write, serial lock) live in `src/main/agent/shared/relocation-utils.ts`. Implementations must be non-destructive and never block the caller. Aider, Cursor, Warp, and Ollama omit this (their resumable state is in-project or absent). |
-| `onWorktreeRemoved?(worktreePath)` | `(string) => Promise<void>` | Drop per-directory state the adapter recorded in a GLOBAL config file for a worktree Kangentic has just deleted. Kangentic creates a worktree per task, so an adapter keyed by absolute path accumulates one dead entry per task forever with nothing to clean it up (one machine reached 473). Dispatched from the single chokepoint inside `WorktreeManager.removeWorktree`, via a listener the main process registers at startup (`setWorktreeRemovedListener` -> `notifyAdaptersWorktreeRemoved`), so the git module never imports the agent registry and no removal path can run un-notified. Generic over `agentRegistry.list()` - no agent-name branching. Best-effort and never fatal: the worktree is already gone. Implemented by Codex (`~/.codex/config.toml` directory trust) and Gemini (`~/.gemini/trustedFolders.json`), the two adapters that key trust by absolute path in a global file. Both remove only an entry they could have written themselves, never a user decision. Every other adapter's per-directory state lives inside the worktree and disappears with it. |
+| `parseTranscript?(agentSessionId, cwd)` | `(string, string) => Promise<ParsedTranscript>` | Parse the agent's native session history into agent-agnostic `TranscriptEntry[]` for the MCP `get_transcript` structured format. The adapter owns all format/location knowledge (JSONL file, chat JSONL, SQLite DB), so `handleGetTranscript` never branches on agent name. Must not throw; returns `{ entries: [], sourcePath }` on missing/corrupt history. Implemented by Claude, Droid, Codex, Gemini, Qwen, Kimi, OpenCode, and Grok; Aider/Warp/Cursor/Copilot/Ollama omit it (raw format only). See [MCP server - get_transcript](mcp-server.md#kangentic_get_transcript). |
+| `onProjectRelocated?(oldPath, newPath)` | `(string, string) => Promise<void>` | Migrate per-cwd data the agent keeps OUTSIDE the working directory, keyed by the absolute path, when that path changes. Invoked for two relocations with the same (oldPath, newPath) contract: a whole-project move (the `project:relocate` IPC handler, reached via Locate Folder / Change or the one-step "Move..." flow), and a single worktree-cwd rename on the first resume after a task's worktree was recreated at a new path (`migrateResumeCwdIfRenamed` in `src/main/transition-engine/resume-cwd-migration.ts`, which passes one worktree's old/new path so only that cwd's data moves). Called best-effort after the stored paths are settled and the new location exists. Implemented by Claude, Codex, Gemini, Qwen, Copilot, OpenCode, Kimi, Droid, and Grok (per-agent details in [Project relocation](#project-relocation) below); the shared mechanics (path-pair collection, directory rename/merge, backup + atomic write, serial lock) live in `src/main/agent/shared/relocation-utils.ts`. Implementations must be non-destructive and never block the caller. Aider, Cursor, Warp, and Ollama omit this (their resumable state is in-project or absent). |
+| `onWorktreeRemoved?(worktreePath)` | `(string) => Promise<void>` | Drop per-directory state the adapter recorded in a GLOBAL config file for a worktree Kangentic has just deleted. Kangentic creates a worktree per task, so an adapter keyed by absolute path accumulates one dead entry per task forever with nothing to clean it up (one machine reached 473). Dispatched from the single chokepoint inside `WorktreeManager.removeWorktree`, via a listener the main process registers at startup (`setWorktreeRemovedListener` -> `notifyAdaptersWorktreeRemoved`), so the git module never imports the agent registry and no removal path can run un-notified. Generic over `agentRegistry.list()` - no agent-name branching. Best-effort and never fatal: the worktree is already gone. Implemented by Codex (`~/.codex/config.toml` directory trust), Gemini (`~/.gemini/trustedFolders.json`), and Grok (`~/.grok/trusted_folders.toml`), the three adapters that key trust by absolute path in a global file. All three remove only an entry they could have written themselves, never a user decision. Every other adapter's per-directory state lives inside the worktree and disappears with it. |
 | `probeAuth?()` | `() => Promise<boolean \| null>` | See the methods table above. |
 | `remoteExecution?` | `{ info: AgentRemoteExecutionInfo; probeServer(server): Promise<RemoteServerStatus> }` | Declared by adapters whose CLI can attach to an already-running server the user operates, instead of always spawning a local process (e.g. OpenCode's `opencode attach <url> --dir <serverPath>`). `info` (`urlPlaceholder`, `authKind`, `workingDirectoryScope`, `remoteModeCaveat?`) is surfaced to the renderer via `AgentDetectionInfo.remoteExecution` so the Agent settings tab renders remote-mode rows (right after the CLI Path row) only for capability-declaring agents - no agent-name branching, including for the adapter-authored caveat text. `probeServer` replaces `probeAuth` as the reachability check when a project's mode for this agent is `remote`: it must hit the server directly and never throw. Implemented today only by OpenCode. See [configuration.md - Remote Execution](configuration.md#remote-execution). |
 | `launchOptions?` | `readonly AgentLaunchOptionInfo[]` | Declared by adapters whose CLI exposes optional boolean startup toggles (id, label, description, default). Surfaced to the renderer via `AgentDetectionInfo.launchOptions` so the Agent settings tab renders one toggle row per declared option, only for capability-declaring agents. Values are resolved by `resolveLaunchOptions` (`src/main/agent/shared/launch-options.ts`) from `agent.launchOptions[agentName]` (falling back to each option's `default`) and threaded through as `CommandOptions.launchOptions`; only the adapter's own command builder interprets an `id` into a concrete CLI flag - no agent-name branching outside the adapter. Implemented today only by Codex, which declares `disableApps` (maps to `--disable apps`, skipping the optional cloud ChatGPT Apps MCP connector that can hang startup at "Booting MCP server: codex_apps" - openai/codex#20167). See [configuration.md - agent.*](configuration.md#agent) for the config shape. |
 | `discoverCapabilities?(cliPath, forceRefresh?)` | `(string, boolean?) => Promise<AgentCapabilities>` | Probe the live CLI for adapter-specific knobs (e.g. parsing `--help` for valid effort levels and the presence of a `--model` flag). Result is attached to `AgentDetectionInfo.capabilities` and read by the renderer to gate optional UI controls (Model and Effort dropdowns on `EditColumnDialog`). `forceRefresh` (set when a model dropdown opens) bypasses any adapter-internal capability caches - notably Claude's 12h `/model` picker probe - so a newly shipped model surfaces without a restart; adapters with no cache to bypass ignore it. Implementations must never throw - return an empty object on parse failure so the rest of detection still succeeds. |
 | `getInjectionSequence?(spec)` | `(SettingsChangeSpec) => string[]` | Translate a column-level settings change (model / effort) into the writes the `TerminalSubmitScheduler` should push onto the live PTY. Sibling of `getExitSequence` - both return `string[]` of writes. Claude returns `['/model X', '/effort Y']` for changed fields. Adapters with no live-swap slash return `[]` and the caller falls back to suspend+respawn. |
-| `canVerifySlashSubmission?()` | `() => boolean` | Whether a SLASH-prefixed `auto_command` can be verified in this agent's history. Omitted or `true` means yes. Declaring `false` makes `prepareInjectionPlan` tag that command `verify: 'none'`, so it is neither retried nor escalated and the outcome stays `unconfirmed`. Exists because absence from the history file is AMBIGUOUS for agents that handle slash input in the TUI - it cannot distinguish "the CLI rejected it" from "the CLI ran it client-side" - and treating the second as a failure escalates a command that actually worked into a session restart. Declared `false` by Codex, which prints "Unrecognized command" and writes no record. See [command-injection.md](command-injection.md). |
-| `canEscalateOnVerificationFailure?()` | `() => boolean` | Whether a verification FAILURE may escalate to a restart-with-prompt. Omitted or `true` means yes. Declaring `false` marks the verifier CONFIRM-ONLY: it still confirms and still drives retry-on-Enter (rung 2, where nearly all the delivery win lives), but is barred from rung 3, because a false negative from an unproven verifier is a guess and escalation acts on that guess by destroying live work. Escalation takes TWO proofs: flush latency measured live (`scripts/measure-injection-flush.mjs`), AND the adapter's own verifier watched confirming a real submission inside a running app. The second is separate because the harness reads the history with its OWN file reader, so it cannot catch a resolver pointing at the wrong path, an uncaptured session id, or a CLI that wraps the stored text - each a PERMANENT false negative that would escalate every delivery. Declared `false` today by Copilot, OpenCode, Qwen, Kimi, and Aider; only Claude and Codex escalate. Graduation recipe: [command-injection.md](command-injection.md). |
+| `canVerifySlashSubmission?()` | `() => boolean` | Whether a SLASH-prefixed `auto_command` can be verified in this agent's history. Omitted or `true` means yes. Declaring `false` makes `prepareInjectionPlan` tag that command `verify: 'none'`, so it is neither retried nor escalated and the outcome stays `unconfirmed`. Exists because absence from the history file is AMBIGUOUS for agents that handle slash input in the TUI - it cannot distinguish "the CLI rejected it" from "the CLI ran it client-side" - and treating the second as a failure escalates a command that actually worked into a session restart. Declared `false` by Codex, which prints "Unrecognized command" and writes no record, and by Grok, whose slash input runs in the TUI palette and never becomes a chat_history turn. See [command-injection.md](command-injection.md). |
+| `canEscalateOnVerificationFailure?()` | `() => boolean` | Whether a verification FAILURE may escalate to a restart-with-prompt. Omitted or `true` means yes. Declaring `false` marks the verifier CONFIRM-ONLY: it still confirms and still drives retry-on-Enter (rung 2, where nearly all the delivery win lives), but is barred from rung 3, because a false negative from an unproven verifier is a guess and escalation acts on that guess by destroying live work. Escalation takes TWO proofs: flush latency measured live (`scripts/measure-injection-flush.mjs`), AND the adapter's own verifier watched confirming a real submission inside a running app. The second is separate because the harness reads the history with its OWN file reader, so it cannot catch a resolver pointing at the wrong path, an uncaptured session id, or a CLI that wraps the stored text - each a PERMANENT false negative that would escalate every delivery. Declared `false` today by Copilot, OpenCode, Qwen, Kimi, Aider, and Grok; only Claude and Codex escalate. Graduation recipe: [command-injection.md](command-injection.md). |
 | `requiresAgentSessionIdForVerification?()` | `() => boolean` | Whether this adapter's verifier needs a captured `agent_session_id` to locate its history. Omitted or `true` means it does, which is the norm. Declared `false` by Aider and Copilot, for different reasons. Aider has NO session id at all (no `sessionIdCapture` in its `runtime`) because it keeps one `.aider.chat.history.md` per project directory, so `cwd` alone identifies its history. Copilot HAS a session id, but its prompt history is a single GLOBAL `~/.copilot/command-history-state.json` shared across every session and project, so neither the id nor `cwd` plays any part in locating it. Without the opt-out `buildCommandInjectionVerifier` short-circuits on the missing id and the verifier can never confirm - worse than having none, since the burst still retries and then reports `failed` instead of staying silently `unconfirmed`. |
-| `transcriptUsage?(input)` | `({ transcriptPath?, agentSessionId?, cwd? }) => Promise<TranscriptUsage \| null>` | Parse CUMULATIVE lifetime token usage for a session from the agent's own transcript - the authoritative source for the per-task lifetime-stats rollup, since the live statusLine token counts are a current-context snapshot (Claude Code 2.1.132+). Prefers the explicit `transcriptPath`, else derives it from `agentSessionId` + `cwd`. Must not throw; returns `null` when the transcript is missing/unparseable so the caller falls back to the snapshot. Implemented today only by the Claude adapter. |
-| `transcriptToolCounts?(input)` | `({ transcriptPath?, agentSessionId?, cwd? }) => Promise<TranscriptToolCounts \| null>` | Sibling of `transcriptUsage`: parse a cumulative tool-call count + callCount-only per-tool breakdown from the agent's own transcript. Backfills the live `UsageAccumulator` count for sessions whose ToolStart/ToolEnd hook events never reached it (e.g. a parked/suspended session that reports 0 despite real cost/tokens). Counts DISTINCT `tool_use` ids (parallel tool calls in one message count separately; a streamed re-emission of the same message does not double-count). Same location contract as `transcriptUsage`; must not throw, returns `null` on a missing/tool-less transcript so the caller keeps the live count. Implemented today only by the Claude adapter. |
-| `configuredModelFromCommand?(command)` | `(string) => { id: string; displayName: string } \| null` | Extract the configured model from a spawned command so the board card can show a friendly model name IMMEDIATELY, before the agent reports its own via status.json / stream telemetry. Returns `{ id, displayName }` (e.g. `claude-opus-4-8` -> "Opus 4.8"), or `null` when the command encodes no explicit model. The seeded value is a placeholder: the agent's own live telemetry overrides it once reported (full usage replace), so a later in-session `/model` change stays accurate. Each adapter owns its own command syntax and model-naming scheme. Implemented today only by the Claude adapter (`adapters/claude/model-display-name.ts`). |
+| `transcriptUsage?(input)` | `({ transcriptPath?, agentSessionId?, cwd? }) => Promise<TranscriptUsage \| null>` | Parse CUMULATIVE lifetime token usage for a session from the agent's own transcript - the authoritative source for the per-task lifetime-stats rollup, since the live statusLine token counts are a current-context snapshot (Claude Code 2.1.132+). Prefers the explicit `transcriptPath`, else derives it from `agentSessionId` + `cwd`. Must not throw; returns `null` when the transcript is missing/unparseable so the caller falls back to the snapshot. Implemented by Claude and Grok (Grok reads the last cumulative `turn_completed.usage` from `updates.jsonl`). |
+| `transcriptToolCounts?(input)` | `({ transcriptPath?, agentSessionId?, cwd? }) => Promise<TranscriptToolCounts \| null>` | Sibling of `transcriptUsage`: parse a cumulative tool-call count + callCount-only per-tool breakdown from the agent's own transcript. Backfills the live `UsageAccumulator` count for sessions whose ToolStart/ToolEnd hook events never reached it (e.g. a parked/suspended session that reports 0 despite real cost/tokens). Counts DISTINCT `tool_use` ids (parallel tool calls in one message count separately; a streamed re-emission of the same message does not double-count). Same location contract as `transcriptUsage`; must not throw, returns `null` on a missing/tool-less transcript so the caller keeps the live count. Implemented by Claude and Grok (Grok counts distinct `tool_call` ids in `updates.jsonl`). |
+| `configuredModelFromCommand?(command)` | `(string) => { id: string; displayName: string } \| null` | Extract the configured model from a spawned command so the board card can show a friendly model name IMMEDIATELY, before the agent reports its own via status.json / stream telemetry. Returns `{ id, displayName }` (e.g. `claude-opus-4-8` -> "Opus 4.8"), or `null` when the command encodes no explicit model. The seeded value is a placeholder: the agent's own live telemetry overrides it once reported (full usage replace), so a later in-session `/model` change stays accurate. Each adapter owns its own command syntax and model-naming scheme. Implemented by Claude (`adapters/claude/model-display-name.ts`) and Grok (`--model` extraction with display names from `~/.grok/models_cache.json`). |
 
 ### `AgentCapabilities`
 
@@ -79,13 +79,13 @@ Adapter-discovered capabilities surfaced to the renderer (returned by `discoverC
 
 ### Per-Adapter Capability Discovery
 
-Beyond Claude (detailed above) and Ollama (which lists installed models via `ollama list`, see [Ollama](#ollama)), eight adapters each ship their own `src/main/agent/adapters/<name>/capability-discovery.ts`. The seven that probe the CLI share a common shape built on the bounded session-history scan helpers in `src/main/agent/shared/history-scan.ts` (`listMostRecentDirs` / `listMostRecentFiles` / `readHeadBytes` / `readTailBytes` / `parseJsonlRecords`, all capped so discovery stays fast on a heavily-used install):
+Beyond Claude (detailed above) and Ollama (which lists installed models via `ollama list`, see [Ollama](#ollama)), nine adapters each ship their own `src/main/agent/adapters/<name>/capability-discovery.ts`. The seven that probe the CLI's session history share a common shape built on the bounded scan helpers in `src/main/agent/shared/history-scan.ts` (`listMostRecentDirs` / `listMostRecentFiles` / `readHeadBytes` / `readTailBytes` / `parseJsonlRecords`, all capped so discovery stays fast on a heavily-used install):
 
 1. **Model-override flag** - run `<cli> --help` and regex for a `--model` / `-m` flag to set `supportsModelOverride`.
 2. **Model list** - when that flag is present, scan the agent's own on-disk session history for the distinct model ids the user has actually used, sorted ascending so families cluster. An empty result leaves `models` undefined and the renderer falls back to a free-form text input.
-3. **Effort levels** - only Copilot parses these from `--help`; every other non-Claude adapter reports `effortLevels: []` (no CLI effort concept).
+3. **Effort levels** - Copilot parses these from `--help`, and Grok reads a real ladder (`low`..`xhigh`) from its models cache; every other non-Claude adapter reports `effortLevels: []` (no CLI effort concept).
 
-All implementations are best-effort and never throw: a help-read or history-scan failure yields conservative defaults so the rest of detection still succeeds. Droid is the one exception to the probe shape - it discovers nothing and hardcodes `supportsModelOverride: false` by design.
+All implementations are best-effort and never throw: a help-read or history-scan failure yields conservative defaults so the rest of detection still succeeds. Two adapters deviate from the probe shape, for opposite reasons: Droid discovers nothing and hardcodes `supportsModelOverride: false` by design, while Grok discovers everything (models, display names, effort ladders) from `~/.grok/models_cache.json` - the CLI's own maintained cache - rather than scanning session history, with a `--help` parse as its fresh-install fallback.
 
 | Adapter | `--model`? | Effort levels | Model list source | Notes |
 |---------|-----------|---------------|-------------------|-------|
@@ -97,6 +97,7 @@ All implementations are best-effort and never throw: a help-read or history-scan
 | Cursor | `--help` (`--model` only, no `-m`) | None | `~/.cursor/sessions/<dated>/*.jsonl` NDJSON `system` / `init` events' `model`, merged with a hardcoded `CURSOR_COMMON_MODELS` fallback | Model entries are display names (e.g. "Claude 4.1 Sonnet"), not ids; the fallback list runs unconditionally so `models` is always populated. Reasoning is encoded in model names, not a separate flag. |
 | OpenCode | `--help` best-effort, defaults false | None | (no history scan) | Model selection is intentionally left to the TUI / `opencode.json` per `cli-features-over-custom-layers.md`; no curated model list. |
 | Droid | No (hardcoded false, no probe) | None | (no history scan) | Intentional: `discoverDroidCapabilities` ignores `cliPath` and returns `supportsModelOverride: false` so the Model / Effort dropdowns stay hidden. TUI-first per `cli-features-over-custom-layers.md`. |
+| Grok Build | `~/.grok/models_cache.json` (fallback: `--help` `-m, --model`) | `models_cache.json` `reasoning_efforts[].id` per model (`low`..`xhigh`) | `~/.grok/models_cache.json` `models.<id>.info` (the CLI's own `/model` picker source; `hidden: true` entries skipped) | The cache carries ids, display names (`info.name`), context windows, AND effort ladders in one file grok itself maintains, so nothing is scraped from sessions. |
 
 ### `CommandOptions` - new spawn knobs
 
@@ -135,14 +136,14 @@ One scannable block per adapter for activity-state derivation and session ID cap
 | `backgroundShells?.resolveOutputFile({cwd, shellId})` | `(options) => string \| null` | Locate the agent's on-disk output file for a NAMED background shell, or `null` when it has none. The bg-shell process-tree watcher stats this file each poll cycle; file growth is ground-truth liveness that keeps a genuinely-running shell from being reclaimed at the 5-min named cap when no OS PID could be captured (see [Activity Detection](activity-detection.md), Output-file liveness). Today only Claude implements this (its temp `tasks/<shellId>.output` files). |
 | `backgroundShells?.reportTerminatedShells?({cwd, agentSessionId, shellIds})` | `(options) => string[]` | Report which of `shellIds` have a TERMINAL notification in the agent's durable session transcript - definitive proof of completion (task #386), independent of process-tree/output state. Reads only new transcript bytes since the previous call. Today only Claude implements this (its native transcript carries the holder's terminal `<task-notification>`; when the CLI is mid-turn it delivers that notification as a `queued_command` attachment which fires no hook, and mid-turn is exactly when a drain matters - see [Activity Detection](activity-detection.md), Transcript drain). Covers both backgrounded Bash shells and `Monitor` waits, which share the same id space, output store, and notification wrapper. |
 
-Omit `sessionId` entirely for agents that use caller-owned IDs (Claude via `--session-id`) or that have no resume mechanism (Aider). Omit `sessionHistory` for agents without a native session log file. Omit `statusFile` for agents that don't emit hook-driven `status.json` / `events.jsonl` (only Claude and Copilot use this pipeline today). Omit `streamOutput` for agents that don't emit machine-readable NDJSON to PTY stdout (everyone except Cursor today). Omit `backgroundShells` for agents that don't write a per-shell output file or expose a transcript-based termination signal (everyone except Claude today).
+Omit `sessionId` entirely for agents that use caller-owned IDs (Claude and Grok via `--session-id`) or that have no resume mechanism (Aider). Omit `sessionHistory` for agents without a native session log file. Omit `statusFile` for agents that don't emit hook-driven `status.json` / `events.jsonl` (Claude, Copilot, and Grok use this pipeline today; Grok's `parseStatus` is null because it has no statusline, but its hook-driven `parseEvent` is live). Omit `streamOutput` for agents that don't emit machine-readable NDJSON to PTY stdout (everyone except Cursor today). Omit `backgroundShells` for agents that don't write a per-shell output file or expose a transcript-based termination signal (everyone except Claude today).
 
 ### `SpawnSessionInput` extras
 
 | Field | Type | Purpose |
 |-------|------|---------|
 | `agentName?` | `string` | Human-readable agent name (`'claude'`, `'gemini'`, etc.) captured at spawn time. Used in diagnostic logs - survives production minification unlike `agentParser.constructor.name`. |
-| `agentSessionId?` | `string \| null` | Caller-owned agent session UUID. Set when the adapter declares `supportsCallerSessionId = true` and the spawn pipeline pre-generates a UUID before invoking the CLI (Claude `--session-id`, Qwen `--session-id`, Kimi `--session`). Lets `session-spawn-flow.ts` call `sessionHistoryReader.attach()` immediately at spawn time without waiting for capture pathways to round-trip, and skips the 30s "session ID not captured" diagnostic timer. Null/undefined for adapters that auto-generate IDs (Codex, Gemini, Droid). |
+| `agentSessionId?` | `string \| null` | Caller-owned agent session UUID. Set when the adapter declares `supportsCallerSessionId = true` and the spawn pipeline pre-generates a UUID before invoking the CLI (Claude `--session-id`, Qwen `--session-id`, Kimi `--session`, Grok `-s`). Lets `session-spawn-flow.ts` call `sessionHistoryReader.attach()` immediately at spawn time without waiting for capture pathways to round-trip, and skips the 30s "session ID not captured" diagnostic timer. Null/undefined for adapters that auto-generate IDs (Codex, Gemini, Droid). |
 
 ## Supported Agents
 
@@ -160,6 +161,7 @@ Omit `sessionId` entirely for agents that use caller-owned IDs (Claude via `--se
 | Droid | `droid-adapter.ts` | `droid` | `--resume <uuid>` | No (PTY-only) | No (use Droid's TUI: `/model` + Ctrl+D, shift+tab) | `<cwd>/.factory/mcp.json` + `buildEnv` token | No |
 | OpenCode | `opencode-adapter.ts` | `opencode` | Plugin/PTY-captured `ses_<id>` (auto-generated) | Yes (plugin JSONL via `tool.execute.before/after` + `event` `session.*`) | No (`opencode.json` + `OPENCODE_CONFIG_CONTENT` env) | `OPENCODE_CONFIG_CONTENT` (local spawns only) | No (auth via `opencode auth login` -> `~/.local/share/opencode/auth.json`) |
 | Ollama | `ollama-adapter.ts` | `ollama` | No | No | No | Not possible (CLI has no MCP client) | No |
+| Grok Build | `grok-adapter.ts` | `grok` | `--session-id <uuid>` (caller-owned) / `--resume <id>` | Yes (events.jsonl via Claude-compatible hooks; usage from `updates.jsonl` tail) | No (wholly-owned `.grok/hooks/kangentic.json` + `.grok/config.toml` sentinel block) | `[mcp_servers.kangentic]` block in `<cwd>/.grok/config.toml` with `${VAR}` env refs + `buildEnv` URL/token | Yes (`~/.grok/trusted_folders.toml`, cascades from project root) |
 
 ## Agent Resolution
 
@@ -194,6 +196,7 @@ Each adapter implements `detectFirstOutput(data)` to signal when the agent's TUI
 | Droid | `\x1b[?25l` (cursor hide) | Ink-based TUI, same pattern as Claude (verified empirically) |
 | OpenCode | `\x1b[?25l` (cursor hide) | Full-screen TUI initializes alternate screen buffer with cursor hide on first frame |
 | Ollama | `data.length > 0` | Ollama streams output immediately (no alternate screen buffer) |
+| Grok Build | `\x1b[?25l` (cursor hide) | Rust alt-screen TUI; the cursor-hide arrives in the very first output chunk, before the alt-screen switch (verified via node-pty against grok 1.0.0) |
 
 The `\x1b[?25l` (ANSI cursor hide) sequence fires after the shell prompt noise but before the TUI draws its startup banner. This keeps the shell command hidden behind the shimmer overlay.
 
@@ -215,6 +218,7 @@ Graceful exit sequences written to the PTY during `SessionManager.suspend()`:
 | Droid | `Ctrl+C`, `/quit` | Triggers clean shutdown of the Ink TUI |
 | OpenCode | `Ctrl+C` | Verified 2026-04-28: PTY exits in ~1s. `/exit` and `/quit` are not recognized slash commands. |
 | Ollama | `Ctrl+C`, `/bye` | `/bye` exits the interactive REPL; harmless after a one-shot run has already exited |
+| Grok Build | `Ctrl+C`, `/quit` | `/quit` exits cleanly (probe-verified exit 0) and prints the conversation dump that transcript cleanup anchors on |
 
 ## Session History File Location
 
@@ -234,6 +238,7 @@ During cross-agent handoff, each adapter's `locateSessionHistoryFile()` finds th
 | OpenCode | `~/.local/share/opencode/opencode.db` (SQLite `session` table) | Read-only WAL handle; match `directory == cwd` and `time_created` within spawn window |
 | Droid | N/A | Returns null (no native session history file; activity flows through PTY-only detection) |
 | Ollama | N/A | Returns null (no CLI-accessible session history) |
+| Grok Build | `~/.grok/sessions/<encodeURIComponent(cwd)>/<sessionId>/updates.jsonl` | Deterministic path construction (session id is caller-owned via `-s`) plus a strict existence check, scoped to the given cwd (the `resume-cwd-migration` reachability gate depends on a cross-cwd match NOT counting). The attach-time `runtime.sessionHistory.locate` additionally polls ~60s and falls back to a sessions-root scan for encoding mismatches |
 
 ## Auto-Name (Summarize)
 
@@ -259,6 +264,7 @@ Implementations live next to each adapter and call the shared `runCliPrintSummar
 | Cursor | `agent --output-format text -p "<prompt>"` | positional arg |
 | Droid | `droid exec -o text "<prompt>"` | positional arg |
 | Copilot | `copilot --silent -p "<prompt>"` | positional arg |
+| Grok Build | `grok --output-format plain -p "<prompt>"` | positional arg |
 | Aider, Warp | (no clean plain-text headless mode yet) | n/a |
 | Ollama | (summarize not yet wired) | n/a |
 
@@ -950,7 +956,7 @@ The renderer surfaces the `false` state two ways: an amber `DetectionCard` varia
 
 Filesystem check chosen over a `kimi info` subprocess: the probe runs on every `AGENT_LIST` call alongside the existing `--version` probes, and a single sub-millisecond `fs.readdirSync` (with ENOENT mapped to `false`) keeps the refresh latency unchanged. An expired-token false-positive (credentials present but not valid) still falls through to today's behavior - the spawned session prints "LLM not set" and exits.
 
-`probeAuth?()` is an optional method on the `AgentAdapter` interface; only Kimi implements it today. Other adapters return `undefined` for the `authenticated` field, which the renderer treats as "not applicable".
+`probeAuth?()` is an optional method on the `AgentAdapter` interface; Kimi and Grok implement it today (Grok via `grok models` output, see [Grok Build](#grok-build)). Other adapters return `undefined` for the `authenticated` field, which the renderer treats as "not applicable".
 
 ### Limitations
 
@@ -1073,6 +1079,113 @@ Runtime activity is PTY-only. A one-shot `ollama run` streams output then exits,
 - No `transcript-cleanup.ts` (streams plain text output, not a TUI alternate screen)
 - `locateSessionHistoryFile` returns null - `ollama run` has no native session history files
 
+## Grok Build
+
+`src/main/agent/adapters/grok/`
+
+xAI's terminal coding agent (repo: `xai-org/grok-build`, binary `grok`, a Rust alt-screen
+TUI). Grok deliberately clones Claude Code's surface - Claude-compatible hooks, the same
+`--session-id` / `--resume` split, the same `--permission-mode` vocabulary - which is what
+makes this the second full-harness adapter after Claude. Every empirical claim below was
+verified against grok 1.0.0 (3cd0d0cbce) on Windows and is re-checkable with
+`node scripts/probe-grok.js` (headless checks spend a few tiny free-tier turns; add
+`--skip-pty` to skip the interactive leg).
+
+**Sessions (caller-owned ids).** `-s/--session-id <uuid>` names a NEW session only (reusing
+an existing uuid errors with "Session ID ... is already in use"); `--resume <uuid>` resumes.
+The store lives at `~/.grok/sessions/<encodeURIComponent(cwd)>/<sessionId>/` (the raw
+absolute cwd, backslashes intact on Windows, URL-encoded byte-for-byte) with
+`updates.jsonl` (append-only ACP `session/update` JSON-RPC log, the authoritative record),
+`chat_history.jsonl` (raw model messages), and `summary.json` (metadata). `GROK_HOME`
+overrides `~/.grok`. Because the id is caller-owned, `locate` is a deterministic path build
+plus an existence poll, with a sessions-root scan fallback keyed on the uuid for encoding
+mismatches. The command builder deliberately emits NO `--cwd`: grok keys the store by
+process cwd, and a normalized `--cwd` value could key it under a different encoding than
+`session-paths.ts` computes.
+
+**Hooks (the activity pipeline).** Grok fires the full Claude-compatible hook set -
+including in headless mode - with camelCase payloads (`toolName`, `toolUseId`, `toolInput`,
+`toolResult`, `reason`, `stopHookActive`). `Stop` fires only for the main agent (subagents
+fire `SubagentStop` in the subagent), so Claude's subagent-depth gating is unnecessary.
+Grok has no per-session settings flag, so the hook file is per-cwd:
+`<cwd>/.grok/hooks/kangentic.json`, a wholly-Kangentic-owned file (grok merges every
+`*.json` in that directory, so user hook files are never read, merged, or swept). The
+per-session events path rides the spawn environment instead of the file: hook commands name
+`env:KANGENTIC_EVENTS_PATH`, which `event-bridge.js` resolves from its own process env at
+run time - hook processes inherit the grok process env (probe-verified). One static file is
+therefore correct for concurrent sessions in one cwd, and a session without the variable
+(the user's own manual `grok` run there) makes the bridge a silent no-op. Hooks load from
+the project root grok discovers by walking up to the first `.git`; every Kangentic spawn cwd
+is a git root, so writing at cwd is writing at the root. Runtime is
+`ActivityDetection.hooksAndPty()`: untrusted folders skip project hooks silently
+(fail-open), and the PTY silence timer carries activity until trust lands. No `detectIdle`
+regex - grok's `❯` prompt stays visible during active work, the same always-visible-prompt
+trap as Codex's `›`.
+
+**Telemetry (`updates.jsonl` tail, no statusline).** Grok has no statusline, so
+`parseStatus` is null and usage comes from `runtime.sessionHistory` tailing `updates.jsonl`.
+Three measured semantics are load-bearing: `params._meta.totalTokens` on streaming/tool
+updates is the RUNNING context total (the ContextBar occupancy number);
+`turn_completed.usage` is CUMULATIVE across the session (observed `numTurns: 8`,
+`inputTokens: 541k` - using it for occupancy is the Codex `total_token_usage` trap; it feeds
+`transcriptUsage` instead); and `costUsdTicks` is 1e-10 USD (pinned by a headless json run
+reporting `total_cost_usd` and `total_cost_usd_ticks` side by side, re-checked by the
+probe). Context window sizes and model display names come from `~/.grok/models_cache.json`.
+The parser emits NO tool events - hooks own those, and a second emitter would double-count
+ToolStart/ToolEnd pairs - only usage plus idempotent activity hints (`turn_completed` ->
+Idle, chunks -> Thinking, non-terminal `retry_state` -> Thinking) as a hook backstop.
+
+**Kangentic MCP.** Project-scoped `<cwd>/.grok/config.toml` carries a sentinel-delimited
+`[mcp_servers.kangentic]` block whose every value is an env reference
+(`url = "${KANGENTIC_MCP_URL}"`, token header `${KANGENTIC_MCP_TOKEN}`); grok's documented
+`${VAR}` expansion resolves them at load time. The block is fully static - the per-session
+URL (which carries the caller-session id) and per-launch token ride `buildEnv` - so
+concurrent sessions in one cwd each expand their own environment, no secret ever reaches
+disk or argv, and removal (refcounted, shared with the hooks file) is a surgical strip of
+the sentinel block that never reserializes the user's TOML. The builder also passes
+`--allow "MCPTool(kangentic__*)"` (grok's native permission-rules mechanism,
+session-scoped, deny still wins) so a board-driven session never stalls on the interactive
+approval prompt for Kangentic's own tools - verified live without it,
+`kangentic__kangentic_get_current_task` sat on the approval dialog with nobody there to
+answer. This is Claude's `mcp__kangentic` allow-rule injection, in grok's dialect.
+
+**Trust.** Folder trust (`~/.grok/trusted_folders.toml`, entries
+`[folders.'<path>'] / trusted = true / decided_at = <unix>`) gates project hooks and
+project MCP together, and CASCADES to subdirectories - verified live: a Kangentic worktree
+under a trusted project root reports `projectTrusted: true` with only the root in the store.
+`ensureTrust` therefore pre-approves ONLY a Kangentic worktree with no covering decision
+(one entry per task, dropped by `onWorktreeRemoved` - the Codex dead-entries lesson), never
+overrules an explicit ancestor deny, and never auto-trusts a plain project root: an
+undecided root runs untrusted (PTY fallback carries activity) until the user's own first
+interactive grok session decides it once, which then cascades to every future worktree.
+
+**Verification tier: confirm-only.** `chat_history.jsonl` flushes the typed user turn on
+SUBMIT (measured 313ms and 32ms across two runs, against a ~2s turn), so a
+`command-injection` verifier is wired against it (genuine turns have no `synthetic_reason`
+and wrap the text in `<user_query>` tags, which the extractor strips). But records carry no
+timestamps to bound the match window and the resolver has never been proven in-app, so
+`canEscalateOnVerificationFailure` is false. `canVerifySlashSubmission` is false (slash
+input runs in the TUI palette and never becomes a chat_history turn - the Codex verdict),
+which is also why `getInjectionSequence` returns `[]` despite grok having native `/model`
+and `/effort` commands: an unconfirmable injection could land as literal prompt text, while
+the suspend + respawn fallback applies `--model` / `--reasoning-effort` deterministically.
+
+**Other capabilities.** `parseTranscript` reads `chat_history.jsonl`
+(`system`/`user`/`assistant`/`reasoning`/`tool_result` records; assistant tool calls in
+`tool_calls[]` with JSON-string `arguments`; no timestamps, so entries get a parse-time
+stamp and synthesized uuids). `transcriptUsage`/`transcriptToolCounts` read `updates.jsonl`
+(Claude-parity lifetime rollup). `summarize` uses the verified headless mode
+(`--output-format plain -p`). `probeAuth` runs `grok models` and checks for "not
+authenticated" - note grok currently serves a free tier without login, so false means "not
+signed in", not "unusable"; a subscription-less account that hits a limit gets an explicit
+403 rendered as a failed turn in the TUI, not a hang. Auth is browser OAuth through the PTY
+(`grok login`, device-code fallback `--device-auth`, `XAI_API_KEY` env for CI).
+
+**Detector.** `binaryName: 'grok'` with NO `agent` alias - grok's installer also publishes
+a generic `agent` shim that collides with Cursor's (see the collision guard below), and
+`parseVersion` requires the `grok ` banner prefix so a foreign binary answering on a shared
+name is rejected. `tests/unit/cursor-grok-binary-collision.test.ts` pins both directions.
+
 ## Project relocation
 
 A Kangentic project relocates in one of two ways, both handled by the `project:relocate` IPC
@@ -1111,6 +1224,7 @@ same caveat the Claude adapter documents).
 | Cursor | None. | No cwd-keyed external session store Kangentic depends on. |
 | Oz (Warp) | None. | No resumable on-disk session state. |
 | Ollama | None. | No resumable external session state; `onProjectRelocated` omitted. |
+| Grok Build | `~/.grok/sessions/<encodeURIComponent(cwd)>/` session dirs and `[folders.'<path>']` headers in `~/.grok/trusted_folders.toml`. | Encoded-dir rename mirrors Droid's slug rename; the trust rewrite mirrors Codex's header rewrite (backup + atomic write). |
 
 ## Prompt Templates
 
@@ -1153,7 +1267,7 @@ Two standalone Node.js scripts in `src/main/agent/`:
 - **Output:** `events.jsonl` (append-only, one JSON line per event)
 - **Data:** Timestamps, event types, tool names, file paths
 - **Watched by:** SessionManager with 50ms debounce, incremental byte-offset reads
-- **Supported by:** Claude Code (18 hook points), Codex CLI (via config.toml hooks), Gemini CLI (via .gemini/settings.json hooks)
+- **Supported by:** Claude Code (18 hook points), Codex CLI (via config.toml hooks), Gemini CLI (via .gemini/settings.json hooks), Grok Build (via `.grok/hooks/kangentic.json`, with the events path resolved through the `env:KANGENTIC_EVENTS_PATH` sentinel - see [Grok Build](#grok-build))
 
 Both scripts are stateless (no persistent process), read JSON from stdin, write to their output file, and exit. All writes are try/catch wrapped for non-fatal failures.
 

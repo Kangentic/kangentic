@@ -98,6 +98,15 @@ describe('Adapter summarize() invocation shapes', () => {
     expect(call.promptVia).toBe('arg');
   });
 
+  it('Grok uses --output-format plain -p via positional arg', async () => {
+    const { GrokAdapter } = await import('../../src/main/agent/adapters/grok/grok-adapter');
+    const adapter = new GrokAdapter();
+    await adapter.summarize('triage crash report', '/usr/bin/grok', '/cwd');
+    const call = runCliPrintSummarizeMock.mock.calls[0][0];
+    expect(call.args).toEqual(['--output-format', 'plain', '-p']);
+    expect(call.promptVia).toBe('arg');
+  });
+
   it('Copilot uses --silent -p via positional arg', async () => {
     const { CopilotAdapter } = await import('../../src/main/agent/adapters/copilot/copilot-adapter');
     const adapter = new CopilotAdapter();

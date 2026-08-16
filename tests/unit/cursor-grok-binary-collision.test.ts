@@ -22,6 +22,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { CursorAdapter } from '../../src/main/agent/adapters/cursor/cursor-adapter';
+import { GrokDetector, parseGrokVersion } from '../../src/main/agent/adapters/grok/detector';
 
 /** Reach the detector config the adapter constructed. */
 function detectorConfig(): { binaryName: string; binaryAliases?: string[]; parseVersion(raw: string): string | null } {
@@ -63,6 +64,47 @@ describe('Cursor / Grok `agent` shim collision', () => {
     // stripped", so an unrelated tool that prints its own name is refused.
     for (const foreign of ['aider 0.9.1', 'codex-cli 0.128.0', 'some-tool v2', 'not a version']) {
       expect(parseVersion(foreign)).toBeNull();
+    }
+  });
+});
+
+/**
+ * The REVERSE direction, added with the Grok adapter itself: Grok's own
+ * detector must never resolve through the shared `agent` shim, and its
+ * parseVersion must reject every banner that is not Grok's - otherwise a
+ * machine where Cursor's `agent` wins the PATH race would mis-identify
+ * Cursor as Grok, the mirror image of the original defect.
+ */
+describe('Grok detector side of the `agent` shim collision', () => {
+  function grokConfig(): { binaryName: string; binaryAliases?: string[] } {
+    const detector = new GrokDetector() as unknown as {
+      config: { binaryName: string; binaryAliases?: string[] };
+    };
+    return detector.config;
+  }
+
+  it('probes only the unambiguous `grok` name, never the shared `agent` shim', () => {
+    const config = grokConfig();
+    expect(config.binaryName).toBe('grok');
+    expect(config.binaryAliases ?? []).not.toContain('agent');
+  });
+
+  it('accepts the real grok version banner', () => {
+    // The exact string a real `grok --version` returned (grok 1.0.0).
+    expect(parseGrokVersion('grok 1.0.0 (3cd0d0cbce) [stable]')).toBe('1.0.0');
+    expect(parseGrokVersion('grok 1.2.3')).toBe('1.2.3');
+  });
+
+  it("rejects Cursor's banners and every other foreign product", () => {
+    for (const foreign of [
+      '2026.04.29-c83a488',
+      'agent 1.0.0',
+      'Cursor Agent 1.0.0',
+      'codex-cli 0.128.0',
+      'aider 0.9.1',
+      'not a version',
+    ]) {
+      expect(parseGrokVersion(foreign)).toBeNull();
     }
   });
 });

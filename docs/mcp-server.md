@@ -43,7 +43,7 @@ A Kangentic-spawned agent calls an MCP tool (e.g. kangentic_create_task)
 | Column Resolver | `src/main/agent/commands/column-resolver.ts` | Shared case-insensitive column name to swimlane lookup used by multiple handlers. |
 | Task Ordering | `src/main/agent/commands/task-ordering.ts` | Pure ordinal-slot arithmetic shared by `handleMoveTask`'s same-column reposition and `handleReorderTasks`: slot clamping, prefix-merge reordering, and ordinal-to-raw-position translation. |
 | MCP Config Delivery | Per-adapter, under `src/main/agent/adapters/<agent>/` | Each adapter delivers the per-launch URL + token through its own CLI's mechanism. See the [Discovery](#discovery) table. |
-| Trust Managers | `adapters/claude/trust-manager.ts`, `adapters/codex/trust-manager.ts`, `adapters/gemini/trust-manager.ts`, `adapters/qwen-code/trust-manager.ts` | Pre-approve the spawn directory so the session is not blocked at startup: Claude in `~/.claude.json`, Codex via `[projects.'<path>'] trust_level` in `~/.codex/config.toml`, Gemini and Qwen via `trustedFolders.json` (an untrusted folder disables every configured MCP server). All four leave an explicit user decision alone, in either direction. |
+| Trust Managers | `adapters/claude/trust-manager.ts`, `adapters/codex/trust-manager.ts`, `adapters/gemini/trust-manager.ts`, `adapters/qwen-code/trust-manager.ts`, `adapters/grok/trust-manager.ts` | Pre-approve the spawn directory so the session is not blocked at startup: Claude in `~/.claude.json`, Codex via `[projects.'<path>'] trust_level` in `~/.codex/config.toml`, Gemini and Qwen via `trustedFolders.json`, Grok via `[folders.'<path>']` in `~/.grok/trusted_folders.toml` (an untrusted folder disables every configured MCP server; Grok's trust cascades to subdirectories, so only worktrees under an undecided root get their own entry). All five leave an explicit user decision alone, in either direction. |
 | Board Refresh | `src/main/ipc/handlers/sessions.ts` | Forwards task-created/updated/backlog-changed events to renderer via IPC. |
 | Dev-only DevTools | `src/devtools/mcp/register.ts`, `src/devtools/mcp/preview-tools.ts` | Registers the `kangentic_devtools_*` tools when `__KANGENTIC_DEV__` is set. Excluded from production builds at compile time. |
 
@@ -60,6 +60,7 @@ Delivery is per-adapter, because no two of these CLIs accept MCP config the same
 | Gemini CLI | `mcpServers` in `<cwd>/.gemini/settings.json` (`httpUrl`) | project file, stripped on exit |
 | Qwen Code | `mcpServers` in `<cwd>/.qwen/settings.json` (`httpUrl`) | project file, stripped on exit |
 | Droid | `<cwd>/.factory/mcp.json` with `${KANGENTIC_MCP_TOKEN}` | process env (file holds only the var name) |
+| Grok Build | `[mcp_servers.kangentic]` sentinel block in `<cwd>/.grok/config.toml` with `${KANGENTIC_MCP_URL}` + `${KANGENTIC_MCP_TOKEN}`, plus `--allow "MCPTool(kangentic__*)"` pre-approval | process env (file holds only var names - the URL too, so the block is fully static) |
 | OpenCode | `OPENCODE_CONFIG_CONTENT` env var | process env (local spawns only) |
 | Cursor, Oz CLI | Not wired | n/a |
 | Aider, Ollama | Not possible - neither CLI is an MCP client | n/a |
@@ -697,7 +698,7 @@ Structured-format support by agent:
 
 | Agent | Structured | Raw |
 |-------|------------|-----|
-| Claude, Droid, Codex, Gemini, Qwen, Kimi, OpenCode | native parser | yes |
+| Claude, Droid, Codex, Gemini, Qwen, Kimi, OpenCode, Grok | native parser | yes |
 | Aider | no (no per-session native history) | yes |
 | Warp, Cursor, Copilot | no (history location unknown) | yes |
 

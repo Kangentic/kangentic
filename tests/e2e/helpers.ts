@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { execSync, spawn } from 'node:child_process';
 import type { Session, Swimlane, Task } from '../../src/shared/types';
 
-export type AgentName = 'claude' | 'codex' | 'gemini' | 'cursor' | 'warp' | 'opencode' | 'kimi' | 'qwen' | 'droid';
+export type AgentName = 'claude' | 'codex' | 'gemini' | 'cursor' | 'warp' | 'opencode' | 'kimi' | 'qwen' | 'droid' | 'grok';
 
 // --- Test data isolation ---
 // Each test run uses its own data directory so E2E tests never pollute
@@ -492,6 +492,23 @@ export async function createTask(
 export function cleanupKimiSessionsForCwd(cwd: string): void {
   const hash = createHash('md5').update(path.resolve(cwd)).digest('hex');
   const target = path.join(os.homedir(), '.kimi', 'sessions', hash);
+  try { fs.rmSync(target, { recursive: true, force: true }); } catch { /* ignore */ }
+}
+
+/**
+ * Remove the grok session store for a test cwd. mock-grok.js writes real
+ * session files under `$GROK_HOME/sessions/<encodeURIComponent(cwd)>/`
+ * (defaulting to `~/.grok`, the same resolution the real CLI uses), keyed
+ * by the test's temp project dir, so wiping that one encoded directory
+ * never touches user sessions. Honors GROK_HOME so a test that redirects
+ * the store cleans up the same root the mock wrote to.
+ */
+export function cleanupGrokSessionsForCwd(cwd: string): void {
+  const grokHomeOverride = process.env.GROK_HOME;
+  const grokHome = grokHomeOverride && grokHomeOverride.trim().length > 0
+    ? grokHomeOverride
+    : path.join(os.homedir(), '.grok');
+  const target = path.join(grokHome, 'sessions', encodeURIComponent(path.resolve(cwd)));
   try { fs.rmSync(target, { recursive: true, force: true }); } catch { /* ignore */ }
 }
 

@@ -57,7 +57,19 @@
 process.stdout.write = () => true;
 
 const fs = require('fs');
-const outputPath = process.argv[2];
+// The events path argument is either a literal path or the sentinel
+// `env:<NAME>`, which resolves the path from the hook process environment at
+// run time. Adapters whose CLI has no per-session settings mechanism (Grok)
+// write ONE static per-cwd hook file whose commands carry the sentinel; each
+// Kangentic PTY spawn supplies its own value, so concurrent sessions in the
+// same cwd route to their own events.jsonl - and a session WITHOUT the
+// variable (the user's own manual CLI run in that cwd) resolves to an empty
+// path, which the `if (!outputPath) return` below turns into a silent no-op
+// instead of writing into some task's activity log.
+const rawOutputPath = process.argv[2];
+const outputPath = rawOutputPath && rawOutputPath.startsWith('env:')
+  ? (process.env[rawOutputPath.slice(4)] || '')
+  : rawOutputPath;
 const eventType = process.argv[3] || 'idle';
 const directives = process.argv.slice(4);
 

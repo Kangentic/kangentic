@@ -98,7 +98,7 @@ follows it.
 
 ## Claude's JSONL-polling implementation
 
-Claude's is the richest verifier, and the only one that matches on a structured slash-invocation record rather than on the submitted text. Seven adapters provide a `'command-injection'` verifier today (see the matrix below). Of the six besides Claude, three (Codex, Qwen, Kimi) reuse the shared submitted-text scan; Copilot, OpenCode, and Aider each ship a bespoke verifier, because their history formats cannot support that scan safely.
+Claude's is the richest verifier, and the only one that matches on a structured slash-invocation record rather than on the submitted text. Eight adapters provide a `'command-injection'` verifier today (see the matrix below). Of the seven besides Claude, four (Codex, Qwen, Kimi, Grok) reuse the shared submitted-text scan; Copilot, OpenCode, and Aider each ship a bespoke verifier, because their history formats cannot support that scan safely.
 
 Claude Code writes every successful slash invocation to its session JSONL transcript as a `local_command` system entry whose `<command-name>` matches the slash and whose `<command-args>` matches exactly what was sent. The verifier (`src/main/agent/adapters/claude/slash-command-verifier.ts`) tail-scans this file for an entry matching both fields exactly:
 
@@ -267,6 +267,14 @@ Live runs, 2026-08-08, Windows. "Worst" is the slowest observation across trials
 | Droid | 3202ms, 941ms | 661ms, 636ms (4.5s, 9.9s) | **3202ms** | yes (580ms, 564ms) | **stop** |
 | Cursor | login-gated | 5766ms, 5446ms (5.8s, 5.4s) | **5766ms** | yes (2614ms) | **stop** |
 | Gemini | 5504ms, never (>25s) | never (>25s), 6302ms (16.9s) | **>25s** | not reached | **stop** |
+| Grok Build | 313ms, 32ms (2.1s, ~4s turns) | (not yet paired-long measured) | **313ms** | n/a (slash never recorded, by design) | **implement (confirm-only)** |
+
+Grok's two numbers come from `scripts/probe-grok.js`'s interactive PTY leg (2026-08-16, grok
+1.0.0, Windows) rather than `measure-injection-flush.mjs` - a typed submit polled against
+`chat_history.jsonl` at 25ms cadence. Both landed well inside the single-attempt 400ms window
+and far below the turn end, which is the flush-on-submit signature; the formal paired
+short/long trial has not been run, which (together with the missing in-app proof and the
+records carrying no timestamps) is why its verifier ships confirm-only rather than verified.
 
 **The bar is the delivery BUDGET, not a margin.** `submitKeystrokes` retries up to 5 times polling 400ms each, so a submission has ~2000ms to become visible before the outcome is `failed`, and `sentAt` advances on every retry. Two earlier attempts to hold reserve (1000ms, then 1500ms) both failed the CLAUDE CONTROL - the reference implementation whose verifier ships and works. Any bar that rejects the known-good adapter is measuring the wrong thing.
 
@@ -304,6 +312,7 @@ There are three tiers, and the line between the first two is a safety property, 
 | OpenCode | `null` | verifier (SQL) | confirm-only | 95ms worst via a read-only query. Has a KNOWN wrong answer for remote sessions, below; declines SLASH commands, same as Codex |
 | Qwen | `null` | verifier | confirm-only | 696ms worst, slash included. Builds its path from a CAPTURED session id and has never run against a live Qwen session in-app |
 | Kimi | `null` | verifier | confirm-only | `wire.jsonl` shape pinned to real captures. Unmeasured: never reached a usable TUI |
+| Grok Build | `null` | verifier | confirm-only | 313ms/32ms flush-on-submit measured live; extractor unwraps the stored `<user_query>` wrapper and skips `synthetic_reason` records. Lacks the in-app proof, and `chat_history.jsonl` records carry NO timestamps so the scan cannot bound a `sentAt` window - a byte-identical PRIOR submission could false-confirm, harmless for confirm-only, disqualifying for escalation. Declines SLASH commands (TUI palette, never a recorded turn) |
 | Aider | `null` | verifier | confirm-only | markdown shape from a real fixture. Unmeasured: not installed on the measuring machine |
 | Gemini | `null` | `null` | none | measured turn-end flushed and highly variable |
 | Droid | `null` | `null` | none | measured unreliable: 564ms best, 3202ms worst |
@@ -325,7 +334,7 @@ The harness answers one question: *does the CLI write the record fast enough?* I
 
 Both of those produce a **permanent** false negative rather than an intermittent one, so they would escalate *every* auto_command the adapter ever receives. That is why the second proof is a run inside the app, and why an adapter stays confirm-only until it has one, even with a clean measurement.
 
-The wrapping half of that risk is partly mechanised: `tests/unit/command-injection-real-capture-extractors.test.ts` runs each extractor over a real captured history file committed under `tests/fixtures/` and asserts it hands back text that trim-equals what was typed. A hand-authored fixture cannot do this - it pins our belief about the shape rather than the shape itself. Codex, Qwen, Kimi, and Aider have such a capture; Copilot and OpenCode do not, and adding one is the cheapest single contribution toward graduating either.
+The wrapping half of that risk is partly mechanised: `tests/unit/command-injection-real-capture-extractors.test.ts` runs each extractor over a real captured history file committed under `tests/fixtures/` and asserts it hands back text that trim-equals what was typed. A hand-authored fixture cannot do this - it pins our belief about the shape rather than the shape itself. Codex, Qwen, Kimi, and Aider have such a capture; Copilot, OpenCode, and Grok do not, and adding one is the cheapest single contribution toward graduating any of them.
 
 Mechanically: `canEscalateOnVerificationFailure() === false` makes `prepareInjectionPlan` mark the auto_command `escalatable: false`, and `TerminalSubmitScheduler.escalate` filters it out. Worst case for a confirm-only adapter is a `failed` outcome and a notice, never a respawn. The tiers are pinned per adapter in `tests/unit/agent-submission-verifier-shape.test.ts`, so flipping one without recording the evidence fails CI.
 
@@ -466,11 +475,12 @@ Every "before" failure in the picker sweep fell in the 100-200ms band - exactly 
 - `src/main/pty/prompt-draft-ledger.ts` - unsent-user-text accounting.
 - `src/main/ipc/helpers/auto-command-outcome.ts` - persists the outcome and rations the notice.
 - `src/main/agent/adapters/claude/slash-command-verifier.ts` - Claude's JSONL-polling implementation, including the `submitted` exact-content scan.
-- `src/main/agent/shared/transcript-tail-cache.ts` - the bounded 256KB tail read and its LRU content-identity cache. Used by five of the seven verifiers: Claude and Aider import it directly, Codex/Qwen/Kimi reach it through the shared scan. Copilot and OpenCode do not read an appendable text file at all (a global JSON blob and a SQL query), so they bypass it. Must stay ONE module-global instance.
+- `src/main/agent/shared/transcript-tail-cache.ts` - the bounded 256KB tail read and its LRU content-identity cache. Used by six of the eight verifiers: Claude and Aider import it directly, Codex/Qwen/Kimi/Grok reach it through the shared scan. Copilot and OpenCode do not read an appendable text file at all (a global JSON blob and a SQL query), so they bypass it. Must stay ONE module-global instance.
 - `src/main/agent/shared/submitted-text-verifier.ts` - the shared backwards tail walk, `sentAt` watermark, and exact trim-equality. Adapters supply only a synchronous path resolver and a record-shape extractor.
 - `src/main/agent/adapters/codex/command-injection-verifier.ts` - Codex resolver (memoised readdir scan) and rollout record shape.
 - `src/main/agent/adapters/qwen-code/command-injection-verifier.ts` - Qwen resolver (direct path construction) and chats record shape.
 - `src/main/agent/adapters/kimi/command-injection-verifier.ts` - CONFIRM-ONLY. `wire.jsonl` resolver plus the unix-SECONDS timestamp conversion.
+- `src/main/agent/adapters/grok/command-injection-verifier.ts` - CONFIRM-ONLY. `chat_history.jsonl` resolver (deterministic path from the caller-owned session UUID) and the `<user_query>`-unwrapping extractor; records carry no timestamps, so `timestampMs` is null and the scan matches on text alone within the bounded tail.
 - `src/main/agent/adapters/aider/command-injection-verifier.ts` - CONFIRM-ONLY. One of the three bespoke verifiers that cannot use the shared scan (with OpenCode and Copilot): no per-entry timestamps, so it guards on file mtime and matches the LAST user block only.
 - `src/main/agent/adapters/opencode/command-injection-verifier.ts` - CONFIRM-ONLY, and the only SQL-backed verifier; a remote session has no local row and is reported `failed`.
 - `src/main/agent/adapters/copilot/command-injection-verifier.ts` - CONFIRM-ONLY. Reads the GLOBAL `command-history-state.json` newest-first, guarded by file mtime and a bounded recent-entry window.

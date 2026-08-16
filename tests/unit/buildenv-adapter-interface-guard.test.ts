@@ -10,6 +10,11 @@
  * Droid also delivers only the token: its project `.factory/mcp.json` holds
  * the literal `${KANGENTIC_MCP_TOKEN}`, which Droid expands at connect time,
  * keeping the secret out of a file that lives inside the user's repo.
+ * Grok goes one further than Droid: its project `.grok/config.toml` block is
+ * fully static (`${KANGENTIC_MCP_URL}` AND `${KANGENTIC_MCP_TOKEN}` are both
+ * env references grok expands at load time), and the same env channel also
+ * carries KANGENTIC_EVENTS_PATH for the hook bridge's `env:` sentinel - so
+ * neither the per-session URL, the token, nor the events path reaches disk.
  * Every other adapter passes its MCP config by flag or settings file, and
  * adding buildEnv to one of those by mistake would silently double-inject.
  * This test catches that regression by iterating all registered adapters.
@@ -25,7 +30,7 @@ import { agentRegistry } from '../../src/main/agent/agent-registry';
  * Exhaustive list of adapter names that are EXPECTED to implement buildEnv.
  * See the file docstring for why each one is here.
  */
-const ADAPTERS_WITH_BUILDENV: ReadonlySet<string> = new Set(['opencode', 'codex', 'droid']);
+const ADAPTERS_WITH_BUILDENV: ReadonlySet<string> = new Set(['opencode', 'codex', 'droid', 'grok']);
 
 describe('AgentAdapter.buildEnv interface guard', () => {
   it('exactly the adapters in ADAPTERS_WITH_BUILDENV implement buildEnv', () => {
