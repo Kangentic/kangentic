@@ -100,9 +100,12 @@ function buildSpawnEnv() {
 /** Replica of resolveShellArgs for the shells this probe supports. */
 function resolveShellArgs(shell) {
   const lower = shell.toLowerCase();
-  if (lower.startsWith('wsl ')) {
+  if (lower.startsWith('wsl ') || lower.startsWith('wsl.exe ')) {
     const parts = shell.split(/\s+/);
-    return { exe: parts[0], args: parts.slice(1) };
+    // Mirror src/main/pty/spawn/pty-spawn.ts: node-pty's ConPTY resolver
+    // cannot resolve the extension-less bare `wsl`, so append `.exe`.
+    const executable = parts[0].toLowerCase().endsWith('.exe') ? parts[0] : `${parts[0]}.exe`;
+    return { exe: executable, args: parts.slice(1) };
   }
   if (lower.includes('cmd')) return { exe: shell, args: [] };
   if (lower.includes('powershell') || lower.includes('pwsh')) return { exe: shell, args: ['-NoLogo'] };

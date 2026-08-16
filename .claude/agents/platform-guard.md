@@ -12,7 +12,7 @@ description: |
   - Test files that reference shells or paths
 
   <example>
-  User modifies src/main/pty/shell-resolver.ts to add a new shell type.
+  User modifies src/main/pty/spawn/shell-resolver.ts to add a new shell type.
   -> Spawn platform-guard to check for missing platform guards and shell-specific adaptations.
   </example>
 
@@ -58,7 +58,7 @@ Scan the changed files (or the full codebase if no specific scope is given) for 
 ### 3. Shell Command Construction
 - PowerShell: executable must be prefixed with `& ` call operator
 - PowerShell: prompts must replace `"` with `'` before `quoteArg()`
-- WSL: commands must split into exe (`wsl`) + args (`-d`, distro, `--`, cmd...)
+- WSL: commands must split into exe (`wsl.exe`) + args (`-d`, distro); node-pty's ConPTY resolver cannot resolve the extension-less bare `wsl`
 - Fish/Nushell: must skip `--login` flag
 - `cd && git` pattern: must use `git -C <path>` instead (triggers security prompt)
 - **Severity: Critical** -- causes command execution failures
