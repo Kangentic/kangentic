@@ -717,8 +717,8 @@ test.describe('Task Activity Indicators', () => {
     });
 
     // Gap 1: liveTelemetryUnsupported branch
-    // When a task's agent declares liveTelemetryUnsupported (currently only
-    // Droid), ContextBar renders a static pill with the adapter's label and
+    // When a task's agent declares liveTelemetryUnsupported (currently Droid
+    // and Antigravity), ContextBar renders a static pill with the adapter's label and
     // tooltip instead of the indefinite Loader2 spinner. The renderer never
     // branches on agent name -- it reads the generic capability flag from
     // agentList.find(a => a.name === task.agent).
