@@ -1,11 +1,14 @@
 /**
  * Unit tests for the 'data-tap' unfiltered PTY output event added to
  * SessionManager for the mobile bridge (see session-manager.ts's onFlush
- * callback). The load-bearing property: 'data-tap' fires for EVERY
- * session's output regardless of renderer focus, unlike 'data' - which is
- * gated to focusedSessionIds - and it must not feed the renderer's
- * backpressure accounting, since that protocol exists only for the
- * focused-tab drain handshake a bridge subscriber never participates in.
+ * and onDrain callbacks - data-tap has TWO feeders: the ordinary 16ms
+ * flush, and the replay-drain report for bytes a desktop replay consumed
+ * out of the pending buffer before they could flush). The load-bearing
+ * property: 'data-tap' fires for EVERY session's output regardless of
+ * renderer focus, unlike 'data' - which is gated to focusedSessionIds -
+ * and it must not feed the renderer's backpressure accounting, since that
+ * protocol exists only for the focused-tab drain handshake a bridge
+ * subscriber never participates in.
  *
  * Follows the same mock-pty harness as session-manager.test.ts.
  */
@@ -188,6 +191,68 @@ describe('SessionManager data-tap', () => {
     await new Promise((resolve) => setTimeout(resolve, 30));
 
     expect(dataListener).toHaveBeenCalledTimes(1);
+  });
+
+  it('forwards replay-drained bytes to data-tap without emitting "data" or feeding backpressure', async () => {
+    const { session, feedData } = await spawnSession('task-data-tap-replay-drain');
+    // Focused is the strong case: 'data' WOULD fire here if the drain report
+    // were ever miswired into the renderer emit.
+    manager.setFocusedSessions([session.id]);
+
+    const dataTapListener = vi.fn();
+    const dataListener = vi.fn();
+    manager.on('data-tap', dataTapListener);
+    manager.on('data', dataListener);
+
+    feedData('drained before flush');
+    // Sample inside the 16ms flush window: the replay's double-delivery guard
+    // drains the pending bytes out of the buffer, so they never reach onFlush.
+    // Before the onDrain seam existed, a phone streaming this session simply
+    // lost them whenever a desktop terminal mounted the same session.
+    await manager.getScrollback(session.id);
+
+    expect(dataTapListener).toHaveBeenCalledWith(session.id, 'drained before flush');
+    // The renderer emit stays suppressed: the desktop gets these bytes inside
+    // the replay payload it just requested, and a second 'data' delivery is
+    // exactly the duplicate the drain exists to prevent.
+    expect(dataListener).not.toHaveBeenCalled();
+
+    // The emptied flush stays silent - no second data-tap delivery either.
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(dataTapListener).toHaveBeenCalledTimes(1);
+    expect(dataListener).not.toHaveBeenCalled();
+
+    // Drained bytes never ride the renderer's 'data' channel, so they must
+    // not enter its backpressure accounting.
+    const stats = manager.getPipelineStats().find((entry) => entry.sessionId === session.id);
+    expect(stats?.inFlightBytes).toBe(0);
+  });
+
+  it('does not feed first-output detection off a replay drain (first-output stays keyed to the flushed stream)', async () => {
+    const { session, feedData } = await spawnSession('task-data-tap-first-output-drain');
+
+    const firstOutputListener = vi.fn();
+    manager.on('first-output', firstOutputListener);
+
+    feedData('qualifying first output chunk');
+    // Sample inside the 16ms flush window: getScrollback's pre-flush drain
+    // empties the pending buffer via onDrain (data-tap only), so this chunk
+    // never reaches onFlush's firstOutputTracker.consume call.
+    await manager.getScrollback(session.id);
+
+    expect(firstOutputListener).not.toHaveBeenCalled();
+
+    // A later flush over NEW data goes through the ordinary onFlush path (no
+    // further sample here, so onDrain never fires a second time) and must
+    // still fire first-output exactly once, proving detection was only
+    // DELAYED to the next real flush, never lost. If a future edit wired
+    // firstOutputTracker.consume into onDrain, the assertion above would
+    // fail instead: first-output would fire during the drain itself.
+    feedData('second chunk after the drain');
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(firstOutputListener).toHaveBeenCalledTimes(1);
+    expect(firstOutputListener).toHaveBeenCalledWith(session.id);
   });
 
   it('getPipelineStats reports focused: false by default and true only for the session passed to setFocusedSessions', async () => {

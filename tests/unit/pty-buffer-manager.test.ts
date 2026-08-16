@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { PtyBufferManager } from '../../src/main/pty/buffer/pty-buffer-manager';
 
 describe('PtyBufferManager', () => {
@@ -6,12 +6,13 @@ describe('PtyBufferManager', () => {
 
   function createManager() {
     const onFlush = vi.fn();
-    const manager = new PtyBufferManager({ onFlush });
+    const onDrain = vi.fn();
+    const manager = new PtyBufferManager({ onFlush, onDrain });
     manager.initSession(SESSION, '', 80);
     // Simulate the initial resize that establishes real terminal dimensions.
     // This mirrors what the renderer does on first connection (fit + resize).
     manager.onResize(SESSION, 80);
-    return { manager, onFlush };
+    return { manager, onFlush, onDrain };
   }
 
   describe('getScrollback drains pending buffer', () => {
@@ -105,7 +106,7 @@ describe('PtyBufferManager', () => {
   describe('resize reports width changes truthfully and preserves scrollback', () => {
     it('reports colsChanged=true on the first resize to a new width (no initial-resize swallow)', () => {
       const onFlush = vi.fn();
-      const manager = new PtyBufferManager({ onFlush });
+      const manager = new PtyBufferManager({ onFlush, onDrain: vi.fn() });
       // Cold-launch shape: the PTY was spawned at 120, the buffer is seeded with
       // that real width, and the renderer fits to ~190 on mount. The first
       // resize must report the change truthfully so getScrollback's
@@ -120,7 +121,7 @@ describe('PtyBufferManager', () => {
 
     it('reports colsChanged=false when the first resize matches the seeded spawn width', () => {
       const onFlush = vi.fn();
-      const manager = new PtyBufferManager({ onFlush });
+      const manager = new PtyBufferManager({ onFlush, onDrain: vi.fn() });
       // Pre-spawn-resize shape: the PTY was spawned AT the fitted width, so the
       // renderer's follow-up resize is a no-op and must not arm a needless wait.
       manager.initSession(SESSION, 'previous session output', 190);
@@ -132,7 +133,7 @@ describe('PtyBufferManager', () => {
 
     it('preserves scrollback across a later width change', () => {
       const onFlush = vi.fn();
-      const manager = new PtyBufferManager({ onFlush });
+      const manager = new PtyBufferManager({ onFlush, onDrain: vi.fn() });
       manager.initSession(SESSION, 'previous session output', 120);
       manager.onResize(SESSION, 190);
       manager.onData(SESSION, 'live data');
@@ -145,7 +146,7 @@ describe('PtyBufferManager', () => {
 
     it('reports colsChanged=false on a genuine rows-only resize (return is reporting, arming is separate)', () => {
       const onFlush = vi.fn();
-      const manager = new PtyBufferManager({ onFlush });
+      const manager = new PtyBufferManager({ onFlush, onDrain: vi.fn() });
       manager.initSession(SESSION, 'previous session output', 120, 30);
       manager.onResize(SESSION, 120, 30);
       manager.onData(SESSION, ' plus new data');
@@ -162,7 +163,7 @@ describe('PtyBufferManager', () => {
 
     it('tracks lastRows through init and resize (dev diagnostics)', () => {
       const onFlush = vi.fn();
-      const manager = new PtyBufferManager({ onFlush });
+      const manager = new PtyBufferManager({ onFlush, onDrain: vi.fn() });
       manager.initSession(SESSION, '', 120, 24);
       expect(manager.getDimensionState(SESSION)?.lastRows).toBe(24);
 
@@ -172,7 +173,7 @@ describe('PtyBufferManager', () => {
 
     it('fresh session seeded at spawn width reports no change on a matching resize', () => {
       const onFlush = vi.fn();
-      const manager = new PtyBufferManager({ onFlush });
+      const manager = new PtyBufferManager({ onFlush, onDrain: vi.fn() });
       manager.initSession(SESSION, '', 120);
 
       const colsChanged = manager.onResize(SESSION, 120);
@@ -188,7 +189,7 @@ describe('PtyBufferManager', () => {
     // rows param would otherwise read as a spurious row change - see the
     // onResize doc). Returns the manager so each test drives the settle.
     function armWidthChange(tui = true): PtyBufferManager {
-      const manager = new PtyBufferManager({ onFlush: vi.fn() });
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
       manager.initSession(SESSION, '', 120, 30);
       manager.onData(SESSION, tui ? '\x1b[2Jold frame at 120 cols' : 'plain shell output');
       expect(manager.onResize(SESSION, 190, 30)).toBe(true);
@@ -198,7 +199,7 @@ describe('PtyBufferManager', () => {
     // Same shape armed by a ROWS-ONLY change: cols stay 120, rows 30 -> 50.
     // onResize returns false (the report stays colsChanged) while arming.
     function armRowsChange(tui = true): PtyBufferManager {
-      const manager = new PtyBufferManager({ onFlush: vi.fn() });
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
       manager.initSession(SESSION, '', 120, 30);
       manager.onData(SESSION, tui ? '\x1b[2Jold frame at 30 rows' : 'plain shell output');
       expect(manager.onResize(SESSION, 120, 50)).toBe(false);
@@ -407,7 +408,7 @@ describe('PtyBufferManager', () => {
 
     it('survives a mid-wait scrollback trim: the scan offset shifts with the trimmed prefix', async () => {
       vi.useFakeTimers();
-      const manager = new PtyBufferManager({ onFlush: vi.fn() });
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
       manager.initSession(SESSION, '', 120);
       // A large pre-resize TUI buffer, just below the 768KB write-path trim
       // threshold, so the resize stamps a large scan offset (~717KB).
@@ -582,7 +583,7 @@ describe('PtyBufferManager', () => {
 
     it('does not arm a wait when the geometry did not change', async () => {
       vi.useFakeTimers();
-      const manager = new PtyBufferManager({ onFlush: vi.fn() });
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
       manager.initSession(SESSION, '', 120, 30);
       manager.onData(SESSION, '\x1b[2Jframe at 120x30');
       // Same cols AND rows: nothing changed, no pending repaint stamped.
@@ -724,7 +725,7 @@ describe('PtyBufferManager', () => {
       // real rows (SessionManager.resize), so this path is reachable only from
       // tests - pinned here so the behavior is documented rather than
       // rediscovered: an omitted rows after rows=50 reads 50 -> 30 and arms.
-      const manager = new PtyBufferManager({ onFlush: vi.fn() });
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
       manager.initSession(SESSION, '', 120, 30);
       manager.onData(SESSION, '\x1b[2Jframe');
       expect(manager.onResize(SESSION, 120, 50)).toBe(false);
@@ -743,7 +744,7 @@ describe('PtyBufferManager', () => {
       // stacks" case is pinned above (immediate re-resize -> stacked true);
       // this test is the complementary stale case.
       vi.useFakeTimers();
-      const manager = new PtyBufferManager({ onFlush: vi.fn() });
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
       manager.initSession(SESSION, '', 120, 30);
       manager.onData(SESSION, '\x1b[2Jframe');
 
@@ -1391,7 +1392,7 @@ describe('PtyBufferManager', () => {
     // Real timers: the headless parser drains its write buffer on a macrotask,
     // and getSerializedFrame awaits that flush before serializing.
     it('reconstructs a fullscreen-TUI static cell that the raw 512KB byte-window replay drops', async () => {
-      const manager = new PtyBufferManager({ onFlush: vi.fn() });
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
       manager.initSession(SESSION, '', 80, 24);
 
       // A fullscreen TUI: enter the alt screen, clear, then draw a WRITE-ONCE
@@ -1431,7 +1432,7 @@ describe('PtyBufferManager', () => {
     });
 
     it('returns empty string for an unknown session', async () => {
-      const manager = new PtyBufferManager({ onFlush: vi.fn() });
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
       expect(await manager.getSerializedFrame('nonexistent')).toBe('');
     });
   });
@@ -1440,7 +1441,7 @@ describe('PtyBufferManager', () => {
     // Real timers, like the getSerializedFrame block above: the frame branch
     // awaits the headless parser's macrotask flush barrier.
     it('serves a parsed-grid frame that keeps static cells a capped byte replay drops', async () => {
-      const manager = new PtyBufferManager({ onFlush: vi.fn() });
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
       manager.initSession(SESSION, '', 80, 24);
 
       // Same fixture as the getSerializedFrame regression above: a write-once
@@ -1476,7 +1477,7 @@ describe('PtyBufferManager', () => {
     });
 
     it('re-asserts mouse-encoding modes the serialize addon cannot emit', async () => {
-      const manager = new PtyBufferManager({ onFlush: vi.fn() });
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
       manager.initSession(SESSION, '', 80, 24);
       // A fullscreen TUI with wheel-scroll support: mouse tracking (1000) in
       // SGR encoding (1006), like Claude Code. The serialize addon re-asserts
@@ -1498,7 +1499,7 @@ describe('PtyBufferManager', () => {
     });
 
     it('passes a non-alt-screen session through to the raw byte replay', async () => {
-      const manager = new PtyBufferManager({ onFlush: vi.fn() });
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
       manager.initSession(SESSION, '', 80, 24);
       manager.onData(SESSION, 'plain shell output\r\nsecond line');
 
@@ -1513,7 +1514,7 @@ describe('PtyBufferManager', () => {
 
     it('drains the pending buffer on the frame branch like getScrollback does', async () => {
       const onFlush = vi.fn();
-      const manager = new PtyBufferManager({ onFlush });
+      const manager = new PtyBufferManager({ onFlush, onDrain: vi.fn() });
       manager.initSession(SESSION, '', 80, 24);
       manager.onData(SESSION, '\x1b[?1049h\x1b[2J\x1b[1;1Hpending frame bytes');
 
@@ -1529,7 +1530,7 @@ describe('PtyBufferManager', () => {
     });
 
     it('returns empty string for an unknown or empty session', async () => {
-      const manager = new PtyBufferManager({ onFlush: vi.fn() });
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
       expect(await manager.getReplaySnapshot('nonexistent')).toBe('');
       manager.initSession(SESSION, '', 80, 24);
       expect(await manager.getReplaySnapshot(SESSION)).toBe('');
@@ -1538,7 +1539,7 @@ describe('PtyBufferManager', () => {
 
     it('folds bytes that race the sample into the reply exactly once, never via a flush', async () => {
       const onFlush = vi.fn();
-      const manager = new PtyBufferManager({ onFlush });
+      const manager = new PtyBufferManager({ onFlush, onDrain: vi.fn() });
       manager.initSession(SESSION, '', 80, 24);
       manager.onData(SESSION, '\x1b[?1049h\x1b[2J\x1b[1;1Halt frame');
 
@@ -1564,7 +1565,7 @@ describe('PtyBufferManager', () => {
     });
 
     it('resolves empty when the session is torn down mid-sample', async () => {
-      const manager = new PtyBufferManager({ onFlush: vi.fn() });
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
       manager.initSession(SESSION, '', 80, 24);
       manager.onData(SESSION, '\x1b[?1049h\x1b[2J\x1b[1;1Halt frame');
 
@@ -1580,7 +1581,7 @@ describe('PtyBufferManager', () => {
 
     it('resumes normal flush delivery once a sample completes (replaySamplesInFlight must not stick)', async () => {
       const onFlush = vi.fn();
-      const manager = new PtyBufferManager({ onFlush });
+      const manager = new PtyBufferManager({ onFlush, onDrain: vi.fn() });
       manager.initSession(SESSION, '', 80, 24);
       manager.onData(SESSION, '\x1b[?1049h\x1b[2J\x1b[1;1Halt frame');
 
@@ -1608,7 +1609,7 @@ describe('PtyBufferManager', () => {
     });
 
     it('propagates a HeadlessFrameBuffer.serialize rejection rather than swallowing it', async () => {
-      const manager = new PtyBufferManager({ onFlush: vi.fn() });
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
       manager.initSession(SESSION, '', 80, 24);
       manager.onData(SESSION, '\x1b[?1049h\x1b[2J\x1b[1;1Halt frame');
 
@@ -1632,6 +1633,199 @@ describe('PtyBufferManager', () => {
       };
 
       await expect(manager.getReplaySnapshot(SESSION)).rejects.toThrow('serializer disposed mid-sample');
+
+      manager.removeSession(SESSION);
+    });
+  });
+
+  describe('replay-drain onDrain seam (focus-independent data-tap feeder)', () => {
+    // A replay sample's double-delivery guard empties state.buffer without an
+    // onFlush, which is correct for the requesting renderer (the bytes are
+    // inside the replay payload it receives) but used to starve every
+    // focus-independent data-tap consumer: a phone streaming the session
+    // missed whatever was pending at sample time. onDrain is the dedicated
+    // report of exactly those drained bytes.
+
+    // A failing assertion skips a test's inline vi.useRealTimers(); restore
+    // here so a red test cannot leak fake timers into later suites (the
+    // headless parser's macrotask flush hangs forever under fake timers).
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('getScrollback reports the drained pending bytes via onDrain, never via onFlush', () => {
+      vi.useFakeTimers();
+      const { manager, onFlush, onDrain } = createManager();
+
+      manager.onData(SESSION, 'hello world');
+      manager.getScrollback(SESSION);
+
+      expect(onDrain).toHaveBeenCalledTimes(1);
+      expect(onDrain).toHaveBeenCalledWith(SESSION, 'hello world');
+
+      // The already-queued 16ms flush still finds an empty buffer and stays
+      // silent: onDrain reports the bytes, it does not re-deliver them.
+      vi.advanceTimersByTime(20);
+      expect(onFlush).not.toHaveBeenCalled();
+
+      vi.useRealTimers();
+    });
+
+    it('reports the frame-branch pre-serialize drain via onDrain', async () => {
+      const onFlush = vi.fn();
+      const onDrain = vi.fn();
+      const manager = new PtyBufferManager({ onFlush, onDrain });
+      manager.initSession(SESSION, '', 80, 24);
+      const ALT_BYTES = '\x1b[?1049h\x1b[2J\x1b[1;1Hpending frame bytes';
+      manager.onData(SESSION, ALT_BYTES);
+
+      await manager.getReplaySnapshot(SESSION);
+
+      expect(onDrain).toHaveBeenCalledTimes(1);
+      expect(onDrain).toHaveBeenCalledWith(SESSION, ALT_BYTES);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(onFlush).not.toHaveBeenCalled();
+
+      manager.removeSession(SESSION);
+    });
+
+    it('reports race bytes once via the tail fold, in order after the pre-drain', async () => {
+      const onFlush = vi.fn();
+      const onDrain = vi.fn();
+      const manager = new PtyBufferManager({ onFlush, onDrain });
+      manager.initSession(SESSION, '', 80, 24);
+      const ALT_BYTES = '\x1b[?1049h\x1b[2J\x1b[1;1Halt frame';
+      manager.onData(SESSION, ALT_BYTES);
+
+      const pendingSnapshot = manager.getReplaySnapshot(SESSION); // do not await yet
+      manager.onData(SESSION, 'RACE_BYTES'); // lands during the await window
+      await pendingSnapshot;
+
+      // Pre-drain first, tail second: data-tap consumers see the same byte
+      // order the desktop replay preserves, and the race bytes appear in
+      // exactly one report.
+      expect(onDrain.mock.calls).toEqual([
+        [SESSION, ALT_BYTES],
+        [SESSION, 'RACE_BYTES'],
+      ]);
+
+      // And never a second time via a flush once the held tick re-fires.
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      expect(onFlush).not.toHaveBeenCalled();
+
+      manager.removeSession(SESSION);
+    });
+
+    it('reports nothing when the pending buffer is already empty at sample time', () => {
+      vi.useFakeTimers();
+      const { manager, onFlush, onDrain } = createManager();
+
+      manager.onData(SESSION, 'flushed before the sample');
+      vi.advanceTimersByTime(20);
+      expect(onFlush).toHaveBeenCalledTimes(1);
+
+      manager.getScrollback(SESSION);
+      expect(onDrain).not.toHaveBeenCalled();
+
+      vi.useRealTimers();
+    });
+
+    it('an alt-screen sample with nothing pending reports neither a pre-drain nor a tail', async () => {
+      const onFlush = vi.fn();
+      const onDrain = vi.fn();
+      const manager = new PtyBufferManager({ onFlush, onDrain });
+      manager.initSession(SESSION, '', 80, 24);
+      manager.onData(SESSION, '\x1b[?1049h\x1b[2J\x1b[1;1Halt frame');
+      // Let the ordinary 16ms tick deliver the bytes first, so both the
+      // pre-serialize drain and the tail fold find an empty buffer.
+      await expect
+        .poll(() => onFlush.mock.calls.length > 0, { timeout: 2000, interval: 10 })
+        .toBe(true);
+
+      await manager.getReplaySnapshot(SESSION);
+      expect(onDrain).not.toHaveBeenCalled();
+
+      manager.removeSession(SESSION);
+    });
+
+    it('the normal flush path delivers via onFlush only, never onDrain', () => {
+      vi.useFakeTimers();
+      const { manager, onFlush, onDrain } = createManager();
+
+      manager.onData(SESSION, 'ordinary streamed output');
+      vi.advanceTimersByTime(20);
+
+      expect(onFlush).toHaveBeenCalledWith(SESSION, 'ordinary streamed output');
+      expect(onDrain).not.toHaveBeenCalled();
+
+      vi.useRealTimers();
+    });
+
+    it('the serialize-deadline fallback reports await-window bytes exactly once via onDrain', async () => {
+      vi.useFakeTimers();
+      const onFlush = vi.fn();
+      const onDrain = vi.fn();
+      const manager = new PtyBufferManager({ onFlush, onDrain });
+      manager.initSession(SESSION, '', 80, 24);
+      const ALT_BYTES = '\x1b[?1049h\x1b[2J\x1b[1;1Halt frame';
+      manager.onData(SESSION, ALT_BYTES);
+
+      // Wedge the parser so the sample rides the REPLAY_SERIALIZE_MAX_WAIT_MS
+      // deadline into the byte-replay fallback.
+      interface ManagerInternals {
+        buffers: Map<string, { headless: { serialize: () => Promise<string> } }>;
+      }
+      const bufferState = (manager as unknown as ManagerInternals).buffers.get(SESSION);
+      if (!bufferState) throw new Error('test setup: session buffer state missing');
+      bufferState.headless.serialize = () => new Promise<string>(() => {});
+
+      const pendingSnapshot = manager.getReplaySnapshot(SESSION);
+      // The pre-serialize drain reports synchronously, before the await.
+      expect(onDrain.mock.calls).toEqual([[SESSION, ALT_BYTES]]);
+
+      manager.onData(SESSION, 'AWAIT_WINDOW_BYTES');
+      await vi.advanceTimersByTimeAsync(1100);
+      const snapshot = await pendingSnapshot;
+
+      // The fallback's byte replay carries the await-window bytes to the
+      // desktop, and its getScrollback drain reports the SAME bytes to
+      // onDrain exactly once; no flush ever delivers them.
+      expect(snapshot).toContain('AWAIT_WINDOW_BYTES');
+      expect(onDrain.mock.calls).toEqual([
+        [SESSION, ALT_BYTES],
+        [SESSION, 'AWAIT_WINDOW_BYTES'],
+      ]);
+      expect(onFlush).not.toHaveBeenCalled();
+
+      vi.useRealTimers();
+      manager.removeSession(SESSION);
+    });
+
+    it('reports the drain before incrementing replaySamplesInFlight, so a throwing onDrain listener never leaves the counter stuck (ordering pinned at pty-buffer-manager.ts ~line 970)', async () => {
+      const onFlush = vi.fn();
+      const onDrain = vi.fn(() => {
+        throw new Error('listener failure');
+      });
+      const manager = new PtyBufferManager({ onFlush, onDrain });
+      manager.initSession(SESSION, '', 80, 24);
+      const ALT_BYTES = '\x1b[?1049h\x1b[2J\x1b[1;1Halt frame';
+      manager.onData(SESSION, ALT_BYTES);
+
+      await expect(manager.getReplaySnapshot(SESSION)).rejects.toThrow('listener failure');
+
+      // If a future edit moved the reportDrain call after the
+      // replaySamplesInFlight increment (both still ahead of the try/finally),
+      // the throw would propagate having already incremented the counter, and
+      // the matching decrement in the finally would never run - the code never
+      // reaches the try block. scheduleFlush's replaySamplesInFlight > 0 hold
+      // would then re-arm forever and no future flush could ever emit. New
+      // data delivered via the ordinary flush path (not another sample, so
+      // onDrain does not fire a second time) proves the counter is not stuck.
+      manager.onData(SESSION, 'new data after the failed drain');
+      await expect
+        .poll(() => onFlush.mock.calls.length > 0, { timeout: 2000, interval: 10 })
+        .toBe(true);
+      expect(onFlush).toHaveBeenCalledWith(SESSION, 'new data after the failed drain');
 
       manager.removeSession(SESSION);
     });

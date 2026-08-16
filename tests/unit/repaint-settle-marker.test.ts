@@ -52,7 +52,7 @@ const STALE_FRAME = frameAtWidth(PANEL_COLS, 'DRAWN-AT-PANEL-WIDTH');
 const REPAINT_FRAME = frameAtWidth(WINDOW_COLS, 'DRAWN-AT-WINDOW-WIDTH');
 
 function createManager() {
-  const manager = new PtyBufferManager({ onFlush: vi.fn() });
+  const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
   manager.initSession(SESSION, '', PANEL_COLS);
   manager.onResize(SESSION, PANEL_COLS);
   return manager;
@@ -123,7 +123,7 @@ describe('repaint settle: what the user sees first on a panel -> window handoff'
     const WINDOW_ROWS = 34;
     const frameAtRows = (rows: number, tag: string): string => `${CLEAR}\x1b[${rows};1H${tag}`;
 
-    const manager = new PtyBufferManager({ onFlush: vi.fn() });
+    const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
     manager.initSession(SESSION, '', PANEL_COLS, PANEL_ROWS);
     manager.onResize(SESSION, PANEL_COLS, PANEL_ROWS);
     manager.onData(SESSION, frameAtRows(PANEL_ROWS, 'DRAWN-AT-PANEL-HEIGHT'));
@@ -167,7 +167,7 @@ describe('repaint settle: what the user sees first on a panel -> window handoff'
    * mount that crosses exactly this path.
    */
   it('waits for a starting TUI\'s FIRST frame even though the ring has no marker yet', async () => {
-    const manager = new PtyBufferManager({ onFlush: vi.fn() });
+    const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
     manager.initSession(SESSION, '', PANEL_COLS);
     manager.onResize(SESSION, PANEL_COLS);
     // The agent's pre-frame chatter: no full-screen erase anywhere yet.
@@ -196,7 +196,7 @@ describe('repaint settle: what the user sees first on a panel -> window handoff'
     // The common no-marker case really is a plain shell, and a shell answers
     // SIGWINCH with nothing. Waiting the TUI's full deadline there would slow
     // every Command Terminal open; the no-marker wait must stay short.
-    const manager = new PtyBufferManager({ onFlush: vi.fn() });
+    const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
     manager.initSession(SESSION, '', PANEL_COLS);
     manager.onResize(SESSION, PANEL_COLS);
     manager.onData(SESSION, 'PS C:\\dev> ');
@@ -214,7 +214,7 @@ describe('repaint settle: what the user sees first on a panel -> window handoff'
   it('samples a marker-less redraw on its quiesce instead of instantly', async () => {
     // A shell that DOES answer the resize (prompt redraw, no erase): the
     // sample should include those bytes, keyed on the output going quiet.
-    const manager = new PtyBufferManager({ onFlush: vi.fn() });
+    const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
     manager.initSession(SESSION, '', PANEL_COLS);
     manager.onResize(SESSION, PANEL_COLS);
     manager.onData(SESSION, 'PS C:\\dev> ');

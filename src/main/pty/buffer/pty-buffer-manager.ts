@@ -229,6 +229,16 @@ function buildDecPrivateModePrefix(activeModes: Set<number>): string {
 
 interface PtyBufferManagerCallbacks {
   onFlush(sessionId: string, data: string): void;
+  /** Replay-drain report: fired synchronously at the moment a replay sample
+   *  (getScrollback / getReplaySnapshot) empties the pending buffer as its
+   *  double-delivery guard, carrying exactly the drained bytes (never an
+   *  empty string). The requesting renderer receives those bytes inside the
+   *  replay payload, but focus-independent consumers (SessionManager's
+   *  'data-tap') never see a replay - this callback is their only source for
+   *  them, so dropping it silently starves a streaming phone of whatever was
+   *  pending when a desktop terminal mounted the same session. Listeners
+   *  must not call back into the buffer manager synchronously. */
+  onDrain(sessionId: string, data: string): void;
 }
 
 interface BufferState {
@@ -787,14 +797,28 @@ export class PtyBufferManager {
     };
   }
 
+  /** Report bytes a replay sample drained out of the pending buffer (see
+   *  PtyBufferManagerCallbacks.onDrain). One chokepoint for every drain site
+   *  so the non-empty guard and the trace cannot diverge. */
+  private reportDrain(sessionId: string, drained: string): void {
+    if (!drained) return;
+    traceTerminal(sessionId, 'replay-drain', { bytes: drained.length });
+    this.callbacks.onDrain(sessionId, drained);
+  }
+
   getScrollback(sessionId: string): string {
     const state = this.buffers.get(sessionId);
     if (!state?.scrollback) return '';
     // Drain the pending buffer so the next 16ms flush fires harmlessly
     // (empty buffer -> onFlush skipped). Without this, data appended to
     // both buffer and scrollback by onData() would be delivered twice:
-    // once via the scrollback replay and again by the stale flush.
+    // once via the scrollback replay and again by the stale flush. The
+    // requesting renderer gets the drained bytes inside this replay, but
+    // focus-independent data-tap consumers never see a replay, so the drain
+    // reports them through onDrain instead of dropping them.
+    const drained = state.buffer;
     state.buffer = '';
+    this.reportDrain(sessionId, drained);
 
     let scrollback = state.scrollback;
 
@@ -945,7 +969,13 @@ export class PtyBufferManager {
     // the frame instead. The deadline and the post-await teardown check mirror
     // waitForResizeRepaint's discipline: this await must never leave the IPC
     // reply hanging on a disposed parser.
+    // Report the drain before the in-flight increment: a throwing onDrain
+    // listener then propagates without ever incrementing, so the finally
+    // decrement below always pairs with an increment that happened. All of
+    // this is synchronous, so no flush tick can interleave.
+    const drainedBeforeSerialize = state.buffer;
     state.buffer = '';
+    this.reportDrain(sessionId, drainedBeforeSerialize);
     state.replaySamplesInFlight += 1;
     try {
       let deadlineTimer: NodeJS.Timeout | undefined;
@@ -980,6 +1010,7 @@ export class PtyBufferManager {
       // keeps the held flush tick silent once it re-fires.
       const tail = state.buffer;
       state.buffer = '';
+      this.reportDrain(sessionId, tail);
       // Re-assert the tracked DEC private modes after the frame. The serialize
       // addon emits mouse TRACKING from terminal.modes (?1000h etc.) but has no
       // API for the mouse ENCODING modes (1005/1006/1015/1016), so a bare frame

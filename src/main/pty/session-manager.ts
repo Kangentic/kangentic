@@ -260,7 +260,9 @@ export class SessionManager extends EventEmitter {
         // since that accounting exists only for the renderer's focused-tab
         // drain protocol, which a bridge subscriber does not participate
         // in. With no listener attached this emit is a no-op call, so it
-        // costs nothing when no device is paired.
+        // costs nothing when no device is paired. data-tap has a SECOND
+        // feeder, onDrain below, covering bytes a replay sample drains out
+        // of the pending buffer before they can flush.
         this.emit('data-tap', sessionId, data);
 
         // Only emit IPC data for focused sessions. Background sessions
@@ -272,6 +274,25 @@ export class SessionManager extends EventEmitter {
           this.emit('data', sessionId, data);
           this.backpressure.recordEmitted(sessionId, data.length);
         }
+      },
+      onDrain: (sessionId, data) => {
+        // Replay-drain tap: a desktop replay (getScrollback /
+        // getReplaySnapshot) consumed these bytes straight out of the
+        // pending buffer as its double-delivery guard, so they will never
+        // reach onFlush. Forward them to 'data-tap' ONLY:
+        // - never to the focused 'data' IPC emit: suppressing that duplicate
+        //   is exactly what the drain exists for (the renderer receives
+        //   these bytes inside the replay payload it just requested);
+        // - never to backpressure.recordEmitted: that accounting tracks
+        //   bytes in flight on the renderer's 'data' channel, which these
+        //   never ride;
+        // - never to firstOutputTracker: first-output stays keyed to the
+        //   flushed stream, as before this seam existed. A reveal/reload
+        //   drain can consume a detector's marker bytes, which is safe only
+        //   because every adapter's detectFirstOutput matches recurring
+        //   output (or any chunk), so detection is delayed to the next
+        //   chunk, never lost.
+        this.emit('data-tap', sessionId, data);
       },
     });
 
