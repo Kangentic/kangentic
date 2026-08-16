@@ -48,8 +48,11 @@ vi.mock('node:os', async (importOriginal) => {
 import { exec, execFile } from 'node:child_process';
 import {
   AntigravityAdapter,
+  AntigravityDetector,
   antigravityModelDisplayName,
 } from '../../src/main/agent/adapters/antigravity';
+import { standardUnixFallbackPaths } from '../../src/main/agent/shared/fallback-paths';
+import type { AgentDetectorConfig } from '../../src/main/agent/shared/agent-detector';
 import {
   parseAntigravityTranscript,
   parseAntigravityTranscriptFile,
@@ -111,6 +114,76 @@ describe('AntigravityAdapter identity', () => {
 
   it('exits via double Ctrl+C (agy has no /quit command)', () => {
     expect(adapter.getExitSequence()).toEqual(['\x03', '\x03']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AntigravityDetector: binary probing and the platform-conditional
+// fallback-path list. Uses the private-config-access pattern already
+// established for DroidDetector (droid-adapter.test.ts) and GrokDetector
+// (cursor-grok-binary-collision.test.ts).
+// ---------------------------------------------------------------------------
+
+describe('AntigravityDetector', () => {
+  const originalPlatform = process.platform;
+  const originalLocalAppData = process.env.LOCALAPPDATA;
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: originalPlatform });
+    if (originalLocalAppData === undefined) delete process.env.LOCALAPPDATA;
+    else process.env.LOCALAPPDATA = originalLocalAppData;
+  });
+
+  function detectorConfig(): AgentDetectorConfig {
+    return (new AntigravityDetector() as unknown as { config: AgentDetectorConfig }).config;
+  }
+
+  it('probes the unambiguous agy binary name', () => {
+    expect(detectorConfig().binaryName).toBe('agy');
+  });
+
+  it('falls back to the official Windows installer path when LOCALAPPDATA is set', () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    process.env.LOCALAPPDATA = 'C:\\Users\\dev\\AppData\\Local';
+
+    const config = detectorConfig();
+
+    expect(config.fallbackPaths).toEqual([
+      path.join('C:\\Users\\dev\\AppData\\Local', 'agy', 'bin', 'agy.exe'),
+    ]);
+  });
+
+  it('yields no Windows fallback when LOCALAPPDATA is unset', () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    delete process.env.LOCALAPPDATA;
+
+    expect(detectorConfig().fallbackPaths).toEqual([]);
+  });
+
+  it('delegates to the shared Unix fallback list on macOS/Linux', () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+
+    const config = detectorConfig();
+
+    // Live comparison (never a hardcoded homedir-derived list) plus a
+    // concrete non-tautological anchor: a dropped delegation or a wrong
+    // binary name would still satisfy an equality-only check against a
+    // freshly recomputed call, so pin shape too.
+    expect(config.fallbackPaths).toEqual(standardUnixFallbackPaths('agy'));
+    expect(config.fallbackPaths?.length).toBeGreaterThan(0);
+    expect(config.fallbackPaths?.every((candidate) => candidate.endsWith('agy'))).toBe(true);
+  });
+
+  it('parseVersion accepts a bare digit-led version and rejects a foreign banner', () => {
+    const { parseVersion } = detectorConfig();
+
+    expect(parseVersion('1.1.13')).toBe('1.1.13');
+    expect(parseVersion('  1.1.13  ')).toBe('1.1.13');
+    // Guards the collision lesson this detector's own docstring cites: a
+    // foreign tool answering on the shared binary name must be rejected,
+    // not misidentified as agy.
+    expect(parseVersion('not signed in')).toBeNull();
+    expect(parseVersion('')).toBeNull();
   });
 });
 

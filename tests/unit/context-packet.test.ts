@@ -102,6 +102,7 @@ describe('buildSessionHistoryReference', () => {
       { name: 'kimi', display: 'Kimi Code' },
       { name: 'droid', display: 'Droid' },
       { name: 'grok', display: 'Grok Build' },
+      { name: 'antigravity', display: 'Antigravity CLI' },
     ];
 
     for (const { name, display } of agents) {
