@@ -16,8 +16,24 @@ import {
 } from '../../src/main/pty/spawn/pty-spawn';
 
 describe('resolveShellArgs', () => {
-  it('splits WSL specs into exe + args', () => {
-    expect(resolveShellArgs('wsl -d Ubuntu')).toEqual({ exe: 'wsl', args: ['-d', 'Ubuntu'] });
+  it('splits WSL specs into exe + args, appending .exe for the ConPTY resolver', () => {
+    // node-pty's ConPTY executable search cannot resolve an extension-less
+    // bare name; `wsl` spawns as exit -1 with zero output while `wsl.exe` works.
+    expect(resolveShellArgs('wsl -d Ubuntu')).toEqual({ exe: 'wsl.exe', args: ['-d', 'Ubuntu'] });
+  });
+
+  it('does not double-append .exe when a hand-edited config already carries it', () => {
+    // A hand-edited config may already store the WSL spec with the .exe
+    // suffix. The gate must recognize `wsl.exe ...` as a WSL spec (not fall
+    // through to the catch-all branch), and the suffix guard must not
+    // append a second .exe on top of an already-suffixed executable.
+    expect(resolveShellArgs('wsl.exe -d Ubuntu')).toEqual({ exe: 'wsl.exe', args: ['-d', 'Ubuntu'] });
+  });
+
+  it('preserves the original casing of an already-suffixed WSL executable', () => {
+    // The gate lowercases the spec to decide whether it is a WSL invocation,
+    // but the returned exe keeps the caller's original casing.
+    expect(resolveShellArgs('WSL.EXE -d Ubuntu')).toEqual({ exe: 'WSL.EXE', args: ['-d', 'Ubuntu'] });
   });
 
   it('returns cmd with no args', () => {

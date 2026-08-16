@@ -137,9 +137,16 @@ export function isCmdShell(shellName: string): boolean {
  *  - Git Bash:   C:\path → /c/path
  *  - WSL:        C:\path → /mnt/c/path
  *  - cmd:        no conversion
+ *
+ * `platform` is injectable for tests (cross-platform parity); production
+ * callers omit it.
  */
-export function adaptCommandForShell(cmd: string, shellName: string): string {
-  if (process.platform !== 'win32') return cmd;
+export function adaptCommandForShell(
+  cmd: string,
+  shellName: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  if (platform !== 'win32') return cmd;
 
   const lower = shellName.toLowerCase();
 
@@ -250,12 +257,20 @@ export function quoteArg(
 
 /**
  * Convert a Windows-style executable path at the START of a command to
- * POSIX format. Handles both quoted and unquoted paths.
+ * POSIX format. Handles unquoted, double-quoted, and single-quoted paths;
+ * single quotes are what `quoteArg` emits for unix-like shells.
  *
- * Quoted:   "C:\path with spaces\exe" --flag  →  /c/path with spaces/exe --flag
+ * Double:   "C:\path with spaces\exe" --flag  →  "/c/path with spaces/exe" --flag
+ * Single:   'C:\path\to\exe' --flag           →  '/c/path/to/exe' --flag
  * Unquoted: C:\path\to\exe --flag             →  /c/path/to/exe --flag
+ *
+ * A single-quoted token STAYS single-quoted even without spaces: legal
+ * Windows paths can contain shell-active characters (& $ parens), and the
+ * quotes are what keep them inert in the target shell.
  */
 export function convertWindowsExePath(cmd: string, isWsl: boolean): string {
+  const convertDrivePath = isWsl ? toWslPath : toGitBashPath;
+
   // UNC paths (\\server\share) - normalize slashes in the exe path only,
   // leaving arguments after it unchanged. Exe paths are almost never on
   // network shares, but handle gracefully if they are.
@@ -263,33 +278,56 @@ export function convertWindowsExePath(cmd: string, isWsl: boolean): string {
     return cmd.replace(
       /^"(\\\\[^"]+)"/,
       (_m, uncPath: string) => {
-        const posix = uncPath.replace(/\\/g, '/');
+        const posix = toForwardSlash(uncPath);
         return posix.includes(' ') ? `"${posix}"` : posix;
       },
+    );
+  }
+  if (cmd.startsWith("'\\\\")) {
+    return cmd.replace(
+      /^'(\\\\[^']+)'/,
+      (_m, uncPath: string) => `'${toForwardSlash(uncPath)}'`,
     );
   }
   if (cmd.startsWith('\\\\')) {
     return cmd.replace(
       /^(\\\\[^\s]+)/,
-      (_m, uncPath: string) => uncPath.replace(/\\/g, '/'),
+      (_m, uncPath: string) => toForwardSlash(uncPath),
     );
   }
 
-  const prefix = isWsl ? '/mnt/' : '/';
+  // The repeated groups below exclude `\` from their character classes so a
+  // backslash run has exactly one parse; the ambiguous `(?:\\[^X]+)+` shape
+  // backtracks exponentially on adversarial input.
 
   if (cmd.startsWith('"')) {
     return cmd.replace(
-      /^"([A-Za-z]):((?:\\[^"]+)+)"/,
+      /^"([A-Za-z]):((?:\\[^"\\]*)+)"/,
       (_m, drive: string, rest: string) => {
-        const posix = `${prefix}${drive.toLowerCase()}${rest.replace(/\\/g, '/')}`;
+        const posix = convertDrivePath(`${drive}:${rest}`);
         return posix.includes(' ') ? `"${posix}"` : posix;
       },
     );
   }
 
+  // quoteArg emits this form for unix-like shells (Git Bash, WSL). The
+  // converted path is re-emitted single-quoted unconditionally: stripping
+  // the quotes would let shell-active characters in a legal Windows path
+  // (& $ parens) become live syntax. A path containing a literal single
+  // quote arrives as 'C:\...'\''...' (POSIX escaping), so the match stops
+  // at the first quote and the tail keeps its backslashes; such a path
+  // fails to resolve, the same outcome it had before this branch existed.
+  // Accepted - a robust fix means converting before quoting, not
+  // re-parsing the quoted form.
+  if (cmd.startsWith("'")) {
+    return cmd.replace(
+      /^'([A-Za-z]):((?:\\[^'\\]*)+)'/,
+      (_m, drive: string, rest: string) => `'${convertDrivePath(`${drive}:${rest}`)}'`,
+    );
+  }
+
   return cmd.replace(
-    /^([A-Za-z]):((?:\\[^\s]+)+)/,
-    (_m, drive: string, rest: string) =>
-      `${prefix}${drive.toLowerCase()}${rest.replace(/\\/g, '/')}`,
+    /^([A-Za-z]):((?:\\[^\s\\]*)+)/,
+    (_m, drive: string, rest: string) => convertDrivePath(`${drive}:${rest}`),
   );
 }

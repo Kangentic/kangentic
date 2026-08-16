@@ -8,7 +8,7 @@ Contextual knowledge for platform-specific issues across Windows, macOS, and Lin
 
 ## Shell Resolution
 
-`src/main/pty/shell-resolver.ts` discovers available shells per platform:
+`src/main/pty/spawn/shell-resolver.ts` discovers available shells per platform:
 
 **Windows priority:** PowerShell 7 -> PowerShell 5 -> Git Bash -> cmd.exe, plus WSL distros via `wsl --list --quiet` (5-second timeout, Docker distros filtered out).
 
@@ -24,25 +24,26 @@ When spawning a PTY session, the shell type determines command construction:
 
 | Shell | Adaptation | Source |
 |-------|-----------|--------|
-| PowerShell (pwsh/powershell) | Prefix executable with `& ` call operator | `paths.ts:92-107` |
-| WSL (`wsl -d <distro>`) | Split into exe (`wsl`) + args (`-d`, distro, `--`, cmd...) | `session-manager.ts:153-157` |
-| Fish | Skip `--login` flag | `session-manager.ts:162-165` |
-| Nushell | Skip `--login` flag | `session-manager.ts:162-165` |
-| Git Bash | Convert Windows paths to `/c/Users/...` format | `paths.ts:47-53` |
+| PowerShell (pwsh/powershell) | Prefix executable with `& ` call operator | `adaptCommandForShell` (`src/shared/paths.ts`) |
+| WSL (`wsl -d <distro>`) | Split into exe (`wsl.exe`) + args (`-d`, distro) only - the `.exe` is appended because node-pty's ConPTY resolver cannot find an extension-less bare name; the agent command is NOT in argv, it is written into the PTY afterwards through `adaptCommandForShell`, which converts the leading exe path to `/mnt/c/...` | `resolveShellArgs` (`src/main/pty/spawn/pty-spawn.ts`), `adaptCommandForShell` (`src/shared/paths.ts`) |
+| Fish | Skip `--login` flag | `resolveShellArgs` (`src/main/pty/spawn/pty-spawn.ts`) |
+| Nushell | Skip `--login` flag | `resolveShellArgs` (`src/main/pty/spawn/pty-spawn.ts`) |
+| Git Bash | Convert the leading Windows exe path to `/c/Users/...` format | `convertWindowsExePath` (`src/shared/paths.ts`) |
 
 ## Path Handling
 
 `src/shared/paths.ts` provides platform-safe path utilities:
 
-- **`toForwardSlash(path)`** -- Replace backslashes with forward slashes. Required for all paths written to `.claude.json` or config files, as Claude Code uses forward slashes on all platforms.
-- **`quoteArg(arg)`** -- Shell-aware quoting. Windows: double-quotes with backslash escaping. Unix: single-quotes with `'\''` escaping. Simple args (matching `/^[a-zA-Z0-9_.\/:-]+$/`) left unquoted.
-- **`toGitBashPath(path)`** -- `C:\Users\dev` -> `/c/Users/dev`
-- **`toWslPath(path)`** -- `C:\Users\dev` -> `/mnt/c/Users/dev`
-- **`sanitizeForPty(text)`** -- Collapse newlines/tabs/consecutive whitespace to single space. Prevents newlines being interpreted as Enter by terminal emulators.
+- **`toForwardSlash(path)`** - Replace backslashes with forward slashes. Required for all paths written to `.claude.json` or config files, as Claude Code uses forward slashes on all platforms.
+- **`quoteArg(arg, shell?)`** - Shell-aware quoting, keyed on the TARGET shell, not the host platform: unix-like shells (bash, zsh, WSL) get single quotes with `'\''` escaping; PowerShell/cmd get double quotes with backtick/`$`/`"` escaping. When `shell` is omitted, falls back to platform detection (win32 = double quotes). Simple args (matching `/^[a-zA-Z0-9_.\/:-]+$/`) left unquoted; a backslashed Windows path is never simple, so it is always quoted.
+- **`convertWindowsExePath(cmd, isWsl)`** - Converts the leading Windows exe path of a command string to POSIX form (`/c/...` or `/mnt/c/...`), recognizing bare, double-quoted, and single-quoted leading tokens (single quotes are what `quoteArg` emits for unix-like shells; a single-quoted token stays single-quoted so shell-active path characters remain inert). Called via `adaptCommandForShell` at the PTY spawn seam.
+- **`toGitBashPath(path)`** - `C:\Users\dev` -> `/c/Users/dev`
+- **`toWslPath(path)`** - `C:\Users\dev` -> `/mnt/c/Users/dev`
+- **`sanitizeForPty(text)`** - Collapse newlines/tabs/consecutive whitespace to single space. Prevents newlines being interpreted as Enter by terminal emulators.
 
 ## PowerShell Prompt Escaping
 
-`src/main/agent/adapters/claude/command-builder.ts` (lines 131-138):
+`src/main/agent/adapters/claude/command-builder.ts` (the prompt block of `buildClaudeCommand`):
 
 PowerShell interprets `\"` differently from bash. The command builder replaces double quotes with single quotes in prompts BEFORE `quoteArg()` wrapping. Without this, prompts containing quotes break PowerShell sessions.
 
@@ -72,7 +73,7 @@ which throws EPERM on locked files.
 
 ## Em-Dash Encoding
 
-**NEVER use Unicode em-dash (U+2014) anywhere in the codebase.** Always use ASCII `--` instead.
+**NEVER use Unicode em-dash (U+2014) anywhere in the codebase.** Always use a single ASCII `-` instead; `--` as punctuation is equally banned (see `.claude/rules/text-formatting.md`).
 
 Windows console code pages (e.g., CP437, CP1252) cannot render em-dashes, producing garbled characters like `\u0096` or mojibake. This applies to:
 - Source code and comments
@@ -131,7 +132,7 @@ Sparse-checkout excludes `.claude/commands/` from worktrees (commands walk up th
 
 ## Key Source Files
 
-- `src/main/pty/shell-resolver.ts` -- Shell discovery and default selection
+- `src/main/pty/spawn/shell-resolver.ts` -- Shell discovery and default selection
 - `src/main/agent/adapters/claude/command-builder.ts` -- Claude CLI command assembly, prompt sanitization
 - `src/main/git/worktree-manager.ts` -- Worktree CRUD with Windows retry logic
 - `src/renderer/hooks/useTerminal.ts` -- xterm setup, WebGL fallback, resize debouncing

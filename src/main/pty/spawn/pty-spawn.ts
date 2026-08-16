@@ -20,9 +20,16 @@ export interface ShellInvocation {
  */
 export function resolveShellArgs(shell: string): ShellInvocation {
   const shellName = shell.toLowerCase();
-  if (shellName.startsWith('wsl ')) {
+  if (shellName.startsWith('wsl ') || shellName.startsWith('wsl.exe ')) {
     const parts = shell.split(/\s+/);
-    return { exe: parts[0], args: parts.slice(1) };
+    // node-pty's ConPTY resolver needs the extension: a bare `wsl` fails its
+    // executable search ("File not found", session exits -1 with no output)
+    // while `wsl.exe` resolves. Every other picker entry stores a full path;
+    // the WSL spec is the only bare name that reaches pty.spawn. The picker
+    // emits `wsl -d <distro>`, but a hand-edited config may already carry
+    // the `.exe` suffix, so accept both and append only when missing.
+    const executable = parts[0].toLowerCase().endsWith('.exe') ? parts[0] : `${parts[0]}.exe`;
+    return { exe: executable, args: parts.slice(1) };
   }
   if (shellName.includes('cmd')) return { exe: shell, args: [] };
   if (shellName.includes('powershell') || shellName.includes('pwsh')) {

@@ -31,12 +31,17 @@ Adaptations applied during the spawn flow (`src/main/pty/lifecycle/session-spawn
 | Shell | Args | Command Adaptation |
 |-------|------|-------------------|
 | PowerShell (pwsh/powershell) | `-NoLogo` | `& ` prefix for command execution |
-| WSL (wsl -d ...) | Split into exe + args | Paths converted to `/mnt/c/...` |
+| WSL (wsl -d ...) | Split into exe + args | Leading exe path converted to `/mnt/c/...` (runs the Windows binary via WSL interop) |
 | bash/zsh | `--login` | Standard execution |
 | fish | (none) | No login flag |
 | nushell (nu) | (none) | No login flag |
 | cmd | (none) | Standard execution |
-| Git Bash | `--login` | Paths may use `/c/...` format |
+| Git Bash | `--login` | Leading exe path converted to `/c/...` |
+
+The leading-token conversion (`convertWindowsExePath` in `src/shared/paths.ts`) recognizes all
+three quote forms a command builder can emit: a bare path, a double-quoted path, and the
+single-quoted path `quoteArg` produces for unix-like shells. UNC exe paths (`\\server\share\...`)
+are normalized the same way.
 
 ### Spawn-time cwd fixups (Windows)
 
@@ -51,11 +56,11 @@ The PowerShell case fixes a Windows PowerShell 5.1 quirk: it treats `[` / `]` in
 
 ## Path Handling
 
-- `toForwardSlash()` -- normalizes backslashes to forward slashes for cross-platform CLI commands
-- `quoteArg(arg, shell?)` -- shell-aware quoting: single quotes for Unix-like shells (bash, zsh, WSL), double quotes for PowerShell/cmd. The shell parameter is explicitly passed in all spawn calls so quoting always matches the target shell. Falls back to platform detection when shell is omitted.
+- `toForwardSlash()` - normalizes backslashes to forward slashes for cross-platform CLI commands
+- `quoteArg(arg, shell?)` - shell-aware quoting: single quotes for Unix-like shells (bash, zsh, WSL), double quotes for PowerShell/cmd. The shell parameter is explicitly passed in all spawn calls so quoting always matches the target shell. Falls back to platform detection when shell is omitted.
 - Git Bash: paths like `C:\Users\...` become `/c/Users/...`
 - WSL: paths like `C:\Users\...` become `/mnt/c/Users/...`
-- `adaptCommandForShell()` -- adds `& ` prefix for PowerShell commands
+- `adaptCommandForShell()` - adds the `& ` prefix for PowerShell commands, and for unix-like shells (Git Bash, WSL) converts the leading Windows exe path to POSIX form via `convertWindowsExePath()`, which handles bare, double-quoted, and single-quoted leading tokens (a single-quoted token stays single-quoted so shell-active path characters remain inert; a double-quoted token is re-quoted when the converted path contains spaces)
 
 ## Native Modules
 
@@ -237,8 +242,22 @@ the project root. A junction is not a way around any of this.
 
 - Detection: `wsl --list --quiet` with 5s timeout
 - Docker filtering: distros starting with `docker-` are excluded
-- Shell spec: stored as `wsl -d Ubuntu` etc., split into exe (`wsl`) + args (`-d Ubuntu`) at spawn time
-- Path conversion: Windows paths converted to `/mnt/c/...` for WSL environments
+- Shell spec: stored as `wsl -d Ubuntu` etc., split into exe (`wsl.exe`) + args (`-d Ubuntu`) at spawn time. The `.exe` extension is appended deliberately: node-pty's ConPTY executable search cannot resolve the extension-less bare name (the session exits -1 with no output)
+- Path conversion: the leading exe path of the agent command is converted to `/mnt/c/...`; the agent command itself is written into the PTY after the shell starts, never passed in argv
+
+### WSL runs the Windows binary (interop)
+
+Converting the CLI path to `/mnt/c/...` launches the **Windows** agent binary through WSL's
+binfmt interop, which can only execute PE `.exe` files. Two consequences, both accepted as
+documented limitations:
+
+- npm-installed `.cmd` / `.bat` shims cannot be launched from inside WSL (Git Bash can run
+  them; WSL interop cannot). Users on WSL need the agent's native `.exe` install.
+- A CLI installed *inside* the distro (e.g. `claude` under Linux) is not discovered: CLI
+  detection resolves on the Windows host only, identically for every shell. Preferring a
+  distro-native binary in WSL mode would also require converting every path *argument*
+  (`--settings`, `--mcp-config` are Windows paths, correct for a Windows binary, wrong for a
+  Linux one); it is a possible follow-up feature, not current behavior.
 
 ## Environment Stripping
 

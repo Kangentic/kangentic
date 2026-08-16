@@ -946,9 +946,9 @@ describe('Shell arguments', () => {
     return vi.mocked(pty.spawn).mock.calls[vi.mocked(pty.spawn).mock.calls.length - 1];
   }
 
-  it('WSL "wsl -d Ubuntu" → exe="wsl", args=["-d", "Ubuntu"]', async () => {
+  it('WSL "wsl -d Ubuntu" → exe="wsl.exe", args=["-d", "Ubuntu"]', async () => {
     const call = await spawnWithShell('wsl -d Ubuntu');
-    expect(call[0]).toBe('wsl');
+    expect(call[0]).toBe('wsl.exe');
     expect(call[1]).toEqual(['-d', 'Ubuntu']);
   });
 
