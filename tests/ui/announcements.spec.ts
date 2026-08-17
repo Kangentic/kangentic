@@ -327,6 +327,21 @@ test.describe('Announcements megaphone and history', () => {
     await megaphone().click();
     await expect(historyRows()).toHaveCount(1);
     await expect(historyRows().first()).toContainText('Retired announcement');
+    // The row opens the announcement, so it carries a disclosure chevron, and it
+    // is drawn WITHOUT hovering (ui-conventions.md bans hover-only affordances).
+    // Asserted with no preceding hover, which is the whole point of the check.
+    await expect(historyRows().first().locator('svg')).toBeVisible();
+    // toBeVisible() reads box size and visibility/display, NOT computed
+    // opacity, so it would still pass against the `opacity-0
+    // group-hover:opacity-100` reveal ui-conventions.md actually bans. Read the
+    // opacity back explicitly, still with no hover, or the ban is unpinned.
+    await expect
+      .poll(() => historyRows().first().locator('svg')
+        .evaluate((element) => Number(getComputedStyle(element).opacity)))
+      .toBeGreaterThan(0);
+    // last:border-b-0: the sole row draws no trailing rule, so a one-entry
+    // archive does not read as a section header over a blank panel.
+    await expect(historyRows().first()).toHaveCSS('border-bottom-width', '0px');
 
     await historyDialog().locator('[aria-label="Close dialog"]').click();
     await fireAnnouncements([]);
@@ -488,6 +503,16 @@ test.describe('Announcements megaphone and history', () => {
 
     const shortHeight = await dialogHeight();
     expect(shortHeight).toBeLessThan(viewportHeight * 0.3);
+    // ...but not so small it reads as a toast. Asserted on the LIST, which is the
+    // element carrying the floor, so this still fails if the min-h is dropped after
+    // a header redesign changes the dialog root's height. clientHeight, not
+    // boundingBox: the dialog's entrance animation scales the content box from
+    // 0.96, and a bounding rect is the TRANSFORMED one, so a mid-flight read is
+    // 150 * 0.96 = 144 and the assertion would flake on animation timing.
+    await expect
+      .poll(() => page.locator('[data-testid="announcement-history-list"]')
+        .evaluate((element) => element.clientHeight))
+      .toBeGreaterThanOrEqual(150);
     // Nothing to scroll at one entry.
     await expect
       .poll(() => page.locator('[data-testid="announcement-history-list"]')
@@ -498,6 +523,12 @@ test.describe('Announcements megaphone and history', () => {
     await fireAnnouncements([], Array.from({ length: 50 }, (_unused, index) =>
       makeHistoryEntry(makeAnnouncement({ id: `scroll-many-${stamp}-${index}` }))));
     await expect(historyRows()).toHaveCount(50);
+    // The trailing rule is dropped on the LAST row ONLY. Asserted against a
+    // populated list because the one-entry case alone cannot tell
+    // `last:border-b-0` apart from having dropped `border-b` outright, which
+    // would un-separate all 50.
+    await expect(historyRows().first()).toHaveCSS('border-bottom-width', '1px');
+    await expect(historyRows().nth(49)).toHaveCSS('border-bottom-width', '0px');
 
     const tallHeight = await dialogHeight();
     expect(tallHeight).toBeGreaterThan(shortHeight);
@@ -618,9 +649,17 @@ test.describe('Announcements megaphone and history', () => {
     await fireAnnouncements([], []);
 
     await megaphone().click();
-    await expect(page.locator('[data-testid="announcement-history-empty"]')).toBeVisible();
+    const empty = page.locator('[data-testid="announcement-history-empty"]');
+    await expect(empty).toBeVisible();
     await expect(historyRows()).toHaveCount(0);
     await expect(badge()).toHaveCount(0);
+    // The empty state carries the same floor as the list, so the panel does not
+    // shrink below panel size on the one state that has no content at all.
+    // clientHeight for the same reason as the sizing test above: the entrance
+    // animation scales the box, so a bounding rect reads short mid-flight.
+    await expect
+      .poll(() => empty.evaluate((element) => element.clientHeight))
+      .toBeGreaterThanOrEqual(150);
 
     await historyDialog().locator('[aria-label="Close dialog"]').click();
     await expect(historyDialog()).toHaveCount(0);

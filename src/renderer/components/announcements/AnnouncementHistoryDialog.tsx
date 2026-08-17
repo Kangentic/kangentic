@@ -1,4 +1,4 @@
-import { Megaphone } from 'lucide-react';
+import { ChevronRight, Megaphone } from 'lucide-react';
 import { BaseDialog } from '../dialogs/BaseDialog';
 import { useAnnouncementsStore } from '../../stores/announcements-store';
 import { formatRelativeTime } from '../../lib/datetime';
@@ -15,7 +15,10 @@ function AnnouncementHistoryRow({ entry }: { entry: AnnouncementArchiveEntry }) 
       data-announcement-id={entry.announcement.id}
       data-unread={unread ? 'true' : 'false'}
       onClick={() => openDialog(entry.announcement, 'history')}
-      className="w-full flex items-center gap-2.5 px-4 py-2.5 text-left border-b border-edge/50 hover:bg-surface-hover transition-colors cursor-pointer"
+      // last:border-b-0 so a one-entry archive does not draw a full-width rule
+      // under its only row: against the floor's empty space below, that read as a
+      // section header over a blank panel rather than as a list item.
+      className="group w-full flex items-center gap-2.5 px-4 py-2.5 text-left border-b border-edge/50 last:border-b-0 hover:bg-surface-hover transition-colors cursor-pointer"
     >
       {/* Always drawn, never hover-only (ui-conventions.md): the unread state
           is the reason the megaphone badge is lit, so it has to be readable
@@ -37,9 +40,28 @@ function AnnouncementHistoryRow({ entry }: { entry: AnnouncementArchiveEntry }) 
       <span className="flex-shrink-0 text-[11px] text-fg-faint tabular-nums">
         {formatRelativeTime(entry.announcement.publishedAt ?? entry.firstSeenAt)}
       </span>
+      {/* The row opens the announcement, and nothing else in it said so: at rest
+          it read as a static line of text, since the only affordance was the
+          hover fill. This is the same disclosure chevron BoardManagerDialog and
+          ShortcutsTab use for a row that opens something, and it is drawn at all
+          times rather than on hover (ui-conventions.md). */}
+      <ChevronRight size={14} className="text-fg-faint group-hover:text-fg-muted flex-shrink-0" />
     </button>
   );
 }
+
+/**
+ * The floor beneath the content-sized body, ~4 rows tall (a row is py-2.5 plus
+ * one text line plus its border). Without it a one-entry archive rendered a
+ * 520x95 box that read as a toast rather than a panel.
+ *
+ * On the list this REPLACES min-h-0 rather than joining it. min-h-0 was there
+ * only to override the flex default `min-height: auto`, so the list can shrink
+ * to the 60vh cap and scroll instead of growing the dialog; an explicit floor
+ * overrides `auto` just as well. Two min-h utilities on one element would be
+ * competing declarations resolved by Tailwind's emit order.
+ */
+const HISTORY_BODY_MIN_HEIGHT = 'min-h-[150px]';
 
 /**
  * The megaphone's history list: every announcement this client has ever had
@@ -83,13 +105,19 @@ export function AnnouncementHistoryDialog() {
     >
       {history.length === 0 ? (
         <div
-          className="flex-1 flex items-center justify-center px-6 py-10 text-center text-sm text-fg-muted"
+          // py-10 is kept below the floor, not replaced by it: the padding is
+          // symmetric so items-center still centers the copy, and it is what
+          // keeps the text off the edges if it ever wraps past the floor.
+          className={`flex-1 ${HISTORY_BODY_MIN_HEIGHT} flex items-center justify-center px-6 py-10 text-center text-sm text-fg-muted`}
           data-testid="announcement-history-empty"
         >
           No announcements yet. Product news shows up here as it is published.
         </div>
       ) : (
-        <div className="flex-1 min-h-0 overflow-y-auto" data-testid="announcement-history-list">
+        <div
+          className={`flex-1 ${HISTORY_BODY_MIN_HEIGHT} overflow-y-auto`}
+          data-testid="announcement-history-list"
+        >
           {history.map((entry) => (
             <AnnouncementHistoryRow key={entry.announcement.id} entry={entry} />
           ))}

@@ -677,11 +677,13 @@ active **for that client**, most recently seen first, capped at 50 entries with 
 on write. Ordering is by when this client first saw an entry, not by the announcement's own
 `publishedAt`, so a high-priority older announcement that arrives on a later poll sorts above
 entries published after it.
-It is written from the same filtered list the banner uses, so targeting is inherited for free (an
-announcement that never matched this client never enters its history), and it is what makes the
+The poll writes it from the same filtered list the banner uses, so targeting is inherited for free
+(an announcement that never matched this client never enters its history), and it is what makes the
 megaphone useful in the three cases the live feed cannot cover: the ~10 seconds before the first
 poll, an offline launch, and an entry deleted upstream. An entry's stored copy is refreshed when
-the feed edits it in place, but its `firstSeenAt` and read-state are not.
+the feed edits it in place, but its `firstSeenAt` and read-state are not. The poll is the only
+writer that filters; the ephemeral preview seeds this file directly and does not, so that targeting
+guarantee holds everywhere except a preview (see the end of this section).
 
 **Dismissed and read are different states, stored apart:**
 
@@ -706,6 +708,21 @@ message wants more, it should be a link to a page, not a longer announcement.
 
 Dismissals persist per-announcement-id in `dismissedAnnouncementIds` (see the
 [Top-Level reference](#top-level)). Read-state does not: it lives on the archive entry.
+
+**The ephemeral preview seeds both states.** A `/preview` boot wipes its data directory, which
+takes the archive with it, so the first poll used to re-append every announcement as unread and
+relight the badge on every launch. Before Electron starts, `scripts/dev.js` now writes the archive
+with every entry's `readAt` stamped AND lists those same ids in `dismissedAnnouncementIds`. Both,
+because they are the separate states above: the first darkens the badge, the second keeps the
+banner down. `--fresh` skips the seed, so the first-launch experience still shows announcements
+unread. A regular `npm start` is unaffected: it uses the real data directory and its real
+read-state.
+
+Two limits are deliberate. The seed reads the repo's committed `announcements.json`, so an
+announcement published to `main` after this worktree branched is absent from it and still arrives
+unread on the next poll; that self-corrects on a rebase. And the seed applies no targeting, so a
+preview's history can list an entry that `minVersion` or `platforms` would have filtered for this
+client.
 
 ## Environment Variables
 

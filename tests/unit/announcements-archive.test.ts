@@ -299,3 +299,183 @@ describe('archive file store', () => {
     expect(fs.readdirSync(tempDir)).toEqual(['announcements-archive.json']);
   });
 });
+
+describe('ephemeral preview seed', () => {
+  // scripts/dev.js wipes <worktree>/.kangentic/data on every /preview boot and
+  // exports it as KANGENTIC_DATA_DIR, so the archive that carries read-state is
+  // recreated empty each launch and the first poll relit the megaphone badge.
+  // The seed writes a pre-read archive there from the committed feed. These
+  // tests own the contract that seed depends on; dev.js is plain CJS and cannot
+  // import any of this, so nothing else would catch a break.
+  const REPO_ROOT = path.join(__dirname, '..', '..');
+  const FEED_PATH = path.join(REPO_ROOT, 'announcements.json');
+  const DEV_SCRIPT_PATH = path.join(REPO_ROOT, 'scripts', 'dev.js');
+
+  function readFeedAnnouncements(): unknown[] {
+    const feed: unknown = JSON.parse(fs.readFileSync(FEED_PATH, 'utf-8'));
+    const announcements = (feed as { announcements?: unknown[] }).announcements;
+    return Array.isArray(announcements) ? announcements : [];
+  }
+
+  /**
+   * One announcement in the RAW shape announcements.json commits them: nested
+   * `sections` carrying their own links, `publishedAt` / `expiresAt` /
+   * `priority`, and no top-level `links`. Deliberately a literal rather than
+   * makeAnnouncement's output, which is already the PARSED shape and so could
+   * never catch parseAnnouncement rejecting a field only the raw feed carries.
+   *
+   * The contract tests below run off this rather than off the committed feed:
+   * the feed is live content whose entries are DELETED upstream once they
+   * expire, so asserting the real file is non-empty would turn the unit tier
+   * red on a pure JSON edit. The real feed is still exercised, separately and
+   * guarded, by 'accepts the committed feed as it stands today' below.
+   */
+  const RAW_FEED_ANNOUNCEMENT = {
+    id: 'raw-feed-shape',
+    title: 'Raw feed shape',
+    body: 'Body copied verbatim out of the feed.',
+    sections: [
+      {
+        heading: 'A section',
+        body: 'Sections carry their own links.',
+        links: [{ label: 'Docs', url: 'https://kangentic.com/', qr: true }],
+      },
+    ],
+    publishedAt: '2026-08-05T00:00:00Z',
+    expiresAt: '2026-09-30T00:00:00Z',
+    priority: 0,
+  };
+
+  /** The exact entry shape dev.js writes, built from RAW feed objects. */
+  function buildSeedFrom(rawAnnouncements: unknown[], seenAt: string): unknown[] {
+    return rawAnnouncements.map((announcement) => ({
+      announcement,
+      firstSeenAt: seenAt,
+      readAt: seenAt,
+    }));
+  }
+
+  let tempDir: string;
+  let archivePath: string;
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'announcements-seed-test-'));
+    archivePath = path.join(tempDir, 'announcements-archive.json');
+  });
+
+  afterEach(() => {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('survives the archive reader with raw feed objects, unparsed', () => {
+    // The load-bearing one. dev.js copies feed announcements VERBATIM rather
+    // than running them through parseAnnouncement (it cannot import it), so if
+    // parseEntry ever required a field the feed omits, the seed would be
+    // silently discarded on read and the whole fix would no-op with no error.
+    const seed = buildSeedFrom([RAW_FEED_ANNOUNCEMENT], NOW.toISOString());
+
+    fs.writeFileSync(archivePath, JSON.stringify(seed, null, 2));
+
+    expect(readArchive(archivePath)).toHaveLength(1);
+  });
+
+  it('accepts the committed feed as it stands today', () => {
+    // Belt and braces on the fixture above: if announcements.json ever grows a
+    // field the fixture does not carry, this still catches parseEntry rejecting
+    // it. Returns early rather than failing on an empty feed, which is a
+    // sanctioned content-only edit - entries are deleted upstream once they
+    // expire, and that must never redden the unit tier.
+    const feedAnnouncements = readFeedAnnouncements();
+    if (feedAnnouncements.length === 0) return;
+
+    fs.writeFileSync(
+      archivePath,
+      JSON.stringify(buildSeedFrom(feedAnnouncements, NOW.toISOString()), null, 2),
+    );
+
+    expect(readArchive(archivePath)).toHaveLength(feedAnnouncements.length);
+  });
+
+  it('leaves nothing unread once the first poll folds the live feed in', () => {
+    // The invariant the preview fix rests on: appendToArchive keeps the readAt
+    // of an id it has already archived, so the 10s poll refreshes the payload
+    // without relighting the badge.
+    fs.writeFileSync(
+      archivePath,
+      JSON.stringify(buildSeedFrom([RAW_FEED_ANNOUNCEMENT], NOW.toISOString()), null, 2),
+    );
+    const seeded = readArchive(archivePath);
+    expect(seeded).toHaveLength(1);
+    const active = seeded.map((entry) => entry.announcement);
+
+    const folded = appendToArchive(seeded, active, LATER);
+
+    expect(folded).toHaveLength(seeded.length);
+    expect(countUnreadAnnouncements(folded)).toBe(0);
+  });
+
+  it('still counts an announcement the seed could not have known about', () => {
+    // The seed reads THIS worktree's copy of the feed, so an announcement added
+    // to main after the branch point is absent and legitimately arrives unread.
+    // Pins that the fix suppresses stale ids only, never the mechanism.
+    fs.writeFileSync(
+      archivePath,
+      JSON.stringify(buildSeedFrom([RAW_FEED_ANNOUNCEMENT], NOW.toISOString()), null, 2),
+    );
+    const seeded = readArchive(archivePath);
+    expect(seeded).toHaveLength(1);
+
+    const folded = appendToArchive(
+      seeded,
+      [...seeded.map((entry) => entry.announcement), makeAnnouncement({ id: 'published-after-branch' })],
+      LATER,
+    );
+
+    expect(countUnreadAnnouncements(folded)).toBe(1);
+  });
+
+  it('is still wired into the ephemeral branch of scripts/dev.js', () => {
+    // A source scan, in the shape external-scripts-parity.test.ts uses for the
+    // same script: nothing else can observe dev.js, so without this the seed
+    // could be dropped in a refactor and only a human running /preview would
+    // notice. Anchored on the named path const, not the bare filename.
+    //
+    // Scoped to the GUARDED BLOCK rather than the whole file, which is what
+    // makes the nesting load-bearing. Three bare whole-file toContain checks
+    // all still pass with the seed hoisted OUT of the !fresh guard, and that
+    // is precisely the regression worth catching: it would leave a genuine
+    // first-launch preview opening with its announcements already read.
+    const devScript = fs.readFileSync(DEV_SCRIPT_PATH, 'utf-8');
+    const guardCondition = 'if (ephemeral && !fresh && ephemeralDataDir)';
+    const guardIndex = devScript.indexOf(guardCondition);
+    expect(guardIndex).toBeGreaterThan(-1);
+    // Unique, so the slice below is unambiguous.
+    expect(devScript.indexOf(guardCondition, guardIndex + 1)).toBe(-1);
+
+    // Brace matching over source text. Every brace in this block is a balanced
+    // code brace today (no braces inside its string literals or comments); a
+    // future one would break the match and fail LOUDLY here, which is the
+    // right direction for a tripwire.
+    const openIndex = devScript.indexOf('{', guardIndex);
+    let depth = 0;
+    let closeIndex = -1;
+    for (let index = openIndex; index < devScript.length; index++) {
+      if (devScript[index] === '{') depth++;
+      else if (devScript[index] === '}') {
+        depth--;
+        if (depth === 0) { closeIndex = index; break; }
+      }
+    }
+    expect(closeIndex).toBeGreaterThan(openIndex);
+    const guardedBlock = devScript.slice(openIndex, closeIndex + 1);
+
+    expect(guardedBlock).toContain('previewAnnouncementsArchiveFile');
+    expect(guardedBlock).toContain('dismissedAnnouncementIds');
+    // Proves the slice is genuinely BOUNDED rather than silently spanning the
+    // rest of the file: this marker lives well past the guard's closing brace,
+    // so a runaway match would sweep it in and the two checks above would be
+    // whole-file checks again, which is the weakness this test was rewritten
+    // to remove.
+    expect(guardedBlock).not.toContain('KANGENTIC_DATA_DIR');
+  });
+});

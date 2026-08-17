@@ -121,7 +121,38 @@ async function start() {
     // --fresh deliberately gets neither seed: that mode exists to test the real
     // first-launch experience, where the app's own seed does run.
     const previewAppVersion = JSON.parse(fs.readFileSync(path.join(projectDir, 'package.json'), 'utf-8')).version;
-    fs.writeFileSync(path.join(ephemeralDataDir, 'config.json'), JSON.stringify({ hasCompletedFirstRun: true, lastWhatsNewShownVersion: previewAppVersion }, null, 2));
+    // Announcements need the same treatment for the same reason. Read-state lives in
+    // an archive sidecar inside this wiped data dir, so every boot started empty, the
+    // first poll appended each active announcement as unread, and the megaphone badge
+    // and banner came back. Seeded from the COMMITTED feed, which is the document the
+    // poll fetches (ANNOUNCEMENTS_URL is this file on main); appendToArchive keeps the
+    // readAt of an id it has already archived, so the 10s poll cannot relight it.
+    //
+    // Two deliberate gaps. This script is plain CJS and cannot import
+    // selectActiveAnnouncements, so every entry is stamped regardless of minVersion /
+    // platforms and a preview may list one real targeting would have filtered. And an
+    // announcement added to main after this worktree branched is absent here, so it
+    // arrives unread; that self-corrects on a rebase.
+    const previewAnnouncementsArchiveFile = path.join(ephemeralDataDir, 'announcements-archive.json');
+    let previewDismissedAnnouncementIds = [];
+    try {
+      const feed = JSON.parse(fs.readFileSync(path.join(projectDir, 'announcements.json'), 'utf-8'));
+      const seenAt = new Date().toISOString();
+      const archive = (Array.isArray(feed.announcements) ? feed.announcements : [])
+        .map((announcement) => ({ announcement, firstSeenAt: seenAt, readAt: seenAt }));
+      previewDismissedAnnouncementIds = archive.map((entry) => entry.announcement.id);
+      // A bare array, which is the on-disk shape readArchive expects; an object
+      // wrapper parses as empty and would silently undo the whole seed.
+      fs.writeFileSync(previewAnnouncementsArchiveFile, JSON.stringify(archive, null, 2));
+    } catch (announcementsSeedError) {
+      // Best-effort, exactly like the pre-clone below: a missing or malformed feed
+      // costs a relit badge, never a preview boot.
+      console.warn('[dev] could not seed the preview announcements archive:', announcementsSeedError);
+    }
+    // dismissedAnnouncementIds too, or the banner reappears even with the badge dark:
+    // dismissed and read are separate states (see the note above
+    // computeDismissedIdsAfterDismiss in src/shared/announcements.ts).
+    fs.writeFileSync(path.join(ephemeralDataDir, 'config.json'), JSON.stringify({ hasCompletedFirstRun: true, lastWhatsNewShownVersion: previewAppVersion, dismissedAnnouncementIds: previewDismissedAnnouncementIds }, null, 2));
     const preClone = (cloneDir) => new Promise((resolve) => {
       const cloneProc = spawn('git', ['clone', '--no-checkout', '--local', resolvedTarget, cloneDir], { stdio: 'inherit', windowsHide: true });
       cloneProc.on('close', () => resolve());

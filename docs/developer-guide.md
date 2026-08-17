@@ -171,9 +171,9 @@ Three parallel processes:
 Native modules (`better-sqlite3`, `node-pty`, `sherpa-onnx-node`, `font-list`, `simple-git`) are marked external in esbuild -- loaded at runtime from `node_modules`.
 
 Flags:
-- `--port=<n>` -- override Vite port
-- `--ephemeral` -- isolated data directory, auto-cleaned on exit (used for worktree previews). The data directory is wiped on every boot, so a previous (possibly crashed) preview's clones never persist.
-- `--fresh` -- ephemeral preview with NO project pre-cloned or auto-opened, so the app starts on the Welcome Screen. Use it to exercise the first-launch experience (pick a folder, land on the board, onboarding checklist). Implies the same wipe as `--ephemeral`; without it, two projects are pre-cloned from the worktree and Project 1 is opened.
+- `--port=<n>` - override Vite port
+- `--ephemeral` - isolated data directory, auto-cleaned on exit (used for worktree previews). The data directory is wiped on every boot, so a previous (possibly crashed) preview's clones never persist. Because the wipe also takes the markers that say what the user has already seen, the boot seeds them back: `hasCompletedFirstRun`, `lastWhatsNewShownVersion`, and every announcement in the committed `announcements.json` stamped read and dismissed. Without that last one the megaphone badge and the announcement banner returned on every preview launch.
+- `--fresh` - ephemeral preview with NO project pre-cloned or auto-opened, so the app starts on the Welcome Screen. Use it to exercise the first-launch experience (pick a folder, land on the board, onboarding checklist). Implies the same wipe as `--ephemeral`, but deliberately gets NONE of the seeded markers above, so onboarding, What's New, and unread announcements all present as they would to a real first-time user.
 
 ### Production (`npm run build` / `scripts/build.js`)
 
