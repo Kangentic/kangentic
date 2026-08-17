@@ -57,6 +57,8 @@ let jobChain: Promise<void> = Promise.resolve();
 const pendingTimers = new Set<NodeJS.Timeout>();
 /** Per-session trailing-debounce timers for live (turn-boundary) re-indexing. */
 const liveIndexTimers = new Map<string, NodeJS.Timeout>();
+/** Per-session trailing-debounce timers for finalize (suspend / exit) indexing. */
+const finalizeIndexTimers = new Map<string, NodeJS.Timeout>();
 
 // Model-file download state (downloading the local embedding model to disk).
 // The embed WORKER and its warm-hold / crash / device state live in
@@ -134,8 +136,21 @@ function chain(job: () => Promise<unknown>): void {
 
 function scheduleFinalizeIndex(context: IpcContext, sessionId: string): void {
   if (disposed || !isIndexingEnabled(context)) return;
+  // Per-session TRAILING debounce, like scheduleLiveIndex below. One suspend
+  // now reports twice - once when the status is marked, once after the graceful
+  // PTY shutdown, so the UI does not wait seconds to drop the session - and a
+  // suspend followed by an exit already reported twice before that. Without a
+  // per-session timer each report booked its own indexing pass over the same
+  // transcript. Keeping only the LAST one is also the more correct read: the
+  // later a finalize runs, the more of the agent's final flush it sees.
+  const existing = finalizeIndexTimers.get(sessionId);
+  if (existing) {
+    clearTimeout(existing);
+    pendingTimers.delete(existing);
+  }
   const timer = setTimeout(() => {
     pendingTimers.delete(timer);
+    finalizeIndexTimers.delete(sessionId);
     if (disposed || !isIndexingEnabled(context)) return;
     // Transient (command-terminal) sessions have no DB row; skip them.
     if (context.sessionManager.getSession(sessionId)?.transient) return;
@@ -151,6 +166,7 @@ function scheduleFinalizeIndex(context: IpcContext, sessionId: string): void {
   }, FINALIZE_DEBOUNCE_MS);
   timer.unref();
   pendingTimers.add(timer);
+  finalizeIndexTimers.set(sessionId, timer);
 }
 
 /**
@@ -405,6 +421,8 @@ export const retrievalService = {
     pendingTimers.clear();
     for (const timer of liveIndexTimers.values()) clearTimeout(timer);
     liveIndexTimers.clear();
+    for (const timer of finalizeIndexTimers.values()) clearTimeout(timer);
+    finalizeIndexTimers.clear();
     embedEngine.dispose();
   },
 };
