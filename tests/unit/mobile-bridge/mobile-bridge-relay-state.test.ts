@@ -106,6 +106,7 @@ class FakeBridgeSession extends EventEmitter {
   start = vi.fn();
   dispose = vi.fn();
   sendMessage = vi.fn();
+  sendGoodbye = vi.fn();
   constructor(options: { deviceId: string }) {
     super();
     this.deviceId = options.deviceId;

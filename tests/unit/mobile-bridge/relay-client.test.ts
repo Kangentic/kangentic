@@ -126,6 +126,33 @@ describe('RelayClient', () => {
     expect(new TextDecoder().decode(received)).toBe('still alive');
   }, 15_000);
 
+  /**
+   * The guarantee revokeDevice()'s goodbye rides on: sendGoodbye() is
+   * immediately followed by dispose(), which calls transport.close(). Per
+   * the WHATWG close algorithm the closing handshake starts AFTER queued
+   * messages, so the frame must reach the server anyway - this pins that
+   * for the global (undici) WebSocket this client actually uses, the way
+   * the mobile repo's relayTransport.test.ts pins it for `ws`.
+   */
+  it('flushes a frame written immediately before close()', async () => {
+    const { url, wss } = await startEchoServer();
+    activeServers.push(wss);
+    const serverReceived = new Promise<Uint8Array>((resolve) => {
+      wss.on('connection', (socket) => {
+        socket.on('message', (data) => resolve(new Uint8Array(data as Buffer)));
+      });
+    });
+    const client = new RelayClient({ relayUrl: url, slotId: 'test-slot' });
+    activeClients.push(client);
+    await client.connect();
+
+    client.send(new TextEncoder().encode('goodbye'));
+    client.close();
+
+    const received = await serverReceived;
+    expect(new TextDecoder().decode(received)).toBe('goodbye');
+  });
+
   it('does not reconnect after an explicit close()', async () => {
     const { url, wss } = await startEchoServer();
     activeServers.push(wss);

@@ -120,6 +120,8 @@ The paired-devices list identifies each device by a **key fingerprint** (`packag
 
 Revoking a device (`revokeDevice()`) removes its entry from the roster **and** is intended to rotate the desktop's own static identity key. Dropping the roster entry alone is not sufficient: Noise KK's mutual authentication only proves possession of a static keypair, so a revoked device that already completed a handshake could still authenticate against a future session as long as the desktop's static key is unchanged. Phases 1 and 2 ship the roster-side "drop" half (`roster-store.ts`'s `revokeDevice`) plus live `BridgeSession`/subscription teardown for that device (`MobileBridgeService.disposeSession`); a full key-rotation-and-re-provisioning flow for any *other* still-paired devices is Phase 3 scope, since a small paired-device count is the common case in practice.
 
+Revocation is also **announced**: before the drop, `revokeDevice()` sends a `FrameTag.Final` goodbye over the established session (`BridgeSession.sendGoodbye`, a no-op when the session is not established or its transport is down), so a connected phone clears its own pairing - trust anchor, push key, cached desktop content - immediately instead of showing "Connecting" forever against a slot the desktop will never dial again. The same signal works in reverse: when the phone's own unpair Final arrives, the desktop drops the device outright (roster, push registration, session) rather than merely marking it offline, with no goodbye echoed back. A Final is only ever sent on deliberate unpair - never on quit, disable, shutdown, backgrounding, or reconnect - which is exactly what lets both sides act on it as revocation.
+
 ## Capability Verbs
 
 `packages/protocol/src/capabilities/verbs.ts` defines the complete allowlist a paired device can be granted:
@@ -238,7 +240,10 @@ Two guards keep the value honest without making it twitchy:
 - **A probe budget before `offline`.** Every handshake initiation doubles as a presence probe.
   Silence for `PEER_PRESENCE_TIMEOUT_MS` (5s) spends one unit; only `PEER_PRESENCE_FAILURES_BEFORE_ABSENT`
   (2) consecutive failures conclude the peer is absent, so one slow round trip never flashes
-  "Offline" on a live phone. An explicit goodbye (a `FrameTag.Final` frame) skips the budget. Once
+  "Offline" on a live phone. An explicit goodbye (a `FrameTag.Final` frame) skips the budget -
+  and, because a Final is only ever a deliberate unpair (neither side sends it on quit, sleep,
+  backgrounding, or reconnect), the service now goes further and drops the device from the
+  roster entirely (see [Revocation](#revocation-is-drop-plus-rekey)). Once
   absent, `PEER_PROBE_INTERVAL_MS` (15s) keeps probing so a returning phone is picked up in ~20s
   rather than on the next rekey tick. The probe window is anchored to the start of an
   unestablished episode and is **never restarted** by a later initiation: `HANDSHAKE_RETRY_MS`

@@ -465,7 +465,10 @@ export class BridgeSession extends EventEmitter {
       // An explicit goodbye is unambiguous, so it skips the probe budget the
       // silent case has to spend. `streams` is deliberately left intact: this
       // side's send stream is independent, and clearing it would change push
-      // presence suppression and the send path (see the class doc).
+      // presence suppression and the send path (see the class doc). The
+      // service escalates 'remoteClosed' to a full device drop - a Final is
+      // only ever a deliberate unpair - but that is its decision; the
+      // session-level contract here stays presence-only.
       this.markPeerAbsent();
       this.emit('remoteClosed');
       return;
@@ -487,6 +490,31 @@ export class BridgeSession extends EventEmitter {
     if (!this.streams) throw new Error('BridgeSession is not established yet');
     const frame = this.streams.send.seal(encodeMessage(message));
     this.transport.send(wrapSessionFrame(SessionFrameKind.Application, frame));
+  }
+
+  /**
+   * Seals an empty FrameTag.Final frame - the revoke goodbye, the mirror of
+   * the phone's own unpair Final. Not a sendMessage() tag parameter on
+   * purpose: it is the only frame with no BridgeMessage inside, and callers
+   * should not be able to tag an ordinary message Final by accident.
+   * Sealing burns a send-counter slot, so it only seals when the frame can
+   * actually leave: a frame sealed and then dropped by a disconnected
+   * transport would desync the phone's receive counter and poison every
+   * later frame on this stream. Never throws - it runs first in the revoke
+   * chain, and a failed goodbye must not stop the revoke. A Final is only
+   * ever sent on deliberate unpair; dispose() (quit, disable, shutdown)
+   * stays silent by contract.
+   */
+  sendGoodbye(): void {
+    if (this.disposed || !this.streams) return;
+    if (this.transport.state !== 'connected') return;
+    try {
+      const frame = this.streams.send.seal(new Uint8Array(0), FrameTag.Final);
+      this.transport.send(wrapSessionFrame(SessionFrameKind.Application, frame));
+    } catch {
+      // The socket dropped between the check and the send; the phone's own
+      // disconnect handling covers this case.
+    }
   }
 
   dispose(): void {

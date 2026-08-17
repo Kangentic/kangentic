@@ -78,6 +78,7 @@ class SimulatedDeviceResponder {
   private handshake: HandshakeState;
   streams: SecretstreamDirectionPair | null = null;
   readonly receivedMessages: BridgeMessage[] = [];
+  receivedGoodbyes = 0;
 
   constructor(
     private readonly deviceStatic: ReturnType<typeof generateX25519KeyPair>,
@@ -102,8 +103,14 @@ class SimulatedDeviceResponder {
       }
     } else {
       if (!this.streams) throw new Error('Received an application frame before the handshake completed');
-      const { plaintext } = this.streams.receive.open(payload);
-      this.receivedMessages.push(decodeMessage(plaintext));
+      const opened = this.streams.receive.open(payload);
+      // A goodbye's plaintext is empty and decodeMessage throws on empty
+      // bytes - branch on the tag first, the way the phone's receiver does.
+      if (opened.tag === FrameTag.Final) {
+        this.receivedGoodbyes += 1;
+        return;
+      }
+      this.receivedMessages.push(decodeMessage(opened.plaintext));
     }
   }
 
@@ -988,5 +995,98 @@ describe('BridgeSession.connectionState', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+/**
+ * The revoke goodbye. A FrameTag.Final is only ever sent on deliberate
+ * unpair - revokeDevice() says it, dispose() (quit, disable, shutdown)
+ * never does - and it must only be sealed when the frame can actually
+ * leave, because a sealed-but-dropped frame desyncs the phone's receive
+ * counter and poisons every later frame on the stream.
+ */
+describe('BridgeSession.sendGoodbye', () => {
+  function establishSession(transport: Transport, desktopIdentity: BridgeIdentity, devicePublicKey: Uint8Array): BridgeSession {
+    const session = new BridgeSession({
+      identity: desktopIdentity,
+      deviceId: 'device-1',
+      remoteStaticPublicKey: devicePublicKey,
+      capabilities: new Set(['read-board']) as CapabilitySet,
+      transport,
+    });
+    session.start();
+    return session;
+  }
+
+  it('seals exactly one Final the phone opens as a goodbye, leaving later sends intact', () => {
+    const desktopIdentity = testIdentity();
+    const deviceStatic = generateX25519KeyPair();
+    const [desktopTransport, deviceTransport] = createLoopbackTransportPair();
+    const responder = new SimulatedDeviceResponder(deviceStatic, desktopIdentity.staticKeyPair.publicKey, deviceTransport);
+    const session = establishSession(desktopTransport, desktopIdentity, deviceStatic.publicKey);
+    expect(session.isEstablished).toBe(true);
+
+    session.sendGoodbye();
+
+    expect(responder.receivedGoodbyes).toBe(1);
+    expect(responder.receivedMessages).toEqual([]);
+    // The goodbye spent one counter slot legitimately: a later frame on the
+    // same stream still opens, so the counters stayed aligned.
+    session.sendMessage({ type: 'heartbeat' });
+    expect(responder.receivedMessages).toEqual([{ type: 'heartbeat' }]);
+
+    session.dispose();
+  });
+
+  it('sends nothing before the session is established', () => {
+    const desktopIdentity = testIdentity();
+    const deviceStatic = generateX25519KeyPair();
+    // No responder is attached, so the initiation goes unanswered.
+    const { desktop } = createReconnectableLoopback();
+    const session = establishSession(desktop, desktopIdentity, deviceStatic.publicKey);
+    expect(session.isEstablished).toBe(false);
+
+    const sendSpy = vi.spyOn(desktop, 'send');
+    expect(() => session.sendGoodbye()).not.toThrow();
+
+    const applicationFrames = sendSpy.mock.calls.filter(([frame]) => unwrapSessionFrame(frame).kind === SessionFrameKind.Application);
+    expect(applicationFrames).toEqual([]);
+
+    session.dispose();
+  });
+
+  it('sends nothing and does not throw while the transport is disconnected', () => {
+    const desktopIdentity = testIdentity();
+    const deviceStatic = generateX25519KeyPair();
+    const { desktop, device, setDesktopState } = createReconnectableLoopback();
+    new SimulatedDeviceResponder(deviceStatic, desktopIdentity.staticKeyPair.publicKey, device);
+    const session = establishSession(desktop, desktopIdentity, deviceStatic.publicKey);
+    expect(session.isEstablished).toBe(true);
+
+    // A blip, not a teardown: the session still holds streams, but the
+    // socket cannot carry a frame. The transport-state guard is the only
+    // thing standing between this call and a burned counter slot.
+    setDesktopState('reconnecting');
+    const sendSpy = vi.spyOn(desktop, 'send');
+    expect(() => session.sendGoodbye()).not.toThrow();
+    expect(sendSpy).not.toHaveBeenCalled();
+
+    session.dispose();
+  });
+
+  it('dispose() never sends a goodbye - Final means unpair, never shutdown', () => {
+    const desktopIdentity = testIdentity();
+    const deviceStatic = generateX25519KeyPair();
+    const [desktopTransport, deviceTransport] = createLoopbackTransportPair();
+    const responder = new SimulatedDeviceResponder(deviceStatic, desktopIdentity.staticKeyPair.publicKey, deviceTransport);
+    const session = establishSession(desktopTransport, desktopIdentity, deviceStatic.publicKey);
+    expect(session.isEstablished).toBe(true);
+
+    const sendSpy = vi.spyOn(desktopTransport, 'send');
+    session.dispose();
+
+    const applicationFrames = sendSpy.mock.calls.filter(([frame]) => unwrapSessionFrame(frame).kind === SessionFrameKind.Application);
+    expect(applicationFrames).toEqual([]);
+    expect(responder.receivedGoodbyes).toBe(0);
   });
 });

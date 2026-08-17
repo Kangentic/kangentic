@@ -17,12 +17,13 @@
  *    resulting session, and never revokes or disables afterward.
  *
  * This file closes that gap: message routing through capabilityRouter back
- * out via sendMessage(), remoteClosed's subscriptions-only teardown (session
- * stays alive for the relay's reconnect), revokeDevice()/reconcile(disable)
- * actually disposing a LIVE session (not just the "no identity yet" no-op
- * already covered), and the roster-diff eviction path that disposes a
- * session whose device fell out of the roster without going through
- * revokeDevice() at all.
+ * out via sendMessage(), remoteClosed's full device drop (a Final is only
+ * ever the phone's deliberate unpair, so roster + push registration +
+ * session all go, with no goodbye echo), revokeDevice()'s goodbye-then-drop
+ * ordering, reconcile(disable) actually disposing a LIVE session (not just
+ * the "no identity yet" no-op already covered), and the roster-diff
+ * eviction path that disposes a session whose device fell out of the
+ * roster without going through revokeDevice() at all.
  *
  * Mocking mirrors mobile-bridge-sync-race.test.ts's pattern (mock
  * electron/analytics/paths/identity/roster-store/bridge-session/transport),
@@ -95,6 +96,7 @@ class FakeBridgeSession extends EventEmitter {
   start = vi.fn();
   dispose = vi.fn();
   sendMessage = vi.fn();
+  sendGoodbye = vi.fn();
   constructor(options: { deviceId: string; capabilities: Set<string> }) {
     super();
     this.deviceId = options.deviceId;
@@ -191,9 +193,16 @@ describe('MobileBridgeService session-lifecycle wiring', () => {
     service.dispose();
   });
 
-  it('remoteClosed tears down the device live subscriptions but leaves the session itself alive for the relay reconnect', async () => {
+  it('an inbound Final drops the device outright - roster, session, subscriptions - with no goodbye echo', async () => {
     const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
     const session = await openSession(service);
+    // The mocked roster reads from rosterDevices, so the mocked revoke has
+    // to mutate it for pairedDeviceCount to reflect the drop.
+    revokeDeviceSpy.mockImplementation(() => {
+      rosterDevices = [];
+    });
+    const stateChanged = vi.fn();
+    service.on('stateChanged', stateChanged);
 
     // Register a live subscription the same way a real handler would (via
     // the getSubscriptions closure attachContext() wires into the router),
@@ -205,12 +214,62 @@ describe('MobileBridgeService session-lifecycle wiring', () => {
       .set('board:proj-1', subscriptionTeardown);
 
     session.emit('remoteClosed');
+    await flushMicrotasks();
 
+    // A Final is only ever the phone's deliberate unpair, so the device is
+    // gone entirely, not merely quiet until the next reconnect.
     expect(subscriptionTeardown).toHaveBeenCalledTimes(1);
-    expect(session.dispose).not.toHaveBeenCalled();
-    // Session-count bookkeeping is untouched by a remote close (unlike an
-    // actual revoke/eviction) - the device is still "paired".
-    expect(service.getStatus().pairedDeviceCount).toBe(1);
+    expect(revokeDeviceSpy).toHaveBeenCalledWith(fakeIdentity, session.deviceId);
+    expect(session.dispose).toHaveBeenCalledTimes(1);
+    expect(service.getStatus().pairedDeviceCount).toBe(0);
+    expect(stateChanged).toHaveBeenCalled();
+    // No goodbye echo at a peer that already left.
+    expect(session.sendGoodbye).not.toHaveBeenCalled();
+
+    service.dispose();
+  });
+
+  it('a second remoteClosed for the same device is a no-op', async () => {
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    const session = await openSession(service);
+
+    session.emit('remoteClosed');
+    session.emit('remoteClosed');
+    await flushMicrotasks();
+
+    expect(revokeDeviceSpy).toHaveBeenCalledTimes(1);
+    expect(session.dispose).toHaveBeenCalledTimes(1);
+
+    service.dispose();
+  });
+
+  it('a stale remoteClosed from a replaced session does not drop the new session', async () => {
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    const firstSession = await openSession(service);
+
+    // A relay URL change replaces the device's session with a fresh one.
+    service.reconcile({ enabled: true, relayUrl: 'wss://relay2.example.com' });
+    await flushMicrotasks();
+    const secondSession = createdSessions.at(-1);
+    if (!secondSession || secondSession === firstSession) throw new Error('expected a replacement session');
+
+    // The sessions-map guard is what stops a Final from the superseded
+    // session tearing down the freshly opened one.
+    firstSession.emit('remoteClosed');
+    await flushMicrotasks();
+
+    expect(revokeDeviceSpy).not.toHaveBeenCalled();
+    expect(secondSession.dispose).not.toHaveBeenCalled();
+
+    service.dispose();
+  });
+
+  it('revokeDevice() on an offline (session-less) device drops it without throwing', () => {
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+
+    expect(() => service.revokeDevice('device-A')).not.toThrow();
+
+    expect(revokeDeviceSpy).toHaveBeenCalledWith(fakeIdentity, 'device-A');
 
     service.dispose();
   });
@@ -242,16 +301,33 @@ describe('MobileBridgeService session-lifecycle wiring', () => {
     service.dispose();
   });
 
-  it('revokeDevice() disposes a LIVE session, not just the no-identity no-op', async () => {
+  it('revokeDevice() says the goodbye exactly once, BEFORE disposing the live session', async () => {
     const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
     const session = await openSession(service);
 
     service.revokeDevice(session.deviceId);
 
-    expect(revokeDeviceSpy).toHaveBeenCalledWith(fakeIdentity, session.deviceId);
+    // Ordering is the feature: dispose() closes the transport, after which
+    // no frame can leave, so the goodbye must have gone out first.
+    expect(session.sendGoodbye).toHaveBeenCalledTimes(1);
     expect(session.dispose).toHaveBeenCalledTimes(1);
+    expect(session.sendGoodbye.mock.invocationCallOrder[0]).toBeLessThan(session.dispose.mock.invocationCallOrder[0]);
+    expect(revokeDeviceSpy).toHaveBeenCalledWith(fakeIdentity, session.deviceId);
 
     service.dispose();
+  });
+
+  it('service dispose() (the quit path) never sends a goodbye', async () => {
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    const session = await openSession(service);
+
+    service.dispose();
+
+    expect(session.dispose).toHaveBeenCalledTimes(1);
+    // Quit, disable, and shutdown all stay silent by contract: a Final only
+    // ever means deliberate unpair, so an ordinary desktop quit must never
+    // read as one on the phone.
+    expect(session.sendGoodbye).not.toHaveBeenCalled();
   });
 
   it('reconcile() disabling the bridge disposes a LIVE session, not just an in-progress pairing', async () => {

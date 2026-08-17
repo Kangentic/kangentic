@@ -452,13 +452,21 @@ export class MobileBridgeService extends EventEmitter {
       });
     });
     session.on('remoteClosed', () => {
-      // Stop pushing events into a dead channel. The BridgeSession/transport
-      // stay alive so the relay's reconnect + next re-handshake re-establish
-      // the connection; the phone re-arms live subscriptions with fresh
-      // read-* requests once reconnected, rather than this side guessing
-      // what to re-push.
+      // Synchronous half: stop pushing events into a dead channel now.
       this.subscriptionsByDevice.get(deviceId)?.dispose();
       this.subscriptionsByDevice.delete(deviceId);
+      // A Final is only ever the phone's deliberate unpair (its Unpair
+      // button; never backgrounding, reconnect, or an app kill - those stay
+      // silent), so the device is dropped outright: roster, push
+      // registration, session. Deferred a microtask because this listener
+      // fires from inside the session's own frame handling and the drop
+      // disposes that very session; the sessions-map guard makes a second
+      // Final, or a drop that already happened, a no-op. Deliberately no
+      // goodbye echo at a peer that already left.
+      queueMicrotask(() => {
+        if (this.sessions.get(deviceId) !== session) return;
+        this.dropDevice(deviceId);
+      });
     });
     session.on('peerAbsent', () => {
       // The SILENT departure (backgrounding, lost network, OS kill) sends no
@@ -635,6 +643,21 @@ export class MobileBridgeService extends EventEmitter {
   }
 
   revokeDevice(deviceId: string): void {
+    // The goodbye goes FIRST: dropDevice() disposes the session and closes
+    // its transport, after which no frame can leave. sendGoodbye() guards
+    // establishment and transport state itself and never throws, so an
+    // unreachable phone simply gets no goodbye and discovers the revocation
+    // through its own sustained-silence heuristic instead.
+    this.sessions.get(deviceId)?.sendGoodbye();
+    this.dropDevice(deviceId);
+  }
+
+  /**
+   * The teardown half of revocation, shared by the user's own revoke (which
+   * says goodbye first) and the phone's inbound unpair Final (which must NOT
+   * echo a goodbye back at a peer that just left).
+   */
+  private dropDevice(deviceId: string): void {
     // A revoked device must stop receiving pushes too, unconditionally -
     // before the identity guard, so a registration can never outlive its
     // device under any teardown ordering.
