@@ -647,6 +647,7 @@ Operates on a per-project DB.
 | `reorderWithinSwimlane(swimlaneId, orderedTaskIds)` | Dense rewrite of one swimlane's task order to 0..N-1 in a single transaction. The write behind `kangentic_reorder_tasks` and `kangentic_move_task`'s same-column `position`. Unlike `move()`'s two-shift arithmetic it heals position gaps left by archiving; a stray id from another swimlane is a no-op (`swimlane_id` guard), and re-issuing the same order writes nothing (`position != ?` guard, so `updated_at` moves only on rows that actually shift) |
 | `archive(id)` | Set `archived_at` to now (soft-delete for Done column) |
 | `unarchive(id, targetSwimlaneId, position)` | Clear `archived_at`, move to target swimlane and position |
+| `clearArchived(id)` | Clear `archived_at` WITHOUT moving the task. The exact inverse of `archive(id)`, used by `task-move`s move-out-of-Done path, which has already placed the row and would fight `move()`s sibling reordering if it re-ran the placement |
 | `listArchived()` | All archived tasks ordered by `archived_at` DESC |
 | `listArchivedPreview(limit)` | The newest `limit` archived tasks plus the total archived count; cheap hydration for the Done column (full list loads lazily via `listArchived`) |
 | `delete(id)` | Hard delete with position shift in the owning swimlane |

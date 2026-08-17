@@ -150,14 +150,34 @@ Session teardown varies by target column:
 
 ### SessionManager.suspend() flow
 
-1. Close file watchers
-2. Null out file paths (prevents `onExit` cleanup from deleting files)
-3. Emit synthetic `session_end` event
-4. Clear subagent depth tracking
-5. Mark status as `suspended`
-6. Kill PTY
-7. Emit status change
-8. Notify queue (slot freed)
+1. Remove the adapter's hooks from the project settings file (idempotent with `onExit`)
+2. Close file watchers and detach telemetry readers, preserving the files for resume
+3. Flush the transcript to the DB
+4. Emit a synthetic `session_end` event (the agent's own hook will not fire on a kill)
+5. Clear subagent depth tracking
+6. Mark status as `suspended`
+7. **Emit `session-changed`** - before the shutdown below, not after
+8. Release backpressure so the agent's exit-sequence output is not held back
+9. `gracefulPtyShutdown`: send the exit sequence, wait up to 1500ms for a natural exit, then
+   force-kill and wait up to 1500ms more for kill propagation
+10. Last-resort scrollback scan for an agent session id not yet captured
+11. **Emit `session-changed` again** - now carrying the post-shutdown session
+12. Notify the queue (slot freed)
+
+Steps 7 and 11 are a deliberate DOUBLE emit, and both are load-bearing:
+
+- Step 7 exists because the bottom panel's tab set is `status === 'running'`
+  (`derivePanelSessions`). Emitting only at the end left a tab for a session the user had already
+  watched leave the board, for the whole of step 9. A user-initiated Pause never showed that,
+  because the renderer store writes the suspended status optimistically; a main-driven suspend
+  (move to Done, idle timeout, settings restart) had no such write and wore the full delay.
+- Step 11 carries state that only exists after the shutdown, including an agent session id
+  recovered by step 10.
+
+The gap between them is what sets `FINALIZE_DEBOUNCE_MS` (3500) in
+`src/main/retrieval/retrieval-service.ts`: finalize indexing is debounced per session, and the
+two reports can be up to 3000ms apart on a force-kill, so a shorter window would fail to coalesce
+them on exactly the slow path where the later read matters most.
 
 ## Resume
 

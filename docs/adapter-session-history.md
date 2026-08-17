@@ -335,6 +335,17 @@ Reading the table by class:
 
 ### Why there is no `canResumeSession` transcript-presence guard
 
+> Not to be confused with `isResumeConversationAbsent`
+> (`src/main/transition-engine/resume-conversation-guard.ts`), which DOES downgrade a resume to a
+> fresh spawn, on both chokepoints. It is deliberately narrower than the guard rejected here, and
+> that narrowness is what makes it safe: it never derives a transcript path, requiring the AGENT
+> to have reported one (in its own status file, or in the SessionStart hook payload), and it
+> additionally requires that same report to show the conversation never took a turn. Absence of
+> evidence is never evidence, so a missing report leaves today's behavior untouched, which is
+> exactly what keeps the mocked resumes below passing. See "A resume with no conversation behind
+> it is downgraded to fresh" in session-lifecycle.md. The rejection below still stands for the
+> BLANKET form described in this section.
+
 A natural-looking robustness idea is an optional `canResumeSession(agentSessionId, cwd)` adapter
 method that returns `false` when the resume target is verifiably absent, plus a shared chokepoint
 (`isResumeTranscriptMissing`) in both spawn paths that downgrades a doomed `--resume <id>` to a
