@@ -274,6 +274,24 @@ describe('TaskRepository SQL contracts', () => {
     });
   });
 
+  // done-move-bookkeeping.test.ts pins clearArchived's SQL TEXT via a source
+  // regex; that cannot catch a `.run(id, now)` argument-order swap (the SQL
+  // string is unchanged, but archived_at would bind to the task id and the
+  // WHERE clause would bind to the timestamp). This calls the real method
+  // through the tracker to pin the actual bound argument order.
+  it('clearArchived binds the timestamp then the id, matching the SQL positional order', () => {
+    const before = new Date().toISOString();
+    repo.clearArchived('task-to-restore');
+    const after = new Date().toISOString();
+
+    const statement = tracker.statements.find((s) => s.sql.includes('archived_at = NULL'));
+    expect(statement).toBeDefined();
+    const [updatedAtArg, idArg] = statement!.args;
+    expect(idArg).toBe('task-to-restore');
+    expect(updatedAtArg as string >= before).toBe(true);
+    expect(updatedAtArg as string <= after).toBe(true);
+  });
+
   describe('create - createdAt handling', () => {
     // Added for kangentic_move_task_to_project: create() gained an optional
     // `createdAt` on TaskCreateInput so a relocated task can preserve its
