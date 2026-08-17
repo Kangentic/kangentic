@@ -228,7 +228,7 @@ describe('SessionManager data-tap', () => {
     expect(stats?.inFlightBytes).toBe(0);
   });
 
-  it('does not feed first-output detection off a replay drain (first-output stays keyed to the flushed stream)', async () => {
+  it('feeds first-output detection off a replay drain, exactly once across both streams', async () => {
     const { session, feedData } = await spawnSession('task-data-tap-first-output-drain');
 
     const firstOutputListener = vi.fn();
@@ -236,23 +236,24 @@ describe('SessionManager data-tap', () => {
 
     feedData('qualifying first output chunk');
     // Sample inside the 16ms flush window: getScrollback's pre-flush drain
-    // empties the pending buffer via onDrain (data-tap only), so this chunk
-    // never reaches onFlush's firstOutputTracker.consume call.
+    // empties the pending buffer via onDrain, so this chunk never reaches
+    // onFlush. For cursor-hide adapters the ESC[?25l first-output marker can
+    // arrive in exactly that first chunk (docs/agent-integration.md pins it
+    // for Grok), and nothing guarantees the marker recurs - so the drain
+    // stream MUST feed the latch too, or a terminal mounting onto a
+    // just-spawned session strands the shimmer overlay and the resuming
+    // label. The latch fires during the drain itself.
     await manager.getScrollback(session.id);
 
-    expect(firstOutputListener).not.toHaveBeenCalled();
+    expect(firstOutputListener).toHaveBeenCalledTimes(1);
+    expect(firstOutputListener).toHaveBeenCalledWith(session.id);
 
-    // A later flush over NEW data goes through the ordinary onFlush path (no
-    // further sample here, so onDrain never fires a second time) and must
-    // still fire first-output exactly once, proving detection was only
-    // DELAYED to the next real flush, never lost. If a future edit wired
-    // firstOutputTracker.consume into onDrain, the assertion above would
-    // fail instead: first-output would fire during the drain itself.
+    // The tracker is a one-shot latch, so the ordinary flush stream feeding
+    // the SAME latch afterwards must not double-fire it.
     feedData('second chunk after the drain');
     await new Promise((resolve) => setTimeout(resolve, 30));
 
     expect(firstOutputListener).toHaveBeenCalledTimes(1);
-    expect(firstOutputListener).toHaveBeenCalledWith(session.id);
   });
 
   it('getPipelineStats reports focused: false by default and true only for the session passed to setFocusedSessions', async () => {

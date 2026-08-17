@@ -101,3 +101,102 @@ describe('discoverGrokCapabilities --help fallback (models_cache.json absent)', 
     expect(capabilities).toEqual({});
   });
 });
+
+/**
+ * discoverGrokCapabilities's in-module memo, keyed by cliPath (mirroring
+ * antigravity/capability-discovery.ts): a Settings save that repoints
+ * agent.cliPaths.grok rebuilds the agent list WITHOUT forceRefresh, and an
+ * unkeyed memo would keep reporting the old binary's capabilities. Every
+ * test here counts the underlying --help probe (exec + execFile combined,
+ * so the assertion is correct on both win32 and POSIX without branching on
+ * process.platform) as the "was the probe re-run" signal.
+ */
+describe('discoverGrokCapabilities memoization (keyed by cliPath)', () => {
+  function probeCallCount(): number {
+    return execMock.mock.calls.length + execFileMock.mock.calls.length;
+  }
+
+  it('memo hit: a second call with the SAME cliPath does not re-probe', async () => {
+    setHelpOutput('Usage: grok\n  -m, --model <model>   Model to use\n  --reasoning-effort <level>   Reasoning effort\n');
+
+    const first = await discoverGrokCapabilities('/usr/bin/grok');
+    const second = await discoverGrokCapabilities('/usr/bin/grok');
+
+    expect(second).toEqual(first);
+    expect(probeCallCount()).toBe(1);
+  });
+
+  it('a DIFFERENT cliPath triggers fresh discovery even without forceRefresh', async () => {
+    // Red-green: this is the discriminating case for the cliPath-keyed memo
+    // - reverting discoveryMemo to a plain `AgentCapabilities | null` (no
+    // cliPath field) would make this go red, since the old memo has no path
+    // to compare against and would serve the stale first result for the
+    // second (different) binary.
+    setHelpOutput('Usage: grok\n  -m, --model <model>   Model to use\n');
+
+    await discoverGrokCapabilities('/usr/bin/grok');
+    await discoverGrokCapabilities('/usr/local/bin/grok-beta');
+
+    expect(probeCallCount()).toBe(2);
+  });
+
+  it('forceRefresh bypasses the memo even for the SAME cliPath', async () => {
+    setHelpOutput('Usage: grok\n  -m, --model <model>   Model to use\n');
+
+    await discoverGrokCapabilities('/usr/bin/grok');
+    await discoverGrokCapabilities('/usr/bin/grok', true);
+
+    expect(probeCallCount()).toBe(2);
+  });
+});
+
+/**
+ * readModelsCache's fall-through-to-help branches. Each test asserts
+ * `capabilities.models` is undefined, which only the --help path can
+ * produce (readModelsCache always sets `models` on a successful parse; it
+ * never returns an object with an empty models array - it returns null
+ * instead). That's positive evidence the assertions below exercised the
+ * fallback and not some other path that happens to agree with the mocked
+ * --help output.
+ */
+describe('discoverGrokCapabilities readModelsCache fall-through', () => {
+  it('falls through to --help when models_cache.json is corrupt JSON', async () => {
+    fs.writeFileSync(path.join(tempGrokHome, 'models_cache.json'), '{not valid json');
+    setHelpOutput('Usage: grok\n  -m, --model <model>   Model to use\n');
+
+    const capabilities = await discoverGrokCapabilities('/usr/bin/grok');
+
+    expect(capabilities.supportsModelOverride).toBe(true);
+    expect(capabilities.models).toBeUndefined();
+  });
+
+  it('falls through to --help when models is missing or not an object', async () => {
+    setHelpOutput('Usage: grok\n  -m, --model <model>   Model to use\n');
+
+    fs.writeFileSync(path.join(tempGrokHome, 'models_cache.json'), JSON.stringify({ other: true }));
+    const missingModels = await discoverGrokCapabilities('/usr/bin/grok');
+    expect(missingModels.supportsModelOverride).toBe(true);
+    expect(missingModels.models).toBeUndefined();
+
+    // Same cliPath as above: clear the memo so the second write is actually
+    // re-read rather than served from the first call's cached result.
+    clearGrokCapabilityMemo();
+    fs.writeFileSync(path.join(tempGrokHome, 'models_cache.json'), JSON.stringify({ models: 'not-an-object' }));
+    const nonObjectModels = await discoverGrokCapabilities('/usr/bin/grok');
+    expect(nonObjectModels.supportsModelOverride).toBe(true);
+    expect(nonObjectModels.models).toBeUndefined();
+  });
+
+  it('falls through to --help when every model in the cache is hidden', async () => {
+    fs.writeFileSync(path.join(tempGrokHome, 'models_cache.json'), JSON.stringify({
+      models: { 'grok-secret': { info: { id: 'grok-secret', name: 'Hidden', hidden: true } } },
+    }));
+    setHelpOutput('Usage: grok\n  -m, --model <model>   Model to use\n  --reasoning-effort <level>   Reasoning effort\n');
+
+    const capabilities = await discoverGrokCapabilities('/usr/bin/grok');
+
+    expect(capabilities.supportsModelOverride).toBe(true);
+    expect(capabilities.effortLevels).toEqual(['low', 'medium', 'high', 'xhigh']);
+    expect(capabilities.models).toBeUndefined();
+  });
+});

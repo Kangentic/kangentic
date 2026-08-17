@@ -82,16 +82,19 @@ export class GrokSessionHistoryParser {
       if (!isRecord(params)) continue;
       const update = params.update;
       if (!isRecord(update)) continue;
-      const rawType = update.sessionUpdate;
-      if (!isGrokDispatchType(rawType)) continue;
-      const updateType: GrokDispatchType = rawType;
 
       // Running context total: present in `params._meta.totalTokens` on
-      // streaming and tool updates.
+      // streaming and tool updates. Harvested BEFORE the dispatch-type
+      // guard so lines of an unknown sessionUpdate type (hook_execution,
+      // task_backgrounded) still contribute - see GROK_DISPATCH_TYPES.
       const paramsMeta = params._meta;
       if (isRecord(paramsMeta) && typeof paramsMeta.totalTokens === 'number') {
         contextTotalTokens = paramsMeta.totalTokens;
       }
+
+      const rawType = update.sessionUpdate;
+      if (!isGrokDispatchType(rawType)) continue;
+      const updateType: GrokDispatchType = rawType;
 
       if (updateType === 'user_message_chunk') {
         const updateMeta = update._meta;

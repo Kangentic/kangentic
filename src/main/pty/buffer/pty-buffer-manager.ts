@@ -237,7 +237,9 @@ interface PtyBufferManagerCallbacks {
    *  'data-tap') never see a replay - this callback is their only source for
    *  them, so dropping it silently starves a streaming phone of whatever was
    *  pending when a desktop terminal mounted the same session. Listeners
-   *  must not call back into the buffer manager synchronously. */
+   *  must not call back into the buffer manager synchronously, and must not
+   *  throw - a throw is caught and logged at the reportDrain chokepoint so
+   *  it can never unwind a replay whose pending buffer is already emptied. */
   onDrain(sessionId: string, data: string): void;
 }
 
@@ -799,11 +801,19 @@ export class PtyBufferManager {
 
   /** Report bytes a replay sample drained out of the pending buffer (see
    *  PtyBufferManagerCallbacks.onDrain). One chokepoint for every drain site
-   *  so the non-empty guard and the trace cannot diverge. */
+   *  so the non-empty guard, the trace, and the throw guard cannot diverge. */
   private reportDrain(sessionId: string, drained: string): void {
     if (!drained) return;
     traceTerminal(sessionId, 'replay-drain', { bytes: drained.length });
-    this.callbacks.onDrain(sessionId, drained);
+    try {
+      this.callbacks.onDrain(sessionId, drained);
+    } catch (error) {
+      // Two of the three drain sites run after the pending buffer is already
+      // emptied; a listener throw propagating from there would reject the
+      // replay IPC with the drained bytes gone. The report is best-effort by
+      // contract, so contain the throw here.
+      console.error('[pty-buffer] onDrain listener threw:', error);
+    }
   }
 
   getScrollback(sessionId: string): string {
@@ -969,9 +979,10 @@ export class PtyBufferManager {
     // the frame instead. The deadline and the post-await teardown check mirror
     // waitForResizeRepaint's discipline: this await must never leave the IPC
     // reply hanging on a disposed parser.
-    // Report the drain before the in-flight increment: a throwing onDrain
-    // listener then propagates without ever incrementing, so the finally
-    // decrement below always pairs with an increment that happened. All of
+    // Report the drain before the in-flight increment. reportDrain contains
+    // a listener throw (see the chokepoint), so the increment/decrement
+    // pairing below is unconditional either way; the ordering keeps the
+    // report outside the sampling critical section on principle. All of
     // this is synchronous, so no flush tick can interleave.
     const drainedBeforeSerialize = state.buffer;
     state.buffer = '';

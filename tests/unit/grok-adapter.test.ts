@@ -6,13 +6,13 @@
  * measured against grok 1.0.0 (3cd0d0cbce) - see the adapter files and
  * scripts/probe-grok.js for the provenance.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { GrokAdapter } from '../../src/main/agent/adapters/grok/grok-adapter';
 import { GrokCommandBuilder, grokMcpWiringEnabled } from '../../src/main/agent/adapters/grok/command-builder';
-import { parseGrokVersion } from '../../src/main/agent/adapters/grok/detector';
+import { parseGrokVersion, GrokDetector } from '../../src/main/agent/adapters/grok/detector';
 import { buildGrokHooks, writeHooksFile, removeHooksFile } from '../../src/main/agent/adapters/grok/hook-manager';
 import { writeMcpConfig, removeMcpConfig } from '../../src/main/agent/adapters/grok/mcp-config';
 import {
@@ -24,6 +24,7 @@ import {
 import {
   GrokSessionHistoryParser,
   clearGrokModelsCacheMemo,
+  grokModelDisplayName,
 } from '../../src/main/agent/adapters/grok/session-history-parser';
 import {
   parseGrokTranscript,
@@ -139,6 +140,17 @@ describe('GrokAdapter identity', () => {
     expect(adapter.configuredModelFromCommand('grok -s x --model grok-4.6 -- "hi"')?.id).toBe('grok-4.6');
     expect(adapter.configuredModelFromCommand('grok -s x -- "hi"')).toBeNull();
   });
+
+  it('resolves configuredModelFromCommand\'s displayName from the models cache, falling back to the raw id', () => {
+    const home = useTempGrokHome();
+    fs.writeFileSync(path.join(home, 'models_cache.json'), JSON.stringify({
+      models: { 'grok-4.6': { info: { id: 'grok-4.6', name: 'Grok 4.6', context_window: 500000 } } },
+    }));
+    expect(adapter.configuredModelFromCommand('grok -s x --model grok-4.6 -- "hi"'))
+      .toEqual({ id: 'grok-4.6', displayName: 'Grok 4.6' });
+    expect(adapter.configuredModelFromCommand('grok -s x --model grok-unlisted -- "hi"'))
+      .toEqual({ id: 'grok-unlisted', displayName: 'grok-unlisted' });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -151,6 +163,39 @@ describe('parseGrokVersion', () => {
     expect(parseGrokVersion('Cursor Agent 1.0.0')).toBeNull();
     expect(parseGrokVersion('2026.04.29-c83a488')).toBeNull();
     expect(parseGrokVersion('codex-cli 0.128.0')).toBeNull();
+  });
+});
+
+describe('GrokDetector fallback paths (platform-conditional binary name)', () => {
+  // Private-config-access pattern established for GrokDetector in
+  // cursor-grok-binary-collision.test.ts / for AntigravityDetector in
+  // antigravity-adapter.test.ts. process.platform must be overridden BEFORE
+  // constructing the detector: the fallback path is computed once in the
+  // constructor, not read lazily per call.
+  const originalPlatform = process.platform;
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: originalPlatform });
+  });
+
+  function grokDetectorFallbackPaths(): string[] | undefined {
+    return (new GrokDetector() as unknown as { config: { fallbackPaths?: string[] } }).config.fallbackPaths;
+  }
+
+  it('appends the home-directory fallback as grok.exe on win32', () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    const fallbackPaths = grokDetectorFallbackPaths();
+    expect(fallbackPaths?.at(-1)).toBe(path.join(os.homedir(), '.grok', 'bin', 'grok.exe'));
+  });
+
+  it('appends the extensionless home-directory fallback elsewhere (darwin/linux)', () => {
+    Object.defineProperty(process, 'platform', { value: 'linux' });
+    const linuxFallbackPaths = grokDetectorFallbackPaths();
+    expect(linuxFallbackPaths?.at(-1)).toBe(path.join(os.homedir(), '.grok', 'bin', 'grok'));
+
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    const darwinFallbackPaths = grokDetectorFallbackPaths();
+    expect(darwinFallbackPaths?.at(-1)).toBe(path.join(os.homedir(), '.grok', 'bin', 'grok'));
   });
 });
 
@@ -282,6 +327,51 @@ describe('GrokCommandBuilder', () => {
     })).toBeNull();
     expect(grokMcpWiringEnabled({ ...baseOptions, mcpServerUrl: 'http://x' })).toBe(false);
   });
+
+  it('returns ONLY the events path when events output is set and MCP wiring is not enabled', () => {
+    // Distinct from the "routes per-session values through env" test above
+    // (which sets all three env vars) and the "suppresses" test (which
+    // asserts null): this pins the partial shape when only events wiring
+    // applies.
+    const env = builder.buildGrokEnv({
+      ...baseOptions,
+      eventsOutputPath: '/project/.kangentic/sessions/s1/events.jsonl',
+    });
+    expect(env).toEqual({
+      KANGENTIC_EVENTS_PATH: '/project/.kangentic/sessions/s1/events.jsonl',
+    });
+  });
+
+  it('quotePrompt falls back to process.platform detection when shell is undefined', () => {
+    // Transient / Command Terminal spawns pass no shell. Mirrors the
+    // property-descriptor platform-override pattern from
+    // command-builder.test.ts ("undefined shell falls back to platform
+    // detection").
+    const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    try {
+      Object.defineProperty(process, 'platform', { value: 'win32' });
+      const winCommand = builder.buildGrokCommand({
+        ...baseOptions,
+        shell: undefined,
+        sessionId: SESSION_ID,
+        prompt: 'say "hello"',
+      });
+      expect(winCommand).not.toContain('\\"hello\\"');
+      expect(winCommand).toContain("'hello'");
+
+      Object.defineProperty(process, 'platform', { value: 'linux' });
+      const posixCommand = builder.buildGrokCommand({
+        ...baseOptions,
+        shell: undefined,
+        sessionId: SESSION_ID,
+        prompt: 'say "hello"',
+      });
+      expect(posixCommand).toContain('"hello"');
+      expect(posixCommand).not.toContain("'hello'");
+    } finally {
+      Object.defineProperty(process, 'platform', originalPlatformDescriptor);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -325,6 +415,19 @@ describe('buildGrokHooks', () => {
     expect(directives[1]).toEqual({ kind: 'extractToolId', payload: { fields: ['toolUseId'] } });
     expect(directives[2].kind).toBe('extractDetail');
     expect(directives[2].payload).toMatchObject({ nested: 'toolInput' });
+  });
+
+  it('maps PostToolUse to tool_end with tool-name/tool-id extraction and NO error-detail directive', () => {
+    // Unlike PostToolUseFailure (asserted below), a successful tool
+    // completion carries no error/errorDetails directive - only the
+    // tool-name and tool-id extractors.
+    const postToolUseTokens = hooks.PostToolUse[0].hooks[0].command.split(' ');
+    expect(postToolUseTokens[3]).toBe('tool_end');
+    const directives = postToolUseTokens.slice(4).map(decodeDirective);
+    expect(directives).toHaveLength(2);
+    expect(directives[0]).toEqual({ kind: 'extractTool', payload: { field: 'toolName' } });
+    expect(directives[1]).toEqual({ kind: 'extractToolId', payload: { fields: ['toolUseId'] } });
+    expect(directives.some((directive) => directive.kind === 'extractDetail')).toBe(false);
   });
 
   it('maps Stop to idle and remaps transient StopFailure classes to turn_retrying', () => {
@@ -410,6 +513,24 @@ describe('hooks file + MCP config lifecycle', () => {
     writeHooksFile(projectDir);
     removeHooksFile(projectDir);
     expect(fs.existsSync(userHookPath)).toBe(true);
+  });
+
+  it('swallows a writeHooksFile filesystem failure via console.error and never throws', () => {
+    // '.grok' exists as a plain FILE, so mkdirSync(recursive) for
+    // '.grok/hooks' fails with ENOTDIR - the write is best-effort, so the
+    // failure must be logged and swallowed, never thrown.
+    fs.writeFileSync(path.join(projectDir, '.grok'), 'not a directory');
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(() => writeHooksFile(projectDir)).not.toThrow();
+    expect(consoleErrorSpy).toHaveBeenCalled();
+    consoleErrorSpy.mockRestore();
+  });
+
+  it('swallows a removeHooksFile filesystem failure and never throws', () => {
+    fs.writeFileSync(path.join(projectDir, '.grok'), 'not a directory');
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(() => removeHooksFile(projectDir)).not.toThrow();
+    consoleErrorSpy.mockRestore();
   });
 
   it('writes a static env-referencing MCP block and strips only its own block', () => {
@@ -518,6 +639,48 @@ describe('hooks file + MCP config lifecycle', () => {
     const remaining = fs.readFileSync(configPath, 'utf-8');
     expect(remaining).toContain(userContent.trim());
     expect(remaining).not.toContain('kangentic');
+  });
+
+  it('swallows a writeMcpConfig filesystem failure and never throws', () => {
+    // Same ENOTDIR blocker as the hooks-file failure test above.
+    fs.writeFileSync(path.join(projectDir, '.grok'), 'not a directory');
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(() => writeMcpConfig(projectDir)).not.toThrow();
+    expect(consoleErrorSpy).toHaveBeenCalled();
+    consoleErrorSpy.mockRestore();
+  });
+
+  it('inserts a separator newline before the managed block when existing content has none', () => {
+    const configPath = path.join(projectDir, '.grok', 'config.toml');
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    // Deliberately NO trailing newline.
+    const userContent = '[mcp_servers.mine]\nurl = "https://example.com/mcp"';
+    fs.writeFileSync(configPath, userContent);
+
+    writeMcpConfig(projectDir);
+    const written = fs.readFileSync(configPath, 'utf-8');
+    expect(written).toContain(`${userContent}\n# BEGIN KANGENTIC MANAGED BLOCK`);
+    // Guards against the separator being dropped (block glued onto the
+    // last user line) or doubled (a blank line inserted).
+    expect(written).not.toContain(`${userContent}# BEGIN`);
+    expect(written).not.toContain(`${userContent}\n\n# BEGIN`);
+  });
+
+  it('removeMcpConfig no-ops when the file does not exist', () => {
+    const configPath = path.join(projectDir, '.grok', 'config.toml');
+    expect(fs.existsSync(configPath)).toBe(false);
+    expect(() => removeMcpConfig(projectDir)).not.toThrow();
+    expect(fs.existsSync(configPath)).toBe(false);
+  });
+
+  it('removeMcpConfig no-ops when the file exists without the managed block marker', () => {
+    const configPath = path.join(projectDir, '.grok', 'config.toml');
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    const userContent = '[mcp_servers.mine]\nurl = "https://example.com/mcp"\n';
+    fs.writeFileSync(configPath, userContent);
+
+    removeMcpConfig(projectDir);
+    expect(fs.readFileSync(configPath, 'utf-8')).toBe(userContent);
   });
 });
 
@@ -639,6 +802,60 @@ describe('GrokSessionHistoryParser', () => {
     expect(result.usage?.model.id).toBe('grok-4-fast');
     expect(result.usage?.model.displayName).toBe('Grok 4 Fast');
   });
+
+  it('harvests params._meta.totalTokens BEFORE the dispatch-type guard, so an all-unknown-type batch still yields context usage', () => {
+    // Red-green: reverting the harvest to run AFTER isGrokDispatchType (its
+    // pre-fix position) makes this go red, since hook_execution and
+    // task_backgrounded are both unknown dispatch types and would be
+    // skipped before ever reaching the totalTokens read.
+    useTempGrokHome();
+    const content = [
+      updateLine({ sessionUpdate: 'hook_execution', event_name: 'pre_tool_use' }, { totalTokens: 12345 }),
+      updateLine({ sessionUpdate: 'task_backgrounded' }, { totalTokens: 20000 }),
+    ].join('\n');
+
+    const result = GrokSessionHistoryParser.parse(content, 'append');
+    expect(result.activity).toBeNull();
+    expect(result.events).toEqual([]);
+    // Both fields derive from the same harvested value.
+    expect(result.usage?.contextWindow.usedTokens).toBe(20000);
+    expect(result.usage?.contextWindow.totalInputTokens).toBe(20000);
+    // No dispatch-type line ever carried a model id, so this is evidence the
+    // usage came from the pre-dispatch harvest and not from some other path.
+    expect(result.usage?.model).toBeUndefined();
+  });
+
+  it('buildUsage populates contextWindow.totalOutputTokens and cost.totalDurationMs from the raw usage fields', () => {
+    const home = useTempGrokHome();
+    fs.writeFileSync(path.join(home, 'models_cache.json'), JSON.stringify({
+      models: { 'grok-4.6': { info: { id: 'grok-4.6', name: 'Grok 4.6', context_window: 500000 } } },
+    }));
+
+    const content = [
+      updateLine({ sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'hi' }, _meta: { modelId: 'grok-4.6' } }),
+      updateLine({
+        sessionUpdate: 'turn_completed',
+        stop_reason: 'end_turn',
+        usage: { inputTokens: 100, outputTokens: 4321, apiDurationMs: 9876 },
+      }),
+    ].join('\n');
+
+    const result = GrokSessionHistoryParser.parse(content, 'append');
+    expect(result.usage?.contextWindow.totalOutputTokens).toBe(4321);
+    expect(result.usage?.cost.totalDurationMs).toBe(9876);
+  });
+});
+
+describe('grokModelDisplayName', () => {
+  it('falls back to the raw model id when the model is absent from the cache', () => {
+    const home = useTempGrokHome();
+    fs.writeFileSync(path.join(home, 'models_cache.json'), JSON.stringify({
+      models: { 'grok-4.6': { info: { id: 'grok-4.6', name: 'Grok 4.6', context_window: 500000 } } },
+    }));
+
+    expect(grokModelDisplayName('grok-4.6')).toBe('Grok 4.6');
+    expect(grokModelDisplayName('grok-does-not-exist')).toBe('grok-does-not-exist');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -689,6 +906,30 @@ describe('parseGrokTranscript', () => {
     expect(entries).toEqual([]);
     expect(sourcePath).toBeNull();
   });
+
+  it('keeps the raw arguments string when a tool call carries malformed JSON', async () => {
+    const home = useTempGrokHome();
+    const cwd = '/home/dev/malformed-args-project';
+    const sessionDir = path.join(home, 'sessions', cwdToSessionsDirName(cwd), SESSION_ID);
+    fs.mkdirSync(sessionDir, { recursive: true });
+    const records = [
+      { type: 'user', content: { type: 'text', text: '<user_query>\nrun it\n</user_query>' } },
+      {
+        type: 'assistant',
+        content: 'On it.',
+        tool_calls: [{ id: 'call-1', name: 'read_file', arguments: '{not valid json' }],
+      },
+    ];
+    fs.writeFileSync(
+      path.join(sessionDir, 'chat_history.jsonl'),
+      records.map((record) => JSON.stringify(record)).join('\n'),
+    );
+
+    const { entries } = await parseGrokTranscript(SESSION_ID, cwd);
+    const assistantEntry = entries[1] as { blocks: Array<{ type: string; input?: unknown }> };
+    const toolUse = assistantEntry.blocks.find((block) => block.type === 'tool_use') as { input: unknown };
+    expect(toolUse.input).toBe('{not valid json');
+  });
 });
 
 describe('grokTranscriptUsage / grokTranscriptToolCounts', () => {
@@ -712,6 +953,39 @@ describe('grokTranscriptUsage / grokTranscriptToolCounts', () => {
     useTempGrokHome();
     const usage = await grokTranscriptUsage(SESSION_ID, '/nowhere');
     expect(usage).toBeNull();
+  });
+
+  it('skips a turn_completed whose usage.inputTokens/outputTokens are not numbers', async () => {
+    const home = useTempGrokHome();
+    const cwd = '/home/dev/non-numeric-usage-project';
+    const updatesPath = grokUpdatesJsonlPath(cwd, SESSION_ID);
+    fs.mkdirSync(path.dirname(updatesPath), { recursive: true });
+    const content = [
+      updateLine({ sessionUpdate: 'turn_completed', usage: { inputTokens: 100, outputTokens: 20 } }),
+      // Malformed usage on the LAST turn_completed - must be skipped rather
+      // than overwriting the valid earlier reading with garbage/NaN.
+      updateLine({ sessionUpdate: 'turn_completed', usage: { inputTokens: '300', outputTokens: 75 } }),
+    ].join('\n');
+    fs.writeFileSync(updatesPath, content);
+
+    const usage = await grokTranscriptUsage(SESSION_ID, cwd);
+    expect(usage).toEqual({ inputTokens: 100, outputTokens: 20 });
+  });
+
+  it('tolerates a garbled line mid-file between valid turn_completed records', async () => {
+    const home = useTempGrokHome();
+    const cwd = '/home/dev/garbled-mid-file-project';
+    const updatesPath = grokUpdatesJsonlPath(cwd, SESSION_ID);
+    fs.mkdirSync(path.dirname(updatesPath), { recursive: true });
+    const content = [
+      updateLine({ sessionUpdate: 'turn_completed', usage: { inputTokens: 10, outputTokens: 1 } }),
+      'not json at all - a partial write mid-flush',
+      updateLine({ sessionUpdate: 'turn_completed', usage: { inputTokens: 200, outputTokens: 30 } }),
+    ].join('\n');
+    fs.writeFileSync(updatesPath, content);
+
+    const usage = await grokTranscriptUsage(SESSION_ID, cwd);
+    expect(usage).toEqual({ inputTokens: 200, outputTokens: 30 });
   });
 
   it('dedupes tool calls by toolCallId, names from _meta with a title fallback, and sorts the breakdown by callCount', async () => {
@@ -757,6 +1031,31 @@ describe('grokTranscriptUsage / grokTranscriptToolCounts', () => {
   });
 });
 
+describe('GrokAdapter.transcriptUsage / transcriptToolCounts (missing session context)', () => {
+  // Everything above exercises grokTranscriptUsage / grokTranscriptToolCounts
+  // directly. This proves the REAL adapter methods short-circuit to null
+  // before ever touching the filesystem when the caller omits
+  // agentSessionId or cwd, matching the codex-adapter.test.ts precedent for
+  // this guard shape.
+  const adapter = new GrokAdapter();
+
+  it('transcriptUsage returns null when agentSessionId is missing', async () => {
+    expect(await adapter.transcriptUsage({ agentSessionId: null, cwd: '/home/dev/project' })).toBeNull();
+  });
+
+  it('transcriptUsage returns null when cwd is missing', async () => {
+    expect(await adapter.transcriptUsage({ agentSessionId: SESSION_ID, cwd: null })).toBeNull();
+  });
+
+  it('transcriptToolCounts returns null when agentSessionId is missing', async () => {
+    expect(await adapter.transcriptToolCounts({ agentSessionId: null, cwd: '/home/dev/project' })).toBeNull();
+  });
+
+  it('transcriptToolCounts returns null when cwd is missing', async () => {
+    expect(await adapter.transcriptToolCounts({ agentSessionId: SESSION_ID, cwd: null })).toBeNull();
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Command-injection extractor
 // ---------------------------------------------------------------------------
@@ -771,6 +1070,13 @@ describe('extractGrokUserTurn', () => {
     expect(extractGrokUserTurn(JSON.stringify({ type: 'user', synthetic_reason: 'system_reminder', content: { type: 'text', text: 'x' } }))).toBeNull();
     expect(extractGrokUserTurn(JSON.stringify({ type: 'assistant', content: 'hello' }))).toBeNull();
     expect(extractGrokUserTurn('not json')).toBeNull();
+  });
+
+  it('rejects a JSON array line and a literal `null` line rather than treating them as records', () => {
+    // JSON.parse succeeds for both, so the isRecord-style guard (typeof
+    // === 'object' && !== null && !Array.isArray) is what must reject them.
+    expect(extractGrokUserTurn(JSON.stringify(['user', 'hello']))).toBeNull();
+    expect(extractGrokUserTurn('null')).toBeNull();
   });
 
   it('handles the wrapper edge cases via unwrapUserQuery', () => {
@@ -827,6 +1133,37 @@ describe('createGrokCommandInjectionVerifier (wiring)', () => {
       mode: 'submitted',
     })).toBe(false);
   });
+
+  it('resolvePath swallows an fs.existsSync throw and returns false instead of throwing', async () => {
+    useTempGrokHome();
+    const cwd = '/home/dev/exists-throw-project';
+    const realExistsSync = fs.existsSync;
+    // Throw ONLY for the chat_history.jsonl probe resolvePath performs, so
+    // this actually exercises resolvePath's own try/catch rather than
+    // passing vacuously off some unrelated existsSync call elsewhere in the
+    // verifier chain.
+    const existsSyncSpy = vi.spyOn(fs, 'existsSync').mockImplementation((...args: Parameters<typeof fs.existsSync>) => {
+      const [target] = args;
+      if (String(target).includes('chat_history.jsonl')) {
+        throw new Error('EPERM: simulated permission failure');
+      }
+      return realExistsSync(...args);
+    });
+
+    const verifier = createGrokCommandInjectionVerifier();
+    const result = await verifier({
+      type: 'command-injection',
+      text: 'anything',
+      agentSessionId: SESSION_ID,
+      cwd,
+      sentAt: Date.now(),
+      mode: 'submitted',
+    });
+
+    expect(result).toBe(false);
+    expect(existsSyncSpy.mock.calls.some((call) => String(call[0]).includes('chat_history.jsonl'))).toBe(true);
+    existsSyncSpy.mockRestore();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -856,6 +1193,41 @@ describe('cleanGrokTranscript', () => {
   it('returns finalized prose when no structural marker exists', () => {
     expect(cleanGrokTranscript('just some output\n\nwith prose')).toContain('just some output');
     expect(cleanGrokTranscript('   \n  ')).toBeNull();
+  });
+
+  it('strips the braille spinner/logo, telemetry opt-in prose, status/timer chrome, key-hint/status bar, and slash-palette noise patterns', () => {
+    // One example line per untested GROK_NOISE_PATTERNS entry, derived
+    // verbatim from the regexes in transcript-cleanup.ts. The welcome-banner
+    // "Upgrade for more usage" / "New worktree ctrl+w" / "Resume session
+    // ctrl+s" / "Changelog" / "Quit ctrl+q" variants are deliberately out of
+    // scope here (already partially covered by the "extracts the last turn"
+    // test above, and not named in this hole).
+    const noiseLines = [
+      '⠋⠙⠹⠸⠼⠴', // braille spinner/logo
+      'Help improve Grok by sharing usage data', // telemetry opt-in prose
+      '[Opt out] [Opt in]',
+      'Opt-in to allow SpaceXAI to help train models',
+      'Read Terms and Privacy Policy for details',
+      '◆ Thinking…', // status/timer chrome
+      'Thinking… 12.3s',
+      'Thought for 4.2s',
+      'Responding… 1.1s',
+      'Worked for 30.5s',
+      'Ctrl+x: shortcuts', // key hints and status bar
+      'Enter: send',
+      'Shift+Tab: mode',
+      '[stable]',
+      '/quit Quit the application', // slash-command palette entry
+    ];
+    const survivor = 'Fixed the failing test suite.';
+    const raw = [survivor, ...noiseLines].join('\n');
+
+    const cleaned = cleanGrokTranscript(raw);
+
+    expect(cleaned).toContain(survivor);
+    for (const noise of noiseLines) {
+      expect(cleaned).not.toContain(noise);
+    }
   });
 });
 
@@ -934,6 +1306,39 @@ describe('trust manager', () => {
     const home = useTempGrokHome();
     await ensureWorktreeTrust(path.join(home, 'fake-project'));
     expect(fs.existsSync(path.join(home, 'trusted_folders.toml'))).toBe(false);
+  });
+
+  it('writes nothing for a worktree path containing a single quote (cannot be a TOML literal key)', async () => {
+    const home = useTempGrokHome();
+    const projectRoot = path.join(home, 'fake-project');
+    const worktree = path.join(projectRoot, '.kangentic', 'worktrees', "task's-slug");
+
+    await ensureWorktreeTrust(worktree);
+    expect(fs.existsSync(path.join(home, 'trusted_folders.toml'))).toBe(false);
+  });
+
+  it('removeWorktreeTrust no-ops when the trust store file does not exist', async () => {
+    const home = useTempGrokHome();
+    const storePath = path.join(home, 'trusted_folders.toml');
+    expect(fs.existsSync(storePath)).toBe(false);
+
+    await expect(removeWorktreeTrust(worktreePathUnder(path.join(home, 'fake-project')))).resolves.toBeUndefined();
+    expect(fs.existsSync(storePath)).toBe(false);
+  });
+
+  it('logs and does not throw when the trust store write fails', async () => {
+    const home = useTempGrokHome();
+    const worktree = worktreePathUnder(path.join(home, 'fake-project'));
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const appendFileSyncSpy = vi.spyOn(fs, 'appendFileSync').mockImplementation(() => {
+      throw new Error('EACCES: simulated permission failure');
+    });
+
+    await expect(ensureWorktreeTrust(worktree)).resolves.toBeUndefined();
+    expect(consoleErrorSpy).toHaveBeenCalled();
+
+    appendFileSyncSpy.mockRestore();
+    consoleErrorSpy.mockRestore();
   });
 
   it('removes only tables Kangentic could have written, atomically', async () => {
@@ -1028,6 +1433,76 @@ describe('migrateGrokProjectData', () => {
     expect(store).toContain(`[folders.'${path.resolve(newProjectPath)}']`);
     expect(store).not.toContain(`[folders."${oldProjectPath}"]`);
     expect(store).toContain(`[folders."${unrelatedPath}"]`);
+  });
+
+  it('logs a per-pair rename failure without aborting migration of the remaining pairs', async () => {
+    const home = useTempGrokHome();
+    const oldProject = path.join(home, 'blocked-old-project');
+    const newProject = path.join(home, 'blocked-new-project');
+    const sessionsRoot = path.join(home, 'sessions');
+
+    // Project-root pair: seed the OLD session dir, then preempt the NEW
+    // location with a plain FILE so the merge-rename inside
+    // renameOrMergeDirectory throws instead of succeeding.
+    const oldRootSessionDir = path.join(sessionsRoot, cwdToSessionsDirName(path.resolve(oldProject)));
+    fs.mkdirSync(oldRootSessionDir, { recursive: true });
+    fs.writeFileSync(path.join(oldRootSessionDir, 'updates.jsonl'), '');
+    const newRootSessionDir = path.join(sessionsRoot, cwdToSessionsDirName(path.resolve(newProject)));
+    fs.writeFileSync(newRootSessionDir, 'not a directory');
+
+    // Worktree pair: a normal rename that MUST still succeed even though
+    // the project-root pair above fails first.
+    fs.mkdirSync(path.join(newProject, '.kangentic', 'worktrees', 'task-a'), { recursive: true });
+    const oldWorktreeSessionDir = path.join(
+      sessionsRoot,
+      cwdToSessionsDirName(path.join(path.resolve(oldProject), '.kangentic', 'worktrees', 'task-a')),
+    );
+    fs.mkdirSync(oldWorktreeSessionDir, { recursive: true });
+    fs.writeFileSync(path.join(oldWorktreeSessionDir, 'updates.jsonl'), '');
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await expect(migrateGrokProjectData(oldProject, newProject)).resolves.toBeUndefined();
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[GROK_RELOCATE] Failed to migrate sessions'),
+      expect.anything(),
+    );
+
+    const newWorktreeSessionDir = path.join(
+      sessionsRoot,
+      cwdToSessionsDirName(path.join(path.resolve(newProject), '.kangentic', 'worktrees', 'task-a')),
+    );
+    expect(fs.existsSync(newWorktreeSessionDir)).toBe(true);
+    expect(fs.existsSync(oldWorktreeSessionDir)).toBe(false);
+
+    warnSpy.mockRestore();
+  });
+
+  it('rewriteTrustedFolderPaths no-ops when the trust store file does not exist', async () => {
+    const home = useTempGrokHome();
+    const oldProject = path.join(home, 'no-store-old');
+    const newProject = path.join(home, 'no-store-new');
+
+    await expect(migrateGrokProjectData(oldProject, newProject)).resolves.toBeUndefined();
+    expect(fs.existsSync(path.join(home, 'trusted_folders.toml'))).toBe(false);
+  });
+
+  it('skips rewriting a trust header when the new path contains a single quote', async () => {
+    const home = useTempGrokHome();
+    const oldProjectPath = path.join(home, 'quote-old-project');
+    const newProjectPath = path.join(home, "task's-new-project");
+    const storePath = path.join(home, 'trusted_folders.toml');
+    fs.writeFileSync(
+      storePath,
+      `[folders.'${path.resolve(oldProjectPath)}']\ntrusted = true\ndecided_at = 1786162868\n`,
+    );
+
+    await migrateGrokProjectData(oldProjectPath, newProjectPath);
+
+    const store = fs.readFileSync(storePath, 'utf-8');
+    expect(store).toContain(`[folders.'${path.resolve(oldProjectPath)}']`);
+    expect(store).not.toContain(path.resolve(newProjectPath));
   });
 });
 

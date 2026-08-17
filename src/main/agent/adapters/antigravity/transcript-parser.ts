@@ -51,11 +51,16 @@ export function locateAntigravityTranscriptFile(conversationId: string): string 
   return fs.existsSync(transcriptPath) ? transcriptPath : null;
 }
 
-/** Read and order the raw steps of a conversation's transcript. */
-function readSteps(transcriptPath: string): AntigravityStep[] {
+/** Read and order the raw steps of a conversation's transcript. Async read:
+ *  transcript.jsonl grows for the life of a session (multi-MB on a long
+ *  task), and this runs in the single-threaded main process on routine card
+ *  moves (transcriptToolCounts via session-metrics refine) - a sync read
+ *  would stall IPC and PTY flushing app-wide, which is why the Claude and
+ *  Grok transcript parsers read async too. */
+async function readSteps(transcriptPath: string): Promise<AntigravityStep[]> {
   let raw: string;
   try {
-    raw = fs.readFileSync(transcriptPath, 'utf-8');
+    raw = await fs.promises.readFile(transcriptPath, 'utf-8');
   } catch {
     return [];
   }
@@ -121,14 +126,14 @@ export async function parseAntigravityTranscript(
 }
 
 /** Parse a known transcript file path (the `transcriptPath`-driven callers). */
-export function parseAntigravityTranscriptFile(sourcePath: string): ParsedTranscript {
+export async function parseAntigravityTranscriptFile(sourcePath: string): Promise<ParsedTranscript> {
   const entries: TranscriptEntry[] = [];
   // The id of the most recent tool_use block, so a following ERROR_MESSAGE
   // step (agy records tool failures as their own step) can be attached as
   // that tool call's error result.
   let lastToolUseId: string | null = null;
 
-  for (const step of readSteps(sourcePath)) {
+  for (const step of await readSteps(sourcePath)) {
     const uuid = `step-${step.step_index}`;
     const ts = stepTimestamp(step);
 

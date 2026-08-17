@@ -684,7 +684,7 @@ describe('Windows Path Conversion for Shells (adaptCommandForShell)', () => {
     // value in addition to the picker's "wsl -d <distro>". The same shell
     // string also reaches adaptCommandForShell at the spawn seam (via
     // session-spawn-flow.ts's `shellName = shell.toLowerCase()`), whose
-    // isWsl gate is `lower.startsWith('wsl')` -- already broad enough to
+    // isWsl gate is `lower.startsWith('wsl')` - already broad enough to
     // match the .exe form, but that was never pinned. Guards against a
     // future "tighten the gate to match resolveShellArgs" edit that adds a
     // trailing space and silently sends /c/... (Git Bash form) instead of
@@ -695,7 +695,7 @@ describe('Windows Path Conversion for Shells (adaptCommandForShell)', () => {
   });
 });
 
-// convertWindowsExePath has no platform guard -- runs on all platforms
+// convertWindowsExePath has no platform guard - runs on all platforms
 describe('Windows Path Conversion (convertWindowsExePath)', () => {
   it('no-op for Unix paths (macOS/Linux)', () => {
     const cmd = '/usr/local/bin/claude --print "hello"';
@@ -722,9 +722,9 @@ describe('Windows Path Conversion (convertWindowsExePath)', () => {
         .toBe('/mnt/c/Users/dev/bin/claude.exe --print');
     });
 
-    it('converts a double-quoted drive-letter path for Git Bash', () => {
+    it('converts a double-quoted drive-letter path for Git Bash, staying double-quoted', () => {
       expect(convertWindowsExePath('"C:\\Users\\dev\\bin\\claude.exe" --print', false))
-        .toBe('/c/Users/dev/bin/claude.exe --print');
+        .toBe('"/c/Users/dev/bin/claude.exe" --print');
     });
 
     it('converts a double-quoted drive-letter path for WSL', () => {
@@ -747,6 +747,15 @@ describe('Windows Path Conversion (convertWindowsExePath)', () => {
       // bash syntax (& backgrounds the truncated command).
       expect(convertWindowsExePath("'C:\\Tools\\R&D\\claude.exe' --print", false))
         .toBe("'/c/Tools/R&D/claude.exe' --print");
+    });
+
+    it('keeps shell-active characters inert for the double-quoted form too', () => {
+      // The same hazard through quoteArg's win32 fallback (no shell hint,
+      // e.g. a transient session), which double-quotes the cliPath: the
+      // converted spaceless path must stay quoted, or & backgrounds the
+      // truncated command in bash.
+      expect(convertWindowsExePath('"C:\\Tools\\R&D\\claude.exe" --print', false))
+        .toBe('"/c/Tools/R&D/claude.exe" --print');
     });
 
     it('re-quotes a single-quoted spaces path in single quotes for Git Bash', () => {
@@ -780,22 +789,22 @@ describe('Windows Path Conversion (convertWindowsExePath)', () => {
   });
 
   // The double-quoted and single-quoted branches used to repeat a group
-  // shaped `(?:\\[^"]+)+` (backslash NOT excluded from the inner class) --
-  // classic catastrophic-backtracking shape, equivalent to `(a+)+`. An
+  // shaped `(?:\\[^"]+)+` (backslash NOT excluded from the inner class),
+  // the classic catastrophic-backtracking shape, equivalent to `(a+)+`. An
   // unterminated quoted path with a long run of backslashes has no valid
   // parse, so the engine explored every way to partition the run among
-  // repetitions before giving up -- a cliPath value (project-configurable
+  // repetitions before giving up. A cliPath value (project-configurable
   // via `agent.cliPaths.<agent>`) reaches this regex synchronously on the
   // main-process spawn path, so this was a real hang vector, not a
   // theoretical one. Measured against the reverted pre-fix regex with 44
   // backslashes (the size below): ~2.7s in isolated node, ~8s inside this
-  // vitest run on this machine -- growth is roughly 2.5x per +2 backslashes,
+  // vitest run on this machine. Growth is roughly 2.5x per +2 backslashes,
   // so a 48-char run already costs ~1 CPU-minute under vitest. The hardened
   // regex excludes `\` from the repeated character class, so each backslash
   // has exactly one parse and matching stays linear (sub-millisecond even at
   // thousands of backslashes). The unquoted (bare) branch was never
-  // vulnerable -- nothing follows its repeated group, so the first greedy
-  // match always succeeds with no backtracking -- and is intentionally not
+  // vulnerable (nothing follows its repeated group, so the first greedy
+  // match always succeeds with no backtracking) and is intentionally not
   // covered here.
   describe('adversarial input does not cause catastrophic backtracking (ReDoS guard)', () => {
     it('returns quickly for an unterminated double-quoted path with a long backslash run', () => {
@@ -866,15 +875,17 @@ describe('adapter command composed through adaptCommandForShell', () => {
   it('undefined shell (transient session) falls back to double quotes on win32 and still converts', () => {
     // Transient / Command Terminal sessions pass no shell to the builder, so
     // quoteArg falls back to platform detection: double quotes on win32. That
-    // form is converted by the double-quote branch. Pin it so a fix to the
-    // single-quote path can never silently regress the Command Terminal flow.
+    // form is converted by the double-quote branch and stays double-quoted
+    // (shell-active characters in the path must remain inert). Pin it so a
+    // fix to the single-quote path can never silently regress the Command
+    // Terminal flow.
     const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
     Object.defineProperty(process, 'platform', { value: 'win32' });
     try {
       const quoted = quoteArg('C:\\Users\\dev\\.local\\bin\\claude.EXE');
       expect(quoted).toBe('"C:\\Users\\dev\\.local\\bin\\claude.EXE"');
       const adapted = adaptCommandForShell(`${quoted} --print`, 'bash', 'win32');
-      expect(adapted).toBe('/c/Users/dev/.local/bin/claude.EXE --print');
+      expect(adapted).toBe('"/c/Users/dev/.local/bin/claude.EXE" --print');
     } finally {
       Object.defineProperty(process, 'platform', originalPlatformDescriptor);
     }
@@ -1905,9 +1916,9 @@ describe('UNC Path Support', () => {
         .toBe('//server/share/bin/exe --flag');
     });
 
-    it('normalizes quoted UNC exe path (strips quotes when no spaces)', () => {
+    it('normalizes quoted UNC exe path, staying quoted', () => {
       expect(convertWindowsExePath('"\\\\server\\share\\bin\\exe" --flag', false))
-        .toBe('//server/share/bin/exe --flag');
+        .toBe('"//server/share/bin/exe" --flag');
     });
 
     it('scopes replacement to exe path only, preserving backslash args', () => {

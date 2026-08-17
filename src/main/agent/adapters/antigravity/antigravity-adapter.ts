@@ -201,7 +201,7 @@ export class AntigravityAdapter implements AgentAdapter {
       ?? (input.agentSessionId ? antigravityTranscriptPath(input.agentSessionId) : null);
     if (!transcriptPath || !fs.existsSync(transcriptPath)) return null;
 
-    const parsed = parseAntigravityTranscriptFile(transcriptPath);
+    const parsed = await parseAntigravityTranscriptFile(transcriptPath);
 
     const byTool = new Map<string, number>();
     let toolCallCount = 0;
@@ -379,6 +379,8 @@ export function antigravityModelDisplayName(slug: string): string {
   const words = parts.map((part) => {
     if (part === 'gpt') return 'GPT';
     if (part === 'oss') return 'OSS';
+    // Parameter-count suffix: '120b' -> '120B'. Digit-only / already-caps
+    // tokens ('20241022') pass through unchanged.
     if (/^\d/.test(part)) return part.toUpperCase() === part ? part : part.replace(/b$/, 'B');
     return part[0].toUpperCase() + part.slice(1);
   });

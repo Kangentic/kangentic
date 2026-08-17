@@ -1801,7 +1801,7 @@ describe('PtyBufferManager', () => {
       manager.removeSession(SESSION);
     });
 
-    it('reports the drain before incrementing replaySamplesInFlight, so a throwing onDrain listener never leaves the counter stuck (ordering pinned at pty-buffer-manager.ts ~line 970)', async () => {
+    it('contains a throwing onDrain listener at the reportDrain chokepoint: the replay resolves and the counter never sticks', async () => {
       const onFlush = vi.fn();
       const onDrain = vi.fn(() => {
         throw new Error('listener failure');
@@ -1811,16 +1811,19 @@ describe('PtyBufferManager', () => {
       const ALT_BYTES = '\x1b[?1049h\x1b[2J\x1b[1;1Halt frame';
       manager.onData(SESSION, ALT_BYTES);
 
-      await expect(manager.getReplaySnapshot(SESSION)).rejects.toThrow('listener failure');
+      // Two of the three drain sites report AFTER the pending buffer is
+      // already emptied, so a propagating listener throw would reject the
+      // replay IPC with the drained bytes gone. reportDrain contains the
+      // throw instead: the replay must resolve normally, with the drain
+      // still reported (best-effort, exactly once).
+      await manager.getReplaySnapshot(SESSION);
+      expect(onDrain).toHaveBeenCalledTimes(1);
+      expect(onDrain).toHaveBeenCalledWith(SESSION, ALT_BYTES);
 
-      // If a future edit moved the reportDrain call after the
-      // replaySamplesInFlight increment (both still ahead of the try/finally),
-      // the throw would propagate having already incremented the counter, and
-      // the matching decrement in the finally would never run - the code never
-      // reaches the try block. scheduleFlush's replaySamplesInFlight > 0 hold
-      // would then re-arm forever and no future flush could ever emit. New
-      // data delivered via the ordinary flush path (not another sample, so
-      // onDrain does not fire a second time) proves the counter is not stuck.
+      // And the replaySamplesInFlight pairing survives the throw: new data
+      // delivered via the ordinary flush path (not another sample, so
+      // onDrain does not fire a second time) proves scheduleFlush's
+      // replaySamplesInFlight > 0 hold is not re-arming forever.
       manager.onData(SESSION, 'new data after the failed drain');
       await expect
         .poll(() => onFlush.mock.calls.length > 0, { timeout: 2000, interval: 10 })

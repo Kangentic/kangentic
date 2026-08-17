@@ -143,6 +143,28 @@ describe('buildHooks', () => {
     expect(merged['my-hook']).toEqual(userHook);
     expect(merged[KANGENTIC_HOOK_NAME].Stop![0].command).toContain('../.kangentic/events.jsonl');
   });
+
+  it('PostToolUse directives carry the exact extractToolPath/extractDetailPath payload shape', () => {
+    // The command only carries opaque base64 directive tokens (see
+    // directive-builders.ts); decode them out of the built command string
+    // rather than substring-matching the directive KIND, so a change to the
+    // segment/field arrays themselves is caught.
+    const merged = buildHooks('../.kangentic/agy-event-bridge.cjs', '../.kangentic/sessions/s1/events.jsonl', {});
+    const command = merged[KANGENTIC_HOOK_NAME].PostToolUse![0].hooks[0].command;
+
+    function decodeDirective(kind: string): unknown {
+      const token = command.split(' ').find((candidate) => candidate.startsWith(`${kind}:`));
+      if (!token) throw new Error(`no ${kind} directive found in: ${command}`);
+      const base64Payload = token.slice(kind.length + 1);
+      return JSON.parse(Buffer.from(base64Payload, 'base64').toString('utf8'));
+    }
+
+    expect(decodeDirective('extractToolPath')).toEqual({ path: ['toolCall', 'name'] });
+    expect(decodeDirective('extractDetailPath')).toEqual({
+      parents: ['toolCall', 'args'],
+      fields: ['TargetFile', 'CommandLine', 'DirectoryPath', 'AbsolutePath', 'Query'],
+    });
+  });
 });
 
 describe('filterOurHooks', () => {
@@ -251,6 +273,54 @@ describe('AntigravityCommandBuilder side effects', () => {
     expect(fs.existsSync(path.join(workspace, '.agents', 'plugins'))).toBe(false);
   });
 
+  it('suppresses MCP wiring when only mcpServerUrl is set (token missing)', () => {
+    builder.buildAntigravityCommand({
+      agyPath: '/usr/bin/agy',
+      taskId: 't1',
+      cwd: workspace,
+      permissionMode: 'default',
+      shell: 'bash',
+      mcpServerUrl: 'http://127.0.0.1:4123/mcp',
+    });
+    expect(fs.existsSync(path.join(workspace, '.agents', 'plugins'))).toBe(false);
+  });
+
+  it('suppresses MCP wiring when only mcpServerToken is set (URL missing)', () => {
+    builder.buildAntigravityCommand({
+      agyPath: '/usr/bin/agy',
+      taskId: 't1',
+      cwd: workspace,
+      permissionMode: 'default',
+      shell: 'bash',
+      mcpServerToken: 'token-abc',
+    });
+    expect(fs.existsSync(path.join(workspace, '.agents', 'plugins'))).toBe(false);
+  });
+
+  it('sanitizePrompt keeps embedded double quotes for a Unix-like shell', () => {
+    const command = builder.buildAntigravityCommand({
+      agyPath: '/usr/bin/agy',
+      taskId: 't1',
+      cwd: workspace,
+      permissionMode: 'default',
+      shell: 'bash',
+      prompt: 'Say "hello" now',
+    });
+    expect(command).toContain(`'Say "hello" now'`);
+  });
+
+  it('sanitizePrompt swaps embedded double quotes to single quotes for PowerShell', () => {
+    const command = builder.buildAntigravityCommand({
+      agyPath: '/usr/bin/agy',
+      taskId: 't1',
+      cwd: workspace,
+      permissionMode: 'default',
+      shell: 'powershell',
+      prompt: 'Say "hello" now',
+    });
+    expect(command).toContain(`"Say 'hello' now"`);
+  });
+
   it('skips hook wiring (never writes hooks.json) but still returns a usable command when the events path cannot be made space-free', () => {
     // A space anywhere under the events path defeats BOTH the relative and
     // the absolute space-free checks in spaceFreeAgentsToken (the relative
@@ -271,6 +341,42 @@ describe('AntigravityCommandBuilder side effects', () => {
 
     expect(fs.existsSync(hooksPath())).toBe(false);
     expect(command).toContain('/usr/bin/agy');
+  });
+});
+
+describe('writeMergedHooks corrupt existing-file recovery', () => {
+  it('treats corrupt JSON in an existing hooks.json as empty, merging successfully without throwing', () => {
+    fs.mkdirSync(path.dirname(hooksPath()), { recursive: true });
+    fs.writeFileSync(hooksPath(), 'not valid json {');
+    const builder = new AntigravityCommandBuilder();
+
+    expect(() => builder.buildAntigravityCommand({
+      agyPath: '/usr/bin/agy',
+      taskId: 't1',
+      cwd: workspace,
+      permissionMode: 'default',
+      shell: 'bash',
+      eventsOutputPath: path.join(workspace, '.kangentic', 'sessions', 's1', 'events.jsonl'),
+    })).not.toThrow();
+
+    expect(Object.keys(readHooks())).toEqual([KANGENTIC_HOOK_NAME]);
+  });
+
+  it('treats a JSON string literal (valid JSON, not an object) in hooks.json as empty', () => {
+    fs.mkdirSync(path.dirname(hooksPath()), { recursive: true });
+    fs.writeFileSync(hooksPath(), JSON.stringify('just a string'));
+    const builder = new AntigravityCommandBuilder();
+
+    expect(() => builder.buildAntigravityCommand({
+      agyPath: '/usr/bin/agy',
+      taskId: 't1',
+      cwd: workspace,
+      permissionMode: 'default',
+      shell: 'bash',
+      eventsOutputPath: path.join(workspace, '.kangentic', 'sessions', 's1', 'events.jsonl'),
+    })).not.toThrow();
+
+    expect(Object.keys(readHooks())).toEqual([KANGENTIC_HOOK_NAME]);
   });
 });
 
@@ -297,6 +403,22 @@ describe('removeHooks', () => {
 
     expect(Object.keys(readHooks())).toEqual(['mine']);
     expect(fs.existsSync(path.join(workspace, '.agents', 'plugins', 'kangentic'))).toBe(false);
+  });
+
+  it('does not rewrite hooks.json when it holds no Kangentic-owned hooks (transform is a no-op)', () => {
+    // filterOurHooks(root) keeps the same key count as root here, so
+    // safelyUpdateSettingsFile's transform returns null and the file must be
+    // left byte-for-byte untouched - no backup written, no rewrite. Use
+    // compact (non-pretty-printed) JSON so any rewrite (which always
+    // pretty-prints via JSON.stringify(next, null, 2)) would change the text.
+    fs.mkdirSync(path.dirname(hooksPath()), { recursive: true });
+    const original = JSON.stringify({ mine: { Stop: [{ type: 'command', command: './notify.sh' }] } });
+    fs.writeFileSync(hooksPath(), original);
+
+    removeHooks(workspace);
+
+    expect(fs.readFileSync(hooksPath(), 'utf-8')).toBe(original);
+    expect(fs.existsSync(hooksPath() + '.kangentic-bak')).toBe(false);
   });
 
   it('deletes hooks.json (and a now-empty .agents dir) when only Kangentic hooks existed', () => {
@@ -426,6 +548,15 @@ describe('removeAntigravityWorkspaceTrust', () => {
     await removeAntigravityWorkspaceTrust('/never-trusted');
     expect(fs.existsSync(settingsPath())).toBe(false);
   });
+
+  it('is a silent no-op on a corrupt settings.json (never throws, leaves the file untouched)', async () => {
+    fs.mkdirSync(path.dirname(settingsPath()), { recursive: true });
+    fs.writeFileSync(settingsPath(), 'not json at all');
+
+    await expect(removeAntigravityWorkspaceTrust('/repo')).resolves.toBeUndefined();
+
+    expect(fs.readFileSync(settingsPath(), 'utf-8')).toBe('not json at all');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -450,6 +581,11 @@ describe('git-exclude seeding', () => {
     fs.writeFileSync(path.join(worktreeCheckout, '.git'), `gitdir: ${worktreeGitDir}\n`);
     fs.writeFileSync(path.join(worktreeGitDir, 'commondir'), '../..\n');
     expect(resolveGitCommonDir(worktreeCheckout)).toBe(path.join(repo, '.git'));
+  });
+
+  it('returns null for a .git FILE whose content does not match the gitdir pointer format', () => {
+    fs.writeFileSync(path.join(workspace, '.git'), 'not a gitdir pointer\n');
+    expect(resolveGitCommonDir(workspace)).toBeNull();
   });
 
   it('returns null outside a git checkout (seeding is a silent no-op)', () => {
@@ -593,5 +729,34 @@ describe('migrateAntigravityProjectData', () => {
     writeSettings({ trustedWorkspaces: ['/other'] });
     await migrateAntigravityProjectData('/old/repo', '/new/repo');
     expect(readSettings().trustedWorkspaces).toEqual(['/other']);
+  });
+
+  it('does not duplicate the trust entry when newPath is already present', async () => {
+    writeSettings({ trustedWorkspaces: ['/old/repo', '/new/repo'] });
+    await migrateAntigravityProjectData('/old/repo', '/new/repo');
+    expect(readSettings().trustedWorkspaces).toEqual(['/new/repo']);
+  });
+
+  it('logs and never throws when both settings.json and last_conversations.json are corrupt', async () => {
+    fs.mkdirSync(path.dirname(settingsPath()), { recursive: true });
+    fs.writeFileSync(settingsPath(), 'not json at all');
+    const cachePath = path.join(tmpHome, '.gemini', 'antigravity-cli', 'cache', 'last_conversations.json');
+    fs.mkdirSync(path.dirname(cachePath), { recursive: true });
+    fs.writeFileSync(cachePath, 'not json at all');
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await expect(migrateAntigravityProjectData('/old/repo', '/new/repo')).resolves.toBeUndefined();
+      // Both the trust migration and the last_conversations migration hit
+      // their catch block (a SyntaxError, not ENOENT) and must each log
+      // rather than throw or silently drop the failure. Assert the two
+      // distinct messages (not just a call count) so a regression that
+      // silences ONE path while the other still logs cannot pass.
+      const loggedMessages = errorSpy.mock.calls.map((call) => String(call[0])).join('\n');
+      expect(loggedMessages).toContain('Failed to migrate trustedWorkspaces');
+      expect(loggedMessages).toContain('Failed to migrate last_conversations');
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 });

@@ -239,20 +239,7 @@ export class SessionManager extends EventEmitter {
 
     this.bufferManager = new PtyBufferManager({
       onFlush: (sessionId, data) => {
-        const session = this.registry.get(sessionId);
-        const detector = session?.agentParser
-          ? (chunk: string) => session.agentParser!.detectFirstOutput(chunk)
-          : undefined;
-        if (this.firstOutputTracker.consume(sessionId, data, detector)) {
-          this.emit('first-output', sessionId);
-          // Clear the resuming flag once the resumed CLI has actually
-          // produced output. This unblocks card / overlay labels for
-          // adapters (Codex, Gemini) that don't emit a usage statusline.
-          if (session && session.resuming) {
-            session.resuming = false;
-            this.emit('session-changed', sessionId, toSession(session));
-          }
-        }
+        this.consumeFirstOutput(sessionId, data);
         // Unfiltered output tap: fires for EVERY session regardless of
         // renderer focus, unlike 'data' below. This is the mobile bridge's
         // seam onto live PTY output (see src/main/mobile-bridge/handlers)
@@ -285,13 +272,17 @@ export class SessionManager extends EventEmitter {
         //   these bytes inside the replay payload it just requested);
         // - never to backpressure.recordEmitted: that accounting tracks
         //   bytes in flight on the renderer's 'data' channel, which these
-        //   never ride;
-        // - never to firstOutputTracker: first-output stays keyed to the
-        //   flushed stream, as before this seam existed. A reveal/reload
-        //   drain can consume a detector's marker bytes, which is safe only
-        //   because every adapter's detectFirstOutput matches recurring
-        //   output (or any chunk), so detection is delayed to the next
-        //   chunk, never lost.
+        //   never ride.
+        // firstOutputTracker DOES consume drained bytes: for the cursor-hide
+        // adapters the ESC[?25l marker can arrive in the very first output
+        // chunk (docs/agent-integration.md pins this for Grok), and a
+        // terminal mounting onto a just-spawned session samples exactly
+        // across that chunk - the replay hold window keeps those bytes out
+        // of onFlush, so skipping them here would strand the shimmer
+        // overlay and the resuming label until the marker happens to recur.
+        // consume() is a one-shot latch, so feeding both the flushed and
+        // the drained stream can never double-fire 'first-output'.
+        this.consumeFirstOutput(sessionId, data);
         this.emit('data-tap', sessionId, data);
       },
     });
@@ -472,6 +463,31 @@ export class SessionManager extends EventEmitter {
       // Nothing left to reshape either: a respawn spawns at the desktop grid.
       this.cancelRestingGridRestore(sessionId);
     });
+  }
+
+  /**
+   * Feed a chunk to the first-output latch; on the first qualifying chunk,
+   * emit 'first-output' and clear the resuming flag. Fed from BOTH buffer
+   * streams - the 16ms flush (onFlush) and the replay-drain report
+   * (onDrain) - because a replay can consume the chunk carrying the
+   * adapter's one-time marker before it ever flushes. The tracker is a
+   * one-shot latch per session, so the double feed can never double-fire.
+   */
+  private consumeFirstOutput(sessionId: string, data: string): void {
+    const session = this.registry.get(sessionId);
+    const detector = session?.agentParser
+      ? (chunk: string) => session.agentParser!.detectFirstOutput(chunk)
+      : undefined;
+    if (this.firstOutputTracker.consume(sessionId, data, detector)) {
+      this.emit('first-output', sessionId);
+      // Clear the resuming flag once the resumed CLI has actually
+      // produced output. This unblocks card / overlay labels for
+      // adapters (Codex, Gemini) that don't emit a usage statusline.
+      if (session && session.resuming) {
+        session.resuming = false;
+        this.emit('session-changed', sessionId, toSession(session));
+      }
+    }
   }
 
   setMaxConcurrent(max: number): void {

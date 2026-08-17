@@ -45,6 +45,21 @@ vi.mock('node:os', async (importOriginal) => {
   return { ...actual, default: { ...actual, homedir }, homedir };
 });
 
+// Antigravity's summarize() drives a dedicated hidden-PTY runner
+// (runAntigravityPrint) rather than the shared child_process
+// runCliPrintSummarize helper (agy -p hangs without a TTY - see
+// print-runner.ts), so it is mocked here rather than fitting
+// agent-summarize-shape.test.ts's shared mock shape. Only runAntigravityPrint
+// is replaced; extractPrintResponse (used unmocked below in the
+// "print-runner response extraction" tests) keeps its real implementation via
+// the ...actual spread. The mock fn is created INSIDE the factory (not
+// referenced from outer scope) so there is no ordering/TDZ hazard - the same
+// pattern the node:child_process mock above uses for exec/execFile.
+vi.mock('../../src/main/agent/adapters/antigravity/print-runner', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/agent/adapters/antigravity/print-runner')>();
+  return { ...actual, runAntigravityPrint: vi.fn() };
+});
+
 import { exec, execFile } from 'node:child_process';
 import {
   AntigravityAdapter,
@@ -66,7 +81,7 @@ import {
   resetAntigravityCapabilityCacheForTests,
 } from '../../src/main/agent/adapters/antigravity/capability-discovery';
 import { AntigravityStatusParser } from '../../src/main/agent/adapters/antigravity/status-parser';
-import { extractPrintResponse } from '../../src/main/agent/adapters/antigravity/print-runner';
+import { extractPrintResponse, runAntigravityPrint } from '../../src/main/agent/adapters/antigravity/print-runner';
 import { agentRegistry } from '../../src/main/agent/agent-registry';
 import {
   agentDisplayName,
@@ -77,6 +92,7 @@ import {
 import type { SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
 
 const adapter = new AntigravityAdapter();
+const runAntigravityPrintMock = runAntigravityPrint as unknown as ReturnType<typeof vi.fn>;
 
 function spawnOptions(overrides: Partial<SpawnCommandOptions> = {}): SpawnCommandOptions {
   return {
@@ -114,6 +130,15 @@ describe('AntigravityAdapter identity', () => {
 
   it('exits via double Ctrl+C (agy has no /quit command)', () => {
     expect(adapter.getExitSequence()).toEqual(['\x03', '\x03']);
+  });
+
+  it('pins liveTelemetryUnsupported label and title on the real adapter (tests/ui/mock-electron-api.js hand-copies these strings)', () => {
+    expect(adapter.liveTelemetryUnsupported.unavailableLabel).toBe('Telemetry: TUI only');
+    expect(adapter.liveTelemetryUnsupported.unavailableTitle).toBe(
+      'Antigravity does not stream live telemetry to Kangentic.\n'
+      + 'The agy TUI footer shows the active model and effort; per-thought\n'
+      + 'token counts appear inline in its output.',
+    );
   });
 });
 
@@ -282,6 +307,18 @@ describe('AntigravityAdapter activity detection', () => {
     expect(detectIdle?.('⣾  Generating...esc to cancel')).toBe(false);
   });
 
+  it('detects idle when an OSC title-set sequence splits the marker text mid-frame', () => {
+    // The OSC-strip branch (distinct from the CSI-strip already covered
+    // above): "? for shortcuts" with an OSC title-change sequence spliced
+    // between "f" and "or", the way a terminal title repaint can interleave
+    // with footer output. Without stripping the OSC bytes
+    // (\x1b]0;...\x07), "for" is never contiguous and the marker regex
+    // cannot match - this chunk only reads as idle once the OSC run is
+    // removed.
+    const chunk = '? f\x1b]0;agy - my-project\x07or shortcuts';
+    expect(detectIdle?.(chunk)).toBe(true);
+  });
+
   it('reports first output on any nonempty chunk', () => {
     expect(adapter.detectFirstOutput('W')).toBe(true);
     expect(adapter.detectFirstOutput('')).toBe(false);
@@ -357,6 +394,41 @@ describe('print-runner response extraction', () => {
 });
 
 // ---------------------------------------------------------------------------
+// AntigravityAdapter.summarize: wiring into the mocked runAntigravityPrint
+// (a hidden-PTY runner - see the top-of-file vi.mock and its rationale), plus
+// the empty-output throw when cleanup strips the print run down to nothing.
+// ---------------------------------------------------------------------------
+
+describe('AntigravityAdapter.summarize', () => {
+  beforeEach(() => {
+    runAntigravityPrintMock.mockReset();
+  });
+
+  it('wires the wrapped prompt through runAntigravityPrint and returns the cleaned title', async () => {
+    runAntigravityPrintMock.mockResolvedValue('  Fix the login timeout bug.  ');
+
+    const title = await adapter.summarize('fix the login timeout bug', '/usr/local/bin/agy', '/project');
+
+    expect(title).toBe('Fix the login timeout bug');
+    expect(runAntigravityPrintMock).toHaveBeenCalledTimes(1);
+    const [cliPath, prompt] = runAntigravityPrintMock.mock.calls[0] as [string, string];
+    expect(cliPath).toBe('/usr/local/bin/agy');
+    expect(prompt).toContain('fix the login timeout bug');
+  });
+
+  it('throws "summarize produced empty output" when cleanup strips the print run down to nothing', async () => {
+    // A fenced code block with no surrounding text: cleanSummarizeOutput
+    // collapses the whole fence to a single space and finds no non-empty
+    // first line, yielding ''.
+    runAntigravityPrintMock.mockResolvedValue('```\nno title text here\n```');
+
+    await expect(
+      adapter.summarize('fix the login timeout bug', '/usr/local/bin/agy', '/project'),
+    ).rejects.toThrow('summarize produced empty output');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Transcript parsing (fixture mirrors real brain-dir transcript.jsonl steps)
 // ---------------------------------------------------------------------------
 
@@ -379,10 +451,10 @@ function writeTranscriptFixture(): string {
 }
 
 describe('parseAntigravityTranscriptFile', () => {
-  it('maps steps to entries, sorted by step_index with decoded tool args', () => {
+  it('maps steps to entries, sorted by step_index with decoded tool args', async () => {
     const filePath = writeTranscriptFixture();
     try {
-      const parsed = parseAntigravityTranscriptFile(filePath);
+      const parsed = await parseAntigravityTranscriptFile(filePath);
       expect(parsed.sourcePath).toBe(filePath);
       expect(parsed.entries.map((entry) => entry.kind)).toEqual([
         'user', 'assistant', 'tool_result', 'system', 'assistant',
@@ -415,12 +487,12 @@ describe('parseAntigravityTranscriptFile', () => {
     }
   });
 
-  it('never throws on a corrupt or partially flushed transcript', () => {
+  it('never throws on a corrupt or partially flushed transcript', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-transcript-'));
     const filePath = path.join(dir, 'transcript.jsonl');
     try {
       fs.writeFileSync(filePath, '{"step_index":0,"type":"USER_INPUT","content":"<USER_REQUEST>\\nhi\\n</USER_REQUEST>"}\n{"step_index":1,"typ');
-      const parsed = parseAntigravityTranscriptFile(filePath);
+      const parsed = await parseAntigravityTranscriptFile(filePath);
       expect(parsed.entries).toHaveLength(1);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
@@ -431,7 +503,7 @@ describe('parseAntigravityTranscriptFile', () => {
     expect(extractUserRequestText('plain prompt')).toBe('plain prompt');
   });
 
-  it('does not attach an ERROR_MESSAGE to a stale tool call from an earlier step', () => {
+  it('does not attach an ERROR_MESSAGE to a stale tool call from an earlier step', async () => {
     // A tool-bearing PLANNER_RESPONSE (step 0), then a TEXT-ONLY
     // PLANNER_RESPONSE (step 1, no tool_calls) that must reset the "most
     // recent tool call" anchor, then an ERROR_MESSAGE (step 2). Without the
@@ -446,7 +518,7 @@ describe('parseAntigravityTranscriptFile', () => {
     const filePath = path.join(dir, 'transcript.jsonl');
     try {
       fs.writeFileSync(filePath, steps);
-      const parsed = parseAntigravityTranscriptFile(filePath);
+      const parsed = await parseAntigravityTranscriptFile(filePath);
       // Only the two PLANNER_RESPONSE steps produce entries; the orphaned
       // ERROR_MESSAGE (no live tool call to attach to) produces none.
       expect(parsed.entries.map((entry) => entry.kind)).toEqual(['assistant', 'assistant']);
@@ -571,6 +643,26 @@ describe('AntigravityAdapter.transcriptToolCounts', () => {
   it('returns null when nothing is resolvable', async () => {
     expect(await adapter.transcriptToolCounts({})).toBeNull();
   });
+
+  it('returns null when a resolvable transcript parses fine but carries zero tool_calls', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-transcript-'));
+    const filePath = path.join(dir, 'transcript.jsonl');
+    try {
+      fs.writeFileSync(filePath, [
+        '{"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"2026-08-16T16:09:01Z","content":"<USER_REQUEST>\\nhow does auth work\\n</USER_REQUEST>"}',
+        '{"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-08-16T16:09:05Z","content":"It uses OAuth."}',
+      ].join('\n') + '\n');
+      // Sanity: the transcript DOES parse into real entries (proves this is
+      // the zero-tool_calls branch, not the "nothing resolvable" branch
+      // already covered above).
+      const parsed = await parseAntigravityTranscriptFile(filePath);
+      expect(parsed.entries.length).toBeGreaterThan(0);
+
+      expect(await adapter.transcriptToolCounts({ transcriptPath: filePath })).toBeNull();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -629,6 +721,88 @@ describe('parseAntigravityTranscript (async entry point)', () => {
     // for it under the (mocked, empty) home directory.
     const parsed = await parseAntigravityTranscript('00000000-0000-4000-8000-000000000000', '/project');
     expect(parsed).toEqual({ entries: [], sourcePath: null });
+  });
+});
+
+describe('AntigravityAdapter.transcriptToolCounts resolves path from agentSessionId', () => {
+  let sandboxHome: string;
+
+  beforeEach(() => {
+    sandboxHome = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-home-'));
+    homeOverride = sandboxHome;
+  });
+
+  afterEach(() => {
+    homeOverride = null;
+    fs.rmSync(sandboxHome, { recursive: true, force: true });
+  });
+
+  it('derives the transcript path via antigravityTranscriptPath when transcriptPath is not given', async () => {
+    const conversationId = '5d0e1f2a-6b3c-4d4e-9f5a-1234567890ab';
+    const logsDir = path.join(
+      sandboxHome, '.gemini', 'antigravity-cli', 'brain', conversationId,
+      '.system_generated', 'logs',
+    );
+    fs.mkdirSync(logsDir, { recursive: true });
+    fs.writeFileSync(path.join(logsDir, 'transcript.jsonl'), JSON.stringify({
+      step_index: 0,
+      source: 'MODEL',
+      type: 'PLANNER_RESPONSE',
+      status: 'DONE',
+      created_at: '2026-08-16T16:09:01Z',
+      tool_calls: [{ name: 'write_to_file', args: { TargetFile: '"C:/Users/dev/ws/x.txt"' } }],
+    }) + '\n');
+
+    // No transcriptPath given at all - only agentSessionId, proving
+    // resolution goes through antigravityTranscriptPath rather than the
+    // caller-supplied path.
+    const counts = await adapter.transcriptToolCounts({ agentSessionId: conversationId });
+
+    expect(counts?.toolCallCount).toBe(1);
+    expect(counts?.toolBreakdown).toEqual([
+      { toolName: 'write_to_file', callCount: 1, totalDurationMs: 0, interruptedCount: 0 },
+    ]);
+  });
+});
+
+describe('AntigravityAdapter.locateSessionHistoryFile', () => {
+  let sandboxHome: string;
+
+  beforeEach(() => {
+    sandboxHome = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-locate-'));
+    homeOverride = sandboxHome;
+  });
+
+  afterEach(() => {
+    homeOverride = null;
+    fs.rmSync(sandboxHome, { recursive: true, force: true });
+  });
+
+  it('returns the transcript path immediately when it already exists', async () => {
+    const conversationId = '7c8e9d10-1234-4abc-8def-0123456789ab';
+    const logsDir = path.join(
+      sandboxHome, '.gemini', 'antigravity-cli', 'brain', conversationId,
+      '.system_generated', 'logs',
+    );
+    fs.mkdirSync(logsDir, { recursive: true });
+    const filePath = path.join(logsDir, 'transcript.jsonl');
+    fs.writeFileSync(filePath, '');
+
+    const located = await adapter.locateSessionHistoryFile(conversationId, '/project');
+    expect(located).toBe(filePath);
+  });
+
+  it('polls up to 10x/500ms then gives up with null when the transcript never appears', async () => {
+    vi.useFakeTimers();
+    try {
+      const resultPromise = adapter.locateSessionHistoryFile('never-appears-uuid', '/project');
+      // 10 attempts * 500ms = 5000ms of sequential sleeps; advance past that
+      // with margin so the whole chained-timer sequence has room to unwind.
+      await vi.advanceTimersByTimeAsync(6000);
+      await expect(resultPromise).resolves.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -712,6 +886,51 @@ describe('discoverAntigravityCapabilities', () => {
       models: undefined,
       modelDisplayNames: undefined,
     });
+  });
+
+  it('sets supportsModelOverride without effortLevels when --help documents --model but not --effort', async () => {
+    respondInOrder(
+      'Usage: agy [options]\n  --model <name>  Model for the current CLI session\n',
+      'Fetching available models...\ngemini-3.1-pro-high\tGemini 3.1 Pro (High)\n',
+    );
+
+    const capabilities = await discoverAntigravityCapabilities('/usr/bin/agy');
+
+    expect(capabilities.supportsModelOverride).toBe(true);
+    expect(capabilities.effortLevels).toEqual([]);
+  });
+
+  it('sets effortLevels without supportsModelOverride when --help documents --effort but not --model', async () => {
+    respondInOrder('Usage: agy [options]\n  --effort <level>  Reasoning effort for the current session (low|medium|high)\n');
+
+    const capabilities = await discoverAntigravityCapabilities('/usr/bin/agy');
+
+    expect(capabilities.supportsModelOverride).toBe(false);
+    expect(capabilities.effortLevels).toEqual(['low', 'medium', 'high']);
+    // supportsModelOverride is false, so the `agy models` follow-up must
+    // never run.
+    expect(capabilities.models).toBeUndefined();
+  });
+
+  it('keeps supportsModelOverride true with no model list when the models fetch fails after a successful --help probe', async () => {
+    let callIndex = 0;
+    const respond = (...invocationArguments: unknown[]): void => {
+      const callback = callbackArgument(invocationArguments);
+      if (callIndex === 0) {
+        callIndex += 1;
+        callback(null, { stdout: 'Usage: agy\n  --model <name>  Model for the current CLI session\n', stderr: '' });
+        return;
+      }
+      callback(new Error('ETIMEDOUT: models fetch timed out'));
+    };
+    execMock.mockImplementation(respond);
+    execFileMock.mockImplementation(respond);
+
+    const capabilities = await discoverAntigravityCapabilities('/usr/bin/agy');
+
+    expect(capabilities.supportsModelOverride).toBe(true);
+    expect(capabilities.models).toBeUndefined();
+    expect(capabilities.modelDisplayNames).toBeUndefined();
   });
 
   it('caches per cliPath and only re-probes the CLI when forceRefresh is set', async () => {

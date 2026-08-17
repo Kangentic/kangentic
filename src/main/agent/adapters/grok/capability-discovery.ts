@@ -34,22 +34,28 @@ const HELP_TIMEOUT_MS = 5000;
  * cache file is grok's own; Kangentic never refetches the model list
  * itself - cli-features-over-custom-layers).
  */
-let discoveryMemo: AgentCapabilities | null = null;
+// Keyed by cliPath (mirroring antigravity/capability-discovery.ts): a
+// Settings save that repoints agent.cliPaths.grok rebuilds the agent list
+// WITHOUT forceRefresh, and an unkeyed memo would keep reporting the old
+// binary's capabilities.
+let discoveryMemo: { cliPath: string; capabilities: AgentCapabilities } | null = null;
 
 export async function discoverGrokCapabilities(
   cliPath: string,
   forceRefresh?: boolean,
 ): Promise<AgentCapabilities> {
-  if (discoveryMemo && !forceRefresh) return discoveryMemo;
+  if (discoveryMemo && discoveryMemo.cliPath === cliPath && !forceRefresh) {
+    return discoveryMemo.capabilities;
+  }
 
   const fromCache = readModelsCache();
   if (fromCache) {
-    discoveryMemo = fromCache;
+    discoveryMemo = { cliPath, capabilities: fromCache };
     return fromCache;
   }
 
   const fromHelp = await readHelpCapabilities(cliPath);
-  discoveryMemo = fromHelp;
+  discoveryMemo = { cliPath, capabilities: fromHelp };
   return fromHelp;
 }
 

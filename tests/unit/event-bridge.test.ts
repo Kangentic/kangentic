@@ -396,6 +396,21 @@ describe('event-bridge', () => {
     expect(readEvent().detail).toBeUndefined();
   });
 
+  it('extractDetailPath: first directive to resolve wins (extractDetail before extractDetailPath)', () => {
+    // extractDetail resolves event.detail from the top-level `message` field
+    // first. The later extractDetailPath's own nested container also has a
+    // matching field (`TargetFile`) with a DIFFERENT value - first-extraction-
+    // wins must keep the extractDetail value, not overwrite it.
+    const stdin = JSON.stringify({
+      message: 'first value',
+      toolCall: { args: { TargetFile: 'second value' } },
+    });
+    runBridge(stdin, [outputFile, 'tool_end',
+      extractDetail(['message']),
+      extractDetailPath(['toolCall', 'args'], ['TargetFile'])]);
+    expect(readEvent().detail).toBe('first value');
+  });
+
   // --- extractToolPath / extractDetailPath: non-object values mid-path ---
   //
   // Antigravity's own payload shape (`ctx.toolCall.name`,

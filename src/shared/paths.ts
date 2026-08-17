@@ -260,13 +260,16 @@ export function quoteArg(
  * POSIX format. Handles unquoted, double-quoted, and single-quoted paths;
  * single quotes are what `quoteArg` emits for unix-like shells.
  *
- * Double:   "C:\path with spaces\exe" --flag  →  "/c/path with spaces/exe" --flag
- * Single:   'C:\path\to\exe' --flag           →  '/c/path/to/exe' --flag
- * Unquoted: C:\path\to\exe --flag             →  /c/path/to/exe --flag
+ * Double:   "C:\path\to\exe" --flag  →  "/c/path/to/exe" --flag
+ * Single:   'C:\path\to\exe' --flag  →  '/c/path/to/exe' --flag
+ * Unquoted: C:\path\to\exe --flag    →  /c/path/to/exe --flag
  *
- * A single-quoted token STAYS single-quoted even without spaces: legal
- * Windows paths can contain shell-active characters (& $ parens), and the
- * quotes are what keep them inert in the target shell.
+ * A quoted token STAYS quoted (same quote character) even without spaces:
+ * legal Windows paths can contain shell-active characters (& $ parens), and
+ * the quotes are what keep them inert in the target shell. Double-quoted
+ * input keeps double quotes rather than upgrading to single quotes, because
+ * a path containing a literal single quote is representable inside double
+ * quotes but not inside a naive single-quoted rewrap.
  */
 export function convertWindowsExePath(cmd: string, isWsl: boolean): string {
   const convertDrivePath = isWsl ? toWslPath : toGitBashPath;
@@ -277,10 +280,7 @@ export function convertWindowsExePath(cmd: string, isWsl: boolean): string {
   if (cmd.startsWith('"\\\\')) {
     return cmd.replace(
       /^"(\\\\[^"]+)"/,
-      (_m, uncPath: string) => {
-        const posix = toForwardSlash(uncPath);
-        return posix.includes(' ') ? `"${posix}"` : posix;
-      },
+      (_m, uncPath: string) => `"${toForwardSlash(uncPath)}"`,
     );
   }
   if (cmd.startsWith("'\\\\")) {
@@ -300,13 +300,15 @@ export function convertWindowsExePath(cmd: string, isWsl: boolean): string {
   // backslash run has exactly one parse; the ambiguous `(?:\\[^X]+)+` shape
   // backtracks exponentially on adversarial input.
 
+  // Like the single-quoted branch below, the converted path is re-emitted
+  // quoted unconditionally: quoteArg's win32 fallback (a transient session
+  // with no shell hint) double-quotes the cliPath, and stripping the quotes
+  // on a spaceless path would let shell-active characters in a legal
+  // Windows path (& parens) become live bash syntax.
   if (cmd.startsWith('"')) {
     return cmd.replace(
       /^"([A-Za-z]):((?:\\[^"\\]*)+)"/,
-      (_m, drive: string, rest: string) => {
-        const posix = convertDrivePath(`${drive}:${rest}`);
-        return posix.includes(' ') ? `"${posix}"` : posix;
-      },
+      (_m, drive: string, rest: string) => `"${convertDrivePath(`${drive}:${rest}`)}"`,
     );
   }
 
