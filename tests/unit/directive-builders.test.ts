@@ -13,7 +13,10 @@ import { EventType } from '../../src/shared/types';
 import {
   extractTool,
   extractToolId,
+  extractToolPath,
   extractDetail,
+  extractDetailPath,
+  captureHookContext,
   setDetail,
   setTypeWhen,
   setTypeWhenDetailContains,
@@ -55,6 +58,17 @@ describe('directive builders - wire format contract', () => {
     ['setTypeWhenDetailMatches', setTypeWhenDetailMatches('^[\\w-]{1,64}$', EventType.BackgroundShellStart), 'setTypeWhenDetailMatches', { pattern: '^[\\w-]{1,64}$', to: 'background_shell_start' }],
     ['extractDetailPattern', extractDetailPattern('prompt', '<task-id>([\\w-]+)</task-id>'), 'extractDetailPattern', { field: 'prompt', pattern: '<task-id>([\\w-]+)</task-id>' }],
     ['emitOnlyWhenDetailMatches', emitOnlyWhenDetailMatches('^[\\w-]{1,64}$'), 'emitOnlyWhenDetailMatches', { pattern: '^[\\w-]{1,64}$' }],
+    // Nested-payload siblings (Antigravity's `ctx.toolCall.name` /
+    // `ctx.toolCall.args.TargetFile` shape) and the no-once-per-session
+    // hookContext opt-in. Each is its OWN wire kind for the fail-closed
+    // reason documented on the builders (a stale bridge copy rejects an
+    // unknown kind via `default` instead of misreading the payload) - a
+    // lockstep rename of the kind string here goes red the moment it drifts
+    // from event-bridge.js's `case` labels, since that would silently no-op
+    // on any deployed bridge copy still running the old kind name.
+    ['extractToolPath', extractToolPath(['toolCall', 'name']), 'extractToolPath', { path: ['toolCall', 'name'] }],
+    ['extractDetailPath', extractDetailPath(['toolCall', 'args'], ['TargetFile', 'CommandLine']), 'extractDetailPath', { parents: ['toolCall', 'args'], fields: ['TargetFile', 'CommandLine'] }],
+    ['captureHookContext', captureHookContext(), 'captureHookContext', {}],
   ];
 
   it.each(cases)('%s encodes to <kind>:<base64> and round-trips', (_label, directive, expectedKind, expectedPayload) => {
@@ -83,6 +97,12 @@ describe('directive builders - wire format contract', () => {
   it('throws on an empty field list (authoring mistake caught at build time)', () => {
     expect(() => extractDetail([])).toThrow();
     expect(() => extractToolId([])).toThrow();
+  });
+
+  it('extractToolPath and extractDetailPath throw on an empty segment list (authoring mistake caught at build time)', () => {
+    expect(() => extractToolPath([])).toThrow();
+    expect(() => extractDetailPath([], ['field'])).toThrow();
+    expect(() => extractDetailPath(['parent'], [])).toThrow();
   });
 
   it('setTypeWhen throws when both nested and field are provided (mutually exclusive)', () => {

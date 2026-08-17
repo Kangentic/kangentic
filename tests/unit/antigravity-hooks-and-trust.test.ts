@@ -45,10 +45,6 @@ import {
   type AntigravityHooksFile,
 } from '../../src/main/agent/adapters/antigravity/hook-manager';
 import { migrateAntigravityProjectData } from '../../src/main/agent/adapters/antigravity/project-relocation';
-import {
-  ensureLocalGitExcludes,
-  resolveGitCommonDir,
-} from '../../src/main/agent/adapters/antigravity/git-exclude';
 import { normalizeForCompare } from '../../src/main/agent/adapters/antigravity/trust-manager';
 
 let tmpRoot: string;
@@ -144,26 +140,40 @@ describe('buildHooks', () => {
     expect(merged[KANGENTIC_HOOK_NAME].Stop![0].command).toContain('../.kangentic/events.jsonl');
   });
 
-  it('PostToolUse directives carry the exact extractToolPath/extractDetailPath payload shape', () => {
-    // The command only carries opaque base64 directive tokens (see
-    // directive-builders.ts); decode them out of the built command string
-    // rather than substring-matching the directive KIND, so a change to the
-    // segment/field arrays themselves is caught.
+  // Decodes the ACTUAL base64 directive payloads the production call in
+  // hook-manager.ts writes (extractToolPath/extractDetailPath on PostToolUse,
+  // captureHookContext on PreInvocation), rather than substring-matching the
+  // opaque wire tokens like the tests above. A typo'd path segment or a
+  // dropped field in that call is invisible to `.toContain('extractToolPath:')`
+  // but must fail this decode.
+  it('decodes the production extractToolPath / extractDetailPath / captureHookContext payloads written to hooks.json', () => {
     const merged = buildHooks('../.kangentic/agy-event-bridge.cjs', '../.kangentic/sessions/s1/events.jsonl', {});
-    const command = merged[KANGENTIC_HOOK_NAME].PostToolUse![0].hooks[0].command;
+    const entry = merged[KANGENTIC_HOOK_NAME];
 
-    function decodeDirective(kind: string): unknown {
-      const token = command.split(' ').find((candidate) => candidate.startsWith(`${kind}:`));
-      if (!token) throw new Error(`no ${kind} directive found in: ${command}`);
-      const base64Payload = token.slice(kind.length + 1);
-      return JSON.parse(Buffer.from(base64Payload, 'base64').toString('utf8'));
+    function decodeDirective(token: string): { kind: string; payload: unknown } {
+      const separatorIndex = token.indexOf(':');
+      const kind = token.slice(0, separatorIndex);
+      const base64Payload = token.slice(separatorIndex + 1);
+      const payload: unknown = JSON.parse(Buffer.from(base64Payload, 'base64').toString('utf8'));
+      return { kind, payload };
     }
 
-    expect(decodeDirective('extractToolPath')).toEqual({ path: ['toolCall', 'name'] });
-    expect(decodeDirective('extractDetailPath')).toEqual({
+    const postToolUseTokens = entry.PostToolUse![0].hooks[0].command.split(' ');
+    const decodedToolPath = decodeDirective(postToolUseTokens[4]);
+    expect(decodedToolPath.kind).toBe('extractToolPath');
+    expect(decodedToolPath.payload).toEqual({ path: ['toolCall', 'name'] });
+
+    const decodedDetailPath = decodeDirective(postToolUseTokens[5]);
+    expect(decodedDetailPath.kind).toBe('extractDetailPath');
+    expect(decodedDetailPath.payload).toEqual({
       parents: ['toolCall', 'args'],
       fields: ['TargetFile', 'CommandLine', 'DirectoryPath', 'AbsolutePath', 'Query'],
     });
+
+    const preInvocationTokens = entry.PreInvocation![0].command.split(' ');
+    const decodedCapture = decodeDirective(preInvocationTokens[4]);
+    expect(decodedCapture.kind).toBe('captureHookContext');
+    expect(decodedCapture.payload).toEqual({});
   });
 });
 
@@ -176,6 +186,42 @@ describe('filterOurHooks', () => {
     };
     const kept = filterOurHooks(root);
     expect(Object.keys(kept)).toEqual(['mine']);
+  });
+
+  // Per-handler (not entry-level) filtering: a user-named entry mixing their
+  // own handler with a stale/renamed Kangentic command must lose only the
+  // Kangentic handler, never the user's own handler alongside it. Red against
+  // the old wholesale-drop code, which dropped the whole entry as soon as ANY
+  // handler fingerprinted as ours.
+  it('keeps the user handler and drops only the Kangentic-fingerprinted handler within the same named entry', () => {
+    const root: AntigravityHooksFile = {
+      mixed: {
+        PreInvocation: [
+          { type: 'command', command: './my-notify.sh' },
+          { type: 'command', command: 'node event-bridge.cjs ../.kangentic/e.jsonl prompt' },
+        ],
+      },
+    };
+    const kept = filterOurHooks(root);
+    expect(Object.keys(kept)).toEqual(['mixed']);
+    expect(kept.mixed.PreInvocation).toEqual([{ type: 'command', command: './my-notify.sh' }]);
+  });
+
+  it('drops a named entry whole when every one of its handlers is Kangentic-fingerprinted', () => {
+    const root: AntigravityHooksFile = {
+      allOurs: {
+        PreInvocation: [{ type: 'command', command: 'node event-bridge.cjs ../.kangentic/e.jsonl prompt' }],
+        Stop: [{ type: 'command', command: 'node event-bridge.cjs ../.kangentic/e.jsonl idle' }],
+      },
+    };
+    expect(filterOurHooks(root)).toEqual({});
+  });
+
+  it('leaves a handler-less user entry untouched (nothing to fingerprint)', () => {
+    const root: AntigravityHooksFile = {
+      disabledPlaceholder: { enabled: false },
+    };
+    expect(filterOurHooks(root)).toEqual({ disabledPlaceholder: { enabled: false } });
   });
 });
 
@@ -560,57 +606,14 @@ describe('removeAntigravityWorkspaceTrust', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Local git excludes for the runtime files
+// Local git excludes for the runtime files (seeding POLICY only; the shared
+// mechanism itself is covered in tests/unit/git-exclude.test.ts)
 // ---------------------------------------------------------------------------
 
 describe('git-exclude seeding', () => {
   function excludePath(): string {
     return path.join(workspace, '.git', 'info', 'exclude');
   }
-
-  it('resolves a plain .git directory and a worktree .git file with commondir', () => {
-    fs.mkdirSync(path.join(workspace, '.git'), { recursive: true });
-    expect(resolveGitCommonDir(workspace)).toBe(path.join(workspace, '.git'));
-
-    // Worktree layout: <repo>/.git/worktrees/<name> gitdir, commondir -> ../..
-    const repo = path.join(tmpRoot, 'repo');
-    const worktreeGitDir = path.join(repo, '.git', 'worktrees', 'task-1');
-    const worktreeCheckout = path.join(tmpRoot, 'checkout');
-    fs.mkdirSync(worktreeGitDir, { recursive: true });
-    fs.mkdirSync(worktreeCheckout, { recursive: true });
-    fs.writeFileSync(path.join(worktreeCheckout, '.git'), `gitdir: ${worktreeGitDir}\n`);
-    fs.writeFileSync(path.join(worktreeGitDir, 'commondir'), '../..\n');
-    expect(resolveGitCommonDir(worktreeCheckout)).toBe(path.join(repo, '.git'));
-  });
-
-  it('returns null for a .git FILE whose content does not match the gitdir pointer format', () => {
-    fs.writeFileSync(path.join(workspace, '.git'), 'not a gitdir pointer\n');
-    expect(resolveGitCommonDir(workspace)).toBeNull();
-  });
-
-  it('returns null outside a git checkout (seeding is a silent no-op)', () => {
-    expect(resolveGitCommonDir(workspace)).toBeNull();
-    ensureLocalGitExcludes(workspace, ['.agents/plugins/kangentic/']);
-    expect(fs.existsSync(excludePath())).toBe(false);
-  });
-
-  it('appends missing patterns under the marker, idempotently', () => {
-    fs.mkdirSync(path.join(workspace, '.git'), { recursive: true });
-    ensureLocalGitExcludes(workspace, ['.agents/plugins/kangentic/', '.kangentic/']);
-    ensureLocalGitExcludes(workspace, ['.agents/plugins/kangentic/', '.kangentic/']);
-    const content = fs.readFileSync(excludePath(), 'utf-8');
-    expect(content.split('\n').filter((line) => line === '.kangentic/')).toHaveLength(1);
-    expect(content).toContain('# kangentic:');
-  });
-
-  it('preserves an existing exclude file and appends with a separating newline', () => {
-    fs.mkdirSync(path.join(workspace, '.git', 'info'), { recursive: true });
-    fs.writeFileSync(excludePath(), '*.log'); // no trailing newline
-    ensureLocalGitExcludes(workspace, ['.agents/plugins/kangentic/']);
-    const lines = fs.readFileSync(excludePath(), 'utf-8').split('\n');
-    expect(lines[0]).toBe('*.log');
-    expect(lines).toContain('.agents/plugins/kangentic/');
-  });
 
   it('builder seeds excludes: hooks.json only when Kangentic creates it', () => {
     fs.mkdirSync(path.join(workspace, '.git'), { recursive: true });
@@ -653,6 +656,27 @@ describe('git-exclude seeding', () => {
     const content = fs.readFileSync(excludePath(), 'utf-8');
     expect(content).not.toContain('.agents/hooks.json');
     expect(content).toContain('.kangentic/');
+  });
+
+  it('seeds excludes for an MCP-only spawn (no eventsOutputPath) - the OR-gate\'s MCP disjunct', () => {
+    // Every other seeding test wires events AND MCP together; isolate the
+    // second half of the OR so an accidental AND-gating regression (seeding
+    // only when BOTH wirings are present) is caught.
+    fs.mkdirSync(path.join(workspace, '.git'), { recursive: true });
+    new AntigravityCommandBuilder().buildAntigravityCommand({
+      agyPath: '/usr/bin/agy',
+      taskId: 't1',
+      cwd: workspace,
+      permissionMode: 'default',
+      shell: 'bash',
+      mcpServerUrl: 'http://127.0.0.1:4123/mcp',
+      mcpServerToken: 'token-abc',
+    });
+
+    const content = fs.readFileSync(excludePath(), 'utf-8');
+    expect(content).toContain('.agents/plugins/kangentic/');
+    expect(content).not.toContain('.kangentic/');
+    expect(content).not.toContain('.agents/hooks.json');
   });
 });
 
@@ -735,6 +759,14 @@ describe('migrateAntigravityProjectData', () => {
     writeSettings({ trustedWorkspaces: ['/old/repo', '/new/repo'] });
     await migrateAntigravityProjectData('/old/repo', '/new/repo');
     expect(readSettings().trustedWorkspaces).toEqual(['/new/repo']);
+  });
+
+  it('collapses a duplicate: when newPath is already a trusted entry, migration leaves exactly one entry for it', async () => {
+    writeSettings({ trustedWorkspaces: ['/old/repo', '/new/repo', '/other'] });
+    await migrateAntigravityProjectData('/old/repo', '/new/repo');
+    const trustedWorkspaces = readSettings().trustedWorkspaces as string[];
+    expect(trustedWorkspaces.filter((entry) => entry === '/new/repo')).toHaveLength(1);
+    expect(trustedWorkspaces).toEqual(['/other', '/new/repo']);
   });
 
   it('logs and never throws when both settings.json and last_conversations.json are corrupt', async () => {

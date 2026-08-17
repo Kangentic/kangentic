@@ -36,6 +36,17 @@ import { ActivityDetection } from '../../../../shared/types';
 
 const CONVERSATION_UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 
+// Hoisted: sessionId.fromOutput runs on every raw PTY chunk until capture
+// lands (and for the no-hook fallback spawns, for the session's lifetime),
+// so the patterns compile once here rather than per chunk.
+const SHUTDOWN_CONVERSATION_RE = new RegExp(`agy\\s+--conversation=(${CONVERSATION_UUID})`);
+const PRINT_CONVERSATION_RE = new RegExp(`"conversation_id"\\s*:\\s*"(${CONVERSATION_UUID})"`);
+// Fallback for a truncated hookContext (the bridge caps the serialized
+// payload at 2048 chars, and agy's PreInvocation payload carries the full
+// prompt, so a long task description can push conversationId's JSON past
+// clean parseability even though the field itself made the cut).
+const HOOK_CONVERSATION_RE = new RegExp(`"conversationId"\\s*:\\s*"(${CONVERSATION_UUID})"`);
+
 /**
  * Google Antigravity CLI (`agy`) adapter. Every behavior below was verified
  * against a real agy 1.1.13 install (2026-08-16, the E1/E2/E3 rig runs):
@@ -145,7 +156,15 @@ export class AntigravityAdapter implements AgentAdapter {
    * channel), making this the model pill's ONLY source.
    */
   configuredModelFromCommand(command: string): { id: string; displayName: string } | null {
-    const match = command.match(/--model\s+(?:"([^"]+)"|'([^']+)'|(\S+))/);
+    // Search only the flag region before the prompt. agy has no end-of-options
+    // marker; the builder delivers the prompt exclusively via `-i`/`-p`, and no
+    // flag it emits before that point collides, so the first bare `-i`/`-p`
+    // token bounds the flags. Without this a task text containing a literal
+    // `--model <word>` would seed a bogus model pill that nothing ever
+    // corrects (no live telemetry channel).
+    const promptFlag = command.search(/\s-(?:i|p)\s/);
+    const flagRegion = promptFlag === -1 ? command : command.slice(0, promptFlag);
+    const match = flagRegion.match(/--model\s+(?:"([^"]+)"|'([^']+)'|(\S+))/);
     const id = match?.[1] ?? match?.[2] ?? match?.[3];
     if (!id) return null;
     return { id, displayName: antigravityModelDisplayName(id) };
@@ -333,13 +352,22 @@ export class AntigravityAdapter implements AgentAdapter {
           }
           return null;
         } catch {
+          // The bridge's 2048-char hookContext cap can truncate a large
+          // PreInvocation payload mid-structure. The field itself often
+          // survives inside the truncated prefix, so fall back to a direct
+          // scan before giving up (see HOOK_CONVERSATION_RE).
+          const truncatedMatch = hookContext.match(HOOK_CONVERSATION_RE);
+          if (truncatedMatch) {
+            console.log(`[antigravity] Captured conversation ID from truncated hook payload: ${truncatedMatch[1].slice(0, 16)}...`);
+            return truncatedMatch[1];
+          }
           return null;
         }
       },
       fromOutput(data) {
-        const shutdownMatch = data.match(new RegExp(`agy\\s+--conversation=(${CONVERSATION_UUID})`));
+        const shutdownMatch = data.match(SHUTDOWN_CONVERSATION_RE);
         if (shutdownMatch) return shutdownMatch[1];
-        const printMatch = data.match(new RegExp(`"conversation_id"\\s*:\\s*"(${CONVERSATION_UUID})"`));
+        const printMatch = data.match(PRINT_CONVERSATION_RE);
         return printMatch ? printMatch[1] : null;
       },
     },

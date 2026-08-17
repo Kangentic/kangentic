@@ -335,6 +335,50 @@ describe('Droid Adapter', () => {
     });
   });
 
+  describe('git-exclude seeding', () => {
+    const excludePath = () => path.join(tempDir, '.git', 'info', 'exclude');
+
+    const build = (overrides: Partial<SpawnCommandOptions> = {}) =>
+      adapter.buildCommand(makeOptions({
+        cwd: tempDir,
+        mcpServerEnabled: true,
+        mcpServerUrl: 'http://127.0.0.1:5555/mcp/project-123/sess-xyz',
+        mcpServerToken: 'secret-token',
+        ...overrides,
+      }));
+
+    beforeEach(() => {
+      fs.mkdirSync(path.join(tempDir, '.git'), { recursive: true });
+    });
+
+    it('seeds .factory/mcp.json and .kangentic/ when Kangentic creates the file', () => {
+      build();
+      const content = fs.readFileSync(excludePath(), 'utf-8');
+      expect(content).toContain('.factory/mcp.json');
+      expect(content).toContain('.kangentic/');
+    });
+
+    it('never excludes a pre-existing user mcp.json (created-by-us carve-out)', () => {
+      // Also pins the seed-BEFORE-write ordering: after the build the merged
+      // file always exists, so a post-write existence check could never
+      // distinguish the user's file from ours.
+      fs.mkdirSync(path.join(tempDir, '.factory'), { recursive: true });
+      fs.writeFileSync(
+        path.join(tempDir, '.factory', 'mcp.json'),
+        JSON.stringify({ mcpServers: { linear: { type: 'http', url: 'http://example.test/mcp' } } }),
+      );
+      build();
+      const content = fs.readFileSync(excludePath(), 'utf-8');
+      expect(content).not.toContain('.factory/mcp.json');
+      expect(content).toContain('.kangentic/');
+    });
+
+    it('seeds nothing when MCP wiring is disabled', () => {
+      build({ mcpServerEnabled: false });
+      expect(fs.existsSync(excludePath())).toBe(false);
+    });
+  });
+
   describe('interpolateTemplate', () => {
     it('replaces {{key}} placeholders', () => {
       const result = adapter.interpolateTemplate(

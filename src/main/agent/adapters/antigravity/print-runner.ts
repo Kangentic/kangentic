@@ -20,6 +20,11 @@ import type * as pty from 'node-pty';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+// The control-code core only (steps 1-5), DELIBERATELY without
+// stripAnsiEscapes' newline normalization and trailing-whitespace trim
+// (steps 6-8): those rewrite bytes that may sit inside the JSON payload
+// extracted below.
+import { stripAnsiControlCodes } from '../../../../shared/ansi-strip';
 import { ensureWorkspaceTrust } from './trust-manager';
 
 const PRINT_TIMEOUT_MS = 25_000;
@@ -30,25 +35,13 @@ function scratchDirectory(): string {
   return path.join(os.tmpdir(), 'kangentic-antigravity-print');
 }
 
-// Steps 1-5 of `stripAnsiEscapes` (src/shared/ansi-strip.ts), DELIBERATELY
-// without its newline normalization and trailing-whitespace trim (steps 6-8):
-// those rewrite bytes that may sit inside the JSON payload extracted below.
-function stripAnsi(text: string): string {
-  return text
-    .replace(/(?:\x1b[P\]X^_]|\x90|\x9d|\x9e|\x9f|\x98)[\s\S]*?(?:\x1b\\|\x07|\x9c)/g, '')
-    .replace(/(?:\x1b\[|\x9b)[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]/g, '')
-    .replace(/\x1b[\x20-\x7e]/g, '')
-    .replace(/[\x80-\x9f]/g, '')
-    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
-}
-
 /**
  * Pull the print-mode result object out of captured PTY output: the LAST
  * `{...}` JSON blob carrying a `response` field (PTY chrome like the clear
  * sequence and the shell's OSC title precede/follow it).
  */
 export function extractPrintResponse(rawOutput: string): string | null {
-  const cleaned = stripAnsi(rawOutput);
+  const cleaned = stripAnsiControlCodes(rawOutput);
   const candidates: string[] = [...(cleaned.match(/\{[\s\S]*?\}(?=\s*$|\s*\{)/g) ?? [])];
   // Also try a greedy whole-object match: the result JSON can contain nested
   // braces (usage object), which the lazy candidate split above would cut.
@@ -119,7 +112,11 @@ export async function runAntigravityPrint(cliPath: string, prompt: string): Prom
     const timer = setTimeout(() => finish(new Error('antigravity print run timed out')), PRINT_TIMEOUT_MS);
 
     printProcess.onData((data) => {
-      if (output.length < OUTPUT_CAP_BYTES) output += data;
+      // Retain the TAIL under the cap, not the head: extractPrintResponse
+      // reads the result JSON from the END of the captured stream, so a
+      // drop-forward guard would discard exactly the closing chunk that
+      // carries it once a chatty run crosses the cap.
+      output = (output + data).slice(-OUTPUT_CAP_BYTES);
     });
     printProcess.onExit(() => {
       // Give the final chunk a tick to land before parsing.

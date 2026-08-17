@@ -144,6 +144,72 @@ describe('GeminiCommandBuilder', () => {
     });
   });
 
+  describe('git-exclude seeding', () => {
+    let tmpDir: string;
+
+    const excludePath = () => path.join(tmpDir, '.git', 'info', 'exclude');
+
+    const build = (overrides: Partial<GeminiCommandOptions> = {}) =>
+      new GeminiCommandBuilder().buildGeminiCommand(baseOptions({
+        cwd: tmpDir,
+        mcpServerEnabled: true,
+        mcpServerUrl: 'http://127.0.0.1:5555/mcp/project-123/sess-xyz',
+        mcpServerToken: 'secret-token',
+        ...overrides,
+      }));
+
+    beforeEach(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kng-gemini-exclude-'));
+      fs.mkdirSync(path.join(tmpDir, '.git'), { recursive: true });
+    });
+
+    afterEach(() => {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('seeds .gemini/settings.json and .kangentic/ when Kangentic creates the file', () => {
+      build();
+      const content = fs.readFileSync(excludePath(), 'utf-8');
+      expect(content).toContain('.gemini/settings.json');
+      expect(content).toContain('.kangentic/');
+    });
+
+    it('never excludes a pre-existing user settings.json (created-by-us carve-out)', () => {
+      // Also pins the seed-BEFORE-write ordering: after the build the merged
+      // file always exists, so a post-write existence check could never
+      // distinguish the user's file from ours.
+      fs.mkdirSync(path.join(tmpDir, '.gemini'), { recursive: true });
+      fs.writeFileSync(
+        path.join(tmpDir, '.gemini', 'settings.json'),
+        JSON.stringify({ mcpServers: { context7: { httpUrl: 'http://example.test/mcp' } } }),
+      );
+      build({ projectRoot: tmpDir });
+      const content = fs.readFileSync(excludePath(), 'utf-8');
+      expect(content).not.toContain('.gemini/settings.json');
+      expect(content).toContain('.kangentic/');
+    });
+
+    it('seeds nothing when no settings write happens', () => {
+      build({ mcpServerEnabled: false });
+      expect(fs.existsSync(excludePath())).toBe(false);
+    });
+
+    it('an events-only spawn (no MCP) still seeds .gemini/settings.json and .kangentic/', () => {
+      // shouldWriteMergedSettings / seedGitExcludes are OR-gated on
+      // eventsOutputPath OR mcp wiring - either alone must trigger seeding.
+      // Regression guard against the two conditions drifting apart.
+      build({
+        mcpServerEnabled: false,
+        mcpServerUrl: undefined,
+        mcpServerToken: undefined,
+        eventsOutputPath: path.join(tmpDir, '.kangentic', 'sessions', 's1', 'events.jsonl'),
+      });
+      const content = fs.readFileSync(excludePath(), 'utf-8');
+      expect(content).toContain('.gemini/settings.json');
+      expect(content).toContain('.kangentic/');
+    });
+  });
+
   describe('permission modes', () => {
     it('default mode produces no flags', () => {
       const command = buildCommand({ permissionMode: 'default' });

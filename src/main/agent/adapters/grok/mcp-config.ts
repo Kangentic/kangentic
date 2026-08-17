@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { atomicWriteFileWithBackup } from '../../shared/relocation-utils';
 
 /**
  * Kangentic MCP server wiring for Grok Build.
@@ -48,7 +49,8 @@ const MANAGED_BLOCK = [
   '',
 ].join('\n');
 
-function configTomlPath(directory: string): string {
+/** Exported for the command builder's git-exclude created-by-us check. */
+export function configTomlPath(directory: string): string {
   return path.join(directory, '.grok', 'config.toml');
 }
 
@@ -87,7 +89,16 @@ export function writeMcpConfig(directory: string): void {
     const base = stripManagedBlock(existing);
     const separator = base.length === 0 || base.endsWith('\n') ? '' : '\n';
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, `${base}${separator}${MANAGED_BLOCK}`);
+    // Atomic (write-temp + rename): config.toml is the USER'S file, and this
+    // full rewrite runs on every spawn, so a crash mid-write must never leave
+    // it truncated (the trust-manager rewrite discipline). `backup: false`
+    // because rename-replace already preserves the original on any failure
+    // before the rename, and a per-spawn backup file would litter the
+    // user's `.grok/` dir.
+    atomicWriteFileWithBackup(filePath, `${base}${separator}${MANAGED_BLOCK}`, {
+      backup: false,
+      logTag: '[grok]',
+    });
   } catch (error) {
     console.error(`[grok] Failed to write MCP config: ${filePath}`, error);
   }
@@ -115,7 +126,9 @@ export function removeMcpConfig(directory: string): void {
       fs.rmSync(filePath, { force: true });
       try { fs.rmdirSync(path.dirname(filePath)); } catch { /* not empty or already gone */ }
     } else {
-      fs.writeFileSync(filePath, remaining);
+      // Atomic for the same reason as writeMcpConfig: `remaining` is purely
+      // the user's own content, so a crash mid-write must never truncate it.
+      atomicWriteFileWithBackup(filePath, remaining, { backup: false, logTag: '[grok]' });
     }
   } catch (error) {
     console.error(`[grok] Failed to clean up MCP config: ${filePath}`, error);

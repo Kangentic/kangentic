@@ -156,7 +156,11 @@ process.stdin.on('end', () => {
 
     switch (kind) {
       case 'extractTool': {
-        if (ctx && payload.field && ctx[payload.field] != null) event.tool = ctx[payload.field];
+        // Stringify + cap like firstNonNull: a non-primitive landing on the
+        // field must never embed an unbounded nested object into the JSONL.
+        if (ctx && payload.field && ctx[payload.field] != null) {
+          event.tool = String(ctx[payload.field]).slice(0, 200);
+        }
         break;
       }
       case 'extractToolPath': {
@@ -167,7 +171,8 @@ process.stdin.on('end', () => {
         for (const segment of payload.path) {
           value = value && typeof value === 'object' ? value[segment] : undefined;
         }
-        if (value != null) event.tool = value;
+        // Same stringify + cap contract as extractTool above.
+        if (value != null) event.tool = String(value).slice(0, 200);
         break;
       }
       case 'extractToolId': {

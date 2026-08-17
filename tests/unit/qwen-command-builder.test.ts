@@ -198,6 +198,73 @@ describe('QwenCommandBuilder', () => {
     });
   });
 
+  describe('git-exclude seeding', () => {
+    let tmpDir: string;
+
+    const excludePath = () => path.join(tmpDir, '.git', 'info', 'exclude');
+
+    const build = (overrides: Partial<QwenCommandOptions> = {}) =>
+      new QwenCommandBuilder().buildQwenCommand(baseOptions({
+        cwd: tmpDir,
+        projectRoot: tmpDir,
+        mcpServerEnabled: true,
+        mcpServerUrl: 'http://127.0.0.1:51234/mcp/proj-1',
+        mcpServerToken: 'test-token-abc',
+        ...overrides,
+      }));
+
+    beforeEach(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'qwen-cmd-exclude-'));
+      fs.mkdirSync(path.join(tmpDir, '.git'), { recursive: true });
+    });
+
+    afterEach(() => {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('seeds .qwen/settings.json and .kangentic/ when Kangentic creates the file', () => {
+      build();
+      const content = fs.readFileSync(excludePath(), 'utf-8');
+      expect(content).toContain('.qwen/settings.json');
+      expect(content).toContain('.kangentic/');
+    });
+
+    it('never excludes a pre-existing user settings.json (created-by-us carve-out)', () => {
+      // Also pins the seed-BEFORE-write ordering: after the build the merged
+      // file always exists, so a post-write existence check could never
+      // distinguish the user's file from ours.
+      fs.mkdirSync(path.join(tmpDir, '.qwen'), { recursive: true });
+      fs.writeFileSync(
+        path.join(tmpDir, '.qwen', 'settings.json'),
+        JSON.stringify({ mcpServers: { 'user-server': { httpUrl: 'http://example.com/mcp' } } }),
+      );
+      build();
+      const content = fs.readFileSync(excludePath(), 'utf-8');
+      expect(content).not.toContain('.qwen/settings.json');
+      expect(content).toContain('.kangentic/');
+    });
+
+    it('seeds nothing when no settings write happens', () => {
+      build({ mcpServerEnabled: false });
+      expect(fs.existsSync(excludePath())).toBe(false);
+    });
+
+    it('an events-only spawn (no MCP) still seeds .qwen/settings.json and .kangentic/', () => {
+      // shouldWriteMergedSettings / seedGitExcludes are OR-gated on
+      // eventsOutputPath OR mcp wiring - either alone must trigger seeding.
+      // Regression guard against the two conditions drifting apart.
+      build({
+        mcpServerEnabled: false,
+        mcpServerUrl: undefined,
+        mcpServerToken: undefined,
+        eventsOutputPath: path.join(tmpDir, '.kangentic', 'sessions', 's1', 'events.jsonl'),
+      });
+      const content = fs.readFileSync(excludePath(), 'utf-8');
+      expect(content).toContain('.qwen/settings.json');
+      expect(content).toContain('.kangentic/');
+    });
+  });
+
   /**
    * MCP server config tests touch the filesystem (`createMergedSettings`
    * writes `.qwen/settings.json` into options.cwd), so each test gets a

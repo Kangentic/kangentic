@@ -30,19 +30,51 @@ export async function migrateGrokProjectData(oldProjectPath: string, newProjectP
   for (const pair of pairs) {
     try {
       renameOrMergeDirectory(
-        path.join(sessionsRoot, cwdToSessionsDirName(pair.oldAbsolute)),
+        findSessionsDirForCwd(sessionsRoot, pair.oldAbsolute),
         path.join(sessionsRoot, cwdToSessionsDirName(pair.newAbsolute)),
       );
-    } catch (err) {
-      console.warn(`[GROK_RELOCATE] Failed to migrate sessions for ${pair.oldAbsolute}:`, err);
+    } catch (error) {
+      console.warn(`[GROK_RELOCATE] Failed to migrate sessions for ${pair.oldAbsolute}:`, error);
     }
   }
 
   try {
     rewriteTrustedFolderPaths(pairs);
-  } catch (err) {
-    console.warn('[GROK_RELOCATE] Failed to rewrite trusted_folders.toml:', err);
+  } catch (error) {
+    console.warn('[GROK_RELOCATE] Failed to rewrite trusted_folders.toml:', error);
   }
+}
+
+/**
+ * Resolve the on-disk sessions directory for a cwd, tolerating an encoding
+ * mismatch between the key we compute and the key grok actually wrote (e.g.
+ * a drive-letter casing difference on Windows) - the same hazard
+ * session-paths.ts's `findSessionDirAcrossCwds` defends the attach path
+ * against. The exact-encoded path wins when present; otherwise a one-level
+ * scan of the sessions root looks for a key that DECODES to the same path
+ * under `normalizeForCompare`. Falls back to the exact-encoded path (a
+ * no-op rename source) when nothing matches.
+ */
+function findSessionsDirForCwd(sessionsRoot: string, cwd: string): string {
+  const exact = path.join(sessionsRoot, cwdToSessionsDirName(cwd));
+  if (fs.existsSync(exact)) return exact;
+
+  let cwdKeys: string[];
+  try {
+    cwdKeys = fs.readdirSync(sessionsRoot);
+  } catch {
+    return exact;
+  }
+  for (const cwdKey of cwdKeys) {
+    try {
+      if (pathsEqual(decodeURIComponent(cwdKey), cwd)) {
+        return path.join(sessionsRoot, cwdKey);
+      }
+    } catch {
+      // Malformed percent-encoding in a foreign directory name - skip.
+    }
+  }
+  return exact;
 }
 
 function rewriteTrustedFolderPaths(

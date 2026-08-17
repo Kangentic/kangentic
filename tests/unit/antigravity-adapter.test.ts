@@ -142,6 +142,35 @@ describe('AntigravityAdapter identity', () => {
   });
 });
 
+// ── liveTelemetryUnsupported capability ─────────────────────────────────────
+//
+// Antigravity has no per-session telemetry channel Kangentic can subscribe
+// to (verified 1.1.13: neither the interactive transcript nor the hook
+// payloads carry usage). The adapter declares a static
+// `liveTelemetryUnsupported` affordance so ContextBar can render a static
+// pill instead of an indefinite spinner. Same droid-adapter.test.ts
+// precedent: (a) the field is defined, (b) the label is a non-empty string,
+// (c) the tooltip title contains the "Antigravity" product-name marker so an
+// accidental field-clear is caught.
+
+describe('AntigravityAdapter.liveTelemetryUnsupported', () => {
+  it('is defined on the adapter instance', () => {
+    expect(adapter.liveTelemetryUnsupported).toBeDefined();
+  });
+
+  it('unavailableLabel is a non-empty string', () => {
+    const label = adapter.liveTelemetryUnsupported?.unavailableLabel;
+    expect(typeof label).toBe('string');
+    expect(label!.length).toBeGreaterThan(0);
+  });
+
+  it('unavailableTitle contains "Antigravity" so an empty-field refactor is caught', () => {
+    const title = adapter.liveTelemetryUnsupported?.unavailableTitle;
+    expect(typeof title).toBe('string');
+    expect(title).toContain('Antigravity');
+  });
+});
+
 // ---------------------------------------------------------------------------
 // AntigravityDetector: binary probing and the platform-conditional
 // fallback-path list. Uses the private-config-access pattern already
@@ -292,6 +321,27 @@ describe('AntigravityAdapter session-id capture', () => {
     expect(adapter.runtime.sessionId?.fromHook?.('{}')).toBeNull();
     expect(adapter.runtime.sessionId?.fromHook?.('not json')).toBeNull();
   });
+
+  it('fromHook falls back to a direct scan on a valid-prefix-but-truncated payload (the bridge caps hookContext at 2048 chars)', () => {
+    const conversationId = '08939dbf-7975-4a3e-988e-54962828b379';
+    const fullPayload = JSON.stringify({
+      conversationId,
+      modelName: 'gemini-3.7-flash-high',
+      // Pads the serialized payload well past 2048 chars so the slice below
+      // lands mid-string, mirroring a real long task prompt in agy's
+      // PreInvocation payload.
+      prompt: 'x'.repeat(4000),
+    });
+    const truncated = fullPayload.slice(0, 2048);
+    expect(() => JSON.parse(truncated)).toThrow(); // sanity: this is genuinely invalid JSON
+    expect(adapter.runtime.sessionId?.fromHook?.(truncated)).toBe(conversationId);
+  });
+
+  it('fromHook returns null for truncated garbage whose surviving prefix has no conversationId', () => {
+    const truncated = JSON.stringify({ modelName: 'gemini-3.7-flash-high', prompt: 'y'.repeat(4000) }).slice(0, 2048);
+    expect(() => JSON.parse(truncated)).toThrow();
+    expect(adapter.runtime.sessionId?.fromHook?.(truncated)).toBeNull();
+  });
 });
 
 describe('AntigravityAdapter activity detection', () => {
@@ -333,6 +383,22 @@ describe('configuredModelFromCommand and model display names', () => {
 
   it('returns null when the command has no model override', () => {
     expect(adapter.configuredModelFromCommand('"/usr/local/bin/agy"')).toBeNull();
+  });
+
+  it('ignores a literal "--model" string that only appears inside the -i prompt text (no real flag present)', () => {
+    // The flag-region guard truncates the search at the first bare -i/-p
+    // token, so a task prompt containing "--model bug" must never seed a
+    // bogus model pill.
+    const command = "/usr/local/bin/agy -i '--model bug'";
+    expect(adapter.configuredModelFromCommand(command)).toBeNull();
+  });
+
+  it('still parses a real --model flag positioned before -i, even when the prompt text also contains "--model"', () => {
+    const command = "/usr/local/bin/agy --model 'gemini-3.1-pro-high' -i '--model bug'";
+    expect(adapter.configuredModelFromCommand(command)).toEqual({
+      id: 'gemini-3.1-pro-high',
+      displayName: 'Gemini 3.1 Pro (High)',
+    });
   });
 
   it('extracts a double-quoted --model value with a friendly display name', () => {
@@ -390,6 +456,12 @@ describe('print-runner response extraction', () => {
 
   it('returns null when no result object is present', () => {
     expect(extractPrintResponse('spinner noise only')).toBeNull();
+  });
+
+  it('resolves the response from the LATER of two JSON-shaped candidates when only it carries a response field (last-blob policy)', () => {
+    const raw = '{"conversation_id":"a1-progress-blob","status":"partial","usage":{}}\n'
+      + '{"conversation_id":"a2-result-blob","status":"done","response":"final title","usage":{}}';
+    expect(extractPrintResponse(raw)).toBe('final title');
   });
 });
 
@@ -803,6 +875,61 @@ describe('AntigravityAdapter.locateSessionHistoryFile', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AntigravityAdapter.locateSessionHistoryFile: the brain-dir transcript can
+// appear a beat after conversation-id capture, so the adapter polls briefly.
+// vi.useFakeTimers() drives the 500ms poll interval virtually.
+// ---------------------------------------------------------------------------
+
+describe('AntigravityAdapter.locateSessionHistoryFile', () => {
+  let sandboxHome: string;
+
+  beforeEach(() => {
+    sandboxHome = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-locate-'));
+    homeOverride = sandboxHome;
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    homeOverride = null;
+    fs.rmSync(sandboxHome, { recursive: true, force: true });
+  });
+
+  function transcriptPathFor(conversationId: string): string {
+    return path.join(
+      sandboxHome, '.gemini', 'antigravity-cli', 'brain', conversationId,
+      '.system_generated', 'logs', 'transcript.jsonl',
+    );
+  }
+
+  it('finds a transcript that appears mid-poll, after a few virtual 500ms ticks', async () => {
+    const conversationId = '08939dbf-7975-4a3e-988e-54962828b379';
+    const resultPromise = adapter.locateSessionHistoryFile(conversationId, '/project');
+
+    // The first couple of polling attempts see nothing yet.
+    await vi.advanceTimersByTimeAsync(500);
+    await vi.advanceTimersByTimeAsync(500);
+
+    // The transcript lands mid-poll.
+    const expectedPath = transcriptPathFor(conversationId);
+    fs.mkdirSync(path.dirname(expectedPath), { recursive: true });
+    fs.writeFileSync(expectedPath, '');
+
+    await vi.advanceTimersByTimeAsync(500);
+
+    await expect(resultPromise).resolves.toBe(expectedPath);
+  });
+
+  it('returns null after 10 polling attempts when the transcript never appears', async () => {
+    const resultPromise = adapter.locateSessionHistoryFile('never-appears-uuid', '/project');
+
+    await vi.advanceTimersByTimeAsync(500 * 10);
+
+    await expect(resultPromise).resolves.toBeNull();
   });
 });
 

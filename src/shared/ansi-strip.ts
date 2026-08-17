@@ -29,7 +29,15 @@
  *
  * The result is readable plain text. Not pretty, but complete.
  */
-export function stripAnsiEscapes(text: string): string {
+
+/**
+ * The control-code core of `stripAnsiEscapes` (steps 1-5): removes escape
+ * sequences and control bytes WITHOUT the whitespace normalization of steps
+ * 6-8, so callers that must preserve exact payload bytes (e.g. a JSON blob
+ * embedded in PTY output - see antigravity's print-runner) can share the
+ * hardened patterns instead of carrying a copy that silently drifts.
+ */
+export function stripAnsiControlCodes(text: string): string {
   // 1. String-type sequences terminated by ST (ESC \) or BEL:
   //    OSC (ESC ]), DCS (ESC P), APC (ESC _), PM (ESC ^), SOS (ESC X)
   //    Also handles 8-bit C1 initiators (\x9d for OSC, \x90 for DCS, etc.)
@@ -64,7 +72,10 @@ export function stripAnsiEscapes(text: string): string {
   // 5. C0 control characters except \t (0x09), \n (0x0a), \r (0x0d).
   //    Strips NUL, BEL, BS, VT, FF, SO, SI, DLE, DC1-DC4, NAK, SYN,
   //    ETB, CAN, EM, SUB, ESC (orphaned), FS, GS, RS, US, DEL.
-  result = result.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
+  return result.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
+}
+export function stripAnsiEscapes(text: string): string {
+  let result = stripAnsiControlCodes(text);
 
   // 6. Normalize line endings: \r\n -> \n, standalone \r -> \n
   result = result.replace(/\r\n/g, '\n');
