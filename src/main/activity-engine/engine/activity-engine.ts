@@ -380,12 +380,44 @@ export class ActivityEngine {
    * stability-window idle, and the idle-hint / retry-failure provenance
    * flags. Shared by `applyInterruptedBypass` (which additionally commits
    * idle) and `applyRetryableFailureHold` (which keeps the session thinking).
+   *
+   * `preserveSubagentDepth` keeps `state.subagentDepth` intact. It defaults to
+   * OFF so the idle-committing bypass keeps its historical behavior untouched;
+   * only the live-retry hold opts in. See the option's own doc below.
+   *
+   * `pendingToolCount` / `pendingToolStack` are deliberately NOT given the same
+   * opt-out. They are the same shape of loss (a wiped count also lets an
+   * `idle_hint` end the turn via `idleHintEndsTurn`), but they are weaker - the
+   * count is not in `derivePredicate`, and the turn-ending gate above keys only
+   * on `subagentDepth`, so a real parent Stop ends the turn either way - and
+   * restoring the count without its id-matched `pendingToolStack` would leave
+   * arriving `tool_end`s unable to match. Whether an in-flight FOREGROUND tool
+   * call survives a rate-limit retry is unverified; task #532 captured only the
+   * subagent case. Open question, deliberately left cleared.
    */
-  private resetInFlightCounters(state: SessionEngineState): void {
+  private resetInFlightCounters(
+    state: SessionEngineState,
+    options: {
+      /**
+       * Keep `subagentDepth` across the reset. Set only by
+       * `applyRetryableFailureHold`: a live `turn_retrying` leaves the agent
+       * CLI process RUNNING and its subagents with it - they survive the
+       * parent's API retry and self-heal through their own terminal
+       * `SubagentStop`. Zeroing the depth there discarded the only counter
+       * proving live work exists, and the decrement's `Math.max(0, ...)` clamp
+       * made the loss permanent, so every later idle / idle_hint sailed through
+       * the `subagentDepth === 0` turn-ending gate (task #532). Same premise as
+       * the `exemptBackgroundShellIds` carve-out below.
+       */
+      preserveSubagentDepth?: boolean;
+    } = {},
+  ): void {
     state.pendingIdleAt = null;
     state.pendingToolCount = 0;
     state.pendingToolStack.length = 0;
-    state.subagentDepth = 0;
+    if (!options.preserveSubagentDepth) {
+      state.subagentDepth = 0;
+    }
     state.activeBackgroundShellIds.clear();
     state.anonymousBackgroundShellCount = 0;
     // Neither `exemptBackgroundShellIds` nor `pendingExemptShellToolIds` is
@@ -440,16 +472,25 @@ export class ActivityEngine {
   }
 
   /**
-   * Hold the session `thinking` through a LIVE `turn_retrying` retry: reset
-   * the in-flight counters (decoupled cleanup, same as `applyInterruptedBypass`)
-   * but KEEP `turnActive` so `turnActive` becomes the sole watchdog holder and
-   * the existing 180s stale-thinking watchdog - not an immediate idle - is the
-   * arbiter of whether the turn is actually still alive. Each subsequent retry
-   * refreshes `lastSignalAt` (TurnRetrying is not in `LOG_ONLY_EVENTS`), so the
-   * net fires ~180s after the LAST retry, not the first. Sets
-   * `retryFailurePending` so the watchdog's `signal`-anchor narrowing engages
-   * (see `watchdogBaseTime`) - a parked-TUI retry countdown must not defer the
-   * net forever if the error turns out to be terminal.
+   * Hold the session `thinking` through a LIVE `turn_retrying` retry: reset the
+   * in-flight counters (decoupled cleanup, same as `applyInterruptedBypass`)
+   * EXCEPT `subagentDepth`, and KEEP `turnActive`, so a watchdog - not an
+   * immediate idle - is the arbiter of whether the turn is actually still
+   * alive. Each subsequent retry refreshes `lastSignalAt` (TurnRetrying is not
+   * in `LOG_ONLY_EVENTS`), so the net fires from the LAST retry, not the first.
+   * Sets `retryFailurePending` so the watchdog's `signal`-anchor narrowing
+   * engages (see `watchdogBaseTime`) - a parked-TUI retry countdown must not
+   * defer the net forever if the error turns out to be terminal.
+   *
+   * WHICH watchdog arbitrates depends on the preserved depth, and both are
+   * anchor-narrowed by `retryFailurePending`:
+   *   - depth 0: `turnActive` is the sole holder -> `timer:stale-thinking`
+   *     (180s, `parkedAnchor: 'signal'`).
+   *   - depth > 0: live subagents also hold -> `timer:stuck-subagent` (5 min,
+   *     `parkedAnchor: 'signal'` via its `parkedWhen`). Task #532 preserved the
+   *     depth, which made this hold reachable during a retry for the first
+   *     time; without its own narrowing a parked TUI's repaints would defer it
+   *     forever, reopening exactly what #367 closed for stale-thinking.
    */
   private applyRetryableFailureHold(
     sessionId: string,
@@ -457,7 +498,13 @@ export class ActivityEngine {
     before: ReturnType<typeof snapshotCounters>,
     event: SessionEvent,
   ): void {
-    this.resetInFlightCounters(state);
+    // The retry is LIVE: the agent CLI process, and every subagent it
+    // dispatched, is still running. Preserve the depth so a later idle /
+    // idle_hint cannot slip through the `subagentDepth === 0` turn-ending gate
+    // while those subagents work (task #532). They self-heal through their own
+    // terminal `SubagentStop`, and `timer:stuck-subagent` is the backstop for a
+    // dropped one.
+    this.resetInFlightCounters(state, { preserveSubagentDepth: true });
     // resetInFlightCounters clears retryFailurePending (it is shared with the
     // idle-committing bypass, which wants it off); re-arm it here for the
     // live-hold path so the watchdog's `signal`-anchor narrowing engages.
@@ -915,18 +962,21 @@ export class ActivityEngine {
    *   stale-thinking): the FRESHER of `lastSignalAt` and `lastPtyOutputAt` -
    *   streaming TUI output keeps a genuinely-running turn from being
    *   force-idled even when hooks and the status heartbeat are both silent.
-   * - `signal`: `lastSignalAt` only. Used by stale-thinking as its
-   *   `parkedAnchor`: once the agent is BELIEVED parked, parked-TUI statusline
-   *   repaints (PTY bytes) must stop deferring the 180s net, so it ignores
-   *   `lastPtyOutputAt`.
+   * - `signal`: `lastSignalAt` only. Used by stale-thinking and stuck-subagent
+   *   as their `parkedAnchor`: once the agent is BELIEVED parked, parked-TUI
+   *   statusline repaints (PTY bytes) must stop deferring the net, so it
+   *   ignores `lastPtyOutputAt`.
    *
    * A hold's `parkedAnchor` (when set) replaces `anchor` while the agent is
-   * BELIEVED parked: `state.idleHintPending` (it said so), OR
-   * `state.turnForcedByHeartbeat` (a hook-less resume-picker turn that can
-   * never fire an idle_hint - task #364), OR `state.retryFailurePending` (a
-   * live `turn_retrying` hold - a parked-TUI "retrying in Ns..." repaint
-   * during backoff must not defer the net forever if the error is actually
-   * terminal). `fallback` is returned when the relevant anchor(s) are null.
+   * BELIEVED parked. The DEFAULT parked test is `state.idleHintPending` (it
+   * said so), OR `state.turnForcedByHeartbeat` (a hook-less resume-picker turn
+   * that can never fire an idle_hint - task #364), OR
+   * `state.retryFailurePending` (a live `turn_retrying` hold - a parked-TUI
+   * "retrying in Ns..." repaint during backoff must not defer the net forever
+   * if the error is actually terminal). A hold may replace that test with its
+   * own `parkedWhen`; `stuck-subagent` does, narrowing to `retryFailurePending`
+   * alone so an idle_hint fired mid-subagent keeps the PTY anchor (task #237).
+   * `fallback` is returned when the relevant anchor(s) are null.
    */
   private watchdogBaseTime(
     state: SessionEngineState,
@@ -937,8 +987,12 @@ export class ActivityEngine {
     // anchor (stale-thinking -> `signal`) so statusline PTY repaints stop
     // deferring it. Mirrors `effectiveThreshold`'s idle_hint short-grace
     // selection, but broadened beyond `idleHintPending` (see field doc above).
-    const believedParked =
-      state.idleHintPending || state.turnForcedByHeartbeat || state.retryFailurePending;
+    // A hold may override which flags count as parked FOR IT (`parkedWhen`);
+    // `stuck-subagent` narrows to `retryFailurePending` alone so #237's
+    // idle_hint-mid-subagent case keeps the PTY anchor. See WatchdogHold.
+    const believedParked = hold.parkedWhen !== undefined
+      ? hold.parkedWhen(state)
+      : state.idleHintPending || state.turnForcedByHeartbeat || state.retryFailurePending;
     const anchor = believedParked && hold.parkedAnchor !== undefined
       ? hold.parkedAnchor
       : hold.anchor;

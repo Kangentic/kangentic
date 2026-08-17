@@ -889,7 +889,12 @@ describe('ActivityEngine replay tests', () => {
       const midRetry = loadFixture(FIXTURE).slice(0, MID_RETRY_SLICE_LENGTH);
       const result = replay(midRetry);
       expect(result.finalActivity).toBe('thinking');
-      expect(result.finalState.subagentDepth).toBe(0);
+      // The fixture's 3 Explore subagents are never stopped, so they are still
+      // LIVE mid-backoff. This asserted 0 until task #532: the retry hold
+      // zeroed the depth it had no business touching, which is what let a later
+      // idle / idle_hint end the parent's turn while those subagents worked.
+      // The hold now preserves it - see `preserveSubagentDepth`.
+      expect(result.finalState.subagentDepth).toBe(3);
       expect(result.finalState.pendingToolCount).toBe(0);
       expect(result.finalState.turnActive).toBe(true);
     });
@@ -910,6 +915,68 @@ describe('ActivityEngine replay tests', () => {
       expect(result.finalActivity).toBe('thinking');
       expect(result.finalState.pendingToolCount).toBe(0);
       expect(result.finalState.turnActive).toBe(true);
+    });
+  });
+
+  describe('session-028-turn-retrying-wipes-subagent-depth', () => {
+    // Task #532. Modeled on the real false-idle incident (session 7faa4308,
+    // task #527's Code Review agent): the board read idle while the CLI footer
+    // still reported `<- 1 agent` running `general-purpose` at 18m 53s, and the
+    // session later resumed on its own with no user input.
+    //
+    // A live `turn_retrying:rate_limit` zeroed `subagentDepth` through the
+    // shared `resetInFlightCounters`. Because the decrement is clamped
+    // (`Math.max(0, depth - 1)`), the named terminal `SubagentStop`s that did
+    // arrive could never restore it - depth stayed pinned at 0, so every later
+    // idle / idle_hint sailed through the `subagentDepth === 0` turn-ending
+    // gate. 11 turn-enders were let through in the real session while 2 to 11
+    // subagents were live.
+    //
+    // Sibling of `session-023-false-idle-server-error-retry`, which pins the
+    // retry hold itself (#367). This fixture pins what the hold must PRESERVE.
+    // Timestamps are the real incident's epoch values and are DOCUMENTARY only:
+    // this tier stamps `lastSignalAt` from `this.now()` under fake timers, not
+    // from `event.ts`, and advances no timers.
+    const FIXTURE = 'session-028-turn-retrying-wipes-subagent-depth.jsonl';
+    // Index 5 is the `turn_retrying:rate_limit`; slicing through it is the
+    // moment of the reset, before any of the turn-enders it wrongly unblocked.
+    const AT_RETRY_SLICE_LENGTH = 6;
+
+    it('preserves the live subagent depth across the retry hold', () => {
+      const atRetry = loadFixture(FIXTURE).slice(0, AT_RETRY_SLICE_LENGTH);
+      const result = replay(atRetry);
+      expect(result.finalActivity).toBe('thinking');
+      expect(result.finalState.subagentDepth).toBe(2);
+      expect(result.finalState.turnActive).toBe(true);
+    });
+
+    it('the post-retry idle / idle_hint never commit idle while subagents are live', () => {
+      const result = replay(loadFixture(FIXTURE));
+      // The defect is a COMMITTED idle, not the counter that causes it: three
+      // turn-enders (idle, idle_hint, idle) follow the retry while 2 subagents
+      // are still running. None may end the parent's turn.
+      expect(result.lastThinkingToIdleTrigger).toBeNull();
+      const firstActive = result.transitions.findIndex((activity) => activity !== 'idle');
+      expect(firstActive).toBeGreaterThanOrEqual(0);
+      expect(result.transitions.slice(firstActive)).not.toContain('idle');
+      // Still held, and held by the RIGHT thing: the surviving subagent, not a
+      // watchdog papering over the gap.
+      expect(result.finalActivity).toBe('thinking');
+      expect(result.finalState.subagentDepth).toBe(1);
+      expect(result.staleThinkingCompensations).toBe(0);
+      expect(result.forceThinkingCompensations).toBe(0);
+    });
+
+    it('the same stream idles if the retry were a terminal turn_failed instead (mechanical red-green)', () => {
+      // Retyping ONLY the event type proves the outcome pivots on the
+      // retryable-vs-terminal classification: a terminal abort still zeroes the
+      // depth through `applyInterruptedBypass`, so the following idle lands.
+      const asTerminal = loadFixture(FIXTURE).map((event) =>
+        event.type === EventType.TurnRetrying ? { ...event, type: EventType.TurnFailed } : event,
+      );
+      const result = replay(asTerminal);
+      expect(result.finalActivity).toBe('idle');
+      expect(result.finalState.subagentDepth).toBe(0);
     });
   });
 
@@ -1212,6 +1279,7 @@ describe('ActivityEngine replay tests', () => {
         'session-026-false-active-injected-ctrl-c-kills-subagent.jsonl',
         'session-027-preview-watcher-holds-active.jsonl',
         'session-027-preview-watcher-exempt.jsonl',
+        'session-028-turn-retrying-wipes-subagent-depth.jsonl',
       ];
       for (const name of fixtures) {
         const events = loadFixture(name);

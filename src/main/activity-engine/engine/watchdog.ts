@@ -16,13 +16,14 @@ import type { SessionEngineState, TransitionTrigger } from './shapes';
  *   alive even when hooks and the status heartbeat are silent, whether the
  *   turn is held by a foreground tool (stuck-pending-tools), a subagent
  *   (stuck-subagent), or tool-less generation (stale-thinking).
- * - `signal`: `lastSignalAt` only. Used by stale-thinking as its
- *   `parkedAnchor` (active while the agent is BELIEVED parked -
- *   `idleHintPending`, `turnForcedByHeartbeat` for a hook-less resume turn
- *   that can never fire an idle_hint (task #364), or `retryFailurePending` for
- *   a live `turn_retrying` hold (task #367)): once the agent is believed
+ * - `signal`: `lastSignalAt` only. Used as the `parkedAnchor` of stale-thinking
+ *   (active while the agent is BELIEVED parked - `idleHintPending`,
+ *   `turnForcedByHeartbeat` for a hook-less resume turn that can never fire an
+ *   idle_hint (task #364), or `retryFailurePending` for a live `turn_retrying`
+ *   hold (task #367)) and of stuck-subagent (narrowed by its own `parkedWhen`
+ *   to `retryFailurePending` alone - task #532): once the agent is believed
  *   parked, parked-TUI statusline repaints stream PTY bytes that must NOT
- *   defer the 180s net, so it ignores `lastPtyOutputAt`.
+ *   defer the net, so it ignores `lastPtyOutputAt`.
  */
 export type WatchdogAnchor =
   | 'bg-shell-hold-since'
@@ -58,9 +59,12 @@ export interface WatchdogHold {
    * Optional shortened threshold used INSTEAD of `thresholdMs` while
    * `state.idleHintPending` is set (the agent reported "waiting for your input"
    * but a counter is still stuck > 0 - the aborted/errored-turn signature). Only
-   * the `stuck-subagent` and `stuck-pending-tools` holds set this; the anchor is
-   * unchanged, so live work that keeps streaming PTY output still defers the
-   * (now shorter) deadline. Undefined holds always use `thresholdMs`.
+   * the `stuck-subagent` and `stuck-pending-tools` holds set this. This field
+   * shortens only the THRESHOLD; the anchor is chosen independently by
+   * `parkedAnchor` / `parkedWhen`, so live work that keeps streaming PTY output
+   * still defers the (now shorter) deadline - EXCEPT on `stuck-subagent` during
+   * a live retry hold, where `parkedWhen` narrows the anchor to `signal` (task
+   * #532). Undefined holds always use `thresholdMs`.
    */
   idleHintThresholdMs?: number;
   /**
@@ -88,16 +92,34 @@ export interface WatchdogHold {
    * to `idleHintThresholdMs` for the threshold, but broader: a hook-less resume
    * turn is genuinely parked yet can never fire an `idle_hint`, task #364), OR
    * `state.retryFailurePending` (a live `turn_retrying` hold whose parked-TUI
-   * "retrying in Ns..." repaints must not defer the net, task #367). Only
-   * stale-thinking sets it (`'signal'`): once the agent is believed parked,
-   * parked-TUI statusline repaints (PTY bytes) must stop deferring the 180s net,
-   * so the hold ignores `lastPtyOutputAt` and anchors to `lastSignalAt` alone. A
+   * "retrying in Ns..." repaints must not defer the net, task #367).
+   * stale-thinking and stuck-subagent both set it (`'signal'`), the latter
+   * narrowed to `retryFailurePending` alone by its own `parkedWhen` below
+   * (task #532): once the agent is believed parked, parked-TUI statusline
+   * repaints (PTY bytes) must stop deferring the net, so the hold ignores
+   * `lastPtyOutputAt` and anchors to `lastSignalAt` alone. A
    * live long-generation turn never fires `idle_hint` and is never
    * heartbeat-forced (it is thinking via a real turn hook), so its anchor stays
    * `signal-or-pty-output` and the PTY anchor still defers it (#246). Undefined
    * holds always use `anchor`.
    */
   parkedAnchor?: WatchdogAnchor;
+  /**
+   * Optional predicate replacing the DEFAULT believed-parked test for this
+   * hold's `parkedAnchor`. Undefined holds use the default
+   * (`idleHintPending || turnForcedByHeartbeat || retryFailurePending`) - see
+   * `watchdogBaseTime`.
+   *
+   * Only `stuck-subagent` sets it, narrowing to `retryFailurePending` alone.
+   * That hold must NOT narrow on `idleHintPending`: an idle_hint can fire
+   * mid-subagent (task #237), and #237's guarantee is precisely that a live
+   * subagent's streaming output keeps deferring the hold. Dropping
+   * `lastPtyOutputAt` there would reintroduce the parallel-subagent false idle.
+   * A live `turn_retrying` hold is the opposite case - the agent is believed
+   * parked in backoff, and its "retrying in Ns..." repaints must not defer the
+   * net forever if the error turns out to be terminal (task #532).
+   */
+  parkedWhen?(state: SessionEngineState): boolean;
   /** Mutates state to clear the stuck holder. Called once threshold fires. */
   reset(state: SessionEngineState): void;
   /**
@@ -327,6 +349,24 @@ export function buildWatchdogHolds(config: WatchdogConfig): readonly WatchdogHol
       idleHintThresholdMs: config.staleAfterIdleHintMs,
       trigger: 'timer:stuck-subagent',
       anchor: 'signal-or-pty-output',
+      // Task #532 made this hold reachable during a live `turn_retrying` for
+      // the first time (the retry hold now preserves `subagentDepth` instead of
+      // zeroing it, so this hold arbitrates where `stale-thinking` used to).
+      // Without a narrowing of its own, a parked TUI repainting "retrying in
+      // Ns..." streams real PTY bytes that would defer this net forever, which
+      // is exactly what #367 closed for `stale-thinking`. `parkedWhen` scopes
+      // the narrowing to the retry hold ONLY, so #237's idle_hint case keeps
+      // the full `signal-or-pty-output` anchor. Safe because ANY non-LOG_ONLY
+      // event refreshes `lastSignalAt` - the narrowed anchor itself - not just
+      // the turn-initiating ones (`tool_start` / `subagent_start`, which
+      // additionally clear `retryFailurePending` outright). `tool_end` and a
+      // plain `idle` qualify too; only `idle_hint` and `subagent_stop` are
+      // LOG_ONLY. So a wedged CLI emitting nothing but repaints is what is left
+      // to the cap - 5 min, or the 180s `staleAfterIdleHintMs` budget once an
+      // `idle_hint` has also fired (a combination task #532 made reachable
+      // here for the first time).
+      parkedAnchor: 'signal',
+      parkedWhen: (state) => state.retryFailurePending,
       reset: (state) => {
         state.subagentDepth = 0;
         // The matching named SubagentStop was lost along with, most likely,

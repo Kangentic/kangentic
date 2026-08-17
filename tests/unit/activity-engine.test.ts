@@ -1439,7 +1439,7 @@ describe('ActivityEngine', () => {
       syntheticEvents.length = 0;
     });
 
-    it('keeps the session thinking through a live retry, resetting the stuck counters', () => {
+    it('keeps the session thinking through a live retry, resetting the stuck counters but KEEPING subagent depth', () => {
       // An open subagent + tool, exactly like the false-idle incident's
       // in-flight TaskOutput tool and Explore subagents.
       engine.processEvent(SESSION_ID, event(EventType.SubagentStart, { detail: 'test-builder' }));
@@ -1451,8 +1451,18 @@ describe('ActivityEngine', () => {
       const state = engine.getState(SESSION_ID)!;
       expect(state.activity).toBe('thinking');
       expect(state.turnActive).toBe(true);
-      expect(state.subagentDepth).toBe(0);
+      // Asserted 0 until task #532. A rate-limit retry does not kill live
+      // subagents - they survive the parent's API retry and self-heal through
+      // their own terminal SubagentStop - so zeroing the depth here discarded
+      // the only counter proving live work exists, and the clamped decrement
+      // made that loss permanent. `pendingToolCount` deliberately still resets:
+      // see the note on `resetInFlightCounters`.
+      expect(state.subagentDepth).toBe(1);
       expect(state.pendingToolCount).toBe(0);
+      // The id-matched stack clears with the count. Asserted explicitly so a
+      // future symmetric "preserve the tool stack too" edit cannot leave a
+      // stale entry behind while the count still reads 0.
+      expect(state.pendingToolStack).toEqual([]);
       expect(state.retryFailurePending).toBe(true);
       expect(state.recentTransitions.at(-1)?.trigger).toBe('event:turn_retrying:server_error');
     });
@@ -1529,6 +1539,113 @@ describe('ActivityEngine', () => {
       }
       expect(engine.getState(SESSION_ID)?.activity).toBe('idle');
       expect(engine.getStatsSnapshot(SESSION_ID)?.compensationCounters.staleThinking).toBe(1);
+    });
+
+    it('a post-retry idle / idle_hint cannot end the turn while a subagent is live (task #532)', () => {
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+      engine.processEvent(SESSION_ID, event(EventType.SubagentStart, { detail: 'general-purpose' }));
+      engine.processEvent(SESSION_ID, event(EventType.TurnRetrying, { detail: 'rate_limit' }));
+      transitions.length = 0;
+
+      // Both turn-enders must be no-ops for the PARENT: the subagent is still
+      // running (the CLI footer's `<- 1 agent`), and only the preserved depth
+      // blocks the `subagentDepth === 0` gate.
+      engine.processEvent(SESSION_ID, event(EventType.Idle));
+      engine.processEvent(SESSION_ID, event(EventType.IdleHint, { detail: 'Claude is waiting for your input' }));
+      vi.advanceTimersByTime(TEST_STABILITY_WINDOW_MS + 50);
+
+      expect(engine.getState(SESSION_ID)?.activity).toBe('thinking');
+      expect(transitions).toHaveLength(0);
+
+      // The subagent's own terminal stop drains the depth - and the parent is
+      // still thinking, correctly: it is about to consume that result, and the
+      // Idle it already fired belonged to the subagent's inner loop. Only a
+      // fresh parent-level Idle, now seen at depth 0, ends the turn.
+      engine.processEvent(SESSION_ID, event(EventType.SubagentStop, { detail: 'general-purpose' }));
+      expect(engine.getState(SESSION_ID)?.subagentDepth).toBe(0);
+      expect(engine.getState(SESSION_ID)?.activity).toBe('thinking');
+
+      engine.processEvent(SESSION_ID, event(EventType.Idle));
+      vi.advanceTimersByTime(TEST_STABILITY_WINDOW_MS + 50);
+      expect(engine.getState(SESSION_ID)?.activity).toBe('idle');
+    });
+
+    it('does not defer the stuck-subagent net forever on parked-TUI repaints during a retry hold (task #532)', () => {
+      // The depth-> 0 sibling of the 'does not defer the stale-thinking net
+      // forever on parked-TUI PTY repaints during a retry hold' test above.
+      // Preserving the depth
+      // moves the arbiter from `stale-thinking` to `stuck-subagent`, which had
+      // no parkedAnchor - so a parked "retrying in Ns..." repaint would defer
+      // it forever. RED without `parkedWhen` on that hold.
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+      engine.processEvent(SESSION_ID, event(EventType.SubagentStart, { detail: 'general-purpose' }));
+      engine.processEvent(SESSION_ID, event(EventType.TurnRetrying, { detail: 'rate_limit' }));
+      expect(engine.getState(SESSION_ID)?.retryFailurePending).toBe(true);
+      expect(engine.getState(SESSION_ID)?.subagentDepth).toBe(1);
+
+      // NOTE: stuck-subagent is thresholded on `bgShellEscapeHatchMs`, NOT the
+      // stale timeout that stale-thinking sibling advances, and `effectiveThreshold`
+      // cannot shorten it here (idleHintPending is false by construction on the
+      // live-hold branch). Advancing the stale value would never fire the hold.
+      const stepMs = 200;
+      for (let elapsed = 0; elapsed < TEST_BG_SHELL_HATCH_MS + 400; elapsed += stepMs) {
+        vi.advanceTimersByTime(stepMs);
+        engine.markPtyOutput(SESSION_ID);
+      }
+
+      expect(engine.getState(SESSION_ID)?.activity).toBe('idle');
+      expect(engine.getStatsSnapshot(SESSION_ID)?.compensationCounters.stuckSubagent).toBe(1);
+    });
+
+    it('an idle_hint fired mid-subagent still keeps the PTY anchor (parkedWhen does not narrow #237)', () => {
+      // The guard on the `parkedWhen` narrowing: only `retryFailurePending`
+      // narrows stuck-subagent. An idle_hint can fire while a subagent is
+      // genuinely live (#237), and there the streaming output must still defer
+      // the hold. Same repaint loop, no retry - must stay thinking.
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+      engine.processEvent(SESSION_ID, event(EventType.SubagentStart, { detail: 'general-purpose' }));
+      engine.processEvent(SESSION_ID, event(EventType.IdleHint, { detail: 'Claude is waiting for your input' }));
+      expect(engine.getStatsSnapshot(SESSION_ID)?.idleHintPending).toBe(true);
+
+      const stepMs = 200;
+      for (let elapsed = 0; elapsed < TEST_STALE_AFTER_IDLE_HINT_MS + 400; elapsed += stepMs) {
+        vi.advanceTimersByTime(stepMs);
+        engine.markPtyOutput(SESSION_ID);
+      }
+
+      expect(engine.getState(SESSION_ID)?.activity).toBe('thinking');
+      expect(engine.getStatsSnapshot(SESSION_ID)?.compensationCounters.stuckSubagent).toBe(0);
+    });
+
+    it('a retry hold with a live subagent AND a pending idle_hint fires stuck-subagent on the short 180s budget, not the 5-min cap (task #532)', () => {
+      // Before #532, subagentDepth was already zeroed by the time any
+      // idle_hint could fire, so stuck-subagent's `subagentDepth > 0`
+      // predicate could never match alongside idleHintPending - this
+      // three-flag combination was structurally unreachable. Preserving
+      // depth through a live retry hold makes it reachable: idleHintPending
+      // shortens effectiveThreshold to the 180s staleAfterIdleHintMs budget
+      // instead of the 5-min bgShellEscapeHatchMs cap, and retryFailurePending
+      // narrows watchdogBaseTime's anchor to `signal` (PTY-blind) via
+      // parkedWhen. So a live subagent that emits no non-LOG_ONLY hook event
+      // gets reclaimed at ~180s even while PTY output streams. This test
+      // pins that as deliberate, not a regression.
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+      engine.processEvent(SESSION_ID, event(EventType.SubagentStart, { detail: 'general-purpose' }));
+      engine.processEvent(SESSION_ID, event(EventType.TurnRetrying, { detail: 'rate_limit' }));
+      engine.processEvent(SESSION_ID, event(EventType.IdleHint, { detail: 'Claude is waiting for your input' }));
+
+      expect(engine.getState(SESSION_ID)?.subagentDepth).toBe(1);
+      expect(engine.getState(SESSION_ID)?.retryFailurePending).toBe(true);
+      expect(engine.getStatsSnapshot(SESSION_ID)?.idleHintPending).toBe(true);
+
+      const stepMs = 200;
+      for (let elapsed = 0; elapsed < TEST_STALE_AFTER_IDLE_HINT_MS + 400; elapsed += stepMs) {
+        vi.advanceTimersByTime(stepMs);
+        engine.markPtyOutput(SESSION_ID);
+      }
+
+      expect(engine.getState(SESSION_ID)?.activity).toBe('idle');
+      expect(engine.getStatsSnapshot(SESSION_ID)?.compensationCounters.stuckSubagent).toBe(1);
     });
 
     it('forceThinking clears a live retryFailurePending hold (PTY tracker / heartbeat sees fresh activity mid-retry)', () => {
