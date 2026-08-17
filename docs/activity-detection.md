@@ -579,7 +579,7 @@ The fuzz tests complement the deterministic replay fixtures by exercising input 
 
 The engine itself emits synthetic events into the activity log via the `onSyntheticEvent` callback for two cases:
 
-- **Watchdog Idle/Timeout:** when the 180s stale-thinking watchdog, a bg-shell sole-holder hold (5-min named cap or 30s anonymous grace), or the 5-min stuck-pending-tools hatch fires. Pushed BEFORE the matching `onActivityChange` so the log entry appears before the state change.
+- **Watchdog Idle/Timeout:** when ANY of the five watchdog holds fires - `onTick` emits this uniformly for whichever hold `findActiveWatchdogHold` matched, before dispatching to that hold's compensation counter. That is the 180s stale-thinking watchdog, either bg-shell sole-holder hold (5-min named cap or 30s anonymous grace), the 5-min stuck-pending-tools hatch, or the 5-min stuck-subagent hatch. Pushed BEFORE the matching `onActivityChange` so the log entry appears before the state change.
 - **Natural-exit `BackgroundShellEnd`:** when the watcher infers a bg shell exited naturally. Detail is `IdleReason.NaturalExit` for `onNaturalExit` (anonymous count drain), or the shell_id for `onShellPidExited` (Tier A PID-exit) and `onNamedShellLikelyExited` (a PID-less named shell reclaimed by output quiescence in a persistent deficit).
 
 ## Test infrastructure
