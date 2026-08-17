@@ -9,6 +9,7 @@ import { BrowserPane } from '../../browser/BrowserPane';
 import { PriorityBadge } from '../../backlog/PriorityBadge';
 import { LabelPills } from '../../Pill';
 import { useTaskDetailHost } from './task-detail-host';
+import { taskDetailSurfaceFor } from '../../../utils/task-progress';
 import { QueuedPlaceholder } from './QueuedPlaceholder';
 import { taskHasDescriptionContent } from './description-content';
 import { AttachmentChipStrip } from '../AttachmentChipStrip';
@@ -66,6 +67,7 @@ interface TaskDetailBodyProps {
   isFocused: boolean;
   isArchived: boolean;
   isInTodo: boolean;
+  isInDone: boolean;
   hasSessionContext: boolean;
   sessionId: string | null;
   displayKind: SessionDisplayState['kind'];
@@ -99,6 +101,7 @@ export function TaskDetailBody({
   isFocused,
   isArchived,
   isInTodo,
+  isInDone,
   hasSessionContext,
   sessionId,
   displayKind,
@@ -304,8 +307,14 @@ export function TaskDetailBody({
   // <webview> (Browser pane) and the xterm canvas.
   const resizeCaptureOverlay = isSplitResizing && <div className="fixed inset-0 z-50 cursor-col-resize" />;
 
-  // Active terminal session
-  if (sessionId && displayKind !== 'queued' && displayKind !== 'suspended') {
+  // Active terminal session.
+  //
+  // Gated on the classifier rather than a chain of `kind !== ...` exclusions: a
+  // denylist adopts every kind added later, which is how a restore came to paint
+  // the outgoing session's dead terminal once 'preparing' started winning. The
+  // table in task-progress.ts is compile-enforced, so a new kind cannot land
+  // here by default.
+  if (sessionId && taskDetailSurfaceFor(displayKind) === 'terminal') {
     // Browser, Changes, and the Description peek are mutually exclusive; when one
     // shares the row with the terminal, a draggable divider sets the per-task split.
     const showDivider = rightPanelPresent && !changesExpanded;
@@ -374,7 +383,7 @@ export function TaskDetailBody({
   }
 
   // Queued
-  if (displayKind === 'queued') {
+  if (taskDetailSurfaceFor(displayKind) === 'queued-placeholder') {
     return <QueuedPlaceholder sessionId={sessionId} />;
   }
 
@@ -382,7 +391,7 @@ export function TaskDetailBody({
   // exists. The terminal area is otherwise blank here, so mirror the board
   // card's launch treatment - a centered muted spinner + the spawn status
   // label - and keep PreSpawnContextBar pinned at the bottom.
-  if (displayKind === 'preparing') {
+  if (taskDetailSurfaceFor(displayKind) === 'launch-overlay') {
     // No session/PTY yet, so the only right panel that applies is the Description
     // peek (Browser needs a live session; Changes is not offered here). It rides
     // the same split so it survives the transition into the running terminal.
@@ -408,8 +417,12 @@ export function TaskDetailBody({
     );
   }
 
-  // Suspended or toggling
-  if ((isSuspended || toggling) && !isArchived && !isInTodo) {
+  // Suspended or toggling. The big centered Play button is a resume surface, so
+  // it follows the same eligibility as the header toggle: main refuses an
+  // in-place resume for To Do, Done, and archived tasks. Done is checked
+  // alongside isArchived rather than folded into it, because a task placed
+  // directly in a Done-role column was never archived.
+  if ((isSuspended || toggling) && !isArchived && !isInTodo && !isInDone) {
     if (pendingCommandLabel) {
       return (
         <>

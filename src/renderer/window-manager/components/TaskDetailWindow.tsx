@@ -43,6 +43,7 @@ import {
   useTaskDetailHost,
 } from '../../components/dialogs/task-detail';
 import { useLayerStore } from '../context';
+import { taskDetailSurfaceFor } from '../../utils/task-progress';
 import { registerWindowCloser, unregisterWindowCloser } from '../store/window-close-registry';
 import { classifySnapZone, nextSnap } from '../dnd/snap-zones';
 import type { SnapDirection } from '../dnd/snap-zones';
@@ -181,8 +182,10 @@ export function TaskDetailWindow({
   // `displayKind` is the field that actually does the work here, not the two
   // flags the Resume prompt reads. TaskDetailBody picks its branch in order, and
   // the active-terminal branch is gated FIRST, on `sessionId && displayKind !==
-  // 'queued' && displayKind !== 'suspended'`. `displayKind` is derived straight
-  // from `session.status` (task-progress.ts), so the optimistic write flips it
+  // 'queued' && displayKind !== 'suspended' && displayKind !== 'preparing'`.
+  // `displayKind` is derived from `session.status` (task-progress.ts, which also
+  // lets an in-flight spawn label outrank a suspended session), so the
+  // optimistic write flips it
   // to 'suspended' on the same render that starts the fade. Freezing only
   // `isSuspended` / `toggling` therefore fails BOTH gates at once - the terminal
   // branch because displayKind is live-suspended, the resume branch because the
@@ -427,8 +430,15 @@ export function TaskDetailWindow({
     toggleChangesOpen(task.id);
   }, [browserOpen, changesOpen, descriptionPeekOpen, toggleBrowserOpen, toggleChangesOpen, task.id]);
 
+  // The Browser pane binds to a session id, so it must not be offered while one
+  // is being REPLACED: during a restore the outgoing session's id is still on
+  // the row (that is why the id check below passes), and opening a pane against
+  // it would re-register the guest the moment the new session lands. Excluded
+  // through the surface classifier rather than another `!== 'preparing'`, so a
+  // future pre-session kind is covered by mapping it in one table.
   const canShowBrowser = browserEnabled
     && !!sessionState.session?.id
+    && taskDetailSurfaceFor(sessionState.displayState.kind) !== 'launch-overlay'
     && sessionState.displayState.kind !== 'queued'
     && sessionState.displayState.kind !== 'suspended';
   const { copied: displayIdCopied, copy: copyDisplayId } = useCopyDisplayId(task.display_id);
@@ -740,6 +750,7 @@ export function TaskDetailWindow({
               isFocused={isFocused}
               isArchived={isArchived}
               isInTodo={isInTodo}
+              isInDone={sessionState.isInDone}
               hasSessionContext={hasSessionContext}
               sessionId={bodySessionView.sessionId}
               displayKind={bodySessionView.displayKind}

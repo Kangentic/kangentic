@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import { useSessionStore } from '../../../stores/session-store';
-import { useTaskProgress } from '../../../utils/task-progress';
+import { useTaskProgress, isActiveKind, hasSessionLifecycle } from '../../../utils/task-progress';
 import { isActive, requiresUserInteraction } from '../../../../shared/activity-state';
+import { resumeBlockReason } from '../../../../shared/session-resume-eligibility';
 import type { Task, Session } from '../../../../shared/types';
 
 interface TaskSessionState {
@@ -56,17 +57,30 @@ export function useTaskSessionState(input: {
 
   const displayState = useTaskProgress(input.task.id, session?.id);
 
-  const canToggle = !input.isInTodo && (
-    displayState.kind === 'running'
-    || displayState.kind === 'queued'
-    || displayState.kind === 'initializing'
-    || displayState.kind === 'suspended'
-    || displayState.kind === 'preparing'
-  );
-  const isSessionActive = displayState.kind === 'running'
-    || displayState.kind === 'queued'
-    || displayState.kind === 'initializing'
-    || displayState.kind === 'preparing';
+  // Main refuses an in-place resume for To Do, Done, and archived tasks, so the
+  // control must not be offered for them (a completed task in Done otherwise
+  // offers a Play button that recreates the worktree Done deleted and spawns a
+  // live agent on a card the board no longer shows).
+  //
+  // Pausing is deliberately NOT blocked: this one flag gates both directions,
+  // and this button is the only in-window stop for a session that is genuinely
+  // live. A view that drifted to 'suspended' while main holds a live PTY
+  // self-heals through the reconcile probe below, which flips isSessionActive
+  // back to true and restores Pause. To Do stays a separate factor because it
+  // hides both directions (its cards open straight into the edit form).
+  const resumeBlocked = resumeBlockReason({
+    laneRole: input.currentSwimlaneRole,
+    isArchived: input.isArchived,
+  }) !== null;
+
+  // Classified through the compile-enforced tables in task-progress.ts rather
+  // than literal chains, so a new display kind cannot silently inherit either
+  // answer (see the note above TASK_DETAIL_SURFACE).
+  const isSessionActive = isActiveKind(displayState.kind);
+
+  const canToggle = !input.isInTodo
+    && (isSessionActive || !resumeBlocked)
+    && hasSessionLifecycle(displayState.kind);
   const isQueued = displayState.kind === 'queued';
   const isSuspended = displayState.kind === 'suspended';
   // Activity-while-running, classified the same way the board card does
@@ -79,8 +93,7 @@ export function useTaskSessionState(input: {
   // Base session-context flag - excludes the "during-toggle transition"
   // compensation, which callers add in to keep the dialog large while
   // pendingAction is non-null.
-  const hasSessionContext = !input.isArchived
-    && (displayState.kind !== 'none' && displayState.kind !== 'exited');
+  const hasSessionContext = !input.isArchived && hasSessionLifecycle(displayState.kind);
 
   // Show Changes button when the task isn't in a terminal column.
   // Works with or without a branch/worktree - tasks on main show uncommitted working tree changes.
