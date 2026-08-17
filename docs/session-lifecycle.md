@@ -131,7 +131,7 @@ Session teardown varies by target column:
 
 - **To Do** (role=`todo`), via `TASK_MOVE` - full cleanup via `cleanupTaskResources()`: kills the PTY (via `SessionManager.remove()`), deletes session files from disk, deletes all session DB records for the task, and then removes the worktree and (when `git.autoCleanup` is on) force-deletes the branch. Destructive, which is why the drop is gated behind a pending-changes confirmation. Moving back to an active column spawns a fresh session.
 - **To Do** (role=`todo`), via `TASK_UNARCHIVE` / `TASK_BULK_UNARCHIVE` (restore from Done) - the SESSION-only half, `cleanupTaskSession()`. The worktree and branch are left alone. Without this the task keeps the session Done deliberately suspended, and since `listSessions()` has no status filter the restored card renders "Paused" for the rest of the app session. It is not the full `cleanupTaskResources()` on purpose: `deleteTaskWorktree` nulls `worktree_path` only when the Done-time removal SUCCEEDED, so a task whose worktree was pinned at Done time (routine on Windows) still carries both fields, and the full helper would re-attempt the removal and force-delete the branch holding its committed work with no confirmation on this route.
-- **Done** (role=`done`) - suspends session (preserves for resume via `SessionManager.suspend()`), archives task, and deletes the worktree to reclaim disk while preserving `branch_name` and the session records. The DB record is marked `suspended` so the session can be resumed if the task is later unarchived into an auto-spawn column.
+- **Done** (role=`done`) - suspends session (preserves for resume via `SessionManager.suspend()`), archives task, and deletes the worktree to reclaim disk while preserving `branch_name` and the session records. The DB record is marked `suspended` so the session can be resumed if the task is later unarchived into an auto-spawn column. That unarchive is the ONLY route back: resuming in place is refused for a Done or archived task (see [Where resume is refused](#where-resume-is-refused)), since it would recreate the worktree this move deleted.
 - **Any column with `auto_spawn=false`** - suspends session (same as Done, but without archiving). A restore into such a column keeps the suspended session and its Resume affordance; only a `role=todo` target resets it.
 
 ### What is preserved on suspend (Done / auto_spawn=false)
@@ -160,6 +160,71 @@ Session teardown varies by target column:
 8. Notify queue (slot freed)
 
 ## Resume
+
+### Where resume is refused
+
+`SESSION_RESUME` (the task detail's Pause/Resume toggle) restarts a suspended session **in
+place**, in the task's current column. It is refused for three states, resolved by one shared
+predicate (`src/shared/session-resume-eligibility.ts`) that both the main-process handler and the
+task detail read, and whose role set startup recovery shares:
+
+| State | Why |
+|---|---|
+| Lane role `todo` | A To Do card has not started; its detail opens straight into the edit form |
+| Lane role `done` | The task is complete. The route back is to move it OUT of Done |
+| `archived_at` set | Same, for a task archived without a live Done-role lane |
+
+Resuming a completed task in place would recreate the worktree the move to Done had just deleted
+and leave the task archived AND running at once, with no board card to show for it. The supported
+route is the recovery move below, which unarchives first and then spawns through the normal
+chokepoint, so the refusal never applies to it. The main-process guard is the contract; the task
+detail hides the control so it is never offered. Pausing a session that is genuinely live is NOT
+refused in any of those states, so a stray agent can still be stopped from the window showing it.
+
+### A resume with no conversation behind it is downgraded to fresh
+
+Kangentic pre-specifies `--session-id` for Claude and persists it on the session record AT SPAWN
+TIME, before the agent has done anything, while the agent CLI writes its transcript on the first
+turn. A session that ends before that turn therefore leaves a resumable-looking record pointing at
+a conversation that does not exist.
+
+That is reachable in seconds of ordinary use: the recovery move out of Done spawns command-free,
+so the agent comes up idle with nothing to do, and moving the task back to Done before typing
+suspends it with its id intact. Every later entry into an auto-spawn column then issued
+`--resume <id>`, the CLI answered "No conversation found with session ID", and the user was left on
+a bare shell with the record still reading `running` (the shell PTY outlives the CLI).
+
+`isResumeConversationAbsent` (`src/main/transition-engine/resume-conversation-guard.ts`) now
+downgrades that spawn to fresh at both chokepoints (`executeSpawnAgent` and `prepareAgentSpawn`).
+It fires only on positive evidence of an empty conversation, and all of these must hold:
+
+- the transcript path comes from the AGENT's own status report, never one Kangentic derived;
+- that same report independently shows no turns (no tokens, no cost);
+- the file it names is absent.
+
+Anything else - no status file, no status pipeline, malformed JSON, no reported transcript path -
+returns false and resumes exactly as before, so a conversation that had turns is never discarded.
+This is deliberately narrower than the `canResumeSession` transcript-presence guard reverted in
+#255 (see docs/adapter-session-history.md), whose false misses silently lost real conversations.
+The check walks every record sharing the conversation's `agent_session_id`, newest first, because a
+failed resume writes no status file of its own and would otherwise stay broken forever.
+
+### A restore reports progress instead of showing a Resume button
+
+Restoring from Done is slow (the worktree is recreated from the preserved branch, then the CLI
+boots) and the task's suspended record survives that whole window, so the UI used to advertise a
+manual "Resume session" button while the engine was already restoring the conversation. Two things
+now prevent that:
+
+- `TASK_UNARCHIVE` / `TASK_BULK_UNARCHIVE` thread `onProgress` into their git helpers exactly as
+  `task-move` does, and emit `resuming` immediately so the card is never silent while the lane is
+  resolved and the git op queues.
+- `getTaskProgress` lets an in-flight spawn label outrank a `suspended` session (only `suspended`;
+  a running or queued session owns its own display). An emitted label means main is spawning right
+  now, which is newer than a record suspended earlier.
+
+The task therefore shows the `preparing` launch overlay from about 100ms after the drop, through
+"Creating worktree..." and "Starting agent...", until the terminal takes over.
 
 When a suspended task moves to an active column:
 
