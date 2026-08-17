@@ -464,6 +464,20 @@ export class TaskRepository {
   }
 
   /**
+   * Clear the archive flag WITHOUT moving the task, the exact inverse of
+   * `archive()`.
+   *
+   * `unarchive()` below also rewrites swimlane_id and position, which suits the
+   * restore-from-the-Completed-list flow that picks a destination. A task move
+   * has already placed the row by the time it needs this, so re-running the
+   * placement there would fight `move()`'s own sibling reordering.
+   */
+  clearArchived(id: string): void {
+    const now = new Date().toISOString();
+    this.db.prepare('UPDATE tasks SET archived_at = NULL, updated_at = ? WHERE id = ?').run(now, id);
+  }
+
+  /**
    * Record the outcome of this task's most recent auto_command delivery.
    *
    * Deliberately NOT part of `update()`: this is engine telemetry, not a user

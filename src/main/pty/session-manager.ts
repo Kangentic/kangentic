@@ -1364,6 +1364,20 @@ export class SessionManager extends EventEmitter {
     // Mark suspended BEFORE killing so the async onExit handler preserves it
     session.status = 'suspended';
 
+    // ...and TELL the renderer now, not after the shutdown below. That await is
+    // up to 1500ms for a natural exit plus another 1500ms for kill propagation,
+    // and the bottom panel's tab set is `status === 'running'`
+    // (derivePanelSessions), so emitting only at the end left a tab for a
+    // session the user had already watched leave the board - the card gone, the
+    // agent gone, a dead terminal still tabbed for seconds. A user-initiated
+    // Pause never showed it because the store writes that status optimistically;
+    // a main-driven suspend (move to Done, idle timeout, settings restart) had
+    // no such write and wore the full delay.
+    //
+    // The trailing emit stays: it carries the post-shutdown session, including
+    // an agent session id recovered from the final scrollback scan below.
+    this.emit('session-changed', sessionId, toSession(session));
+
     // Resume a backpressure-paused PTY so the agent's exit-sequence output is
     // not held back during the graceful shutdown window.
     this.backpressure.release(sessionId);

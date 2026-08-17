@@ -240,6 +240,26 @@ export async function handleTaskMove(
         console.log(`[TASK_MOVE] Auto-archived task ${input.taskId.slice(0, 8)} (moved to Done)`);
       }
 
+      // The inverse, in the same tick and for the same reason. A move OUT of
+      // Done must clear the flag this handler set on the way in, or the task
+      // lands in a live column while still archived: absent from the board
+      // (every list query filters `archived_at IS NULL`) yet holding a worktree
+      // and, in an auto-spawn column, a running agent. That is the same
+      // "live agent with no card" state the Done/archived resume guard exists
+      // to prevent, reached through a different door.
+      //
+      // The UI never takes this path - dragging or restoring an archived card
+      // routes to TASK_UNARCHIVE - so this is reached by MCP `move_task` and
+      // any other main-process caller of handleTaskMove.
+      //
+      // Keyed on the task's own flag rather than the source lane's role, so a
+      // legacy archived row parked outside Done is repaired too. Moving WITHIN
+      // Done keeps its archive (toLane is still the done role).
+      if (task.archived_at !== null && toLane?.role !== 'done') {
+        tasks.clearArchived(input.taskId);
+        console.log(`[TASK_MOVE] Unarchived task ${input.taskId.slice(0, 8)} (moved out of Done)`);
+      }
+
       // Within-column reorder: no side effects needed
       if (fromSwimlaneId === input.targetSwimlaneId) return null;
 
