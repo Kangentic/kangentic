@@ -1622,6 +1622,44 @@ describe('migrateGrokProjectData', () => {
     expect(fs.existsSync(mismatchedSessionDir)).toBe(false);
   });
 
+  it('skips a sessions-root sibling whose name is malformed percent-encoding, without logging a rename failure', async () => {
+    // findSessionsDirForCwd's scan-and-decode fallback calls
+    // decodeURIComponent(cwdKey) on every sibling in the sessions root; a
+    // THIRD-PARTY (grok-written) directory name that is not valid
+    // percent-encoding (e.g. a lone "%" not followed by two hex digits) must
+    // be skipped, not propagate an uncaught URIError out of the scan.
+    //
+    // Deliberately no decodable match exists in this sessions root (only the
+    // malformed sibling), so this assertion cannot pass by accident of
+    // readdirSync ordering: on correct behavior the scan exhausts safely,
+    // falls back to the (non-existent) exact-encoded path, and
+    // renameOrMergeDirectory silently no-ops (relocation-utils.ts returns
+    // early when the source does not exist) - no warning is logged. On
+    // broken behavior (the guarding try/catch removed) decodeURIComponent
+    // throws INSIDE the scan; that throw propagates, uncaught, out of
+    // findSessionsDirForCwd and into migrateGrokProjectData's per-pair
+    // try/catch, which DOES log "[GROK_RELOCATE] Failed to migrate
+    // sessions" - so the assertion below is genuinely red against the
+    // unguarded scan, not vacuously true.
+    const home = useTempGrokHome();
+    const oldProject = path.join(home, 'old-project');
+    const newProject = path.join(home, 'new-project');
+    const sessionsRoot = path.join(home, 'sessions');
+
+    fs.mkdirSync(path.join(sessionsRoot, '%zz-not-percent-encoded'), { recursive: true });
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await expect(migrateGrokProjectData(oldProject, newProject)).resolves.toBeUndefined();
+
+    expect(warnSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining('[GROK_RELOCATE] Failed to migrate sessions'),
+      expect.anything(),
+    );
+
+    warnSpy.mockRestore();
+  });
+
   it('rewrites a double-quoted trust header for the old path, leaving an unrelated header untouched', async () => {
     // grok itself always writes single-quoted literals, but a double-quoted
     // key is legal TOML and must not be silently left pointing at the old
