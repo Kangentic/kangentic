@@ -2788,6 +2788,34 @@ describe('ActivityEngine', () => {
       expect(localEngine.getState(SESSION_ID)?.compensationCounters.staleThinking).toBe(0);
       localEngine.dispose();
     });
+
+    it('also fires despite continuous PTY repaints for a heartbeat-forced turn (task #364 disjunct, watchdogBaseTime default branch)', () => {
+      // Task #532 turned watchdogBaseTime's single believedParked expression
+      // into a ternary: `hold.parkedWhen(state)` when a hold sets one (only
+      // stuck-subagent does), else the original
+      // `idleHintPending || turnForcedByHeartbeat || retryFailurePending`.
+      // stale-thinking sets no parkedWhen, so it always takes that default
+      // arm. The idleHintPending disjunct is pinned above (task #294) and the
+      // retryFailurePending disjunct is pinned in the turn_retrying describe
+      // block (task #367) - each with its own PTY-narrowing loop. This is the
+      // third disjunct's: a hook-less heartbeat-forced turn (task #364) can
+      // never fire an idle_hint when it parks, so without this disjunct in
+      // the default arm a parked-TUI repaint would defer the net forever.
+      // RED if turnForcedByHeartbeat is dropped from that expression.
+      const { engine: localEngine } = makeEngine();
+      localEngine.initSession(SESSION_ID);
+      localEngine.forceThinking(SESSION_ID, true);
+      expect(localEngine.getState(SESSION_ID)?.turnForcedByHeartbeat).toBe(true);
+
+      const stepMs = 200;
+      for (let elapsed = 0; elapsed < TEST_STALE_TIMEOUT_MS + 400; elapsed += stepMs) {
+        vi.advanceTimersByTime(stepMs);
+        localEngine.markPtyOutput(SESSION_ID);
+      }
+      expect(localEngine.getState(SESSION_ID)?.activity).toBe('idle');
+      expect(localEngine.getState(SESSION_ID)?.compensationCounters.staleThinking).toBe(1);
+      localEngine.dispose();
+    });
   });
 
   describe('180s stale-thinking watchdog (hook loss safety net)', () => {
