@@ -209,7 +209,7 @@ export class TransitionEngine {
     // so cross-agent and main-vs-isolated resume mismatches are structurally
     // impossible (no guard needed). Resume is only attempted when agent_session_id
     // is non-null (real CLI session ID has been captured or pre-specified).
-    const intent = resolveSpawnIntent({
+    const spawnIntentOptions = {
       taskId: task.id,
       sessionType: adapter.sessionType,
       isolatedSwimlaneId,
@@ -218,7 +218,8 @@ export class TransitionEngine {
       templateVars: vars,
       resumePrompt,
       forceFresh: spawnOverrides?.forceFresh,
-    });
+    };
+    let intent = resolveSpawnIntent(spawnIntentOptions);
 
     // A resume whose conversation the agent never persisted (a session that
     // ended before its first turn - see resume-conversation-guard.ts) would
@@ -226,30 +227,41 @@ export class TransitionEngine {
     // a bare shell. Downgrade it to a fresh spawn instead. The probe only fires
     // on positive evidence of an empty conversation and returns false on every
     // uncertainty, so a real conversation is never discarded.
-    let canResume = intent.mode === 'resume';
-    // Every record that ran this conversation, newest first: a record whose CLI
-    // died on a failed resume wrote no status file, so the proof of emptiness
-    // can only be on an older one (see the guard's `recordIds` doc).
-    const conversationRecordIds = canResume
-      ? [
-          intent.retireRecordId,
-          ...(this.sessionRepo?.listForTaskNewestFirst(task.id) ?? [])
-            .filter((record) => record.agent_session_id === intent.agentSessionId)
-            .map((record) => record.id),
-        ]
-      : [];
-    if (canResume && await isResumeConversationAbsent({
-      adapter,
-      recordIds: conversationRecordIds,
-      projectPath: appConfig.projectPath || cwd,
-    })) {
-      console.log(
-        `[spawnAgent] Resume downgraded to fresh for task ${task.id.slice(0, 8)}:`
-        + ` agent session ${intent.agentSessionId?.slice(0, 8)} never wrote a conversation`
-        + ` (session ended before its first turn)`,
-      );
-      canResume = false;
+    if (intent.mode === 'resume') {
+      // Every record that ran this conversation, newest first: a record whose CLI
+      // died on a failed resume wrote no status file, so the proof of emptiness
+      // can only be on an older one (see the guard's `recordIds` doc). Built
+      // BEFORE the re-resolve below, which clears both fields it reads.
+      const conversationRecordIds = [
+        intent.retireRecordId,
+        ...(this.sessionRepo?.listForTaskNewestFirst(task.id) ?? [])
+          .filter((record) => record.agent_session_id === intent.agentSessionId)
+          .map((record) => record.id),
+      ];
+      if (await isResumeConversationAbsent({
+        adapter,
+        recordIds: conversationRecordIds,
+        projectPath: appConfig.projectPath || cwd,
+      })) {
+        console.log(
+          `[spawnAgent] Resume downgraded to fresh for task ${task.id.slice(0, 8)}:`
+          + ` agent session ${intent.agentSessionId?.slice(0, 8)} never wrote a conversation`
+          + ` (session ended before its first turn)`,
+        );
+        // Re-RESOLVE, rather than just clearing a boolean. The two branches of
+        // resolveSpawnIntent do not carry the same prompt: resume takes
+        // `resumePrompt` (undefined for an ordinary task spawn) while fresh
+        // interpolates `promptTemplate`. Flipping a flag would therefore boot a
+        // brand-new `--session-id` with NO task prompt - and a promptless
+        // session suspended before the user types is precisely the zero-turn
+        // conversation this guard detects, so the downgrade would seed its own
+        // next false positive. `forceFresh` takes the fresh branch whole: the
+        // interpolated prompt, a null agentSessionId, and the same poisoned
+        // record still retired.
+        intent = resolveSpawnIntent({ ...spawnIntentOptions, forceFresh: true });
+      }
     }
+    const canResume = intent.mode === 'resume';
 
     // agent_session_id: the agent CLI's real session ID for --resume/--session-id.
     // - Resume: use the captured/specified ID from the DB record, reconciled

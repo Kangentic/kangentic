@@ -315,8 +315,33 @@ describe('both spawn chokepoints apply the downgrade', () => {
   ])('%s calls isResumeConversationAbsent', (relativePath) => {
     const source = fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
     expect(source).toContain('isResumeConversationAbsent(');
-    // The downgrade has to be able to flip the decision, so the flag cannot be
-    // a `const` initialized from the resolver alone.
-    expect(source).toMatch(/let canResume/);
+  });
+
+  it('the board path re-resolves the intent instead of clearing a flag', () => {
+    // A `let canResume` that the guard flips to false is NOT enough, and asserting
+    // only that the `let` exists cannot tell the difference: the declaration alone
+    // satisfies it, so deleting the downgrade passed. Worse, flipping the flag
+    // leaves `intent.prompt` on the RESUME branch's value (`resumePrompt`,
+    // undefined for an ordinary task spawn), so the fresh spawn it produces comes
+    // up with no task prompt - itself a zero-turn conversation, which is exactly
+    // what this guard downgrades. Only re-running the resolver forceFresh takes
+    // the fresh branch's interpolated promptTemplate with it.
+    const source = fs.readFileSync(
+      path.join(repoRoot, 'src/main/transition-engine/transition-engine.ts'), 'utf8',
+    );
+    expect(source).toMatch(/resolveSpawnIntent\(\{ \.\.\.spawnIntentOptions, forceFresh: true \}\)/);
+    // And the decision is then READ from the re-resolved intent, not a stale flag.
+    expect(source).toMatch(/const canResume = intent\.mode === 'resume'/);
+  });
+
+  it('startup recovery is structurally promptless, so it only needs the flag', () => {
+    // prepare-spawn.ts passes `prompt: undefined` unconditionally - a recovered
+    // session never carries one - so there is no fresh-branch prompt for a
+    // downgrade to lose there. If that ever changes, this file's board-path
+    // re-resolve has to be mirrored into it.
+    const source = fs.readFileSync(
+      path.join(repoRoot, 'src/main/transition-engine/session-startup/prepare-spawn.ts'), 'utf8',
+    );
+    expect(source).toMatch(/prompt: undefined/);
   });
 });

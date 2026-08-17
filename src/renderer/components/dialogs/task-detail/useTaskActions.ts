@@ -6,6 +6,7 @@ import { useToastStore } from '../../../stores/toast-store';
 import { useTaskDetailHost } from './task-detail-host';
 import type { Task, Session, AgentCommand, Swimlane, PermissionMode, TaskRunMode } from '../../../../shared/types';
 import type { useBranchConfig } from './useBranchConfig';
+import { hasSessionLifecycle } from '../../../utils/task-progress';
 import type { useTaskProgress } from '../../../utils/task-progress';
 
 /**
@@ -173,8 +174,12 @@ export function useTaskActions(input: {
   // Includes a 5s safety timeout in case the transition never arrives.
   useEffect(() => {
     if (!pendingAction) return;
+    // "No session lifecycle left" is the ended bucket of SESSION_LIFECYCLE_PHASE
+    // ('none' / 'exited'), read through the compile-enforced table rather than
+    // re-listed here, so a kind added later cannot leave a pause hanging on the
+    // 5s timeout below.
     const reached = pendingAction === 'pausing'
-      ? (input.isSuspended || input.displayState.kind === 'none' || input.displayState.kind === 'exited')
+      ? (input.isSuspended || !hasSessionLifecycle(input.displayState.kind))
       : input.isSessionActive;
     if (reached) {
       setPendingAction(null);

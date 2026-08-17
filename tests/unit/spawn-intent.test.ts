@@ -344,4 +344,38 @@ describe('resolveSpawnIntent', () => {
     expect(intent.mode).toBe('fresh');
     expect(intent.resumeFromCwd).toBeNull();
   });
+
+  it('re-resolving forceFresh after a resume match takes the fresh branch whole, not a partial flip of the resume intent', () => {
+    // Mirrors the downgrade wiring in transition-engine.ts's executeSpawnAgent:
+    // on a resumable match whose conversation was never persisted
+    // (isResumeConversationAbsent), the engine RE-RESOLVES the same options with
+    // forceFresh: true rather than flipping a `canResume` boolean on the
+    // already-resolved (resume-mode) intent. This pins the two branches'
+    // incompatible `prompt` fields: a boolean flip would leave `prompt` on the
+    // resume branch's value (resumePrompt), never falling through to the fresh
+    // branch's interpolated promptTemplate - so a downgraded spawn would boot
+    // with no task prompt at all.
+    const record = mockSessionRecord({ status: 'suspended' });
+    const options = {
+      ...baseOptions,
+      sessionRepo: mockSessionRepo(record),
+      resumePrompt: '/review',
+    };
+
+    const resumeIntent = resolveSpawnIntent(options);
+    expect(resumeIntent.mode).toBe('resume');
+    expect(resumeIntent.prompt).toBe('/review');
+
+    const downgradedIntent = resolveSpawnIntent({ ...options, forceFresh: true });
+
+    expect(downgradedIntent.mode).toBe('fresh');
+    expect(downgradedIntent.agentSessionId).toBeNull();
+    expect(downgradedIntent.resumeFromCwd).toBeNull();
+    // Retires the SAME record the resume branch would have kept alive.
+    expect(downgradedIntent.retireRecordId).toBe(resumeIntent.retireRecordId);
+    // The whole point: the fresh branch's interpolated prompt, never the
+    // resume branch's resumePrompt ('/review').
+    expect(downgradedIntent.prompt).toBe('Fix bug: login broken');
+    expect(downgradedIntent.prompt).not.toBe(resumeIntent.prompt);
+  });
 });

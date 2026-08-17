@@ -188,8 +188,17 @@ describe('display-kind classifiers are total', () => {
     expect(taskDetailSurfaceFor('preparing')).toBe('launch-overlay');
     expect(taskDetailSurfaceFor('queued')).toBe('queued-placeholder');
     expect(taskDetailSurfaceFor('suspended')).toBe('resume-prompt');
-    expect(taskDetailSurfaceFor('exited')).toBe('inert');
     expect(taskDetailSurfaceFor('none')).toBe('inert');
+  });
+
+  it('keeps a finished agent on the terminal, so its scrollback stays readable', () => {
+    // Converting the old denylist (`kind !== 'queued' && kind !== 'suspended'`)
+    // to this table must not narrow it beyond the one intended exclusion above.
+    // 'exited' passed that gate, and the task detail is the ONLY surface that
+    // shows it: the bottom panel tabs `status === 'running'` only
+    // (panel-sessions.ts). Mapping it to 'inert' drops the user on "No active
+    // session" and takes the record of why the agent stopped with it.
+    expect(taskDetailSurfaceFor('exited')).toBe('terminal');
   });
 
   it('classifies the lifecycle phases the toggle reads', () => {

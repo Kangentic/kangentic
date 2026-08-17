@@ -28,6 +28,7 @@ import { TransitionEngine } from '../../src/main/transition-engine/transition-en
 import { buildTaskXml } from '../../src/main/agent/shared/prompt-xml';
 import { sanitizeForPty } from '../../src/shared/paths';
 import { migrateResumeCwdIfRenamed } from '../../src/main/transition-engine/resume-cwd-migration';
+import { ClaudeStatusParser } from '../../src/main/agent/adapters/claude/status-parser';
 import { OpenCodeCommandBuilder, type OpenCodeCommandOptions } from '../../src/main/agent/adapters/opencode';
 import { CodexCommandBuilder, type CodexCommandOptions } from '../../src/main/agent/adapters/codex';
 import type { AgentExecutionServer, AgentProjectExecution, AgentLaunchOptionInfo, SessionUsage } from '../../src/shared/types';
@@ -1149,5 +1150,173 @@ describe('TransitionEngine - MCP caller-session URL stamping (executeSpawnAgent 
     await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
 
     expect(capturedOptions?.mcpServerUrl).toBeUndefined();
+  });
+});
+
+describe('TransitionEngine - resume downgraded to fresh when the conversation was never persisted (executeSpawnAgent chokepoint)', () => {
+  // Coverage hole (review): executeSpawnAgent's downgrade path RE-RESOLVES the
+  // spawn intent (`resolveSpawnIntent({ ...spawnIntentOptions, forceFresh: true })`)
+  // when isResumeConversationAbsent proves a resumable match never persisted a
+  // conversation, rather than flipping a `canResume` boolean on the
+  // already-resolved resume intent. resolveSpawnIntent's own forceFresh
+  // contract is unit-pinned in spawn-intent.test.ts; what is untested here is
+  // the WIRING - that a real resumable record whose status.json proves a
+  // zero-turn conversation actually produces a built command carrying the
+  // interpolated promptTemplate, not the resume branch's resumePrompt
+  // (undefined for an ordinary task spawn). A boolean-flip regression leaves
+  // `intent` unchanged (still resume-mode, prompt = resumePrompt = undefined),
+  // so the downgraded spawn would boot with no task prompt at all - exactly
+  // the zero-turn conversation the guard exists to prevent.
+  //
+  // Uses a REAL mkdtemp projectPath (like the reconcile-wiring describe above)
+  // because isResumeConversationAbsent reads a real status.json from disk; this
+  // file's node:fs mock stubs mkdirSync only, so fs.promises.mkdir +
+  // fs.writeFileSync below reach the real filesystem.
+  const RECORD_ID = 'poisoned-record-1';
+  const AGENT_SESSION_ID = 'agent-uuid-poisoned';
+
+  let projectPath: string;
+
+  /** The exact reported state a session that ended before its first turn
+   * leaves behind: a named transcript_path that was never written, and zero
+   * cost/token usage. Mirrors resume-conversation-guard.test.ts's identical
+   * fixture, which pins that this shape makes isResumeConversationAbsent
+   * resolve true. Takes the record id so the lineage-walk test below can
+   * write it under an OLDER record than the one being retired. */
+  async function writeEmptyStatusFile(recordId: string): Promise<void> {
+    const sessionDir = path.join(projectPath, '.kangentic', 'sessions', recordId);
+    await fs.promises.mkdir(sessionDir, { recursive: true });
+    fs.writeFileSync(path.join(sessionDir, 'status.json'), JSON.stringify({
+      session_id: AGENT_SESSION_ID,
+      transcript_path: path.join(projectPath, 'history', `${AGENT_SESSION_ID}.jsonl`),
+      model: { id: 'claude-haiku-4-5-20251001', display_name: 'Haiku 4.5' },
+      cost: { total_cost_usd: 0, total_duration_ms: 1388, total_api_duration_ms: 0 },
+      context_window: {
+        total_input_tokens: 0,
+        total_output_tokens: 0,
+        context_window_size: 200000,
+        current_usage: null,
+        used_percentage: null,
+      },
+    }));
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAdapter.buildCommand.mockImplementation((options: { prompt?: string }) => {
+      return `claude ${options.prompt ?? ''}`;
+    });
+    projectPath = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-te-downgrade-'));
+    mockAdapter.runtime = { statusFile: { parseStatus: ClaudeStatusParser.parseStatus } };
+  });
+
+  afterEach(() => {
+    fs.rmSync(projectPath, { recursive: true, force: true });
+    mockAdapter.runtime = undefined;
+  });
+
+  it('spawns fresh with the interpolated prompt, not resumePrompt, when the resumable record never persisted a conversation', async () => {
+    await writeEmptyStatusFile(RECORD_ID);
+
+    const sessionRepo = makeSessionRepo();
+    sessionRepo.getLatestForTaskByTypeAndIsolation.mockReturnValue({
+      id: RECORD_ID,
+      agent_session_id: AGENT_SESSION_ID,
+      session_type: 'claude_agent',
+      status: 'suspended',
+      cwd: projectPath,
+    });
+
+    let capturedOptions: { resume?: boolean; sessionId?: string; prompt?: string } | undefined;
+    mockAdapter.buildCommand.mockImplementation((options: { resume?: boolean; sessionId?: string; prompt?: string }) => {
+      capturedOptions = options;
+      return `claude ${options.prompt ?? ''}`;
+    });
+
+    // worktree_path: null so `cwd` (task.worktree_path || appConfig.projectPath
+    // || process.cwd()) resolves to the same mkdtemp root writeEmptyStatusFile
+    // wrote under, matching makeTask's own default.
+    const task = makeTask({ worktree_path: null });
+    const sessionManager = makeSessionManager();
+    const { engine } = makeEngine({ sessionManager, sessionRepo, projectPath });
+
+    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
+
+    // Red: reverting executeSpawnAgent's
+    // `intent = resolveSpawnIntent({ ...spawnIntentOptions, forceFresh: true })`
+    // to a `canResume = false` boolean flip on the STALE resume intent (intent
+    // left unchanged) makes this undefined (intent.prompt = resumePrompt,
+    // never passed to this spawn) instead of the interpolated task_xml prompt.
+    expect(capturedOptions?.resume).toBe(false);
+    expect(capturedOptions?.prompt).toContain('Fix login flow');
+
+    expect(sessionManager.spawnedSessions).toHaveLength(1);
+
+    // The poisoned record is still retired even though the spawn goes fresh
+    // (forceFresh's retireRecordId carries the same match.id forward).
+    expect(sessionRepo.compareAndUpdateStatus).toHaveBeenCalledWith(
+      RECORD_ID,
+      ['suspended', 'orphaned', 'exited'],
+      'exited',
+      expect.objectContaining({ exited_at: expect.any(String) }),
+    );
+
+    expect(sessionRepo.insertedRecords).toHaveLength(1);
+    const inserted = sessionRepo.insertedRecords[0] as { agent_session_id?: string | null; prompt?: string | null };
+    // Fresh spawns generate their own PTY session id (Claude
+    // supportsCallerSessionId), never the stale DB-stored AGENT_SESSION_ID.
+    expect(inserted.agent_session_id).not.toBe(AGENT_SESSION_ID);
+    expect(inserted.prompt).toContain('Fix login flow');
+  });
+
+  it('walks the conversation lineage: finds the downgrade proof on an OLDER record when the retiring record wrote no status file', async () => {
+    // A failed resume is self-perpetuating (see resume-conversation-guard.ts's
+    // "heals an already-poisoned lineage" case): the CLI dies before its
+    // status line runs, so the RETIRING record has no status.json, and the
+    // proof of emptiness can only be found on an older record of the same
+    // conversation. `conversationRecordIds` in executeSpawnAgent spreads
+    // `listForTaskNewestFirst(...)` (filtered to the resumed agent_session_id)
+    // onto `intent.retireRecordId` for exactly this reason.
+    const OLDER_RECORD_ID = 'poisoned-record-older';
+    await writeEmptyStatusFile(OLDER_RECORD_ID);
+    // The retiring (latest) record's session dir exists but holds no
+    // status.json - exactly what a failed resume leaves behind.
+    await fs.promises.mkdir(path.join(projectPath, '.kangentic', 'sessions', RECORD_ID), { recursive: true });
+
+    const sessionRepo = makeSessionRepo();
+    sessionRepo.getLatestForTaskByTypeAndIsolation.mockReturnValue({
+      id: RECORD_ID,
+      agent_session_id: AGENT_SESSION_ID,
+      session_type: 'claude_agent',
+      status: 'suspended',
+      cwd: projectPath,
+    });
+    // Newest first, including a record from an UNRELATED conversation (a
+    // different agent_session_id) that must be filtered out, not walked.
+    sessionRepo.listForTaskNewestFirst.mockReturnValue([
+      { id: RECORD_ID, agent_session_id: AGENT_SESSION_ID },
+      { id: OLDER_RECORD_ID, agent_session_id: AGENT_SESSION_ID },
+      { id: 'unrelated-record', agent_session_id: 'a-different-conversation-id' },
+    ]);
+
+    let capturedOptions: { resume?: boolean; prompt?: string } | undefined;
+    mockAdapter.buildCommand.mockImplementation((options: { resume?: boolean; prompt?: string }) => {
+      capturedOptions = options;
+      return `claude ${options.prompt ?? ''}`;
+    });
+
+    const task = makeTask({ worktree_path: null });
+    const { engine } = makeEngine({ sessionRepo, projectPath });
+
+    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
+
+    // Red: dropping the `...listForTaskNewestFirst(...).filter(...).map(...)`
+    // spread (passing only `[intent.retireRecordId]`) leaves RECORD_ID as the
+    // only candidate. It has no status.json, so the guard finds no evidence
+    // and returns false (unknown -> resume as before), making this true
+    // instead - the task would stay stuck resuming a dead conversation
+    // forever.
+    expect(capturedOptions?.resume).toBe(false);
+    expect(capturedOptions?.prompt).toContain('Fix login flow');
   });
 });

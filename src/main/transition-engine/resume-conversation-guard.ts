@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { AgentAdapter } from '../agent/agent-adapter';
+import type { SessionUsage } from '../../shared/types';
 import { sessionOutputPaths } from './session-paths';
 
 /**
@@ -118,7 +119,10 @@ interface ConversationEvidence {
 /** The status line's report. Null when absent, malformed, or pathless. */
 function readStatusEvidence(
   sessionDir: string,
-  parseStatus: (raw: string) => { transcriptPath?: string; contextWindow: { usedTokens: number; totalInputTokens: number; totalOutputTokens: number }; cost: { totalCostUsd: number } } | null,
+  // The adapter's own signature, not a re-declared subset: a local structural
+  // copy typechecks against today's SessionUsage and then silently stops
+  // tracking it.
+  parseStatus: (raw: string) => SessionUsage | null,
 ): ConversationEvidence | null {
   const { statusOutputPath } = sessionOutputPaths(sessionDir);
   let raw: string;

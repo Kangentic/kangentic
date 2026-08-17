@@ -74,7 +74,7 @@ function deriveOverlayLabel(
 
 /** Which face the task-detail body paints. */
 export type TaskDetailSurface =
-  /** The live xterm for the task's session. */
+  /** The xterm for the task's session, live or finished (its scrollback). */
   | 'terminal'
   /** Spinner + spawn phase label: work is happening, no session to show yet. */
   | 'launch-overlay'
@@ -89,13 +89,18 @@ const TASK_DETAIL_SURFACE = {
   // A session exists and is producing output (its boot noise included).
   running: 'terminal',
   initializing: 'terminal',
+  // An agent that has finished keeps its terminal. The scrollback is the only
+  // record of WHY it exited, and this window is the only surface that shows it:
+  // the bottom panel's tab set is `status === 'running'` (panel-sessions.ts), so
+  // an exited session has no tab either. 'inert' here sends the user to "No
+  // active session" with the output still on disk but nowhere to read it.
+  exited: 'terminal',
   // Pre-session work. NOTE: during a restore the outgoing session's id is still
   // on the row, so this must not fall through to 'terminal' or the user watches
   // a dead shell while the agent is being restored.
   preparing: 'launch-overlay',
   queued: 'queued-placeholder',
   suspended: 'resume-prompt',
-  exited: 'inert',
   none: 'inert',
 } satisfies Record<SessionDisplayState['kind'], TaskDetailSurface>;
 

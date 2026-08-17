@@ -14,6 +14,11 @@ import { IPC } from '../../shared/ipc-channels';
 //   Base branch task:   starting-agent
 //   Has worktree:       starting-agent
 //   Cross-agent:        packaging-handoff → detecting-agent → starting-agent
+//   Restore from Done:  resuming → (whichever of the above the task needs)
+//
+// 'resuming' is emitted by TASK_UNARCHIVE / TASK_BULK_UNARCHIVE before any git
+// work, so the card is never silent while the lane resolves and the git op
+// queues. Every other phase is emitted by the git helpers themselves.
 //
 // QUERYABLE STATE (not just fire-once IPC): the latest in-flight label per
 // task is also retained in a module-level map so the renderer can re-derive

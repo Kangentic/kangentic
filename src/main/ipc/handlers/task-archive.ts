@@ -128,68 +128,71 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
       // card would otherwise still read "Paused".
       onProgress('resuming');
 
-      // Create worktree if needed (any non-backlog column gets an agent)
+      // ONE `finally` for the whole labelled region, rather than a clear in each
+      // exit branch. Every branch below retires the label unconditionally, so
+      // per-branch calls were pure duplication - and they covered only the
+      // branches someone remembered: the engine construction below (getProjectDb
+      // / new SessionRepository / createTransitionEngine) sat outside every
+      // `try`, so a throw there (a project DB closed by a concurrent switch)
+      // stranded the card on "Resuming session..." until the 120s TTL swept it.
       try {
-        await ensureTaskWorktree(context, task, tasks, resolvedProjectPath, { onProgress });
-      } catch (worktreeError) {
-        console.error('[TASK_UNARCHIVE] Worktree creation failed:', worktreeError);
-        clearSpawnProgress(context.mainWindow, task.id);
-        return tasks.getById(input.id);
-      }
-
-      // Checkout the task's branch in the main repo (non-worktree tasks only).
-      // If checkout fails, the task is still unarchived but no agent is spawned.
-      try {
-        await ensureTaskBranchCheckout(context, task, resolvedProjectPath, { onProgress });
-      } catch (checkoutError) {
-        console.error('[TASK_UNARCHIVE] Branch checkout failed:', checkoutError);
-        clearSpawnProgress(context.mainWindow, task.id);
-        notifyBranchCheckoutBlocked(context, task, checkoutError, resolvedProjectId);
-        return tasks.getById(input.id);
-      }
-
-      // Execute transition actions (from Done -> target) for ALL non-kill columns,
-      // via the shared spawn chokepoint (spawn preamble, transition actions,
-      // fallback spawn). Recovery move: unarchive is always the FIRST move out
-      // of Done, so suppressAutoCommand keeps the destination column's
-      // auto_command out of the resumed session - it comes up idle, ready for
-      // the user to inspect, matching startup recovery (resume-suspended.ts).
-      // The next normal move injects per column config. skipPromptTemplate for
-      // the same reason: an unarchived task is never a fresh "do this task" run.
-      if (resolvedProjectPath) {
-        const doneLane = swimlanes.list().find((l) => l.role === 'done');
-        if (doneLane) {
-          const db = getProjectDb(resolvedProjectId);
-          const sessionRepo = new SessionRepository(db);
-          const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachmentRepo, resolvedProjectId, resolvedProjectPath);
-
-          try {
-            await spawnAgent({
-              context, engine, tasks, sessionRepo, task,
-              fromSwimlaneId: doneLane.id,
-              toLane,
-              skipPromptTemplate: true,
-              suppressAutoCommand: true,
-              projectId: resolvedProjectId,
-              projectPath: resolvedProjectPath,
-              attachments: attachmentRepo,
-            });
-          } catch (err) {
-            console.error('[TASK_UNARCHIVE] Failed to start session:', err);
-          } finally {
-            // Mirrors task-move's Phase 3: the label must go once the spawn has
-            // resolved either way, so a task that never reaches a live session
-            // does not sit on "preparing" until the 120s TTL sweeps it.
-            clearSpawnProgress(context.mainWindow, task.id);
-          }
-        } else {
-          clearSpawnProgress(context.mainWindow, task.id);
+        // Create worktree if needed (any non-backlog column gets an agent)
+        try {
+          await ensureTaskWorktree(context, task, tasks, resolvedProjectPath, { onProgress });
+        } catch (worktreeError) {
+          console.error('[TASK_UNARCHIVE] Worktree creation failed:', worktreeError);
+          return tasks.getById(input.id);
         }
-      } else {
+
+        // Checkout the task's branch in the main repo (non-worktree tasks only).
+        // If checkout fails, the task is still unarchived but no agent is spawned.
+        try {
+          await ensureTaskBranchCheckout(context, task, resolvedProjectPath, { onProgress });
+        } catch (checkoutError) {
+          console.error('[TASK_UNARCHIVE] Branch checkout failed:', checkoutError);
+          notifyBranchCheckoutBlocked(context, task, checkoutError, resolvedProjectId);
+          return tasks.getById(input.id);
+        }
+
+        // Execute transition actions (from Done -> target) for ALL non-kill columns,
+        // via the shared spawn chokepoint (spawn preamble, transition actions,
+        // fallback spawn). Recovery move: unarchive is always the FIRST move out
+        // of Done, so suppressAutoCommand keeps the destination column's
+        // auto_command out of the resumed session - it comes up idle, ready for
+        // the user to inspect, matching startup recovery (resume-suspended.ts).
+        // The next normal move injects per column config. skipPromptTemplate for
+        // the same reason: an unarchived task is never a fresh "do this task" run.
+        if (resolvedProjectPath) {
+          const doneLane = swimlanes.list().find((l) => l.role === 'done');
+          if (doneLane) {
+            const db = getProjectDb(resolvedProjectId);
+            const sessionRepo = new SessionRepository(db);
+            const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachmentRepo, resolvedProjectId, resolvedProjectPath);
+
+            try {
+              await spawnAgent({
+                context, engine, tasks, sessionRepo, task,
+                fromSwimlaneId: doneLane.id,
+                toLane,
+                skipPromptTemplate: true,
+                suppressAutoCommand: true,
+                projectId: resolvedProjectId,
+                projectPath: resolvedProjectPath,
+                attachments: attachmentRepo,
+              });
+            } catch (err) {
+              console.error('[TASK_UNARCHIVE] Failed to start session:', err);
+            }
+          }
+        }
+
+        return tasks.getById(input.id);
+      } finally {
+        // Mirrors task-move's Phase 3: the label goes once the restore has
+        // resolved, whichever way, so a task that never reaches a live session
+        // does not sit on "preparing" until the 120s TTL sweeps it.
         clearSpawnProgress(context.mainWindow, task.id);
       }
-
-      return tasks.getById(input.id);
     });
   });
 
@@ -226,57 +229,57 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
         const onProgress = createProgressCallback(context.mainWindow, task.id);
         onProgress('resuming');
 
+        // One `finally` for the whole labelled region, as in the single-unarchive
+        // handler above. `task.id` here comes from this iteration's own
+        // `tasks.unarchive(...)` inside the per-task `withTaskLock`, so the clear
+        // can only ever retire this task's label, never a sibling's.
         try {
-          await ensureTaskWorktree(context, task, tasks, resolvedProjectPath, { onProgress });
-        } catch (worktreeError) {
-          console.error(`[TASK_BULK_UNARCHIVE] Worktree creation failed for task ${id.slice(0, 8)}:`, worktreeError);
-          clearSpawnProgress(context.mainWindow, task.id);
-          return;
-        }
-
-        // Checkout the task's branch in the main repo (non-worktree tasks only).
-        // Catch per-task so one failure doesn't block the entire batch.
-        try {
-          await ensureTaskBranchCheckout(context, task, resolvedProjectPath, { onProgress });
-        } catch (checkoutError) {
-          console.error(`[TASK_BULK_UNARCHIVE] Branch checkout failed for task ${id.slice(0, 8)}:`, checkoutError);
-          clearSpawnProgress(context.mainWindow, task.id);
-          notifyBranchCheckoutBlocked(context, task, checkoutError, resolvedProjectId);
-          return;
-        }
-
-        if (resolvedProjectPath) {
-          const doneLane = swimlanes.list().find((lane) => lane.role === 'done');
-          if (doneLane) {
-            const db = getProjectDb(resolvedProjectId);
-            const sessionRepo = new SessionRepository(db);
-            const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachmentRepo, resolvedProjectId, resolvedProjectPath);
-
-            // Same shared-chokepoint recovery-move contract as the single
-            // TASK_UNARCHIVE handler above: suppressAutoCommand +
-            // skipPromptTemplate, session resumes idle.
-            try {
-              await spawnAgent({
-                context, engine, tasks, sessionRepo, task,
-                fromSwimlaneId: doneLane.id,
-                // The per-task folded lane, so a bulk unarchive spawns each task
-                // on its own profile's rung rather than the column's base.
-                toLane: taskLane,
-                skipPromptTemplate: true,
-                suppressAutoCommand: true,
-                projectId: resolvedProjectId,
-                projectPath: resolvedProjectPath,
-                attachments: attachmentRepo,
-              });
-            } catch (error) {
-              console.error('[TASK_BULK_UNARCHIVE] Failed to start session:', error);
-            } finally {
-              clearSpawnProgress(context.mainWindow, task.id);
-            }
-          } else {
-            clearSpawnProgress(context.mainWindow, task.id);
+          try {
+            await ensureTaskWorktree(context, task, tasks, resolvedProjectPath, { onProgress });
+          } catch (worktreeError) {
+            console.error(`[TASK_BULK_UNARCHIVE] Worktree creation failed for task ${id.slice(0, 8)}:`, worktreeError);
+            return;
           }
-        } else {
+
+          // Checkout the task's branch in the main repo (non-worktree tasks only).
+          // Catch per-task so one failure doesn't block the entire batch.
+          try {
+            await ensureTaskBranchCheckout(context, task, resolvedProjectPath, { onProgress });
+          } catch (checkoutError) {
+            console.error(`[TASK_BULK_UNARCHIVE] Branch checkout failed for task ${id.slice(0, 8)}:`, checkoutError);
+            notifyBranchCheckoutBlocked(context, task, checkoutError, resolvedProjectId);
+            return;
+          }
+
+          if (resolvedProjectPath) {
+            const doneLane = swimlanes.list().find((lane) => lane.role === 'done');
+            if (doneLane) {
+              const db = getProjectDb(resolvedProjectId);
+              const sessionRepo = new SessionRepository(db);
+              const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachmentRepo, resolvedProjectId, resolvedProjectPath);
+
+              // Same shared-chokepoint recovery-move contract as the single
+              // TASK_UNARCHIVE handler above: suppressAutoCommand +
+              // skipPromptTemplate, session resumes idle.
+              try {
+                await spawnAgent({
+                  context, engine, tasks, sessionRepo, task,
+                  fromSwimlaneId: doneLane.id,
+                  // The per-task folded lane, so a bulk unarchive spawns each task
+                  // on its own profile's rung rather than the column's base.
+                  toLane: taskLane,
+                  skipPromptTemplate: true,
+                  suppressAutoCommand: true,
+                  projectId: resolvedProjectId,
+                  projectPath: resolvedProjectPath,
+                  attachments: attachmentRepo,
+                });
+              } catch (error) {
+                console.error('[TASK_BULK_UNARCHIVE] Failed to start session:', error);
+              }
+            }
+          }
+        } finally {
           clearSpawnProgress(context.mainWindow, task.id);
         }
       });

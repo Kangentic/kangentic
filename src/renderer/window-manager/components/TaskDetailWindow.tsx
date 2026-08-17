@@ -181,8 +181,8 @@ export function TaskDetailWindow({
   //
   // `displayKind` is the field that actually does the work here, not the two
   // flags the Resume prompt reads. TaskDetailBody picks its branch in order, and
-  // the active-terminal branch is gated FIRST, on `sessionId && displayKind !==
-  // 'queued' && displayKind !== 'suspended' && displayKind !== 'preparing'`.
+  // the active-terminal branch is gated FIRST, on
+  // `sessionId && taskDetailSurfaceFor(displayKind) === 'terminal'`.
   // `displayKind` is derived from `session.status` (task-progress.ts, which also
   // lets an in-flight spawn label outrank a suspended session), so the
   // optimistic write flips it
@@ -314,11 +314,13 @@ export function TaskDetailWindow({
   // Unlike canShowBrowser we do NOT require a live session?.id, because the
   // pre-session 'preparing' branch renders the peek too (the description is
   // meaningful before the PTY exists), and preparing has no session yet.
+  // The two surfaces that actually render the peek are the terminal branch and
+  // the launch overlay, so ask the classifier for those rather than re-listing
+  // the kinds that are not them.
+  const descriptionSurface = taskDetailSurfaceFor(sessionState.displayState.kind);
   const canShowDescription = !isArchived
     && hasDescriptionContent
-    && sessionState.displayState.kind !== 'none'
-    && sessionState.displayState.kind !== 'queued'
-    && sessionState.displayState.kind !== 'suspended';
+    && (descriptionSurface === 'terminal' || descriptionSurface === 'launch-overlay');
 
   // Unsaved-changes detection for edit mode: any editable field differing from
   // the persisted task counts as dirty (mirrors handleCancel's reverts).
@@ -433,14 +435,16 @@ export function TaskDetailWindow({
   // The Browser pane binds to a session id, so it must not be offered while one
   // is being REPLACED: during a restore the outgoing session's id is still on
   // the row (that is why the id check below passes), and opening a pane against
-  // it would re-register the guest the moment the new session lands. Excluded
-  // through the surface classifier rather than another `!== 'preparing'`, so a
-  // future pre-session kind is covered by mapping it in one table.
+  // it would re-register the guest the moment the new session lands.
+  //
+  // Gated on the SAME classifier answer as the body's terminal branch, which is
+  // the only place BrowserPane actually mounts. A mixed predicate here (one
+  // classifier check AND a leftover `!== 'queued' && !== 'suspended'` chain) let
+  // the two disagree: the toggle offered a pane the body would never render.
+  // One table, one answer, so a future kind cannot split them again.
   const canShowBrowser = browserEnabled
     && !!sessionState.session?.id
-    && taskDetailSurfaceFor(sessionState.displayState.kind) !== 'launch-overlay'
-    && sessionState.displayState.kind !== 'queued'
-    && sessionState.displayState.kind !== 'suspended';
+    && taskDetailSurfaceFor(sessionState.displayState.kind) === 'terminal';
   const { copied: displayIdCopied, copy: copyDisplayId } = useCopyDisplayId(task.display_id);
 
   const moveTargets = useMemo(() =>

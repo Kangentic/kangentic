@@ -39,8 +39,17 @@ import type { Embedder } from './types';
 import type { MemoryStatus, MemorySemanticState, MemoryModelState, Project, ActivityState } from '../../shared/types';
 
 /** Grace period after a finalize event before indexing, so the agent CLI has
- *  flushed its native history file. */
-const FINALIZE_DEBOUNCE_MS = 2000;
+ *  flushed its native history file.
+ *
+ *  Must also OUTLAST one suspend's two reports, or the per-session debounce
+ *  below cannot coalesce them. `SessionManager.suspend` emits `session-changed`
+ *  immediately and again after `gracefulPtyShutdown`, which is up to
+ *  `gracePeriodMs` (1500) + `killPropagationMs` (1500) = 3000ms later when the
+ *  agent needs a force-kill. At 2000ms the first timer fired and cleared itself
+ *  before the trailing report arrived, so the slow path - the one that most
+ *  needs the later, fuller read of the transcript - was the one that still
+ *  indexed twice. Kept above that worst case with a margin. */
+const FINALIZE_DEBOUNCE_MS = 3500;
 /** Grace period after a turn completes (session goes idle / awaits permission)
  *  before a live re-index, so a burst of activity transitions within a turn
  *  coalesces into one index and the CLI has flushed the new turn to disk. */
