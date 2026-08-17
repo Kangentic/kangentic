@@ -2345,18 +2345,6 @@
             supportsSummarize: true,
           },
           {
-            name: 'qwen', displayName: 'Qwen Code', found: false, path: null, version: null,
-            // KEEP IN SYNC with QwenAdapter.permissions in src/main/agent/adapters/qwen-code/qwen-adapter.ts
-            permissions: [
-              { mode: 'plan', label: 'Plan (Read-Only Research)' },
-              { mode: 'default', label: 'Default (Confirm Actions)' },
-              { mode: 'acceptEdits', label: 'Auto Edit (Auto-Approve Edits)' },
-              { mode: 'bypassPermissions', label: 'YOLO (Auto-Approve All)' },
-            ],
-            defaultPermission: 'acceptEdits',
-            supportsSummarize: true,
-          },
-          {
             name: 'kimi', displayName: 'Kimi Code', found: false, path: null, version: null,
             // KEEP IN SYNC with KimiAdapter.permissions in src/main/agent/adapters/kimi/kimi-adapter.ts
             permissions: [
