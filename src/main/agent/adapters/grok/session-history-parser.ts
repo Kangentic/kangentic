@@ -80,17 +80,18 @@ export class GrokSessionHistoryParser {
       if (!isRecord(entry)) continue;
       const params = entry.params;
       if (!isRecord(params)) continue;
-      const update = params.update;
-      if (!isRecord(update)) continue;
-
       // Running context total: present in `params._meta.totalTokens` on
-      // streaming and tool updates. Harvested BEFORE the dispatch-type
-      // guard so lines of an unknown sessionUpdate type (hook_execution,
-      // task_backgrounded) still contribute - see GROK_DISPATCH_TYPES.
+      // streaming and tool updates. Harvested BEFORE the dispatch-type guard
+      // (it is a sibling of `update`, not type-specific), so an unknown
+      // update type like hook_execution still contributes its total instead
+      // of leaving the ContextBar stale at the last dispatch-type line.
       const paramsMeta = params._meta;
       if (isRecord(paramsMeta) && typeof paramsMeta.totalTokens === 'number') {
         contextTotalTokens = paramsMeta.totalTokens;
       }
+
+      const update = params.update;
+      if (!isRecord(update)) continue;
 
       const rawType = update.sessionUpdate;
       if (!isGrokDispatchType(rawType)) continue;

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { EventType } from '../../../../shared/types';
 import { toForwardSlash } from '../../../../shared/paths';
-import { filterKangenticHooks, safelyUpdateSettingsFile } from '../../shared/hook-utils';
+import { isKangenticHookCommand, safelyUpdateSettingsFile } from '../../shared/hook-utils';
 import { resolveBridgeScript } from '../../shared/bridge-utils';
 import {
   captureHookContext,
@@ -97,34 +97,69 @@ export function deployWorkspaceBridgeCopy(cwd: string): string | null {
   }
 }
 
-/** Collect every command string reachable from one named hook, for filtering. */
-function collectCommands(entry: AntigravityNamedHook): string[] {
-  const commands: string[] = [];
-  for (const group of [...(entry.PreToolUse ?? []), ...(entry.PostToolUse ?? [])]) {
-    for (const handler of group.hooks ?? []) commands.push(handler.command);
-  }
-  for (const handler of [
-    ...(entry.PreInvocation ?? []),
-    ...(entry.PostInvocation ?? []),
-    ...(entry.Stop ?? []),
-  ]) {
-    commands.push(handler.command);
-  }
-  return commands;
+/**
+ * Drop the individual handlers whose command carries the Kangentic
+ * fingerprint, preserving the entry's other handlers. PER-HANDLER
+ * granularity is load-bearing: a user's named hook that happens to mix
+ * their own handler with a stale/renamed Kangentic command (e.g. a copied
+ * bridge invocation) must lose only the Kangentic handler, never the whole
+ * entry - entry-level filtering silently destroyed the user's own handlers
+ * alongside it. Returns null when nothing user-owned survives (the entry
+ * was 100% ours, however it was named).
+ */
+function stripKangenticHandlers(entry: AntigravityNamedHook): AntigravityNamedHook | null {
+  const keepHandler = (handler: AntigravityHookHandler): boolean =>
+    !isKangenticHookCommand(handler.command);
+  const filterGroups = (groups: AntigravityHookGroup[] | undefined): AntigravityHookGroup[] | undefined => {
+    if (!groups) return undefined;
+    return groups
+      .map((group) => ({ ...group, hooks: (group.hooks ?? []).filter(keepHandler) }))
+      .filter((group) => group.hooks.length > 0);
+  };
+  const filterHandlers = (handlers: AntigravityHookHandler[] | undefined): AntigravityHookHandler[] | undefined =>
+    handlers ? handlers.filter(keepHandler) : undefined;
+
+  const survivor: AntigravityNamedHook = {
+    ...entry,
+    PreToolUse: filterGroups(entry.PreToolUse),
+    PostToolUse: filterGroups(entry.PostToolUse),
+    PreInvocation: filterHandlers(entry.PreInvocation),
+    PostInvocation: filterHandlers(entry.PostInvocation),
+    Stop: filterHandlers(entry.Stop),
+  };
+
+  const survivingHandlerCount =
+    (survivor.PreToolUse ?? []).reduce((count, group) => count + group.hooks.length, 0)
+    + (survivor.PostToolUse ?? []).reduce((count, group) => count + group.hooks.length, 0)
+    + (survivor.PreInvocation ?? []).length
+    + (survivor.PostInvocation ?? []).length
+    + (survivor.Stop ?? []).length;
+  const originalHandlerCount =
+    (entry.PreToolUse ?? []).reduce((count, group) => count + (group.hooks ?? []).length, 0)
+    + (entry.PostToolUse ?? []).reduce((count, group) => count + (group.hooks ?? []).length, 0)
+    + (entry.PreInvocation ?? []).length
+    + (entry.PostInvocation ?? []).length
+    + (entry.Stop ?? []).length;
+
+  // A handler-less entry (nothing to fingerprint) is the user's to keep,
+  // untouched; an entry whose every handler was ours is dropped whole.
+  if (originalHandlerCount === 0) return entry;
+  return survivingHandlerCount > 0 ? survivor : null;
 }
 
 /**
- * Drop Kangentic-owned named hooks, keeping user-defined ones. Matches on the
- * reserved name prefix AND on the shared command fingerprint
- * (`isKangenticHookCommand` via filterKangenticHooks), so both a normally
- * named stale entry and a renamed-but-ours command are swept.
+ * Drop Kangentic-owned hooks, keeping user-defined ones. An entry named with
+ * the reserved `kangentic-` prefix is dropped whole; everywhere else the
+ * shared command fingerprint (`isKangenticHookCommand`) sweeps
+ * renamed-but-ours handlers PER HANDLER, so a mixed user entry keeps its own
+ * handlers (see stripKangenticHandlers).
  */
 export function filterOurHooks(root: AntigravityHooksFile): AntigravityHooksFile {
   const kept: AntigravityHooksFile = {};
   for (const [name, entry] of Object.entries(root)) {
     if (name.startsWith('kangentic-')) continue;
-    const survivors = filterKangenticHooks([entry], collectCommands);
-    if (survivors.length > 0) kept[name] = entry;
+    const survivor = stripKangenticHandlers(entry);
+    if (survivor) kept[name] = survivor;
   }
   return kept;
 }

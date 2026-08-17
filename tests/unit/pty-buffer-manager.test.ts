@@ -1579,6 +1579,62 @@ describe('PtyBufferManager', () => {
       expect(snapshot).toBe('');
     });
 
+    it('a stale-generation identity guard: removeSession + initSession under the SAME id mid-await never resolves the old sample to a live-looking snapshot, and never touches the new generation\'s pending bytes', async () => {
+      const onFlush = vi.fn();
+      const onDrain = vi.fn();
+      const manager = new PtyBufferManager({ onFlush, onDrain });
+      manager.initSession(SESSION, '', 80, 24);
+      const ALT_BYTES = '\x1b[?1049h\x1b[2J\x1b[1;1Halt frame';
+      manager.onData(SESSION, ALT_BYTES);
+
+      // Make the OLD generation's serialize a controllable deferred promise
+      // (rather than the permanently-wedged pattern used above) so the test
+      // can resolve it deterministically AFTER swapping in a new generation,
+      // instead of racing REPLAY_SERIALIZE_MAX_WAIT_MS.
+      interface ManagerInternals {
+        buffers: Map<string, { headless: { serialize: () => Promise<string> } }>;
+      }
+      const oldBufferState = (manager as unknown as ManagerInternals).buffers.get(SESSION);
+      if (!oldBufferState) throw new Error('test setup: session buffer state missing');
+      let resolveSerialize: ((value: string) => void) | undefined;
+      const deferredSerialize = new Promise<string>((resolve) => { resolveSerialize = resolve; });
+      oldBufferState.headless.serialize = () => deferredSerialize;
+
+      const pendingSnapshot = manager.getReplaySnapshot(SESSION); // do not await yet
+      // The pre-serialize drain reports the OLD generation's pending bytes
+      // synchronously, before the await.
+      expect(onDrain.mock.calls).toEqual([[SESSION, ALT_BYTES]]);
+
+      // Same session id, a NEW generation, while the old sample is still
+      // in flight (`state` inside the pending call still points at the OLD
+      // BufferState object).
+      manager.removeSession(SESSION);
+      manager.initSession(SESSION, '', 80, 24);
+      manager.onData(SESSION, 'NEW_GENERATION_BYTES');
+
+      // Let the old sample's serialize resolve now that a new generation
+      // exists under the same id.
+      if (!resolveSerialize) throw new Error('test setup: resolveSerialize not captured');
+      resolveSerialize('stale frame from the disposed generation');
+      const snapshot = await pendingSnapshot;
+
+      // The mid-await identity check (`this.buffers.get(sessionId) !== state`)
+      // must reject the stale sample rather than resolve the OLD generation's
+      // frame under the now-live session id.
+      expect(snapshot).toBe('');
+
+      // The old sample's teardown must never drain or tap-report the NEW
+      // generation's pending buffer: onDrain has still seen only the OLD
+      // generation's pre-serialize drain, never NEW_GENERATION_BYTES.
+      expect(onDrain.mock.calls).toEqual([[SESSION, ALT_BYTES]]);
+
+      // And the new generation's bytes are still there, untouched, for its
+      // own sample to find.
+      expect(manager.getScrollback(SESSION)).toContain('NEW_GENERATION_BYTES');
+
+      manager.removeSession(SESSION);
+    });
+
     it('resumes normal flush delivery once a sample completes (replaySamplesInFlight must not stick)', async () => {
       const onFlush = vi.fn();
       const manager = new PtyBufferManager({ onFlush, onDrain: vi.fn() });
@@ -1831,6 +1887,34 @@ describe('PtyBufferManager', () => {
       expect(onFlush).toHaveBeenCalledWith(SESSION, 'new data after the failed drain');
 
       manager.removeSession(SESSION);
+    });
+
+    it('a re-entrant onDrain that synchronously calls getScrollback for the same session sees exactly one drain report (no recursion, no duplicate delivery)', () => {
+      vi.useFakeTimers();
+      const onFlush = vi.fn();
+      // Closes over `manager`, assigned on the next line - safe because this
+      // callback only ever RUNS once manager.getScrollback(SESSION) is called
+      // below, by which point the const is initialized.
+      const onDrain = vi.fn((sessionId: string) => {
+        // Synchronously call back into the manager for the SAME session, from
+        // inside the drain report itself. reportDrain's ORDERING RULE
+        // (state.buffer cleared BEFORE onDrain fires, see the comment on
+        // PtyBufferManager.reportDrain) is what makes this re-entrant call
+        // find an already-empty buffer and become a harmless no-op instead of
+        // unbounded recursion with duplicate tap delivery.
+        manager.getScrollback(sessionId);
+      });
+      const manager = new PtyBufferManager({ onFlush, onDrain });
+      manager.initSession(SESSION, '', 80);
+      manager.onResize(SESSION, 80);
+
+      manager.onData(SESSION, 'hello world');
+      manager.getScrollback(SESSION);
+
+      expect(onDrain).toHaveBeenCalledTimes(1);
+      expect(onDrain).toHaveBeenCalledWith(SESSION, 'hello world');
+
+      vi.useRealTimers();
     });
   });
 

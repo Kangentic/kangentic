@@ -294,9 +294,17 @@ export class GrokAdapter implements AgentAdapter {
   }
 
   configuredModelFromCommand(command: string): { id: string; displayName: string } | null {
-    const match = command.match(/--model\s+"?([^\s"]+)"?/);
-    if (!match) return null;
-    const id = match[1];
+    // Search only the flag region before the end-of-options `--` marker the
+    // builder emits ahead of the prompt, so a task text containing a literal
+    // `--model <word>` is never misread as a real flag (the
+    // parseModelFromClaudeCommand precedent). The alternation accepts the
+    // single quotes quoteArg emits on unix-like shells as well as double
+    // quotes and bare tokens.
+    const endOfOptions = command.search(/\s--\s/);
+    const flagRegion = endOfOptions === -1 ? command : command.slice(0, endOfOptions);
+    const match = flagRegion.match(/--model\s+(?:"([^"]+)"|'([^']+)'|(\S+))/);
+    const id = (match?.[1] ?? match?.[2] ?? match?.[3] ?? '').trim();
+    if (!id) return null;
     return { id, displayName: grokModelDisplayName(id) };
   }
 

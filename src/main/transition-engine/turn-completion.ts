@@ -121,8 +121,16 @@ export function waitForTurnCompletion(
 
     const onOutput = (evtSessionId: string): void => {
       if (evtSessionId !== sessionId) return;
-      lastOutputAt = Date.now();
-      evaluate();
+      try {
+        lastOutputAt = Date.now();
+        evaluate();
+      } catch (caughtError) {
+        // Same contract as onActivity above - and 'data-tap' can now fire
+        // SYNCHRONOUSLY inside a replay's IPC stack (the buffer manager's
+        // replay-drain report), so a throw here would fail an unrelated
+        // getScrollback reply, not just a flush timer.
+        console.error(`[turn-completion] output handler failed for ${sessionId.slice(0, 8)}:`, caughtError);
+      }
     };
 
     const onExit = (evtSessionId: string): void => {

@@ -801,7 +801,15 @@ export class PtyBufferManager {
 
   /** Report bytes a replay sample drained out of the pending buffer (see
    *  PtyBufferManagerCallbacks.onDrain). One chokepoint for every drain site
-   *  so the non-empty guard, the trace, and the throw guard cannot diverge. */
+   *  so the non-empty guard, the trace, and the throw guard cannot diverge.
+   *
+   *  ORDERING RULE for every call site: clear `state.buffer` BEFORE calling
+   *  this. The emptied buffer plus the non-empty guard below is what makes a
+   *  re-entrant listener (one that synchronously calls getScrollback /
+   *  getReplaySnapshot back into this manager) a harmless no-op instead of
+   *  unbounded recursion with duplicate tap delivery - and at the serialize
+   *  site it is also the counter's exception-safety. Report-before-clear
+   *  breaks both silently. */
   private reportDrain(sessionId: string, drained: string): void {
     if (!drained) return;
     traceTerminal(sessionId, 'replay-drain', { bytes: drained.length });
@@ -1001,9 +1009,13 @@ export class PtyBufferManager {
       } finally {
         if (deadlineTimer) clearTimeout(deadlineTimer);
       }
-      if (!this.buffers.get(sessionId)) {
+      if (this.buffers.get(sessionId) !== state) {
         // Torn down mid-sample (removeSession disposed the parser): nothing to
         // replay; the renderer's empty-scrollback path flushes its held bytes.
+        // IDENTITY comparison, not presence: if the id were ever re-initialized
+        // while this sample was in flight, a presence check would pass on the
+        // NEW state while the tail fold below read - and reported to data-tap -
+        // the dead generation's buffer under a live session id.
         traceTerminal(sessionId, 'scrollback-sample', { source: 'parsed-grid-torn-down', bytes: 0 });
         return '';
       }

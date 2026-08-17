@@ -40,6 +40,7 @@ import { QwenAdapter } from '../../src/main/agent/adapters/qwen-code/qwen-adapte
 import { KimiAdapter } from '../../src/main/agent/adapters/kimi/kimi-adapter';
 import { DroidAdapter } from '../../src/main/agent/adapters/droid/droid-adapter';
 import { GrokAdapter } from '../../src/main/agent/adapters/grok/grok-adapter';
+import { AntigravityAdapter } from '../../src/main/agent/adapters/antigravity/antigravity-adapter';
 import type { AgentAdapter, SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
 import type { PermissionMode } from '../../src/shared/types';
 
@@ -184,6 +185,7 @@ const ADAPTERS: ProbeAdapter[] = [
   { name: 'kimi', adapter: new KimiAdapter() },
   { name: 'droid', adapter: new DroidAdapter() },
   { name: 'grok', adapter: new GrokAdapter() },
+  { name: 'antigravity', adapter: new AntigravityAdapter() },
 ];
 
 /**
@@ -240,6 +242,21 @@ const SESSIONS_ROOTS: Record<string, SessionRootSpec | undefined> = {
   // same source its /model picker uses), which the CLI writes on first use -
   // so an install with sessions on disk reliably has a populated cache.
   grok: { root: path.join(os.homedir(), '.grok', 'sessions'), expectModels: true },
+  // Antigravity's conversation transcripts live under
+  // `~/.gemini/antigravity-cli/brain/<uuid>/.system_generated/logs/
+  // transcript.jsonl` (data-paths.ts's antigravityDataRoot), so `brain/` -
+  // not the data root itself, which also holds settings.json even for a user
+  // who has only completed the trust dance and never actually run a
+  // conversation - is the closest on-disk proxy for "has run agy before".
+  // Unlike Grok's persisted models_cache.json, `discoverAntigravityCapabilities`
+  // has no local model cache: `agy models` is a live NETWORK fetch on every
+  // call (capability-discovery.ts), so a populated transcript directory does
+  // not reliably predict a populated model list at test-run time (offline,
+  // or an auth hiccup, degrades to no models by design - "best-effort and
+  // never throws"). expectModels: false keeps the directory-scan path
+  // exercised without asserting something the adapter's own source does not
+  // guarantee.
+  antigravity: { root: path.join(os.homedir(), '.gemini', 'antigravity-cli', 'brain'), expectModels: false },
 };
 
 /**

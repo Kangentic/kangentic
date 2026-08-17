@@ -453,6 +453,41 @@ describe('event-bridge', () => {
     expect(readEvent().detail).toBeUndefined();
   });
 
+  // --- extractToolPath / extractTool: a non-primitive leaf must be bounded,
+  // never embedded raw ---
+  //
+  // Both arms now match firstNonNull's own contract: `String(value).slice(0,
+  // 200)`. Before that, `event.tool` was assigned the raw walked/looked-up
+  // value with no stringify/cap - so a leaf that resolves to a nested OBJECT
+  // (e.g. a future agy payload shape whose `toolCall.name` is itself a
+  // structured value, or any adapter whose top-level field is an object)
+  // would embed that object directly into `event`, and JSON.stringify(event)
+  // would serialize it as an unbounded nested JSON blob inside the JSONL line
+  // instead of a bounded string. Pinned here as the '[object Object]' string
+  // coercion, exactly what `String({...})` produces.
+
+  it('extractToolPath with a non-primitive leaf stringifies and bounds it, never embedding a raw object', () => {
+    const stdin = JSON.stringify({ toolCall: { name: { nested: 'object' } } });
+    runBridge(stdin, [outputFile, 'tool_end', extractToolPath(['toolCall', 'name'])]);
+    const line = readEvent();
+    expect(line.tool).toBe('[object Object]');
+    expect(typeof line.tool).toBe('string');
+  });
+
+  it('extractTool with a top-level non-primitive field stringifies and bounds it the same way', () => {
+    const stdin = JSON.stringify({ tool_name: { nested: 'object' } });
+    runBridge(stdin, [outputFile, 'tool_start', extractTool('tool_name')]);
+    const line = readEvent();
+    expect(line.tool).toBe('[object Object]');
+    expect(typeof line.tool).toBe('string');
+  });
+
+  it('extractToolPath with a normal string leaf is unchanged', () => {
+    const stdin = JSON.stringify({ toolCall: { name: 'write_to_file' } });
+    runBridge(stdin, [outputFile, 'tool_end', extractToolPath(['toolCall', 'name'])]);
+    expect(readEvent().tool).toBe('write_to_file');
+  });
+
   // --- No directives (events that need no extraction) ---
 
   it('event with no directives writes type only', () => {
