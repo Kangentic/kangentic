@@ -5,7 +5,8 @@ import { TaskRepository } from '../../db/repositories/task-repository';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { SessionManager } from '../../pty/session-manager';
 import { ConfigManager } from '../../config/config-manager';
-import type { BoardProfile, SessionRecord, SwimlaneRole, Task } from '../../../shared/types';
+import type { BoardProfile, SessionRecord, Task } from '../../../shared/types';
+import { RESUME_HIDDEN_ROLES } from '../../../shared/session-resume-eligibility';
 import { isResumeEligible } from '../spawn-intent';
 import { applyProfileToLane, findTaskProfile } from '../column-strategy';
 import { resolveIsolatedSwimlaneId } from '../session-isolation';
@@ -13,21 +14,6 @@ import { retireRecord, markRecordSuspended } from '../session-lifecycle';
 import { isShuttingDown } from '../../shutdown-state';
 import { prepareAgentSpawn, type PreparedSpawn } from './prepare-spawn';
 import { startStartupTimer } from './timing';
-
-/**
- * Columns that deliberately offer no Resume, so a suspended record in one gets
- * no placeholder registered.
- *
- * `SwimlaneRole` is exactly 'todo' | 'done'; a custom column has `role: null`.
- * There is no live 'backlog' role - it was migrated to 'todo', and the Backlog
- * is a separate table rather than a swimlane. Typed as the union rather than
- * `string` so a typo in either literal is a compile error, not a silent miss
- * that would register a placeholder on a To Do card.
- *
- * The gate is the ROLE, not `auto_spawn`: To Do and Done both default to
- * `auto_spawn = 0`, so keying off the flag would sweep them in.
- */
-const RESUME_HIDDEN_ROLES: ReadonlySet<SwimlaneRole> = new Set<SwimlaneRole>(['todo', 'done']);
 
 /**
  * Recover suspended and orphaned agent sessions on project open.
@@ -234,8 +220,9 @@ export async function resumeSuspendedSessions(
       // branch below can run. Without a placeholder the renderer has NO session
       // for the task at all, so the card opens the edit form and offers no
       // Resume - the task is stranded, since `SESSION_RESUME` itself is happy to
-      // resume here (it rejects only role 'todo'). Register one so Resume stays
-      // reachable whatever the column's auto_spawn setting is.
+      // resume here (it refuses only the roles in RESUME_HIDDEN_ROLES, plus
+      // archived tasks). Register one so Resume stays reachable whatever the
+      // column's auto_spawn setting is.
       //
       // CUSTOM columns only. To Do and Done are `auto_spawn = 0` by default, and
       // both deliberately hide Resume: a To Do card also relies on having no

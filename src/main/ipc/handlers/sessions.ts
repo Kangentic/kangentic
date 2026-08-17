@@ -22,6 +22,7 @@ import { abortInFlightResume, registerResumeController, releaseResumeController 
 import type { PtyResizeOrigin, Session, TaskResolvePrResult } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 import { isAbortError } from '../../../shared/abort-utils';
+import { resumeBlockMessage, resumeBlockReason } from '../../../shared/session-resume-eligibility';
 import { broadcast } from '../../pop-out/window-broadcast';
 
 // Track session start times for duration calculation on exit
@@ -148,16 +149,18 @@ export function registerSessionHandlers(context: IpcContext): void {
         // surfacing an error the user can't recover from without a restart,
         // we treat resume as idempotent and return the existing handle. The
         // renderer's resumeSession action replaces the stale entry and sets
-        // activeSessionId, restoring the terminal attachment.
+        // activeSessionId, restoring the terminal attachment. That branch stays
+        // AHEAD of the eligibility check below: handing back a PTY that already
+        // exists spawns nothing, and it is the only path that re-attaches a
+        // drifted renderer, including one drifted onto an archived task.
         const phase1Result = await withTaskLock(taskId, async () => {
           const { task, liveSession } = reconcileTaskSessionRef(context, resolvedProjectId, taskId);
           if (liveSession) {
             return { kind: 'live' as const, session: liveSession };
           }
           const lane = swimlanes.getById(task.swimlane_id);
-          if (lane?.role === 'todo') {
-            throw new Error('Cannot resume a session for a task in the To Do column');
-          }
+          const blocked = resumeBlockReason({ laneRole: lane?.role, isArchived: task.archived_at !== null });
+          if (blocked) throw new Error(resumeBlockMessage(blocked));
           return { kind: 'spawn' as const, task };
         });
 
@@ -201,9 +204,14 @@ export function registerSessionHandlers(context: IpcContext): void {
             swimlanes.getById(current.swimlane_id),
             loadTaskProfile(context, current, resolvedProjectPath),
           );
-          if (currentLane?.role === 'todo') {
-            throw new Error('Cannot resume a session for a task in the To Do column');
-          }
+          // Re-read, not the Phase 1 snapshot: the task could have been moved or
+          // archived (a move to Done archives in the same tick) during the
+          // unlocked git I/O above.
+          const currentBlocked = resumeBlockReason({
+            laneRole: currentLane?.role,
+            isArchived: current.archived_at !== null,
+          });
+          if (currentBlocked) throw new Error(resumeBlockMessage(currentBlocked));
 
           const db = getProjectDb(resolvedProjectId);
           const sessionRepo = new SessionRepository(db);

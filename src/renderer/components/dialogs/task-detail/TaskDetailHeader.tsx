@@ -280,6 +280,7 @@ export function TaskDetailHeader({
         <button
           onClick={onToggle}
           disabled={toggling}
+          data-testid="header-toggle-session-btn"
           className={`inline-flex items-center justify-center p-1 rounded-full transition-colors flex-shrink-0 disabled:cursor-not-allowed ${
             toggling
               ? 'text-fg-muted'
