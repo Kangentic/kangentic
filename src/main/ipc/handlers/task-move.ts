@@ -255,7 +255,9 @@ export async function handleTaskMove(
       // Keyed on the task's own flag rather than the source lane's role, so a
       // legacy archived row parked outside Done is repaired too. Moving WITHIN
       // Done keeps its archive (toLane is still the done role).
-      if (task.archived_at !== null && toLane?.role !== 'done') {
+      // Truthiness, not `!== null`: a Task assembled without the column carries
+      // `undefined`, and `!== null` would try to unarchive every ordinary move.
+      if (Boolean(task.archived_at) && toLane?.role !== 'done') {
         tasks.clearArchived(input.taskId);
         console.log(`[TASK_MOVE] Unarchived task ${input.taskId.slice(0, 8)} (moved out of Done)`);
       }

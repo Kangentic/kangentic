@@ -79,6 +79,11 @@ function makeSessionRepo() {
     // below). Every other test's mockAdapter has no runtime, so the reconcile
     // returns before ever calling this.
     updateAgentSessionId: vi.fn(),
+    // The conversation lineage isResumeConversationAbsent walks on a resume:
+    // every record sharing the resumed agent_session_id, newest first. Empty
+    // here, so the guard falls back to the retiring record alone and finds no
+    // report, which is its "unknown, resume as before" path.
+    listForTaskNewestFirst: vi.fn(() => []),
     insertedRecords,
   };
 }

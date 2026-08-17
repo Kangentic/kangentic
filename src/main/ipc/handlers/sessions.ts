@@ -159,7 +159,10 @@ export function registerSessionHandlers(context: IpcContext): void {
             return { kind: 'live' as const, session: liveSession };
           }
           const lane = swimlanes.getById(task.swimlane_id);
-          const blocked = resumeBlockReason({ laneRole: lane?.role, isArchived: task.archived_at !== null });
+          // Truthiness, not `!== null`: a Task assembled without the column
+          // (mocks, wire mappers, MCP-constructed rows) carries `undefined`,
+          // which `!== null` reads as ARCHIVED and would refuse every resume.
+          const blocked = resumeBlockReason({ laneRole: lane?.role, isArchived: Boolean(task.archived_at) });
           if (blocked) throw new Error(resumeBlockMessage(blocked));
           return { kind: 'spawn' as const, task };
         });
@@ -209,7 +212,7 @@ export function registerSessionHandlers(context: IpcContext): void {
           // unlocked git I/O above.
           const currentBlocked = resumeBlockReason({
             laneRole: currentLane?.role,
-            isArchived: current.archived_at !== null,
+            isArchived: Boolean(current.archived_at),
           });
           if (currentBlocked) throw new Error(resumeBlockMessage(currentBlocked));
 

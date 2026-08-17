@@ -41,7 +41,13 @@ describe('a move out of Done clears the archive flag it set on the way in', () =
   it('keys the unarchive on the task flag, not the source lane', () => {
     // A legacy archived row parked outside Done must be repaired too, and the
     // guard has to exclude a move WITHIN Done (which keeps its archive).
-    expect(source).toMatch(/task\.archived_at !== null && toLane\?\.role !== 'done'/);
+    //
+    // Truthiness, never `!== null`: a Task assembled without the column carries
+    // `undefined`, which `!== null` reads as archived. That exact slip made the
+    // handler try to unarchive on ordinary moves and shipped as a unit-tier
+    // failure across split-lock-cas.
+    expect(source).toMatch(/Boolean\(task\.archived_at\) && toLane\?\.role !== 'done'/);
+    expect(source).not.toMatch(/task\.archived_at !== null/);
   });
 
   it('uses the placement-free repository method', () => {

@@ -103,8 +103,11 @@ describe('SESSION_RESUME routes both lane checks through the shared predicate', 
   });
 
   it('reads archived_at at both call sites, not just the lane role', () => {
-    const archivedReads = source.match(/archived_at !== null/g) ?? [];
+    // Truthiness, never `!== null`: a Task assembled without the column carries
+    // `undefined`, and `!== null` reads that as ARCHIVED, refusing every resume.
+    const archivedReads = source.match(/isArchived: Boolean\((task|current)\.archived_at\)/g) ?? [];
     expect(archivedReads).toHaveLength(2);
+    expect(source).not.toMatch(/archived_at !== null/);
   });
 
   it('keeps the self-heal early return ahead of the eligibility check', () => {
