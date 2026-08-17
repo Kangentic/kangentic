@@ -60,7 +60,7 @@ The PowerShell case fixes a Windows PowerShell 5.1 quirk: it treats `[` / `]` in
 - `quoteArg(arg, shell?)` - shell-aware quoting: single quotes for Unix-like shells (bash, zsh, WSL), double quotes for PowerShell/cmd. The shell parameter is explicitly passed in all spawn calls so quoting always matches the target shell. Falls back to platform detection when shell is omitted.
 - Git Bash: paths like `C:\Users\...` become `/c/Users/...`
 - WSL: paths like `C:\Users\...` become `/mnt/c/Users/...`
-- `adaptCommandForShell()` - adds the `& ` prefix for PowerShell commands, and for unix-like shells (Git Bash, WSL) converts the leading Windows exe path to POSIX form via `convertWindowsExePath()`, which handles bare, double-quoted, and single-quoted leading tokens (a single-quoted token stays single-quoted so shell-active path characters remain inert; a double-quoted token is re-quoted when the converted path contains spaces)
+- `adaptCommandForShell()` - adds the `& ` prefix for PowerShell commands, and for unix-like shells (Git Bash, WSL) converts the leading Windows exe path to POSIX form via `convertWindowsExePath()`, which handles bare, double-quoted, and single-quoted leading tokens (a quoted token stays quoted with the same quote character even without spaces, so shell-active path characters like `&` remain inert in the target shell)
 
 ## Native Modules
 
@@ -259,7 +259,7 @@ documented limitations:
   (`--settings`, `--mcp-config` are Windows paths, correct for a Windows binary, wrong for a
   Linux one); it is a possible follow-up feature, not current behavior.
 
-## Environment Stripping
+## Environment Stripping and Defaults
 
 When spawning PTY sessions, `buildSpawnEnv` (`src/main/pty/spawn/pty-spawn.ts`) strips `CLAUDECODE`
 and every `CLAUDE_CODE_*` identity marker from the merged environment. Kangentic is often launched
@@ -273,6 +273,19 @@ matching what Claude Code's own agent views do on Windows, because the fullscree
 intermittently drops history entries from its incremental scrolled-view updates. An explicit value
 already present in the environment always wins, including a user's opt-out. Non-Claude agents ignore
 the variable.
+
+`NO_COLOR` is stripped too, but only when the merged environment also carries `CLAUDECODE`. Claude
+Code exports `NO_COLOR=1` into its tool shells alongside `CLAUDECODE`, so a dev/preview Kangentic
+launched from inside a Claude Code session would otherwise force-dim every color-capable CLI in
+every agent PTY. A `NO_COLOR` present without `CLAUDECODE` is a deliberate user preference and
+passes through untouched, as does an explicit per-spawn `NO_COLOR` supplied by a caller.
+
+`buildSpawnEnv` also defaults `TERM=xterm-256color` when the merged environment has no TERM (an
+empty TERM counts as absent). node-pty turns the `name` spawn option into the child's TERM only on
+POSIX; its Windows path never writes TERM, so a child of a PowerShell-launched Kangentic would see
+no TERM at all and capability-detecting TUIs (Antigravity's agy) render monochrome. The default
+gives Windows children the same environment POSIX children already get; an explicit TERM in the
+environment always wins.
 
 ## See Also
 

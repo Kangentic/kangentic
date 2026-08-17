@@ -157,6 +157,113 @@ describe('buildSpawnEnv full-repaint keeplist', () => {
   });
 });
 
+// Claude Code exports NO_COLOR=1 into its tool shells alongside CLAUDECODE, so
+// a dev/preview Kangentic launched from inside a Claude Code session would
+// otherwise force-dim every color-capable CLI in every agent PTY (agy honors
+// NO_COLOR and drops to monochrome). The strip is provenance-gated: NO_COLOR
+// is dropped only when CLAUDECODE proves it leaked from a Claude Code launch.
+// A bare NO_COLOR is a deliberate user preference and passes through, and an
+// explicit per-spawn NO_COLOR from a caller always survives.
+describe('buildSpawnEnv NO_COLOR strip', () => {
+  const hermeticKeys = ['NO_COLOR', 'CLAUDECODE'] as const;
+  let savedHostValues: Record<string, string | undefined>;
+
+  beforeEach(() => {
+    // Hermetic: dogfood machines run this suite from inside Claude Code,
+    // where both keys are genuinely exported.
+    savedHostValues = {};
+    for (const key of hermeticKeys) {
+      savedHostValues[key] = process.env[key];
+      delete process.env[key];
+    }
+  });
+
+  afterEach(() => {
+    for (const key of hermeticKeys) {
+      if (savedHostValues[key] === undefined) delete process.env[key];
+      else process.env[key] = savedHostValues[key];
+    }
+  });
+
+  it('strips a NO_COLOR leaked from a Claude Code launch (the dev/preview scenario)', () => {
+    process.env.NO_COLOR = '1';
+    process.env.CLAUDECODE = '1';
+    const env = buildSpawnEnv(undefined);
+    expect(env.NO_COLOR).toBeUndefined();
+    expect(env.CLAUDECODE).toBeUndefined();
+  });
+
+  it('strips it when CLAUDECODE arrives via inputEnv (the check reads the merged env)', () => {
+    process.env.NO_COLOR = '1';
+    const env = buildSpawnEnv({ CLAUDECODE: '1' });
+    expect(env.NO_COLOR).toBeUndefined();
+  });
+
+  it('preserves a bare NO_COLOR without CLAUDECODE (deliberate user preference)', () => {
+    process.env.NO_COLOR = '1';
+    expect(buildSpawnEnv(undefined).NO_COLOR).toBe('1');
+    expect(buildSpawnEnv({}).NO_COLOR).toBe('1');
+  });
+
+  it('keeps an explicit inputEnv NO_COLOR while still stripping CLAUDECODE', () => {
+    process.env.CLAUDECODE = '1';
+    const env = buildSpawnEnv({ NO_COLOR: '1' });
+    expect(env.NO_COLOR).toBe('1');
+    expect(env.CLAUDECODE).toBeUndefined();
+  });
+
+  it('keeps an explicit inputEnv NO_COLOR even when CLAUDECODE rides inputEnv too', () => {
+    const env = buildSpawnEnv({ CLAUDECODE: '1', NO_COLOR: '1' });
+    expect(env.NO_COLOR).toBe('1');
+    expect(env.CLAUDECODE).toBeUndefined();
+  });
+});
+
+// node-pty turns the `name` spawn option into the child's TERM only on POSIX
+// (unixTerminal.js assigns `env.TERM = name`; the Windows agent computes the
+// name and never touches the env), so a child of a PowerShell-launched
+// Kangentic sees no TERM at all and capability-detecting TUIs render
+// monochrome. The default fills that gap without overriding anything the
+// user's environment already carries.
+describe('buildSpawnEnv TERM default', () => {
+  let savedHostTerm: string | undefined;
+
+  beforeEach(() => {
+    // Hermetic: the host shell (Git Bash, CI's Linux runner) may export TERM.
+    savedHostTerm = process.env.TERM;
+    delete process.env.TERM;
+  });
+
+  afterEach(() => {
+    if (savedHostTerm === undefined) delete process.env.TERM;
+    else process.env.TERM = savedHostTerm;
+  });
+
+  it('defaults TERM to xterm-256color when absent (the PowerShell-launch case)', () => {
+    expect(buildSpawnEnv(undefined).TERM).toBe('xterm-256color');
+  });
+
+  it('treats an empty TERM as absent', () => {
+    process.env.TERM = '';
+    expect(buildSpawnEnv(undefined).TERM).toBe('xterm-256color');
+  });
+
+  it('preserves an inherited TERM verbatim (user environment wins)', () => {
+    process.env.TERM = 'screen';
+    expect(buildSpawnEnv(undefined).TERM).toBe('screen');
+  });
+
+  it('preserves an explicit inputEnv TERM (per-spawn caller choice wins)', () => {
+    expect(buildSpawnEnv({ TERM: 'xterm' }).TERM).toBe('xterm');
+  });
+
+  it('applies on every platform (the platform arg gates only the full-repaint flag)', () => {
+    expect(buildSpawnEnv({}, 'linux').TERM).toBe('xterm-256color');
+    expect(buildSpawnEnv({}, 'win32').TERM).toBe('xterm-256color');
+    expect(buildSpawnEnv({}, 'darwin').TERM).toBe('xterm-256color');
+  });
+});
+
 describe('resolveSpawnCwd', () => {
   afterEach(() => {
     vi.restoreAllMocks();

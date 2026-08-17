@@ -66,6 +66,31 @@ export function resolveShellArgs(shell: string): ShellInvocation {
  * for non-Claude agents, which ignore these vars, and it deliberately leaves
  * `ANTHROPIC_*` keys (BYOK / API auth) untouched.
  *
+ * Also strips `NO_COLOR`, but ONLY when the merged environment carries
+ * `CLAUDECODE`, the same parentage marker stripped above. Claude Code exports
+ * `NO_COLOR=1` into its tool shells alongside `CLAUDECODE`, so a dev/preview
+ * Kangentic launched from inside a Claude Code session would otherwise
+ * force-dim every color-capable CLI in every agent PTY (agy honors NO_COLOR
+ * and drops to monochrome). A `NO_COLOR` present WITHOUT `CLAUDECODE` is a
+ * deliberate user preference and passes through untouched, and an explicit
+ * `inputEnv.NO_COLOR` (a caller opting one spawn out of color) always
+ * survives. The strip must live here rather than in an adapter buildEnv:
+ * adapter env merges over `process.env` and can only add or overwrite, never
+ * delete, and overriding with an empty string is unreliable (no-color.org
+ * says empty means off, but many implementations check mere presence).
+ *
+ * Also defaults `TERM=xterm-256color` when the merged environment has no TERM
+ * (empty counts as absent: capability detectors treat `TERM=""` as unset).
+ * node-pty turns the `name` spawn option into the child's TERM only on POSIX
+ * (unixTerminal.js assigns `env.TERM = name`; the Windows agent computes the
+ * name and never touches the env), so a child of a PowerShell-launched
+ * Kangentic sees no TERM at all and capability-detecting TUIs (agy) render
+ * monochrome. The default makes the child env match what POSIX children
+ * already get; an explicit TERM in the environment always wins. A TERM-set
+ * child env can reopen Claude Code's DECSTBM capability gate, which was
+ * measured shut while TERM was unset - see `scrollRegionSuffix()` in
+ * `src/main/pty/buffer/headless-frame.ts` for the guard and the measurement.
+ *
  * `platform` is injectable for tests (cross-platform parity); production
  * callers omit it.
  */
@@ -94,14 +119,22 @@ export function buildSpawnEnv(
   platform: NodeJS.Platform = process.platform,
 ): Record<string, string> {
   const merged = { ...process.env, ...inputEnv };
+  // Read the parentage signal before the loop strips CLAUDECODE itself. An
+  // explicit caller-supplied NO_COLOR survives: the heuristic targets only
+  // the inherited leak, never a deliberate per-spawn choice.
+  const stripNoColor = merged.CLAUDECODE !== undefined && inputEnv?.NO_COLOR === undefined;
   const result: Record<string, string> = {};
   for (const [key, value] of Object.entries(merged)) {
     if (value === undefined) continue;
     if (key === 'CLAUDECODE' || (key.startsWith('CLAUDE_CODE_') && key !== FULL_REPAINT_ENV_KEY)) continue;
+    if (key === 'NO_COLOR' && stripNoColor) continue;
     result[key] = value;
   }
   if (platform === 'win32' && result[FULL_REPAINT_ENV_KEY] === undefined) {
     result[FULL_REPAINT_ENV_KEY] = '1';
+  }
+  if (result.TERM === undefined || result.TERM === '') {
+    result.TERM = 'xterm-256color';
   }
   return result;
 }

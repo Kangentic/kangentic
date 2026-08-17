@@ -200,9 +200,13 @@ export class HeadlessFrameBuffer {
    * `XTVERSION: no reply (terminal ignored query)` and then
    * `DECSTBM: gated (TMUX=unset ZELLIJ=unset TERM_PROGRAM=unset TERM=unset)`.
    * xterm registers `CSI > c` but no `CSI > q`, so it never answers XTVERSION.
-   * The gate can reopen on any upgrade (or if we ever set TERM), silently, and
-   * the resulting bug is expensive to re-diagnose - hence the guard. The
-   * origin-mode branch below is NOT dormant.
+   * Re-measured 2026-08-16 (claude 2.1.233) after buildSpawnEnv began
+   * defaulting TERM=xterm-256color into every PTY child: still
+   * `DECSTBM: gated (TMUX=unset ZELLIJ=unset TERM_PROGRAM=unset
+   * TERM=xterm-256color)` behind the same XTVERSION no-reply, so the gate keys
+   * on the handshake, not on TERM alone. It can still reopen on any upgrade,
+   * silently, and the resulting bug is expensive to re-diagnose - hence the
+   * guard. The origin-mode branch below is NOT dormant.
    *
    * Order is load-bearing, twice over:
    *
