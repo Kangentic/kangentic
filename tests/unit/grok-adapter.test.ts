@@ -12,6 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { GrokAdapter } from '../../src/main/agent/adapters/grok/grok-adapter';
 import { GrokCommandBuilder, grokMcpWiringEnabled } from '../../src/main/agent/adapters/grok/command-builder';
+import type { GrokCommandOptions } from '../../src/main/agent/adapters/grok/command-builder';
 import { parseGrokVersion, GrokDetector } from '../../src/main/agent/adapters/grok/detector';
 import { buildGrokHooks, writeHooksFile, removeHooksFile } from '../../src/main/agent/adapters/grok/hook-manager';
 import { writeMcpConfig, removeMcpConfig } from '../../src/main/agent/adapters/grok/mcp-config';
@@ -150,6 +151,18 @@ describe('GrokAdapter identity', () => {
       .toEqual({ id: 'grok-4.6', displayName: 'Grok 4.6' });
     expect(adapter.configuredModelFromCommand('grok -s x --model grok-unlisted -- "hi"'))
       .toEqual({ id: 'grok-unlisted', displayName: 'grok-unlisted' });
+  });
+
+  it('only reads --model from the flag region before the end-of-options marker', () => {
+    // A prompt that happens to contain the literal text "--model usage" must
+    // never be misread as a real flag: only text BEFORE the ` -- ` marker
+    // the builder emits ahead of the prompt is a candidate flag region
+    // (the parseModelFromClaudeCommand precedent).
+    expect(adapter.configuredModelFromCommand("grok -s x -- 'run --model usage now'")).toBeNull();
+  });
+
+  it('parses a single-quoted --model value (the unix quoteArg form)', () => {
+    expect(adapter.configuredModelFromCommand("grok -s x --model 'my-model' -- 'hi'")?.id).toBe('my-model');
   });
 });
 
@@ -413,8 +426,15 @@ describe('buildGrokHooks', () => {
     const directives = tokens.slice(4).map(decodeDirective);
     expect(directives[0]).toEqual({ kind: 'extractTool', payload: { field: 'toolName' } });
     expect(directives[1]).toEqual({ kind: 'extractToolId', payload: { fields: ['toolUseId'] } });
-    expect(directives[2].kind).toBe('extractDetail');
-    expect(directives[2].payload).toMatchObject({ nested: 'toolInput' });
+    // Pinned exactly (not toMatchObject) so a field silently dropped from or
+    // added to buildGrokHooks's PreToolUse detail list is caught here.
+    expect(directives[2]).toEqual({
+      kind: 'extractDetail',
+      payload: {
+        fields: ['command', 'target_file', 'file_path', 'path', 'query', 'pattern', 'url', 'description'],
+        nested: 'toolInput',
+      },
+    });
   });
 
   it('maps PostToolUse to tool_end with tool-name/tool-id extraction and NO error-detail directive', () => {
@@ -480,6 +500,87 @@ describe('buildGrokHooks', () => {
     const preCompactTokens = hooks.PreCompact[0].hooks[0].command.split(' ');
     expect(preCompactTokens[3]).toBe('compact');
     expect(preCompactTokens).toHaveLength(4);
+  });
+});
+
+describe('git-exclude seeding', () => {
+  const builder = new GrokCommandBuilder();
+  let tempCwd: string;
+
+  const excludePath = () => path.join(tempCwd, '.git', 'info', 'exclude');
+
+  const build = (overrides: Partial<GrokCommandOptions> = {}) =>
+    builder.buildGrokCommand({
+      grokPath: '/usr/bin/grok',
+      taskId: 'task-1',
+      cwd: tempCwd,
+      permissionMode: 'acceptEdits' as PermissionMode,
+      shell: 'bash',
+      ...overrides,
+    });
+
+  beforeEach(() => {
+    tempCwd = fs.mkdtempSync(path.join(os.tmpdir(), 'grok-exclude-'));
+    fs.mkdirSync(path.join(tempCwd, '.git'), { recursive: true });
+  });
+
+  afterEach(() => {
+    fs.rmSync(tempCwd, { recursive: true, force: true });
+  });
+
+  it('full spawn seeds the hook file, config.toml, and .kangentic/', () => {
+    build({
+      eventsOutputPath: path.join(tempCwd, '.kangentic', 'sessions', 's1', 'events.jsonl'),
+      mcpServerUrl: 'http://127.0.0.1:4100/mcp/p1/s1',
+      mcpServerToken: 'secret-token',
+    });
+    const content = fs.readFileSync(excludePath(), 'utf-8');
+    expect(content).toContain('.grok/hooks/kangentic.json');
+    expect(content).toContain('.grok/config.toml');
+    expect(content).toContain('.kangentic/');
+  });
+
+  it('never excludes a pre-existing user config.toml, but still excludes the hook file', () => {
+    // Also pins the seed-BEFORE-write ordering: after the build the managed
+    // block has been appended, so a post-write existence check could never
+    // distinguish the user's config.toml from a Kangentic-created one.
+    fs.mkdirSync(path.join(tempCwd, '.grok'), { recursive: true });
+    fs.writeFileSync(path.join(tempCwd, '.grok', 'config.toml'), '[settings]\ntheme = "dark"\n');
+    build({
+      eventsOutputPath: path.join(tempCwd, '.kangentic', 'sessions', 's1', 'events.jsonl'),
+      mcpServerUrl: 'http://127.0.0.1:4100/mcp/p1/s1',
+      mcpServerToken: 'secret-token',
+    });
+    const content = fs.readFileSync(excludePath(), 'utf-8');
+    expect(content).not.toContain('.grok/config.toml');
+    expect(content).toContain('.grok/hooks/kangentic.json');
+  });
+
+  it('events-only spawn seeds the hook file and .kangentic/ but not config.toml', () => {
+    build({
+      eventsOutputPath: path.join(tempCwd, '.kangentic', 'sessions', 's1', 'events.jsonl'),
+      mcpServerEnabled: false,
+    });
+    const content = fs.readFileSync(excludePath(), 'utf-8');
+    expect(content).toContain('.grok/hooks/kangentic.json');
+    expect(content).toContain('.kangentic/');
+    expect(content).not.toContain('.grok/config.toml');
+  });
+
+  it('MCP-only spawn (no eventsOutputPath) seeds config.toml and .kangentic/ but not the hook file', () => {
+    build({
+      mcpServerUrl: 'http://127.0.0.1:4100/mcp/p1/s1',
+      mcpServerToken: 'secret-token',
+    });
+    const content = fs.readFileSync(excludePath(), 'utf-8');
+    expect(content).toContain('.grok/config.toml');
+    expect(content).toContain('.kangentic/');
+    expect(content).not.toContain('.grok/hooks/kangentic.json');
+  });
+
+  it('seeds nothing when neither events nor MCP are wired', () => {
+    build({ mcpServerEnabled: false });
+    expect(fs.existsSync(excludePath())).toBe(false);
   });
 });
 
@@ -616,6 +717,27 @@ describe('hooks file + MCP config lifecycle', () => {
 
     adapter.removeHooks(projectDir, 'task-b');
     expect(fs.existsSync(configPath)).toBe(false);
+  });
+
+  it('leaves no .kangentic-tmp or .kangentic-backup file behind after write and remove', () => {
+    // writeMcpConfig / removeMcpConfig now go through the atomic
+    // write-temp + rename helper with `backup: false` (config.toml is the
+    // user's own file, and rename-replace already preserves the original on
+    // any failure before the rename - a per-spawn backup file would litter
+    // .grok/). Both the temp file and any backup file must be gone once the
+    // write settles.
+    const configPath = path.join(projectDir, '.grok', 'config.toml');
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, '[settings]\ntheme = "dark"\n');
+
+    writeMcpConfig(projectDir);
+    expect(fs.existsSync(`${configPath}.kangentic-tmp`)).toBe(false);
+    expect(fs.existsSync(`${configPath}.kangentic-backup`)).toBe(false);
+
+    removeMcpConfig(projectDir);
+    expect(fs.existsSync(`${configPath}.kangentic-tmp`)).toBe(false);
+    expect(fs.existsSync(`${configPath}.kangentic-backup`)).toBe(false);
+    expect(fs.readFileSync(configPath, 'utf-8')).toContain('[settings]');
   });
 
   it('recovers from a truncated managed block (BEGIN present, END missing) by dropping to EOF', () => {
@@ -777,6 +899,20 @@ describe('GrokSessionHistoryParser', () => {
     const result = GrokSessionHistoryParser.parse(content, 'append');
     expect(result.activity).toBeNull();
     expect(result.events).toEqual([]);
+  });
+
+  it('harvests params._meta.totalTokens on an unknown dispatch type (hook_execution)', () => {
+    // The totalTokens harvest runs BEFORE the dispatch-type guard (it is a
+    // sibling of `update`, not type-specific), so an update type the parser
+    // does not otherwise dispatch on still contributes its context total
+    // instead of leaving the ContextBar stale at the last dispatch-type line.
+    const content = updateLine(
+      { sessionUpdate: 'hook_execution' },
+      { totalTokens: 70000 },
+    );
+    const result = GrokSessionHistoryParser.parse(content, 'append');
+    expect(result.usage?.contextWindow.usedTokens).toBe(70000);
+    expect(result.usage?.contextWindow.totalInputTokens).toBe(70000);
   });
 
   it('falls back to the LAST modelUsage key for the model id when no user_message_chunk carried one', () => {
@@ -1256,6 +1392,41 @@ describe('discoverGrokCapabilities', () => {
     expect(capabilities.modelDisplayNames).toEqual({ 'grok-4.6': 'Grok 4.6' });
     expect(capabilities.effortLevels).toEqual(['low', 'medium', 'high', 'xhigh']);
   });
+
+  it('memoizes the result: a second call does not re-read models_cache.json', async () => {
+    const home = useTempGrokHome();
+    fs.writeFileSync(path.join(home, 'models_cache.json'), JSON.stringify({
+      models: { 'grok-4.6': { info: { id: 'grok-4.6', name: 'Grok 4.6', context_window: 500000 } } },
+    }));
+
+    const first = await discoverGrokCapabilities('/usr/bin/grok');
+    expect(first.models).toEqual(['grok-4.6']);
+
+    // Change the on-disk cache after the memoized call. If the memo were not
+    // honored, the second call would pick this up and report grok-5 instead.
+    fs.writeFileSync(path.join(home, 'models_cache.json'), JSON.stringify({
+      models: { 'grok-5': { info: { id: 'grok-5', name: 'Grok 5', context_window: 1000000 } } },
+    }));
+
+    const second = await discoverGrokCapabilities('/usr/bin/grok');
+    expect(second.models).toEqual(['grok-4.6']);
+  });
+
+  it('forceRefresh bypasses the memo and re-reads the current models_cache.json', async () => {
+    const home = useTempGrokHome();
+    fs.writeFileSync(path.join(home, 'models_cache.json'), JSON.stringify({
+      models: { 'grok-4.6': { info: { id: 'grok-4.6', name: 'Grok 4.6', context_window: 500000 } } },
+    }));
+
+    await discoverGrokCapabilities('/usr/bin/grok');
+
+    fs.writeFileSync(path.join(home, 'models_cache.json'), JSON.stringify({
+      models: { 'grok-5': { info: { id: 'grok-5', name: 'Grok 5', context_window: 1000000 } } },
+    }));
+
+    const refreshed = await discoverGrokCapabilities('/usr/bin/grok', true);
+    expect(refreshed.models).toEqual(['grok-5']);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1277,6 +1448,19 @@ describe('trust manager', () => {
     expect(store).toContain(`[folders.'${path.resolve(worktree)}']`);
     expect(store).toContain('trusted = true');
     expect(store).toMatch(/decided_at = \d+/);
+  });
+
+  it('is idempotent: calling it twice for the same worktree appends exactly one table', async () => {
+    const home = useTempGrokHome();
+    const projectRoot = path.join(home, 'fake-project');
+    const worktree = worktreePathUnder(projectRoot);
+
+    await ensureWorktreeTrust(worktree);
+    await ensureWorktreeTrust(worktree);
+
+    const store = fs.readFileSync(path.join(home, 'trusted_folders.toml'), 'utf-8');
+    const occurrences = store.split(`[folders.'${path.resolve(worktree)}']`).length - 1;
+    expect(occurrences).toBe(1);
   });
 
   it('does nothing when a trusted ancestor already cascades over the worktree', async () => {
@@ -1408,6 +1592,34 @@ describe('migrateGrokProjectData', () => {
     const store = fs.readFileSync(path.join(home, 'trusted_folders.toml'), 'utf-8');
     expect(store).toContain(`[folders.'${path.resolve(newProject)}']`);
     expect(store).not.toContain(`[folders.'${path.resolve(oldProject)}']`);
+  });
+
+  it('falls back to a scan-and-decode match when the on-disk key carries a stray trailing separator', async () => {
+    // cwdToSessionsDirName is bare encodeURIComponent (no normalization), but
+    // normalizeForCompare resolves and strips a trailing separator. A key
+    // encoded with a trailing separator is therefore a genuine STRING
+    // mismatch against the exact-encoded key (unlike a same-machine drive-
+    // letter casing difference, which Windows' case-insensitive filesystem
+    // already tolerates at the exact-match existsSync check, making that
+    // scenario unable to exercise this fallback at all) - real fs calls only,
+    // no mocking needed, and platform-neutral since normalizeForCompare's
+    // trailing-separator strip is not win32-gated.
+    const home = useTempGrokHome();
+    const oldProject = path.join(home, 'old-project');
+    const newProject = path.join(home, 'new-project');
+    const sessionsRoot = path.join(home, 'sessions');
+
+    const resolvedOld = path.resolve(oldProject);
+    const keyWithTrailingSep = resolvedOld + path.sep;
+    const mismatchedSessionDir = path.join(sessionsRoot, cwdToSessionsDirName(keyWithTrailingSep), SESSION_ID);
+    fs.mkdirSync(mismatchedSessionDir, { recursive: true });
+    fs.writeFileSync(path.join(mismatchedSessionDir, 'updates.jsonl'), '');
+
+    await migrateGrokProjectData(oldProject, newProject);
+
+    const newSessionDir = path.join(sessionsRoot, cwdToSessionsDirName(path.resolve(newProject)), SESSION_ID);
+    expect(fs.existsSync(newSessionDir)).toBe(true);
+    expect(fs.existsSync(mismatchedSessionDir)).toBe(false);
   });
 
   it('rewrites a double-quoted trust header for the old path, leaving an unrelated header untouched', async () => {

@@ -60,9 +60,10 @@ export async function ensureGitignore(projectPath: string): Promise<void> {
     }
 
     // Note: the OpenCode activity plugin (`.opencode/plugins/kangentic-activity.mjs`)
-    // is NOT ignored here. That entry is added lazily by the OpenCode adapter's
-    // buildHooks() at spawn time, so projects that never use OpenCode never get
-    // a stray ignore line.
+    // is NOT ignored here. The OpenCode adapter's buildHooks() seeds it into the
+    // local `.git/info/exclude` at spawn time (shared/git-exclude.ts), so projects
+    // that never use OpenCode never get a stray entry and the tracked .gitignore
+    // is never dirtied.
   } catch (err) {
     // Non-fatal: log and continue. Project may be read-only or on a network drive.
     console.warn(`[PROJECT_OPEN] Could not update .gitignore at ${projectPath}:`, err);

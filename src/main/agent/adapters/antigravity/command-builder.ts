@@ -9,7 +9,7 @@ import {
   spaceFreeAgentsToken,
   type AntigravityHooksFile,
 } from './hook-manager';
-import { ensureLocalGitExcludes } from './git-exclude';
+import { ensureLocalGitExcludes } from '../../shared/git-exclude';
 import type { PermissionMode } from '../../../../shared/types';
 
 /**

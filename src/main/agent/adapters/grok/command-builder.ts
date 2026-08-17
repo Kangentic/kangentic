@@ -1,7 +1,9 @@
+import fs from 'node:fs';
 import { quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import { interpolateTemplate } from '../../shared/template-utils';
+import { ensureLocalGitExcludes } from '../../shared/git-exclude';
 import { writeHooksFile, KANGENTIC_EVENTS_PATH_ENV } from './hook-manager';
-import { writeMcpConfig, KANGENTIC_MCP_URL_ENV, KANGENTIC_MCP_TOKEN_ENV } from './mcp-config';
+import { writeMcpConfig, configTomlPath, KANGENTIC_MCP_URL_ENV, KANGENTIC_MCP_TOKEN_ENV } from './mcp-config';
 import type { PermissionMode } from '../../../../shared/types';
 
 /**
@@ -94,7 +96,12 @@ export class GrokCommandBuilder {
 
     // Wire the per-cwd hook file (static, env-routed) whenever this spawn
     // participates in the events pipeline, and the MCP config block
-    // whenever the server is attached. Both are idempotent rewrites.
+    // whenever the server is attached. Both are idempotent rewrites. Seed
+    // .git/info/exclude BEFORE the writes so the config.toml pre-existence
+    // check reflects the user's file, not ours: the runtime files otherwise
+    // sit untracked in the worktree for the whole session, polluting git
+    // status and riding along with any `git add -A` an agent runs.
+    this.seedGitExcludes(options);
     if (options.eventsOutputPath) {
       writeHooksFile(options.cwd);
     }
@@ -148,6 +155,33 @@ export class GrokCommandBuilder {
     }
 
     return parts.join(' ');
+  }
+
+  /**
+   * Hide the Kangentic-written runtime files from git for the untracked
+   * case. `.grok/hooks/kangentic.json` is a wholly Kangentic-owned filename
+   * (a pre-existing copy is ours from a prior or crashed session), so it is
+   * excluded unconditionally. `.grok/config.toml` is a user-owned file that
+   * gets the created-by-us carve-out: only a file Kangentic is about to
+   * create is excluded, and the exclude line persists once seeded, so a
+   * crash-leftover copy stays covered on respawn. Neither file carries a
+   * secret (URL and token are env references), so this is purely
+   * untracked-file noise control.
+   */
+  private seedGitExcludes(options: GrokCommandOptions): void {
+    const patterns: string[] = [];
+    if (options.eventsOutputPath || grokMcpWiringEnabled(options)) {
+      patterns.push('.kangentic/');
+    }
+    if (options.eventsOutputPath) {
+      patterns.push('.grok/hooks/kangentic.json');
+    }
+    if (grokMcpWiringEnabled(options) && !fs.existsSync(configTomlPath(options.cwd))) {
+      patterns.push('.grok/config.toml');
+    }
+    if (patterns.length > 0) {
+      ensureLocalGitExcludes(options.cwd, patterns);
+    }
   }
 
   /**

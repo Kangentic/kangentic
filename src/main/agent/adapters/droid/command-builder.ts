@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { toForwardSlash, quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import { interpolateTemplate } from '../../shared/template-utils';
+import { ensureLocalGitExcludes } from '../../shared/git-exclude';
 import type { PermissionMode } from '../../../../shared/types';
 
 /**
@@ -93,6 +94,11 @@ export class DroidCommandBuilder {
     const { shell } = options;
     const parts: string[] = [quoteArg(options.droidPath, shell)];
 
+    // Seed .git/info/exclude BEFORE the write so the mcp.json pre-existence
+    // check reflects the user's file, not ours: the config otherwise sits
+    // untracked in the worktree for the whole session, polluting git status
+    // and riding along with any `git add -A` an agent runs.
+    this.seedGitExcludes(options);
     this.writeMcpConfig(options);
 
     parts.push('--cwd', quoteArg(toForwardSlash(options.cwd), shell));
@@ -114,6 +120,23 @@ export class DroidCommandBuilder {
     }
 
     return parts.join(' ');
+  }
+
+  /**
+   * Hide the Kangentic-written runtime files from git for the untracked
+   * case. `<cwd>/.factory/mcp.json` gets the created-by-us carve-out: a
+   * file already present may be the user's own project MCP config, possibly
+   * destined for a commit. The file holds no secret (the token is a
+   * `${KANGENTIC_MCP_TOKEN}` env reference), so this is purely about
+   * untracked-file noise in the task worktree.
+   */
+  private seedGitExcludes(options: DroidCommandOptions): void {
+    if (!droidMcpWiringEnabled(options)) return;
+    const patterns = ['.kangentic/'];
+    if (!fs.existsSync(path.join(options.cwd, '.factory', 'mcp.json'))) {
+      patterns.push('.factory/mcp.json');
+    }
+    ensureLocalGitExcludes(options.cwd, patterns);
   }
 
   /**

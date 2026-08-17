@@ -3,6 +3,7 @@ import path from 'node:path';
 import { toForwardSlash, quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import { interpolateTemplate } from '../../shared/template-utils';
 import { resolveBridgeScript } from '../../shared/bridge-utils';
+import { ensureLocalGitExcludes } from '../../shared/git-exclude';
 import { buildHooks } from './hook-manager';
 import type { QwenHookEntry } from './hook-manager';
 import type { PermissionMode } from '../../../../shared/types';
@@ -58,7 +59,12 @@ export class QwenCommandBuilder {
     // Write merged settings whenever event-bridge hooks OR the kangentic
     // MCP server entry need to land in `.qwen/settings.json`. Either alone
     // is sufficient - hooks need eventsOutputPath, MCP needs the URL+token
-    // pair.
+    // pair. Seed .git/info/exclude BEFORE the write so the settings.json
+    // pre-existence check reflects the user's file, not ours: the merged
+    // file otherwise sits untracked in the worktree for the whole session,
+    // polluting git status and riding along with any `git add -A` an agent
+    // runs - which would commit the per-launch plaintext token.
+    this.seedGitExcludes(options);
     if (this.shouldWriteMergedSettings(options)) {
       this.createMergedSettings(options);
     }
@@ -145,6 +151,23 @@ export class QwenCommandBuilder {
       Boolean(options.mcpServerUrl) &&
       Boolean(options.mcpServerToken)
     );
+  }
+
+  /**
+   * Hide the Kangentic-written runtime files from git for the untracked
+   * case. `.qwen/settings.json` gets the created-by-us carve-out: a file
+   * already present in the cwd may be the user's own, possibly destined for
+   * a commit, so only a file Kangentic is about to create is excluded.
+   * Ignore rules never affect tracked files, so a committed settings.json
+   * keeps its normal git visibility either way.
+   */
+  private seedGitExcludes(options: QwenCommandOptions): void {
+    if (!this.shouldWriteMergedSettings(options)) return;
+    const patterns = ['.kangentic/'];
+    if (!fs.existsSync(path.join(options.cwd, '.qwen', 'settings.json'))) {
+      patterns.push('.qwen/settings.json');
+    }
+    ensureLocalGitExcludes(options.cwd, patterns);
   }
 
   /**

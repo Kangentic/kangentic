@@ -2,24 +2,33 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 /**
- * Hide Antigravity's Kangentic-written runtime files from git.
+ * Hide Kangentic-written agent runtime files from git.
  *
- * The agy CLI has no per-spawn settings flag, so the event hooks and the MCP
- * plugin (which carries the per-launch `X-Kangentic-Token`) must live in the
- * WORKSPACE at `.agents/`. During a live session they therefore show up as
- * untracked files in `git status` - polluting the Changes pane and, far
- * worse, riding along with any `git add -A` an agent runs, which would land
- * the token in git history.
+ * Several agent CLIs have no per-spawn settings flag, so their event hooks
+ * and MCP wiring (sometimes carrying the per-launch `X-Kangentic-Token`)
+ * must live in the WORKSPACE (`.agents/`, `.gemini/`, `.qwen/`, `.factory/`,
+ * `.grok/`, ...). During a live session those files show up as untracked in
+ * `git status` - polluting the Changes pane and, far worse, riding along
+ * with any `git add -A` an agent runs, which would land the token in git
+ * history.
  *
  * `.git/info/exclude` is the local, never-committed ignore file, and for a
  * worktree it resolves to the repository's COMMON git dir, so one seeding
  * covers every worktree of the repo. Ignore rules only affect UNTRACKED
  * files, which gives exactly the wanted semantics: files Kangentic created
- * vanish from status and `add -A`, while a user's own TRACKED `.agents`
- * customizations keep their normal git visibility.
+ * vanish from status and `add -A`, while a user's own TRACKED files keep
+ * their normal git visibility. The created-by-us carve-out for shared-name
+ * files (a settings file the user may own and commit) is caller-side
+ * policy: an adapter excludes such a file only when Kangentic is about to
+ * create it, checked with `fs.existsSync` BEFORE its write.
  */
 
-const EXCLUDE_MARKER = '# kangentic: antigravity adapter runtime files (local ignore, safe to remove)';
+const EXCLUDE_MARKER = '# kangentic: agent runtime files (local ignore, safe to remove)';
+
+// Any prior Kangentic marker line (including the legacy adapter-branded
+// "# kangentic: antigravity adapter runtime files ..." one) counts as
+// "marker already present", so re-seeding never stacks a second marker.
+const EXCLUDE_MARKER_PREFIX = '# kangentic:';
 
 /**
  * Resolve the directory whose `info/exclude` this checkout reads, following
@@ -79,13 +88,14 @@ export function ensureLocalGitExcludes(directory: string, patterns: string[]): v
     const missing = patterns.filter((pattern) => !existingLines.has(pattern));
     if (missing.length === 0) return;
 
+    const hasMarker = [...existingLines].some((line) => line.startsWith(EXCLUDE_MARKER_PREFIX));
     fs.mkdirSync(path.dirname(excludePath), { recursive: true });
     const needsNewline = existing.length > 0 && !existing.endsWith('\n');
-    const block = (existingLines.has(EXCLUDE_MARKER) ? [] : [EXCLUDE_MARKER])
+    const block = (hasMarker ? [] : [EXCLUDE_MARKER])
       .concat(missing)
       .join('\n');
     fs.appendFileSync(excludePath, `${needsNewline ? '\n' : ''}${block}\n`);
   } catch (error) {
-    console.error('[antigravity] Failed to seed .git/info/exclude', error);
+    console.error('[git-exclude] Failed to seed .git/info/exclude', error);
   }
 }

@@ -66,6 +66,8 @@ Delivery is per-adapter, because no two of these CLIs accept MCP config the same
 | Cursor, Oz CLI | Not wired | n/a |
 | Aider, Ollama | Not possible - neither CLI is an MCP client | n/a |
 
+The project-file rows (Gemini, Qwen, Droid, Grok, Antigravity) are additionally hidden from git while untracked: when Kangentic creates the file, the builder seeds it into the local `.git/info/exclude` so it never shows in `git status` and cannot ride a `git add -A` (shared mechanism in `src/main/agent/shared/git-exclude.ts`; a pre-existing user file keeps its git visibility).
+
 Full per-adapter detail, including the Codex quoting contract and the Gemini folder-trust requirement, lives in [agent-integration.md](agent-integration.md).
 
 #### Claude Code

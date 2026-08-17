@@ -550,7 +550,7 @@ The settings write is gated on hooks **or** MCP, so an MCP-only spawn (no events
 Two things make this work that are easy to miss:
 
 - **Folder trust is load-bearing.** Gemini disables every configured MCP server in an untrusted folder (`gemini mcp list` reports "MCP servers are configured but disabled because this folder is untrusted", and user-level servers are suppressed too), so the entry would be silently inert. `GeminiAdapter.ensureTrust` pre-populates `~/.gemini/trustedFolders.json` via `trust-manager.ts`. Unlike the Qwen equivalent it does **not** gate on `security.folderTrust.enabled`, because Gemini 0.54.4 enforces trust with that flag unset. It never overrides a user's `TRUST_PARENT` or `DO_NOT_TRUST`, at the path itself or on any ancestor, so a `DO_NOT_TRUST` on the repo suppresses approval for every worktree Kangentic creates beneath it (the same deny rule Codex applies to its project root). It also skips the write when an ancestor is already trusted, so a worktree under an already-trusted repo adds no key at all. When no ancestor is trusted, though, it does record one `TRUST_FOLDER` per task worktree, exactly like Codex - which is why `GeminiAdapter.onWorktreeRemoved` drops that entry again when Kangentic deletes the worktree (`removeWorktreeTrust`). Without it the file grows by a dead entry per task forever, the accumulation that reached 473 entries in Codex's `config.toml`. Removal only ever takes an entry Kangentic could have written itself: a `TRUST_PARENT` or `DO_NOT_TRUST` at that path is a user decision and survives, so a later worktree at the same path still honors it. Ancestor matching folds case only on Windows, since POSIX paths are case-sensitive.
-- **The token is plaintext on disk while the session runs.** `.gemini/settings.json` is project-shared and may be intentionally committed, so it cannot be blanket-gitignored like `.kangentic/`. Tokens rotate per app launch and `removeHooks` strips the entry on exit. Do not commit `.gemini/settings.json` while a Kangentic-spawned Gemini session is running. Droid avoids this class of problem entirely because it supports `${NAME}` env expansion inside header values; Gemini does not.
+- **The token is plaintext on disk while the session runs.** `.gemini/settings.json` is project-shared and may be intentionally committed, so it cannot be blanket-gitignored like `.kangentic/`. Tokens rotate per app launch and `removeHooks` strips the entry on exit. For the untracked case this is now self-enforcing: when Kangentic creates the file (it did not exist before the spawn), the builder seeds `.gemini/settings.json` and `.kangentic/` into `.git/info/exclude` via the shared `git-exclude.ts` mechanism (see the Antigravity section), so the file never shows as untracked and cannot ride a `git add -A` into history. A pre-existing file keeps its normal git visibility (the created-by-us carve-out), and ignore rules never affect tracked files - so the rule stands: do not commit `.gemini/settings.json` while a Kangentic-spawned Gemini session is running. Droid avoids this class of problem entirely because it supports `${NAME}` env expansion inside header values; Gemini does not.
 
 ## Qwen Code
 
@@ -596,6 +596,8 @@ The fork swapped Gemini's `auto_edit` (underscore) flag value for `auto-edit` (h
 ### Settings Merge
 
 Qwen Code reads settings from `.qwen/settings.json` in the project directory. Like Gemini it has no `--settings` flag, so Kangentic writes merged settings (with event-bridge hooks) directly to `.qwen/settings.json` in the CWD. Concurrent sessions in the same project are serialized by a per-task reference counter in `QwenAdapter.hookHolders`, identical to the Gemini implementation.
+
+The security trade-off is also identical to Gemini's: the merged file carries the per-launch MCP token in plaintext while the session runs. The same mitigations apply - tokens rotate per app launch, `removeHooks` strips the entry on exit, and when Kangentic creates the file the builder seeds `.qwen/settings.json` and `.kangentic/` into `.git/info/exclude` (created-by-us carve-out: a pre-existing user file keeps its git visibility). Do not commit `.qwen/settings.json` while a Kangentic-spawned Qwen session is running.
 
 ### Session History
 
@@ -653,7 +655,13 @@ The `permissions` list exposes two entries in OpenCode's own vocabulary: `plan` 
 
 ### Settings Merge
 
-None. OpenCode reads MCP and provider configuration from `opencode.json` (project) or `~/.config/opencode/opencode.json` (global). `removeHooks` is a no-op and `clearSettingsCache` has nothing to clear. The Kangentic MCP server IS wired in for a local-mode spawn - `buildOpenCodeEnv` (`command-builder.ts`) emits an inline `mcp.kangentic` entry via the `OPENCODE_CONFIG_CONTENT` env var per PTY spawn, deep-merged over the user's own config so their `mcp.*` entries are preserved (see [MCP Server](mcp-server.md)). It is NOT wired in for a remote-mode spawn (`opencode attach <url>`) - see the Remote Execution subsection below.
+None. OpenCode reads MCP and provider configuration from `opencode.json` (project) or `~/.config/opencode/opencode.json` (global). `clearSettingsCache` has nothing to clear, and `removeHooks` only removes the activity plugin (next subsection). The Kangentic MCP server IS wired in for a local-mode spawn - `buildOpenCodeEnv` (`command-builder.ts`) emits an inline `mcp.kangentic` entry via the `OPENCODE_CONFIG_CONTENT` env var per PTY spawn, deep-merged over the user's own config so their `mcp.*` entries are preserved (see [MCP Server](mcp-server.md)). It is NOT wired in for a remote-mode spawn (`opencode attach <url>`) - see the Remote Execution subsection below.
+
+### Activity Plugin
+
+Local-mode spawns install the Kangentic activity plugin by copying `kangentic-activity.mjs` into `<projectRoot>/.opencode/plugins/`, where OpenCode auto-discovers plugins at TUI startup. The copy is byte-compare idempotent, and removal verifies a sentinel comment on line 1 so a user-authored plugin at the same path is never touched. The plugin runs inline in the OpenCode process and writes activity events straight to the session's `events.jsonl`, reading its output path from the `KANGENTIC_EVENTS_PATH` env var exported by the PTY spawn flow. Note the install lands at the PROJECT ROOT, not the task worktree.
+
+The plugin file is hidden from git via the shared `.git/info/exclude` mechanism (`src/main/agent/shared/git-exclude.ts`, see the Antigravity section), seeded only once the plugin file actually exists at the destination so a failed copy never leaves an entry pointing at a missing file. Earlier releases appended the entry to the project's tracked `.gitignore` instead, which dirtied the user's checkout; a line those releases appended is left in place (harmless - it ignores the same path).
 
 ### Session ID Capture
 
@@ -680,7 +688,7 @@ The adapter tracks which cwd resolved to which remote target in an in-memory `Ma
 ### Limitations
 
 - **Concurrent same-cwd spawns cannot be disambiguated (local mode only):** Two OpenCode tasks spawned within ~30 s against the same `cwd` cannot be reliably distinguished by `captureSessionIdFromFilesystem`. Both rows match the directory + time-window predicate, so the parser returns the most recently created row - which can attribute task A's session ID to task B, or vice versa. Kangentic's per-task worktrees (`git.worktreesEnabled`, default `true`) sidestep this by giving every task its own `cwd`. If you have disabled worktrees and need to run multiple OpenCode tasks against the same project root, either re-enable worktrees in Settings -> Git or stagger the spawns by more than 30 seconds. The Codex CLI parser carries the same caveat. Does not apply to remote-mode sessions (see above).
-- **No status / events telemetry:** OpenCode has no documented hook system, so activity detection is PTY-silence-only (`PTY_SILENCE_THRESHOLD_MS`, same `PtyActivityTracker` shape as Codex) and there is no `status.json` / `events.jsonl` pipeline.
+- **No status.json pipeline:** activity is `hooks_and_pty` - the activity plugin's events are authoritative when they fire, and PTY-silence detection (`PTY_SILENCE_THRESHOLD_MS`, same `PtyActivityTracker` shape as Codex) is the fallback tier for sessions without the plugin (remote mode, failed install). OpenCode has no statusline, so there is no `status.json` pipeline.
 - **No trust dialog:** `ensureTrust` is a no-op. OpenCode does not prompt for directory trust on first run.
 - **Remote mode is single-directory per project:** the server working directory is per-project, not per-task, so concurrent remote tasks in the same project share one directory. Per-task remote worktrees would require remote git operations (OpenCode's `POST /session/:id/shell` is the mechanism, if pursued later).
 
@@ -1016,7 +1024,7 @@ Droid CLI has no per-spawn `--mcp-config` flag, but it does expand `${NAME}` ref
 
 User-defined servers in that file are preserved, and `removeHooks` strips only the `kangentic` entry on session exit (deleting the file when nothing else remains). Verified against droid 0.189.0: `droid mcp list` reports `kangentic  http  connected  [project]`.
 
-Cleanup runs from the PTY exit and suspend paths, so a hard kill (Task Manager, crash, OS reboot) leaves the entry behind pointing at a dead loopback port until the next spawn rewrites it. It holds no secret, but it is a file Kangentic wrote inside the user's tree, so `.factory/` is gitignored alongside `.codex/` and `.gemini/`. A Droid session on a project with worktrees disabled writes it into the project root rather than a worktree, which is what makes that entry matter.
+Cleanup runs from the PTY exit and suspend paths, so a hard kill (Task Manager, crash, OS reboot) leaves the entry behind pointing at a dead loopback port until the next spawn rewrites it. It holds no secret, but it is a file Kangentic wrote inside the user's tree, so when Kangentic creates it the builder seeds `.factory/mcp.json` and `.kangentic/` into `.git/info/exclude` via the shared `git-exclude.ts` mechanism (see the Antigravity section) - the file never shows as untracked and cannot ride a `git add -A`. A pre-existing user `mcp.json` keeps its normal git visibility (the created-by-us carve-out). A Droid session on a project with worktrees disabled writes it into the project root rather than a worktree, which is what makes that entry matter.
 
 ### Limitations
 
@@ -1155,6 +1163,13 @@ approval prompt for Kangentic's own tools - verified live without it,
 `kangentic__kangentic_get_current_task` sat on the approval dialog with nobody there to
 answer. This is Claude's `mcp__kangentic` allow-rule injection, in grok's dialect.
 
+Both runtime files are hidden from git for the untracked case: the builder seeds
+`.grok/hooks/kangentic.json` (unconditionally - the filename is wholly Kangentic-owned),
+`.grok/config.toml` (only when Kangentic creates the file; a pre-existing user config keeps
+its git visibility), and `.kangentic/` into `.git/info/exclude` via the shared
+`git-exclude.ts` mechanism (see the Antigravity section). Neither file carries a secret, so
+this is purely untracked-noise control for the Changes pane and `git add -A`.
+
 **Trust.** Folder trust (`~/.grok/trusted_folders.toml`, entries
 `[folders.'<path>'] / trusted = true / decided_at = <unix>`) gates project hooks and
 project MCP together, and CASCADES to subdirectories - verified live: a Kangentic worktree
@@ -1238,7 +1253,7 @@ Session ids are captured two ways: `fromHook` reads `conversationId` (present in
 
 The Kangentic MCP server is registered as a WORKSPACE PLUGIN at `<cwd>/.agents/plugins/kangentic/` (`plugin.json` marker + `mcp_config.json` with `serverUrl` and a `headers['X-Kangentic-Token']` entry). agy dials `serverUrl` with streamable HTTP (`POST /mcp`) and forwards the headers map, connecting lazily at the first agent turn. A bare workspace `mcp_config.json` (no plugin wrapper) does not load (upstream google-antigravity/antigravity-cli#60). Same plaintext-token trade-off as Gemini: the per-launch token sits on disk during the active session; tokens rotate per app launch and `removeHooks()` deletes the plugin dir on session exit / suspend.
 
-Unlike Gemini, the runtime files are also hidden from git for the session's lifetime: the command builder seeds `.git/info/exclude` (the local, never-committed ignore file, resolved through the worktree's `commondir` so one seeding covers every worktree of the repo) with `.agents/plugins/kangentic/`, `.kangentic/`, and - only when Kangentic created the file itself - `.agents/hooks.json`. Ignore rules affect untracked files only, so a user's own tracked `.agents` customizations keep normal git visibility, while the token-bearing plugin can never ride into a commit on a `git add -A`. The marker comment in the exclude file says the lines are safe to remove.
+The runtime files are also hidden from git for the session's lifetime: the command builder seeds `.git/info/exclude` (the local, never-committed ignore file, resolved through the worktree's `commondir` so one seeding covers every worktree of the repo) with `.agents/plugins/kangentic/`, `.kangentic/`, and - only when Kangentic created the file itself - `.agents/hooks.json`. Ignore rules affect untracked files only, so a user's own tracked `.agents` customizations keep normal git visibility, while the token-bearing plugin can never ride into a commit on a `git add -A`. The marker comment in the exclude file says the lines are safe to remove. This mechanism originated here and now lives in `src/main/agent/shared/git-exclude.ts` (generic `# kangentic:` marker; the legacy antigravity-branded marker is recognized by prefix so already-seeded repos never gain a second marker block), shared by the Gemini, Qwen, Droid, and Grok builders and OpenCode's plugin install - each with its own pattern list and created-by-us carve-outs.
 
 ### Trust
 

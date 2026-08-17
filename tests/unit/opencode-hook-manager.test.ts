@@ -132,15 +132,17 @@ describe('opencode-hook-manager', () => {
     });
   });
 
-  describe('buildHooks gitignore behavior', () => {
-    const PLUGIN_GITIGNORE_ENTRY = '.opencode/plugins/kangentic-activity.mjs';
+  describe('buildHooks git-exclude behavior', () => {
+    const PLUGIN_EXCLUDE_PATTERN = '.opencode/plugins/kangentic-activity.mjs';
 
-    function gitignorePath(): string {
-      return path.join(projectDir, '.gitignore');
+    function excludePath(): string {
+      return path.join(projectDir, '.git', 'info', 'exclude');
     }
 
-    function readGitignore(): string {
-      return fs.readFileSync(gitignorePath(), 'utf-8');
+    function readExclude(): string {
+      // `git init` may or may not seed a template info/exclude, so a missing
+      // file reads as empty rather than failing the assertion.
+      return fs.existsSync(excludePath()) ? fs.readFileSync(excludePath(), 'utf-8') : '';
     }
 
     function initGitRepo(): void {
@@ -156,12 +158,21 @@ describe('opencode-hook-manager', () => {
       });
     }
 
-    it('adds the plugin entry to .gitignore after a successful install', () => {
+    it('adds the plugin entry to .git/info/exclude after a successful install', () => {
       initGitRepo();
       buildHooks(projectDir);
 
-      expect(fs.existsSync(gitignorePath())).toBe(true);
-      expect(readGitignore()).toContain(PLUGIN_GITIGNORE_ENTRY);
+      expect(readExclude()).toContain(PLUGIN_EXCLUDE_PATTERN);
+    });
+
+    it('never touches the tracked .gitignore', () => {
+      // The pre-exclude implementation appended to the project's .gitignore,
+      // dirtying a TRACKED file in the user's checkout. The exclude file is
+      // local to .git/ and never committed.
+      initGitRepo();
+      buildHooks(projectDir);
+
+      expect(fs.existsSync(path.join(projectDir, '.gitignore'))).toBe(false);
     });
 
     it('is idempotent on repeated calls (no duplicate entry)', () => {
@@ -170,55 +181,41 @@ describe('opencode-hook-manager', () => {
       buildHooks(projectDir);
       buildHooks(projectDir);
 
-      const occurrences = readGitignore()
+      const occurrences = readExclude()
         .split('\n')
-        .filter((line) => line.trim() === PLUGIN_GITIGNORE_ENTRY);
+        .filter((line) => line.trim() === PLUGIN_EXCLUDE_PATTERN);
       expect(occurrences).toHaveLength(1);
     });
 
-    it('does not touch .gitignore when the directory is not a git repo', () => {
+    it('writes no exclude when the directory is not a git repo', () => {
       // projectDir has no .git directory.
       buildHooks(projectDir);
 
       // The plugin must still install...
       expect(fs.existsSync(path.join(projectDir, '.opencode', 'plugins', 'kangentic-activity.mjs'))).toBe(true);
-      // ...but no .gitignore must be created.
-      expect(fs.existsSync(gitignorePath())).toBe(false);
+      // ...but no exclude file must be created.
+      expect(fs.existsSync(excludePath())).toBe(false);
     });
 
-    it('preserves pre-existing user content in .gitignore', () => {
+    it('preserves pre-existing content in the exclude file', () => {
       initGitRepo();
-      const userContent = 'node_modules/\ndist/\n*.log\n';
-      fs.writeFileSync(gitignorePath(), userContent);
+      fs.mkdirSync(path.dirname(excludePath()), { recursive: true });
+      fs.writeFileSync(excludePath(), 'node_modules/\n*.log\n');
 
       buildHooks(projectDir);
 
-      const content = readGitignore();
+      const content = readExclude();
       expect(content).toContain('node_modules/');
-      expect(content).toContain('dist/');
       expect(content).toContain('*.log');
-      expect(content).toContain(PLUGIN_GITIGNORE_ENTRY);
+      expect(content).toContain(PLUGIN_EXCLUDE_PATTERN);
     });
 
-    it('does not duplicate the entry if it is already present without a trailing newline', () => {
-      initGitRepo();
-      // No trailing newline - the helper must still detect the existing line.
-      fs.writeFileSync(gitignorePath(), `node_modules/\n${PLUGIN_GITIGNORE_ENTRY}`);
-
-      buildHooks(projectDir);
-
-      const occurrences = readGitignore()
-        .split('\n')
-        .filter((line) => line.trim() === PLUGIN_GITIGNORE_ENTRY);
-      expect(occurrences).toHaveLength(1);
-    });
-
-    it('does not write a .gitignore entry when copyFileSync fails', () => {
+    it('does not write an exclude entry when copyFileSync fails', () => {
       // This test protects the ordering invariant that is the heart of the
-      // "stop appending opencode" fix: ensurePluginGitignored is only called
-      // when fs.existsSync(destinationFile) is true AFTER the copy attempt.
-      // If the copy fails the file does not exist, existsSync returns false,
-      // and the gitignore entry must never be written - otherwise we would
+      // "stop appending opencode" fix: the exclude is only seeded when
+      // fs.existsSync(destinationFile) is true AFTER the copy attempt. If
+      // the copy fails the file does not exist, existsSync returns false,
+      // and the exclude entry must never be written - otherwise we would
       // add an entry pointing to a non-existent file.
       initGitRepo();
 
@@ -232,8 +229,8 @@ describe('opencode-hook-manager', () => {
       // Assert before restoring spies: mockRestore() resets call history.
       // The plugin file must not exist because the copy threw.
       expect(fs.existsSync(pluginPath())).toBe(false);
-      // The gitignore entry must not have been written.
-      expect(fs.existsSync(gitignorePath())).toBe(false);
+      // The exclude entry must not have been written.
+      expect(readExclude()).not.toContain(PLUGIN_EXCLUDE_PATTERN);
       // The copy failure must have been logged via console.error.
       expect(errorSpy).toHaveBeenCalledOnce();
 
