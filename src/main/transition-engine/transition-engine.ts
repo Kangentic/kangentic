@@ -17,6 +17,7 @@ import { resolveEffectivePermissionMode } from './spawn-preamble';
 import { resolveSpawnIntent } from './spawn-intent';
 import { migrateResumeCwdIfRenamed } from './resume-cwd-migration';
 import { reconcileResumeAgentSessionId } from './resume-id-reconcile';
+import { isResumeConversationAbsent } from './resume-conversation-guard';
 import { sessionOutputPaths } from './session-paths';
 import type { ActionRepository } from '../db/repositories/action-repository';
 import type { TaskRepository } from '../db/repositories/task-repository';
@@ -219,7 +220,36 @@ export class TransitionEngine {
       forceFresh: spawnOverrides?.forceFresh,
     });
 
-    const canResume = intent.mode === 'resume';
+    // A resume whose conversation the agent never persisted (a session that
+    // ended before its first turn - see resume-conversation-guard.ts) would
+    // spawn `--resume <id>`, get "No conversation found", and leave the user on
+    // a bare shell. Downgrade it to a fresh spawn instead. The probe only fires
+    // on positive evidence of an empty conversation and returns false on every
+    // uncertainty, so a real conversation is never discarded.
+    let canResume = intent.mode === 'resume';
+    // Every record that ran this conversation, newest first: a record whose CLI
+    // died on a failed resume wrote no status file, so the proof of emptiness
+    // can only be on an older one (see the guard's `recordIds` doc).
+    const conversationRecordIds = canResume
+      ? [
+          intent.retireRecordId,
+          ...(this.sessionRepo?.listForTaskNewestFirst(task.id) ?? [])
+            .filter((record) => record.agent_session_id === intent.agentSessionId)
+            .map((record) => record.id),
+        ]
+      : [];
+    if (canResume && await isResumeConversationAbsent({
+      adapter,
+      recordIds: conversationRecordIds,
+      projectPath: appConfig.projectPath || cwd,
+    })) {
+      console.log(
+        `[spawnAgent] Resume downgraded to fresh for task ${task.id.slice(0, 8)}:`
+        + ` agent session ${intent.agentSessionId?.slice(0, 8)} never wrote a conversation`
+        + ` (session ended before its first turn)`,
+      );
+      canResume = false;
+    }
 
     // agent_session_id: the agent CLI's real session ID for --resume/--session-id.
     // - Resume: use the captured/specified ID from the DB record, reconciled
@@ -247,7 +277,9 @@ export class TransitionEngine {
     const ptySessionId = randomUUID();
 
     console.log(
-      `[spawnAgent] task=${task.id.slice(0, 8)} intent=${intent.mode} session=${isolatedSwimlaneId ?? 'main'}`
+      // Reports the mode actually spawned, not the resolver's proposal: a
+      // never-persisted conversation is downgraded to fresh above.
+      `[spawnAgent] task=${task.id.slice(0, 8)} intent=${canResume ? 'resume' : 'fresh'} session=${isolatedSwimlaneId ?? 'main'}`
       + ` agent=${agentName} ptySessionId=${ptySessionId.slice(0, 8)}`
       + (agentSessionId ? ` agentSessionId=${agentSessionId.slice(0, 8)}` : '')
       + (intent.retireRecordId ? ` retiring=${intent.retireRecordId.slice(0, 8)}` : ''),

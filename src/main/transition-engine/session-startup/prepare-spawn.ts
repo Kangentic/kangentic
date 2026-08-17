@@ -11,6 +11,7 @@ import { runSpawnPreamble, resolveEffectivePermissionMode, projectModelDefaultsA
 import { applyProfileToLane, findTaskProfile } from '../column-strategy';
 import { sessionOutputPaths } from '../session-paths';
 import { reconcileResumeAgentSessionId } from '../resume-id-reconcile';
+import { isResumeConversationAbsent } from '../resume-conversation-guard';
 import type { SessionRepository } from '../../db/repositories/session-repository';
 import { resolveExecutionTarget } from '../../agent/shared/execution-target';
 import { resolveLaunchOptions } from '../../agent/shared/launch-options';
@@ -166,7 +167,26 @@ export async function prepareAgentSpawn(input: {
   );
 
   let agentSessionId: string | null;
-  const canResume = input.resume !== null;
+  // Same downgrade the board spawn path applies: a record whose conversation
+  // the agent never persisted (session ended before its first turn) must not be
+  // recovered with `--resume`, or startup hands the user a dead CLI. Returns
+  // false on every uncertainty, so a real conversation is never discarded.
+  let canResume = input.resume !== null;
+  if (canResume && await isResumeConversationAbsent({
+    adapter,
+    // Startup recovery holds only the record it is recovering; unlike the board
+    // path it has no repository handle to walk the conversation's lineage. A
+    // record recovered here ran until the crash, so it normally has its own
+    // status report.
+    recordIds: [input.resume!.recordId ?? null],
+    projectPath,
+  })) {
+    console.log(
+      `[SESSION_RECOVERY] Resume downgraded to fresh for task ${task.id.slice(0, 8)}:`
+      + ` agent session ${input.resume!.agentSessionId.slice(0, 8)} never wrote a conversation`,
+    );
+    canResume = false;
+  }
   if (canResume) {
     // Reconcile the resumed id against the retiring record's own status.json:
     // a mid-session fork (Claude /clear) in the final seconds before suspend
