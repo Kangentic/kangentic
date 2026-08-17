@@ -52,6 +52,90 @@ function deriveOverlayLabel(
  *   2. Session-based display state (queued, initializing, running, etc.)
  *   3. None (no session, no progress)
  */
+// ---------------------------------------------------------------------------
+// Display-kind classification (compile-enforced)
+//
+// Consumers used to ask "which kind is this?" with chains of string-literal
+// comparisons, e.g. the task-detail body's terminal gate:
+//
+//   sessionId && kind !== 'queued' && kind !== 'suspended'
+//
+// A denylist like that silently ADOPTS every kind added later, which is exactly
+// how a restore came to paint the outgoing session's dead terminal: the moment
+// an in-flight spawn label started resolving to 'preparing', a gate that had
+// never heard of it matched. The failure is invisible - no type error, no test,
+// just the wrong face.
+//
+// Both tables below are `satisfies Record<SessionDisplayState['kind'], ...>`, so
+// adding a kind to the union fails `npm run typecheck` until every consumer has
+// been told what to do with it. Same mechanism as ACTIVITY_DISPOSITION in
+// shared/activity-state.ts (see .claude/rules/activity-state-classification.md).
+// ---------------------------------------------------------------------------
+
+/** Which face the task-detail body paints. */
+export type TaskDetailSurface =
+  /** The live xterm for the task's session. */
+  | 'terminal'
+  /** Spinner + spawn phase label: work is happening, no session to show yet. */
+  | 'launch-overlay'
+  /** Waiting for a concurrency slot. */
+  | 'queued-placeholder'
+  /** Offer to restart a session that is genuinely parked. */
+  | 'resume-prompt'
+  /** Nothing session-shaped to show; the body falls through to its other faces. */
+  | 'inert';
+
+const TASK_DETAIL_SURFACE = {
+  // A session exists and is producing output (its boot noise included).
+  running: 'terminal',
+  initializing: 'terminal',
+  // Pre-session work. NOTE: during a restore the outgoing session's id is still
+  // on the row, so this must not fall through to 'terminal' or the user watches
+  // a dead shell while the agent is being restored.
+  preparing: 'launch-overlay',
+  queued: 'queued-placeholder',
+  suspended: 'resume-prompt',
+  exited: 'inert',
+  none: 'inert',
+} satisfies Record<SessionDisplayState['kind'], TaskDetailSurface>;
+
+/** The task-detail face for a display kind. Total by construction. */
+export function taskDetailSurfaceFor(kind: SessionDisplayState['kind']): TaskDetailSurface {
+  return TASK_DETAIL_SURFACE[kind];
+}
+
+/** Where a display kind sits in the session lifecycle. */
+export type SessionLifecyclePhase =
+  /** The agent is working or on its way to working. */
+  | 'active'
+  /** Parked, but resumable - it still has a session behind it. */
+  | 'paused'
+  /** No session lifecycle at all (never started, or finished). */
+  | 'ended';
+
+const SESSION_LIFECYCLE_PHASE = {
+  running: 'active',
+  queued: 'active',
+  initializing: 'active',
+  preparing: 'active',
+  suspended: 'paused',
+  exited: 'ended',
+  none: 'ended',
+} satisfies Record<SessionDisplayState['kind'], SessionLifecyclePhase>;
+
+/** True while the agent is working or starting: the Pause direction of a toggle. */
+export function isActiveKind(kind: SessionDisplayState['kind']): boolean {
+  return SESSION_LIFECYCLE_PHASE[kind] === 'active';
+}
+
+/**
+ * True when the task has a session lifecycle to talk about (active or paused).
+ * The complement of "never started / already finished".
+ */
+export function hasSessionLifecycle(kind: SessionDisplayState['kind']): boolean {
+  return SESSION_LIFECYCLE_PHASE[kind] !== 'ended';
+}
+
 export function getTaskProgress(inputs: {
   session?: Session;
   usage?: SessionUsage;
@@ -60,8 +144,21 @@ export function getTaskProgress(inputs: {
 }): SessionDisplayState {
   const { session, usage, activity, spawnProgressLabel } = inputs;
 
-  // Pre-session: spawn progress from main process (worktree creation, etc.)
-  if (spawnProgressLabel && !session) {
+  // Pre-session: spawn progress from main process (worktree creation, etc.).
+  //
+  // A SUSPENDED session does not suppress this. Main only emits a spawn label
+  // while it is actively spawning or resuming right now, which is strictly
+  // newer information than a record that was suspended earlier. Restoring a
+  // task from Done is the case that made this obvious: the suspended record is
+  // deliberately preserved for the resume, so the old `!session` test discarded
+  // the label for the entire worktree-recreate and CLI-boot window and left the
+  // card reading "Paused" with a manual "Resume session" button, while the
+  // engine was already restoring the conversation behind it. The same stale
+  // window hit any suspended task moved into an auto-spawn column.
+  //
+  // Only 'suspended' is overridden. A running/queued session owns its own
+  // display, and a stale label must never mask a live agent.
+  if (spawnProgressLabel && (!session || session.status === 'suspended')) {
     return { kind: 'preparing', label: spawnProgressLabel };
   }
 

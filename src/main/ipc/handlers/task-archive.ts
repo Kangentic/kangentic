@@ -15,6 +15,7 @@ import { resolveProjectContext } from '../helpers/project-repos';
 import { applyProfileToLane } from '../../transition-engine/column-strategy';
 import { loadTaskProfile } from '../helpers/task-profile';
 import { withTaskLock } from '../task-lifecycle-lock';
+import { createProgressCallback, clearSpawnProgress } from '../../transition-engine/spawn-progress';
 import type { TaskRepository } from '../../db/repositories/task-repository';
 import type { SwimlaneRole, Task } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
@@ -114,20 +115,35 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
         return tasks.getById(input.id);
       }
 
+      // Report progress exactly as task-move does. Restoring from Done deletes
+      // no time: the worktree has to be recreated from the preserved branch and
+      // the CLI booted, and the task's suspended record survives that whole
+      // window. Without a label the card sits on "Paused" behind a manual
+      // "Resume session" button while the engine is already restoring the
+      // conversation; with one, getTaskProgress reports 'preparing' and the
+      // restore reads as continuous.
+      const onProgress = createProgressCallback(context.mainWindow, task.id);
+      // Emitted immediately, before any git work: the several seconds spent
+      // resolving the lane and queueing the worktree op are exactly when the
+      // card would otherwise still read "Paused".
+      onProgress('resuming');
+
       // Create worktree if needed (any non-backlog column gets an agent)
       try {
-        await ensureTaskWorktree(context, task, tasks, resolvedProjectPath);
+        await ensureTaskWorktree(context, task, tasks, resolvedProjectPath, { onProgress });
       } catch (worktreeError) {
         console.error('[TASK_UNARCHIVE] Worktree creation failed:', worktreeError);
+        clearSpawnProgress(context.mainWindow, task.id);
         return tasks.getById(input.id);
       }
 
       // Checkout the task's branch in the main repo (non-worktree tasks only).
       // If checkout fails, the task is still unarchived but no agent is spawned.
       try {
-        await ensureTaskBranchCheckout(context, task, resolvedProjectPath);
+        await ensureTaskBranchCheckout(context, task, resolvedProjectPath, { onProgress });
       } catch (checkoutError) {
         console.error('[TASK_UNARCHIVE] Branch checkout failed:', checkoutError);
+        clearSpawnProgress(context.mainWindow, task.id);
         notifyBranchCheckoutBlocked(context, task, checkoutError, resolvedProjectId);
         return tasks.getById(input.id);
       }
@@ -160,8 +176,17 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
             });
           } catch (err) {
             console.error('[TASK_UNARCHIVE] Failed to start session:', err);
+          } finally {
+            // Mirrors task-move's Phase 3: the label must go once the spawn has
+            // resolved either way, so a task that never reaches a live session
+            // does not sit on "preparing" until the 120s TTL sweeps it.
+            clearSpawnProgress(context.mainWindow, task.id);
           }
+        } else {
+          clearSpawnProgress(context.mainWindow, task.id);
         }
+      } else {
+        clearSpawnProgress(context.mainWindow, task.id);
       }
 
       return tasks.getById(input.id);
@@ -195,19 +220,27 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
           return;
         }
 
+        // Per task, same as the single-unarchive handler above: a restore is
+        // slow enough (worktree recreate + CLI boot) that the card must show
+        // it is working rather than a stale "Paused".
+        const onProgress = createProgressCallback(context.mainWindow, task.id);
+        onProgress('resuming');
+
         try {
-          await ensureTaskWorktree(context, task, tasks, resolvedProjectPath);
+          await ensureTaskWorktree(context, task, tasks, resolvedProjectPath, { onProgress });
         } catch (worktreeError) {
           console.error(`[TASK_BULK_UNARCHIVE] Worktree creation failed for task ${id.slice(0, 8)}:`, worktreeError);
+          clearSpawnProgress(context.mainWindow, task.id);
           return;
         }
 
         // Checkout the task's branch in the main repo (non-worktree tasks only).
         // Catch per-task so one failure doesn't block the entire batch.
         try {
-          await ensureTaskBranchCheckout(context, task, resolvedProjectPath);
+          await ensureTaskBranchCheckout(context, task, resolvedProjectPath, { onProgress });
         } catch (checkoutError) {
           console.error(`[TASK_BULK_UNARCHIVE] Branch checkout failed for task ${id.slice(0, 8)}:`, checkoutError);
+          clearSpawnProgress(context.mainWindow, task.id);
           notifyBranchCheckoutBlocked(context, task, checkoutError, resolvedProjectId);
           return;
         }
@@ -237,8 +270,14 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
               });
             } catch (error) {
               console.error('[TASK_BULK_UNARCHIVE] Failed to start session:', error);
+            } finally {
+              clearSpawnProgress(context.mainWindow, task.id);
             }
+          } else {
+            clearSpawnProgress(context.mainWindow, task.id);
           }
+        } else {
+          clearSpawnProgress(context.mainWindow, task.id);
         }
       });
     }

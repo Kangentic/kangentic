@@ -104,6 +104,7 @@ export function __resetSpawnProgressForTest(): void {
 
 /** Valid spawn progress phases. */
 export type SpawnPhase =
+  | 'resuming'
   | 'fetching'
   | 'creating-worktree'
   | 'init-script'
@@ -114,6 +115,12 @@ export type SpawnPhase =
 
 /** Phase → user-facing label (single source of truth for display text). */
 const PHASE_LABELS: Record<SpawnPhase, string> = {
+  // Emitted the instant a restore begins, before any git work. Unlike
+  // 'fetching' (deliberately not emitted eagerly, because a queue wait would
+  // masquerade as an active fetch), this one is always true when sent: the
+  // restore IS starting. Without it the card holds its stale "Paused" for the
+  // several seconds before the worktree helper produces its first phase.
+  'resuming': 'Resuming session...',
   'fetching': 'Fetching latest...',
   'creating-worktree': 'Creating worktree...',
   'init-script': 'Running setup script...',
