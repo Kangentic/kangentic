@@ -133,9 +133,12 @@ export const DEFAULT_STALE_AFTER_HEARTBEAT_FORCED_MS = 30_000;
  * session-018, confirmed by code.claude.com/docs/en/hooks), so we recover on the
  * same "this turn has been silent long enough to be stale" budget the engine
  * already trusts for a lone `turnActive`, rather than going below any validated
- * threshold. The anchor is unchanged (`signal-or-pty-output`): a genuinely-live
- * subagent streams PTY output (task #246 streamed continuously for 211s), which
- * defers this timer; only a truly silent (aborted) turn lets it fire. Override
+ * threshold. This shortens only the THRESHOLD; the anchor stays
+ * `signal-or-pty-output` unless the hold's own `parkedWhen` narrows it (only
+ * `stuck-subagent` does, and only during a live retry hold - task #532). So a
+ * genuinely-live subagent streams PTY output (task #246 streamed continuously
+ * for 211s), which defers this timer; only a truly silent (aborted) turn lets
+ * it fire. Override
  * for tests. This is the EMPIRICALLY-VALIDATED recovery for the captured #277
  * incident, where the turn ended with a normal `Stop` (swallowed by the stuck
  * counter) plus an `idle_hint` - NO `StopFailure` was emitted. The structured
@@ -262,8 +265,12 @@ export interface CompensationCounters {
    * `timer:stuck-subagent` fired: `subagentDepth` was stuck > 0 (a named
    * terminal `subagent_stop` was lost after its empty inner stop was
    * ignored) with no other holder, and no other watchdog could reclaim it
-   * because they all gate on `subagentDepth === 0`. Non-zero means a named
-   * SubagentStop hook was dropped and the recovery hold cleared the depth.
+   * because they all gate on `subagentDepth === 0`. Non-zero means EITHER a
+   * named SubagentStop hook was dropped (the original #237 cause), OR a wedged
+   * CLI never resumed during a live retry hold that deliberately PRESERVED the
+   * depth (task #532) - there the subagent may still be genuinely alive and no
+   * hook was lost. The trigger label cannot distinguish them; check
+   * `retryFailurePending` on the transition record.
    */
   stuckSubagent: number;
 }
@@ -507,13 +514,16 @@ export interface SessionEngineState {
    * True while the session is held `thinking` through a LIVE `turn_retrying`
    * retry (a transient StopFailure error, e.g. 529 overloaded, that the agent
    * is auto-retrying mid-turn - see `ActivityEngine.applyRetryableFailureHold`).
-   * Feeds the stale-thinking watchdog's `believedParked` check
-   * (`watchdogBaseTime`) alongside `idleHintPending` / `turnForcedByHeartbeat`:
-   * without it, a parked-TUI "retrying in Ns..." repaint during backoff would
-   * stream real PTY bytes and defer the 180s net indefinitely for a retryable
-   * error that turns out to be terminal (reintroducing the #294/#364 parked-
-   * repaint class). Narrowing the anchor to `signal` while this is set lets the
-   * net still fire ~180s after the last genuine hook/output-growth signal.
+   * Feeds the `believedParked` check (`watchdogBaseTime`) alongside
+   * `idleHintPending` / `turnForcedByHeartbeat`: without it, a parked-TUI
+   * "retrying in Ns..." repaint during backoff would stream real PTY bytes and
+   * defer the net indefinitely for a retryable error that turns out to be
+   * terminal (reintroducing the #294/#364 parked-repaint class). Narrowing the
+   * anchor to `signal` while this is set lets the net still fire after the last
+   * genuine hook/output-growth signal. WHICH watchdog it narrows depends on the
+   * preserved `subagentDepth` (task #532): stale-thinking at depth 0 (~180s), or
+   * stuck-subagent at depth > 0 (the 5-min cap), the latter via that hold's own
+   * `parkedWhen`, which narrows on THIS flag alone.
    * Cleared by the same events that clear `idleHintPending`: a genuine
    * turn-initiating event, the Interrupted/TurnFailed/TurnRetrying bypass
    * (`resetInFlightCounters`), and `forceThinking`/`forceIdle`.
@@ -624,10 +634,13 @@ export interface ActivityStatsSnapshot {
    *  not the 5-min cap. Lets the debug overlay explain a fast watchdog fire. */
   idleHintPending: boolean;
   /** True while the session is held `thinking` through a live `turn_retrying`
-   *  retry (see `SessionEngineState.retryFailurePending`): the stale-thinking
-   *  watchdog's anchor is narrowed to `signal`, so parked-TUI retry repaints do
-   *  not defer the 180s net. Lets the debug overlay explain a narrowed retry
-   *  hold, the retry-side analog of `idleHintPending`. */
+   *  retry (see `SessionEngineState.retryFailurePending`): the anchor of
+   *  whichever watchdog is arbitrating the hold is narrowed to `signal`, so
+   *  parked-TUI retry repaints do not defer its net. That is stale-thinking at
+   *  `subagentDepth === 0` (~180s) and stuck-subagent at depth > 0 (the 5-min
+   *  cap), since the hold preserves the depth (task #532). Lets the debug
+   *  overlay explain a narrowed retry hold, the retry-side analog of
+   *  `idleHintPending`. */
   retryFailurePending: boolean;
   recentTransitions: ReadonlyArray<TransitionRecord>;
   compensationCounters: CompensationCounters;
