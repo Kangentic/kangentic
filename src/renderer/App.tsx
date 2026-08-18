@@ -593,6 +593,10 @@ export function App() {
         // Also the path the DETACHED monitor takes: its row click routes through
         // main and re-emits here, so pop-out and in-app behave identically.
         useSessionStore.getState().requestHideCommandBar();
+        // agent-focus-ok: a notification click is the user asking for this task,
+        // so the detail it opens SHOULD take focus. It arrives over an IPC push
+        // like the agent's does, which is why the origin is stated here rather
+        // than inferred. See .claude/rules/agent-driven-focus.md.
         if (taskId && alreadyActive) {
           useSessionStore.getState().setDetailTaskId(taskId);
         } else {

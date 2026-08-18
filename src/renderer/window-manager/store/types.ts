@@ -77,6 +77,20 @@ export interface ManagedWindow {
    *  restore (project switch) so they paint flat with NO entrance animation,
    *  unlike a fresh user-opened window. Re-derived on every restore. */
   skipEnterAnimation?: boolean;
+  /** Transient, never persisted: this window was opened or raised by an AGENT
+   *  (`kangentic_browser_open_pane`), not by the user.
+   *
+   *  Window-layer focus is how the arrival-focus arbiter decides which terminal
+   *  may take the KEYBOARD on mount, so an agent-opened window would otherwise
+   *  hand its own terminal the user's keystrokes mid-sentence. While this is set
+   *  and the window holds focus, `resolveArrivalFocus` denies EVERY terminal,
+   *  including this window's own. Cleared by `focusWindow`, i.e. by the user's
+   *  first pointer-down on the frame.
+   *
+   *  Set only when true, so default-by-omission is "the user did this" and a
+   *  forgotten flag on a user path is impossible.
+   *  See `.claude/rules/agent-driven-focus.md`. */
+  openedByAgent?: true;
   /** Set to the OWNING project's id while that project is backgrounded.
    *
    *  A retained window stays in `windows` and keeps rendering at its existing

@@ -1,6 +1,7 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Globe, ArrowRight } from 'lucide-react';
 import { normalizeUrl } from './BrowserEmptyState.utils';
+import { focusIsInTypingSurface } from '../../utils/terminal-arrival-focus';
 
 interface BrowserEmptyStateProps {
   onSubmit: (url: string) => void;
@@ -27,6 +28,17 @@ const QUICK_PICKS: QuickPick[] = [
 export function BrowserEmptyState({ onSubmit }: BrowserEmptyStateProps) {
   const [value, setValue] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  // Focus the URL input on mount, but never out of something the user is typing
+  // into. This pane does not only mount from the user's Browser pill: an agent's
+  // kangentic_browser_open_pane mounts it too, and lands here whenever the URL it
+  // seeded fails to resolve. A bare `autoFocus` made that an agent-triggered
+  // focus steal. See `.claude/rules/agent-driven-focus.md`.
+  useEffect(() => {
+    if (focusIsInTypingSurface()) return;
+    inputRef.current?.focus();
+  }, []);
 
   const submit = useCallback((raw: string) => {
     const normalized = normalizeUrl(raw);
@@ -63,11 +75,11 @@ export function BrowserEmptyState({ onSubmit }: BrowserEmptyStateProps) {
 
         <form onSubmit={handleSubmit} className="flex w-full gap-2 mt-1">
           <input
+            ref={inputRef}
             type="text"
             value={value}
             onChange={(event) => setValue(event.target.value)}
             placeholder="https://example.com or localhost:5173"
-            autoFocus
             spellCheck={false}
             className="flex-1 bg-surface-input text-fg text-sm px-3 py-2 rounded border border-edge-input focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30 transition-colors"
             data-testid="browser-empty-state-input"

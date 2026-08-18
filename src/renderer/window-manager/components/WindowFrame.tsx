@@ -120,6 +120,12 @@ function WindowFrameInner({ managedWindow, containerSize, overlayRef, tiledRect 
         if (target.closest('button, a, input, textarea, select, [role="button"], [role="menuitem"], [contenteditable="true"]')) return;
         if (target.closest('.xterm')) return;
         if (target.closest('[data-testid="conversation-view"]')) return;
+        // A Browser pane's <webview>, excluded for the same reason as .xterm: it
+        // is a content surface with its own focus, not window chrome. Guest input
+        // is normally routed straight to the guest process so this rarely fires,
+        // but when it does the preventDefault below would pull the user's focus
+        // out of the page they just clicked and into the terminal.
+        if (target.closest('webview')) return;
         event.preventDefault();
         // arrival-focus-ok: a literal pointer-down on THIS window's chrome.
         frameRef.current?.querySelector<HTMLElement>('.xterm-helper-textarea')?.focus();

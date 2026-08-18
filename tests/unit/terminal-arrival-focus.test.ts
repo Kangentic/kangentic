@@ -24,6 +24,7 @@ import {
   ARRIVAL_BURST_MS,
   type ArrivalFocusInput,
 } from '../../src/renderer/utils/terminal-arrival-focus';
+import type { FocusedWindowTerminal } from '../../src/renderer/utils/dictation-target';
 import {
   boardWindowManager,
   commandWindowManager,
@@ -66,6 +67,18 @@ function advanceToFreshInstant(): void {
  */
 let arrivalFocusFakeClock = NOW;
 
+/** A focused terminal-hosting window the USER opened. The default everywhere
+ *  except the tier-1.5 block, which is the whole point: the flag is set only on
+ *  the agent's own opens, so a plain window can never accidentally deny. */
+function userOpenedWindow(sessionId: string | null): FocusedWindowTerminal {
+  return { sessionId, openedByAgent: false };
+}
+
+/** The same window, opened by kangentic_browser_open_pane instead of by a user. */
+function agentOpenedWindow(sessionId: string | null): FocusedWindowTerminal {
+  return { sessionId, openedByAgent: true };
+}
+
 /** Tier 3, allowing: no claim, no focused window, focus not in a typing surface. */
 function baseInput(overrides: Partial<ArrivalFocusInput> = {}): ArrivalFocusInput {
   return {
@@ -95,7 +108,7 @@ describe('resolveArrivalFocus - tier 1, the user-gesture claim', () => {
     const result = resolveArrivalFocus(baseInput({
       sessionId: 'sess-detail',
       claim: { sessionId: 'sess-clicked', fingerprint: 'board:|cmd:|mon:', at: NOW },
-      focusedWindowTerminal: { sessionId: 'sess-detail' },
+      focusedWindowTerminal: userOpenedWindow('sess-detail'),
     }));
     expect(result).toEqual({ allow: false, reason: 'claim-mismatch' });
   });
@@ -107,7 +120,7 @@ describe('resolveArrivalFocus - tier 1, the user-gesture claim', () => {
       sessionId: 'sess-detail',
       claim: { sessionId: 'sess-clicked', fingerprint: 'board:|cmd:|mon:', at: NOW },
       windowFocusFingerprint: 'board:board-window-1|cmd:|mon:',
-      focusedWindowTerminal: { sessionId: 'sess-detail' },
+      focusedWindowTerminal: userOpenedWindow('sess-detail'),
     }));
     expect(result).toEqual({ allow: true, reason: 'window' });
   });
@@ -120,7 +133,7 @@ describe('resolveArrivalFocus - tier 1, the user-gesture claim', () => {
         fingerprint: 'board:|cmd:|mon:',
         at: NOW - ARRIVAL_CLAIM_TTL_MS - 1,
       },
-      focusedWindowTerminal: { sessionId: 'sess-detail' },
+      focusedWindowTerminal: userOpenedWindow('sess-detail'),
     }));
     expect(result).toEqual({ allow: true, reason: 'window' });
   });
@@ -138,11 +151,90 @@ describe('resolveArrivalFocus - tier 1, the user-gesture claim', () => {
   });
 });
 
+describe('resolveArrivalFocus - tier 1.5, the agent-opened window', () => {
+  // kangentic_browser_open_pane opens or raises a task-detail window on the
+  // agent's behalf, which moves `focusedWindowId`. Nothing about that says the
+  // user wants to type there, so no terminal may arrive into focus off the back
+  // of it. See `.claude/rules/agent-driven-focus.md`.
+
+  it('DENIES the agent-opened window\'s OWN terminal, which tier 2 would have allowed', () => {
+    // The reported steal: the user is typing in another terminal, the agent
+    // opens its pane, and the new window's terminal takes the keyboard. Tier 2
+    // matches this session exactly, so without tier 1.5 this returns `window`.
+    const result = resolveArrivalFocus(baseInput({
+      sessionId: 'sess-agent-detail',
+      focusedWindowTerminal: agentOpenedWindow('sess-agent-detail'),
+    }));
+    expect(result).toEqual({ allow: false, reason: 'agent-window' });
+  });
+
+  it('DENIES an unrelated session too, rather than handing it the vacancy', () => {
+    // Exclusivity: denying only the agent's own terminal would let whichever
+    // other terminal happened to arrive in the same frame win instead, which is
+    // the race this module exists to remove.
+    const result = resolveArrivalFocus(baseInput({
+      sessionId: 'sess-panel',
+      focusedWindowTerminal: agentOpenedWindow('sess-agent-detail'),
+    }));
+    expect(result).toEqual({ allow: false, reason: 'agent-window' });
+  });
+
+  it('DENIES even when every tier below would have allowed (nothing else owns the user\'s attention)', () => {
+    const result = resolveArrivalFocus(baseInput({
+      sessionId: 'sess-agent-detail',
+      focusedWindowTerminal: agentOpenedWindow('sess-agent-detail'),
+      focusIsInTypingSurface: false,
+      lastGrant: null,
+    }));
+    expect(result).toEqual({ allow: false, reason: 'agent-window' });
+  });
+
+  it('applies to a window that has not spawned a session yet', () => {
+    const result = resolveArrivalFocus(baseInput({
+      sessionId: 'sess-panel',
+      focusedWindowTerminal: agentOpenedWindow(null),
+    }));
+    expect(result).toEqual({ allow: false, reason: 'agent-window' });
+  });
+
+  it('LOSES to a live user claim at the same fingerprint', () => {
+    // Ordering: tier 1 sits above this one because clicking a bottom-panel tab
+    // moves no layer's `focusedWindowId`, so a claim can legitimately be made
+    // after an agent open and still be live here. That is newer, real user
+    // intent. Constructed so tier 1.5 would have denied.
+    const result = resolveArrivalFocus(baseInput({
+      sessionId: 'sess-clicked',
+      claim: { sessionId: 'sess-clicked', fingerprint: 'board:|cmd:|mon:', at: NOW },
+      focusedWindowTerminal: agentOpenedWindow('sess-agent-detail'),
+    }));
+    expect(result).toEqual({ allow: true, reason: 'claim' });
+  });
+
+  it('still denies a claim MISMATCH, so tier 1 does not become an escape hatch', () => {
+    const result = resolveArrivalFocus(baseInput({
+      sessionId: 'sess-agent-detail',
+      claim: { sessionId: 'sess-clicked', fingerprint: 'board:|cmd:|mon:', at: NOW },
+      focusedWindowTerminal: agentOpenedWindow('sess-agent-detail'),
+    }));
+    expect(result).toEqual({ allow: false, reason: 'claim-mismatch' });
+  });
+
+  it('leaves a USER-opened window on the tier-2 path untouched', () => {
+    // The regression guard: the stamp is set only on the agent's own opens, so
+    // an ordinary open must still behave exactly as before.
+    const result = resolveArrivalFocus(baseInput({
+      sessionId: 'sess-detail',
+      focusedWindowTerminal: userOpenedWindow('sess-detail'),
+    }));
+    expect(result).toEqual({ allow: true, reason: 'window' });
+  });
+});
+
 describe('resolveArrivalFocus - tier 2, the focused window', () => {
   it('allows the focused window\'s own terminal', () => {
     const result = resolveArrivalFocus(baseInput({
       sessionId: 'sess-detail',
-      focusedWindowTerminal: { sessionId: 'sess-detail' },
+      focusedWindowTerminal: userOpenedWindow('sess-detail'),
     }));
     expect(result).toEqual({ allow: true, reason: 'window' });
   });
@@ -152,7 +244,7 @@ describe('resolveArrivalFocus - tier 2, the focused window', () => {
     // surface), which is exactly how the panel used to win the race.
     const result = resolveArrivalFocus(baseInput({
       sessionId: 'sess-panel-fallback',
-      focusedWindowTerminal: { sessionId: 'sess-detail' },
+      focusedWindowTerminal: userOpenedWindow('sess-detail'),
     }));
     expect(result).toEqual({ allow: false, reason: 'window-mismatch' });
   });
@@ -162,7 +254,7 @@ describe('resolveArrivalFocus - tier 2, the focused window', () => {
     // read as "no window focused" and let some other terminal grab focus.
     const result = resolveArrivalFocus(baseInput({
       sessionId: 'sess-panel-fallback',
-      focusedWindowTerminal: { sessionId: null },
+      focusedWindowTerminal: userOpenedWindow(null),
     }));
     expect(result).toEqual({ allow: false, reason: 'window-mismatch' });
   });

@@ -26,6 +26,10 @@ interface AttachedState {
   consoleRing: ConsoleEntry[];
   consoleListener: (event: Electron.Event, method: string, params: unknown) => void;
   detachListener: (event: Electron.Event, reason: string) => void;
+  /** `Emulation.setFocusEmulationEnabled` has been sent for THIS CDP session.
+   *  Lives on the attached state, not in a module Set, so it resets with the
+   *  session for free: the detach listener drops this whole entry. */
+  focusEmulated: boolean;
 }
 
 export interface ConsoleEntry {
@@ -47,6 +51,7 @@ export function attachDebugger(webContents: WebContents): boolean {
   }
   const state: AttachedState = {
     webContents,
+    focusEmulated: false,
     consoleRing: [],
     consoleListener: (_event, method, params) => {
       if (method === 'Console.messageAdded') {
@@ -114,6 +119,43 @@ export function detachDebugger(webContents: WebContents): void {
  */
 export function isDebuggerAttached(webContents: WebContents): boolean {
   return attached.has(webContents);
+}
+
+/**
+ * Make a guest render and behave as a FOCUSED page, without the browser ever
+ * giving it real keyboard focus.
+ *
+ * What it buys, stated carefully because a stronger claim here was wrong once:
+ * the page BEHAVES as focused. A page that hides UI, pauses a render loop, or
+ * drops a selection highlight on blur keeps working while an agent drives it,
+ * and the guest's own focused element survives the renderer handing the user's
+ * focus back (`src/renderer/utils/agent-input-focus-guard.ts`).
+ *
+ * What it does NOT do is affect input ROUTING. Measured inside a guest during a
+ * drive whose keystrokes were being dropped: `document.hasFocus()` was already
+ * `true` while nothing landed. Chromium routes keyboard input to the widget that
+ * genuinely holds focus, and emulation does not change which widget that is - so
+ * do not reach for this when a `type` call is not landing. See
+ * `.claude/rules/agent-driven-focus.md` for what actually governs that.
+ *
+ * Idempotent per CDP session, and deliberately NOT called from
+ * `attachDebugger`: the dev inspection bridge attaches through that same
+ * function against Kangentic's OWN window (`src/devtools/install.ts`), where a
+ * permanently-focused page would change `document.hasFocus()` under the app
+ * itself. Only the browser-pane driver arms it.
+ *
+ * Fire-and-forget like the domain enables above: a guest that refuses the
+ * command is not a reason to fail the tool call.
+ *
+ * See `.claude/rules/agent-driven-focus.md`.
+ */
+export function ensureFocusEmulation(webContents: WebContents): void {
+  const state = attached.get(webContents);
+  if (!state || state.focusEmulated) return;
+  state.focusEmulated = true;
+  void webContents.debugger
+    .sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true })
+    .catch(() => {});
 }
 
 interface ConsoleMessage {
@@ -657,18 +699,70 @@ export async function dispatchMouseEvent(
   });
 }
 
+/**
+ * Bring an element into the viewport before it is measured or clicked.
+ *
+ * REQUIRED, not an optimization. `Input.dispatchMouseEvent` takes coordinates
+ * relative to the VIEWPORT, while `DOM.getBoxModel` measures in page space - so
+ * for anything below the fold the click was dispatched at a y far outside the
+ * viewport and simply never landed. Measured on a real page: an element 11,122px
+ * down reported that exact y, the click reported success, and the page did not
+ * react at all. That is the worst shape a bug can take here, because the tool
+ * told the agent it had clicked.
+ *
+ * Best-effort: a node that cannot be scrolled (detached, `display: none`) just
+ * leaves the caller measuring what it would have measured anyway, and the caller
+ * still reports honestly from the box it gets back.
+ */
+async function scrollNodeIntoView(webContents: WebContents, nodeId: number): Promise<void> {
+  try {
+    await webContents.debugger.sendCommand('DOM.scrollIntoViewIfNeeded', { nodeId });
+  } catch {
+    // best-effort
+  }
+}
+
+/** Centroid of a box-model content quad: x0,y0, x1,y1, x2,y2, x3,y3
+ *  (top-left, top-right, bottom-right, bottom-left). */
+function contentCentroid(box: BoxModel['model']): { x: number; y: number } | null {
+  if (!box || !Array.isArray(box.content) || box.content.length < 8) return null;
+  return {
+    x: (box.content[0] + box.content[4]) / 2,
+    y: (box.content[1] + box.content[5]) / 2,
+  };
+}
+
+/**
+ * Scroll an element into view and return the viewport centroid to click.
+ * Returns null when the selector does not resolve or cannot be measured.
+ */
+async function resolveClickPoint(
+  webContents: WebContents,
+  selector: string,
+): Promise<{ x: number; y: number } | null> {
+  const nodeId = await resolveSelector(webContents, selector);
+  if (!nodeId) return null;
+  await scrollNodeIntoView(webContents, nodeId);
+  // Measured AFTER the scroll: the box is only meaningful once the element is
+  // actually in the viewport the click coordinates address.
+  const box = await getBoundingBoxByNodeId(webContents, nodeId);
+  if (!box) return null;
+  return contentCentroid(box);
+}
+
 export async function clickAtCenterOfSelector(
   webContents: WebContents,
   selector: string,
 ): Promise<boolean> {
-  const box = await getBoundingBox(webContents, selector);
-  if (!box || !Array.isArray(box.content) || box.content.length < 8) return false;
-  // `content` is a quad: x0,y0, x1,y1, x2,y2, x3,y3 (top-left, top-right,
-  // bottom-right, bottom-left). Compute the centroid.
-  const cx = (box.content[0] + box.content[4]) / 2;
-  const cy = (box.content[1] + box.content[5]) / 2;
-  await dispatchMouseEvent(webContents, { type: 'mousePressed', x: cx, y: cy });
-  await dispatchMouseEvent(webContents, { type: 'mouseReleased', x: cx, y: cy });
+  const point = await resolveClickPoint(webContents, selector);
+  if (!point) return false;
+  // A `mouseMoved` before the press, which a real pointer always produces.
+  // Without it a page never sees `mouseover` / `mouseenter`, so hover-gated UI
+  // (dropdown menus, hover-revealed action buttons, tooltips) is not open when
+  // the press arrives and the click hits whatever is underneath instead.
+  await dispatchMouseEvent(webContents, { type: 'mouseMoved', x: point.x, y: point.y });
+  await dispatchMouseEvent(webContents, { type: 'mousePressed', x: point.x, y: point.y });
+  await dispatchMouseEvent(webContents, { type: 'mouseReleased', x: point.x, y: point.y });
   return true;
 }
 
@@ -678,13 +772,25 @@ export async function dragFromTo(
   toSelector: string,
   options: { steps?: number } = {},
 ): Promise<boolean> {
-  const fromBox = await getBoundingBox(webContents, fromSelector);
-  const toBox = await getBoundingBox(webContents, toSelector);
-  if (!fromBox || !toBox) return false;
-  const sourceX = (fromBox.content[0] + fromBox.content[4]) / 2;
-  const sourceY = (fromBox.content[1] + fromBox.content[5]) / 2;
-  const targetX = (toBox.content[0] + toBox.content[4]) / 2;
-  const targetY = (toBox.content[1] + toBox.content[5]) / 2;
+  // Same viewport-coordinate requirement as a click: measure only after both
+  // ends are scrolled into view, or a drag involving anything below the fold
+  // silently does nothing. Source first, then target, because scrolling to the
+  // target can move the source - so the source is re-measured last, once the
+  // page has settled where the drag will actually run.
+  const fromNodeId = await resolveSelector(webContents, fromSelector);
+  const toNodeId = await resolveSelector(webContents, toSelector);
+  if (!fromNodeId || !toNodeId) return false;
+  await scrollNodeIntoView(webContents, fromNodeId);
+  await scrollNodeIntoView(webContents, toNodeId);
+  const fromBox = await getBoundingBoxByNodeId(webContents, fromNodeId);
+  const toBox = await getBoundingBoxByNodeId(webContents, toNodeId);
+  const source = fromBox ? contentCentroid(fromBox) : null;
+  const target = toBox ? contentCentroid(toBox) : null;
+  if (!source || !target) return false;
+  const sourceX = source.x;
+  const sourceY = source.y;
+  const targetX = target.x;
+  const targetY = target.y;
   const steps = Math.max(2, options.steps ?? 10);
 
   await dispatchMouseEvent(webContents, { type: 'mousePressed', x: sourceX, y: sourceY });
@@ -717,14 +823,63 @@ export async function dispatchKeyEvent(
 }
 
 /**
- * Type a string by dispatching one `char` event per character. The CDP
- * `char` event handles printable text properly (no key-code mapping
- * needed). Special keys go through `dispatchKeypress`.
+ * Type a string, one character at a time, as a real keyboard would.
+ *
+ * Each character sends `keyDown` / `char` / `keyUp` rather than a bare `char`.
+ * The bare `char` alone delivers the text and nothing else, so a page that does
+ * ANY of its work in a `keydown` handler never reacts: React inputs that filter
+ * or transform keys, search-as-you-type boxes, form libraries that validate per
+ * keystroke, and editors with hotkeys. Those pages took the text into the DOM
+ * and then behaved as though nothing had been typed, which reads as "the agent
+ * typed but the app ignored it".
+ *
+ * ONLY THE `char` CARRIES `text`, deliberately. In CDP a `keyDown` with a
+ * non-empty `text` performs the insertion by itself (it is how Puppeteer types),
+ * so carrying `text` on both would insert every character TWICE. Splitting the
+ * roles - `keyDown` to fire handlers, `char` to insert - keeps the insertion
+ * path exactly the one that has always worked here and adds the missing events
+ * around it, so this cannot regress typing that works today.
+ *
+ * Special keys (Enter, Tab, arrows) still go through `dispatchKeypress`, which
+ * owns the virtual-key-code mapping.
  */
 export async function typeText(webContents: WebContents, text: string): Promise<void> {
   for (const character of text) {
+    const keyIdentity = printableKeyIdentity(character);
+    await dispatchKeyEvent(webContents, { type: 'keyDown', ...keyIdentity });
     await dispatchKeyEvent(webContents, { type: 'char', text: character });
+    await dispatchKeyEvent(webContents, { type: 'keyUp', ...keyIdentity });
   }
+}
+
+/**
+ * `key` / `code` / `windowsVirtualKeyCode` for a printable character, so a
+ * page's `keydown` handler sees a plausible event rather than an empty one.
+ *
+ * Only letters, digits, and Enter get a real `code`; everything else (symbols,
+ * punctuation, non-Latin text) carries `key` and the uppercased char code, which
+ * is what matters to handlers keying off `event.key`. A full physical-layout map
+ * would be a lie for any non-US keyboard, so it is deliberately not attempted.
+ */
+function printableKeyIdentity(character: string): {
+  key: string;
+  code?: string;
+  windowsVirtualKeyCode?: number;
+} {
+  if (character === '\n' || character === '\r') {
+    return { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 };
+  }
+  const upper = character.toUpperCase();
+  if (character >= 'a' && character <= 'z') {
+    return { key: character, code: `Key${upper}`, windowsVirtualKeyCode: upper.charCodeAt(0) };
+  }
+  if (character >= 'A' && character <= 'Z') {
+    return { key: character, code: `Key${character}`, windowsVirtualKeyCode: character.charCodeAt(0) };
+  }
+  if (character >= '0' && character <= '9') {
+    return { key: character, code: `Digit${character}`, windowsVirtualKeyCode: character.charCodeAt(0) };
+  }
+  return { key: character, windowsVirtualKeyCode: upper.charCodeAt(0) };
 }
 
 const SPECIAL_KEY_MAP: Record<string, { code: string; key: string; vk: number }> = {
@@ -794,16 +949,34 @@ export async function dispatchKeypress(
     }
     const upper = target.toUpperCase();
     const vk = upper.charCodeAt(0);
+    // Shift alone PRODUCES TEXT; Ctrl / Alt / Meta do not.
+    //
+    // Without this, `Shift+a` sent a keyDown/keyUp pair carrying no `text` and
+    // typed nothing at all - silently, while the tool reported success. That
+    // contradicts this function's own contract, where a bare `a` types the
+    // letter. A shortcut chord (`Ctrl+a`, `Meta+s`) correctly stays text-free:
+    // inserting a character there would be wrong.
+    //
+    // Scoped to ASCII letters deliberately. `Shift+1` is `!` on a US layout and
+    // something else on most others, and this has no keyboard-layout map, so
+    // guessing would be a lie. Use `kangentic_browser_type` for symbols.
+    const isShiftedLetter = modifierFlags === MODIFIER_FLAGS.Shift
+      && /^[a-zA-Z]$/.test(target);
+    const shiftedText = isShiftedLetter ? upper : null;
     await dispatchKeyEvent(webContents, {
       type: 'keyDown',
-      key: target,
+      key: shiftedText ?? target,
       code: `Key${upper}`,
       windowsVirtualKeyCode: vk,
       modifiers: modifierFlags,
     });
+    if (shiftedText) {
+      // Same split as `typeText`: the keyDown fires handlers, the char inserts.
+      await dispatchKeyEvent(webContents, { type: 'char', text: shiftedText });
+    }
     await dispatchKeyEvent(webContents, {
       type: 'keyUp',
-      key: target,
+      key: shiftedText ?? target,
       code: `Key${upper}`,
       windowsVirtualKeyCode: vk,
       modifiers: modifierFlags,

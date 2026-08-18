@@ -391,6 +391,7 @@ session; rules with one load when you touch matching files. Each rule names its 
 - `derived-detail-ownership.md` - task-detail ownership is reported as a host's COMPLETE mounted set and reconciled, never accumulated from claim/release; the reporter mounts where it outlives the window store (`src/main/task-detail/**`, `src/renderer/window-manager/bridge/**`, `src/renderer/components/monitor/**`).
 - `retained-pane-never-remounts.md` - a task-detail window whose Browser pane is open is RETAINED across a project switch so its `<webview>` guest survives; never re-parent it, never change its tree shape above `BrowserPane`, and hide it with `opacity: 0` only (`src/renderer/window-manager/**`, `src/renderer/components/browser/**`).
 - `terminal-arrival-focus.md` - an arriving terminal never decides its own focus; route programmatic focus through `mayTakeArrivalFocus`, keep the tiers exclusive, and mark genuine user gestures `// arrival-focus-ok:` (`src/renderer/**`).
+- `agent-driven-focus.md` - an agent-driven pane SHOWS its focus move rather than hiding it (the terminal dims, the pane is marked), the driver never takes guest focus itself, the pane restores only AFTER the whole burst, and an agent-opened window denies arrival focus to every terminal (`src/main/browser/**`, `src/renderer/components/browser/**`).
 
 **Local overrides:** there is no per-rule local file. Put machine-specific instruction
 overrides in a gitignored `CLAUDE.local.md` at the project root.

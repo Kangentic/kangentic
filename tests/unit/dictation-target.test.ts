@@ -427,7 +427,7 @@ describe('resolveFocusedWindowTerminal (real stores)', () => {
       sessions: [makeSession({ id: 'sess-spawned-later', taskId: 'task-1', status: 'running' })],
     });
 
-    expect(resolveFocusedWindowTerminal()).toEqual({ sessionId: 'sess-spawned-later' });
+    expect(resolveFocusedWindowTerminal()).toEqual({ sessionId: 'sess-spawned-later', openedByAgent: false });
   });
 
   it('resolves the live session when the stored sessionId went stale after a respawn', () => {
@@ -440,7 +440,7 @@ describe('resolveFocusedWindowTerminal (real stores)', () => {
       sessions: [makeSession({ id: 'sess-respawned', taskId: 'task-1', status: 'running' })],
     });
 
-    expect(resolveFocusedWindowTerminal()).toEqual({ sessionId: 'sess-respawned' });
+    expect(resolveFocusedWindowTerminal()).toEqual({ sessionId: 'sess-respawned', openedByAgent: false });
   });
 
   it('reports a focused window whose task has no session as sessionId null, NOT as "no window"', () => {
@@ -453,7 +453,7 @@ describe('resolveFocusedWindowTerminal (real stores)', () => {
       title: 'Task Unspawned',
     });
 
-    expect(resolveFocusedWindowTerminal()).toEqual({ sessionId: null });
+    expect(resolveFocusedWindowTerminal()).toEqual({ sessionId: null, openedByAgent: false });
   });
 
   it('resolves a focused monitor detail window', () => {
@@ -466,7 +466,7 @@ describe('resolveFocusedWindowTerminal (real stores)', () => {
       sessions: [makeSession({ id: 'sess-mon', taskId: 'task-mon', status: 'running' })],
     });
 
-    expect(resolveFocusedWindowTerminal()).toEqual({ sessionId: 'sess-mon' });
+    expect(resolveFocusedWindowTerminal()).toEqual({ sessionId: 'sess-mon', openedByAgent: false });
   });
 
   it('returns null when no layer has a focused window', () => {
@@ -542,7 +542,7 @@ describe('resolveFocusedWindowTerminal (real stores)', () => {
       ],
     });
 
-    expect(resolveFocusedWindowTerminal()).toEqual({ sessionId: 'sess-cmd' });
+    expect(resolveFocusedWindowTerminal()).toEqual({ sessionId: 'sess-cmd', openedByAgent: false });
   });
 
   it('falls past a HIDDEN command layer to the monitor, rather than resolving it to null', () => {
@@ -568,6 +568,6 @@ describe('resolveFocusedWindowTerminal (real stores)', () => {
       sessions: [makeSession({ id: 'sess-mon', projectId, taskId: 'task-mon', status: 'running' })],
     });
 
-    expect(resolveFocusedWindowTerminal()).toEqual({ sessionId: 'sess-mon' });
+    expect(resolveFocusedWindowTerminal()).toEqual({ sessionId: 'sess-mon', openedByAgent: false });
   });
 });

@@ -27,6 +27,7 @@
 import { monitorWindowManager } from '../../window-manager';
 import { useDetailOwnershipSync } from '../../window-manager/bridge/useDetailOwnershipSync';
 import { monitorDetailAnchor, parseMonitorAnchor } from '../../window-manager/store/monitor-anchor';
+import { useSessionStore } from '../../stores/session-store';
 import { useEffect } from 'react';
 
 /**
@@ -67,9 +68,19 @@ export function useMonitorDetailOwnership(): void {
       if (host !== 'monitor') return;
       const store = monitorWindowManager.store.getState();
       const anchor = monitorDetailAnchor(projectId, taskId);
+      // agent-focus-ok: this push serves BOTH a user's monitor-row click and an
+      // agent's kangentic_browser_open_pane, and nothing on the push tells them
+      // apart. The monitor is a SECOND host for the same signal, so it has to
+      // stamp exactly as the board bridge does - otherwise an agent-opened
+      // detail that lands here takes the user's keyboard, which is the bug
+      // .claude/rules/agent-driven-focus.md exists to prevent, reappearing on
+      // the one path the board fix does not cover.
+      const agentInitiated = useSessionStore.getState().detailTaskAgentInitiated;
       const existing = Object.values(store.windows).find((candidate) => candidate.anchor === anchor);
       if (existing) {
         store.focusWindow(existing.id);
+        // AFTER the raise: focusWindow clears the stamp.
+        if (agentInitiated) store.markAgentOpened(existing.id);
         return;
       }
       // Consumed once: a later open of the same task is a normal view.
@@ -96,6 +107,7 @@ export function useMonitorDetailOwnership(): void {
         // Reuses the `skipEnterAnimation` flag workspace restore already sets
         // (restore-no-animation-replay.md).
         skipEnterAnimation: true,
+        openedByAgent: agentInitiated,
       });
       // No claim call here on purpose. Opening the window changes the store, and the
       // derived reporter below turns that into main's record - so a request that

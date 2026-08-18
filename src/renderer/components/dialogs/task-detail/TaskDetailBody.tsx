@@ -18,6 +18,7 @@ import type { AttachmentWithPreview } from './useAttachments';
 import { MarkdownRenderer } from '../../MarkdownRenderer';
 import type { Task, SessionDisplayState } from '../../../../shared/types';
 import { useSessionStore } from '../../../stores/session-store';
+import { useIsAgentDrivingSession } from '../../../stores/agent-drive-store';
 import { useTaskSplitResize } from '../../../hooks/useTaskSplitResize';
 import { PanelErrorBoundary } from '../../PanelErrorBoundary';
 import { usePopOut } from '../../../pop-out/usePopOut';
@@ -170,6 +171,9 @@ export function TaskDetailBody({
   // back to the other panel or the plain terminal) rather than showing it in two
   // places at once.
   const showBrowser = browserOpen && !browserPopOut.isOpen;
+  // Only meaningful while the pane is actually on screen: a drive against a
+  // popped-out or closed pane must not dim a terminal the user is working in.
+  const agentDrivingBrowser = useIsAgentDrivingSession(sessionId) && showBrowser;
   const showChanges = changesOpen && !showBrowser && !changesPopOut.isOpen;
   const rightPanelPresent = showChanges || showBrowser || descriptionPeekOpen;
   const changesPresent = showChanges;
@@ -321,7 +325,11 @@ export function TaskDetailBody({
     // The chosen right panel (Browser / Changes / Description) - shown instantly
     // with no reveal animation.
     const rightPanelElement = rightPanelPresent && (
-      <div className={`flex-1 min-h-0 min-w-0 overflow-hidden ${changesExpanded ? '' : 'border-l border-edge'}`}>
+      <div
+        className={`flex-1 min-h-0 min-w-0 overflow-hidden transition-colors ${
+          changesExpanded ? '' : 'border-l'
+        } ${agentDrivingBrowser ? 'border-accent' : 'border-edge'}`}
+      >
         <div className="h-full">
           {showBrowser ? (
             <BrowserPane
@@ -347,7 +355,19 @@ export function TaskDetailBody({
               className={`${rightPanelPresent ? 'flex-shrink-0 flex-grow-0' : 'flex-1'} min-h-0 relative overflow-hidden`}
               style={rightPanelPresent ? { flexBasis: `${splitRatio * 100}%` } : undefined}
             >
-              <div className="absolute inset-0">
+              {/* Dimmed while an agent drives the Browser pane.
+                  Interacting with a page means clicking it, and a click gives
+                  the guest real keyboard focus - so the focus move cannot be
+                  designed away, and every attempt to hide it put keystrokes on
+                  the wrong side. It is shown instead, so the user can SEE that
+                  their typing will not land here. Opacity only: the terminal
+                  stays mounted, live, and clickable, and one click takes focus
+                  straight back. */}
+              <div
+                className={`absolute inset-0 transition-opacity duration-200 ${
+                  agentDrivingBrowser ? 'opacity-40' : 'opacity-100'
+                }`}
+              >
                 {/* A retained window is mounted ONLY to keep its Browser pane's
                     <webview> guest alive while its project is backgrounded, so
                     the terminal comes down: an xterm parsing PTY output for a

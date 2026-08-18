@@ -15,9 +15,8 @@
  *
  * Everything else (geolocation, notifications, openExternal, ...) stays denied.
  *
- * This policy governs ONLY the default session (the first-party app window). The
- * embedded browser webview is untrusted guest content and is governed by its own
- * deny-all handler in `index.ts`; it is not covered here.
+ * The embedded browser webview is untrusted guest content with its own, far
+ * tighter policy - `isEmbeddedBrowserPermissionAllowed` below.
  */
 const ALLOWED_FIRST_PARTY_PERMISSIONS = new Set<string>([
   'media',
@@ -32,4 +31,32 @@ const ALLOWED_FIRST_PARTY_PERMISSIONS = new Set<string>([
  */
 export function isFirstPartyPermissionAllowed(permission: string): boolean {
   return ALLOWED_FIRST_PARTY_PERMISSIONS.has(permission);
+}
+
+/**
+ * Permissions the embedded Browser pane - and the popups it opens, which share
+ * its `Session` - may use.
+ *
+ * The pane is untrusted web content that an AGENT can navigate, so this stays far
+ * tighter than the first-party set: camera, microphone, geolocation,
+ * notifications, MIDI, serial, HID, USB, and fullscreen all stay denied, per
+ * `docs/embedded-browser.md` decision 5.
+ *
+ * `clipboard-sanitized-write` is the one grant, and it is here for a specific
+ * reason rather than as a convenience. This pass added a permission CHECK handler
+ * where the pane previously had only a REQUEST handler, so synchronous checks now
+ * consult this predicate instead of falling through to Electron's default. A
+ * blanket deny would therefore NEWLY break `navigator.clipboard.writeText()` in
+ * the user's own dev server - a regression dressed up as hardening. The
+ * permission is gesture-gated, cannot READ the clipboard, and is what a real
+ * browser allows without prompting. Clipboard READ stays denied.
+ *
+ * See `docs/embedded-browser.md` decision 14.
+ */
+const ALLOWED_EMBEDDED_BROWSER_PERMISSIONS = new Set<string>([
+  'clipboard-sanitized-write',
+]);
+
+export function isEmbeddedBrowserPermissionAllowed(permission: string): boolean {
+  return ALLOWED_EMBEDDED_BROWSER_PERMISSIONS.has(permission);
 }

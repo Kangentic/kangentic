@@ -251,6 +251,14 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
         const pendingTaskId = useSessionStore.getState()._pendingOpenTaskId;
         if (pendingTaskId) {
           useSessionStore.getState().setPendingOpenTaskId(null);
+          // agent-focus-ok: `_pendingOpenTaskId` is parked by a user gesture that
+          // had to cross a project switch first (a notification click, a monitor
+          // row), so the detail it reopens SHOULD take focus. The agent's
+          // kangentic_browser_open_pane cannot reach here - it refuses outright
+          // when its project is not the open one (`project-not-open`) rather than
+          // parking an id. If a future agent path ever DOES park one, it must
+          // carry its origin through to here.
+          // See .claude/rules/agent-driven-focus.md.
           useSessionStore.getState().setDetailTaskId(pendingTaskId);
         }
 

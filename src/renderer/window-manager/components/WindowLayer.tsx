@@ -34,6 +34,7 @@ import { useConversationWindowBridge } from '../bridge/useConversationWindowBrid
 import { useWindowSessionClaims } from '../bridge/useWindowSessionClaims';
 import { useDetailOwnershipSync } from '../bridge/useDetailOwnershipSync';
 import { useBrowserPaneRequestBridge } from '../bridge/useBrowserPaneRequestBridge';
+import { useBrowserDownloadToast } from '../bridge/useBrowserDownloadToast';
 import { useProjectStore } from '../../stores/project-store';
 import { useWindowAutoCloseOnDone } from '../bridge/useWindowAutoCloseOnDone';
 import { useWindowFocusReconcile } from '../bridge/useWindowFocusReconcile';
@@ -247,6 +248,7 @@ export function WindowManagerLayer(props: WindowManagerLayerProps) {
 function BoardBridges(): null {
   useTaskDetailWindowBridge();
   useBrowserPaneRequestBridge();
+  useBrowserDownloadToast();
   useConversationWindowBridge();
   useWindowSessionClaims();
   useBoardDetailOwnership();

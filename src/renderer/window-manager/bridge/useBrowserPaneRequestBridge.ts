@@ -57,6 +57,12 @@ export function useBrowserPaneRequestBridge(): void {
       // A stale signal still naming this task would be a no-op change and would
       // never re-fire the effect that acts on it, so clear it first and set it
       // in a later task - two commits, one re-fire.
+      //
+      // `agentInitiated` is what stops the window this opens from handing its
+      // arriving terminal the user's keyboard. The push itself cannot carry that
+      // intent any further down: `onOpenHere` serves the user's card click too,
+      // so the origin has to be declared HERE, by the only caller that knows it.
+      // See `.claude/rules/agent-driven-focus.md`.
       if (session.detailTaskId === taskId) {
         session.setDetailTaskId(null);
         if (pendingReopen) clearTimeout(pendingReopen);
@@ -66,11 +72,11 @@ export function useBrowserPaneRequestBridge(): void {
           // Only restore what we cleared. Anything else that claimed the signal
           // in the gap (a card click, a search-palette open, another push) is
           // newer than this request and must not be silently redirected back.
-          if (current.detailTaskId === null) current.setDetailTaskId(taskId);
+          if (current.detailTaskId === null) current.setDetailTaskId(taskId, { agentInitiated: true });
         }, 0);
         return;
       }
-      session.setDetailTaskId(taskId);
+      session.setDetailTaskId(taskId, { agentInitiated: true });
     });
     return () => {
       if (pendingReopen) clearTimeout(pendingReopen);

@@ -402,7 +402,7 @@ Detach a registered UI surface (usage stats, git changes, the task Browser pane,
 | `clipboard:readImage` | invoke | Read the native clipboard image, cap its long edge at `IMAGE_LONG_EDGE_CAP`, prune stale `pasted-image-*` files from the temp directory (24h age limit, 40-file cap), save it to a temp file, returns file path or null |
 | `clipboard:writeText` | invoke | Write text to the native clipboard (focus-independent; used by terminal copy and the OSC 52 handler) |
 
-### Browser pane (10 channels)
+### Browser pane (13 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `browser:captureSend` | invoke | Composite the embedded webview frame + draw overlay + picked element into a PNG, write it to the session captures dir, and submit a structured prompt to the agent's PTY via PasteEngine |
@@ -415,6 +415,9 @@ Detach a registered UI surface (usage stats, git changes, the task Browser pane,
 | `browser:paneUnregister` | invoke | Unregister a Browser pane on unmount, scoped to the webContentsId that instance registered with (compare-and-delete) so an out-of-order unmount between the in-app pane and its pop-out cannot clobber a newer registration; the guest's own `destroyed` event is the backstop |
 | `browser:paneOpenRequest` | push | Main asking the renderer to open a task's Browser pane, behind `kangentic_browser_open_pane`. Pane open state is renderer-owned (`browserOpenTasks`), so main cannot set it directly. Fire-and-forget: main validates every precondition itself (the open project, the per-project `browser.enabled` gate, the task row, the URL it seeds first) and then awaits the pane REGISTRY rather than a reply, because only a registered live guest proves the pane is driveable |
 | `browser:paneCloseRequest` | push | Main asking the renderer to close Browser panes, behind `kangentic_browser_close_pane`. Carries the taskIds main computed from the pane registry: the renderer must not re-derive them, since `browserOpenTasks` is not project-keyed and the board store holds only the open project's tasks, so a retained backgrounded pane would be invisible to a board lookup |
+| `browser:agentInput` | push | An agent has started or stopped driving a guest, carrying the guest's `webContentsId` (one window hosts several panes). Debounced to the whole BURST rather than each tool call: announcing every call made the pane hand focus back between consecutive calls, measured at 810 focus events in one drive against 11 debounced. Drives the visible state - the terminal dims and the pane is marked - and arms the focus guard. See `.claude/rules/agent-driven-focus.md` |
+| `browser:userKeyDuringDrive` | push | A keystroke the user made while an agent held the guest's focus, already encoded as terminal bytes (`src/shared/terminal-key-encoding.ts`). Main intercepts it at `before-input-event` so it never reaches the page, and the pane writes it to the terminal the user was typing in. CDP input does not travel that path, so an event arriving mid-drive is the user's |
+| `browser:downloadDone` | push | A download from a guest finished, carrying `{ fileName, filePath, state }` for the toast and its "Show in folder" action (which reuses the existing `shell:showItemInFolder`). Sent to the INITIATING guest's host window, resolved per download rather than captured at install time, since one `Session` serves every pane in a worktree |
 
 ### Updater (3 channels)
 | Channel | Pattern | Purpose |

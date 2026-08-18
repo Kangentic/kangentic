@@ -205,6 +205,11 @@ interface OpenWindowInput {
    *  workspace-restored one. A plain user open leaves it unset so the entrance
    *  plays. Transient, never persisted (mirrors `deserializeWorkspace`). */
   skipEnterAnimation?: boolean;
+  /** This open was requested by an AGENT (`kangentic_browser_open_pane`), not by
+   *  a user gesture. Stamps `ManagedWindow.openedByAgent`, which makes the
+   *  arrival-focus arbiter refuse to hand ANY terminal the keyboard off the back
+   *  of this window's focus. See `.claude/rules/agent-driven-focus.md`. */
+  openedByAgent?: boolean;
 }
 
 export interface WindowStoreState {
@@ -225,8 +230,15 @@ export interface WindowStoreState {
   /** Open a window for an anchor, or focus the existing one for that anchor. */
   openWindow: (input: OpenWindowInput) => string;
   closeWindow: (id: string) => void;
-  /** Raise + focus a window (no-op if already focused). */
+  /** Raise + focus a window. Raising is a no-op when it is already focused, but
+   *  the agent-open stamp is cleared either way: this is only ever called for a
+   *  real user gesture or by an open path that re-stamps immediately after. */
   focusWindow: (id: string) => void;
+  /** Mark an ALREADY-OPEN window as agent-opened. Used by the open paths that
+   *  reach an existing window through `focusWindow` (which clears the stamp), so
+   *  the stamp has to be re-applied after the raise rather than before it.
+   *  See `.claude/rules/agent-driven-focus.md`. */
+  markAgentOpened: (id: string) => void;
   /** Commit a window's geometry (used by drag/resize/edge-snap on drop). */
   setGeometry: (id: string, geometry: FractionalRect) => void;
   maximizeWindow: (id: string) => void;
@@ -346,6 +358,10 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
       );
       if (existing) {
         get().focusWindow(existing.id);
+        // AFTER the raise, never before: `focusWindow` clears the stamp (it is
+        // the user's pointer-down that normally calls it), so stamping first
+        // would be undone by the very next line.
+        if (input.openedByAgent) get().markAgentOpened(existing.id);
         return existing.id;
       }
 
@@ -369,6 +385,9 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
         // Only set when true so a plain open leaves the property absent (a
         // freshly opened window keeps its entrance animation).
         ...(input.skipEnterAnimation ? { skipEnterAnimation: true } : {}),
+        // Same shape, same reason: absent means "the user opened this", so a
+        // user path can never inherit an agent stamp by forgetting to clear it.
+        ...(input.openedByAgent ? { openedByAgent: true as const } : {}),
       };
 
       set((current) => ({
@@ -398,17 +417,39 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
 
     focusWindow: (id) => {
       const current = get();
-      if (!current.windows[id]) return;
-      if (current.focusedWindowId === id) return;
+      const target = current.windows[id];
+      if (!target) return;
+      // Clearing the agent stamp happens BEFORE the already-focused early
+      // return. Every caller is either a real user gesture (WindowFrame's
+      // pointer-down) or an open path that re-stamps right after, and an
+      // agent-opened window is by definition already focused - so returning
+      // early without clearing would leave the user's own click on the frame
+      // unable to release the arrival-focus hold.
+      // See `.claude/rules/agent-driven-focus.md`.
+      if (current.focusedWindowId === id) {
+        if (!target.openedByAgent) return;
+        const { openedByAgent: _cleared, ...withoutAgentStamp } = target;
+        set({ windows: { ...current.windows, [id]: withoutAgentStamp } });
+        return;
+      }
       const zCounter = current.zCounter + 1;
+      const { openedByAgent: _raised, ...raisedWindow } = target;
       set({
         windows: {
           ...current.windows,
-          [id]: { ...current.windows[id], zIndex: zCounter },
+          [id]: { ...raisedWindow, zIndex: zCounter },
         },
         order: [...current.order.filter((candidate) => candidate !== id), id],
         focusedWindowId: id,
         zCounter,
+      });
+    },
+
+    markAgentOpened: (id) => {
+      set((current) => {
+        const target = current.windows[id];
+        if (!target || target.openedByAgent) return current;
+        return { windows: { ...current.windows, [id]: { ...target, openedByAgent: true as const } } };
       });
     },
 

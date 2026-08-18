@@ -9,10 +9,12 @@ import { AttachmentChips } from './AttachmentChips';
 import { useToastStore } from '../../stores/toast-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useKeybinding } from '../../hooks/useKeybinding';
+import { useAgentInputFocusGuard } from '../../utils/agent-input-focus-guard';
+import { useAgentDriveStore, useIsAgentDrivingSession } from '../../stores/agent-drive-store';
 import { PopOutButton } from '../../pop-out/PopOutButton';
 import { browserPartitionForWorktree } from '../../../shared/browser-partition';
 import type { BrowserPickedElement } from '../../../shared/types';
-import type { WebviewElement } from './webview-types';
+import { ALLOW_POPUPS_ATTRIBUTE, type WebviewElement } from './webview-types';
 import { MIN_ZOOM, MAX_ZOOM, stepZoom } from '../../../shared/zoom-steps';
 
 // Side-pane in the task-detail window that hosts an Electron <webview>, a
@@ -486,6 +488,37 @@ function BrowserPaneActive({
   useKeybinding('browser.zoomOut', () => zoomOut(), { ...browserKeyOptions, when: paneActive });
   useKeybinding('browser.zoomReset', () => resetZoom(), { ...browserKeyOptions, when: paneActive });
 
+  // An agent driving this pane must never take the user's keyboard focus. Main
+  // announces each drive; this puts focus back if Chromium moved it into the
+  // guest. Inert while no agent is driving. See
+  // `.claude/rules/agent-driven-focus.md`.
+  useAgentInputFocusGuard({ paneRef, guestWebContentsIdRef: registeredWebContentsIdRef });
+
+  const agentDriving = useIsAgentDrivingSession(sessionId);
+
+  // Publish the drive as VISIBLE state, keyed by session.
+  //
+  // Interacting with a page means clicking it, and a click gives the guest real
+  // keyboard focus - so the focus move cannot be designed away. It is shown
+  // instead: the terminal dims and this pane is highlighted, so the user can see
+  // where their typing will land rather than finding out afterwards. This pane is
+  // the only component that knows both the guest id the signal carries and the
+  // sessionId the consumers are addressed by, so the translation lives here.
+  useEffect(() => {
+    const browser = window.electronAPI?.browser;
+    if (!browser?.onAgentInput) return;
+    const unsubscribe = browser.onAgentInput((webContentsId, active) => {
+      if (webContentsId !== registeredWebContentsIdRef.current) return;
+      useAgentDriveStore.getState().setAgentDriving(sessionId, active);
+    });
+    return () => {
+      unsubscribe();
+      // A pane unmounting mid-drive would otherwise leave the terminal dimmed
+      // with nothing left to un-dim it.
+      useAgentDriveStore.getState().setAgentDriving(sessionId, false);
+    };
+  }, [sessionId]);
+
   return (
     <div
       ref={paneRef}
@@ -526,6 +559,19 @@ function BrowserPaneActive({
         >
           <RotateCcw size={14} />
         </button>
+        {/* Says where the keyboard is, in words. The dimmed terminal and the
+            accent border carry the same message, but colour alone is not a
+            signal everyone can read, and "why did my typing stop appearing" is
+            exactly the moment plain text helps. */}
+        {agentDriving && (
+          <span
+            className="flex items-center gap-1 px-1.5 py-0.5 text-[11px] text-accent whitespace-nowrap"
+            data-testid="browser-agent-driving"
+          >
+            <Loader2 size={11} className="animate-spin" />
+            Agent typing here
+          </span>
+        )}
         <input
           type="text"
           value={urlInput}
@@ -622,6 +668,19 @@ function BrowserPaneActive({
           // computed above). Sessions sharing a checkout share the jar; concurrent
           // worktrees stay isolated. Settings -> Browser -> Clear browser data wipes them.
           partition={partition}
+          // Electron disables window.open inside the guest OUTRIGHT unless this
+          // is present, so without it the main-process window-open policy never
+          // even runs and every popup-based sign-in is a dead button.
+          //
+          // Unconditional on purpose. This attribute is NOT the trust boundary -
+          // a renderer cannot be trusted to set it honestly, and the main-process
+          // handler is what actually enforces policy (hardened webPreferences,
+          // http(s) only, the guest's own cookie jar, a chromed window titled with
+          // its real origin). Gating it behind a setting would only recreate the
+          // dead-button symptom behind a switch nobody would find.
+          // Spread, not inline: React types the attribute boolean but a boolean
+          // is silently dropped. See ALLOW_POPUPS_ATTRIBUTE for the full reason.
+          {...ALLOW_POPUPS_ATTRIBUTE}
           style={{
             position: 'absolute',
             inset: 0,

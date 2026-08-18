@@ -417,7 +417,13 @@ export function registerBrowserTools(
   server.registerTool(
     'kangentic_browser_bounding_box',
     {
-      description: "Get the raw CDP box-model (content/padding/border/margin quads) of an element in the task's Browser pane.",
+      // The coordinate-space warning is load-bearing, not pedantry: these quads
+      // are PAGE space, while kangentic_browser_click takes VIEWPORT
+      // coordinates. Feeding a box from here straight into click as x/y is
+      // correct only at scroll position zero, and silently clicks the wrong
+      // place otherwise. Clicking by selector needs none of this - it scrolls
+      // and measures for itself.
+      description: "Get the raw CDP box-model (content/padding/border/margin quads) of an element in the task's Browser pane. Coordinates are PAGE space and do not account for scroll, so do not pass them to kangentic_browser_click as x/y - click by selector instead, which scrolls the element into view and measures it there.",
       inputSchema: z.object({ ...TARGET_SHAPE, selector: z.string().describe('CSS selector of the element.') }),
       annotations: READ_ONLY_ANNOTATIONS,
     },
@@ -566,7 +572,12 @@ export function registerBrowserTools(
           const focused = await clickAtCenterOfSelector(webContents, selector);
           if (!focused) return { error: 'selector-not-found' as const };
           if (clearFirst) {
-            await dispatchKeypress(webContents, 'Ctrl+a');
+            // Select-all is Cmd+A on macOS; Ctrl+A there is the emacs
+            // beginning-of-line binding, so the clear silently selected nothing
+            // and the new text appended to the old value instead of replacing
+            // it. The guest is Chromium on this same OS, so the host platform is
+            // the right thing to branch on.
+            await dispatchKeypress(webContents, process.platform === 'darwin' ? 'Meta+a' : 'Ctrl+a');
             await dispatchKeyEvent(webContents, { type: 'keyDown', key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8 });
             await dispatchKeyEvent(webContents, { type: 'keyUp', key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8 });
           }

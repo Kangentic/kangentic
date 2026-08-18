@@ -20,9 +20,19 @@ The webview is hardened in `src/main/index.ts`:
 - `webviewTag: true` on the host `BrowserWindow`.
 - `app.on('web-contents-created', ...)` runs `will-attach-webview` to strip `preload`, force `nodeIntegration: false`, `contextIsolation: true`, `sandbox: true`, `webSecurity: true`. Non-`http(s):` `src` URLs are rewritten to `about:blank`.
 - The same handler attaches per-webview policies after attach:
-  - `setWindowOpenHandler` denies all `window.open` and `target=_blank`.
+  - `setWindowOpenHandler` allows an http(s) `window.open` / `target=_blank` into a chromed popup
+    window on the guest's own session, and denies every other scheme. See decisions 10 to 12.
+  - `setPermissionRequestHandler` AND `setPermissionCheckHandler` both read
+    `isEmbeddedBrowserPermissionAllowed` (decision 14).
+  - `session.on('will-download')` saves to the OS Downloads folder, installed once per `Session`
+    (decision 13).
   - `will-navigate` rejects non-`http(s):` schemes.
-  - `before-input-event` binds F5 / Ctrl+R / Cmd+R to `webContents.reload`.
+  - `before-input-event` binds F5 / Ctrl+R / Cmd+R to `webContents.reload`, EXCEPT while an
+    agent is driving the pane. During a drive every keystroke that reaches this handler is the
+    user's (CDP input does not fire it), so it is `preventDefault`ed and routed to their
+    terminal instead; `encodeTerminalKey` maps no Ctrl chord and no `F5`, so a reload chord is
+    swallowed rather than reloading the page or reaching the terminal. The guard spans the
+    whole burst including its quiet tail, so a back-to-back agent run holds it continuously.
 - Non-webview contents (the main window, and any pop-out window) get a `setWindowOpenHandler`
   too: always deny the popup, and route an allowed URL (`src/shared/external-url.ts`'s
   `EXTERNAL_OPEN_SCHEMES`) out to the OS default browser instead. This is what stops a
@@ -125,17 +135,83 @@ The Browser tab in `AppSettingsPanel` (per-project, above the separator) exposes
 | Clear browser data action in settings | Done | `IPC.BROWSER_CLEAR_STORAGE`; see Settings above |
 | Pop-out window for second-monitor workflow | Done | child `BrowserWindow` via the pop-out surface registry; see decision 7 |
 | DOM tree picker (vs free-form `getSelection()`) | Future | nice-to-have |
-| File downloads from embedded webview | Future | needs `will-download` handler |
-| Permission requests (camera, mic, geo) from embedded webview | Future | needs explicit deny via `setPermissionRequestHandler` |
+| File downloads from embedded webview | Done | saved to the OS Downloads folder with a toast; see decision 13 |
+| Permission requests (camera, mic, geo) from embedded webview | Done | deny-by-default request AND check handlers on the guest session; see decisions 5 and 14 |
+| `window.open` / `target=_blank` popups | Done | chromed popup on the guest's own session; see decisions 10 to 12 |
+| Google federated sign-in inside the pane | Won't fix | Google refuses embedded user agents; see decision 15 |
+| An agent-opened window stealing the user's keyboard focus | Done | `openedByAgent` stamp + an exclusive arrival-focus tier; see decision 16 |
+| Focus moving into the pane while an agent drives it | Accepted, and SHOWN | unavoidable: driving a page means clicking it, and a click focuses the guest. The terminal dims, the pane is marked "Agent typing here", and stray keystrokes are still routed to the terminal. Three attempts to eliminate it were built, measured, and reverted; see decisions 18 and 19 |
+| Selector-less `type` / `keypress` | Accepted limitation | only land when the pane already holds focus. Use a selector, or `text` ending in `\n` to submit; see decision 18 |
+| Scroll primitive, and modifier-click (Ctrl/Shift+click) | Future | `click` scrolls its own target into view, but there is no standalone scroll tool and no way to send a modified click |
+| Cross-platform verification of the focus behavior | Unverified | every measurement was Windows; the out-of-process guest focus path is exactly what differs on macOS/Linux. CI's Linux tiers exercise the code paths, not this behavior |
+| Google refusal signature (`/signin/oauth/error`) | Unverified | written from documented behavior, never captured from a live `disallowed_useragent` bounce. Benign if wrong (no prompt appears, which is today's behavior); the unit tests pin the matching logic, not the signature |
 | Devtools exposure on the webview | Future | UX vs. security tradeoff |
 | Capture history / thumbnails | Future | feature polish |
-| E2E test coverage of Send → paste-engine → submission | Future | test follow-up |
+| E2E test coverage of Send → paste-engine → submission | Done on POSIX | `tests/e2e/browser-send-roundtrip.spec.ts`, `test.fixme` on Windows because ConPTY does not echo paste content into scrollback; the wiring is covered at unit tier |
+
+## Driving the browser tools in a `/preview` (zero quota)
+
+The `kangentic_browser_*` family is the one MCP surface that cannot be exercised from an ordinary
+MCP client, which makes it easy to assume a preview is missing something. It is not: a preview's
+MCP server is at full parity with the dogfooding instance. What the family needs is a CALLER
+SESSION, and that requirement is identical in both.
+
+Two facts make the difference, and both bite silently:
+
+1. **`kangentic_browser_open_pane` refuses a connection with no caller session** (`no-caller-task`).
+   That is deliberate - the tool takes no `taskId` argument at all, so it can only ever target the
+   caller's own task ([[browser-automation-driver]]). Connecting to `/mcp/<projectId>` gets the
+   refusal on a preview AND on the dogfooding app; connecting to
+   `/mcp/<projectId>/<callerSessionId>` works on both.
+2. **A Browser pane needs a live session to exist**, because `sessionId` keys its registry entry,
+   its capture directory, and its paste target.
+
+So the rig is: give the task a real PTY session backed by a MOCK CLI (zero quota, see
+`tests/fixtures/mock-claude.js`), then talk to the session-scoped MCP URL.
+
+```js
+// 1. In the preview's renderer (kangentic_devtools_eval). A raw `command` skips
+//    agent resolution entirely, so nothing bills a subscription.
+await window.electronAPI.sessions.spawn({
+  taskId, projectId,
+  command: `node "<repo>/tests/fixtures/mock-claude.js"`,
+  cwd: projectPath,
+  env: { MOCK_CLAUDE_TUI_REPAINT: '1' },
+});
+```
+
+```
+# 2. URL and token, written per project once it is open:
+#    <projectPath>/.kangentic/mcp-config.json
+#    For an EPHEMERAL preview that projectPath is NOT the worktree - it is
+#    <worktree>/.kangentic/data/preview-projects/project-N.
+POST http://127.0.0.1:<port>/mcp/<projectId>/<sessionId>
+  X-Kangentic-Token: <token>
+  Accept: application/json, text/event-stream
+  {"jsonrpc":"2.0","id":1,"method":"tools/call",
+   "params":{"name":"kangentic_browser_open_pane","arguments":{"url":"..."}}}
+```
+
+Two things that cost real time when forgotten:
+
+- **A preview does not pick up main-process edits without a restart.** `.vite/build/index.js` is
+  rebuilt at launch, so a `cdp.ts` change made while a preview runs is simply not in it. Check the
+  bundle's mtime against the edit before believing a result, or a fixed bug will look unfixed.
+- **A focus measurement against an unfocused preview window is VOID, not a pass.**
+  `document.hasFocus()` false means Chromium has no embedder focus to move, so a focus steal cannot
+  reproduce and the fix appears to work when nothing was tested. Assert `hasFocus === true` as a
+  precondition of every trial.
 
 ## Test coverage
 
 - **Unit** - `tests/unit/terminal-submit.test.ts` covers the byte-level engine for both `submitContent` (paste) and `submitKeystrokes` (slash-command burst), including settle/cap/floor, verifier + retry, bracketed-paste-mode tracking, abort, timeout, and per-adapter verifier paths. `tests/unit/write-queue.test.ts` (17 cases) covers bracketed-paste-aware chunking. `tests/unit/terminal-submit-scheduler.test.ts` covers task-keyed scheduling: drag-burst coalesce, freshlySpawned waits, cancel/cancelAll. `tests/unit/agent-submission-verifier-shape.test.ts` confirms each adapter implements `getSubmissionVerifier`.
-- **UI** - pending. Should cover URL bar, draw/inspect toggles, attachment chips, send disable-on-pending. The mock electron API needs `browser.captureAndSend`, `browser.getUrls`, etc.
-- **E2E** - pending. Should cover Send → paste-engine → mock-claude submission round-trip.
+- **Unit (browser policy)** - `window-open-policy.test.ts` (both handlers: the app window's deny-and-route-out, and the pane's popup allow plus `hardenWebviewPopupWindow`), `embedded-signin-refusal.test.ts`, `webview-download-policy.test.ts`, `browser-partition.test.ts`, `browser-pane-driver.test.ts`, `browser-pane-registry.test.ts`, `browser-pane-opener.test.ts`, `browser-automation-config.test.ts`, `browser-automation-invariants.test.ts`.
+- **Unit (input and focus)** - `browser-input-focus-emulation.test.ts` drives the REAL `cdp.ts` through a spying fake debugger and pins the mouse/key payloads, the scroll-into-view ordering, and the focus-emulation lifecycle; `agent-input-focus-guard.test.ts` pins the guard's three pure decisions; `terminal-arrival-focus.test.ts` pins the `agent-window` tier; `window-store-agent-open.test.ts` pins the `openedByAgent` stamp; `agent-input-burst.test.ts` pins the burst debounce behind decision 20 (one begin for a run of back-to-back calls, the end waiting for the quiet window, and `isAgentDriving` covering the tail).
+- **UI** - `browser-empty-state`, `browser-pane-active`, `browser-pane-refetch-guard`, `browser-pane-registration` (the guest-identity spec), `browser-pane-request-bridge`, `browser-pane-shortcuts`, `browser-pill-gate`, `browser-settings`, plus `agent-open-pane-focus` and `browser-pane-agent-input-focus` for the focus work.
+- **E2E** - `browser-send-roundtrip.spec.ts`, `browser-ctrl-enter-pty.spec.ts`, `browser-evidence-retry.spec.ts`, `browser-popup-window.spec.ts` (the only tier with a real guest, so the only place the popup's origin title and shared `Session` can be checked at all).
+- **Not mechanically testable, and deliberately left to the live rig above:** whether Chromium's real
+  focus propagation is suppressed (no tier has a live `<webview>` guest), whether the popup genuinely
+  shares the opener's browsing context group, and whether Google's refusal URL still matches.
 
 ## Decision log
 
@@ -150,21 +226,42 @@ Open questions resolved during the build:
 7. **Pop-out window** - shipped, built as a child `BrowserWindow` exactly as this entry originally proposed, rather than retrofitting re-parenting. A `<webview>` guest's lifetime is bound to its DOM node, so moving the pane between hosts destroys and recreates the guest; the pop-out therefore mounts a fresh `BrowserPane` that re-registers the new `webContentsId` under the same sessionId. `unregisterIfMatches` in `browser-pane-registry.ts` exists solely to stop the outgoing in-app pane's unmount from clobbering that newer registration. See `.claude/rules/pop-out-surface-registry.md`.
 8. **Surviving a project switch** - a task-detail window whose Browser pane is open is RETAINED when its project is backgrounded: it stays in the window map, rendering in place but invisible (`opacity: 0`) and inert, so its guest keeps running and the task's agent can keep driving it. It renders from a frozen task row (the board store is project-scoped) and drops its terminal, so the standing cost is one composited zero-opacity webview per pane. Returning to the project ADOPTS the retained window rather than rebuilding it, preserving the guest. Hiding must not use `visibility: hidden` or offscreen positioning: both stop compositing, which hangs `Page.captureScreenshot` and wedges that guest's CDP queue. See `.claude/rules/retained-pane-never-remounts.md`.
 9. **Cross-project pane isolation** - the `kangentic_browser_*` tools resolve a target scoped to the caller's own project, taken from the MCP URL path rather than from tool arguments. Before that, an agent in one project could drive another project's pane by omitting `taskId` (the registry default spanned every pane on the machine) or by naming a sessionId it read out of `list_panes`. The pane's registered `projectId` is backfilled in the main process from the session registry, because the renderer's value is ambient `currentProject` and goes stale in a pop-out.
+10. **Popups allowed** - `window.open` and `target=_blank` from the pane used to hit a blanket deny handler, so any site whose sign-in is a popup presented as a dead button with nothing in the UI to explain it. The pane now carries `allowpopups` (Electron otherwise disables `window.open` inside the guest before the main process ever sees the request) and the guest's `setWindowOpenHandler` is `createWebviewWindowOpenHandler` (`src/main/window-open-policy.ts`), which allows http(s) and denies everything else with the same `[WINDOW_OPEN]` warn the external handler uses. It denies `mailto:` where the app window's handler allows it: guest pages are agent-navigable and `shell.openExternal` is ShellExecute on Windows, and the guest's `will-navigate` already blocks non-http(s), so this is parity rather than a new restriction. `allowpopups` is unconditional on purpose and is not the trust boundary - a renderer attribute cannot be trusted to be honest, the main-process handler is what enforces policy, and gating the attribute behind a setting would only recreate the dead-button symptom behind a switch nobody would find. It must also reach the DOM as a STRING: React types the attribute boolean, `allowpopups` is absent from react-dom's attribute table, and a boolean is dropped with a console warning, which would leave the whole policy unreachable behind a passing typecheck.
+11. **Popup chrome and hardening** - the popup is a real OS window with `frame: true` and its title forced to the target's host (`accounts.google.com`, or `Not secure - <host>` for http), because the OS title bar is the only origin indicator the window has and a page free to name itself would be a phishing surface: `page-title-updated` is `preventDefault()`ed and the title re-asserted on `did-navigate` and `did-navigate-in-page`, while the constructor title is seeded from the requested URL so the window is labelled before its first byte loads. There is deliberately no synchronous title call at hardening time, because `getURL()` is still empty there and would clobber that seeded title. Its `webPreferences` repeat the guest's hardening exactly (no preload, `nodeIntegration: false`, `contextIsolation: true`, `sandbox: true`, `webSecurity: true`) plus `webviewTag: false`, since a child window inherits none of the opener's preferences on Electron 30 and later. Custom HTML chrome was rejected as a second renderer surface to build and test for a window that is open for fifteen seconds, and `WindowOpenHandlerResponse.createWindow` was rejected too even though it would remove an ordering dependency: it needs a literal `new BrowserWindow(` in a third file and would break the two-site rule in `.claude/rules/pop-out-surface-registry.md`. The popup is instead described declaratively through `overrideBrowserWindowOptions` and hardened in `did-create-window`, which fires after `web-contents-created` has already given the popup the external handler and therefore wins by running last. The popup is deliberately not registered in `browserPaneRegistry` and so is invisible to the `kangentic_browser_*` tools: an agent should not be able to drive a live sign-in window. Live-verified: `window.open` from a guest produces an OS window titled `example.com` rather than the page's own title.
+12. **Popup cookie jar** - `overrideBrowserWindowOptions.webPreferences.session` is set to the guest's own `Session` OBJECT rather than to a partition string, which Electron documents as taking precedence and which puts the popup in the exact per-worktree jar the pane uses without the main process re-deriving the partition name. This is not only about cookies: a popup in a different storage partition is in a different browsing context group, which severs `window.opener` and the `postMessage` channel almost every OAuth flow uses to hand its result back, and breaks the `popup.closed` poll that tells the opener the user gave up. All three were verified live against a real guest: a cookie set in the guest was readable from the popup, `popup.opener === window` held, and `window.close()` from the opener tore the popup down. A popup may itself open one more popup under the identical policy, so a chained identity-provider hop stays in the same jar instead of being ejected to the system browser; popups are capped at four per pane as a runaway guard, counted at GRANT rather than at creation because `did-create-window` fires after the handler has already answered and a burst of `window.open` calls would otherwise clear a materialized-count check every time.
+13. **File downloads** - allowed, and saved without a prompt to the OS Downloads folder (`app.getPath('downloads')`, with a ` (n)` suffix inserted before the extension when the name is taken), which is what Chrome does by default. This replaces the original "unhandled, future hardening: explicit deny" position, which on inspection bought nothing: the agent driving the pane already has full filesystem write through its own tools, so a deny would only have broken the human's use of the pane, and leaving the event unhandled raises a native save dialog that can block an agent-driven pane. The handler is installed at most once per `Session` behind a `WeakSet` guard, because panes sharing a worktree share a partition and `session.on` accumulates listeners where `setPermissionRequestHandler` merely overwrites. The host window is resolved from the download's INITIATING webContents rather than from an install-time closure, since the one install serves every pane on that Session and a captured host goes stale as soon as the first pane closes. Progress is surfaced on the host window's taskbar via `setProgressBar`, and a toast naming the file (with "Show in folder", reusing the existing `shell:showItemInFolder` channel) is pushed on `BROWSER_DOWNLOAD_DONE`.
+14. **Permissions on the popup** - the popup shares the guest's `Session`, so the deny policy from decision 5 already covers it and no second handler exists or is needed. What this pass did close is that the guest session had a permission REQUEST handler and no permission CHECK handler, so synchronous checks fell through to Electron's default instead of the pane's policy. Both handlers now read one predicate, `isEmbeddedBrowserPermissionAllowed` in `src/main/permission-policy.ts`, mirroring how the first-party session already keeps its two in lockstep. The predicate grants exactly one permission, `clipboard-sanitized-write`: it is gesture-gated, cannot read the clipboard, is what a real browser allows without prompting, and is listed only because adding a blanket-deny check handler would otherwise newly break `navigator.clipboard.writeText` in the user's own dev server, which would be a regression dressed as hardening. Camera, microphone, geolocation, notifications, MIDI, serial, HID, and USB all stay denied.
+15. **Google federated sign-in stays blocked** - Google returns `Error 403: disallowed_useragent` for OAuth in any embedded user agent, and a top-level Electron `BrowserWindow` is still an embedded user agent by that definition, so the popup work does not make "Log in with Google" complete inside the pane and was never expected to. What it changes is the failure mode: a dead button becomes a chromed window showing Google's own error, and every provider that does not enforce the rule works. Spoofing the user agent to strip the `Electron/` token was considered and rejected: it is a deliberate anti-phishing control on Google's side rather than a bug, `<webview useragent>` would misrepresent the app to every site the pane visits and not just to Google, and the token list is a moving target we would maintain forever. When the popup lands on Google's OAuth error path the main process raises a `dialog.showMessageBox` parented to that popup offering "Open in my browser", and the copy is honest about its own limit: signing in there signs the user into their real browser and leaves the pane logged out, so the pane's own answer is a non-Google sign-in method on that site. The detector matches a provider OAuth ERROR URL, not the user-agent refusal specifically (that string is in the rendered page, not the URL), and the prompt wording is hedged to match.
+16. **An agent never moves the user's keyboard focus** - measured on Electron 41 with a terminal focused in an OS-focused window, one `Input.dispatchMouseEvent` moved `document.activeElement` to the `<webview>` and flipped `document.hasFocus()` to false, so the rest of what the user was typing went into the page. Separately, `kangentic_browser_open_pane` opened a task-detail window whose arriving terminal then legitimately won `resolveArrivalFocus`'s tier 2. Both are closed, and the shape is recorded in `.claude/rules/agent-driven-focus.md`: `withGuest` arms `Emulation.setFocusEmulationEnabled` and announces each drive over `BROWSER_AGENT_INPUT`, the pane restores the user's element only AFTER the drive ends, and an agent-opened window is stamped `openedByAgent` so a new exclusive tier denies arrival focus to every terminal. Restoring DURING a drive was the original design and was reversed on measurement: it breaks the running tool, because once focus leaves the guest its own focused element loses it too and the `type` tool's characters land nowhere. Focus emulation makes the page BEHAVE focused so a blur-sensitive page still works under automation, but it is not what makes a keystroke land - see decisions 18 and 19 for what the pane actually does about the focus move.
+17. **The user can keep typing while an agent drives** - restoring focus after the drive still left a window (tens to hundreds of milliseconds) in which the guest genuinely holds focus, so a user mid-sentence would watch their text flow out of the terminal and into a web form. The two input paths turn out to be separable at the guest, which is what makes this fixable rather than a documented limitation: CDP `Input.dispatchKeyEvent` does NOT fire `before-input-event`, while real user input does (main-side instrumentation with a positive control recorded ZERO events across a 120-round drive of ~3400 dispatched keys, while the user's own `Shift` and `Control` presses came through the same handler; an earlier `Ctrl+r` A/B suggested the same conclusion but is unreliable evidence, having run while the guest held no real focus). So any `before-input-event` arriving while a drive is in flight is provably the user's: main `preventDefault()`s it before the page can see it, encodes it as terminal bytes (`src/shared/terminal-key-encoding.ts`, which returns null and DROPS anything it has no safe mapping for), and pushes it to the pane, which writes it to the terminal the user was typing in. Verified end to end on a live guest: characters typed into a driven pane left the page value empty while appearing on the terminal's prompt, an Enter executed the command, and the same keystrokes with no drive in flight typed into the page normally.
+18. **Selector-less `type` / `keypress` are a known limitation, not a bug to fix with focus management** - Chromium routes keyboard input only to a focused widget, while mouse input is hit-tested and needs none. So a selector-bearing call works (its synthesized mousedown focuses the guest as a direct side effect of the same input pipeline, and the characters follow inside the SAME call), while a selector-less one only lands when the pane already holds focus. Measured over one 25-second run against a live guest: `kangentic_browser_keypress` returned `ok: true` 278 times and delivered ONE DOM keydown. Two things that look like fixes and are not: `webContents.focus()` cannot focus a guest at all (Electron early-returns for one to avoid a fatal NOTREACHED in `WebContentsViewChildFrame`, `electron_api_web_contents.cc`), and `Emulation.setFocusEmulationEnabled` does not affect input ROUTING (`document.hasFocus()` inside the guest was already `true` while keys were being dropped). An implementation that DID acquire guest focus for interact drives was built and measured, and is the reason this is now a documented limitation: holding focus across calls put the agent's own text into the user's terminal at 28, then 95, then 207 characters as mitigations were added, because a `<webview>` is an out-of-process iframe whose focus acquisition is asynchronous and never atomic - anything dispatched before it lands goes to whichever widget still holds focus. Workaround for the common flow: `kangentic_browser_type` maps `\n` to Enter, so `{selector, text: "query\n"}` searches and submits in one call. See `.claude/rules/agent-driven-focus.md`.
+19. **An agent drive is shown, not hidden** - the accepted answer to "the agent moved my keyboard focus". Interacting with a page means clicking it, and a click gives the guest real keyboard focus, so the move cannot be designed away; three attempts to make it invisible and safe were built and measured, and each put keystrokes on the wrong side. Instead, while a drive is open the terminal side of the split dims (opacity only - it stays mounted, live, and one click away), the Browser pane takes an accent border, and its toolbar reads "Agent typing here". State lives in `src/renderer/stores/agent-drive-store.ts`, keyed by sessionId, with `BrowserPane` translating from the guest id the signal carries. The keystroke interception stays underneath as the safety net, so a user who types anyway lands in their terminal rather than in a web form. The residual, accepted deliberately: focus does move to the pane during a drive, and the user is told so rather than surprised by it.
+20. **The pane hears about a BURST, not each tool call** - `endAgentInput` debounces its end-of-drive announcement, and a call arriving inside the quiet window cancels it. Announcing every call made the pane hand the user's focus back between each consecutive pair: measured at 810 trusted `focusin` events on the terminal during a single drive, against 11 with the debounce. The residual, accepted deliberately: focus still moves to the pane once per burst, as the unavoidable consequence of clicking a page, and returns when the agent stops.
 
 ## Files
 
 ```
 src/main/
-  index.ts                                  webview hardening, webviewTag
+  index.ts                                  webview hardening, webviewTag, popup + permission +
+                                            download wiring, mid-drive keystroke interception
+  window-open-policy.ts                     app-window deny handler + webview popup allow handler
+  permission-policy.ts                      first-party and embedded-browser permission predicates
   ipc/handlers/browser.ts                   BROWSER_CAPTURE_SEND, URL persistence
   pty/paste-engine.ts                       paste-and-submit primitive
   pty/write-queue.ts                        bracketed-paste-aware chunking
   browser/browser-url-store.ts              per-task URL overrides
   browser/browser-pane-registry.ts          open panes by sessionId; caller-scoped target resolution
   browser/browser-pane-opener.ts            open/close a pane for the caller's task (MCP lifecycle tools)
-  browser/browser-pane-driver.ts            withGuest: policy gate, resolve, CDP attach, error envelope
+  browser/browser-pane-driver.ts            withGuest: gate, resolve, CDP attach, focus emulation,
+                                            drive signal, error envelope
   browser/browser-automation-config.ts      resolved Agent Browser policy
+  browser/agent-input-signal.ts             refcounted "an agent is driving guest N" burst edges
+  browser/embedded-signin-refusal.ts        detects a provider refusing an embedded browser
+  browser/webview-download-policy.ts        one will-download handler per guest Session
   browser/cdp/                              the single shared CDP driver (+ bounded screenshot)
+
+src/main/agent/mcp-http/
+  browser-tools.ts                          the 16 kangentic_browser_* tools
 
 src/renderer/components/browser/
   BrowserPane.tsx                           top-level component (loading/empty/active)
@@ -179,18 +276,45 @@ src/renderer/components/browser/
 src/renderer/window-manager/
   bridge/retained-task-snapshots.ts         frozen task rows a retained window renders from
   bridge/useBrowserPaneRequestBridge.ts     applies main's open/close pane pushes to browserOpenTasks
+  bridge/useBrowserDownloadToast.ts         the download-finished toast + "Show in folder" (decision 13)
   components/
   TaskDetailWindow.tsx                      browser/changes mutually exclusive (task detail is now a modeless window)
 src/renderer/components/dialogs/
-  task-detail/TaskDetailBody.tsx            2-col layout when Browser is on
+  task-detail/TaskDetailBody.tsx            2-col layout when Browser is on; owns the drive-visible
+                                            treatment - dims the terminal side, accents the pane border
   task-detail/TaskDetailHeader.tsx          Browser pill
+
+src/renderer/stores/
+  agent-drive-store.ts                      which sessions have an agent driving their pane, so the
+                                            terminal and the pane can show it (HMR-pinned, Pattern E)
+
+src/renderer/utils/
+  agent-input-focus-guard.ts                restores the user's focus after a drive; routes an
+                                            intercepted keystroke to their terminal
 
 src/shared/
   ipc-channels.ts                           BROWSER_*
   types.ts                                  BrowserCaptureInput, BrowserPickedElement, AppConfig.browser
+  external-url.ts                           EMBEDDED_BROWSER_SCHEMES (pane + popup)
+  terminal-key-encoding.ts                  keystroke -> terminal bytes, for intercepted input
 
 tests/unit/
   terminal-submit.test.ts
   terminal-submit-scheduler.test.ts
   write-queue.test.ts
+  window-open-policy.test.ts                both handlers + the index.ts wiring scans
+  browser-input-focus-emulation.test.ts     the REAL cdp.ts input payloads and focus emulation
+  agent-input-focus-guard.test.ts           the guard's three pure decisions
+  agent-driven-focus-sites.test.ts          the rule's static scan
+  terminal-key-encoding.test.ts
+  embedded-signin-refusal.test.ts
+  webview-download-policy.test.ts
+  window-store-agent-open.test.ts
+
+tests/ui/
+  agent-open-pane-focus.spec.ts             an agent open never moves focus; a user open still does
+  browser-pane-agent-input-focus.spec.ts    the guard restores, and routes intercepted keys
+
+tests/e2e/
+  browser-popup-window.spec.ts              real guest: popup exists, origin title, shared Session
 ```

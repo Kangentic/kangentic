@@ -45,4 +45,24 @@ declare global {
   }
 }
 
+/**
+ * `allowpopups`, spread onto the `<webview>` rather than written inline.
+ *
+ * It has to reach the DOM as a STRING. React's own `WebViewHTMLAttributes` is
+ * what resolves for `<webview>` (ahead of the global JSX declaration above) and
+ * types it `boolean | undefined`, but a boolean cannot work: `webview` has no
+ * dash, so React treats it as an unknown HTML element rather than a custom
+ * element, and `allowpopups` is absent from React DOM's attribute table - so
+ * `allowpopups={true}` logs "Received `true` for a non-boolean attribute" and
+ * React DROPS the attribute entirely. Electron would then disable `window.open`
+ * inside the guest and the main-process popup policy would never run: the exact
+ * dead-sign-in-button symptom the popup work exists to fix, silent and behind a
+ * passing typecheck. A string value always renders.
+ *
+ * The interface cannot be widened by augmentation (TS2717 - a merged declaration
+ * may not change an existing property's type), so the cast lives here, once,
+ * with the reason attached, instead of at the JSX site.
+ */
+export const ALLOW_POPUPS_ATTRIBUTE = { allowpopups: '' } as unknown as { allowpopups?: boolean };
+
 export type {};

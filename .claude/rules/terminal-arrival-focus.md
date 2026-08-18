@@ -72,3 +72,9 @@ Programmatic focus on terminals under `src/renderer/`. Does not govern focus ins
 own input handling, non-terminal focus (dialogs, form fields, menus), or the PTY-stream focused set
 in `focused-terminals.ts` / `focused-sessions.ts`, which is a different mechanism with a
 confusingly similar name.
+
+A focus move an AGENT causes is governed by [[agent-driven-focus]], which spans main and renderer
+and adds the exclusive `agent-window` tier to `resolveArrivalFocus`. This rule decides which
+terminal wins among ARRIVING terminals; that one decides whether an agent may move focus at all -
+and, for the one case it cannot prevent (a click into a Browser pane focuses the guest, exactly as a
+user's click would), how that move is bounded, shown, and handed back.

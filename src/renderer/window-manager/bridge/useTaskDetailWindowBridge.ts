@@ -62,6 +62,13 @@ export function useTaskDetailWindowBridge(): void {
 
     const windowStore = useWindowStore.getState();
 
+    // agent-focus-ok: this push serves BOTH the user's card click and an agent's
+    // kangentic_browser_open_pane, and nothing on the push distinguishes them.
+    // The origin is declared by whoever set `detailTaskId` (the request bridge
+    // passes `agentInitiated`), so it is read from the store here rather than
+    // inferred. See `.claude/rules/agent-driven-focus.md`.
+    const agentInitiated = useSessionStore.getState().detailTaskAgentInitiated;
+
     // Focus an existing window for this task instead of opening a duplicate.
     // Scope to task-detail windows: a conversation window's anchor is a session
     // id, not a taskId, and must never be matched here.
@@ -70,6 +77,9 @@ export function useTaskDetailWindowBridge(): void {
     );
     if (existing) {
       windowStore.focusWindow(existing.id);
+      // AFTER the raise: `focusWindow` clears the stamp, so stamping first would
+      // be undone immediately.
+      if (agentInitiated) windowStore.markAgentOpened(existing.id);
       detailWindowIdRef.current = existing.id;
       return;
     }
@@ -105,6 +115,10 @@ export function useTaskDetailWindowBridge(): void {
       // Correctness over motion: a surface that spawns a terminal is worth more
       // fast and accurate than animated.
       skipEnterAnimation: true,
+      // An agent-requested open raises and shows the window (the agent needs a
+      // rendering pane to drive) but must not let its arriving terminal take the
+      // user's keyboard. See `.claude/rules/agent-driven-focus.md`.
+      openedByAgent: agentInitiated,
     });
     detailWindowIdRef.current = windowId;
     // No claim call: opening the window changed the store, and the derived reporter

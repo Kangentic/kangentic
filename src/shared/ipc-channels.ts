@@ -373,6 +373,27 @@ export const IPC = {
   // `src/main/browser/browser-pane-opener.ts`.
   BROWSER_PANE_OPEN_REQUEST: 'browser:paneOpenRequest',
   BROWSER_PANE_CLOSE_REQUEST: 'browser:paneCloseRequest',
+  // Main -> renderer: an agent is dispatching CDP input into this guest right
+  // now (active=true), or has finished (active=false). Carries the guest's own
+  // webContents id, because one window can host several panes.
+  //
+  // A synthesized mousedown makes Chromium focus the guest, which blurs whatever
+  // the user was typing into. Main is the ONLY caller of `Input.*`, so it is the
+  // only side that knows the interval exactly; the renderer cannot tell an agent
+  // click from a user one, because clicking into a <webview> produces no mousedown
+  // on the host. The pane restores the user's focus if it moved.
+  // See `.claude/rules/agent-driven-focus.md`.
+  BROWSER_AGENT_INPUT: 'browser:agentInput',
+  // Main -> renderer: a file download started from a Browser pane has finished.
+  // The pane saves silently to the OS Downloads folder (Chrome's default), so
+  // this is what stops an agent-triggered download being invisible.
+  BROWSER_DOWNLOAD_DONE: 'browser:downloadDone',
+  // Main -> renderer: the user typed into a Browser pane's guest WHILE an agent
+  // was driving it. Main intercepted the keystroke before the page could see it
+  // (CDP input does not fire `before-input-event`, so anything that does during
+  // a drive is the user), already encoded as terminal bytes. The renderer routes
+  // it to the terminal the user was typing in.
+  BROWSER_USER_KEY_DURING_DRIVE: 'browser:userKeyDuringDrive',
 
   // Updater
   UPDATE_CHECK: 'updater:check',

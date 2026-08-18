@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '../shared/ipc-channels';
-import type { ElectronAPI, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, SessionEvent, UpdateDownloadedInfo, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice } from '../shared/types';
+import type { ElectronAPI, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, SessionEvent, UpdateDownloadedInfo, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, BrowserDownloadDone } from '../shared/types';
 import type { AnnouncementsChangedPayload } from '../shared/announcements';
 import { POPOUT_ARG_PREFIX } from '../shared/pop-out';
 import type { PopOutDescriptor, PopOutKind, PopOutParamsByKind } from '../shared/pop-out';
@@ -629,6 +629,24 @@ const api: ElectronAPI = {
         callback(projectId, taskIds);
       ipcRenderer.on(IPC.BROWSER_PANE_CLOSE_REQUEST, handler);
       return () => ipcRenderer.removeListener(IPC.BROWSER_PANE_CLOSE_REQUEST, handler);
+    },
+    onAgentInput: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, webContentsId: number, active: boolean) =>
+        callback(webContentsId, active);
+      ipcRenderer.on(IPC.BROWSER_AGENT_INPUT, handler);
+      return () => ipcRenderer.removeListener(IPC.BROWSER_AGENT_INPUT, handler);
+    },
+    onDownloadDone: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, download: BrowserDownloadDone) =>
+        callback(download);
+      ipcRenderer.on(IPC.BROWSER_DOWNLOAD_DONE, handler);
+      return () => ipcRenderer.removeListener(IPC.BROWSER_DOWNLOAD_DONE, handler);
+    },
+    onUserKeyDuringDrive: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, webContentsId: number, data: string) =>
+        callback(webContentsId, data);
+      ipcRenderer.on(IPC.BROWSER_USER_KEY_DURING_DRIVE, handler);
+      return () => ipcRenderer.removeListener(IPC.BROWSER_USER_KEY_DURING_DRIVE, handler);
     },
   },
 

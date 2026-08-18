@@ -5053,6 +5053,37 @@ export interface ElectronAPI {
      * invisible to a board lookup.
      */
     onPaneCloseRequest: (callback: (projectId: string, taskIds: string[]) => void) => () => void;
+    /**
+     * An agent is dispatching CDP input into a Browser pane's guest right now
+     * (`active: true`), or has just finished (`active: false`).
+     *
+     * A synthesized mousedown makes Chromium focus the guest, which blurs
+     * whatever the user was typing into. This side cannot detect that on its own:
+     * clicking into a `<webview>` routes input to the guest widget and produces no
+     * mousedown on the host document, so "was there a trusted user gesture" is not
+     * a safe discriminator. Main IS able to say exactly when it is driving, so it
+     * announces the interval and the pane restores the user's focus if it moved.
+     *
+     * `webContentsId` identifies WHICH guest, since one window can host several
+     * panes and each must ignore the others'.
+     * See `.claude/rules/agent-driven-focus.md`.
+     */
+    onAgentInput: (callback: (webContentsId: number, active: boolean) => void) => () => void;
+    /**
+     * A file download started from a Browser pane has finished. The pane saves
+     * silently to the OS Downloads folder (what Chrome does), so this push is
+     * what stops an agent-triggered download from being invisible.
+     */
+    onDownloadDone: (callback: (download: BrowserDownloadDone) => void) => () => void;
+    /**
+     * The user typed into this guest while an agent was driving it. Main already
+     * blocked the keystroke from the page and encoded it as terminal bytes; this
+     * side routes it to the terminal the user was typing in, so their sentence
+     * continues where they meant it to rather than landing in a web form.
+     */
+    onUserKeyDuringDrive: (
+      callback: (webContentsId: number, data: string) => void,
+    ) => () => void;
   };
 
   // Search
@@ -5140,6 +5171,16 @@ export interface BrowserPaneRegisterInput {
   /** The guest webview id from `webview.getWebContentsId()`. */
   webContentsId: number;
   url: string | null;
+}
+
+/** A finished Browser-pane download, reported to the renderer so it can toast. */
+export interface BrowserDownloadDone {
+  /** Basename actually written, which may carry a ` (n)` dedupe suffix. */
+  fileName: string;
+  /** Absolute path, for the toast's "Show in folder" action. */
+  filePath: string;
+  /** Electron's `DownloadItem` terminal state. */
+  state: 'completed' | 'cancelled' | 'interrupted';
 }
 
 export interface SearchRequest {

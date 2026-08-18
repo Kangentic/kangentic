@@ -224,6 +224,7 @@ export const useSessionStore = create<SessionStore>((set, get, api) => ({
   activeSessionId: null,
   detailTaskId: null,
   detailTaskInitialEdit: false,
+  detailTaskAgentInitiated: false,
   dialogSessionIds: [],
   remoteDetailTaskIds: [],
   mobileTerminalStreamedSessionIds: [],
@@ -590,8 +591,15 @@ export const useSessionStore = create<SessionStore>((set, get, api) => ({
     window.electronAPI.config.set({ lastActiveTaskByProject: updated });
   },
 
+  // Both companion flags reset when their option is absent, so a later USER open
+  // can never inherit a stale agent stamp (or a stale edit intent) from the open
+  // before it. See `.claude/rules/agent-driven-focus.md`.
   setDetailTaskId: (id, options) =>
-    set({ detailTaskId: id, detailTaskInitialEdit: id ? !!options?.initialEdit : false }),
+    set({
+      detailTaskId: id,
+      detailTaskInitialEdit: id ? !!options?.initialEdit : false,
+      detailTaskAgentInitiated: id ? !!options?.agentInitiated : false,
+    }),
   claimDialogSession: (sessionId) =>
     set((state) =>
       state.dialogSessionIds.includes(sessionId)

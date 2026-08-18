@@ -1,17 +1,23 @@
 import { BrowserWindow, type WebContents } from 'electron';
 import { browserPaneRegistry, type ResolveTargetSelector } from './browser-pane-registry';
-import { attachDebugger, isDebuggerAttached } from './cdp/cdp';
+import { attachDebugger, ensureFocusEmulation, isDebuggerAttached } from './cdp/cdp';
+import { beginAgentInput, endAgentInput } from './agent-input-signal';
 import type { ResolvedBrowserAutomationConfig } from './browser-automation-config';
 
 /**
  * The single chokepoint every `kangentic_browser_*` MCP tool routes through to
  * drive the embedded Browser pane. It (1) gates the call against the global
  * automation policy, (2) resolves the target pane to a live guest webContents,
- * (3) lazily attaches the CDP debugger, then (4) runs the operation and wraps
- * the outcome in a structured `{ ok, data } | { ok: false, error }` envelope.
+ * (3) lazily attaches the CDP debugger, (4) announces the drive to the pane's
+ * renderer so no agent action can take the user's keyboard focus, then (5) runs
+ * the operation and wraps the outcome in a structured
+ * `{ ok, data } | { ok: false, error }` envelope.
  *
- * Centralizing attach + gating + error shaping here keeps the tools thin and
- * guarantees no tool can bypass capability checks or the attach lifecycle.
+ * Centralizing attach + gating + focus signalling + error shaping here keeps the
+ * tools thin and guarantees no tool can bypass capability checks, the attach
+ * lifecycle, or the focus guarantee. Step 4 is why a new CDP primitive must be
+ * reachable only from inside a `withGuest` body - see
+ * `.claude/rules/agent-driven-focus.md`.
  */
 
 export type BrowserCapability = 'observe' | 'interact' | 'navigate' | 'eval';
@@ -140,7 +146,40 @@ export async function withGuest<T>(
     }
   }
 
+  // Tell the guest it BEHAVES as focused, so a page that hides UI or pauses on
+  // blur works normally under automation and keeps its own focused element after
+  // the renderer hands the user's focus back. It does NOT affect input routing -
+  // see the measurement in `ensureFocusEmulation`. Armed on every call, not just
+  // the attaching one: idempotent per CDP session, so this is one no-op call on
+  // the hot path. See `.claude/rules/agent-driven-focus.md`.
+  ensureFocusEmulation(webContents);
+
+  // Announce the drive so the pane can put the user's keyboard focus back if
+  // Chromium moved it (see `.claude/rules/agent-driven-focus.md`). Deliberately
+  // fired for EVERY capability tier, not just `interact` and `eval`: `observe`
+  // dispatches no input today, but a tier list here would go stale the first time
+  // a new primitive lands, and the cost is one IPC push per tool call.
+  //
+  // It is armed only AFTER the guest resolves, so a call refused by the gate or
+  // by target resolution never arms a guard for a pane it never touched.
+  beginAgentInput(webContents);
   try {
+    // NOT DONE HERE: taking the guest's keyboard focus.
+    //
+    // Chromium delivers a dispatched keystroke to whichever widget genuinely
+    // holds focus, and a `<webview>` guest is out-of-process, so acquiring its
+    // focus is asynchronous and never atomic. An attempt to hold that focus
+    // ACROSS tool calls was built and measured against a live guest: it put the
+    // agent's own text into the user's terminal, at 28, then 95, then 207
+    // characters as each mitigation was added. Every version of it is a race
+    // with the user, who can take focus back mid-dispatch.
+    //
+    // What works, and has in every measurement, is a click and its keystrokes
+    // inside ONE call: the click focuses the guest as a direct side effect of
+    // the same input pipeline, and the characters follow with nothing held
+    // across a boundary. So the selector forms are the supported path, and the
+    // limits of the selector-less ones are documented rather than papered over
+    // with focus management. See `docs/embedded-browser.md`.
     const data = await fn(webContents);
     return { ok: true, data };
   } catch (error) {
@@ -151,6 +190,10 @@ export async function withGuest<T>(
         detail: error instanceof Error ? error.message : String(error),
       },
     };
+  } finally {
+    // `finally`, so a throwing tool still ends the guard. A guard that never ends
+    // would keep restoring focus out of the pane for the rest of the session.
+    endAgentInput(webContents);
   }
 }
 

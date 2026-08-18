@@ -1,6 +1,6 @@
 const PROCESS_START = performance.now();
 
-import { app, BrowserWindow, clipboard, Menu, nativeImage, powerMonitor, session, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, Menu, nativeImage, powerMonitor, session, shell } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { registerAllIpc, getSessionManager, getTerminalSubmitScheduler, getBoardConfigManager, getCurrentProjectId, getOptionalIpcContext, openProjectByPath, deleteProjectFromIndex, pruneStaleWorktreeProjects, activateAllProjects, getLastOpenedProject } from './ipc/register-all';
@@ -17,6 +17,8 @@ import { installDevtools } from '../devtools/install';
 import { startMcpHttpServer, type McpHttpServerHandle } from './agent/mcp-http-server';
 import { readBrowserAutomationConfig } from './browser/browser-automation-config';
 import { browserPaneRegistry } from './browser/browser-pane-registry';
+import { setAgentInputSender, isAgentDriving } from './browser/agent-input-signal';
+import { encodeTerminalKey } from '../shared/terminal-key-encoding';
 import { createRequestResolver } from './agent/mcp-project-context';
 import { IPC, PROJECT_PATH_MISSING_PREFIX } from '../shared/ipc-channels';
 import { ConfigManager } from './config/config-manager';
@@ -58,10 +60,18 @@ import { setWorktreeRemovedListener } from './git/worktree-manager';
 import { notifyAdaptersWorktreeRemoved } from './ipc/helpers/task-cleanup';
 import { loadVecExtension } from './retrieval/vec-extension';
 import { restoreShellEnv } from './shell-env';
-import { isFirstPartyPermissionAllowed } from './permission-policy';
+import { isFirstPartyPermissionAllowed, isEmbeddedBrowserPermissionAllowed } from './permission-policy';
+import { EXTERNAL_OPEN_SCHEMES, isAllowedExternalUrl } from '../shared/external-url';
 import { MIN_ZOOM, MAX_ZOOM } from '../shared/zoom-steps';
 import { defaultDeveloperFlag, type DeveloperFlagKey } from '../shared/developer-flag-defaults';
-import { createExternalWindowOpenHandler } from './window-open-policy';
+import {
+  createExternalWindowOpenHandler,
+  createWebviewWindowOpenHandler,
+  hardenWebviewPopupWindow,
+  MAX_LIVE_POPUPS_PER_PANE,
+  type WebviewPopupPolicy,
+} from './window-open-policy';
+import { installWebviewDownloadPolicy } from './browser/webview-download-policy';
 
 initStartupTimer(PROCESS_START);
 mark('process_start');
@@ -291,13 +301,101 @@ app.on('web-contents-created', (_event, contents) => {
     return;
   }
 
-  contents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  // Popups from the pane: allowed, hardened, and chromed with their real origin.
+  // Denying them outright made every popup-based sign-in (OAuth on most SaaS
+  // apps) present as a dead button. See embedded-browser.md decisions 10 to 12
+  // for what the allow costs and how each cost is paid.
+  //
+  // The budget lives in THIS closure so it dies with the guest: a runaway page
+  // cannot spawn OS windows without bound, and a pane that closes takes its
+  // counter with it rather than leaking a permanently-exhausted budget.
+  // Counts popups GRANTED, not popups materialized. `onPopupOpened` runs from
+  // `did-create-window`, which is after the open handler has already answered -
+  // so a page calling `window.open` several times in a row would clear a
+  // materialized-count check every time and blow straight past the cap. The
+  // grant is the thing being rationed, so the grant is what is counted.
+  let grantedPopupCount = 0;
+  const popupPolicy: WebviewPopupPolicy = {
+    guestSession: contents.session,
+    resolveParentWindow: () => BrowserWindow.fromWebContents(contents.hostWebContents ?? contents),
+    hasPopupBudget: () => grantedPopupCount < MAX_LIVE_POPUPS_PER_PANE,
+    onPopupGranted: () => { grantedPopupCount += 1; },
+    onPopupOpened: (popupWindow) => {
+      // Released when the window goes, so a user closing a sign-in window frees
+      // its slot. A grant that never becomes a window (denied downstream, or a
+      // navigation that never happens) is the one case that leaks a slot until
+      // the pane closes, which is acceptable for a runaway guard.
+      popupWindow.once('closed', () => {
+        grantedPopupCount = Math.max(0, grantedPopupCount - 1);
+      });
+    },
+    showSignInRefusalPrompt: (popupWindow, refusal) => {
+      void dialog.showMessageBox(popupWindow, {
+        type: 'warning',
+        title: `${refusal.provider} returned a sign-in error`,
+        message: `${refusal.provider} would not complete this sign-in.`,
+        detail:
+          `${refusal.provider} blocks sign-in from apps that embed a browser, which is the usual `
+          + 'cause here. You can open the sign-in page in your default browser, but signing in there '
+          + 'does not sign you in inside this pane. To use the pane itself, sign in with a different '
+          + 'method on that site.',
+        buttons: ['Open in my browser', 'Close'],
+        defaultId: 0,
+        cancelId: 1,
+      }).then(({ response }) => {
+        if (response !== 0) return;
+        if (!isAllowedExternalUrl(refusal.signInUrl, EXTERNAL_OPEN_SCHEMES)) return;
+        shell.openExternal(refusal.signInUrl).catch((openError) => {
+          console.warn(`[WINDOW_OPEN] shell.openExternal failed for ${refusal.signInUrl}`, openError);
+        });
+      }).catch((dialogError) => {
+        // `.catch`, not a bare `void`: showMessageBox REJECTS when its parent
+        // window is destroyed while the box is still up (closing the popup, or
+        // the pane, mid-prompt). Unhandled, that reaches the process-level
+        // rejection handler and is reported as an `app_error` telemetry event,
+        // turning an expected outcome into crash signal. Same reasoning as
+        // `createExternalWindowOpenHandler` in window-open-policy.ts.
+        console.warn('[WINDOW_OPEN] sign-in refusal dialog failed', dialogError);
+      });
+    },
+  };
 
-  // Deny all permission requests (camera, mic, geolocation, notifications, ...)
-  // on the embedded pane. The pane is for viewing dev servers, which need none
-  // of these, and agent-driven navigation could otherwise reach a page that
-  // auto-prompts. (embedded-browser.md decision log item 5.)
-  contents.session.setPermissionRequestHandler((_requestingContents, _permission, callback) => callback(false));
+  contents.setWindowOpenHandler(createWebviewWindowOpenHandler(popupPolicy));
+
+  // ORDERING, load-bearing. `did-create-window` fires on the EMBEDDER after
+  // `web-contents-created` has already fired for the popup - and because a
+  // popup's `getType()` is 'window', not 'webview', that handler has already
+  // given it `createExternalWindowOpenHandler`. This runs later and
+  // `setWindowOpenHandler` is a setter, so the webview policy wins. Do not move
+  // popup hardening earlier. The consolation is that a popup which somehow never
+  // reaches here still cannot spawn a bare chrome-less window.
+  //
+  // Our popup is sandboxed, so Electron passes the guest webContents in rather
+  // than navigating first: listeners attached here land before its first
+  // navigation.
+  contents.on('did-create-window', (popupWindow, popupDetails) => {
+    console.log(`[BROWSER_POPUP] pane webContents=${contents.id} opened a popup for ${popupDetails.url}`);
+    hardenWebviewPopupWindow(popupWindow, popupDetails.url, popupPolicy);
+  });
+
+  // Deny permission requests (camera, mic, geolocation, notifications, ...) on
+  // the embedded pane. The pane is for viewing dev servers, which need none of
+  // these, and agent-driven navigation could otherwise reach a page that
+  // auto-prompts. (embedded-browser.md decision log items 5 and 14.)
+  //
+  // BOTH handlers, reading one predicate. Only the request handler existed
+  // before, so a synchronous permission CHECK fell through to Electron's default
+  // instead of the pane's policy. Set on the SESSION, so the popups above - which
+  // share the guest's Session object - inherit both with no extra wiring.
+  contents.session.setPermissionRequestHandler((_requestingContents, permission, callback) =>
+    callback(isEmbeddedBrowserPermissionAllowed(permission)));
+  contents.session.setPermissionCheckHandler((_requestingContents, permission) =>
+    isEmbeddedBrowserPermissionAllowed(permission));
+
+  // Downloads: saved to the OS Downloads folder rather than denied or left to
+  // Chromium's native save dialog (which can block an agent-driven pane).
+  // Installed once per Session; see the module for why that guard is mandatory.
+  installWebviewDownloadPolicy(contents.session);
 
   contents.on('will-navigate', (navigationEvent, urlString) => {
     try {
@@ -312,6 +410,52 @@ app.on('web-contents-created', (_event, contents) => {
 
   contents.on('before-input-event', (inputEvent, input) => {
     if (input.type !== 'keyDown') return;
+
+    // THE USER IS TYPING WHILE AN AGENT DRIVES THIS PANE.
+    //
+    // A CDP click hands the guest real focus as a side effect, so for the length
+    // of a drive the user's keystrokes would go into the page - text flowing out
+    // of their terminal and into a web form, which is the kind of thing that
+    // costs trust permanently.
+    //
+    // An event arriving here during a drive is the USER'S, because CDP input does
+    // not travel this path. Validated on Electron 41 against a live guest with a
+    // positive control in the log itself: across a 120-round drive (~3400
+    // dispatched keys) this handler fired ZERO times, while the user's own
+    // `Shift` and `Control` presses came through it during the same runs.
+    //
+    // An earlier attempt to attribute each key individually was built on the
+    // opposite reading and removed once the control proved it wrong. Do not
+    // reintroduce per-key attribution without re-running that measurement - the
+    // instrument needs its own positive control, since an empty log otherwise
+    // reads identically to a broken logger.
+    // See `.claude/rules/agent-driven-focus.md`.
+    if (isAgentDriving(contents.id)) {
+      // Never touch input mid-composition. An IME (Chinese, Japanese, Korean,
+      // and dead keys on many European layouts) builds a character over several
+      // keystrokes that only mean something to the composition session, and
+      // `preventDefault` on one of them corrupts the sequence. There is also
+      // nothing sensible to forward: the composed result arrives separately, not
+      // as `input.key`. Letting these through means a composing user's text can
+      // reach the page during a drive - narrower and far more recoverable than
+      // breaking text entry for everyone who uses an IME.
+      if (input.isComposing) return;
+
+      inputEvent.preventDefault();
+      const encoded = encodeTerminalKey({
+        key: input.key,
+        control: input.control,
+        alt: input.alt,
+        meta: input.meta,
+        shift: input.shift,
+      });
+      const hostWindow = BrowserWindow.fromWebContents(contents.hostWebContents ?? contents);
+      if (encoded !== null && hostWindow && !hostWindow.isDestroyed()) {
+        hostWindow.webContents.send(IPC.BROWSER_USER_KEY_DURING_DRIVE, contents.id, encoded);
+      }
+      return;
+    }
+
     const isF5 = input.key === 'F5';
     const isCtrlR = (input.control || input.meta) && (input.key === 'r' || input.key === 'R');
     if (isF5 || isCtrlR) {
@@ -362,6 +506,18 @@ app.on('web-contents-created', (_event, contents) => {
   contents.on('did-navigate', (_navigationEvent, navigatedUrl) => {
     browserPaneRegistry.updateUrlByWebContentsId(contents.id, navigatedUrl);
   });
+});
+
+// Route the "an agent is driving this guest" signal to the window that HOSTS the
+// guest - the main window for a docked pane, a pop-out window for a detached one
+// - exactly as the zoom readout above is routed, and for the same reason: the
+// pane that has to restore focus lives in that renderer, not necessarily in the
+// main one. See `.claude/rules/agent-driven-focus.md`.
+setAgentInputSender((guest, active) => {
+  if (guest.isDestroyed()) return;
+  const hostWindow = BrowserWindow.fromWebContents(guest.hostWebContents ?? guest);
+  if (!hostWindow || hostWindow.isDestroyed()) return;
+  hostWindow.webContents.send(IPC.BROWSER_AGENT_INPUT, guest.id, active);
 });
 
 // Enforce single instance -- prevents manual double-launches from spawning

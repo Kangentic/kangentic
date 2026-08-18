@@ -23,6 +23,15 @@
  * unconditional: pointer-down on a window frame, a file drop on a terminal, the
  * maximize/restore re-homing, and the imperative `focus()` those use.
  *
+ * The mirror case is an AGENT-initiated one. `kangentic_browser_open_pane` opens
+ * or raises a task-detail window on the agent's behalf, which moves
+ * `focusedWindowId` and so would make tier 2 hand that window's arriving terminal
+ * the user's keystrokes. Tier 1.5 below closes that: a window stamped
+ * `openedByAgent` denies EVERY terminal for as long as it holds focus. The wider
+ * rule that an agent never moves the user's focus at all - including the CDP
+ * input path, which is a main-process concern - lives in
+ * `.claude/rules/agent-driven-focus.md`.
+ *
  * Naming note: "focused" is already taken in this codebase. `focused-terminals.ts`
  * owns the PTY-STREAM focused set (which sessions main forwards bytes for, several
  * at once), and `focused-sessions.ts` derives it. This module is about KEYBOARD
@@ -60,6 +69,7 @@ export interface ArrivalFocusClaim {
 export type ArrivalFocusReason =
   | 'claim'
   | 'claim-mismatch'
+  | 'agent-window'
   | 'window'
   | 'window-mismatch'
   | 'occupied'
@@ -101,6 +111,32 @@ export function resolveArrivalFocus(input: ArrivalFocusInput): ArrivalFocusDecis
     return claim.sessionId === input.sessionId
       ? { allow: true, reason: 'claim' }
       : { allow: false, reason: 'claim-mismatch' };
+  }
+
+  // Tier 1.5: the window holding window-layer focus was opened or raised by an
+  // AGENT (kangentic_browser_open_pane), not by the user. There is no user intent
+  // behind that focus, so NOBODY takes keyboard focus off the back of it - not
+  // another window's terminal, and not the agent-opened window's OWN. Its
+  // terminal mounts unfocused, which is the entire point: the user keeps typing
+  // wherever they already were. See .claude/rules/agent-driven-focus.md.
+  //
+  // Denying everyone is what keeps the tier EXCLUSIVE. An "allow the others"
+  // variant would let whichever unrelated terminal happened to arrive in the
+  // same frame win, which is the race this module exists to remove.
+  //
+  // Below tier 1 on purpose: clicking a bottom-panel tab moves no layer's
+  // `focusedWindowId`, so a claim can be made after an agent open and still be
+  // live here. That is newer, real user intent and must win. Note this does NOT
+  // mean a claim always survives an agent open - `windowFocusFingerprint()`
+  // invalidates a pending claim on ANY window open, so a claim made just before
+  // one dies at tier 1 regardless. That is a pre-existing property of the
+  // fingerprint, not something this tier introduces.
+  //
+  // No TTL: the stamp is cleared by `focusWindow`, i.e. by the user's first
+  // pointer-down on the frame, and it only bites while that window actually
+  // holds `focusedWindowId`.
+  if (input.focusedWindowTerminal?.openedByAgent) {
+    return { allow: false, reason: 'agent-window' };
   }
 
   // Tier 2: a terminal-hosting window holds window-layer focus. That window is
@@ -183,8 +219,15 @@ export function claimArrivalFocus(sessionId: string | null): void {
   arrivalClaim = { sessionId, fingerprint: windowFocusFingerprint(), at: Date.now() };
 }
 
-/** True while focus sits in something the user could be typing into. */
-function focusIsInTypingSurface(): boolean {
+/**
+ * True while focus sits in something the user could be typing into.
+ *
+ * Exported because it is not only tier 3's test: any surface that focuses itself
+ * on mount and can be mounted BY AN AGENT needs the same guard (see
+ * `.claude/rules/agent-driven-focus.md`). `BrowserEmptyState` is the one such
+ * consumer today.
+ */
+export function focusIsInTypingSurface(): boolean {
   const active = document.activeElement;
   if (!active || active === document.body) return false;
   return active.matches('input, textarea, select, [contenteditable="true"]');

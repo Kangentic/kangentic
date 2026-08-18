@@ -49,6 +49,9 @@
   let browserZoomSubscribers = [];
   let browserPaneOpenSubscribers = [];
   let browserPaneCloseSubscribers = [];
+  let browserAgentInputSubscribers = [];
+  let browserDownloadSubscribers = [];
+  let browserUserKeySubscribers = [];
   // Pop-out engine call log: open/close/focus invocations, so a test can
   // assert the title-bar / surface-header trigger called the right verb
   // (e.g. focus() instead of toggling the in-app overlay) without a real
@@ -3730,6 +3733,35 @@
           if (index >= 0) browserPaneOpenSubscribers.splice(index, 1);
         };
       },
+      // Main -> renderer "an agent is driving guest N right now" interval, which
+      // is what lets the pane put the user's focus back after a CDP dispatch
+      // moves it. Driven from a test via
+      // window.__mockBrowser.emitAgentInput(webContentsId, active).
+      onAgentInput: function (callback) {
+        browserAgentInputSubscribers.push(callback);
+        return function () {
+          const index = browserAgentInputSubscribers.indexOf(callback);
+          if (index >= 0) browserAgentInputSubscribers.splice(index, 1);
+        };
+      },
+      // Main -> renderer "a pane download finished" push, behind the toast.
+      // Driven via window.__mockBrowser.emitDownloadDone({fileName, filePath, state}).
+      onDownloadDone: function (callback) {
+        browserDownloadSubscribers.push(callback);
+        return function () {
+          const index = browserDownloadSubscribers.indexOf(callback);
+          if (index >= 0) browserDownloadSubscribers.splice(index, 1);
+        };
+      },
+      // Main -> renderer push carrying a keystroke the user typed into the guest
+      // while an agent was driving it. Main already blocked it from the page.
+      onUserKeyDuringDrive: function (callback) {
+        browserUserKeySubscribers.push(callback);
+        return function () {
+          const index = browserUserKeySubscribers.indexOf(callback);
+          if (index >= 0) browserUserKeySubscribers.splice(index, 1);
+        };
+      },
       onPaneCloseRequest: function (callback) {
         browserPaneCloseSubscribers.push(callback);
         return function () {
@@ -3810,6 +3842,26 @@
     emitPaneCloseRequest: function (projectId, taskIds) {
       browserPaneCloseSubscribers.slice().forEach(function (callback) {
         callback(projectId, taskIds);
+      });
+    },
+    /** Fire main's "an agent is driving this guest" interval edge. Pass true to
+     *  arm the pane's focus guard and false to end the drive. */
+    emitAgentInput: function (webContentsId, active) {
+      browserAgentInputSubscribers.slice().forEach(function (callback) {
+        callback(webContentsId, active);
+      });
+    },
+    /** Fire main's "a pane download finished" push. */
+    emitDownloadDone: function (download) {
+      browserDownloadSubscribers.slice().forEach(function (callback) {
+        callback(download);
+      });
+    },
+    /** Fire main's "the user typed into the guest mid-drive" push, carrying
+     *  already-encoded terminal bytes. */
+    emitUserKeyDuringDrive: function (webContentsId, data) {
+      browserUserKeySubscribers.slice().forEach(function (callback) {
+        callback(webContentsId, data);
       });
     },
   };

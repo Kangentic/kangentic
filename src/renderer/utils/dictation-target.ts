@@ -38,6 +38,21 @@ export function noteTerminalFocus(sessionId: string | null): void {
   if (sessionId) lastFocusedTerminalSessionId = sessionId;
 }
 
+/**
+ * The session behind the terminal the user most recently focused.
+ *
+ * Exported for the agent-input guard, which must answer a DIFFERENT question
+ * from `resolveDictationTarget`: not "which terminal should this land in" but
+ * "which terminal was the user actually in when the agent took their focus". It
+ * snapshots this at ARM time, while the user's terminal still holds focus, and
+ * writes only there. It must not use the dictation chain, whose tier 1 is the
+ * focused WINDOW - which an agent-opened window becomes, by design, without ever
+ * holding DOM focus. See `.claude/rules/agent-driven-focus.md`.
+ */
+export function getLastFocusedTerminalSessionId(): string | null {
+  return lastFocusedTerminalSessionId;
+}
+
 // @ts-expect-error -- Vite handles import.meta.hot
 if (import.meta.hot) {
   // @ts-expect-error -- Vite handles import.meta.hot
@@ -47,7 +62,7 @@ if (import.meta.hot) {
 }
 
 /** True only when the id names a session the manager currently has running. */
-function isRunningSession(sessionId: string | null): sessionId is string {
+export function isRunningSession(sessionId: string | null): sessionId is string {
   if (!sessionId) return false;
   return useSessionStore
     .getState()
@@ -59,6 +74,15 @@ function isRunningSession(sessionId: string | null): sessionId is string {
  *  "no window is focused" - the window still owns the user's attention. */
 export interface FocusedWindowTerminal {
   sessionId: string | null;
+  /** That window was opened or raised by an AGENT, so its focus carries no user
+   *  intent (see `.claude/rules/agent-driven-focus.md`).
+   *
+   *  DICTATION DELIBERATELY IGNORES THIS. It is the same resolver but a different
+   *  POLICY: dictation is a later, separate user action and must resolve a target
+   *  wherever the window came from, while arrival focus must abstain because
+   *  nothing about that window says the user asked to type in it. Consuming this
+   *  field in the dictation chain would silently drop the user's speech. */
+  openedByAgent: boolean;
 }
 
 /** Layers in paint order, front-most first: the Command Terminal layer renders
@@ -108,6 +132,7 @@ export function resolveFocusedWindowTerminal(): FocusedWindowTerminal | null {
           currentProjectId: useProjectStore.getState().currentProject?.id ?? null,
           transientSessions: sessionState.transientSessions,
         }),
+        openedByAgent: focusedWindow.openedByAgent === true,
       };
     }
 
@@ -116,7 +141,7 @@ export function resolveFocusedWindowTerminal(): FocusedWindowTerminal | null {
     const session = useSessionStore
       .getState()
       .sessions.find((candidate) => candidate.taskId === taskId);
-    return { sessionId: session?.id ?? null };
+    return { sessionId: session?.id ?? null, openedByAgent: focusedWindow.openedByAgent === true };
   }
   return null;
 }
