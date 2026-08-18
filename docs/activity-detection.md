@@ -523,9 +523,11 @@ One caveat since exempt shells were added: `getActiveShellCount` sums them (it h
 
 Set `KANGENTIC_BG_SHELL_WATCHER=0` to disable the watcher. The sole-holder holds remain as fallback (named shells reclaim at the 5-min cap, anonymous shells at the 30s grace), but without the watcher a genuinely-running named shell is no longer held past the cap (Tier A liveness needs the watcher).
 
-## Resume reconciliation
+## Resume reconciliation (deliberately none)
 
-When Kangentic restarts mid-session, the engine starts clean but the agent's Claude CLI may have living descendant processes. `reconcileBgShellsOnResume` enumerates the descendants at resume time, filters to shell-like basenames, and adopts them as anonymous bg shells. The watcher then prunes them as they exit naturally.
+When Kangentic restarts mid-session the engine starts clean while the session's shell may still have living descendants. A `reconcileBgShellsOnResume` used to enumerate those at resume time and adopt them as anonymous bg shells. **It was deleted, and must not be reintroduced:** the adopted count was a phantom the engine had no way to drain, so a resumed session sat in `thinking` indefinitely (the "activity engine stays thinking on idle sessions" bug).
+
+The resume path now adopts nothing. Any surviving shell-like descendants are instead folded into the watcher's first-cycle `preExistingHelpers` baseline, so they are treated as helpers rather than as background work - deliberately over-inclusive at resume, as `SessionWatchState.helperPids` notes. Pinned by the `performSpawn - resume path does not adopt bg shells` guard in `tests/unit/session-spawn-flow.test.ts`.
 
 ## Observability
 

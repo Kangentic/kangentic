@@ -11,8 +11,11 @@ import {
 
 /**
  * The watcher periodically enumerates the OS process tree rooted at
- * each session's Claude CLI PID and infers when a background shell
- * has exited naturally. Two tiers compose for that:
+ * each session's PTY pid - which is the SHELL, not the agent CLI:
+ * Kangentic spawns a shell and writes the agent's command to its
+ * stdin, so the agent is a DESCENDANT of the root (`getSessionRootPid`
+ * returns `session.pty.pid`). It infers from that tree when a
+ * background shell has exited naturally. Two tiers compose for that:
  *
  * **Tier A (PID-aware)**: When `registerShellPid(sessionId, shellId, pid)`
  * is called (from a hook directive that extracted a real OS PID from
@@ -34,7 +37,10 @@ import {
  * a session whose agent CLI exited while its shell PTY survived (`/exit`, a CLI
  * crash, a failed launch), which nothing else notices because the surviving
  * shell means the PTY never fires `onExit`. It runs on its own much slower
- * cadence (`AGENT_ABSENCE_SWEEP_INTERVAL_MS`) and its remedy is a session-status
+ * cadence (`AGENT_ABSENCE_SWEEP_INTERVAL_MS`), though it also evaluates for
+ * free on any cycle already enumerating for bg-shell work, so a busy board
+ * detects a phantom in seconds and only an idle one waits out the
+ * interval. Its remedy is a session-status
  * change via `onAgentProcessAbsent`, not a bg-shell drain. Note the contrast
  * with `onRootProcessDied` below: there the root is GONE, here it is ALIVE and
  * only its agent child is missing. See docs/session-lifecycle.md, "A session
@@ -87,7 +93,13 @@ export interface BgShellWatcherCallbacks {
    * shell by id.
    */
   onNamedShellTerminated(sessionId: string, shellId: string): void;
-  /** Called when the Claude CLI itself dies. Engine should forceIdle. */
+  /**
+   * Called when the session's PTY ROOT (its shell) dies, taking the whole tree
+   * with it. Engine should forceIdle.
+   *
+   * Contrast `onAgentProcessAbsent`: there the root is ALIVE and only the agent
+   * below it is gone, which is why root-death detection never caught that case.
+   */
   onRootProcessDied(sessionId: string): void;
   /**
    * May the agent-absence sweep judge this session at all?
@@ -207,7 +219,8 @@ function defaultStatOutputFile(filePath: string): OutputFileSample | null {
 }
 
 interface SessionWatchState {
-  /** Root PID (Claude CLI) for this session. */
+  /** Root PID for this session: its PTY, i.e. the SHELL. The agent CLI is a
+   *  DESCENDANT of this pid, never this pid itself. */
   rootPid: number;
   /**
    * Count of pre-existing direct shell-like descendants captured on
