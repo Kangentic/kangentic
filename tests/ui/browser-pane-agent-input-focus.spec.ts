@@ -395,3 +395,58 @@ test.describe('an agent drive is visible', () => {
     await expect(sharedPage.locator('[data-testid="browser-agent-driving"]')).toHaveCount(0);
   });
 });
+
+/**
+ * The OTHER half of "the focus move is SHOWN, not hidden": the terminal side
+ * of the split, in TaskDetailBody. The badge above lives inside BrowserPane
+ * and is asserted there; this is the sibling assertion for the dimmed
+ * terminal wrapper and the accented right-panel border that ride the same
+ * `agentDrivingBrowser` flag one level up the tree.
+ */
+test.describe('an agent drive dims the terminal side of the split', () => {
+  // Scoped to THIS task's own dialog, not a bare page-wide query: this file's
+  // other describe block opens a second task-detail window (Victim Task) with
+  // its own running session, which renders its own identically-testid'd dim
+  // wrapper and right-panel border. A page-wide locator would be a strict-mode
+  // violation (or silently match the wrong window) the moment two of these
+  // dialogs are open at once - the project's `.fixed.inset-0` anti-pattern,
+  // one level down. Mirrors this file's own `openVictimTaskByClick` /
+  // `activeElementIsVictimTerminal` scoping idiom.
+  function guardDialog(page: Page) {
+    return page.locator('[data-testid="task-detail-dialog"]').filter({ hasText: 'Guard Task' }).first();
+  }
+
+  test('dims the terminal wrapper and accents the right-panel border while driving, then reverts', async () => {
+    await openPaneWithGuest(sharedPage);
+
+    const terminalDim = guardDialog(sharedPage).locator('[data-testid="task-detail-terminal-dim"]');
+    const rightPanel = guardDialog(sharedPage).locator('[data-testid="task-detail-right-panel"]');
+    await expect(terminalDim).toHaveClass(/opacity-100/);
+    await expect(rightPanel).toHaveClass(/border-edge/);
+
+    await sharedPage.evaluate((guestId) => window.__mockBrowser?.emitAgentInput(guestId, true), GUEST_ID);
+    await expect(terminalDim).toHaveClass(/opacity-40/);
+    await expect(rightPanel).toHaveClass(/border-accent/);
+
+    await sharedPage.evaluate((guestId) => window.__mockBrowser?.emitAgentInput(guestId, false), GUEST_ID);
+    await expect(terminalDim).toHaveClass(/opacity-100/);
+    await expect(rightPanel).toHaveClass(/border-edge/);
+  });
+
+  test('a drive for a DIFFERENT guest never dims this task\'s terminal', async () => {
+    await openPaneWithGuest(sharedPage);
+
+    await sharedPage.evaluate((guestId) => window.__mockBrowser?.emitAgentInput(guestId + 1, true), GUEST_ID);
+
+    // Intentional fixed wait, not a poll: cannot poll for non-occurrence (the
+    // wrapper already reads opacity-100 before any signal fires, so a poll for
+    // that value would return immediately and prove nothing about a delayed
+    // dim). 300ms mirrors the sibling "different guest" checks above in this
+    // file.
+    await sharedPage.waitForTimeout(300);
+    await expect(guardDialog(sharedPage).locator('[data-testid="task-detail-terminal-dim"]'))
+      .toHaveClass(/opacity-100/);
+    await expect(guardDialog(sharedPage).locator('[data-testid="task-detail-right-panel"]'))
+      .toHaveClass(/border-edge/);
+  });
+});

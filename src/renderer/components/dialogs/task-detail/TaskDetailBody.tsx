@@ -326,6 +326,7 @@ export function TaskDetailBody({
     // with no reveal animation.
     const rightPanelElement = rightPanelPresent && (
       <div
+        data-testid="task-detail-right-panel"
         className={`flex-1 min-h-0 min-w-0 overflow-hidden transition-colors ${
           changesExpanded ? '' : 'border-l'
         } ${agentDrivingBrowser ? 'border-accent' : 'border-edge'}`}
@@ -364,6 +365,7 @@ export function TaskDetailBody({
                   stays mounted, live, and clickable, and one click takes focus
                   straight back. */}
               <div
+                data-testid="task-detail-terminal-dim"
                 className={`absolute inset-0 transition-opacity duration-200 ${
                   agentDrivingBrowser ? 'opacity-40' : 'opacity-100'
                 }`}
