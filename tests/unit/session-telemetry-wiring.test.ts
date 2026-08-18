@@ -1165,3 +1165,137 @@ describe('SessionTelemetry: BgShellWatcherCallbacks.getNamedShellIds includes ex
     expect(telemetry.activityEngine.getState('s-exempt')?.exemptBackgroundShellIds.size).toBe(0);
   });
 });
+
+describe('SessionTelemetry: agent-absence sweep wiring (isAgentAbsenceCandidate default + onAgentProcessAbsent -> retireAgentlessSession)', () => {
+  // The sweep's two halves are each covered elsewhere - the process-tree half by
+  // `bg-shell-watcher.test.ts` against a hand-rolled callbacks object, the
+  // session half by `session-manager-agent-absence.test.ts`, which mocks this
+  // module away entirely. Neither runs the closures SessionTelemetry actually
+  // builds, so the glue between them was the one unpinned link: emptying
+  // `onAgentProcessAbsent`, or flipping the `?? false` default, kept every other
+  // suite green. TypeScript constrains the closures' shape, never their body.
+  //
+  // This also exercises the PRODUCTION 60s cadence: SessionTelemetry constructs
+  // BgShellWatcher without `agentAbsenceSweepIntervalMs`, so these tests run
+  // against the real `AGENT_ABSENCE_SWEEP_INTERVAL_MS` default rather than the
+  // 0ms always-due override the watcher suite uses.
+  const PHANTOM_SESSION_ID = 'phantom-session';
+  const PHANTOM_ROOT_PID = 9001;
+  /** Comfortably past AGENT_ABSENCE_SWEEP_INTERVAL_MS (60s). */
+  const PAST_ONE_SWEEP_INTERVAL_MS = 61_000;
+
+  let probe: MockProcessTreeProbe;
+  let rootPids: Map<string, number>;
+  let log: CallbackLog;
+  let telemetry: SessionTelemetry | null;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    probe = new MockProcessTreeProbe();
+    rootPids = new Map();
+    log = { activityChanges: [], events: [], usageChanges: [] };
+    telemetry = null;
+  });
+
+  afterEach(() => {
+    telemetry?.dispose();
+    vi.useRealTimers();
+  });
+
+  /**
+   * A real SessionTelemetry (and therefore a real BgShellWatcher) with only the
+   * sweep callbacks varied, so each test isolates one arm of the wiring.
+   */
+  function buildTelemetry(sweepCallbacks: {
+    isAgentAbsenceCandidate?: (sessionId: string) => boolean;
+    retireAgentlessSession?: (sessionId: string) => void;
+  }): SessionTelemetry {
+    const options: SessionTelemetryOptions = {
+      processTreeProbe: probe,
+      disableBgShellWatcher: false,
+      activityEngineOptions: {
+        bgShellEscapeHatchMs: 60_000,
+        staleThinkingTimeoutMs: 60_000,
+        idleStabilityWindowMs: 0,
+      },
+    };
+    return new SessionTelemetry(
+      {
+        ...makeCallbacks(log),
+        getSessionRootPid: (sessionId) => rootPids.get(sessionId),
+        ...sweepCallbacks,
+      },
+      options,
+    );
+  }
+
+  /** A live shell root with nothing whatsoever running under it: the phantom shape. */
+  function seedPhantomShell(): void {
+    rootPids.set(PHANTOM_SESSION_ID, PHANTOM_ROOT_PID);
+    probe.alive.add(PHANTOM_ROOT_PID);
+    probe.trees.set(PHANTOM_ROOT_PID, []);
+    telemetry!.initSession(PHANTOM_SESSION_ID);
+  }
+
+  it('leaves the sweep inert when isAgentAbsenceCandidate is not wired (the ?? false default)', async () => {
+    // Every existing SessionTelemetry construction in the suite omits these
+    // callbacks. If the default were TRUE, all of them would start retiring
+    // sessions the moment a tree looked empty.
+    const retired: string[] = [];
+    telemetry = buildTelemetry({ retireAgentlessSession: (sessionId) => retired.push(sessionId) });
+    seedPhantomShell();
+
+    // Three sweep-eligible cycles - well past the 2 confirmations a wired
+    // candidate needs - so a flipped default could not hide behind the counter.
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      await telemetry.bgShellWatcher!.pollNow();
+      vi.setSystemTime(Date.now() + PAST_ONE_SWEEP_INTERVAL_MS);
+    }
+
+    expect(retired).toEqual([]);
+  });
+
+  it('routes onAgentProcessAbsent to retireAgentlessSession once the real cadence confirms absence', async () => {
+    const retired: string[] = [];
+    telemetry = buildTelemetry({
+      isAgentAbsenceCandidate: () => true,
+      retireAgentlessSession: (sessionId) => retired.push(sessionId),
+    });
+    seedPhantomShell();
+
+    // Anchor cycle: banks the first absent observation.
+    await telemetry.bgShellWatcher!.pollNow();
+    expect(retired).toEqual([]);
+
+    // Baselined AFTER the anchor cycle: initSession emits its own opening idle,
+    // which belongs to session start, not to the sweep.
+    const activityChangesBeforeRetirement = log.activityChanges.length;
+
+    // Second observation, one full production sweep interval later.
+    vi.setSystemTime(Date.now() + PAST_ONE_SWEEP_INTERVAL_MS);
+    await telemetry.bgShellWatcher!.pollNow();
+
+    expect(retired).toEqual([PHANTOM_SESSION_ID]);
+
+    // The retiring cycle itself emits NO activity-state change: the session is
+    // being retired outright, so unlike onRootProcessDied the sweep must not
+    // force idle to describe a session that is about to stop existing.
+    expect(log.activityChanges).toHaveLength(activityChangesBeforeRetirement);
+  });
+
+  it('never retires a session the candidate callback refuses (the Command Terminal guard)', async () => {
+    const retired: string[] = [];
+    telemetry = buildTelemetry({
+      isAgentAbsenceCandidate: () => false,
+      retireAgentlessSession: (sessionId) => retired.push(sessionId),
+    });
+    seedPhantomShell();
+
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      await telemetry.bgShellWatcher!.pollNow();
+      vi.setSystemTime(Date.now() + PAST_ONE_SWEEP_INTERVAL_MS);
+    }
+
+    expect(retired).toEqual([]);
+  });
+});

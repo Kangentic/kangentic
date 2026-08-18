@@ -604,6 +604,60 @@ export function isShellLike(comm: string): boolean {
 }
 
 /**
+ * Basenames that are the OS's CONSOLE HOST rather than a real child process.
+ *
+ * Windows allocates one per console (`conhost.exe`, or `OpenConsole.exe` under
+ * Windows Terminal). Where it lands in the tree depends on how the process was
+ * started, and the agent-absence sweep must not mistake one for a live agent.
+ *
+ * MEASURED on this machine across three live Kangentic instances: all nine
+ * ConPTY session shells had their console host parented to the ELECTRON caller,
+ * i.e. a sibling rather than a descendant, so a bare shell's descendant set was
+ * genuinely empty. Only a plainly-spawned child (the WindowsProbe's own
+ * PowerShell) owned its console host as a descendant.
+ *
+ * So on the measured configuration this filter is DEFENSE IN DEPTH, not the
+ * thing that makes the sweep work - `descendants.length === 0` would have been
+ * sufficient there. It is kept because console-host parenting is an
+ * unspecified Windows implementation detail that differs by console host and
+ * launch path (a winpty fallback hosts its own console), and the cost of being
+ * wrong is asymmetric: a stray console host would silently disable the sweep
+ * for that session forever, while filtering costs ~0.3us per cycle for a whole
+ * fleet. Do not "simplify" it back to an emptiness check on the strength of one
+ * machine's process tree.
+ *
+ * POSIX has no equivalent process, so this list is inert there.
+ *
+ * `comm` arrives lowercased with `.exe` already stripped (see
+ * `_parseWindowsCsv`); the optional suffix mirrors `SHELL_LIKE_COMM_PATTERNS`
+ * so a future parser change cannot silently empty the list.
+ */
+export const CONSOLE_HOST_COMM_PATTERNS: readonly RegExp[] = [
+  /^conhost(?:\.exe)?$/,
+  /^openconsole(?:\.exe)?$/,
+];
+
+export function isConsoleHost(comm: string): boolean {
+  const normalized = comm.toLowerCase();
+  return CONSOLE_HOST_COMM_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+/**
+ * True when `descendants` holds nothing but console hosts (or is empty): no
+ * real process is running under that subtree.
+ *
+ * A session's PTY root is the SHELL, not the agent - Kangentic spawns the shell
+ * and writes the agent CLI command to its stdin - so the agent CLI is a
+ * descendant. When it exits on its own the shell survives, and this returns
+ * true. Deliberately NOT `filterTopmostShellLikeDescendants`: that filter exists
+ * to HIDE the `cmd.exe` shim an agent CLI is often launched through on Windows,
+ * which is the opposite of what this question needs.
+ */
+export function hasNoNonConsoleDescendants(descendants: readonly ProcessInfo[]): boolean {
+  return descendants.every((descendant) => isConsoleHost(descendant.comm));
+}
+
+/**
  * Filter `descendants` down to TOPMOST shell-like processes - shells
  * whose immediate parent within the descendant set is NOT itself
  * shell-like. Used by both the bg-shell watcher (per-cycle counting)

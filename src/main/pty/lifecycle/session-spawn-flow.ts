@@ -453,7 +453,14 @@ export async function performSpawn(
       // Synthetic session_end - Claude Code's hook won't fire on kill
       context.telemetry.emitSessionEnd(id);
     }
-    session.exitCode = exitCode;
+    // The OS code is deliberately MASKED when an override is set. Today only the
+    // agent-absence sweep sets one (always 0): it force-kills a shell whose agent
+    // had already exited normally, and every platform reports a force-kill as
+    // abnormal - which `SessionRepository.getInterruptedExited` would then resume
+    // on the next launch, resurrecting the conversation the user ended. See
+    // ManagedSession.overrideExitCode.
+    const resolvedExitCode = session.overrideExitCode ?? exitCode;
+    session.exitCode = resolvedExitCode;
     session.pty = null;
 
     // Cancel the session-ID diagnostic timer but keep the scanner so
@@ -496,7 +503,7 @@ export async function performSpawn(
     // reattaches.
     traceRecorder.clearSessionDir(id);
 
-    context.emit('exit', id, exitCode, intentional);
+    context.emit('exit', id, resolvedExitCode, intentional);
     context.sessionQueue.notifySlotFreed();
   });
 

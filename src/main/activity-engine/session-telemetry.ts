@@ -61,6 +61,17 @@ interface SessionTelemetryCallbacks {
    * transcript knowledge stays behind this generic callback.
    */
   reportTerminatedBackgroundShells?(sessionId: string, shellIds: string[]): string[];
+  /**
+   * May the bg-shell watcher's agent-absence sweep judge this session? See
+   * `SessionManager.isAgentAbsenceCandidate` for the arms. Optional, and it
+   * defaults to FALSE below: unwired, the sweep never fires at all.
+   */
+  isAgentAbsenceCandidate?(sessionId: string): boolean;
+  /**
+   * Retire a session whose agent CLI exited while its shell PTY survived. See
+   * `SessionManager.retireAgentlessSession`.
+   */
+  retireAgentlessSession?(sessionId: string): void;
 }
 
 export interface SessionTelemetryOptions {
@@ -264,6 +275,18 @@ export class SessionTelemetry {
           },
           onRootProcessDied: (sessionId) => {
             this.activityEngine.forceIdle(sessionId);
+          },
+          // Default FALSE, so a SessionTelemetry built without this wiring (every
+          // existing test construction) leaves the sweep permanently inert rather
+          // than judging sessions it cannot describe.
+          isAgentAbsenceCandidate: (sessionId) =>
+            callbacks.isAgentAbsenceCandidate?.(sessionId) ?? false,
+          onAgentProcessAbsent: (sessionId) => {
+            // No synthetic event and no activity-state change: the session is
+            // being retired outright, and the kill's own onExit emits the
+            // session_end. Unlike onRootProcessDied, forcing idle here would
+            // just describe a session that is about to stop existing.
+            callbacks.retireAgentlessSession?.(sessionId);
           },
           onShellsObservedAlive: (sessionId) => {
             // Watcher confirmed the tracked bg shells are still alive in the

@@ -102,4 +102,40 @@ describeWithSqlite('getInterruptedExited (real SQLite via node:sqlite)', () => {
     expect(ids.has('rK1')).toBe(true); // main (isolation NULL)
     expect(ids.has('rK2')).toBe(true); // isolated (isolation 'laneR')
   });
+
+  /**
+   * The agent-absence sweep retires a session whose agent CLI exited while its
+   * shell PTY survived, by force-killing that shell. A force-kill reports an
+   * ABNORMAL code on every platform - which this query resumes on the next
+   * launch. So `retireAgentlessSession` forces the reported code to 0
+   * (`ManagedSession.overrideExitCode`), because the agent's own exit was
+   * normal and Kangentic is only noticing it late.
+   *
+   * This proves the coupling rather than assuming it: the same retirement is
+   * seeded under both designs, and only the un-overridden one comes back.
+   * Without the override, the sweep would resurrect exactly the conversation
+   * the user `/exit`-ed - the behavior the "clean exit 0 is excluded" rule
+   * exists to prevent.
+   */
+  it('does not resurrect an agent-absence retirement, but WOULD at the raw force-kill code', () => {
+    const db = new sqlite!.DatabaseSync(':memory:');
+    db.exec(`CREATE TABLE sessions (
+      id TEXT PRIMARY KEY, task_id TEXT, session_type TEXT, isolated_swimlane_id TEXT,
+      agent_session_id TEXT, command TEXT, cwd TEXT, status TEXT, exit_code INTEGER,
+      started_at TEXT
+    )`);
+    const insert = db.prepare(`INSERT INTO sessions
+      (id, task_id, session_type, isolated_swimlane_id, agent_session_id, command, cwd, status, exit_code, started_at)
+      VALUES (?, ?, 'claude', NULL, ?, 'c', '/p', 'exited', ?, '2026-08-17T05:00:00Z')`);
+    // What the sweep actually writes: overrideExitCode = 0.
+    insert.run('retired-with-override', 'TASK-A', 'agent-a', 0);
+    // The counterfactual: the same retirement reporting the OS force-kill code.
+    insert.run('retired-without-override', 'TASK-B', 'agent-b', 1073807364);
+
+    const ids = new SessionRepository(db as never)
+      .getInterruptedExited()
+      .map((record) => record.id);
+
+    expect(ids).toEqual(['retired-without-override']);
+  });
 });

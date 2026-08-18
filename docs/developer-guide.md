@@ -110,7 +110,7 @@ src/
       terminal-submit.ts   # Unified byte-pushing engine: submitContent (paste) + submitKeystrokes (slash-command burst with verifier)
       activity/              # Activity-detection subsystem (engine, watchers, telemetry orchestrator)
         engine/              # Single-predicate state machine: activity-engine.ts, shapes, predicate, event-handlers, watchdog, snapshot-writer
-        background-shell/    # Process-tree watcher + resume reconciliation
+        background-shell/    # Process-tree watcher + resume reconciliation; also hosts the agent-absence sweep (retires a session whose agent CLI exited under a surviving shell)
         session-telemetry.ts # Wires engine + watchers + Ctrl+C coordinator (was usage-tracker.ts)
         user-interrupt-coordinator.ts # 3s settle timer for Ctrl+C; synthesizes Interrupted on stuck state
         usage-accumulator.ts # Per-tool stats

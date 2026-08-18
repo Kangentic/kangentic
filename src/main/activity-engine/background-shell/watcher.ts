@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import {
   filterTopmostShellLikeDescendants,
+  hasNoNonConsoleDescendants,
   indexByParent,
   isShellLike,
   walkDescendantsFromIndex,
@@ -11,7 +12,7 @@ import {
 /**
  * The watcher periodically enumerates the OS process tree rooted at
  * each session's Claude CLI PID and infers when a background shell
- * has exited naturally. Two tiers compose:
+ * has exited naturally. Two tiers compose for that:
  *
  * **Tier A (PID-aware)**: When `registerShellPid(sessionId, shellId, pid)`
  * is called (from a hook directive that extracted a real OS PID from
@@ -27,6 +28,17 @@ import {
  * shell-like descendant count drops below the snapshot AND the engine
  * reports non-zero tracked shells, fires `onNaturalExit(delta)` for
  * the difference. Works without knowing PIDs.
+ *
+ * A THIRD tier rides the same cycle but answers a different question, about the
+ * SESSION rather than its background shells: the **agent-absence sweep** retires
+ * a session whose agent CLI exited while its shell PTY survived (`/exit`, a CLI
+ * crash, a failed launch), which nothing else notices because the surviving
+ * shell means the PTY never fires `onExit`. It runs on its own much slower
+ * cadence (`AGENT_ABSENCE_SWEEP_INTERVAL_MS`) and its remedy is a session-status
+ * change via `onAgentProcessAbsent`, not a bg-shell drain. Note the contrast
+ * with `onRootProcessDied` below: there the root is GONE, here it is ALIVE and
+ * only its agent child is missing. See docs/session-lifecycle.md, "A session
+ * whose agent exited under a surviving shell".
  *
  * Failure modes:
  *   - Probe times out -> empty descendants -> no signal this cycle.
@@ -77,6 +89,32 @@ export interface BgShellWatcherCallbacks {
   onNamedShellTerminated(sessionId: string, shellId: string): void;
   /** Called when the Claude CLI itself dies. Engine should forceIdle. */
   onRootProcessDied(sessionId: string): void;
+  /**
+   * May the agent-absence sweep judge this session at all?
+   *
+   * The watcher decides only what the PROCESS TREE says; every session-shaped
+   * arm of the decision (is it a task agent, is it running, has its spawn grace
+   * elapsed) lives behind this callback so the watcher needs no session
+   * knowledge. The critical exclusion is a transient Command Terminal, which is
+   * a bare shell BY DESIGN: it is registered here like any other session, so
+   * without this the sweep would retire every one the moment it opened.
+   *
+   * Returning false also resets the session's absence counter, so a session
+   * that becomes a candidate later starts from a clean slate.
+   */
+  isAgentAbsenceCandidate(sessionId: string): boolean;
+  /**
+   * Confirmed over `AGENT_ABSENCE_CONFIRM_CYCLES` consecutive healthy probes:
+   * the session's PTY root (its SHELL) is alive but nothing except a console
+   * host is running under it, so the agent CLI has exited on its own - a user
+   * `/exit`, a crash, or a launch that failed. Nothing else notices this,
+   * because the shell surviving means the PTY never fires `onExit`.
+   *
+   * Distinct from `onRootProcessDied` (the root is GONE, and the remedy there
+   * is an activity-state change): here the root is alive and the remedy is a
+   * session-status change - the session should be retired.
+   */
+  onAgentProcessAbsent(sessionId: string): void;
   /**
    * Tier B positive-liveness: every engine-tracked bg shell is present in
    * the OS tree this cycle (`shellLikeCount === preExistingHelpers + tracked`
@@ -151,6 +189,11 @@ export interface BgShellWatcherOptions {
    * tests so the file-growth liveness path is exercised without real I/O.
    */
   statOutputFile?: (filePath: string) => OutputFileSample | null;
+  /**
+   * Dedicated cadence for the agent-absence sweep. Default 60s. Override for
+   * tests, the same way `pollIntervalMs` is.
+   */
+  agentAbsenceSweepIntervalMs?: number;
 }
 
 /** Default output-file stat: size + mtime, or null on any filesystem error. */
@@ -237,6 +280,15 @@ interface SessionWatchState {
    * dropped (to force a re-resolve) if the file vanishes.
    */
   shellOutputFiles: Map<string, { filePath: string; sizeBytes: number; mtimeMs: number; quiescentCycles: number }>;
+  /**
+   * Consecutive HEALTHY probes on which this session's shell showed no
+   * non-console descendant. Requiring `AGENT_ABSENCE_CONFIRM_CYCLES` of them
+   * before retiring guards the one gap the probe-health check cannot see: a
+   * genuine momentary tree gap (an agent the user exited and is about to
+   * relaunch by hand). Reset by any real descendant, and by the session not
+   * being a candidate.
+   */
+  agentAbsentObservations: number;
 }
 
 const DEFAULT_POLL_INTERVAL_MS = 2_000;
@@ -284,12 +336,40 @@ export const POLL_BACKOFF_STAGE_TWO_TREE_CYCLES = 15;
 const POLL_BACKOFF_STAGE_ONE_MULTIPLIER = 2;
 const POLL_BACKOFF_STAGE_TWO_MULTIPLIER = 3;
 
+/**
+ * The agent-absence sweep runs on its OWN cadence, decoupled from the poll
+ * interval and the backoff above.
+ *
+ * A phantom session is not urgent, and the signal it needs (the full host
+ * process enumeration) is the expensive one - a ~200ms PowerShell CIM query on
+ * Windows. Tying it to the 2s poll would defeat the laziness that exists to
+ * protect CPU when several agents are running. At 60s it costs roughly one
+ * snapshot per minute regardless of session count, and the sweep is FREE on any
+ * cycle that already enumerated for bg-shell work, so a busy machine detects a
+ * phantom in seconds while a fully idle one takes 60-120s.
+ *
+ * A PTY-quiet filter was considered and rejected: shells emit bytes (prompt
+ * repaints, OSC titles, prompt themes), so "produced output" does not imply
+ * "agent alive"; and an idle-but-alive agent is quiet for hours too, so the
+ * quiet set is nearly every session and filters nothing.
+ */
+export const AGENT_ABSENCE_SWEEP_INTERVAL_MS = 60_000;
+
+/**
+ * Consecutive agent-absent OBSERVATIONS required before retiring - observations,
+ * not poll cycles. At the 60s sweep cadence over a 2s poll, ~29 of every 30
+ * cycles are skips; if a skip reset the counter it could never reach this
+ * threshold and the sweep would never fire at all.
+ */
+export const AGENT_ABSENCE_CONFIRM_CYCLES = 2;
+
 export class BgShellWatcher {
   private readonly callbacks: BgShellWatcherCallbacks;
   private readonly probe: ProcessTreeProbe;
   private readonly pollIntervalMs: number;
   private readonly isShellLikeFn: (comm: string) => boolean;
   private readonly statOutputFileFn: (filePath: string) => OutputFileSample | null;
+  private readonly agentAbsenceSweepIntervalMs: number;
   private readonly states = new Map<string, SessionWatchState>();
   private timer: NodeJS.Timeout | null = null;
   private polling = false;
@@ -297,6 +377,12 @@ export class BgShellWatcher {
   // Consecutive cycles that ran the full OS enumeration (reset by a skip cycle
   // or any bg-shell lifecycle transition). Drives the adaptive poll backoff.
   private consecutiveTreeCycles = 0;
+  // Wall-clock ms of the last cycle that enumerated the host process list, from
+  // the agent-absence sweep's point of view. Stamped on EVERY enumerating cycle,
+  // not just sweep-driven ones, so a cycle the bg-shell path already paid for
+  // counts as this sweep's turn and no extra snapshot is taken behind it.
+  // 0 = never enumerated, so the first candidate sweeps immediately.
+  private lastAgentAbsenceSweepAt = 0;
 
   constructor(options: BgShellWatcherOptions) {
     this.callbacks = options.callbacks;
@@ -304,6 +390,8 @@ export class BgShellWatcher {
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.isShellLikeFn = options.isShellLike ?? isShellLike;
     this.statOutputFileFn = options.statOutputFile ?? defaultStatOutputFile;
+    this.agentAbsenceSweepIntervalMs =
+      options.agentAbsenceSweepIntervalMs ?? AGENT_ABSENCE_SWEEP_INTERVAL_MS;
   }
 
   /**
@@ -315,7 +403,13 @@ export class BgShellWatcher {
     const rootPid = this.callbacks.getRootPid(sessionId);
     if (!rootPid || rootPid <= 0) return;
     if (this.states.has(sessionId)) {
-      this.states.get(sessionId)!.rootPid = rootPid;
+      const existing = this.states.get(sessionId)!;
+      existing.rootPid = rootPid;
+      // The re-register is the ONE path where an absence count outlives the PTY
+      // it was counted against: a resume swaps in a fresh root pid in place. A
+      // session that had banked an observation against its OLD tree would then
+      // need just one more to retire a freshly spawned agent.
+      existing.agentAbsentObservations = 0;
       // A resume is a transition too: watch the new tree at base cadence.
       this.resetPollBackoff();
       return;
@@ -331,6 +425,7 @@ export class BgShellWatcher {
       candidateForegroundShellPid: null,
       consecutiveDeficitCycles: 0,
       shellOutputFiles: new Map(),
+      agentAbsentObservations: 0,
     });
     this.maybeStartPolling();
   }
@@ -496,7 +591,17 @@ export class BgShellWatcher {
         const state = this.states.get(sessionId);
         return state !== undefined && this.sessionNeedsTree(sessionId, state);
       });
-      if (!anyNeedsTree) {
+      // The agent-absence sweep has its own, much slower cadence (see
+      // AGENT_ABSENCE_SWEEP_INTERVAL_MS). It can force an enumeration on a
+      // cycle no bg-shell work needs, because a phantom session is by
+      // definition one with no tracked shells and no pending tools - the exact
+      // shape `sessionNeedsTree` skips, so an opportunistic-only sweep would
+      // never run on the idle board where phantoms actually sit.
+      // Short-circuited on a cycle that will enumerate anyway: there the sweep
+      // rides along for free inside cycleSession, so asking whether it is "due"
+      // would only cost a candidate lookup per session on every busy cycle.
+      const absenceSweepDue = !anyNeedsTree && this.isAgentAbsenceSweepDue(sessionIds);
+      if (!anyNeedsTree && !absenceSweepDue) {
         // A skip cycle costs nothing, so it resets the backoff: the moment work
         // resumes we start from the base cadence again.
         this.consecutiveTreeCycles = 0;
@@ -504,9 +609,19 @@ export class BgShellWatcher {
         return;
       }
 
-      // A needy cycle ran the OS enumeration; count it toward the backoff. A
-      // probe that later times out to [] still cost a spawn, so it counts.
-      this.consecutiveTreeCycles += 1;
+      // Only BG-SHELL work feeds the backoff. A sweep-only cycle neither
+      // increments nor resets it: the sweep's cost is already bounded by its own
+      // interval, and letting a once-a-minute enumeration stretch a backoff
+      // meant for bg-shell churn would slow bg-shell detection for an unrelated
+      // reason.
+      if (anyNeedsTree) {
+        // A needy cycle ran the OS enumeration; count it toward the backoff. A
+        // probe that later times out to [] still cost a spawn, so it counts.
+        this.consecutiveTreeCycles += 1;
+      }
+      // Stamp before the await: this cycle IS the sweep's turn whether it was
+      // the sweep or bg-shell work that paid for the snapshot.
+      this.lastAgentAbsenceSweepAt = Date.now();
 
       // Single OS query shared across all sessions in this cycle.
       // Without this, each session's cycleSession would call
@@ -568,6 +683,20 @@ export class BgShellWatcher {
       || this.callbacks.getActiveShellCount(sessionId) > 0
       || this.callbacks.getPendingToolCount(sessionId) > 0
     );
+  }
+
+  /**
+   * Is the agent-absence sweep due, and is there anything for it to look at?
+   *
+   * Both arms matter. The interval keeps the expensive enumeration rare; the
+   * candidate check means a board with nothing to judge (only Command Terminals,
+   * only freshly-spawned sessions) never pays for a snapshot at all.
+   */
+  private isAgentAbsenceSweepDue(sessionIds: string[]): boolean {
+    if (Date.now() - this.lastAgentAbsenceSweepAt < this.agentAbsenceSweepIntervalMs) {
+      return false;
+    }
+    return sessionIds.some((sessionId) => this.callbacks.isAgentAbsenceCandidate(sessionId));
   }
 
   /**
@@ -652,6 +781,42 @@ export class BgShellWatcher {
     // Snapshot health is the actual, precise discriminator.
     if (allProcessPids.size === 0 || !allProcessPids.has(state.rootPid)) {
       return;
+    }
+
+    // AGENT-ABSENCE SWEEP. `rootPid` is the session's SHELL (getRootPid is
+    // pty.pid) and Kangentic writes the agent CLI command to that shell's
+    // stdin, so the agent is a DESCENDANT. When it exits on its own - a user
+    // `/exit`, a CLI crash, a launch that failed - the shell survives, the PTY
+    // never fires onExit, and nothing else in the app notices: the record stays
+    // `running`, the status bar counts a phantom agent, and the bottom panel
+    // keeps a tab (derivePanelSessions filters on status === 'running'). The
+    // root-death check at the top of this method cannot see it, because the
+    // root is alive - that is the whole shape of the bug.
+    //
+    // Placed AFTER the probe-health guard above, unlike the transcript drain,
+    // which deliberately runs before it: an untrustworthy snapshot showing an
+    // empty tree is precisely the false positive this must never act on, and
+    // marking a LIVE agent dead is worse than leaving the phantom.
+    //
+    // Console hosts are excluded rather than assumed absent because Windows
+    // parents a ConPTY's conhost inconsistently - see CONSOLE_HOST_COMM_PATTERNS.
+    if (this.callbacks.isAgentAbsenceCandidate(sessionId)) {
+      if (hasNoNonConsoleDescendants(descendants)) {
+        state.agentAbsentObservations += 1;
+        if (state.agentAbsentObservations >= AGENT_ABSENCE_CONFIRM_CYCLES) {
+          state.agentAbsentObservations = 0;
+          this.callbacks.onAgentProcessAbsent(sessionId);
+          // Same shape as the root-death path above: hand off, unregister, and
+          // return. The later unregister that arrives via the retirement's own
+          // kill -> onExit -> clearSessionTracking is an idempotent no-op.
+          this.unregisterSession(sessionId);
+          return;
+        }
+      } else {
+        state.agentAbsentObservations = 0;
+      }
+    } else {
+      state.agentAbsentObservations = 0;
     }
 
     // We capture tracked HERE (before Tier A might fire) because Tier

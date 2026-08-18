@@ -245,3 +245,71 @@ describe('session-spawn-flow onExit - intentional-suspend flag', () => {
     expect(findExitEmit(context)).toEqual(['exit', input.id, 0, false]);
   });
 });
+
+/**
+ * `overrideExitCode` MASKS the OS exit code when Kangentic ends a session on the
+ * agent's behalf. Today only the agent-absence sweep sets it, always to 0.
+ *
+ * That sweep force-kills a shell whose agent CLI had already exited NORMALLY (a
+ * user `/exit`, a crash, a failed launch) while the shell survived. Every
+ * platform reports a force-kill with an abnormal code, and
+ * `SessionRepository.getInterruptedExited` resumes exactly those on the next
+ * launch - so reporting the real code would resurrect the very conversation the
+ * user ended, contradicting that query's documented "clean exit 0 is excluded so
+ * a deliberate /exit is never resurrected".
+ */
+describe('session-spawn-flow onExit - overrideExitCode', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    ptyHarness.onExitCallback = null;
+  });
+
+  it('reports the override instead of the OS force-kill code', async () => {
+    const context = makeContext();
+    const input = makeInput();
+    await performSpawn(input, context);
+
+    // What retireAgentlessSession() does before calling kill().
+    const session = context.registry.get(input.id!);
+    session!.overrideExitCode = 0;
+    session!.intentionalExit = true;
+
+    // The OS reports the Windows ConPTY force-kill code...
+    ptyHarness.onExitCallback!({ exitCode: 1073807364 });
+
+    // ...but 0 is what reaches the DB writer, which is the value
+    // getInterruptedExited keys on.
+    expect(findExitEmit(context)).toEqual(['exit', input.id, 0, true]);
+    expect(context.registry.get(input.id!)!.exitCode).toBe(0);
+  });
+
+  it('reports the override on a POSIX SIGKILL code too', async () => {
+    const context = makeContext();
+    const input = makeInput();
+    await performSpawn(input, context);
+
+    const session = context.registry.get(input.id!);
+    session!.overrideExitCode = 0;
+    session!.intentionalExit = true;
+
+    ptyHarness.onExitCallback!({ exitCode: 137 });
+
+    expect(findExitEmit(context)).toEqual(['exit', input.id, 0, true]);
+    expect(context.registry.get(input.id!)!.exitCode).toBe(0);
+  });
+
+  it('leaves the real OS code alone when no override is set', async () => {
+    // The override is opt-in: every other exit path must be byte-for-byte
+    // unchanged, including a genuine crash that MUST stay resumable at startup.
+    const context = makeContext();
+    const input = makeInput();
+    await performSpawn(input, context);
+
+    expect(context.registry.get(input.id!)!.overrideExitCode).toBeUndefined();
+
+    ptyHarness.onExitCallback!({ exitCode: 137 });
+
+    expect(findExitEmit(context)).toEqual(['exit', input.id, 137, false]);
+    expect(context.registry.get(input.id!)!.exitCode).toBe(137);
+  });
+});

@@ -6,6 +6,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   BgShellWatcher,
+  AGENT_ABSENCE_CONFIRM_CYCLES,
   NAMED_SHELL_QUIESCENT_RECLAIM_CYCLES,
   POLL_BACKOFF_STAGE_ONE_TREE_CYCLES,
   POLL_BACKOFF_STAGE_TWO_TREE_CYCLES,
@@ -77,6 +78,7 @@ interface CallbackLog {
   namedShellTerminated: Array<{ sessionId: string; shellId: string }>;
   rootDied: string[];
   observedAlive: string[];
+  agentAbsent: string[];
 }
 
 function makeWatcher(opts?: {
@@ -94,6 +96,14 @@ function makeWatcher(opts?: {
    * to this set, then asserting `log.namedShellTerminated`.
    */
   terminatedShellIds?: Set<string>;
+  /**
+   * Sessions the agent-absence sweep is allowed to judge. Defaults to EMPTY, so
+   * `isAgentAbsenceCandidate` returns false and the sweep stays completely
+   * inert for every pre-existing test - mirroring production, where an
+   * unwired SessionTelemetry callback defaults to false.
+   */
+  agentAbsenceCandidates?: Set<string>;
+  agentAbsenceSweepIntervalMs?: number;
 }) {
   const probe = new MockProcessTreeProbe();
   const log: CallbackLog = {
@@ -103,7 +113,9 @@ function makeWatcher(opts?: {
     namedShellTerminated: [],
     rootDied: [],
     observedAlive: [],
+    agentAbsent: [],
   };
+  const agentAbsenceCandidates = opts?.agentAbsenceCandidates ?? new Set<string>();
   const rootPids = opts?.rootPidMap ?? new Map<string, number>();
   const shellCounts = opts?.shellCountMap ?? new Map<string, number>();
   const pendingTools = opts?.pendingToolMap ?? new Map<string, number>();
@@ -156,6 +168,12 @@ function makeWatcher(opts?: {
     getPendingToolCount(sessionId) {
       return pendingTools.get(sessionId) ?? 0;
     },
+    isAgentAbsenceCandidate(sessionId) {
+      return agentAbsenceCandidates.has(sessionId);
+    },
+    onAgentProcessAbsent(sessionId) {
+      log.agentAbsent.push(sessionId);
+    },
   };
 
   const watcher = new BgShellWatcher({
@@ -163,9 +181,12 @@ function makeWatcher(opts?: {
     probe,
     pollIntervalMs: opts?.pollIntervalMs ?? 100,
     statOutputFile: (filePath) => mockFiles.get(filePath) ?? null,
+    // 0 = "always due", so a test driving cycles with pollNow() under frozen
+    // fake timers sweeps on every cycle. Cadence tests override it.
+    agentAbsenceSweepIntervalMs: opts?.agentAbsenceSweepIntervalMs ?? 0,
   });
 
-  return { watcher, probe, log, rootPids, shellCounts, pendingTools, namedShells, outputPaths, mockFiles, terminatedShellIds };
+  return { watcher, probe, log, rootPids, shellCounts, pendingTools, namedShells, outputPaths, mockFiles, terminatedShellIds, agentAbsenceCandidates };
 }
 
 describe('BgShellWatcher', () => {
@@ -2719,6 +2740,299 @@ describe('BgShellWatcher', () => {
       pendingTools.set('s1', 1);
       await vi.advanceTimersByTimeAsync(5 * 100);
       expect(probe.listAllCalls).toBe(callsAfterSkips + 5);
+      watcher.dispose();
+    });
+  });
+
+  /**
+   * The agent-absence sweep.
+   *
+   * A session's PTY root is the SHELL (getRootPid is pty.pid) and Kangentic
+   * writes the agent CLI command to that shell's stdin, so the agent CLI is a
+   * DESCENDANT. When the CLI exits on its own - a user `/exit`, a crash, a
+   * launch that failed - the shell survives, the PTY never fires onExit, and
+   * nothing marks the session finished: the record stays `running`, the status
+   * bar counts a phantom agent, and the bottom panel keeps a tab.
+   *
+   * `onRootProcessDied` cannot see this, because the root is alive.
+   */
+  describe('agent-absence sweep', () => {
+    /** A candidate session whose shell is alive with the given descendants. */
+    function makeAbsenceSession(descendants: ProcessInfo[], options?: {
+      pollIntervalMs?: number;
+      agentAbsenceSweepIntervalMs?: number;
+      shellCount?: number;
+    }) {
+      const harness = makeWatcher({
+        agentAbsenceCandidates: new Set(['s1']),
+        pollIntervalMs: options?.pollIntervalMs,
+        agentAbsenceSweepIntervalMs: options?.agentAbsenceSweepIntervalMs,
+      });
+      const { watcher, probe, rootPids, shellCounts } = harness;
+      rootPids.set('s1', 1234);
+      probe.alive.add(1234);
+      probe.trees.set(1234, descendants);
+      if (options?.shellCount !== undefined) shellCounts.set('s1', options.shellCount);
+      watcher.registerSession('s1');
+      return harness;
+    }
+
+    it('retires a session after the confirmation cycles when nothing runs under its shell', async () => {
+      expect(AGENT_ABSENCE_CONFIRM_CYCLES).toBe(2);
+      const { watcher, log } = makeAbsenceSession([]);
+
+      await watcher.pollNow();
+      expect(log.agentAbsent).toHaveLength(0); // one observation is not enough
+
+      await watcher.pollNow();
+      expect(log.agentAbsent).toEqual(['s1']);
+      // The root is ALIVE throughout - this is not the root-death path.
+      expect(log.rootDied).toHaveLength(0);
+      watcher.dispose();
+    });
+
+    it('retires when the ONLY descendant is a Windows console host', async () => {
+      // Defense in depth. Measured live, ConPTY session shells parent their
+      // conhost to the Electron caller, so a real bare shell's descendant set
+      // is empty. But console-host parenting is an unspecified Windows detail
+      // that varies by console host and launch path, and one stray conhost
+      // would silently disable the sweep for that session forever.
+      const { watcher, log } = makeAbsenceSession([
+        { pid: 14028, ppid: 1234, comm: 'conhost' },
+      ]);
+
+      await watcher.pollNow();
+      await watcher.pollNow();
+      expect(log.agentAbsent).toEqual(['s1']);
+      watcher.dispose();
+    });
+
+    it('does NOT retire while a real process is running under the shell', async () => {
+      const { watcher, log } = makeAbsenceSession([
+        { pid: 48848, ppid: 1234, comm: 'claude' },
+        { pid: 46448, ppid: 48848, comm: 'conhost' },
+      ]);
+
+      await watcher.pollNow();
+      await watcher.pollNow();
+      await watcher.pollNow();
+      expect(log.agentAbsent).toHaveLength(0);
+      watcher.dispose();
+    });
+
+    it('requires the observations to be CONSECUTIVE (a live descendant resets the count)', async () => {
+      const { watcher, probe, log } = makeAbsenceSession([]);
+
+      await watcher.pollNow(); // absent #1
+      probe.trees.set(1234, [{ pid: 48848, ppid: 1234, comm: 'claude' }]);
+      await watcher.pollNow(); // agent present again -> reset
+      probe.trees.set(1234, []);
+      await watcher.pollNow(); // absent #1 again, not #2
+
+      expect(log.agentAbsent).toHaveLength(0);
+      watcher.dispose();
+    });
+
+    it('does NOT retire on a probe failure (empty snapshot)', async () => {
+      // An empty descendant set that came from a FAILED probe is
+      // indistinguishable from a genuinely empty tree by shape alone, so the
+      // watcher's snapshot-health guard is what separates them. Marking a live
+      // agent dead is worse than leaving the phantom.
+      const { watcher, probe, log } = makeAbsenceSession([]);
+      probe.failProbe = true;
+
+      await watcher.pollNow();
+      await watcher.pollNow();
+      await watcher.pollNow();
+      expect(log.agentAbsent).toHaveLength(0);
+      watcher.dispose();
+    });
+
+    it('does NOT retire when the snapshot is non-empty but is missing the root pid', async () => {
+      // A healthy enumeration lists every process on the host, so it must
+      // contain the root we just verified alive. Missing it means the snapshot
+      // is partial and cannot be trusted.
+      const { watcher, probe, rootPids, log } = makeWatcher({
+        agentAbsenceCandidates: new Set(['s1']),
+      });
+      rootPids.set('s1', 1234);
+      probe.alive.add(1234); // isAlive passes, so the root-death path is not taken
+      // No `trees` entry for 1234, so the mock never emits it into the snapshot.
+      // An unrelated live tree keeps the snapshot non-empty.
+      probe.alive.add(9000);
+      probe.trees.set(9000, [{ pid: 9001, ppid: 9000, comm: 'node' }]);
+      watcher.registerSession('s1');
+
+      await watcher.pollNow();
+      await watcher.pollNow();
+      await watcher.pollNow();
+      expect(log.agentAbsent).toHaveLength(0);
+      watcher.dispose();
+    });
+
+    it('never judges a session that is not a candidate (the transient Command Terminal guard)', async () => {
+      // A Command Terminal is a bare shell BY DESIGN and is registered with the
+      // watcher exactly like a task agent, so its tree is legitimately empty.
+      // Without the candidate gate the sweep would retire every one of them the
+      // moment it opened - the highest-cost false positive in this design.
+      const { watcher, probe, rootPids, log } = makeWatcher(); // no candidates
+      rootPids.set('command-terminal', 1234);
+      probe.alive.add(1234);
+      probe.trees.set(1234, []); // a bare shell: nothing under it, ever
+      watcher.registerSession('command-terminal');
+
+      await watcher.pollNow();
+      await watcher.pollNow();
+      await watcher.pollNow();
+
+      expect(log.agentAbsent).toHaveLength(0);
+      watcher.dispose();
+    });
+
+    it('resets the count on an enumerated cycle where the session is no longer a candidate', async () => {
+      const harness = makeAbsenceSession([]);
+      const { watcher, log, agentAbsenceCandidates, pendingTools } = harness;
+      // Keep every cycle enumerating, so the non-candidate cycle is a real
+      // observation rather than a skipped one. A pending tool (rather than a
+      // shell count) also suppresses the deficit branch, keeping this focused.
+      pendingTools.set('s1', 1);
+
+      await watcher.pollNow(); // absent #1
+      agentAbsenceCandidates.delete('s1');
+      await watcher.pollNow(); // observed, not a candidate -> reset
+      agentAbsenceCandidates.add('s1');
+      await watcher.pollNow(); // absent #1 again, not #2
+
+      expect(log.agentAbsent).toHaveLength(0);
+      watcher.dispose();
+    });
+
+    it('counts consecutive OBSERVATIONS, so a skipped cycle is neutral rather than a reset', async () => {
+      // Load-bearing, and easy to "fix" wrongly. The sweep observes at its own
+      // 60s cadence while the poll runs at 2s, so ~29 of every 30 cycles are
+      // skips. If a skip reset the counter it could never reach the
+      // confirmation threshold and the sweep would never fire at all.
+      const { watcher, probe, log } = makeAbsenceSession([], {
+        agentAbsenceSweepIntervalMs: 1000,
+      });
+
+      await watcher.pollNow(); // anchoring cycle: enumerates, absent #1
+      probe.listAllCalls = 0;
+
+      // Several skip cycles: not due, and no bg-shell work.
+      await watcher.pollNow();
+      await watcher.pollNow();
+      expect(probe.listAllCalls).toBe(0);
+      expect(log.agentAbsent).toHaveLength(0);
+
+      // The next real observation is #2, undisturbed by the skips between.
+      vi.setSystemTime(new Date(Date.now() + 1000));
+      await watcher.pollNow();
+      expect(log.agentAbsent).toEqual(['s1']);
+      watcher.dispose();
+    });
+
+    it('clears a banked observation when the session is re-registered onto a new PTY', async () => {
+      // registerSession is idempotent and a RESUME mutates rootPid in place.
+      // An observation banked against the OLD tree must not carry over, or one
+      // more absent cycle would retire a freshly spawned agent.
+      const { watcher, probe, rootPids, log } = makeAbsenceSession([]);
+
+      await watcher.pollNow(); // absent #1 against the old root
+
+      rootPids.set('s1', 5678); // resumed onto a new PTY
+      probe.alive.add(5678);
+      probe.trees.set(5678, []);
+      watcher.registerSession('s1');
+
+      await watcher.pollNow(); // absent #1 against the NEW root, not #2
+      expect(log.agentAbsent).toHaveLength(0);
+
+      await watcher.pollNow(); // now #2
+      expect(log.agentAbsent).toEqual(['s1']);
+      watcher.dispose();
+    });
+
+    it('unregisters the session on retirement so it cannot fire twice', async () => {
+      const { watcher, log } = makeAbsenceSession([]);
+
+      await watcher.pollNow();
+      await watcher.pollNow();
+      expect(log.agentAbsent).toEqual(['s1']);
+
+      await watcher.pollNow();
+      await watcher.pollNow();
+      expect(log.agentAbsent).toEqual(['s1']); // still exactly one
+      watcher.dispose();
+    });
+
+    it('evaluates for free on a cycle the bg-shell path already enumerated', async () => {
+      // The sweep interval is effectively infinite here, so the ONLY reason a
+      // snapshot is taken is the tracked bg shell. The sweep still gets to run.
+      const { watcher, log } = makeAbsenceSession([], {
+        agentAbsenceSweepIntervalMs: 10 * 60_000,
+        shellCount: 1,
+      });
+
+      await watcher.pollNow();
+      await watcher.pollNow();
+      expect(log.agentAbsent).toEqual(['s1']);
+      watcher.dispose();
+    });
+
+    it('does not enumerate more often than its own interval on an otherwise-idle board', async () => {
+      // The cost control: `listAllProcesses` is a ~200ms PowerShell CIM query on
+      // Windows, and the bg-shell watcher deliberately skips it on idle cycles.
+      // A live descendant keeps this session from ever retiring, so enumeration
+      // count is driven purely by the sweep cadence.
+      const { watcher, probe } = makeAbsenceSession(
+        [{ pid: 48848, ppid: 1234, comm: 'claude' }],
+        { agentAbsenceSweepIntervalMs: 1000 },
+      );
+
+      await watcher.pollNow(); // anchoring cycle enumerates and stamps the sweep
+      probe.listAllCalls = 0;
+
+      await watcher.pollNow();
+      await watcher.pollNow();
+      expect(probe.listAllCalls).toBe(0); // not due, and no bg-shell work
+
+      vi.setSystemTime(new Date(Date.now() + 1000));
+      await watcher.pollNow();
+      expect(probe.listAllCalls).toBe(1); // due: exactly one snapshot
+      watcher.dispose();
+    });
+
+    it('does not pay for a snapshot when no session is a candidate', async () => {
+      const { watcher, probe, rootPids } = makeWatcher(); // no candidates
+      rootPids.set('s1', 1234);
+      probe.alive.add(1234);
+      probe.trees.set(1234, []);
+      watcher.registerSession('s1');
+
+      await watcher.pollNow(); // anchor
+      probe.listAllCalls = 0;
+      await watcher.pollNow();
+      await watcher.pollNow();
+      expect(probe.listAllCalls).toBe(0);
+      watcher.dispose();
+    });
+
+    it('sweep-only cycles do not accrue the bg-shell poll backoff', async () => {
+      // The sweep runs on its own cadence; letting it feed the backoff meant for
+      // bg-shell churn would stretch bg-shell detection for an unrelated reason.
+      // A live descendant keeps the session from retiring, and interval 0 makes
+      // every cycle sweep-driven.
+      const { watcher, probe } = makeAbsenceSession(
+        [{ pid: 48848, ppid: 1234, comm: 'claude' }],
+        { pollIntervalMs: 100, agentAbsenceSweepIntervalMs: 0 },
+      );
+      probe.listAllCalls = 0;
+
+      // Ten base-cadence cycles fit in 1000ms. Had these accrued backoff, the
+      // interval would have stretched to 200ms after five and produced ~7.
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(probe.listAllCalls).toBeGreaterThanOrEqual(9);
       watcher.dispose();
     });
   });

@@ -97,6 +97,19 @@ export interface ManagedSession {
    *  renderer suppresses the false "Session crashed" notification. Orthogonal to
    *  status: a hard reset stays 'exited', not 'suspended'. */
   intentionalExit?: boolean;
+  /**
+   * Exit code to report INSTEAD of the one the OS gives, when Kangentic ends a
+   * session on the agent's behalf. Named "override" rather than "reported"
+   * because it genuinely MASKS the real code: after it is applied,
+   * `exitCode` reads 0 for a process that was force-killed.
+   *
+   * Set only by `retireAgentlessSession` (the agent-absence sweep), always to
+   * 0. The agent's own exit was normal - Kangentic is only noticing late - and
+   * a force-kill's abnormal code would make `getInterruptedExited` resurrect
+   * the conversation on the next launch. Orthogonal to `intentionalExit`,
+   * which suppresses the crash toast but does not affect the code.
+   */
+  overrideExitCode?: number;
 }
 
 /**

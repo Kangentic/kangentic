@@ -50,6 +50,7 @@ The in-memory `SessionStatus` does not include `orphaned` (that is a DB-only con
 | `running` | `suspended` | A column or Board Profile edit flips `auto_spawn` to false while the task is already sitting there, with no move at all (`reconcileAutoSpawnChange`, `suspended_by='system'`) |
 | `running` | `exited` | Task moved to To Do (full cleanup via `cleanupTaskSession`) |
 | `running` | `exited` | Process exits naturally or is killed |
+| `running` | `exited` | The agent CLI exited on its own while its shell PTY survived, so no PTY exit ever fired. The bg-shell watcher's [agent-absence sweep](#a-session-whose-agent-exited-under-a-surviving-shell) confirms it over two probes and retires the session |
 | `running` | `orphaned` | App crashes, leftover `running` DB record found on next launch |
 | `queued` | `orphaned` | App crashes, leftover `queued` DB record found on next launch |
 | `suspended` | `running` | Task moved to active column, resumed via `--resume` |
@@ -249,6 +250,98 @@ otherwise stay broken forever. Startup recovery passes only the record it is rec
 no repository handle to walk the lineage, and a record recovered there ran until the crash, so it
 normally has its own status report.
 
+### A session whose agent exited under a surviving shell
+
+Kangentic spawns a SHELL and writes the agent CLI command to its stdin, so the agent CLI is a
+CHILD of the PTY root, never the root itself (`getSessionRootPid` returns `session.pty.pid`). When
+the CLI exits on its own - a user typing `/exit`, a CLI crash, a launch that fails - the shell
+survives, the PTY never fires `onExit`, and nothing marks the session finished. The record stays
+`running` with `suspended_at` and `exited_at` NULL, the status bar counts a phantom agent, the card
+reads active, and the bottom panel keeps a tab (its tab set is `status === 'running'`,
+`derivePanelSessions`).
+
+`isResumeConversationAbsent` (above) removed one trigger. The general case is closed by an
+**agent-absence sweep**, a third tier of the bg-shell watcher
+(`src/main/activity-engine/background-shell/watcher.ts`). The watcher is already registered for
+every spawned session, already holds each session's root PID, and already takes one shared process
+snapshot per cycle, so the sweep adds no new subsystem.
+
+**No descendant process means no agent.** That is agent-agnostic, so it needs no adapter
+capability and no agent-name branching. Two things make it correct rather than merely plausible:
+
+- **The predicate is any-descendant, not shell-like.** `hasNoNonConsoleDescendants`
+  (`process-tree.ts`) deliberately does NOT reuse `filterTopmostShellLikeDescendants`, which exists
+  to HIDE the `cmd.exe` shim an agent CLI is often launched through - the opposite of what this
+  question needs. Measured live: a real session tree is `pwsh -> cmd.exe -> node`, and the
+  shell-like filter would treat that `cmd.exe` as a helper.
+- **Console hosts are filtered as defense in depth.** Measured across three live instances, all
+  nine ConPTY session shells had their `conhost.exe` parented to the ELECTRON caller (a sibling,
+  not a descendant), so a bare shell's descendant set really was empty and a plain emptiness check
+  would have sufficed. The filter is kept because console-host parenting is an unspecified Windows
+  detail that varies by console host and launch path, and the failure is asymmetric: one stray
+  console host would silently disable the sweep for that session forever, while filtering costs
+  ~0.3us per cycle for a whole fleet.
+- **A false positive is worse than the phantom**, so five guards must all hold: the PTY root itself
+  alive (otherwise this is ordinary root death); a HEALTHY probe, reusing the watcher's existing
+  discriminator that the snapshot must contain the verified-alive root (an empty or partial
+  snapshot means the probe failed, not that nothing is running); two consecutive confirmations;
+  past a 30s spawn grace; and the session being a `SessionManager`-approved candidate.
+
+`SessionManager.isAgentAbsenceCandidate` owns every session-shaped arm, so the watcher needs no
+session knowledge. It requires a `running`, non-transient session with a live PTY, an agent adapter,
+a non-WSL shell, and an elapsed spawn grace. The **transient exclusion is load-bearing**: a Command Terminal is a
+bare shell BY DESIGN and is registered with the watcher like any task agent, so without it the sweep
+would retire every Command Terminal the moment it opened. A slow-STARTING agent is not excluded by
+the grace and does not need to be - its process exists, it just has not drawn yet, which is exactly
+why the process tree is a safer signal than a first-output timeout.
+
+The **WSL exclusion covers a different failure than the others**: there the tree signal is
+UNREADABLE, not empty. A WSL session's PTY root is `wsl.exe`, and the agent is not a Win32
+descendant of it either way - a distro-native CLI is a Linux process in another PID namespace, and
+the interop path Kangentic actually uses ([cross-platform.md](cross-platform.md#wsl-runs-the-windows-binary-interop))
+launches the Windows binary through WSL's binfmt host rather than under this `wsl.exe`. Since the
+Windows probe enumerates `Win32_Process`, a perfectly HEALTHY WSL agent presents an empty descendant
+set and passes every other arm, so the sweep would force-kill live work. Refusing to judge it fails
+safe to the pre-existing phantom instead. Note this arm is a DENYLIST and closes only the known
+case; an allowlist (require that the tree showed a non-console descendant at least once before
+absence can be concluded) would close the whole class of structurally invisible subtrees.
+
+**Cadence.** The sweep runs on its own 60s clock (`AGENT_ABSENCE_SWEEP_INTERVAL_MS`), decoupled from
+the watcher's 2s/4s/6s poll backoff, and evaluates for free on any cycle that already enumerated for
+bg-shell work. `listAllProcesses` is a ~200ms PowerShell CIM query on Windows and the watcher
+deliberately skips it on idle cycles, so a per-session-per-cycle check would defeat that
+optimization exactly when the machine is saturated. A sweep-only cycle neither increments nor resets
+the bg-shell backoff counter. The counter counts consecutive OBSERVATIONS, not poll cycles: a
+skipped cycle is neutral, because resetting on skips would mean the count could never reach two.
+
+**What it does.** `SessionManager.retireAgentlessSession` re-checks the guard (the watcher decides
+asynchronously) and routes through `kill()`, so the entire existing exit path runs: record marked
+exited, queue slot freed, hooks stripped, transcript flushed, and `intentionalExit` suppressing the
+renderer's false "Session crashed" toast. Once the tab is gone the leftover shell is unreachable,
+so leaving it alive would only leak a process.
+
+**It must also emit `session-changed`, and that emit is load-bearing.** Measured in a live preview:
+with `kill()` alone, main and the DB were both correct (`exited`, code 0) while the board kept
+counting the agent and the bottom panel kept its tab - the exact two symptoms the sweep exists to
+remove. The renderer's `SESSION_EXIT` handler deliberately returns early on an INTENTIONAL exit
+(`App.tsx`), because it cannot tell a suspend from a hard end without racing the suspended status
+push, so it never runs its own `updateSessionStatus`; and both `derivePanelSessions` and the agent
+count read the renderer store, not the DB. `session-changed` (broadcast as `SESSION_STATUS`) carries
+a resolved status and has no such ambiguity, so the retirement announces itself there. Pinned by
+`tests/unit/session-manager-agent-absence.test.ts`.
+
+The reported exit code is forced to **0** via `ManagedSession.overrideExitCode`, which deliberately
+MASKS the OS code. A force-kill reports abnormally on every platform, and `getInterruptedExited`
+resumes exactly those on the next launch - so the real code would resurrect the very conversation
+the user `/exit`-ed, contradicting that query's "clean exit 0 is excluded". This coupling is pinned
+by `tests/unit/session-interrupted-exited-sql.test.ts`, which runs the real query over both designs.
+
+The sweep inherits the watcher's kill switches (`disableBgShellWatcher`,
+`KANGENTIC_BG_SHELL_WATCHER=0`, a missing `getSessionRootPid`); with the watcher off there is no
+phantom detection, which is accepted since it is the same subsystem. Covered by the `agent-absence
+sweep` block in `tests/unit/bg-shell-watcher.test.ts` and by
+`tests/unit/session-manager-agent-absence.test.ts`.
+
 ### A restore reports progress instead of showing a Resume button
 
 Restoring from Done is slow (the worktree is recreated from the preserved branch, then the CLI
@@ -322,6 +415,8 @@ On project open (`src/main/transition-engine/session-startup/`):
 1. **Prune orphaned worktrees** -- delete tasks whose worktree directories were removed externally
 2. **Mark crash recovery** -- leftover `running` DB records become `orphaned` (skip records with live PTYs to handle re-entrant calls)
 3. **Collect candidates** -- all `suspended` + `orphaned` agent records, plus OS-killed **interrupted-exited** records (any `session_type` except `run_script`). An interrupted-exited record is `status='exited'` with an *abnormal* code (`exit_code != 0`, cross-platform: Windows `1073807364`, Unix `137`/`143`/`130`), a captured `agent_session_id`, that is the latest record for its `(task, session_type, isolation)` group (`getInterruptedExited`). This catches a hard shutdown (OS restart, power loss, SIGKILL) where the PTY died and the onExit handler recorded `exited` before the clean-quit path could mark it `suspended`. Clean exit 0 is excluded so a deliberate `/exit` is never resurrected on startup.
+
+   Exit code 0 no longer means only "the agent ended itself cleanly". The [agent-absence sweep](#a-session-whose-agent-exited-under-a-surviving-shell) also writes 0 when it retires a session whose agent vanished under a live shell, and its trigger set is wider than `/exit`: a CLI crash and a failed launch land there too. So a retirement is never resurrected here, whatever ended the agent. That is deliberate (the alternative resurrects the conversation a user deliberately exited), but note the resulting asymmetry: a crash that KILLS the shell reports an abnormal code and IS recovered, while a crash that leaves the shell alive is reported as 0 and is not.
 4. **Deduplicate per `(task_id, isolated_swimlane_id)`** -- keep only the latest record for each parallel session (see [Isolated Sessions](#isolated-sessions-per-column-session-model)), mark older same-session duplicates as `exited`. A task may hold multiple sessions; only same-session duplicates are retired.
 5. **Select the current session** -- per task, recover ONLY the session matching the task's current column strategy (`resolveIsolatedSwimlaneId`). Non-target sessions are preserved (an orphaned or interrupted-exited one is CAS-upgraded to `suspended`) so re-entering their column later continues their own conversation.
 6. **Filter** -- skip tasks in non-auto-spawn columns (an interrupted-exited record there is CAS-upgraded to `suspended` for future resume, mirroring move-to-Done), skip user-paused sessions (`suspended_by = 'user'`), skip missing CWD, skip deleted/archived tasks. Skipped does NOT mean invisible: a record that ends up `suspended` in a non-auto-spawn **custom** column gets a `registerSuspendedPlaceholder` entry, because the renderer derives the Resume control and the card's click target from its in-memory session list, not the DB. Without one the task presents exactly like a To Do card (click opens the edit form, no Resume anywhere) even though `SESSION_RESUME` would happily resume it. To Do and Done are excluded by ROLE, not by the `auto_spawn` flag: both deliberately hide Resume, and a To Do card relies on having no session so it opens straight into the edit form.

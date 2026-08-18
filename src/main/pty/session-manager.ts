@@ -110,6 +110,23 @@ const RESTING_GRID_ROWS = 48;
  */
 const MOBILE_USABLE_MIN_ROWS = 20;
 
+/**
+ * How long after a session's PTY spawns before the agent-absence sweep may
+ * judge it. This is the one window where "no agent process under the shell" is
+ * genuinely expected rather than a fault: the SHELL starts first, Kangentic
+ * writes the agent CLI command to its stdin ~100ms later (a further 200ms
+ * behind a Windows cwd fixup - see session-spawn-flow), and the CLI process
+ * still has to start; a heavy shell profile can stall even reading that stdin.
+ *
+ * 30s is far more than any of that needs, and it is nearly free: a session
+ * whose agent dies inside its own first half-minute is retired on the next
+ * sweep instead of this one. A SLOW-STARTING agent never needed this grace at
+ * all - its process exists from the moment it launches, it has just not drawn
+ * a frame yet, which is exactly the distinction that makes the process tree a
+ * safer signal than a first-output timeout.
+ */
+const AGENT_SPAWN_GRACE_MS = 30_000;
+
 export class SessionManager extends EventEmitter {
   private registry = new SessionRegistry();
   private shellResolver = new ShellResolver();
@@ -390,6 +407,8 @@ export class SessionManager extends EventEmitter {
         return session.agentParser?.runtime?.backgroundShells
           ?.reportTerminatedShells?.({ cwd: session.cwd, agentSessionId: session.agentSessionId, shellIds }) ?? [];
       },
+      isAgentAbsenceCandidate: (sessionId) => this.isAgentAbsenceCandidate(sessionId),
+      retireAgentlessSession: (sessionId) => this.retireAgentlessSession(sessionId),
     }, {
       activityEngineOptions: this.activityEngineOptions,
       // Activity-engine debug snapshots land at `<projectRoot>/.kangentic/debug/<sessionId>.json`
@@ -1226,6 +1245,101 @@ export class SessionManager extends EventEmitter {
   removeByTaskId(taskId: string): void {
     const session = this.registry.findByTaskId(taskId);
     if (session) this.remove(session.id);
+  }
+
+  /**
+   * May the bg-shell watcher's agent-absence sweep judge this session?
+   *
+   * The watcher owns only the process-tree question ("is anything running under
+   * this PTY?"); every session-shaped arm lives here. Each one excludes a case
+   * where "no agent process under the shell" is NOT a fault:
+   *
+   * - `transient`: a Command Terminal IS a bare shell. It has no agent by
+   *   design, and it is registered with the watcher exactly like a task agent,
+   *   so without this arm the sweep would retire every one on open. This is the
+   *   highest-cost false positive in the design.
+   * - no `agentParser`: nothing was ever meant to run an agent CLI under this
+   *   PTY (a `run_script` session, a bare-shell spawn).
+   * - a WSL shell: the premise "the agent is a Win32 descendant of the PTY
+   *   root" does not hold there, so the tree signal is unreadable rather than
+   *   merely empty. See the guard below.
+   * - not `running`, or no live `pty`: a queued, suspended or already-exited
+   *   session has no live tree to judge, and an ordinary exit is not a phantom.
+   * - inside the spawn grace: the shell starts FIRST and Kangentic writes the
+   *   CLI command to its stdin ~100ms later (+200ms more behind a Windows cwd
+   *   fixup), then the process still has to start - and a heavy shell profile
+   *   can stall even that. This is the one window where "no agent yet" is
+   *   genuinely expected. A SLOW-STARTING agent is not in it: its process
+   *   exists, it just has not drawn its first frame.
+   */
+  private isAgentAbsenceCandidate(sessionId: string): boolean {
+    const session = this.registry.get(sessionId);
+    if (!session) return false;
+    if (session.transient) return false;
+    if (!session.agentParser) return false;
+    // A WSL session's PTY root is `wsl.exe`, and the agent is NOT a Win32
+    // descendant of it either way: a distro-native CLI is a Linux process in
+    // another PID namespace, and the interop path Kangentic actually uses (see
+    // docs/cross-platform.md) launches the Windows binary through WSL's binfmt
+    // host rather than under this `wsl.exe`. The Windows probe enumerates
+    // `Win32_Process`, so a perfectly healthy WSL agent presents an EMPTY
+    // descendant set - indistinguishable from a phantom, and every guard above
+    // passes. Judging one would force-kill live work, which is the severe
+    // failure direction; refusing to judge it only leaves the pre-existing
+    // phantom, which is the status quo. Detection mirrors `resolveShellArgs`
+    // (pty-spawn.ts), the single owner of the `wsl -d <distro>` spec form.
+    const shellSpec = session.shell.toLowerCase();
+    if (shellSpec.startsWith('wsl ') || shellSpec.startsWith('wsl.exe ')) return false;
+    if (session.status !== 'running' || session.pty === null) return false;
+    const startedAtMs = Date.parse(session.startedAt);
+    if (!Number.isFinite(startedAtMs)) return false;
+    return Date.now() - startedAtMs >= AGENT_SPAWN_GRACE_MS;
+  }
+
+  /**
+   * Retire a `running` session whose agent CLI exited while its shell PTY
+   * survived, so nothing ever marked the session finished.
+   *
+   * Routed through `kill()` deliberately: that path already does the entire job
+   * (record marked exited, panel tab dropped, phantom count corrected, queue
+   * slot freed, hooks stripped, transcript flushed) and its `intentionalExit`
+   * flag suppresses the renderer's "Session crashed" toast - the agent's own
+   * exit was the event, and Kangentic is only noticing it late.
+   *
+   * The reported exit code is forced to 0 because this WAS a normal end. A
+   * force-kill reports an abnormal code on every platform, and
+   * `SessionRepository.getInterruptedExited` resumes exactly those on the next
+   * launch - so leaving the real code would resurrect the very conversation the
+   * user `/exit`-ed, contradicting that query's "clean exit 0 is excluded".
+   *
+   * The candidate guard is re-checked here: the watcher decides asynchronously,
+   * and the session may have been suspended or killed during that gap.
+   */
+  private retireAgentlessSession(sessionId: string): void {
+    if (!this.isAgentAbsenceCandidate(sessionId)) return;
+    const session = this.registry.get(sessionId);
+    if (!session) return;
+    session.overrideExitCode = 0;
+    this.kill(sessionId);
+    // Announce the retirement as a STATUS change, not just an exit.
+    //
+    // Measured in a live preview: without this, main and the DB were correct
+    // (`exited`, code 0) while the board kept counting the agent and the bottom
+    // panel kept its tab - the two symptoms this sweep exists to remove. The
+    // renderer's SESSION_EXIT handler deliberately returns early on an
+    // INTENTIONAL exit (App.tsx) because it cannot tell a suspend from a hard
+    // end without racing the suspended status push, so it never runs its own
+    // `updateSessionStatus`. `session-changed` is the authoritative channel
+    // (broadcast as SESSION_STATUS) and carries the resolved status, so it has
+    // no such ambiguity.
+    //
+    // Set here rather than waiting for the PTY's async onExit: the emit must
+    // carry the final status, and onExit's own assignment is the same value
+    // (it only skips when the status is already 'suspended', which a candidate
+    // never is).
+    session.status = 'exited';
+    session.exitCode = 0;
+    this.emit('session-changed', sessionId, toSession(session));
   }
 
   kill(sessionId: string): void {

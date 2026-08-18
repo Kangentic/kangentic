@@ -9,11 +9,15 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import {
   createProcessTreeProbe,
   isShellLike,
+  isConsoleHost,
+  hasNoNonConsoleDescendants,
   SHELL_LIKE_COMM_PATTERNS,
+  CONSOLE_HOST_COMM_PATTERNS,
   _parseWindowsCsv,
   _parsePosixPs,
   _buildReadLoopScript,
 } from '../../src/main/activity-engine/background-shell/process-tree';
+import type { ProcessInfo } from '../../src/main/activity-engine/background-shell/process-tree';
 
 const skip = process.env.SKIP_PROCESS_TREE_PROBE === '1';
 
@@ -114,6 +118,90 @@ describe('isShellLike', () => {
     for (const pattern of SHELL_LIKE_COMM_PATTERNS) {
       expect(pattern).toBeInstanceOf(RegExp);
     }
+  });
+
+  it('CONSOLE_HOST_COMM_PATTERNS is a non-empty readonly array of regexes', () => {
+    // A silently-emptied list would make the agent-absence sweep stop firing on
+    // any Windows shell that owns its own console host.
+    expect(CONSOLE_HOST_COMM_PATTERNS.length).toBeGreaterThan(0);
+    for (const pattern of CONSOLE_HOST_COMM_PATTERNS) {
+      expect(pattern).toBeInstanceOf(RegExp);
+    }
+  });
+
+  it('a console host is NOT shell-like (the two lists stay disjoint)', () => {
+    // If conhost ever matched the shell allowlist it would be counted as a bg
+    // shell by Tier B, inflating the user-visible count.
+    expect(isShellLike('conhost')).toBe(false);
+    expect(isShellLike('openconsole')).toBe(false);
+  });
+});
+
+/**
+ * The agent-absence sweep asks "is anything real still running under this
+ * session's shell?".
+ *
+ * Console hosts are filtered as DEFENSE IN DEPTH. Measured across three live
+ * Kangentic instances, all nine ConPTY session shells had their `conhost.exe`
+ * parented to the Electron caller (a sibling, not a descendant), so a plain
+ * emptiness check would have sufficed there. The filter is kept because
+ * console-host parenting is an unspecified Windows detail that varies by
+ * console host and launch path, and one stray console host would silently
+ * disable the sweep for that session forever.
+ */
+describe('isConsoleHost / hasNoNonConsoleDescendants (agent-absence sweep)', () => {
+  const makeProcessInfo = (pid: number, comm: string): ProcessInfo => ({ pid, ppid: 1, comm });
+
+  it('matches the Windows console hosts', () => {
+    expect(isConsoleHost('conhost')).toBe(true);
+    expect(isConsoleHost('conhost.exe')).toBe(true);
+    expect(isConsoleHost('openconsole')).toBe(true);
+    expect(isConsoleHost('openconsole.exe')).toBe(true);
+  });
+
+  it('is case-insensitive (OpenConsole.exe is the real-world casing)', () => {
+    expect(isConsoleHost('OpenConsole.exe')).toBe(true);
+    expect(isConsoleHost('ConHost')).toBe(true);
+  });
+
+  it('rejects agent CLIs, shells, and runtimes', () => {
+    expect(isConsoleHost('claude')).toBe(false);
+    expect(isConsoleHost('claude.exe')).toBe(false);
+    expect(isConsoleHost('node')).toBe(false);
+    expect(isConsoleHost('bash')).toBe(false);
+    expect(isConsoleHost('pwsh')).toBe(false);
+    expect(isConsoleHost('cmd')).toBe(false);
+  });
+
+  it('does not match on a substring (a process merely named like one)', () => {
+    expect(isConsoleHost('myconhost')).toBe(false);
+    expect(isConsoleHost('conhost-helper')).toBe(false);
+    expect(isConsoleHost('openconsole2')).toBe(false);
+  });
+
+  it('reports absence for an empty descendant set (the POSIX shape)', () => {
+    expect(hasNoNonConsoleDescendants([])).toBe(true);
+  });
+
+  it('reports absence when the ONLY descendant is a console host (defense in depth)', () => {
+    expect(hasNoNonConsoleDescendants([makeProcessInfo(14028, 'conhost')])).toBe(true);
+    expect(hasNoNonConsoleDescendants([makeProcessInfo(22180, 'openconsole')])).toBe(true);
+  });
+
+  it('reports PRESENCE for a live agent CLI, even beside a console host', () => {
+    expect(hasNoNonConsoleDescendants([
+      makeProcessInfo(48848, 'claude'),
+      makeProcessInfo(46448, 'conhost'),
+    ])).toBe(false);
+  });
+
+  it('reports presence for a `.cmd`-shim agent chain (why the shell-like filter is wrong here)', () => {
+    // filterTopmostShellLikeDescendants exists to HIDE this cmd shim. The
+    // absence sweep must see it: something IS running under the shell.
+    expect(hasNoNonConsoleDescendants([
+      makeProcessInfo(27972, 'cmd'),
+      makeProcessInfo(46464, 'node'),
+    ])).toBe(false);
   });
 });
 
