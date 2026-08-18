@@ -87,6 +87,24 @@ process.on('SIGINT', () => {
   else exitWithSummary();
 });
 
+// Raw mode, like the real agy TUI (and every other interactive fixture here).
+//
+// This is load-bearing on POSIX, not cosmetic. Kangentic writes the whole exit
+// sequence back-to-back in one tick (`writeExitSequence`), and agy's is TWO
+// Ctrl+C. In canonical mode the tty turns each \x03 into SIGINT instead of
+// delivering it as data - and POSIX standard signals are NOT queued, so two
+// raised in immediate succession coalesce into a single delivery. The mock then
+// counted one interrupt, printed "press ctrl+c again to exit", and never
+// reached exitWithSummary, so the `agy --conversation=<uuid>` line the adapter's
+// fromOutput scraper needs was never printed and the resume spawned fresh.
+//
+// That failed only on Linux CI (intermittently, depending on whether the handler
+// ran between the two signals) and always passed on Windows, where ConPTY
+// delivers \x03 as data. Raw mode disables ISIG, so both bytes arrive on the
+// data path on every platform and the count is deterministic.
+if (process.stdin.isTTY) {
+  try { process.stdin.setRawMode(true); } catch { /* not a tty: fall back to the SIGINT path */ }
+}
 process.stdin.resume();
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', (data) => {
