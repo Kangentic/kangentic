@@ -216,18 +216,38 @@ a bare shell with the record still reading `running` (the shell PTY outlives the
 
 `isResumeConversationAbsent` (`src/main/transition-engine/resume-conversation-guard.ts`) now
 downgrades that spawn to fresh at both chokepoints (`executeSpawnAgent` and `prepareAgentSpawn`).
-It fires only on positive evidence of an empty conversation, and all of these must hold:
+It fires only on positive evidence of an empty conversation. Two things must hold together:
 
-- the transcript path comes from the AGENT's own status report, never one Kangentic derived;
-- that same report independently shows no turns (no tokens, no cost);
-- the file it names is absent.
+- the transcript path was reported by the AGENT itself, never derived by Kangentic;
+- the same report independently shows the conversation never took a turn;
 
-Anything else - no status file, no status pipeline, malformed JSON, no reported transcript path -
-returns false and resumes exactly as before, so a conversation that had turns is never discarded.
-This is deliberately narrower than the `canResumeSession` transcript-presence guard reverted in
-#255 (see docs/adapter-session-history.md), whose false misses silently lost real conversations.
-The check walks every record sharing the conversation's `agent_session_id`, newest first, because a
-failed resume writes no status file of its own and would otherwise stay broken forever.
+and then the file that report names must be absent.
+
+The evidence comes from either of two agent-written files in Kangentic's own session directory,
+which differ in how each answers the turn question:
+
+| Source | Transcript path | "Never took a turn" means |
+|---|---|---|
+| `status.json` (preferred) | the status line's `transcript_path` | no tokens and no cost |
+| `events.jsonl` (fallback) | `transcript_path` inside the SessionStart hook payload | no event beyond `session_start` / `session_end` |
+
+The fallback exists because the status line only runs once the TUI is up, so a CLI killed in its
+first second leaves none. The SessionStart hook fires far earlier. A missing status file therefore
+does NOT end the check: it falls through to the hook, and only a record that yields neither report
+is skipped.
+
+The guard returns false - resuming exactly as before - when the adapter has no status pipeline,
+when the project path is unknown, or when no record yields a usable report at all. Absence of
+evidence is never evidence, so a conversation that had turns is never discarded. Mocked CLIs land
+on that path structurally, which is what kept the E2E resume specs passing. This is deliberately
+narrower than the `canResumeSession` transcript-presence guard reverted in #255 (see
+docs/adapter-session-history.md), whose false misses silently lost real conversations.
+
+The board chokepoint walks every record sharing the conversation's `agent_session_id`, newest
+first, because a failed resume writes no report of its own and an already-poisoned task would
+otherwise stay broken forever. Startup recovery passes only the record it is recovering: it holds
+no repository handle to walk the lineage, and a record recovered there ran until the crash, so it
+normally has its own status report.
 
 ### A restore reports progress instead of showing a Resume button
 
