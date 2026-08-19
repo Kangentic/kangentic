@@ -78,6 +78,14 @@ export interface MemoryGraphCanvasProps {
   chromeInsets?: ViewportInsets;
   /** Which shipped carve-up of the map is on screen. */
   granularity?: MemoryGraphGranularity;
+  /**
+   * Nodes the FACET rows have left on the map, or null when nothing is scoped.
+   *
+   * Separate from `highlighted`, which folds in the search hits: a facet scope
+   * redefines what the map is and so moves its default framing, where a search
+   * is a question the camera flies to and returns from. Reset view frames this.
+   */
+  framingIndices?: ReadonlyArray<number> | null;
 }
 
 /**
@@ -273,6 +281,7 @@ export function MemoryGraphCanvas({
   colorMode = 'cluster',
   granularity = DEFAULT_GRANULARITY,
   chromeInsets,
+  framingIndices = null,
 }: MemoryGraphCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -667,6 +676,7 @@ export function MemoryGraphCanvas({
     regionOf,
     onFrame: positionOverlays,
     insets: framingInsets,
+    framingIndices,
   });
   const { requestRender, resetView, frameNodes, setOrbitAnchor } = graph;
 

@@ -61,6 +61,15 @@ const MAX_DISTANCE = WORLD_SIZE * 6;
 /** World units per second of keyboard flight. Tuned against the world cube, not
  *  in absolute units, so it feels the same at any corpus size. */
 const FLY_SPEED = WORLD_SIZE * 0.55;
+/**
+ * Smallest neighbourhood a fly may frame, as a share of the world cube.
+ *
+ * A one-hit query has no extent at all, so the fit that serves it would land the
+ * camera on a single point with nothing around it to place it. Carried over from
+ * the bounding sphere this replaced, whose radius floor was the same 0.12 and
+ * for the same reason.
+ */
+const FLY_MIN_RADIUS = 0.12;
 
 export interface MemoryGraphSceneHandle {
   /** Ask for one frame. Cheap and idempotent within a frame. */
@@ -109,18 +118,35 @@ interface UseMemoryGraphSceneOptions {
   /** Pixels of the canvas covered by the floating panels, so the camera can aim
    *  at the part of it the user can actually see. */
   insets?: ViewportInsets;
+  /**
+   * Nodes the DEFAULT VIEW frames, or null for the whole map.
+   *
+   * This is the FACET scope (regions, time, outcome), never the search
+   * highlight, and the difference is the reason it is a separate input rather
+   * than "whatever is drawn". A facet exclusion is a persistent re-scoping: with
+   * regions switched off the map IS the remaining regions, so its canonical
+   * framing moves with them. A search is a transient question the camera FLIES
+   * to (`frameNodes`), and Reset view is the documented way back from one -
+   * which it could not be if it framed the hits.
+   */
+  framingIndices?: ReadonlyArray<number> | null;
 }
 
 export function useMemoryGraphScene(options: UseMemoryGraphSceneOptions): MemoryGraphSceneHandle {
   const {
     canvasRef, containerRef, nodes, edges, signature, edgeColor, regionOf, onFrame,
-    insets = NO_VIEWPORT_INSETS,
+    insets = NO_VIEWPORT_INSETS, framingIndices = null,
   } = options;
 
   // Read inside effects that must not re-run when a panel opens: the scene is
   // never rebuilt for chrome, only re-aimed.
   const insetsRef = useRef(insets);
   insetsRef.current = insets;
+
+  // Same reason: a facet change must not rebuild the scene. It is read at FIT
+  // time, which is the only moment the framing is recomputed.
+  const framingIndicesRef = useRef(framingIndices);
+  framingIndicesRef.current = framingIndices;
 
   const sceneRef = useRef<MemoryGraphScene | null>(null);
   const controlsRef = useRef<CameraControls | null>(null);
@@ -428,7 +454,7 @@ export function useMemoryGraphScene(options: UseMemoryGraphSceneOptions): Memory
   }, [requestRender]);
 
   /**
-   * The canonical view: default direction, distance fitted to the whole map.
+   * The canonical view: default direction, distance fitted to the map on screen.
    *
    * Used by BOTH the mount path and Reset view, so "initial" and "reset" cannot
    * drift apart - which is the property that made the clipping so confusing,
@@ -457,9 +483,29 @@ export function useMemoryGraphScene(options: UseMemoryGraphSceneOptions): Memory
       container?.clientHeight ?? 0,
       insetsRef.current,
     );
+    // The default view frames what is DRAWN, not every node the projection
+    // holds. A facet exclusion re-scopes the map, so fitting the whole cloud
+    // framed a map that was no longer there: measured on the real
+    // 648-conversation corpus with 9 of 39 regions on, the visible 177 filled
+    // 0.57 of the safe area's height, against the 0.88 the same fit gives an
+    // unfiltered map. Reset view was therefore the one control that pulled the
+    // view further OUT after a filter.
+    let framed: ReadonlyArray<Vector3> = scene.positions;
+    const scope = framingIndicesRef.current;
+    if (scope && scope.length > 0) {
+      const subset: Vector3[] = [];
+      for (const index of scope) {
+        const position = scene.positions[index];
+        if (position) subset.push(position);
+      }
+      // An empty scope keeps the whole map. Nothing is drawn at that point, so
+      // there is nothing to frame, and the map's own default is a better place
+      // to be standing when a region comes back on.
+      if (subset.length > 0) framed = subset;
+    }
     // A projection with no nodes has no shape to fit, so fall back to the fixed
     // vantage rather than leaving the camera wherever it was constructed.
-    const framing = fitDefaultView(scene.positions, scene.camera.fov, viewport);
+    const framing = fitDefaultView(framed, scene.camera.fov, viewport);
     const center = framing?.center ?? new Vector3(0, 0, 0);
     const direction = framing?.direction ?? DEFAULT_VIEW_DIRECTION;
     const distance = framing?.distance ?? WORLD_SIZE * 1.6;
@@ -487,8 +533,9 @@ export function useMemoryGraphScene(options: UseMemoryGraphSceneOptions): Memory
   applyDefaultViewRef.current = applyDefaultView;
 
   const resetView = useCallback(() => {
-    // A reset means the whole map, so it drops the anchor rather than flying
-    // back to the default framing and continuing to orbit one conversation.
+    // A reset means the map as a whole - the whole of whatever the facets have
+    // scoped it to - so it drops the anchor rather than flying back to the
+    // default framing and continuing to orbit one conversation.
     orbitAnchorRef.current = null;
     applyDefaultView(true);
   }, [applyDefaultView]);
@@ -517,13 +564,52 @@ export function useMemoryGraphScene(options: UseMemoryGraphSceneOptions): Memory
     }
     if (points.length === 0) return;
 
-    // A bounding sphere rather than a box: `fitToSphere` frames it the same way
-    // from any angle, so the fly does not also swing the camera around to suit a
-    // box's axes.
-    const sphere = new Sphere().setFromPoints(points);
-    // A single hit has radius 0, which would fit the camera to a point and dolly
-    // to the near plane. Give it enough room to see the neighbourhood it sits in.
-    sphere.radius = Math.max(sphere.radius, WORLD_SIZE * 0.12);
+    // THE SAME FIT the default view uses, along the camera's CURRENT direction.
+    //
+    // It was `controls.fitToSphere`, and two fits that disagree is exactly what
+    // reads as inconsistent. A sphere CIRCUMSCRIBES, and this layout is a
+    // flattened, elongated cloud rather than a ball, so it framed nothing like
+    // the default view did - and it knows nothing about the floating panels or
+    // the label chips either. Measured on the real corpus with three of
+    // thirty-nine regions on: a facet toggle left 54px of clearance above the
+    // map, against Reset view's 208, and the top inset alone is 50 - so the top
+    // row of titles sat under the search box.
+    //
+    // Direction is the one thing this fly must keep and the default fit
+    // deliberately does not: a fly frames a subset from where the user is
+    // standing, where arriving at a map picks the angle that shows its shape.
+    const container = containerRef.current;
+    const viewport = describeViewport(
+      container?.clientWidth ?? 0,
+      container?.clientHeight ?? 0,
+      insetsRef.current,
+    );
+    // Allocated rather than scratched: this runs on a fly, not per frame.
+    const direction = new Vector3();
+    const currentTarget = new Vector3();
+    controls.getPosition(direction);
+    controls.getTarget(currentTarget);
+    direction.sub(currentTarget);
+    // Degenerate only before the camera has been placed at all, where there is
+    // no orientation worth keeping.
+    if (direction.lengthSq() < 1e-6) direction.copy(DEFAULT_VIEW_DIRECTION);
+    else direction.normalize();
+
+    const framing = fitDefaultView(points, scene.camera.fov, viewport, direction);
+    if (!framing) return;
+
+    // A one-hit query fits at zero distance, and the shared fit's own floor is a
+    // camera DISTANCE rather than a framed volume - it would stop 25 units from
+    // a lone point with nothing around it. What a fly needs floored is the
+    // NEIGHBOURHOOD it lands in, which is what the bounding sphere's radius
+    // floor used to express, so that is restored here in the same terms.
+    const halfFov = Math.tan((scene.camera.fov / 2) * (Math.PI / 180));
+    const halfAngle = Math.atan(Math.min(
+      halfFov * viewport.safeFractionY,
+      halfFov * Math.max(viewport.aspect, 0.0001) * viewport.safeFractionX,
+    ));
+    const distance = Math.max(framing.distance, (WORLD_SIZE * FLY_MIN_RADIUS) / Math.sin(halfAngle));
+
     // A deliberate departure from the default view, so a later resize leaves it
     // alone rather than yanking the camera back out to the whole map.
     viewIsDefaultRef.current = false;
@@ -531,9 +617,15 @@ export function useMemoryGraphScene(options: UseMemoryGraphSceneOptions): Memory
     // `setOrbitPoint` mid-transition - so the anchor is dropped here rather
     // than fought with.
     orbitAnchorRef.current = null;
-    void controls.fitToSphere(sphere, true);
+    void controls.setLookAt(
+      framing.center.x + framing.direction.x * distance,
+      framing.center.y + framing.direction.y * distance,
+      framing.center.z + framing.direction.z * distance,
+      framing.center.x, framing.center.y, framing.center.z,
+      true,
+    );
     requestRender();
-  }, [requestRender]);
+  }, [containerRef, requestRender]);
 
   return {
     requestRender,

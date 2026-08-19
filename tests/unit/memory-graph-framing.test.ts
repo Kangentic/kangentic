@@ -255,6 +255,48 @@ describe('default view framing', () => {
   it('has nothing to frame when there are no nodes', () => {
     expect(fitDefaultView([], FOV, describeViewport(1600, 900, NO_VIEWPORT_INSETS))).toBeNull();
   });
+
+  it('frames from a supplied direction with the same air as its own', () => {
+    // What a fly to a subset needs, and the reason it reuses this fit rather
+    // than a bounding sphere. `fitToSphere` circumscribes, knows nothing about
+    // the panels, and adds no padding, so the two framings disagreed: measured
+    // on the real corpus with three of thirty-nine regions on, a facet toggle
+    // left 54px of clearance above the map against Reset view's 208, and the top
+    // inset alone is 50 - the first row of titles sat under the search box.
+    //
+    // Direction is the only thing a fly may differ on: it frames a subset from
+    // where the user is standing, where arriving at a map picks the angle that
+    // shows its shape. Everything that decides the AIR has to be shared.
+    const points = cubeCorners();
+    const viewport = describeViewport(WITH_PANELS.width, WITH_PANELS.height, WITH_PANELS.insets);
+    const derived = fitDefaultView(points, FOV, viewport)!;
+
+    // Handing back the direction it chose must reproduce its own answer exactly,
+    // which is what says the override changes nothing else about the fit.
+    const echoed = fitDefaultView(points, FOV, viewport, derived.direction)!;
+    expect(echoed.distance).toBeCloseTo(derived.distance, 6);
+    expect(echoed.center.distanceTo(derived.center)).toBeLessThan(1e-6);
+
+    // And an unrelated direction still frames inside the safe area, still with
+    // room to spare - the same bracket the default view is held to.
+    for (const direction of [
+      new Vector3(1, 0, 0),
+      new Vector3(0.3, 0.9, -0.2).normalize(),
+      new Vector3(-0.6, 0.2, 0.7).normalize(),
+    ]) {
+      const framing = fitDefaultView(points, FOV, viewport, direction)!;
+      const camera = new PerspectiveCamera(FOV, viewport.aspect, 0.1, WORLD_SIZE * 100);
+      applyViewport(camera, WITH_PANELS.width, WITH_PANELS.height, WITH_PANELS.insets);
+      camera.position.copy(framing.center).addScaledVector(framing.direction, framing.distance);
+      camera.lookAt(framing.center);
+      camera.updateMatrixWorld(true);
+      const projected = points.map((point) => point.clone().project(camera));
+      const reachedX = Math.max(...projected.map((p) => Math.abs(p.x))) / viewport.safeFractionX;
+      const reachedY = Math.max(...projected.map((p) => Math.abs(p.y))) / viewport.safeFractionY;
+      expect(Math.max(reachedX, reachedY)).toBeLessThanOrEqual(1);
+      expect(Math.max(reachedX, reachedY)).toBeGreaterThan(0.8);
+    }
+  });
 });
 
 describe('the safe area under the floating panels', () => {

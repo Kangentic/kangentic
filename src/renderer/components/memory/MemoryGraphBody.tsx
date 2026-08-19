@@ -298,6 +298,18 @@ export function MemoryGraphBody() {
     return surviving;
   }, [nodes, facets, clustering]);
 
+  /**
+   * The facet scope as an array, for the camera's default framing.
+   *
+   * Deliberately NOT `highlighted`: the camera's idea of "the whole map" has to
+   * follow a persistent re-scoping and must not follow a search, or Reset view
+   * would frame the hits and there would be no way back out of a query.
+   */
+  const framingIndices = useMemo(
+    () => (facetIndices ? [...facetIndices] : null),
+    [facetIndices],
+  );
+
   const highlighted = useMemo(() => {
     // Explore wins: it is the most recent, most specific thing the user asked
     // for, and it is dismissible without losing the query underneath it.
@@ -445,6 +457,7 @@ export function MemoryGraphBody() {
         granularity={granularity}
         projection={projection}
         highlighted={highlighted}
+        framingIndices={framingIndices}
         selectedIndex={selectedIndex}
         onSelect={selectNode}
         onActivate={(index) => {

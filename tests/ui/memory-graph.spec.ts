@@ -763,6 +763,68 @@ test.describe('memory graph', () => {
     }
   });
 
+  test('a long region list gets a filter field, a short one does not', async () => {
+    // A control that can only ever do nothing is not rendered - the rule the
+    // dead facet rows and the Detail chips already follow. Measured across the
+    // eight real project indexes, the seven small ones top out at eight regions
+    // and the 646-conversation one starts at twenty-two, so the threshold sits
+    // in the gap between them.
+    const manyRegions = `(function () {
+      var base = ${projectionLiteral(42)};
+      var regions = [];
+      for (var r = 0; r < 14; r++) {
+        regions.push({ id: r, label: 'topic ' + r, x: 0.5, y: 0.5, z: 0.5, size: 3 });
+      }
+      base.clusterings = base.clusterings.map(function (entry) {
+        return { granularity: entry.granularity, regions: regions };
+      });
+      base.nodes.forEach(function (node, i) {
+        node.clusters = { coarse: i % 14, balanced: i % 14, fine: i % 14 };
+      });
+      return base;
+    })()`;
+    const { browser, page } = await launchWithState(snapshotScript({ projection: manyRegions }));
+    try {
+      await openMemoryGraph(page);
+      const rows = page.locator('[data-testid="memory-graph-region-row"]');
+      const field = page.locator('[data-testid="memory-graph-region-filter"]');
+      await expect(rows).toHaveCount(14);
+      await expect(field).toBeVisible();
+
+      // Narrows the LIST. "topic 1" also prefixes 10 through 13.
+      await field.fill('topic 1');
+      await expect(rows).toHaveCount(5);
+      await field.fill('topic 7');
+      await expect(rows).toHaveCount(1);
+      await expect(rows.nth(0)).toContainText('topic 7');
+
+      // The map is untouched by the text box: every region is still shown, which
+      // is what the count line above All and None keeps saying.
+      await expect(page.locator('[data-testid="memory-graph-controls"]')).toContainText('14 of 14 shown');
+
+      // An empty result says so rather than leaving a blank box.
+      await field.fill('nothing matches this');
+      await expect(rows).toHaveCount(0);
+      await expect(page.locator('[data-testid="memory-graph-region-filter-empty"]')).toBeVisible();
+
+      await page.locator('[data-testid="memory-graph-region-filter-clear"]').click();
+      await expect(rows).toHaveCount(14);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('does not offer a region filter over a list short enough to read', async () => {
+    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(20) }));
+    try {
+      await openMemoryGraph(page);
+      await expect(page.locator('[data-testid="memory-graph-region-row"]')).toHaveCount(2);
+      await expect(page.locator('[data-testid="memory-graph-region-filter"]')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('hides a filter row that could only ever do nothing', async () => {
     // One region means the region picker can
     // only return everything, and one outcome means the same of that row.
@@ -1206,6 +1268,77 @@ test.describe('memory graph', () => {
       expect(legendBox!.y).toBeGreaterThan(canvas!.y + canvas!.height / 2);
       expect(reset!.x).toBeGreaterThan(canvas!.x + canvas!.width / 2);
       expect(reset!.y).toBeGreaterThan(canvas!.y + canvas!.height / 2);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('reset view frames the regions still on the map, not the ones filtered out', async () => {
+    // A facet exclusion re-scopes what the map IS, so the map's canonical
+    // framing has to move with it. Framing every node the projection holds put
+    // the surviving regions in a corner: measured on the real 648-conversation
+    // corpus with 9 of 39 regions on, the visible 177 filled 0.57 of the safe
+    // area's height against the 0.88 an unfiltered map gets. Reset view was
+    // therefore the one control that pulled the view further OUT after a filter.
+    //
+    // Two well-separated blocks, because the fixture's own clustering is
+    // INTERLEAVED (`i % 2` over a grid), so hiding a region there leaves the
+    // same spatial extent and the assertion could not fail.
+    const separated = `(function () {
+      var base = ${projectionLiteral(40)};
+      base.nodes.forEach(function (node, i) {
+        var far = i >= 20;
+        node.clusters = { coarse: 0, balanced: far ? 1 : 0, fine: far ? 1 : 0 };
+        node.x = (far ? 0.55 : 0.12) + (i % 5) * 0.06;
+        node.y = (far ? 0.55 : 0.12) + (Math.floor(i / 5) % 4) * 0.06;
+        node.z = (far ? 0.55 : 0.12) + (i % 4) * 0.06;
+      });
+      return base;
+    })()`;
+    const { browser, page } = await launchWithState(snapshotScript({ projection: separated }));
+    try {
+      await openMemoryGraph(page);
+      // The titles are the only thing in the DOM that carries where the camera
+      // put the map: they are positioned by projecting each node through it on
+      // every rendered frame.
+      const titleExtent = async () => page.evaluate(() => {
+        const boxes = Array.from(document.querySelectorAll('[data-testid="memory-graph-node-title"]'))
+          .filter((element) => Number((element as HTMLElement).style.opacity || '0') > 0)
+          .map((element) => element.getBoundingClientRect());
+        if (boxes.length === 0) return { width: 0, height: 0, count: 0 };
+        return {
+          width: Math.max(...boxes.map((box) => box.right)) - Math.min(...boxes.map((box) => box.left)),
+          height: Math.max(...boxes.map((box) => box.bottom)) - Math.min(...boxes.map((box) => box.top)),
+          count: boxes.length,
+        };
+      });
+
+      await expect.poll(async () => (await titleExtent()).count).toBeGreaterThan(0);
+      const whole = await titleExtent();
+
+      // Hide the far block, then ask for the default view back.
+      await page.locator('[data-testid="memory-graph-region-row"]').nth(1).click();
+      await page.locator('[data-testid="memory-graph-reset-view"]').click();
+
+      // Polled rather than waited out: Reset view is an animated fly, so this
+      // retries until the camera settles instead of guessing how long it takes.
+      // Measured on this fixture: 632 x 560 across 19 titles with the fit scoped
+      // to the visible region, against 230 x 136 across 6 when it framed all
+      // forty nodes - so 0.85 of the unfiltered extent sits far from both.
+      await expect.poll(
+        async () => (await titleExtent()).height / whole.height,
+        { timeout: 10_000 },
+      ).toBeGreaterThan(0.85);
+      const scoped = await titleExtent();
+      expect(scoped.width).toBeGreaterThan(whole.width * 0.85);
+      // An independent signal on the same framing: nodes pushed into the
+      // distance lose their titles to the label distance cap, so a map framed
+      // for regions that are no longer drawn also draws fewer names. Held to a
+      // looser ratio than the extents on purpose - how many titles survive
+      // collision culling depends on the label width estimate against real font
+      // metrics, which differ on the headless Linux runner. Measured here: 19
+      // against the whole map's 15 with the fit scoped, 6 without it.
+      expect(scoped.count).toBeGreaterThan(whole.count * 0.6);
     } finally {
       await browser.close();
     }

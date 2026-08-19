@@ -649,6 +649,18 @@ export function fitDefaultView(
   positions: ReadonlyArray<Vector3>,
   verticalFovDegrees: number,
   viewport: ViewportDescription,
+  /**
+   * Where to look FROM, when the caller already has an answer.
+   *
+   * The default view derives its own direction from the cloud's shape, which is
+   * right for arriving at a map and wrong for a fly to a subset: that one has to
+   * frame the subset from where the user is currently standing, or the camera
+   * swings round as a side effect of a search. Everything else about the fit -
+   * the percentile distance, the iterative re-centring, the safe area and the
+   * padding - is what makes the two land with the SAME air, which is the whole
+   * reason a fly reuses this rather than a bounding sphere.
+   */
+  viewDirection?: Vector3,
 ): { center: Vector3; direction: Vector3; distance: number } | null {
   if (positions.length === 0) return null;
 
@@ -667,7 +679,9 @@ export function fitDefaultView(
   );
 
   // View basis. Signs are irrelevant below because only magnitudes are used.
-  const toCamera = principalViewDirection(positions, worldCenter);
+  const toCamera = viewDirection
+    ? viewDirection.clone().normalize()
+    : principalViewDirection(positions, worldCenter);
   const right = new Vector3().crossVectors(WORLD_UP, toCamera).normalize();
   // Degenerate only if the view direction were parallel to world up, which this
   // constant is not - but a zero-length right would silently produce NaNs.

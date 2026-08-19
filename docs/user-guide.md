@@ -755,7 +755,9 @@ about, so the map reads as a topic atlas of the project rather than an anonymous
 **Flying it.** Drag to orbit, shift-drag to pan, scroll to zoom in and out. Click the map and use
 **W** / **S** to fly forward and back, **A** / **D** to slide left and right, and **Q** / **E** to
 rise and drop - you can fly right into a cluster and out the other side. **Reset view** (bottom
-right) flies back to where the map opened, so it is always possible to get un-lost.
+right) frames the whole map again, so it is always possible to get un-lost. With regions switched
+off it frames what is left rather than the regions you hid, so resetting a scoped map fills the
+view instead of pulling it back out.
 
 **Clicking around.** Hover a point for its title and size; click it for a detail panel. When a
 search is running, the panel opens with **Why this matched** - where the conversation ranks in the
@@ -797,6 +799,11 @@ repaint the identical picture.
 **Filter** scopes the map by time and by outcome. Each row appears only when it can actually
 narrow this index: the time row is hidden when every conversation falls inside the shortest window,
 and an outcome appears only if something in the index has it.
+
+The **Regions** section below it lists every region with its colour and how many conversations it
+holds, each independently switchable, plus **All** and **None**. A large index can carry dozens of
+regions, so past a dozen the list gains a **Find a region** box. That narrows the LIST only - All
+and None still act on every region, which is what the "N of M shown" count above them reports.
 
 Position and links are not equally precise, and the surface says so rather than letting you assume:
 **links are exact** (computed in the embedding's full dimensionality), while **position is
