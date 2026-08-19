@@ -5435,8 +5435,32 @@ export interface MemoryGraphNode {
    *  task. Archiving is board tidiness and does not decide this - see the CASE
    *  in `documentMetadata` for the measurement that settled it. */
   outcome: 'done' | 'abandoned' | 'active' | null;
-  /** Which labelled region of the map this node sits in. */
-  cluster: number;
+  /**
+   * Which labelled region this node sits in, at each granularity.
+   *
+   * Indexed the same way as `MemoryGraphProjection.clusterings`, so
+   * `clusters[g]` is this node's region id within `clusterings[g].regions`.
+   */
+  clusters: Record<MemoryGraphGranularity, number>;
+}
+
+/**
+ * How finely the map is cut into regions.
+ *
+ * A preference rather than a measurement, and that is the honest framing: every
+ * separation score is maximised by the fewest clusters on a continuous cloud, so
+ * "the right number of regions" is a readability judgement about how much detail
+ * a reader wants, not a fact waiting in the data. All three are computed and
+ * shipped together, so switching costs no rebuild.
+ */
+export type MemoryGraphGranularity = 'coarse' | 'balanced' | 'fine';
+
+export const MEMORY_GRAPH_GRANULARITIES: MemoryGraphGranularity[] = ['coarse', 'balanced', 'fine'];
+
+/** One complete carve-up of the map. */
+export interface MemoryGraphClustering {
+  granularity: MemoryGraphGranularity;
+  regions: MemoryGraphCluster[];
 }
 
 /** A named region of the map, derived from the layout and labelled from the
@@ -5485,7 +5509,15 @@ export interface MemoryCoverageSummary {
 export interface MemoryGraphProjection {
   nodes: MemoryGraphNode[];
   edges: MemoryGraphEdge[];
-  clusters: MemoryGraphCluster[];
+  /**
+   * Every granularity, computed together.
+   *
+   * Shipping all three rather than storing the choice and rebuilding on a switch:
+   * the clustering is milliseconds over a layout that is already computed, the
+   * extra payload is one integer per node per granularity, and the alternative
+   * would put a full projection rebuild behind a display control.
+   */
+  clusterings: MemoryGraphClustering[];
   signature: string;
   modelTag: string;
   /** Width of the EMBEDDINGS this was projected from (384 / 768 / 1024). The

@@ -37,6 +37,9 @@ import {
   type FacetAvailability,
 } from './MemoryGraphControls';
 
+import { findStandalone } from './standalone-conversations';
+import { DEFAULT_GRANULARITY, resolveClustering } from './active-clustering';
+import type { MemoryGraphGranularity } from '../../../shared/types';
 import { useChromeInsets } from './useChromeInsets';
 import { MemoryNodeDetail, openConversationForNode } from './MemoryNodeDetail';
 
@@ -75,6 +78,12 @@ export function MemoryGraphBody() {
   const [showLabels, setShowLabels] = useState(true);
   const [showTitles, setShowTitles] = useState(true);
   const [colorMode, setColorMode] = useState<MemoryGraphColorMode>('cluster');
+  /**
+   * How finely the map is cut. All three carve-ups ship with the projection,
+   * so this is a lookup rather than a rebuild - which is the only reason it is
+   * a display control at all.
+   */
+  const [granularity, setGranularity] = useState<MemoryGraphGranularity>(DEFAULT_GRANULARITY);
   const [filter, setFilter] = useState<MemoryGraphFilter>('all');
   const [facets, setFacets] = useState<MemoryGraphFacets>(EMPTY_FACETS);
   /**
@@ -168,19 +177,10 @@ export function MemoryGraphBody() {
    * most worth writing down, and they are invisible in a dense map until you
    * ask for them.
    */
-  const isolatedIndices = useMemo(() => {
-    if (!snapshot?.projection || !nodes) return new Set<number>();
-    const connected = new Set<number>();
-    for (const edge of snapshot.projection.edges) {
-      connected.add(edge.source);
-      connected.add(edge.target);
-    }
-    const isolated = new Set<number>();
-    for (let index = 0; index < nodes.length; index += 1) {
-      if (!connected.has(index)) isolated.add(index);
-    }
-    return isolated;
-  }, [snapshot, nodes]);
+  const standaloneIndices = useMemo(
+    () => findStandalone(snapshot?.projection?.nodeNeighbors, nodes?.length ?? 0),
+    [snapshot, nodes],
+  );
 
   /** Indices matching the current query, in result order. */
   const queryIndices = useMemo(() => {
@@ -253,6 +253,11 @@ export function MemoryGraphBody() {
     );
   }, [projectionSignature]);
 
+  const clustering = useMemo(
+    () => resolveClustering(snapshot?.projection ?? { clusterings: [] }, granularity),
+    [snapshot, granularity],
+  );
+
   /**
    * The map's regions, with how many conversations each holds.
    *
@@ -260,18 +265,18 @@ export function MemoryGraphBody() {
    * beside a region is the number of points the user can actually see in it.
    */
   const regions = useMemo(() => {
-    const clusters = snapshot?.projection?.clusters ?? [];
-    if (clusters.length === 0) return [];
+    if (clustering.regions.length === 0) return [];
     const counts = new Map<number, number>();
     for (const node of nodes ?? []) {
-      counts.set(node.cluster, (counts.get(node.cluster) ?? 0) + 1);
+      const region = clustering.regionOf(node);
+      counts.set(region, (counts.get(region) ?? 0) + 1);
     }
-    return clusters.map((cluster) => ({
+    return clustering.regions.map((cluster) => ({
       id: cluster.id,
       label: cluster.label,
       count: counts.get(cluster.id) ?? 0,
     }));
-  }, [snapshot, nodes]);
+  }, [clustering, nodes]);
 
   /** Node indices surviving the facet rows, or null when nothing is scoped. */
   const facetIndices = useMemo(() => {
@@ -280,7 +285,7 @@ export function MemoryGraphBody() {
       facets.since === 'any' ? null : Date.now() - TIME_WINDOW_DAYS[facets.since] * DAY_MS;
     const surviving = new Set<number>();
     nodes.forEach((node, index) => {
-      if (facets.hiddenRegions.has(node.cluster)) return;
+      if (facets.hiddenRegions.has(clustering.regionOf(node))) return;
       if (facets.outcome !== 'any' && node.outcome !== facets.outcome) return;
       // A conversation with no timestamp cannot satisfy a time window. Dropping
       // it is the honest reading of "last 30 days"; keeping it would quietly
@@ -289,7 +294,7 @@ export function MemoryGraphBody() {
       surviving.add(index);
     });
     return surviving;
-  }, [nodes, facets]);
+  }, [nodes, facets, clustering]);
 
   const highlighted = useMemo(() => {
     // Explore wins: it is the most recent, most specific thing the user asked
@@ -297,7 +302,7 @@ export function MemoryGraphBody() {
     let asked: Set<number> | undefined;
     if (exploreIndices) asked = exploreIndices;
     else if (queryIndices) asked = queryIndices;
-    else if (filter === 'unconnected' && isolatedIndices.size > 0) asked = isolatedIndices;
+    else if (filter === 'standalone' && standaloneIndices.size > 0) asked = standaloneIndices;
 
     // Facets INTERSECT rather than replace. They answer a different question
     // from search - "which part of the index" versus "which conversations" - so
@@ -308,7 +313,7 @@ export function MemoryGraphBody() {
     const both = new Set<number>();
     for (const index of asked) if (facetIndices.has(index)) both.add(index);
     return both;
-  }, [exploreIndices, queryIndices, filter, isolatedIndices, facetIndices]);
+  }, [exploreIndices, queryIndices, filter, standaloneIndices, facetIndices]);
 
   /**
    * The search hits that survive the facet rows.
@@ -436,6 +441,7 @@ export function MemoryGraphBody() {
     <div ref={surfaceRef} className="relative flex-1 min-h-0" data-testid="memory-graph-body">
       <MemoryGraphCanvas
         chromeInsets={chromeInsets}
+        granularity={granularity}
         projection={projection}
         highlighted={highlighted}
         selectedIndex={selectedIndex}
@@ -534,7 +540,9 @@ export function MemoryGraphBody() {
           onFacetsChange={setFacets}
           facetAvailability={facetAvailability}
           regions={regions}
-          unconnectedCount={isolatedIndices.size}
+          granularity={granularity}
+          onGranularityChange={setGranularity}
+          standaloneCount={standaloneIndices.size}
           coverage={snapshot.coverage}
           semanticAvailable={snapshot.semanticAvailable}
           edgeCount={projection.edges.length}
@@ -550,7 +558,9 @@ export function MemoryGraphBody() {
           <div className={`h-full overflow-hidden rounded-lg border border-edge bg-surface-raised/85 shadow-xl backdrop-blur-md`}>
             <MemoryNodeDetail
               node={selectedNode}
-              cluster={projection.clusters.find((entry) => entry.id === selectedNode.cluster) ?? null}
+              cluster={clustering.regions.find(
+                (entry) => entry.id === clustering.regionOf(selectedNode),
+              ) ?? null}
               neighbors={selectedNeighbors}
               onSelectNeighbor={followNeighbor}
               queryHit={selectedQueryHit}

@@ -786,11 +786,11 @@ The **Display** panel (top left) collapses out of the way and holds three groups
 
 **Show** turns the region labels and the similarity links on and off.
 
-**Filter** offers **Unconnected** when some conversations have no close relative anywhere else in
+**Filter** offers **Standalone** when some conversations have no close relative anywhere else in
 the index. Those are the one-off pieces of knowledge - work that connects to nothing you have done
 since, which makes them both the easiest to forget and the most worth writing down. They are
 invisible in a dense map until you ask for them, and the group is hidden entirely when everything
-is linked.
+is related, so its appearing at all means something.
 
 Position and links are not equally precise, and the surface says so rather than letting you assume:
 **links are exact** (computed in the embedding's full dimensionality), while **position is

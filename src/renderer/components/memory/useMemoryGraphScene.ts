@@ -100,6 +100,8 @@ interface UseMemoryGraphSceneOptions {
   /** Rebuild key. The projection's signature: a new one means new geometry. */
   signature: string;
   edgeColor: string;
+  /** A node's region at the ACTIVE granularity, for the edge tint. */
+  regionOf: (node: MemoryGraphNode) => number;
   /** Runs inside every rendered frame, after the camera has been updated and
    *  before the draw - where DOM label positions are written. Kept out of React
    *  state on purpose: this runs at frame rate. */
@@ -111,7 +113,7 @@ interface UseMemoryGraphSceneOptions {
 
 export function useMemoryGraphScene(options: UseMemoryGraphSceneOptions): MemoryGraphSceneHandle {
   const {
-    canvasRef, containerRef, nodes, edges, signature, edgeColor, onFrame,
+    canvasRef, containerRef, nodes, edges, signature, edgeColor, regionOf, onFrame,
     insets = NO_VIEWPORT_INSETS,
   } = options;
 
@@ -224,7 +226,7 @@ export function useMemoryGraphScene(options: UseMemoryGraphSceneOptions): Memory
 
     let scene: MemoryGraphScene;
     try {
-      scene = createMemoryGraphScene({ canvas, nodes, edges, edgeColor });
+      scene = createMemoryGraphScene({ canvas, nodes, edges, edgeColor, regionOf });
     } catch (error) {
       // `new WebGLRenderer` throws when a context cannot be acquired. Release
       // the slot immediately: holding a reservation for a context we never got

@@ -44,7 +44,12 @@ import {
 } from './memory-graph-scene';
 import { HoverTip } from '../HoverTip';
 import { humanizeModelId } from '../../../shared/model-id';
-import type { MemoryGraphCluster, MemoryGraphProjection } from '../../../shared/types';
+import type {
+  MemoryGraphCluster,
+  MemoryGraphGranularity,
+  MemoryGraphProjection,
+} from '../../../shared/types';
+import { DEFAULT_GRANULARITY, resolveClustering } from './active-clustering';
 
 /** How nodes are tinted. Each answers a different question, which is why they
  *  are modes rather than layers. */
@@ -71,6 +76,8 @@ export interface MemoryGraphCanvasProps {
   /** Pixels of the canvas the floating panels cover, so the camera can aim at
    *  the part of it the user can actually see. */
   chromeInsets?: ViewportInsets;
+  /** Which shipped carve-up of the map is on screen. */
+  granularity?: MemoryGraphGranularity;
 }
 
 /**
@@ -254,10 +261,19 @@ export function MemoryGraphCanvas({
   showLabels = true,
   showTitles = true,
   colorMode = 'cluster',
+  granularity = DEFAULT_GRANULARITY,
   chromeInsets,
 }: MemoryGraphCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  // One answer to "which region is this node in", rather than one per call site.
+  const clustering = useMemo(
+    () => resolveClustering(projection, granularity),
+    [projection, granularity],
+  );
+  const regions = clustering.regions;
+  const regionOf = clustering.regionOf;
+
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   /** Region pill under the cursor, when no node or title is. */
   const [hoveredRegion, setHoveredRegion] = useState<number | null>(null);
@@ -270,12 +286,12 @@ export function MemoryGraphCanvas({
   // state for the same reason the scene is imperative.
   const labelRefs = useRef<Map<number, HTMLDivElement | null>>(new Map());
   const labelWorldPositions = useMemo(
-    () => projection.clusters.map((cluster) => new Vector3(
+    () => regions.map((cluster) => new Vector3(
       (cluster.x - 0.5) * WORLD_SIZE,
       (cluster.y - 0.5) * WORLD_SIZE,
       (cluster.z - 0.5) * WORLD_SIZE,
     )),
-    [projection.clusters],
+    [regions],
   );
   const showLabelsRef = useRef(showLabels);
   showLabelsRef.current = showLabels;
@@ -360,7 +376,7 @@ export function MemoryGraphCanvas({
     const candidates = regionCandidatesRef.current;
     candidates.length = 0;
     for (let index = 0; index < labelWorldPositions.length; index += 1) {
-      const cluster = projection.clusters[index];
+      const cluster = regions[index];
       if (!cluster) continue;
       if (!showLabelsRef.current || !visibleClustersRef.current.has(cluster.id)) continue;
       const world = labelWorldPositions[index];
@@ -413,12 +429,12 @@ export function MemoryGraphCanvas({
 
     // Everything that did not get placed is hidden explicitly, including the
     // ones dropped for colliding.
-    for (const cluster of projection.clusters) {
+    for (const cluster of regions) {
       if (placedIds.has(cluster.id)) continue;
       const element = labelRefs.current.get(cluster.id);
       if (element) element.style.opacity = '0';
     }
-  }, [labelWorldPositions, projection.clusters]);
+  }, [labelWorldPositions, regions]);
 
   /**
    * Place the node titles for this frame.
@@ -636,6 +652,7 @@ export function MemoryGraphCanvas({
     edges: projection.edges,
     signature: projection.signature,
     edgeColor,
+    regionOf,
     onFrame: positionOverlays,
     insets: framingInsets,
   });
@@ -711,7 +728,7 @@ export function MemoryGraphCanvas({
       if (isLit || isSelected) {
         color = accentTriplet;
       } else if (colorMode === 'cluster') {
-        color = toLinearTriplet(`hsl(${clusterHue(node.cluster)} 62% 62%)`);
+        color = toLinearTriplet(`hsl(${clusterHue(regionOf(node))} 62% 62%)`);
       } else if (colorMode === 'recency') {
         // Bright and warm for recent, dim and cool for old.
         const rank = recencyRank[index];
@@ -766,7 +783,7 @@ export function MemoryGraphCanvas({
     });
   }, [
     projection.nodes, highlighted, selectedIndex, hoveredIndex, colorMode,
-    recencyRank, maxChunkCount, degrees, maxDegree,
+    recencyRank, maxChunkCount, degrees, maxDegree, regionOf,
   ]);
 
   useEffect(() => {
@@ -776,7 +793,7 @@ export function MemoryGraphCanvas({
     const visibleNodes = new Set<number>();
     for (let index = 0; index < styles.length; index += 1) {
       if (styles[index].alpha > 0) {
-        visible.add(projection.nodes[index].cluster);
+        visible.add(regionOf(projection.nodes[index]));
         visibleNodes.add(index);
       }
     }
@@ -787,7 +804,7 @@ export function MemoryGraphCanvas({
 
     graph.scene?.setNodeStyles(styles);
     requestRender();
-  }, [styles, projection.nodes, graph.scene, requestRender]);
+  }, [styles, projection.nodes, graph.scene, requestRender, regionOf]);
 
   useEffect(() => {
     graph.scene?.setEdgeOpacity(showEdges ? 0.14 : 0);
@@ -929,7 +946,7 @@ export function MemoryGraphCanvas({
           ratio, theme-aware, selectable, and no texture atlas to manage. Their
           transforms are written by `positionLabels` inside the frame loop. */}
       <div className="pointer-events-none absolute inset-0" aria-hidden={!showLabels}>
-        {projection.clusters.map((cluster) => (
+        {regions.map((cluster) => (
           <ClusterLabel
             key={cluster.id}
             cluster={cluster}
@@ -965,7 +982,8 @@ export function MemoryGraphCanvas({
 
       {hoveredIndex === null && hoveredRegion !== null ? (
         <RegionHoverCard
-          cluster={projection.clusters.find((entry) => entry.id === hoveredRegion) ?? null}
+          cluster={regions.find((entry) => entry.id === hoveredRegion) ?? null}
+          regionOf={regionOf}
           nodes={projection.nodes}
           x={pointer.x}
           y={pointer.y}
@@ -977,8 +995,8 @@ export function MemoryGraphCanvas({
       {hoveredIndex !== null ? (
         <HoverCard
           node={projection.nodes[hoveredIndex]}
-          cluster={projection.clusters.find(
-            (entry) => entry.id === projection.nodes[hoveredIndex].cluster,
+          cluster={regions.find(
+            (entry) => entry.id === regionOf(projection.nodes[hoveredIndex]),
           ) ?? null}
           x={pointer.x}
           y={pointer.y}
@@ -1261,6 +1279,7 @@ function HoverFact({ label, value }: { label: string; value: string }) {
  */
 function RegionHoverCard({
   cluster,
+  regionOf,
   nodes,
   x,
   y,
@@ -1268,6 +1287,9 @@ function RegionHoverCard({
   containerHeight,
 }: {
   cluster: MemoryGraphCluster | null;
+  /** Passed in rather than read off the node: which carve-up is on screen is
+   *  the caller's choice. */
+  regionOf: (node: MemoryGraphProjection['nodes'][number]) => number;
   nodes: MemoryGraphProjection['nodes'];
   x: number;
   y: number;
@@ -1284,7 +1306,7 @@ function RegionHoverCard({
     let earliest = Number.POSITIVE_INFINITY;
     let latest = 0;
     for (const node of nodes) {
-      if (node.cluster !== cluster.id) continue;
+      if (regionOf(node) !== cluster.id) continue;
       count += 1;
       if (node.outcome === 'done') done += 1;
       costUsd += node.costUsd ?? 0;
@@ -1296,7 +1318,7 @@ function RegionHoverCard({
       }
     }
     return { count, done, costUsd, tokens, durationMs, earliest, latest };
-  }, [cluster, nodes]);
+  }, [cluster, nodes, regionOf]);
 
   if (!cluster || !summary || summary.count === 0) return null;
 

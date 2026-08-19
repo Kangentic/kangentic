@@ -168,6 +168,10 @@ export interface MemoryGraphSceneOptions {
   edges: ReadonlyArray<MemoryGraphEdge>;
   /** Link colour, read from the theme by the caller (never hardcoded here). */
   edgeColor: string;
+  /** A node's region at the ACTIVE granularity. Passed in rather than read off
+   *  the node, because which of the shipped clusterings is on screen is the
+   *  caller's choice. */
+  regionOf: (node: MemoryGraphNode) => number;
 }
 
 export interface MemoryGraphScene {
@@ -796,7 +800,7 @@ export function buildEdgeStrengths(
 }
 
 export function createMemoryGraphScene(options: MemoryGraphSceneOptions): MemoryGraphScene {
-  const { canvas, nodes, edges, edgeColor } = options;
+  const { canvas, nodes, edges, edgeColor, regionOf } = options;
 
   const renderer = new WebGLRenderer({
     canvas,
@@ -901,9 +905,10 @@ export function createMemoryGraphScene(options: MemoryGraphSceneOptions): Memory
   for (let index = 0; index < edges.length; index += 1) {
     const from = nodes[edges[index].source];
     const to = nodes[edges[index].target];
-    const shared = from && to && from.cluster === to.cluster;
-    if (shared) {
-      tint.setHSL(clusterHue(from.cluster) / 360, 0.62, 0.62);
+    const fromRegion = from ? regionOf(from) : -1;
+    const toRegion = to ? regionOf(to) : -2;
+    if (from && to && fromRegion === toRegion) {
+      tint.setHSL(clusterHue(fromRegion) / 360, 0.62, 0.62);
     } else {
       tint.copy(neutral);
     }

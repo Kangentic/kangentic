@@ -29,12 +29,12 @@ import { CountBadge } from '../CountBadge';
 import { Select } from '../settings/shared';
 import type { MemoryGraphColorMode } from './MemoryGraphCanvas';
 import { clusterHue } from './memory-graph-scene';
-import type { MemoryCoverageSummary } from '../../../shared/types';
+import type { MemoryCoverageSummary, MemoryGraphGranularity } from '../../../shared/types';
 import { PanelRow, InfoHint, formatBytes } from './PanelRow';
 
 /** Which conversations are drawn. Structural rather than a facet of the data,
  *  which is why it stays its own control below the three facet rows. */
-export type MemoryGraphFilter = 'all' | 'unconnected';
+export type MemoryGraphFilter = 'all' | 'standalone';
 
 /** How far back a conversation's last activity may be. */
 export type MemoryGraphTimeWindow = 'any' | '7d' | '30d' | '90d';
@@ -90,7 +90,7 @@ export function facetsAreEmpty(facets: MemoryGraphFacets): boolean {
  * Which facet rows have anything to offer on THIS corpus.
  *
  * A control that can only ever return the same set is worse than no control -
- * the rule the Unconnected toggle already followed, generalized. Time is the
+ * the rule the Standalone toggle already followed, generalized. Time is the
  * subtle one: if every conversation is inside the narrowest window then all
  * three windows and "Any time" select identically, so the row is dead even
  * though the timestamps exist.
@@ -159,7 +159,9 @@ export interface MemoryGraphControlsProps {
   regions: ReadonlyArray<{ id: number; label: string; count: number }>;
   /** Hidden entirely when zero: a filter that can only ever do nothing is worse
    *  than no filter. */
-  unconnectedCount: number;
+  standaloneCount: number;
+  granularity: MemoryGraphGranularity;
+  onGranularityChange: (granularity: MemoryGraphGranularity) => void;
   coverage: MemoryCoverageSummary;
   semanticAvailable: boolean;
   edgeCount: number;
@@ -295,7 +297,9 @@ export function MemoryGraphControls({
   onFacetsChange,
   facetAvailability,
   regions,
-  unconnectedCount,
+  standaloneCount,
+  granularity,
+  onGranularityChange,
   coverage,
   semanticAvailable,
   edgeCount,
@@ -394,7 +398,7 @@ export function MemoryGraphControls({
             </div>
           </div>
 
-          {unconnectedCount > 0 || anyFacetAvailable ? (
+          {standaloneCount > 0 || anyFacetAvailable ? (
             <div>
               <GroupLabel hint="Scope the map to part of the index. Filters combine with each other and with search, so each one narrows what the others left.">
                 Filter
@@ -445,19 +449,37 @@ export function MemoryGraphControls({
             </div>
           ) : null}
 
-          {unconnectedCount > 0 ? (
+          <div>
+            <GroupLabel hint="How finely the map is cut into regions. All three are computed with the map, so switching is instant. No measurement can pick this for you: every way of scoring a clustering prefers the fewest regions on a cloud this continuous, so it is a question of how much detail you want to read.">
+              Detail
+            </GroupLabel>
+            <SegmentedControl
+              options={[
+                { value: 'coarse', label: 'Coarse', title: 'Fewer, broader regions' },
+                { value: 'balanced', label: 'Balanced', title: 'The default: regions of roughly 10 to 26 conversations' },
+                { value: 'fine', label: 'Fine', title: 'More, narrower regions' },
+              ]}
+              value={granularity}
+              onChange={onGranularityChange}
+              ariaLabel="Region detail"
+              testId="memory-graph-granularity"
+              fullWidth
+            />
+          </div>
+
+          {standaloneCount > 0 ? (
             <div className={anyFacetAvailable ? '-mt-1.5' : undefined}>
               <SegmentedControl
                 options={[
                   { value: 'all', label: 'All' },
                   {
-                    value: 'unconnected',
-                    label: 'Unconnected',
-                    title: 'Conversations with no close relative anywhere else in the index - one-off knowledge that is easy to lose',
+                    value: 'standalone',
+                    label: 'Standalone',
+                    title: 'Conversations with no close relative in the index - work nothing since has built on',
                     // Attached to the option rather than sitting in the map's
                     // chrome, so the number reads as "how many this filter would
                     // show" instead of as another statistic in a row of them.
-                    trailing: <CountBadge count={unconnectedCount} variant="muted" />,
+                    trailing: <CountBadge count={standaloneCount} variant="muted" />,
                   },
                 ]}
                 value={filter}

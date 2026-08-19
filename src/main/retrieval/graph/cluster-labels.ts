@@ -196,6 +196,26 @@ const MAX_REGIONS = 24;
  */
 const TARGET_MIN_ROWS_PER_REGION = 10;
 const TARGET_MAX_ROWS_PER_REGION = 26;
+
+/** How many conversations a region should hold, at each granularity. */
+export interface RegionSizeBand {
+  readonly min: number;
+  readonly max: number;
+}
+
+/**
+ * The three bands the granularity control offers.
+ *
+ * Balanced is the measured default above. The other two are the same judgement
+ * made differently: how much detail does the reader want, which no separation
+ * score can answer for them. The spans overlap deliberately - a hard boundary
+ * between them would make one conversation's arrival flip the whole map.
+ */
+export const REGION_SIZE_BANDS: Record<'coarse' | 'balanced' | 'fine', RegionSizeBand> = {
+  coarse: { min: 18, max: 45 },
+  balanced: { min: TARGET_MIN_ROWS_PER_REGION, max: TARGET_MAX_ROWS_PER_REGION },
+  fine: { min: 6, max: 15 },
+};
 /** Rows the k sweep runs over. The sweep only has to pick a NUMBER, and it is
  *  quadratic-ish in candidates, so it reads a deterministic prefix rather than
  *  the whole corpus; the final clustering still runs over everything. */
@@ -225,6 +245,7 @@ export function chooseClusterCount(
   rowCount: number,
   points?: Float32Array,
   components = DEFAULT_COMPONENTS,
+  band: RegionSizeBand = REGION_SIZE_BANDS.balanced,
 ): number {
   if (rowCount < 6) return Math.max(1, Math.min(rowCount, 2));
 
@@ -235,11 +256,11 @@ export function chooseClusterCount(
   // a limit of 24.
   const floor = Math.min(
     MAX_REGIONS,
-    Math.max(MIN_REGIONS, Math.ceil(rowCount / TARGET_MAX_ROWS_PER_REGION)),
+    Math.max(MIN_REGIONS, Math.ceil(rowCount / band.max)),
   );
   const ceiling = Math.max(
     floor,
-    Math.min(MAX_REGIONS, Math.floor(rowCount / TARGET_MIN_ROWS_PER_REGION)),
+    Math.min(MAX_REGIONS, Math.floor(rowCount / band.min)),
   );
   // No layout to read (callers that only know the size, and the tests that pin
   // the range): the middle of the band is the best available guess.
@@ -251,8 +272,8 @@ export function chooseClusterCount(
   // Without this scaling a 5000-row corpus sampled at 500 would judge every
   // region ten times too small and reject every candidate.
   const scale = sampleRows / rowCount;
-  const sampleMin = Math.max(2, Math.round(TARGET_MIN_ROWS_PER_REGION * scale));
-  const sampleMax = Math.max(sampleMin + 1, Math.round(TARGET_MAX_ROWS_PER_REGION * scale));
+  const sampleMin = Math.max(2, Math.round(band.min * scale));
+  const sampleMax = Math.max(sampleMin + 1, Math.round(band.max * scale));
 
   let bestCount = floor;
   let fewestViolations = Infinity;

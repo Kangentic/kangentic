@@ -12,6 +12,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { MEMORY_GRAPH_GRANULARITIES } from '../../src/shared/types';
 import {
   runProjectionPass,
   computeProjectionSleepMs,
@@ -204,6 +205,12 @@ describe('cache signature', () => {
   });
 });
 
+/** The default carve-up. The projection ships every granularity, so a test that
+ *  cares about labels has to say which one it means. */
+function balancedRegions(projection: { clusterings: Array<{ granularity: string; regions: Array<{ id: number; label: string; size: number }> }> }) {
+  return projection.clusterings.find((entry) => entry.granularity === 'balanced')?.regions ?? [];
+}
+
 describe('projection pass', () => {
   it('pools chunks per document and lays out one node each', async () => {
     const { store } = scriptedStore(makeChunks(12, 4));
@@ -244,7 +251,10 @@ describe('projection pass', () => {
       expect(node.effort).toBe('high');
       expect(node.lastActivityMs).toBe(1_700_000_000_000);
       expect(node.outcome).toBe('done');
-      expect(node.cluster).toBeGreaterThanOrEqual(0);
+      // Every granularity places every node somewhere.
+      for (const granularity of MEMORY_GRAPH_GRANULARITIES) {
+        expect(node.clusters[granularity]).toBeGreaterThanOrEqual(0);
+      }
     }
   });
 
@@ -327,7 +337,7 @@ describe('projection pass', () => {
     const result = await runProjectionPass({
       store, modelTag: MODEL_TAG, dimensions: DIMENSIONS, delay: instantDelay,
     });
-    const labels = result!.projection.clusters.map((cluster) => cluster.label).join(' ');
+    const labels = balancedRegions(result!.projection).map((cluster) => cluster.label).join(' ');
     expect(labels).not.toContain('pruneorphaneddirectories');
     expect(labels).toMatch(/prune|orphaned|directories|spawn|agent/);
   });
@@ -351,7 +361,7 @@ describe('projection pass', () => {
     const result = await runProjectionPass({
       store, modelTag: MODEL_TAG, dimensions: DIMENSIONS, delay: instantDelay,
     });
-    const labels = result!.projection.clusters.map((cluster) => cluster.label).join(' ');
+    const labels = balancedRegions(result!.projection).map((cluster) => cluster.label).join(' ');
     expect(labels).not.toContain('agent');
     expect(labels).not.toContain('project');
     expect(labels).toMatch(/terminal|scrollback|sqlite|migration/);
@@ -363,12 +373,13 @@ describe('projection pass', () => {
       store, modelTag: MODEL_TAG, dimensions: DIMENSIONS, delay: instantDelay,
     });
 
-    const { clusters, nodes } = result!.projection;
+    const { nodes } = result!.projection;
+    const clusters = balancedRegions(result!.projection);
     expect(clusters.length).toBeGreaterThan(1);
     // Every node belongs to a cluster that exists, and sizes account for all
     // of them - a node in a phantom cluster would render under no label.
     const clusterIds = new Set(clusters.map((cluster) => cluster.id));
-    for (const node of nodes) expect(clusterIds.has(node.cluster)).toBe(true);
+    for (const node of nodes) expect(clusterIds.has(node.clusters.balanced)).toBe(true);
     expect(clusters.reduce((total, cluster) => total + cluster.size, 0)).toBe(nodes.length);
     for (const cluster of clusters) {
       expect(cluster.label.length).toBeGreaterThan(0);

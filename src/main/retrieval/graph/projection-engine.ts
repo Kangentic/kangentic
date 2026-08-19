@@ -28,6 +28,7 @@
 
 import type { RetrievalStore } from '../retrieval-store';
 import type { MemoryGraphNode, MemoryGraphProjection } from '../../../shared/types';
+import { MEMORY_GRAPH_GRANULARITIES } from '../../../shared/types';
 import {
   createMeanPoolAccumulator,
   accumulateVector,
@@ -42,7 +43,12 @@ import {
 } from './projection-math';
 import { computeCosineNeighbors, buildSimilarityEdgesByQuantile } from './neighbor-edges';
 import { agentRegistry } from '../../agent/agent-registry';
-import { assignClusters, chooseClusterCount, labelClusters } from './cluster-labels';
+import {
+  assignClusters,
+  chooseClusterCount,
+  labelClusters,
+  REGION_SIZE_BANDS,
+} from './cluster-labels';
 
 /** `memory_meta` keys. Versioned so a format change invalidates rather than
  *  mis-parses an old blob.
@@ -56,7 +62,8 @@ import { assignClusters, chooseClusterCount, labelClusters } from './cluster-lab
  *  ten-region carve-up forever, since the freshness signature does not move for
  *  it either; v7 added each conversation's duration, cost and token count, and
  *  changed the region labels to phrases; v8 replaced the region-count score with
- *  a size rule, which again changes the CLUSTERS rather than the shape). All
+ *  a size rule, which again changes the CLUSTERS rather than the shape; v9 ships
+ *  all three granularities, which IS a shape change). All
  *  bumps are load-bearing rather than cosmetic: the freshness signature is
  *  `${modelTag}:${chunkCount}:${maxChunkId}`, which a shape change does not move
  *  at all, so an older blob would have matched, been served, and rendered with
@@ -67,7 +74,7 @@ import { assignClusters, chooseClusterCount, labelClusters } from './cluster-lab
  *  The SUMS key deliberately stays at v1. It carries the per-document vector sums
  *  and `lastScannedChunkId`, which the new layout does not change, so keeping it
  *  makes the rebuild the ~330ms kNN + embed rather than the ~62s full vector scan. */
-export const PROJECTION_CACHE_KEY = 'graph_projection_v8';
+export const PROJECTION_CACHE_KEY = 'graph_projection_v9';
 export const PROJECTION_SUMS_KEY = 'graph_projection_sums_v1';
 
 /**
@@ -253,18 +260,36 @@ export async function runProjectionPass(
   // blob the eye sees. While a flat view existed this had to be done in 2D and
   // reused in 3D, and the reuse only held to ~76% member contiguity; assigning
   // here removes that compromise rather than managing it.
-  const clusterAssignment = assignClusters(
-    positions,
-    pooled.rowCount,
-    // The LAYOUT is handed in so the count is chosen by clustering at each
-    // candidate and measuring the regions it actually produces. Without it this
-    // can only guess from the size, which is what carved nine regions out of 150
-    // conversations because there were 150 of them.
-    chooseClusterCount(pooled.rowCount, positions, LAYOUT_COMPONENTS),
-    LAYOUT_COMPONENTS,
-  );
+  //
+  // ALL THREE granularities, computed together. How finely to cut the map is a
+  // readability preference rather than a fact - every separation score is
+  // maximised by the fewest regions on a continuous cloud - so the reader gets
+  // the choice. Computing them here rather than storing the choice means
+  // switching costs nothing: this is milliseconds of k-means over a layout that
+  // already exists, against a full projection rebuild behind a display control.
   const labelSources = pooled.docKeys.map((docKey) => metadataByDocKey.get(docKey)?.title ?? '');
-  const clusters = labelClusters(clusterAssignment, labelSources, positions, LAYOUT_COMPONENTS);
+  const clusterings = MEMORY_GRAPH_GRANULARITIES.map((granularity) => {
+    const assignment = assignClusters(
+      positions,
+      pooled.rowCount,
+      // The LAYOUT is handed in so the count is chosen by clustering at each
+      // candidate and measuring the regions it actually produces. Without it
+      // this can only guess from the size, which is what carved nine regions out
+      // of 150 conversations because there were 150 of them.
+      chooseClusterCount(
+        pooled.rowCount,
+        positions,
+        LAYOUT_COMPONENTS,
+        REGION_SIZE_BANDS[granularity],
+      ),
+      LAYOUT_COMPONENTS,
+    );
+    return {
+      granularity,
+      assignment,
+      regions: labelClusters(assignment, labelSources, positions, LAYOUT_COMPONENTS),
+    };
+  });
 
   const nodes: GraphNodePosition[] = pooled.docKeys.map((docKey, row) => {
     const metadata = metadataByDocKey.get(docKey);
@@ -292,7 +317,9 @@ export async function runProjectionPass(
       tokens: metadata?.tokens ? metadata.tokens : null,
       lastActivityMs: metadata?.lastActivityMs ?? null,
       outcome: (metadata?.outcome as GraphNodePosition['outcome']) ?? null,
-      cluster: clusterAssignment.clusterOf[row] ?? 0,
+      clusters: Object.fromEntries(
+        clusterings.map((entry) => [entry.granularity, entry.assignment.clusterOf[row] ?? 0]),
+      ) as GraphNodePosition['clusters'],
     };
   });
 
@@ -309,7 +336,10 @@ export async function runProjectionPass(
 
   const projection: GraphProjection = {
     nodes,
-    clusters,
+    clusterings: clusterings.map((entry) => ({
+      granularity: entry.granularity,
+      regions: entry.regions,
+    })),
     edges: buildSimilarityEdgesByQuantile(neighbors, EDGE_KEEP_FRACTION),
     // The SAME kNN the edges are pruned from, kept unpruned. Computing it is
     // already paid for; throwing it away is what made the panel's "closest

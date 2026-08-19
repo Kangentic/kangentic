@@ -85,13 +85,16 @@ function projectionLiteral(nodeCount: number): string {
         effort: 'high',
         lastActivityMs: 1700000000000 + i * 1000,
         outcome: i % 3 === 0 ? 'done' : (i % 3 === 1 ? 'active' : 'done'),
-        cluster: i % 2,
+        // Every granularity, since the projection ships all three. The
+        // fixture keeps them DIFFERENT so a test cannot pass by reading the
+        // wrong one: coarse merges what balanced splits.
+        clusters: { coarse: 0, balanced: i % 2, fine: i % 3 },
       };
       nodes.push(node);
     }
     return {
       nodes: nodes,
-      // Only nodes 0 and 1 are linked, so everything else is "unconnected" -
+      // Only nodes 0 and 1 are linked, so the DRAWN mesh is sparse -
       // which is what the isolated-node affordance is for.
       edges: [{ source: 0, target: 1, similarity: 0.9 }],
       // Deliberately RICHER than the drawn edge list: the panel reads these,
@@ -103,9 +106,28 @@ function projectionLiteral(nodeCount: number): string {
           { index: (i + 3) % nodes.length, similarity: 0.88 }
         ];
       }),
-      clusters: [
-        { id: 0, label: 'terminal / pty', x: 0.25, y: 0.25, z: 0.3, size: Math.ceil(${nodeCount} / 2) },
-        { id: 1, label: 'database / schema', x: 0.75, y: 0.75, z: 0.7, size: Math.floor(${nodeCount} / 2) }
+      clusterings: [
+        {
+          granularity: 'coarse',
+          regions: [
+            { id: 0, label: 'everything', x: 0.5, y: 0.5, z: 0.5, size: ${nodeCount} }
+          ]
+        },
+        {
+          granularity: 'balanced',
+          regions: [
+            { id: 0, label: 'terminal / pty', x: 0.25, y: 0.25, z: 0.3, size: Math.ceil(${nodeCount} / 2) },
+            { id: 1, label: 'database / schema', x: 0.75, y: 0.75, z: 0.7, size: Math.floor(${nodeCount} / 2) }
+          ]
+        },
+        {
+          granularity: 'fine',
+          regions: [
+            { id: 0, label: 'terminal / pty', x: 0.2, y: 0.2, z: 0.3, size: Math.ceil(${nodeCount} / 3) },
+            { id: 1, label: 'database / schema', x: 0.5, y: 0.5, z: 0.5, size: Math.ceil(${nodeCount} / 3) },
+            { id: 2, label: 'relay / mobile', x: 0.8, y: 0.8, z: 0.7, size: Math.floor(${nodeCount} / 3) }
+          ]
+        }
       ],
       signature: 'sig-1', modelTag: 'bge-base@q8-cls', dimensions: 768,
       storageBytes: 3_221_225_472,
@@ -520,20 +542,29 @@ test.describe('memory graph', () => {
   });
 
   test('surfaces conversations with no close relative', async () => {
-    // One-off knowledge is invisible in a dense map until you ask for it, and
-    // it is the most worth writing down. The fixture links only nodes 0 and 1,
-    // so 18 of 20 are unconnected.
-    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(20) }));
+    // One-off knowledge is invisible in a dense map until you ask for it, and it
+    // is the most worth writing down.
+    //
+    // The count comes from the EXACT neighbour lists, not from the drawn mesh.
+    // Reading the mesh is what made this claim "37 of 150" on the real corpus,
+    // every one of which had six exact neighbours listed in the panel beside it.
+    const twoOneOffs = `(function () {
+      var base = ${projectionLiteral(20)};
+      base.nodeNeighbors[3] = [{ index: 7, similarity: 0.71 }];
+      base.nodeNeighbors[11] = [{ index: 2, similarity: 0.77 }];
+      return base;
+    })()`;
+    const { browser, page } = await launchWithState(snapshotScript({ projection: twoOneOffs }));
     try {
       await openMemoryGraph(page);
       const filter = page.locator('[data-testid="memory-graph-filter"]');
       // Presented as a FILTER with a count attached, rather than as another
       // statistic in a row of statistics.
-      await expect(filter).toContainText('Unconnected');
-      await expect(filter).toContainText('18');
-      const unconnected = filter.getByRole('radio', { name: /Unconnected/ });
-      await unconnected.click();
-      await expect(unconnected).toHaveAttribute('aria-checked', 'true');
+      await expect(filter).toContainText('Standalone');
+      await expect(filter).toContainText('2');
+      const standalone = filter.getByRole('radio', { name: /Standalone/ });
+      await standalone.click();
+      await expect(standalone).toHaveAttribute('aria-checked', 'true');
     } finally {
       await browser.close();
     }
@@ -737,13 +768,15 @@ test.describe('memory graph', () => {
   });
 
   test('hides a filter row that could only ever do nothing', async () => {
-    // The Unconnected rule, generalized. One region means the region picker can
+    // The Standalone rule, generalized. One region means the region picker can
     // only return everything, and one outcome means the same of that row.
     const oneRegion = `(function () {
       var base = ${projectionLiteral(6)};
-      base.clusters = [base.clusters[0]];
+      base.clusterings = base.clusterings.map(function (entry) {
+        return { granularity: entry.granularity, regions: [entry.regions[0]] };
+      });
       base.nodes.forEach(function (node) {
-        node.cluster = 0;
+        node.clusters = { coarse: 0, balanced: 0, fine: 0 };
         node.outcome = 'done';
       });
       return base;
@@ -758,6 +791,40 @@ test.describe('memory graph', () => {
       // Time survives: the fixture's timestamps are years old, so the windows
       // still select different sets.
       await expect(page.locator('[data-testid="memory-graph-filter-since"]')).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('offers a detail control that recuts the map without a rebuild', async () => {
+    // How finely to cut is a preference, not a measurement: every way of scoring
+    // a clustering prefers the fewest regions on a cloud this continuous. All
+    // three carve-ups ship with the projection, so switching is a lookup - the
+    // test proves that by asserting the regions change with NO refresh request.
+    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(12) }));
+    try {
+      await openMemoryGraph(page);
+      const detail = page.locator('[data-testid="memory-graph-granularity"]');
+      await expect(detail).toBeVisible();
+
+      // Balanced by default: the fixture's balanced carve-up has two regions.
+      const regionRows = page.locator('[data-testid="memory-graph-region-row"]');
+      await expect(regionRows).toHaveCount(2);
+
+      await detail.getByRole('radio', { name: 'Fine' }).click();
+      await expect(regionRows).toHaveCount(3);
+
+      // Coarse merges the fixture into ONE region, and the panel then hides
+      // itself - the same rule every other filter follows, since a picker that
+      // can only return everything is worse than no picker.
+      await detail.getByRole('radio', { name: 'Coarse' }).click();
+      await expect(page.locator('[data-testid="memory-graph-regions-toggle"]')).toHaveCount(0);
+
+      // No rebuild was asked for: the whole point of shipping all three.
+      const refreshes = await page.evaluate(
+        () => (window as unknown as { __mockRefreshGraphCalls?: unknown[] }).__mockRefreshGraphCalls?.length ?? 0,
+      );
+      expect(refreshes).toBe(0);
     } finally {
       await browser.close();
     }
@@ -881,8 +948,10 @@ test.describe('memory graph', () => {
     }
   });
 
-  test('hides the unconnected affordance when everything is linked', async () => {
-    // A toggle that can only ever do nothing is worse than no toggle.
+  test('hides the standalone affordance when everything is related', async () => {
+    // A toggle that can only ever do nothing is worse than no toggle - and the
+    // default fixture is exactly that case, since every node's best match is the
+    // same 0.95 and none of them is an outlier from the rest.
     const everythingLinked = `(function () {
       var base = ${projectionLiteral(4)};
       base.edges = [
