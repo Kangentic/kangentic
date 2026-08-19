@@ -716,4 +716,53 @@ test.describe('New Backlog Task Dialog - Header, Delete, Meta', () => {
     await page.locator('button:has-text("Discard")').click();
     await expect(dialog).not.toBeVisible();
   });
+
+  // Red-green for the confirmDelete/confirmDiscard early-return in
+  // handleSubmit: the delete confirm uses variant="danger", which disables
+  // ConfirmDialog's own Enter-to-confirm handler (see ConfirmDialog.tsx), so
+  // nothing upstream prevents a stray Enter keypress from reaching the
+  // form's native submit while the confirm sits on top. Without the guard,
+  // a title input that still (or again) has focus would submit the edited
+  // title over the pending delete and silently close everything out from
+  // under the confirmation the user is looking at.
+  test('Enter while the delete confirm is open does not submit the edit form over it', async () => {
+    await openBacklogView(page);
+    await createBacklogItem(page, 'Enter guard item');
+    await expect(page.locator('text=Enter guard item')).toBeVisible();
+
+    await page.locator('[data-testid="edit-item-btn"]').click();
+    const editDialog = page.locator('[data-testid="new-backlog-task-dialog"]');
+    await expect(editDialog).toBeVisible();
+
+    const titleInput = editDialog.locator('[data-testid="backlog-task-title"]');
+    await titleInput.fill('Enter guard item CHANGED');
+
+    await editDialog.locator('[data-testid="delete-backlog-task-btn"]').click();
+    const confirmHeading = page.locator('h3:has-text("Delete backlog task")');
+    await expect(confirmHeading).toBeVisible();
+
+    // Re-focus the title input (trapFocus only intercepts Tab, not an
+    // explicit .focus() call) to reproduce the exact scenario the guard
+    // defends against, then press Enter.
+    await titleInput.focus();
+    await titleInput.press('Enter');
+
+    // Nothing must have happened: a submit would call onUpdate, which
+    // resolves and closes the whole dialog tree (including this confirm,
+    // since it is a sibling unmounted along with the rest on onClose). Both
+    // stay open and the title is untouched.
+    await expect(confirmHeading).toBeVisible();
+    await expect(editDialog).toBeVisible();
+    await expect(titleInput).toHaveValue('Enter guard item CHANGED');
+
+    // Clean up: cancel the confirm, then discard the still-dirty edit.
+    await page.locator('button:has-text("Cancel")').last().click();
+    await expect(confirmHeading).not.toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('h3:has-text("Discard unsaved changes?")')).toBeVisible();
+    await page.locator('button:has-text("Discard")').click();
+    await expect(editDialog).not.toBeVisible();
+    await expect(page.locator('text=Enter guard item CHANGED')).not.toBeVisible();
+    await expect(page.locator('text=Enter guard item')).toBeVisible();
+  });
 });
