@@ -327,6 +327,43 @@ describe('BACKLOG_PROMOTE AbortError cleanup', () => {
     expect(mockSpawnAgent).not.toHaveBeenCalled();
   });
 
+  it('notifies via notifySpawnBlocked with step="checkout" for a NON-abort branch-checkout failure in Phase 2', async () => {
+    // Mirrors the worktree-failure test above one stage later: the worktree
+    // succeeds (the beforeEach default), and it is ensureTaskBranchCheckout
+    // that fails here. The step literal is what the renderer uses to tell
+    // this notice apart from a worktree failure, so pinning it is the point
+    // of this test - a count-only assertion would stay green against a
+    // copy-pasted 'worktree' at this call site. Red-green: flip backlog.ts's
+    // 'checkout' literal at this call site to 'worktree' and this assertion
+    // reds.
+    const checkoutError = new Error('fatal: another agent is running in that directory');
+    mockEnsureTaskBranchCheckout.mockImplementation(async () => {
+      throw checkoutError;
+    });
+
+    const handler = capturedHandlers.get(IPC.BACKLOG_PROMOTE);
+    if (!handler) throw new Error('BACKLOG_PROMOTE handler not registered');
+
+    await handler(null, {
+      backlogTaskIds: ['backlog-1'],
+      targetSwimlaneId: 'lane-doing',
+    });
+
+    // Phase 2 is a fire-and-forget IIFE; wait for the notify call to land.
+    await vi.waitFor(() => {
+      expect(mockNotifySpawnBlocked).toHaveBeenCalledTimes(1);
+    });
+
+    const [, notifiedTask, step, notifiedError, notifiedProjectId] = mockNotifySpawnBlocked.mock.calls[0];
+    expect((notifiedTask as { id: string }).id).toBe('task-promoted');
+    expect(step).toBe('checkout');
+    expect(notifiedError).toBe(checkoutError);
+    expect(notifiedProjectId).toBe(context.currentProjectId);
+
+    // A checkout failure must stop the chain right there: no spawn.
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+  });
+
   it('threads projectId, projectPath, fromSwimlaneId, and the target swimlane into the Phase 2 spawnAgent call', async () => {
     // Regression guard: the promote path's spawnAgent call must carry the
     // resolved projectId/projectPath so the spawn preamble (first-spawn

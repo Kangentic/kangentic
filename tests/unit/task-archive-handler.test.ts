@@ -511,7 +511,8 @@ describe('task-archive handlers', () => {
       });
 
       mockEnsureTaskWorktree.mockResolvedValue(null);
-      mockEnsureTaskBranchCheckout.mockRejectedValue(new Error('branch locked by active session'));
+      const checkoutError = new Error('branch locked by active session');
+      mockEnsureTaskBranchCheckout.mockRejectedValue(checkoutError);
 
       const result = await callHandler(IPC.TASK_UNARCHIVE, {
         id: 'task-checkout-err',
@@ -521,6 +522,20 @@ describe('task-archive handlers', () => {
       expect(result).toMatchObject({ id: 'task-checkout-err' });
       expect(mockCreateTransitionEngine).not.toHaveBeenCalled();
       expect(mockSpawnAgent).not.toHaveBeenCalled();
+
+      // Same notice contract as the worktree-error branch above, at the other
+      // git step. The step literal is what discriminates the two notices in
+      // the renderer, so pinning it here catches a copy-pasted 'worktree' at
+      // this call site the same way task-create-handler.test.ts already does
+      // for TASK_CREATE. Red-green: flip task-archive.ts's 'checkout' literal
+      // at this call site to 'worktree' and this assertion reds.
+      expect(mockNotifySpawnBlocked).toHaveBeenCalledTimes(1);
+      const [, checkoutNotifiedTask, checkoutStep, checkoutNotifiedError, checkoutNotifiedProjectId] =
+        mockNotifySpawnBlocked.mock.calls[0];
+      expect((checkoutNotifiedTask as { id: string }).id).toBe('task-checkout-err');
+      expect(checkoutStep).toBe('checkout');
+      expect(checkoutNotifiedError).toBe(checkoutError);
+      expect(checkoutNotifiedProjectId).toBe(context.currentProjectId);
     });
 
     it('skips transition engine when no role=done lane exists', async () => {
@@ -919,6 +934,61 @@ describe('task-archive handlers', () => {
       const [, failedTask, step] = mockNotifySpawnBlocked.mock.calls[0];
       expect((failedTask as { id: string }).id).toBe('task-fail-worktree');
       expect(step).toBe('worktree');
+    });
+
+    it('continues processing subsequent tasks when one branch checkout fails, notifying with step="checkout"', async () => {
+      // Same shape as the worktree-failure test above, one stage later: both
+      // tasks clear ensureTaskWorktree, and it is ensureTaskBranchCheckout
+      // that fails for the first task only. Mirrors the mockRejectedValueOnce
+      // / mockResolvedValueOnce pairing above rather than mockRejectedValue,
+      // so the second task's checkout still succeeds and the assertion that
+      // it reaches spawnAgent actually proves the catch is per-task, not
+      // batch-fatal.
+      const tasks = [
+        createMockTask('task-fail-checkout'),
+        createMockTask('task-succeed-checkout'),
+      ];
+      taskRepo = createMockTaskRepo(tasks);
+      taskRepo.getById.mockImplementation((id: string) => {
+        const found = tasks.find((t) => t.id === id);
+        return found ? { ...found, session_id: id === 'task-succeed-checkout' ? 'session-ok' : null } : null;
+      });
+      mockGetProjectRepos.mockReturnValue({
+        tasks: taskRepo,
+        swimlanes: swimlaneRepo,
+        actions: { getTransitionsFor: vi.fn(() => []) },
+        attachments: { deleteByTaskId: vi.fn() },
+      });
+
+      mockEnsureTaskWorktree.mockResolvedValue(null);
+      const checkoutError = new Error('branch locked by active session');
+      mockEnsureTaskBranchCheckout
+        .mockRejectedValueOnce(checkoutError)
+        .mockResolvedValueOnce(undefined);
+
+      const engine = createMockEngine();
+      mockCreateTransitionEngine.mockReturnValue(engine);
+
+      await expect(
+        callHandler(IPC.TASK_BULK_UNARCHIVE, ['task-fail-checkout', 'task-succeed-checkout'], 'lane-doing'),
+      ).resolves.toBeUndefined();
+
+      // The second task still proceeded to ensureTaskBranchCheckout.
+      expect(mockEnsureTaskBranchCheckout).toHaveBeenCalledTimes(2);
+      // ...and all the way through to spawnAgent - the signal that the catch
+      // block for the first task's failure is per-task, not batch-fatal.
+      expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+
+      // The step literal is what discriminates this notice from a worktree
+      // failure in the renderer. Red-green: flip task-archive.ts's 'checkout'
+      // literal at this bulk call site to 'worktree' and this assertion reds;
+      // before this change existed at all, no test in this suite exercised
+      // the bulk checkout-failure branch, so the whole test reds against the
+      // pre-fix handler's silent console-only catch.
+      expect(mockNotifySpawnBlocked).toHaveBeenCalledTimes(1);
+      const [, failedCheckoutTask, checkoutStep] = mockNotifySpawnBlocked.mock.calls[0];
+      expect((failedCheckoutTask as { id: string }).id).toBe('task-fail-checkout');
+      expect(checkoutStep).toBe('checkout');
     });
 
     it('processes each task with an independent lock (different ids do not block each other)', async () => {

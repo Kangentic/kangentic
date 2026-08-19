@@ -122,6 +122,12 @@ beforeEach(() => {
   mockEnsureTaskWorktree.mockImplementation(async () => {
     throw new Error('stop here - worktree phase reached');
   });
+  // vi.clearAllMocks() clears call records, not implementations, so a test
+  // that overrides this with mockRejectedValue (the checkout-failure describe
+  // block below) would otherwise leak a rejecting checkout into every test
+  // that runs after it. Re-establish the default success implementation every
+  // time, the same way backlog-promote-abort.test.ts resets its git mocks.
+  mockEnsureTaskBranchCheckout.mockImplementation(async () => {});
 });
 
 describe('autoSpawnForTask: the auto_spawn guard reads the profile-folded lane', () => {
@@ -243,5 +249,34 @@ describe('autoSpawnForTask: a failed worktree tells the user', () => {
 
     // A column that simply does not auto-spawn is not a failure to report.
     expect(mockNotifySpawnBlocked).not.toHaveBeenCalled();
+  });
+});
+
+describe('autoSpawnForTask: a failed branch checkout also tells the user', () => {
+  it('notifies with step="checkout", stamped with the EXPLICIT projectId, distinctly from a worktree failure', async () => {
+    mockSwimlaneGetById.mockReturnValue(makeLane({ auto_spawn: true }));
+    mockTaskGetById.mockReturnValue({
+      id: TASK_ID, title: 'Branch locked', swimlane_id: LANE_ID, profile_id: null,
+    });
+    // The file-level beforeEach makes ensureTaskWorktree throw by default so
+    // the guard-only tests above stop before any git work. This test needs
+    // the worktree phase to SUCCEED so control reaches the checkout phase,
+    // which is where this notice's call site lives.
+    mockEnsureTaskWorktree.mockResolvedValue(null);
+    const checkoutError = new Error('fatal: another agent is running in that directory');
+    mockEnsureTaskBranchCheckout.mockRejectedValue(checkoutError);
+
+    await autoSpawnForTask(makeContext([]), 'proj-1', { id: TASK_ID, title: 'Branch locked' }, LANE_ID);
+
+    expect(mockNotifySpawnBlocked).toHaveBeenCalledTimes(1);
+    const [, , step, error, projectId] = mockNotifySpawnBlocked.mock.calls[0];
+    // The step literal is what the renderer/dialog uses to tell a checkout
+    // failure from a worktree one - a copy-pasted 'worktree' at this call
+    // site would silently mislabel every MCP auto-spawn checkout failure.
+    // Red-green: flip agent-spawn.ts's 'checkout' literal at this call site
+    // to 'worktree' and this assertion reds.
+    expect(step).toBe('checkout');
+    expect(error).toBe(checkoutError);
+    expect(projectId).toBe('proj-1');
   });
 });

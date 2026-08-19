@@ -140,4 +140,69 @@ test.describe('task:spawnBlocked push', () => {
       await browser.close();
     }
   });
+
+  test('wraps a long unbroken token instead of growing the toast past its width cap', async () => {
+    const { browser, page } = await launch();
+    try {
+      // A spaced message - or even a slash/backslash-separated path - wraps at
+      // its natural break points regardless of the CSS below (Chromium treats
+      // both '/' and '\' as line-break opportunities per the Unicode line-
+      // breaking rules), and proves nothing about `break-words` /
+      // `overflow-wrap`. The bug this guards needs one long, GENUINELY
+      // unbreakable run - no space, slash, backslash, or hyphen anywhere in
+      // it - which only wraps mid-token if `overflow-wrap` (`break-words`) is
+      // applied, and only wraps INSIDE a bounded box if every flex ancestor
+      // can actually shrink below its content size (`min-w-0`). Without both,
+      // a real failure reached ~1800px on a wide monitor and still lost its
+      // tail - either the toast grows past its cap, or its content overflows
+      // the cap invisibly.
+      const longUnbrokenToken = 'a1b2c3d4e5f6'.repeat(30);
+      const longPathMessage =
+        `Cannot switch branches in a checkout named ${longUnbrokenToken}: "Task A" is already `
+        + 'running an agent there. Stop that task, or enable worktree mode so each task gets its own checkout.';
+
+      await page.evaluate(
+        ([message, projectId, title]) => {
+          (window as unknown as {
+            __mockFireTaskSpawnBlocked: (taskId: string, taskTitle: string, message: string, projectId: string) => void;
+          }).__mockFireTaskSpawnBlocked(`task-blocked-${title}`, title, message, projectId);
+        },
+        [longPathMessage, CURRENT_PROJECT_ID, 'Long Path Task'] as const,
+      );
+
+      const toast = page.locator('[data-testid="toast"]').filter({ hasText: 'Long Path Task' });
+      await expect(toast).toBeVisible({ timeout: 5000 });
+
+      // The CSS cap is 34rem (544px at the default 16px root font-size - index.css
+      // carries no root-level font-size override). 600 leaves headroom for the
+      // border and accent bar without being loose enough to pass a broken cap.
+      // This alone only proves the max-w cap holds on the toast's OWN box -
+      // removing `min-w-0` / `break-words` does not move this number, because
+      // the root also carries `overflow-hidden`, so an unbreakable child that
+      // cannot shrink overflows invisibly rather than growing the box. The
+      // overflow check below is what actually exercises those two classes.
+      const box = await toast.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.width).toBeLessThan(600);
+
+      // `min-w-0` (every flex ancestor down to the message span can shrink
+      // below its content's intrinsic width) and `break-words` (the token
+      // wraps mid-run instead of demanding room for the whole thing) are what
+      // keep the message from overflowing once the box itself is capped.
+      // Measured on the ROOT (the element carrying `overflow-hidden`, not the
+      // span): a flex item's rendered box sizes itself to fit its own
+      // min-content and so never reports self-overflow, even when it cannot
+      // wrap - the overflow instead shows up here, as the root's scrollWidth
+      // (the true content extent) exceeding its max-w-capped clientWidth. An
+      // overflow boolean, not a pixel-exact metric, so it stays inside the
+      // geometry-tolerance rule for cross-platform tests.
+      const rootOverflow = await toast.evaluate((element) => ({
+        scrollWidth: element.scrollWidth,
+        clientWidth: element.clientWidth,
+      }));
+      expect(rootOverflow.scrollWidth).toBeLessThanOrEqual(rootOverflow.clientWidth + 2);
+    } finally {
+      await browser.close();
+    }
+  });
 });
