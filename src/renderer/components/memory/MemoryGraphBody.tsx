@@ -32,13 +32,11 @@ import {
   TIME_WINDOW_DAYS,
   OUTCOME_ORDER,
   facetsAreEmpty,
-  type MemoryGraphFilter,
   type MemoryGraphFacets,
   type FacetAvailability,
 } from './MemoryGraphControls';
 
-import { findStandalone } from './standalone-conversations';
-import { DEFAULT_GRANULARITY, resolveClustering } from './active-clustering';
+import { availableGranularities, DEFAULT_GRANULARITY, resolveClustering } from './active-clustering';
 import type { MemoryGraphGranularity } from '../../../shared/types';
 import { useChromeInsets } from './useChromeInsets';
 import { MemoryNodeDetail, openConversationForNode } from './MemoryNodeDetail';
@@ -84,7 +82,6 @@ export function MemoryGraphBody() {
    * a display control at all.
    */
   const [granularity, setGranularity] = useState<MemoryGraphGranularity>(DEFAULT_GRANULARITY);
-  const [filter, setFilter] = useState<MemoryGraphFilter>('all');
   const [facets, setFacets] = useState<MemoryGraphFacets>(EMPTY_FACETS);
   /**
    * "Explore from here": the map scoped to one conversation and its exact links.
@@ -169,19 +166,6 @@ export function MemoryGraphBody() {
     return map;
   }, [nodes]);
 
-  /**
-   * Conversations with no similarity link to anything else.
-   *
-   * These are the one-off pieces of knowledge - work that connects to nothing
-   * you have done since. That makes them both the easiest to forget and the
-   * most worth writing down, and they are invisible in a dense map until you
-   * ask for them.
-   */
-  const standaloneIndices = useMemo(
-    () => findStandalone(snapshot?.projection?.nodeNeighbors, nodes?.length ?? 0),
-    [snapshot, nodes],
-  );
-
   /** Indices matching the current query, in result order. */
   const queryIndices = useMemo(() => {
     if (!query) return null;
@@ -253,6 +237,24 @@ export function MemoryGraphBody() {
     );
   }, [projectionSignature]);
 
+  /** Which detail settings this corpus can actually express - often only one,
+   *  in which case the control does not render. */
+  const grainOptions = useMemo(
+    () => availableGranularities(snapshot?.projection),
+    [snapshot],
+  );
+
+  /**
+   * A selection can outlive the corpus that offered it: switch to a project
+   * whose index is too small to cut three ways and "Fine" is still selected with
+   * no control left on screen to explain it. Heal back to the default, the same
+   * way a stale outcome filter does.
+   */
+  useEffect(() => {
+    if (grainOptions.length === 0 || grainOptions.includes(granularity)) return;
+    setGranularity(DEFAULT_GRANULARITY);
+  }, [grainOptions, granularity]);
+
   const clustering = useMemo(
     () => resolveClustering(snapshot?.projection ?? { clusterings: [] }, granularity),
     [snapshot, granularity],
@@ -302,7 +304,6 @@ export function MemoryGraphBody() {
     let asked: Set<number> | undefined;
     if (exploreIndices) asked = exploreIndices;
     else if (queryIndices) asked = queryIndices;
-    else if (filter === 'standalone' && standaloneIndices.size > 0) asked = standaloneIndices;
 
     // Facets INTERSECT rather than replace. They answer a different question
     // from search - "which part of the index" versus "which conversations" - so
@@ -313,7 +314,7 @@ export function MemoryGraphBody() {
     const both = new Set<number>();
     for (const index of asked) if (facetIndices.has(index)) both.add(index);
     return both;
-  }, [exploreIndices, queryIndices, filter, standaloneIndices, facetIndices]);
+  }, [exploreIndices, queryIndices, facetIndices]);
 
   /**
    * The search hits that survive the facet rows.
@@ -534,15 +535,13 @@ export function MemoryGraphBody() {
           onShowTitlesChange={setShowTitles}
           showEdges={showEdges}
           onShowEdgesChange={setShowEdges}
-          filter={filter}
-          onFilterChange={setFilter}
           facets={facets}
           onFacetsChange={setFacets}
           facetAvailability={facetAvailability}
           regions={regions}
           granularity={granularity}
+          availableGranularities={grainOptions}
           onGranularityChange={setGranularity}
-          standaloneCount={standaloneIndices.size}
           coverage={snapshot.coverage}
           semanticAvailable={snapshot.semanticAvailable}
           edgeCount={projection.edges.length}
@@ -554,7 +553,7 @@ export function MemoryGraphBody() {
       {/* The detail panel wins the rail when a node is selected: it is the more
           specific answer, and the search results stay one click away on the map. */}
       {selectedNode ? (
-        <div data-graph-chrome="right" className="absolute bottom-3 right-3 top-3 z-10 w-80">
+        <div data-graph-chrome="right" className="overlay-panel-in absolute bottom-3 right-3 top-3 z-10 w-80">
           <div className={`h-full overflow-hidden rounded-lg border border-edge bg-surface-raised/85 shadow-xl backdrop-blur-md`}>
             <MemoryNodeDetail
               node={selectedNode}
@@ -572,7 +571,7 @@ export function MemoryGraphBody() {
           </div>
         </div>
       ) : query ? (
-        <div data-graph-chrome="right" className="absolute bottom-3 right-3 top-3 z-10 w-80">
+        <div data-graph-chrome="right" className="overlay-panel-in absolute bottom-3 right-3 top-3 z-10 w-80">
           <aside
             className="h-full overflow-y-auto rounded-lg border border-edge bg-surface-raised/85 shadow-xl backdrop-blur-md"
             data-testid="memory-graph-results"

@@ -25,16 +25,11 @@
 import { useState } from 'react';
 import { ChevronDown, Database, Shapes, SlidersHorizontal } from 'lucide-react';
 import { SegmentedControl } from '../SegmentedControl';
-import { CountBadge } from '../CountBadge';
 import { Select } from '../settings/shared';
 import type { MemoryGraphColorMode } from './MemoryGraphCanvas';
 import { clusterHue } from './memory-graph-scene';
 import type { MemoryCoverageSummary, MemoryGraphGranularity } from '../../../shared/types';
 import { PanelRow, InfoHint, formatBytes } from './PanelRow';
-
-/** Which conversations are drawn. Structural rather than a facet of the data,
- *  which is why it stays its own control below the three facet rows. */
-export type MemoryGraphFilter = 'all' | 'standalone';
 
 /** How far back a conversation's last activity may be. */
 export type MemoryGraphTimeWindow = 'any' | '7d' | '30d' | '90d';
@@ -89,8 +84,8 @@ export function facetsAreEmpty(facets: MemoryGraphFacets): boolean {
 /**
  * Which facet rows have anything to offer on THIS corpus.
  *
- * A control that can only ever return the same set is worse than no control -
- * the rule the Standalone toggle already followed, generalized. Time is the
+ * A control that can only ever return the same set is worse than no control.
+ * Time is the
  * subtle one: if every conversation is inside the narrowest window then all
  * three windows and "Any time" select identically, so the row is dead even
  * though the timestamps exist.
@@ -140,6 +135,21 @@ const COLOR_OPTIONS: ReadonlyArray<{ value: MemoryGraphColorMode; label: string;
   { value: 'size', label: 'Length', hint: 'Brighter is a longer conversation' },
 ];
 
+/** Keyed rather than listed, so the rendered set is driven by what the corpus
+ *  can actually express while the copy stays in one place. */
+const GRANULARITY_OPTIONS: Record<
+  MemoryGraphGranularity,
+  { value: MemoryGraphGranularity; label: string; title: string }
+> = {
+  coarse: { value: 'coarse', label: 'Coarse', title: 'Fewer, broader regions' },
+  balanced: {
+    value: 'balanced',
+    label: 'Balanced',
+    title: 'The default: regions of roughly 10 to 26 conversations',
+  },
+  fine: { value: 'fine', label: 'Fine', title: 'More, narrower regions' },
+};
+
 export interface MemoryGraphControlsProps {
   colorMode: MemoryGraphColorMode;
   onColorModeChange: (mode: MemoryGraphColorMode) => void;
@@ -149,18 +159,15 @@ export interface MemoryGraphControlsProps {
   onShowTitlesChange: (show: boolean) => void;
   showEdges: boolean;
   onShowEdgesChange: (show: boolean) => void;
-  filter: MemoryGraphFilter;
-  onFilterChange: (filter: MemoryGraphFilter) => void;
   facets: MemoryGraphFacets;
   onFacetsChange: (facets: MemoryGraphFacets) => void;
   /** Rows with nothing to offer on this corpus are not rendered at all. */
   facetAvailability: FacetAvailability;
   /** One entry per region, in cluster order, for the Regions section. */
   regions: ReadonlyArray<{ id: number; label: string; count: number }>;
-  /** Hidden entirely when zero: a filter that can only ever do nothing is worse
-   *  than no filter. */
-  standaloneCount: number;
   granularity: MemoryGraphGranularity;
+  /** Only those that cut the map differently - see `availableGranularities`. */
+  availableGranularities: MemoryGraphGranularity[];
   onGranularityChange: (granularity: MemoryGraphGranularity) => void;
   coverage: MemoryCoverageSummary;
   semanticAvailable: boolean;
@@ -291,14 +298,12 @@ export function MemoryGraphControls({
   onShowTitlesChange,
   showEdges,
   onShowEdgesChange,
-  filter,
-  onFilterChange,
   facets,
   onFacetsChange,
   facetAvailability,
   regions,
-  standaloneCount,
   granularity,
+  availableGranularities,
   onGranularityChange,
   coverage,
   semanticAvailable,
@@ -398,7 +403,7 @@ export function MemoryGraphControls({
             </div>
           </div>
 
-          {standaloneCount > 0 || anyFacetAvailable ? (
+          {anyFacetAvailable ? (
             <div>
               <GroupLabel hint="Scope the map to part of the index. Filters combine with each other and with search, so each one narrows what the others left.">
                 Filter
@@ -449,47 +454,25 @@ export function MemoryGraphControls({
             </div>
           ) : null}
 
-          <div>
-            <GroupLabel hint="How finely the map is cut into regions. All three are computed with the map, so switching is instant. No measurement can pick this for you: every way of scoring a clustering prefers the fewest regions on a cloud this continuous, so it is a question of how much detail you want to read.">
-              Detail
-            </GroupLabel>
-            <SegmentedControl
-              options={[
-                { value: 'coarse', label: 'Coarse', title: 'Fewer, broader regions' },
-                { value: 'balanced', label: 'Balanced', title: 'The default: regions of roughly 10 to 26 conversations' },
-                { value: 'fine', label: 'Fine', title: 'More, narrower regions' },
-              ]}
-              value={granularity}
-              onChange={onGranularityChange}
-              ariaLabel="Region detail"
-              testId="memory-graph-granularity"
-              fullWidth
-            />
-          </div>
-
-          {standaloneCount > 0 ? (
-            <div className={anyFacetAvailable ? '-mt-1.5' : undefined}>
+          {/* Only the granularities that produce a DIFFERENT map. On a small
+              index every band clamps to the same region count, so the other
+              chips would repaint the identical picture. */}
+          {availableGranularities.length > 1 ? (
+            <div>
+              <GroupLabel hint="How finely the map is cut into regions. Each one is computed with the map, so switching is instant. No measurement can pick this for you: every way of scoring a clustering prefers the fewest regions on a cloud this continuous, so it is a question of how much detail you want to read.">
+                Detail
+              </GroupLabel>
               <SegmentedControl
-                options={[
-                  { value: 'all', label: 'All' },
-                  {
-                    value: 'standalone',
-                    label: 'Standalone',
-                    title: 'Conversations with no close relative in the index - work nothing since has built on',
-                    // Attached to the option rather than sitting in the map's
-                    // chrome, so the number reads as "how many this filter would
-                    // show" instead of as another statistic in a row of them.
-                    trailing: <CountBadge count={standaloneCount} variant="muted" />,
-                  },
-                ]}
-                value={filter}
-                onChange={onFilterChange}
-                ariaLabel="Filter conversations"
-                testId="memory-graph-filter"
+                options={availableGranularities.map((value) => GRANULARITY_OPTIONS[value])}
+                value={granularity}
+                onChange={onGranularityChange}
+                ariaLabel="Region detail"
+                testId="memory-graph-granularity"
                 fullWidth
               />
             </div>
           ) : null}
+
         </div>
       ) : null}
 

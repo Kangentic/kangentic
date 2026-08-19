@@ -90,6 +90,16 @@ export interface MemoryGraphCanvasProps {
  * and stop being pickable (see `memory-graph-scene.ts`), so what is left on
  * screen is the query's own structure.
  */
+/**
+ * How far the pointer may travel before a click becomes a camera drag.
+ *
+ * Zero is what shipped, via "any pointermove between down and up is a drag",
+ * and it is too strict for a mouse: the hand moves a pixel on the way to
+ * releasing a button, so genuine clicks were read as drags. It is also too
+ * loose in the other direction, because that test never ran when the move
+ * arrived in the same tick as the press.
+ */
+const DRAG_SLOP_PX = 3;
 const HIDDEN_ALPHA = 0;
 /** How brightly a conversation with no links draws, relative to a connected one. */
 const ISOLATED_ALPHA = 0.55;
@@ -281,6 +291,8 @@ export function MemoryGraphCanvas({
   const [pointer, setPointer] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const didDragRef = useRef(false);
+  /** What the press landed on, resolved at press time. Null between gestures. */
+  const pressRef = useRef<{ x: number; y: number; hit: number | null } | null>(null);
 
   // Cluster label elements, positioned imperatively each frame. Refs rather than
   // state for the same reason the scene is imperative.
@@ -896,14 +908,31 @@ export function MemoryGraphCanvas({
         style={{ cursor: isDragging ? 'grabbing' : hoveredIndex !== null ? 'pointer' : 'grab' }}
         onPointerDown={(event) => {
           didDragRef.current = false;
+          pressRef.current = {
+            x: event.clientX,
+            y: event.clientY,
+            // Resolved HERE, against the frame the user actually clicked on.
+            // Re-picking at release instead was the bug: `setViewOffset` and the
+            // camera's own damping both keep moving between down and up, so the
+            // same screen point can miss the node it hit a moment earlier - the
+            // panel opened on the press and vanished on the release.
+            hit: pickIncludingTitle(event.clientX, event.clientY, pickAt(event.clientX, event.clientY)),
+          };
           setIsDragging(true);
           canvasRef.current?.focus();
-          const hit = pickIncludingTitle(event.clientX, event.clientY, pickAt(event.clientX, event.clientY));
-          if (hit !== null) onSelect?.(hit);
         }}
         onPointerMove={(event) => {
-          if (isDragging) {
-            didDragRef.current = true;
+          const press = pressRef.current;
+          if (press) {
+            // A real drag, not a hand tremor. `isDragging` is React state set in
+            // the pointerdown handler, so a move arriving in the same tick still
+            // reads the OLD value - the slop test has to run off the ref.
+            if (
+              Math.abs(event.clientX - press.x) > DRAG_SLOP_PX
+              || Math.abs(event.clientY - press.y) > DRAG_SLOP_PX
+            ) {
+              didDragRef.current = true;
+            }
             return;
           }
           // The region PILL wins, and that ordering is not arbitrary: the pill is
@@ -922,16 +951,19 @@ export function MemoryGraphCanvas({
           if (hit !== hoveredIndex) setHoveredIndex(hit);
           if (region !== hoveredRegion) setHoveredRegion(region);
         }}
-        onPointerUp={(event) => {
-          // A drag that ended on empty space is not a deselect gesture; only a
-          // clean click is. Otherwise flying the camera clears the detail panel.
-          const released = pickIncludingTitle(event.clientX, event.clientY, pickAt(event.clientX, event.clientY));
-          if (!didDragRef.current && released === null) {
-            onSelect?.(null);
-          }
+        onPointerUp={() => {
+          // Selection is decided once, by the whole gesture: what the press
+          // landed on, and whether the pointer then travelled. A drag is camera
+          // work and changes nothing; a clean click selects what it hit, or
+          // clears when it hit nothing.
+          const press = pressRef.current;
+          pressRef.current = null;
           setIsDragging(false);
+          if (!press || didDragRef.current) return;
+          onSelect?.(press.hit);
         }}
         onPointerLeave={() => {
+          pressRef.current = null;
           setIsDragging(false);
           setHoveredIndex(null);
           setHoveredRegion(null);
@@ -1241,11 +1273,26 @@ export function formatCost(usd: number): string {
   return `$${usd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-/** Cost with its token count folded in, since the two answer one question and
- *  a reader comparing them should not have to look at two rows to do it. */
-export function formatCostWithTokens(usd: number | null, tokens: number | null): string | null {
-  if (usd === null && tokens === null) return null;
-  if (usd === null) return `${formatCompactCount(tokens ?? 0)} tokens`;
+/**
+ * Cost with its token count folded in, since the two answer one question and
+ * a reader comparing them should not have to look at two rows to do it.
+ *
+ * The guards are `== null`, not `=== null`, and that is load-bearing rather
+ * than stylistic. The parameters are typed `number | null` because that is what
+ * the projection's SQL produces, but a node reaching here is a JSON payload:
+ * a field that is absent rather than null arrives as `undefined`, sails past a
+ * `=== null` check, and reaches `usd.toLocaleString()`. That throws inside
+ * `HoverCard`, `PanelErrorBoundary` catches it, and the ENTIRE Memory Graph
+ * unmounts - which reads as the panel flashing open and vanishing, not as a
+ * crash. Hovering one conversation whose session never recorded a cost took the
+ * whole surface down.
+ */
+export function formatCostWithTokens(
+  usd: number | null | undefined,
+  tokens: number | null | undefined,
+): string | null {
+  if (usd == null && tokens == null) return null;
+  if (usd == null) return `${formatCompactCount(tokens ?? 0)} tokens`;
   const cost = formatCost(usd);
   return tokens ? `${cost} (${formatCompactCount(tokens)} tokens)` : cost;
 }

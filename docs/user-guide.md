@@ -773,7 +773,7 @@ graph - the same when the graph is detached into its own window. **Explore from 
 the map to that conversation and everything it links to, with a breadcrumb under the search box to
 take it back.
 
-The **Display** panel (top left) collapses out of the way and holds three groups.
+The **Display** panel (top left) collapses out of the way and holds the groups below.
 
 **Colour** switches what the points encode:
 
@@ -786,11 +786,17 @@ The **Display** panel (top left) collapses out of the way and holds three groups
 
 **Show** turns the region labels and the similarity links on and off.
 
-**Filter** offers **Standalone** when some conversations have no close relative anywhere else in
-the index. Those are the one-off pieces of knowledge - work that connects to nothing you have done
-since, which makes them both the easiest to forget and the most worth writing down. They are
-invisible in a dense map until you ask for them, and the group is hidden entirely when everything
-is related, so its appearing at all means something.
+**Detail** cuts the map into more or fewer regions: **Coarse**, **Balanced** (the default) or
+**Fine**. All three are computed with the map, so switching between them is instant and never
+rebuilds anything. There is no measurement that can pick this for you - every way of scoring a
+clustering prefers the fewest regions on a cloud this continuous - so it is simply how much detail
+you want to read. How finely the map CAN be cut is bounded by the index: on a small one every
+setting produces the same regions, and the control hides itself rather than offering choices that
+repaint the identical picture.
+
+**Filter** scopes the map by time and by outcome. Each row appears only when it can actually
+narrow this index: the time row is hidden when every conversation falls inside the shortest window,
+and an outcome appears only if something in the index has it.
 
 Position and links are not equally precise, and the surface says so rather than letting you assume:
 **links are exact** (computed in the embedding's full dimensionality), while **position is

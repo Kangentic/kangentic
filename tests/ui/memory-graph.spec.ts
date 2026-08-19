@@ -67,7 +67,32 @@ function snapshotScript(options: {
 }
 
 /** A projection in the shipped shape: one 3D position per node and cluster. */
-function projectionLiteral(nodeCount: number): string {
+/**
+ * `collapsed` models a SMALL index, where every band clamps to the same region
+ * count and all three granularities are one identical carve-up. Four of the
+ * eight real projects measured behave this way, so it is the common case rather
+ * than an edge one.
+ */
+function projectionLiteral(nodeCount: number, options: { collapsed?: boolean } = {}): string {
+  if (options.collapsed) {
+    const regions = `[
+      { id: 0, label: 'terminal / pty', x: 0.25, y: 0.25, z: 0.3, size: Math.ceil(${nodeCount} / 2) },
+      { id: 1, label: 'database / schema', x: 0.75, y: 0.75, z: 0.7, size: Math.floor(${nodeCount} / 2) }
+    ]`;
+    return projectionLiteral(nodeCount)
+      .replace(
+        "clusters: { coarse: 0, balanced: i % 2, fine: i % 3 },",
+        'clusters: { coarse: i % 2, balanced: i % 2, fine: i % 2 },',
+      )
+      .replace(
+        /clusterings: \[[\s\S]*?\n      \],/,
+        `clusterings: [
+        { granularity: 'coarse', regions: ${regions} },
+        { granularity: 'balanced', regions: ${regions} },
+        { granularity: 'fine', regions: ${regions} }
+      ],`,
+      );
+  }
   return `(function () {
     var nodes = [];
     for (var i = 0; i < ${nodeCount}; i++) {
@@ -541,35 +566,6 @@ test.describe('memory graph', () => {
     }
   });
 
-  test('surfaces conversations with no close relative', async () => {
-    // One-off knowledge is invisible in a dense map until you ask for it, and it
-    // is the most worth writing down.
-    //
-    // The count comes from the EXACT neighbour lists, not from the drawn mesh.
-    // Reading the mesh is what made this claim "37 of 150" on the real corpus,
-    // every one of which had six exact neighbours listed in the panel beside it.
-    const twoOneOffs = `(function () {
-      var base = ${projectionLiteral(20)};
-      base.nodeNeighbors[3] = [{ index: 7, similarity: 0.71 }];
-      base.nodeNeighbors[11] = [{ index: 2, similarity: 0.77 }];
-      return base;
-    })()`;
-    const { browser, page } = await launchWithState(snapshotScript({ projection: twoOneOffs }));
-    try {
-      await openMemoryGraph(page);
-      const filter = page.locator('[data-testid="memory-graph-filter"]');
-      // Presented as a FILTER with a count attached, rather than as another
-      // statistic in a row of statistics.
-      await expect(filter).toContainText('Standalone');
-      await expect(filter).toContainText('2');
-      const standalone = filter.getByRole('radio', { name: /Standalone/ });
-      await standalone.click();
-      await expect(standalone).toHaveAttribute('aria-checked', 'true');
-    } finally {
-      await browser.close();
-    }
-  });
-
   test('offers region, time and outcome filters', async () => {
     // The same dimensions the colour modes encode. Before this you could colour
     // by Outcome and SEE that some work was abandoned, but could not scope the
@@ -768,7 +764,7 @@ test.describe('memory graph', () => {
   });
 
   test('hides a filter row that could only ever do nothing', async () => {
-    // The Standalone rule, generalized. One region means the region picker can
+    // One region means the region picker can
     // only return everything, and one outcome means the same of that row.
     const oneRegion = `(function () {
       var base = ${projectionLiteral(6)};
@@ -825,6 +821,68 @@ test.describe('memory graph', () => {
         () => (window as unknown as { __mockRefreshGraphCalls?: unknown[] }).__mockRefreshGraphCalls?.length ?? 0,
       );
       expect(refreshes).toBe(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('hides the detail control when every setting is the same map', async () => {
+    // How finely the map CAN be cut is bounded by the corpus, not by the
+    // control. Below roughly 55 conversations every band clamps to the same
+    // floor and all three settings resolve to one carve-up - four of the eight
+    // real projects measured do exactly this. Offering three chips that repaint
+    // the identical picture is the defect this surface already refuses
+    // elsewhere: the dead facet rows hide the same way.
+    const { browser, page } = await launchWithState(
+      snapshotScript({ projection: projectionLiteral(12, { collapsed: true }) }),
+    );
+    try {
+      await openMemoryGraph(page);
+      // The regions themselves are still there and still switchable - it is the
+      // DETAIL picker that has nothing to offer, not the map.
+      await expect(page.locator('[data-testid="memory-graph-region-row"]')).toHaveCount(2);
+      await expect(page.locator('[data-testid="memory-graph-granularity"]')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a click on the map selects, and a small hand tremor does not undo it', async () => {
+    // The reported bug: clicking a node made the detail panel flash open and
+    // vanish. Selection was decided on pointerDOWN and then RE-PICKED on
+    // pointerUP, so anything that moved the projection between the two - the
+    // camera's own damping, or a chrome re-aim - meant the release missed the
+    // node the press had hit, and the miss was read as "clicked empty space".
+    // It presented as intermittent because it depended on whether the camera
+    // happened to be settling.
+    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(12) }));
+    try {
+      await openMemoryGraph(page);
+      const title = page.locator('[data-testid="memory-graph-node-title"]').first();
+      await expect(title).toBeVisible();
+      const box = (await title.boundingBox())!;
+      const x = box.x + box.width / 2;
+      const y = box.y + box.height / 2;
+
+      // Press, wobble a pixel, release. This is a click, not a drag.
+      await page.mouse.move(x, y);
+      await page.mouse.down();
+      await page.mouse.move(x + 1, y + 1);
+      await page.mouse.up();
+
+      const detail = page.locator('[data-testid="memory-graph-detail"]');
+      await expect(detail).toBeVisible();
+      // It must still be there a moment later: the flash was an open followed by
+      // an immediate close, which an assertion on the press alone would miss.
+      await page.waitForTimeout(300);
+      await expect(detail).toBeVisible();
+
+      // And a real drag is camera work, so it must not change the selection.
+      await page.mouse.move(x, y);
+      await page.mouse.down();
+      await page.mouse.move(x + 120, y + 90, { steps: 8 });
+      await page.mouse.up();
+      await expect(detail).toBeVisible();
     } finally {
       await browser.close();
     }
@@ -943,29 +1001,6 @@ test.describe('memory graph', () => {
 
       await toggle.getByRole('radio', { name: 'Titles' }).click();
       await expect.poll(async () => (await visibleNodeTitles(page)).length).toBeGreaterThan(0);
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('hides the standalone affordance when everything is related', async () => {
-    // A toggle that can only ever do nothing is worse than no toggle - and the
-    // default fixture is exactly that case, since every node's best match is the
-    // same 0.95 and none of them is an outlier from the rest.
-    const everythingLinked = `(function () {
-      var base = ${projectionLiteral(4)};
-      base.edges = [
-        { source: 0, target: 1, similarity: 0.9 },
-        { source: 1, target: 2, similarity: 0.9 },
-        { source: 2, target: 3, similarity: 0.9 }
-      ];
-      return base;
-    })()`;
-    const { browser, page } = await launchWithState(snapshotScript({ projection: everythingLinked }));
-    try {
-      await openMemoryGraph(page);
-      await expect(page.locator('[data-testid="memory-graph-canvas"]')).toBeVisible();
-      await expect(page.locator('[data-testid="memory-graph-filter"]')).toHaveCount(0);
     } finally {
       await browser.close();
     }

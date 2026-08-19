@@ -36,6 +36,12 @@ const FUNCTION_WORDS = new Set([
   'only', 'just', 'still', 'now', 'also', 'more', 'most', 'some', 'any', 'each', 'every', 'than',
   'after', 'before', 'again', 'back', 'around', 'through', 'without', 'within',
   'across', 'about', 'between', 'during', 'against', 'because', 'where',
+  // Possessives and wh-words. Added after `mcp / move their` named a region on
+  // the real corpus: a phrase is only barred when BOTH halves are grammar, so a
+  // pronoun paired with a real word sailed through as a plausible-looking term.
+  'their', 'them', 'our', 'your', 'his', 'her', 'what', 'which', 'who', 'whose',
+  'how', 'why', 'whether', 'there', 'here', 'until', 'once', 'upon', 'being',
+  'toward', 'towards',
 ]);
 
 /**
@@ -166,8 +172,37 @@ const MIN_REGIONS = 3;
  * real 638-conversation corpus the old square-root rule already wanted 18 and
  * was being clamped to 10. Clamping is what forced unrelated work into one
  * region.
+ *
+ * Then 24, and that re-created the same failure one corpus size up. It binds
+ * from `24 x band.min` conversations - n>144 for fine, n>240 for balanced - so
+ * on a real 646-conversation index the balanced floor computed to 25, clamped to
+ * 24, and the ceiling to 24: floor equalled ceiling, the sweep below never ran,
+ * and FINE resolved to exactly the same 24. Two of the three granularities were
+ * the identical map, and balanced still carried a 44-conversation region, which
+ * is the "unrelated work filed together" complaint the size band exists to fix.
+ *
+ * 40 is measured, not chosen. Region sizes across every candidate k on that
+ * corpus:
+ *
+ *     k    max  p75  med  p25  min  ratio   <6   >26
+ *    24     44   31   25   23   15    2.9    0     9
+ *    32     33   24   21   15    4    8.3    1     4
+ *    40     31   19   15   13    4    7.8    1     2
+ *    48     27   17   13   10    3    9.0    4     1
+ *    54     26   16   12    9    1   26.0    8     0
+ *
+ * Past ~40 the split stops finding structure and starts shaving strays: one
+ * region under six conversations at k=40, four by k=48, and by k=54 the
+ * smallest region is a single conversation whose label can only name itself.
+ * Below it, balanced settles at 32 (largest region 33, not 44) and fine reaches
+ * 40, so the three granularities finally differ.
+ *
+ * Measured across all eight indexed projects on the development machine, raising
+ * this changes NOTHING on seven of them - it cannot bind until a project passes
+ * ~144 conversations. A reader who finds 40 regions too many now has Coarse,
+ * which is the escape hatch the old ceiling was standing in for.
  */
-const MAX_REGIONS = 24;
+const MAX_REGIONS = 40;
 /**
  * The size band a region must land in. This is the WHOLE selection rule.
  *
@@ -216,10 +251,22 @@ export const REGION_SIZE_BANDS: Record<'coarse' | 'balanced' | 'fine', RegionSiz
   balanced: { min: TARGET_MIN_ROWS_PER_REGION, max: TARGET_MAX_ROWS_PER_REGION },
   fine: { min: 6, max: 15 },
 };
-/** Rows the k sweep runs over. The sweep only has to pick a NUMBER, and it is
- *  quadratic-ish in candidates, so it reads a deterministic prefix rather than
- *  the whole corpus; the final clustering still runs over everything. */
-const CHOOSE_K_SAMPLE = 500;
+// The sweep below deliberately reads EVERY row.
+//
+// It used to cluster a 500-row prefix to pick the count and then cluster the
+// whole corpus with it. That prefix is in accumulator insertion order, which is
+// chunk-id order, which is roughly chronological - so on any index past 500
+// conversations the region count was decided by the OLDEST 500 and applied to
+// all of them. The comment called it a sample; it was never a sample.
+//
+// Measured on the real 646-conversation corpus: the prefix picks 20 regions for
+// coarse where the whole corpus picks 22, and the prefix's answer carries a
+// 61-conversation region against the other's 44 - the sampled answer is the one
+// that merges unrelated work, at the granularity least able to afford it. It
+// bought nothing either: sweeping everything costs 77ms against the prefix's
+// 85ms, because the candidate range narrows as the corpus grows (past
+// `MAX_REGIONS x band.max` rows the floor meets the ceiling and there is no
+// sweep left to run).
 
 /**
  * How many regions to carve the map into.
@@ -252,8 +299,8 @@ export function chooseClusterCount(
   // The band, then the score within it.
   // The floor is clamped to MAX_REGIONS FIRST. Without that, a large corpus
   // pushes the floor past the ceiling and `Math.max(floor, ...)` quietly carries
-  // it through - a 5000-conversation index asked for 193 regions and got 25 past
-  // a limit of 24.
+  // it through - a 5000-conversation index asked for 193 regions and got one
+  // more than the limit allows.
   const floor = Math.min(
     MAX_REGIONS,
     Math.max(MIN_REGIONS, Math.ceil(rowCount / band.max)),
@@ -267,23 +314,15 @@ export function chooseClusterCount(
   if (!points) return Math.round((floor + ceiling) / 2);
   if (ceiling <= floor) return floor;
 
-  const sampleRows = Math.min(rowCount, CHOOSE_K_SAMPLE);
-  // Sizes are measured on the SAMPLE, so the band has to be measured there too.
-  // Without this scaling a 5000-row corpus sampled at 500 would judge every
-  // region ten times too small and reject every candidate.
-  const scale = sampleRows / rowCount;
-  const sampleMin = Math.max(2, Math.round(band.min * scale));
-  const sampleMax = Math.max(sampleMin + 1, Math.round(band.max * scale));
-
   let bestCount = floor;
   let fewestViolations = Infinity;
   for (let candidate = floor; candidate <= ceiling; candidate += 1) {
-    const assignment = assignClusters(points, sampleRows, candidate, components);
+    const assignment = assignClusters(points, rowCount, candidate, components);
     const sizes = new Int32Array(assignment.clusterCount);
-    for (let row = 0; row < sampleRows; row += 1) sizes[assignment.clusterOf[row]] += 1;
+    for (let row = 0; row < rowCount; row += 1) sizes[assignment.clusterOf[row]] += 1;
 
     let violations = 0;
-    for (const size of sizes) if (size < sampleMin || size > sampleMax) violations += 1;
+    for (const size of sizes) if (size < band.min || size > band.max) violations += 1;
 
     // `<=` rather than `<`: candidates ascend, so a tie hands it to the LARGER
     // k. More regions at equal quality is the answer that stops distinct

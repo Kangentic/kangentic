@@ -109,7 +109,19 @@ export function MemoryNodeDetail({
           </button>
         ) : null}
 
-        <h2 className="text-sm font-semibold text-fg leading-snug">
+        {/* The title sits on its own ground rather than as the first line of the
+            block. It was `text-sm font-semibold` directly above a label/value
+            list whose values are also `font-medium text-fg`, so the SUBJECT of
+            the panel and the attributes describing it differed only by a step
+            in size - the name read as one more row and got lost. A surface
+            behind it changes the KIND of thing it is rather than its degree,
+            which is the distinction the eye resolves without working at it, and
+            it wraps where a true pill could not: these titles run to a full
+            sentence. */}
+        <h2
+          className="rounded-md border border-edge/60 bg-surface-control/60 px-2.5 py-2 text-[13px] font-semibold leading-snug text-fg"
+          data-testid="memory-graph-detail-title"
+        >
           {node.title ?? 'Untitled conversation'}
         </h2>
 

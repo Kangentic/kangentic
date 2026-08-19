@@ -153,6 +153,9 @@ export function useMemoryGraphScene(options: UseMemoryGraphSceneOptions): Memory
    * result as user-adjusted the moment it started moving.
    */
   const viewIsDefaultRef = useRef(false);
+  /** Whether the camera has taken its aim from a chrome measurement yet. The
+   *  first one lands; later ones only feed the next fit. See the effect below. */
+  const aimedRef = useRef(false);
 
   /**
    * The node the camera currently orbits around, and the map centre to hand the
@@ -346,6 +349,21 @@ export function useMemoryGraphScene(options: UseMemoryGraphSceneOptions): Memory
     const scene = sceneRef.current;
     const container = containerRef.current;
     if (!scene || !container) return;
+    // The FIRST measurement only. The panels are measured after the scene
+    // mounts, so without this the opening fit would be the one computed for a
+    // canvas with no chrome on it.
+    //
+    // Every LATER change is deliberately ignored, and that is a reversal. It
+    // used to re-aim on every chrome change, so that a rail sliding in would
+    // slide the map out from under it. In use that is the wrong trade by a wide
+    // margin: the detail rail opens on every node click, so the entire map
+    // lurched sideways each time the user selected something - while they were
+    // looking at the thing they had just clicked. A panel is an overlay; it
+    // should cover part of the view, not push it. The insets are still read at
+    // FIT time (`applyDefaultView`), so the opening frame and Reset view both
+    // still clear the chrome; only the involuntary mid-session re-aim is gone.
+    if (aimedRef.current) return;
+    aimedRef.current = true;
     scene.setSize(container.clientWidth, container.clientHeight, insets);
     if (viewIsDefaultRef.current) applyDefaultViewRef.current?.(false);
     requestRender();

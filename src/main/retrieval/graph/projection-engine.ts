@@ -74,7 +74,7 @@ import {
  *  The SUMS key deliberately stays at v1. It carries the per-document vector sums
  *  and `lastScannedChunkId`, which the new layout does not change, so keeping it
  *  makes the rebuild the ~330ms kNN + embed rather than the ~62s full vector scan. */
-export const PROJECTION_CACHE_KEY = 'graph_projection_v9';
+export const PROJECTION_CACHE_KEY = 'graph_projection_v10';
 export const PROJECTION_SUMS_KEY = 'graph_projection_sums_v1';
 
 /**

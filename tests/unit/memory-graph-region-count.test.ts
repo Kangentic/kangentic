@@ -21,6 +21,13 @@ import {
 } from '../../src/main/retrieval/graph/cluster-labels';
 
 const COMPONENTS = 3;
+/**
+ * Mirrors `MAX_REGIONS` in the source, which is deliberately not exported: the
+ * assertions below are that a hard clamp EXISTS and binds, so restating the
+ * number here means a change to it has to be made twice and thought about once.
+ * It moved 10 -> 24 -> 40 as the surface gained ways to manage many regions.
+ */
+const HARD_CEILING = 40;
 
 /** Deterministic jitter, so a run cannot pass or fail by luck. */
 function seededNoise(seed: number): () => number {
@@ -78,6 +85,41 @@ describe('region count', () => {
     expect(fourGroups).not.toBe(twelveGroups);
   });
 
+  it('judges the whole corpus, not a leading slice of it', () => {
+    // The rule used to cluster a 500-row PREFIX to pick the count and then
+    // cluster everything with it. The prefix is in insertion order, which is
+    // chunk-id order, which is roughly chronological - so past 500 conversations
+    // the answer came from the oldest 500 and the rest never voted. Measured on
+    // the real 646-conversation corpus that cost real quality: the prefix chose
+    // 20 regions for coarse where the whole corpus chooses 22, and the prefix's
+    // answer carried a 61-conversation region against the other's 44.
+    //
+    // The property that catches it: two corpora sharing an identical first 500
+    // rows must still be ALLOWED to disagree. A prefix rule cannot - same
+    // prefix and same row count means the same sweep over the same points, so
+    // it returns the same number every time however the tail is shaped.
+    const prefix = plantedGroups(25, 20);
+    const withGroupedTail = new Float32Array(700 * COMPONENTS);
+    const withPiledTail = new Float32Array(700 * COMPONENTS);
+    withGroupedTail.set(prefix);
+    withPiledTail.set(prefix);
+
+    // Same 200 extra conversations either way, but one tail is ten separate
+    // subjects and the other is a single dense one.
+    const tail = plantedGroups(10, 20);
+    withGroupedTail.set(tail, 500 * COMPONENTS);
+    const noise = seededNoise(0x9a41c7);
+    for (let row = 500; row < 700; row += 1) {
+      withPiledTail[row * COMPONENTS] = 200 + noise() * 2;
+      withPiledTail[row * COMPONENTS + 1] = 200 + noise() * 2;
+      withPiledTail[row * COMPONENTS + 2] = 200 + noise() * 2;
+    }
+
+    expect(chooseClusterCount(700, withGroupedTail, COMPONENTS)).not.toBe(
+      chooseClusterCount(700, withPiledTail, COMPONENTS),
+    );
+  });
+
   it('keeps the average region inside a readable size band', () => {
     // The band is the readability judgement no separation score can make on a
     // continuous cloud: every one of them - Calinski-Harabasz, silhouette,
@@ -106,16 +148,16 @@ describe('region count', () => {
 
   it('clamps a very large corpus to the hard ceiling', () => {
     // The band's floor scales with size, so a big enough index pushes it past
-    // the ceiling. That went unclamped and returned 25 against a limit of 24.
-    expect(chooseClusterCount(5000)).toBeLessThanOrEqual(24);
-    expect(chooseClusterCount(50000)).toBeLessThanOrEqual(24);
+    // the ceiling. That went unclamped and returned one more than the limit.
+    expect(chooseClusterCount(5000)).toBeLessThanOrEqual(HARD_CEILING);
+    expect(chooseClusterCount(50000)).toBeLessThanOrEqual(HARD_CEILING);
   });
 
   it('never returns fewer than three, or more than the hard ceiling', () => {
     for (const rowCount of [6, 30, 150, 638, 5000]) {
       const chosen = chooseClusterCount(rowCount);
       expect(chosen).toBeGreaterThanOrEqual(3);
-      expect(chosen).toBeLessThanOrEqual(24);
+      expect(chosen).toBeLessThanOrEqual(HARD_CEILING);
     }
   });
 
