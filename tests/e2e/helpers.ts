@@ -88,8 +88,19 @@ const TEMPLATE_DIR = path.join(TEMPLATE_PARENT, `worker-${process.pid}`);
 const TMP_PROJECT_ROOT = path.join(__dirname, '..', '.tmp', `worker-${process.pid}`);
 let templateInitialized = false;
 
+// Structural completeness check for the git template: a bare `existsSync(TEMPLATE_DIR)`
+// is true as soon as `mkdirSync` runs, before `git init` / `git commit` have written
+// anything into `.git/objects`. That let a fast-path caller (or a caller racing an
+// in-progress first init) trust a half-built template and hand a broken `.git` dir to
+// `fs.cpSync`, producing an ENOENT on `.git/objects` inside the copy destination. Checking
+// for `.git/objects` specifically (created by `git init`, populated by the first commit)
+// is a cheap proxy for "git init + commit actually finished".
+function isGitTemplateComplete(dir: string): boolean {
+  return fs.existsSync(path.join(dir, '.git', 'objects'));
+}
+
 function ensureGitTemplate(): string {
-  if (templateInitialized && fs.existsSync(TEMPLATE_DIR)) return TEMPLATE_DIR;
+  if (templateInitialized && isGitTemplateComplete(TEMPLATE_DIR)) return TEMPLATE_DIR;
   // Only remove OUR own PID-specific subdirectory. Do NOT rmSync the entire
   // TEMPLATE_PARENT: with workers=4 on CI, multiple worker processes call
   // ensureGitTemplate concurrently and each owns a unique pid-keyed dir under
@@ -125,8 +136,32 @@ export function createTempProject(testName: string): string {
   try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
   // Copy from the cached git template instead of running git init + commit
   // every call. fs.cpSync recursively copies including the .git directory.
-  const template = ensureGitTemplate();
-  fs.cpSync(template, tmpDir, { recursive: true });
+  //
+  // fs.cpSync's recursive walk can transiently ENOENT on a directory it just
+  // created on the destination side (its mkdir/readdir report whichever path
+  // they were acting on, so the error can name a destination path even though
+  // the underlying cause is elsewhere) under heavy parallel I/O on a loaded CI
+  // filesystem. cpSync is synchronous and this template is tiny (~400KB, a
+  // single empty commit), so a tight retry is cheap; three attempts absorbs a
+  // transient hiccup without masking a real, persistent failure (which will
+  // still throw after the retries are exhausted). ensureGitTemplate() is
+  // called INSIDE the loop (not once above it) so that if the template itself
+  // is ever found incomplete on a retry, isGitTemplateComplete() rebuilds it
+  // instead of the retry reusing a possibly-stale template reference.
+  const MAX_COPY_ATTEMPTS = 3;
+  for (let attempt = 1; attempt <= MAX_COPY_ATTEMPTS; attempt++) {
+    try {
+      const template = ensureGitTemplate();
+      fs.cpSync(template, tmpDir, { recursive: true });
+      break;
+    } catch (error) {
+      const isEnoent = error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT';
+      if (!isEnoent || attempt === MAX_COPY_ATTEMPTS) throw error;
+      // Clear any partial copy before retrying so we don't leave a half-copied
+      // tree if the retry also fails, and so the next cpSync starts clean.
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
+  }
   return tmpDir;
 }
 
