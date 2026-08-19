@@ -23,8 +23,14 @@ export interface ExpoPushMessage {
   to: string;
   /** Android notification channel id; ignored by iOS. */
   channelId: string;
-  title: string;
-  body: string;
+  /**
+   * OS-visible placeholder text. Optional: both omitted makes this a
+   * data-only message, which is what Android gets so that
+   * expo-notifications does not render its own notification alongside
+   * the decrypted one the app posts. See PushNotifier's header.
+   */
+  title?: string;
+  body?: string;
   /** The sealed push envelope - the only non-placeholder content in the POST. */
   dataBlob: string;
 }
@@ -70,8 +76,13 @@ function delay(ms: number): Promise<void> {
 export async function sendExpoPush(fetchImpl: FetchLike, message: ExpoPushMessage): Promise<ExpoPushSendResult> {
   const requestBody = JSON.stringify({
     to: message.to,
-    title: message.title,
-    body: message.body,
+    // Spread rather than assigned: JSON.stringify drops an undefined
+    // VALUE from an object, but `title: undefined` would still be an own
+    // key here and a future encoder change could start emitting it as
+    // null - which reads to Expo as a title, not as its absence. Omitting
+    // the key outright is the whole point of the Android path.
+    ...(message.title !== undefined ? { title: message.title } : {}),
+    ...(message.body !== undefined ? { body: message.body } : {}),
     data: { blob: message.dataBlob },
     priority: 'high',
     channelId: message.channelId,

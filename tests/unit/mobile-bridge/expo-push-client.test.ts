@@ -51,6 +51,29 @@ describe('sendExpoPush', () => {
     });
   });
 
+  /**
+   * The Android path. A message with no title and no body is a data-only
+   * push, which is what stops expo-notifications rendering its own
+   * generic notification alongside the decrypted one the app posts.
+   *
+   * toEqual, not toMatchObject: the keys must be ABSENT from the JSON,
+   * not present-and-null. Expo reads a null title as a title.
+   */
+  it('omits title and body entirely when the message carries neither', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ data: { status: 'ok' } })) as FetchLike;
+
+    await sendExpoPush(fetchImpl, { to: message.to, channelId: message.channelId, dataBlob: message.dataBlob });
+
+    const [, init] = vi.mocked(fetchImpl).mock.calls[0];
+    expect(JSON.parse(init.body)).toEqual({
+      to: 'ExponentPushToken[abc]',
+      data: { blob: 'sealed-blob' },
+      priority: 'high',
+      channelId: 'needs-attention',
+      mutableContent: true,
+    });
+  });
+
   it('accepts the batch-shaped { data: [ticket] } response too', async () => {
     const fetchImpl = vi.fn(async () => jsonResponse({ data: [{ status: 'ok', id: 'ticket-1' }] })) as FetchLike;
     expect(await sendExpoPush(fetchImpl, message)).toEqual({ delivered: true });
