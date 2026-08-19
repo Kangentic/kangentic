@@ -115,15 +115,24 @@ export interface FacetAvailability {
 
 export type MemoryGraphOutcome = 'done' | 'active' | 'abandoned';
 
-/** Phrased as what HAPPENED, not as a lane name: these read beside each other in
- *  a list, where a bare "Done" next to "Active" reads as a column picker rather
- *  than a history. */
+/**
+ * Phrased as what HAPPENED, not as a lane name: these read beside each other in
+ * a list, where a bare "Done" next to "Active" reads as a column picker rather
+ * than a history.
+ *
+ * They were "Reached Done" / "Still on the board" / "Abandoned", which got the
+ * intent right and the words wrong: a clause, a clause and an adjective, with a
+ * column name inside the first. These are three plain states of the same kind,
+ * and no lane is named. The internal values keep the word `outcome` - the code's
+ * vocabulary and the reader's do not have to be the same word, and renaming the
+ * wire field would cost a projection rebuild to change a label.
+ */
 export const OUTCOME_LABELS: Readonly<Record<MemoryGraphOutcome, string>> = {
-  done: 'Reached Done',
-  active: 'Still on the board',
-  // "Abandoned" rather than "Archived" because archiving is how a FINISHED task
-  // leaves the board, so it is not the opposite of Done - dropping the work is.
-  abandoned: 'Abandoned',
+  done: 'Finished',
+  active: 'Still open',
+  // "Dropped" rather than "Archived" because archiving is how a FINISHED task
+  // leaves the board, so it is not the opposite of finishing - dropping is.
+  abandoned: 'Dropped',
 };
 
 /** Display order, independent of whatever order the corpus happened to yield. */
@@ -131,23 +140,33 @@ export const OUTCOME_ORDER: ReadonlyArray<MemoryGraphOutcome> = ['done', 'active
 
 export const NO_FACETS_AVAILABLE: FacetAvailability = { since: false, outcomes: [] };
 
+/**
+ * Every colour mode, in display order. What is OFFERED is filtered from this by
+ * `availableColorModes`, so a mode this index cannot express never appears.
+ *
+ * One word each, deliberately. "Conversation length" was the odd one out in a
+ * list of single words, and the qualifier turned out to be unnecessary once
+ * Duration and Cost sat beside it: three magnitudes in a row disambiguate each
+ * other far better than a longer name does, and the hint carries the rest.
+ *
+ * The three are not three readings of one thing, which was measured rather than
+ * assumed on the real 648-conversation corpus: length to duration 0.507, length
+ * to cost 0.560, duration to cost 0.664.
+ */
 const COLOR_OPTIONS: ReadonlyArray<{ value: MemoryGraphColorMode; label: string; hint: string }> = [
   { value: 'cluster', label: 'Topic', hint: 'Color by the region of the map each conversation sits in' },
   { value: 'recency', label: 'Recency', hint: 'Warm is recent, cool is old - shows where your attention has moved' },
-  // These three can now be told apart, which they could not when `archived_at`
-  // overrode the lane: everything finished read as archived, so this mode
-  // painted a real board one flat grey.
-  { value: 'outcome', label: 'Outcome', hint: 'Green reached Done, amber still on the board, grey abandoned without finishing' },
-  // "Length" alone was read as the task's effort or elapsed time, which the map
-  // also knows and does not encode here - so the option names what it measures.
-  // (It was "Depth" before that, which collided with the depth you fly through.)
+  { value: 'outcome', label: 'Outcome', hint: 'Green finished, amber still open, grey dropped without finishing' },
   {
     value: 'size',
-    label: 'Conversation length',
+    label: 'Length',
     hint: 'How much transcript the conversation holds: warm and bright is long, deep indigo is short. This is text, not time or money - a long conversation is often a cheap one',
   },
-  // A separate mode rather than a second reading of length, and measured rather
-  // than assumed: their rank correlation on the real corpus is 0.556.
+  {
+    value: 'duration',
+    label: 'Duration',
+    hint: 'How long the conversation ran for in wall time: warm and bright is slow, deep indigo is quick. A brief conversation can still be a slow one',
+  },
   {
     value: 'cost',
     label: 'Cost',
@@ -191,9 +210,9 @@ function regionMatches(label: string, query: string): boolean {
 export interface MemoryGraphControlsProps {
   colorMode: MemoryGraphColorMode;
   onColorModeChange: (mode: MemoryGraphColorMode) => void;
-  /** Whether anything in this index has a recorded cost. False hides that mode
-   *  rather than offering one that would paint every node the same. */
-  costAvailable: boolean;
+  /** Only the modes this index can express - see `availableColorModes`. A mode
+   *  that would paint every node the same is not offered. */
+  availableColorModes: ReadonlyArray<MemoryGraphColorMode>;
   showLabels: boolean;
   onShowLabelsChange: (show: boolean) => void;
   showTitles: boolean;
@@ -342,7 +361,7 @@ function SectionHeader({
 export function MemoryGraphControls({
   colorMode,
   onColorModeChange,
-  costAvailable,
+  availableColorModes,
   showLabels,
   onShowLabelsChange,
   showTitles,
@@ -451,12 +470,11 @@ export function MemoryGraphControls({
                 aria-label="Color conversations by"
                 data-testid="memory-graph-color-mode"
               >
-                {/* Only the modes this corpus can actually express. Cost is
-                    absent on conversations indexed before metrics were captured,
-                    and an option that paints every node identically is the same
-                    dead control the outcome facet already prunes. */}
+                {/* Only the modes this corpus can actually express. An option
+                    that paints every node identically is the same dead control
+                    the outcome facet rows already prune. */}
                 {COLOR_OPTIONS.filter(
-                  (option) => option.value !== 'cost' || costAvailable,
+                  (option) => availableColorModes.includes(option.value),
                 ).map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
@@ -547,10 +565,13 @@ export function MemoryGraphControls({
                           outcome: event.target.value as MemoryGraphFacets['outcome'],
                         })
                       }
-                      aria-label="Filter by where the work ended up"
+                      aria-label="Filter by the task's status"
                       data-testid="memory-graph-filter-outcome"
                     >
-                      <option value="any">Any outcome</option>
+                      {/* "Any status", not "Any outcome": one of the values is
+                          "Still open", which is not an outcome at all - it is
+                          the absence of one. */}
+                      <option value="any">Any status</option>
                       {facetAvailability.outcomes.map((outcome) => (
                         <option key={outcome} value={outcome}>{OUTCOME_LABELS[outcome]}</option>
                       ))}

@@ -117,6 +117,7 @@ function projectionLiteral(nodeCount: number, options: { collapsed?: boolean } =
         // node had a cost could not catch the mode being offered on an index
         // that has none.
         costUsd: i % 5 === 0 ? null : i * 1.5,
+        durationMs: i % 7 === 0 ? null : (i + 1) * 90000,
         outcome: i % 3 === 0 ? 'done' : (i % 3 === 1 ? 'active' : 'done'),
         // Every granularity, since the projection ships all three. The
         // fixture keeps them DIFFERENT so a test cannot pass by reading the
@@ -565,17 +566,18 @@ test.describe('memory graph', () => {
   });
 
   test('offers topic, recency, outcome, length and cost colour modes', async () => {
-    // "Conversation length", not "Length" and not the "Depth" before that. Bare
-    // "Length" was read as the task's effort or elapsed time - both of which the
-    // map knows and neither of which this mode encodes - so the option names
-    // what it measures, and Cost is now its own mode beside it.
+    // One word each. "Conversation length" was the odd one out in a list of
+    // single words, and the qualifier stopped being needed once Duration and
+    // Cost sat beside it: three magnitudes in a row disambiguate each other. They
+    // are three DIFFERENT magnitudes, measured on the real corpus - length to
+    // duration 0.507, length to cost 0.560, duration to cost 0.664.
     const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(20) }));
     try {
       await openMemoryGraph(page);
       // A Select, not a segmented control: four labels never fit the panel's
       // width, and `ui-conventions` names Select for exactly that case.
       const select = page.locator('[data-testid="memory-graph-color-mode"]');
-      for (const [value, label] of [['cluster', 'Topic'], ['recency', 'Recency'], ['outcome', 'Outcome'], ['size', 'Conversation length'], ['cost', 'Cost']]) {
+      for (const [value, label] of [['cluster', 'Topic'], ['recency', 'Recency'], ['outcome', 'Outcome'], ['size', 'Length'], ['duration', 'Duration'], ['cost', 'Cost']]) {
         await select.selectOption(value);
         await expect(select).toHaveValue(value);
         // The description under the control tracks the selection, so the user
@@ -587,21 +589,23 @@ test.describe('memory graph', () => {
     }
   });
 
-  test('does not offer a cost mode on an index that records no cost, and heals a stale one', async () => {
-    // The same rule the outcome facet follows. Cost is absent on conversations
-    // indexed before the metrics were captured, and a mode that paints every
-    // node identically is worse than no mode.
-    const noCost = `(function () {
+  test('does not offer a metric mode on an index that records no metrics', async () => {
+    // The same rule the outcome facet follows. Cost and duration are absent on
+    // conversations indexed before the metrics were captured, and a mode that
+    // paints every node identically is worse than no mode.
+    const noMetrics = `(function () {
       var base = ${projectionLiteral(20)};
-      base.nodes.forEach(function (node) { node.costUsd = null; });
+      base.nodes.forEach(function (node) { node.costUsd = null; node.durationMs = null; });
       return base;
     })()`;
-    const { browser, page } = await launchWithState(snapshotScript({ projection: noCost }));
+    const { browser, page } = await launchWithState(snapshotScript({ projection: noMetrics }));
     try {
       await openMemoryGraph(page);
       const select = page.locator('[data-testid="memory-graph-color-mode"]');
+      // Topic, Recency, Outcome, Length - the four that need no captured metric.
       await expect(select.locator('option')).toHaveCount(4);
       await expect(select).not.toContainText('Cost');
+      await expect(select).not.toContainText('Duration');
       // And it is not merely hidden from the list: selecting it is impossible,
       // so a projection that loses its costs mid-session cannot strand the map
       // in a mode with no control left on screen to explain it.
@@ -622,7 +626,7 @@ test.describe('memory graph', () => {
       await expect(page.locator('[data-testid="memory-graph-filter-outcome"]')).toBeVisible();
       // Every option says what it means on its own, so the rows need no labels.
       await expect(page.locator('[data-testid="memory-graph-filter-since"]')).toContainText('Last 30 days');
-      await expect(page.locator('[data-testid="memory-graph-filter-outcome"]')).toContainText('Reached Done');
+      await expect(page.locator('[data-testid="memory-graph-filter-outcome"]')).toContainText('Finished');
       // Regions are their own panel now, not a row in this group.
       await expect(page.locator('[data-testid="memory-graph-filter-region"]')).toHaveCount(0);
     } finally {
@@ -761,8 +765,8 @@ test.describe('memory graph', () => {
     try {
       await openMemoryGraph(page);
       const outcome = page.locator('[data-testid="memory-graph-filter-outcome"]');
-      await expect(outcome).toContainText('Reached Done');
-      await expect(outcome).toContainText('Still on the board');
+      await expect(outcome).toContainText('Finished');
+      await expect(outcome).toContainText('Still open');
       await expect(outcome).not.toContainText('Abandoned');
     } finally {
       await browser.close();
@@ -780,7 +784,7 @@ test.describe('memory graph', () => {
     const { browser, page } = await launchWithState(snapshotScript({ projection: withAbandoned }));
     try {
       await openMemoryGraph(page);
-      await expect(page.locator('[data-testid="memory-graph-filter-outcome"]')).toContainText('Abandoned');
+      await expect(page.locator('[data-testid="memory-graph-filter-outcome"]')).toContainText('Dropped');
     } finally {
       await browser.close();
     }

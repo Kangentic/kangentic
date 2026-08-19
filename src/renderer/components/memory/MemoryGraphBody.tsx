@@ -37,6 +37,7 @@ import {
 } from './MemoryGraphControls';
 
 import { availableGranularities, DEFAULT_GRANULARITY, resolveClustering } from './active-clustering';
+import { availableColorModes } from './color-mode-availability';
 import type { MemoryGraphGranularity } from '../../../shared/types';
 import { useChromeInsets } from './useChromeInsets';
 import { MemoryNodeDetail, openConversationForNode } from './MemoryNodeDetail';
@@ -311,21 +312,15 @@ export function MemoryGraphBody() {
   );
 
   /**
-   * Whether anything here has a recorded cost.
-   *
-   * Conversations indexed before the metrics were captured carry none, and an
-   * index made entirely of those would offer a mode that paints every node the
-   * same. Same rule the outcome facet follows, and the same healing: a selection
-   * that outlives its option falls back to Topic rather than leaving the map in
-   * a mode with no control left on screen to explain it.
+   * Which colour modes this index can express. A selection that outlives its
+   * option heals back to Topic rather than leaving the map in a mode with no
+   * control left on screen to explain it - the same rule the outcome facet and
+   * the Detail chips already follow.
    */
-  const costAvailable = useMemo(
-    () => (nodes ?? []).some((node) => node.costUsd !== null),
-    [nodes],
-  );
+  const colorModes = useMemo(() => availableColorModes(nodes ?? []), [nodes]);
   useEffect(() => {
-    if (colorMode === 'cost' && !costAvailable) setColorMode('cluster');
-  }, [colorMode, costAvailable]);
+    if (!colorModes.includes(colorMode)) setColorMode('cluster');
+  }, [colorMode, colorModes]);
 
   const highlighted = useMemo(() => {
     // Explore wins: it is the most recent, most specific thing the user asked
@@ -559,7 +554,7 @@ export function MemoryGraphBody() {
         <MemoryGraphControls
           colorMode={colorMode}
           onColorModeChange={setColorMode}
-          costAvailable={costAvailable}
+          availableColorModes={colorModes}
           showLabels={showLabels}
           onShowLabelsChange={setShowLabels}
           showTitles={showTitles}

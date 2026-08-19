@@ -47,6 +47,7 @@ import { humanizeModelId } from '../../../shared/model-id';
 import type {
   MemoryGraphCluster,
   MemoryGraphGranularity,
+  MemoryGraphNode,
   MemoryGraphProjection,
 } from '../../../shared/types';
 import { DEFAULT_GRANULARITY, resolveClustering } from './active-clustering';
@@ -55,12 +56,14 @@ import { DEFAULT_GRANULARITY, resolveClustering } from './active-clustering';
  * How nodes are tinted. Each answers a different question, which is why they
  * are modes rather than layers.
  *
- * `size` and `cost` are both magnitudes and they are NOT the same magnitude:
- * measured on the real 648-conversation corpus their rank correlation is 0.556,
- * so a long cheap conversation and a short expensive one are both ordinary. A
- * mode that merely restated another would not earn its place in this list.
+ * `size`, `duration` and `cost` are three magnitudes and they are three
+ * DIFFERENT magnitudes, which was measured rather than assumed. Rank
+ * correlations on the real 648-conversation corpus: length to duration 0.507,
+ * length to cost 0.560, duration to cost 0.664. Nothing above two thirds, so a
+ * long conversation is not reliably a slow one and a slow one is not reliably an
+ * expensive one. A mode that merely restated another would not earn its place.
  */
-export type MemoryGraphColorMode = 'cluster' | 'recency' | 'outcome' | 'size' | 'cost';
+export type MemoryGraphColorMode = 'cluster' | 'recency' | 'outcome' | 'size' | 'duration' | 'cost';
 
 export interface MemoryGraphCanvasProps {
   projection: MemoryGraphProjection;
@@ -773,20 +776,23 @@ export function MemoryGraphCanvas({
    * end rather than being hidden. It is a real conversation; what is missing is
    * the metric, and hiding it would make the map lie about what the index holds.
    */
-  const costRank = useMemo(() => {
-    const byCost = projection.nodes
-      .map((node, index) => ({ index, cost: node.costUsd }))
-      .sort((first, second) => {
-        if (first.cost === null) return second.cost === null ? 0 : 1;
-        if (second.cost === null) return -1;
-        return first.cost - second.cost;
-      });
-    const ranks = new Float32Array(projection.nodes.length);
-    byCost.forEach((entry, position) => {
-      ranks[entry.index] = byCost.length <= 1 ? 1 : position / (byCost.length - 1);
-    });
-    return ranks;
-  }, [projection.nodes]);
+  const costRank = useMemo(
+    () => rankByMetric(projection.nodes, (node) => node.costUsd),
+    [projection.nodes],
+  );
+
+  /**
+   * Shortest-to-longest WALL TIME, for the duration ramp.
+   *
+   * Its own mode rather than a rename of length, because they are not the same
+   * thing: rank correlation 0.507 on the real corpus, where duration itself runs
+   * a 33-minute median against a 9.6-hour longest. A conversation can be brief
+   * and slow (a small model thinking) or long and quick.
+   */
+  const durationRank = useMemo(
+    () => rankByMetric(projection.nodes, (node) => node.durationMs),
+    [projection.nodes],
+  );
 
   /**
    * How many links each node has in the mesh that is actually DRAWN.
@@ -854,7 +860,9 @@ export function MemoryGraphCanvas({
         // the high one, which is the standard shape for a magnitude and stays
         // readable for a reader who cannot separate two hues, since lightness
         // rises monotonically with it.
-        const rank = colorMode === 'cost' ? costRank[index] : lengthRank[index];
+        const rank = colorMode === 'cost'
+          ? costRank[index]
+          : colorMode === 'duration' ? durationRank[index] : lengthRank[index];
         color = toLinearTriplet(
           `hsl(${Math.round(265 - rank * 215)} ${Math.round(55 + rank * 25)}% ${Math.round(38 + rank * 30)}%)`,
         );
@@ -891,7 +899,7 @@ export function MemoryGraphCanvas({
     });
   }, [
     projection.nodes, highlighted, selectedIndex, hoveredIndex, colorMode,
-    recencyRank, lengthRank, costRank, degrees, maxDegree, regionOf,
+    recencyRank, lengthRank, durationRank, costRank, degrees, maxDegree, regionOf,
   ]);
 
   useEffect(() => {
@@ -1358,13 +1366,42 @@ const HOVER_CARD_MAX_HEIGHT = 190;
 const OUTCOME_PRESENTATION: Readonly<
   Record<'done' | 'active' | 'abandoned' | 'none', { label: string; dot: string } | null>
 > = {
-  done: { label: 'Reached Done', dot: 'bg-active' },
-  active: { label: 'Still on the board', dot: 'bg-amber-400' },
-  abandoned: { label: 'Abandoned', dot: 'bg-fg-faint' },
+  done: { label: 'Finished', dot: 'bg-active' },
+  active: { label: 'Still open', dot: 'bg-amber-400' },
+  abandoned: { label: 'Dropped', dot: 'bg-fg-faint' },
   // A conversation with no task has no outcome to report, and saying so would
   // be noise on every hover in a project that does not link tasks.
   none: null,
 };
+
+/**
+ * Cheapest-to-dearest (or briefest-to-longest) position of each node.
+ *
+ * RANK rather than the value, which is the third time this surface has needed
+ * the lesson: every one of these metrics is heavily skewed, so a linear or log
+ * scale hands most of its range to a handful of extremes and squeezes the body
+ * of the corpus into a sliver. A rank uses the whole ramp whatever the shape.
+ *
+ * A node with no recorded value sorts LAST and draws at the muted end rather
+ * than being hidden. It is a real conversation; what is missing is the metric.
+ */
+function rankByMetric(
+  nodes: ReadonlyArray<MemoryGraphNode>,
+  valueOf: (node: MemoryGraphNode) => number | null,
+): Float32Array {
+  const ordered = nodes
+    .map((node, index) => ({ index, value: valueOf(node) }))
+    .sort((first, second) => {
+      if (first.value === null) return second.value === null ? 0 : 1;
+      if (second.value === null) return -1;
+      return first.value - second.value;
+    });
+  const ranks = new Float32Array(nodes.length);
+  ordered.forEach((entry, position) => {
+    ranks[entry.index] = ordered.length <= 1 ? 1 : position / (ordered.length - 1);
+  });
+  return ranks;
+}
 
 /** Wall time as someone would say it: "3m", "1h 12m", "2d 4h". */
 export function formatDuration(milliseconds: number): string {
@@ -1520,7 +1557,7 @@ function RegionHoverCard({
         <HoverFact label="Conversations" value={summary.count.toLocaleString()} />
         {/* Shipped versus total, because "12 conversations" says nothing about
             whether the area went anywhere. */}
-        <HoverFact label="Reached Done" value={`${summary.done} of ${summary.count}`} />
+        <HoverFact label="Finished" value={`${summary.done} of ${summary.count}`} />
         {summary.durationMs > 0 ? (
           <HoverFact label="Time spent" value={formatDuration(summary.durationMs)} />
         ) : null}

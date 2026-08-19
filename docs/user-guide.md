@@ -782,14 +782,20 @@ The **Display** panel (top left) collapses out of the way and holds the groups b
 - **Topic** - the region each conversation belongs to.
 - **Recency** - warm is recent, cool is old. Shows where your attention has moved, and which
   areas have gone quiet.
-- **Outcome** - green reached Done, amber still on the board, grey archived. Note that archiving
-  is how finished work leaves the board, so grey covers both shipped and dropped work.
-- **Conversation length** - how much transcript the conversation holds, from deep indigo for the
-  shortest through blue and teal to a warm yellow for the longest.
-- **Cost** - what the conversation cost to run, on the same ramp. A separate mode rather than a
-  second reading of length: the two agree only loosely (rank correlation 0.556 on a real index), so
-  a long cheap conversation and a short expensive one are both ordinary. Hidden on an index that
-  records no cost, and conversations missing one draw at the cheap end.
+- **Outcome** - green finished, amber still open, grey dropped without finishing. Offered only when
+  the second-commonest status covers at least a twentieth of the index: on a healthy board almost
+  everything finishes (642 of 648 on a real one), and a map that is uniformly green with six specks
+  in it is a question for the Outcome FILTER rather than a thing colour can show.
+- **Length** - how much transcript the conversation holds, from deep indigo for the shortest through
+  blue and teal to a warm yellow for the longest.
+- **Duration** - how long it ran in wall time, on the same ramp.
+- **Cost** - what it cost to run, on the same ramp.
+
+Those last three are three different questions, not three readings of one: measured on a real index
+their rank correlations are 0.507 (length to duration), 0.560 (length to cost) and 0.664 (duration
+to cost), so a long conversation is not reliably a slow one and a slow one is not reliably an
+expensive one. Duration and Cost are hidden on an index that records neither, and a conversation
+missing one draws at the low end rather than disappearing.
 
 **Show** turns the region labels and the similarity links on and off.
 
@@ -801,9 +807,11 @@ you want to read. How finely the map CAN be cut is bounded by the index: on a sm
 setting produces the same regions, and the control hides itself rather than offering choices that
 repaint the identical picture.
 
-**Filter** scopes the map by time and by outcome. Each row appears only when it can actually
-narrow this index: the time row is hidden when every conversation falls inside the shortest window,
-and an outcome appears only if something in the index has it.
+**Filter** scopes the map by time and by status (Finished, Still open, Dropped). Each row appears
+only when it can actually narrow this index: the time row is hidden when every conversation falls
+inside the shortest window, and a status appears only if something in the index has it. Unlike the
+colour mode, this row survives a lopsided board, which is the point of it - scoping to the handful
+still open is exactly the question a green map cannot answer.
 
 The **Regions** section below it lists every region with its colour and how many conversations it
 holds, each independently switchable, plus **All** and **None**. A large index can carry dozens of
