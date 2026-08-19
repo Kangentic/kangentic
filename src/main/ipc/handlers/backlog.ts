@@ -9,7 +9,7 @@ import { ActionRepository } from '../../db/repositories/action-repository';
 import { AttachmentRepository } from '../../db/repositories/attachment-repository';
 import { BacklogAttachmentRepository } from '../../db/repositories/backlog-attachment-repository';
 import { SessionRepository } from '../../db/repositories/session-repository';
-import { cleanupTaskResources, createTransitionEngine, getProjectRepos, ensureTaskWorktree, ensureTaskBranchCheckout, notifyBranchCheckoutBlocked, spawnAgent, openAttachmentFile } from '../helpers';
+import { cleanupTaskResources, createTransitionEngine, getProjectRepos, ensureTaskWorktree, ensureTaskBranchCheckout, notifySpawnBlocked, spawnAgent, openAttachmentFile } from '../helpers';
 import { isAbortError } from '../../../shared/abort-utils';
 import { withTaskLock } from '../task-lifecycle-lock';
 import type { IpcContext } from '../ipc-context';
@@ -193,6 +193,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
                 } catch (worktreeError) {
                   if (isAbortError(worktreeError)) throw worktreeError;
                   console.error('[BACKLOG_PROMOTE] Worktree creation failed:', worktreeError);
+                  notifySpawnBlocked(context, task, 'worktree', worktreeError, projectId);
                   return;
                 }
 
@@ -201,7 +202,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
                 } catch (checkoutError) {
                   if (isAbortError(checkoutError)) throw checkoutError;
                   console.error('[BACKLOG_PROMOTE] Branch checkout failed:', checkoutError);
-                  notifyBranchCheckoutBlocked(context, task, checkoutError, projectId);
+                  notifySpawnBlocked(context, task, 'checkout', checkoutError, projectId);
                   return;
                 }
 

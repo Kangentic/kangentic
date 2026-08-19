@@ -18,7 +18,7 @@ A Kangentic-spawned agent calls an MCP tool (e.g. kangentic_create_task)
      (X-Kangentic-Token header, JSON-RPC body)
   -> In-process MCP HTTP server in Electron main (mcp-http-server.ts)
   -> Per-request McpServer + Streamable HTTP transport
-  -> Tool handler runs synchronously against project DB
+  -> Tool handler runs in the same HTTP request against project DB
   -> Response returned in same HTTP request (no SSE, no file polling)
   -> Board refreshes via IPC event + toast notification
 ```
@@ -136,7 +136,7 @@ Create a task on the board (default: the To Do column on the active board) or in
 | `column` | string | No | Target column name (case-insensitive). Defaults to To Do. Pass `"Backlog"` to route to the backlog staging area instead of the board. |
 | `priority` | number | No | Priority: 0=none (default), 1=low, 2=medium, 3=high, 4=urgent. Applies to both board tasks and backlog items. |
 | `labels` | array | No | Labels for categorization. Each entry is a string or `{ name, color }` object with hex color. Applies to both board tasks and backlog items. |
-| `branchName` | string | No | Custom git branch name. Board tasks only - ignored when routed to the backlog. |
+| `branchName` | string | No | Custom git branch name. Board tasks only - ignored when routed to the backlog. Rejected if the branch is already checked out anywhere; see the Branch conflict guard note below. |
 | `baseBranch` | string | No | Base branch for the task. Board tasks only. |
 | `useWorktree` | boolean | No | Whether to use a git worktree. Board tasks only. |
 | `attachments` | array | No | File attachments: `[{ filePath: string, filename?: string }]`. Files are read from disk and stored in the project's `.kangentic/` directory. |
@@ -157,6 +157,8 @@ Create a task on the board (default: the To Do column on the active board) or in
 The mirror case is rejected for the same reason: any of the four pins alongside `runMode: "column_settings"`. Setting a pin already *is* asking for override mode, so pairing it with the opposite mode is a contradiction the repository would resolve silently in the pin's favour, discarding the mode the caller named. `runMode: "column_settings"` with no pins, or alongside `profile`, is fine - those agree.
 
 If the target column has `auto_spawn` enabled, creating a task there will also spawn an agent session for it. Backlog items never auto-spawn.
+
+**Branch conflict guard:** git allows a branch to be checked out in only one working tree at a time. When `branchName` names a branch that some worktree already holds - including the user's own main checkout - the tool refuses and creates nothing, rather than filing a task whose worktree can never be built. Without this guard the failure was invisible: the tool response is sent before auto-spawn runs, so the card appeared healthy while `git worktree add` failed a second later with `is already used by worktree at <path>`, leaving a null session and null worktree. The refusal names the branch and the path holding it, states that nothing was created, and says what to do - free the branch and re-run, or stop and tell the user, since the holder is often a checkout the calling agent cannot touch. The check is skipped for backlog items (which ignore `branchName`) and fails open if git cannot be probed. It is otherwise unconditional: it does not depend on the destination column's `auto_spawn` (a task filed into a quiet column today can be dragged into a spawning one tomorrow, and the conflict bites then), nor on `useWorktree` (passing `useWorktree: false` is rejected too, since that only moves the same collision to the branch-checkout step instead of avoiding it).
 
 **Cross-project routing guard:** when `project` is omitted (so the task would default to the active project) but the title or description names a *different* registered project, the tool refuses with a routing-check error instead of creating the task. No task is created and no rate-limit slot is consumed. Re-run with `project: "<that project>"` to file it there, or with `project: "<active project>"` to confirm the active project. This catches the common cross-project triage case (filing a bug about one project from another) when the routing cue is only implied by the task text.
 

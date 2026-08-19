@@ -82,7 +82,7 @@ vi.mock('../../src/main/ipc/helpers', () => ({
   getProjectRepos: (...args: unknown[]) => mockGetProjectRepos(...args),
   ensureTaskWorktree: vi.fn(),
   ensureTaskBranchCheckout: vi.fn(),
-  notifyBranchCheckoutBlocked: vi.fn(),
+  notifySpawnBlocked: vi.fn(),
   spawnAgent: vi.fn(),
   createTransitionEngine: vi.fn(),
   cleanupTaskResources: vi.fn(),

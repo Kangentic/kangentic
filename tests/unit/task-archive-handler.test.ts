@@ -133,12 +133,13 @@ const mockSpawnAgent = vi.fn(async () => {});
 // guard" tests under TASK_UNARCHIVE / TASK_BULK_UNARCHIVE below.
 const mockCleanupTaskSession = vi.fn(async () => {});
 const mockCleanupTaskResources = vi.fn(async () => {});
+const mockNotifySpawnBlocked = vi.fn();
 
 vi.mock('../../src/main/ipc/helpers', () => ({
   getProjectRepos: (...args: unknown[]) => mockGetProjectRepos(...args),
   ensureTaskWorktree: (...args: unknown[]) => mockEnsureTaskWorktree(...args),
   ensureTaskBranchCheckout: (...args: unknown[]) => mockEnsureTaskBranchCheckout(...args),
-  notifyBranchCheckoutBlocked: () => {},
+  notifySpawnBlocked: (...args: unknown[]) => mockNotifySpawnBlocked(...args),
   createTransitionEngine: (...args: unknown[]) => mockCreateTransitionEngine(...args),
   cleanupTaskSession: (...args: unknown[]) => mockCleanupTaskSession(...args),
   cleanupTaskResources: (...args: unknown[]) => mockCleanupTaskResources(...args),
@@ -486,6 +487,17 @@ describe('task-archive handlers', () => {
       expect(result).toMatchObject({ id: 'task-worktree-err' });
       expect(mockCreateTransitionEngine).not.toHaveBeenCalled();
       expect(mockSpawnAgent).not.toHaveBeenCalled();
+
+      // The task is restored but the card would look identical to a healthy
+      // spawn (null session, null worktree) unless the user is told the agent
+      // did not start. Mirrors the assertion style already pinned for
+      // TASK_BULK_UNARCHIVE below. Red-green: pre-fix this catch block only
+      // ran console.error, so mockNotifySpawnBlocked would be uncalled here.
+      expect(mockNotifySpawnBlocked).toHaveBeenCalledTimes(1);
+      const [, notifiedTask, step, , notifiedProjectId] = mockNotifySpawnBlocked.mock.calls[0];
+      expect((notifiedTask as { id: string }).id).toBe('task-worktree-err');
+      expect(step).toBe('worktree');
+      expect(notifiedProjectId).toBe(context.currentProjectId);
     });
 
     it('returns task without spawning when ensureTaskBranchCheckout throws', async () => {
@@ -900,6 +912,13 @@ describe('task-archive handlers', () => {
       expect(mockEnsureTaskWorktree).toHaveBeenCalledTimes(2);
       // spawnAgent reached for the successful task only
       expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+      // ...and the one that failed says so, rather than being restored into the
+      // column looking exactly like the one that succeeded. Red-green: pre-fix
+      // this branch was `console.error` + `return`.
+      expect(mockNotifySpawnBlocked).toHaveBeenCalledTimes(1);
+      const [, failedTask, step] = mockNotifySpawnBlocked.mock.calls[0];
+      expect((failedTask as { id: string }).id).toBe('task-fail-worktree');
+      expect(step).toBe('worktree');
     });
 
     it('processes each task with an independent lock (different ids do not block each other)', async () => {

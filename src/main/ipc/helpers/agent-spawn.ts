@@ -23,7 +23,7 @@ import { buildCommandInjectionVerifier } from '../../transition-engine/injection
 import type { CommandVerifier } from '../../transition-engine/terminal-submit-scheduler';
 import { reportAutoCommandOutcome } from './auto-command-outcome';
 import { emitSpawnProgress, createProgressCallback } from '../../transition-engine/spawn-progress';
-import { ensureTaskWorktree, ensureTaskBranchCheckout, notifyBranchCheckoutBlocked } from './task-git';
+import { ensureTaskWorktree, ensureTaskBranchCheckout, notifySpawnBlocked } from './task-git';
 import { getProjectRepos } from './project-repos';
 import { withTaskLock } from '../task-lifecycle-lock';
 import { runWithProjectLogContext } from '../../diagnostics/project-log-context';
@@ -549,6 +549,7 @@ export async function autoSpawnForTask(
         await ensureTaskWorktree(context, fullTask, tasks, projectPath);
       } catch (worktreeError) {
         console.error('[MCP auto-spawn] Worktree creation failed:', worktreeError);
+        notifySpawnBlocked(context, fullTask, 'worktree', worktreeError, projectId);
         return;
       }
 
@@ -566,7 +567,7 @@ export async function autoSpawnForTask(
         // targets whichever project the tool named, which is often not the
         // focused one. Falling back to `context.currentProjectId` would stamp
         // the notice with the wrong project, and the renderer filters on it.
-        notifyBranchCheckoutBlocked(context, fullTask, checkoutError, projectId);
+        notifySpawnBlocked(context, fullTask, 'checkout', checkoutError, projectId);
         return;
       }
 

@@ -9,9 +9,10 @@ export { ensureGitignore } from './project-setup';
 export {
   ensureTaskWorktree,
   ensureTaskBranchCheckout,
-  notifyBranchCheckoutBlocked,
+  notifySpawnBlocked,
   BranchCheckoutBlockedError,
 } from './task-git';
+export type { SpawnFailureStep } from './task-git';
 export { createTransitionEngine, spawnAgent, autoSpawnForTask, resolveSpawnOverrides } from './agent-spawn';
 export type { AgentSpawnOptions } from './agent-spawn';
 export { cleanupTaskSession, cleanupTaskResources, deleteTaskWorktree } from './task-cleanup';

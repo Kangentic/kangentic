@@ -150,8 +150,8 @@ describe.runIf(CAN_RUN)('resolving and moving a task to the Done column', () => 
     }
   });
 
-  it('handleCreateTask still rejects column: "Done" by name', () => {
-    const response = handleCreateTask({ title: 'New task', column: 'Done' }, context);
+  it('handleCreateTask still rejects column: "Done" by name', async () => {
+    const response = await handleCreateTask({ title: 'New task', column: 'Done' }, context);
 
     expect(response.success).toBe(false);
     if (!response.success) {

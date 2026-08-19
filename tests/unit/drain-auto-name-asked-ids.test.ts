@@ -66,7 +66,7 @@ vi.mock('../../src/main/ipc/helpers', () => ({
   })),
   ensureTaskWorktree: vi.fn(async () => ({ worktreePath: '/tmp', checkoutError: undefined })),
   ensureTaskBranchCheckout: vi.fn(),
-  notifyBranchCheckoutBlocked: vi.fn(),
+  notifySpawnBlocked: vi.fn(),
   createTransitionEngine: vi.fn(() => ({ run: vi.fn(async () => ({})) })),
   cleanupTaskResources: vi.fn(async () => {}),
 }));

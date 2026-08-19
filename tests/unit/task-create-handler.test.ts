@@ -114,12 +114,13 @@ const mockEnsureTaskBranchCheckout = vi.fn(async () => {});
 const mockCreateTransitionEngine = vi.fn();
 const mockCleanupTaskResources = vi.fn(async () => {});
 const mockSpawnAgent = vi.fn(async () => {});
+const mockNotifySpawnBlocked = vi.fn();
 
 vi.mock('../../src/main/ipc/helpers', () => ({
   getProjectRepos: (...args: unknown[]) => mockGetProjectRepos(...args),
   ensureTaskWorktree: (...args: unknown[]) => mockEnsureTaskWorktree(...args),
   ensureTaskBranchCheckout: (...args: unknown[]) => mockEnsureTaskBranchCheckout(...args),
-  notifyBranchCheckoutBlocked: () => {},
+  notifySpawnBlocked: (...args: unknown[]) => mockNotifySpawnBlocked(...args),
   createTransitionEngine: (...args: unknown[]) => mockCreateTransitionEngine(...args),
   cleanupTaskResources: (...args: unknown[]) => mockCleanupTaskResources(...args),
   spawnAgent: (...args: unknown[]) => mockSpawnAgent(...args),
@@ -429,6 +430,25 @@ describe('TASK_CREATE handler', () => {
     expect(mockSpawnAgent).not.toHaveBeenCalled();
   });
 
+  it('tells the user the worktree step failed, instead of leaving a healthy-looking card', async () => {
+    const worktreeError = new Error('git worktree add failed');
+    mockEnsureTaskWorktree.mockRejectedValue(worktreeError);
+
+    await callCreateHandler(context, {
+      swimlane_id: 'lane-doing',
+      title: 'Worktree error task',
+    });
+
+    // Red-green: pre-fix this branch was `console.error` + `return`, so a task
+    // created into a spawn column sat there with a null session and a null
+    // worktree, indistinguishable from a healthy one (task #538).
+    expect(mockNotifySpawnBlocked).toHaveBeenCalledTimes(1);
+    const [, task, step, error] = mockNotifySpawnBlocked.mock.calls[0];
+    expect((task as { id: string }).id).toBe('task-new');
+    expect(step).toBe('worktree');
+    expect(error).toBe(worktreeError);
+  });
+
   // =========================================================================
   // Checkout error branch
   // =========================================================================
@@ -444,6 +464,18 @@ describe('TASK_CREATE handler', () => {
     expect(result).toMatchObject({ id: 'task-new' });
     expect(mockCreateTransitionEngine).not.toHaveBeenCalled();
     expect(mockSpawnAgent).not.toHaveBeenCalled();
+  });
+
+  it('tells the user the checkout step failed', async () => {
+    mockEnsureTaskBranchCheckout.mockRejectedValue(new Error('branch locked by active session'));
+
+    await callCreateHandler(context, {
+      swimlane_id: 'lane-doing',
+      title: 'Checkout error task',
+    });
+
+    expect(mockNotifySpawnBlocked).toHaveBeenCalledTimes(1);
+    expect(mockNotifySpawnBlocked.mock.calls[0][2]).toBe('checkout');
   });
 
   // =========================================================================

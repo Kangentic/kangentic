@@ -124,7 +124,7 @@ vi.mock('../../src/main/ipc/helpers', () => ({
   cleanupTaskResources: (...args: unknown[]) => mockCleanupTaskResources(...args),
   ensureTaskWorktree: (...args: unknown[]) => mockEnsureTaskWorktree(...args),
   ensureTaskBranchCheckout: (...args: unknown[]) => mockEnsureTaskBranchCheckout(...args),
-  notifyBranchCheckoutBlocked: () => {},
+  notifySpawnBlocked: () => {},
   createTransitionEngine: (...args: unknown[]) => mockCreateTransitionEngine(...args),
   interpolateTemplate: vi.fn((template: string) => template),
 }));

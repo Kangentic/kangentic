@@ -43,7 +43,7 @@ const mockSwimlaneGetById = vi.fn();
 const mockTaskGetById = vi.fn();
 const mockEnsureTaskWorktree = vi.fn();
 const mockEnsureTaskBranchCheckout = vi.fn(async () => {});
-const mockNotifyBranchCheckoutBlocked = vi.fn();
+const mockNotifySpawnBlocked = vi.fn();
 
 // The two modules agent-spawn.ts imports that drag in the heaviest transitive
 // graph (SessionManager -> node-pty, every agent adapter). Neither is ever
@@ -74,7 +74,7 @@ vi.mock('../../src/main/ipc/helpers/project-repos', () => ({
 vi.mock('../../src/main/ipc/helpers/task-git', () => ({
   ensureTaskWorktree: (...args: unknown[]) => mockEnsureTaskWorktree(...args),
   ensureTaskBranchCheckout: (...args: unknown[]) => mockEnsureTaskBranchCheckout(...args),
-  notifyBranchCheckoutBlocked: (...args: unknown[]) => mockNotifyBranchCheckoutBlocked(...args),
+  notifySpawnBlocked: (...args: unknown[]) => mockNotifySpawnBlocked(...args),
 }));
 vi.mock('../../src/main/ipc/task-lifecycle-lock', () => ({
   withTaskLock: vi.fn(async (_taskId: string, fn: () => Promise<void>) => fn()),
@@ -208,5 +208,40 @@ describe('autoSpawnForTask: re-checks the task is still in the planned column', 
     await autoSpawnForTask(makeContext([]), 'proj-1', { id: TASK_ID, title: 'Stayed put' }, LANE_ID);
 
     expect(mockEnsureTaskWorktree).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('autoSpawnForTask: a failed worktree tells the user', () => {
+  it('notifies when worktree creation fails, stamped with the EXPLICIT projectId', async () => {
+    mockSwimlaneGetById.mockReturnValue(makeLane({ auto_spawn: true }));
+    mockTaskGetById.mockReturnValue({
+      id: TASK_ID, title: 'Branch in use', swimlane_id: LANE_ID, profile_id: null,
+    });
+    const worktreeError = new Error("fatal: 'some-branch' is already used by worktree at '/repo'");
+    mockEnsureTaskWorktree.mockRejectedValue(worktreeError);
+
+    await autoSpawnForTask(makeContext([]), 'proj-1', { id: TASK_ID, title: 'Branch in use' }, LANE_ID);
+
+    // This is exactly the task #538 path. Pre-fix the catch was `console.error`
+    // + `return`, so an MCP-created task failed here with no UI trace at all.
+    expect(mockNotifySpawnBlocked).toHaveBeenCalledTimes(1);
+    const [, , step, error, projectId] = mockNotifySpawnBlocked.mock.calls[0];
+    expect(step).toBe('worktree');
+    expect(error).toBe(worktreeError);
+    // The explicit id, never the ambient one: MCP auto-spawn targets whichever
+    // project the tool named, and the renderer filters the notice on it.
+    expect(projectId).toBe('proj-1');
+  });
+
+  it('does not notify when the worktree phase is never reached', async () => {
+    mockSwimlaneGetById.mockReturnValue(makeLane({ auto_spawn: false }));
+    mockTaskGetById.mockReturnValue({
+      id: TASK_ID, title: 'Quiet task', swimlane_id: LANE_ID, profile_id: null,
+    });
+
+    await autoSpawnForTask(makeContext([]), 'proj-1', { id: TASK_ID, title: 'Quiet task' }, LANE_ID);
+
+    // A column that simply does not auto-spawn is not a failure to report.
+    expect(mockNotifySpawnBlocked).not.toHaveBeenCalled();
   });
 });

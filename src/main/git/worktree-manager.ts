@@ -1061,6 +1061,71 @@ export class WorktreeManager {
     return worktrees;
   }
 
+  /**
+   * The worktree path holding `branchName`, or null when no worktree has it
+   * checked out.
+   *
+   * Git allows a branch in only ONE working tree at a time, so this answers
+   * "will `git worktree add` refuse this branch?" BEFORE anything is created.
+   * The main checkout is always the first record `git worktree list` prints, so
+   * a branch the user simply has checked out counts as held.
+   *
+   * Deliberately does NOT prune first. A stale registration makes `git worktree
+   * add` fail with the same "already used by worktree" error until it is
+   * pruned, so reporting it matches git's real behaviour - and naming the path
+   * is what tells the caller which stale entry to clear.
+   */
+  async findWorktreeHoldingBranch(branchName: string): Promise<string | null> {
+    const porcelain = await this.git.raw(['worktree', 'list', '--porcelain']);
+    return parseWorktreeBranches(porcelain).get(branchName) ?? null;
+  }
+}
+
+/**
+ * Map each branch checked out in one of this repository's worktrees to the path
+ * holding it, from `git worktree list --porcelain` output.
+ *
+ * Parsed as RECORDS, not lines, because three things bite a line-wise parse:
+ *
+ * 1. A record is `worktree <path>`, then optionally `HEAD <sha>`, then exactly
+ *    ONE of `branch refs/heads/<name>` / `detached` / `bare`. Not every record
+ *    names a branch, so a branch line must be paired with the path from its own
+ *    record (records are separated by a blank line).
+ * 2. The ref is stripped by PREFIX. Splitting on '/' would mangle a branch name
+ *    that legitimately contains slashes, e.g. `feature/login`.
+ * 3. `listWorktrees` above cannot be reused: it keeps only the `worktree` paths
+ *    and drops the `branch` lines, which are exactly what this needs.
+ *
+ * The trailing-`\r` strip below is defensive only. git writes porcelain output
+ * LF-terminated on every platform, Windows included, so it is belt-and-braces
+ * against a future caller piping this through something that does not - the
+ * same reason every other git-output parser in this file calls `.trim()`.
+ *
+ * Exported for direct unit testing; the three cases above are silent when wrong.
+ */
+export function parseWorktreeBranches(porcelain: string): Map<string, string> {
+  const REF_PREFIX = 'refs/heads/';
+  const branchToWorktreePath = new Map<string, string>();
+  let currentWorktreePath: string | null = null;
+
+  for (const rawLine of porcelain.split('\n')) {
+    const line = rawLine.replace(/\r$/, '');
+    if (line === '') {
+      currentWorktreePath = null;
+      continue;
+    }
+    if (line.startsWith('worktree ')) {
+      currentWorktreePath = line.slice('worktree '.length);
+      continue;
+    }
+    if (line.startsWith('branch ') && currentWorktreePath) {
+      const ref = line.slice('branch '.length);
+      const branchName = ref.startsWith(REF_PREFIX) ? ref.slice(REF_PREFIX.length) : ref;
+      if (branchName) branchToWorktreePath.set(branchName, currentWorktreePath);
+    }
+  }
+
+  return branchToWorktreePath;
 }
 
 /**

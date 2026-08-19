@@ -11,7 +11,7 @@ import {
   getProjectRepos,
   ensureTaskWorktree,
   ensureTaskBranchCheckout,
-  notifyBranchCheckoutBlocked,
+  notifySpawnBlocked,
   createTransitionEngine,
   cleanupTaskResources,
   spawnAgent,
@@ -122,6 +122,7 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
           await ensureTaskWorktree(context, task, tasks, projectPath);
         } catch (worktreeError) {
           console.error('[TASK_CREATE] Worktree creation failed:', worktreeError);
+          notifySpawnBlocked(context, task, 'worktree', worktreeError, projectId);
           return;
         }
 
@@ -131,7 +132,7 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
           await ensureTaskBranchCheckout(context, task, projectPath);
         } catch (checkoutError) {
           console.error('[TASK_CREATE] Branch checkout failed:', checkoutError);
-          notifyBranchCheckoutBlocked(context, task, checkoutError, projectId);
+          notifySpawnBlocked(context, task, 'checkout', checkoutError, projectId);
           return;
         }
 

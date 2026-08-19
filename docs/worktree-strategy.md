@@ -160,6 +160,14 @@ surfaces it as a toast. Create, promote, unarchive and MCP auto-spawn deliberate
 skip only the spawn, so they emit `task:spawnBlocked` and the renderer toasts it, naming the blocking
 task. Without that push, "created and silently not spawned" looked identical to success.
 
+`kangentic_create_task` (`src/main/agent/commands/task-commands.ts`) catches the collision one step
+earlier still: it refuses a `branchName` that some worktree already holds BEFORE the task row is
+written, via `WorktreeManager.findWorktreeHoldingBranch` (`parseWorktreeBranches` parses
+`git worktree list --porcelain` into a branch to path map). That matters because the tool response is
+sent before auto-spawn runs, so a collision caught later can only reach a desktop toast the calling
+agent never sees. The preflight fails open when git cannot be probed, and is skipped for backlog
+items. See [MCP Server](mcp-server.md#kangentic_create_task) for the full refusal contract.
+
 ### When worktree creation fails with a written error
 
 Two distinct failure modes raise an actionable `Error` rather than falling back silently. Where

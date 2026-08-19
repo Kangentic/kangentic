@@ -6,7 +6,7 @@ import {
   getProjectRepos,
   ensureTaskWorktree,
   ensureTaskBranchCheckout,
-  notifyBranchCheckoutBlocked,
+  notifySpawnBlocked,
   createTransitionEngine,
   spawnAgent,
   cleanupTaskSession,
@@ -141,6 +141,7 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
           await ensureTaskWorktree(context, task, tasks, resolvedProjectPath, { onProgress });
         } catch (worktreeError) {
           console.error('[TASK_UNARCHIVE] Worktree creation failed:', worktreeError);
+          notifySpawnBlocked(context, task, 'worktree', worktreeError, resolvedProjectId);
           return tasks.getById(input.id);
         }
 
@@ -150,7 +151,7 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
           await ensureTaskBranchCheckout(context, task, resolvedProjectPath, { onProgress });
         } catch (checkoutError) {
           console.error('[TASK_UNARCHIVE] Branch checkout failed:', checkoutError);
-          notifyBranchCheckoutBlocked(context, task, checkoutError, resolvedProjectId);
+          notifySpawnBlocked(context, task, 'checkout', checkoutError, resolvedProjectId);
           return tasks.getById(input.id);
         }
 
@@ -238,6 +239,7 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
             await ensureTaskWorktree(context, task, tasks, resolvedProjectPath, { onProgress });
           } catch (worktreeError) {
             console.error(`[TASK_BULK_UNARCHIVE] Worktree creation failed for task ${id.slice(0, 8)}:`, worktreeError);
+            notifySpawnBlocked(context, task, 'worktree', worktreeError, resolvedProjectId);
             return;
           }
 
@@ -247,7 +249,7 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
             await ensureTaskBranchCheckout(context, task, resolvedProjectPath, { onProgress });
           } catch (checkoutError) {
             console.error(`[TASK_BULK_UNARCHIVE] Branch checkout failed for task ${id.slice(0, 8)}:`, checkoutError);
-            notifyBranchCheckoutBlocked(context, task, checkoutError, resolvedProjectId);
+            notifySpawnBlocked(context, task, 'checkout', checkoutError, resolvedProjectId);
             return;
           }
 

@@ -16,6 +16,8 @@ import {
 import { handleCreateBacklogTask, BACKLOG_DESCRIPTION_MAX_LENGTH } from './backlog-commands';
 import { resolveProfileSelector } from './profile-commands';
 import { linkPRForTask } from '../../pr/pr-linking';
+import { WorktreeManager } from '../../git/worktree-manager';
+import { isGitRepo } from '../../git/git-checks';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
 import type { TaskUpdateInput, PermissionMode, TaskRunMode } from '../../../shared/types';
 
@@ -131,7 +133,56 @@ function scheduleLinkTimeResolve(
   });
 }
 
-export const handleCreateTask: CommandHandler = (
+/**
+ * Refuse a create whose `branchName` git already has checked out somewhere,
+ * returning the refusal message, or null when the branch is free.
+ *
+ * Git allows a branch in only ONE working tree at a time, so a task naming a
+ * held branch can never build its worktree: `ensureTaskWorktree` throws, and
+ * because `onTaskCreated` fires auto-spawn fire-and-forget the tool response has
+ * already been sent by then. What is left is a card with a null session and a
+ * null worktree, indistinguishable from a healthy one (task #538).
+ *
+ * This is the only point that can still tell the CALLER, which for an MCP create
+ * is usually an agent in another project that will never see a desktop toast.
+ * So the message has to be self-contained: what is wrong, WHERE the branch is
+ * held, that nothing was created, and - because the holder is typically the
+ * user's own checkout, which the calling agent cannot touch - an explicit
+ * terminal state rather than a retry that would just loop.
+ *
+ * Two things it deliberately never suggests: dropping `branchName` (the caller
+ * named that branch because the commits are on it, so an auto-generated name
+ * would build a worktree disconnected from the work), and `useWorktree: false`
+ * (which this same guard rejects, so it is a guaranteed loop).
+ *
+ * Fails OPEN. A probe that throws (git missing, corrupt repo) must never block a
+ * create it cannot reason about.
+ */
+async function describeBranchConflict(
+  projectPath: string,
+  branchName: string,
+): Promise<string | null> {
+  if (!isGitRepo(projectPath)) return null;
+
+  let holdingPath: string | null;
+  try {
+    holdingPath = await new WorktreeManager(projectPath).findWorktreeHoldingBranch(branchName);
+  } catch (error) {
+    console.warn(`[create_task] Could not check whether branch "${branchName}" is in use:`, error);
+    return null;
+  }
+  if (!holdingPath) return null;
+
+  return `Cannot create this task: branch '${branchName}' is already checked out at ${holdingPath}. `
+    + `Git allows a branch in only one working tree at a time, so this task's worktree could not be `
+    + `created and its agent would never start. No task was created. Retrying this same call will `
+    + `fail identically: if you can free that branch, check out a different branch in ${holdingPath} `
+    + `and re-run, otherwise stop and tell the user that ${holdingPath} is holding '${branchName}' `
+    + `and has to move off it before this task can run. Use a different branchName only if this `
+    + `task's work is not actually on that branch.`;
+}
+
+export const handleCreateTask: CommandHandler = async (
   params: Record<string, unknown>,
   context: CommandContext,
 ) => {
@@ -215,6 +266,19 @@ export const handleCreateTask: CommandHandler = (
     const resolvedProfile = resolveProfileSelector(context, profileSelector);
     if (!resolvedProfile.ok) return { success: false, error: resolvedProfile.error };
     profileId = resolvedProfile.profileId;
+  }
+
+  // Same slot, same reason as the profile check above: refuse BEFORE the row is
+  // written, so a branch that can never build a worktree leaves no task behind.
+  //
+  // NOT gated on the destination column's `auto_spawn`. The conflict bites the
+  // moment the task reaches any spawning column, so one unconditional rule is
+  // both simpler and correct for a task filed into a quiet column today and
+  // dragged into a spawning one tomorrow. Runs after the Backlog early-return
+  // above, which ignores `branchName` entirely.
+  if (branchName) {
+    const conflict = await describeBranchConflict(context.getProjectPath(), branchName);
+    if (conflict) return { success: false, error: conflict };
   }
 
   const db = context.getProjectDb();

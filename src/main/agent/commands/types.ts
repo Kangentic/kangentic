@@ -71,9 +71,12 @@ export interface CommandResponse {
  * Handlers may be sync or async. Most are sync (DB-only operations via the
  * synchronous better-sqlite3 driver), but some need to await I/O - e.g.
  * `get_transcript`'s structured branch reads Claude Code's native session
- * JSONL from disk. CommandBridge dispatches sync handlers inline so test
- * harnesses that read response files immediately after invocation keep
- * working; only Promise-returning handlers go through async dispatch.
+ * JSONL from disk, and `create_task` probes git for a branch conflict before
+ * writing its row.
+ *
+ * Every consumer awaits: `runHandler` (mcp-http/handler-helpers.ts), the mobile
+ * bridge's board-tool handler, and the devtools command proxy. The file-based
+ * CommandBridge that once required sync handlers to dispatch inline is gone.
  *
  * Do not narrow this back to `CommandResponse` without first migrating
  * every async handler.

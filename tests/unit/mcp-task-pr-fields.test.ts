@@ -192,8 +192,8 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('handleCreateTask PR fields', () => {
-  it('applies prUrl / prNumber as a follow-up update, keeping create PR-column-free', () => {
-    const response = handleCreateTask(
+  it('applies prUrl / prNumber as a follow-up update, keeping create PR-column-free', async () => {
+    const response = await handleCreateTask(
       createTaskParams({ prUrl: REVIEWED_PR_URL, prNumber: 98 }),
       makeContext(),
     );
@@ -213,22 +213,22 @@ describe('handleCreateTask PR fields', () => {
     });
   });
 
-  it('links by prNumber alone, with no prUrl to derive it from', () => {
+  it('links by prNumber alone, with no prUrl to derive it from', async () => {
     // Mirrors handleUpdateTask's "nulls pr_state when only the PR number is set"
     // - the schema admits prNumber with no prUrl (mcp-task-tools-pr-fields-schema
     // asserts this), so a caller who already knows the number but not the full
     // URL is a reachable call shape on create too.
-    handleCreateTask(createTaskParams({ prNumber: 98 }), makeContext());
+    await handleCreateTask(createTaskParams({ prNumber: 98 }), makeContext());
 
     expect(mockTaskRepoUpdate).toHaveBeenCalledWith({ id: 'task-uuid-1', pr_number: 98 });
   });
 
-  it('derives pr_number from prUrl when only the URL is passed', () => {
+  it('derives pr_number from prUrl when only the URL is passed', async () => {
     // A URL already encodes its number, so passing prUrl alone is the natural
     // call. Without the derivation the row gets a pr_url and no pr_number, and
     // the ladder anchors on pr_number - so the task shows a PR badge that no
     // resolve can ever reach (the no-anchor gate never inspects pr_url).
-    handleCreateTask(createTaskParams({ prUrl: REVIEWED_PR_URL }), makeContext());
+    await handleCreateTask(createTaskParams({ prUrl: REVIEWED_PR_URL }), makeContext());
 
     expect(mockTaskRepoUpdate).toHaveBeenCalledWith({
       id: 'task-uuid-1',
@@ -237,11 +237,11 @@ describe('handleCreateTask PR fields', () => {
     });
   });
 
-  it('omits pr_number when the URL names no PR number', () => {
+  it('omits pr_number when the URL names no PR number', async () => {
     // z.string().url() admits any URL, not just a /pull/<n> one. Writing no
     // number is right here: a wrong number is worse than none, since Tier 1
     // would treat it as authoritative.
-    handleCreateTask(createTaskParams({ prUrl: 'https://example.com/not-a-pr' }), makeContext());
+    await handleCreateTask(createTaskParams({ prUrl: 'https://example.com/not-a-pr' }), makeContext());
 
     expect(mockTaskRepoUpdate).toHaveBeenCalledWith({
       id: 'task-uuid-1',
@@ -249,26 +249,26 @@ describe('handleCreateTask PR fields', () => {
     });
   });
 
-  it('does not touch the PR columns when neither field is passed', () => {
-    const response = handleCreateTask(createTaskParams(), makeContext());
+  it('does not touch the PR columns when neither field is passed', async () => {
+    const response = await handleCreateTask(createTaskParams(), makeContext());
 
     expect(response.success).toBe(true);
     expect(mockTaskRepoUpdate).not.toHaveBeenCalled();
   });
 
-  it('treats omitted PR keys the same as the explicit nulls the tool layer forwards', () => {
+  it('treats omitted PR keys the same as the explicit nulls the tool layer forwards', async () => {
     // The MCP tool always forwards `?? null`, but a direct handler call (and
     // several existing suites) pass neither key. `undefined !== null`, so
     // reading them raw would fire a pointless follow-up update on every create.
-    const response = handleCreateTask({ title: 'Plain task', description: '' }, makeContext());
+    const response = await handleCreateTask({ title: 'Plain task', description: '' }, makeContext());
 
     expect(response.success).toBe(true);
     expect(mockTaskRepoUpdate).not.toHaveBeenCalled();
   });
 
-  it('reports the updated task, so the linked row is what the caller is told about', () => {
+  it('reports the updated task, so the linked row is what the caller is told about', async () => {
     const context = makeContext();
-    handleCreateTask(createTaskParams({ prUrl: REVIEWED_PR_URL, prNumber: 98 }), context);
+    await handleCreateTask(createTaskParams({ prUrl: REVIEWED_PR_URL, prNumber: 98 }), context);
 
     expect(context.onTaskCreated).toHaveBeenCalledWith(
       expect.objectContaining({ pr_url: REVIEWED_PR_URL, pr_number: 98 }),
@@ -370,7 +370,7 @@ describe('link-time PR resolve', () => {
   });
 
   it('resolves right after create_task writes a link', async () => {
-    handleCreateTask(createTaskParams({ prUrl: REVIEWED_PR_URL, prNumber: 98 }), makeContext());
+    await handleCreateTask(createTaskParams({ prUrl: REVIEWED_PR_URL, prNumber: 98 }), makeContext());
     await flushLinkTimeResolve();
 
     expect(mockLinkPRForTask).toHaveBeenCalledWith(
@@ -390,7 +390,7 @@ describe('link-time PR resolve', () => {
       return { status: 'unchanged', task: null };
     });
 
-    handleCreateTask(createTaskParams({ prUrl: REVIEWED_PR_URL }), context);
+    await handleCreateTask(createTaskParams({ prUrl: REVIEWED_PR_URL }), context);
     await flushLinkTimeResolve();
 
     expect(order).toEqual(['onTaskCreated', 'linkPRForTask']);
@@ -420,7 +420,7 @@ describe('link-time PR resolve', () => {
   });
 
   it('does not resolve on a create with no PR fields', async () => {
-    handleCreateTask(createTaskParams(), makeContext());
+    await handleCreateTask(createTaskParams(), makeContext());
     await flushLinkTimeResolve();
 
     expect(mockLinkPRForTask).not.toHaveBeenCalled();
@@ -441,7 +441,7 @@ describe('link-time PR resolve', () => {
     // above cannot cover it: `prUrl: ''` clears `!== null` there too, and only
     // the `.trim() !== ''` half of `linksPR` keeps a create with no real anchor
     // from firing a forced resolve.
-    handleCreateTask(createTaskParams({ prUrl: '' }), makeContext());
+    await handleCreateTask(createTaskParams({ prUrl: '' }), makeContext());
     await flushLinkTimeResolve();
 
     expect(mockLinkPRForTask).not.toHaveBeenCalled();
@@ -473,7 +473,7 @@ describe('link-time PR resolve', () => {
 
   it('does not resolve on create when prNumber is non-numeric and no prUrl anchors it', async () => {
     // Same guard, create path's own copy of it (`Number.isFinite(linkedPrNumber)`).
-    handleCreateTask(createTaskParams({ prNumber: 'not-a-number' }), makeContext());
+    await handleCreateTask(createTaskParams({ prNumber: 'not-a-number' }), makeContext());
     await flushLinkTimeResolve();
 
     expect(mockLinkPRForTask).not.toHaveBeenCalled();

@@ -168,12 +168,13 @@ const mockCreateTransitionEngine = vi.fn(() => ({
 }));
 const mockCleanupTaskResources = vi.fn(async () => {});
 const mockGetProjectRepos = vi.fn();
+const mockNotifySpawnBlocked = vi.fn();
 
 vi.mock('../../src/main/ipc/helpers', () => ({
   getProjectRepos: (...args: unknown[]) => mockGetProjectRepos(...args),
   ensureTaskWorktree: (...args: unknown[]) => mockEnsureTaskWorktree(...args),
   ensureTaskBranchCheckout: (...args: unknown[]) => mockEnsureTaskBranchCheckout(...args),
-  notifyBranchCheckoutBlocked: () => {},
+  notifySpawnBlocked: (...args: unknown[]) => mockNotifySpawnBlocked(...args),
   spawnAgent: (...args: unknown[]) => mockSpawnAgent(...args),
   createTransitionEngine: (...args: unknown[]) => mockCreateTransitionEngine(...args),
   cleanupTaskResources: (...args: unknown[]) => mockCleanupTaskResources(...args),
@@ -280,6 +281,48 @@ describe('BACKLOG_PROMOTE AbortError cleanup', () => {
 
     // The abort must NOT have propagated downstream: spawn never ran and the
     // post-worktree branch checkout never ran.
+    expect(mockEnsureTaskBranchCheckout).not.toHaveBeenCalled();
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+
+    // isAbortError re-throws before the notifySpawnBlocked call, so an abort
+    // is silent by design - the abort itself already carries no user-actionable
+    // information, unlike the arbitrary-failure case pinned below. This is the
+    // other side of that boundary: the notify call must not fire here.
+    expect(mockNotifySpawnBlocked).not.toHaveBeenCalled();
+  });
+
+  it('notifies via notifySpawnBlocked for a NON-abort worktree failure in Phase 2', async () => {
+    // isAbortError re-throws an abort-classified rejection before the notify
+    // call, which is why the abort test above never reaches this line. An
+    // arbitrary git failure (not an AbortError) is the case that must notify
+    // and then stop, rather than falling through to checkout/spawn or being
+    // left as a console-only failure. Red-green: pre-fix this call site did
+    // not exist (the notify call was added by this change), so reverting it
+    // would leave mockNotifySpawnBlocked uncalled and this test red.
+    mockEnsureTaskWorktree.mockImplementation(async () => {
+      throw new Error("fatal: 'feature-x' is already used by worktree at '/repo'");
+    });
+
+    const handler = capturedHandlers.get(IPC.BACKLOG_PROMOTE);
+    if (!handler) throw new Error('BACKLOG_PROMOTE handler not registered');
+
+    await handler(null, {
+      backlogTaskIds: ['backlog-1'],
+      targetSwimlaneId: 'lane-doing',
+    });
+
+    // Phase 2 is a fire-and-forget IIFE; wait for the notify call to land.
+    await vi.waitFor(() => {
+      expect(mockNotifySpawnBlocked).toHaveBeenCalledTimes(1);
+    });
+
+    const [, notifiedTask, step, , notifiedProjectId] = mockNotifySpawnBlocked.mock.calls[0];
+    expect((notifiedTask as { id: string }).id).toBe('task-promoted');
+    expect(step).toBe('worktree');
+    expect(notifiedProjectId).toBe(context.currentProjectId);
+
+    // A non-abort worktree failure must stop the chain right there: no
+    // checkout attempt, no spawn.
     expect(mockEnsureTaskBranchCheckout).not.toHaveBeenCalled();
     expect(mockSpawnAgent).not.toHaveBeenCalled();
   });

@@ -159,8 +159,8 @@ describe('handleCreateTask - run_mode', () => {
     }));
   });
 
-  it('a truthy runMode is spread into the TaskRepository.create input', () => {
-    const result = handleCreateTask({ title: 'T', runMode: 'agent_override' }, context);
+  it('a truthy runMode is spread into the TaskRepository.create input', async () => {
+    const result = await handleCreateTask({ title: 'T', runMode: 'agent_override' }, context);
 
     expect(result.success).toBe(true);
     expect(mockTaskRepoCreate).toHaveBeenCalledOnce();
@@ -168,8 +168,8 @@ describe('handleCreateTask - run_mode', () => {
     expect(createInput.run_mode).toBe('agent_override');
   });
 
-  it('an omitted runMode leaves run_mode OUT of the create input entirely (not merely undefined)', () => {
-    const result = handleCreateTask({ title: 'T' }, context);
+  it('an omitted runMode leaves run_mode OUT of the create input entirely (not merely undefined)', async () => {
+    const result = await handleCreateTask({ title: 'T' }, context);
 
     expect(result.success).toBe(true);
     expect(mockTaskRepoCreate).toHaveBeenCalledOnce();
@@ -182,12 +182,12 @@ describe('handleCreateTask - run_mode', () => {
     expect(createInput).not.toHaveProperty('run_mode');
   });
 
-  it('the default value "column_settings" is truthy, so it IS spread even though it is the default', () => {
+  it('the default value "column_settings" is truthy, so it IS spread even though it is the default', async () => {
     // Distinguishes the create-side truthiness guard from a hypothetical
     // "only send non-default values" guard - runMode is either present (any
     // truthy string) or fully omitted, with no special-casing of the
     // "column_settings" string itself.
-    const result = handleCreateTask({ title: 'T', runMode: 'column_settings' }, context);
+    const result = await handleCreateTask({ title: 'T', runMode: 'column_settings' }, context);
 
     expect(result.success).toBe(true);
     const createInput = mockTaskRepoCreate.mock.calls[0][0] as Record<string, unknown>;
