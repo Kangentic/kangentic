@@ -81,8 +81,11 @@ function projectionLiteral(nodeCount: number, options: { collapsed?: boolean } =
     ]`;
     return projectionLiteral(nodeCount)
       .replace(
-        "clusters: { coarse: 0, balanced: i % 2, fine: i % 3 },",
-        'clusters: { coarse: i % 2, balanced: i % 2, fine: i % 2 },',
+        /clusters: \{\n[\s\S]*?\n        \},/,
+        `clusters: (function () {
+          var half = i < ${nodeCount} / 2 ? 0 : 1;
+          return { coarse: half, balanced: half, fine: half };
+        })(),`,
       )
       .replace(
         /clusterings: \[[\s\S]*?\n      \],/,
@@ -113,7 +116,18 @@ function projectionLiteral(nodeCount: number, options: { collapsed?: boolean } =
         // Every granularity, since the projection ships all three. The
         // fixture keeps them DIFFERENT so a test cannot pass by reading the
         // wrong one: coarse merges what balanced splits.
-        clusters: { coarse: 0, balanced: i % 2, fine: i % 3 },
+        //
+        // CONTIGUOUS, not interleaved by remainder as this was. A real
+        // clustering is k-means over the layout, so a region is a PLACE - and
+        // under an interleaved assignment every region shares one centroid,
+        // which made the region pills collide and drop each other the moment a
+        // pill moved to where its nodes actually are. x runs with i here, so
+        // slicing on i gives regions that occupy different parts of the map.
+        clusters: {
+          coarse: 0,
+          balanced: i < ${nodeCount} / 2 ? 0 : 1,
+          fine: i < ${nodeCount} / 3 ? 0 : (i < (2 * ${nodeCount}) / 3 ? 1 : 2),
+        },
       };
       nodes.push(node);
     }
@@ -546,15 +560,17 @@ test.describe('memory graph', () => {
   });
 
   test('offers topic, recency, outcome and length colour modes', async () => {
-    // "Length", not "Depth": the old name meant conversation length and
-    // collided with the depth the user now flies through.
+    // "Conversation length", not "Length" and not the "Depth" before that. Bare
+    // "Length" was read as the task's effort or elapsed time - both of which the
+    // map knows and neither of which this mode encodes - so the option names
+    // what it measures.
     const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(20) }));
     try {
       await openMemoryGraph(page);
       // A Select, not a segmented control: four labels never fit the panel's
       // width, and `ui-conventions` names Select for exactly that case.
       const select = page.locator('[data-testid="memory-graph-color-mode"]');
-      for (const [value, label] of [['cluster', 'Topic'], ['recency', 'Recency'], ['outcome', 'Outcome'], ['size', 'Length']]) {
+      for (const [value, label] of [['cluster', 'Topic'], ['recency', 'Recency'], ['outcome', 'Outcome'], ['size', 'Conversation length']]) {
         await select.selectOption(value);
         await expect(select).toHaveValue(value);
         // The description under the control tracks the selection, so the user
@@ -622,6 +638,47 @@ test.describe('memory graph', () => {
 
       await page.locator('[data-testid="memory-graph-region-row"]').nth(1).click();
       await expect(dropped).not.toHaveCSS('opacity', '0');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('drops a region label the filter has left a single conversation of', async () => {
+    // A pill names an AREA, and the projection's centroid is the average of
+    // every node the region ever had. With one hit left that centroid is the
+    // hit, so the region name became a second, vaguer label on a conversation
+    // whose own title was already there - and a search returning 42 across 39
+    // regions therefore drew a wall of them, churning as the camera moved.
+    //
+    // Region 0 keeps three hits (docs 0-2) and region 1 gets exactly one (doc
+    // 15), because the fixture splits balanced at the halfway node.
+    const hit = (index: number) =>
+      `{ docKey: 'conversation::doc-${index}', sessionId: 's-${index}', taskId: null, taskTitle: 'Hit ${index}', agentName: null, snippet: 'x', score: 0.9, matchKind: 'hybrid', matchCount: 1, turnTs: null }`;
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(20) })}
+      window.__mockPreConfigure(function () {
+        return {
+          memoryGraphQueryResult: {
+            query: 'terminal',
+            semantic: true,
+            hits: [${hit(0)}, ${hit(1)}, ${hit(2)}, ${hit(15)}],
+          },
+        };
+      });`;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await openMemoryGraph(page);
+      const kept = page.locator('[data-testid="memory-graph-cluster-label"][data-cluster="0"]');
+      const thinned = page.locator('[data-testid="memory-graph-cluster-label"][data-cluster="1"]');
+      await expect(kept).not.toHaveCSS('opacity', '0');
+      await expect(thinned).not.toHaveCSS('opacity', '0');
+
+      await page.locator('[data-testid="memory-graph-search-input"]').fill('terminal');
+      await expect(page.locator('[data-testid="memory-graph-result-card"]')).toHaveCount(4);
+
+      // Opacity, not element count: the labels stay mounted and the frame loop
+      // fades them, so a count assertion passes against a merely invisible pill.
+      await expect(thinned).toHaveCSS('opacity', '0');
+      await expect(kept).not.toHaveCSS('opacity', '0');
     } finally {
       await browser.close();
     }

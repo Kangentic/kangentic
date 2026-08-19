@@ -138,9 +138,14 @@ const COLOR_OPTIONS: ReadonlyArray<{ value: MemoryGraphColorMode; label: string;
   // overrode the lane: everything finished read as archived, so this mode
   // painted a real board one flat grey.
   { value: 'outcome', label: 'Outcome', hint: 'Green reached Done, amber still on the board, grey abandoned without finishing' },
-  // Renamed from "Depth", which meant conversation length and collided with the
-  // depth you are now flying through.
-  { value: 'size', label: 'Length', hint: 'Brighter is a longer conversation' },
+  // "Length" alone was read as the task's effort or elapsed time, which the map
+  // also knows and does not encode here - so the option names what it measures.
+  // (It was "Depth" before that, which collided with the depth you fly through.)
+  {
+    value: 'size',
+    label: 'Conversation length',
+    hint: 'How much was said: warm and bright is a long conversation, deep indigo a short one. Measured in indexed passages, not in time spent or money',
+  },
 ];
 
 /** Keyed rather than listed, so the rendered set is driven by what the corpus

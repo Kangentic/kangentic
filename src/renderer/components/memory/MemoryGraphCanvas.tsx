@@ -164,6 +164,20 @@ const REGION_LABEL_HEIGHT = 30;
  * way a map prints a place name beside its dot rather than over it.
  */
 const REGION_LABEL_LIFT = 30;
+/**
+ * Visible nodes a region needs before its pill is drawn.
+ *
+ * TWO, because that is the smallest number for which a centroid is a place
+ * BETWEEN things rather than a point on one thing. Below it the region name is a
+ * second, vaguer label sitting on a conversation whose own title already names
+ * it - which is what a search returning 42 conversations across 39 regions
+ * produced: a wall of region pills, one per surviving hit, churning as the
+ * camera moved.
+ *
+ * Inert on an unfiltered map, where the smallest region the clustering will
+ * produce is far above this.
+ */
+const MIN_REGION_LABEL_NODES = 2;
 const NODE_LABEL_PADDING = 14;
 const NODE_LABEL_HEIGHT = 19;
 /** Gap enforced between placed boxes, so near-misses still read as separate. */
@@ -306,24 +320,35 @@ export function MemoryGraphCanvas({
   // Cluster label elements, positioned imperatively each frame. Refs rather than
   // state for the same reason the scene is imperative.
   const labelRefs = useRef<Map<number, HTMLDivElement | null>>(new Map());
-  const labelWorldPositions = useMemo(
-    () => regions.map((cluster) => new Vector3(
-      (cluster.x - 0.5) * WORLD_SIZE,
-      (cluster.y - 0.5) * WORLD_SIZE,
-      (cluster.z - 0.5) * WORLD_SIZE,
-    )),
-    [regions],
-  );
+  /**
+   * Where each region's pill sits, recomputed from the nodes STILL ON SCREEN.
+   *
+   * The projection's own centroid is the average of every node in the region,
+   * which is right for an unfiltered map and wrong the moment a search or a
+   * facet empties most of it: a 25-conversation region with one hit left still
+   * put its name at the middle of where those 25 used to be, pointing at nothing.
+   * A search returning 42 conversations across 39 regions therefore drew a wall
+   * of pills over empty space, and they churned as the camera moved, which is
+   * what made orbiting feel like the map was flying around.
+   *
+   * A ref because the frame loop reads it, written by the same effect that
+   * decides which regions are visible at all - so a pill's POSITION and its
+   * VISIBILITY can never disagree about which nodes they were computed from.
+   */
+  const labelWorldPositionsRef = useRef<Map<number, Vector3>>(new Map());
   const showLabelsRef = useRef(showLabels);
   showLabelsRef.current = showLabels;
 
   /**
-   * Clusters with at least one node still on screen.
+   * Clusters with enough nodes still on screen to name an AREA.
    *
    * A filter empties whole regions, and a region label hanging over the space
    * where its conversations USED to be is worse than no label: it names
-   * something that is not there. Held in a ref because the frame loop reads it
-   * and must not depend on a React render having happened first.
+   * something that is not there. The threshold is what makes that true of the
+   * partial case too - with one node left the centroid is that node, and the
+   * region name is then a second, vaguer label on a conversation whose own title
+   * is already there. Held in a ref because the frame loop reads it and must not
+   * depend on a React render having happened first.
    */
   const visibleClustersRef = useRef<Set<number>>(new Set());
 
@@ -396,11 +421,10 @@ export function MemoryGraphCanvas({
     // it, so a name is never hidden underneath another name.
     const candidates = regionCandidatesRef.current;
     candidates.length = 0;
-    for (let index = 0; index < labelWorldPositions.length; index += 1) {
-      const cluster = regions[index];
-      if (!cluster) continue;
+    for (const cluster of regions) {
       if (!showLabelsRef.current || !visibleClustersRef.current.has(cluster.id)) continue;
-      const world = labelWorldPositions[index];
+      const world = labelWorldPositionsRef.current.get(cluster.id);
+      if (!world) continue;
       scratchToLabel.copy(world).sub(cameraPosition);
       // Behind the camera: `project` mirrors those to the opposite side of the
       // screen when w is negative, which reads as a label flying about at random.
@@ -455,7 +479,7 @@ export function MemoryGraphCanvas({
       const element = labelRefs.current.get(cluster.id);
       if (element) element.style.opacity = '0';
     }
-  }, [labelWorldPositions, regions]);
+  }, [regions]);
 
   /**
    * Place the node titles for this frame.
@@ -707,10 +731,29 @@ export function MemoryGraphCanvas({
     return ranks;
   }, [projection.nodes]);
 
-  const maxChunkCount = useMemo(
-    () => projection.nodes.reduce((highest, node) => Math.max(highest, node.chunkCount), 1),
-    [projection.nodes],
-  );
+  /**
+   * Shortest-to-longest position of each node, for the length ramp.
+   *
+   * Rank, not the value, and not a log of it either - the same trap the link
+   * weights and the similarity percentages both fell into. Measured on the real
+   * 648-conversation corpus, `chunkCount` runs 1 to 1509 but the middle 80% sits
+   * between 13 and 157, so a log scale against the maximum spends two thirds of
+   * its range on a handful of outliers and squeezes almost every conversation
+   * into a third of the ramp: 0.361 at the 10th percentile to 0.692 at the 90th.
+   * At one hue that is a twenty-point saturation difference across four fifths
+   * of the map, which is exactly the sea of blue it produced. A rank uses the
+   * whole ramp whatever the distribution.
+   */
+  const lengthRank = useMemo(() => {
+    const bySize = projection.nodes
+      .map((node, index) => ({ index, chunks: node.chunkCount }))
+      .sort((first, second) => first.chunks - second.chunks);
+    const ranks = new Float32Array(projection.nodes.length);
+    bySize.forEach((entry, position) => {
+      ranks[entry.index] = bySize.length <= 1 ? 1 : position / (bySize.length - 1);
+    });
+    return ranks;
+  }, [projection.nodes]);
 
   /**
    * How many links each node has in the mesh that is actually DRAWN.
@@ -768,9 +811,15 @@ export function MemoryGraphCanvas({
         else if (node.outcome === 'abandoned') color = toLinearTriplet('hsl(0 0% 42%)');
         else color = toLinearTriplet('hsl(0 0% 55%)');
       } else {
-        const share = Math.log10(1 + node.chunkCount) / Math.log10(1 + maxChunkCount);
+        // A ramp across HUE as well as lightness, not one hue at varying
+        // saturation. The single-hue version could not separate its own middle:
+        // deep indigo for the shortest conversations through blue and teal to a
+        // warm yellow for the longest, which is the standard shape for a
+        // magnitude and stays readable for a reader who cannot separate two
+        // hues, since lightness rises monotonically with it.
+        const rank = lengthRank[index];
         color = toLinearTriplet(
-          `hsl(210 ${Math.round(20 + share * 60)}% ${Math.round(40 + share * 35)}%)`,
+          `hsl(${Math.round(265 - rank * 215)} ${Math.round(55 + rank * 25)}% ${Math.round(38 + rank * 30)}%)`,
         );
       }
 
@@ -805,21 +854,45 @@ export function MemoryGraphCanvas({
     });
   }, [
     projection.nodes, highlighted, selectedIndex, hoveredIndex, colorMode,
-    recencyRank, maxChunkCount, degrees, maxDegree, regionOf,
+    recencyRank, lengthRank, degrees, maxDegree, regionOf,
   ]);
 
   useEffect(() => {
     // Recomputed alongside the styles, from the same alphas the scene gets, so a
     // label can never disagree with whether its region is drawn.
-    const visible = new Set<number>();
     const visibleNodes = new Set<number>();
+    // Running sum per region, so a pill lands on the conversations it still has
+    // rather than on the middle of where its region used to be.
+    const centroids = new Map<number, { x: number; y: number; z: number; count: number }>();
     for (let index = 0; index < styles.length; index += 1) {
-      if (styles[index].alpha > 0) {
-        visible.add(regionOf(projection.nodes[index]));
-        visibleNodes.add(index);
+      if (styles[index].alpha <= 0) continue;
+      visibleNodes.add(index);
+      const node = projection.nodes[index];
+      const region = regionOf(node);
+      const running = centroids.get(region);
+      if (running) {
+        running.x += node.x;
+        running.y += node.y;
+        running.z += node.z;
+        running.count += 1;
+      } else {
+        centroids.set(region, { x: node.x, y: node.y, z: node.z, count: 1 });
       }
     }
+
+    const visible = new Set<number>();
+    const positions = new Map<number, Vector3>();
+    for (const [region, sum] of centroids) {
+      if (sum.count < MIN_REGION_LABEL_NODES) continue;
+      visible.add(region);
+      positions.set(region, new Vector3(
+        (sum.x / sum.count - 0.5) * WORLD_SIZE,
+        (sum.y / sum.count - 0.5) * WORLD_SIZE,
+        (sum.z / sum.count - 0.5) * WORLD_SIZE,
+      ));
+    }
     visibleClustersRef.current = visible;
+    labelWorldPositionsRef.current = positions;
     // Titles follow the same alpha the scene gets, so a filtered-out
     // conversation cannot leave its name floating over the map.
     visibleNodesRef.current = visibleNodes;
@@ -1113,10 +1186,13 @@ export function MemoryGraphCanvas({
       </div>
 
       {/* Reset view is an ACTION, not reference, so it does not live in the
-          legend - it sits opposite, in the corner actions belong in. It insets
-          itself by whatever the detail rail is currently taking, rather than by
-          a boolean: the rail has a real width, and reading it from the same
-          measurement the camera uses means one source instead of two. */}
+          legend - it sits opposite, in the corner actions belong in. And it
+          STAYS there: the rails stop short of the bottom to leave it this
+          corner, rather than the button sliding left by whatever the rail is
+          currently taking. It moved on every panel open, and when the chrome
+          measurement read a mid-animation rail it slid under the rail instead
+          of clear of it - which is the worst outcome for the one control that
+          exists to get you un-lost. */}
       <button
         type="button"
         onClick={resetView}
@@ -1124,8 +1200,7 @@ export function MemoryGraphCanvas({
         title="Fly back to the opening view"
         aria-label="Reset view"
         data-testid="memory-graph-reset-view"
-        style={{ right: `${(chromeInsets?.right ?? 0) + RESET_VIEW_MARGIN}px` }}
-        className="absolute bottom-3 flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised/80 px-2 py-1 text-[11px] text-fg-muted backdrop-blur transition-colors hover:bg-surface-hover hover:text-fg cursor-pointer"
+        className="absolute bottom-3 right-3 flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised/80 px-2 py-1 text-[11px] text-fg-muted backdrop-blur transition-colors hover:bg-surface-hover hover:text-fg cursor-pointer"
       >
         <RotateCcw size={11} aria-hidden />
         Reset view
@@ -1133,9 +1208,6 @@ export function MemoryGraphCanvas({
     </div>
   );
 }
-
-/** Gap between Reset view and whatever edge it is sitting against. */
-const RESET_VIEW_MARGIN = 12;
 
 /**
  * One input, drawn as a key.

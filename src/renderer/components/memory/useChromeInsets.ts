@@ -99,5 +99,26 @@ export function useChromeInsets(
     return () => observer.disconnect();
   }, [rootRef, measure]);
 
+  // Measure AGAIN when a panel finishes sliding in.
+  //
+  // The rails enter on the app's panel animation, whose first keyframe is
+  // `translateX(100%)` - and `getBoundingClientRect` reports the TRANSFORMED box
+  // by definition, so the layout effect above measures a rail that is still one
+  // full width off the right edge. Measured on the real surface: a 320px rail
+  // read as 24px of inset, which put Reset view underneath it and framed the map
+  // into a pane that still included the rail. Nothing corrected it either, since
+  // an animation ending is neither a revision change nor a resize.
+  //
+  // The event bubbles, so this covers any animated panel added later rather than
+  // just the two rails. Each firing costs a handful of rect reads and returns
+  // early when nothing moved.
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const remeasure = () => measure();
+    root.addEventListener('animationend', remeasure);
+    return () => root.removeEventListener('animationend', remeasure);
+  }, [rootRef, measure]);
+
   return insets;
 }

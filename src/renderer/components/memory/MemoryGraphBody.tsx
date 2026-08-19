@@ -564,9 +564,16 @@ export function MemoryGraphBody() {
       </div>
 
       {/* The detail panel wins the rail when a node is selected: it is the more
-          specific answer, and the search results stay one click away on the map. */}
+          specific answer, and the search results stay one click away on the map.
+
+          Both rails stop short of the bottom (`bottom-14`) so Reset view keeps
+          its corner. Reset view used to slide left by the rail's width instead,
+          which meant the one control that gets you un-lost moved every time a
+          panel opened - and when the chrome measurement was wrong it vanished
+          underneath the rail entirely. A control that does not move is easier to
+          find than one that is correctly placed. */}
       {selectedNode ? (
-        <div data-graph-chrome="right" className="overlay-panel-in absolute bottom-3 right-3 top-3 z-10 w-80">
+        <div data-graph-chrome="right" className="overlay-panel-in absolute bottom-14 right-3 top-3 z-10 w-80">
           <div className={`h-full overflow-hidden rounded-lg border border-edge bg-surface-raised/85 shadow-xl backdrop-blur-md`}>
             <MemoryNodeDetail
               node={selectedNode}
@@ -584,7 +591,7 @@ export function MemoryGraphBody() {
           </div>
         </div>
       ) : query ? (
-        <div data-graph-chrome="right" className="overlay-panel-in absolute bottom-3 right-3 top-3 z-10 w-80">
+        <div data-graph-chrome="right" className="overlay-panel-in absolute bottom-14 right-3 top-3 z-10 w-80">
           <aside
             className="h-full overflow-y-auto rounded-lg border border-edge bg-surface-raised/85 shadow-xl backdrop-blur-md"
             data-testid="memory-graph-results"

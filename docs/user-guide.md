@@ -784,7 +784,8 @@ The **Display** panel (top left) collapses out of the way and holds the groups b
   areas have gone quiet.
 - **Outcome** - green reached Done, amber still on the board, grey archived. Note that archiving
   is how finished work leaves the board, so grey covers both shipped and dropped work.
-- **Length** - brighter is a longer conversation.
+- **Conversation length** - how much was said, from deep indigo for the shortest through blue and
+  teal to a warm yellow for the longest. Measured in indexed passages, not in time spent or money.
 
 **Show** turns the region labels and the similarity links on and off.
 
