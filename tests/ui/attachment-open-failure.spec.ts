@@ -173,10 +173,11 @@ async function openBacklogEditDialog(taskTitle: string): Promise<void> {
 /**
  * Close NewBacklogTaskDialog by driving the backlog store's editingItem
  * slot directly (the same function BaseDialog's own X button calls), rather
- * than clicking a close gesture. A saved attachment makes the edit form
- * report dirty (NewBacklogTaskDialog.tsx's isDirty includes
- * `attachments.length > 0` in edit mode), which would otherwise route any
- * close gesture through the discard-changes ConfirmDialog.
+ * than clicking a close gesture. NewBacklogTaskDialog.tsx's isDirty counts
+ * only PENDING attachments, so a saved one no longer reports the edit form
+ * dirty and a real close gesture would work here too; driving the store
+ * directly is kept for symmetry with openBacklogEditDialog below, which also
+ * bypasses the UI to seed state no create/edit flow can currently write.
  *
  * Also switches back to the board view, so a later test in this shared-page
  * file (e.g. the task-detail describe above, which needs the "To Do" swimlane

@@ -2,6 +2,9 @@
  * UI tests for the New Backlog Task dialog UX:
  *   - Escape/discard-confirm guard in create mode and edit mode
  *   - Maximize toggle button and Ctrl+Shift+M hotkey
+ *   - Header (Pencil/Plus icon, source link, priority badge), the read-only
+ *     meta row, and the footer Delete affordance added to bring this dialog
+ *     up to the board task-detail's visual treatment
  *
  * Coverage gaps addressed (#2 from the branch audit):
  *   NewBacklogTaskDialog has the same dirty-changes guard as NewTaskDialog
@@ -198,9 +201,13 @@ test.describe('New Backlog Task Dialog - Maximize Toggle', () => {
 
     await expect(maximizeButton).toBeVisible();
 
-    // Windowed state: action is "Maximize", dialog has windowed class.
+    // Windowed state: action is "Maximize", dialog has windowed class. The
+    // windowed class now carries a definite height (h-[80vh]) so the
+    // description editor's flex-1 chain has something to fill against
+    // instead of being inert - see NewBacklogTaskDialog.tsx's maximizedDialogLayout call.
     await expect(maximizeButton).toHaveAttribute('aria-label', 'Maximize dialog');
     await expect(dialog).toHaveClass(/w-\[840px\]/);
+    await expect(dialog).toHaveClass(/h-\[80vh\]/);
     await expect(dialog).toHaveClass(/rounded-lg/);
 
     // Click maximize - content fills the area between title bar and status bar.
@@ -246,6 +253,467 @@ test.describe('New Backlog Task Dialog - Maximize Toggle', () => {
     await expect(dialog).not.toHaveClass(/w-full/);
 
     await page.keyboard.press('Escape');
+    await expect(dialog).not.toBeVisible();
+  });
+});
+
+// Seed the edit dialog directly through the backlog store, mirroring
+// attachment-open-failure.spec.ts's openBacklogEditDialog helper. Bypasses the
+// row-click UI so fields no create/edit flow can currently write (assignee,
+// external_source/url) can still be exercised.
+async function seedBacklogEditItem(
+  page: Page,
+  title: string,
+  overrides: Record<string, unknown> = {},
+): Promise<void> {
+  await page.locator('[data-testid="view-toggle-backlog"]').click();
+  await expect(page.locator('[data-testid="backlog-view"]')).toBeVisible();
+
+  await page.evaluate(({ taskTitle, taskOverrides }) => {
+    const stores = (window as unknown as {
+      __zustandStores?: { backlog?: { getState: () => { setEditingItem: (task: unknown) => void } } };
+    }).__zustandStores;
+    if (!stores?.backlog) throw new Error('backlog store not exposed on __zustandStores');
+    const now = new Date().toISOString();
+    stores.backlog.getState().setEditingItem(Object.assign({
+      id: `backlog-header-test-${Date.now()}`,
+      title: taskTitle,
+      description: '',
+      priority: 0,
+      labels: [],
+      position: 0,
+      assignee: null,
+      due_date: null,
+      item_type: null,
+      external_id: null,
+      external_source: null,
+      external_url: null,
+      sync_status: null,
+      external_metadata: null,
+      attachment_count: 0,
+      created_at: now,
+      updated_at: now,
+    }, taskOverrides));
+  }, { taskTitle: title, taskOverrides: overrides });
+
+  await expect(page.locator('[data-testid="new-backlog-task-dialog"]')).toBeVisible();
+}
+
+test.describe('New Backlog Task Dialog - Header, Delete, Meta', () => {
+  let browser: Browser;
+  let page: Page;
+
+  test.beforeAll(async () => {
+    const result = await launchPage();
+    browser = result.browser;
+    page = result.page;
+    await createProject(page, `backlog-header-delete-${Date.now()}`);
+  });
+
+  test.afterAll(async () => {
+    await browser?.close();
+  });
+
+  test('header shows the Plus icon in create mode and the Pencil icon in edit mode', async () => {
+    await openBacklogView(page);
+    await openNewBacklogDialog(page);
+    const createDialog = page.locator('[data-testid="new-backlog-task-dialog"]');
+    await expect(createDialog.locator('svg.lucide-plus')).toBeVisible();
+    await expect(createDialog.locator('svg.lucide-pencil')).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(createDialog).not.toBeVisible();
+
+    await seedBacklogEditItem(page, 'Icon check item');
+    const editDialog = page.locator('[data-testid="new-backlog-task-dialog"]');
+    await expect(editDialog.locator('svg.lucide-pencil')).toBeVisible();
+    await expect(editDialog.locator('svg.lucide-plus')).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(editDialog).not.toBeVisible();
+  });
+
+  test('header priority badge tracks the live Priority select and hides at None', async () => {
+    await openBacklogView(page);
+    await openNewBacklogDialog(page);
+    const dialog = page.locator('[data-testid="new-backlog-task-dialog"]');
+    const headerTitle = dialog.locator('h3');
+
+    // No priority selected yet - the badge self-hides (PriorityBadge returns
+    // null at priority 0 with no showLabel), so the header carries only the
+    // dialog title.
+    await expect(headerTitle).toHaveText('New Backlog Task');
+
+    await dialog.locator('[data-testid="backlog-task-priority"]').selectOption({ label: 'Medium' });
+    await expect(headerTitle).toContainText('Medium');
+
+    await dialog.locator('[data-testid="backlog-task-priority"]').selectOption({ label: 'None' });
+    await expect(headerTitle).toHaveText('New Backlog Task');
+
+    await page.keyboard.press('Escape');
+    await expect(dialog).not.toBeVisible();
+  });
+
+  test('header shows a source link only when external_source and external_url are set, and opens it', async () => {
+    await seedBacklogEditItem(page, 'No source item');
+    const plainDialog = page.locator('[data-testid="new-backlog-task-dialog"]');
+    await expect(plainDialog.locator('[data-testid="backlog-task-external-link"]')).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(plainDialog).not.toBeVisible();
+
+    await seedBacklogEditItem(page, 'Imported item', {
+      external_source: 'github_issues',
+      external_url: 'https://github.com/kangentic/kangentic/issues/42',
+    });
+    const importedDialog = page.locator('[data-testid="new-backlog-task-dialog"]');
+    const link = importedDialog.locator('[data-testid="backlog-task-external-link"]');
+    await expect(link).toBeVisible();
+    await link.click();
+    const openedUrls = await page.evaluate(() => (window as unknown as { __openedExternalUrls?: string[] }).__openedExternalUrls ?? []);
+    expect(openedUrls).toContain('https://github.com/kangentic/kangentic/issues/42');
+
+    await page.keyboard.press('Escape');
+    await expect(importedDialog).not.toBeVisible();
+  });
+
+  test('meta row is edit-mode only, always shows Created and updated as one sentence, and the assignee chip only when set', async () => {
+    await openBacklogView(page);
+    await openNewBacklogDialog(page);
+    const createDialog = page.locator('[data-testid="new-backlog-task-dialog"]');
+    await expect(createDialog.locator('[data-testid="backlog-task-meta"]')).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(createDialog).not.toBeVisible();
+
+    // Both times always show, joined as one sentence ("Created X, updated Y")
+    // rather than two adjacent capitalized spans - the latter read as a
+    // stutter, especially right after creating an item when both times are
+    // seconds apart.
+    await seedBacklogEditItem(page, 'Edited item', {
+      created_at: new Date(Date.now() - 4 * 24 * 60 * 60 * 1000).toISOString(),
+      updated_at: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
+    });
+    const editedDialog = page.locator('[data-testid="new-backlog-task-dialog"]');
+    const editedMeta = editedDialog.locator('[data-testid="backlog-task-meta"]');
+    await expect(editedMeta).toBeVisible();
+    await expect(editedMeta).toContainText('Created');
+    await expect(editedMeta).toContainText('updated');
+    await expect(editedMeta).not.toContainText('@');
+    await page.keyboard.press('Escape');
+    await expect(editedDialog).not.toBeVisible();
+
+    await seedBacklogEditItem(page, 'Assigned item', { assignee: 'octocat' });
+    const assignedDialog = page.locator('[data-testid="new-backlog-task-dialog"]');
+    const assignedMeta = assignedDialog.locator('[data-testid="backlog-task-meta"]');
+    await expect(assignedMeta).toContainText('@octocat');
+    await page.keyboard.press('Escape');
+    await expect(assignedDialog).not.toBeVisible();
+  });
+
+  test('Delete is absent in create mode and present in edit mode; confirming deletes the item and closes', async () => {
+    await openBacklogView(page);
+    await openNewBacklogDialog(page);
+    const createDialog = page.locator('[data-testid="new-backlog-task-dialog"]');
+    await expect(createDialog.locator('[data-testid="delete-backlog-task-btn"]')).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(createDialog).not.toBeVisible();
+
+    await createBacklogItem(page, 'Delete me from the dialog');
+    await expect(page.locator('text=Delete me from the dialog')).toBeVisible();
+    await page.locator('[data-testid="edit-item-btn"]').click();
+    const editDialog = page.locator('[data-testid="new-backlog-task-dialog"]');
+    await expect(editDialog).toBeVisible();
+
+    const deleteButton = editDialog.locator('[data-testid="delete-backlog-task-btn"]');
+    await expect(deleteButton).toBeVisible();
+    await deleteButton.click();
+
+    const confirmHeading = page.locator('h3:has-text("Delete backlog task")');
+    await expect(confirmHeading).toBeVisible();
+    await page.locator('button:has-text("Delete")').last().click();
+
+    await expect(editDialog).not.toBeVisible();
+    await expect(page.locator('text=Delete me from the dialog')).not.toBeVisible();
+  });
+
+  test('Delete with skipDeleteConfirm set deletes immediately with no confirm dialog', async () => {
+    await openBacklogView(page);
+    await createBacklogItem(page, 'Delete me without asking');
+    await expect(page.locator('text=Delete me without asking')).toBeVisible();
+
+    await page.evaluate(() => {
+      const stores = (window as unknown as {
+        __zustandStores?: { config?: { getState: () => { updateConfig: (partial: Record<string, unknown>) => Promise<void> } } };
+      }).__zustandStores;
+      void stores?.config?.getState().updateConfig({ skipDeleteConfirm: true });
+    });
+
+    await page.locator('[data-testid="edit-item-btn"]').click();
+    const editDialog = page.locator('[data-testid="new-backlog-task-dialog"]');
+    await expect(editDialog).toBeVisible();
+
+    await editDialog.locator('[data-testid="delete-backlog-task-btn"]').click();
+    await expect(editDialog).not.toBeVisible({ timeout: 3000 });
+    await expect(page.locator('text=Delete me without asking')).not.toBeVisible();
+
+    // Restore the shared page's config for any later test in this describe.
+    await page.evaluate(() => {
+      const stores = (window as unknown as {
+        __zustandStores?: { config?: { getState: () => { updateConfig: (partial: Record<string, unknown>) => Promise<void> } } };
+      }).__zustandStores;
+      void stores?.config?.getState().updateConfig({ skipDeleteConfirm: false });
+    });
+  });
+
+  // Red-green for the isDirty defect: edit-mode isDirty used to end with
+  // `attachments.length > 0`, but the load effect pushes SAVED attachments
+  // into that same array - so opening an item that already has an attachment
+  // reported dirty on arrival and Escape popped the discard confirm with zero
+  // user edits. Fails before the `hasPendingAttachments` fix.
+  test('opening an edit item with a saved attachment and Escape closes immediately, no false discard confirm', async () => {
+    await page.evaluate(() => {
+      window.electronAPI.backlogAttachments.list = async () => [{
+        id: 'ba-dirty-regression',
+        backlog_task_id: 'unused',
+        filename: 'spec.pdf',
+        file_path: '/mock/spec.pdf',
+        media_type: 'application/pdf',
+        size_bytes: 10,
+        created_at: new Date().toISOString(),
+      }];
+    });
+
+    await seedBacklogEditItem(page, 'Has a saved attachment');
+    const dialog = page.locator('[data-testid="new-backlog-task-dialog"]');
+    await expect(dialog.locator('[data-testid="attachment-chip"]')).toBeVisible();
+
+    await page.keyboard.press('Escape');
+    await expect(dialog).not.toBeVisible();
+    await expect(page.locator('h3:has-text("Discard unsaved changes?")')).not.toBeVisible();
+
+    // Restore the default (empty) mock for any later test in this describe.
+    await page.evaluate(() => {
+      window.electronAPI.backlogAttachments.list = async () => [];
+    });
+  });
+
+  // Red-green for the delete-failure ordering fix: performDelete used to
+  // persist "don't ask again" BEFORE calling onDelete, so a delete that
+  // failed still armed the global skip-confirm bypass while the user was
+  // staring straight at the error. It now persists only after onDelete
+  // resolves; on rejection the catch path toasts an error, leaves both the
+  // confirm and the edit dialog open, and does not touch skipDeleteConfirm.
+  test('a rejected delete keeps the dialog open, toasts an error, and does not persist "don\'t ask again"', async () => {
+    await openBacklogView(page);
+    await createBacklogItem(page, 'Delete failure item');
+    await expect(page.locator('text=Delete failure item')).toBeVisible();
+
+    await page.evaluate(() => {
+      const api = window as unknown as { __originalBacklogDelete?: typeof window.electronAPI.backlog.delete };
+      api.__originalBacklogDelete = window.electronAPI.backlog.delete;
+      window.electronAPI.backlog.delete = async () => {
+        throw new Error('mock delete failure');
+      };
+    });
+
+    await page.locator('[data-testid="edit-item-btn"]').click();
+    const editDialog = page.locator('[data-testid="new-backlog-task-dialog"]');
+    await expect(editDialog).toBeVisible();
+
+    await editDialog.locator('[data-testid="delete-backlog-task-btn"]').click();
+    const confirmHeading = page.locator('h3:has-text("Delete backlog task")');
+    await expect(confirmHeading).toBeVisible();
+
+    const dontAskAgainCheckbox = page.locator('label', { hasText: "Don't ask again" }).locator('input[type="checkbox"]');
+    await dontAskAgainCheckbox.check();
+    await page.locator('button:has-text("Delete")').last().click();
+
+    // The delete failed: an error toast appears, and both the confirm and the
+    // edit dialog stay open - performDelete's catch never calls
+    // setConfirmDelete(false) or onClose().
+    await expect(page.locator('[data-testid="toast"]')).toContainText('Failed to delete backlog task');
+    await expect(confirmHeading).toBeVisible();
+    await expect(editDialog).toBeVisible();
+
+    // The global bypass must not have been persisted on a failed delete.
+    const skipDeleteConfirm = await page.evaluate(() => {
+      const stores = (window as unknown as {
+        __zustandStores?: { config?: { getState: () => { config: { skipDeleteConfirm: boolean } } } };
+      }).__zustandStores;
+      return stores?.config?.getState().config.skipDeleteConfirm ?? null;
+    });
+    expect(skipDeleteConfirm).toBe(false);
+
+    // The item was never removed.
+    await expect(page.locator('text=Delete failure item')).toBeVisible();
+
+    // Clean up: dismiss the confirm, close the (still clean) edit dialog,
+    // restore the real backlog.delete mock, then remove the item through the
+    // store so the describe's single-row invariant holds for later tests.
+    // .last() picks the confirm's own Cancel button - the edit dialog's
+    // footer Cancel button is still in the DOM underneath (same ambiguity as
+    // the existing "Delete" button locator further down in this file).
+    await page.locator('button:has-text("Cancel")').last().click();
+    await expect(confirmHeading).not.toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(editDialog).not.toBeVisible();
+
+    await page.evaluate(async () => {
+      const api = window as unknown as { __originalBacklogDelete?: typeof window.electronAPI.backlog.delete };
+      if (api.__originalBacklogDelete) window.electronAPI.backlog.delete = api.__originalBacklogDelete;
+      const stores = (window as unknown as {
+        __zustandStores?: {
+          backlog?: {
+            getState: () => {
+              items: { id: string; title: string }[];
+              deleteItem: (id: string) => Promise<void>;
+            };
+          };
+        };
+      }).__zustandStores;
+      const target = stores?.backlog?.getState().items.find((item) => item.title === 'Delete failure item');
+      if (target) await stores?.backlog?.getState().deleteItem(target.id);
+    });
+    await expect(page.locator('text=Delete failure item')).not.toBeVisible();
+  });
+
+  // "Don't ask again" on a SUCCESSFUL delete persists skipDeleteConfirm - the
+  // failure test above only proves it stays false on rejection.
+  test('checking "don\'t ask again" on a successful delete persists skipDeleteConfirm', async () => {
+    await openBacklogView(page);
+    await createBacklogItem(page, 'Delete with dont ask again');
+    await expect(page.locator('text=Delete with dont ask again')).toBeVisible();
+
+    await page.locator('[data-testid="edit-item-btn"]').click();
+    const editDialog = page.locator('[data-testid="new-backlog-task-dialog"]');
+    await expect(editDialog).toBeVisible();
+
+    await editDialog.locator('[data-testid="delete-backlog-task-btn"]').click();
+    const confirmHeading = page.locator('h3:has-text("Delete backlog task")');
+    await expect(confirmHeading).toBeVisible();
+
+    const dontAskAgainCheckbox = page.locator('label', { hasText: "Don't ask again" }).locator('input[type="checkbox"]');
+    await dontAskAgainCheckbox.check();
+    await page.locator('button:has-text("Delete")').last().click();
+
+    await expect(editDialog).not.toBeVisible();
+    await expect(page.locator('text=Delete with dont ask again')).not.toBeVisible();
+
+    const skipDeleteConfirm = await page.evaluate(() => {
+      const stores = (window as unknown as {
+        __zustandStores?: { config?: { getState: () => { config: { skipDeleteConfirm: boolean } } } };
+      }).__zustandStores;
+      return stores?.config?.getState().config.skipDeleteConfirm ?? null;
+    });
+    expect(skipDeleteConfirm).toBe(true);
+
+    // Restore for any later test in this describe.
+    await page.evaluate(() => {
+      const stores = (window as unknown as {
+        __zustandStores?: { config?: { getState: () => { updateConfig: (partial: Record<string, unknown>) => Promise<void> } } };
+      }).__zustandStores;
+      void stores?.config?.getState().updateConfig({ skipDeleteConfirm: false });
+    });
+  });
+
+  // Coverage gap: NameFromPromptButton sits beside the title input but only
+  // renders once `description` is non-empty, and no existing test in this
+  // file ever fills the description - so the whole wiring was unverified.
+  test('Name from prompt button appears once the description is filled and updates the title', async () => {
+    await openBacklogView(page);
+    await openNewBacklogDialog(page);
+    const dialog = page.locator('[data-testid="new-backlog-task-dialog"]');
+
+    await expect(dialog.locator('[data-testid="name-from-prompt-button"]')).toHaveCount(0);
+
+    await dialog.locator('[data-testid="backlog-task-description"]').fill('rename a backlog item whose title is fix bug');
+    const nameFromPromptButton = dialog.locator('[data-testid="name-from-prompt-button"]');
+    await expect(nameFromPromptButton).toBeVisible();
+
+    await page.evaluate(() => {
+      (window as unknown as { __mockAgentSummarize: (input: { prompt: string }) => unknown }).__mockAgentSummarize =
+        (input) => ({ ok: true, title: `Suggested: ${(input as { prompt: string }).prompt.slice(0, 20)}` });
+    });
+
+    await nameFromPromptButton.click();
+    await expect(dialog.locator('[data-testid="backlog-task-title"]')).toHaveValue(/^Suggested:/);
+
+    // Restore the default summarize mock and discard the now-dirty form.
+    await page.evaluate(() => {
+      delete (window as unknown as { __mockAgentSummarize?: unknown }).__mockAgentSummarize;
+    });
+    await page.keyboard.press('Escape');
+    await expect(page.locator('h3:has-text("Discard unsaved changes?")')).toBeVisible();
+    await page.locator('button:has-text("Discard")').click();
+    await expect(dialog).not.toBeVisible();
+  });
+
+  test('header uses a plain external-link icon and "Open in <source>" title for a non-GitHub source', async () => {
+    await seedBacklogEditItem(page, 'Jira item', {
+      external_source: 'jira',
+      external_url: 'https://example.atlassian.net/browse/ISSUE-1',
+    });
+    const dialog = page.locator('[data-testid="new-backlog-task-dialog"]');
+    const link = dialog.locator('[data-testid="backlog-task-external-link"]');
+    await expect(link).toBeVisible();
+    await expect(link).toHaveAttribute('title', 'Open in jira');
+    await page.keyboard.press('Escape');
+    await expect(dialog).not.toBeVisible();
+
+    // The GitHub case, for contrast - the title differs.
+    await seedBacklogEditItem(page, 'GitHub title check item', {
+      external_source: 'github_issues',
+      external_url: 'https://github.com/kangentic/kangentic/issues/7',
+    });
+    const githubDialog = page.locator('[data-testid="new-backlog-task-dialog"]');
+    const githubLink = githubDialog.locator('[data-testid="backlog-task-external-link"]');
+    await expect(githubLink).toHaveAttribute('title', 'Open in GitHub');
+    await page.keyboard.press('Escape');
+    await expect(githubDialog).not.toBeVisible();
+  });
+
+  // The header link guards on `external_source && external_url`. Only
+  // both-null and both-set were covered, so a regression from `&&` to `||`
+  // would still pass every existing test.
+  test('header hides the source link when external_source is set but external_url is null', async () => {
+    await seedBacklogEditItem(page, 'Source with no url item', {
+      external_source: 'jira',
+      external_url: null,
+    });
+    const dialog = page.locator('[data-testid="new-backlog-task-dialog"]');
+    await expect(dialog.locator('[data-testid="backlog-task-external-link"]')).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(dialog).not.toBeVisible();
+  });
+
+  // Positive direction of the isDirty fix above: a PENDING attachment (one
+  // the user just added, not loaded from disk) must still make the edit form
+  // dirty, so Escape shows the discard confirm.
+  test('adding a pending attachment in edit mode makes the form dirty and Escape shows the discard confirm', async () => {
+    await seedBacklogEditItem(page, 'Has a pending attachment');
+    const dialog = page.locator('[data-testid="new-backlog-task-dialog"]');
+
+    // Simulate pasting an image into the description textarea - mirrors the
+    // paste simulation in task-attachments.spec.ts.
+    await page.evaluate(() => {
+      const textarea = document.querySelector('[data-testid="backlog-task-description"]');
+      if (!textarea) return;
+      const base64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==';
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+      const blob = new Blob([bytes], { type: 'image/png' });
+      const file = new File([blob], 'pending.png', { type: 'image/png' });
+      const dataTransfer = new DataTransfer();
+      dataTransfer.items.add(file);
+      const pasteEvent = new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dataTransfer });
+      textarea.dispatchEvent(pasteEvent);
+    });
+
+    await expect(dialog.locator('[data-testid="attachment-chip"]')).toBeVisible();
+
+    await page.keyboard.press('Escape');
+    const confirmHeading = page.locator('h3:has-text("Discard unsaved changes?")');
+    await expect(confirmHeading).toBeVisible();
+
+    await page.locator('button:has-text("Discard")').click();
     await expect(dialog).not.toBeVisible();
   });
 });

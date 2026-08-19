@@ -80,6 +80,7 @@ export function BacklogDialogs() {
           onCreate={createItem}
           editTask={editingItem}
           onUpdate={updateItem}
+          onDelete={deleteItem}
         />
       )}
 
