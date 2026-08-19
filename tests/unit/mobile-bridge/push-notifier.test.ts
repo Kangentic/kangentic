@@ -221,6 +221,26 @@ describe('PushNotifier', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  /**
+   * The `statsSnapshot?.` optional chain, not just the `.activity !== 'idle'`
+   * comparison, is what this pins: a session can be torn down entirely
+   * between arming the settle timer and it firing, so the re-check must
+   * treat "no snapshot" the same as "not idle" instead of dereferencing a
+   * null. Dropping the `?.` would only blow up under this exact
+   * null-snapshot condition - `vi.advanceTimersByTimeAsync` rejects if the
+   * timer callback throws, so an un-guarded read fails this test rather
+   * than silently passing it.
+   */
+  it('a null snapshot at settle fire time is treated as session-gone, not a crash', async () => {
+    buildNotifier();
+    sessionManager.emit('activity', 'sess-1', 'thinking', { kind: 'turn-active' });
+    sessionManager.emit('activity', 'sess-1', 'idle', { kind: 'idle' });
+    sessionManager.getActivityStatsSnapshot.mockReturnValue(null);
+
+    await vi.advanceTimersByTimeAsync(EXPECTED_IDLE_SETTLE_MS);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it('plan-exit notifies plan-complete', () => {
     buildNotifier();
     sessionManager.emit('plan-exit', 'sess-1');
@@ -384,6 +404,12 @@ describe('PushNotifier', () => {
     notifier.dispose();
     await vi.advanceTimersByTimeAsync(EXPECTED_IDLE_SETTLE_MS * 2);
     expect(fetchImpl).not.toHaveBeenCalled();
+    // fetchImpl alone is not enough: notify() opens with a disposed guard,
+    // so a stale timer that fires anyway would still be swallowed there and
+    // this assertion would stay green even if dispose() forgot to clear
+    // idleSettleTimers. Asserting the fire-time snapshot re-check never ran
+    // pins that the timer itself died, not just its downstream effect.
+    expect(sessionManager.getActivityStatsSnapshot).not.toHaveBeenCalled();
   });
 
   /**
@@ -424,6 +450,28 @@ describe('PushNotifier', () => {
     expect(body.title).toBe('Kangentic');
     expect(body.body).toBe('Session stopped');
     expect(body.mutableContent).toBe(true);
+  });
+
+  /**
+   * Every other iOS-placeholder test above drives session-failed via exit,
+   * and every settled-turn test above registers the Android device, which
+   * gets no body key at all (see the data-only test). That leaves the
+   * turn-complete placeholder copy - 'Agent went idle', changed from the
+   * old 'Task update' now that this category means "went quiet" rather
+   * than "a turn ended" - asserted nowhere: a revert back to the old
+   * string would leave the whole suite green. Driving a full settled turn
+   * against an iOS-only registration closes that gap.
+   */
+  it('a settled turn on an iOS device posts the turn-complete placeholder copy', async () => {
+    listRegistrations = vi.fn(() => [IOS_REGISTRATION]);
+    buildNotifier();
+    await settleTurn();
+
+    expect(sealedCategories()).toEqual(['turn-complete']);
+    const body = postedBodies()[0];
+    expect(body.title).toBe('Kangentic');
+    expect(body.body).toBe('Agent went idle');
+    expect(body.channelId).toBe('completions');
   });
 
   it('branches per device when both platforms are registered', () => {

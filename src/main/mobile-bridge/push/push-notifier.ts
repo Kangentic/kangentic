@@ -206,11 +206,25 @@ export class PushNotifier {
   }
 
   /**
-   * Same shape as schedulePermissionNotification, and deliberately so:
-   * first-write-wins (a re-arm must not push the deadline out, or a
-   * flickering session never alerts at all) plus a fire-time re-check
-   * against the live snapshot, which catches a session that changed
-   * without an activity emission reaching us.
+   * Shares schedulePermissionNotification's fire-time re-check, but the
+   * hazard it covers is narrower than "the state moved without telling
+   * us": ActivityEngine.commitTransition is the only writer of
+   * state.activity and it emits unconditionally, so there is no missed
+   * emission to catch. What it does catch is the session's engine state
+   * being TORN DOWN between arming and firing (suspend / removeSession
+   * delete it), after which the snapshot is null and the pending "went
+   * idle" is correctly dropped. It re-reads the same engine that produced
+   * the idle, so a false idle survives it either way.
+   *
+   * The arming differs from the permission debounce. Every route back to
+   * 'idle' passes through 'thinking' first, and that branch calls
+   * clearIdleSettle, so a flickering session cancels its pending timer and
+   * the next settled idle starts a fresh full window rather than
+   * inheriting the old deadline. Restarting the clock on every bounce IS
+   * the debounce: only an idle that sticks for IDLE_SETTLE_MS alerts.
+   * That also leaves the guard below unreachable from onActivity today,
+   * since the three-value ActivityState offers no other way in; it stays
+   * as cheap insurance against a future caller that arms twice.
    */
   private scheduleIdleNotification(sessionId: string): void {
     if (this.idleSettleTimers.has(sessionId)) return;

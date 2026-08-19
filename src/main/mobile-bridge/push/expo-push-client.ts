@@ -138,8 +138,12 @@ export function createExpoWakeChannel(fetchImpl: FetchLike): WakeChannel {
       return sendExpoPush(fetchImpl, {
         to: message.token,
         channelId: message.channelId,
-        title: message.title,
-        body: message.body,
+        // Conditional spread, matching sendExpoPush below: a plain
+        // `title: message.title` would leave `title` an own key holding
+        // undefined on the data-only Android path, which is the one
+        // shape this file is written to avoid.
+        ...(message.title !== undefined ? { title: message.title } : {}),
+        ...(message.body !== undefined ? { body: message.body } : {}),
         dataBlob: message.blob,
       });
     },
