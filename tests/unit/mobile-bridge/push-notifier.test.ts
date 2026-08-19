@@ -122,6 +122,26 @@ describe('PushNotifier', () => {
     expect(body.mutableContent).toBe(true);
   });
 
+  /**
+   * The input-required placeholder copy, on iOS where it's actually sent.
+   * The Android-registered test above dropped its title/body assertions
+   * when the platform split landed (Android gets a data-only push, so
+   * there is nothing to assert there) - which left
+   * PLACEHOLDER_BODIES['input-required'] pinned nowhere: a revert of that
+   * string back to something else would leave the whole suite green.
+   */
+  it('a transition into permission on an iOS device posts the input-required placeholder copy', async () => {
+    listRegistrations = vi.fn(() => [IOS_REGISTRATION]);
+    buildNotifier();
+    sessionManager.emit('activity', 'sess-1', 'permission', { kind: 'permission' });
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(sealedCategories()).toEqual(['input-required']);
+    const body = postedBodies()[0];
+    expect(body.title).toBe('Kangentic');
+    expect(body.body).toBe('Agent needs your attention');
+  });
+
   it('a prompt cleared within the debounce window never notifies', async () => {
     buildNotifier();
     sessionManager.emit('activity', 'sess-1', 'permission', { kind: 'permission' });
