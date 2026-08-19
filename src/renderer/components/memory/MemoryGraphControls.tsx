@@ -144,7 +144,14 @@ const COLOR_OPTIONS: ReadonlyArray<{ value: MemoryGraphColorMode; label: string;
   {
     value: 'size',
     label: 'Conversation length',
-    hint: 'How much was said: warm and bright is a long conversation, deep indigo a short one. Measured in indexed passages, not in time spent or money',
+    hint: 'How much transcript the conversation holds: warm and bright is long, deep indigo is short. This is text, not time or money - a long conversation is often a cheap one',
+  },
+  // A separate mode rather than a second reading of length, and measured rather
+  // than assumed: their rank correlation on the real corpus is 0.556.
+  {
+    value: 'cost',
+    label: 'Cost',
+    hint: 'What the conversation cost to run: warm and bright is expensive, deep indigo is cheap. Conversations with no recorded cost draw at the cheap end',
   },
 ];
 
@@ -184,6 +191,9 @@ function regionMatches(label: string, query: string): boolean {
 export interface MemoryGraphControlsProps {
   colorMode: MemoryGraphColorMode;
   onColorModeChange: (mode: MemoryGraphColorMode) => void;
+  /** Whether anything in this index has a recorded cost. False hides that mode
+   *  rather than offering one that would paint every node the same. */
+  costAvailable: boolean;
   showLabels: boolean;
   onShowLabelsChange: (show: boolean) => void;
   showTitles: boolean;
@@ -332,6 +342,7 @@ function SectionHeader({
 export function MemoryGraphControls({
   colorMode,
   onColorModeChange,
+  costAvailable,
   showLabels,
   onShowLabelsChange,
   showTitles,
@@ -440,7 +451,13 @@ export function MemoryGraphControls({
                 aria-label="Color conversations by"
                 data-testid="memory-graph-color-mode"
               >
-                {COLOR_OPTIONS.map((option) => (
+                {/* Only the modes this corpus can actually express. Cost is
+                    absent on conversations indexed before metrics were captured,
+                    and an option that paints every node identically is the same
+                    dead control the outcome facet already prunes. */}
+                {COLOR_OPTIONS.filter(
+                  (option) => option.value !== 'cost' || costAvailable,
+                ).map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
               </Select>

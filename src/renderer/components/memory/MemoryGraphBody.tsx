@@ -310,6 +310,23 @@ export function MemoryGraphBody() {
     [facetIndices],
   );
 
+  /**
+   * Whether anything here has a recorded cost.
+   *
+   * Conversations indexed before the metrics were captured carry none, and an
+   * index made entirely of those would offer a mode that paints every node the
+   * same. Same rule the outcome facet follows, and the same healing: a selection
+   * that outlives its option falls back to Topic rather than leaving the map in
+   * a mode with no control left on screen to explain it.
+   */
+  const costAvailable = useMemo(
+    () => (nodes ?? []).some((node) => node.costUsd !== null),
+    [nodes],
+  );
+  useEffect(() => {
+    if (colorMode === 'cost' && !costAvailable) setColorMode('cluster');
+  }, [colorMode, costAvailable]);
+
   const highlighted = useMemo(() => {
     // Explore wins: it is the most recent, most specific thing the user asked
     // for, and it is dismissible without losing the query underneath it.
@@ -542,6 +559,7 @@ export function MemoryGraphBody() {
         <MemoryGraphControls
           colorMode={colorMode}
           onColorModeChange={setColorMode}
+          costAvailable={costAvailable}
           showLabels={showLabels}
           onShowLabelsChange={setShowLabels}
           showTitles={showTitles}

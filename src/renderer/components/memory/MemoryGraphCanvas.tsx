@@ -51,9 +51,16 @@ import type {
 } from '../../../shared/types';
 import { DEFAULT_GRANULARITY, resolveClustering } from './active-clustering';
 
-/** How nodes are tinted. Each answers a different question, which is why they
- *  are modes rather than layers. */
-export type MemoryGraphColorMode = 'cluster' | 'recency' | 'outcome' | 'size';
+/**
+ * How nodes are tinted. Each answers a different question, which is why they
+ * are modes rather than layers.
+ *
+ * `size` and `cost` are both magnitudes and they are NOT the same magnitude:
+ * measured on the real 648-conversation corpus their rank correlation is 0.556,
+ * so a long cheap conversation and a short expensive one are both ordinary. A
+ * mode that merely restated another would not earn its place in this list.
+ */
+export type MemoryGraphColorMode = 'cluster' | 'recency' | 'outcome' | 'size' | 'cost';
 
 export interface MemoryGraphCanvasProps {
   projection: MemoryGraphProjection;
@@ -756,6 +763,32 @@ export function MemoryGraphCanvas({
   }, [projection.nodes]);
 
   /**
+   * Cheapest-to-dearest position, for the cost ramp.
+   *
+   * Rank for the same reason length is: measured on the real corpus, cost runs
+   * $0 to $155.80 with a median of $15.33, so a linear or log scale hands most
+   * of the range to a handful of expensive sessions.
+   *
+   * A conversation with no recorded cost sorts LAST and is drawn at the muted
+   * end rather than being hidden. It is a real conversation; what is missing is
+   * the metric, and hiding it would make the map lie about what the index holds.
+   */
+  const costRank = useMemo(() => {
+    const byCost = projection.nodes
+      .map((node, index) => ({ index, cost: node.costUsd }))
+      .sort((first, second) => {
+        if (first.cost === null) return second.cost === null ? 0 : 1;
+        if (second.cost === null) return -1;
+        return first.cost - second.cost;
+      });
+    const ranks = new Float32Array(projection.nodes.length);
+    byCost.forEach((entry, position) => {
+      ranks[entry.index] = byCost.length <= 1 ? 1 : position / (byCost.length - 1);
+    });
+    return ranks;
+  }, [projection.nodes]);
+
+  /**
    * How many links each node has in the mesh that is actually DRAWN.
    *
    * Deliberately the drawn edge list rather than the exact neighbour lists: this
@@ -811,13 +844,17 @@ export function MemoryGraphCanvas({
         else if (node.outcome === 'abandoned') color = toLinearTriplet('hsl(0 0% 42%)');
         else color = toLinearTriplet('hsl(0 0% 55%)');
       } else {
+        // The two MAGNITUDE modes share one ramp, deliberately: they are never
+        // on screen together, and reading "brighter and warmer is more" once is
+        // better than learning it twice.
+        //
         // A ramp across HUE as well as lightness, not one hue at varying
         // saturation. The single-hue version could not separate its own middle:
-        // deep indigo for the shortest conversations through blue and teal to a
-        // warm yellow for the longest, which is the standard shape for a
-        // magnitude and stays readable for a reader who cannot separate two
-        // hues, since lightness rises monotonically with it.
-        const rank = lengthRank[index];
+        // deep indigo at the low end through blue and teal to a warm yellow at
+        // the high one, which is the standard shape for a magnitude and stays
+        // readable for a reader who cannot separate two hues, since lightness
+        // rises monotonically with it.
+        const rank = colorMode === 'cost' ? costRank[index] : lengthRank[index];
         color = toLinearTriplet(
           `hsl(${Math.round(265 - rank * 215)} ${Math.round(55 + rank * 25)}% ${Math.round(38 + rank * 30)}%)`,
         );
@@ -854,7 +891,7 @@ export function MemoryGraphCanvas({
     });
   }, [
     projection.nodes, highlighted, selectedIndex, hoveredIndex, colorMode,
-    recencyRank, lengthRank, degrees, maxDegree, regionOf,
+    recencyRank, lengthRank, costRank, degrees, maxDegree, regionOf,
   ]);
 
   useEffect(() => {

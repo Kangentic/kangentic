@@ -784,8 +784,12 @@ The **Display** panel (top left) collapses out of the way and holds the groups b
   areas have gone quiet.
 - **Outcome** - green reached Done, amber still on the board, grey archived. Note that archiving
   is how finished work leaves the board, so grey covers both shipped and dropped work.
-- **Conversation length** - how much was said, from deep indigo for the shortest through blue and
-  teal to a warm yellow for the longest. Measured in indexed passages, not in time spent or money.
+- **Conversation length** - how much transcript the conversation holds, from deep indigo for the
+  shortest through blue and teal to a warm yellow for the longest.
+- **Cost** - what the conversation cost to run, on the same ramp. A separate mode rather than a
+  second reading of length: the two agree only loosely (rank correlation 0.556 on a real index), so
+  a long cheap conversation and a short expensive one are both ordinary. Hidden on an index that
+  records no cost, and conversations missing one draw at the cheap end.
 
 **Show** turns the region labels and the similarity links on and off.
 

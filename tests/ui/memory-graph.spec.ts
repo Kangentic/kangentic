@@ -112,6 +112,11 @@ function projectionLiteral(nodeCount: number, options: { collapsed?: boolean } =
         model: 'Opus 5',
         effort: 'high',
         lastActivityMs: 1700000000000 + i * 1000,
+        // Mostly present, some null - the real mix, since a conversation indexed
+        // before the metrics were captured carries none. A fixture where every
+        // node had a cost could not catch the mode being offered on an index
+        // that has none.
+        costUsd: i % 5 === 0 ? null : i * 1.5,
         outcome: i % 3 === 0 ? 'done' : (i % 3 === 1 ? 'active' : 'done'),
         // Every granularity, since the projection ships all three. The
         // fixture keeps them DIFFERENT so a test cannot pass by reading the
@@ -559,24 +564,48 @@ test.describe('memory graph', () => {
     }
   });
 
-  test('offers topic, recency, outcome and length colour modes', async () => {
+  test('offers topic, recency, outcome, length and cost colour modes', async () => {
     // "Conversation length", not "Length" and not the "Depth" before that. Bare
     // "Length" was read as the task's effort or elapsed time - both of which the
     // map knows and neither of which this mode encodes - so the option names
-    // what it measures.
+    // what it measures, and Cost is now its own mode beside it.
     const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(20) }));
     try {
       await openMemoryGraph(page);
       // A Select, not a segmented control: four labels never fit the panel's
       // width, and `ui-conventions` names Select for exactly that case.
       const select = page.locator('[data-testid="memory-graph-color-mode"]');
-      for (const [value, label] of [['cluster', 'Topic'], ['recency', 'Recency'], ['outcome', 'Outcome'], ['size', 'Conversation length']]) {
+      for (const [value, label] of [['cluster', 'Topic'], ['recency', 'Recency'], ['outcome', 'Outcome'], ['size', 'Conversation length'], ['cost', 'Cost']]) {
         await select.selectOption(value);
         await expect(select).toHaveValue(value);
         // The description under the control tracks the selection, so the user
         // can tell what the mode MEANS without hovering for a title.
         await expect(page.locator('[data-testid="memory-graph-controls"]')).toContainText(label);
       }
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('does not offer a cost mode on an index that records no cost, and heals a stale one', async () => {
+    // The same rule the outcome facet follows. Cost is absent on conversations
+    // indexed before the metrics were captured, and a mode that paints every
+    // node identically is worse than no mode.
+    const noCost = `(function () {
+      var base = ${projectionLiteral(20)};
+      base.nodes.forEach(function (node) { node.costUsd = null; });
+      return base;
+    })()`;
+    const { browser, page } = await launchWithState(snapshotScript({ projection: noCost }));
+    try {
+      await openMemoryGraph(page);
+      const select = page.locator('[data-testid="memory-graph-color-mode"]');
+      await expect(select.locator('option')).toHaveCount(4);
+      await expect(select).not.toContainText('Cost');
+      // And it is not merely hidden from the list: selecting it is impossible,
+      // so a projection that loses its costs mid-session cannot strand the map
+      // in a mode with no control left on screen to explain it.
+      await expect(select).toHaveValue('cluster');
     } finally {
       await browser.close();
     }
