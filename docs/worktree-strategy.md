@@ -167,9 +167,12 @@ that error goes depends on the entry point:
 
 - **Task move** (`handleTaskMove` in `src/main/ipc/handlers/task-move.ts`) and **`SESSION_RESUME`**
   wrap and re-throw it, so the user sees a toast reading `Worktree setup failed: <message>`.
-- **Task create, unarchive, backlog promote, MCP auto-spawn, and the `create_worktree` transition
-  action** catch it, log to console, and skip worktree creation, so there is no toast on those
-  paths today.
+- **Task create, unarchive, backlog promote, and MCP auto-spawn** catch it and skip worktree
+  creation, keeping the task. They also emit `task:spawnBlocked`, so the failure reaches the user
+  as a toast rather than only a console line (`notifySpawnBlocked` in `ipc/helpers/task-git.ts`,
+  which covers the worktree step as well as the checkout step).
+- **The `create_worktree` transition action** catches it and logs to console only, so it is the one
+  path with no toast today.
 - **`TASK_SWITCH_BRANCH`** (`src/main/ipc/handlers/task-branch.ts`) calls `ensureTaskWorktree`
   uncaught, so the error propagates as a rejected `ipcMain.handle` promise - Electron forwards it
   to the renderer's `invoke()` call, not a toast from this list, but however the branch-switch UI

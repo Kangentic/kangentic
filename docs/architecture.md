@@ -95,7 +95,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `task:updatedByAgent` | on | Event: task was updated by an agent via MCP tool call |
 | `task:deletedByAgent` | on | Event: task was deleted by an agent via MCP tool call |
 | `task:sessionResync` | on | Event: quiet (toast-free) board re-sync after a column model-change session restart, so the board store's stale `task.session_id` reloads |
-| `task:spawnBlocked` | on | Event: the task was created, promoted, unarchived or MCP-auto-spawned, but its agent could not start because another task holds the same checkout. Those paths deliberately keep the task, so without this the result is indistinguishable from a healthy spawn |
+| `task:spawnBlocked` | on | Event: the task was created, promoted, unarchived or MCP-auto-spawned, but its agent could not start because its worktree could not be created or its branch could not be checked out. Any git failure at those two steps fires this, not only the case where another task holds the checkout. Those paths deliberately keep the task, so without this the result is indistinguishable from a healthy spawn |
 | `task:autoCommandResult` | on | Event: the outcome of a task's auto_command injection (`AutoCommandResultNotice`: state, command, reason, discardedDraft, interruptedTurn, escalated). Rationed by `shouldNotify` so a routine delivery stays silent and only a failure, an escalation, or a discarded draft reaches the user |
 | `task:spawnProgress` | on | Event: spawn progress phase label during a task move or a restore from Done |
 | `task:getSpawnProgress` | invoke | Fetch the queryable in-flight spawn-progress map (taskId -> phase label) so `syncSessions` can reconcile after HMR / project switch |
