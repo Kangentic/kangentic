@@ -440,6 +440,18 @@ export function useMemoryGraphScene(options: UseMemoryGraphSceneOptions): Memory
     if (!scene || !controls) return;
 
     const container = containerRef.current;
+    // A FIT is the one moment the viewport is re-established, and the scene has
+    // to be told before the framing is computed against it.
+    //
+    // Without this the two disagree: the chrome effect below deliberately stops
+    // re-aiming after the first measurement, so the camera keeps ITS view offset
+    // while this fit computes for whatever the panels measure NOW. Toggling
+    // regions resizes the Regions list, and Reset view then framed for one safe
+    // area while rendering through another - the map bunched into a corner with
+    // dead space opposite. Re-establishing it here keeps "do not move when a
+    // panel opens" and "frame correctly when asked to" from pulling against each
+    // other, because only an explicit fit moves the viewport now.
+    if (container) scene.setSize(container.clientWidth, container.clientHeight, insetsRef.current);
     const viewport = describeViewport(
       container?.clientWidth ?? 0,
       container?.clientHeight ?? 0,
