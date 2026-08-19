@@ -28,9 +28,11 @@
  * as part of the control rather than as help.
  */
 
-import { useMemo, useState } from 'react';
-import { ChevronDown, Database, Search, Shapes, SlidersHorizontal, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronDown, ChevronRight, Database, Search, Shapes, SlidersHorizontal, X } from 'lucide-react';
 import { SegmentedControl } from '../SegmentedControl';
+import { OverlayPopover } from '../OverlayPopover';
+import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 import { Select } from '../settings/shared';
 import type { MemoryGraphColorMode } from './MemoryGraphCanvas';
 import { clusterHue } from './memory-graph-scene';
@@ -287,12 +289,17 @@ function SectionHeader({
   collapsed,
   onToggle,
   testId,
+  /** Where the section's body appears. A `side` header keeps its chevron
+   *  pointing at the flyout rather than rotating down onto content that is not
+   *  underneath it. */
+  opens = 'down',
 }: {
   icon: React.ReactNode;
   label: string;
   collapsed: boolean;
   onToggle: () => void;
   testId: string;
+  opens?: 'down' | 'side';
 }) {
   return (
     <button
@@ -304,11 +311,15 @@ function SectionHeader({
     >
       {icon}
       <span className="flex-1 text-left">{label}</span>
-      <ChevronDown
-        size={13}
-        aria-hidden
-        className={`transition-transform ${collapsed ? '-rotate-90' : ''}`}
-      />
+      {opens === 'side' ? (
+        <ChevronRight size={13} aria-hidden />
+      ) : (
+        <ChevronDown
+          size={13}
+          aria-hidden
+          className={`transition-transform ${collapsed ? '-rotate-90' : ''}`}
+        />
+      )}
     </button>
   );
 }
@@ -342,6 +353,40 @@ export function MemoryGraphControls({
   // reference they consult.
   const [regionsCollapsed, setRegionsCollapsed] = useState(false);
   const [regionQuery, setRegionQuery] = useState('');
+  /**
+   * Index opens to the SIDE, not downward.
+   *
+   * It is the last thing in a column whose middle section is a list of every
+   * region the index holds - forty of them on a large project - so by the time
+   * the reader reaches Index there is no room left beneath it and its rows ran
+   * off the bottom of the window. A flyout leaves the region list where it is
+   * instead of squeezing it, which is right for a section that is reference
+   * rather than a control.
+   */
+  const indexTriggerRef = useRef<HTMLDivElement>(null);
+  const indexPopoverRef = useRef<HTMLDivElement>(null);
+  const { style: indexPopoverStyle } = usePopoverPosition(
+    indexTriggerRef,
+    indexPopoverRef,
+    !indexCollapsed,
+    // Enough padding to clear the app's status bar, which shows through beneath
+    // this surface: the hook's default 8 is measured against `innerHeight` and
+    // would let the flyout rest on top of it.
+    { mode: 'flyout', viewportPadding: 40 },
+  );
+  useEffect(() => {
+    if (indexCollapsed) return;
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (indexPopoverRef.current?.contains(target)) return;
+      // The header is the toggle, so let its own handler close it rather than
+      // closing here and reopening on the same click.
+      if (indexTriggerRef.current?.contains(target)) return;
+      setIndexCollapsed(true);
+    };
+    document.addEventListener('mousedown', closeOnOutsideClick, true);
+    return () => document.removeEventListener('mousedown', closeOnOutsideClick, true);
+  }, [indexCollapsed]);
   const shownRegionCount = regions.filter((region) => !facets.hiddenRegions.has(region.id)).length;
   const regionFilterable = regions.length >= REGION_FILTER_MIN;
   const listedRegions = useMemo(
@@ -354,8 +399,10 @@ export function MemoryGraphControls({
     facetAvailability.since || facetAvailability.outcomes.length > 1;
 
   return (
-    <div className="flex w-64 flex-col gap-2" data-testid="memory-graph-controls">
-      {/* TWO cards, not one slab. Display is fixed-height chrome about how the
+    <div className="flex w-64 flex-col gap-3" data-testid="memory-graph-controls">
+      {/* TWO cards, not one slab, and `gap-3` matches the panel's own
+          `left-3 top-3` inset so the seam between them reads as the same
+          measure as the space around them. Display is fixed-height chrome about how the
           map is DRAWN; below it sits a variable-height list of what the map
           CONTAINS, and merged into one surface the panel read as an endless
           column with the region list growing out of the Detail control. The gap
@@ -627,16 +674,35 @@ export function MemoryGraphControls({
 
         {/* The rule separates Index from Regions INSIDE this card, so it is drawn
             only when there is a Regions section above it to separate from. */}
-        <div className={regions.length > 1 ? 'border-t border-edge' : undefined}>
+        <div
+          ref={indexTriggerRef}
+          className={`relative ${regions.length > 1 ? 'border-t border-edge' : ''}`}
+        >
           <SectionHeader
             icon={<Database size={13} aria-hidden />}
             label="Index"
             collapsed={indexCollapsed}
             onToggle={() => setIndexCollapsed((current) => !current)}
             testId="memory-graph-index-toggle"
+            opens="side"
           />
-          {!indexCollapsed ? (
-            <div className="px-3 pb-3">
+          <OverlayPopover
+            open={!indexCollapsed}
+            popoverRef={indexPopoverRef}
+            style={indexPopoverStyle}
+            transformOrigin="left top"
+            // Its own card rather than a section of the panel's, because it now
+            // floats beside the panel rather than continuing it.
+            //
+            // popover-inflow-ok: flyout mode is positioned against its own
+            // `relative` parent, and this panel's ancestors up to the surface
+            // root set no overflow - the canvas that does is a SIBLING. Checked
+            // in both hosts: `MemoryGraphPage` and `PopOutMemoryRoot` mount the
+            // same body.
+            className="absolute z-30 w-64 rounded-lg border border-edge bg-surface-raised/95 backdrop-blur-md shadow-xl"
+            data-testid="memory-graph-index-panel"
+          >
+            <div className="px-3 py-3">
               {/* A definition list, not the coverage STRIP. The strip is a
                   full-width horizontal bar - icon, big number, two-line caption -
                   and squeezing that into a 256px column produced a loose pile of
@@ -702,7 +768,7 @@ export function MemoryGraphControls({
                 <InfoHint text="Links are computed in full embedding dimensionality and are exact. Position is an approximate reduction, so nearby is a hint, not a guarantee." />
               </p>
             </div>
-          ) : null}
+          </OverlayPopover>
         </div>
       </div>
     </div>

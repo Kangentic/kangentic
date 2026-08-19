@@ -1542,6 +1542,16 @@ test.describe('memory graph', () => {
       await expect(page.locator('[data-testid="memory-graph-controls"]')).toContainText('Size on disk');
       await expect(page.locator('[data-testid="memory-graph-controls"]')).toContainText('Chunks');
       await expect(page.locator('[data-testid="memory-coverage-strip"]')).toHaveCount(0);
+
+      // It opens to the SIDE, and that is not cosmetic: Index is the last thing
+      // in a column whose middle is a list of every region the index holds, so
+      // downward there is nothing left and its rows ran off the bottom of the
+      // window. Asserted as geometry because that IS the bug - the rows are in
+      // the DOM either way.
+      const panelBox = (await panel.boundingBox())!;
+      const indexBox = (await page.locator('[data-testid="memory-graph-index-panel"]').boundingBox())!;
+      expect(indexBox.x).toBeGreaterThanOrEqual(panelBox.x + panelBox.width - 2);
+      expect(indexBox.y + indexBox.height).toBeLessThanOrEqual(page.viewportSize()!.height);
     } finally {
       await browser.close();
     }
