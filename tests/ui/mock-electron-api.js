@@ -30,6 +30,15 @@
     semantic: 'disabled',
     model: { id: 'bge-base', displayName: 'bge base', tier: 'accurate', approxSizeMb: 110, dimensions: 768, state: 'absent' },
   };
+  // Memory Graph fixture. null means "no projection cached yet", which is the
+  // first-open state the surface must handle without looking broken. Seeded via
+  // __mockPreConfigure (mirrors searchHits).
+  let memoryGraphSnapshot = null;
+  // Memory Graph retrieval fixture; null yields an empty result set.
+  let memoryGraphQueryResult = null;
+  // Proactive-recall fixture for task detail; empty means the panel renders
+  // nothing at all, which is the common case and must stay silent.
+  let memoryRelatedToTask = null;
   // Conversation viewer fixtures. `transcriptSeeds` maps a sessionId to a
   // TranscriptGetResponse; `transcriptSessionsByTask` maps a taskId to the
   // ConversationSessionMeta[] the session picker offers. Both seeded via
@@ -3662,6 +3671,54 @@
         }
         return Promise.resolve();
       },
+      graphSnapshot: function (projectId) {
+        if (typeof window !== 'undefined') {
+          if (!window.__mockGraphSnapshotCalls) window.__mockGraphSnapshotCalls = [];
+          window.__mockGraphSnapshotCalls.push({ projectId: projectId === undefined ? null : projectId });
+        }
+        return Promise.resolve(memoryGraphSnapshot ? JSON.parse(JSON.stringify(memoryGraphSnapshot)) : null);
+      },
+      refreshGraph: function (projectId) {
+        if (typeof window !== 'undefined') {
+          if (!window.__mockRefreshGraphCalls) window.__mockRefreshGraphCalls = [];
+          window.__mockRefreshGraphCalls.push({ projectId: projectId === undefined ? null : projectId });
+        }
+        return Promise.resolve();
+      },
+      queryGraph: function (query, projectId) {
+        if (typeof window !== 'undefined') {
+          if (!window.__mockGraphQueryCalls) window.__mockGraphQueryCalls = [];
+          window.__mockGraphQueryCalls.push({ query: query, projectId: projectId === undefined ? null : projectId });
+        }
+        return Promise.resolve(
+          memoryGraphQueryResult
+            ? JSON.parse(JSON.stringify(memoryGraphQueryResult))
+            : { query: query, hits: [], semantic: true },
+        );
+      },
+      relatedToTask: function (taskId, projectId) {
+        if (typeof window !== 'undefined') {
+          if (!window.__mockRelatedToTaskCalls) window.__mockRelatedToTaskCalls = [];
+          window.__mockRelatedToTaskCalls.push({ taskId: taskId, projectId: projectId === undefined ? null : projectId });
+        }
+        return Promise.resolve(memoryRelatedToTask ? JSON.parse(JSON.stringify(memoryRelatedToTask)) : []);
+      },
+      onGraphChanged: function (callback) {
+        if (!window.__mockGraphChangedListeners) window.__mockGraphChangedListeners = [];
+        window.__mockGraphChangedListeners.push(callback);
+        if (!window.__mockFireGraphChanged) {
+          // Drives the push path from a spec: window.__mockFireGraphChanged(id).
+          window.__mockFireGraphChanged = function (projectId) {
+            var listeners = (window.__mockGraphChangedListeners || []).slice();
+            for (var i = 0; i < listeners.length; i++) listeners[i](projectId);
+          };
+        }
+        return function () {
+          var listeners = window.__mockGraphChangedListeners || [];
+          var index = listeners.indexOf(callback);
+          if (index >= 0) listeners.splice(index, 1);
+        };
+      },
     },
 
     transcripts: {
@@ -4001,6 +4058,15 @@
     }
     if (result && result.memoryStatus && typeof result.memoryStatus === 'object') {
       memoryStatus = result.memoryStatus;
+    }
+    if (result && result.memoryGraphSnapshot && typeof result.memoryGraphSnapshot === 'object') {
+      memoryGraphSnapshot = result.memoryGraphSnapshot;
+    }
+    if (result && result.memoryGraphQueryResult && typeof result.memoryGraphQueryResult === 'object') {
+      memoryGraphQueryResult = result.memoryGraphQueryResult;
+    }
+    if (result && Array.isArray(result.memoryRelatedToTask)) {
+      memoryRelatedToTask = result.memoryRelatedToTask;
     }
     if (result && result.transcriptSeeds && typeof result.transcriptSeeds === 'object') {
       Object.assign(transcriptSeeds, result.transcriptSeeds);

@@ -14,6 +14,7 @@ import { useUpdaterStore } from './stores/updater-store';
 import { useAnnouncementsStore } from './stores/announcements-store';
 import { useUsageDashboardStore } from './stores/usage-dashboard-store';
 import { useMonitorStore } from './stores/monitor-store';
+import { useMemoryGraphStore } from './stores/memory-graph-store';
 import { usePopOutStore } from './stores/pop-out-store';
 import { useDictationStore } from './stores/dictation-store';
 import { useProjectSwitchEffect } from './hooks/useProjectSwitchEffect';
@@ -26,7 +27,7 @@ import { COMMAND_TERMINAL_NOTIFICATION_TASK_ID } from '../shared/notification-co
 import { bumpHmrGeneration } from './utils/hmr-generation';
 import { clearSnapPreviewDom } from './window-manager';
 import { setRebindCaptureActive } from './utils/rebind-state';
-import { useWindowStore, commandWindowManager } from './window-manager/store/window-store';
+import { useWindowStore, commandWindowManager, memoryWindowManager } from './window-manager/store/window-store';
 import {
   autoNameTimers,
   scheduleAutoNameSuggestion,
@@ -856,6 +857,11 @@ if (import.meta.hot) {
     if (useMonitorStore.getState().monitorOpen) {
       void useMonitorStore.getState().loadSnapshot();
     }
+    // Memory graph Pattern B: re-read the cached projection + coverage from
+    // main-process truth (no-ops while the surface is closed).
+    if (useMemoryGraphStore.getState().graphOpen) {
+      void useMemoryGraphStore.getState().loadSnapshot();
+    }
     // Pop-out windows Pattern B: re-hydrate which surfaces are currently detached.
     usePopOutStore.getState().loadOpen();
     // Announcements Pattern B: re-pull the active list and the archive from
@@ -891,7 +897,9 @@ if (import.meta.env.DEV) {
     session: useSessionStore,
     window: useWindowStore,
     commandWindow: commandWindowManager.store,
+    memoryWindows: memoryWindowManager.store,
     usageDashboard: useUsageDashboardStore,
+    memoryGraph: useMemoryGraphStore,
     popOut: usePopOutStore,
     dictation: useDictationStore,
     announcements: useAnnouncementsStore,

@@ -14,6 +14,8 @@ import {
   applyWebglAttachmentPlan,
   onWebglAttachmentsChanged,
   notifyFontChanged,
+  reserveWebglContext,
+  getWebglReservationCount,
 } from '../../src/renderer/utils/terminal-webgl';
 
 interface FakeAddon {
@@ -514,5 +516,78 @@ describe('budget suspend/resume', () => {
     expect(addons).toHaveLength(1);
     expect(addons[0].disposed).toBe(false);
     dispose();
+  });
+});
+
+/**
+ * Non-terminal consumers of the page's WebGL budget.
+ *
+ * Terminals were the only consumer until the Memory Graph's three.js canvas.
+ * An unaccounted second consumer is exactly the eviction the budget exists to
+ * prevent: Chromium silently drops the OLDEST context past its per-page cap, and
+ * that lands on some terminal as a context loss it did not cause.
+ */
+describe('non-terminal context reservations', () => {
+  it('counts against the budget, so a terminal at the cap starts suspended', () => {
+    const release = reserveWebglContext('memory-graph');
+    try {
+      expect(getWebglReservationCount()).toBe(1);
+      // Budget of 1, already spent by the reservation: this terminal must not
+      // ask Chromium for a context at all.
+      const { createAddon, addons } = makeAddonFactory(['ok']);
+      const dispose = attachWebglRenderer(fakeTerminal, 'terminal-a', {
+        createAddon,
+        attachBudget: 1,
+      });
+      expect(addons).toHaveLength(0);
+      expect(getTerminalRendererReport()['terminal-a']).toMatchObject({
+        renderer: 'dom',
+        suspendedByBudget: true,
+        // NOT a failure: the coordinator resumes it when the slot frees.
+        permanentDomFallback: false,
+        contextLossCount: 0,
+      });
+      dispose();
+    } finally {
+      release();
+    }
+  });
+
+  it('frees the slot on release, and releasing twice is a no-op', () => {
+    const release = reserveWebglContext('memory-graph');
+    expect(getWebglReservationCount()).toBe(1);
+    release();
+    expect(getWebglReservationCount()).toBe(0);
+    release();
+    expect(getWebglReservationCount()).toBe(0);
+  });
+
+  it('notifies attachment listeners so the coordinator re-plans immediately', () => {
+    // Without this the terminals would keep their old, larger share until some
+    // unrelated window change happened to trigger a re-plan.
+    const listener = vi.fn();
+    const unsubscribe = onWebglAttachmentsChanged(listener);
+    const release = reserveWebglContext('memory-graph');
+    expect(listener).toHaveBeenCalledTimes(1);
+    release();
+    expect(listener).toHaveBeenCalledTimes(2);
+    unsubscribe();
+  });
+
+  it('a terminal below the reduced cap still attaches', () => {
+    // The reservation shrinks the terminals' share; it does not shut them out.
+    const release = reserveWebglContext('memory-graph');
+    try {
+      const { createAddon, addons } = makeAddonFactory(['ok']);
+      const dispose = attachWebglRenderer(fakeTerminal, 'terminal-b', {
+        createAddon,
+        attachBudget: 2,
+      });
+      expect(addons).toHaveLength(1);
+      expect(getTerminalRendererReport()['terminal-b'].renderer).toBe('webgl');
+      dispose();
+    } finally {
+      release();
+    }
   });
 });

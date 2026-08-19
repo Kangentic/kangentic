@@ -11,9 +11,12 @@
 
 import { IPC } from './ipc-channels';
 
-export type PopOutKind = 'stats' | 'changes' | 'browser' | 'monitor';
+// `memory` rather than `memory-graph`: the registry parity test matches a kind
+// with /kind:\s*'([a-z]+)'/, so a hyphen or digit would silently fail to parse
+// and the surface would read as unregistered.
+export type PopOutKind = 'stats' | 'changes' | 'browser' | 'monitor' | 'memory';
 
-export const POPOUT_KINDS: readonly PopOutKind[] = ['stats', 'changes', 'browser', 'monitor'];
+export const POPOUT_KINDS: readonly PopOutKind[] = ['stats', 'changes', 'browser', 'monitor', 'memory'];
 
 export function isPopOutKind(value: string): value is PopOutKind {
   return (POPOUT_KINDS as readonly string[]).includes(value);
@@ -29,6 +32,7 @@ export interface PopOutParamsByKind {
   changes: PopOutTaskParams;
   browser: PopOutTaskParams;
   monitor: Record<string, never>;
+  memory: Record<string, never>;
 }
 
 /**
@@ -37,7 +41,7 @@ export interface PopOutParamsByKind {
  * inline `kind === 'stats'` check so adding a global surface cannot silently fall
  * through to the task-params branch and key as `monitor:undefined:undefined`.
  */
-const GLOBAL_KINDS: readonly PopOutKind[] = ['stats', 'monitor'];
+const GLOBAL_KINDS: readonly PopOutKind[] = ['stats', 'monitor', 'memory'];
 
 /** True for a kind whose params carry no task/project, so a caller must not read
  *  `taskId` / `projectId` off them. Exported so every such branch reads the one
@@ -156,6 +160,24 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
       // that hosts a terminal must declare this channel too.
       IPC.SESSION_PTY_RESIZED,
       IPC.TASK_SPAWN_PROGRESS,
+    ],
+  },
+  memory: {
+    kind: 'memory',
+    scope: 'global',
+    title: 'Memory Graph',
+    // Wider than tall: the surface is a canvas beside a result-card rail, and
+    // the map is far more readable with horizontal room than vertical.
+    defaultBounds: { width: 1200, height: 820 },
+    // Below this the canvas and the card rail cannot both be useful.
+    minSize: { width: 720, height: 480 },
+    needsWebview: false,
+    channels: [
+      // A projection pass can take minutes on a cold corpus and finishes in the
+      // background, so a detached window must be told rather than poll. Omitting
+      // this leaves the pop-out permanently showing "building".
+      IPC.MEMORY_GRAPH_CHANGED,
+      IPC.CONFIG_CHANGED,
     ],
   },
 };

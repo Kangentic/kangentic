@@ -31,6 +31,23 @@ export interface WindowManagerLayerOptions {
    * not of the window.
    */
   renderTaskDetail?: (input: TaskDetailRenderInput) => ReactNode;
+  /**
+   * How this layer reveals a task's detail, for content that offers a jump to one
+   * (`ConversationWindow`'s "Open task"). Omitted means this layer CANNOT reveal a
+   * task detail, and such affordances must hide themselves rather than call a
+   * route that goes nowhere.
+   *
+   * Supplied rather than branched for the same reason `renderTaskDetail` is: what
+   * differs is where a layer's host can put a task detail, which is a property of
+   * the layer. The board supplies `setDetailTaskId`, whose bridge mounts the
+   * window on the board layer. The Memory Graph's layer omits it deliberately:
+   * in-app, that bridge would mount the detail at z-40, UNDERNEATH the graph's own
+   * z-42 overlay (the exact bug this layer exists to fix, one hop deeper); in the
+   * detached graph there is no board layer at all, so the button would be inert.
+   * Hiding a control that cannot work beats shipping one that silently does
+   * nothing.
+   */
+  revealTaskDetail?: (taskId: string) => void;
 }
 
 /** What a layer's `renderTaskDetail` receives. Mirrors WindowContent's props. */

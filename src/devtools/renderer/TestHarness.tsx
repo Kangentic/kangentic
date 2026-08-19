@@ -16,7 +16,7 @@
  */
 
 import { useRef, useState } from 'react';
-import { Plus, FolderPlus, FileDiff, Database, MessagesSquare, ChartColumn, GripVertical } from 'lucide-react';
+import { Plus, FolderPlus, FileDiff, Database, MessagesSquare, ChartColumn, Waypoints, Network, GripVertical } from 'lucide-react';
 import { useBoardStore } from '../../renderer/stores/board-store';
 import { useProjectStore } from '../../renderer/stores/project-store';
 import { useToastStore } from '../../renderer/stores/toast-store';
@@ -46,6 +46,13 @@ const LARGE_CONVERSATION_SEED_TURNS = 3000;
  *  a click near-instant. Re-clicks append another batch, so the open
  *  dashboard visibly animates to the new totals. */
 const USAGE_DATA_SEED_DAYS = 60;
+
+/** Documents written per click of "Seed Memory Graph". Chosen to sit in the
+ *  same order as a real project's indexed history (the dogfood project holds
+ *  ~640), so the layout, the node budget, and the coverage strip are all
+ *  exercised at production scale rather than on a toy corpus. Vectors are
+ *  written directly, so this stays near-instant despite the size. */
+const MEMORY_GRAPH_SEED_DOCUMENTS = 240;
 
 // Lorem source. Titles/descriptions are deliberately meaningless so that
 // dragging a seeded task to an executing column gives the agent nothing real to
@@ -147,6 +154,8 @@ export function TestHarness() {
   const [seedingBacklog, setSeedingBacklog] = useState(false);
   const [seedingConversation, setSeedingConversation] = useState(false);
   const [seedingUsage, setSeedingUsage] = useState(false);
+  const [seedingMemoryGraph, setSeedingMemoryGraph] = useState(false);
+  const [seedingRealIndex, setSeedingRealIndex] = useState(false);
 
   // Draggable so the panel can be moved off whatever it is covering. Position
   // is session-only BY DESIGN (never persisted): every launch starts at the
@@ -376,6 +385,65 @@ export function TestHarness() {
     }
   };
 
+  // Dev-only: seed a fully-embedded, cluster-structured conversation corpus so
+  // the Memory Graph has nodes, similarity edges, and provenance to render. A
+  // preview project starts with zero indexed conversations, and embedding this
+  // many documents through real inference would take minutes, so the vectors
+  // are written directly. Documents are drawn from planted topic clusters, so
+  // the map has a ground truth you can check by eye.
+  const handleSeedMemoryGraph = async () => {
+    setSeedingMemoryGraph(true);
+    try {
+      const result = await window.electronAPI.dev?.seedMemoryGraph({
+        documentCount: MEMORY_GRAPH_SEED_DOCUMENTS,
+      });
+      if (!result) {
+        useToastStore.getState().addToast({ message: 'Seeding the memory graph is dev-preview only', variant: 'warning' });
+        return;
+      }
+      await useBoardStore.getState().loadBoard();
+      useToastStore.getState().addToast({
+        message: `Seeded ${result.documents} conversations / ${result.chunks} embedded chunks `
+          + `across ${result.clusters} topic clusters (${result.dimensions}d)`,
+        variant: 'success',
+      });
+    } catch (error) {
+      useToastStore.getState().addToast({
+        message: `Failed to seed memory graph: ${error instanceof Error ? error.message : 'unknown error'}`,
+        variant: 'error',
+      });
+    } finally {
+      setSeedingMemoryGraph(false);
+    }
+  };
+
+  // Dev-only: mirror the REAL parent project's conversation index into this
+  // preview. Synthetic text proves the plumbing but makes every product
+  // question unanswerable - you cannot judge a cluster label or a result card
+  // against word salad. The source embeddings already exist, so this is a copy.
+  const handleSeedRealIndex = async () => {
+    setSeedingRealIndex(true);
+    try {
+      const result = await window.electronAPI.dev?.seedMemoryGraphReal({});
+      if (!result) {
+        useToastStore.getState().addToast({ message: 'Mirroring the real index is dev-preview only', variant: 'warning' });
+        return;
+      }
+      await useBoardStore.getState().loadBoard();
+      useToastStore.getState().addToast({
+        message: `Mirrored ${result.documents} conversations / ${result.chunks} chunks from "${result.sourceProject}" (${result.dimensions}d)`,
+        variant: 'success',
+      });
+    } catch (error) {
+      useToastStore.getState().addToast({
+        message: `Failed to mirror the real index: ${error instanceof Error ? error.message : 'unknown error'}`,
+        variant: 'error',
+      });
+    } finally {
+      setSeedingRealIndex(false);
+    }
+  };
+
   return (
     <div
       ref={panelRef}
@@ -466,6 +534,28 @@ export function TestHarness() {
       >
         <ChartColumn size={16} />
         {seedingUsage ? 'Seeding...' : 'Seed Usage Data'}
+      </button>
+      <button
+        type="button"
+        onClick={handleSeedMemoryGraph}
+        disabled={seedingMemoryGraph}
+        className="flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised px-3.5 py-2 text-[13px] font-medium text-fg hover:bg-surface disabled:opacity-50 transition-colors"
+        data-testid="dev-seed-memory-graph"
+        title={`Seed ${MEMORY_GRAPH_SEED_DOCUMENTS} fully-embedded synthetic conversations across planted topic clusters, so the Memory Graph has nodes, edges, and provenance to render`}
+      >
+        <Waypoints size={16} />
+        {seedingMemoryGraph ? 'Seeding...' : 'Seed Memory Graph'}
+      </button>
+      <button
+        type="button"
+        onClick={handleSeedRealIndex}
+        disabled={seedingRealIndex}
+        className="flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised px-3.5 py-2 text-[13px] font-medium text-fg hover:bg-surface disabled:opacity-50 transition-colors"
+        data-testid="dev-seed-memory-graph-real"
+        title="Mirror a slice of the REAL parent project's conversation index (titles, text, embeddings) into this preview, so the Memory Graph shows actual work"
+      >
+        <Network size={16} />
+        {seedingRealIndex ? 'Mirroring...' : 'Mirror Real Index'}
       </button>
     </div>
   );

@@ -26,6 +26,8 @@ export const IPC = {
   DEV_SEED_EMBEDDING_BACKLOG: 'dev:seedEmbeddingBacklog',
   DEV_SEED_LARGE_CONVERSATION: 'dev:seedLargeConversation',
   DEV_SEED_USAGE_DATA: 'dev:seedUsageData',
+  DEV_SEED_MEMORY_GRAPH: 'dev:seedMemoryGraph',
+  DEV_SEED_MEMORY_GRAPH_REAL: 'dev:seedMemoryGraphReal',
 
   // Project Groups
   PROJECT_GROUP_LIST: 'projectGroup:list',
@@ -437,6 +439,20 @@ export const IPC = {
   // Purge the current project's conversation index and re-run the backfill sweep
   // (recovery from a corrupt/stale index; Memory settings "Rebuild index").
   MEMORY_REBUILD_INDEX: 'memory:rebuildIndex',
+  /** Cheap read of the cached Memory Graph projection plus its coverage strip.
+   *  Never runs the projection pass - see graph-service. */
+  MEMORY_GRAPH_SNAPSHOT: 'memory:graphSnapshot',
+  /** Ask for a background refresh of one project's projection. Returns
+   *  immediately; completion arrives via MEMORY_GRAPH_CHANGED. */
+  MEMORY_GRAPH_REFRESH: 'memory:graphRefresh',
+  /** Push: a projection pass finished for a project. Declared in that surface's
+   *  POP_OUT_SURFACES `channels` too, or a detached window never updates. */
+  MEMORY_GRAPH_CHANGED: 'memory:graphChanged',
+  /** Run the existing fusion search and map its hits onto graph nodes. */
+  MEMORY_GRAPH_QUERY: 'memory:graphQuery',
+  /** Earlier conversations semantically near a task, for proactive recall in
+   *  task detail. The index finding you, rather than waiting to be searched. */
+  MEMORY_RELATED_TO_TASK: 'memory:relatedToTask',
 
   // Diagnostics (product, all builds): renderer console + window error
   // forwarding to main, where they are persisted to .kangentic/logs/.

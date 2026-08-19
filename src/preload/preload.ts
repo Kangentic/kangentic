@@ -676,6 +676,17 @@ const api: ElectronAPI = {
   memory: {
     getStatus: () => ipcRenderer.invoke(IPC.MEMORY_STATUS),
     rebuildIndex: (projectId) => ipcRenderer.invoke(IPC.MEMORY_REBUILD_INDEX, projectId),
+    graphSnapshot: (projectId) => ipcRenderer.invoke(IPC.MEMORY_GRAPH_SNAPSHOT, projectId),
+    refreshGraph: (projectId) => ipcRenderer.invoke(IPC.MEMORY_GRAPH_REFRESH, projectId),
+    queryGraph: (query: string, projectId?: string | null) =>
+      ipcRenderer.invoke(IPC.MEMORY_GRAPH_QUERY, query, projectId),
+    relatedToTask: (taskId: string, projectId?: string | null) =>
+      ipcRenderer.invoke(IPC.MEMORY_RELATED_TO_TASK, taskId, projectId),
+    onGraphChanged: (callback: (projectId: string) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, projectId: string) => callback(projectId);
+      ipcRenderer.on(IPC.MEMORY_GRAPH_CHANGED, handler);
+      return () => ipcRenderer.removeListener(IPC.MEMORY_GRAPH_CHANGED, handler);
+    },
   },
 
   platform: process.platform,
@@ -708,6 +719,10 @@ if (__KANGENTIC_DEV__) {
     seedEmbeddingBacklog: (count: number) => ipcRenderer.invoke(IPC.DEV_SEED_EMBEDDING_BACKLOG, count),
     seedLargeConversation: (count: number) => ipcRenderer.invoke(IPC.DEV_SEED_LARGE_CONVERSATION, count),
     seedUsageData: (days: number) => ipcRenderer.invoke(IPC.DEV_SEED_USAGE_DATA, days),
+    seedMemoryGraph: (options: { documentCount?: number; chunksPerDocument?: number }) =>
+      ipcRenderer.invoke(IPC.DEV_SEED_MEMORY_GRAPH, options),
+    seedMemoryGraphReal: (options: { documentLimit?: number }) =>
+      ipcRenderer.invoke(IPC.DEV_SEED_MEMORY_GRAPH_REAL, options),
     isEphemeralPreview,
     previewTaskTitle,
   };

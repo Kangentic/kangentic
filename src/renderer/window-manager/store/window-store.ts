@@ -1052,7 +1052,7 @@ const HMR_DATA: Record<string, WindowManager> | undefined = import.meta.hot?.dat
  *  `import.meta.hot.data` (the block at the bottom of this module), so they are
  *  recovered here. That write MUST stay after these `resolveInstance` calls. */
 function resolveInstance(
-  key: 'boardWindowManager' | 'commandWindowManager' | 'monitorWindowManager',
+  key: 'boardWindowManager' | 'commandWindowManager' | 'monitorWindowManager' | 'memoryWindowManager',
   options: WindowManagerStoreOptions,
 ): WindowManager {
   return HMR_DATA?.[key] ?? createWindowManagerStore(options);
@@ -1083,6 +1083,25 @@ export const monitorWindowManager = resolveInstance('monitorWindowManager', {
 });
 
 /**
+ * The Memory Graph's conversation layer. The ONLY instance whose windows are
+ * conversations rather than task details, and the reason it exists at all: the
+ * graph's "Open conversation" used to write `session-store.conversationSessionId`,
+ * which the BOARD's bridge turned into a window at z-40 - underneath the graph's
+ * own z-42 overlay, so the transcript opened where the user could not see it. And
+ * in the detached graph there is no board layer at all, so that route had no
+ * destination whatsoever.
+ *
+ * Anchored by session id (`kind: 'conversation'` matches the board's conversation
+ * windows), never persisted, and deliberately NOT wired to detail ownership or
+ * session claims - all three of those systems already skip non-task-detail
+ * windows, so this layer adds no coupling to them.
+ */
+export const memoryWindowManager = resolveInstance('memoryWindowManager', {
+  idPrefix: 'mem',
+  kind: 'conversation',
+});
+
+/**
  * Every window-manager instance in this renderer.
  *
  * Some state the layers feed is renderer-GLOBAL rather than per-layer - notably
@@ -1097,6 +1116,7 @@ export const allWindowManagers: readonly WindowManager[] = [
   boardWindowManager,
   commandWindowManager,
   monitorWindowManager,
+  memoryWindowManager,
 ];
 
 /** Back-compat: the board instance's bound store hook. Existing engine consumers
@@ -1112,6 +1132,8 @@ if (import.meta.hot) {
   import.meta.hot.data.commandWindowManager = commandWindowManager;
   // @ts-expect-error -- Vite handles import.meta.hot
   import.meta.hot.data.monitorWindowManager = monitorWindowManager;
+  // @ts-expect-error -- Vite handles import.meta.hot
+  import.meta.hot.data.memoryWindowManager = memoryWindowManager;
   // Self-accept: editing this module forces a clean reload rather than handing a
   // second store instance to part of an already-mounted tree (Pattern E).
   // @ts-expect-error -- Vite handles import.meta.hot

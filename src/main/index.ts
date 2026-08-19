@@ -13,6 +13,8 @@ import { registerSeedGitChangesDevIpc } from '../devtools/main/seed-git-changes'
 import { registerSeedEmbeddingBacklogDevIpc } from '../devtools/main/seed-embedding-backlog';
 import { registerSeedLargeConversationDevIpc } from '../devtools/main/seed-large-conversation';
 import { registerSeedUsageDataDevIpc } from '../devtools/main/seed-usage-data';
+import { registerSeedMemoryGraphDevIpc } from '../devtools/main/seed-memory-graph';
+import { registerSeedMemoryGraphRealDevIpc } from '../devtools/main/seed-memory-graph-real';
 import { installDevtools } from '../devtools/install';
 import { startMcpHttpServer, type McpHttpServerHandle } from './agent/mcp-http-server';
 import { readBrowserAutomationConfig } from './browser/browser-automation-config';
@@ -971,6 +973,15 @@ const createWindow = () => {
           // real capture repositories, so the usage dashboard has rich charts
           // to show in an ephemeral preview.
           registerSeedUsageDataDevIpc(getOptionalIpcContext);
+          // Seed-memory-graph dev IPC for the TestHarness "Seed Memory Graph"
+          // button - a fully-embedded, cluster-structured conversation corpus so
+          // the Memory Graph surface has nodes, edges, and provenance to render
+          // in an ephemeral preview without waiting on real ONNX inference.
+          registerSeedMemoryGraphDevIpc(getOptionalIpcContext);
+          // ...and the REAL-index mirror, which copies a slice of the parent
+          // project's actual conversations (titles, text, vectors) so the graph
+          // can be judged against real work rather than synthetic text.
+          registerSeedMemoryGraphRealDevIpc(getOptionalIpcContext);
           // Adopt the two clones the /preview script pre-cloned (overlapping the
           // build); add more on demand via the TestHarness "Create Project" button.
           const project1 = await createPreviewClone(ephemeralContext, cwd); // adopts "Project 1"

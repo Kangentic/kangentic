@@ -36,6 +36,7 @@ import { useDetailOwnershipSync } from '../bridge/useDetailOwnershipSync';
 import { useBrowserPaneRequestBridge } from '../bridge/useBrowserPaneRequestBridge';
 import { useBrowserDownloadToast } from '../bridge/useBrowserDownloadToast';
 import { useProjectStore } from '../../stores/project-store';
+import { useSessionStore } from '../../stores/session-store';
 import { useWindowAutoCloseOnDone } from '../bridge/useWindowAutoCloseOnDone';
 import { useWindowFocusReconcile } from '../bridge/useWindowFocusReconcile';
 import { useWorkspacePersistence } from '../bridge/useWorkspacePersistence';
@@ -295,6 +296,9 @@ function useBoardDetailOwnership(): void {
 
 const BOARD_LAYER_OPTIONS: WindowManagerLayerOptions = {
   minSize: { width: DEFAULT_MIN_WIDTH_PX, height: DEFAULT_MIN_HEIGHT_PX },
+  // This layer CAN reveal a task detail: `useTaskDetailWindowBridge` (mounted in
+  // BoardBridges above) turns the signal into a window on this very layer.
+  revealTaskDetail: (taskId) => useSessionStore.getState().setDetailTaskId(taskId),
 };
 
 const BOARD_OVERLAY_BASE_CLASS = 'fixed left-0 right-0 top-10 bottom-9 z-40 pointer-events-none';

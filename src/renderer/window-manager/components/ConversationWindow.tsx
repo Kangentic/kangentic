@@ -38,7 +38,7 @@ import { ConversationView, type InitialPosition } from '../../components/convers
 import { reconcileDisplayRows } from '../../components/conversation/display-rows';
 import { matchTuiViewportToRow } from '../../components/conversation/tui-anchor';
 import { transcriptToMarkdown } from '../../../shared/transcript-format';
-import { useLayerStore } from '../context';
+import { useLayerStore, useWindowManager } from '../context';
 import type { ManagedWindow } from '../store/types';
 import type { TranscriptGetResponse, TranscriptUnchangedResponse } from '../../../shared/types';
 
@@ -113,13 +113,19 @@ export function ConversationWindow({
   requestClose,
 }: ConversationWindowProps) {
   const currentProjectId = useProjectStore((state) => state.currentProject?.id ?? null);
-  const setDetailTaskId = useSessionStore((state) => state.setDetailTaskId);
   const scrollToTurnUuid = useSessionStore((state) => state.scrollToTurnUuid);
   const setScrollToTurnUuid = useSessionStore((state) => state.setScrollToTurnUuid);
   const conversationSessionId = useSessionStore((state) => state.conversationSessionId);
   const pendingTuiAnchor = useSessionStore((state) => state.pendingTuiAnchor);
   const setPendingTuiAnchor = useSessionStore((state) => state.setPendingTuiAnchor);
   const sessions = useSessionStore((state) => state.sessions);
+
+  // Whether THIS layer can put a task detail somewhere the user will see it. The
+  // board supplies the route; the Memory Graph's layer deliberately does not (see
+  // `WindowManagerLayerOptions.revealTaskDetail`), so "Open task" hides there
+  // rather than opening a window under the graph or doing nothing at all.
+  const { layer } = useWindowManager();
+  const revealTaskDetail = layer.revealTaskDetail;
 
   const useStore = useLayerStore();
   const toggleMaximizeWindow = useStore((state) => state.toggleMaximizeWindow);
@@ -235,8 +241,12 @@ export function ConversationWindow({
   }, [response]);
 
   const handleOpenTask = useCallback(() => {
-    if (taskId) setDetailTaskId(taskId);
-  }, [taskId, setDetailTaskId]);
+    if (taskId) revealTaskDetail?.(taskId);
+  }, [taskId, revealTaskDetail]);
+
+  /** Both "Open task" affordances gate on this: a real task AND a layer that can
+   *  actually show it. */
+  const canOpenTask = taskId !== null && revealTaskDetail !== undefined;
 
   const consumeScroll = useCallback(() => {
     setScrollToTurnUuid(null);
@@ -352,7 +362,7 @@ export function ConversationWindow({
               behind "...". The kebab entries stay too (same pill+kebab redundancy
               TaskDetailHeader uses for "View conversation"). Search has no toggle
               button here - it is always visible inside ConversationView. */}
-          {taskId && (
+          {canOpenTask && (
             <HeaderActionButton
               icon={SquareTerminal}
               onClick={handleOpenTask}
@@ -373,7 +383,7 @@ export function ConversationWindow({
           <KebabMenu>
             {(close) => (
               <>
-                {taskId && (
+                {canOpenTask && (
                   <KebabMenuItem
                     icon={<SquareTerminal size={13} />}
                     label="Open task"

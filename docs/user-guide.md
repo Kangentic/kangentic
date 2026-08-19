@@ -740,6 +740,107 @@ Open the usage dashboard from the chart icon in the title bar or with `Mod+Shift
 
 Totals are read from the durable usage ledgers, so they survive task and session deletion. The selected range and scope persist across app restarts (one global value shared across all projects).
 
+## Memory Graph
+
+Open it from the network icon in the title bar or with `Mod+Shift+A`. It answers "what does this
+project's conversation index actually know, and how much of my history has it reached" - a question
+neither the Memory settings tab (a toggle and a Rebuild button) nor Quick Find (a flat result list)
+can answer.
+
+**The map.** Every indexed conversation is a point in 3D space, placed by the meaning of its
+embeddings, so conversations about the same thing cluster together. Links join each conversation to
+its nearest neighbours. Regions are named automatically from what the conversations in them are
+about, so the map reads as a topic atlas of the project rather than an anonymous scatter.
+
+**Flying it.** Drag to orbit, shift-drag to pan, scroll to zoom in and out. Click the map and use
+**W** / **S** to fly forward and back, **A** / **D** to slide left and right, and **Q** / **E** to
+rise and drop - you can fly right into a cluster and out the other side. **Reset view** (bottom
+right) flies back to where the map opened, so it is always possible to get un-lost.
+
+**Clicking around.** Hover a point for its title and size; click it for a detail panel. When a
+search is running, the panel opens with **Why this matched** - where the conversation ranks in the
+results, whether it matched your wording, its meaning, or both, and the passage that matched - so
+selecting a node continues the search rather than dropping it.
+
+Below that, **Closest conversations** lists its strongest links, ordered rather than scored: the
+embeddings sit in a narrow similarity band where a percentage reads "99%" on every row and tells
+you nothing, so the ordering is the signal. Any that are also answers to your current search are
+marked.
+
+Two actions: **Open conversation** (or a double-click on the point) opens the full transcript in a
+movable window over the map, so it stays where you are reading rather than opening behind the
+graph - the same when the graph is detached into its own window. **Explore from here** re-scopes
+the map to that conversation and everything it links to, with a breadcrumb under the search box to
+take it back.
+
+The **Display** panel (top left) collapses out of the way and holds three groups.
+
+**Colour** switches what the points encode:
+
+- **Topic** - the region each conversation belongs to.
+- **Recency** - warm is recent, cool is old. Shows where your attention has moved, and which
+  areas have gone quiet.
+- **Outcome** - green reached Done, amber still on the board, grey archived. Note that archiving
+  is how finished work leaves the board, so grey covers both shipped and dropped work.
+- **Length** - brighter is a longer conversation.
+
+**Show** turns the region labels and the similarity links on and off.
+
+**Filter** offers **Unconnected** when some conversations have no close relative anywhere else in
+the index. Those are the one-off pieces of knowledge - work that connects to nothing you have done
+since, which makes them both the easiest to forget and the most worth writing down. They are
+invisible in a dense map until you ask for them, and the group is hidden entirely when everything
+is linked.
+
+Position and links are not equally precise, and the surface says so rather than letting you assume:
+**links are exact** (computed in the embedding's full dimensionality), while **position is
+approximate** - reducing 1024 dimensions to three loses information, so "nearby" is a strong hint
+rather than a guarantee. Follow the links when you want certainty.
+
+**Searching.** Type in the box and the map SCOPES to the matches: everything else is hidden, the
+links between hidden conversations go with it, and the camera flies to frame what is left. The hits
+are listed as cards beside it, each tagged `semantic`, `lexical` or `hybrid` so you can see how it
+matched.
+
+This is the same retrieval agents get from `kangentic_search` - meaning-based, not a text scan over
+transcripts - running locally, instantly, and never leaving your machine. If semantic search is off
+it still works, matching text only, and tells you so. Clear the search to bring the whole map back;
+the camera stays where you left it, and **Reset view** is the way home.
+
+**The coverage strip** across the top reports what is actually indexed. Two entries are worth
+understanding:
+
+- **searchable, transcript deleted** - the agent's transcript file is gone (a pruned worktree, a
+  cleaned CLI cache), but the indexed text and its embeddings are still here and still answer
+  queries. On a mature project this is most of the index, and it is not a problem.
+- **not yet indexed** - conversations the background sweep has not reached yet.
+
+The panel counts conversations, not files: it says nothing about how much of your repository is
+indexed.
+
+The map is drawn on the GPU. On a machine that cannot provide a 3D drawing context (a blocklisted
+driver, some remote sessions) it says so and the coverage numbers and search keep working.
+
+**Building the map.** The first time a project opens the graph, Kangentic reads every embedding in
+the index to place the dots. On a large project that takes a few minutes, runs in the background,
+and only happens once - after that it updates in about a second as new conversations are indexed.
+The surface shows its progress rather than an empty map. It needs semantic search on (Settings >
+Memory); without embeddings there is no meaningful notion of "near", so it shows the coverage and
+asks you to enable it rather than drawing a map that would imply meaning it does not have.
+
+Like the Agent Monitor and Usage Stats, it detaches into its own window from the pop-out control in
+its header.
+
+### Prior work on a task
+
+The map is somewhere you go. This is the same recall coming to you: open a task and, if the index
+holds earlier conversations near it, a line appears under the description reading
+**"3 earlier conversations about this"**. Expand it to see them, click one to open its transcript.
+
+The task's own title and description are the query, so there is nothing to type, and the task's own
+history is excluded (that is already one click away in the header). When there is no earlier work
+near a task, nothing is shown at all.
+
 ## Agent Monitor
 
 Open the monitor from the activity icon in the title bar or with `Mod+Shift+M`. It answers "what are all my agents doing right now?" in one place, across **every** registered project rather than just the one whose board is open. The title-bar icon itself is the ambient signal: green while any agent anywhere is working, amber the moment one starts waiting on you.
@@ -775,6 +876,7 @@ General:
 
 - **Mod+Shift+S** - Toggle the settings panel
 - **Mod+Shift+U** - Toggle the Usage Stats dashboard
+- **Mod+Shift+A** - Toggle the Memory Graph (a map of what this project's conversation index has learned)
 - **Mod+Shift+M** - Toggle the Agent Monitor (every running agent, across all projects)
 - **Mod+Shift+B** - Switch between Board and Backlog view
 - **Mod+Shift+E** - Toggle the project sidebar

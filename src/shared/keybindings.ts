@@ -110,6 +110,19 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
     rebindable: true,
   },
   {
+    // Mod+Shift+A from the free set. M (monitor) and U (stats) are taken, and
+    // detectConflicts must stay empty across every rebindable global/board
+    // entry plus the terminal-unsafe set. R and I are avoided deliberately:
+    // Chromium claims them for force-reload and DevTools.
+    id: 'memory.toggle',
+    label: 'Toggle Memory Graph',
+    description: 'Open or close the map of what the conversation index has learned.',
+    group: 'General',
+    scope: 'global',
+    defaultCombo: 'Mod+Shift+A',
+    rebindable: true,
+  },
+  {
     id: 'monitor.toggle',
     label: 'Toggle Agent Monitor',
     description: 'Open or close the cross-project view of every running agent.',

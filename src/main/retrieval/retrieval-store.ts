@@ -529,6 +529,287 @@ export class RetrievalStore {
     return row.count;
   }
 
+  /**
+   * One page of chunk identities, ascending by id, for the Memory Graph's
+   * projection scan. Ordered and cursored by `id` so a pass can resume from
+   * `afterChunkId` instead of rescanning the corpus.
+   *
+   * Paging `memory_chunks` (a real B-tree) and then fetching those rowids from
+   * the vec table is deliberate: `memory_chunks_vec` is a vec0 virtual table
+   * whose cost is dominated by per-row blob decode, so there is no cheaper
+   * ordering to be had on that side.
+   */
+  listChunkIdentities(afterChunkId: number, limit: number): Array<{
+    id: number;
+    corpus: string;
+    docId: string;
+  }> {
+    return this.db
+      .prepare(
+        `SELECT id, corpus, doc_id AS docId FROM memory_chunks
+         WHERE id > ? AND embedded_model IS NOT NULL
+         ORDER BY id ASC
+         LIMIT ?`,
+      )
+      .all(afterChunkId, limit) as Array<{ id: number; corpus: string; docId: string }>;
+  }
+
+  /**
+   * Bulk-read embedding vectors by chunk id.
+   *
+   * `WHERE rowid IN (...)` is the only bulk read verified to work against a
+   * vec0 table (sqlite-vec 0.1.9): an unconstrained `SELECT rowid, embedding`
+   * scan also works, but is no faster (62s vs 68s across 51k rows) because both
+   * pay the same per-row blob decode. Rowids are NOT contiguous - deleted
+   * chunks leave gaps - so a page can legitimately return fewer rows than it
+   * asked for, and that must not be read as end-of-scan.
+   */
+  readVectors(chunkIds: number[]): Map<number, Float32Array> {
+    const vectors = new Map<number, Float32Array>();
+    if (!this.vecReady || chunkIds.length === 0) return vectors;
+    const placeholders = chunkIds.map(() => '?').join(',');
+    const rows = this.db
+      .prepare(`SELECT rowid AS id, embedding FROM memory_chunks_vec WHERE rowid IN (${placeholders})`)
+      .all(...chunkIds) as Array<{ id: number; embedding: Buffer }>;
+    for (const row of rows) {
+      // Copy out of the sqlite-owned buffer: the statement's memory is reused
+      // for the next row, so a view would alias whatever comes next.
+      const copy = new Float32Array(row.embedding.byteLength / 4);
+      copy.set(
+        new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.embedding.byteLength / 4),
+      );
+      vectors.set(row.id, copy);
+    }
+    return vectors;
+  }
+
+  /** Per-document chunk and embedded counts, for the coverage strip and for
+   *  detecting a re-indexed document during an incremental projection pass. */
+  documentChunkTotals(): Array<{
+    corpus: string;
+    docId: string;
+    chunkCount: number;
+    embeddedCount: number;
+  }> {
+    return this.db
+      .prepare(
+        `SELECT corpus, doc_id AS docId, COUNT(*) AS chunkCount,
+                SUM(CASE WHEN embedded_model IS NOT NULL THEN 1 ELSE 0 END) AS embeddedCount
+         FROM memory_chunks
+         GROUP BY corpus, doc_id`,
+      )
+      .all() as Array<{ corpus: string; docId: string; chunkCount: number; embeddedCount: number }>;
+  }
+
+  /** Highest chunk id present, used as half the cache signature. */
+  maxChunkId(): number {
+    const row = this.db.prepare('SELECT COALESCE(MAX(id), 0) AS id FROM memory_chunks').get() as {
+      id: number;
+    };
+    return row.id;
+  }
+
+  /**
+   * Every conversation doc id the corpus could hold, for the coverage strip's
+   * "not yet reached by the sweep" bucket.
+   *
+   * These are `sessions.agent_session_id`, the agent CLI's own transcript id,
+   * NOT `sessions.id`. Verified against the live corpus: joining
+   * `memory_chunks.doc_id` to `sessions.id` matches zero rows. Rows with a null
+   * `agent_session_id` never produced a transcript and are excluded rather than
+   * counted as pending, which would report ~1000 phantom un-indexed documents.
+   */
+  knownConversationDocIds(): string[] {
+    const rows = this.db
+      .prepare('SELECT DISTINCT agent_session_id AS id FROM sessions WHERE agent_session_id IS NOT NULL')
+      .all() as Array<{ id: string }>;
+    return rows.map((row) => row.id);
+  }
+
+  /**
+   * Map chunk ids to their graph node keys (`${corpus}::${docId}`).
+   *
+   * Needed because the search layer speaks in session ids and chunk ids while
+   * the graph is keyed by CORPUS + DOC id - and for conversations the doc id is
+   * the agent CLI's transcript id, not `sessions.id`. Resolving the join here
+   * keeps that translation in one place instead of every caller re-deriving it.
+   */
+  docKeysForChunks(chunkIds: number[]): Map<number, string> {
+    const keys = new Map<number, string>();
+    if (chunkIds.length === 0) return keys;
+    const placeholders = chunkIds.map(() => '?').join(',');
+    const rows = this.db
+      .prepare(`SELECT id, corpus, doc_id AS docId FROM memory_chunks WHERE id IN (${placeholders})`)
+      .all(...chunkIds) as Array<{ id: number; corpus: string; docId: string }>;
+    for (const row of rows) keys.set(row.id, `${row.corpus}::${row.docId}`);
+    return keys;
+  }
+
+  /**
+   * Per-document display metadata for the Memory Graph's nodes: what to call
+   * it, which conversation to open, and when it last happened.
+   *
+   * Without this a node is an opaque hash, which is exactly what made the first
+   * version unusable - you could see the shape of the index but not what any
+   * point in it was. `sessionId` is what lets a click open the real transcript.
+   */
+  documentMetadata(): Array<{
+    corpus: string;
+    docId: string;
+    sessionId: string | null;
+    taskId: string | null;
+    title: string | null;
+    agent: string | null;
+    model: string | null;
+    effort: string | null;
+    durationMs: number | null;
+    costUsd: number | null;
+    tokens: number | null;
+    lastActivityMs: number | null;
+    outcome: string | null;
+  }> {
+    return this.db
+      .prepare(
+        `SELECT c.corpus AS corpus,
+                c.doc_id AS docId,
+                MAX(c.session_id) AS sessionId,
+                MAX(c.task_id) AS taskId,
+                MAX(t.title) AS title,
+                MAX(s.session_type) AS agent,
+                -- What the session actually RAN at, not what was configured:
+                -- applied_model / applied_effort are written when the agent
+                -- reports its settings, so they survive a mid-session change.
+                MAX(COALESCE(s.applied_model, s.model_display_name)) AS model,
+                MAX(s.applied_effort) AS effort,
+                -- What the work COST, in units a person recognises. "N indexed
+                -- chunks" is an artifact of how the index is stored and answers
+                -- nothing anyone asks about a past conversation; how long it ran
+                -- and what it spent do. Captured on the session at exit/suspend,
+                -- so an in-flight conversation reports null and the row is simply
+                -- absent rather than showing a zero it has not earned.
+                MAX(s.total_duration_ms) AS durationMs,
+                MAX(s.total_cost_usd) AS costUsd,
+                MAX(COALESCE(s.total_input_tokens, 0) + COALESCE(s.total_output_tokens, 0)) AS tokens,
+                MAX(c.ts_end) AS lastActivityMs,
+                -- Where the work ENDED UP, so the map can show which
+                -- explorations shipped and which were abandoned.
+                --
+                -- The LANE decides, and archiving does not override it. The
+                -- reverse rule shipped first and is wrong on any real board:
+                -- finished work gets archived once it leaves Done, so on this
+                -- project 485 of 496 tasks are archived AND in a Done lane.
+                -- Letting archived_at win reported every one of them as
+                -- abandoned, which made "reached Done" match nothing at all and
+                -- painted the whole Outcome map one grey. Archiving is board
+                -- tidiness; the column is the verdict.
+                MAX(CASE
+                  WHEN w.role = 'done' THEN 'done'
+                  WHEN t.archived_at IS NOT NULL THEN 'abandoned'
+                  WHEN t.id IS NULL THEN NULL
+                  ELSE 'active'
+                END) AS outcome
+         FROM memory_chunks c
+         LEFT JOIN tasks t ON t.id = c.task_id
+         LEFT JOIN swimlanes w ON w.id = t.swimlane_id
+         LEFT JOIN sessions s ON s.id = c.session_id
+         GROUP BY c.corpus, c.doc_id`,
+      )
+      .all() as Array<{
+        corpus: string;
+        docId: string;
+        sessionId: string | null;
+        taskId: string | null;
+        title: string | null;
+        agent: string | null;
+        model: string | null;
+        effort: string | null;
+        durationMs: number | null;
+        costUsd: number | null;
+        tokens: number | null;
+        lastActivityMs: number | null;
+        outcome: string | null;
+      }>;
+  }
+
+  /**
+   * One PAGE of the indexed chunk-text byte total, resuming after `afterChunkId`.
+   *
+   * Pageable rather than a single `SUM(length(text))` because better-sqlite3 is
+   * synchronous and the whole scan measured ~170ms over the real corpus's 52k
+   * chunks. Every other block in the projection pass is chunked precisely so no
+   * single step exceeds a frame budget, and a 170ms statement is a long task by
+   * any definition - it would have been the one unpaced block in a pass whose
+   * entire design premise is that it never blocks the main thread.
+   *
+   * `lastChunkId` is 0 when the page came back empty, which is how the caller
+   * knows it has reached the end. Callers must keep this on the pass side, never
+   * on `getSnapshot`, which is a cheap read on the IPC path.
+   *
+   * The vector half needs no query at all: vec0 rows are fixed-width, so it is
+   * exactly `embeddedChunks * dimensions * 4` (verified against the live table,
+   * which held uniform 4096-byte blobs at 1024 dimensions).
+   */
+  indexedTextBytesPage(afterChunkId: number, limit: number): { bytes: number; lastChunkId: number } {
+    const rows = this.db
+      .prepare(
+        `SELECT id, length(text) AS bytes
+         FROM memory_chunks
+         WHERE id > ?
+         ORDER BY id
+         LIMIT ?`,
+      )
+      .all(afterChunkId, limit) as Array<{ id: number; bytes: number | null }>;
+    let bytes = 0;
+    let lastChunkId = 0;
+    for (const row of rows) {
+      bytes += row.bytes ?? 0;
+      lastChunkId = row.id;
+    }
+    return { bytes, lastChunkId };
+  }
+
+  /**
+   * What is ACTUALLY stored in the vec table: its width, and the model tag the
+   * chunks were embedded under.
+   *
+   * The Memory Graph reads this rather than the configured model, because the
+   * two legitimately disagree. `memory_chunks_vec` is fixed-width and is only
+   * rebuilt by the embedding path, so between a model switch and the re-embed
+   * finishing, config says one width and the table holds another - and a
+   * projection built on the configured width would silently reject every
+   * vector and produce an empty map. Reading the table is also what makes the
+   * cache signature self-invalidating: the tag changes when the corpus is
+   * re-embedded, without anything having to notify the graph.
+   *
+   * Returns null when nothing is embedded yet.
+   */
+  storedEmbeddingSignature(): { dimensions: number; modelTag: string } | null {
+    const dimensionsRaw = this.getMeta('vec_dims');
+    const dimensions = dimensionsRaw ? Number(dimensionsRaw) : 0;
+    if (!Number.isFinite(dimensions) || dimensions <= 0) return null;
+
+    // The dominant tag, so a handful of rows left over from a previous model
+    // mid-re-embed do not flip the signature back and forth.
+    const row = this.db
+      .prepare(
+        `SELECT embedded_model AS modelTag, COUNT(*) AS count
+         FROM memory_chunks
+         WHERE embedded_model IS NOT NULL
+         GROUP BY embedded_model
+         ORDER BY count DESC
+         LIMIT 1`,
+      )
+      .get() as { modelTag: string; count: number } | undefined;
+    if (!row) return null;
+    return { dimensions, modelTag: row.modelTag };
+  }
+
+  listIndexState(): Array<{ corpus: string; docId: string; status: string }> {
+    return this.db
+      .prepare('SELECT corpus, doc_id AS docId, status FROM memory_index_state')
+      .all() as Array<{ corpus: string; docId: string; status: string }>;
+  }
+
   /** Startup GC: drop vec rows whose chunk was removed while the extension was
    *  unavailable (triggers cannot touch the vec table). */
   reconcileVecOrphans(): void {

@@ -485,7 +485,14 @@ Constraint: `PRIMARY KEY (corpus, doc_id)`. `status` is one of `ok`, `unsupporte
 
 ### memory_meta table
 
-Key/value bookkeeping for the memory index. Holds `chunker_version`; a mismatch against the current chunker version purges and reindexes the project.
+Key/value bookkeeping for the memory index.
+
+- `chunker_version` - a mismatch against the current chunker version purges and reindexes the project.
+- `vec_dims` - the width of the `memory_chunks_vec` table, set from the selected embedding model. A change forces a full re-embed, since vec0 tables are fixed-width.
+- `graph_projection_v8` - the Memory Graph's cached projection (nodes, edges, clusters, the 3D layout, each conversation's agent/model/effort and its duration/cost/tokens, the exact per-node neighbour lists, the index size on disk, and the corpus signature it was built from), JSON-encoded. The version suffix must be bumped whenever the payload SHAPE changes, because the freshness signature does not move for it and a stale blob would otherwise be served and rendered. It is bumped for a change to the CLUSTERING too, for the same reason: v6 chose the region count from the data, and v8 replaced that score with a size rule, neither of which alters the shape but both of which would otherwise keep serving the previous carve-up forever.
+- `graph_projection_sums_v1` - the per-document running vector SUMS behind that projection, so a rebuild scans only chunks newer than the highest id already folded in. Reading every embedding costs ~62s on a large corpus, so this is what keeps that a one-time cost rather than a per-rebuild one.
+
+Both graph keys are version-suffixed so a format change invalidates the cache rather than being mis-parsed. The two version independently, and the projection key's two bumps are why: `v1` -> `v2` added a 3D layout beside the flat one, `v2` -> `v3` dropped the flat one so a node carries a single `x, y, z`. The freshness signature is `modelTag:chunkCount:maxChunkId`, which a change to the layout's SHAPE does not move, so without a bump an older blob would have matched and been served with coordinates the renderer does not have. The sums key stayed at `v1` through both, because the vector sums were unaffected - which made each rebuild the ~330ms kNN plus layout rather than the full 62s scan. Bump the projection key on every shape change; the signature will not do it for you.
 
 | Column | Type | Constraints |
 |--------|------|-------------|
@@ -523,7 +530,7 @@ Durable per-turn token-usage ledger. One row per assistant turn that reported us
 
 Keyed by `turn_uuid` because a `--resume` replays its parent's turns verbatim under the same uuid; the PK dedups a replayed turn back onto one row so per-task / per-project totals never double-count a shared turn. Indices: `idx_turn_usage_task` (task_id), `idx_turn_usage_session` (session_id), `idx_turn_usage_ts` (ts). Deliberately has NO `sessions` DELETE cascade (unlike `memory_chunks`): it is a durable ledger, not a rebuildable index, so token history outlives the session rows it describes.
 
-Module: `src/main/retrieval/` (store `RetrievalStore`, usage ledger `ConversationUsageStore`, indexer `ConversationIndexer`, service `retrievalService`, query `searchConversationMemory`).
+Module: `src/main/retrieval/` (store `RetrievalStore`, usage ledger `ConversationUsageStore`, indexer `ConversationIndexer`, service `retrievalService`, query `searchConversationMemory`); the Memory Graph's projection lives in `src/main/retrieval/graph/` (`projection-math.ts`, `neighbor-edges.ts`, `coverage-aggregate.ts`, `cluster-labels.ts`, `projection-engine.ts`, `graph-service.ts`).
 
 ### session_activity_intervals table
 

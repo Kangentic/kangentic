@@ -15,6 +15,7 @@ import { syncParkedTerminals } from '../utils/parked-terminals';
 import { syncFocusedTerminals } from '../utils/focused-terminals';
 import {
   WEBGL_ATTACH_BUDGET,
+  getWebglReservationCount,
   applyWebglAttachmentPlan,
   onWebglAttachmentsChanged,
   type WebglAttachmentPlan,
@@ -194,7 +195,10 @@ export function useFocusedSessionsSync(panelShowsTerminal: boolean): void {
       boardLayerParked: activeView !== 'board',
       windows,
       panelSessionId,
-      webglBudget: WEBGL_ATTACH_BUDGET,
+      // Minus whatever non-terminal consumers hold (the Memory Graph's three.js
+      // canvas). Those reservations are pinned, so they never appear in the
+      // attach/suspend plan - they just shrink what the terminals may share.
+      webglBudget: Math.max(0, WEBGL_ATTACH_BUDGET - getWebglReservationCount()),
     });
     const parkedSessionIds = new Set(plan.parkedSessionIds);
 

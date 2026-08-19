@@ -4356,6 +4356,34 @@ export interface DevSeedEmbeddingBacklogResult {
   docId: string;
 }
 
+/** Summary of a dev test-harness memory-graph seed (see DEV_SEED_MEMORY_GRAPH). */
+export interface DevSeedMemoryGraphResult {
+  /** Synthetic fully-embedded conversations written. */
+  documents: number;
+  /** Chunks written and embedded across those conversations. */
+  chunks: number;
+  /** Planted topic clusters the documents were drawn from. The Memory Graph
+   *  layout is expected to recover these, which is what makes the seeded
+   *  corpus a ground truth rather than just filler. */
+  clusters: number;
+  /** Throwaway tasks the sessions were hung off, for provenance edges. */
+  tasks: number;
+  /** Embedding width used, taken from the SELECTED model, never hardcoded. */
+  dimensions: number;
+  /** Model tag stamped on every seeded chunk. */
+  modelTag: string;
+}
+
+/** Summary of a dev test-harness REAL-index mirror (see DEV_SEED_MEMORY_GRAPH_REAL). */
+export interface DevSeedMemoryGraphRealResult {
+  /** The real project the slice was copied from. */
+  sourceProject: string;
+  documents: number;
+  chunks: number;
+  tasks: number;
+  dimensions: number;
+}
+
 /** Summary of a dev test-harness usage-data seed (see DEV_SEED_USAGE_DATA). */
 export interface DevSeedUsageDataResult {
   /** Synthetic finalized sessions written to usage_history (across all projects). */
@@ -4451,6 +4479,21 @@ export interface ElectronAPI {
      * fresh batch.
      */
     seedUsageData: (days: number) => Promise<DevSeedUsageDataResult>;
+    /**
+     * Seed a fully-embedded, cluster-structured conversation corpus so the
+     * Memory Graph surface has something to render in an ephemeral preview.
+     * Vectors are written directly rather than inferred, because embedding
+     * hundreds of documents for real would take minutes before the graph
+     * showed anything.
+     */
+    seedMemoryGraph: (options: { documentCount?: number; chunksPerDocument?: number }) => Promise<DevSeedMemoryGraphResult>;
+    /**
+     * Mirror a slice of the REAL parent project's conversation index (chunks,
+     * vectors, titles) into this preview, so the Memory Graph can be judged
+     * against actual work rather than synthetic word salad. A copy, not a
+     * re-embed - the source embeddings already exist.
+     */
+    seedMemoryGraphReal: (options: { documentLimit?: number }) => Promise<DevSeedMemoryGraphRealResult>;
     /** True only in dev-preview (`/preview`, `--ephemeral`); false in the regular dogfood. */
     isEphemeralPreview: boolean;
     /**
@@ -5225,6 +5268,23 @@ export interface ElectronAPI {
      *  (recovery from a corrupt/stale index). Resolves when the purge is done;
      *  the rebuild sweep continues in the background. */
     rebuildIndex: (projectId?: string | null) => Promise<void>;
+    /** Cheap read of the cached Memory Graph projection plus its coverage
+     *  strip. Never triggers the projection pass. */
+    graphSnapshot: (projectId?: string | null) => Promise<MemoryGraphSnapshot | null>;
+    /** Ask for a background projection refresh. Resolves immediately;
+     *  completion arrives on `onGraphChanged`. */
+    refreshGraph: (projectId?: string | null) => Promise<void>;
+    /** Push subscription: fires when a projection pass finishes. Returns an
+     *  unsubscribe closure. */
+    onGraphChanged: (callback: (projectId: string) => void) => () => void;
+    /** Retrieval only: local, free, and instant. Runs the same fusion search
+     *  the palette uses and maps each hit onto its graph node. */
+    queryGraph: (query: string, projectId?: string | null) => Promise<MemoryGraphQueryResult>;
+    /**
+     * Earlier conversations semantically near a task, excluding the task's own.
+     * Proactive recall: what have I already figured out about this?
+     */
+    relatedToTask: (taskId: string, projectId?: string | null) => Promise<MemoryGraphQueryHit[]>;
   };
 
   // Platform
@@ -5335,6 +5395,163 @@ export interface MemoryModelStatus {
 
 /** Where the embedding model runs. See `AppConfig.memory.acceleration`. */
 export type MemoryAcceleration = 'auto' | 'gpu' | 'cpu';
+
+/** One node in the Memory Graph: a document in whatever corpus it came from. */
+export interface MemoryGraphNode {
+  /** `${corpus}::${docId}`. The corpus prefix is what keeps the graph open to a
+   *  second corpus (repo files) without a node-kind rewrite. */
+  docKey: string;
+  /** Unit-box coordinates, 0..1. One 3D layout: the surface has no flat view. */
+  x: number;
+  y: number;
+  z: number;
+  chunkCount: number;
+  /** Human-readable name, normally the owning task's title. Null when the
+   *  conversation has no task. Without it a node is an opaque hash. */
+  title: string | null;
+  /** The Kangentic session, so a click can open the real transcript. */
+  sessionId: string | null;
+  taskId: string | null;
+  /** Agent that produced it, as a DISPLAY name resolved from the adapter
+   *  registry ("Claude Code"), never the raw `session_type` ("claude_agent"). */
+  agent: string | null;
+  /** Model the session actually ran at, preferring the applied value over the
+   *  configured one so a mid-session `/model` change is reflected. */
+  model: string | null;
+  /** Reasoning effort the session actually ran at, when the agent reports one. */
+  effort: string | null;
+  /** Wall time the session ran for, in ms. Null while it is still running, or
+   *  for a conversation indexed before metrics were captured. */
+  durationMs: number | null;
+  /** What the session cost, in USD. Null on the same terms as `durationMs`. */
+  costUsd: number | null;
+  /** Input plus output tokens. Null on the same terms as `durationMs`. */
+  tokens: number | null;
+  /** Epoch ms of the last indexed turn, for recency colouring. */
+  lastActivityMs: number | null;
+  /** Where the owning task ended up: `'done'` (reached a Done lane, whether or
+   *  not it was later archived), `'abandoned'` (archived without ever reaching
+   *  one), `'active'` (still on the board), or null for a conversation with no
+   *  task. Archiving is board tidiness and does not decide this - see the CASE
+   *  in `documentMetadata` for the measurement that settled it. */
+  outcome: 'done' | 'abandoned' | 'active' | null;
+  /** Which labelled region of the map this node sits in. */
+  cluster: number;
+}
+
+/** A named region of the map, derived from the layout and labelled from the
+ *  terms most over-represented in it. */
+export interface MemoryGraphCluster {
+  id: number;
+  label: string;
+  /** Centroid of this cluster's members, where its label is anchored. */
+  x: number;
+  y: number;
+  z: number;
+  size: number;
+}
+
+/** A similarity edge between two node indices. Computed in FULL embedding
+ *  dimensionality, so unlike node positions these are exact. */
+export interface MemoryGraphEdge {
+  source: number;
+  target: number;
+  similarity: number;
+}
+
+/** A coverage bucket. `tone` is resolved in main so the renderer never has to
+ *  re-derive which index states are genuinely problems - notably
+ *  `missing-source`, which is the steady state for most of a mature corpus and
+ *  must never be painted as an error. */
+export interface MemoryCoverageBucket {
+  documents: number;
+  chunks: number;
+  tone: 'ok' | 'neutral' | 'problem';
+}
+
+export interface MemoryCoverageSummary {
+  indexed: MemoryCoverageBucket;
+  sourceMissingButSearchable: MemoryCoverageBucket;
+  empty: MemoryCoverageBucket;
+  failed: MemoryCoverageBucket;
+  notYetIndexed: MemoryCoverageBucket;
+  totalDocumentsWithChunks: number;
+  totalChunks: number;
+  totalEmbeddedChunks: number;
+  embeddedFraction: number;
+  knownDocumentIdsMatched: number;
+}
+
+export interface MemoryGraphProjection {
+  nodes: MemoryGraphNode[];
+  edges: MemoryGraphEdge[];
+  clusters: MemoryGraphCluster[];
+  signature: string;
+  modelTag: string;
+  /** Width of the EMBEDDINGS this was projected from (384 / 768 / 1024). The
+   *  LAYOUT is always three components; see `MemoryGraphNode`. */
+  dimensions: number;
+  /**
+   * Each node's genuinely nearest conversations, most similar first, computed in
+   * FULL embedding dimensionality.
+   *
+   * Separate from `edges` on purpose, because the two answer different
+   * questions. `edges` is the mesh DRAWN on the map, and it is quantile-pruned
+   * to stay readable - an unpruned mesh at this density is a hairball. That
+   * pruning is global, so a node's true nearest neighbour can be absent from it
+   * entirely, and the detail panel read exactly one neighbour for conversations
+   * that genuinely had several. What is drawn is a legibility decision; what the
+   * panel lists is a claim about the data, and it must not be filtered by the
+   * former.
+   */
+  nodeNeighbors: ReadonlyArray<ReadonlyArray<{ index: number; similarity: number }>>;
+
+  /**
+   * Bytes the index occupies: chunk text plus vectors.
+   *
+   * Computed in the background pass, not on the snapshot read, because the text
+   * half is a full scan (~170ms over 52k chunks). It therefore travels with the
+   * map and is exactly as fresh as it.
+   */
+  storageBytes: number;
+  builtAt: string;
+}
+
+/** One conversation matched by a Memory Graph query. */
+export interface MemoryGraphQueryHit {
+  /** `${corpus}::${docId}` - the graph node this hit belongs to, so the canvas
+   *  can light it without the renderer re-deriving the join. */
+  docKey: string;
+  sessionId: string;
+  taskId: string | null;
+  taskTitle: string | null;
+  agentName: string | null;
+  snippet: string;
+  score: number;
+  matchKind: 'lexical' | 'semantic' | 'hybrid';
+  /** How many chunks in this conversation matched. */
+  matchCount: number;
+  turnTs: number | null;
+}
+
+export interface MemoryGraphQueryResult {
+  query: string;
+  hits: MemoryGraphQueryHit[];
+  /** False when the semantic layer was unavailable, so the UI can say the
+   *  search was lexical-only rather than silently returning worse results. */
+  semantic: boolean;
+}
+
+export interface MemoryGraphSnapshot {
+  projectId: string;
+  /** Null until the first projection pass completes. */
+  projection: MemoryGraphProjection | null;
+  coverage: MemoryCoverageSummary;
+  building: boolean;
+  /** Stale projections are still served: a slightly old map beats a blank one. */
+  stale: boolean;
+  semanticAvailable: boolean;
+}
 
 export interface MemoryStatus {
   indexingEnabled: boolean;

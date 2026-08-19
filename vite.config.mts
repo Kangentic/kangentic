@@ -97,6 +97,11 @@ export default defineConfig(({ mode }) => ({
           if (/node_modules[\\/](react|react-dom|scheduler)[\\/]/.test(id)) return 'react-vendor';
           if (id.includes('@xterm/xterm') || id.includes('@xterm/addon-webgl')) return 'xterm';
           if (id.includes('recharts')) return 'recharts';
+          // three + camera-controls, grouped so assertVendorChunksLazy has a
+          // stable name to check. Both are reachable ONLY through
+          // LazyMemoryGraph; the name match cannot hit first-party sources,
+          // which live under components/memory/.
+          if (/node_modules[\\/](three|camera-controls)[\\/]/.test(id)) return 'three';
         },
       },
     },

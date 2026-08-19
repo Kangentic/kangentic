@@ -65,6 +65,7 @@
     "@types/react": "^19.2.16",
     "@types/react-dom": "^19.2.3",
     "@types/remove-markdown": "^0.3.4",
+    "@types/three": "^0.185.4",
     "@types/turndown": "^5.0.6",
     "@types/uuid": "^10.0.0",
     "@types/which": "^3.0.4",
@@ -123,6 +124,7 @@
     "@xterm/headless": "6.0.0",
     "better-sqlite3": "^12.10.0",
     "bindings": "^1.5.0",
+    "camera-controls": "^3.1.2",
     "file-uri-to-path": "^1.0.0",
     "font-list": "^2.1.0",
     "monaco-editor": "^0.55.1",
@@ -135,6 +137,7 @@
     "remove-markdown": "^0.6.4",
     "sherpa-onnx-node": "^1.13.3",
     "sqlite-vec": "^0.1.9",
+    "three": "^0.185.1",
     "turndown": "^7.2.4",
     "turndown-plugin-gfm": "^1.0.2"
   }

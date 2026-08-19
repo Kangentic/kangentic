@@ -61,6 +61,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `dev:seedEmbeddingBacklog` | invoke | Seed synthetic pending chunks (`embedded_model = NULL`) into the current project's conversation-memory index via the real chunk-write path, then flag the project dirty (TestHarness "Seed Embedding Backlog" button) - a fast path to a realistic embedding backlog for exercising the central embedding engine's drain loop without needing that many real agent turns. Returns `DevSeedEmbeddingBacklogResult` |
 | `dev:seedLargeConversation` | invoke | Seed a throwaway task backed by a synthetic multi-thousand-turn Claude JSONL transcript (TestHarness "Seed Large Conversation" button; appends more turns on re-click) and open it in the Conversation viewer, for exercising the viewer's virtualization, in-viewer search, and open-at-position behavior against a realistic long transcript. Returns `DevSeedLargeConversationResult` |
 | `dev:seedUsageData` | invoke | Seed days of realistic synthetic usage (sessions across several agents/models plus per-turn time series) into every registered project's usage ledgers via the real capture repositories, at descending volume per project (TestHarness "Seed Usage Data" button; appends another batch on re-click), so the usage dashboard has rich charts in a preview. Returns `DevSeedUsageDataResult` |
+| `dev:seedMemoryGraph` | invoke | Seed a fully-embedded, cluster-structured synthetic conversation corpus into the current project (TestHarness "Seed Memory Graph" button), hung off real tasks and session rows so provenance exists. Vectors are written DIRECTLY rather than inferred: a preview project starts with zero indexed conversations, and real ONNX inference over hundreds of documents would take minutes before the Memory Graph showed anything. Documents are drawn from planted topic clusters, so the map has a ground truth you can check by eye. Returns `DevSeedMemoryGraphResult` |
 
 ### Project Groups (6 channels)
 | Channel | Pattern | Purpose |
@@ -377,7 +378,7 @@ Machine-global (like Config), not project-scoped - backs the Mobile Devices sett
 | `window:isFocused` | invoke | Check if the sending window has focus (for the renderer's spawn-stall/plan-complete notification gating; the idle/crash desktop notifier resolves focus synchronously in main instead - see `src/main/notifications/desktop-notifier.ts`) |
 
 ### Pop-out Windows (6 channels)
-Detach a registered UI surface (usage stats, git changes, the task Browser pane, the Agent Monitor) into its own OS-level `BrowserWindow`. See `src/shared/pop-out.ts` for the surface registry (`PopOutKind`, params, per-surface push fan-out) and `src/main/pop-out/` for the window manager + broadcast helper. Distinct from the in-app DOM window manager (`src/renderer/window-manager/`), which tiles movable panes inside the single main `BrowserWindow`.
+Detach a registered UI surface (usage stats, git changes, the task Browser pane, the Agent Monitor, the Memory Graph) into its own OS-level `BrowserWindow`. See `src/shared/pop-out.ts` for the surface registry (`PopOutKind`, params, per-surface push fan-out) and `src/main/pop-out/` for the window manager + broadcast helper. Distinct from the in-app DOM window manager (`src/renderer/window-manager/`), which tiles movable panes inside the single main `BrowserWindow`.
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `popOut:open` | invoke | Open a surface's pop-out window (kind + params), or focus it if already open |
@@ -448,12 +449,18 @@ Read-only structured-transcript access for the conversation viewer. Prefer the e
 | `transcript:get` | invoke | Return the structured (tool_use / tool_result) transcript for a session. Powers the conversation viewer. |
 | `transcript:listSessions` | invoke | List the sessions that have a readable transcript, for the viewer's session picker. |
 
-### Memory (2 channels)
-Conversation-memory semantic layer (Smart-mode search). See the Memory settings tab.
+### Memory (7 channels)
+Conversation-memory semantic layer (Smart-mode search) and the Memory Graph surface built on it.
+See the Memory settings tab.
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `memory:status` | invoke | Report the conversation-memory index status for the Smart-mode palette UI. |
 | `memory:rebuildIndex` | invoke | Purge the current project's conversation index and re-run the backfill sweep (recovery from a corrupt/stale index; Memory settings "Rebuild index"). |
+| `memory:graphSnapshot` | invoke | Cheap read of the cached Memory Graph projection plus its coverage strip. Never runs the projection pass. Returns `MemoryGraphSnapshot \| null`. |
+| `memory:graphRefresh` | invoke | Ask for a background refresh of one project's projection. Returns immediately; completion arrives via `memory:graphChanged`. |
+| `memory:graphChanged` | on | Push: a projection pass finished for a project. Declared in the `memory` pop-out surface's `channels`, or a detached window never updates. |
+| `memory:graphQuery` | invoke | Run the existing fusion search and map its hits onto graph nodes. Returns `MemoryGraphQueryResult`. |
+| `memory:relatedToTask` | invoke | Proactive recall: earlier conversations semantically near a task, using its title + description as the query and excluding its own conversations. Powers the "N earlier conversations about this" line in task detail. Returns `MemoryGraphQueryHit[]`. |
 
 ### Diagnostics (2 channels)
 | Channel | Pattern | Purpose |
