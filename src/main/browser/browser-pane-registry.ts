@@ -107,6 +107,28 @@ const FOREIGN_PROJECT_HINT =
 const NO_PANE_OPEN_HINT =
   'Call kangentic_browser_open_pane with a url to open and load your own task\'s Browser pane, then retry.';
 
+/**
+ * Why a pane left the registry. Every deletion names one.
+ *
+ * These are indistinguishable from the outside - all four make a later
+ * explicit-`sessionId` call return `no-pane-open` - which is precisely what made
+ * task #542's retained-pane death hard to attribute.
+ */
+export type PaneUnregisterReason =
+  /** The renderer's effect cleanup ran (component unmounted). */
+  | 'renderer-unmount'
+  /** Same, but compare-and-delete matched this instance's own guest id. */
+  | 'renderer-unmount-matched'
+  /** The guest webContents emitted `destroyed`. */
+  | 'guest-destroyed'
+  /** Self-heal: the entry pointed at a guest that no longer exists. */
+  | 'self-heal-dead-guest';
+
+// `detachAll` is deliberately absent. It bulk-clears on the synchronous
+// `before-quit` path (see .claude/rules/synchronous-shutdown.md), where adding
+// per-pane console I/O would slow the one path that must stay fast - and a
+// deletion during shutdown needs no attribution, since the app is going away.
+
 export type ResolveGuestResult =
   | { ok: true; entry: BrowserPaneEntry; webContents: WebContents }
   | { ok: false; kind: 'pane-destroyed'; detail: string };
@@ -148,9 +170,35 @@ export class BrowserPaneRegistry {
     this.notifyWaiters();
   }
 
-  unregister(sessionId: string): void {
+  /**
+   * Say WHY a pane left the registry.
+   *
+   * Four call paths delete an entry, and from the outside they are
+   * indistinguishable: every one of them makes a later explicit-`sessionId`
+   * call return `no-pane-open`. Task #542 hit exactly that wall - a retained
+   * pane's guest was destroyed on a project switch, and narrowing it down to a
+   * deleter meant reasoning backwards from an error kind that four paths share,
+   * across a boundary where the renderer's unmount and the guest's `destroyed`
+   * event look identical.
+   *
+   * One line each removes that ambiguity. It is deliberately unconditional
+   * rather than dev-gated: the repro is rare, timing-dependent, and needs a
+   * restart to instrument, so the one time it happens the evidence has to
+   * already be in the log.
+   */
+  private forget(sessionId: string, reason: PaneUnregisterReason): void {
+    const entry = this.panes.get(sessionId);
+    if (!entry) return;
     this.panes.delete(sessionId);
+    console.log(
+      `[browser-pane] unregister session=${sessionId.slice(0, 8)} task=${entry.taskId.slice(0, 8)} ` +
+        `wc=${entry.webContentsId} project=${entry.projectId ?? 'none'} reason=${reason}`,
+    );
     this.notifyWaiters();
+  }
+
+  unregister(sessionId: string): void {
+    this.forget(sessionId, 'renderer-unmount');
   }
 
   /** Unregister sessionId's pane ONLY if its current entry still has this exact
@@ -161,8 +209,7 @@ export class BrowserPaneRegistry {
   unregisterIfMatches(sessionId: string, webContentsId: number): void {
     const entry = this.panes.get(sessionId);
     if (entry && entry.webContentsId === webContentsId) {
-      this.panes.delete(sessionId);
-      this.notifyWaiters();
+      this.forget(sessionId, 'renderer-unmount-matched');
     }
   }
 
@@ -170,8 +217,7 @@ export class BrowserPaneRegistry {
   unregisterByWebContentsId(webContentsId: number): void {
     for (const [sessionId, entry] of this.panes) {
       if (entry.webContentsId === webContentsId) {
-        this.panes.delete(sessionId);
-        this.notifyWaiters();
+        this.forget(sessionId, 'guest-destroyed');
         return;
       }
     }
@@ -421,7 +467,7 @@ export class BrowserPaneRegistry {
   resolveLiveGuest(entry: BrowserPaneEntry): ResolveGuestResult {
     const guest = electronWebContents.fromId(entry.webContentsId);
     if (!guest || guest.isDestroyed()) {
-      this.panes.delete(entry.sessionId);
+      this.forget(entry.sessionId, 'self-heal-dead-guest');
       return {
         ok: false,
         kind: 'pane-destroyed',

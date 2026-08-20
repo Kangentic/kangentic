@@ -73,8 +73,9 @@ export function BrowserPane({ sessionId, taskId, cwd, projectId }: BrowserPanePr
   if (!effectiveUrl) {
     // Empty state submit goes through the same auto-save path as any other
     // navigation: webview loads -> did-navigate fires -> recordNavigation
-    // auto-saves task URL and (since projectDefault is null here) also seeds
-    // the project default with a toast.
+    // auto-saves the TASK url. It no longer seeds the project default: doing
+    // that made every sibling task inherit this one's URL, which points them at
+    // this task's dev-server port. See recordNavigation in useBrowserUrl.ts.
     return (
       <BrowserEmptyState
         onSubmit={(url) => recordNavigation(url)}

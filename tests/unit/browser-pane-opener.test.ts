@@ -334,6 +334,41 @@ describe('openPaneForCallerTask', () => {
       vi.mocked(browserPaneRegistry.list).mockReturnValue([pane()] as never);
     });
 
+    it('navigates a RETAINED live pane whose project is backgrounded', async () => {
+      // Task #542 Finding B. Retention deliberately keeps a backgrounded
+      // project's pane alive so its agent can keep driving it, but the
+      // project-not-open guard used to run BEFORE the live-pane lookup, so the
+      // one pane retention exists to preserve was the one open_pane refused.
+      //
+      // Worse, the two composed: `no-pane-open` tells the agent to call
+      // open_pane, which returned project-not-open, so an agent with a live,
+      // driveable pane had no way back to it and worked blind.
+      installHost({ currentProjectId: 'other-project', currentProjectPath: null });
+      runWithGuestBody();
+
+      const result = await openPaneForCallerTask(openInput('http://localhost:7777'));
+
+      expect(result).toMatchObject({ ok: true, data: { opened: false, navigated: true } });
+      expect(loadedUrls).toEqual(['http://localhost:7777']);
+      // Nothing project-scoped may run on this path: `taskExists` resolves a
+      // project DB by id, and getProjectDb CREATES the file for an unrecognized
+      // id, so reaching it with a backgrounded project would leave a stray db.
+      expect(sent).toEqual([]);
+      expect(browserUrlStore.set).not.toHaveBeenCalled();
+    });
+
+    it('reports a retained pane"s status while its project is backgrounded', async () => {
+      installHost({ currentProjectId: 'other-project', currentProjectPath: null });
+      vi.mocked(browserPaneRegistry.list).mockReturnValue([pane({ url: 'http://localhost:4200' })] as never);
+
+      const result = await openPaneForCallerTask(openInput(undefined));
+
+      expect(result).toMatchObject({
+        ok: true,
+        data: { opened: false, navigated: false, url: 'http://localhost:4200' },
+      });
+    });
+
     it('navigates a live pane instead of re-seeding its locked src', async () => {
       // BrowserPane locks its <webview> src at first mount, so a seeded URL
       // would be silently ignored and the agent told it navigated when it did not.

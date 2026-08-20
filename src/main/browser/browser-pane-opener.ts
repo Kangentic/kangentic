@@ -191,13 +191,85 @@ export async function openPaneForCallerTask(input: OpenPaneInput): Promise<Drive
     return failure('app-not-ready', 'Kangentic is still starting up. Retry in a moment.');
   }
 
-  // The board window layer renders the OPEN project's tasks, so it cannot mount
-  // a window for a task in a backgrounded project. Refusing here is honest and
-  // immediate; pushing anyway would just time out with a vaguer message.
+  const selectorFor = (sessionId?: string): ResolveTargetSelector => ({
+    sessionId,
+    taskId: sessionId ? undefined : callerTaskId,
+    projectId,
+    callerSessionId,
+    callerTaskId,
+  });
+
+  // WARM PATH FIRST: is this task's pane already up and driveable?
+  //
+  // This lookup has to precede the project-not-open guard below, and the
+  // ordering is the whole fix. A pane whose project is BACKGROUNDED is
+  // deliberately kept alive - that is what retention is for, so an agent can
+  // keep driving its own pane while the user works elsewhere (see
+  // `.claude/rules/retained-pane-never-remounts.md`). Guarding first refused
+  // exactly that pane, and the `no-pane-open` hint sends the agent right back
+  // here, so the two composed into a dead end: an agent with a live, retained,
+  // driveable pane could not reach it and had to work blind.
+  //
+  // `closePanes` below already reasoned this through and does NOT require the
+  // caller's project to be open. Opening simply never got revisited when
+  // retention landed.
+  //
+  // Resolving the live pane first is also what makes this safe rather than just
+  // a reordering: everything the warm path needs comes from the registry, so it
+  // touches no project-scoped state. In particular it never reaches
+  // `host.taskExists`, whose documented precondition is that the project be
+  // confirmed open - `getProjectDb` CREATES a database file for an unrecognized
+  // id, so calling it with an unvalidated one leaves a stray `<projectId>.db`
+  // behind. A registered live pane is its own proof the task is real: the
+  // renderer registered it, and main backfilled its `projectId` from the
+  // session registry.
+  const live = browserPaneRegistry
+    .getByTaskId(callerTaskId, projectId)
+    .find((entry) => browserPaneRegistry.resolveLiveGuest(entry).ok);
+
+  // Pure no-op: the pane is already up and the caller named no URL, so nothing
+  // navigates. The navigation POLICY is deliberately not consulted on this
+  // path - it gates navigations, and refusing here would reject a status-only
+  // call because the policy tightened after the page loaded, which cannot
+  // unload that page anyway. The capability gate above still applies.
+  if (live && !input.url) {
+    const pane = paneStatus(live.sessionId);
+    if (!pane) return failure('pane-destroyed', 'The Browser pane closed while opening. Retry.');
+    if (pane.url) {
+      return { ok: true, data: { opened: false, navigated: false, url: pane.url, pane } };
+    }
+    // A live guest with no URL is a pane sitting on its empty state. Reporting
+    // the task's SAVED url here (which is what this path used to do) would
+    // claim a page is loaded when nothing is. Fall through to the cold path so
+    // a URL actually gets resolved and loaded.
+  }
+
+  if (live && input.url) {
+    const validatedLive = validateNavigationUrl(input.url, config);
+    if (!validatedLive.ok) return { ok: false, error: validatedLive.error };
+    const navigateResult = await withGuest<true>(
+      { selector: selectorFor(live.sessionId), capability: input.capability, config },
+      async (webContents) => {
+        // Bounded for the same reason as the navigate tool: this body runs
+        // inside withGuest, so an unbounded load holds the guest's drive lock.
+        await navigateGuest(webContents, validatedLive.url);
+        return true;
+      },
+    );
+    if (!navigateResult.ok) return { ok: false, error: navigateResult.error };
+    const pane = paneStatus(live.sessionId);
+    if (!pane) return failure('pane-destroyed', 'The Browser pane closed while navigating. Retry.');
+    return { ok: true, data: { opened: false, navigated: true, url: validatedLive.url, pane } };
+  }
+
+  // COLD PATH: no live pane, so a window has to be mounted. The board window
+  // layer renders only the OPEN project's tasks, so this genuinely cannot work
+  // for a backgrounded project. Refusing here is honest and immediate; pushing
+  // anyway would just time out with a vaguer message.
   if (host.currentProjectId !== projectId || !host.currentProjectPath) {
     return failure(
       'project-not-open',
-      'Your project is not the one currently open in Kangentic, so its task windows cannot be opened. Ask the user to switch to it, then retry.',
+      'Your project is not the one currently open in Kangentic, so a Browser pane cannot be opened for it. Ask the user to switch to it, then retry. (A pane that is ALREADY open stays driveable while its project is backgrounded.)',
     );
   }
   const projectPath = host.currentProjectPath;
@@ -229,53 +301,14 @@ export async function openPaneForCallerTask(input: OpenPaneInput): Promise<Drive
       'No URL to load: this task has no saved Browser URL and the project has no default. Pass the `url` argument (for example http://localhost:5173).',
     );
   }
-  const selectorFor = (sessionId?: string): ResolveTargetSelector => ({
-    sessionId,
-    taskId: sessionId ? undefined : callerTaskId,
-    projectId,
-    callerSessionId,
-    callerTaskId,
-  });
-
-  // Idempotent path: the pane is already up. Do NOT re-seed the sidecar -
-  // `BrowserPane` locks its `<webview>` src on first mount, so a seeded URL
-  // would be silently ignored and the agent would be told it navigated when it
-  // did not. Drive the live guest instead.
-  const live = browserPaneRegistry
-    .getByTaskId(callerTaskId, projectId)
-    .find((entry) => browserPaneRegistry.resolveLiveGuest(entry).ok);
-
-  // Pure no-op: the pane is already up and the caller named no URL, so nothing
-  // navigates. The navigation POLICY is deliberately not consulted on this
-  // path - it gates navigations, and refusing here would reject a status-only
-  // call because the policy tightened after the page loaded, which cannot
-  // unload that page anyway. The capability gate above still applies.
-  if (live && !input.url) {
-    const pane = paneStatus(live.sessionId);
-    if (!pane) return failure('pane-destroyed', 'The Browser pane closed while opening. Retry.');
-    return { ok: true, data: { opened: false, navigated: false, url: pane.url ?? resolvedUrl, pane } };
-  }
-
   const validated = validateNavigationUrl(resolvedUrl, config);
   if (!validated.ok) return { ok: false, error: validated.error };
 
-  if (live) {
-    const navigateResult = await withGuest<true>(
-      { selector: selectorFor(live.sessionId), capability: input.capability, config },
-      async (webContents) => {
-        // Bounded for the same reason as the navigate tool: this body runs
-        // inside withGuest, so an unbounded load holds the guest's drive lock.
-        await navigateGuest(webContents, validated.url);
-        return true;
-      },
-    );
-    if (!navigateResult.ok) return { ok: false, error: navigateResult.error };
-    const pane = paneStatus(live.sessionId);
-    if (!pane) return failure('pane-destroyed', 'The Browser pane closed while navigating. Retry.');
-    return { ok: true, data: { opened: false, navigated: true, url: validated.url, pane } };
-  }
+  // No live-pane branch here any more: both warm cases are handled above, ahead
+  // of the project-not-open guard, so a retained pane in a backgrounded project
+  // stays driveable. Do not reintroduce one below the guard.
 
-  // Cold path. Seed the URL BEFORE the push so the pane's own mount-time lookup
+  // Seed the URL BEFORE the push so the pane's own mount-time lookup
   // resolves it and the pane comes up active rather than on the empty state.
   // This is the same write the pane performs for itself on `did-navigate`, just
   // earlier.
