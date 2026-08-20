@@ -45,16 +45,37 @@ import { browserPartitionForWorktree } from '../../shared/browser-partition';
  * FULL frame bitmap on every paint, so an animating page in a lane nobody is
  * watching would burn CPU at the default 60fps. Lanes therefore run at
  * `LANE_FRAME_RATE` and are created on demand and destroyed eagerly.
+ *
+ * Sandboxing was verified not to interfere: with `sandbox: true` a lane loads,
+ * captures, and receives wheel input identically to an unsandboxed one, so the
+ * hardened `webPreferences` below cost nothing.
  */
 
 /**
  * Frames per second for a lane.
  *
- * A frame is only needed when something captures one, and CDP's screenshot
- * forces its own. This floor is what stops an animating page in an unwatched
- * lane costing a full-rate render loop.
+ * Throttled because offscreen rendering copies a FULL frame bitmap on every
+ * paint, so an animating page in a lane nobody is watching would otherwise burn
+ * CPU at 60fps for no one.
+ *
+ * 10 rather than a lower floor, and the difference is measured, not guessed.
+ * Wheel-driven scroll takes this long to land on Electron 41.1.1:
+ *
+ *   unthrottled  100ms
+ *   10fps        100ms   <- no penalty at all
+ *   2fps         300ms   <- 3x slower
+ *
+ * At 2fps a lane's input settles noticeably late, and an agent that scrolls and
+ * then immediately screenshots captures the PRE-scroll frame - a silently wrong
+ * answer, which is worse than a slow one. 10fps costs nothing on that axis and
+ * is still a 6x saving over the default. Do not lower it without re-measuring
+ * that table.
+ *
+ * Capture itself is unaffected: `Page.captureScreenshot` forces its own frame,
+ * and an explicit `invalidate()` before capturing changed nothing (identical
+ * byte counts at every frame rate tested).
  */
-export const LANE_FRAME_RATE = 2;
+export const LANE_FRAME_RATE = 10;
 
 /**
  * Most lanes one task may hold at once.
