@@ -724,8 +724,8 @@ export function useDictation(): void {
       // then hits `if (!activeRef.current) return` and does nothing, so the chip
       // is stuck for the rest of the dev session and its rAF loop keeps
       // measuring every frame. Reconcile the two rather than leave the orphan.
-      // activity-state-ok: the dictation store's own status enum, not ActivityState
       const { status, dictationSessionId } = useDictationStore.getState();
+      // activity-state-ok: the dictation store's own status enum, not ActivityState
       if (status === 'idle') return;
       if (dictationSessionId) {
         void window.electronAPI.dictation.cancel(dictationSessionId).catch(() => undefined);
