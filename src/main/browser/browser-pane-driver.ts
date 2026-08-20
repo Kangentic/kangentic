@@ -3,7 +3,8 @@ import { browserPaneRegistry, type ResolveTargetSelector } from './browser-pane-
 import { attachDebugger, ensureFocusEmulation, isDebuggerAttached } from './cdp/cdp';
 import { beginAgentInput, endAgentInput } from './agent-input-signal';
 import type { ResolvedBrowserAutomationConfig } from './browser-automation-config';
-import { withGuestDriveLock, GuestBusyError } from './guest-drive-queue';
+import { withGuestDriveLock, GuestBusyError, guestDriveDepth } from './guest-drive-queue';
+import { logDrive } from './drive-telemetry';
 
 /**
  * The single chokepoint every `kangentic_browser_*` MCP tool routes through to
@@ -174,8 +175,30 @@ export async function withGuest<T>(
   // burst-quiet window in `agent-input-signal.ts` means a queued call arriving
   // shortly after its predecessor still continues the same burst rather than
   // flapping the guard open and shut between them.
+  // Sampled BEFORE acquiring, so it reflects what this call actually contended
+  // with rather than what is left once it holds the guest.
+  const queueDepthAtEntry = guestDriveDepth(webContents.id) + 1;
+  const requestedAt = Date.now();
+  let startedAt = requestedAt;
+  const report = (outcome: string): void => {
+    logDrive({
+      capability: options.capability,
+      callerSessionId: options.selector.callerSessionId,
+      callerTaskId: options.selector.callerTaskId,
+      resolvedSessionId: target.entry.sessionId,
+      resolvedTaskId: target.entry.taskId,
+      projectId: target.entry.projectId,
+      webContentsId: webContents.id,
+      queueDepthAtEntry,
+      waitedMs: startedAt - requestedAt,
+      durationMs: Date.now() - startedAt,
+      outcome,
+    });
+  };
+
   try {
     return await withGuestDriveLock(webContents.id, async () => {
+      startedAt = Date.now();
       beginAgentInput(webContents);
       try {
         // NOT DONE HERE: taking the guest's keyboard focus.
@@ -195,8 +218,10 @@ export async function withGuest<T>(
         // limits of the selector-less ones are documented rather than papered over
         // with focus management. See `docs/embedded-browser.md`.
         const data = await fn(webContents);
+        report('ok');
         return { ok: true, data } as DriverResult<T>;
       } catch (error) {
+        report('driver-error');
         return {
           ok: false,
           error: {
@@ -216,8 +241,13 @@ export async function withGuest<T>(
     // tell "someone else holds this pane" from "the page misbehaved", which are
     // different problems with different fixes.
     if (error instanceof GuestBusyError) {
+      // startedAt never advanced, so waitedMs is the full time spent queueing -
+      // which is exactly what a reader wants to see on a busy refusal.
+      startedAt = Date.now();
+      report('pane-busy');
       return { ok: false, error: { kind: 'pane-busy', detail: error.message } };
     }
+    report('driver-error');
     return {
       ok: false,
       error: {
