@@ -2602,9 +2602,10 @@ export interface AppConfig {
    * and exposes it as {{port}}; it never starts or supervises a dev server.
    */
   devServer?: {
-    /** First port considered when leasing. Default 4200. */
+    /** First port considered when leasing. Default 7300, chosen to miss every
+     *  common framework default (3000, 4200, 4321, 5000, 5173, 8000, 8080). */
     portRangeStart?: number;
-    /** Last port considered when leasing (inclusive). Default 4399. */
+    /** Last port considered when leasing (inclusive). Default 7499. */
     portRangeEnd?: number;
   };
 

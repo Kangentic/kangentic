@@ -19,12 +19,28 @@ import type { DevPortLease } from '../../shared/types';
  */
 
 /**
- * Default scan window. 4200 rather than 5173 deliberately: Vite's own default
- * is the port a user is most likely to already be running by hand, and taking
- * it out from under them is a bad first impression.
+ * Default scan window, chosen to avoid every common framework default.
+ *
+ * This started at 4200 on the reasoning that 5173 (Vite's default) is the port a
+ * user is most likely to already be running. That reasoning was right and the
+ * choice was still wrong: 4200 is ANGULAR's default, so the very first lease on
+ * an Angular developer's machine landed on their own running app - observed
+ * directly, with a task's pane opening onto an unrelated dashboard.
+ *
+ * The bind probe means a lease can never take a port that is currently bound,
+ * but it cannot help when the user's server is merely stopped at that moment:
+ * Kangentic would lease it, and the task's `npm run dev -- --port {{port}}`
+ * would then fight the app the next time it starts.
+ *
+ * 7300-7499 is deliberately boring. Nothing in common use defaults there:
+ * 3000 (Next/CRA/Express), 4200 (Angular), 4321 (Astro), 5000 (Flask/.NET),
+ * 5173-5174 (Vite, and Kangentic's own preview), 8000 (Django), 8080 (webpack),
+ * 9000, 9229 (node inspect). Keep it that way - the point of the range is that a
+ * collision should be the exception the probe handles, not the first thing that
+ * happens.
  */
-export const DEFAULT_DEV_PORT_RANGE_START = 4200;
-export const DEFAULT_DEV_PORT_RANGE_END = 4399;
+export const DEFAULT_DEV_PORT_RANGE_START = 7300;
+export const DEFAULT_DEV_PORT_RANGE_END = 7499;
 
 /** How long a probe waits before treating a port as occupied. */
 const PROBE_TIMEOUT_MS = 500;
