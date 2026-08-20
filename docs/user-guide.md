@@ -328,6 +328,8 @@ Press **Ctrl+Shift+F** (Cmd+Shift+F on macOS) or **Ctrl+F** (Cmd+F) to open the 
 - Registered projects by name and path
 - Past agent conversations, by keyword or by meaning (Smart mode, when semantic search is enabled in Settings > Memory) - see [Conversation Memory](#conversation-memory)
 
+Type `#<number>` (e.g. `#42`) to search by **ticket number**: the palette matches tasks whose display ID (`#N`) prefix-matches the number (`#4` matches #4, #40, #41, ...) and shows only those, skipping the other result kinds. The board search box (Ctrl+F on the board) accepts the same `#<number>` syntax to filter the board by ticket number.
+
 Default scope is the current project; toggle to **All projects** to widen the search across every registered project. Selecting a hit jumps to the right place: tasks open the detail dialog, session events scroll the Activity Log to the matched event with a brief highlight, backlog hits switch to the backlog view and open the item's edit dialog, project hits switch projects, and conversation hits open the read-only [conversation viewer](#the-conversation-viewer) scrolled to the matched turn (or route to the live terminal if that session is still running).
 
 ### Filter Popover

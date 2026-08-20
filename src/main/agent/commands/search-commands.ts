@@ -4,6 +4,7 @@ import { BacklogRepository } from '../../db/repositories/backlog-repository';
 import { listActiveSwimlanes } from './column-resolver';
 import { BACKLOG_PRIORITY_LABELS } from '../../../shared/types';
 import type { Task, BacklogTask } from '../../../shared/types';
+import { parseTicketQuery, matchesTicketPrefix } from '../../../shared/ticket-query';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
 
 export type SearchScope = 'board' | 'backlog' | 'both';
@@ -69,9 +70,16 @@ export const handleSearchTasks: CommandHandler = (
     return { success: false, error: 'Search query is required' };
   }
 
+  // A `#<digits>` query is a ticket lookup: match board tasks by display_id
+  // (prefix) rather than text. Backlog items have no display_id, so they are
+  // never returned for a ticket query. See src/shared/ticket-query.ts.
+  // `query` is already the coerced query string; the ticket regex only matches
+  // `#` + digits, which are case-invariant, so the lowercased form is fine.
+  const ticketDigits = parseTicketQuery(query);
+
   const db = context.getProjectDb();
   const includeBoard = scope === 'board' || scope === 'both';
-  const includeBacklog = scope === 'backlog' || scope === 'both';
+  const includeBacklog = (scope === 'backlog' || scope === 'both') && ticketDigits === null;
 
   const tasks: BoardHit[] = [];
   let totalActive = 0;
@@ -83,8 +91,10 @@ export const handleSearchTasks: CommandHandler = (
     const swimlaneMap = new Map(allSwimlanes.map((swimlane) => [swimlane.id, swimlane.name]));
 
     const matchesQuery = (task: Task) =>
-      task.title.toLowerCase().includes(query) ||
-      task.description.toLowerCase().includes(query);
+      ticketDigits !== null
+        ? matchesTicketPrefix(task.display_id, ticketDigits)
+        : task.title.toLowerCase().includes(query) ||
+          task.description.toLowerCase().includes(query);
 
     if (statusFilter === 'active' || statusFilter === 'all') {
       for (const swimlane of allSwimlanes) {

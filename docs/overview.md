@@ -32,7 +32,7 @@ Filter board tasks by priority level and label using the filter popover at the t
 
 ### Search Palette
 
-Press Ctrl+Shift+F (Cmd+Shift+F on macOS) or Ctrl+F to open a global search palette that searches across tasks (active and archived), backlog items, session events, and registered projects. Default scope is the current project; toggle to "All projects" to search across every registered project. Selecting a hit jumps to the right place: a task opens its detail dialog, a session event scrolls the Activity Log to the matching event with a brief highlight, a backlog hit switches to the backlog view and opens the item, a project hit switches projects.
+Press Ctrl+Shift+F (Cmd+Shift+F on macOS) or Ctrl+F to open a global search palette that searches across tasks (active and archived), backlog items, session events, and registered projects. Type `#<number>` (e.g. `#42`) to search by ticket number: only tasks whose display ID prefix-matches. Default scope is the current project; toggle to "All projects" to search across every registered project. Selecting a hit jumps to the right place: a task opens its detail dialog, a session event scrolls the Activity Log to the matching event with a brief highlight, a backlog hit switches to the backlog view and opens the item, a project hit switches projects.
 
 ### Markdown Descriptions
 

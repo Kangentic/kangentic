@@ -327,6 +327,29 @@ test.describe('Search Palette', () => {
     }
   });
 
+  test('forwards a raw #<number> ticket query through IPC unchanged', async () => {
+    // The palette only trims the query; the "#" must survive so the backend
+    // (runSearchEverything) can run its ticket-number match. This guards
+    // against a future change that sanitizes special characters out.
+    const { browser, page } = await launchWithState(preConfigWithSearchHits());
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await page.keyboard.press('Control+Shift+F');
+      await page.getByTestId('search-palette-input').fill('#42');
+      await expect
+        .poll(async () =>
+          page.evaluate(
+            () =>
+              (window as unknown as { __mockLastSearchRequest?: { query?: string } })
+                .__mockLastSearchRequest?.query,
+          ),
+        )
+        .toBe('#42');
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('conversation hit renders in its own group and Enter opens the viewer', async () => {
     const { browser, page } = await launchWithState(preConfigWithSearchHits());
     try {

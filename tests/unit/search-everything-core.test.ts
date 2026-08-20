@@ -523,4 +523,115 @@ describe('runSearchEverything', () => {
     // Board tables are empty, so with the feature off the whole result is empty.
     expect(hits).toEqual([]);
   });
+
+  describe('#<number> ticket search', () => {
+    // display_ids chosen so prefix matching is observable: #4, #40, #41 share a
+    // prefix, #5 does not; #400 is archived so ranking can be checked too.
+    const ticketFixtureTasks = [
+      { id: 'task-4', display_id: 4, title: 'Exact four', description: 'body of four', archived_at: null },
+      { id: 'task-41', display_id: 41, title: 'Forty one', description: '', archived_at: null },
+      { id: 'task-40', display_id: 40, title: 'Forty', description: '', archived_at: null },
+      { id: 'task-5', display_id: 5, title: 'Five is unrelated', description: '', archived_at: null },
+      { id: 'task-400', display_id: 400, title: 'Archived four hundred', description: '', archived_at: '2026-04-15T00:00:00Z' },
+    ];
+
+    it('matches board tasks by display_id prefix and returns only task hits', async () => {
+      const project = makeProject({ path: tempProjectRoot });
+      const fixture: FakeProjectFixture = {
+        project,
+        tasks: ticketFixtureTasks,
+        backlog: [{ id: 'backlog-4', title: 'has a 4 in it', description: '#4 mentioned' }],
+        sessions: [],
+      };
+      const db = makeMockDb(fixture);
+
+      const hits = await runSearchEverything({
+        query: '#4',
+        projects: [project],
+        includeProjectHits: true,
+        projectsForProjectHits: [project, makeProject({ id: '99999999-9999-4999-8999-999999999999', name: 'project-4', path: '/tmp/p4' })],
+        getDb: () => db,
+      });
+
+      // Only task hits: no backlog / project / session / conversation kinds.
+      expect(hits.every((hit) => hit.kind === 'task')).toBe(true);
+      const matchedIds = hits.map((hit) => (hit.kind === 'task' ? hit.displayId : -1));
+      // #4, #40, #41, #400 match the "4" prefix; #5 does not.
+      expect(matchedIds).toEqual([4, 40, 41, 400]);
+    });
+
+    it('ranks non-archived first, then the exact match, then prefixes ascending', async () => {
+      const project = makeProject({ path: tempProjectRoot });
+      const fixture: FakeProjectFixture = { project, tasks: ticketFixtureTasks, backlog: [], sessions: [] };
+      const db = makeMockDb(fixture);
+
+      const hits = await runSearchEverything({
+        query: '#4',
+        projects: [project],
+        includeProjectHits: false,
+        getDb: () => db,
+      });
+
+      const order = hits.map((hit) => (hit.kind === 'task' ? hit.displayId : -1));
+      // #4 (exact, non-archived) first, then #40 and #41 ascending, then the
+      // archived #400 last.
+      expect(order).toEqual([4, 40, 41, 400]);
+      const exact = hits[0];
+      if (exact.kind === 'task') {
+        // A ticket hit renders plain: zero-width match, snippet is the title.
+        expect(exact.snippetField).toBe('title');
+        expect(exact.matchStart).toBe(exact.matchEnd);
+        expect(exact.snippet).toContain('Exact four');
+        expect(exact.archived).toBe(false);
+      }
+      const archived = hits[hits.length - 1];
+      if (archived.kind === 'task') {
+        expect(archived.displayId).toBe(400);
+        expect(archived.archived).toBe(true);
+      }
+    });
+
+    it('returns no hits when no display_id matches the prefix', async () => {
+      const project = makeProject({ path: tempProjectRoot });
+      const fixture: FakeProjectFixture = { project, tasks: ticketFixtureTasks, backlog: [], sessions: [] };
+      const db = makeMockDb(fixture);
+
+      const hits = await runSearchEverything({
+        query: '#9',
+        projects: [project],
+        includeProjectHits: false,
+        getDb: () => db,
+      });
+
+      expect(hits).toEqual([]);
+    });
+
+    it('does not treat a bare number (no "#") as a ticket query', async () => {
+      const project = makeProject({ path: tempProjectRoot });
+      const fixture: FakeProjectFixture = {
+        project,
+        // Title contains "4" so the text path would match it; the ticket path
+        // would instead match by display_id. Assert we took the text path.
+        tasks: [{ id: 'task-x', display_id: 77, title: 'contains a 4 here', description: '', archived_at: null }],
+        backlog: [],
+        sessions: [],
+      };
+      const db = makeMockDb(fixture);
+
+      const hits = await runSearchEverything({
+        query: '4',
+        projects: [project],
+        includeProjectHits: false,
+        getDb: () => db,
+      });
+
+      const taskHits = hits.filter((hit) => hit.kind === 'task');
+      expect(taskHits).toHaveLength(1);
+      // Matched by text (the "4" in the title), not by display_id 77.
+      if (taskHits[0].kind === 'task') {
+        expect(taskHits[0].displayId).toBe(77);
+        expect(taskHits[0].matchEnd).toBeGreaterThan(taskHits[0].matchStart);
+      }
+    });
+  });
 });

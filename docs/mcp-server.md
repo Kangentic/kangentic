@@ -294,9 +294,11 @@ as tasks are archived.
 
 Search by keyword across both the board (active + archived tasks) and the backlog. This is the default tool for finding a task by title, description, or backlog label - it covers items whether or not they have been promoted from backlog to board. Use `scope` to narrow to a single surface.
 
+A query of the form `#<number>` (e.g. `#42`) is a ticket lookup instead of a text search: it matches board tasks whose display ID (`#N`) prefix-matches the number (`#4` matches #4, #40, #41, ...) and returns no backlog items (they have no display ID). For an exact single-task lookup by number, `kangentic_find_task` with `displayId` is more direct.
+
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `query` | string | Yes | Search keyword (case-insensitive). Backlog hits also match on labels. |
+| `query` | string | Yes | Search keyword (case-insensitive). Backlog hits also match on labels. A `#<number>` query (e.g. `#42`) is a ticket lookup: board tasks by display-ID prefix, no text/backlog match. |
 | `scope` | `'board' \| 'backlog' \| 'both'` | No | Which surface to search. Defaults to `"both"`. |
 | `status` | string | No | Filter board hits: `"active"`, `"completed"`, or `"all"` (default). Ignored for backlog hits. |
 
@@ -621,6 +623,8 @@ List items in the backlog staging area. Items have priority levels and labels fo
 
 The single unified search tool for agents. One query across the active project (or all registered projects) covering: board tasks (active + archived, title and description), backlog items (title and description), session events (the structured tool_start/tool_end/idle stream from agent runs), past agent conversations, and project names/paths. Returns a per-kind grouped result with snippets so an agent can pinpoint the matching task, backlog item, session event, conversation turn, or project in one call instead of issuing `kangentic_search_tasks` + `kangentic_get_session_events` separately. (`kangentic_search_tasks` already spans board + backlog within a single project; reach for `kangentic_search` when you also need session events, past conversations, semantic matching, or cross-project scope.)
 
+A query of the form `#<number>` (e.g. `#42`) is a shortcut for a ticket lookup: it returns only board tasks whose display ID (`#N`) prefix-matches the number (`#4` matches #4, #40, #41, ...), skipping the backlog, session-event, conversation, and project kinds entirely. This mirrors the desktop Quick Find palette and board search box, where the same `#<number>` syntax filters by ticket number.
+
 Conversations are matched by **keyword** by default; pass `mode: "hybrid"` to also match them by **meaning** (semantic embedding fused with keyword) - the "have we solved this / seen this before?" recall path over past agent conversations. `mode` affects only the conversation corpus; tasks, backlog, session events, and projects are always keyword. Both modes fall back to keyword transparently when the conversation embedding layer is off. Conversation hits carry a `sessionId` + `turnUuid`; follow up with `kangentic_get_transcript` (`aroundUuid`) to read the neighboring turns.
 
 Defaults to scoping the search to the active project. Pass `scope: "all"` to widen across every registered project (which also surfaces project-name hits so the agent can discover routing targets). Passing `project` forces `scope: "current"` since explicit project routing already specifies the target.
@@ -633,7 +637,7 @@ This tool consolidates what were previously two tools (`kangentic_search_everyth
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `query` | string | Yes | Search keyword or phrase, or (in `mode:"hybrid"`) a natural-language description of what you are looking for. Case-insensitive; empty queries return no results. |
+| `query` | string | Yes | Search keyword or phrase, or (in `mode:"hybrid"`) a natural-language description of what you are looking for. Case-insensitive; empty queries return no results. A `#<number>` query (e.g. `#42`) is a ticket lookup: only board tasks by display-ID prefix. |
 | `scope` | `'current' \| 'all'` | No | `"current"` (default) searches only the active or `project`-routed project. `"all"` widens to every registered project. Ignored (forced to `"current"`) when `project` is set. |
 | `mode` | `'keyword' \| 'hybrid'` | No | How conversations are matched. `"hybrid"` (default) fuses keyword + semantic embedding; `"keyword"` is lexical-only. Only affects the conversation corpus. |
 | `taskId` | string | No | Restrict conversation hits to this task's internal id (not the display `"#N"`). Other hit kinds are unaffected. |

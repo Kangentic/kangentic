@@ -12,6 +12,7 @@ import type {
 } from '../../shared/types';
 import { searchConversationMemory, type TranscriptSearchHit } from '../retrieval/memory-search';
 import type { Embedder } from '../retrieval/types';
+import { parseTicketQuery, matchesTicketPrefix } from '../../shared/ticket-query';
 
 /** Map an engine transcript hit to the `conversation` SearchHit surfaced to the
  *  palette and MCP. Shared by the unified search and the similar-sessions IPC.
@@ -251,6 +252,61 @@ function pushTaskHits(
   }
 }
 
+/**
+ * Match tasks by ticket number for a `#<digits>` query. Prefix-matches
+ * `display_id` (so `#4` -> 4, 40, 41, ...) and ranks non-archived before
+ * archived, the exact hit first, then remaining prefix hits by ascending
+ * `display_id`. Each hit carries a zero-width match (`matchStart === matchEnd`)
+ * with the title as its snippet, which the palette renders plainly; the
+ * `#{displayId}` badge in the result row header is what signals the match.
+ */
+function pushTaskHitsByDisplayId(
+  project: Project,
+  ticketDigits: string,
+  budget: Budget,
+  hits: SearchHit[],
+  getDb: (projectId: string) => Database.Database,
+): void {
+  if (budget.task <= 0) return;
+  const db = getDb(project.id);
+  const rows = db
+    .prepare('SELECT id, display_id, title, description, archived_at FROM tasks')
+    .all() as TaskRow[];
+  const exactValue = Number(ticketDigits);
+  const matched = rows.filter((row) => matchesTicketPrefix(row.display_id, ticketDigits));
+  matched.sort((first, second) => {
+    // Non-archived tasks rank ahead of archived ones.
+    const firstArchived = first.archived_at != null ? 1 : 0;
+    const secondArchived = second.archived_at != null ? 1 : 0;
+    if (firstArchived !== secondArchived) return firstArchived - secondArchived;
+    // The exact-number match wins within the same archived group.
+    const firstExact = first.display_id === exactValue ? 0 : 1;
+    const secondExact = second.display_id === exactValue ? 0 : 1;
+    if (firstExact !== secondExact) return firstExact - secondExact;
+    // Remaining prefix matches ascend by number (#4, #40, #41, ...).
+    return first.display_id - second.display_id;
+  });
+  for (const row of matched) {
+    if (budget.task <= 0) return;
+    const title = row.title ?? '';
+    const snippet = buildSnippet(title, 0, 0);
+    hits.push({
+      kind: 'task',
+      projectId: project.id,
+      projectName: project.name,
+      taskId: row.id,
+      displayId: row.display_id,
+      taskTitle: title,
+      archived: row.archived_at != null,
+      snippetField: 'title',
+      snippet: snippet.snippet,
+      matchStart: snippet.matchStart,
+      matchEnd: snippet.matchEnd,
+    });
+    budget.task -= 1;
+  }
+}
+
 function pushBacklogHits(
   project: Project,
   needleLower: string,
@@ -427,15 +483,33 @@ export interface SearchEverythingInput {
  * Returns the full `SearchHit[]` with per-kind caps applied; ordering
  * within a kind is project-by-project, and tasks/backlog prioritise title
  * matches over description matches within each project.
+ *
+ * A `#<digits>` query is a special case: it short-circuits to a ticket
+ * lookup that returns only `task` hits matched by `display_id` prefix (ranked
+ * non-archived first, the exact number first, then ascending `display_id`)
+ * and skips every other source. See `pushTaskHitsByDisplayId`.
  */
 export async function runSearchEverything(input: SearchEverythingInput): Promise<SearchHit[]> {
   const query = input.query.trim();
   if (!query) return [];
 
-  const needleLower = query.toLowerCase();
   const getDb = input.getDb ?? getProjectDb;
   const hits: SearchHit[] = [];
   const budget: Budget = { ...PER_KIND_CAP };
+
+  // A `#<digits>` query is unambiguously a ticket lookup: match tasks by
+  // `display_id` (prefix) and skip every other source. Backlog rows have no
+  // display_id, and projects / session events / conversations are not tickets,
+  // so returning them here would only be noise.
+  const ticketDigits = parseTicketQuery(query);
+  if (ticketDigits !== null) {
+    for (const project of input.projects) {
+      pushTaskHitsByDisplayId(project, ticketDigits, budget, hits, getDb);
+    }
+    return hits;
+  }
+
+  const needleLower = query.toLowerCase();
 
   if (input.includeProjectHits) {
     pushProjectHits(

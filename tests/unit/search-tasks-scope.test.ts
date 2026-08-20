@@ -247,6 +247,59 @@ describe('handleSearchTasks - scope', () => {
 });
 
 // ---------------------------------------------------------------------------
+// #<number> ticket search
+//
+// A `#<digits>` query matches board tasks by display_id (prefix), not text,
+// and never returns backlog items (they have no display_id). The fixture's
+// display_ids are 1 (alpha, active) and 2 (beta, archived).
+// ---------------------------------------------------------------------------
+
+describe('handleSearchTasks - #<number> ticket search', () => {
+  it('matches a board task by display_id and skips the backlog entirely', () => {
+    const result = handleSearchTasks({ query: '#1' }, makeContext());
+
+    expect(result.success).toBe(true);
+    const data = result.data as {
+      tasks: Array<{ id: string; displayId: number }>;
+      backlog: Array<{ id: string }>;
+      scope: string;
+    };
+    // Only display_id 1 (alpha); display_id 2 (beta) does not start with "1".
+    expect(data.tasks.map((task) => task.id)).toEqual(['task-alpha']);
+    // Backlog is never returned for a ticket query, and is not even scanned.
+    expect(data.backlog).toEqual([]);
+    expect(mockBacklogRepoList).not.toHaveBeenCalled();
+  });
+
+  it('does not match by text when the query is a ticket lookup', () => {
+    // The literal string "#1" appears in no title/description; a text search
+    // would return nothing, but the ticket path still finds display_id 1.
+    const result = handleSearchTasks({ query: '#1' }, makeContext());
+    const data = result.data as { tasks: Array<{ id: string }> };
+    expect(data.tasks.map((task) => task.id)).toEqual(['task-alpha']);
+  });
+
+  it('returns no tasks when no display_id matches the prefix', () => {
+    const result = handleSearchTasks({ query: '#9' }, makeContext());
+
+    expect(result.success).toBe(true);
+    const data = result.data as { tasks: Array<{ id: string }>; backlog: Array<{ id: string }> };
+    expect(data.tasks).toEqual([]);
+    expect(data.backlog).toEqual([]);
+  });
+
+  it('a bare number (no "#") stays a text search', () => {
+    // "board" is in TASK_ALPHA_ACTIVE's title/description; a bare "1" is not a
+    // ticket query, so the text path runs (and finds nothing for "1" here).
+    const result = handleSearchTasks({ query: 'board' }, makeContext());
+    const data = result.data as { tasks: Array<{ id: string }>; backlog: Array<{ id: string }> };
+    expect(data.tasks.map((task) => task.id)).toEqual(['task-alpha']);
+    // Backlog IS scanned for a normal text query (no ticket short-circuit).
+    expect(mockBacklogRepoList).toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // handleFindTask - backlog widening
 //
 // Backlog items only carry id (UUID) and title that are matchable by

@@ -249,6 +249,42 @@ test.describe('Board Search', () => {
     await expect(page.locator('[data-testid="swimlane"]').locator('text=Docs update')).toBeVisible();
   });
 
+  test('#<number> filters to the task with that ticket number', async () => {
+    // Ticket number = display_id, assigned monotonically by the mock, so read
+    // the real ids at runtime rather than hardcoding.
+    const ids = await page.evaluate(async () => {
+      const api = (
+        window as unknown as {
+          electronAPI: { tasks: { list(): Promise<Array<{ title: string; display_id: number }>> } };
+        }
+      ).electronAPI;
+      const tasks = await api.tasks.list();
+      const byTitle = (title: string) =>
+        tasks.find((task) => task.title === title)?.display_id as number;
+      return {
+        dashboard: byTitle('Dashboard feature'),
+        max: Math.max(...tasks.map((task) => task.display_id)),
+      };
+    });
+
+    // Full id isolates one task (the four ids are consecutive, so the exact
+    // string is a prefix of only its own id).
+    await page.locator('[data-testid="board-search"]').fill(`#${ids.dashboard}`);
+    await expect(page.locator('[data-testid="swimlane"]').locator('text=Dashboard feature')).toBeVisible();
+    await expect(page.locator('[data-testid="swimlane"]').locator('text=Auth bug fix')).not.toBeVisible();
+    await expect(page.locator('[data-testid="swimlane"]').locator('text=API refactor')).not.toBeVisible();
+    await expect(page.locator('[data-testid="swimlane"]').locator('text=Docs update')).not.toBeVisible();
+
+    // A ticket number no task has hides everything.
+    await page.locator('[data-testid="board-search"]').fill(`#${ids.max + 999}`);
+    await expect(page.locator('[data-testid="swimlane"]').locator('text=Dashboard feature')).not.toBeVisible();
+    await expect(page.locator('[data-testid="swimlane"]').locator('text=Auth bug fix')).not.toBeVisible();
+
+    // Reset for subsequent tests.
+    await page.locator('[data-testid="board-search"]').fill('');
+    await expect(page.locator('[data-testid="swimlane"]').locator('text=Dashboard feature')).toBeVisible();
+  });
+
   test('search and priority filter compose with AND logic', async () => {
     // Open the filter popover and activate "High" priority
     const filterButton = page.locator('[data-testid="board-filter-btn"]');

@@ -17,6 +17,7 @@ import { NewTaskDialog } from '../dialogs/NewTaskDialog';
 import { useBoardStore } from '../../stores/board-store';
 import { useBoardDragDrop } from '../../hooks/useBoardDragDrop';
 import { useHmrGeneration } from '../../utils/hmr-generation';
+import { parseTicketQuery, matchesTicketPrefix } from '../../../shared/ticket-query';
 import type { Task } from '../../../shared/types';
 
 /** Wrapper that registers a column with @dnd-kit/sortable.
@@ -272,6 +273,10 @@ export function KanbanBoard() {
   const labelFilters = useBoardStore((s) => s.labelFilters);
   const boardSearchQuery = useBoardStore((s) => s.boardSearchQuery);
   const normalizedSearch = boardSearchQuery.trim().toLowerCase();
+  // A `#<digits>` query filters by ticket number (display_id, prefix) instead of
+  // substring-matching title/description. Parsed once here so tasksPerLane can
+  // branch per task. See src/shared/ticket-query.ts.
+  const ticketDigits = parseTicketQuery(boardSearchQuery);
 
   // New Task hotkey (task.create): a nonce increments in the board store; we open
   // a board-level New Task dialog targeting the first actionable (non-Done) lane,
@@ -332,7 +337,10 @@ export function KanbanBoard() {
       if (completingTaskIds.has(task.id)) continue;
       if (priorityFilters.size > 0 && !priorityFilters.has(task.priority)) continue;
       if (labelFilters.size > 0 && !(task.labels ?? []).some((label) => labelFilters.has(label))) continue;
-      if (normalizedSearch) {
+      if (ticketDigits !== null) {
+        // `#<digits>` filters by ticket number (prefix), not text.
+        if (!matchesTicketPrefix(task.display_id, ticketDigits)) continue;
+      } else if (normalizedSearch) {
         const title = task.title.toLowerCase();
         const description = (task.description ?? '').toLowerCase();
         if (!title.includes(normalizedSearch) && !description.includes(normalizedSearch)) continue;
@@ -368,7 +376,7 @@ export function KanbanBoard() {
     }
     stableLanesRef.current = stable;
     return stable;
-  }, [swimlanes, tasks, priorityFilters, labelFilters, normalizedSearch, completingTaskIds, lanePins]);
+  }, [swimlanes, tasks, priorityFilters, labelFilters, normalizedSearch, ticketDigits, completingTaskIds, lanePins]);
 
   if (!hydrated) return null;
 
