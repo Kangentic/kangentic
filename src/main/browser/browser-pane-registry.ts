@@ -18,6 +18,22 @@ import { detachDebugger, isDebuggerAttached } from './cdp/cdp';
  *
  * Main-process state, so no HMR concerns (esbuild does not Fast-Refresh main).
  */
+/**
+ * What kind of surface an entry points at.
+ *
+ * `pane` is the user-visible `<webview>` inside a task-detail window, owned by
+ * the renderer. `lane` is a main-process offscreen `BrowserWindow` opened for
+ * one caller so concurrent workers stop sharing a viewport.
+ *
+ * A lane deliberately lives in THIS registry rather than a parallel one: it
+ * keeps a single resolver, a single liveness self-heal, and a single shutdown
+ * path, so `withGuest` needed no change at all to drive one. What the field
+ * buys is the two places where the distinction is real - `list_panes` labels
+ * lanes, and `close_pane` ignores them, because a lane's lifetime belongs to
+ * the caller that opened it rather than to a user gesture.
+ */
+export type BrowserSurfaceKind = 'pane' | 'lane';
+
 export interface BrowserPaneEntry {
   sessionId: string;
   taskId: string;
@@ -27,6 +43,11 @@ export interface BrowserPaneEntry {
   /** Last known navigated URL (null until the first navigation lands). */
   url: string | null;
   registeredAt: number;
+  /**
+   * Defaults to `pane` when absent, so every existing renderer registration and
+   * every existing test fixture keeps its meaning without being touched.
+   */
+  kind?: BrowserSurfaceKind;
 }
 
 /** A pane entry enriched with live status for `list()` / discovery. */
@@ -158,6 +179,8 @@ export class BrowserPaneRegistry {
     projectId: string | null;
     webContentsId: number;
     url: string | null;
+    /** Omitted by the renderer, which only ever registers real panes. */
+    kind?: BrowserSurfaceKind;
   }): void {
     this.panes.set(input.sessionId, {
       sessionId: input.sessionId,
@@ -166,6 +189,7 @@ export class BrowserPaneRegistry {
       webContentsId: input.webContentsId,
       url: input.url,
       registeredAt: Date.now(),
+      kind: input.kind ?? 'pane',
     });
     this.notifyWaiters();
   }

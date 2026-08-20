@@ -1,5 +1,6 @@
 import { closeAll, getProjectDb } from './db/database';
 import { browserPaneRegistry } from './browser/browser-pane-registry';
+import { destroyAllLanes } from './browser/browser-lane-manager';
 import { popOutWindowManager } from './pop-out/pop-out-window-manager';
 import { SessionRepository } from './db/repositories/session-repository';
 import { TaskRepository } from './db/repositories/task-repository';
@@ -52,6 +53,10 @@ export function syncShutdownCleanup(dependencies: ShutdownDependencies): void {
     // per .claude/rules/synchronous-shutdown.md (detachDebugger guards a
     // destroyed webContents).
     browserPaneRegistry.detachAll();
+
+    // Destroy every offscreen browser lane. Synchronous, same rule: a lane is a
+    // real BrowserWindow main owns, so nothing else tears it down on the way out.
+    destroyAllLanes();
 
     // Destroy every open pop-out window synchronously. Idempotent -- the main
     // window's 'close' handler (index.ts) already calls this in the normal quit

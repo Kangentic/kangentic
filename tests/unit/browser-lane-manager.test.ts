@@ -1,0 +1,211 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+
+/**
+ * Lane bookkeeping and lifetime.
+ *
+ * Electron is mocked, so this covers the parts that are ours: the per-task cap,
+ * the cookie-jar choice, registration as `kind: 'lane'`, and - most importantly
+ * - that every cleanup backstop actually destroys the window. The OSR mechanics
+ * (does an offscreen window composite, does CDP capture resolve, does input
+ * land) are not unit-testable at all; they were measured against a real
+ * Electron 41.1.1 build and the results are recorded in the plan.
+ */
+
+interface FakeWindow {
+  id: number;
+  destroyed: boolean;
+  webContents: {
+    id: number;
+    setFrameRate: (fps: number) => void;
+    loadURL: (url: string) => Promise<void>;
+    once: (event: string, handler: () => void) => void;
+    isDestroyed: () => boolean;
+  };
+  isDestroyed: () => boolean;
+  destroy: () => void;
+}
+
+let created: Array<{ options: Record<string, unknown>; window: FakeWindow }> = [];
+let nextId = 100;
+let loadShouldFail = false;
+
+vi.mock('electron', () => ({
+  BrowserWindow: class {
+    constructor(options: Record<string, unknown>) {
+      const id = (nextId += 1);
+      const win: FakeWindow = {
+        id,
+        destroyed: false,
+        webContents: {
+          id,
+          setFrameRate: vi.fn(),
+          loadURL: vi.fn(async () => {
+            if (loadShouldFail) throw new Error('ERR_CONNECTION_REFUSED');
+          }),
+          once: vi.fn(),
+          isDestroyed: () => win.destroyed,
+        },
+        isDestroyed: () => win.destroyed,
+        destroy: () => { win.destroyed = true; },
+      };
+      created.push({ options, window: win });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the fake stands in for a BrowserWindow
+      return win as any;
+    }
+  },
+}));
+
+const registered: Array<Record<string, unknown>> = [];
+const unregistered: string[] = [];
+
+vi.mock('../../src/main/browser/browser-pane-registry', () => ({
+  browserPaneRegistry: {
+    register: (input: Record<string, unknown>) => { registered.push(input); },
+    unregister: (sessionId: string) => { unregistered.push(sessionId); },
+    unregisterByWebContentsId: vi.fn(),
+  },
+}));
+
+const {
+  openLane,
+  destroyLane,
+  destroyLanesForSession,
+  destroyLanesForTask,
+  destroyIdleLanes,
+  destroyAllLanes,
+  laneCountForTask,
+  laneIdsForTask,
+  isLaneId,
+  resetLanesForTests,
+  MAX_LANES_PER_TASK,
+  LANE_FRAME_RATE,
+} = await import('../../src/main/browser/browser-lane-manager');
+
+const input = (overrides: Record<string, unknown> = {}) => ({
+  taskId: 'task-1',
+  projectId: 'project-1',
+  ownerSessionId: 'session-1',
+  cwd: 'C:\\Users\\dev\\repo\\.kangentic\\worktrees\\7',
+  url: 'http://localhost:4200',
+  ...overrides,
+});
+
+beforeEach(() => {
+  created = [];
+  registered.length = 0;
+  unregistered.length = 0;
+  loadShouldFail = false;
+  resetLanesForTests();
+});
+
+afterEach(() => {
+  resetLanesForTests();
+});
+
+describe('openLane', () => {
+  it('registers the lane so existing tools can target it by sessionId', async () => {
+    // The whole point of living in the shared registry: withGuest needed no
+    // change to drive a lane, and no tool needed a new argument.
+    const result = await openLane(input());
+    expect(result.ok).toBe(true);
+    expect(registered).toHaveLength(1);
+    expect(registered[0]).toMatchObject({ taskId: 'task-1', projectId: 'project-1', kind: 'lane' });
+    expect(isLaneId(registered[0].sessionId as string)).toBe(true);
+  });
+
+  it('creates an OFFSCREEN, never-shown window', async () => {
+    await openLane(input());
+    const options = created[0].options as { show: boolean; webPreferences: Record<string, unknown> };
+    expect(options.show).toBe(false);
+    expect(options.webPreferences.offscreen).toBe(true);
+  });
+
+  it('throttles the frame rate so an unwatched animating page cannot burn CPU', async () => {
+    // Offscreen rendering copies a FULL frame bitmap per paint, so the default
+    // 60fps against a lane nobody is watching is the real cost risk.
+    await openLane(input());
+    expect(created[0].window.webContents.setFrameRate).toHaveBeenCalledWith(LANE_FRAME_RATE);
+  });
+
+  it('shares the task worktree cookie jar rather than minting a fresh one', async () => {
+    // A private jar would land every worker on a sign-in wall for an app the
+    // user is already authenticated into.
+    await openLane(input());
+    const options = created[0].options as { webPreferences: { partition: string } };
+    expect(options.webPreferences.partition).toContain('persist:kngbrowser-');
+  });
+
+  it('refuses past the per-task cap and names the lanes to reuse', async () => {
+    for (let index = 0; index < MAX_LANES_PER_TASK; index += 1) {
+      const created = await openLane(input());
+      expect(created.ok).toBe(true);
+    }
+    const overflow = await openLane(input());
+    expect(overflow).toMatchObject({ ok: false, kind: 'lane-limit' });
+    if (overflow.ok) throw new Error('expected a refusal');
+    // Actionable rather than a bare "no": a retrying agent needs to be told to
+    // reuse the handle it already holds.
+    expect(overflow.detail).toContain('reuse it by passing its sessionId');
+    for (const laneId of laneIdsForTask('task-1')) expect(overflow.detail).toContain(laneId);
+  });
+
+  it('counts lanes per task, not globally', async () => {
+    await openLane(input());
+    await openLane(input({ taskId: 'task-2' }));
+    expect(laneCountForTask('task-1')).toBe(1);
+    expect(laneCountForTask('task-2')).toBe(1);
+  });
+
+  it('destroys the window and registers nothing when the URL fails to load', async () => {
+    loadShouldFail = true;
+    const result = await openLane(input());
+    expect(result).toMatchObject({ ok: false, kind: 'lane-load-failed' });
+    expect(registered).toHaveLength(0);
+    expect(created[0].window.destroyed).toBe(true);
+    expect(laneCountForTask('task-1')).toBe(0);
+  });
+});
+
+describe('lane cleanup backstops', () => {
+  it('destroys the window and unregisters on an explicit close', async () => {
+    const lane = await openLane(input());
+    if (!lane.ok) throw new Error('expected a lane');
+    expect(destroyLane(lane.laneId)).toBe(true);
+    expect(created[0].window.destroyed).toBe(true);
+    expect(unregistered).toContain(lane.laneId);
+    // Idempotent: a second close is a no-op, not a throw.
+    expect(destroyLane(lane.laneId)).toBe(false);
+  });
+
+  it('destroys only the owning session"s lanes', async () => {
+    // Session end is the GUARANTEE, because only one of the ten supported agent
+    // CLIs has a SubagentStop hook to fire a faster signal.
+    await openLane(input({ ownerSessionId: 'session-a' }));
+    await openLane(input({ ownerSessionId: 'session-b' }));
+    expect(destroyLanesForSession('session-a')).toBe(1);
+    expect(laneCountForTask('task-1')).toBe(1);
+  });
+
+  it('destroys every lane for a task', async () => {
+    await openLane(input());
+    await openLane(input());
+    expect(destroyLanesForTask('task-1')).toBe(2);
+    expect(laneCountForTask('task-1')).toBe(0);
+  });
+
+  it('reclaims only lanes idle past the threshold', async () => {
+    const lane = await openLane(input());
+    if (!lane.ok) throw new Error('expected a lane');
+    expect(destroyIdleLanes(60_000, Date.now())).toBe(0);
+    expect(destroyIdleLanes(60_000, Date.now() + 61_000)).toBe(1);
+  });
+
+  it('destroys everything synchronously on shutdown', async () => {
+    await openLane(input());
+    await openLane(input({ taskId: 'task-2' }));
+    destroyAllLanes();
+    expect(created.every((entry) => entry.window.destroyed)).toBe(true);
+    expect(laneCountForTask('task-1')).toBe(0);
+    expect(laneCountForTask('task-2')).toBe(0);
+  });
+});

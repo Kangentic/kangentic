@@ -15,6 +15,7 @@ import {
   type DriverResult,
 } from './browser-pane-driver';
 import type { ResolvedBrowserAutomationConfig } from './browser-automation-config';
+import { openLane, destroyLane } from './browser-lane-manager';
 
 /**
  * Opens and closes a task's embedded Browser pane on behalf of the
@@ -105,6 +106,22 @@ export interface OpenPaneInput {
    */
   capability: BrowserCapability;
   config: ResolvedBrowserAutomationConfig;
+  /**
+   * Open a private LANE instead of the task's shared pane.
+   *
+   * The discriminator is the ACT OF ASKING, not who is asking - which is the
+   * whole reason this is an argument rather than per-caller routing. Every
+   * subagent inherits its parent's `callerSessionId`, so the server genuinely
+   * cannot tell concurrent workers apart, and the alternatives (a hook that
+   * stamps Claude's `agent_id`) are single-agent solutions in a product that
+   * supports ten agent CLIs.
+   *
+   * A lane's id comes back as `sessionId`, which every driving tool already
+   * accepts, so no tool needed a new argument.
+   */
+  isolated?: boolean;
+  /** Worktree directory for the caller's task, so a lane shares its cookie jar. */
+  cwd?: string | null;
 }
 
 export interface OpenPaneData {
@@ -114,6 +131,12 @@ export interface OpenPaneData {
   navigated: boolean;
   url: string;
   pane: BrowserPaneStatus;
+  /**
+   * Present only for an isolated lane. The caller MUST pass this back as
+   * `sessionId` on every later browser call, or it falls back to the shared
+   * pane and the isolation it just asked for silently does nothing.
+   */
+  laneId?: string;
 }
 
 export interface ClosePaneInput {
@@ -304,6 +327,25 @@ export async function openPaneForCallerTask(input: OpenPaneInput): Promise<Drive
   const validated = validateNavigationUrl(resolvedUrl, config);
   if (!validated.ok) return { ok: false, error: validated.error };
 
+  // Isolated lane: an offscreen surface of this caller's own, so concurrent
+  // workers under one task stop sharing a viewport. Deliberately AFTER url
+  // resolution (a lane needs somewhere to point) but BEFORE the window push - a
+  // lane needs no task-detail window at all, which is exactly what keeps it out
+  // of the renderer, out of `browserOpenTasks`, and out of detail ownership.
+  if (input.isolated) {
+    const lane = await openLane({
+      taskId: callerTaskId,
+      projectId,
+      ownerSessionId: callerSessionId,
+      cwd: input.cwd ?? projectPath,
+      url: validated.url,
+    });
+    if (!lane.ok) return failure(lane.kind, lane.detail);
+    const pane = paneStatus(lane.laneId);
+    if (!pane) return failure('pane-destroyed', 'The browser lane closed immediately after opening. Retry.');
+    return { ok: true, data: { opened: true, navigated: true, url: validated.url, pane, laneId: lane.laneId } };
+  }
+
   // No live-pane branch here any more: both warm cases are handled above, ahead
   // of the project-not-open guard, so a retained pane in a backgrounded project
   // stays driveable. Do not reintroduce one below the guard.
@@ -416,11 +458,6 @@ export async function closePanes(input: ClosePaneInput): Promise<DriverResult<Cl
     return { ok: true, data: { closed: [], skipped: [], scope, otherProjectPaneCount } };
   }
 
-  const host = readHost();
-  if (!host) {
-    return failure('app-not-ready', 'The Kangentic window is not available.');
-  }
-
   const summarize = (pane: BrowserPaneStatus): ClosedPaneSummary => ({
     sessionId: pane.sessionId,
     taskId: pane.taskId,
@@ -428,15 +465,35 @@ export async function closePanes(input: ClosePaneInput): Promise<DriverResult<Cl
     url: pane.url,
   });
 
+  // Lanes are closed HERE, in main, not by the renderer push below.
+  //
+  // A lane is an offscreen window main owns outright: there is no task-detail
+  // window hosting it and no `browserOpenTasks` flag to clear, so the push
+  // would do nothing and the lane would be reported "still registered" - a
+  // skipped close, forever. Destroying it directly is also what makes this tool
+  // the working escape hatch the lane-limit error points callers at.
+  const laneTargets = targets.filter((pane) => pane.kind === 'lane');
+  const paneTargets = targets.filter((pane) => pane.kind !== 'lane');
+  const closedLanes = laneTargets.filter((lane) => destroyLane(lane.sessionId)).map(summarize);
+
+  if (paneTargets.length === 0) {
+    return { ok: true, data: { closed: closedLanes, skipped: [], scope, otherProjectPaneCount } };
+  }
+
+  const host = readHost();
+  if (!host) {
+    return failure('app-not-ready', 'The Kangentic window is not available.');
+  }
+
   // Push the task ids: pane open state is keyed by task, not session.
-  const taskIds = [...new Set(targets.map((pane) => pane.taskId))];
+  const taskIds = [...new Set(paneTargets.map((pane) => pane.taskId))];
   if (!host.send(IPC.BROWSER_PANE_CLOSE_REQUEST, projectId, taskIds)) {
     return failure('app-not-ready', 'The Kangentic window is not available.');
   }
 
   const stillRegistered = new Set(
     await browserPaneRegistry.waitForPanesGone(
-      targets.map((pane) => pane.sessionId),
+      paneTargets.map((pane) => pane.sessionId),
       PANE_CLOSE_TIMEOUT_MS,
     ),
   );
@@ -450,8 +507,11 @@ export async function closePanes(input: ClosePaneInput): Promise<DriverResult<Cl
   // closing that OS window would, which is out of scope). Main cannot tell that
   // apart from a renderer that simply did not act, so the reason states the
   // fact and names the known cause without asserting it.
-  const closed = targets.filter((pane) => !stillRegistered.has(pane.sessionId)).map(summarize);
-  const skipped = targets
+  const closed = [
+    ...closedLanes,
+    ...paneTargets.filter((pane) => !stillRegistered.has(pane.sessionId)).map(summarize),
+  ];
+  const skipped = paneTargets
     .filter((pane) => stillRegistered.has(pane.sessionId))
     .map((pane) => ({
       ...summarize(pane),

@@ -957,6 +957,25 @@ Every **driving** tool below takes the same optional target pair. They are liste
 
 Omitting both resolves your own pane, then the single pane open in the project. Alongside the per-tool errors listed below, any driving tool can return the shared refusals raised while resolving and attaching to a pane: `no-pane-open`, `multiple-panes` (more than one is open and neither argument was given; the error carries the candidates), `foreign-project`, `pane-destroyed`, `pane-not-rendering`, `cdp-attach-failed`, `pane-busy`, and `driver-error`.
 
+### Isolated browser lanes
+
+`kangentic_browser_open_pane` accepts `isolated: true`, which opens a private browser LANE instead of
+the task's shared pane and returns a `laneId`. Pass that id back as `sessionId` on every later
+`kangentic_browser_*` call - forget it and the call silently falls back to the shared pane, which
+undoes the isolation. Use a lane whenever several agents work on one task at the same time: without
+one they all resolve to the same pane and interleave navigations, clicks and screenshots while each
+believes it has exclusive control.
+
+A lane is offscreen. It does not appear on screen, does not disturb the pane the user is looking at,
+and cannot take their keyboard focus. It shares the task's worktree cookie jar, so it inherits
+whatever the user is already signed into. Lanes are capped per task; past the cap `open_pane` returns
+`lane-limit` and names the lanes to reuse. Close one with `kangentic_browser_close_pane`, which
+destroys lanes directly. A lane is also destroyed when the session that opened it ends, when it goes
+idle, and on app quit - so forgetting to close one leaks nothing.
+
+`kangentic_browser_list_panes` reports a lane's `kind` so an agent can tell its own lane from the
+task's shared pane.
+
 `kangentic_browser_screenshot` additionally returns `dev-server-error` when the dev server is showing
 a build-error overlay. Without it the tool returns a faithful picture of a full-screen red overlay,
 which costs a turn to interpret - and when several agents share one dev server, the one that sees the

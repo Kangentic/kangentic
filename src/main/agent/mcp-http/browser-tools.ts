@@ -82,6 +82,12 @@ export type AutomationConfigReader = () => ResolvedBrowserAutomationConfig;
  */
 export interface BrowserSessionLookup {
   getSessionTaskId(sessionId: string): string | undefined;
+  /**
+   * The task's worktree directory, so an isolated lane can share the task's
+   * browser partition and inherit whatever the user is already logged into.
+   * Optional: an older host that does not supply it just gets the project path.
+   */
+  getTaskWorktreePath?(taskId: string): string | null;
 }
 
 export interface BrowserToolDependencies {
@@ -210,15 +216,25 @@ export function registerBrowserTools(
           .describe(
             "Absolute http(s) URL to load, e.g. http://localhost:5173. Omit to reuse the task's saved Browser URL, or the project default. If neither exists, pass one - a pane with no URL registers nothing and cannot be driven.",
           ),
+        isolated: z
+          .boolean()
+          .optional()
+          .describe(
+            'Open a private browser lane of your own instead of the task\'s shared pane. Use this when several agents are working on one task at the same time, so you do not fight over one viewport. The response returns a laneId - pass it as `sessionId` on EVERY later kangentic_browser_* call, or you will silently fall back to the shared pane. A lane is offscreen: it does not disturb the user\'s pane and cannot take their keyboard focus.',
+          ),
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ url }) => {
+    async ({ url, isolated }) => {
       const result = await openPaneForCallerTask({
         projectId,
         callerSessionId,
         callerTaskId,
         url,
+        isolated,
+        // A lane shares the task's worktree cookie jar, so a subagent inherits
+        // the user's existing login rather than landing on a sign-in wall.
+        cwd: callerTaskId && sessions ? sessions.getTaskWorktreePath?.(callerTaskId) ?? null : null,
         // Opening always loads a URL, so this is a navigation-tier action:
         // "Allow navigation" off in Settings disables this tool too.
         capability: 'navigate',

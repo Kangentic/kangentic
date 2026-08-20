@@ -17,10 +17,22 @@ import { IPC } from '../../src/shared/ipc-channels';
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx']);
-/** The only files allowed to construct an OS BrowserWindow. */
+/**
+ * The only files allowed to construct an OS BrowserWindow.
+ *
+ * The third entry is a deliberate carve-out, not creep. A browser LANE is an
+ * OFFSCREEN window (`show: false`, `offscreen: true`): it is never presented to
+ * the user, never persists bounds, never appears in `POP_OUT_SURFACES`, and has
+ * no renderer-side surface descriptor - so routing it through the pop-out
+ * manager would mean teaching that manager about a window it can never show.
+ * It has its own lifecycle (owned by the agent session that opened it) and its
+ * own synchronous teardown in `shutdown.ts`. Adding a FOURTH entry needs the
+ * same kind of justification, not an appeal to this one.
+ */
 const ALLOWED_BROWSER_WINDOW_FILES = new Set([
   'src/main/index.ts',
   'src/main/pop-out/pop-out-window-manager.ts',
+  'src/main/browser/browser-lane-manager.ts',
 ]);
 
 function collectSourceFiles(directory: string): string[] {
