@@ -2639,7 +2639,8 @@ export interface AppConfig {
     releaseBufferMs?: number;
     /** Which live UI surface to show while dictating (experiment switcher).
      *  `popup` = floating panel; `docked` = bar by the terminal input; `live` =
-     *  type directly into the terminal as you speak. Default `popup`. */
+     *  type directly into the resolved target as you speak. Default `popup`,
+     *  though `live` is what actually ships (see `useDictation`). */
     experience?: 'popup' | 'docked' | 'live';
     /** Remote backend (used when engineMode = `remote`). */
     remote?: DictationRemoteEndpoint;
@@ -4642,7 +4643,8 @@ export interface ElectronAPI {
     getDashboardStats: (scope: UsageStatsScope, period: UsageTimePeriod, drill?: UsageDayDrill | null, customWindow?: UsageCustomWindow | null) => Promise<UsageDashboardStats>;
   };
 
-  // Voice-to-text dictation (push-to-talk -> live popup -> focused terminal).
+  // Voice-to-text dictation (push-to-talk -> live transcript -> focused text
+  // field, or a terminal when nothing writable has focus).
   // Channels are by session id, not task-scoped, so they carry no projectId
   // (same category as session write). See .claude/rules/ipc-7-layer-parity.md.
   dictation: {
