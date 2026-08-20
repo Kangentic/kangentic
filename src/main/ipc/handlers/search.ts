@@ -11,6 +11,7 @@ import { selectAnswerSources, MAX_ANSWER_SOURCES } from '../../retrieval/answer-
 import { buildAnswerPrompt, NO_SOURCES_ANSWER } from '../../retrieval/answer-prompt';
 import { broadcast } from '../../pop-out/window-broadcast';
 import { resolveEmbeddingModel } from '../../../shared/embedding-models';
+import { resolveAnswerAgent } from '../../../shared/answer-agent';
 import type {
   SearchHit,
   SearchRequest,
@@ -206,14 +207,29 @@ export function registerSearchHandlers(context: IpcContext): void {
         // The agent is resolved and CHECKED before any retrieval runs. Doing the
         // search first would spend real work on a question that cannot be
         // answered, and then report the CLI failure as if the search had failed.
-        const agentName = project.default_agent
-          ?? agentRegistry.list()[0]
-          ?? null;
-        if (!agentName) return { ok: false, reason: 'no agents registered' };
+        //
+        // Resolved through the SHARED chain the renderer uses to decide whether
+        // to offer Ask and whose name to print, so the button can never name one
+        // agent while a different one replies.
+        const resolved = resolveAnswerAgent({
+          agents: agentRegistry.list().flatMap((name) => {
+            const entry = agentRegistry.get(name);
+            return entry
+              ? [{
+                name,
+                displayName: entry.displayName,
+                supportsAnswerFromContext: typeof entry.answerFromContext === 'function',
+              }]
+              : [];
+          }),
+          configured: config.memory?.answerAgent ?? null,
+          projectAgent: project.default_agent,
+        });
+        if (!resolved) return { ok: false, reason: 'no installed agent can answer questions' };
+        const agentName = resolved.name;
         const adapter = agentRegistry.get(agentName);
-        if (!adapter) return { ok: false, reason: `unknown agent: ${agentName}` };
-        if (typeof adapter.answerFromContext !== 'function') {
-          return { ok: false, reason: `${adapter.displayName} cannot answer questions` };
+        if (!adapter?.answerFromContext) {
+          return { ok: false, reason: `unknown agent: ${agentName}` };
         }
         const info = await adapter.detect(config.agent.cliPaths[agentName] ?? null);
         if (!info.found || !info.path) {

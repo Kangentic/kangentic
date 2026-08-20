@@ -3,6 +3,7 @@ import { MessageSquare, Sparkles, Check, RotateCcw } from 'lucide-react';
 import { SectionHeader, SettingRow, SettingToggleRow, Select, DownloadProgressBar, useScopedUpdate } from '../shared';
 import { settingProps } from '../settings-registry';
 import { useProjectStore } from '../../../stores/project-store';
+import { useConfigStore } from '../../../stores/config-store';
 import { EMBEDDING_MODELS } from '../../../../shared/embedding-models';
 import type { AppConfig, MemoryStatus, MemoryAcceleration } from '../../../../shared/types';
 
@@ -40,6 +41,10 @@ export function MemoryTab({ globalConfig }: { globalConfig: AppConfig }) {
   const embeddingModelId = globalConfig.memory?.embeddingModel ?? 'bge-base';
   // Default acceleration when unset (matches DEFAULT_CONFIG.memory.acceleration).
   const acceleration = globalConfig.memory?.acceleration ?? 'auto';
+  // Installed agents that declare `answerFromContext`. Read from the capability
+  // rather than a hardcoded list, per `agent-adapters-boundary.md`.
+  const answerCapableAgents = useConfigStore((state) => state.agentList)
+    .filter((agent) => agent.found && agent.supportsAnswerFromContext);
 
   // Poll the semantic-layer status while the feature is on so the model-download
   // progress and readiness update live. Cleared on unmount / when turned off.
@@ -188,6 +193,30 @@ export function MemoryTab({ globalConfig }: { globalConfig: AppConfig }) {
             <div className="text-xs text-fg-muted px-1" data-testid="semantic-status">
               {platformNote}
             </div>
+          ) : null}
+
+          {/* Only the agents that can actually answer. An agent with no
+              `answerFromContext` is not a choice, it is a way to turn Ask off by
+              accident - the same rule the dead facet rows and the colour modes
+              follow. The whole row is hidden when nothing can answer, since
+              picking between zero options is not a decision. */}
+          {answerCapableAgents.length > 0 ? (
+            <SettingRow {...settingProps('memory.answerAgent')}>
+              <Select
+                value={globalConfig.memory?.answerAgent ?? ''}
+                onChange={(event) => updateGlobal({
+                  memory: { answerAgent: event.target.value === '' ? null : event.target.value },
+                })}
+                data-testid="memory-answer-agent-select"
+              >
+                {/* Empty string rather than a sentinel name: it is the ABSENCE
+                    of a choice, which is what null means in the config. */}
+                <option value="">Follow the project</option>
+                {answerCapableAgents.map((agent) => (
+                  <option key={agent.name} value={agent.name}>{agent.displayName}</option>
+                ))}
+              </Select>
+            </SettingRow>
           ) : null}
         </div>
       ) : null}

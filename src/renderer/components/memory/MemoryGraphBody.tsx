@@ -41,6 +41,8 @@ import {
 
 import { availableGranularities, DEFAULT_GRANULARITY, resolveClustering } from './active-clustering';
 import { availableColorModes } from './color-mode-availability';
+import { resolveAnswerAgent } from '../../../shared/answer-agent';
+import { HoverTip } from '../HoverTip';
 import type { MemoryGraphGranularity } from '../../../shared/types';
 import { useChromeInsets } from './useChromeInsets';
 import { MemoryNodeDetail, openConversationForNode } from './MemoryNodeDetail';
@@ -79,24 +81,30 @@ export function MemoryGraphBody() {
   const clearAnswer = useMemoryGraphStore((state) => state.clearAnswer);
 
   /**
-   * Whether the project's agent can answer at all, read from the CAPABILITY and
-   * never from the agent's name (`.claude/rules/agent-adapters-boundary.md`).
-   * An agent with no `answerFromContext` gets no Ask affordance rather than one
-   * that fails when pressed.
+   * Who answers, resolved through the SAME chain the main process uses, so the
+   * button can never name one agent while a different one replies. Gated on the
+   * CAPABILITY rather than on any agent's name
+   * (`.claude/rules/agent-adapters-boundary.md`).
    *
-   * In a pop-out `currentProject` is never populated, so this falls back to the
-   * only adapter that declares the capability. That is not a guess: it is what
-   * the handler itself resolves to when a project names no default agent.
+   * `requireFound` here and not in main: this list carries a detection flag and
+   * must not offer Ask for an agent that is not installed, where main detects
+   * the CLI itself a moment later and reports a precise reason.
+   *
+   * In a pop-out `currentProject` is never populated, so the chain falls through
+   * to any capable agent - which is what the handler resolves to as well.
    */
   const agentList = useConfigStore((state) => state.agentList);
+  const configuredAnswerAgent = useConfigStore((state) => state.config.memory?.answerAgent ?? null);
   const projectAgent = useProjectStore((state) => state.currentProject?.default_agent ?? null);
-  const askAdapter = useMemo(() => {
-    const named = projectAgent
-      ? agentList.find((entry) => entry.name === projectAgent)
-      : undefined;
-    const resolved = named ?? agentList.find((entry) => entry.supportsAnswerFromContext);
-    return resolved?.found && resolved.supportsAnswerFromContext ? resolved : null;
-  }, [agentList, projectAgent]);
+  const askAdapter = useMemo(
+    () => resolveAnswerAgent({
+      agents: agentList,
+      configured: configuredAnswerAgent,
+      projectAgent,
+      requireFound: true,
+    }),
+    [agentList, configuredAnswerAgent, projectAgent],
+  );
   const canAsk = askAdapter !== null;
   const askAgentLabel = askAdapter?.displayName ?? 'the agent';
 
@@ -549,36 +557,41 @@ export function MemoryGraphBody() {
             </>
           ) : null}
         </div>
-        {/* Ask lives WITH the question, not in the results rail.
-            The box is where a question gets typed, so the offer to answer it
-            belongs directly under it; the rail is where results are read and
-            refined. It was in the rail first, and that put the input for one act
-            inside the output of another.
+        {/* Ask sits BESIDE the box, as the agent counterpart to the search that
+            already ran. It was a full-width row underneath, which read as a
+            banner about the search rather than a second thing you can do to it.
 
-            Still a SECOND, explicit act: typing has already searched, free and
-            instantly, and this names the agent it will run and that it costs a
-            call. Offered only once the search HAS matches, since there is
-            nothing to read otherwise. */}
+            Absolutely positioned rather than a flex sibling, so mounting and
+            unmounting it never moves the search box: this row is centred, and
+            anything that changes its width shifts the input the user is typing
+            into.
+
+            Still a SECOND, explicit act - typing has already searched, free and
+            instantly - and it names the AGENT up front so the fallback chain is
+            never silent. The cost is one hover away rather than a permanent
+            second line, because the button is the control and the tooltip is
+            the detail. */}
         {canAsk && query && visibleHits.length > 0 && !answer ? (
-          <button
-            type="button"
-            onClick={() => void askQuestion(query.query)}
-            disabled={answering}
-            data-testid="memory-graph-ask"
-            className="mt-1.5 flex w-full items-center gap-2 rounded-md border border-edge bg-surface-raised/85 px-2.5 py-1.5 text-left shadow-xl backdrop-blur transition-colors hover:bg-surface-hover disabled:cursor-default disabled:hover:bg-surface-raised/85 cursor-pointer"
+          <HoverTip
+            label={`${askAgentLabel} reads the matches and answers with citations. One agent call.`}
+            className="absolute left-full top-0 ml-2"
+            testId="memory-graph-ask-tip"
           >
-            {answering
-              ? <Loader2 size={12} className="flex-shrink-0 animate-spin text-fg-muted" aria-hidden />
-              : <Sparkles size={12} className="flex-shrink-0 text-accent-fg" aria-hidden />}
-            <span className="min-w-0 flex-1 truncate text-[11px] text-fg">
+            <button
+              type="button"
+              onClick={() => void askQuestion(query.query)}
+              disabled={answering}
+              data-testid="memory-graph-ask"
+              className="flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-edge bg-surface-raised/85 px-3 py-2 shadow-xl backdrop-blur-md transition-colors hover:bg-surface-hover disabled:cursor-default disabled:hover:bg-surface-raised/85 cursor-pointer"
+            >
               {answering
-                ? `Asking ${askAgentLabel} to read the matches`
-                : `Ask ${askAgentLabel} to answer this`}
-            </span>
-            {!answering ? (
-              <span className="flex-shrink-0 text-[11px] text-fg-muted">One agent call</span>
-            ) : null}
-          </button>
+                ? <Loader2 size={13} className="flex-shrink-0 animate-spin text-fg-muted" aria-hidden />
+                : <Sparkles size={13} className="flex-shrink-0 text-accent-fg" aria-hidden />}
+              <span className="text-xs text-fg">
+                {answering ? `Asking ${askAgentLabel}` : `Ask ${askAgentLabel}`}
+              </span>
+            </button>
+          </HoverTip>
         ) : null}
         {query && !query.semantic ? (
           <p className="mt-1.5 rounded bg-surface-raised/80 px-2 py-1 text-[11px] text-fg-muted backdrop-blur">

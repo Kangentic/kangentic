@@ -655,8 +655,16 @@ test.describe('memory graph', () => {
       // states the cost - the two controls are separate acts, not one box with
       // a hidden mode.
       await expect(ask).toBeVisible();
-      await expect(ask).toContainText('Claude Code');
-      await expect(ask).toContainText('One agent call');
+      // The AGENT is on the button itself, so the fallback chain is never
+      // silent about who will run.
+      await expect(ask).toContainText('Ask Claude Code');
+      // The COST is one hover away, and reachable without a pointer: HoverTip
+      // renders its label sr-only inside the trigger at all times, so a mapping
+      // that exists only under a cursor does not exist at all to someone not
+      // using one.
+      await expect(page.getByText('One agent call', { exact: false }).first()).toBeAttached();
+      await ask.hover();
+      await expect(page.locator('[data-testid="memory-graph-ask-tip"]')).toContainText('One agent call');
 
       // And it has NOT run. Search is free and automatic; this is not.
       expect(await page.evaluate(() => (window as unknown as {

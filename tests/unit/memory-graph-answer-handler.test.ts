@@ -181,10 +181,76 @@ describe('the Ask handler', () => {
     const result = await ask('anything');
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.reason).toContain('Aider');
+    // Names the SHORTAGE, not the project's agent: with nothing capable
+    // registered, "Aider cannot answer" would point at the wrong problem.
+    expect(result.reason).toMatch(/no installed agent can answer/i);
     // Retrieval never ran. Doing it first would spend real work on a question
     // that cannot be answered, and then report the CLI failure as a search one.
     expect(searchSpy).not.toHaveBeenCalled();
+  });
+
+  it('falls through to a capable agent when the project names one that is not', async () => {
+    // The chain is configured setting, then project default, then anything
+    // capable. A named fallback beats no answer, and the button prints the name
+    // it resolved, so the fallback is stated rather than silent.
+    const answerSpy = vi.fn(async () => 'From the other agent [1].');
+    mockAdapters = [
+      {
+        name: 'aider',
+        displayName: 'Aider',
+        detect: async () => ({ found: true, path: '/usr/bin/aider', version: '1' }),
+      },
+      {
+        name: 'claude',
+        displayName: 'Claude Code',
+        detect: async () => ({ found: true, path: '/usr/bin/claude', version: '1' }),
+        answerFromContext: answerSpy,
+      },
+    ];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the context is a narrow test double
+    registerSearchHandlers(makeContext('aider') as any);
+
+    const result = await ask('anything');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.agentName).toBe('Claude Code');
+    expect(answerSpy).toHaveBeenCalled();
+  });
+
+  it('honours the configured answering agent over the project default', async () => {
+    const claudeSpy = vi.fn(async () => 'claude answered');
+    const codexSpy = vi.fn(async () => 'codex answered');
+    mockAdapters = [
+      {
+        name: 'claude',
+        displayName: 'Claude Code',
+        detect: async () => ({ found: true, path: '/usr/bin/claude', version: '1' }),
+        answerFromContext: claudeSpy,
+      },
+      {
+        name: 'codex',
+        displayName: 'Codex',
+        detect: async () => ({ found: true, path: '/usr/bin/codex', version: '1' }),
+        answerFromContext: codexSpy,
+      },
+    ];
+    const context = makeContext('claude');
+    context.configManager.load = vi.fn(() => ({
+      agent: { cliPaths: {} },
+      memory: { answerAgent: 'codex' },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- narrow test double
+    })) as any;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the context is a narrow test double
+    registerSearchHandlers(context as any);
+
+    const result = await ask('anything');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Which agent runs your tasks and which reads your history are different
+    // choices, so the explicit setting wins over the project's default.
+    expect(result.agentName).toBe('Codex');
+    expect(codexSpy).toHaveBeenCalled();
+    expect(claudeSpy).not.toHaveBeenCalled();
   });
 
   it('reports a missing CLI rather than retrieving into a failure', async () => {

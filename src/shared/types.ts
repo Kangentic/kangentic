@@ -2642,6 +2642,20 @@ export interface AppConfig {
      *  forces the universal CPU path. Offloading to an idle GPU keeps the CPU free
      *  for the agents when many run at once. */
     acceleration?: MemoryAcceleration;
+    /**
+     * Which agent answers a question from the index (the Memory Graph's Ask).
+     *
+     * GLOBAL, and deliberately separate from the project's default agent: which
+     * agent RUNS YOUR TASKS and which agent READS YOUR HISTORY are different
+     * choices, and only some agents can do the second at all. Leaving this unset
+     * follows the project's default and falls back to any agent that declares
+     * the capability, which is what shipped first and is right until someone
+     * has a preference.
+     *
+     * An adapter NAME (`claude`, `codex`), never a display name - the name is
+     * the registry key and the display name is copy that can change.
+     */
+    answerAgent?: string | null;
   };
 
   /**
