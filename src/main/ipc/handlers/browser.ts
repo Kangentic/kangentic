@@ -9,6 +9,7 @@ import { getProjectRepos, resolveProjectContext } from '../helpers/project-repos
 import { browserUrlStore } from '../../browser/browser-url-store';
 import { browserPaneRegistry } from '../../browser/browser-pane-registry';
 import { setBrowserPaneOpenerHost } from '../../browser/browser-pane-opener';
+import { installLaneHandoff } from '../../browser/browser-lane-handoff';
 import { PasteSubmitError } from '../../pty/terminal-submit';
 import { agentRegistry } from '../../agent/agent-registry';
 import {
@@ -67,6 +68,35 @@ export function registerBrowserHandlers(context: IpcContext): void {
       return true;
     },
   }));
+
+  // A browser an agent is using belongs to the AGENT, not to a piece of UI. The
+  // user must be free to close the task detail and move around the board without
+  // disconnecting an agent that is midway through verifying something - but an
+  // Electron <webview> guest dies the moment its DOM node unmounts, so closing
+  // the window destroys it. This hands the page off to an offscreen lane
+  // instead, and stands that lane down when the user's pane comes back.
+  installLaneHandoff({
+    hasLiveSession: (taskId) => {
+      try {
+        // Live (running/queued) specifically, not merely registered: a
+        // suspended or exited session has no agent to keep a browser for.
+        return context.sessionManager.findLiveSessionByTaskId(taskId) !== undefined;
+      } catch {
+        // Never let a lookup failure decide policy: no hand-off is the safe
+        // answer, since a spurious one would open a browser nobody asked for.
+        return false;
+      }
+    },
+    getTaskWorktreePath: (taskId) => {
+      try {
+        const projectId = context.currentProjectId;
+        if (!projectId) return null;
+        return getProjectRepos(context, projectId).tasks.getById(taskId)?.worktree_path ?? null;
+      } catch {
+        return null;
+      }
+    },
+  });
 
   ipcMain.handle(IPC.BROWSER_CAPTURE_SEND, async (_event, input: BrowserCaptureInput) => {
     if (!input.sessionId) throw new Error('captureAndSend requires a sessionId');

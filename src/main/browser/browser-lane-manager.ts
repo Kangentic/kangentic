@@ -94,6 +94,17 @@ interface LaneRecord {
   ownerSessionId: string | null;
   window: BrowserWindow;
   lastUsedAt: number;
+  /**
+   * True when main created this lane automatically to keep an agent's browser
+   * alive after the user closed the task window (see `browser-lane-handoff.ts`),
+   * rather than the agent asking for isolation.
+   *
+   * The distinction is load-bearing: a hand-off lane stands down as soon as the
+   * user's own pane comes back, because two surfaces for one task would make
+   * every implicit call ambiguous. A lane the agent deliberately requested is
+   * its working surface and must never be closed out from under it.
+   */
+  handoff: boolean;
 }
 
 const lanes = new Map<string, LaneRecord>();
@@ -123,6 +134,8 @@ export interface OpenLaneInput {
   /** Worktree directory, so a lane shares the task's cookie jar. */
   cwd: string | null;
   url: string;
+  /** Created by the pane hand-off rather than requested by the agent. */
+  handoff?: boolean;
 }
 
 export type OpenLaneResult =
@@ -180,6 +193,7 @@ export async function openLane(input: OpenLaneInput): Promise<OpenLaneResult> {
     ownerSessionId: input.ownerSessionId ?? null,
     window,
     lastUsedAt: Date.now(),
+    handoff: input.handoff === true,
   };
   lanes.set(laneId, record);
 
@@ -238,6 +252,31 @@ export function destroyLanesForSession(sessionId: string): number {
   let destroyed = 0;
   for (const lane of [...lanes.values()]) {
     if (lane.ownerSessionId !== sessionId) continue;
+    if (destroyLane(lane.laneId)) destroyed += 1;
+  }
+  return destroyed;
+}
+
+/** True when this task already has a hand-off lane standing in for its pane. */
+export function hasHandoffLaneForTask(taskId: string): boolean {
+  for (const lane of lanes.values()) {
+    if (lane.taskId === taskId && lane.handoff) return true;
+  }
+  return false;
+}
+
+/**
+ * Destroy only the AUTO-CREATED hand-off lanes for a task.
+ *
+ * Called when the user's own pane comes back. Never touches a lane the agent
+ * asked for with `isolated: true`: that is its working surface, and closing it
+ * because a human opened an unrelated pane would be the same class of bug this
+ * whole task is about.
+ */
+export function destroyHandoffLanesForTask(taskId: string): number {
+  let destroyed = 0;
+  for (const lane of [...lanes.values()]) {
+    if (lane.taskId !== taskId || !lane.handoff) continue;
     if (destroyLane(lane.laneId)) destroyed += 1;
   }
   return destroyed;

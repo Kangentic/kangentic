@@ -191,6 +191,11 @@ export class BrowserPaneRegistry {
       registeredAt: Date.now(),
       kind: input.kind ?? 'pane',
     });
+    try {
+      this.paneRegisteredHandler?.(this.panes.get(input.sessionId)!);
+    } catch (error) {
+      console.warn('[browser-pane] pane-registered handler failed:', error);
+    }
     this.notifyWaiters();
   }
 
@@ -219,7 +224,35 @@ export class BrowserPaneRegistry {
         `wc=${entry.webContentsId} project=${entry.projectId ?? 'none'} reason=${reason}`,
     );
     this.notifyWaiters();
+    // Injected rather than imported, so the registry stays free of any
+    // dependency on the lane manager (which imports the registry, so a direct
+    // import would be a cycle). Never allowed to break a deletion.
+    try {
+      this.paneClosedHandler?.(entry, reason);
+    } catch (error) {
+      console.warn('[browser-pane] pane-closed handler failed:', error);
+    }
   }
+
+  private paneClosedHandler: ((entry: BrowserPaneEntry, reason: PaneUnregisterReason) => void) | null = null;
+
+  /**
+   * Observe pane closures. Wired once at startup by the lane hand-off, which
+   * keeps an agent's browser alive when the user closes the task's window.
+   */
+  setPaneClosedHandler(
+    handler: ((entry: BrowserPaneEntry, reason: PaneUnregisterReason) => void) | null,
+  ): void {
+    this.paneClosedHandler = handler;
+  }
+
+  /** Observe pane REGISTRATION, so a hand-off lane can stand down when the
+   *  user's own pane comes back. */
+  setPaneRegisteredHandler(handler: ((entry: BrowserPaneEntry) => void) | null): void {
+    this.paneRegisteredHandler = handler;
+  }
+
+  private paneRegisteredHandler: ((entry: BrowserPaneEntry) => void) | null = null;
 
   unregister(sessionId: string): void {
     this.forget(sessionId, 'renderer-unmount');

@@ -957,6 +957,24 @@ Every **driving** tool below takes the same optional target pair. They are liste
 
 Omitting both resolves your own pane, then the single pane open in the project. Alongside the per-tool errors listed below, any driving tool can return the shared refusals raised while resolving and attaching to a pane: `no-pane-open`, `multiple-panes` (more than one is open and neither argument was given; the error carries the candidates), `foreign-project`, `pane-destroyed`, `pane-not-rendering`, `cdp-attach-failed`, `pane-busy`, and `driver-error`.
 
+### An agent's browser survives the window closing
+
+A browser an agent is using belongs to the agent, not to a piece of UI. The user is free to close the
+task detail, move around the board, and switch projects without disconnecting an agent midway through
+verifying something.
+
+An Electron `<webview>` guest dies the instant its DOM node unmounts, so closing the task's detail
+window really does destroy the visible pane. When that happens and the task still has a live agent
+session, main hands the page off to an offscreen lane at the same URL, registered under the same
+task. The agent's next call resolves to it through the ordinary caller-task rule, so nothing about
+the agent changes - it does not know a hand-off happened and does not need to. Reopening the task's
+Browser pane stands the hand-off lane down, because the visible pane is the better answer whenever it
+exists and two surfaces for one task would make every implicit call ambiguous.
+
+This is distinct from retention (`.claude/rules/retained-pane-never-remounts.md`), which keeps a
+window that stays OPEN alive across a project switch. Retention covers the window staying; the
+hand-off covers the window going away.
+
 ### Isolated browser lanes
 
 `kangentic_browser_open_pane` accepts `isolated: true`, which opens a private browser LANE instead of
