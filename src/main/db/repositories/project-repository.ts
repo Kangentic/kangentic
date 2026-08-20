@@ -57,6 +57,13 @@ export class ProjectRepository {
   delete(id: string): void {
     const db = getGlobalDb();
     const tx = db.transaction(() => {
+      // Return this project's dev-server ports to the pool. Inside the
+      // transaction because both tables live in the GLOBAL database, and here
+      // rather than at the three delete call sites because this is the one path
+      // every project removal passes through - the same reasoning as
+      // TaskRepository.delete. Without it a removed project's leases would
+      // block their ports until a range-exhausted allocation swept them.
+      db.prepare('DELETE FROM dev_ports WHERE project_id = ?').run(id);
       db.prepare('DELETE FROM projects WHERE id = ?').run(id);
       // Reindex positions to keep them contiguous (0..N-1)
       const remaining = db.prepare('SELECT id FROM projects ORDER BY position ASC').all() as Array<{ id: string }>;

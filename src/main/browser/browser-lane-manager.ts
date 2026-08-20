@@ -86,6 +86,15 @@ export const LANE_FRAME_RATE = 10;
  */
 export const MAX_LANES_PER_TASK = 4;
 
+/**
+ * How long a lane may go untouched before it is reclaimed.
+ *
+ * Generous, because reclaiming a lane an agent is merely pausing on would be
+ * worse than holding a renderer process: the agent would come back to a page
+ * that silently no longer exists. A drive of any kind refreshes it.
+ */
+export const LANE_IDLE_RECLAIM_MS = 30 * 60 * 1000;
+
 interface LaneRecord {
   laneId: string;
   taskId: string;
@@ -147,6 +156,11 @@ export type OpenLaneResult =
  * target it by `sessionId`.
  */
 export async function openLane(input: OpenLaneInput): Promise<OpenLaneResult> {
+  // Reclaim abandoned lanes before counting, so a long-lived session that opened
+  // and forgot lanes an hour ago is not refused a new one over renderer
+  // processes nothing is using. Opportunistic on purpose - see destroyIdleLanes.
+  destroyIdleLanes(LANE_IDLE_RECLAIM_MS);
+
   if (laneCountForTask(input.taskId) >= MAX_LANES_PER_TASK) {
     return {
       ok: false,
@@ -284,16 +298,16 @@ export function destroyHandoffLanesForTask(taskId: string): number {
   return destroyed;
 }
 
-export function destroyLanesForTask(taskId: string): number {
-  let destroyed = 0;
-  for (const lane of [...lanes.values()]) {
-    if (lane.taskId !== taskId) continue;
-    if (destroyLane(lane.laneId)) destroyed += 1;
-  }
-  return destroyed;
-}
-
-/** Reclaim lanes no drive has touched for `idleMs`. */
+/**
+ * Reclaim lanes no drive has touched for `idleMs`.
+ *
+ * Swept OPPORTUNISTICALLY, from `openLane`, rather than on an interval. A timer
+ * would run for the life of the app to serve a subsystem most sessions never
+ * touch, and the moment reclaim actually matters is the moment a new lane is
+ * wanted - which is exactly when this runs. Sessions ending and app shutdown
+ * remain the guarantees; this only stops a long-lived session that churns lanes
+ * from holding renderer processes it stopped using.
+ */
 export function destroyIdleLanes(idleMs: number, now: number = Date.now()): number {
   let destroyed = 0;
   for (const lane of [...lanes.values()]) {

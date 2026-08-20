@@ -218,6 +218,12 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
       await allocateDevPort(options.projectId, task.id, {
         rangeStart: devServerConfig?.portRangeStart,
         rangeEnd: devServerConfig?.portRangeEnd,
+        // Consulted only if the range is exhausted. A lease whose project is no
+        // longer registered cannot belong to anything that will come back, so
+        // it is safe to reclaim once its port also probes free. Deliberately
+        // NOT "the task is gone": that needs the project's own database, and
+        // opening one by an id we have not validated would create a stray file.
+        isLeaseReclaimable: (lease) => context.projectRepo.getById(lease.projectId) === undefined,
       });
     } catch (error) {
       console.warn(`[dev-ports] Could not lease a port for task ${task.id.slice(0, 8)}:`, error);

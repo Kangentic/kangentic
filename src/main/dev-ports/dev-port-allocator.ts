@@ -32,6 +32,19 @@ const PROBE_TIMEOUT_MS = 500;
 export interface DevPortRangeOptions {
   rangeStart?: number;
   rangeEnd?: number;
+  /**
+   * Whether a lease may be reclaimed if its port also turns out to be free.
+   *
+   * Consulted ONLY when the range is exhausted, which is what keeps the normal
+   * path free of any extra work. Both conditions are required: a task whose dev
+   * server is merely restarting has a live lease and a temporarily silent port,
+   * and stealing that would hand its port to someone else moments before it
+   * comes back.
+   *
+   * Omit it and nothing is ever reclaimed, which is the safe default for a
+   * caller that cannot judge liveness.
+   */
+  isLeaseReclaimable?: (lease: DevPortLease) => boolean;
 }
 
 /**
@@ -117,6 +130,31 @@ export async function allocateDevPort(
 
   const { start, end } = resolveRange(options);
 
+  const leased = await scanRange(start, end, projectId, taskId);
+  if (leased !== null) return leased;
+
+  // Exhausted. Before giving up, reclaim leases that are provably dead and try
+  // once more.
+  //
+  // Deliberately here rather than on a timer or a startup pass: a timer would
+  // run for the life of the app to serve a table most sessions never fill, and
+  // a startup pass only helps the crash that happened before the last launch.
+  // Running out of ports is the exact moment reclaiming is worth anything, so
+  // that is when it runs - and the normal path pays nothing for it.
+  if (!options?.isLeaseReclaimable) return null;
+  const reclaimed = await reclaimStaleDevPorts((lease) => !options.isLeaseReclaimable!(lease));
+  if (reclaimed.length === 0) return null;
+
+  return scanRange(start, end, projectId, taskId);
+}
+
+/** One pass over the range: first port that is both unleased and bindable. */
+async function scanRange(
+  start: number,
+  end: number,
+  projectId: string,
+  taskId: string,
+): Promise<number | null> {
   for (let port = start; port <= end; port += 1) {
     // Cheap check first: skip anything already promised to another task
     // without paying for a socket probe.

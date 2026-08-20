@@ -70,8 +70,11 @@ const {
   openLane,
   destroyLane,
   destroyLanesForSession,
-  destroyLanesForTask,
   destroyIdleLanes,
+  destroyHandoffLanesForTask,
+  hasHandoffLaneForTask,
+  touchLane,
+  LANE_IDLE_RECLAIM_MS,
   destroyAllLanes,
   laneCountForTask,
   laneIdsForTask,
@@ -189,11 +192,15 @@ describe('lane cleanup backstops', () => {
     expect(laneCountForTask('task-1')).toBe(1);
   });
 
-  it('destroys every lane for a task', async () => {
-    await openLane(input());
-    await openLane(input());
-    expect(destroyLanesForTask('task-1')).toBe(2);
-    expect(laneCountForTask('task-1')).toBe(0);
+  it('closes only the AUTO hand-off lanes, never one the agent asked for', async () => {
+    // Closing an agent's deliberately-requested lane because a human opened an
+    // unrelated pane would be the same class of bug this whole task is about.
+    const requested = await openLane(input());
+    const handedOff = await openLane(input({ handoff: true }));
+    if (!requested.ok || !handedOff.ok) throw new Error('expected two lanes');
+
+    expect(destroyHandoffLanesForTask('task-1')).toBe(1);
+    expect(laneIdsForTask('task-1')).toEqual([requested.laneId]);
   });
 
   it('reclaims only lanes idle past the threshold', async () => {
@@ -201,6 +208,48 @@ describe('lane cleanup backstops', () => {
     if (!lane.ok) throw new Error('expected a lane');
     expect(destroyIdleLanes(60_000, Date.now())).toBe(0);
     expect(destroyIdleLanes(60_000, Date.now() + 61_000)).toBe(1);
+  });
+
+  it('spares a lane a drive has touched', async () => {
+    // Without touchLane, `lastUsedAt` would be frozen at creation and the
+    // reclaim would close lanes an agent is actively working in. withGuest
+    // calls it on every drive, which is what makes the threshold mean "idle"
+    // rather than "old".
+    const lane = await openLane(input());
+    if (!lane.ok) throw new Error('expected a lane');
+
+    // Age it past the threshold, then drive it. The touch has to move the clock
+    // forward WITH the lane, which is why the system time advances before it
+    // rather than the check being handed a future timestamp.
+    vi.setSystemTime(Date.now() + 61_000);
+    expect(destroyIdleLanes(60_000)).toBe(1);
+
+    const second = await openLane(input());
+    if (!second.ok) throw new Error('expected a second lane');
+    vi.setSystemTime(Date.now() + 61_000);
+    touchLane(second.laneId);
+    expect(destroyIdleLanes(60_000)).toBe(0);
+  });
+
+  it('touching an unknown session is a harmless no-op', () => {
+    // Every drive calls this, and most drives are against ordinary panes.
+    expect(() => touchLane('session-that-is-not-a-lane')).not.toThrow();
+  });
+
+  it('reclaims abandoned lanes before refusing at the cap', async () => {
+    // A long-lived session that opened and forgot lanes must not be refused a
+    // new one over renderer processes nothing is using.
+    for (let index = 0; index < MAX_LANES_PER_TASK; index += 1) {
+      await openLane(input());
+    }
+    expect(laneCountForTask('task-1')).toBe(MAX_LANES_PER_TASK);
+
+    // Age every existing lane past the reclaim threshold.
+    vi.setSystemTime(Date.now() + LANE_IDLE_RECLAIM_MS + 1_000);
+
+    const fresh = await openLane(input());
+    expect(fresh.ok).toBe(true);
+    expect(laneCountForTask('task-1')).toBe(1);
   });
 
   it('destroys everything synchronously on shutdown', async () => {

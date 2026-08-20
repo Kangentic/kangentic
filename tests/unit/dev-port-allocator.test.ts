@@ -144,6 +144,42 @@ describe('allocateDevPort', () => {
     expect(second).toBeNull();
   });
 
+  it('reclaims a dead lease only once the range is exhausted, then succeeds', async () => {
+    // Self-healing where it matters, and nowhere else: reclaiming is the exact
+    // thing worth doing when there are no ports left, so that is when it runs.
+    await allocateDevPort('dead-project', 'ghost-task', { rangeStart: 4500, rangeEnd: 4500 });
+    expect(leases).toHaveLength(1);
+
+    const port = await allocateDevPort('proj-1', 'task-2', {
+      rangeStart: 4500,
+      rangeEnd: 4500,
+      isLeaseReclaimable: (lease) => lease.projectId === 'dead-project',
+    });
+
+    expect(port).toBe(4500);
+    expect(leases).toHaveLength(1);
+    expect(leases[0].taskId).toBe('task-2');
+  });
+
+  it('does not reclaim a lease the caller still considers live', async () => {
+    await allocateDevPort('proj-1', 'task-1', { rangeStart: 4500, rangeEnd: 4500 });
+    const port = await allocateDevPort('proj-1', 'task-2', {
+      rangeStart: 4500,
+      rangeEnd: 4500,
+      isLeaseReclaimable: () => false,
+    });
+    expect(port).toBeNull();
+    expect(leases[0].taskId).toBe('task-1');
+  });
+
+  it('does not reclaim when no predicate is supplied', async () => {
+    // The safe default for a caller that cannot judge liveness.
+    await allocateDevPort('proj-1', 'task-1', { rangeStart: 4500, rangeEnd: 4500 });
+    const port = await allocateDevPort('proj-1', 'task-2', { rangeStart: 4500, rangeEnd: 4500 });
+    expect(port).toBeNull();
+    expect(leases).toHaveLength(1);
+  });
+
   it('falls back to the default range when given a reversed one', async () => {
     const port = await allocateDevPort('proj-1', 'task-1', { rangeStart: 5000, rangeEnd: 4000 });
     expect(port).toBe(DEFAULT_DEV_PORT_RANGE_START);

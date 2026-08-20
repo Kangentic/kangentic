@@ -5,6 +5,7 @@ import { beginAgentInput, endAgentInput } from './agent-input-signal';
 import type { ResolvedBrowserAutomationConfig } from './browser-automation-config';
 import { withGuestDriveLock, GuestBusyError, guestDriveDepth } from './guest-drive-queue';
 import { logDrive } from './drive-telemetry';
+import { touchLane } from './browser-lane-manager';
 
 /**
  * The single chokepoint every `kangentic_browser_*` MCP tool routes through to
@@ -108,6 +109,12 @@ export async function withGuest<T>(
   }
 
   const { webContents } = live;
+
+  // Mark a lane as in use. A no-op for an ordinary pane, and the reason the
+  // idle reclaim below can tell "nobody has touched this in an hour" from "an
+  // agent is working in it right now" - without it, `lastUsedAt` would be frozen
+  // at creation and the reclaim would close lanes mid-drive.
+  touchLane(target.entry.sessionId);
 
   // A window that is not being composited has no frame for CDP to hand back, so
   // `Page.captureScreenshot` NEVER RESOLVES and every later command for that
