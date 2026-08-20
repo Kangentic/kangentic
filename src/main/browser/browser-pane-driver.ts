@@ -3,6 +3,7 @@ import { browserPaneRegistry, type ResolveTargetSelector } from './browser-pane-
 import { attachDebugger, ensureFocusEmulation, isDebuggerAttached } from './cdp/cdp';
 import { beginAgentInput, endAgentInput } from './agent-input-signal';
 import type { ResolvedBrowserAutomationConfig } from './browser-automation-config';
+import { withGuestDriveLock, GuestBusyError } from './guest-drive-queue';
 
 /**
  * The single chokepoint every `kangentic_browser_*` MCP tool routes through to
@@ -154,35 +155,69 @@ export async function withGuest<T>(
   // the hot path. See `.claude/rules/agent-driven-focus.md`.
   ensureFocusEmulation(webContents);
 
-  // Announce the drive so the pane can put the user's keyboard focus back if
-  // Chromium moved it (see `.claude/rules/agent-driven-focus.md`). Deliberately
-  // fired for EVERY capability tier, not just `interact` and `eval`: `observe`
-  // dispatches no input today, but a tier list here would go stale the first time
-  // a new primitive lands, and the cost is one IPC push per tool call.
+  // Serialize from here down, so only ONE drive touches this guest at a time.
+  // Taken AFTER resolution and the compositing precondition, so a call refused
+  // by the gate or by target resolution never queues for a pane it never
+  // touches. Refusal rather than an unbounded wait: see
+  // GUEST_DRIVE_WAIT_TIMEOUT_MS.
   //
-  // It is armed only AFTER the guest resolves, so a call refused by the gate or
-  // by target resolution never arms a guard for a pane it never touched.
-  beginAgentInput(webContents);
+  // Inside the lock, `beginAgentInput` announces the drive so the pane can put
+  // the user's keyboard focus back if Chromium moved it (see
+  // `.claude/rules/agent-driven-focus.md`). Deliberately fired for EVERY
+  // capability tier, not just `interact` and `eval`: `observe` dispatches no
+  // input today, but a tier list here would go stale the first time a new
+  // primitive lands, and the cost is one IPC push per tool call.
+  //
+  // The announcement is INSIDE the lock, not around it: a call that is still
+  // queued has not begun driving, so announcing it would light the pane up and
+  // hand the user's focus around for a drive that has not started. The 400ms
+  // burst-quiet window in `agent-input-signal.ts` means a queued call arriving
+  // shortly after its predecessor still continues the same burst rather than
+  // flapping the guard open and shut between them.
   try {
-    // NOT DONE HERE: taking the guest's keyboard focus.
-    //
-    // Chromium delivers a dispatched keystroke to whichever widget genuinely
-    // holds focus, and a `<webview>` guest is out-of-process, so acquiring its
-    // focus is asynchronous and never atomic. An attempt to hold that focus
-    // ACROSS tool calls was built and measured against a live guest: it put the
-    // agent's own text into the user's terminal, at 28, then 95, then 207
-    // characters as each mitigation was added. Every version of it is a race
-    // with the user, who can take focus back mid-dispatch.
-    //
-    // What works, and has in every measurement, is a click and its keystrokes
-    // inside ONE call: the click focuses the guest as a direct side effect of
-    // the same input pipeline, and the characters follow with nothing held
-    // across a boundary. So the selector forms are the supported path, and the
-    // limits of the selector-less ones are documented rather than papered over
-    // with focus management. See `docs/embedded-browser.md`.
-    const data = await fn(webContents);
-    return { ok: true, data };
+    return await withGuestDriveLock(webContents.id, async () => {
+      beginAgentInput(webContents);
+      try {
+        // NOT DONE HERE: taking the guest's keyboard focus.
+        //
+        // Chromium delivers a dispatched keystroke to whichever widget genuinely
+        // holds focus, and a `<webview>` guest is out-of-process, so acquiring its
+        // focus is asynchronous and never atomic. An attempt to hold that focus
+        // ACROSS tool calls was built and measured against a live guest: it put the
+        // agent's own text into the user's terminal, at 28, then 95, then 207
+        // characters as each mitigation was added. Every version of it is a race
+        // with the user, who can take focus back mid-dispatch.
+        //
+        // What works, and has in every measurement, is a click and its keystrokes
+        // inside ONE call: the click focuses the guest as a direct side effect of
+        // the same input pipeline, and the characters follow with nothing held
+        // across a boundary. So the selector forms are the supported path, and the
+        // limits of the selector-less ones are documented rather than papered over
+        // with focus management. See `docs/embedded-browser.md`.
+        const data = await fn(webContents);
+        return { ok: true, data } as DriverResult<T>;
+      } catch (error) {
+        return {
+          ok: false,
+          error: {
+            kind: 'driver-error',
+            detail: error instanceof Error ? error.message : String(error),
+          },
+        } as DriverResult<T>;
+      } finally {
+        // `finally`, so a throwing tool still ends the guard. A guard that never ends
+        // would keep restoring focus out of the pane for the rest of the session.
+        endAgentInput(webContents);
+      }
+    });
   } catch (error) {
+    // Only a failure to ACQUIRE lands here - the body above never rethrows.
+    // `pane-busy` is its own kind rather than a `driver-error` so the agent can
+    // tell "someone else holds this pane" from "the page misbehaved", which are
+    // different problems with different fixes.
+    if (error instanceof GuestBusyError) {
+      return { ok: false, error: { kind: 'pane-busy', detail: error.message } };
+    }
     return {
       ok: false,
       error: {
@@ -190,10 +225,45 @@ export async function withGuest<T>(
         detail: error instanceof Error ? error.message : String(error),
       },
     };
+  }
+}
+
+/**
+ * How long a navigation may hold the guest.
+ *
+ * `webContents.loadURL` resolves on load and rejects on failure, but a dev
+ * server that accepts the connection and then never responds leaves it pending
+ * indefinitely - which was survivable while drives interleaved, and is not once
+ * they are serialized: one hung navigation would hold the guest's queue against
+ * every later caller. The bound converts that into a normal tool error.
+ */
+export const NAVIGATE_TIMEOUT_MS = 20_000;
+
+/**
+ * Load a URL into a guest, bounded.
+ *
+ * Shared by `kangentic_browser_navigate` and the opener's navigate-a-live-pane
+ * path so both carry the same bound - the opener runs inside its own
+ * `withGuest`, so an unbounded load there holds the guest exactly as long.
+ *
+ * Like the screenshot bound, the race ABANDONS rather than cancels: Electron
+ * exposes no way to cancel an in-flight `loadURL`, so the page may still land
+ * afterwards. The caller gets a clean error and the guest's queue is released,
+ * which is the property that matters here.
+ */
+export async function navigateGuest(webContents: WebContents, url: string): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  const bounded = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`Navigation to ${url} did not complete within ${NAVIGATE_TIMEOUT_MS / 1000}s. The dev server may be starting, unreachable, or hung.`)),
+      NAVIGATE_TIMEOUT_MS,
+    );
+    timer.unref?.();
+  });
+  try {
+    await Promise.race([webContents.loadURL(url), bounded]);
   } finally {
-    // `finally`, so a throwing tool still ends the guard. A guard that never ends
-    // would keep restoring focus out of the pane for the rest of the session.
-    endAgentInput(webContents);
+    if (timer) clearTimeout(timer);
   }
 }
 

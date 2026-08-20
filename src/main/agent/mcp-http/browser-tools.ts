@@ -4,6 +4,7 @@ import { z } from 'zod/v4';
 import {
   withGuest,
   validateNavigationUrl,
+  navigateGuest,
   type BrowserCapability,
   type DriverResult,
 } from '../../browser/browser-pane-driver';
@@ -283,7 +284,9 @@ export function registerBrowserTools(
       const validated = validateNavigationUrl(url, config);
       if (!validated.ok) return errorToolResult(validated.error);
       const result = await drive<{ ok: true; url: string }>('navigate', { sessionId, taskId }, async (webContents) => {
-        await webContents.loadURL(validated.url);
+        // Bounded: an unbounded load holds the guest's drive lock against every
+        // other caller if the dev server accepts the connection and then stalls.
+        await navigateGuest(webContents, validated.url);
         return { ok: true, url: validated.url };
       }, config);
       return driverToolResult(result);
@@ -481,26 +484,50 @@ export function registerBrowserTools(
       if (!selector && !domText) {
         return errorToolResult({ kind: 'missing-condition', detail: 'Provide a selector or domText to wait for.' });
       }
-      const result = await drive('observe', { sessionId, taskId }, async (webContents) => {
-        const timeout = clampNumber(timeoutMs, 30000, 60000);
-        const interval = clampNumber(intervalMs, 250, 5000);
-        const deadline = Date.now() + timeout;
-        while (Date.now() < deadline) {
-          if (selector) {
-            const html = await getOuterHtml(webContents, selector);
-            if (html !== null && (!domText || html.includes(domText))) {
-              return { matched: true, matchedAt: new Date().toISOString() };
-            }
-          } else if (domText) {
-            const html = await getOuterHtml(webContents, 'body');
-            if (html !== null && html.includes(domText)) {
-              return { matched: true, matchedAt: new Date().toISOString() };
-            }
-          }
-          await sleep(interval);
+      const timeout = clampNumber(timeoutMs, 30000, 60000);
+      const interval = clampNumber(intervalMs, 250, 5000);
+      const deadline = Date.now() + timeout;
+
+      // Each POLL takes the guest, not the whole wait.
+      //
+      // This body used to sit inside one `drive()` for up to 60 seconds. Once
+      // drives are serialized per guest, that would make `wait` a 60-second
+      // denial of service on the pane: any other caller's click or screenshot
+      // would queue behind it and most would hit the acquisition bound. A poll
+      // is a single DOM read, so acquiring per poll costs one extra lock
+      // round-trip and lets other work interleave between polls, which is the
+      // correct granularity - the waiting is not driving.
+      //
+      // The sleep happens OUTSIDE the lock deliberately. At the default 250ms
+      // interval the drive-burst quiet window (400ms) keeps the burst open
+      // across polls, so the pane does not flap. At a longer interval the burst
+      // legitimately closes between polls, which is also right: an agent
+      // sleeping five seconds between DOM reads is not driving the pane, and
+      // the user should get their focus back.
+      let result: DriverResult<{ matched: boolean; matchedAt?: string; timedOutAfterMs?: number }> | null = null;
+      for (;;) {
+        result = await drive('observe', { sessionId, taskId }, async (webContents) => {
+          const target = selector ?? 'body';
+          const html = await getOuterHtml(webContents, target);
+          const hit = selector
+            ? html !== null && (!domText || html.includes(domText))
+            : html !== null && !!domText && html.includes(domText);
+          return hit
+            ? { matched: true, matchedAt: new Date().toISOString() }
+            : { matched: false };
+        });
+
+        // A refusal (pane gone, busy, policy) ends the wait immediately rather
+        // than being retried until the deadline: re-polling a pane that has
+        // been destroyed just burns the full timeout to report the same thing.
+        if (!result.ok) break;
+        if (result.data.matched) break;
+        if (Date.now() >= deadline) {
+          result = { ok: true, data: { matched: false, timedOutAfterMs: timeout } };
+          break;
         }
-        return { matched: false, timedOutAfterMs: timeout };
-      });
+        await sleep(interval);
+      }
       return driverToolResult(result);
     },
   );

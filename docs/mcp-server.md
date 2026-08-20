@@ -955,7 +955,13 @@ Every **driving** tool below takes the same optional target pair. They are liste
 | `sessionId` | string | No | Session whose Browser pane to target. Must name a pane in your own project. |
 | `taskId` | string | No | Task whose Browser pane to target. An alternative to `sessionId`, likewise same-project. |
 
-Omitting both resolves your own pane, then the single pane open in the project. Alongside the per-tool errors listed below, any driving tool can return the shared refusals raised while resolving and attaching to a pane: `no-pane-open`, `multiple-panes` (more than one is open and neither argument was given; the error carries the candidates), `foreign-project`, `pane-destroyed`, `pane-not-rendering`, `cdp-attach-failed`, and `driver-error`.
+Omitting both resolves your own pane, then the single pane open in the project. Alongside the per-tool errors listed below, any driving tool can return the shared refusals raised while resolving and attaching to a pane: `no-pane-open`, `multiple-panes` (more than one is open and neither argument was given; the error carries the candidates), `foreign-project`, `pane-destroyed`, `pane-not-rendering`, `cdp-attach-failed`, `pane-busy`, and `driver-error`.
+
+Drives against one pane are SERIALIZED. Only one runs at a time per guest, so two agents sharing a
+pane get slow-but-correct behavior instead of interleaved clicks, keystrokes and navigations. A
+drive that cannot get its turn within 30s returns `pane-busy` rather than hanging. Serialization
+fixes interleaving, not intent: it cannot stop another agent navigating away from the page you were
+midway through verifying, so concurrent workers should take their own panes rather than share one.
 
 The capability gate (`capabilityGate` in `src/main/browser/browser-pane-driver.ts`, the single source of the tier rules) adds four more: `automation-disabled` when the master switch is off, and `interaction-disabled` / `navigation-disabled` / `eval-disabled` for the tool's own tier. `automation-disabled` is reachable even though the family is not registered while the master switch is off, because the policy is read live per request: a switch flipped mid-session refuses the next call rather than waiting for a reconnect.
 

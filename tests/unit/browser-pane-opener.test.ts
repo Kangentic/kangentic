@@ -33,6 +33,12 @@ vi.mock('../../src/main/browser/browser-pane-driver', () => ({
   withGuest: vi.fn(async () => ({ ok: true, data: null })),
   capabilityGate: vi.fn(() => null),
   validateNavigationUrl: vi.fn((url: string) => ({ ok: true, url })),
+  // The opener loads through the driver's BOUNDED navigate helper rather than
+  // a bare loadURL, so that an unbounded load cannot hold the guest's drive
+  // lock against every other caller.
+  navigateGuest: vi.fn(async (webContents: { loadURL: (url: string) => Promise<void> }, url: string) => {
+    await webContents.loadURL(url);
+  }),
 }));
 vi.mock('../../src/main/browser/browser-url-store', () => ({
   browserUrlStore: { get: vi.fn(() => null), set: vi.fn() },

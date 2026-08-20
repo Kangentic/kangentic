@@ -9,6 +9,7 @@ import {
   withGuest,
   capabilityGate,
   validateNavigationUrl,
+  navigateGuest,
   type BrowserCapability,
   type DriverError,
   type DriverResult,
@@ -262,7 +263,9 @@ export async function openPaneForCallerTask(input: OpenPaneInput): Promise<Drive
     const navigateResult = await withGuest<true>(
       { selector: selectorFor(live.sessionId), capability: input.capability, config },
       async (webContents) => {
-        await webContents.loadURL(validated.url);
+        // Bounded for the same reason as the navigate tool: this body runs
+        // inside withGuest, so an unbounded load holds the guest's drive lock.
+        await navigateGuest(webContents, validated.url);
         return true;
       },
     );
