@@ -222,6 +222,69 @@ export async function openPaneForCallerTask(input: OpenPaneInput): Promise<Drive
     callerTaskId,
   });
 
+  // ISOLATED LANE - handled FIRST, ahead of both the shared-pane lookup and the
+  // project-not-open guard.
+  //
+  // Ahead of the pane lookup because a caller asking for isolation must never be
+  // handed the shared pane instead; that would silently give it the opposite of
+  // what it asked for.
+  //
+  // Ahead of the project-not-open guard because a lane needs NO task-detail
+  // window: it is an offscreen window main owns outright, so the board layer
+  // rendering only the open project is irrelevant to it. That guard exists for
+  // the cold pane path, which genuinely cannot mount a window for a backgrounded
+  // project, and applying it here would block the one recovery that does work.
+  //
+  // That recovery is the real-world failure this ordering fixes. Close a task's
+  // detail window and its `<webview>` guest is destroyed - correctly; the node
+  // unmounted. Switch projects too, and the agent still running in the
+  // backgrounded project now has no pane AND cannot open one: every drive
+  // returns `no-pane-open`, whose hint says to call open_pane, which used to
+  // refuse with `project-not-open`. A lane is the way out, so it must not be
+  // behind the same guard.
+  //
+  // Like the warm path, this reaches no project-scoped state: `callerTaskId`
+  // came from the session registry (so a live session is already proof the task
+  // is real) and `cwd` comes from the same place, which is what keeps
+  // `host.taskExists` - and its stray-database precondition - out of this path.
+  if (input.isolated) {
+    const projectIsOpen = host.currentProjectId === projectId && Boolean(host.currentProjectPath);
+    const laneUrl =
+      input.url
+      ?? (projectIsOpen
+        ? browserUrlStore.get(host.currentProjectPath!, callerTaskId)
+          ?? host.browserOverrides(host.currentProjectPath!)?.defaultUrl
+          ?? null
+        : null);
+
+    if (!laneUrl) {
+      return failure(
+        'no-url',
+        projectIsOpen
+          ? 'No URL to load: this task has no saved Browser URL and the project has no default. Pass the `url` argument (for example http://localhost:5173).'
+          : 'Pass an explicit `url` for an isolated lane while your project is backgrounded. Your project is not the one currently open, so its saved Browser URL and project default cannot be read - but the lane itself will open fine.',
+      );
+    }
+
+    const validatedLane = validateNavigationUrl(laneUrl, config);
+    if (!validatedLane.ok) return { ok: false, error: validatedLane.error };
+
+    const lane = await openLane({
+      taskId: callerTaskId,
+      projectId,
+      ownerSessionId: callerSessionId,
+      cwd: input.cwd ?? (projectIsOpen ? host.currentProjectPath : null),
+      url: validatedLane.url,
+    });
+    if (!lane.ok) return failure(lane.kind, lane.detail);
+    const lanePane = paneStatus(lane.laneId);
+    if (!lanePane) return failure('pane-destroyed', 'The browser lane closed immediately after opening. Retry.');
+    return {
+      ok: true,
+      data: { opened: true, navigated: true, url: validatedLane.url, pane: lanePane, laneId: lane.laneId },
+    };
+  }
+
   // WARM PATH FIRST: is this task's pane already up and driveable?
   //
   // This lookup has to precede the project-not-open guard below, and the
@@ -326,25 +389,6 @@ export async function openPaneForCallerTask(input: OpenPaneInput): Promise<Drive
   }
   const validated = validateNavigationUrl(resolvedUrl, config);
   if (!validated.ok) return { ok: false, error: validated.error };
-
-  // Isolated lane: an offscreen surface of this caller's own, so concurrent
-  // workers under one task stop sharing a viewport. Deliberately AFTER url
-  // resolution (a lane needs somewhere to point) but BEFORE the window push - a
-  // lane needs no task-detail window at all, which is exactly what keeps it out
-  // of the renderer, out of `browserOpenTasks`, and out of detail ownership.
-  if (input.isolated) {
-    const lane = await openLane({
-      taskId: callerTaskId,
-      projectId,
-      ownerSessionId: callerSessionId,
-      cwd: input.cwd ?? projectPath,
-      url: validated.url,
-    });
-    if (!lane.ok) return failure(lane.kind, lane.detail);
-    const pane = paneStatus(lane.laneId);
-    if (!pane) return failure('pane-destroyed', 'The browser lane closed immediately after opening. Retry.');
-    return { ok: true, data: { opened: true, navigated: true, url: validated.url, pane, laneId: lane.laneId } };
-  }
 
   // No live-pane branch here any more: both warm cases are handled above, ahead
   // of the project-not-open guard, so a retained pane in a backgrounded project
