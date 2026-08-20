@@ -235,7 +235,9 @@ export function destroyLane(laneId: string): boolean {
   const lane = lanes.get(laneId);
   if (!lane) return false;
   lanes.delete(laneId);
-  browserPaneRegistry.unregister(laneId);
+  // Say it was a lane teardown, not a renderer unmount. A lane has no renderer,
+  // so the default reason would point an investigation at the wrong process.
+  browserPaneRegistry.unregister(laneId, 'lane-destroyed');
   if (!lane.window.isDestroyed()) lane.window.destroy();
   return true;
 }

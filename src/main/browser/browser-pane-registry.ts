@@ -143,7 +143,17 @@ export type PaneUnregisterReason =
   /** The guest webContents emitted `destroyed`. */
   | 'guest-destroyed'
   /** Self-heal: the entry pointed at a guest that no longer exists. */
-  | 'self-heal-dead-guest';
+  | 'self-heal-dead-guest'
+  /**
+   * Main destroyed an offscreen lane (agent closed it, its session ended, it
+   * went idle, or a hand-off lane stood down because the visible pane returned).
+   *
+   * Distinct from `renderer-unmount` even though both run through `unregister`:
+   * a lane has no renderer to unmount, and reporting one would point an
+   * investigation at the wrong process - the exact ambiguity this enum exists
+   * to remove.
+   */
+  | 'lane-destroyed';
 
 // `detachAll` is deliberately absent. It bulk-clears on the synchronous
 // `before-quit` path (see .claude/rules/synchronous-shutdown.md), where adding
@@ -254,8 +264,12 @@ export class BrowserPaneRegistry {
 
   private paneRegisteredHandler: ((entry: BrowserPaneEntry) => void) | null = null;
 
-  unregister(sessionId: string): void {
-    this.forget(sessionId, 'renderer-unmount');
+  /**
+   * @param reason defaults to the renderer's unmount, which is every caller
+   *   except the lane manager - a lane has no renderer, so it says so.
+   */
+  unregister(sessionId: string, reason: PaneUnregisterReason = 'renderer-unmount'): void {
+    this.forget(sessionId, reason);
   }
 
   /** Unregister sessionId's pane ONLY if its current entry still has this exact

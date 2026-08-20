@@ -56,12 +56,12 @@ vi.mock('electron', () => ({
 }));
 
 const registered: Array<Record<string, unknown>> = [];
-const unregistered: string[] = [];
+const unregistered: Array<{ sessionId: string; reason?: string }> = [];
 
 vi.mock('../../src/main/browser/browser-pane-registry', () => ({
   browserPaneRegistry: {
     register: (input: Record<string, unknown>) => { registered.push(input); },
-    unregister: (sessionId: string) => { unregistered.push(sessionId); },
+    unregister: (sessionId: string, reason?: string) => { unregistered.push({ sessionId, reason }); },
     unregisterByWebContentsId: vi.fn(),
   },
 }));
@@ -172,7 +172,10 @@ describe('lane cleanup backstops', () => {
     if (!lane.ok) throw new Error('expected a lane');
     expect(destroyLane(lane.laneId)).toBe(true);
     expect(created[0].window.destroyed).toBe(true);
-    expect(unregistered).toContain(lane.laneId);
+    // Reported as a lane teardown, not a renderer unmount. A lane has no
+    // renderer, and a wrong reason points an investigation at the wrong
+    // process - which is precisely what the reason enum exists to prevent.
+    expect(unregistered).toContainEqual({ sessionId: lane.laneId, reason: 'lane-destroyed' });
     // Idempotent: a second close is a no-op, not a throw.
     expect(destroyLane(lane.laneId)).toBe(false);
   });
