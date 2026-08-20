@@ -341,9 +341,16 @@ Global-only policy (no per-project override) for whether and how an agent may dr
 
 ### Dictation
 
-Free, fully-local push-to-talk voice-to-text into the focused terminal: hold a key (default a mouse
-side button), speak, watch a live transcript stream into the input, and on release the finalized text
-is inserted (and optionally submitted). Global-only (App Settings only; no per-project override).
+Free, fully-local push-to-talk voice-to-text into whatever the user is focused in: hold a key
+(default a mouse side button), speak, watch a live transcript stream into the target, and on release
+the finalized text is inserted (and optionally submitted). The TARGET is resolved by precedence, and
+a focused text field outranks every terminal tier - any input, textarea, or rich-text host anywhere
+in the app, plus fields inside an embedded browser's guest page; a terminal is the fallback, not the
+rule. A password field REFUSES outright rather than falling through to a terminal, and says so on the
+chip. Because the default binding is a mouse button that also means "back", press DURATION separates
+the two: a hold dictates, and a tap under `NAVIGATION_TAP_MS` instead navigates an active Browser
+pane's history. See `docs/embedded-browser.md` decisions 21 and 24 for the target rules in full.
+Global-only (App Settings only; no per-project override).
 Engines run on-device via `sherpa-onnx-node`; a Cloud refinement option routes only the final clip to
 an OpenAI-compatible endpoint. The first six keys below are settings-panel rows; the rest are
 config-only (driven by the Mode preset + Live/Refinement model dropdowns).
@@ -353,14 +360,14 @@ config-only (driven by the Mode preset + Live/Refinement model dropdowns).
 | `dictation.enabled` | boolean | `false` | Master on/off. Enables push-to-talk. (Transcription section row.) |
 | `dictation.language` | string (BCP-47) | `'en'` | Spoken language. The Live/Refinement model dropdowns narrow to models that support it; non-English uses the multilingual Whisper builds. (Transcription section row.) |
 | `dictation.punctuation` | boolean | `true` | Add punctuation + capitalization to the committed text. (Transcription section row.) |
-| `dictation.autoSubmit` | boolean | `true` | Press Enter automatically after inserting (via the paste engine's settle -> Enter -> evidence path), or leave the text in the input for review. (Input section row.) |
+| `dictation.autoSubmit` | boolean | `true` | Press Enter automatically after inserting, or leave the text in the target for review. How that happens depends on the target: a terminal goes through the paste engine's settle -> Enter -> evidence path, a text field gets a plain Enter dispatched on it. It is REFUSED in two cases regardless of this setting - a field inside a `<form>` holding more than one text field (so dictating a title into New Task cannot create the task with the rest empty), and any field inside a guest page (fill only, since Enter there commits a form we do not control). The chip shows the resolved decision, so its hint never promises a send that will not happen. (Input section row.) |
 | `dictation.releaseBufferMs` | number | `250` | Keep capturing this many ms after release so the last word is not clipped; snaps to 50ms steps (0-500); 0 = off. (Input section row.) |
 | `dictation.remote` | DictationRemoteEndpoint \| undefined | `undefined` | OpenAI-compatible `/v1/audio/transcriptions` endpoint (`url`, `apiKey`, `model`) used when the Refinement model is set to Cloud. (Cloud backend section row.) |
 | `dictation.engineMode` | DictationEngineMode | `'auto'` | Engine selection (`'auto'` tiers by hardware; `'remote'` = cloud final). Config-only; set by the Refinement dropdown's Cloud option. |
 | `dictation.modelId` | string \| null | `null` | The FINAL (accurate) model id, `null` = the tier default (Parakeet), `'none'` = no post-processing pass. Config-only (Refinement dropdown). |
 | `dictation.liveModelId` | string \| null | `undefined` | The LIVE (preview) model id: absent = the streaming Zipformer, an offline id = chunked live, `'none'` = no live preview. Config-only (Live dropdown). |
 | `dictation.mode` | `'fast'`/`'balanced'`/`'accurate'`/`'custom'` | `undefined` | Quality preset. A preset sets AND locks the Live + Refinement models; `'custom'` unlocks them. UI-only; the engine reads the resolved model ids. |
-| `dictation.experience` | `'popup'`/`'docked'`/`'live'` | `'popup'` | Live UI surface. Ships as `'live'` (transcript types straight into the terminal). Config-only. |
+| `dictation.experience` | `'popup'`/`'docked'`/`'live'` | `'popup'` | Live UI surface. Ships as `'live'` (the transcript types straight into the resolved target, terminal or text field, each revision replacing the last in place). Config-only. |
 
 ### Hotkeys
 

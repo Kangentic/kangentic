@@ -301,6 +301,72 @@ app.on('web-contents-created', (_event, contents) => {
     return;
   }
 
+  // Forward the guest's mouse BACK / FORWARD buttons to the host renderer.
+  //
+  // A guest is an out-of-process frame and consumes the mouse outright: measured
+  // on a live guest, one real back-button press produced 31 events inside the
+  // page and ZERO on the host window. So while the page has focus, no renderer
+  // listener can see the button that push-to-talk and back-navigation both live
+  // on - both were simply dead there.
+  //
+  // `input-event` is the hook that does see it, and it reports a real
+  // mouseDown/mouseUp PAIR for `button: 'back'` (measured: a 1534ms hold), which
+  // is what makes push-to-HOLD work rather than only a one-shot toggle. It is
+  // observational - there is no `preventDefault` - so the page still receives the
+  // button too. That is acceptable: Chromium does not navigate a `<webview>` on
+  // it (verified), which is why back-navigation had to be built by hand at all.
+  //
+  // `mouseLeave` releases anything still held. Also measured: a press whose
+  // pointer left the webview before release reported the DOWN and never an UP,
+  // which without this would strand dictation recording forever.
+  //
+  // A DESTROYED guest is the other way an UP goes missing - closing the pane
+  // mid-hold takes the only thing that could report the release with it. That
+  // matters more than it looks: `useDictation` is mounted once app-wide, so a
+  // missing UP leaves `activeRef` true and the microphone open, and every later
+  // press is then swallowed by its own re-entrancy guard until dictation is
+  // toggled off and on again. `releaseHost` exists because `hostWebContents` is
+  // unreachable once `destroyed` has fired, so the last host that took a send is
+  // remembered while it still can be.
+  const heldGuestButtons = new Set<'back' | 'forward'>();
+  let releaseHost: Electron.WebContents | null = null;
+  const sendGuestMouseButton = (button: 'back' | 'forward', phase: 'down' | 'up'): void => {
+    const host = contents.hostWebContents;
+    if (!host || host.isDestroyed()) return;
+    releaseHost = host;
+    host.send(IPC.BROWSER_GUEST_MOUSE_BUTTON, {
+      webContentsId: contents.id,
+      button,
+      phase,
+      // Stamped in MAIN. The renderer measures tap-vs-hold from these, and its
+      // own clock is congested by the very work a press kicks off (mic
+      // permission, engine start, AudioWorklet load), which would inflate a tap
+      // into a hold.
+      at: Date.now(),
+    });
+  };
+
+  contents.on('input-event', (_inputEventHandle, input) => {
+    // Only `button` is widened. Electron types it `'left'|'middle'|'right'`,
+    // which the runtime payload contradicts (see the channel comment); `type` is
+    // already a correct literal union and stays checked.
+    const event = input as Electron.InputEvent & { button?: string };
+    if (event.type === 'mouseLeave') {
+      for (const held of heldGuestButtons) sendGuestMouseButton(held, 'up');
+      heldGuestButtons.clear();
+      return;
+    }
+    const button = event.button === 'back' ? 'back' : event.button === 'forward' ? 'forward' : null;
+    if (!button) return;
+    if (event.type === 'mouseDown') {
+      heldGuestButtons.add(button);
+      sendGuestMouseButton(button, 'down');
+    } else if (event.type === 'mouseUp') {
+      heldGuestButtons.delete(button);
+      sendGuestMouseButton(button, 'up');
+    }
+  });
+
   // Popups from the pane: allowed, hardened, and chromed with their real origin.
   // Denying them outright made every popup-based sign-in (OAuth on most SaaS
   // apps) present as a dead button. See embedded-browser.md decisions 10 to 12
@@ -502,6 +568,20 @@ app.on('web-contents-created', (_event, contents) => {
   // id the renderer reports via `getWebContentsId()`.
   contents.on('destroyed', () => {
     browserPaneRegistry.unregisterByWebContentsId(contents.id);
+    // Release anything still held, for the same reason `mouseLeave` does: a
+    // press the guest can no longer report an UP for would otherwise strand
+    // dictation recording. `contents.id` is read here already, so it survives
+    // the teardown; `hostWebContents` does not, hence the remembered host.
+    if (heldGuestButtons.size === 0 || !releaseHost || releaseHost.isDestroyed()) return;
+    for (const held of heldGuestButtons) {
+      releaseHost.send(IPC.BROWSER_GUEST_MOUSE_BUTTON, {
+        webContentsId: contents.id,
+        button: held,
+        phase: 'up',
+        at: Date.now(),
+      });
+    }
+    heldGuestButtons.clear();
   });
   contents.on('did-navigate', (_navigationEvent, navigatedUrl) => {
     browserPaneRegistry.updateUrlByWebContentsId(contents.id, navigatedUrl);

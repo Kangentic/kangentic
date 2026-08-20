@@ -11,13 +11,23 @@ import { useSessionStore } from '../stores/session-store';
 import { useProjectStore } from '../stores/project-store';
 import { derivePanelSessionId } from './focused-sessions';
 import { transientKey, type TransientSessionEntry } from '../stores/session-store/transient-session-slice';
+import {
+  isPasswordField,
+  resolveFocusedContentEditable,
+  resolveFocusedTextTarget,
+  type ContentEditableTarget,
+  type TextTargetElement,
+} from './text-target';
+import type { WebviewElement } from '../components/browser/webview-types';
 
 /**
- * Resolving the ONE terminal that dictated text should be injected into. The
- * renderer owns single-active-terminal truth across three surfaces (the bottom
- * panel, task-detail windows, and Command Terminal windows); the main process
- * only tracks a focused SET. So we resolve here and pass the chosen session id
- * explicitly on the commit IPC, and refuse to guess when nothing resolves.
+ * Resolving the ONE place dictated text should be injected into. The renderer
+ * owns single-active-target truth across four surfaces (the bottom panel,
+ * task-detail windows, Command Terminal windows, and any focused text input);
+ * the main process only tracks a focused SET of terminals and knows nothing
+ * about the fourth. So we resolve here, pass the chosen session id explicitly on
+ * the commit IPC when the answer is a terminal, and refuse to guess when nothing
+ * resolves.
  *
  * `resolveFocusedWindowTerminal` is the shared half of that question ("which
  * terminal-hosting window holds window-layer focus"), also consumed by the
@@ -25,6 +35,10 @@ import { transientKey, type TransientSessionEntry } from '../stores/session-stor
  * not in the resolution: dictation must resolve something and so falls through to a
  * wider chain, while arrival focus must abstain and so stops there. Keeping one
  * resolver is what stops those two answers drifting apart.
+ *
+ * The text-input case is a tier ABOVE that shared resolver rather than a change
+ * to it, so arrival focus is untouched by it: an arriving terminal's decision
+ * has nothing to say about a focused `<input>`.
  */
 
 // Last terminal whose xterm gained focus, across all layers. The window-manager
@@ -165,19 +179,73 @@ export function resolveFocusedCommandSessionId(input: {
 }
 
 /**
- * Resolve the single injection target via a priority chain. Returns null when
- * no live terminal can be determined, so the caller can refuse to commit rather
- * than inject into the wrong terminal.
+ * Where dictated text goes. A terminal is written to over IPC by session id; a
+ * text input is written to directly in the renderer, so the element itself is
+ * the target and there is no session behind it.
  */
-export function resolveDictationTarget(): string | null {
+export type DictationTarget =
+  | { kind: 'terminal'; sessionId: string }
+  | { kind: 'input'; element: TextTargetElement }
+  /** A `contenteditable` host - a rich-text editor. Separate from `input`
+   *  because it has no `.value`: it is written with Selection + `insertText`,
+   *  which is the route a real keystroke takes. */
+  | { kind: 'contenteditable'; element: ContentEditableTarget }
+  /** A field inside a Browser pane's guest page. Carries the `<webview>` rather
+   *  than the field, because the field lives in another process and can only be
+   *  reached through it (see `guest-text-target.ts`). WHICH field is resolved
+   *  asynchronously by the caller, since the host cannot know it synchronously -
+   *  from here `document.activeElement` is only ever the `<webview>` itself. */
+  | { kind: 'guest'; webview: WebviewElement }
+  /** Focus is somewhere dictation must REFUSE outright rather than fall past.
+   *
+   *  The distinction is load-bearing for a password box. Merely failing
+   *  eligibility is not enough: the chain would carry on to the terminal tiers
+   *  and type the user's spoken password into a live shell. Refusing stops the
+   *  chain dead, and carries the reason so the chip can say what happened
+   *  instead of the untrue "nothing focused". */
+  | { kind: 'refused'; reason: 'password' };
+
+/**
+ * Resolve the single injection target via a priority chain. Returns null when
+ * nothing can be determined, so the caller can refuse to commit rather than
+ * inject into the wrong place.
+ */
+export function resolveDictationTarget(): DictationTarget | null {
+  // 0. An eligible text input holds DOM focus. This outranks every window tier
+  //    below, including a visible, focused Command Terminal: keyboard focus in a
+  //    field the user is typing in is the most direct statement of intent there
+  //    is, and the tiers below are all proxies for it. Eligibility is
+  //    ALLOW-BY-DEFAULT (see `text-target.ts` for why the opt-in marker was
+  //    inverted), so an ordinary settings field or search box IS a target; only
+  //    the structural exclusions fall through to the terminal chain.
+  const active = document.activeElement;
+
+  // 0a. A password box. Refused, never fallen past - see the `refused` variant.
+  if (isPasswordField(active)) return { kind: 'refused', reason: 'password' };
+
+  const focusedInput = resolveFocusedTextTarget(active);
+  if (focusedInput) return { kind: 'input', element: focusedInput };
+
+  const focusedRichText = resolveFocusedContentEditable(active);
+  if (focusedRichText) return { kind: 'contenteditable', element: focusedRichText };
+
+  // 0b. A Browser pane's guest page holds focus. The `<webview>` is as far as
+  //     this resolver can see: whether the guest's own focus is on a text field
+  //     needs a round trip into it, which the caller does before recording.
+  if (active?.tagName === 'WEBVIEW') {
+    return { kind: 'guest', webview: active as WebviewElement };
+  }
+
   // 1. The focused terminal-hosting window, in any layer (Command Terminal,
   //    Agent Monitor, or board). Falls through when it names no running session,
   //    which covers both "no focused window" and "focused window, no session yet".
   const focusedWindowSessionId = resolveFocusedWindowTerminal()?.sessionId ?? null;
-  if (isRunningSession(focusedWindowSessionId)) return focusedWindowSessionId;
+  if (isRunningSession(focusedWindowSessionId)) return { kind: 'terminal', sessionId: focusedWindowSessionId };
 
   // 2. The last terminal the user focused anywhere.
-  if (isRunningSession(lastFocusedTerminalSessionId)) return lastFocusedTerminalSessionId;
+  if (isRunningSession(lastFocusedTerminalSessionId)) {
+    return { kind: 'terminal', sessionId: lastFocusedTerminalSessionId };
+  }
 
   // 3. The bottom panel's derived session.
   const currentProjectId = useProjectStore.getState().currentProject?.id ?? null;
@@ -188,7 +256,7 @@ export function resolveDictationTarget(): string | null {
     currentProjectId,
     sessionActivity: sessionState.sessionActivity,
   });
-  if (isRunningSession(panelSessionId)) return panelSessionId;
+  if (isRunningSession(panelSessionId)) return { kind: 'terminal', sessionId: panelSessionId };
 
   return null;
 }

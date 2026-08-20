@@ -10,6 +10,8 @@ import { useToastStore } from '../../stores/toast-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useKeybinding } from '../../hooks/useKeybinding';
 import { useAgentInputFocusGuard } from '../../utils/agent-input-focus-guard';
+import { ANCHOR_BOUNDS_ATTRIBUTE } from '../../utils/dictation-anchor';
+import { registerBrowserNavigationTarget } from '../../utils/browser-navigation-registry';
 import { useAgentDriveStore, useIsAgentDrivingSession } from '../../stores/agent-drive-store';
 import { PopOutButton } from '../../pop-out/PopOutButton';
 import { browserPartitionForWorktree } from '../../../shared/browser-partition';
@@ -488,6 +490,23 @@ function BrowserPaneActive({
   useKeybinding('browser.zoomOut', () => zoomOut(), { ...browserKeyOptions, when: paneActive });
   useKeybinding('browser.zoomReset', () => resetZoom(), { ...browserKeyOptions, when: paneActive });
 
+  // Publish this pane as the target for a mouse back/forward gesture. The
+  // gesture itself is owned by `useDictation`, which binds the same button for
+  // push-to-talk and is therefore the only place that can tell a tap from a
+  // hold; this just says "I am the pane it applies to, here is my history".
+  //
+  // Empty deps: every function reads a ref at call time, so the registration
+  // never churns as the pane re-renders. `paneActive`'s own inputs (hover, focus
+  // inside) are refs and live DOM for the same reason.
+  useEffect(() => registerBrowserNavigationTarget({
+    isActive: () => hoveredRef.current
+      || (!!paneRef.current && paneRef.current.contains(document.activeElement)),
+    canGoBack: () => { try { return webviewRef.current?.canGoBack() ?? false; } catch { return false; } },
+    canGoForward: () => { try { return webviewRef.current?.canGoForward() ?? false; } catch { return false; } },
+    goBack: () => { try { webviewRef.current?.goBack(); } catch { /* not attached */ } },
+    goForward: () => { try { webviewRef.current?.goForward(); } catch { /* not attached */ } },
+  }), []);
+
   // An agent driving this pane must never take the user's keyboard focus. Main
   // announces each drive; this puts focus back if Chromium moved it into the
   // guest. Inert while no agent is driving. See
@@ -526,6 +545,10 @@ function BrowserPaneActive({
       onMouseLeave={() => { hoveredRef.current = false; }}
       className="flex flex-col h-full min-h-0 bg-surface"
       data-testid="browser-pane"
+      // Keeps the dictation chip anchored to the note input inside THIS pane,
+      // rather than spilling over the terminal beside it. See
+      // `utils/dictation-anchor.ts`.
+      {...{ [ANCHOR_BOUNDS_ATTRIBUTE]: '' }}
     >
       {/* URL bar. This IS the browser pane's top bar (its identity is the URL it
           already shows), so unlike Changes/Stats it needs no separate surface

@@ -394,6 +394,23 @@ export const IPC = {
   // a drive is the user), already encoded as terminal bytes. The renderer routes
   // it to the terminal the user was typing in.
   BROWSER_USER_KEY_DURING_DRIVE: 'browser:userKeyDuringDrive',
+  // Main -> renderer: the user pressed or released a mouse BACK / FORWARD button
+  // while a Browser pane's guest held focus.
+  //
+  // This channel exists because those presses are otherwise unreachable. A guest
+  // is an out-of-process frame, so it consumes the mouse entirely: measured on a
+  // live guest, one real back-button press produced 31 events in the page and
+  // ZERO on the host window, which means no renderer listener can ever see it.
+  // Push-to-talk and back-navigation both live on that button, so both were dead
+  // whenever the page had focus.
+  //
+  // `webContents.on('input-event')` is the one hook that does see it, and it
+  // reports `button: 'back'` with a real mouseDown/mouseUp PAIR (measured: a
+  // 1534ms hold), which is what makes push-to-HOLD possible rather than just a
+  // one-shot. Note the Electron docs list only left/middle/right for
+  // `MouseInputEvent.button`; the runtime payload carries `back` and `forward`
+  // too, so do not "correct" this against the documentation.
+  BROWSER_GUEST_MOUSE_BUTTON: 'browser:guestMouseButton',
 
   // Updater
   UPDATE_CHECK: 'updater:check',

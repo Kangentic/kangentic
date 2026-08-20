@@ -334,6 +334,98 @@ test.describe('agent input focus guard', () => {
     expect(writeCalls.some((entry) => entry.sessionId === SESSION_ID)).toBe(false);
   });
 
+  test('restores focus to the pane\'s NOTE INPUT after the drive ends', async () => {
+    // The note input lives INSIDE the pane, and the guard's "focus was already
+    // in the pane, so this is not a steal" rule used to cover it - so it never
+    // armed for the note input at all, and a drive left the user's cursor in the
+    // guest with no way back. `activeIsTextTarget` is the narrow exception.
+    // This also proves the arming half of the keystroke routing below: if the
+    // guard did not arm, `restoreTarget` would be null and neither would work.
+    await openPaneWithGuest(sharedPage);
+    const noteInput = sharedPage.locator('[data-testid="browser-note-input"]');
+    await noteInput.click();
+
+    await sharedPage.evaluate((guestId) => {
+      window.__mockBrowser?.emitAgentInput(guestId, true);
+      (document.querySelector('[data-testid="browser-webview"]') as HTMLElement).focus();
+    }, GUEST_ID);
+    expect(await activeId(sharedPage)).toBe('WEBVIEW');
+
+    await sharedPage.evaluate((guestId) => window.__mockBrowser?.emitAgentInput(guestId, false), GUEST_ID);
+
+    await expect
+      .poll(
+        () => sharedPage.evaluate(() =>
+          document.activeElement?.getAttribute('data-testid') ?? null),
+        { timeout: 5000 },
+      )
+      .toBe('browser-note-input');
+  });
+
+  test('routes an intercepted keystroke into the pane\'s NOTE INPUT when that is where the user was', async () => {
+    // This case used to be DROPPED. The only delivery mechanism was PTY bytes,
+    // and someone's prose arriving in a live shell as commands is worse than a
+    // lost keystroke - so the guard bailed out unless the user was in a
+    // terminal. Writing into a React-controlled input is a different mechanism
+    // (`utils/text-target.ts`), and it is the same one dictation into this field
+    // uses.
+    await openPaneWithGuest(sharedPage);
+    const noteInput = sharedPage.locator('[data-testid="browser-note-input"]');
+    await noteInput.click();
+    await noteInput.fill('fix ');
+
+    await sharedPage.evaluate((guestId) => {
+      window.__mockBrowser?.emitAgentInput(guestId, true);
+      (document.querySelector('[data-testid="browser-webview"]') as HTMLElement).focus();
+      window.__mockBrowser?.emitUserKeyDuringDrive(guestId, 't');
+      window.__mockBrowser?.emitUserKeyDuringDrive(guestId, 'h');
+      window.__mockBrowser?.emitUserKeyDuringDrive(guestId, 'i');
+      window.__mockBrowser?.emitUserKeyDuringDrive(guestId, 's');
+    }, GUEST_ID);
+
+    // The value assertion is what proves the native-setter write reached REACT
+    // and not just the DOM node: `note` is controlled, so a plain `.value`
+    // assignment would be reverted by the next render.
+    await expect(noteInput).toHaveValue('fix this');
+
+    // And nothing was written to a PTY, which is the failure this replaces.
+    const payloads = await sharedPage.evaluate(() =>
+      (window.electronAPI.sessions as unknown as { __writeCalls: { payload: string }[] })
+        .__writeCalls.map((entry) => entry.payload));
+    expect(payloads).not.toContain('t');
+  });
+
+  test('an intercepted Backspace deletes in the note input, and Enter is still dropped', async () => {
+    // The decoder is deliberately as small as `encodeTerminalKey`: printable
+    // characters and Backspace, nothing else. Enter in this field SENDS the
+    // capture and the note to the agent, and firing that off a keystroke the
+    // user aimed at a web page would post a half-written note with a screenshot
+    // and no way to take it back.
+    await openPaneWithGuest(sharedPage);
+    const noteInput = sharedPage.locator('[data-testid="browser-note-input"]');
+    await noteInput.click();
+    await noteInput.fill('typo!');
+
+    await sharedPage.evaluate((guestId) => {
+      window.__mockBrowser?.emitAgentInput(guestId, true);
+      (document.querySelector('[data-testid="browser-webview"]') as HTMLElement).focus();
+      window.__mockBrowser?.emitUserKeyDuringDrive(guestId, '\x7f');
+    }, GUEST_ID);
+    await expect(noteInput).toHaveValue('typo');
+
+    await sharedPage.evaluate((guestId) => {
+      window.__mockBrowser?.emitUserKeyDuringDrive(guestId, '\r');
+    }, GUEST_ID);
+
+    // A fixed budget, not a poll: this asserts a NON-occurrence, and a poll
+    // returns on its first success. `handleSend` fails at this tier (no real
+    // guest to capture) and reports it in the error strip, so the strip staying
+    // absent is what proves Send never ran.
+    await sharedPage.waitForTimeout(500);
+    await expect(sharedPage.locator('[data-testid="browser-send-error"]')).not.toBeVisible();
+    await expect(noteInput).toHaveValue('typo');
+  });
+
   test('does not route a keystroke for a different guest', async () => {
     await openPaneWithGuest(sharedPage);
     await installVictimInput(sharedPage);

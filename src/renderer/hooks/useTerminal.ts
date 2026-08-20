@@ -19,6 +19,7 @@ import {
 } from '../utils/terminal-grid-registry';
 import { createRepaintNudge, isUserInputData, type RepaintNudgeController } from '../utils/repaint-nudge';
 import { registerMountedTerminal } from '../utils/terminal-mount-registry';
+import { registerTerminalAnchor } from '../utils/terminal-anchor-registry';
 import type { PtyResizeOrigin, TerminalColorOverrides } from '../../shared/types';
 import '@xterm/xterm/css/xterm.css';
 
@@ -578,6 +579,9 @@ export function useTerminal(options: UseTerminalOptions) {
   /** Drops this session from the renderer's MOUNTED set (terminal-mount-registry),
    *  which is what lets main park an unheld PTY back at the spawn grid. */
   const releaseMountedTerminalRef = useRef<(() => void) | null>(null);
+  /** Drops this terminal's element from the anchor registry, so the dictation
+   *  chip can never position against a disposed node. */
+  const releaseTerminalAnchorRef = useRef<(() => void) | null>(null);
   /** This terminal's key in the WebGL renderer report, so the font-family
    *  effect can force a fresh glyph rasterization after a live font change
    *  (see terminal-webgl.ts's notifyFontChanged). */
@@ -901,6 +905,17 @@ export function useTerminal(options: UseTerminalOptions) {
     // terminal that never asked for it has no way back (see the mismatch note
     // above).
     releaseMountedTerminalRef.current = registerMountedTerminal(options.sessionId ?? null);
+
+    // Publish this terminal's element so a floating surface can be positioned
+    // against it - the dictation chip anchors to its PANE, deliberately not to
+    // the caret inside it (see decision 23 in embedded-browser.md). Separate
+    // from the two registrations above because neither answers "where is this
+    // session drawn": the mount registry holds a refcount, and the grid registry
+    // compiles away in a shipped build.
+    releaseTerminalAnchorRef.current = registerTerminalAnchor(
+      options.sessionId ?? null,
+      terminal.element ?? null,
+    );
 
     // Send user input to PTY (via the microtask-batched queue above).
     if (options.sessionId) {
@@ -1373,6 +1388,8 @@ export function useTerminal(options: UseTerminalOptions) {
       unregisterDevtoolsTerminalRef.current = null;
       releaseMountedTerminalRef.current?.();
       releaseMountedTerminalRef.current = null;
+      releaseTerminalAnchorRef.current?.();
+      releaseTerminalAnchorRef.current = null;
       rendererKeyRef.current = null;
       lastAppliedFontRef.current = null;
       xtermRef.current?.dispose();

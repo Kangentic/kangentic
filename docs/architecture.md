@@ -402,7 +402,7 @@ Detach a registered UI surface (usage stats, git changes, the task Browser pane,
 | `clipboard:readImage` | invoke | Read the native clipboard image, cap its long edge at `IMAGE_LONG_EDGE_CAP`, prune stale `pasted-image-*` files from the temp directory (24h age limit, 40-file cap), save it to a temp file, returns file path or null |
 | `clipboard:writeText` | invoke | Write text to the native clipboard (focus-independent; used by terminal copy and the OSC 52 handler) |
 
-### Browser pane (13 channels)
+### Browser pane (14 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `browser:captureSend` | invoke | Composite the embedded webview frame + draw overlay + picked element into a PNG, write it to the session captures dir, and submit a structured prompt to the agent's PTY via PasteEngine |
@@ -418,6 +418,7 @@ Detach a registered UI surface (usage stats, git changes, the task Browser pane,
 | `browser:agentInput` | push | An agent has started or stopped driving a guest, carrying the guest's `webContentsId` (one window hosts several panes). Debounced to the whole BURST rather than each tool call: announcing every call made the pane hand focus back between consecutive calls, measured at 810 focus events in one drive against 11 debounced. Drives the visible state - the terminal dims and the pane is marked - and arms the focus guard. See `.claude/rules/agent-driven-focus.md` |
 | `browser:userKeyDuringDrive` | push | A keystroke the user made while an agent held the guest's focus, already encoded as terminal bytes (`src/shared/terminal-key-encoding.ts`). Main intercepts it at `before-input-event` so it never reaches the page, and the pane writes it to the terminal the user was typing in. CDP input does not travel that path, so an event arriving mid-drive is the user's |
 | `browser:downloadDone` | push | A download from a guest finished, carrying `{ fileName, filePath, state }` for the toast and its "Show in folder" action (which reuses the existing `shell:showItemInFolder`). Sent to the INITIATING guest's host window, resolved per download rather than captured at install time, since one `Session` serves every pane in a worktree |
+| `browser:guestMouseButton` | push | A guest page's mouse BACK / FORWARD button went down or up, carrying the guest's `webContentsId` and a MAIN-stamped `at`. A guest consumes the mouse outright - measured, one real back press produced 31 events inside the page and ZERO on the host window - so no renderer listener can see the button that push-to-talk and back-navigation both live on. `webContents.on('input-event')` does see it, and reports a true down/up PAIR, which is what makes push-to-HOLD possible rather than a one-shot toggle. The timestamp is stamped in main because the renderer's own clock is congested by the work a press starts (mic permission, engine start, AudioWorklet load: an 80ms timer measured 414ms), which would misfile a tap as a hold |
 
 ### Updater (3 channels)
 | Channel | Pattern | Purpose |

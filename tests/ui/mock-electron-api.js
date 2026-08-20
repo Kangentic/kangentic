@@ -52,6 +52,9 @@
   let browserAgentInputSubscribers = [];
   let browserDownloadSubscribers = [];
   let browserUserKeySubscribers = [];
+  // Guest mouse back/forward presses forwarded from main. A real guest
+  // consumes the mouse, so this push is the only way they reach the renderer.
+  let browserGuestMouseSubscribers = [];
   // Pop-out engine call log: open/close/focus invocations, so a test can
   // assert the title-bar / surface-header trigger called the right verb
   // (e.g. focus() instead of toggling the in-app overlay) without a real
@@ -2012,8 +2015,26 @@
       },
       // Each entry is { sessionId, text, eraseCount }.
       __submits: [],
+      // Test hook: hold `submit` open so a spec can observe the window during
+      // which an auto-submit paste is still landing. Real submits are NOT
+      // instant - `terminal-submit.ts` waits for the TUI to settle rather than
+      // sleeping a fixed amount, so on a loaded machine this window has been
+      // measured past two seconds. A mock that always resolves immediately
+      // cannot see any of the behaviour that depends on it.
+      __submitGate: null,
+      __blockSubmit: function () {
+        var release = function () {};
+        window.electronAPI.dictation.__submitGate = new Promise(function (resolve) { release = resolve; });
+        window.electronAPI.dictation.__releaseSubmit = function () {
+          release();
+          window.electronAPI.dictation.__submitGate = null;
+        };
+      },
+      __releaseSubmit: function () {},
       submit: async function (sessionId, text, eraseCount) {
         window.electronAPI.dictation.__submits.push({ sessionId: sessionId, text: text, eraseCount: eraseCount });
+        var gate = window.electronAPI.dictation.__submitGate;
+        if (gate) await gate;
         return true;
       },
       getInfo: async function () {
@@ -3769,6 +3790,17 @@
           if (index >= 0) browserPaneCloseSubscribers.splice(index, 1);
         };
       },
+      // Main -> renderer push for a mouse back/forward press inside the guest.
+      // A real guest consumes the mouse outright, so this channel is the ONLY
+      // way those presses reach the renderer; there is no DOM event to simulate
+      // instead. Driven via window.__mockBrowser.emitGuestMouseButton(...).
+      onGuestMouseButton: function (callback) {
+        browserGuestMouseSubscribers.push(callback);
+        return function () {
+          const index = browserGuestMouseSubscribers.indexOf(callback);
+          if (index >= 0) browserGuestMouseSubscribers.splice(index, 1);
+        };
+      },
     },
 
     // Platform string. Defaults to 'win32' (matches the most common dev
@@ -3830,6 +3862,21 @@
     emitZoomChanged: function (factor, webContentsId) {
       browserZoomSubscribers.slice().forEach(function (callback) {
         callback(factor, webContentsId);
+      });
+    },
+    /**
+     * Fire main's guest mouse back/forward push. `at` defaults to now, and is
+     * the MAIN-side clock the renderer measures tap-vs-hold against - pass an
+     * explicit pair to model a hold without actually waiting.
+     */
+    emitGuestMouseButton: function (webContentsId, button, phase, at) {
+      browserGuestMouseSubscribers.slice().forEach(function (callback) {
+        callback({
+          webContentsId: webContentsId,
+          button: button,
+          phase: phase,
+          at: typeof at === 'number' ? at : Date.now(),
+        });
       });
     },
     /** Fire main's "open this task's Browser pane" push (kangentic_browser_open_pane). */

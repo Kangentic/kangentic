@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '../shared/ipc-channels';
-import type { ElectronAPI, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, SessionEvent, UpdateDownloadedInfo, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, BrowserDownloadDone } from '../shared/types';
+import type { ElectronAPI, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, SessionEvent, UpdateDownloadedInfo, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, BrowserDownloadDone, GuestMouseButtonEvent } from '../shared/types';
 import type { AnnouncementsChangedPayload } from '../shared/announcements';
 import { POPOUT_ARG_PREFIX } from '../shared/pop-out';
 import type { PopOutDescriptor, PopOutKind, PopOutParamsByKind } from '../shared/pop-out';
@@ -647,6 +647,12 @@ const api: ElectronAPI = {
         callback(webContentsId, data);
       ipcRenderer.on(IPC.BROWSER_USER_KEY_DURING_DRIVE, handler);
       return () => ipcRenderer.removeListener(IPC.BROWSER_USER_KEY_DURING_DRIVE, handler);
+    },
+    onGuestMouseButton: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: GuestMouseButtonEvent) =>
+        callback(payload);
+      ipcRenderer.on(IPC.BROWSER_GUEST_MOUSE_BUTTON, handler);
+      return () => ipcRenderer.removeListener(IPC.BROWSER_GUEST_MOUSE_BUTTON, handler);
     },
   },
 

@@ -66,7 +66,7 @@ function sameRect(first: Rect | null, second: Rect | null): boolean {
  * Track a selector's live viewport rect.
  *
  * Re-measures every animation frame and only sets state when the rect actually changes,
- * mirroring `useFocusedTerminalRect`. A polling loop rather than a ResizeObserver because
+ * mirroring the dictation chip position hook. A polling loop rather than a ResizeObserver because
  * the target moves for reasons the observer never sees: horizontal board scroll, a column
  * drag, a sibling panel resizing. The loop only runs while a step is active.
  */

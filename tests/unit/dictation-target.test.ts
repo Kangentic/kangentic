@@ -12,13 +12,21 @@
  * actually being visible (hiding the layer keeps the window and its
  * focusedWindowId alive, so an unguarded resolve would let a hidden terminal
  * steal dictation from a visible board window).
+ *
+ * It also covers priority 0, the opted-in text input (the Browser pane's note
+ * field). `resolveDictationTarget` reads `document.activeElement` for that tier,
+ * and this project runs its unit tier without jsdom, so every block below stubs
+ * a minimal `document` the way `terminal-arrival-focus.test.ts` does. A stub
+ * with `activeElement: null` is exactly the "no input focused" state, which is
+ * what the window-tier cases want anyway.
  */
-import { describe, it, expect, beforeEach, afterEach, afterAll } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vitest';
 import {
   resolveFocusedCommandSessionId,
   resolveDictationTarget,
   resolveFocusedWindowTerminal,
 } from '../../src/renderer/utils/dictation-target';
+import { TEXT_TARGET_DENY_ATTRIBUTE } from '../../src/renderer/utils/text-target';
 import { boardWindowManager, commandWindowManager, monitorWindowManager } from '../../src/renderer/window-manager';
 import { markLayerMounted } from '../../src/renderer/window-manager/store/layer-mount-registry';
 import { useSessionStore } from '../../src/renderer/stores/session-store';
@@ -132,6 +140,28 @@ function unmountAllLayers(): void {
   unmountLayers = [];
 }
 
+/**
+ * Stub `document.activeElement` for priority 0. `null` means "no input focused",
+ * which is the precondition every window-tier case below assumes; passing an
+ * element models the user typing in one.
+ */
+function stubFocus(activeElement: unknown = null): void {
+  vi.stubGlobal('document', { activeElement });
+}
+
+/** An ordinary focusable text input - which is all it takes to be a target. */
+function makeInput(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    tagName: 'INPUT',
+    type: 'text',
+    disabled: false,
+    readOnly: false,
+    classList: { contains: () => false },
+    closest: () => null,
+    ...overrides,
+  };
+}
+
 describe('resolveFocusedCommandSessionId', () => {
   it('resolves the focused command window session when the layer is visible', () => {
     const entry = makeEntry();
@@ -236,8 +266,14 @@ describe('resolveDictationTarget - Command Terminal priority (real stores)', () 
   beforeEach(() => {
     resetIntegrationStores();
     mountAllLayers();
+    // No text input focused, so priority 0 abstains and these cases exercise
+    // the window tiers they were written for.
+    stubFocus(null);
   });
-  afterEach(unmountAllLayers);
+  afterEach(() => {
+    unmountAllLayers();
+    vi.unstubAllGlobals();
+  });
   afterAll(resetIntegrationStores);
 
   it('resolves the focused command-terminal window session when the command layer is visible', () => {
@@ -270,7 +306,7 @@ describe('resolveDictationTarget - Command Terminal priority (real stores)', () 
       ],
     });
 
-    expect(resolveDictationTarget()).toBe(commandSessionId);
+    expect(resolveDictationTarget()).toEqual({ kind: 'terminal', sessionId: commandSessionId });
   });
 
   it('does not let a hidden command layer win priority 1, even with a focused window and a running session', () => {
@@ -303,7 +339,7 @@ describe('resolveDictationTarget - Command Terminal priority (real stores)', () 
     });
 
     const result = resolveDictationTarget();
-    expect(result).not.toBe(commandSessionId);
+    expect(result).not.toEqual({ kind: 'terminal', sessionId: commandSessionId });
     // No other priority has a candidate in this seeded state (no board window
     // focused, no last-focused terminal, and the only running session is
     // transient so it is excluded from the bottom-panel derivation), so the
@@ -335,7 +371,7 @@ describe('resolveDictationTarget - Command Terminal priority (real stores)', () 
       sessions: [makeSession({ id: boardSessionId, projectId, taskId: 'task-1', status: 'running' })],
     });
 
-    expect(resolveDictationTarget()).toBe(boardSessionId);
+    expect(resolveDictationTarget()).toEqual({ kind: 'terminal', sessionId: boardSessionId });
   });
 
   it('lets a focused Command Terminal window win priority 1 over a focused board window with a running session', () => {
@@ -387,7 +423,146 @@ describe('resolveDictationTarget - Command Terminal priority (real stores)', () 
       ],
     });
 
-    expect(resolveDictationTarget()).toBe(commandSessionId);
+    expect(resolveDictationTarget()).toEqual({ kind: 'terminal', sessionId: commandSessionId });
+  });
+});
+
+/**
+ * Priority 0: an opted-in text input holding DOM focus.
+ *
+ * The reported bug is that dictation ALWAYS went to a terminal, so the Browser
+ * pane's note input - the natural place to describe what the agent should do
+ * with a capture - could never win. This tier is the fix, and it sits above
+ * every window tier because keyboard focus in a field is the most direct
+ * statement of intent there is; the tiers below are all proxies for it.
+ *
+ * Red conditions this guards:
+ *  - Remove tier 0 and the first case returns the command terminal, which is
+ *    the original bug.
+ *  - Drop the opt-in check (target any focused input) and the third case
+ *    hijacks dictation from a terminal whenever an unrelated field has focus.
+ */
+describe('resolveDictationTarget - focused text input (priority 0)', () => {
+  beforeEach(() => {
+    resetIntegrationStores();
+    mountAllLayers();
+  });
+  afterEach(() => {
+    unmountAllLayers();
+    vi.unstubAllGlobals();
+  });
+  afterAll(resetIntegrationStores);
+
+  /** Seed a focused, visible Command Terminal with a running session - the
+   *  STRONGEST window tier, so anything that beats it beats all of them. */
+  function seedFocusedCommandTerminal(): string {
+    const projectId = 'proj-tier0';
+    const commandSessionId = 'sess-cmd-tier0';
+    useProjectStore.setState({ currentProject: makeProject(projectId) });
+    commandWindowManager.store.getState().openWindow({
+      anchor: 'slot-1',
+      sessionId: null,
+      title: 'Command Terminal',
+    });
+    useSessionStore.setState({
+      commandBarVisible: true,
+      transientSessions: {
+        [transientKey(projectId, 'slot-1')]: {
+          projectId,
+          slot: 'slot-1',
+          sessionId: commandSessionId,
+          branch: 'main',
+        },
+      },
+      sessions: [makeSession({ id: commandSessionId, projectId, transient: true, status: 'running' })],
+    });
+    return commandSessionId;
+  }
+
+  it('ANY focused text input WINS over a focused, visible Command Terminal', () => {
+    // No marker: dictation works wherever the user can type, so an ordinary
+    // field - a new-task title, a rename box - outranks every window tier.
+    seedFocusedCommandTerminal();
+    const field = makeInput();
+    stubFocus(field);
+
+    expect(resolveDictationTarget()).toEqual({ kind: 'input', element: field });
+  });
+
+  it('xterm\'s helper textarea falls through to the TERMINAL chain, not to itself', () => {
+    // The regression allow-by-default creates. A focused terminal's
+    // `document.activeElement` IS a textarea (xterm's hidden IME helper), so
+    // without the class exclusion tier 0 would claim it and dictation would be
+    // written into a hidden node the shell never reads - silently breaking the
+    // one path that already worked.
+    const commandSessionId = seedFocusedCommandTerminal();
+    stubFocus(makeInput({
+      tagName: 'TEXTAREA',
+      type: undefined,
+      classList: { contains: (token: string) => token === 'xterm-helper-textarea' },
+    }));
+
+    expect(resolveDictationTarget()).toEqual({ kind: 'terminal', sessionId: commandSessionId });
+  });
+
+  it('a field carrying the opt-out falls through to the terminal chain', () => {
+    const commandSessionId = seedFocusedCommandTerminal();
+    stubFocus(makeInput({
+      closest: (selector: string) => (selector === `[${TEXT_TARGET_DENY_ATTRIBUTE}]` ? {} : null),
+    }));
+
+    expect(resolveDictationTarget()).toEqual({ kind: 'terminal', sessionId: commandSessionId });
+  });
+
+  it('a disabled input falls through rather than resolving to a dead field', () => {
+    const commandSessionId = seedFocusedCommandTerminal();
+    stubFocus(makeInput({ disabled: true }));
+
+    expect(resolveDictationTarget()).toEqual({ kind: 'terminal', sessionId: commandSessionId });
+  });
+
+  it('a password field REFUSES rather than falling through to a terminal', () => {
+    // The security case, and the reason `refused` is a variant rather than just
+    // "not eligible". Merely failing tier 0 would carry the chain on to the
+    // terminal tiers - so focusing a password box and dictating would type the
+    // user's spoken password straight into a live shell. Seeded with a running,
+    // focused Command Terminal precisely so a fall-through would be visible.
+    seedFocusedCommandTerminal();
+    stubFocus(makeInput({ type: 'password' }));
+
+    expect(resolveDictationTarget()).toEqual({ kind: 'refused', reason: 'password' });
+  });
+
+  it('a password field refuses with nothing else focused either', () => {
+    stubFocus(makeInput({ type: 'password' }));
+
+    expect(resolveDictationTarget()).toEqual({ kind: 'refused', reason: 'password' });
+  });
+
+  it('resolves the input even when no terminal exists at all', () => {
+    // The chip's "no target" state must not fire just because there is no
+    // running session; an input target has none by construction.
+    const field = makeInput();
+    stubFocus(field);
+
+    expect(resolveDictationTarget()).toEqual({ kind: 'input', element: field });
+  });
+
+  it('a focused CONTENTEDITABLE resolves as its own kind, not as an input', () => {
+    // The distinction is load-bearing for the sink: a rich-text host has no
+    // `.value`, so the native-setter write would silently do nothing. Resolving
+    // it as `input` would look correct right up until no text appeared.
+    const editor = makeInput({ tagName: 'DIV', type: undefined, isContentEditable: true });
+    stubFocus(editor);
+
+    expect(resolveDictationTarget()).toEqual({ kind: 'contenteditable', element: editor });
+  });
+
+  it('a focused textarea qualifies as well as an input', () => {
+    const editor = makeInput({ tagName: 'TEXTAREA', type: undefined });
+    stubFocus(editor);
+
+    expect(resolveDictationTarget()).toEqual({ kind: 'input', element: editor });
   });
 });
 

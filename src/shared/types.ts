@@ -4322,6 +4322,16 @@ export interface DevSeedLargeConversationResult {
   filePath: string;
 }
 
+/** A mouse back/forward press inside a Browser pane's guest page, forwarded from
+ *  main. See `ElectronAPI['browser']['onGuestMouseButton']`. */
+export interface GuestMouseButtonEvent {
+  webContentsId: number;
+  button: 'back' | 'forward';
+  phase: 'down' | 'up';
+  /** `Date.now()` in the MAIN process, when the button actually moved. */
+  at: number;
+}
+
 export interface ElectronAPI {
   // Dev-only (preview): present only when __KANGENTIC_DEV__ (build-excluded in prod).
   dev?: {
@@ -5083,6 +5093,20 @@ export interface ElectronAPI {
      */
     onUserKeyDuringDrive: (
       callback: (webContentsId: number, data: string) => void,
+    ) => () => void;
+    /**
+     * The user pressed or released a mouse BACK / FORWARD button while this
+     * guest held focus.
+     *
+     * Forwarded from main because a guest consumes the mouse outright - measured
+     * on a live guest, a real back press produced 31 events in the page and ZERO
+     * on the host window - so nothing in the renderer can observe it directly.
+     * `at` is stamped in MAIN: the renderer's own clock is congested by the work
+     * a press starts (mic permission, engine load), which would turn a tap into
+     * an apparent hold.
+     */
+    onGuestMouseButton: (
+      callback: (event: GuestMouseButtonEvent) => void,
     ) => () => void;
   };
 
