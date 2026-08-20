@@ -72,7 +72,7 @@ function makeFakeChild(): FakeChild {
 // Import the function under test (after mocks are registered)
 // ---------------------------------------------------------------------------
 
-import { runCliPrintSummarize } from '../../src/main/agent/shared/auto-name';
+import { runCliPrintSummarize, runCliPrintAnswer } from '../../src/main/agent/shared/auto-name';
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -397,5 +397,104 @@ describe('runCliPrintSummarize - non-zero exit code (#6)', () => {
     // Production code: .trim().slice(0, 200)
     const expectedSuffix = 'E'.repeat(200);
     expect(rejection.message).toBe(`summarize CLI exited 1: ${expectedSuffix}`);
+  });
+});
+
+/**
+ * The ANSWER shape.
+ *
+ * The same spawn with two things changed, and both of them would silently
+ * destroy an answer if they were not: the title cleanup keeps only the first
+ * non-empty line and strips fenced code, and the title output budget is 2KB
+ * where an answer over two dozen excerpts runs to several paragraphs.
+ */
+describe('runCliPrintAnswer - the answer shape', () => {
+  it('keeps every paragraph, and the fenced code inside them', async () => {
+    const child = makeFakeChild();
+    mockSpawn.mockReturnValue(child);
+
+    const resultPromise = runCliPrintAnswer({
+      cliPath: '/usr/bin/fake',
+      args: ['--print'],
+      prompt: 'question and excerpts',
+      cwd: '/tmp',
+    });
+
+    const answer = 'The sphere fit was dropped [2].\n\n'
+      + 'It circumscribes, so:\n\n```ts\nfitDefaultView(points, fov, viewport, direction)\n```\n\n'
+      + 'That keeps the air identical [1][4].';
+    child.stdout.emit('data', Buffer.from(answer));
+    child.emit('close', 0);
+
+    const result = await resultPromise;
+    // Verbatim but for the trim. The summarize shape would have returned
+    // "The sphere fit was dropped [2]" alone, with the code fence deleted.
+    expect(result).toBe(answer);
+    expect(result).toContain('```ts');
+    expect(result.split('\n\n')).toHaveLength(4);
+  });
+
+  it('accepts an answer far past the title output budget', async () => {
+    const child = makeFakeChild();
+    mockSpawn.mockReturnValue(child);
+
+    const resultPromise = runCliPrintAnswer({
+      cliPath: '/usr/bin/fake',
+      args: [],
+      prompt: 'question',
+      cwd: '/tmp',
+    });
+
+    // Eight times the 2048-byte title budget, which would have terminated the
+    // child a paragraph in.
+    const long = 'x'.repeat(16_384);
+    child.stdout.emit('data', Buffer.from(long));
+    expect(child.killed).toBe(false);
+    child.emit('close', 0);
+
+    expect(await resultPromise).toBe(long);
+  });
+
+  it('still terminates a runaway agent, just later', async () => {
+    const child = makeFakeChild();
+    mockSpawn.mockReturnValue(child);
+
+    const resultPromise = runCliPrintAnswer({
+      cliPath: '/usr/bin/fake',
+      args: [],
+      prompt: 'question',
+      cwd: '/tmp',
+    });
+
+    // Under the budget first, then over it - the shape the accumulator sees in
+    // practice, and the only one that leaves partial output to resolve with.
+    child.stdout.emit('data', Buffer.alloc(30_000, 'y'));
+    expect(child.killed).toBe(false);
+    child.stdout.emit('data', Buffer.alloc(5_000, 'y'));
+    // The budget is a bound, not a removal: an agent that narrates its way
+    // through two dozen excerpts is cut off rather than left to run.
+    expect(child.killed).toBe(true);
+    child.emit('close', 0);
+    expect(await resultPromise).toHaveLength(30_000);
+  });
+
+  it('lets a caller override the budgets it defaults', async () => {
+    const child = makeFakeChild();
+    mockSpawn.mockReturnValue(child);
+
+    const resultPromise = runCliPrintAnswer({
+      cliPath: '/usr/bin/fake',
+      args: [],
+      prompt: 'question',
+      cwd: '/tmp',
+      outputBudget: 100,
+    });
+
+    child.stdout.emit('data', Buffer.alloc(80, 'z'));
+    expect(child.killed).toBe(false);
+    child.stdout.emit('data', Buffer.alloc(80, 'z'));
+    expect(child.killed).toBe(true);
+    child.emit('close', 0);
+    expect(await resultPromise).toHaveLength(80);
   });
 });

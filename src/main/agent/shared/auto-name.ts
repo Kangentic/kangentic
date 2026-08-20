@@ -5,6 +5,19 @@ const OUTPUT_BUDGET = 2048; // bytes of stdout we accept before terminating
 const TITLE_LIMIT = 80;
 const DEFAULT_TIMEOUT_MS = 15_000;
 
+/**
+ * Budgets for the ANSWER shape, where the same spawn returns prose rather than a
+ * title.
+ *
+ * A title is one line, so 2KB of stdout and 15 seconds were generous. An answer
+ * is several paragraphs with citations, over a prompt carrying about 10,000
+ * tokens of retrieved conversation (measured on a real index), so both bounds
+ * have to move by an order of magnitude. They stay BOUNDS: an agent that decides
+ * to narrate its way through 24 excerpts is still cut off rather than left to run.
+ */
+const ANSWER_OUTPUT_BUDGET = 32_768;
+const ANSWER_TIMEOUT_MS = 120_000;
+
 const SYSTEM_PROMPT_PREFIX =
   'Summarize the following task description as a concise imperative title (4-8 words). '
   + 'Use Title Case. No quotes, no trailing period, no markdown formatting. '
@@ -152,6 +165,30 @@ export interface RunCliPrintOptions {
    * a TUI banner via env var (e.g. `NO_COLOR=1`, custom analytics opt-out) supply them here.
    */
   env?: Record<string, string>;
+  /** Bytes of stdout accepted before the child is terminated. Defaults to a
+   *  title's worth; the answer shape needs far more. */
+  outputBudget?: number;
+  /**
+   * Turns captured stdout (after `extractRaw`) into the returned value.
+   *
+   * Defaults to `cleanSummarizeOutput`, which flattens to a single line - correct
+   * for a title and destructive for anything else. The answer shape passes
+   * `cleanAnswerOutput` instead, which is the whole reason this is a parameter:
+   * one spawn, two output shapes, rather than a second copy of the spawn.
+   */
+  shape?: (candidate: string) => string;
+}
+
+/**
+ * Answer cleanup: trim, and nothing else.
+ *
+ * Deliberately not `cleanSummarizeOutput`, which strips code fences and keeps the
+ * first non-empty line. An answer about a codebase legitimately contains fenced
+ * code, several paragraphs, and citation markers, and every one of those is
+ * content rather than formatting noise.
+ */
+export function cleanAnswerOutput(raw: string): string {
+  return (raw ?? '').trim();
 }
 
 /**
@@ -170,6 +207,8 @@ export async function runCliPrintSummarize(options: RunCliPrintOptions): Promise
     promptVia = 'stdin',
     extractRaw,
     env,
+    outputBudget = OUTPUT_BUDGET,
+    shape = cleanSummarizeOutput,
   } = options;
 
   return new Promise<string>((resolve, reject) => {
@@ -212,7 +251,7 @@ export async function runCliPrintSummarize(options: RunCliPrintOptions): Promise
 
     child.stdout.on('data', (chunk: Buffer) => {
       stdoutSize += chunk.length;
-      if (stdoutSize > OUTPUT_BUDGET) {
+      if (stdoutSize > outputBudget) {
         terminated = true;
         child.kill('SIGTERM');
       } else {
@@ -239,7 +278,7 @@ export async function runCliPrintSummarize(options: RunCliPrintOptions): Promise
           return;
         }
       }
-      const cleaned = cleanSummarizeOutput(candidate);
+      const cleaned = shape(candidate);
       if (cleaned) {
         resolve(cleaned);
         return;
@@ -289,4 +328,27 @@ export function quoteForCmdShell(value: string): string {
   if (!/[\s"&<>|^()%]/.test(value) && value.length > 0) return value;
   const escaped = value.replace(/"/g, '""').replace(/%/g, '%%');
   return `"${escaped}"`;
+}
+
+/**
+ * The same one-shot spawn, shaped for an ANSWER instead of a title.
+ *
+ * A wrapper rather than three options repeated per adapter, for the reason the
+ * summarize path already has `buildSummarizePrompt` and `cleanSummarizeOutput`:
+ * the contract for a shape belongs in one place, so the second adapter to adopt
+ * it inherits the budgets rather than guessing at them.
+ *
+ * Everything else is the summarize path unchanged - no PTY, no `sessions` row,
+ * prompt on stdin or as an argument, SIGTERM then SIGKILL on the timeout - which
+ * is why Ask needs no spawn-parity allowlist entry.
+ */
+export async function runCliPrintAnswer(
+  options: Omit<RunCliPrintOptions, 'shape'>,
+): Promise<string> {
+  return runCliPrintSummarize({
+    timeoutMs: ANSWER_TIMEOUT_MS,
+    outputBudget: ANSWER_OUTPUT_BUDGET,
+    ...options,
+    shape: cleanAnswerOutput,
+  });
 }

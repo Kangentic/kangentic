@@ -59,6 +59,7 @@ async function buildAgentList(
         reportsRateLimits: adapter.reportsRateLimits,
         pastedImageReferenceTemplate: adapter.pastedImageReferenceTemplate,
         supportsSummarize: typeof adapter.summarize === 'function',
+        supportsAnswerFromContext: typeof adapter.answerFromContext === 'function',
         capabilities,
         remoteExecution: adapter.remoteExecution?.info,
         launchOptions: adapter.launchOptions,

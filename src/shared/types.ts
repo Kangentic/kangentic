@@ -123,6 +123,10 @@ export interface AgentDetectionInfo {
   pastedImageReferenceTemplate?: string;
   /** True if the adapter exposes a one-shot summarize capability (used by auto-name task title). */
   supportsSummarize?: boolean;
+  /** True if the adapter can answer a question over supplied context (used by the
+   *  Memory Graph's Ask). Read instead of the agent's name, per
+   *  `.claude/rules/agent-adapters-boundary.md`. */
+  supportsAnswerFromContext?: boolean;
   /** Discovered at detection time; absent for adapters that do not implement discovery. */
   capabilities?: AgentCapabilities;
   /** Present when the adapter can attach to a user-run server instead of spawning locally.

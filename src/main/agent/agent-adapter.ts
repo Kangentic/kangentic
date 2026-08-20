@@ -593,6 +593,28 @@ export interface AgentAdapter {
   summarize?(prompt: string, cliPath: string, cwd: string): Promise<string>;
 
   /**
+   * Optional one-shot question answering over supplied context.
+   *
+   * The same non-interactive spawn `summarize` uses, shaped for prose instead of
+   * a title: the Memory Graph's Ask retrieves conversation passages, builds a
+   * prompt around them, and hands the whole thing here. The adapter's job is the
+   * CLI's flags and output format, nothing else - the prompt, the rules and the
+   * retrieval budget all belong upstream, so an adapter can never quietly change
+   * what the answer is allowed to draw on.
+   *
+   * Implementations should:
+   * - Use the adapter's read-only / no-edit mode. The prompt is pure reading,
+   *   and an agent given a repo and a question will otherwise start editing.
+   * - Call `runCliPrintAnswer`, which carries the answer budgets and cleanup.
+   *   `runCliPrintSummarize` would flatten the answer to its first line.
+   * - Throw on failure rather than returning placeholder text.
+   *
+   * Absent means this agent cannot answer; the renderer gates on
+   * `supportsAnswerFromContext` rather than on the agent's name.
+   */
+  answerFromContext?(prompt: string, cliPath: string, cwd: string): Promise<string>;
+
+  /**
    * Optional: notify the adapter that per-cwd data must move from `oldPath` to
    * `newPath`. Agents that keep per-cwd data OUTSIDE the working directory, keyed
    * by the absolute cwd path, must migrate it here so sessions stay resumable

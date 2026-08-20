@@ -14,7 +14,7 @@ import { reportTerminatedBackgroundShells } from './background-shell-transcript'
 import { ensureWorktreeTrust, ensureMcpServerTrust } from './trust-manager';
 import { migrateClaudeProjectData } from './project-relocation';
 import { removeHooks as removeClaudeHooks } from './hook-manager';
-import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
+import { runCliPrintSummarize, runCliPrintAnswer, buildSummarizePrompt } from '../../shared/auto-name';
 import { discoverClaudeStaticCapabilities, rescanClaudeModels } from './capability-discovery';
 import { createSlashCommandVerifier } from './slash-command-verifier';
 import { configuredModelFromClaudeCommand, buildModelDisplayNames } from './model-display-name';
@@ -265,6 +265,21 @@ export class ClaudeAdapter implements AgentAdapter {
       cliPath,
       args: ['--print', '--permission-mode', 'plan'],
       prompt: buildSummarizePrompt(prompt),
+      cwd,
+    });
+  }
+
+  /**
+   * The prompt arrives fully built - question, excerpts and rules - so this only
+   * chooses the flags. `plan` mode for the same reason `summarize` uses it and a
+   * stronger one: the prompt is pure reading, and an agent handed a repository
+   * and a question about it will otherwise start editing to answer it.
+   */
+  async answerFromContext(prompt: string, cliPath: string, cwd: string): Promise<string> {
+    return runCliPrintAnswer({
+      cliPath,
+      args: ['--print', '--permission-mode', 'plan'],
+      prompt,
       cwd,
     });
   }
