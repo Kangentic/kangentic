@@ -10,6 +10,7 @@ import { browserUrlStore } from '../../browser/browser-url-store';
 import { browserPaneRegistry } from '../../browser/browser-pane-registry';
 import { setBrowserPaneOpenerHost } from '../../browser/browser-pane-opener';
 import { installLaneHandoff } from '../../browser/browser-lane-handoff';
+import { getDevPortForTask } from '../../dev-ports/dev-port-allocator';
 import { PasteSubmitError } from '../../pty/terminal-submit';
 import { agentRegistry } from '../../agent/agent-registry';
 import {
@@ -184,11 +185,17 @@ export function registerBrowserHandlers(context: IpcContext): void {
   // reopened on a page from a different project.
   ipcMain.handle(IPC.BROWSER_URL_GET, (_event, taskId: string, projectId?: string | null) => {
     const { projectPath } = resolveProjectContext(context, projectId);
-    if (!projectPath) return { projectDefault: null, taskOverride: null };
+    if (!projectPath) return { projectDefault: null, taskOverride: null, taskPortUrl: null };
     const overrides = context.configManager.loadProjectOverrides(projectPath);
     const projectDefault = overrides?.browser?.defaultUrl ?? null;
     const taskOverride = browserUrlStore.get(projectPath, taskId);
-    return { projectDefault, taskOverride };
+    // The task's own leased dev-server port, so a pane opens on THIS task's dev
+    // server rather than whatever URL the project default happens to hold. That
+    // default is one value shared by every task, so with several tasks running
+    // at once it is right for at most one of them.
+    const devPort = getDevPortForTask(taskId);
+    const taskPortUrl = devPort === null ? null : `http://localhost:${devPort}`;
+    return { projectDefault, taskOverride, taskPortUrl };
   });
 
   ipcMain.handle(IPC.BROWSER_URL_SET_TASK, (_event, taskId: string, url: string, projectId?: string | null) => {

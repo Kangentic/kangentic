@@ -16,7 +16,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 //   task's URL - and once tasks lease their own dev-server ports, inheriting
 //   another task's port is a cross-task collision rather than a convenience.
 
-export type UrlSource = 'task' | 'project' | 'none';
+export type UrlSource = 'task' | 'task-port' | 'project' | 'none';
 
 export interface UseBrowserUrlResult {
   loading: boolean;
@@ -41,6 +41,7 @@ export interface UseBrowserUrlResult {
 export function useBrowserUrl(taskId: string, projectId: string | null, refreshToken = 0): UseBrowserUrlResult {
   const [projectDefault, setProjectDefault] = useState<string | null>(null);
   const [taskOverride, setTaskOverride] = useState<string | null>(null);
+  const [taskPortUrl, setTaskPortUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   // True once a URL has resolved at least once. A REFETCH must not drop back to
@@ -62,10 +63,16 @@ export function useBrowserUrl(taskId: string, projectId: string | null, refreshT
         // A refetch that finds nothing must not blank a pane that is already
         // showing a page: same reasoning as the loading guard above, since a
         // null effective URL unmounts the guest just as surely.
-        if (hasResolvedRef.current && result.projectDefault === null && result.taskOverride === null) return;
+        if (
+          hasResolvedRef.current
+          && result.projectDefault === null
+          && result.taskOverride === null
+          && result.taskPortUrl === null
+        ) return;
         hasResolvedRef.current = true;
         setProjectDefault(result.projectDefault);
         setTaskOverride(result.taskOverride);
+        setTaskPortUrl(result.taskPortUrl);
       })
       .catch(() => { /* leave defaults; UI shows empty state */ })
       .finally(() => { if (!cancelled) setLoading(false); });
@@ -124,10 +131,20 @@ export function useBrowserUrl(taskId: string, projectId: string | null, refreshT
     // side effect of whichever task happened to navigate first.
   }, [saveForTask]);
 
-  const effectiveUrl = taskOverride ?? projectDefault ?? null;
+  // taskOverride > taskPortUrl > projectDefault.
+  //
+  // The task's own leased dev-server port outranks the project default because
+  // that default is ONE value shared by every task: with several tasks running
+  // at once it is right for at most one of them, and pointing a pane at another
+  // task's dev server is the cross-task collision the port lease exists to
+  // remove. An explicit per-task URL still wins over both - the user or agent
+  // said exactly where to look.
+  const effectiveUrl = taskOverride ?? taskPortUrl ?? projectDefault ?? null;
   const source: UrlSource = taskOverride
     ? 'task'
-    : projectDefault
+    : taskPortUrl
+      ? 'task-port'
+      : projectDefault
       ? 'project'
       : 'none';
 
