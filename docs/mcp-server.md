@@ -957,6 +957,13 @@ Every **driving** tool below takes the same optional target pair. They are liste
 
 Omitting both resolves your own pane, then the single pane open in the project. Alongside the per-tool errors listed below, any driving tool can return the shared refusals raised while resolving and attaching to a pane: `no-pane-open`, `multiple-panes` (more than one is open and neither argument was given; the error carries the candidates), `foreign-project`, `pane-destroyed`, `pane-not-rendering`, `cdp-attach-failed`, `pane-busy`, and `driver-error`.
 
+`kangentic_browser_screenshot` additionally returns `dev-server-error` when the dev server is showing
+a build-error overlay. Without it the tool returns a faithful picture of a full-screen red overlay,
+which costs a turn to interpret - and when several agents share one dev server, the one that sees the
+overlay is usually not the one who broke the build, so the error names that possibility. Detection is
+by custom element (`vite-error-overlay`, `nextjs-portal`), so a dev server that renders neither
+behaves exactly as before: no overlay recognized means "nothing detected", never "the page is fine".
+
 Drives against one pane are SERIALIZED. Only one runs at a time per guest, so two agents sharing a
 pane get slow-but-correct behavior instead of interleaved clicks, keystrokes and navigations. A
 drive that cannot get its turn within 30s returns `pane-busy` rather than hanging. Serialization

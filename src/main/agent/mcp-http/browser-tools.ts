@@ -14,6 +14,7 @@ import {
 } from '../../browser/browser-pane-registry';
 import { openPaneForCallerTask, closePanes } from '../../browser/browser-pane-opener';
 import type { ResolvedBrowserAutomationConfig } from '../../browser/browser-automation-config';
+import { detectDevServerError, describeDevServerError, type DevServerError } from '../../browser/dev-server-error';
 import {
   clickAtCenterOfSelector,
   dispatchMouseEvent,
@@ -309,17 +310,35 @@ export function registerBrowserTools(
       annotations: READ_ONLY_ANNOTATIONS,
     },
     async ({ sessionId, taskId, fullPage, format, quality, maxBytes }) => {
-      const result = await drive('observe', { sessionId, taskId }, (webContents) =>
-        captureScreenshotWithBudget(webContents, {
-          format: format ?? 'jpeg',
-          quality: quality ?? (format === 'png' ? undefined : 80),
-          fullPage: fullPage === true,
-          maxBytes,
-        }),
-      );
+      // Probe for a build-error overlay in the SAME drive as the capture, so the
+      // two cannot disagree about what was on screen. Returning a picture of a
+      // full-screen error overlay is technically correct and practically
+      // useless: the agent spends a turn identifying the red rectangle, and
+      // when several agents share one dev server the one that sees the overlay
+      // usually is not the one who broke the build.
+      type ScreenshotOutcome =
+        | { blocked: DevServerError }
+        | { blocked: null; shot: Awaited<ReturnType<typeof captureScreenshotWithBudget>> };
+
+      const result = await drive<ScreenshotOutcome>('observe', { sessionId, taskId }, async (webContents) => {
+        const devServerError = await detectDevServerError(webContents);
+        if (devServerError) return { blocked: devServerError };
+        return {
+          blocked: null,
+          shot: await captureScreenshotWithBudget(webContents, {
+            format: format ?? 'jpeg',
+            quality: quality ?? (format === 'png' ? undefined : 80),
+            fullPage: fullPage === true,
+            maxBytes,
+          }),
+        };
+      });
       if (!result.ok) return errorToolResult(result.error);
-      if (!result.data) return errorToolResult({ kind: 'screenshot-failed', detail: 'Page.captureScreenshot returned no data.' });
-      return screenshotToolResult({ ok: true, data: result.data });
+      if (result.data.blocked) {
+        return errorToolResult({ kind: 'dev-server-error', detail: describeDevServerError(result.data.blocked) });
+      }
+      if (!result.data.shot) return errorToolResult({ kind: 'screenshot-failed', detail: 'Page.captureScreenshot returned no data.' });
+      return screenshotToolResult({ ok: true, data: result.data.shot });
     },
   );
 
