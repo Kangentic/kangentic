@@ -297,6 +297,32 @@ describe('handleSearchTasks - #<number> ticket search', () => {
     // Backlog IS scanned for a normal text query (no ticket short-circuit).
     expect(mockBacklogRepoList).toHaveBeenCalled();
   });
+
+  it('scope "backlog" + a ticket query returns nothing from either surface', () => {
+    // includeBoard is false (scope isn't 'board'/'both'), and includeBacklog
+    // is also false because a ticket query forces ticketDigits !== null
+    // regardless of scope. So an explicit backlog-scoped ticket query returns
+    // an empty result from BOTH surfaces - it does not fall back to a text
+    // search of the backlog, and it does not widen back to the board despite
+    // the ticket digits matching display_id 1. This combination (scope
+    // narrowing one gate, ticketDigits narrowing the other) is not exercised
+    // by the "scope" tests above (text queries only) or the ticket tests
+    // above (default scope only).
+    const result = handleSearchTasks({ query: '#1', scope: 'backlog' }, makeContext());
+
+    expect(result.success).toBe(true);
+    const data = result.data as {
+      tasks: Array<{ id: string }>;
+      backlog: Array<{ id: string }>;
+      scope: string;
+    };
+    expect(data.scope).toBe('backlog');
+    expect(data.tasks).toEqual([]);
+    expect(data.backlog).toEqual([]);
+    expect(mockBacklogRepoList).not.toHaveBeenCalled();
+    expect(mockTaskRepoList).not.toHaveBeenCalled();
+    expect(mockTaskRepoListArchived).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------

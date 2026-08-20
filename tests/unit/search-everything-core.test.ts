@@ -633,5 +633,36 @@ describe('runSearchEverything', () => {
         expect(taskHits[0].matchEnd).toBeGreaterThan(taskHits[0].matchStart);
       }
     });
+
+    it('stops collecting ticket hits once the per-kind budget is exhausted', async () => {
+      // Mirrors "stops collecting task hits..." above, but for the ticket
+      // lookup path: pushTaskHitsByDisplayId has its own budget-check loop
+      // (separate from pushTaskHits), so the text-search budget test does not
+      // exercise it.
+      const { PER_KIND_CAP } = await import('../../src/main/search/search-core');
+      const taskCount = PER_KIND_CAP.task + 5;
+      // display_ids 1000..1000+taskCount-1 are all in the 1000s range, so
+      // every one starts with "1" and matches the "#1" query.
+      const tasks = Array.from({ length: taskCount }, (_, index) => ({
+        id: `ticket-budget-${index}`,
+        display_id: 1000 + index,
+        title: `ticket budget task ${index}`,
+        description: '',
+        archived_at: null,
+      }));
+      const project = makeProject({ path: tempProjectRoot });
+      const fixture: FakeProjectFixture = { project, tasks, backlog: [], sessions: [] };
+      const db = makeMockDb(fixture);
+
+      const hits = await runSearchEverything({
+        query: '#1',
+        projects: [project],
+        includeProjectHits: false,
+        getDb: () => db,
+      });
+
+      const taskHits = hits.filter((hit) => hit.kind === 'task');
+      expect(taskHits.length).toBe(PER_KIND_CAP.task);
+    });
   });
 });
