@@ -68,6 +68,15 @@ interface MemoryGraphState {
    */
   answer: MemoryGraphAnswerResult | null;
   answering: boolean;
+  /**
+   * The question the current answer belongs to.
+   *
+   * Kept so a NEW search can drop it. An answer is about a question, and one
+   * left standing over a different search claims to be about that one instead -
+   * which is exactly what it looked like: an answer about the most expensive
+   * task sitting on top of a search for "terminal".
+   */
+  answeredQuestion: string | null;
   /** Asks the CURRENT query text. Never fires on its own. */
   askQuestion: (question: string) => Promise<void>;
   clearAnswer: () => void;
@@ -120,7 +129,12 @@ function createMemoryGraphStore() {
       }
       queryOrdinal += 1;
       const ordinal = queryOrdinal;
-      set({ querying: true });
+      // A different question drops the answer to the previous one. Without this
+      // the answer survives every later search and reads as the answer to
+      // whatever is on screen now. Only on a CHANGE, so a re-run of the same
+      // text (a refocus, a re-render) does not throw away a paid-for answer.
+      const stale = get().answeredQuestion !== null && get().answeredQuestion !== trimmed;
+      set({ querying: true, ...(stale ? { answer: null, answeredQuestion: null } : {}) });
       try {
         const result = await window.electronAPI.memory.queryGraph(trimmed, get().projectId);
         // Drop a slow reply that a newer keystroke already superseded.
@@ -135,30 +149,32 @@ function createMemoryGraphStore() {
       queryOrdinal += 1;
       // The answer goes with it. An answer is about a question, and leaving one
       // standing over a cleared search would attach it to whatever came next.
-      set({ query: null, querying: false, answer: null, answering: false });
+      set({ query: null, querying: false, answer: null, answering: false, answeredQuestion: null });
     },
 
     answer: null,
     answering: false,
+    answeredQuestion: null,
 
     askQuestion: async (question) => {
       const trimmed = question.trim();
       if (!trimmed || get().answering) return;
       // Cleared first, so a previous answer cannot sit under a spinner looking
       // like the answer to the question now being asked.
-      set({ answering: true, answer: null });
+      set({ answering: true, answer: null, answeredQuestion: null });
       try {
         const result = await window.electronAPI.memory.answerFromGraph(trimmed, get().projectId);
-        set({ answer: result, answering: false });
+        set({ answer: result, answering: false, answeredQuestion: trimmed });
       } catch (error) {
         set({
           answer: { ok: false, reason: error instanceof Error ? error.message : String(error) },
           answering: false,
+          answeredQuestion: trimmed,
         });
       }
     },
 
-    clearAnswer: () => set({ answer: null, answering: false }),
+    clearAnswer: () => set({ answer: null, answering: false, answeredQuestion: null }),
 
     open: (projectId) => {
       if (get().graphOpen) return;

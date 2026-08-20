@@ -8,7 +8,7 @@
  * which is the thing this surface exists not to ask of anyone.
  */
 
-import { Sparkles, Loader2, X, AlertTriangle } from 'lucide-react';
+import { Sparkles, X, AlertTriangle } from 'lucide-react';
 import type { MemoryAnswerCitation, MemoryGraphAnswerResult } from '../../../shared/types';
 
 /**
@@ -63,30 +63,16 @@ function CitationMark({
 
 export function MemoryAnswer({
   answer,
-  answering,
-  agentLabel,
   onSelectCitation,
   onDismiss,
 }: {
   answer: MemoryGraphAnswerResult | null;
-  answering: boolean;
-  /** Named before the call, so the cost is attributable before it is paid. */
-  agentLabel: string;
   onSelectCitation: (citation: MemoryAnswerCitation) => void;
   onDismiss: () => void;
 }) {
-  if (answering) {
-    return (
-      <div
-        className="flex items-center gap-2 border-b border-edge px-3 py-3 text-sm text-fg-muted"
-        data-testid="memory-answer-pending"
-      >
-        <Loader2 size={13} className="animate-spin" aria-hidden />
-        <span>Asking {agentLabel} to read {' '}the matches</span>
-      </div>
-    );
-  }
-
+  // The pending state lives on the Ask button, beside the question, because
+  // that is where the click happened. A spinner here as well would be a second
+  // report of one event.
   if (!answer) return null;
 
   if (!answer.ok) {

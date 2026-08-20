@@ -656,7 +656,7 @@ test.describe('memory graph', () => {
       // a hidden mode.
       await expect(ask).toBeVisible();
       await expect(ask).toContainText('Claude Code');
-      await expect(ask).toContainText('Runs one agent call');
+      await expect(ask).toContainText('One agent call');
 
       // And it has NOT run. Search is free and automatic; this is not.
       expect(await page.evaluate(() => (window as unknown as {
@@ -711,6 +711,77 @@ test.describe('memory graph', () => {
       await expect(citations).toHaveCount(2);
       await citations.nth(1).click();
       await expect(page.locator('[data-testid="memory-graph-detail"]')).toContainText('Conversation 7');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('drops the answer when the question changes', async () => {
+    // Reported from the running app: an answer about the most expensive task was
+    // still sitting over a later search for "terminal". An answer is ABOUT a
+    // question, and one left standing over a different search claims to be about
+    // that one instead.
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}${askQuery}
+      window.__mockPreConfigure(function () {
+        return {
+          memoryGraphAnswerResult: {
+            ok: true,
+            agentName: 'Claude Code',
+            answer: 'It circumscribes [1].',
+            citations: [
+              { index: 1, docKey: 'conversation::doc-3', sessionId: 's-3', taskId: 't-3', title: 'Frame the map', ts: null }
+            ],
+            droppedConversations: 0,
+          },
+        };
+      });`;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await openMemoryGraph(page);
+      const search = page.locator('[data-testid="memory-graph-search-input"]');
+      await search.fill('sphere fit');
+      await page.locator('[data-testid="memory-graph-ask"]').click();
+      await expect(page.locator('[data-testid="memory-answer"]')).toBeVisible();
+
+      await search.fill('something else entirely');
+      await expect(page.locator('[data-testid="memory-answer"]')).toHaveCount(0);
+      // And Ask is offered again, for the new question.
+      await expect(page.locator('[data-testid="memory-graph-ask"]')).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('keeps a paid-for answer when the same question is re-run', async () => {
+    // The other half of the rule. Search runs on every keystroke and on
+    // re-renders, so clearing on any `runQuery` rather than on a CHANGE would
+    // throw away an answer that cost a real agent call.
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}${askQuery}
+      window.__mockPreConfigure(function () {
+        return {
+          memoryGraphAnswerResult: {
+            ok: true,
+            agentName: 'Claude Code',
+            answer: 'It circumscribes [1].',
+            citations: [
+              { index: 1, docKey: 'conversation::doc-3', sessionId: 's-3', taskId: 't-3', title: 'Frame the map', ts: null }
+            ],
+            droppedConversations: 0,
+          },
+        };
+      });`;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await openMemoryGraph(page);
+      const search = page.locator('[data-testid="memory-graph-search-input"]');
+      await search.fill('sphere fit');
+      await page.locator('[data-testid="memory-graph-ask"]').click();
+      await expect(page.locator('[data-testid="memory-answer"]')).toBeVisible();
+
+      // Re-typed to exactly the same thing: same question, same answer.
+      await search.fill('sphere fi');
+      await search.fill('sphere fit');
+      await expect(page.locator('[data-testid="memory-answer"]')).toBeVisible();
     } finally {
       await browser.close();
     }

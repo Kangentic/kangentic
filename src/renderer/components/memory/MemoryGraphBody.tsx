@@ -549,6 +549,37 @@ export function MemoryGraphBody() {
             </>
           ) : null}
         </div>
+        {/* Ask lives WITH the question, not in the results rail.
+            The box is where a question gets typed, so the offer to answer it
+            belongs directly under it; the rail is where results are read and
+            refined. It was in the rail first, and that put the input for one act
+            inside the output of another.
+
+            Still a SECOND, explicit act: typing has already searched, free and
+            instantly, and this names the agent it will run and that it costs a
+            call. Offered only once the search HAS matches, since there is
+            nothing to read otherwise. */}
+        {canAsk && query && visibleHits.length > 0 && !answer ? (
+          <button
+            type="button"
+            onClick={() => void askQuestion(query.query)}
+            disabled={answering}
+            data-testid="memory-graph-ask"
+            className="mt-1.5 flex w-full items-center gap-2 rounded-md border border-edge bg-surface-raised/85 px-2.5 py-1.5 text-left shadow-xl backdrop-blur transition-colors hover:bg-surface-hover disabled:cursor-default disabled:hover:bg-surface-raised/85 cursor-pointer"
+          >
+            {answering
+              ? <Loader2 size={12} className="flex-shrink-0 animate-spin text-fg-muted" aria-hidden />
+              : <Sparkles size={12} className="flex-shrink-0 text-accent-fg" aria-hidden />}
+            <span className="min-w-0 flex-1 truncate text-[11px] text-fg">
+              {answering
+                ? `Asking ${askAgentLabel} to read the matches`
+                : `Ask ${askAgentLabel} to answer this`}
+            </span>
+            {!answering ? (
+              <span className="flex-shrink-0 text-[11px] text-fg-muted">One agent call</span>
+            ) : null}
+          </button>
+        ) : null}
         {query && !query.semantic ? (
           <p className="mt-1.5 rounded bg-surface-raised/80 px-2 py-1 text-[11px] text-fg-muted backdrop-blur">
             Searched text only. Turn on semantic search for meaning-based matches.
@@ -638,37 +669,12 @@ export function MemoryGraphBody() {
             className="h-full overflow-y-auto rounded-lg border border-edge bg-surface-raised/85 shadow-xl backdrop-blur-md"
             data-testid="memory-graph-results"
           >
-            {/* Ask sits ABOVE the hits, and only once there are hits to read.
-                Two controls, not one box with a hidden mode: typing has already
-                searched, free and instantly, and this is a second act that
-                names the agent it will run and that it costs a call.
-
-                It is the same query text rather than a second input, because
-                asking the user to retype the question they just typed is the
-                surest way to make sure they never use this. */}
-            {canAsk && visibleHits.length > 0 && !answer && !answering ? (
-              <button
-                type="button"
-                onClick={() => void askQuestion(query.query)}
-                data-testid="memory-graph-ask"
-                className="flex w-full items-start gap-2 border-b border-edge px-3 py-2.5 text-left hover:bg-surface-hover cursor-pointer"
-              >
-                <Sparkles size={13} className="mt-0.5 flex-shrink-0 text-accent-fg" aria-hidden />
-                <span className="min-w-0 flex-1">
-                  <span className="block text-xs font-medium text-fg">
-                    Ask {askAgentLabel} to answer this
-                  </span>
-                  <span className="mt-0.5 block text-[11px] text-fg-muted">
-                    Reads the matches below and answers with citations. Runs one agent call.
-                  </span>
-                </span>
-              </button>
-            ) : null}
-
+            {/* The ANSWER stays here even though the button moved: the box is
+                the input surface and the rail is the output one, so an answer
+                belongs with the results it was drawn from rather than floating
+                over the map. */}
             <MemoryAnswer
               answer={answer}
-              answering={answering}
-              agentLabel={askAgentLabel}
               onDismiss={clearAnswer}
               onSelectCitation={(citation) => {
                 const index = indexByDocKey.get(citation.docKey);
