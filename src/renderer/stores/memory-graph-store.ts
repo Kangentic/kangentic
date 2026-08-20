@@ -17,7 +17,11 @@
  */
 
 import { create } from 'zustand';
-import type { MemoryGraphQueryResult, MemoryGraphSnapshot } from '../../shared/types';
+import type {
+  MemoryGraphAnswerResult,
+  MemoryGraphQueryResult,
+  MemoryGraphSnapshot,
+} from '../../shared/types';
 
 interface MemoryGraphState {
   graphOpen: boolean;
@@ -52,6 +56,21 @@ interface MemoryGraphState {
   querying: boolean;
   runQuery: (query: string) => Promise<void>;
   clearQuery: () => void;
+
+  /**
+   * The agent's answer to the current question, its citations, or why there is
+   * none.
+   *
+   * Kept separate from `query` because they are separate acts: a search runs on
+   * every keystroke and is free, an answer runs once and costs a CLI call. A
+   * single field would have made a stale answer look like it belonged to the
+   * query on screen.
+   */
+  answer: MemoryGraphAnswerResult | null;
+  answering: boolean;
+  /** Asks the CURRENT query text. Never fires on its own. */
+  askQuestion: (question: string) => Promise<void>;
+  clearAnswer: () => void;
 
   loadSnapshot: (projectId?: string | null) => Promise<void>;
   /** Point the surface at a different project without a rebuild: the cached
@@ -114,8 +133,32 @@ function createMemoryGraphStore() {
 
     clearQuery: () => {
       queryOrdinal += 1;
-      set({ query: null, querying: false });
+      // The answer goes with it. An answer is about a question, and leaving one
+      // standing over a cleared search would attach it to whatever came next.
+      set({ query: null, querying: false, answer: null, answering: false });
     },
+
+    answer: null,
+    answering: false,
+
+    askQuestion: async (question) => {
+      const trimmed = question.trim();
+      if (!trimmed || get().answering) return;
+      // Cleared first, so a previous answer cannot sit under a spinner looking
+      // like the answer to the question now being asked.
+      set({ answering: true, answer: null });
+      try {
+        const result = await window.electronAPI.memory.answerFromGraph(trimmed, get().projectId);
+        set({ answer: result, answering: false });
+      } catch (error) {
+        set({
+          answer: { ok: false, reason: error instanceof Error ? error.message : String(error) },
+          answering: false,
+        });
+      }
+    },
+
+    clearAnswer: () => set({ answer: null, answering: false }),
 
     open: (projectId) => {
       if (get().graphOpen) return;

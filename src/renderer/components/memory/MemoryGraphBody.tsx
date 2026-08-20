@@ -23,6 +23,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Compass, Loader2, Network, Search, Sparkles, X } from 'lucide-react';
 import { useMemoryGraphStore } from '../../stores/memory-graph-store';
+import { useConfigStore } from '../../stores/config-store';
+import { useProjectStore } from '../../stores/project-store';
+import { MemoryAnswer } from './MemoryAnswer';
 import { MemoryCoverageStrip } from './MemoryCoverageStrip';
 import { MemoryGraphCanvas, type MemoryGraphColorMode } from './MemoryGraphCanvas';
 import {
@@ -70,6 +73,32 @@ export function MemoryGraphBody() {
   const querying = useMemoryGraphStore((state) => state.querying);
   const runQuery = useMemoryGraphStore((state) => state.runQuery);
   const clearQuery = useMemoryGraphStore((state) => state.clearQuery);
+  const answer = useMemoryGraphStore((state) => state.answer);
+  const answering = useMemoryGraphStore((state) => state.answering);
+  const askQuestion = useMemoryGraphStore((state) => state.askQuestion);
+  const clearAnswer = useMemoryGraphStore((state) => state.clearAnswer);
+
+  /**
+   * Whether the project's agent can answer at all, read from the CAPABILITY and
+   * never from the agent's name (`.claude/rules/agent-adapters-boundary.md`).
+   * An agent with no `answerFromContext` gets no Ask affordance rather than one
+   * that fails when pressed.
+   *
+   * In a pop-out `currentProject` is never populated, so this falls back to the
+   * only adapter that declares the capability. That is not a guess: it is what
+   * the handler itself resolves to when a project names no default agent.
+   */
+  const agentList = useConfigStore((state) => state.agentList);
+  const projectAgent = useProjectStore((state) => state.currentProject?.default_agent ?? null);
+  const askAdapter = useMemo(() => {
+    const named = projectAgent
+      ? agentList.find((entry) => entry.name === projectAgent)
+      : undefined;
+    const resolved = named ?? agentList.find((entry) => entry.supportsAnswerFromContext);
+    return resolved?.found && resolved.supportsAnswerFromContext ? resolved : null;
+  }, [agentList, projectAgent]);
+  const canAsk = askAdapter !== null;
+  const askAgentLabel = askAdapter?.displayName ?? 'the agent';
 
   const [queryText, setQueryText] = useState('');
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
@@ -609,6 +638,44 @@ export function MemoryGraphBody() {
             className="h-full overflow-y-auto rounded-lg border border-edge bg-surface-raised/85 shadow-xl backdrop-blur-md"
             data-testid="memory-graph-results"
           >
+            {/* Ask sits ABOVE the hits, and only once there are hits to read.
+                Two controls, not one box with a hidden mode: typing has already
+                searched, free and instantly, and this is a second act that
+                names the agent it will run and that it costs a call.
+
+                It is the same query text rather than a second input, because
+                asking the user to retype the question they just typed is the
+                surest way to make sure they never use this. */}
+            {canAsk && visibleHits.length > 0 && !answer && !answering ? (
+              <button
+                type="button"
+                onClick={() => void askQuestion(query.query)}
+                data-testid="memory-graph-ask"
+                className="flex w-full items-start gap-2 border-b border-edge px-3 py-2.5 text-left hover:bg-surface-hover cursor-pointer"
+              >
+                <Sparkles size={13} className="mt-0.5 flex-shrink-0 text-accent-fg" aria-hidden />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-xs font-medium text-fg">
+                    Ask {askAgentLabel} to answer this
+                  </span>
+                  <span className="mt-0.5 block text-[11px] text-fg-muted">
+                    Reads the matches below and answers with citations. Runs one agent call.
+                  </span>
+                </span>
+              </button>
+            ) : null}
+
+            <MemoryAnswer
+              answer={answer}
+              answering={answering}
+              agentLabel={askAgentLabel}
+              onDismiss={clearAnswer}
+              onSelectCitation={(citation) => {
+                const index = indexByDocKey.get(citation.docKey);
+                if (index !== undefined) selectNode(index);
+              }}
+            />
+
             {visibleHits.length === 0 ? (
               <p className="p-4 text-sm text-fg-muted">
                 Nothing in this project&apos;s indexed conversations matched.

@@ -615,6 +615,172 @@ test.describe('memory graph', () => {
     }
   });
 
+  /**
+   * Ask, which is the half search cannot do.
+   *
+   * Search answers "which conversations"; asked a real question it correctly
+   * returns everything about the subject and leaves the reading to you. These
+   * tests are about the three things that make Ask trustworthy rather than
+   * merely present: it is a SECOND, explicit act with a stated cost, its
+   * citations go back to the map, and it is not offered at all when the agent
+   * cannot do it.
+   */
+  const askQuery = `
+      window.__mockPreConfigure(function () {
+        return {
+          memoryGraphQueryResult: {
+            query: 'sphere fit',
+            semantic: true,
+            hits: [
+              { docKey: 'conversation::doc-3', sessionId: 's-3', taskId: 't-3', taskTitle: 'Frame the map', agentName: 'claude', snippet: 'the sphere circumscribes', score: 0.9, matchKind: 'hybrid', matchCount: 4, turnTs: null },
+              { docKey: 'conversation::doc-7', sessionId: 's-7', taskId: 't-7', taskTitle: 'Reset view', agentName: 'claude', snippet: 'framing regressed', score: 0.7, matchKind: 'semantic', matchCount: 1, turnTs: null }
+            ],
+          },
+        };
+      });`;
+
+  test('offers Ask as a second act, and says what it costs before it runs', async () => {
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}${askQuery}`;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await openMemoryGraph(page);
+      const ask = page.locator('[data-testid="memory-graph-ask"]');
+      // Nothing to read yet, so nothing to offer.
+      await expect(ask).toHaveCount(0);
+
+      await page.locator('[data-testid="memory-graph-search-input"]').fill('sphere fit');
+      await expect(page.locator('[data-testid="memory-graph-result-card"]')).toHaveCount(2);
+
+      // Appears only once there are matches, names the agent it will run, and
+      // states the cost - the two controls are separate acts, not one box with
+      // a hidden mode.
+      await expect(ask).toBeVisible();
+      await expect(ask).toContainText('Claude Code');
+      await expect(ask).toContainText('Runs one agent call');
+
+      // And it has NOT run. Search is free and automatic; this is not.
+      expect(await page.evaluate(() => (window as unknown as {
+        __mockGraphAnswerCalls?: unknown[];
+      }).__mockGraphAnswerCalls ?? [])).toHaveLength(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('answers with citations that select the conversation on the map', async () => {
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}${askQuery}
+      window.__mockPreConfigure(function () {
+        return {
+          memoryGraphAnswerResult: {
+            ok: true,
+            agentName: 'Claude Code',
+            answer: 'A sphere circumscribes [1], so it framed nothing like the default view [2].',
+            citations: [
+              { index: 1, docKey: 'conversation::doc-3', sessionId: 's-3', taskId: 't-3', title: 'Frame the map', ts: 1760000000000 },
+              { index: 2, docKey: 'conversation::doc-7', sessionId: 's-7', taskId: 't-7', title: 'Reset view', ts: 1760000000000 }
+            ],
+            droppedConversations: 0,
+          },
+        };
+      });`;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await openMemoryGraph(page);
+      await page.locator('[data-testid="memory-graph-search-input"]').fill('sphere fit');
+      await expect(page.locator('[data-testid="memory-graph-result-card"]')).toHaveCount(2);
+      await page.locator('[data-testid="memory-graph-ask"]').click();
+
+      const answered = page.locator('[data-testid="memory-answer"]');
+      await expect(answered).toBeVisible();
+      await expect(answered).toContainText('A sphere circumscribes');
+      await expect(answered).toContainText('Answered by Claude Code');
+
+      // It asked the QUERY text rather than making the user retype it, and it
+      // named the project the map is pointed at rather than letting main guess
+      // (`.claude/rules/project-scoped-ipc.md`).
+      expect(await page.evaluate(() => (window as unknown as {
+        __mockGraphAnswerCalls?: Array<{ question: string }>;
+      }).__mockGraphAnswerCalls ?? [])).toEqual([{ question: 'sphere fit', projectId: 'project-1' }]);
+
+      // The cards stay. This is one more reading of them, not a replacement, so
+      // a reader who distrusts the answer can drop straight to the source.
+      await expect(page.locator('[data-testid="memory-graph-result-card"]')).toHaveCount(2);
+
+      // And every claim is traceable: a citation selects its node on the map.
+      const citations = page.locator('[data-testid="memory-answer-citation"]');
+      await expect(citations).toHaveCount(2);
+      await citations.nth(1).click();
+      await expect(page.locator('[data-testid="memory-graph-detail"]')).toContainText('Conversation 7');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('says how many matches did not fit, rather than implying it read them all', async () => {
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}${askQuery}
+      window.__mockPreConfigure(function () {
+        return {
+          memoryGraphAnswerResult: {
+            ok: true,
+            agentName: 'Claude Code',
+            answer: 'It circumscribes [1].',
+            citations: [
+              { index: 1, docKey: 'conversation::doc-3', sessionId: 's-3', taskId: 't-3', title: 'Frame the map', ts: null }
+            ],
+            droppedConversations: 36,
+          },
+        };
+      });`;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await openMemoryGraph(page);
+      await page.locator('[data-testid="memory-graph-search-input"]').fill('sphere fit');
+      await page.locator('[data-testid="memory-graph-ask"]').click();
+      // An answer drawn from 1 of 37 matches is a different claim from one drawn
+      // from all of them, and only the reader can judge whether that matters.
+      await expect(page.locator('[data-testid="memory-answer-dropped"]')).toContainText('36 more matched');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('shows why an answer failed, verbatim', async () => {
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}${askQuery}
+      window.__mockPreConfigure(function () {
+        return {
+          memoryGraphAnswerResult: { ok: false, reason: 'Claude Code CLI not found' },
+        };
+      });`;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await openMemoryGraph(page);
+      await page.locator('[data-testid="memory-graph-search-input"]').fill('sphere fit');
+      await page.locator('[data-testid="memory-graph-ask"]').click();
+      // Every reason is actionable - no CLI, the agent cannot answer, a timeout -
+      // so a generic failure line would take that away.
+      await expect(page.locator('[data-testid="memory-answer-error"]')).toContainText('CLI not found');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('does not offer Ask when the agent cannot answer', async () => {
+    // The gate is the CAPABILITY, never the agent's name
+    // (`.claude/rules/agent-adapters-boundary.md`). An agent without it gets no
+    // affordance rather than one that fails when pressed.
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}${askQuery}
+      window.__mockAgentListOverrides = { claude: { supportsAnswerFromContext: false } };`;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await openMemoryGraph(page);
+      await page.locator('[data-testid="memory-graph-search-input"]').fill('sphere fit');
+      await expect(page.locator('[data-testid="memory-graph-result-card"]')).toHaveCount(2);
+      await expect(page.locator('[data-testid="memory-graph-ask"]')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('offers region, time and outcome filters', async () => {
     // The same dimensions the colour modes encode. Before this you could colour
     // by Outcome and SEE that some work was abandoned, but could not scope the

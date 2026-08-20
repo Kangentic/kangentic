@@ -460,6 +460,7 @@ See the Memory settings tab.
 | `memory:graphRefresh` | invoke | Ask for a background refresh of one project's projection. Returns immediately; completion arrives via `memory:graphChanged`. |
 | `memory:graphChanged` | on | Push: a projection pass finished for a project. Declared in the `memory` pop-out surface's `channels`, or a detached window never updates. |
 | `memory:graphQuery` | invoke | Run the existing fusion search and map its hits onto graph nodes. Returns `MemoryGraphQueryResult`. |
+| `memory:graphAnswer` | invoke | Ask: the SAME retrieval, budgeted into one prompt and read by the project's agent. Spawns the agent's non-interactive CLI (no PTY, no `sessions` row), so it costs a real call and is never automatic. Returns `MemoryGraphAnswerResult`, whose citations carry a `docKey` each so the surface can select the node behind a claim. |
 | `memory:relatedToTask` | invoke | Proactive recall: earlier conversations semantically near a task, using its title + description as the query and excluding its own conversations. Powers the "N earlier conversations about this" line in task detail. Returns `MemoryGraphQueryHit[]`. |
 
 ### Diagnostics (2 channels)

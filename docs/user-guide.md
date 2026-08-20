@@ -833,6 +833,23 @@ transcripts - running locally, instantly, and never leaving your machine. If sem
 it still works, matching text only, and tells you so. Clear the search to bring the whole map back;
 the camera stays where you left it, and **Reset view** is the way home.
 
+**Asking.** Search answers "which conversations". For an actual question - "why did we drop the
+sphere fit?", "what did we try for the resize race?" - the results are correct and still leave you
+the reading. **Ask** appears above them once a search has matches: it hands the best two dozen
+matching passages to your project's agent along with the question, and shows the answer above the
+cards with a number on every claim. Clicking a number selects that conversation on the map, so
+nothing has to be taken on faith.
+
+Three things worth knowing. It is a **second, explicit act** - typing searches, free and instantly;
+Ask costs one agent call, and the button names the agent before you press it. The **cards stay**, so
+you can drop to the source whenever you distrust the answer. And when more conversations matched
+than fit in one question, it **says how many it left out** rather than implying it read everything.
+
+Ask is offered only when your project's agent can do it, and answers only from the excerpts it was
+given. Asked something the index does not cover, it says so rather than guessing - and it cannot
+answer questions about the board itself ("what is the largest task?"), because those are facts about
+tasks rather than anything written in a conversation.
+
 **The coverage strip** across the top reports what is actually indexed. Two entries are worth
 understanding:
 

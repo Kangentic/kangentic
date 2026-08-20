@@ -2297,6 +2297,9 @@
             ],
             defaultPermission: 'acceptEdits',
             supportsSummarize: true,
+            // KEEP IN SYNC with ClaudeAdapter.answerFromContext: gates the Memory
+            // Graph's Ask on the capability rather than on the agent's name.
+            supportsAnswerFromContext: true,
             // KEEP IN SYNC with ClaudeAdapter.reportsRateLimits: gates the ContextBar
             // rate-limit pill on the agent capability (account-wide snapshot).
             reportsRateLimits: true,
