@@ -36,6 +36,7 @@
   let memoryGraphSnapshot = null;
   // Memory Graph retrieval fixture; null yields an empty result set.
   let memoryGraphQueryResult = null;
+  let memoryGraphAnswerResult = null;
   // Proactive-recall fixture for task detail; empty means the panel renders
   // nothing at all, which is the common case and must stay silent.
   let memoryRelatedToTask = null;
@@ -3696,6 +3697,20 @@
             : { query: query, hits: [], semantic: true },
         );
       },
+      answerFromGraph: function (question, projectId) {
+        if (typeof window !== 'undefined') {
+          if (!window.__mockGraphAnswerCalls) window.__mockGraphAnswerCalls = [];
+          window.__mockGraphAnswerCalls.push({ question: question, projectId: projectId === undefined ? null : projectId });
+        }
+        // Defaults to a FAILURE, deliberately. Ask spawns a real CLI, so a spec
+        // that has not said what the agent returns has not set up the case it is
+        // testing, and a plausible default answer would let it pass anyway.
+        return Promise.resolve(
+          memoryGraphAnswerResult
+            ? JSON.parse(JSON.stringify(memoryGraphAnswerResult))
+            : { ok: false, reason: 'no agent configured' },
+        );
+      },
       relatedToTask: function (taskId, projectId) {
         if (typeof window !== 'undefined') {
           if (!window.__mockRelatedToTaskCalls) window.__mockRelatedToTaskCalls = [];
@@ -4064,6 +4079,9 @@
     }
     if (result && result.memoryGraphQueryResult && typeof result.memoryGraphQueryResult === 'object') {
       memoryGraphQueryResult = result.memoryGraphQueryResult;
+    }
+    if (result && result.memoryGraphAnswerResult && typeof result.memoryGraphAnswerResult === 'object') {
+      memoryGraphAnswerResult = result.memoryGraphAnswerResult;
     }
     if (result && Array.isArray(result.memoryRelatedToTask)) {
       memoryRelatedToTask = result.memoryRelatedToTask;

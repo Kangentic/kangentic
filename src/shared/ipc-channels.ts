@@ -450,6 +450,7 @@ export const IPC = {
   MEMORY_GRAPH_CHANGED: 'memory:graphChanged',
   /** Run the existing fusion search and map its hits onto graph nodes. */
   MEMORY_GRAPH_QUERY: 'memory:graphQuery',
+  MEMORY_GRAPH_ANSWER: 'memory:graphAnswer',
   /** Earlier conversations semantically near a task, for proactive recall in
    *  task detail. The index finding you, rather than waiting to be searched. */
   MEMORY_RELATED_TO_TASK: 'memory:relatedToTask',

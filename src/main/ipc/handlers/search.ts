@@ -7,6 +7,8 @@ import { RetrievalStore } from '../../retrieval/retrieval-store';
 import { getProjectDb } from '../../db/database';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { graphService } from '../../retrieval/graph/graph-service';
+import { selectAnswerSources, MAX_ANSWER_SOURCES } from '../../retrieval/answer-context';
+import { buildAnswerPrompt, NO_SOURCES_ANSWER } from '../../retrieval/answer-prompt';
 import { broadcast } from '../../pop-out/window-broadcast';
 import { resolveEmbeddingModel } from '../../../shared/embedding-models';
 import type {
@@ -16,11 +18,22 @@ import type {
   MemoryGraphSnapshot,
   MemoryGraphQueryResult,
   MemoryGraphQueryHit,
+  MemoryGraphAnswerResult,
   Project,
 } from '../../../shared/types';
 
 /** Conversations a graph query may match. See the call site for why it is high. */
 const GRAPH_QUERY_LIMIT = 300;
+
+/**
+ * Conversations Ask retrieves before budgeting them down.
+ *
+ * Over-fetched against `MAX_ANSWER_SOURCES` on purpose. The cap counts sources
+ * that SURVIVE, and a hit whose chunk has been re-indexed away between the
+ * search and the read yields nothing, so asking for exactly the cap would
+ * quietly answer from fewer conversations than it could have.
+ */
+const ANSWER_RETRIEVAL_LIMIT = MAX_ANSWER_SOURCES * 2;
 
 /** Characters of the task's title + description used as the recall query.
  *  Enough to carry the task's meaning; past this the embedding blurs. */
@@ -151,6 +164,120 @@ export function registerSearchHandlers(context: IpcContext): void {
           }];
         }),
       };
+    },
+  );
+
+  /**
+   * Ask: an agent answers a question FROM the retrieved conversations.
+   *
+   * The half of this surface search cannot do. Search is a retrieval tool and
+   * answers a retrieval question; asked a real question ("why did we drop the
+   * sphere fit?") it correctly returns every conversation about sphere fits and
+   * leaves the reading to you. There is no relevance floor that would fix that,
+   * because the score the UI could threshold on is RRF, which is purely ordinal
+   * and carries no similarity at all.
+   *
+   * So the retrieval is IDENTICAL to the map's own search - the same
+   * `searchConversationMemory`, the same fusion, the same one-hit-per-
+   * conversation collapse - and the only new thing is that the passages behind
+   * those hits go to an agent with the question and a rule that it may use
+   * nothing else.
+   *
+   * Deliberately NOT routed through `spawnAgent`: this never touches
+   * `executeTransition`, `resumeSuspendedSession` or `sessionManager.spawn`, so
+   * it creates no PTY and no `sessions` row, and needs no spawn-parity allowlist
+   * entry. It is the auto-name spawn wearing a different output shape.
+   */
+  ipcMain.handle(
+    IPC.MEMORY_GRAPH_ANSWER,
+    async (_event, question: string, projectId?: string | null): Promise<MemoryGraphAnswerResult> => {
+      try {
+        const trimmed = (question ?? '').trim();
+        if (!trimmed) return { ok: false, reason: 'ask a question first' };
+
+        const resolvedProjectId = projectId ?? context.currentProjectId;
+        if (!resolvedProjectId) return { ok: false, reason: 'no project open' };
+        const project = context.projectRepo.list().find((entry) => entry.id === resolvedProjectId);
+        if (!project) return { ok: false, reason: 'no project open' };
+
+        const { agentRegistry } = await import('../../agent/agent-registry');
+        const config = context.configManager.load();
+
+        // The agent is resolved and CHECKED before any retrieval runs. Doing the
+        // search first would spend real work on a question that cannot be
+        // answered, and then report the CLI failure as if the search had failed.
+        const agentName = project.default_agent
+          ?? agentRegistry.list()[0]
+          ?? null;
+        if (!agentName) return { ok: false, reason: 'no agents registered' };
+        const adapter = agentRegistry.get(agentName);
+        if (!adapter) return { ok: false, reason: `unknown agent: ${agentName}` };
+        if (typeof adapter.answerFromContext !== 'function') {
+          return { ok: false, reason: `${adapter.displayName} cannot answer questions` };
+        }
+        const info = await adapter.detect(config.agent.cliPaths[agentName] ?? null);
+        if (!info.found || !info.path) {
+          return { ok: false, reason: `${adapter.displayName} CLI not found` };
+        }
+
+        const embedder = retrievalService.getEmbedder(context);
+        // Over-fetched against the source cap, because the cap counts
+        // conversations that SURVIVE - a hit whose chunk has since been
+        // re-indexed away yields nothing, and asking for exactly the cap would
+        // quietly answer from fewer sources than it could.
+        const hits = await searchConversationMemory({
+          query: trimmed,
+          projects: [project],
+          embedder,
+          k: ANSWER_RETRIEVAL_LIMIT,
+        });
+
+        const store = new RetrievalStore(getProjectDb(resolvedProjectId));
+        const chunks = new Map(
+          store.getChunks(hits.map((hit) => hit.chunkId)).map((chunk) => [chunk.id, chunk]),
+        );
+        const context_ = selectAnswerSources(hits, chunks);
+
+        // Answered WITHOUT spawning. That call could only produce this same
+        // sentence at the cost of a real one, and a surface that charges for
+        // that once is distrusted for the rest of the session.
+        if (context_.sources.length === 0) {
+          return {
+            ok: true,
+            answer: NO_SOURCES_ANSWER,
+            citations: [],
+            agentName: adapter.displayName,
+            droppedConversations: 0,
+          };
+        }
+
+        const answer = await adapter.answerFromContext(
+          buildAnswerPrompt(trimmed, context_.sources),
+          info.path,
+          context.currentProjectPath ?? process.cwd(),
+        );
+        if (!answer) return { ok: false, reason: 'the agent returned nothing' };
+
+        return {
+          ok: true,
+          answer,
+          // Every source, not only the ones the answer happened to cite: an
+          // uncited source is still what the answer was allowed to see, and the
+          // reader checking "did it miss something?" needs that list.
+          citations: context_.sources.map((source) => ({
+            index: source.index,
+            docKey: source.docKey,
+            sessionId: source.sessionId,
+            taskId: source.taskId,
+            title: source.title,
+            ts: source.ts,
+          })),
+          agentName: adapter.displayName,
+          droppedConversations: context_.droppedConversations,
+        };
+      } catch (error) {
+        return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+      }
     },
   );
 

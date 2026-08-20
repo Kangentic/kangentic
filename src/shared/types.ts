@@ -5285,6 +5285,15 @@ export interface ElectronAPI {
      *  the palette uses and maps each hit onto its graph node. */
     queryGraph: (query: string, projectId?: string | null) => Promise<MemoryGraphQueryResult>;
     /**
+     * Ask: the SAME retrieval, read by an agent that answers from it.
+     *
+     * Costs a real CLI call, where `queryGraph` is local and free - which is why
+     * they are two controls rather than one box with a hidden mode. Every
+     * failure comes back as `{ ok: false, reason }` rather than throwing, so the
+     * surface can say what went wrong instead of showing an empty answer.
+     */
+    answerFromGraph: (question: string, projectId?: string | null) => Promise<MemoryGraphAnswerResult>;
+    /**
      * Earlier conversations semantically near a task, excluding the task's own.
      * Proactive recall: what have I already figured out about this?
      */
@@ -5577,6 +5586,41 @@ export interface MemoryGraphQueryResult {
    *  search was lexical-only rather than silently returning worse results. */
   semantic: boolean;
 }
+
+/**
+ * One conversation an answer drew on, and the number it is cited by.
+ *
+ * Carries `docKey` so a citation can select the node it came from: an answer the
+ * reader cannot trace back to the map is a claim they have to take on faith,
+ * which is the thing this surface exists not to ask of them.
+ */
+export interface MemoryAnswerCitation {
+  /** 1-based, matching the [n] markers in the answer text. */
+  index: number;
+  docKey: string;
+  sessionId: string;
+  taskId: string | null;
+  title: string;
+  /** Epoch ms of the cited passage. */
+  ts: number | null;
+}
+
+export type MemoryGraphAnswerResult =
+  | {
+    ok: true;
+    answer: string;
+    citations: MemoryAnswerCitation[];
+    /** Which agent produced it, so the surface can say whose answer this is. */
+    agentName: string;
+    /**
+     * Conversations retrieval found that the prompt could not carry.
+     *
+     * Surfaced rather than swallowed: an answer drawn from 24 of 60 matches is a
+     * different claim from one drawn from all of them.
+     */
+    droppedConversations: number;
+  }
+  | { ok: false; reason: string };
 
 export interface MemoryGraphSnapshot {
   projectId: string;
