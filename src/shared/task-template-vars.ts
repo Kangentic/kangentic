@@ -23,6 +23,7 @@ export const TASK_TEMPLATE_VAR_NAMES = [
   'prUrl',
   'prNumber',
   'attachments',
+  'port',
 ] as const;
 
 export type TaskTemplateVarName = (typeof TASK_TEMPLATE_VAR_NAMES)[number];
@@ -83,5 +84,10 @@ export const TASK_TEMPLATE_VARS: readonly TaskTemplateVarInfo[] = [
     name: 'attachments',
     chip: '{{attachments}}',
     description: 'Attached file paths, one per line (empty if none).',
+  },
+  {
+    name: 'port',
+    chip: '{{port}}',
+    description: "Dev-server port leased to this task (empty if none). e.g. npm run dev -- --port {{port}}",
   },
 ];

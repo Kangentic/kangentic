@@ -10,11 +10,23 @@ import { buildTaskXml } from './prompt-xml';
  * src/main/ipc/handlers/git-stats-capture.ts), never re-derived here so every
  * call site resolves {{baseBranch}} identically. `attachmentPaths` is the
  * task's attachment file paths, already resolved by the caller.
+ *
+ * `devPort` is the task's leased dev-server port, likewise READ by the caller
+ * (devPortRepository.getByTaskId / getDevPortForTask). It is passed in rather
+ * than looked up here for two reasons: resolvers stay pure functions of their
+ * context, so the parity test can exercise them with plain objects and no
+ * database; and, more importantly, allocation must never happen here.
+ * `executeAction` builds one vars object that feeds send_command / run_script /
+ * webhook as well, and transition-engine.ts builds it at two call sites, so a
+ * resolver that allocated lazily would be a side effect fanning out across all
+ * of them with a real double-allocation risk. Leasing happens once, in
+ * ensureWorktree. See .claude/rules/task-template-vars-parity.md clause 7.
  */
 export interface TaskTemplateContext {
   task: Task;
   defaultBaseBranch: string;
   attachmentPaths: string[];
+  devPort: number | null;
 }
 
 type TaskTemplateResolver = (ctx: TaskTemplateContext) => string;
@@ -45,6 +57,20 @@ export const TASK_TEMPLATE_RESOLVERS: Record<TaskTemplateVarName, TaskTemplateRe
   prUrl: ({ task }) => task.pr_url || '',
   prNumber: ({ task }) => (task.pr_number ? String(task.pr_number) : ''),
   attachments: ({ attachmentPaths }) => (attachmentPaths.length > 0 ? `\n${attachmentPaths.join('\n')}` : ''),
+  // Raw read, like {{worktreePath}} and {{branchName}}: a task with no lease
+  // resolves EMPTY rather than falling back to a project-level value, because
+  // inheriting another task's port is the exact collision this whole feature
+  // exists to remove.
+  //
+  // Be aware of what empty MEANS for a flag-shaped template, because it is not
+  // a graceful fallback: drop-and-collapse turns `--port {{port}}` into a bare
+  // `--port` with no value, which most CLIs reject. That is deliberate - a
+  // loud failure beats silently starting on a port some other task owns. It is
+  // also why allocation happens in ensureWorktree rather than lazily: by the
+  // time any auto_command interpolates, a worktree task already holds a lease.
+  // A task with no worktree has no lease, and its auto_command should not use
+  // {{port}}.
+  port: ({ devPort }) => (devPort != null ? String(devPort) : ''),
 };
 
 /** Resolve every task template variable for the given context. */

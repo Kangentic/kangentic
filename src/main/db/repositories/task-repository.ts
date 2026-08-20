@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type Database from 'better-sqlite3';
 import type { Task, TaskCreateInput, TaskUpdateInput, TaskMoveInput, ArchivedTasksPreview, AutoCommandState } from '../../../shared/types';
 import { worktreeFolderUnderRoot } from '../../../shared/worktree-folder';
+import { devPortRepository } from './dev-port-repository';
 
 /** Raw row from SQLite - labels stored as JSON string. */
 interface TaskRow extends Omit<Task, 'labels'> {
@@ -615,5 +616,22 @@ export class TaskRepository {
         .run(task.swimlane_id, task.position);
     });
     tx();
+
+    // Return the task's dev-server port to the pool.
+    //
+    // Deliberately here rather than at the five delete call sites: this is the
+    // one place every task deletion passes through, so the lease cannot be
+    // leaked by a new caller that forgets.
+    //
+    // Equally deliberately NOT in cleanupTaskResources, which also runs when a
+    // task moves to Done. A lease survives a Done round-trip so the task keeps
+    // the same port for its whole life - its saved Browser-pane URL points at
+    // that port, and re-leasing on the way back would silently stale it.
+    // Genuinely orphaned leases (a task row gone without this path running) are
+    // swept at startup by reclaimStaleDevPorts.
+    //
+    // Outside the transaction because it writes the GLOBAL database, which the
+    // project-scoped transaction above does not cover.
+    devPortRepository.releaseByTaskId(id);
   }
 }

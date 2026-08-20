@@ -8,6 +8,7 @@ import { TransitionEngine } from '../../transition-engine/transition-engine';
 import { getProjectDb } from '../../db/database';
 import { interpolateTaskTemplate, resolveTaskTemplateVars } from '../../agent/shared';
 import { resolveDefaultBaseBranch } from '../handlers/git-stats-capture';
+import { allocateDevPort, getDevPortForTask } from '../../dev-ports/dev-port-allocator';
 import { agentRegistry } from '../../agent/agent-registry';
 import { buildSessionHistoryReference } from '../../agent/handoff/session-history-reference';
 import { DEFAULT_AGENT } from '../../../shared/types';
@@ -196,6 +197,33 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
   // an enclosing task-move).
   const project = options.projectId ? context.projectRepo.getById(options.projectId) : null;
 
+  // Lease this task's dev-server port BEFORE anything interpolates {{port}}.
+  //
+  // Allocation lives at the spawn chokepoint rather than inside the template
+  // resolver on purpose: `resolveTaskTemplateVars` builds one object that feeds
+  // send_command / run_script / webhook too, and transition-engine.ts builds it
+  // at two call sites, so a lazily-allocating resolver would be a side effect
+  // fanning out across all of them. See
+  // .claude/rules/task-template-vars-parity.md clause 7.
+  //
+  // Idempotent per task, so repeated spawns reuse the same port - which is what
+  // makes a task's dev-server URL stable across suspend/resume. Failure is
+  // non-fatal: an exhausted range leaves {{port}} empty rather than blocking a
+  // spawn over a dev-server convenience.
+  if (options.projectId) {
+    try {
+      const devServerConfig = context.configManager.getEffectiveConfig(
+        options.projectPath ?? context.currentProjectPath ?? '',
+      ).devServer;
+      await allocateDevPort(options.projectId, task.id, {
+        rangeStart: devServerConfig?.portRangeStart,
+        rangeEnd: devServerConfig?.portRangeEnd,
+      });
+    } catch (error) {
+      console.warn(`[dev-ports] Could not lease a port for task ${task.id.slice(0, 8)}:`, error);
+    }
+  }
+
   // Auto_command template vars for the current task snapshot. defaultBaseBranch
   // is resolved once per spawn (board config -> project/global config ->
   // 'main') so {{baseBranch}} matches resolveDefaultBaseBranch everywhere else
@@ -206,6 +234,7 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
       task: currentTask,
       defaultBaseBranch: resolveDefaultBaseBranch(context, options.projectPath),
       attachmentPaths: options.attachments?.getPathsForTask(currentTask.id) ?? [],
+      devPort: getDevPortForTask(currentTask.id),
     });
 
   const run = async (): Promise<void> => {

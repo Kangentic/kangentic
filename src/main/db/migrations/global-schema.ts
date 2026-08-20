@@ -64,4 +64,27 @@ export function runGlobalMigrations(db: Database.Database): void {
   if (!projectColumns.some((col) => col.name === 'default_effort')) {
     db.exec('ALTER TABLE projects ADD COLUMN default_effort TEXT DEFAULT NULL');
   }
+
+  // Migration: dev-server port leases.
+  //
+  // GLOBAL rather than per-project on purpose: ports are a machine-wide
+  // resource, so two projects both defaulting to 5173 is exactly the collision
+  // a per-project table could not see. Deliberately NOT stored in the
+  // worktree's `.kangentic/`, which is wiped when a preview exits.
+  //
+  // Keyed on task_id, never worktree_path: a Done round-trip nulls
+  // `worktree_path` and removes the directory, so a path-keyed lease would
+  // orphan on every round trip and slowly eat the range.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS dev_ports (
+      port INTEGER PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      task_id TEXT NOT NULL,
+      allocated_at TEXT NOT NULL,
+      last_seen_at TEXT
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_dev_ports_task ON dev_ports(task_id);
+    CREATE INDEX IF NOT EXISTS idx_dev_ports_project ON dev_ports(project_id);
+  `);
 }

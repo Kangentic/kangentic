@@ -89,7 +89,7 @@ switch, so resolving ambiently wrote one project's task URL into another project
 Resolution rule: `taskOverride > projectDefault > null` (caller renders empty state). Once a URL
 has resolved, a later refetch never returns the hook to `loading` and never blanks an
 already-showing pane: `BrowserPane` mounts its active subtree only while an effective URL exists,
-so either would unmount the `<webview>` and destroy the guest. Auto-save: every successful navigation silently updates the task URL; the first navigation in a project also seeds the project default with a "Saved as project default" toast.
+so either would unmount the `<webview>` and destroy the guest. Auto-save: every successful navigation silently updates the task URL. The project default is never set automatically - only by the pane's explicit "Save as project default" action or Settings -> Browser -> Default URL. A task navigation used to seed it on the first navigation in a project, so every sibling task inherited that task's URL on first open; with per-task dev-server port leases (`{{port}}`) that inheritance points a sibling at another task's dev server, which is the collision the lease exists to remove.
 
 ### Agent automation (`kangentic_browser_*`)
 

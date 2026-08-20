@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useToastStore } from '../../stores/toast-store';
 
 // Resolves the effective URL for a task's Browser pane and exposes
 // save/recordNavigation helpers.
@@ -10,12 +9,12 @@ import { useToastStore } from '../../stores/toast-store';
 // - Every successful navigation silently updates the task URL. Task URL is
 //   effectively "what this task was last looking at"; on resume the pane
 //   loads exactly that.
-// - The very first navigation in a project that has no project default also
-//   sets the project default (one-time, with a toast). New tasks then
-//   inherit that default until they navigate to something else.
-// - Project default never changes again automatically. The only explicit
-//   action in the UI is "Save as project default", which copies the current
-//   URL into the project slot.
+// - The project default is NEVER set automatically. It changes only through an
+//   explicit action: "Save as project default" in the pane, or Settings ->
+//   Browser -> Default URL. A task navigation used to seed it on the first
+//   navigation in a fresh project, which made every sibling task inherit that
+//   task's URL - and once tasks lease their own dev-server ports, inheriting
+//   another task's port is a cross-task collision rather than a convenience.
 
 export type UrlSource = 'task' | 'project' | 'none';
 
@@ -43,8 +42,6 @@ export function useBrowserUrl(taskId: string, projectId: string | null, refreshT
   const [projectDefault, setProjectDefault] = useState<string | null>(null);
   const [taskOverride, setTaskOverride] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const projectDefaultRef = useRef<string | null>(null);
-  projectDefaultRef.current = projectDefault;
 
   // True once a URL has resolved at least once. A REFETCH must not drop back to
   // the loading state: `BrowserPane` renders its active subtree only while an
@@ -111,19 +108,21 @@ export function useBrowserUrl(taskId: string, projectId: string | null, refreshT
       // Sidecar write failure is non-fatal; navigation already succeeded.
     });
 
-    // First nav ever in a fresh project also seeds the project default so
-    // sibling tasks inherit it on their first open.
-    if (!projectDefaultRef.current) {
-      saveForProject(url)
-        .then(() => {
-          useToastStore.getState().addToast({
-            message: 'Saved as project default',
-            variant: 'success',
-          });
-        })
-        .catch(() => { /* non-fatal */ });
-    }
-  }, [saveForTask, saveForProject]);
+    // A task navigation deliberately does NOT seed the project default any more.
+    //
+    // It used to: the first navigation in a fresh project wrote
+    // `browser.defaultUrl` for the WHOLE project, so every sibling task
+    // inherited that task's URL on its first open. Once each task leases its own
+    // dev-server port ({{port}}), that inheritance is actively wrong - a sibling
+    // opened onto the first task's port and showed the first task's dev server,
+    // which is exactly the cross-task collision the port lease exists to remove.
+    // It self-corrected only after the sibling navigated once itself, so it hit
+    // precisely when several tasks start at the same time.
+    //
+    // The project default is now settings-only (Settings -> Browser -> Default
+    // URL), which is the one place it can be set deliberately rather than as a
+    // side effect of whichever task happened to navigate first.
+  }, [saveForTask]);
 
   const effectiveUrl = taskOverride ?? projectDefault ?? null;
   const source: UrlSource = taskOverride

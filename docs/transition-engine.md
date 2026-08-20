@@ -158,11 +158,20 @@ substitution (an unknown or empty `{{key}}` is left as-is, matching
 | `{{prUrl}}` | Pull request URL (empty if none) |
 | `{{prNumber}}` | Pull request number as string (empty if none) |
 | `{{attachments}}` | Bare file paths (one per line) when present |
+| `{{port}}` | Dev-server port leased to this task (empty if none) - a raw read, never falls back to another task's port. Typical use: `npm run dev -- --port {{port}}` |
 
 In `auto_command` and `promptTemplate` specifically, an empty-valued or unknown
 `{{key}}` is dropped and surrounding horizontal whitespace collapses (newlines
 are preserved), so `/code-review {{baseBranch}}` with no configured default
 still yields `/code-review`, not a trailing space or a literal placeholder.
+
+Note what that means for a FLAG-shaped placeholder: `--port {{port}}` with no
+lease collapses to a bare `--port`, which most CLIs reject. That is deliberate.
+A task without a port failing loudly is better than it silently starting a dev
+server on a port another task owns, which is the collision `{{port}}` exists to
+prevent. A worktree task is leased a port when its worktree is created, so in
+practice only a task with no worktree resolves empty - and such a task should
+not use `{{port}}`.
 
 Shortcut commands use a separate set of template variables. See [Configuration](configuration.md#shortcuts) for the full list.
 

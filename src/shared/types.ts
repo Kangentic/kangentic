@@ -18,6 +18,23 @@ export interface ProjectGroupCreateInput {
   name: string;
 }
 
+/**
+ * A dev-server port leased to one task, held in the GLOBAL database because
+ * ports are a machine-wide resource shared across every project.
+ *
+ * The lease is advisory: an actual bind probe decides whether a port is usable,
+ * which is what lets an orphaned lease self-correct instead of permanently
+ * burning a port. `lastSeenAt` is null until something is first observed
+ * listening on it.
+ */
+export interface DevPortLease {
+  port: number;
+  projectId: string;
+  taskId: string;
+  allocatedAt: string;
+  lastSeenAt: string | null;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -2576,6 +2593,19 @@ export interface AppConfig {
     allowEval?: boolean;
     /** Restrict navigation to localhost / private hosts only. Default false (any http(s)). */
     restrictNavigationToLocalhost?: boolean;
+  };
+
+  /**
+   * Dev-server port leases. GLOBAL (per-machine) by necessity, not by policy:
+   * ports are a machine-wide resource, so a per-project range could not see
+   * that another project already holds 4200. Kangentic leases a port per task
+   * and exposes it as {{port}}; it never starts or supervises a dev server.
+   */
+  devServer?: {
+    /** First port considered when leasing. Default 4200. */
+    portRangeStart?: number;
+    /** Last port considered when leasing (inclusive). Default 4399. */
+    portRangeEnd?: number;
   };
 
   /**
