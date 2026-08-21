@@ -70,6 +70,25 @@ describe('parseQwenTranscript', () => {
     expect(two[0].uuid).toBe('session-two:0');
   });
 
+  it('treats an explicit empty-string uuid the same as a missing one', async () => {
+    // `raw.uuid` present but `''` is a distinct on-disk shape from the field
+    // being absent, and the guard is
+    // `typeof raw.uuid === 'string' && raw.uuid.length > 0` - dropping the
+    // length check would let `''` through as a "real" uuid, recreating the
+    // shared-uuid collision the fallback exists to fix.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qwen-transcript-'));
+    tmpFile = path.join(dir, 'session.jsonl');
+    const lines = [
+      JSON.stringify({ type: 'user', uuid: '', message: { role: 'user', parts: [{ text: 'first' }] } }),
+      JSON.stringify({ type: 'user', uuid: '', message: { role: 'user', parts: [{ text: 'second' }] } }),
+    ];
+    fs.writeFileSync(tmpFile, lines.join('\n'));
+    const entries = await parseQwenTranscript(SESSION_ID, tmpFile);
+
+    expect(entries).toHaveLength(2);
+    expect(entries.map((entry) => entry.uuid)).toEqual([`${SESSION_ID}:0`, `${SESSION_ID}:1`]);
+  });
+
   it('parses only the tail of a transcript larger than the parse cap, marking the omission', async () => {
     const cap = 2 * 1024;
     setParseWindowBytesForTests(cap);

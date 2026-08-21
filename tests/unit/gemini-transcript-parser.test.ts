@@ -59,6 +59,22 @@ describe('parseGeminiTranscript', () => {
     expect(entries.map((entry) => entry.uuid)).toEqual([`${SESSION_ID}:0`, `${SESSION_ID}:1`]);
   });
 
+  it('treats an explicit empty-string id the same as a missing one', async () => {
+    // The map KEY is the uuid, so this is the sharpest case: an unguarded `''`
+    // id would make both messages collide on the SAME map key and the second
+    // would silently overwrite the first (last-wins), not just share a uuid -
+    // one message would vanish from the parse entirely, before the task stitch
+    // ever runs.
+    tmpFile = writeFixture([
+      JSON.stringify({ type: 'user', id: '', content: [{ text: 'first' }] }),
+      JSON.stringify({ type: 'user', id: '', content: [{ text: 'second' }] }),
+    ]);
+    const entries = await parseGeminiTranscript(SESSION_ID, tmpFile);
+
+    expect(entries).toHaveLength(2);
+    expect(entries.map((entry) => entry.uuid)).toEqual([`${SESSION_ID}:0`, `${SESSION_ID}:1`]);
+  });
+
   it('distinguishes id-less messages seeded from the same $set line', async () => {
     // One `$set` line seeds several messages, so the line alone is not unique.
     // A second line is needed for this to stay JSONL - a lone `{...}` with no

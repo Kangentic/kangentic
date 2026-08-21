@@ -61,6 +61,22 @@ describe('parseDroidTranscript', () => {
     expect(entries.every((entry) => entry.uuid.length > 0)).toBe(true);
   });
 
+  it('treats an explicit empty-string id the same as a missing one', async () => {
+    // `raw.id` present but `''` is a distinct on-disk shape from the field
+    // being absent, and the guard is `typeof raw.id === 'string' && raw.id.length > 0`
+    // - dropping the length check would let `''` through as a "real" id,
+    // recreating the exact shared-uuid collision this parser exists to fix.
+    tmpFile = writeFixture([
+      { type: 'message', id: '', timestamp: '2026-06-12T10:00:00Z', message: { role: 'user', content: [{ type: 'text', text: 'first' }] } },
+      { type: 'message', id: '', timestamp: '2026-06-12T10:00:01Z', message: { role: 'user', content: [{ type: 'text', text: 'second' }] } },
+    ]);
+    const entries = await parseDroidTranscript(SESSION_ID, tmpFile);
+
+    expect(entries).toHaveLength(2);
+    expect(entries.map((entry) => entry.uuid)).toEqual([`${SESSION_ID}:0`, `${SESSION_ID}:1`]);
+    expect(entries.every((entry) => entry.uuid.length > 0)).toBe(true);
+  });
+
   it('parses user, assistant, and tool_result entries from the message envelope', async () => {
     tmpFile = writeFixture([
       { type: 'session_start', id: 's1', title: 't', owner: 'dev', version: 2, cwd: 'C:\\Users\\dev\\project' },

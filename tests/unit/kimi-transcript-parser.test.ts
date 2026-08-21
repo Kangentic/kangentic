@@ -157,6 +157,22 @@ describe('parseKimiTranscript', () => {
     expect(new Set(entries.map((entry) => entry.uuid)).size).toBe(entries.length);
   });
 
+  it('flushes a trailing assistant fragment left pending at end of transcript', async () => {
+    // Every other flush in this file is triggered by a boundary record
+    // (ToolCall/TurnEnd/TurnBegin) mid-loop. A transcript that ends mid-stream
+    // with no closing boundary relies on the unconditional `flushAssistantText()`
+    // call AFTER the loop - deleting that line would silently drop this entry
+    // rather than throw, since nothing else calls flush for it.
+    tmpFile = writeFixture([
+      { type: 'metadata', protocol_version: '1.9' },
+      { timestamp: 1780430656.9, message: { type: 'ContentPart', payload: { text: 'trailing thought' } } },
+    ]);
+    const entries = await parseKimiTranscript(SESSION_ID, tmpFile);
+    expect(entries).toEqual([
+      { kind: 'assistant', uuid: `${SESSION_ID}:1`, ts: expect.any(Number), blocks: [{ type: 'text', text: 'trailing thought' }] },
+    ]);
+  });
+
   it('flags an error tool result via return_value.is_error', async () => {
     tmpFile = writeFixture([
       { type: 'metadata', protocol_version: '1.9' },
