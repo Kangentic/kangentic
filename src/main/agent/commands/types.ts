@@ -25,6 +25,19 @@ export interface CommandContext {
   setBoardProfiles: (profiles: BoardProfile[]) => void;
   onTaskCreated: (task: Task, columnName: string, swimlaneId: string) => void;
   onTaskUpdated: (task: Task) => void;
+  /**
+   * The quiet twin of `onTaskUpdated`, for a PR link/state the APP reconciled
+   * rather than the agent: the forced re-resolve that follows a link write.
+   * It invalidates the board without claiming an agent updated the task, so it
+   * raises no toast (see `IPC.TASK_PR_LINK_CHANGED`).
+   *
+   * Optional because ~23 test suites hand-build a context; the only production
+   * builder is `buildCommandContextForProject`, which the mobile bridge reuses.
+   * A builder that omits it loses the board reload AND the board event for
+   * these writes, not just the toast - so implement it, do not rely on the
+   * caller's `?.`.
+   */
+  onTaskPrLinkChanged?: (task: Task) => void;
   onTaskDeleted: (task: Task) => void;
   onTaskMove: (input: { taskId: string; targetSwimlaneId: string; targetPosition: number }) => Promise<void>;
   /**

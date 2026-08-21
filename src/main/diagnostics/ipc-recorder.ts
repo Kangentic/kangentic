@@ -65,6 +65,7 @@ const SAFE_PUSH_CHANNELS = new Set<string>([
   'task:updatedByAgent',
   'task:deletedByAgent',
   'task:sessionResync',
+  'task:prLinkChanged',
   'swimlane:updatedByAgent',
   'backlog:changedByAgent',
   'backlog:labelColorsChanged',

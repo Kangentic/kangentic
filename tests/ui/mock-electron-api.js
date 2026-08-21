@@ -1201,6 +1201,22 @@
           if (idx >= 0) listeners.splice(idx, 1);
         };
       },
+      onPrLinkChanged: function (callback) {
+        // Tests can fire this via window.__mockFireTaskPrLinkChanged(projectId).
+        if (!window.__mockTaskPrLinkChangedListeners) window.__mockTaskPrLinkChangedListeners = [];
+        window.__mockTaskPrLinkChangedListeners.push(callback);
+        if (!window.__mockFireTaskPrLinkChanged) {
+          window.__mockFireTaskPrLinkChanged = function (projectId) {
+            var listeners = (window.__mockTaskPrLinkChangedListeners || []).slice();
+            for (var i = 0; i < listeners.length; i++) { listeners[i](projectId); }
+          };
+        }
+        return function () {
+          var listeners = window.__mockTaskPrLinkChangedListeners || [];
+          var idx = listeners.indexOf(callback);
+          if (idx >= 0) listeners.splice(idx, 1);
+        };
+      },
       onSpawnProgress: function (callback) {
         // Tests can fire this via window.__mockFireSpawnProgress(taskId, label).
         if (!window.__mockSpawnProgressListeners) window.__mockSpawnProgressListeners = [];

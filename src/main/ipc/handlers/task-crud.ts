@@ -210,10 +210,12 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
     // Forced: a non-force resolve inside the 60s per-task throttle is coalesced
     // away, which is exactly the situation right after a PR-creating flow.
     // Fire-and-forget outside any lock: `linkPRForTask` takes the task lock
-    // itself, and its `onLinked` pushes TASK_UPDATED_BY_AGENT, so awaiting would
-    // only add a `gh` round-trip to every save. Gated on SETTING a link, never
-    // on clearing one - the ladder's branch/commit tiers would re-resolve a
-    // just-cleared task and bounce the clear straight back.
+    // itself, and its `onLinked` pushes the toast-free TASK_PR_LINK_CHANGED (the
+    // user just saved this form, so a "Task updated by agent" toast would be
+    // both untrue and redundant), so awaiting would only add a `gh` round-trip
+    // to every save. Gated on SETTING a link, never on clearing one - the
+    // ladder's branch/commit tiers would re-resolve a just-cleared task and
+    // bounce the clear straight back.
     const linksPR = (typeof input.pr_url === 'string' && input.pr_url.trim() !== '')
       || Number.isFinite(input.pr_number);
     if (linksPR) {

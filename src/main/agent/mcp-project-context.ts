@@ -4,13 +4,12 @@
  * notifications) that the in-process MCP HTTP server fires when an
  * agent tool call mutates the board.
  */
-import type { BrowserWindow } from 'electron';
 import { IPC } from '../../shared/ipc-channels';
 import { getProjectDb } from '../db/database';
 import { autoSpawnForTask } from '../ipc/helpers';
 import { handleTaskMove } from '../ipc/handlers/task-move';
 import { WorktreeManager } from '../git/worktree-manager';
-import { recordPush } from '../diagnostics/ipc-recorder';
+import { sendToRenderer } from '../ipc/send-to-renderer';
 import {
   propagateBoardProfileChange,
   propagateStrategyToLiveSessions,
@@ -20,25 +19,6 @@ import type { CommandContext } from './commands';
 import type { IpcContext } from '../ipc/ipc-context';
 import type { AppConfig } from '../../shared/types';
 import { RequestResolver } from './mcp-http/project-resolver';
-
-/**
- * Send a main -> renderer push, guarding against a destroyed window and
- * mirroring the send into the IPC traffic recorder. This is the single
- * chokepoint for the agent-driven board-invalidation pushes issued from
- * `buildCommandContextForProject`, so the dev IPC log
- * (`kangentic_get_ipc_log`) sees the whole outbound pipeline that the
- * renderer-side board reload depends on. A dropped push (window destroyed)
- * is still recorded, with a `PushDropped` marker, so a lost event leaves a
- * trace instead of vanishing silently.
- */
-function sendToRenderer(mainWindow: BrowserWindow, channel: string, ...args: unknown[]): void {
-  if (mainWindow.isDestroyed()) {
-    recordPush(channel, args, { dropped: true });
-    return;
-  }
-  mainWindow.webContents.send(channel, ...args);
-  recordPush(channel, args);
-}
 
 /**
  * Resolve a project ID to a CommandContext, or return null if the project
@@ -93,6 +73,15 @@ export function buildCommandContextForProject(
 
     onTaskUpdated: (task) => {
       sendToRenderer(ipcContext.mainWindow, IPC.TASK_UPDATED_BY_AGENT, task.id, task.title, projectId);
+      ipcContext.boardEvents.emitBoardChanged({ projectId, change: 'task-updated', ids: [task.id] });
+    },
+
+    // Same board invalidation as onTaskUpdated, on the quiet channel. Used by
+    // the link-time PR re-resolve, which is a write the app fired in response
+    // to the agent's write - the agent's own call already toasted, and the
+    // re-resolve usually restores exactly the state that write cleared.
+    onTaskPrLinkChanged: (task) => {
+      sendToRenderer(ipcContext.mainWindow, IPC.TASK_PR_LINK_CHANGED, projectId);
       ipcContext.boardEvents.emitBoardChanged({ projectId, change: 'task-updated', ids: [task.id] });
     },
 

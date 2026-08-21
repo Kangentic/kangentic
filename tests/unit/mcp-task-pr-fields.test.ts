@@ -107,6 +107,11 @@ function makeContext(overrides: Partial<CommandContext> = {}): CommandContext {
     onLabelColorsChanged: vi.fn(),
     onTaskCreated: vi.fn(),
     onTaskUpdated: vi.fn(),
+    // Optional on CommandContext (many suites hand-build one), but the
+    // production builder always supplies it. Stubbed here so a create- or update-path test
+    // that asserts on the link-time resolve's notification cannot silently pass
+    // against a `?.` no-op.
+    onTaskPrLinkChanged: vi.fn(),
     onTaskDeleted: vi.fn(),
     onTaskMove: vi.fn(async () => {}),
     onTasksReordered: vi.fn(),
@@ -346,6 +351,158 @@ describe('handleUpdateTask PR fields', () => {
     expect(patch).not.toHaveProperty('pr_url');
     expect(patch).not.toHaveProperty('pr_number');
     expect(patch).not.toHaveProperty('pr_state');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Re-writing a link the row already holds
+//
+// A /pull-request flow routinely writes the link a sweep or auto-link already
+// discovered. Nulling pr_state there blanked the card's PR chip until a forced
+// `gh` round-trip put back the value it had just cleared - a visible flicker
+// plus a wasted API call, for a write that changed nothing.
+//
+// The gate must PROVE the link is unchanged. Inferring it from an omitted field
+// would be worse than the churn it saves, which is what the last two tests pin.
+// ---------------------------------------------------------------------------
+
+describe('handleUpdateTask: a PR link write that re-points nothing', () => {
+  /** The stored row already carries this exact link, resolved to `open`. */
+  function alreadyLinked(overrides: Record<string, unknown> = {}) {
+    mockTaskRepoGetById.mockReturnValue({
+      id: 'task-uuid-1', display_id: 7, title: 'Existing', description: '', attachment_count: 0,
+      pr_url: REVIEWED_PR_URL, pr_number: 98, pr_state: 'open', ...overrides,
+    });
+  }
+
+  it('keeps pr_state and skips the resolve when both fields match the stored row', async () => {
+    alreadyLinked();
+
+    handleUpdateTask(updateTaskParams({ prUrl: REVIEWED_PR_URL, prNumber: 98 }), makeContext());
+    await flushLinkTimeResolve();
+
+    const patch = mockTaskRepoUpdate.mock.calls[0][0] as Record<string, unknown>;
+    expect(patch).not.toHaveProperty('pr_state');
+    expect(mockLinkPRForTask).not.toHaveBeenCalled();
+  });
+
+  it('still skips when only the URL is passed and the derived number matches', async () => {
+    // The common /pull-request shape: prUrl alone, pr_number derived at :452.
+    alreadyLinked();
+
+    handleUpdateTask(updateTaskParams({ prUrl: REVIEWED_PR_URL }), makeContext());
+    await flushLinkTimeResolve();
+
+    const patch = mockTaskRepoUpdate.mock.calls[0][0] as Record<string, unknown>;
+    expect(patch).not.toHaveProperty('pr_state');
+    expect(mockLinkPRForTask).not.toHaveBeenCalled();
+  });
+
+  it('still nulls and resolves when the link genuinely re-points', async () => {
+    // Proves the two assertions above are not vacuous.
+    alreadyLinked();
+
+    handleUpdateTask(
+      updateTaskParams({ prUrl: 'https://github.com/owner/repo/pull/1234' }),
+      makeContext(),
+    );
+    await flushLinkTimeResolve();
+
+    expect(mockTaskRepoUpdate).toHaveBeenCalledWith(expect.objectContaining({ pr_state: null }));
+    expect(mockLinkPRForTask).toHaveBeenCalledTimes(1);
+  });
+
+  it('still nulls and resolves when the stored link carries no state yet', async () => {
+    // A link preserved by `preserveLinkOnNotFound` sits with pr_state null. The
+    // re-write is the chance to fill it in, so "unchanged" must not swallow it -
+    // otherwise the card keeps a stateless PR pill until the next sweep.
+    alreadyLinked({ pr_state: null });
+
+    handleUpdateTask(updateTaskParams({ prUrl: REVIEWED_PR_URL, prNumber: 98 }), makeContext());
+    await flushLinkTimeResolve();
+
+    expect(mockTaskRepoUpdate).toHaveBeenCalledWith(expect.objectContaining({ pr_state: null }));
+    expect(mockLinkPRForTask).toHaveBeenCalledTimes(1);
+  });
+
+  it('a prNumber-only write naming a DIFFERENT PR is never read as unchanged', async () => {
+    // The failure mode the gate is written conservatively to avoid: this write
+    // sets no pr_url, so a gate that treated an absent field as "matches" would
+    // keep PR 98's `open` state on a row now pointing at PR 4321, and skip the
+    // resolve that would have corrected it. Red-green guard for requiring
+    // `updates.pr_url` to be PRESENT, not merely non-conflicting.
+    alreadyLinked();
+
+    handleUpdateTask(updateTaskParams({ prNumber: 4321 }), makeContext());
+    await flushLinkTimeResolve();
+
+    expect(mockTaskRepoUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ pr_number: 4321, pr_state: null }),
+    );
+    expect(mockLinkPRForTask).toHaveBeenCalledTimes(1);
+  });
+
+  it('a prUrl-only write naming a DIFFERENT PR is never read as unchanged either', async () => {
+    // Mirror of the case above on the other field: the URL is present but the
+    // derived number (1234) disagrees with the stored 98.
+    alreadyLinked();
+
+    handleUpdateTask(
+      updateTaskParams({ prUrl: 'https://github.com/owner/repo/pull/1234' }),
+      makeContext(),
+    );
+    await flushLinkTimeResolve();
+
+    expect(mockTaskRepoUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ pr_number: 1234, pr_state: null }),
+    );
+    expect(mockLinkPRForTask).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Which channel the link-time resolve announces on
+// ---------------------------------------------------------------------------
+
+describe('link-time PR resolve: notifies quietly', () => {
+  it('routes onLinked to onTaskPrLinkChanged, never onTaskUpdated', async () => {
+    // The resolve exists only because the caller just wrote a link, and that
+    // write already toasted via onTaskUpdated at the end of handleUpdateTask.
+    // Routing the resolve through the loud channel too meant ONE update_task
+    // produced TWO "Task updated by agent" toasts - the second announcing the
+    // pr_state the first had just cleared.
+    const context = makeContext();
+
+    handleUpdateTask(updateTaskParams({ prUrl: REVIEWED_PR_URL }), context);
+    await flushLinkTimeResolve();
+
+    // The agent's own write still toasts: exactly one loud push for one call.
+    expect(context.onTaskUpdated).toHaveBeenCalledTimes(1);
+
+    // Fire the backbone's callback by hand - linkPRForTask is mocked, so this is
+    // what the real `onLinked` inside `linkPRForTask` would do on a state change.
+    const linkOptions = mockLinkPRForTask.mock.calls[0][1] as { onLinked: (task: unknown) => void };
+    linkOptions.onLinked({ id: 'task-uuid-1', title: 'Review PR #98' });
+
+    expect(context.onTaskPrLinkChanged).toHaveBeenCalledTimes(1);
+    // Still one: the resolve must not have added a second loud push.
+    expect(context.onTaskUpdated).toHaveBeenCalledTimes(1);
+  });
+
+  it('create_task takes the same quiet route for its link-time resolve', async () => {
+    // handleCreateTask shares scheduleLinkTimeResolve, so this is the same
+    // wiring - but create announces itself via onTaskCreated ("Task created by
+    // agent"), and a resolve firing onTaskUpdated on top would follow that with
+    // a second, contradictory "Task updated by agent" for the same new card.
+    const context = makeContext();
+
+    await handleCreateTask(createTaskParams({ prUrl: REVIEWED_PR_URL, prNumber: 98 }), context);
+
+    const linkOptions = mockLinkPRForTask.mock.calls[0][1] as { onLinked: (task: unknown) => void };
+    linkOptions.onLinked({ id: 'task-uuid-1', title: 'Review PR #98' });
+
+    expect(context.onTaskPrLinkChanged).toHaveBeenCalledTimes(1);
+    expect(context.onTaskUpdated).not.toHaveBeenCalled();
   });
 });
 

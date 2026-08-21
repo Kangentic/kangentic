@@ -425,7 +425,7 @@ Update a task's title, description (full replace, in-place find/replace edits, o
 
 At least one updatable field is required.
 
-Setting `prUrl` or `prNumber` also clears the task's stored PR state, so the three PR columns never disagree; a forced resolve fires immediately after the write and fills the state back in from the PR itself, so the card shows its state chip without waiting for the background sweep. See [PR Integration](pr-integration.md#where-pr-state-is-persisted).
+Setting `prUrl` or `prNumber` also clears the task's stored PR state, so the three PR columns never disagree; a forced resolve fires immediately after the write and fills the state back in from the PR itself, so the card shows its state chip without waiting for the background sweep. The exception is a write that re-points nothing (the same `prUrl` and `prNumber` the task already holds, on a row whose `pr_state` is non-null): that is treated as a no-op, and both the clear and the resolve are skipped so the card's state chip does not blank and come back. See [PR Integration](pr-integration.md#where-pr-state-is-persisted).
 
 `profile` is **mutually exclusive** with `model` / `effort` / `permissionMode` / `runMode:
 "agent_override"` (and the task's `agent_override`): setting a profile clears the pins and forces

@@ -732,3 +732,146 @@ test.describe('useAgentDrivenInvalidation - task:sessionResync is a quiet reconc
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Test: task:prLinkChanged push is a quiet reconcile (regression guard)
+//
+// The second toast-free channel, and the one that fixed the toast storm.
+// Landing a single PR fired THREE "Task updated by agent" toasts per task: the
+// sweep/auto-link that discovered the PR, the agent's own update_task, and the
+// forced re-resolve that put back the pr_state that write had just cleared.
+// Six pushes for two tasks arrived inside 2711ms, past the 5-toast cap.
+//
+// Only the middle one is agent news. The other two now ride this channel, which
+// must still reload the board (the card's PR chip is stale) while raising no
+// toast. A naive implementation copying the on*ByAgent shape would toast.
+// ---------------------------------------------------------------------------
+
+test.describe('useAgentDrivenInvalidation - task:prLinkChanged is a quiet reconcile', () => {
+  /** See the identical helper above: a retrying assertion false-passes here. */
+  async function toastCountRightNow(page: Page): Promise<number> {
+    return page.getByTestId('toast').count();
+  }
+
+  test('same-project PR-link change reloads the board and raises no toast', async () => {
+    const { browser, page } = await launch();
+
+    try {
+      await warmBothProjectsAndResetCounter(page);
+
+      await page.evaluate((currentProjectId) => {
+        (window as unknown as { __mockFireTaskPrLinkChanged: (projectId?: string) => void })
+          .__mockFireTaskPrLinkChanged(currentProjectId);
+      }, PROJECT_A_ID);
+
+      // The board MUST still reload - going quiet must not mean going inert,
+      // or the card keeps showing a stale (or missing) PR state chip.
+      await expect
+        .poll(async () => {
+          const counts = await page.evaluate(() =>
+            (window as unknown as { __getIpcCallCounts: () => Record<string, number> }).__getIpcCallCounts(),
+          );
+          return (counts['tasks.list'] ?? 0) + (counts['swimlanes.list'] ?? 0);
+        }, { timeout: 3000 })
+        .toBeGreaterThan(0);
+
+      expect(await toastCountRightNow(page)).toBe(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a burst of PR-link pushes raises no toasts at all', async () => {
+    // The reported incident in miniature: the refresh sweep is sequential, so a
+    // pass that finds several changed PRs fires one push per task within a few
+    // hundred ms. Under the old channel that was N toasts, and six of them blew
+    // past maxCount: 5 and silently dropped the oldest. The toast assertion is
+    // what a per-push regression would trip; the settled reload-count assertion
+    // at the end confirms the 250ms debounce still coalesces the burst.
+    const { browser, page } = await launch();
+
+    try {
+      await warmBothProjectsAndResetCounter(page);
+
+      await page.evaluate((currentProjectId) => {
+        const fire = (window as unknown as { __mockFireTaskPrLinkChanged: (projectId?: string) => void })
+          .__mockFireTaskPrLinkChanged;
+        for (let index = 0; index < 6; index += 1) fire(currentProjectId);
+      }, PROJECT_A_ID);
+
+      await expect
+        .poll(async () => {
+          const counts = await page.evaluate(() =>
+            (window as unknown as { __getIpcCallCounts: () => Record<string, number> }).__getIpcCallCounts(),
+          );
+          return (counts['tasks.list'] ?? 0) + (counts['swimlanes.list'] ?? 0);
+        }, { timeout: 3000 })
+        .toBeGreaterThan(0);
+
+      expect(await toastCountRightNow(page)).toBe(0);
+
+      // Now pin the coalescing claim, which `toBeGreaterThan(0)` alone does not
+      // make: it passes identically whether the burst produced one reload or
+      // six. All six pushes are fired synchronously in a single evaluate, so the
+      // 250ms trailing debounce collapses them deterministically - one
+      // loadBoard, which is two counted calls (tasks.list + swimlanes.list).
+      // Six un-debounced reloads would be twelve, so the bound below separates
+      // the two cleanly while leaving room for one extra boundary reload.
+      // (Intentional fixed wait: it must outlast the debounce window. A slow
+      // runner can only count FEWER calls, so this can never flake red.)
+      await page.waitForTimeout(500);
+      const settledCounts = await page.evaluate(() =>
+        (window as unknown as { __getIpcCallCounts: () => Record<string, number> }).__getIpcCallCounts(),
+      );
+      expect((settledCounts['tasks.list'] ?? 0) + (settledCounts['swimlanes.list'] ?? 0))
+        .toBeLessThanOrEqual(4);
+      expect(await toastCountRightNow(page)).toBe(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('background-project PR-link change invalidates that cache, does not reload the active board, and raises no toast', async () => {
+    const { browser, page } = await launch();
+
+    try {
+      await warmBothProjectsAndResetCounter(page);
+
+      await page.evaluate((backgroundProjectId) => {
+        (window as unknown as { __mockFireTaskPrLinkChanged: (projectId?: string) => void })
+          .__mockFireTaskPrLinkChanged(backgroundProjectId);
+      }, PROJECT_B_ID);
+
+      // (Intentional fixed wait - negative assertion; cannot poll for non-occurrence.)
+      await page.waitForTimeout(500);
+      const countsAfterPush = await page.evaluate(() =>
+        (window as unknown as { __getIpcCallCounts: () => Record<string, number> }).__getIpcCallCounts(),
+      );
+      expect(countsAfterPush['tasks.list'] ?? 0).toBe(0);
+      expect(countsAfterPush['swimlanes.list'] ?? 0).toBe(0);
+      expect(await toastCountRightNow(page)).toBe(0);
+
+      // The sweep runs per project, so a background project's PR refresh must
+      // still drop that project's warm-switch snapshot, or switching back shows
+      // pre-refresh PR chips.
+      await page.evaluate(() => {
+        (window as unknown as { __resetIpcCallCounts: () => void }).__resetIpcCallCounts();
+      });
+      await page.locator('[role="button"]:has-text("Inv Beta")').click();
+      await expect(page.locator('[data-swimlane-name="To Do"]')).toBeVisible({ timeout: 5000 });
+
+      await expect
+        .poll(async () => {
+          const counts = await page.evaluate(() =>
+            (window as unknown as { __getIpcCallCounts: () => Record<string, number> }).__getIpcCallCounts(),
+          );
+          return (counts['tasks.list'] ?? 0) + (counts['swimlanes.list'] ?? 0);
+        }, { timeout: 3000 })
+        .toBeGreaterThan(0);
+
+      expect(await toastCountRightNow(page)).toBe(0);
+    } finally {
+      await browser.close();
+    }
+  });
+});

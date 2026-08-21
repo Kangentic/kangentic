@@ -38,9 +38,17 @@ vi.mock('../../src/shared/ipc-channels', () => ({
 }));
 
 // sendToRenderer (invoked when a callback fires) mirrors into the IPC traffic
-// recorder; stub it so invoking a callback stays a pure unit test.
+// recorder; stub it so invoking a callback stays a pure unit test. Hoisted as a
+// NAMED spy rather than an inline `vi.fn()` so tests can assert the push
+// actually reached the recorder: that is the only thing distinguishing a call
+// routed through `sendToRenderer` from a raw `webContents.send`, which is
+// precisely the bug class `src/main/ipc/send-to-renderer.ts` was extracted to
+// close. Its sibling call site in pr-linking.ts already has this revert-proof
+// (pr-link-ladder.test.ts); without it here, coverage of the shared helper's
+// two callers is asymmetric.
+const recordPushSpy = vi.hoisted(() => vi.fn());
 vi.mock('../../src/main/diagnostics/ipc-recorder', () => ({
-  recordPush: vi.fn(),
+  recordPush: recordPushSpy,
 }));
 
 // strategy-propagation.ts pulls in a large transitive chain (SessionRepository,
@@ -357,6 +365,36 @@ describe('buildCommandContextForProject - consolidated board-changed bus fan-out
     context.onTaskUpdated({ id: 'task-1', title: 'Task One' } as never);
 
     expect(send).toHaveBeenCalledWith('TASK_UPDATED_BY_AGENT', 'task-1', 'Task One', DEFAULT_ID);
+    expect(emitBoardChanged).toHaveBeenCalledWith({ projectId: DEFAULT_ID, change: 'task-updated', ids: ['task-1'] });
+  });
+
+  it('onTaskPrLinkChanged pushes the QUIET channel but still fires the task-updated board event', () => {
+    // The quiet twin of onTaskUpdated, used by the link-time PR re-resolve.
+    // Two halves, and both matter:
+    //   - the renderer push must be TASK_PR_LINK_CHANGED (bare projectId), so
+    //     useAgentDrivenInvalidation reloads the board without toasting;
+    //   - emitBoardChanged must NOT go quiet with it, because the monitor and
+    //     the mobile bridge's board-event bus consume that event and a PR link
+    //     change is a real row change to them.
+    const { ipcContext, send, emitBoardChanged } = makeFanOutContext();
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID)!;
+
+    context.onTaskPrLinkChanged!({ id: 'task-1', title: 'Task One' } as never);
+
+    expect(send).toHaveBeenCalledWith('TASK_PR_LINK_CHANGED', DEFAULT_ID);
+    expect(send).not.toHaveBeenCalledWith(
+      'TASK_UPDATED_BY_AGENT', expect.anything(), expect.anything(), expect.anything(),
+    );
+    // The `not.toHaveBeenCalledWith` above matches on an exact 4-argument shape,
+    // so on its own it would miss a loud push made with any other arity. Pinning
+    // the total to one push closes that: an extra send of ANY shape reds this.
+    expect(send).toHaveBeenCalledTimes(1);
+
+    // Revert-proof for the `sendToRenderer` routing: restoring a raw
+    // `ipcContext.mainWindow.webContents.send(...)` here keeps every assertion
+    // above green while silently dropping the push from the IPC traffic log.
+    expect(recordPushSpy).toHaveBeenCalledWith('TASK_PR_LINK_CHANGED', [DEFAULT_ID]);
+
     expect(emitBoardChanged).toHaveBeenCalledWith({ projectId: DEFAULT_ID, change: 'task-updated', ids: ['task-1'] });
   });
 

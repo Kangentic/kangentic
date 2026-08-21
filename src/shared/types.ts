@@ -4518,6 +4518,19 @@ export interface ElectronAPI {
     onUpdatedByAgent: (callback: (taskId: string, taskTitle: string, projectId?: string) => void) => () => void;
     onDeletedByAgent: (callback: (taskId: string, taskTitle: string, projectId?: string) => void) => () => void;
     onSessionResync: (callback: (projectId?: string) => void) => () => void;
+    /**
+     * A task's PR link or PR state was reconciled by the app rather than by an
+     * agent: the periodic refresh sweep, the session-idle auto-link, the
+     * link-time re-resolve that follows a link write, or the task-detail
+     * "Link / refresh PR" control.
+     *
+     * Deliberately quiet, like `onSessionResync`. The board still has to reload
+     * (the card's PR chip is stale), but announcing it as "Task updated by
+     * agent" is wrong twice over: no agent updated anything, and the sweep can
+     * fire it for several tasks at once. An agent's OWN `update_task` /
+     * `link_pr` tool call still goes out on `onUpdatedByAgent` and still toasts.
+     */
+    onPrLinkChanged: (callback: (projectId?: string) => void) => () => void;
     onSpawnProgress: (callback: (taskId: string, label: string | null) => void) => () => void;
     /**
      * Queryable snapshot of in-flight spawn-progress labels (keyed by taskId).

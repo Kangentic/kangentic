@@ -2,6 +2,7 @@ import { IPC } from '../../shared/ipc-channels';
 import { withTaskLock } from '../ipc/task-lifecycle-lock';
 import { readWorktreeHead, hasCommitsAheadOfBase } from '../git/worktree-head';
 import { getProjectRepos } from '../ipc/helpers/project-repos';
+import { sendToRenderer } from '../ipc/send-to-renderer';
 import {
   resolvePRForBranch,
   resolvePRByNumber,
@@ -42,7 +43,14 @@ export interface PRLinkDeps {
    * Falls back to 'main' when absent.
    */
   defaultBaseBranch?: string;
-  /** Notify the renderer that the task changed (e.g. send TASK_UPDATED_BY_AGENT). */
+  /**
+   * Notify the renderer that the task's PR link or state changed. Every
+   * production caller routes this to the toast-free TASK_PR_LINK_CHANGED: the
+   * linker only ever runs because the APP decided to reconcile, so announcing
+   * it as "Task updated by agent" was both untrue and, for a sweep touching
+   * several tasks, a burst of toasts. Fires on a link AND on the
+   * confident-not-found clear.
+   */
   onLinked: (task: Task) => void;
   /** Optional raw PTY scrollback for the degradation fallback when the resolver is unavailable. */
   getScrollback?: () => string | undefined;
@@ -316,9 +324,20 @@ export async function linkPR(context: IpcContext, options: LinkPROptions): Promi
     preserveLinkOnNotFound: options.preserveLinkOnNotFound,
     getScrollback: options.scrollback != null ? () => options.scrollback : undefined,
     onLinked: (linked) => {
-      if (!context.mainWindow.isDestroyed()) {
-        context.mainWindow.webContents.send(IPC.TASK_UPDATED_BY_AGENT, linked.id, linked.title, projectId);
-      }
+      // Quiet channel, not TASK_UPDATED_BY_AGENT. Every caller that reaches
+      // here is the app reconciling a PR link on its own: the refresh sweep,
+      // `autoLinkPRForTask`, a `pr-candidate` scrollback hit, or the task-detail
+      // "Link / refresh PR" control (which already toasts off this call's own
+      // return value, so the push would only duplicate it). Announcing those as
+      // "Task updated by agent" was both untrue and, for a sweep that changed
+      // several tasks, a burst of toasts. An agent's own tool call still goes
+      // out on TASK_UPDATED_BY_AGENT from the command context.
+      //
+      // Covers the `prCleared` branch above too: noticing a stale link is the
+      // same kind of housekeeping.
+      sendToRenderer(context.mainWindow, IPC.TASK_PR_LINK_CHANGED, projectId);
+      // Unchanged: the monitor and the mobile bridge's board-event bus consume
+      // this, and they still need to hear a PR link change.
       context.boardEvents.emitBoardChanged({ projectId, change: 'task-updated', ids: [linked.id] });
     },
   });
