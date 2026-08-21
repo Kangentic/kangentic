@@ -44,9 +44,79 @@ jobs:
           git tag -a "v${{ inputs.version }}" -m "Release v${{ inputs.version }}"
           git push origin "v${{ inputs.version }}"
 
-  release:
+  # Create THE single draft release, before any platform build starts.
+  #
+  # electron-builder's GitHub publisher does a check-then-create with no locking:
+  # getOrCreateRelease() lists releases, scans for a matching tag_name, and creates
+  # a draft if it finds none (electron-publish/out/gitHubPublisher.js:55, verified
+  # against electron-builder 26.8.1 - a caret range, so re-check the line numbers
+  # after a bump). The three matrix legs each run `npm run publish` in parallel, so
+  # on v0.35.0 all three listed before any had created, all three saw nothing, and
+  # all three created a draft. GitHub permits duplicate drafts for one tag (a draft
+  # binds no git ref), so all three succeeded and the release split three ways.
+  #
+  # Pre-creating the draft closes that: `needs:` is a hard barrier, so the draft
+  # provably exists before any leg lists releases, and every leg then takes the
+  # `if (release.draft) return release` branch at gitHubPublisher.js:66 and reuses
+  # it. The legs upload disjoint filenames and never read-modify-write the release
+  # object, so nothing else races.
+  #
+  # Deliberately carries no `environment:`: the matrix legs gate on the
+  # release-<platform> environments, and a required reviewer or wait timer here
+  # would stall draft creation for all three.
+  create-draft-release:
     needs: [create-tag]
     if: always() && (needs.create-tag.result == 'success' || needs.create-tag.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.version) || github.ref }}
+
+      - name: Determine version tag
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=v${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Idempotent, so a re-run reuses whatever already exists. Titled without the
+      # leading "v" to match what electron-builder's own createRelease() produces.
+      #
+      # Page 1 only, unlike scripts/verify-release-assets.js, which pages to 20.
+      # The tag being created is by definition among the newest releases, so it
+      # cannot have fallen off page 1 here. The deeper paging matters only in the
+      # verify gate, which must also SEE a duplicate to fail on it. If this check
+      # ever did miss an existing release, the result is a second draft, and that
+      # gate then fails the release rather than publishing a partial one.
+      - name: Create the draft release if absent
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${{ steps.version.outputs.tag }}"
+          existing=$(gh api "repos/${{ github.repository }}/releases?per_page=100" \
+            --jq "[.[] | select(.tag_name == \"$tag\")] | length")
+          if [ "$existing" -gt 0 ]; then
+            echo "A release already exists for $tag; reusing it."
+            exit 0
+          fi
+          gh release create "$tag" \
+            --draft \
+            --title "${tag#v}" \
+            --notes-file RELEASE_NOTES.md \
+            --repo "${{ github.repository }}"
+
+  release:
+    needs: [create-tag, create-draft-release]
+    # The create-draft-release clause is load-bearing. always() is present to
+    # tolerate the conditional create-tag, which means adding a job to needs:
+    # without also naming it here would let the matrix run when draft creation
+    # FAILED, straight back to the three-way split this job exists to prevent.
+    if: always() && (needs.create-tag.result == 'success' || needs.create-tag.result == 'skipped') && needs.create-draft-release.result == 'success'
     environment: release-${{ matrix.platform }}
     strategy:
       fail-fast: false
@@ -206,9 +276,15 @@ jobs:
           docker run --rm -v "$PWD/out:/out:ro" ubuntu:24.04 sh -c \
             "apt-get update -qq && apt-get install -y \"/out/$(basename "$deb_file")\""
 
-  # Only publish the draft release when ALL platform builds succeed.
-  # This prevents partial releases (e.g. missing macOS artifacts) from
-  # reaching users. If any platform fails, the release stays as a draft.
+  # Publish the draft release, but only after verifying what is actually attached
+  # to it.
+  #
+  # The needs.release.result == 'success' gate is necessary and not sufficient. On
+  # v0.35.0 every platform job DID succeed and the release still shipped Windows-
+  # only, because the artifacts landed on three separate release objects and this
+  # job published one of them. Build success says nothing about what is attached to
+  # the release being published, so the asset-manifest check below is the gate that
+  # actually prevents a partial release. A failure here leaves the release a draft.
   #
   # Publishing (--draft=false) and setting the notes body happen in the SAME
   # `gh release edit` call so the release is never live with an empty body:
@@ -234,6 +310,13 @@ jobs:
           else
             echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           fi
+
+      # Must run BEFORE --draft=false: a failure here has to leave the release
+      # unpublished rather than roll one back.
+      - name: Verify the release carries every expected asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/verify-release-assets.js "${{ steps.version.outputs.tag }}" --repo ${{ github.repository }}
 
       - name: Publish release with notes (remove draft status)
         env:

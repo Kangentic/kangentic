@@ -389,7 +389,7 @@ Detach a registered UI surface (usage stats, git changes, the task Browser pane,
 ### Analytics (1 channel)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `analytics:trackRendererError` | invoke | Report renderer-side errors to main process |
+| `analytics:trackRendererError` | send | Report a renderer-side error to main, with a `RendererErrorContext` (`boundary`, `panel?`, `componentStack?`) saying where it came from. See [Analytics](analytics.md). |
 
 ### App (1 channel)
 | Channel | Pattern | Purpose |

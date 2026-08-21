@@ -11,7 +11,7 @@ Nine event types are tracked, all on critical-path actions only:
 | `app_launch` | App starts (when analytics is enabled) | platform, arch, clientId |
 | `app_heartbeat` | Every 30 minutes while at least one agent session is active; skipped when idle. Also fires once right before system sleep if a session is active | activeSessions, suspendedSessions, queuedSessions, totalSessions |
 | `app_close` | Graceful quit, Ctrl+C, SIGTERM, or OS shutdown/reboot/log-off | durationSeconds |
-| `app_error` | Uncaught exception, unhandled rejection, renderer crash, or React ErrorBoundary | source, message (sanitized), reason (renderer crashes), exitCode (renderer crashes) |
+| `app_error` | Uncaught exception, unhandled rejection, renderer crash, or React ErrorBoundary | source, message (sanitized), reason (renderer crashes), exitCode (renderer crashes), boundary / panel / components (renderer errors) |
 | `project_create` | User creates a project | (none) |
 | `task_complete` | Task moves to Done | agent, model, durationSeconds, costUsd, inputTokens, outputTokens, toolCalls |
 | `session_spawn` | Agent session reaches running state (board or transient) | agent, isTransient |
@@ -27,6 +27,28 @@ For Claude sessions, `model` is normalized to its base id via `parseModelId` (`s
 `costUsd`, `inputTokens`, `outputTokens`, and `toolCalls` are cumulative session metrics, omitted when not yet available (e.g. a session that exited before any usage was recorded). `session_exit` carries `costUsd`/`toolCalls` only, since its token counts would otherwise be a point-in-time context-window snapshot rather than a cumulative total; `task_complete` is the source for cumulative token counts.
 
 The `app_launch` event also carries `clientId`, an anonymous id Kangentic generates and attaches (see "Unique Installs" below). It is attached only to `app_launch` (the one authoritative per-launch install signal), not to every event, to avoid inflating high-cardinality string-prop volume on events like `app_heartbeat` where it adds no install-counting value.
+
+Renderer errors (`source: error_boundary`) carry three extra properties that say *where* the error
+happened, since a message alone is rarely enough to locate one. `boundary` is `root`, `panel`, or
+`unhandled_rejection` and identifies which of the three reporters caught it; `panel` is the
+failing panel's static label; `components` is a trail of React component names, innermost first.
+The raw component stack is never sent: a production stack frame embeds a `file://` URL containing
+the user's home directory, so main reduces it to component names, which cannot contain a path.
+
+`boundary` and `panel` read directly. `components` does not: React takes frame names from
+`fn.name` and the packaged renderer bundle is minified, so the trail arrives mangled. It still
+distinguishes one code path from another, and a matching build's sourcemap resolves it, but it is
+not readable on its own. `boundary` is the field to reach for first.
+
+Aptabase truncates any string property at 180 characters server-side, so `panel` and `components`
+are capped at that length rather than sending text that would be silently cut. `message` is the
+exception: `sanitizeErrorMessage` caps it at 200, so a message longer than 180 is still cut
+server-side.
+
+`boundary` classifies only `source: error_boundary` events. The other `app_error` sources
+(`uncaughtException`, `unhandledRejection`, `render-process-gone`, all raised in the main process)
+never carry it, and they are separate from the local crash-log system under
+`.kangentic/logs/crashes/`, which records its own JSON files and never reaches Aptabase.
 
 The analytics SDK automatically detects: OS name, OS version, locale, app version, anonymous session ID, and country (derived from IP, then discarded).
 

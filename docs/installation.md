@@ -31,8 +31,8 @@ Download the latest release for your platform from [GitHub Releases](https://git
 
 | Platform | File | Notes |
 |----------|------|-------|
-| Windows | `Kangentic Setup X.Y.Z.exe` | NSIS installer. Auto-updates. |
-| macOS | `Kangentic-X.Y.Z.dmg` | Drag to Applications. See [Gatekeeper note](#macos-gatekeeper). |
+| Windows | `Kangentic-Setup-X.Y.Z.exe` | NSIS installer. Auto-updates. |
+| macOS (Apple Silicon) | `Kangentic-X.Y.Z-arm64.dmg` | Drag to Applications. See [Gatekeeper note](#macos-gatekeeper). |
 | Linux (Debian/Ubuntu) | `kangentic_X.Y.Z_amd64.deb` | `sudo apt install ./kangentic_*.deb` |
 | Linux (Fedora/RHEL/openSUSE) | `kangentic-X.Y.Z-1.x86_64.rpm` | `sudo dnf install kangentic-*.rpm` |
 

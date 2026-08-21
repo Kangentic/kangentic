@@ -198,8 +198,16 @@ Summarize the release:
 - Commits included: N
 - Changelog entry: show the generated entry
 - **Release notes:** Read `RELEASE_NOTES.md` and display the contents. Tell the user: "These release notes will be applied to the draft GitHub Release automatically by CI."
-- GitHub Actions: link to `https://github.com/Kangentic/kangentic/actions` -- the tag push triggers the Release workflow which builds platform artifacts and creates a draft GitHub Release.
-- **Open the releases page** in the user's browser: run `start https://github.com/Kangentic/kangentic/releases` so the user can review and publish the draft once the workflow completes.
+- GitHub Actions: link to `https://github.com/Kangentic/kangentic/actions`. The tag push triggers the Release workflow, which creates ONE draft Release, builds all three platforms into it, verifies the asset manifest, and then publishes it automatically.
+- **Open the releases page** in the user's browser: run `start https://github.com/Kangentic/kangentic/releases` so the user can confirm the release went live.
+
+**Never publish the draft by hand.** Publishing is automatic once
+`scripts/verify-release-assets.js` confirms the tag resolves to exactly one release carrying all
+11 expected assets. So a release still sitting as a draft after the workflow finishes means that
+gate FAILED, and the draft is presumed incomplete. Clicking Publish in the GitHub UI bypasses the
+only check that stands between a partial release and every user's auto-updater, which is exactly
+how v0.35.0 shipped macOS-less. Read the `publish-release` job log, fix the cause, and re-run the
+workflow instead.
 
 ## Allowed Tools
 

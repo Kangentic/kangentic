@@ -2583,7 +2583,13 @@
     },
 
     analytics: {
-      trackRendererError: function () {},
+      // Records rather than discarding, like the other fire-and-forget mocks, so a
+      // UI test can assert what a boundary actually reported.
+      // context carries { boundary, panel?, componentStack? }.
+      trackRendererError: function (message, context) {
+        window.__mockTrackRendererErrorCalls = window.__mockTrackRendererErrorCalls || [];
+        window.__mockTrackRendererErrorCalls.push({ message: message, context: context });
+      },
     },
 
     app: {

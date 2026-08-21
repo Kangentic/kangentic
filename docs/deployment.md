@@ -96,24 +96,45 @@ Electron's `autoUpdater` on macOS only works with signed apps (Electron docs: "m
 
 ### Draft Releases Are Invisible to Auto-Updater
 
-`electron-updater` only sees **published** releases. Draft releases are invisible to the auto-updater and to `npx kangentic`. The manual publish step is the review gate -- always verify artifacts before publishing.
+`electron-updater` only sees **published** releases. Draft releases are invisible to the auto-updater and to `npx kangentic`.
+
+That invisibility is what made the v0.35.0 failure user-facing: the three platform jobs each raced
+to create their own draft for the same tag, the publish step resolved the tag to the Windows one,
+and the macOS and Linux artifacts stayed on drafts nobody could download. Two things now prevent a
+repeat. `create-draft-release` creates the single draft before any build starts, so every platform
+job attaches to the same release. Then `scripts/verify-release-assets.js` runs before
+`--draft=false` and fails the release unless the tag resolves to exactly one release object
+carrying all 11 expected assets, all fully uploaded. A build that succeeds on every platform is
+not evidence that the release is complete; only the asset check is.
 
 ### GitHub Actions Workflows
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
 | `ci.yml` | Push to main, PRs | Typecheck, unit tests, UI tests |
-| `release.yml` | Tag push (`v*`) or `workflow_dispatch` | Build + sign + draft GitHub Release, then publish with notes (one atomic `gh release edit`) + publish launcher to npm (via OIDC trusted publishing) |
+| `release.yml` | Tag push (`v*`) or `workflow_dispatch` | Create one draft Release, build + sign on all 3 platforms into it, verify the asset manifest, then publish with notes (one atomic `gh release edit`) + publish launcher to npm (via OIDC trusted publishing) |
 
 ### CI Build Matrix
 
-The release workflow produces 3 builds:
+The release workflow produces 3 builds, contributing 11 assets in total to one release. The full
+expected filename set is `scripts/release-assets.js`, which the publish gate checks against and
+`tests/unit/release-asset-manifest.test.ts` keeps in sync with `electron-builder.yml` and the
+launcher.
 
 | Runner | Platform | Artifacts |
 |--------|----------|-----------|
-| `ubuntu-latest` | linux-x64 | `.deb`, `.rpm` |
-| `windows-latest` | windows-x64 | `Setup.exe`, `.nupkg` |
-| `macos-latest` | macos-arm64 | `.dmg`, `.zip` |
+| `ubuntu-latest` | linux-x64 | `.deb`, `.rpm`, `latest-linux.yml` |
+| `windows-latest` | windows-x64 | `Setup.exe`, `.exe.blockmap`, `latest.yml` |
+| `macos-latest` | macos-arm64 | `.dmg`, `.zip`, a `.blockmap` for each, `latest-mac.yml` |
+
+The three `latest*.yml` files are the update manifests `electron-updater` fetches, so a release
+missing one is broken for that platform even when its installer uploaded fine.
+
+Every artifact filename is pinned via `artifactName` in `electron-builder.yml` rather than
+inherited from electron-builder's defaults. Three of the five templates (the macOS zip, the dmg,
+and the deb) were inherited until v0.35.0; only `nsis` and `rpm` were already pinned. The launcher
+hardcodes the names it downloads, so a default change would have silently 404'd `npx kangentic` on
+that platform.
 
 Linux arm64 and macOS x64 are not built in v1. Documented in the [Installation Guide](installation.md).
 

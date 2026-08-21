@@ -90,6 +90,21 @@ mac:
   target:
     - dmg
     - zip
+  # Pin filenames to match what the launcher (packages/launcher/bin/kangentic.js)
+  # and scripts/release-assets.js expect. These were previously electron-builder
+  # defaults, which only carry the "-arm64" infix because the default arch is x64
+  # and the default templates omit ${arch} when it matches: adding mac.defaultArch,
+  # or an upstream change to that comparison, would silently rename both assets and
+  # 404 every `npx kangentic` on macOS. Any user-set pattern flips isUserForced
+  # (platformPackager.js:551, verified against electron-builder 26.8.1; it is a
+  # caret range, so re-check that line number after a bump), so ${arch} then
+  # always expands.
+  #
+  # This one is the ZIP pattern, not a shared one. Resolution order is
+  # target options -> mac.artifactName -> config.artifactName, and only dmg has a
+  # target-options section, so the zip lands here while dmg.artifactName below
+  # overrides for the dmg. The ${os} macro expands to "mac".
+  artifactName: "${productName}-${version}-${arch}-${os}.${ext}"
   icon: node_modules/@kangentic/branding/resources/desktop/icon.icns
   category: public.app-category.developer-tools
   hardenedRuntime: true
@@ -102,6 +117,11 @@ mac:
     # Shown in the macOS microphone-permission prompt for voice dictation.
     NSMicrophoneUsageDescription: "Kangentic uses your microphone for voice-to-text dictation into terminals. Audio is transcribed locally and never leaves your machine unless you configure a remote backend."
 
+dmg:
+  # Overrides mac.artifactName for the dmg only: the dmg carries no "-mac" infix.
+  # Without this the dmg would inherit the zip pattern above and be renamed.
+  artifactName: "${productName}-${version}-${arch}.${ext}"
+
 linux:
   target:
     - deb
@@ -110,6 +130,9 @@ linux:
   category: Development
 
 deb:
+  # Pin filename to match the launcher and scripts/release-assets.js. Same reason
+  # as mac.artifactName above: this was an inherited electron-builder default.
+  artifactName: "${name}_${version}_${arch}.${ext}"
   depends:
     - libnss3
     - libatk-bridge2.0-0

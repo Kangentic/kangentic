@@ -4354,6 +4354,26 @@ export interface GuestMouseButtonEvent {
   at: number;
 }
 
+/**
+ * Where a renderer error came from, sent alongside the message on
+ * `ElectronAPI['analytics']['trackRendererError']`.
+ *
+ * The message alone is not locatable: `Cannot read properties of undefined
+ * (reading 'split')` told us nothing about which surface threw it, because all
+ * three reporters (both error boundaries and the bare unhandled-rejection
+ * listener) sent a message and nothing else.
+ */
+export interface RendererErrorContext {
+  /** Which reporter caught it. The most useful field by far: it says whether a
+   *  component stack exists at all, since only the boundaries have one. */
+  boundary: 'root' | 'panel' | 'unhandled_rejection';
+  /** `PanelErrorBoundary`'s static `label` prop ("Changes", "Monitor"). */
+  panel?: string;
+  /** React's `info.componentStack`. Main reduces it to component names before
+   *  sending; the raw value never leaves the process. */
+  componentStack?: string;
+}
+
 export interface ElectronAPI {
   // Dev-only (preview): present only when __KANGENTIC_DEV__ (build-excluded in prod).
   dev?: {
@@ -4839,7 +4859,7 @@ export interface ElectronAPI {
 
   // Analytics
   analytics: {
-    trackRendererError: (message: string) => void;
+    trackRendererError: (message: string, context?: RendererErrorContext) => void;
   };
 
   // App

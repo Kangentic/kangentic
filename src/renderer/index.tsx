@@ -9,7 +9,12 @@ import './index.css';
 
 window.addEventListener('unhandledrejection', (event) => {
   const message = event.reason instanceof Error ? event.reason.message : String(event.reason);
-  window.electronAPI?.analytics?.trackRendererError(message);
+  // No component stack exists here: a rejected promise is not a render error.
+  // Reporting the boundary anyway is the point - it distinguishes this path from
+  // the two error boundaries, which previously all reported identically.
+  window.electronAPI?.analytics?.trackRendererError(message, {
+    boundary: 'unhandled_rejection',
+  });
 });
 
 // Dev-server tab / devtools favicon (the packaged app icon is the native BrowserWindow icon,

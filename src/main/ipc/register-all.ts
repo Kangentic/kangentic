@@ -1,7 +1,12 @@
 import { type BrowserWindow, ipcMain } from 'electron';
 import { IPC } from '../../shared/ipc-channels';
-import type { ProjectOpenByPathOverrides } from '../../shared/types';
-import { trackEvent, sanitizeErrorMessage } from '../analytics/analytics';
+import type { ProjectOpenByPathOverrides, RendererErrorContext } from '../../shared/types';
+import {
+  trackEvent,
+  sanitizeErrorMessage,
+  summarizeComponentStack,
+  MAX_ANALYTICS_STRING_LENGTH,
+} from '../analytics/analytics';
 import { ProjectRepository } from '../db/repositories/project-repository';
 import { ProjectGroupRepository } from '../db/repositories/project-group-repository';
 import { SessionManager } from '../pty/session-manager';
@@ -243,12 +248,38 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   startMetricsSnapshotTimer(sessionManager);
 
   // Analytics: renderer error tracking (fire-and-forget from renderer)
-  ipcMain.on(IPC.TRACK_RENDERER_ERROR, (_event, message: string) => {
-    trackEvent('app_error', {
-      source: 'error_boundary',
-      message: sanitizeErrorMessage(message),
-    });
-  });
+  //
+  // `source` stays 'error_boundary' for every reporter so the existing telemetry
+  // grouping is continuous. The origin is carried by `boundary` instead, which is
+  // what makes a message like "Cannot read properties of undefined (reading
+  // 'split')" locatable: it says whether a component stack exists at all.
+  //
+  // Every field is re-checked at RUNTIME because `RendererErrorContext` is erased
+  // at the IPC boundary, and `error.message` is already `undefined` whenever a
+  // component throws a non-Error value (`throw 'boom'`). A throw in here would not
+  // crash (the global `uncaughtException` handler swallows it) - it would silently
+  // drop the very error report this handler exists to send.
+  ipcMain.on(
+    IPC.TRACK_RENDERER_ERROR,
+    (_event, message: string, errorContext?: RendererErrorContext) => {
+      const props: Record<string, string> = {
+        source: 'error_boundary',
+        message: sanitizeErrorMessage(
+          typeof message === 'string' ? message : String(message ?? 'Unknown error')
+        ),
+      };
+      const boundary = errorContext?.boundary;
+      if (typeof boundary === 'string') props.boundary = boundary;
+      const panel = errorContext?.panel;
+      if (typeof panel === 'string') props.panel = panel.slice(0, MAX_ANALYTICS_STRING_LENGTH);
+      const componentStack = errorContext?.componentStack;
+      const components = summarizeComponentStack(
+        typeof componentStack === 'string' ? componentStack : undefined
+      );
+      if (components) props.components = components;
+      trackEvent('app_error', props);
+    }
+  );
 }
 
 // Thin wrappers -- same signatures as before, zero changes in index.ts
