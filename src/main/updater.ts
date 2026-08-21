@@ -99,10 +99,10 @@ export async function downloadWithRetry(): Promise<void> {
 }
 
 /**
- * Registered on every path that bails out of updater init (dev, Linux, and a
- * build with no update manifest). The renderer's updater surfaces still exist
- * on those paths, so without these `ipcRenderer.invoke` rejects with
- * `No handler registered` and surfaces as an unhandled rejection.
+ * Registered on every path that bails out of updater init (dev, and a
+ * packaged build with no update manifest). The renderer's updater surfaces
+ * still exist on those paths, so without these `ipcRenderer.invoke` rejects
+ * with `No handler registered` and surfaces as an unhandled rejection.
  */
 function registerNoOpUpdaterHandlers(): void {
   ipcMain.handle(IPC.UPDATE_CHECK, () => {});

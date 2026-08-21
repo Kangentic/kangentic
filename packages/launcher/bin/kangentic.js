@@ -467,7 +467,11 @@ async function main() {
 
   // Both sampled BEFORE installing, since the install itself changes the answers.
   // wasInstalled separates an upgrade from a first-time install: there is
-  // nothing to "finish updating" when the app was never on the machine.
+  // nothing to "finish updating" when the app was never on the machine. This
+  // deliberately checks the binary's presence (fs.existsSync), not
+  // isInstalled(): isInstalled() also compares the version marker and would
+  // read false on exactly the upgrade this advice exists to announce, since
+  // the marker still names the OLD version at this point in main().
   const wasInstalled = fs.existsSync(getInstallPath(platformInfo));
   const wasRunning = isAppRunning(platformInfo);
 
