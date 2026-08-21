@@ -14,7 +14,7 @@ import { githubReleaseUrl } from '../../lib/github-release-url';
  * update is downloaded and pending. After the relaunch `pendingUpdate` is null,
  * so nothing could surface the notes at all - not for a user who restarted
  * straight from the toast, not for one whose update installed on a normal quit,
- * and not for a fresh, manual, or Linux install the updater never touched.
+ * and not for a fresh, manual, or `npx kangentic` install the updater never touched.
  *
  * A sibling rather than a mode of ReleaseNotesDialog: the two share only the
  * GitHub link and a one-line markdown body, while their triggers, lifecycles,

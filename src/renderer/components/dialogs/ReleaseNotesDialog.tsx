@@ -18,7 +18,7 @@ import { githubReleaseUrl } from '../../lib/github-release-url';
  * This placement is deliberately PRE-restart. WhatsNewDialog is its post-restart
  * counterpart, for the user who never sees this one: the fast path straight from
  * the toast, an install via `autoUpdater.autoInstallOnAppQuit`, a fresh install,
- * or Linux, where the updater does not run at all.
+ * or an `npx kangentic` upgrade, which replaces the package from outside the app.
  *
  * Mounted in AppLayout so it appears regardless of sidebar state.
  */
