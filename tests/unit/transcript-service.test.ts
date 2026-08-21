@@ -1,4 +1,7 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import type Database from 'better-sqlite3';
 import type { SessionRecord, TranscriptEntry } from '../../src/shared/types';
 
@@ -29,7 +32,14 @@ vi.mock('../../src/main/agent/agent-registry', () => ({
   agentRegistry: { getBySessionType: vi.fn() },
 }));
 
-import { resolveSessionTranscript } from '../../src/main/agent/transcript-service';
+import {
+  resolveSessionTranscript,
+  resolveTaskTranscript,
+  resetForTests,
+  setStitchMemoBudgetForTests,
+  stitchMemoBytesForTests,
+  stitchMemoSizeForTests,
+} from '../../src/main/agent/transcript-service';
 import { agentRegistry } from '../../src/main/agent/agent-registry';
 
 interface MemoryChunkRow {
@@ -478,5 +488,175 @@ describe("truncateEntries clamp coverage (via resolveSessionTranscript's 'live' 
       expect(entry.text).toContain('[truncated 100 chars]');
       expect(entry.text.split('\n[truncated')[0].length).toBe(20_000);
     }
+  });
+});
+
+/**
+ * `stitchMemoByTaskId` (the task-level cross-session stitch memo) previously
+ * had a COUNT cap only (`STITCH_MEMO_LIMIT`, 64), while it is an INDEPENDENT
+ * retention root that outlives file-cache eviction - so nothing bounded its
+ * bytes at all. `STITCH_MEMO_BYTE_BUDGET` fixes that; these tests drive it
+ * through the real `resolveTaskTranscript` -> `touchStitchMemo` path, using
+ * REAL temp files on disk (transcript-cache.ts's own `fs.stat` calls are not
+ * mocked), so a memo's recorded `fileSignatures[].size` reflects an actual
+ * file size rather than a stand-in.
+ *
+ * A hand-rolled fake `Database` answers the SQL shapes `resolveTaskTranscript`
+ * and `resolveSessionTranscript` touch: `sessions` lookup by id-or-agent-id,
+ * `sessions` listed by task_id, and the task title lookup.
+ */
+describe('resolveTaskTranscript stitch memo byte budget (Hole 2)', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    resetForTests();
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stitch-memo-budget-test-'));
+  });
+
+  afterEach(() => {
+    // Module-scope budget: restore it (and clear the memo/file cache) on both
+    // the pass and the throw path, or a lowered value leaks into later files.
+    resetForTests();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeStitchSessionRecord(overrides: Partial<SessionRecord> = {}): SessionRecord {
+    return {
+      id: 'session-1',
+      task_id: 'task-1',
+      session_type: 'claude_agent',
+      agent_session_id: 'agent-1',
+      cwd: '/work/project',
+      started_at: '2026-06-01T00:00:00Z',
+      status: 'exited',
+      isolated_swimlane_id: null,
+      exited_at: null,
+      ...overrides,
+    } as unknown as SessionRecord;
+  }
+
+  /** Answers the SQL shapes `resolveTaskTranscript` / `resolveSessionTranscript`
+   *  issue against a flat, growable list of session records spanning many
+   *  distinct tasks. */
+  function makeMultiTaskFakeDb(allSessions: SessionRecord[]): Database.Database {
+    return {
+      prepare(sql: string) {
+        return {
+          get: (...args: unknown[]) => {
+            if (sql.includes('FROM sessions WHERE id = ? OR agent_session_id = ?')) {
+              const [lookupId] = args as [string];
+              const matches = allSessions.filter(
+                (record) => record.id === lookupId || record.agent_session_id === lookupId,
+              );
+              matches.sort((first, second) => second.started_at.localeCompare(first.started_at));
+              return matches[0];
+            }
+            if (sql.includes('SELECT title FROM tasks WHERE id = ?')) {
+              return { title: 'Stitch memo test task' };
+            }
+            throw new Error(`unexpected get SQL: ${sql}`);
+          },
+          all: (...args: unknown[]) => {
+            if (sql.includes('FROM sessions WHERE task_id = ?')) {
+              const [taskId] = args as [string];
+              return allSessions
+                .filter((record) => record.task_id === taskId)
+                .sort((first, second) => second.started_at.localeCompare(first.started_at));
+            }
+            throw new Error(`unexpected all SQL: ${sql}`);
+          },
+        };
+      },
+    } as unknown as Database.Database;
+  }
+
+  /** Seeds `taskCount` distinct single-session tasks, each pointing at a real
+   *  temp file of `contentBytesPerTask` bytes, driving `resolveTaskTranscript`
+   *  for each so its stitch memo is populated from the REAL on-disk file size. */
+  async function seedDistinctTasks(
+    db: Database.Database,
+    allSessions: SessionRecord[],
+    prefix: string,
+    taskCount: number,
+    contentBytesPerTask: number,
+  ): Promise<void> {
+    for (let taskIndex = 0; taskIndex < taskCount; taskIndex += 1) {
+      const sourcePath = path.join(tmpDir, `${prefix}-${taskIndex}.jsonl`);
+      fs.writeFileSync(sourcePath, 'p'.repeat(contentBytesPerTask));
+
+      const record = makeStitchSessionRecord({
+        id: `${prefix}-session-${taskIndex}`,
+        task_id: `${prefix}-task-${taskIndex}`,
+        agent_session_id: `${prefix}-agent-${taskIndex}`,
+        started_at: `2026-06-01T00:${String(taskIndex).padStart(2, '0')}:00Z`,
+      });
+      allSessions.push(record);
+
+      const parseTranscript = vi.fn(async () => ({
+        entries: [{ kind: 'user' as const, uuid: `${prefix}-u-${taskIndex}`, ts: 10, text: 'hi' }],
+        sourcePath,
+      }));
+      getBySessionType.mockReturnValue({
+        displayName: 'Claude Code',
+        parseTranscript,
+      } as unknown as ReturnType<typeof agentRegistry.getBySessionType>);
+
+      const result = await resolveTaskTranscript(db, record.id);
+      if (!result) throw new Error(`resolveTaskTranscript returned null for ${record.task_id}`);
+    }
+  }
+
+  it('records the stitch memo byte size as the SUM of fileSignatures[].size, from the real on-disk file', async () => {
+    const contentBytes = 537;
+    const sourcePath = path.join(tmpDir, 'single-task.jsonl');
+    fs.writeFileSync(sourcePath, 'q'.repeat(contentBytes));
+
+    const record = makeStitchSessionRecord({ id: 'solo-session', task_id: 'solo-task', agent_session_id: 'solo-agent' });
+    const allSessions = [record];
+    const db = makeMultiTaskFakeDb(allSessions);
+    const parseTranscript = vi.fn(async () => ({
+      entries: [{ kind: 'user' as const, uuid: 'solo-u1', ts: 10, text: 'hi' }],
+      sourcePath,
+    }));
+    getBySessionType.mockReturnValue({
+      displayName: 'Claude Code',
+      parseTranscript,
+    } as unknown as ReturnType<typeof agentRegistry.getBySessionType>);
+
+    const result = await resolveTaskTranscript(db, 'solo-session');
+
+    expect(result).not.toBeNull();
+    // Exact, not a bound: the memo's only file signature is this ONE real
+    // file, so its recorded byte size must equal what is actually on disk.
+    expect(stitchMemoBytesForTests()).toBe(contentBytes);
+    expect(stitchMemoSizeForTests()).toBe(1);
+  });
+
+  it('evicts on the BYTE budget while the count cap (64) is nowhere near exceeded', async () => {
+    const taskCount = 10;
+    const contentBytesPerTask = 900;
+    const smallBudget = 4 * 1024;
+
+    // CONTROL: with no binding byte budget, the count cap (64, far above 10)
+    // retains every one of the ten task memos. This is the pre-fix behavior
+    // (a count cap only), and it is what makes the assertions below a genuine
+    // red-green rather than a tautology - ten memos pass any count-based
+    // assertion while holding the whole working set.
+    setStitchMemoBudgetForTests(Number.MAX_SAFE_INTEGER);
+    const controlSessions: SessionRecord[] = [];
+    const controlDb = makeMultiTaskFakeDb(controlSessions);
+    await seedDistinctTasks(controlDb, controlSessions, 'control', taskCount, contentBytesPerTask);
+
+    expect(stitchMemoSizeForTests()).toBe(taskCount);
+    expect(stitchMemoBytesForTests()).toBeGreaterThan(smallBudget);
+
+    resetForTests();
+    setStitchMemoBudgetForTests(smallBudget);
+    const budgetSessions: SessionRecord[] = [];
+    const budgetDb = makeMultiTaskFakeDb(budgetSessions);
+    await seedDistinctTasks(budgetDb, budgetSessions, 'budget', taskCount, contentBytesPerTask);
+
+    expect(stitchMemoSizeForTests()).toBeLessThan(taskCount);
+    expect(stitchMemoBytesForTests()).toBeLessThanOrEqual(smallBudget);
   });
 });

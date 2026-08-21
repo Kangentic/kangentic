@@ -697,6 +697,8 @@ Structured output is shaped by three agent-agnostic levers, applied to the parse
 - `search`: case-insensitive substring; return only entries whose content (including a tool result inlined under its owning tool call) contains the term.
 - `aroundUuid` + `context`: center the returned entries on the turn with `aroundUuid` (the `turnUuid` from a `kangentic_search` conversation hit) and include `context` turns either side (default 3). This is the citation-first fetch - pull just the neighborhood of a cited turn rather than the whole transcript. A stale/absent uuid degrades to the full transcript.
 
+A very large transcript is bounded twice, at two different layers, and the two notices mean different things. The parser reads at most `MAX_PARSE_SOURCE_BYTES` (16MB) from the END of the native history file, because reading an unbounded one whole is what OOM'd the main process; when it does, the omission is announced in-band as a `system` entry with subtype `truncated` ("Earlier N MB of this conversation are not shown"). That is a READ bound and it is the same for every caller. The `maxChars` budget below is a separate RESPONSE bound applied afterwards. A single huge transcript can carry both notices at once. Neither affects `kangentic_search`, whose conversation index walks the whole file in windows.
+
 Output is bounded by a character budget (default ~50,000 chars; raise via `maxChars`, hard ceiling 500,000). When the result exceeds the budget it keeps the **most recent** entries and prepends a `[Truncated: N earlier entries omitted ...]` note. `view`/`tail`/`search` apply to `structured` only; the `maxChars` budget also caps `raw` scrollback (keeping the most recent portion).
 
 Structured-format support by agent:
