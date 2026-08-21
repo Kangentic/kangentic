@@ -265,7 +265,7 @@ Release-time manual validation against real authenticated agent CLIs lives in [r
 
 The `/test` command is the full local gate: typecheck, build, then unit + UI + E2E (all tests,
 no selection heuristic). `/test quick` runs unit + UI only for the fast inner loop. It is for
-manual local runs - the automated gate now runs on CI as PR checks (the **Tests** column runs
+manual local runs - the automated gate now runs on CI as PR checks (the **Testing** column runs
 `/pull-request`, which pushes a branch and drives the CI checks to green; CI runs lint, typecheck,
 unit, build, the UI shards, and the Linux Electron E2E shards under xvfb). To run tiers directly:
 

@@ -145,7 +145,7 @@ export function ColumnsOverview({ rows, onSelect }: ColumnsOverviewProps) {
     },
     {
       key: 'hasAutoCommand',
-      label: 'Auto-cmd',
+      label: 'Message',
       width: 'w-[11%]',
       render: (row) => (row.role ? <NotApplicable /> : <BoolCell on={row.hasAutoCommand} />),
     },

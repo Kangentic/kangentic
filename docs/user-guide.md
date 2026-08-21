@@ -19,12 +19,20 @@ New projects start with seven columns:
 | Column | Role | Behavior |
 |--------|------|----------|
 | **To Do** | todo | Holding area. No agent runs here. Moving a task here kills its session. |
-| **Planning** | (plan mode) | Spawns Claude in plan mode. Agent creates a plan, then task auto-moves to Executing. |
-| **Executing** | (auto) | Spawns Claude in default permission mode. Agent works on the task. |
-| **Code Review** | (auto) | Agent keeps running. Can attach an auto-command for review prompts. |
-| **Tests** | (auto) | Agent keeps running. Can attach an auto-command (e.g. open a PR and drive its checks green). |
-| **Ship It** | (auto) | Agent keeps running. Can attach an auto-command (e.g. merge a verified PR and pull back). |
+| **Planning** | (plan mode) | Spawns the agent in plan mode. Agent creates a plan, then task auto-moves to Executing. |
+| **Executing** | (auto) | Spawns the agent in default permission mode. Agent works on the task. |
+| **Code Review** | (auto) | Agent keeps running. Add a message telling it how to review the work (e.g. review the diff and fix what it finds). |
+| **Testing** | (auto) | Agent keeps running. Add a message telling it how to test the work (e.g. open a PR and drive its checks green). |
+| **Merge** | (auto) | Agent keeps running. Add a message telling it how to ship the work (e.g. merge a verified PR and pull back). |
 | **Done** | done | Suspends the session (preserving context) and archives the task. |
+
+None of the default columns carries a message or a description: the defaults are names, icons,
+and colors only, since what a column should tell its agent depends on your repo and agent. Both
+fields are yours to fill in from Board manager.
+Message examples in this guide, like `/code-review`, come from Kangentic's own development
+board, not from the defaults. ("Message to agent" is the column editor's label for what
+`kangentic.json` and the database store as `autoCommand` / `auto_command`; this guide uses
+both terms interchangeably.)
 
 ## Task Lifecycle
 
@@ -94,8 +102,16 @@ When an agent is already running, the same Model / Effort pills appear in the li
 Drag a task from To Do to any active column (Planning, Executing, etc.). Kangentic will:
 
 1. Create a git worktree for the task (if worktrees are enabled)
-2. Spawn a Claude Code CLI session with the task title and description as the prompt
+2. Spawn an agent CLI session with the task title and description as the prompt
 3. The task card shows a spinner while the agent is thinking
+
+A move out of To Do is the only kind of move that sends the task itself to the agent: the title,
+description, and any attachment paths become the opening prompt (the seeded template
+`{{task_xml}}{{attachments}}`). A move between two active columns resumes the same
+conversation - the description is not sent again, and the destination column's **Message to
+agent** (`auto_command`), if it has one, is the only new instruction the agent receives.
+Moving a task back to To Do kills its session, so moving it out again starts a fresh
+conversation and sends the task once more.
 
 ### Monitor Progress
 
@@ -114,7 +130,9 @@ Drag a task from To Do to any active column (Planning, Executing, etc.). Kangent
 
 Dragging between active columns (e.g., Executing to Code Review) keeps the session alive. If the target column has an `auto_command` configured (e.g., `/code-review`), it is typed straight into the running agent as keystrokes - no suspend, no restart. A suspend and respawn happens only when the move needs one for its own reasons (a permission-mode change, or a model/effort change the agent cannot swap live); in that case the `auto_command` rides along as the resume prompt instead.
 
-Each column chooses WHEN its command arrives via **Auto-command timing**: `immediate` sends it on arrival (the agent queues it if mid-turn), while `deferred` holds it until the current turn genuinely finishes.
+The agent keeps its conversation across these moves; the message is the only new input it sees. A new project has no messages configured, so by default these moves simply carry the session along.
+
+Each column chooses WHEN its message arrives via **Message timing**: `immediate` sends it on arrival (the agent queues it if mid-turn), while `deferred` holds it until the current turn genuinely finishes.
 
 ### Complete a Task
 
@@ -351,13 +369,14 @@ Click the column header's settings icon. You can configure:
 | Setting | Description |
 |---------|-------------|
 | **Name** | Column display name |
+| **Description** | Column header tooltip, shared via `kangentic.json`. Display only; never sent to the agent |
 | **Color** | Header accent color |
 | **Icon** | Lucide icon name (e.g., `square-terminal`, `code`, `flask-conical`) |
 | **Agent** | Override the project's default agent for this column (e.g., use Codex for code review) |
 | **Permission Mode** | Override the global permission mode for agents in this column |
 | **Auto Spawn** | Whether moving a task here spawns an agent (default: on) |
-| **Auto Command** | Command injected into running sessions when tasks arrive |
-| **Auto Command Timing** | Whether that command interrupts the agent or waits for its current turn to finish |
+| **Message to agent** | Sent to the agent when a task enters the column. Plain instructions or a slash command; template variables fill in task details. Stored as `autoCommand` in `kangentic.json` |
+| **Message timing** | Whether the message interrupts the agent or waits for its current turn to finish |
 | **Plan Exit Target** | For plan-mode columns: where tasks move when planning completes |
 
 When a column's agent override differs from the current session's agent, moving a task into that column triggers a cross-agent handoff. The outgoing agent's context (transcript, git changes, metrics) is automatically packaged and delivered to the incoming agent.
@@ -796,6 +815,6 @@ Terminal:
 ## Tips
 
 - **Plan mode workflow:** Use a Planning column with `permission_mode='plan'` and `plan_exit_target_id` pointing to your Executing column. The agent plans first, then auto-moves to execution.
-- **Auto commands:** Set `auto_command` on a Code Review column to automatically ask the agent to review its own code when tasks arrive.
+- **Column messages:** Set a message (`auto_command`) on a Code Review column to automatically ask the agent to review its own code when tasks arrive. Prose works: "Review the diff on this branch and fix what you would change."
 - **Concurrent agents:** Increase `maxConcurrentSessions` to run more agents in parallel. Each needs its own worktree to avoid conflicts.
 - **Resume from Done:** Unarchive a completed task and drag it back to an active column. Kangentic recreates the worktree from the preserved branch on the fly, and the agent picks up exactly where it left off.

@@ -210,7 +210,7 @@ Two special roles affect behavior:
 | `todo` | Task moves here → session killed (not suspended), worktree preserved |
 | `done` | Task moves here → session suspended (resumable), task archived |
 
-All other columns (including Planning, Running, Code Review, etc.) are custom columns with no special role. Their behavior is controlled by `auto_spawn`, `auto_command`, `permission_mode`, and `plan_exit_target_id`.
+All other columns (including Planning, Executing, Code Review, etc.) are custom columns with no special role. Their behavior is controlled by `auto_spawn`, `auto_command`, `permission_mode`, and `plan_exit_target_id`.
 
 ## auto_spawn Flag
 

@@ -126,7 +126,7 @@ function monitorPreConfig(): string {
         // any other test checks.
         sessionId: 'sess-working', projectId: '${PROJECT_A}', projectName: 'Monitor Alpha',
         taskId: 'task-a', taskTitle: 'Fix PTY capture race', outputPeek: ['npm run typecheck', 'no errors'], displayId: 142,
-        columnName: 'Tests', commandTerminalBranch: null, labels: ['bug'], prUrl: null, prNumber: null, prState: null,
+        columnName: 'Testing', commandTerminalBranch: null, labels: ['bug'], prUrl: null, prNumber: null, prState: null,
         agentName: 'claude', modelDisplayName: 'Opus 5', effort: 'xhigh', permissionMode: 'plan',
         startedAt: '2026-01-01T00:00:00.000Z', exitedAt: null,
         status: 'running', activity: 'thinking', activityReason: null,
@@ -264,7 +264,7 @@ test.describe('agent monitor', () => {
       // A task agent keeps its column and grows no branch, so the slot never
       // shows two different things on one card.
       const taskOrigin = page.locator('[data-session-id="sess-working"] [data-testid="monitor-card-origin"]');
-      await expect(taskOrigin).toContainText('Tests');
+      await expect(taskOrigin).toContainText('Testing');
       await expect(taskOrigin.locator('[data-testid="monitor-card-branch"]')).toHaveCount(0);
     } finally {
       await browser.close();
@@ -1231,7 +1231,7 @@ test.describe('agent monitor', () => {
           // working count at 0, which is the state under test.
           sessionId: 'sess-idle-only', projectId: '${PROJECT_A}', projectName: 'Monitor Alpha',
           taskId: 'task-a', taskTitle: 'Fix PTY capture race', outputPeek: [], displayId: 142,
-          columnName: 'Tests', commandTerminalBranch: null, labels: [], prUrl: null,
+          columnName: 'Testing', commandTerminalBranch: null, labels: [], prUrl: null,
           prNumber: null, prState: null, agentName: 'claude', modelDisplayName: 'Opus 5',
           effort: 'xhigh', permissionMode: 'plan', startedAt: '2026-01-01T00:00:00.000Z',
           exitedAt: null, status: 'running', activity: 'idle',

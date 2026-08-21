@@ -121,13 +121,13 @@ test.describe('BoardManagerDialog extended', () => {
   // - The error toast contains the partial-save note.
 
   test('save fan-out: succeeded row clears dirty dot; failed row stays dirty; dialog stays open', async () => {
-    // Wire the spy: reject every call for 'Tests', succeed for anything else.
+    // Wire the spy: reject every call for 'Testing', succeed for anything else.
     await page.evaluate(() => {
       (window as unknown as { __updateSpy: unknown[] }).__updateSpy = [];
       const originalUpdate = window.electronAPI.swimlanes.update;
       window.electronAPI.swimlanes.update = async (input) => {
         (window as unknown as { __updateSpy: unknown[] }).__updateSpy.push(input);
-        if ((input as { name: string }).name === 'TestsFail') {
+        if ((input as { name: string }).name === 'TestingFail') {
           throw new Error('Simulated IPC failure');
         }
         return originalUpdate(input);
@@ -139,9 +139,9 @@ test.describe('BoardManagerDialog extended', () => {
     // Dirty "Code Review" (will succeed)
     await page.locator('[data-testid="board-manager-name"]').fill('ReviewsSucceed');
 
-    // Dirty "Tests" tab (will fail)
-    await page.locator('[data-testid="board-manager-tab"][data-tab-name="Tests"]').click();
-    await page.locator('[data-testid="board-manager-name"]').fill('TestsFail');
+    // Dirty "Testing" tab (will fail)
+    await page.locator('[data-testid="board-manager-tab"][data-tab-name="Testing"]').click();
+    await page.locator('[data-testid="board-manager-name"]').fill('TestingFail');
 
     // Click save
     await page.locator('[data-testid="board-manager-save"]').click();
@@ -153,7 +153,7 @@ test.describe('BoardManagerDialog extended', () => {
     // The "ReviewsSucceed" tab should have its dirty dot cleared.
     // data-tab-name for a saved row becomes the saved name (originals[id].name).
     const succeededTab = dialog.locator('[data-testid="board-manager-tab"][data-tab-name="ReviewsSucceed"]');
-    const failedTab = dialog.locator('[data-testid="board-manager-tab"][data-tab-name="Tests"]');
+    const failedTab = dialog.locator('[data-testid="board-manager-tab"][data-tab-name="Testing"]');
 
     await expect(succeededTab.locator('[data-testid="board-manager-tab-dirty"]')).toBeHidden({ timeout: 2000 });
     await expect(failedTab.locator('[data-testid="board-manager-tab-dirty"]')).toBeVisible();
@@ -171,7 +171,7 @@ test.describe('BoardManagerDialog extended', () => {
       if (lane) await window.electronAPI.swimlanes.update({ id: lane.id, name: 'Code Review' });
     });
 
-    // Close via cancel/discard (Tests tab still dirty)
+    // Close via cancel/discard (Testing tab still dirty)
     await dialog.getByRole('button', { name: 'Cancel' }).click();
     await page.locator('button', { hasText: 'Discard' }).click();
     await dialog.waitFor({ state: 'detached', timeout: 2000 });
@@ -376,7 +376,7 @@ test.describe('BoardManagerDialog extended', () => {
     await page.locator('[data-testid="board-manager-name"]').fill('Renamed1');
 
     // Dirty column 2
-    await dialog.locator('[data-testid="board-manager-tab"][data-tab-name="Tests"]').click();
+    await dialog.locator('[data-testid="board-manager-tab"][data-tab-name="Testing"]').click();
     await page.locator('[data-testid="board-manager-name"]').fill('Renamed2');
 
     // Dirty column 3
@@ -611,7 +611,7 @@ test.describe('BoardManagerDialog extended', () => {
     await dialog.locator('[data-testid="board-manager-name"]').fill('One');
     await expect(summary).toHaveText('1 column modified');
 
-    await dialog.locator('[data-testid="board-manager-tab"][data-tab-name="Tests"]').click();
+    await dialog.locator('[data-testid="board-manager-tab"][data-tab-name="Testing"]').click();
     await dialog.locator('[data-testid="board-manager-name"]').fill('Two');
     await expect(summary).toHaveText('2 columns modified');
     // Dirty edits are discarded by afterEach.

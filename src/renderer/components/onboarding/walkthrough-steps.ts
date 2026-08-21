@@ -148,11 +148,12 @@ export const WALKTHROUGH_STEPS: readonly WalkthroughStepDefinition[] = [
     },
     // Says WHY, not just what: the point is that starting an agent is a per-column
     // setting the seeded board turns on for you, not something this column does by
-    // magic. That is the mental model the rest of the board rests on.
+    // magic - and that the agent's opening prompt is the task itself, which is the
+    // half of the mental model the setting alone does not teach.
     calloutBody: (swimlanes) => {
       const lane = resolveAutoSpawnLane(swimlanes);
       return lane
-        ? `${lane.name} comes preset to start an agent automatically. Any column can be, and you set that in Board manager.`
+        ? `${lane.name} comes preset to start an agent, with the task's title and description as its prompt. Any column can start one; you set that in Board manager.`
         : 'No column starts an agent yet. Turn that on for a column in Board manager.';
     },
   },
@@ -170,7 +171,7 @@ export const WALKTHROUGH_STEPS: readonly WalkthroughStepDefinition[] = [
       return lane ? `[data-swimlane-id="${lane.id}"] [data-task-id]` : '[data-task-id]';
     },
     calloutTitle: () => 'Open the task',
-    calloutBody: () => 'This is where the run lives: the agent\'s terminal, its changes, and a prompt to steer it.',
+    calloutBody: () => 'This is where the run lives: the agent\'s terminal, its changes, and a prompt to steer it. Moves to later columns carry this same conversation along.',
   },
 ];
 

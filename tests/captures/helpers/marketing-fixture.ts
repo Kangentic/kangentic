@@ -15,8 +15,8 @@ const LANE_TODO = 'lane-mkt-todo';
 const LANE_PLANNING = 'lane-mkt-planning';
 const LANE_EXECUTING = 'lane-mkt-executing';
 const LANE_REVIEW = 'lane-mkt-review';
-const LANE_TESTS = 'lane-mkt-tests';
-const LANE_SHIPIT = 'lane-mkt-shipit';
+const LANE_TESTING = 'lane-mkt-testing';
+const LANE_MERGE = 'lane-mkt-merge';
 const LANE_DONE = 'lane-mkt-done';
 
 const LANE_IDS = [
@@ -24,8 +24,8 @@ const LANE_IDS = [
   LANE_PLANNING,
   LANE_EXECUTING,
   LANE_REVIEW,
-  LANE_TESTS,
-  LANE_SHIPIT,
+  LANE_TESTING,
+  LANE_MERGE,
   LANE_DONE,
 ];
 
@@ -240,13 +240,13 @@ export function buildMarketingPreConfig(): string {
         updated_at: ts,
       });
 
-      // Tests column (running agent)
+      // Testing column (running agent)
       state.tasks.push({
         id: '${TASK_INTEGRATION}',
         display_id: 7,
         title: 'Integration test coverage',
         description: 'Add integration tests for auth and billing flows',
-        swimlane_id: '${LANE_TESTS}',
+        swimlane_id: '${LANE_TESTING}',
         position: 0,
         agent: 'claude',
         session_id: '${SESSION_INTEGRATION}',

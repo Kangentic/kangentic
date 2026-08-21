@@ -9,7 +9,7 @@ argument-hint: [commit message]
 Create a local commit of the current changes. Does NOT push, rebase, fetch, or run
 heavy validation. The point is a fast, safe snapshot of the working tree (for example,
 to protect changes before testing in `/preview`, or to capture changes made while
-testing). To push and land, move the task through the board (Tests runs `/pull-request`, Ship It runs
+testing). To push and land, move the task through the board (Testing runs `/pull-request`, Merge runs
 `/merge-pull-request`), or use `/merge-back` for a direct quick-push.
 
 **Usage:** `/commit [commit message]`
@@ -76,4 +76,4 @@ Use conventional-commit format (`type(scope): subject`), matching `/merge-back`.
 ## Step 4 - Report
 
 Report the new commit's short hash and subject, the branch it landed on, and the file count.
-Remind the user this is a local commit only - when they are ready to push, move the task to the Tests column (`/pull-request`) or run `/merge-back` for a direct quick-push.
+Remind the user this is a local commit only - when they are ready to push, move the task to the Testing column (`/pull-request`) or run `/merge-back` for a direct quick-push.

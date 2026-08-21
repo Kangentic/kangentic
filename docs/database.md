@@ -803,9 +803,14 @@ New projects are seeded with 7 default swimlanes:
 2. **Planning**
 3. **Executing**
 4. **Code Review**
-5. **Tests**
-6. **Ship It**
+5. **Testing**
+6. **Merge**
 7. **Done** (role: `done`)
+
+No lane is seeded with a `description` or an `auto_command`: both are left empty for the user
+to fill in (a `description` round-trips into the project's committed `kangentic.json`, so a
+prefilled one would land in every user's repo). The seed is bound to the UI tier's mock copy by
+`tests/unit/default-swimlanes-seed-parity.test.ts`.
 
 Two default actions are created:
 
