@@ -193,6 +193,19 @@ test.describe('Reveal replay writes at the grid width', () => {
       const mountDone = mountedTrace.filter((entry) => entry.event === 'replay-done').pop();
       const mountedCols = mountDone?.detail?.cols as number | undefined;
       expect(mountedCols, 'the mount replay never recorded a grid width').toBeGreaterThan(10);
+      // The task-detail dialog's OWN 'initial' fit, kept for the hostWidth
+      // positive control below. `.pop()`, not `.find()`, for the same reason
+      // mountDone above uses it: this session's terminal mounts TWICE before
+      // the dialog settles (once in the bottom panel, once in the dialog once
+      // it claims the session), and only the LAST one is the terminal this
+      // test goes on to park/reveal.
+      // hostWidth is a pure CSS/DOM measurement (WindowLayer keeps a parked
+      // window's overlay `visibility:hidden`, which preserves its measured size
+      // rather than collapsing it), so it is safe to compare across a renderer
+      // swap in a way a raw `cols` count is not - see the note at the reveal fit.
+      const mountFit = mountedTrace
+        .filter((entry) => entry.event === 'fit' && entry.detail?.phase === 'initial')
+        .pop();
 
       const revealDoneCount = mountedTrace.filter((entry) => entry.event === 'terminal-reveal').length;
 
@@ -249,22 +262,38 @@ test.describe('Reveal replay writes at the grid width', () => {
         + 'replay fitted itself against the DOM fallback\'s cell metric.',
       ).toBeLessThan(revealAt);
 
-      // THE INVARIANT. The reveal fit must not move the grid, and the frame must
-      // be written at the width the grid still has when the dust settles.
-      // RED against the original bug: the fit reported cols 191 / colsBefore 210
-      // (changed: true) and replay-write recorded 191 while replay-done reported
-      // 210 - a frame laid out for a width the grid no longer had.
+      // THE INVARIANT. The reveal fit must run against the same container the
+      // mount fit did (below), and the frame it writes must be laid out at the
+      // width the grid still has once the write settles (further below).
+      // RED against the original bug: replay-write recorded cols 191 while
+      // replay-done reported 210 - a frame laid out for a width the grid no
+      // longer had.
       const revealFit = after.find(
         (entry) => entry.event === 'fit' && entry.detail?.phase === 'reload-initial',
       );
       expect(revealFit, 'the reveal produced no reload-initial fit').toBeTruthy();
       expect(revealFit?.detail?.applied, 'the reveal fit declined; the grid kept a stale width').toBe(true);
+
+      // POSITIVE CONTROL: the container itself did not move across the round
+      // trip. Compared against hostWidth (a plain DOM measurement), not cols -
+      // `cols` is a function of BOTH hostWidth and the live renderer's cell
+      // metric (WebGL floors the measured cell width to an integer device
+      // pixel, the DOM renderer does not - see useTerminal.ts's describeFit),
+      // so two fits an entire park/reveal round trip apart can legitimately
+      // read a different `cols` off an UNCHANGED hostWidth. Asserting on cols
+      // here previously false-failed intermittently: with the renderer-swap
+      // ordering bug live, colsBefore and cols disagree WITHIN the same
+      // reload (unstable mid-flight), which the write/settle check below
+      // already catches directly; comparing against a colsBefore snapshot
+      // taken as early as mount time additionally trips on any OTHER, benign
+      // cause of the metric changing between mount and this reveal.
       expect(
-        revealFit?.detail?.cols,
-        'The reveal fit changed the grid width even though the container did not move '
-        + '(hostWidth ' + String(revealFit?.detail?.hostWidth) + '), which means it '
-        + 'measured a different cell metric. Fit detail: ' + JSON.stringify(revealFit?.detail),
-      ).toBe(revealFit?.detail?.colsBefore);
+        revealFit?.detail?.hostWidth,
+        'The reveal fit ran against a different container width than the mount fit '
+        + '(mount hostWidth ' + String(mountFit?.detail?.hostWidth) + ', reveal hostWidth '
+        + String(revealFit?.detail?.hostWidth) + '), so this run does not isolate a '
+        + 'renderer-metric change from an actual layout change.',
+      ).toBe(mountFit?.detail?.hostWidth);
 
       const revealWrite = after.find((entry) => entry.event === 'replay-write');
       const revealDone = after.find((entry) => entry.event === 'replay-done');
