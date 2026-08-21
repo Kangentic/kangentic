@@ -11,8 +11,6 @@
 export interface WakeMessage {
   /** Vendor-opaque device address; today an ExponentPushToken[...]. */
   token: string;
-  /** Android notification channel hint; a vendor without channels ignores it. */
-  channelId: string;
   /**
    * OS-visible placeholder text, OPTIONAL and omitted for Android.
    *

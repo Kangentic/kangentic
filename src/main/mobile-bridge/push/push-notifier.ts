@@ -35,13 +35,24 @@
  * payload ITSELF, natively, before handing off to the app's background
  * task - so every push was rendered twice: once as the generic
  * placeholder here, once as the decrypted notification Notifee posts.
- * Omitting title/body suppresses the first one entirely
- * (ExpoHandlingDelegate.handleNotification presents a backgrounded
- * notification only when title or text is non-empty) while the task
- * still runs, so nothing is lost. iOS keeps them: with no Notification
- * Service Extension yet, that placeholder is the ONLY visible content an
- * iOS push can have, and stripping it globally would turn iOS from
- * "silent because unauthorized" into "silent by construction".
+ * Making Android data-only stops that, but title/body are not the whole
+ * story: Expo attaches an FCM android.notification block to ANY message
+ * that carries a channelId too, title/body or not, and that block is
+ * what decides who renders. With the block present the FCM SDK draws the
+ * tray item itself - with no title/body that is a blank row - and
+ * onMessageReceived is never called, so the app's background task never
+ * runs and Notifee never posts the decrypted notification either. A
+ * push is data-only, and actually reaches the app, only when it carries
+ * NEITHER title/body NOR channelId. So Android gets no channelId at all
+ * - which costs nothing, since the channel actually used is chosen
+ * on-device from the DECRYPTED category (channelIdForCategory in the
+ * phone's background task), and only the phone knows that. iOS keeps
+ * title/body: with no Notification Service Extension yet, that
+ * placeholder is the ONLY visible content an iOS push can have, and
+ * stripping it globally would turn iOS from "silent because
+ * unauthorized" into "silent by construction". channelId is dropped for
+ * iOS too, since Expo ignores it for APNs and there is nothing to gain
+ * by sending it.
  *
  * A DeviceNotRegistered ticket drops the registration.
  */
@@ -83,15 +94,6 @@ const PLACEHOLDER_BODIES: Record<PushCategory, string> = {
   'session-failed': 'Session stopped',
   'plan-complete': 'Plan complete',
   'spawn-stalled': 'Task is taking a while to start',
-};
-
-/** Android notification channel per category (mirrored by the app's Notifee channel setup). */
-const CHANNEL_IDS: Record<PushCategory, string> = {
-  'input-required': 'needs-attention',
-  'turn-complete': 'completions',
-  'session-failed': 'failures',
-  'plan-complete': 'completions',
-  'spawn-stalled': 'stalls',
 };
 
 export interface PushTaskContext {
@@ -310,16 +312,12 @@ export class PushNotifier {
     sealedBlob: string,
   ): Promise<void> {
     try {
-      // See the file header: a title/body on an Android push is rendered
-      // natively by expo-notifications ON TOP of the decrypted one our
-      // background task posts, so Android gets a data-only message. iOS
-      // needs them - the placeholder is all it can show until the
-      // Notification Service Extension ships.
+      // See the file header for why: Android gets a data-only message,
+      // iOS gets the placeholder, and neither gets a channelId.
       const placeholder =
         platform === 'ios' ? { title: NOTIFICATION_TITLE, body: PLACEHOLDER_BODIES[category] } : {};
       const result = await this.wakeChannel.send({
         token: expoPushToken,
-        channelId: CHANNEL_IDS[category],
         ...placeholder,
         blob: sealedBlob,
       });

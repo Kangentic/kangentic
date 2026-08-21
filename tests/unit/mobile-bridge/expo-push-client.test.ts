@@ -12,7 +12,6 @@ import { EXPO_PUSH_ENDPOINT, sendExpoPush, createExpoWakeChannel, type FetchLike
 
 const message = {
   to: 'ExponentPushToken[abc]',
-  channelId: 'needs-attention',
   title: 'Kangentic',
   body: 'Agent needs your attention',
   dataBlob: 'sealed-blob',
@@ -44,7 +43,6 @@ describe('sendExpoPush', () => {
       body: 'Agent needs your attention',
       data: { blob: 'sealed-blob' },
       priority: 'high',
-      channelId: 'needs-attention',
       // Required for iOS: without it the Notification Service Extension
       // that decrypts the envelope is never invoked.
       mutableContent: true,
@@ -52,26 +50,32 @@ describe('sendExpoPush', () => {
   });
 
   /**
-   * The Android path. A message with no title and no body is a data-only
-   * push, which is what stops expo-notifications rendering its own
-   * generic notification alongside the decrypted one the app posts.
+   * The Android path. A message with no title, no body, and no channelId
+   * is a data-only push, which is what stops expo-notifications rendering
+   * its own generic notification alongside the decrypted one the app
+   * posts. channelId matters here too, not just title/body: Expo attaches
+   * an FCM android.notification block to ANY message carrying a channel
+   * id, and that block is what made the FCM SDK draw a blank tray row
+   * itself and skip the app's background handler entirely, dropping the
+   * payload silently.
    *
    * toEqual, not toMatchObject: the keys must be ABSENT from the JSON,
    * not present-and-null. Expo reads a null title as a title.
    */
-  it('omits title and body entirely when the message carries neither', async () => {
+  it('omits title, body, and channelId entirely when the message carries none of them', async () => {
     const fetchImpl = vi.fn(async () => jsonResponse({ data: { status: 'ok' } })) as FetchLike;
 
-    await sendExpoPush(fetchImpl, { to: message.to, channelId: message.channelId, dataBlob: message.dataBlob });
+    await sendExpoPush(fetchImpl, { to: message.to, dataBlob: message.dataBlob });
 
     const [, init] = vi.mocked(fetchImpl).mock.calls[0];
-    expect(JSON.parse(init.body)).toEqual({
+    const parsedBody = JSON.parse(init.body);
+    expect(parsedBody).toEqual({
       to: 'ExponentPushToken[abc]',
       data: { blob: 'sealed-blob' },
       priority: 'high',
-      channelId: 'needs-attention',
       mutableContent: true,
     });
+    expect(Object.keys(parsedBody)).not.toContain('channelId');
   });
 
   it('accepts the batch-shaped { data: [ticket] } response too', async () => {
@@ -129,7 +133,6 @@ describe('createExpoWakeChannel', () => {
 
     const result = await wakeChannel.send({
       token: 'ExponentPushToken[abc]',
-      channelId: 'needs-attention',
       title: 'Kangentic',
       body: 'Agent needs your attention',
       blob: 'sealed-blob',
@@ -137,11 +140,16 @@ describe('createExpoWakeChannel', () => {
 
     expect(result).toEqual({ delivered: true });
     const [, init] = vi.mocked(fetchImpl).mock.calls[0];
-    expect(JSON.parse(init.body)).toMatchObject({
+    const parsedBody = JSON.parse(init.body);
+    expect(parsedBody).toMatchObject({
       to: 'ExponentPushToken[abc]',
-      channelId: 'needs-attention',
       data: { blob: 'sealed-blob' },
       mutableContent: true,
     });
+    // toMatchObject alone would not notice an extra key: name the guard
+    // against channelId creeping back in, since that field alone is
+    // enough for Expo to attach an FCM notification block and skip our
+    // handler (see PushNotifier's header).
+    expect(Object.keys(parsedBody)).not.toContain('channelId');
   });
 });

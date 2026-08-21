@@ -117,7 +117,6 @@ describe('PushNotifier', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(sealedCategories()).toEqual(['input-required']);
     const body = postedBodies()[0];
-    expect(body.channelId).toBe('needs-attention');
     expect(body.data).toEqual({ blob: 'sealed-blob' });
     expect(body.mutableContent).toBe(true);
   });
@@ -177,7 +176,6 @@ describe('PushNotifier', () => {
     await vi.advanceTimersByTimeAsync(EXPECTED_IDLE_SETTLE_MS);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(sealedCategories()).toEqual(['turn-complete']);
-    expect(postedBodies()[0].channelId).toBe('completions');
   });
 
   /**
@@ -266,7 +264,6 @@ describe('PushNotifier', () => {
     sessionManager.emit('plan-exit', 'sess-1');
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(sealedCategories()).toEqual(['plan-complete']);
-    expect(postedBodies()[0].channelId).toBe('completions');
   });
 
   it('notifyTaskStalled resolves context by taskId and notifies spawn-stalled, keyed off taskId for cooldown', () => {
@@ -274,7 +271,6 @@ describe('PushNotifier', () => {
     notifier.notifyTaskStalled('task-Xw2yL');
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(sealedCategories()).toEqual(['spawn-stalled']);
-    expect(postedBodies()[0].channelId).toBe('stalls');
 
     // Same taskId again within the cooldown: suppressed.
     notifier.notifyTaskStalled('task-Xw2yL');
@@ -298,7 +294,6 @@ describe('PushNotifier', () => {
     sessionManager.emit('exit', 'sess-3', -1); // spawn failure emits no flag
     expect(fetchImpl).toHaveBeenCalledTimes(2);
     expect(sealedCategories()).toEqual(['session-failed', 'session-failed']);
-    expect(postedBodies()[0].channelId).toBe('failures');
   });
 
   it('presence suppression: an established device is never pinged', async () => {
@@ -439,18 +434,23 @@ describe('PushNotifier', () => {
    * appeared twice, once as this generic placeholder and once decrypted.
    * Sending Android a data-only message suppresses the first
    * (ExpoHandlingDelegate presents a backgrounded notification only when
-   * title or text is non-empty) while the task still runs.
+   * title or text is non-empty) while the task still runs - but only if
+   * the message ALSO carries no channelId: Expo attaches an FCM
+   * android.notification block to any message with a channel id, title
+   * or body or not, and that block makes the FCM SDK render the tray
+   * item itself and skip the background task entirely, dropping the
+   * decrypted notification silently.
    */
-  it('sends Android a data-only message, with no OS-visible title or body', () => {
+  it('sends Android a data-only message, with no OS-visible title, body, or channelId', () => {
     buildNotifier();
     sessionManager.emit('exit', 'sess-1', 1, false);
 
     const body = postedBodies()[0];
     expect(body).not.toHaveProperty('title');
     expect(body).not.toHaveProperty('body');
+    expect(body).not.toHaveProperty('channelId');
     // Everything that makes the message useful is still there.
     expect(body.data).toEqual({ blob: 'sealed-blob' });
-    expect(body.channelId).toBe('failures');
     expect(body.priority).toBe('high');
   });
 
@@ -459,9 +459,12 @@ describe('PushNotifier', () => {
    * dropping title/body outright: iOS has no Notification Service
    * Extension yet, so the placeholder is the ONLY visible content an iOS
    * push can carry. Stripping it globally would turn iOS from "silent
-   * because unauthorized" into "silent by construction".
+   * because unauthorized" into "silent by construction". channelId is
+   * still dropped here, mirroring the Android assertion above: the two
+   * platforms differ on title/body only, so a channelId reinstated
+   * inside this branch alone would otherwise leave the suite green.
    */
-  it('keeps the placeholder title and body for an iOS device', () => {
+  it('keeps the placeholder title and body for an iOS device, but still no channelId', () => {
     listRegistrations = vi.fn(() => [IOS_REGISTRATION]);
     buildNotifier();
     sessionManager.emit('exit', 'sess-1', 1, false);
@@ -470,6 +473,7 @@ describe('PushNotifier', () => {
     expect(body.title).toBe('Kangentic');
     expect(body.body).toBe('Session stopped');
     expect(body.mutableContent).toBe(true);
+    expect(body).not.toHaveProperty('channelId');
   });
 
   /**
@@ -491,7 +495,6 @@ describe('PushNotifier', () => {
     const body = postedBodies()[0];
     expect(body.title).toBe('Kangentic');
     expect(body.body).toBe('Agent went idle');
-    expect(body.channelId).toBe('completions');
   });
 
   it('branches per device when both platforms are registered', () => {
