@@ -214,9 +214,9 @@ describe('BoardManagerDialog variable list is sourced from the catalog', () => {
   it('hardcodes no template-variable chips of its own', () => {
     // Matches a STANDALONE quoted chip, which is the shape a hand-maintained
     // array takes (`['{{task_xml}}', '{{title}}', ...]`). Deliberately not a
-    // bare `{{name}}` scan: that also hits the field's placeholder copy
-    // (`"/review {{title}}"`) and any comment that names a variable in prose,
-    // neither of which is a second source of truth.
+    // bare `{{name}}` scan: that also hits any comment that names a variable
+    // in prose (the JSDoc on the inserter mentions `{{chip}}` and
+    // `{{variable}}`), which is not a second source of truth.
     const hardcoded = source.match(/['"]\{\{[a-zA-Z_]+\}\}['"]/g) ?? [];
     expect(hardcoded).toEqual([]);
     // Non-vacuous: the catalog is big enough that a hand-rolled copy of it
