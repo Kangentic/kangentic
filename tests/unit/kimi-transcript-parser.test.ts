@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { parseKimiTranscript } from '../../src/main/agent/adapters/kimi/transcript-parser';
+import { setParseWindowBytesForTests } from '../../src/main/agent/shared/transcript-truncation';
 
 // NOTE: the assistant-text (ContentPart) handling is schema-derived from the
 // upstream wire spec - no real Kimi sessions were available locally. The
@@ -39,6 +40,41 @@ describe('parseKimiTranscript', () => {
     expect(entries[1]).toMatchObject({ kind: 'assistant', blocks: [{ type: 'text', text: 'Here are the files.' }] });
     expect(entries[2]).toMatchObject({ kind: 'assistant', blocks: [{ type: 'tool_use', id: 'tc-1', name: 'Shell', input: { command: 'ls' } }] });
     expect(entries[3]).toMatchObject({ kind: 'tool_result', toolUseId: 'tc-1', content: 'file1.txt\nfile2.txt\n', isError: false });
+  });
+
+  it('parses only the tail of a transcript larger than the parse cap, marking the omission', async () => {
+    // kimi mints uuids window-relative (`kimi-${entryIndex++}`, starting at 0
+    // within whatever window was actually read), so `kimi-0` is present
+    // regardless of truncation - assert on the per-turn TEXT instead.
+    const cap = 2 * 1024;
+    setParseWindowBytesForTests(cap);
+    try {
+      const lines: object[] = [{ type: 'metadata', protocol_version: '1.9' }];
+      let written = Buffer.byteLength(JSON.stringify(lines[0]), 'utf-8') + 1;
+      let lineIndex = 0;
+      while (written <= cap * 3) {
+        const fixtureLine = {
+          timestamp: 1780430656.8 + lineIndex,
+          message: { type: 'TurnBegin', payload: { user_input: `turn ${lineIndex} ${'q'.repeat(200)}` } },
+        };
+        lines.push(fixtureLine);
+        written += Buffer.byteLength(JSON.stringify(fixtureLine), 'utf-8') + 1;
+        lineIndex += 1;
+      }
+      const lastLineIndex = lineIndex - 1;
+      tmpFile = writeFixture(lines);
+      expect(fs.statSync(tmpFile).size).toBeGreaterThan(cap);
+
+      const entries = await parseKimiTranscript(tmpFile);
+
+      expect(entries.length).toBeLessThan(lines.length);
+      expect(entries.some((entry) => entry.kind === 'user' && entry.text.startsWith('turn 0 '))).toBe(false);
+      expect(entries.some((entry) => entry.kind === 'user' && entry.text.startsWith(`turn ${lastLineIndex} `))).toBe(true);
+
+      expect(entries[0]).toMatchObject({ kind: 'system', subtype: 'truncated' });
+    } finally {
+      setParseWindowBytesForTests();
+    }
   });
 
   it('flags an error tool result via return_value.is_error', async () => {

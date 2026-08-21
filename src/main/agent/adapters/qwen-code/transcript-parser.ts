@@ -51,6 +51,9 @@ export async function parseQwenTranscript(filePath: string): Promise<TranscriptE
     const parts = message.parts;
     if (!Array.isArray(parts)) continue;
 
+    // WINDOW-relative counter: above MAX_PARSE_SOURCE_BYTES the same turn gets a
+    // different uuid as the tail window slides. See the fuller note in the Codex
+    // parser; same limitation, same graceful degradation for citation anchors.
     const uuid = `qwen-${entryIndex++}`;
     const ts = parseTimestamp(raw.timestamp);
 

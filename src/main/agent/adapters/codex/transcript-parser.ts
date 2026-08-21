@@ -64,6 +64,16 @@ export async function parseCodexTranscript(filePath: string): Promise<Transcript
 
     if (raw.type !== 'response_item' || !isRecord(raw.payload)) continue;
     const payload = raw.payload;
+    // KNOWN LIMITATION, above MAX_PARSE_SOURCE_BYTES only: this counter is
+    // WINDOW-relative, so once a transcript outgrows the read cap the same turn
+    // gets a different uuid as the tail window slides. Grok avoids this by
+    // deriving its uuid from an absolute physical line index (`countOmittedLines`),
+    // but an ENTRY index cannot be recovered from a line count - entries are
+    // emitted conditionally. The blast radius is citation anchors
+    // (`aroundUuid`, retrieval chunk `turnUuidStart`) drifting for a >16MB
+    // Codex transcript, which degrades to the full transcript rather than
+    // failing. A real fix means minting the uuid from something intrinsic to
+    // the record; out of scope for the OOM fix.
     const uuid = `codex-${entryIndex++}`;
 
     if (payload.type === 'message') {

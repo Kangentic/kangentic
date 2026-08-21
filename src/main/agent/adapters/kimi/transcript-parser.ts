@@ -39,6 +39,9 @@ export async function parseKimiTranscript(filePath: string): Promise<TranscriptE
   const entries: TranscriptEntry[] = [];
   let pendingAssistantText = '';
   let pendingTs = 0;
+  // WINDOW-relative counter: above MAX_PARSE_SOURCE_BYTES the same turn gets a
+  // different uuid as the tail window slides. See the fuller note in the Codex
+  // parser; same limitation, same graceful degradation for citation anchors.
   let entryIndex = 0;
 
   const flushAssistantText = (): void => {

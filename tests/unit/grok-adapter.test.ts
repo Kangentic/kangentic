@@ -1176,6 +1176,16 @@ describe('grokTranscriptUsage / grokTranscriptToolCounts', () => {
     expect(usage).toBeNull();
   });
 
+  it('grokTranscriptToolCounts returns null when the updates file is missing', async () => {
+    // A missing file is a distinct code path from "file exists with zero
+    // tool_call records" (covered below): streamJsonlRecords resolves
+    // readWholeFile=false for a missing file, which must short-circuit to
+    // null rather than falling through to report a hollow zero-count object.
+    useTempGrokHome();
+    const counts = await grokTranscriptToolCounts(SESSION_ID, '/nowhere');
+    expect(counts).toBeNull();
+  });
+
   it('skips a turn_completed whose usage.inputTokens/outputTokens are not numbers', async () => {
     const home = useTempGrokHome();
     const cwd = '/home/dev/non-numeric-usage-project';

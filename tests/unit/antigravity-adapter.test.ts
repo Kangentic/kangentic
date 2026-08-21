@@ -81,6 +81,7 @@ import {
   resetAntigravityCapabilityCacheForTests,
 } from '../../src/main/agent/adapters/antigravity/capability-discovery';
 import { AntigravityStatusParser } from '../../src/main/agent/adapters/antigravity/status-parser';
+import { setParseWindowBytesForTests } from '../../src/main/agent/shared/transcript-truncation';
 import { extractPrintResponse, runAntigravityPrint } from '../../src/main/agent/adapters/antigravity/print-runner';
 import { agentRegistry } from '../../src/main/agent/agent-registry';
 import {
@@ -596,6 +597,47 @@ describe('parseAntigravityTranscriptFile', () => {
       expect(parsed.entries.map((entry) => entry.kind)).toEqual(['assistant', 'assistant']);
       expect(parsed.entries.some((entry) => entry.kind === 'tool_result')).toBe(false);
     } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('parses only the tail of a transcript larger than the parse cap, marking the omission', async () => {
+    const cap = 2 * 1024;
+    setParseWindowBytesForTests(cap);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-transcript-truncated-'));
+    const filePath = path.join(dir, 'transcript.jsonl');
+    try {
+      const steps: string[] = [];
+      let written = 0;
+      let stepIndex = 0;
+      while (written <= cap * 3) {
+        const step = JSON.stringify({
+          step_index: stepIndex,
+          source: 'USER_EXPLICIT',
+          type: 'USER_INPUT',
+          status: 'DONE',
+          created_at: '2026-08-16T16:09:01Z',
+          content: `<USER_REQUEST>\nturn ${stepIndex} ${'q'.repeat(200)}\n</USER_REQUEST>`,
+        });
+        steps.push(step);
+        written += Buffer.byteLength(step, 'utf-8') + 1;
+        stepIndex += 1;
+      }
+      const lastStepIndex = stepIndex - 1;
+      fs.writeFileSync(filePath, steps.join('\n') + '\n');
+      expect(fs.statSync(filePath).size).toBeGreaterThan(cap);
+
+      const parsed = await parseAntigravityTranscriptFile(filePath);
+
+      // The oldest step is gone, the newest is present: a TAIL window.
+      expect(parsed.entries.length).toBeLessThan(steps.length);
+      expect(parsed.entries.some((entry) => entry.uuid === 'step-0')).toBe(false);
+      expect(parsed.entries.some((entry) => entry.uuid === `step-${lastStepIndex}`)).toBe(true);
+
+      // The omission is reported in-band as the first entry.
+      expect(parsed.entries[0]).toMatchObject({ kind: 'system', subtype: 'truncated' });
+    } finally {
+      setParseWindowBytesForTests();
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });

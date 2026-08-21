@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { parseCodexTranscript, locateCodexTranscriptFile } from '../../src/main/agent/adapters/codex/transcript-parser';
+import { setParseWindowBytesForTests } from '../../src/main/agent/shared/transcript-truncation';
 
 function writeFixture(lines: object[]): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-transcript-'));
@@ -57,6 +58,42 @@ describe('parseCodexTranscript', () => {
     const entries = await parseCodexTranscript(tmpFile);
     expect(entries[0]).toMatchObject({ kind: 'assistant', model: 'gpt-5-codex', blocks: [{ type: 'tool_use', id: 'call_1', name: 'shell', input: { command: ['ls'] } }] });
     expect(entries[1]).toMatchObject({ kind: 'tool_result', toolUseId: 'call_1', content: 'a.txt' });
+  });
+
+  it('parses only the tail of a transcript larger than the parse cap, marking the omission', async () => {
+    // codex mints uuids window-relative (`codex-${entryIndex++}`, starting at
+    // 0 within whatever window was actually read), so `codex-0` is present
+    // regardless of truncation - assert on the per-turn TEXT instead.
+    const cap = 2 * 1024;
+    setParseWindowBytesForTests(cap);
+    try {
+      const lines: object[] = [];
+      let written = 0;
+      let lineIndex = 0;
+      while (written <= cap * 3) {
+        const fixtureLine = {
+          type: 'response_item',
+          timestamp: '2026-06-12T10:00:00Z',
+          payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: `turn ${lineIndex} ${'q'.repeat(200)}` }] },
+        };
+        lines.push(fixtureLine);
+        written += Buffer.byteLength(JSON.stringify(fixtureLine), 'utf-8') + 1;
+        lineIndex += 1;
+      }
+      const lastLineIndex = lineIndex - 1;
+      tmpFile = writeFixture(lines);
+      expect(fs.statSync(tmpFile).size).toBeGreaterThan(cap);
+
+      const entries = await parseCodexTranscript(tmpFile);
+
+      expect(entries.length).toBeLessThan(lines.length);
+      expect(entries.some((entry) => entry.kind === 'user' && entry.text.startsWith('turn 0 '))).toBe(false);
+      expect(entries.some((entry) => entry.kind === 'user' && entry.text.startsWith(`turn ${lastLineIndex} `))).toBe(true);
+
+      expect(entries[0]).toMatchObject({ kind: 'system', subtype: 'truncated' });
+    } finally {
+      setParseWindowBytesForTests();
+    }
   });
 
   it('parses the pinned rollout fixture, ignoring duplicate event_msg entries', async () => {

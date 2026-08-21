@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { parseDroidTranscript, droidTranscriptFilePath } from '../../src/main/agent/adapters/droid/transcript-parser';
 import { transcriptToMarkdown } from '../../src/shared/transcript-format';
+import { setParseWindowBytesForTests } from '../../src/main/agent/shared/transcript-truncation';
 
 describe('droidTranscriptFilePath', () => {
   it('builds the expected path on Windows-style cwds', () => {
@@ -394,6 +395,42 @@ describe('parseDroidTranscript', () => {
     const entryTs = (entries[0] as { kind: 'user'; uuid: string; ts: number; text: string }).ts;
     expect(entryTs).toBeGreaterThanOrEqual(beforeMs);
     expect(entryTs).toBeLessThanOrEqual(afterMs + 50); // 50ms tolerance
+  });
+
+  it('parses only the tail of a transcript larger than the parse cap, marking the omission', async () => {
+    const cap = 2 * 1024;
+    setParseWindowBytesForTests(cap);
+    try {
+      const lines: object[] = [];
+      let written = 0;
+      let lineIndex = 0;
+      while (written <= cap * 3) {
+        const fixtureLine = {
+          type: 'message',
+          id: `u${lineIndex}`,
+          timestamp: '2026-04-09T00:00:00Z',
+          message: { role: 'user', content: [{ type: 'text', text: `turn ${lineIndex} ${'q'.repeat(200)}` }] },
+        };
+        lines.push(fixtureLine);
+        written += Buffer.byteLength(JSON.stringify(fixtureLine), 'utf-8') + 1;
+        lineIndex += 1;
+      }
+      const lastLineIndex = lineIndex - 1;
+      tmpFile = writeFixture(lines);
+      expect(fs.statSync(tmpFile).size).toBeGreaterThan(cap);
+
+      const entries = await parseDroidTranscript(tmpFile);
+
+      // The oldest turn is gone, the newest is present: a TAIL window.
+      expect(entries.length).toBeLessThan(lines.length);
+      expect(entries.some((entry) => entry.kind === 'user' && entry.text.startsWith('turn 0 '))).toBe(false);
+      expect(entries.some((entry) => entry.kind === 'user' && entry.text.startsWith(`turn ${lastLineIndex} `))).toBe(true);
+
+      // The omission is reported in-band as the first entry.
+      expect(entries[0]).toMatchObject({ kind: 'system', subtype: 'truncated' });
+    } finally {
+      setParseWindowBytesForTests();
+    }
   });
 
   it('parses the real-shape fixture end-to-end', async () => {
