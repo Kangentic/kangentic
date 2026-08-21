@@ -615,6 +615,28 @@ describe('link-time PR resolve', () => {
     );
   });
 
+  it('handleLinkPr (explicit kangentic_link_pr) still notifies on the LOUD onTaskUpdated channel', async () => {
+    // Deliberate asymmetry with scheduleLinkTimeResolve above: an explicit
+    // link_pr call is the agent ASKING to link/refresh a PR, so its result is
+    // genuine agent news and must keep toasting. scheduleLinkTimeResolve's
+    // onLinked exists only to reconcile after a write that ALREADY toasted via
+    // the write itself, which is why that one is quiet. A refactor that reused
+    // the quiet wiring here (e.g. copying scheduleLinkTimeResolve's callback)
+    // would silently swallow the only toast an explicit link_pr call produces,
+    // and the board would still repaint (onTaskPrLinkChanged also invalidates)
+    // so nothing would look broken in a cursory check.
+    const context = makeContext();
+
+    await handleLinkPr({ taskId: 'task-uuid-1' }, context);
+
+    const linkOptions = mockLinkPRForTask.mock.calls[0][1] as { onLinked: (task: unknown) => void };
+    linkOptions.onLinked({ id: 'task-uuid-1', title: 'Review PR #98' });
+
+    expect(context.onTaskUpdated).toHaveBeenCalledTimes(1);
+    expect(context.onTaskUpdated).toHaveBeenCalledWith({ id: 'task-uuid-1', title: 'Review PR #98' });
+    expect(context.onTaskPrLinkChanged).not.toHaveBeenCalled();
+  });
+
   it('does not resolve on update when prNumber is non-numeric and no prUrl anchors it', async () => {
     // The MCP tool's zod schema already validates a positive int, but this
     // handler is also reachable from the mobile bridge, which hands it raw
