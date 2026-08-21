@@ -87,7 +87,9 @@ src/
     ipc/
       register-all.ts      # Thin orchestrator, creates IpcContext, re-exports
       ipc-context.ts       # Shared IpcContext interface
-      helpers.ts           # Shared helper functions (ensureGitignore, getProjectRepos, etc.)
+      send-to-renderer.ts  # sendToRenderer: main-window push chokepoint (destroyed-window guard + IPC recorder)
+      task-lifecycle-lock.ts # withTaskLock: serializes per-task async mutation
+      helpers/             # Shared helper functions (ensureGitignore, getProjectRepos, etc.)
       handlers/
         backlog.ts         # Backlog CRUD, import, promotion handlers
         board.ts           # Swimlane, Action, Transition, Attachment CRUD
