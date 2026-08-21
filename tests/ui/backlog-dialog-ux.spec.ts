@@ -707,7 +707,22 @@ test.describe('New Backlog Task Dialog - Header, Delete, Meta', () => {
       textarea.dispatchEvent(pasteEvent);
     });
 
-    await expect(dialog.locator('[data-testid="attachment-chip"]')).toBeVisible();
+    const chip = dialog.locator('[data-testid="attachment-chip"]');
+    await expect(chip).toBeVisible();
+
+    // panel.close defaults to Mod+Shift+W, not Escape (see
+    // src/shared/keybindings.ts), so Escape here is handled solely by
+    // BaseDialog's own document-level listener, which is re-registered by a
+    // plain (post-paint) useEffect whenever handleCloseAttempt's identity
+    // changes - which it just did, since isDirty flipped true in the same
+    // commit that added this chip. The chip is visible the instant that
+    // commit lands, but the listener swap has not necessarily run yet, so an
+    // Escape thrown immediately can still hit the stale (isDirty=false)
+    // closure and close the dialog with no confirm. Hovering the chip forces
+    // Playwright's actionability "stable across frames" wait, which settles
+    // on a real render/paint boundary rather than a fixed sleep, giving the
+    // effect a chance to flush before Escape is sent.
+    await chip.hover();
 
     await page.keyboard.press('Escape');
     const confirmHeading = page.locator('h3:has-text("Discard unsaved changes?")');
