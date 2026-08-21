@@ -201,6 +201,49 @@ function commandExists(command) {
   }
 }
 
+/**
+ * Best-effort check for an already-running Kangentic on Linux.
+ *
+ * Only ever used to SKIP a redundant launch, never to gate the install or the
+ * advice printed after it. That asymmetry is deliberate: `pgrep -x` matches a
+ * 15-character-truncated comm name and is a heuristic, so a false negative must
+ * cost no more than one extra launch that focuses the existing window. Anything
+ * that made the user-facing message conditional on this would degrade a false
+ * negative straight back into silence.
+ */
+function isAppRunning(platformInfo) {
+  if (platformInfo.platform !== 'linux') return false;
+  if (!commandExists('pgrep')) return false;
+  try {
+    // Scoped to THIS user where possible: an unscoped match would see another
+    // account's Kangentic on a shared machine and skip a launch the invoking
+    // user needs. A false positive costs a silent no-op, which is worse than
+    // the extra launch a false negative costs. `process.getuid` is POSIX-only,
+    // so it is guarded rather than assumed even on this Linux-only path.
+    const userScope = typeof process.getuid === 'function' ? ['-U', String(process.getuid())] : [];
+    execFileSync('pgrep', ['-x', ...userScope, 'kangentic'], { stdio: 'ignore' });
+    return true;
+  } catch {
+    // Exit 1 means no match; any other failure is equally "not confirmed".
+    return false;
+  }
+}
+
+/**
+ * Whether to tell the user to quit and reopen the app after installing.
+ *
+ * True only for a Linux UPGRADE. Windows and macOS relaunch into the new
+ * version from here, so there is nothing left to finish; and a first-time
+ * install on any platform has no older copy still open to replace.
+ *
+ * Deliberately NOT gated on isAppRunning(): within Linux this must hold
+ * whether or not the pgrep probe confirmed anything, so a false negative costs
+ * one redundant launch rather than restoring the silence it exists to fix.
+ */
+function shouldAdviseReopen(platformInfo, wasInstalled) {
+  return platformInfo.platform === 'linux' && wasInstalled;
+}
+
 function installLinux(artifactPath) {
   console.log('Installing Kangentic...');
   if (artifactPath.endsWith('.deb')) {
@@ -222,8 +265,17 @@ function installLinux(artifactPath) {
       console.log('Running: sudo zypper install (you may be prompted for your password)');
       execFileSync('sudo', ['zypper', '--non-interactive', 'install', artifactPath], { stdio: 'inherit' });
     } else {
-      console.log('Running: sudo rpm -i (you may be prompted for your password)');
-      execFileSync('sudo', ['rpm', '-i', artifactPath], { stdio: 'inherit' });
+      // -U, not -i: `rpm -i` fails with "package is already installed" on any
+      // version-to-version upgrade, so on a distro with neither dnf nor zypper
+      // a repeat `npx kangentic` could never actually update.
+      //
+      // --replacepkgs because the app now self-updates on Linux, so it can
+      // already be at the version this launcher is about to install while the
+      // launcher's own version marker still says otherwise. Without it that
+      // reinstall exits non-zero and main() bails before ever launching. dnf
+      // and zypper already no-op in that case; this makes the fallback match.
+      console.log('Running: sudo rpm -U (you may be prompted for your password)');
+      execFileSync('sudo', ['rpm', '-Uvh', '--replacepkgs', artifactPath], { stdio: 'inherit' });
     }
   }
   console.log('Installation complete.');
@@ -413,6 +465,12 @@ async function main() {
     process.exit(1);
   }
 
+  // Both sampled BEFORE installing, since the install itself changes the answers.
+  // wasInstalled separates an upgrade from a first-time install: there is
+  // nothing to "finish updating" when the app was never on the machine.
+  const wasInstalled = fs.existsSync(getInstallPath(platformInfo));
+  const wasRunning = isAppRunning(platformInfo);
+
   // Install
   try {
     install(platformInfo, artifactPath);
@@ -429,6 +487,21 @@ async function main() {
   } catch {
     // ignore cleanup errors
   }
+
+  // A running instance is the case the user cannot otherwise detect: the app
+  // enforces a single-instance lock, so a launch from here would exit(0) and
+  // merely focus the OLD, pre-upgrade window with nothing to show that
+  // anything happened.
+  if (shouldAdviseReopen(platformInfo, wasInstalled)) {
+    // Phrased as a conditional because this fires for every Linux upgrade, not
+    // only a confirmed-running one. When nothing is running the launch below
+    // opens the new version directly, and an unconditional "quit and reopen"
+    // would be telling the user to undo what just happened.
+    console.log('If Kangentic is already open, quit and reopen it to finish updating.');
+  }
+
+  // Only skip the launch when a running instance was positively confirmed.
+  if (wasRunning) return;
 
   // Launch
   launch(platformInfo, targetDir, dataDir, extraArgs);
@@ -452,4 +525,6 @@ module.exports = {
   getPlatformInfo,
   getArtifactFilename,
   installLinux,
+  isAppRunning,
+  shouldAdviseReopen,
 };

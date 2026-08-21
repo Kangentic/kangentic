@@ -122,9 +122,11 @@ The deb package declares `depends` on Electron's required system libraries (`lib
 
 ## Auto-Update Platform Guard
 
-Auto-update via `electron-updater` runs on Windows and macOS only. The guard in `src/main/updater.ts` checks `app.isPackaged && process.platform !== 'linux'` -- dev mode and Linux are excluded. Linux users update via the launcher package (`npx kangentic`).
+Auto-update via `electron-updater` runs on **all three platforms**. The guard in `src/main/updater.ts` checks `app.isPackaged` only, so the sole exclusion is dev mode.
 
-Release notes are not gated by that guard. The pre-restart modal is, since it needs a downloaded update, but the post-update "What's New" dialog reads notes inlined into the renderer bundle at build time, so it works on every platform and for every install route: a Linux `npx kangentic` upgrade and a manual installer run both surface it on the next launch. See [Auto-Update Behavior](deployment.md#auto-update-behavior).
+Linux is included because `electron-updater` ships `DebUpdater` / `RpmUpdater` and selects one via the `package-type` marker `electron-builder` writes into `resourcesPath` for every fpm target in its `supportsAutoUpdate` list. The one platform difference is `autoInstallOnAppQuit`, forced to `false` on Linux because the package manager always elevates and an auth prompt on the quit path is both confusing and race-prone. See [Linux auto-update](deployment.md#linux-auto-update).
+
+Release notes are not gated by that guard either. The post-update "What's New" dialog reads notes inlined into the renderer bundle at build time, so it works for every install route: an `npx kangentic` upgrade and a manual installer run both surface it on the next launch. See [Auto-Update Behavior](deployment.md#auto-update-behavior).
 
 ## Security Fuses
 

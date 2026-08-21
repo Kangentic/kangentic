@@ -227,6 +227,34 @@ jobs:
           }
           Write-Host "Found $manifest"
 
+      # Linux needs a SECOND file the other platforms do not. electron-updater's
+      # `autoUpdater` export picks between AppImageUpdater / DebUpdater /
+      # RpmUpdater by reading `package-type` from resourcesPath; without it a
+      # deb/rpm install silently falls back to AppImageUpdater and every install
+      # fails. electron-builder writes both files together for any fpm target in
+      # its supportsAutoUpdate list, so a missing one means the publish config
+      # did not resolve at build time and Linux auto-update is dead on arrival.
+      - name: Verify app-update.yml and package-type are packaged (Linux)
+        if: matrix.platform == 'linux'
+        run: |
+          set -e
+          missing=0
+          for file in app-update.yml package-type; do
+            path="out/linux-unpacked/resources/$file"
+            if [ ! -f "$path" ]; then
+              echo "::error::Missing $path"
+              missing=1
+            else
+              echo "Found $path"
+            fi
+          done
+          [ "$missing" = "0" ]
+          package_type=$(cat out/linux-unpacked/resources/package-type)
+          case "$package_type" in
+            deb|rpm|pacman) echo "package-type: $package_type" ;;
+            *) echo "::error::Unexpected package-type '$package_type' (electron-updater maps only deb/rpm/pacman)"; exit 1 ;;
+          esac
+
       # Actually installs the built .rpm/.deb on clean distro containers. A hand-maintained
       # dependency name can look correct and still fail on a real system - this is what would
       # have caught the libXShmfence bug (a package name no RPM distro has ever shipped) before
@@ -275,6 +303,117 @@ jobs:
           echo "Testing $deb_file"
           docker run --rm -v "$PWD/out:/out:ro" ubuntu:24.04 sh -c \
             "apt-get update -qq && apt-get install -y \"/out/$(basename "$deb_file")\""
+
+      # The four steps above prove a FRESH install. Upgrading is the primary path
+      # now that electron-updater installs the new package over the running one
+      # (src/main/updater.ts no longer bails out on Linux), and an upgrade can
+      # fail where a fresh install succeeds: file conflicts between versions,
+      # scriptlet ordering, or a dependency only the old package pulled in.
+      #
+      # `/releases/latest` returns the PREVIOUS release here - the one being built
+      # is still a draft at this point and the API skips drafts - so this upgrades
+      # from exactly what users are running today.
+      #
+      # Skipping is deliberately narrow: only "there is no published release to
+      # upgrade FROM" skips, which happens once, on the first release ever. A
+      # baseline that exists but whose package cannot be downloaded FAILS,
+      # because the only ways that happens are an incomplete previous release or
+      # an artifact rename - and a gate that silently stops testing on a rename
+      # is worse than no gate, since it still reads as coverage.
+      - name: Verify rpm upgrades from the previous release
+        if: matrix.platform == 'linux'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Authenticated, and branching on the HTTP status rather than on curl's
+          # exit code. Unauthenticated api.github.com is 60 req/hour per runner IP
+          # and shared with every other job on that host, so a bare `if curl` folds
+          # a 403 into the same empty-tag branch as "no release exists" and skips
+          # the gate while reporting green. Only a real 404 may skip.
+          status=$(curl -sSL -o /tmp/prev-release.json -w '%{http_code}' \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/latest")
+          if [ "$status" = "404" ]; then
+            echo "No previously published release found; skipping rpm upgrade check."
+            exit 0
+          fi
+          if [ "$status" != "200" ]; then
+            echo "::error::GitHub API returned HTTP $status resolving the previous release."
+            echo "::error::Refusing to skip the upgrade check on a transport failure - that would report green without testing anything."
+            exit 1
+          fi
+          prev_tag=$(jq -r '.tag_name // empty' /tmp/prev-release.json)
+          if [ -z "$prev_tag" ]; then
+            echo "::error::Release API returned HTTP 200 with no tag_name."
+            exit 1
+          fi
+          prev_version="${prev_tag#v}"
+          prev_file="kangentic-${prev_version}-1.x86_64.rpm"
+          mkdir -p prev
+          if ! curl -fsSL -o "prev/$prev_file" "https://github.com/${{ github.repository }}/releases/download/${prev_tag}/${prev_file}"; then
+            echo "::error::$prev_file is missing from release $prev_tag."
+            echo "::error::Either that release is incomplete, or the rpm artifact naming changed - which would also break the npx launcher (packages/launcher/bin/kangentic.js builds this exact filename)."
+            exit 1
+          fi
+          # Assigned in two steps, not `basename "$(ls ...)"`: with the ls nested
+          # inside basename's argument the assignment carries BASENAME's exit
+          # status, so a zero-match glob sails past `set -e` with new_file empty
+          # and fails later as an opaque docker error. Direct assignment aborts
+          # here, matching the fresh-install steps above.
+          rpm_path=$(ls out/kangentic-*-1.x86_64.rpm)
+          new_file=$(basename "$rpm_path")
+          new_version=$(echo "$new_file" | sed -E 's/^kangentic-(.+)-1\.x86_64\.rpm$/\1/')
+          echo "Upgrading rpm $prev_version -> $new_version"
+          # `rpm -q kangentic-$new_version` asks for that exact name-version rather
+          # than grepping the full NVR, where an unanchored pattern would let the
+          # version's dots match any character.
+          docker run --rm -v "$PWD/out:/out:ro" -v "$PWD/prev:/prev:ro" fedora:latest sh -c \
+            "dnf install -y --nogpgcheck /prev/$prev_file && dnf install -y --nogpgcheck /out/$new_file && rpm -q kangentic-$new_version"
+
+      - name: Verify deb upgrades from the previous release
+        if: matrix.platform == 'linux'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Same status-code branching as the rpm step above: only a real 404 skips.
+          status=$(curl -sSL -o /tmp/prev-release.json -w '%{http_code}' \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/latest")
+          if [ "$status" = "404" ]; then
+            echo "No previously published release found; skipping deb upgrade check."
+            exit 0
+          fi
+          if [ "$status" != "200" ]; then
+            echo "::error::GitHub API returned HTTP $status resolving the previous release."
+            echo "::error::Refusing to skip the upgrade check on a transport failure - that would report green without testing anything."
+            exit 1
+          fi
+          prev_tag=$(jq -r '.tag_name // empty' /tmp/prev-release.json)
+          if [ -z "$prev_tag" ]; then
+            echo "::error::Release API returned HTTP 200 with no tag_name."
+            exit 1
+          fi
+          prev_version="${prev_tag#v}"
+          prev_file="kangentic_${prev_version}_amd64.deb"
+          mkdir -p prev
+          if ! curl -fsSL -o "prev/$prev_file" "https://github.com/${{ github.repository }}/releases/download/${prev_tag}/${prev_file}"; then
+            echo "::error::$prev_file is missing from release $prev_tag."
+            echo "::error::Either that release is incomplete, or the deb artifact naming changed - which would also break the npx launcher (packages/launcher/bin/kangentic.js builds this exact filename)."
+            exit 1
+          fi
+          # Two-step assignment for the same set -e reason as the rpm step above.
+          deb_path=$(ls out/kangentic_*_amd64.deb)
+          new_file=$(basename "$deb_path")
+          new_version=$(echo "$new_file" | sed -E 's/^kangentic_(.+)_amd64\.deb$/\1/')
+          echo "Upgrading deb $prev_version -> $new_version"
+          # -xF: whole-line fixed-string, so the installed version must equal the
+          # new one rather than merely contain a regex that matches it.
+          docker run --rm -v "$PWD/out:/out:ro" -v "$PWD/prev:/prev:ro" debian:stable sh -c \
+            "apt-get update -qq && apt-get install -y /prev/$prev_file && apt-get install -y /out/$new_file && dpkg-query -W -f='\${Version}' kangentic | grep -qxF '$new_version'"
 
   # Publish the draft release, but only after verifying what is actually attached
   # to it.

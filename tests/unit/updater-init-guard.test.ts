@@ -52,8 +52,10 @@ describe('initUpdater manifest guard', () => {
       value: '/fake/resources',
       configurable: true,
     });
-    // updater.ts short-circuits on Linux; pin platform so CI (ubuntu) runs
-    // the same wiring path as Windows/macOS hosts.
+    // Pin the platform so CI (ubuntu) and a Windows dev host exercise the
+    // same wiring path. Linux is no longer short-circuited (see the Linux
+    // describe block below), but it does take a different autoInstallOnAppQuit
+    // branch, so the shared cases must not depend on the host OS.
     Object.defineProperty(process, 'platform', {
       value: 'win32',
       configurable: true,
@@ -164,5 +166,96 @@ describe('initUpdater manifest guard', () => {
     expect(mocks.existsSyncMock).not.toHaveBeenCalled();
     expect(mocks.autoUpdaterMock.on).not.toHaveBeenCalled();
     expect(mocks.trackEventMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Linux used to be short-circuited alongside dev builds, on the belief that
+ * deb/rpm had no in-place update path. It does: electron-updater ships
+ * DebUpdater/RpmUpdater, its `autoUpdater` export selects one via the
+ * `package-type` marker, and electron-builder writes that marker plus an
+ * app-update.yml for every fpm target in its supportsAutoUpdate list
+ * (["deb", "rpm", "pacman"]). These tests pin that Linux now wires up like
+ * any other platform, and the one deliberate difference.
+ */
+describe('initUpdater on Linux', () => {
+  const originalResourcesPath = process.resourcesPath;
+  const originalPlatform = process.platform;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    Object.defineProperty(process, 'resourcesPath', {
+      value: '/fake/resources',
+      configurable: true,
+    });
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+    mocks.electronMock.app.isPackaged = true;
+    mocks.electronMock.ipcMain.handle.mockReset();
+    mocks.autoUpdaterMock.on.mockReset();
+    mocks.autoUpdaterMock.checkForUpdates.mockReset();
+    mocks.autoUpdaterMock.autoDownload = true;
+    mocks.autoUpdaterMock.autoInstallOnAppQuit = false;
+    mocks.autoUpdaterMock.disableDifferentialDownload = false;
+    mocks.trackEventMock.mockReset();
+    mocks.existsSyncMock.mockReset();
+    fakeWindowSend.mockReset();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    Object.defineProperty(process, 'resourcesPath', {
+      value: originalResourcesPath,
+      configurable: true,
+    });
+    Object.defineProperty(process, 'platform', {
+      value: originalPlatform,
+      configurable: true,
+    });
+  });
+
+  it('runs full wiring on a packaged Linux build', () => {
+    mocks.existsSyncMock.mockReturnValue(true);
+
+    initUpdater(fakeWindow);
+
+    const onEvents = mocks.autoUpdaterMock.on.mock.calls.map((call) => call[0]).sort();
+    expect(onEvents).toEqual(['error', 'update-available', 'update-downloaded']);
+    expect(mocks.autoUpdaterMock.autoDownload).toBe(false);
+    expect(mocks.trackEventMock).not.toHaveBeenCalled();
+  });
+
+  it('schedules the periodic check on Linux', () => {
+    mocks.existsSyncMock.mockReturnValue(true);
+
+    initUpdater(fakeWindow);
+    vi.advanceTimersByTime(5_000);
+
+    expect(mocks.autoUpdaterMock.checkForUpdates).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT install on quit, unlike the other platforms', () => {
+    // DebUpdater/RpmUpdater shell out to the package manager, which always
+    // elevates. On the quit path that means a password prompt as the window
+    // disappears, racing session teardown. The update stays staged for the
+    // modal's explicit "Restart to update" instead.
+    mocks.existsSyncMock.mockReturnValue(true);
+
+    initUpdater(fakeWindow);
+
+    expect(mocks.autoUpdaterMock.autoInstallOnAppQuit).toBe(false);
+  });
+
+  it('still honors the missing-manifest guard on Linux', () => {
+    mocks.existsSyncMock.mockReturnValue(false);
+
+    initUpdater(fakeWindow);
+
+    expect(mocks.electronMock.ipcMain.handle.mock.calls.map((call) => call[0]))
+      .toEqual([IPC.UPDATE_CHECK, IPC.UPDATE_INSTALL]);
+    expect(mocks.autoUpdaterMock.on).not.toHaveBeenCalled();
+    expect(mocks.trackEventMock).toHaveBeenCalledWith('app_error', {
+      source: 'updater',
+      message: 'missing_manifest',
+    });
   });
 });

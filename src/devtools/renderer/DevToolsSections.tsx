@@ -218,14 +218,14 @@ export function DevToolsSections({ globalConfig }: { globalConfig: AppConfig }) 
         </Description>
       </section>
 
-      {/* initUpdater() early-returns on !app.isPackaged and on Linux (see
+      {/* initUpdater() early-returns on !app.isPackaged (see
           src/main/updater.ts), so the release-notes modal is unreachable while
           dogfooding from `npm start`. This trigger fires it directly with
           fixture notes so the modal stays visible to whoever is working on it. */}
       <ActionRow
         icon={Sparkles}
         title="Release Notes Modal"
-        description="Fire an update-downloaded push with fixture markdown notes. The real trigger is unreachable in dev (the updater only runs on a packaged Windows/macOS build)."
+        description="Fire an update-downloaded push with fixture markdown notes. The real trigger is unreachable in dev (the updater only runs on a packaged build)."
         label="Show modal"
         testId="dev-trigger-release-notes-modal"
         onClick={() => {

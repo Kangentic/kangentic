@@ -110,15 +110,22 @@ function registerNoOpUpdaterHandlers(): void {
 }
 
 /**
- * Initialize the auto-updater for packaged builds (Windows and macOS only).
- * Linux users update via the launcher package (`npx kangentic`).
+ * Initialize the auto-updater for packaged builds on every platform.
+ *
+ * Linux included: electron-updater ships DebUpdater / RpmUpdater alongside
+ * AppImageUpdater, and its `autoUpdater` export selects between them by
+ * reading the `package-type` marker electron-builder writes into
+ * resourcesPath. Our fpm targets (deb, rpm) are both in electron-builder's
+ * supportsAutoUpdate list, so each packaged Linux build already carries that
+ * marker AND an app-update.yml, exactly like the NSIS and DMG builds.
  */
 export function initUpdater(mainWindow: BrowserWindow): void {
-  if (!app.isPackaged || process.platform === 'linux') {
+  if (!app.isPackaged) {
     // The renderer's release-notes modal reaches `installUpdate()` from its
     // primary button, and the Developer tab can open that modal with fixture
     // notes in dev. Register no-ops so the invoke resolves instead of
     // rejecting with `No handler registered` (an unhandled rejection).
+    // Dev only now - a packaged Linux build takes the real path below.
     registerNoOpUpdaterHandlers();
     return;
   }
@@ -146,6 +153,20 @@ export function initUpdater(mainWindow: BrowserWindow): void {
   autoUpdater.autoDownload = false;
   // Install pending updates silently when the user quits normally
   autoUpdater.autoInstallOnAppQuit = true;
+
+  // Except on Linux, where "silently" is not available: DebUpdater and
+  // RpmUpdater shell out to the system package manager, which always
+  // elevates (LinuxUpdater.determineSudoCommand picks pkexec / gksudo /
+  // kdesudo, falling back to sudo). On the quit path that surfaces a
+  // password prompt as the window is disappearing, and the install races
+  // the session teardown that is killing the process. Leave the update
+  // staged instead: the release-notes modal's "Restart to update" is an
+  // explicit, foreground moment where an auth prompt makes sense.
+  // Upstream reached the same conclusion and made deferral the default for
+  // these targets in a later major.
+  if (process.platform === 'linux') {
+    autoUpdater.autoInstallOnAppQuit = false;
+  }
 
   // macOS differential download reads a cached update.zip from
   // ~/Library/Caches/<appId>-updater/pending/, which macOS evicts under

@@ -10,7 +10,7 @@ One command to install and launch [Kangentic](https://github.com/Kangentic/kange
 npx kangentic
 ```
 
-This downloads the pre-built binary for your platform from GitHub Releases, installs it, and launches the app. After the first run, the app manages its own updates automatically (Windows and macOS).
+This downloads the pre-built binary for your platform from GitHub Releases, installs it, and launches the app. After the first run, the app manages its own updates automatically on every platform.
 
 ### Open a specific project
 
@@ -26,7 +26,7 @@ npx kangentic /path/to/your/project
    - **Windows:** Runs NSIS installer silently to `%LOCALAPPDATA%\Programs\Kangentic\`
    - **macOS:** Extracts .zip to `~/Applications/Kangentic.app`
    - **Linux:** Installs .rpm on RPM-family systems (`sudo dnf install` on Fedora/RHEL,
-     `sudo zypper install` on openSUSE, falling back to `sudo rpm -i`) or .deb elsewhere
+     `sudo zypper install` on openSUSE, falling back to `sudo rpm -Uvh`) or .deb elsewhere
      (`sudo apt install`, falling back to `sudo dpkg -i`); prompts for password
 4. Launches the app
 
@@ -36,7 +36,7 @@ After the initial install, you generally don't need to run `npx kangentic` again
 
 - **Windows:** electron-updater installs new versions silently on restart.
 - **macOS:** Built-in auto-updater downloads in the background and prompts to restart. (Requires code signing.)
-- **Linux:** No auto-update. Re-run `npx kangentic` or download from [GitHub Releases](https://github.com/Kangentic/kangentic/releases).
+- **Linux:** The app downloads the new deb/rpm and installs it when you click "Restart to update", asking for your password once. If that fails (no polkit agent, for example), re-run `npx kangentic@latest` (the `@latest` matters: a cached launcher reinstalls its own version), then quit and reopen the app.
 
 ### Install a specific version
 

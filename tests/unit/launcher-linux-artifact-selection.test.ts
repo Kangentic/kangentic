@@ -21,6 +21,8 @@ let launcherModule: {
   getPlatformInfo: () => { platform: string; arch?: string } | null;
   getArtifactFilename: (platformInfo: { platform: string; arch?: string }) => string | null;
   installLinux: (artifactPath: string) => void;
+  isAppRunning: (platformInfo: { platform: string; arch?: string }) => boolean;
+  shouldAdviseReopen: (platformInfo: { platform: string }, wasInstalled: boolean) => boolean;
 };
 
 const launcherPackageJsonPath = path.resolve(__dirname, '../../packages/launcher/package.json');
@@ -33,10 +35,27 @@ let mockAvailableCommands: string[] = [];
 // lookups and records `sudo` calls.
 let sudoInvocations: string[][] = [];
 
+// Drives the `pgrep -x kangentic` probe in isAppRunning(). A real pgrep exits
+// 1 (which execFileSync raises as a throw) when nothing matches, so "no match"
+// has to be modelled as a throw rather than an empty return.
+let mockPgrepMatches = false;
+
+// Records the argv every `pgrep` call receives. Asserting the return value
+// alone cannot catch a wrong probe: mockPgrepMatches is set by the test, so a
+// mistyped process name or a swapped flag still returns true here while never
+// matching a real process.
+let pgrepInvocations: string[][] = [];
+
 beforeAll(() => {
   vi.spyOn(childProcess, 'execFileSync').mockImplementation(((command: string, args: readonly string[]) => {
     if (command === 'which' && !mockAvailableCommands.includes(args[0])) {
       throw new Error(`command not found: ${args[0]}`);
+    }
+    if (command === 'pgrep') {
+      pgrepInvocations.push([...args]);
+      if (!mockPgrepMatches) {
+        throw new Error('no matching processes');
+      }
     }
     if (command === 'sudo') {
       sudoInvocations.push([...args]);
@@ -57,6 +76,8 @@ afterAll(() => {
 beforeEach(() => {
   mockAvailableCommands = [];
   sudoInvocations = [];
+  mockPgrepMatches = false;
+  pgrepInvocations = [];
 });
 
 describe('Launcher Linux artifact selection', () => {
@@ -136,10 +157,90 @@ describe('Launcher Linux artifact selection', () => {
       expect(sudoInvocations).toEqual([['zypper', '--non-interactive', 'install', rpmArtifactPath]]);
     });
 
-    it('falls back to sudo rpm -i when neither dnf nor zypper is present (.rpm)', () => {
+    it('falls back to sudo rpm -Uvh when neither dnf nor zypper is present (.rpm)', () => {
       mockAvailableCommands = [];
       launcherModule.installLinux(rpmArtifactPath);
-      expect(sudoInvocations).toEqual([['rpm', '-i', rpmArtifactPath]]);
+      // -U rather than -i: `rpm -i` refuses an already-installed package, so
+      // this branch could never perform an upgrade. --replacepkgs because the
+      // app self-updates on Linux, so it can already be at the version the
+      // launcher is installing while the launcher's version marker disagrees.
+      expect(sudoInvocations).toEqual([['rpm', '-Uvh', '--replacepkgs', rpmArtifactPath]]);
+    });
+  });
+
+  describe('isAppRunning (running-instance probe)', () => {
+    // Only ever used to skip a redundant launch. The "quit and reopen" advice
+    // main() prints is unconditional, so every false answer here degrades to
+    // one extra launch, never to silence.
+    it('reports true when pgrep matches a running kangentic', () => {
+      mockAvailableCommands = ['pgrep'];
+      mockPgrepMatches = true;
+      expect(launcherModule.isAppRunning({ platform: 'linux', arch: 'x64' })).toBe(true);
+    });
+
+    it('probes the exact process name, scoped to the current user', () => {
+      // -U <uid> keeps another account's Kangentic on a shared machine from
+      // reading as "already running" and silently suppressing this user's
+      // launch. A false POSITIVE costs a no-op; a false negative costs one
+      // redundant launch, so the probe is deliberately narrow.
+      mockAvailableCommands = ['pgrep'];
+      mockPgrepMatches = true;
+      launcherModule.isAppRunning({ platform: 'linux', arch: 'x64' });
+      // getuid is POSIX-only, so the expected argv differs between a Windows dev
+      // host and Linux CI. Both must still target `-x kangentic` exactly.
+      const expectedUserScope =
+        typeof process.getuid === 'function' ? ['-U', String(process.getuid())] : [];
+      expect(pgrepInvocations).toEqual([['-x', ...expectedUserScope, 'kangentic']]);
+    });
+
+    it('reports false when pgrep exits non-zero because nothing matched', () => {
+      mockAvailableCommands = ['pgrep'];
+      mockPgrepMatches = false;
+      expect(launcherModule.isAppRunning({ platform: 'linux', arch: 'x64' })).toBe(false);
+    });
+
+    it('reports false when pgrep is not installed', () => {
+      mockAvailableCommands = [];
+      mockPgrepMatches = true;
+      expect(launcherModule.isAppRunning({ platform: 'linux', arch: 'x64' })).toBe(false);
+    });
+
+    it('reports false on non-Linux platforms without probing at all', () => {
+      mockAvailableCommands = ['pgrep'];
+      mockPgrepMatches = true;
+      expect(launcherModule.isAppRunning({ platform: 'darwin', arch: 'arm64' })).toBe(false);
+      expect(launcherModule.isAppRunning({ platform: 'win32', arch: 'x64' })).toBe(false);
+      // The "without probing at all" half: a return-value-only assertion would
+      // pass even if the platform guard were removed, since pgrep is mocked to
+      // match here.
+      expect(pgrepInvocations).toEqual([]);
+    });
+  });
+
+  describe('shouldAdviseReopen (post-install "quit and reopen" advice)', () => {
+    it('advises on a Linux upgrade', () => {
+      expect(launcherModule.shouldAdviseReopen({ platform: 'linux' }, true)).toBe(true);
+    });
+
+    it('stays quiet on a first-time Linux install', () => {
+      // Nothing to finish: there is no older copy, and the app launches below.
+      expect(launcherModule.shouldAdviseReopen({ platform: 'linux' }, false)).toBe(false);
+    });
+
+    it('stays quiet on a Windows or macOS upgrade', () => {
+      // Those platforms relaunch into the NEW version from the launcher, so
+      // telling the user to quit and reopen would be false.
+      expect(launcherModule.shouldAdviseReopen({ platform: 'win32' }, true)).toBe(false);
+      expect(launcherModule.shouldAdviseReopen({ platform: 'darwin' }, true)).toBe(false);
+    });
+
+    it('does not consult the running-instance probe', () => {
+      // Within Linux the advice must hold whether or not pgrep confirmed
+      // anything, so a false negative costs a redundant launch rather than
+      // restoring the silence this exists to fix.
+      mockAvailableCommands = [];
+      mockPgrepMatches = false;
+      expect(launcherModule.shouldAdviseReopen({ platform: 'linux' }, true)).toBe(true);
     });
   });
 });
