@@ -1,7 +1,8 @@
 import os from 'node:os';
 import path from 'node:path';
-import fs from 'node:fs';
 import type { TranscriptEntry, TranscriptBlock } from '../../../../shared/types';
+import { readJsonlWindow } from '../../shared/history-scan';
+import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
 import { findSessionWireFile } from './session-history-parser';
 
 /**
@@ -30,12 +31,10 @@ import { findSessionWireFile } from './session-history-parser';
  * on-disk shapes.
  */
 export async function parseKimiTranscript(filePath: string): Promise<TranscriptEntry[]> {
-  let content: string;
-  try {
-    content = await fs.promises.readFile(filePath, 'utf-8');
-  } catch {
-    return [];
-  }
+  // Bounded tail read rather than a whole-file one: a transcript has no size
+  // ceiling, and reading one whole is what OOM'd the main process.
+  const window = await readJsonlWindow(filePath, { maxBytes: parseWindowBytes() });
+  if (window.totalBytes === 0) return [];
 
   const entries: TranscriptEntry[] = [];
   let pendingAssistantText = '';
@@ -55,7 +54,7 @@ export async function parseKimiTranscript(filePath: string): Promise<TranscriptE
     pendingAssistantText = '';
   };
 
-  for (const line of content.split(/\r?\n/)) {
+  for (const line of window.text.split(/\r?\n/)) {
     if (line.length === 0) continue;
     let raw: unknown;
     try {
@@ -120,7 +119,7 @@ export async function parseKimiTranscript(filePath: string): Promise<TranscriptE
   }
 
   flushAssistantText();
-  return entries;
+  return prependTruncationMarker(entries, window.omittedBytes, window.totalBytes);
 }
 
 /**

@@ -9,6 +9,12 @@ import type {
   TranscriptToolCounts,
   PerToolStat,
 } from '../../../../shared/types';
+import { readJsonlWindow, streamJsonlRecords } from '../../shared/history-scan';
+import { touchBounded, heldBytes } from '../../shared/bounded-lru';
+import {
+  parseWindowBytes,
+  prependTruncationMarker,
+} from '../../shared/transcript-truncation';
 
 // Maximum slug length before Claude Code truncates and appends a hash suffix.
 // Matches the `jgH`/`NmK` constant in the shipped CLI (Claude Code 2.x).
@@ -226,6 +232,10 @@ interface IncrementalParseState {
   size: number;
   /** Bytes fully consumed (parsed or explicitly carried) as of this state. */
   byteOffset: number;
+  /** First source byte this state's `entries` cover. Non-zero when the file
+   *  exceeded `MAX_PARSE_SOURCE_BYTES` and only its tail was parsed. Retained
+   *  size is `size - windowStartByte`, NOT `size`. */
+  windowStartByte: number;
   /** Trailing bytes after the last complete `\n` seen so far, not yet part
    *  of a complete line - re-prepended to the next increment's read. */
   carry: Buffer;
@@ -236,27 +246,56 @@ interface IncrementalParseState {
 const incrementalStateByPath = new Map<string, IncrementalParseState>();
 
 /** Cap on the number of distinct transcript files whose incremental-parse
- *  state is retained, mirroring the LRU caps on the sibling caches introduced
- *  alongside this one (`CACHE_LIMIT` in `transcript-cache.ts`,
- *  `STITCH_MEMO_LIMIT` in `transcript-service.ts`). Each record holds a full
- *  `entries` array, so an uncapped map would grow with every distinct session
- *  ever parsed over the process lifetime (conversation viewer, Transcript tab,
- *  MCP `get_transcript`). */
+ *  state is retained (conversation viewer, Transcript tab, MCP `get_transcript`,
+ *  each of which can touch a different session). */
 const INCREMENTAL_STATE_LIMIT = 32;
 
-/** Re-insert `state` at the most-recently-used end and evict the oldest past
- *  the cap. Map iteration order is insertion order, so a delete-then-set is
- *  enough for LRU without a separate list (same idiom as `transcript-cache`'s
- *  `touch`). Called on every parse of a path so an actively-growing session
- *  stays hot and is never evicted out from under its own live poll. */
+/**
+ * Byte budget across all retained incremental state, counted in SOURCE bytes.
+ *
+ * This map previously had a count cap ONLY, while holding the largest payload
+ * of any transcript cache: a full UNTRUNCATED entries array per file (the
+ * span-clamping in `transcript-cache.ts` happens downstream and never reaches
+ * back here).
+ *
+ * Sizing this honestly, because the numbers are smaller than they look:
+ * measured on the real 137.9MB transcript, a whole-file parse retained 12.7MB
+ * of entries, so even 32 uncapped slots of the largest file on that machine is
+ * roughly 0.4GB - real, worth bounding, but NOT by itself the 3.4GB that killed
+ * the process. The peak of each read was (see `MAX_PARSE_SOURCE_BYTES`). This
+ * budget is the backstop against many large sessions accumulating, not the
+ * primary fix.
+ *
+ * Both bounds are live and neither is decorative: with `MAX_PARSE_SOURCE_BYTES`
+ * capping any single record at 16MB of source, the COUNT binds for the common
+ * working set of many small sessions and these BYTES bind for a few large ones
+ * (at least 4 max-size records fit).
+ *
+ * Mutable only so tests can exercise eviction against a few KB instead of
+ * writing 64MB of temp files.
+ */
+const INCREMENTAL_STATE_BYTE_BUDGET = 64 * 1024 * 1024;
+let incrementalStateByteBudget = INCREMENTAL_STATE_BYTE_BUDGET;
+
+/** Source bytes this state's retained entries were parsed from. */
+function retainedSourceBytes(state: IncrementalParseState): number {
+  return Math.max(0, state.size - state.windowStartByte);
+}
+
+/** Re-insert `state` at the most-recently-used end and evict past BOTH bounds.
+ *  Called on every parse of a path so an actively-growing session stays hot and
+ *  is never evicted out from under its own live poll. */
 function touchIncrementalState(filePath: string, state: IncrementalParseState): void {
-  incrementalStateByPath.delete(filePath);
-  incrementalStateByPath.set(filePath, state);
-  while (incrementalStateByPath.size > INCREMENTAL_STATE_LIMIT) {
-    const oldestPath = incrementalStateByPath.keys().next().value;
-    if (oldestPath === undefined) break;
-    incrementalStateByPath.delete(oldestPath);
-  }
+  touchBounded(incrementalStateByPath, filePath, state, {
+    limit: INCREMENTAL_STATE_LIMIT,
+    byteBudget: incrementalStateByteBudget,
+    sizeOf: retainedSourceBytes,
+    // A lone record cannot exceed the budget on its own, because
+    // MAX_PARSE_SOURCE_BYTES (16MB) is a quarter of it. So this floor never has
+    // to rescue anything, and the "retain one oversized record forever" versus
+    // "evict it and re-parse every tick" dilemma simply does not arise.
+    minRetained: 1,
+  });
 }
 
 /** Splits `buffer` at the LAST `\n` byte (0x0A) it contains. UTF-8 continuation
@@ -340,7 +379,17 @@ export async function parseClaudeTranscript(filePath: string): Promise<Transcrip
   }
 
   const previous = incrementalStateByPath.get(filePath);
-  const canIncrement = !!previous && stat.size > previous.size && stat.mtimeMs >= previous.mtimeMs;
+  const canIncrement = !!previous
+    && stat.size > previous.size
+    && stat.mtimeMs >= previous.mtimeMs
+    // Appending forever would grow `entries` without bound even though each
+    // increment is small, so a session that has outgrown the window falls
+    // through to a full re-window below. That costs one re-read per
+    // MAX_PARSE_SOURCE_BYTES of growth, and during it the replacement array is
+    // built while the old one is still reachable from the file cache and the
+    // stitch memo - a transient of roughly two windows, which the byte budget
+    // above is sized to absorb.
+    && stat.size - previous.windowStartByte <= parseWindowBytes();
 
   if (canIncrement && previous) {
     try {
@@ -370,31 +419,39 @@ export async function parseClaudeTranscript(filePath: string): Promise<Transcrip
     }
   }
 
-  // Full (re)parse: first call for this path, a shrink/rewind, or a
-  // just-failed incremental read.
-  let content: string;
-  try {
-    content = await fs.readFile(filePath, 'utf-8');
-  } catch {
+  // Full (re)parse: first call for this path, a shrink/rewind, a just-failed
+  // incremental read, or a session that outgrew the window. Reads at most
+  // MAX_PARSE_SOURCE_BYTES from the TAIL rather than the whole file, so the
+  // peak allocation of this branch is bounded no matter how large the
+  // transcript has grown.
+  const window = await readJsonlWindow(filePath, { maxBytes: parseWindowBytes() });
+  if (window.totalBytes === 0) {
     incrementalStateByPath.delete(filePath);
     return [];
   }
 
   const entries: TranscriptEntry[] = [];
   const usageAttributedMessageIds = new Set<string>();
-  for (const line of content.split(/\r?\n/)) {
+  for (const line of window.text.split(/\r?\n/)) {
     if (line.length === 0) continue;
     parseTranscriptLine(line, entries, usageAttributedMessageIds);
   }
 
+  // Report the omission in-band rather than dropping turns silently. The
+  // viewer already renders `system` entries, so this needs no new response
+  // field, and a reader who scrolls to the top sees why the conversation
+  // starts where it does.
+  prependTruncationMarker(entries, window.omittedBytes, window.totalBytes);
+
   // A full parse just consumed everything available in the read, INCLUDING a
-  // trailing line with no final newline (content.split above parses it like
-  // any other segment) - so the next increment starts from the current size
-  // with no carry, regardless of whether the file physically ends in `\n`.
+  // trailing line with no final newline (the split above parses it like any
+  // other segment) - so the next increment starts from the current size with
+  // no carry, regardless of whether the file physically ends in `\n`.
   touchIncrementalState(filePath, {
     mtimeMs: stat.mtimeMs,
     size: stat.size,
     byteOffset: stat.size,
+    windowStartByte: window.startByte,
     carry: Buffer.alloc(0),
     entries,
     usageAttributedMessageIds,
@@ -402,15 +459,61 @@ export async function parseClaudeTranscript(filePath: string): Promise<Transcrip
   return entries;
 }
 
-/** Test-only: clear the module-scope incremental-parse cache between test cases. */
+/**
+ * Parse one explicit byte window of a transcript WITHOUT retaining any state.
+ *
+ * This is the whole-file walk for consumers that need every turn but no
+ * residency: the conversation indexer chunks each window and drops its entries
+ * before asking for the next, so a 137.9MB transcript is fully indexed while
+ * only one window is ever live. Statelessness is the point - a sweep walking
+ * every session must not evict the viewer's hot incremental state (and, before
+ * this existed, a sweep was exactly what packed the state map with the largest
+ * files on the machine).
+ *
+ * `usage` dedupe is per-window, so a message id split across a window seam can
+ * be attributed twice. Irrelevant to the only caller (chunking for search) and
+ * deliberately not paid for.
+ */
+export async function parseClaudeTranscriptWindow(
+  filePath: string,
+  startByte: number,
+  maxBytes: number,
+): Promise<{ entries: TranscriptEntry[]; nextByteOffset: number; totalBytes: number }> {
+  const window = await readJsonlWindow(filePath, { startByte, maxBytes });
+  const entries: TranscriptEntry[] = [];
+  const usageAttributedMessageIds = new Set<string>();
+  for (const line of window.text.split(/\r?\n/)) {
+    if (line.length === 0) continue;
+    parseTranscriptLine(line, entries, usageAttributedMessageIds);
+  }
+  return { entries, nextByteOffset: window.nextByteOffset, totalBytes: window.totalBytes };
+}
+
+/** Test-only: clear the module-scope incremental-parse cache between test cases,
+ *  AND restore the byte budget, so a case that lowered it cannot leak a shrunken
+ *  cap into the next one. */
 export function resetIncrementalParseStateForTests(): void {
   incrementalStateByPath.clear();
+  incrementalStateByteBudget = INCREMENTAL_STATE_BYTE_BUDGET;
 }
 
 /** Test-only: current number of distinct paths retained in the incremental-parse
  *  cache, so a test can assert the `INCREMENTAL_STATE_LIMIT` LRU cap holds. */
 export function incrementalStateSizeForTests(): number {
   return incrementalStateByPath.size;
+}
+
+/** Test-only: total SOURCE bytes currently retained across the incremental-parse
+ *  cache. The byte cap is the one this module regressed on, and a count-based
+ *  assertion stays green while it is broken, so tests must assert on this. */
+export function incrementalStateBytesForTests(): number {
+  return heldBytes(incrementalStateByPath, retainedSourceBytes);
+}
+
+/** Test-only: shrink the byte budget so eviction can be exercised against a few
+ *  KB of fixtures instead of writing 64MB of temp files. */
+export function setIncrementalStateBudgetForTests(bytes: number): void {
+  incrementalStateByteBudget = bytes;
 }
 
 /**
@@ -429,38 +532,36 @@ export function incrementalStateSizeForTests(): number {
  * carries no assistant usage, so the caller can fall back to the live snapshot.
  */
 export async function parseClaudeTranscriptUsage(filePath: string): Promise<TranscriptUsage | null> {
-  let content: string;
-  try {
-    content = await fs.readFile(filePath, 'utf-8');
-  } catch {
-    return null; // transcript rotated/absent -> caller falls back to the snapshot
-  }
-
+  // STREAMED, not read whole. This needs the entire file (the totals are
+  // cumulative across the session, so a windowed read would under-report), but
+  // it only ever computes running aggregates - it was materializing a 275.9MB
+  // string to produce two integers. Peak is now one line plus the dedupe map,
+  // which is bounded by the count of distinct message ids.
+  //
   // message.id -> deduped per-message usage (last write wins; usage is identical
   // across lines that share an id).
   const usageByMessageId = new Map<string, { input: number; output: number }>();
-  for (const line of content.split(/\r?\n/)) {
-    if (line.length === 0) continue;
-    let raw: unknown;
-    try {
-      raw = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    if (!isRecord(raw) || raw.type !== 'assistant') continue;
+  const readWholeFile = await streamJsonlRecords(filePath, (raw) => {
+    if (raw.type !== 'assistant') return;
     const message = raw.message;
-    if (!isRecord(message)) continue;
+    if (!isRecord(message)) return;
     const messageId = typeof message.id === 'string' ? message.id : null;
     const usage = message.usage;
-    if (!messageId || !isRecord(usage)) continue;
+    if (!messageId || !isRecord(usage)) return;
     const input =
       numberOrZero(usage.input_tokens) +
       numberOrZero(usage.cache_creation_input_tokens) +
       numberOrZero(usage.cache_read_input_tokens);
     usageByMessageId.set(messageId, { input, output: numberOrZero(usage.output_tokens) });
-  }
+  });
 
-  if (usageByMessageId.size === 0) return null;
+  // Missing/unreadable file streams zero records -> null, so the caller falls
+  // back to the live snapshot exactly as it did on the old read failure. A read
+  // that STARTED and then failed is the same answer for the same reason: these
+  // totals are cumulative over the whole session, so a partial sum is not a
+  // smaller truth, it is a wrong number that would be written to the session
+  // row and displayed as the task's lifetime usage.
+  if (!readWholeFile || usageByMessageId.size === 0) return null;
   let inputTokens = 0;
   let outputTokens = 0;
   for (const entry of usageByMessageId.values()) {
@@ -486,28 +587,18 @@ export async function parseClaudeTranscriptUsage(filePath: string): Promise<Tran
  * no tool_use blocks, so the caller keeps the live count.
  */
 export async function parseClaudeTranscriptToolCounts(filePath: string): Promise<TranscriptToolCounts | null> {
-  let content: string;
-  try {
-    content = await fs.readFile(filePath, 'utf-8');
-  } catch {
-    return null; // transcript rotated/absent -> caller falls back to the live count
-  }
-
   const countByTool = new Map<string, number>();
   const seenToolUseIds = new Set<string>();
   let toolCallCount = 0;
 
-  for (const line of content.split(/\r?\n/)) {
-    if (line.length === 0) continue;
-    let raw: unknown;
-    try {
-      raw = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    if (!isRecord(raw) || raw.type !== 'assistant') continue;
+  // Streamed for the same reason as `parseClaudeTranscriptUsage`, and it
+  // matters doubly here: these two run back to back on every run-ending path,
+  // so the pair used to put TWO whole copies of the same transcript on the heap
+  // at once.
+  const readWholeFile = await streamJsonlRecords(filePath, (raw) => {
+    if (raw.type !== 'assistant') return;
     const message = raw.message;
-    if (!isRecord(message) || !Array.isArray(message.content)) continue;
+    if (!isRecord(message) || !Array.isArray(message.content)) return;
 
     for (const block of message.content) {
       if (!isRecord(block) || block.type !== 'tool_use') continue;
@@ -520,9 +611,13 @@ export async function parseClaudeTranscriptToolCounts(filePath: string): Promise
       countByTool.set(toolName, (countByTool.get(toolName) ?? 0) + 1);
       toolCallCount += 1;
     }
-  }
+  });
 
-  if (toolCallCount === 0) return null;
+  // Missing/unreadable file streams zero records -> null, matching the old
+  // read-failure behavior (caller keeps the live count). A partial read is
+  // rejected for the same reason as the usage totals above: an undercount here
+  // is written to the session row as the run's tool-call total.
+  if (!readWholeFile || toolCallCount === 0) return null;
   const toolBreakdown: PerToolStat[] = Array.from(countByTool, ([toolName, callCount]) => ({
     toolName,
     callCount,

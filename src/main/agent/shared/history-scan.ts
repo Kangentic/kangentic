@@ -16,7 +16,9 @@
  * schema is agent-specific); only the generic I/O lives here.
  */
 
-import { readdir, stat, open, readFile } from 'node:fs/promises';
+import { readdir, stat, open, readFile, access } from 'node:fs/promises';
+import { constants as fsConstants, createReadStream } from 'node:fs';
+import readline from 'node:readline';
 import path from 'node:path';
 
 /** Default head/tail budget per session file. The model id sits near the
@@ -159,6 +161,259 @@ export async function readTailBytes(filePath: string, maxBytes: number): Promise
   } finally {
     if (handle) await handle.close().catch(() => { /* swallow */ });
   }
+}
+
+/** One bounded window of a newline-delimited file, plus what it left out. */
+export interface JsonlWindow {
+  /** Whole lines only. Empty when the file is missing or unreadable. */
+  text: string;
+  /** Byte offset the returned text starts at, AFTER any partial-line drop. */
+  startByte: number;
+  /** Byte offset to pass as the next call's `startByte`. Equals `totalBytes` at EOF. */
+  nextByteOffset: number;
+  /** Source bytes before `startByte` that this window does not cover. */
+  omittedBytes: number;
+  /** Physical lines before `startByte`. Only computed when `countOmittedLines`. */
+  omittedLineCount: number;
+  /** The file's size at read time. */
+  totalBytes: number;
+}
+
+export interface JsonlWindowOptions {
+  /** Where to start. Defaults to a TAIL window (the last `maxBytes`). */
+  startByte?: number;
+  maxBytes: number;
+  /**
+   * Count physical lines before the window by streaming `[0, startByte)` and
+   * counting newline bytes (O(1) memory, no JSON.parse). Off by default because
+   * it costs a full scan of the omitted head. Exists solely for Grok, whose
+   * transcript entry uuids are `<sessionId>:<physicalLineIndex>` and are the
+   * persisted anchors citations resolve against - it is the one parser that
+   * cannot renumber lines when its read stops covering the whole file.
+   */
+  countOmittedLines?: boolean;
+}
+
+/** Count newline bytes in `[0, endByte)` without materializing the range. */
+async function countNewlinesBefore(filePath: string, endByte: number): Promise<number> {
+  if (endByte <= 0) return 0;
+  let handle;
+  try {
+    handle = await open(filePath, 'r');
+    const buffer = Buffer.alloc(Math.min(endByte, 1024 * 1024));
+    let position = 0;
+    let newlines = 0;
+    while (position < endByte) {
+      const readLength = Math.min(buffer.length, endByte - position);
+      const { bytesRead } = await handle.read(buffer, 0, readLength, position);
+      if (bytesRead <= 0) break;
+      // `indexOf` is a native memchr scan; the equivalent per-byte JS loop runs
+      // this same range one interpreted comparison at a time. That matters here
+      // because the range is the whole omitted head of the transcript and this
+      // reruns on every parse - which for a live Grok session past the cap is
+      // every conversation-viewer poll, on the main process.
+      const chunk = buffer.subarray(0, bytesRead);
+      for (let index = chunk.indexOf(0x0a); index !== -1; index = chunk.indexOf(0x0a, index + 1)) {
+        newlines += 1;
+      }
+      position += bytesRead;
+    }
+    return newlines;
+  } catch {
+    return 0;
+  } finally {
+    if (handle) await handle.close().catch(() => { /* swallow */ });
+  }
+}
+
+/**
+ * Read at most `maxBytes` of whole lines from a newline-delimited file,
+ * starting either at an explicit `startByte` or (by default) at the file's
+ * TAIL. Generalizes `readTailBytes` with an explicit offset and the metadata a
+ * caller needs to either report the omission or walk the file window by window.
+ *
+ * This is the bounded replacement for `readFile(path, 'utf-8')` on a transcript.
+ * An unbounded whole-file read is what OOM'd the main process: a 137.9MB
+ * transcript becomes a 275.9MB UTF-16 string just to be read, and several such
+ * reads were routinely in flight at once. A transcript's size is driven by how
+ * long a user has been working, so it has no ceiling any caller can assume.
+ *
+ * When the window starts mid-file, the truncated leading partial line is
+ * dropped so callers only ever parse whole records, and `startByte` reports the
+ * post-drop offset. Returns an empty window on any failure.
+ */
+export async function readJsonlWindow(
+  filePath: string,
+  options: JsonlWindowOptions,
+): Promise<JsonlWindow> {
+  const empty: JsonlWindow = {
+    text: '', startByte: 0, nextByteOffset: 0, omittedBytes: 0, omittedLineCount: 0, totalBytes: 0,
+  };
+  let handle;
+  try {
+    handle = await open(filePath, 'r');
+    const { size } = await handle.stat();
+    if (size <= 0) return empty;
+
+    const maxBytes = Math.max(0, options.maxBytes);
+    // No explicit start means a tail window: the most recent `maxBytes`.
+    const requestedStart = options.startByte ?? Math.max(0, size - maxBytes);
+    if (requestedStart >= size) {
+      return { ...empty, startByte: size, nextByteOffset: size, omittedBytes: size, totalBytes: size };
+    }
+
+    const readLength = Math.min(maxBytes, size - requestedStart);
+    if (readLength <= 0) return empty;
+    const buffer = Buffer.alloc(readLength);
+    const { bytesRead } = await handle.read(buffer, 0, readLength, requestedStart);
+    const bytes = buffer.subarray(0, bytesRead);
+
+    // EVERY span below is measured in the BYTE domain, and the text is decoded
+    // exactly once at the end. Slicing the decoded string instead desyncs every
+    // offset derived from it: a window start is an arbitrary byte and can land
+    // mid-UTF-8-sequence, whereupon `toString` renders each orphaned
+    // continuation byte as U+FFFD, which re-encodes to THREE bytes. Measuring a
+    // dropped prefix that way over-reports it by up to 6 bytes, which is enough
+    // to carry `startByte` across a newline and shift every Grok uuid (its
+    // `<sessionId>:<physicalLineIndex>` anchors are derived from this offset).
+    let sliceStart = 0;
+    let sliceEnd = bytesRead;
+
+    if (requestedStart > 0) {
+      // Mid-file start: the first line is almost certainly truncated (and may
+      // even begin mid-UTF-8-sequence), so drop through the first newline.
+      // No newline in the whole window means nothing complete to hand back.
+      const newlineIndex = bytes.indexOf(0x0a);
+      sliceStart = newlineIndex >= 0 ? newlineIndex + 1 : bytesRead;
+    }
+
+    const startByte = requestedStart + sliceStart;
+    const reachedEof = requestedStart + bytesRead >= size;
+    let nextByteOffset = requestedStart + sliceEnd;
+
+    if (!reachedEof) {
+      // Trailing partial line: keep it out of `text` and out of `nextByteOffset`
+      // so the next window re-reads it whole. At EOF there is nothing after it,
+      // so the final record (which may legitimately lack a trailing newline) is
+      // kept rather than silently dropped. A poll that lands mid-write of that
+      // final line therefore hands a half-written record to the caller, which
+      // skips it on the parse error - an accepted, self-healing race (this
+      // function is deliberately stateless and has no carry buffer, unlike
+      // Claude's incremental path), because the next poll re-reads it whole.
+      const lastNewline = bytes.lastIndexOf(0x0a);
+      if (lastNewline >= sliceStart) {
+        sliceEnd = lastNewline + 1;
+        // Point AT that final newline, not past it. Every mid-file start drops
+        // through its first newline (it has to: an arbitrary offset lands
+        // mid-record), so handing back the offset just PAST a newline would
+        // make the next window mistake a whole record for a partial one and
+        // drop it. Landing ON the newline means the next window's drop consumes
+        // exactly that one byte. This is what makes consecutive windows tile a
+        // file exactly once, and it is why `startByte` is safe to pass from a
+        // previous `nextByteOffset` verbatim.
+        nextByteOffset = requestedStart + sliceEnd - 1;
+      } else {
+        // A single line longer than the whole window. Advancing past the bytes
+        // actually read is the only way to make progress; the record is skipped
+        // rather than parsed. Measure that advance from `requestedStart`, NOT
+        // from `startByte` - the latter already includes the whole window, so
+        // adding the window a second time leaves a further window-sized span
+        // unread and silently drops every record in it.
+        sliceEnd = sliceStart;
+        nextByteOffset = requestedStart + bytesRead;
+      }
+    }
+
+    // Both bounds sit on a record boundary, so this never splits a sequence.
+    const text = bytes.toString('utf-8', sliceStart, sliceEnd);
+
+    const omittedLineCount = options.countOmittedLines
+      ? await countNewlinesBefore(filePath, startByte)
+      : 0;
+
+    return { text, startByte, nextByteOffset, omittedBytes: startByte, omittedLineCount, totalBytes: size };
+  } catch {
+    return empty;
+  } finally {
+    if (handle) await handle.close().catch(() => { /* swallow */ });
+  }
+}
+
+/**
+ * Stream a newline-delimited file record by record, never materializing it.
+ *
+ * For readers that only need per-line AGGREGATES (cumulative token usage, tool
+ * counts) rather than retained entries: they were reading whole files purely to
+ * `split()` them, which put the entire transcript on the heap to compute a
+ * handful of running totals.
+ *
+ * `onRecord` receives the PHYSICAL line index, which advances across blank and
+ * unparseable lines so it matches `content.split(/\r?\n/)` for every line that
+ * can carry a record. It is not a drop-in for `split(...).length`: a file
+ * ending in `\n` yields one fewer line here, because `split` produces a
+ * trailing empty element that readline does not emit. That element can never
+ * hold a record, so the indices of real records agree either way.
+ * Return `false` to stop early. Silent no-op on a missing file.
+ *
+ * Resolves `false` when the file could not be read THROUGH TO THE END, so a
+ * caller computing a session-cumulative aggregate can tell a genuinely empty
+ * file from a truncated read. That distinction is load-bearing: the whole-file
+ * `readFile` this replaced THREW on an I/O error, and its callers turned that
+ * into `null` and fell back to the live snapshot. Silently keeping a partial
+ * sum instead would write a too-small lifetime token total to the session row,
+ * where it is displayed as fact.
+ */
+export async function streamJsonlRecords(
+  filePath: string,
+  onRecord: (record: Record<string, unknown>, physicalLineIndex: number) => boolean | void,
+): Promise<boolean> {
+  // Pre-check before createReadStream: a stream 'error' would otherwise throw
+  // inside the for-await loop below. The common case is benign (the file was
+  // rotated or never written). This catches ABSENCE only - it does not detect a
+  // Windows sharing violation, which is a different mechanism entirely and is
+  // covered by the error listener below, not here.
+  try {
+    await access(filePath, fsConstants.R_OK);
+  } catch {
+    return false;
+  }
+  const stream = createReadStream(filePath, { encoding: 'utf-8' });
+  // Backstop for races the pre-check cannot cover: the file disappearing
+  // mid-read, or EBUSY on Windows where the team dogfoods. Recorded rather
+  // than merely swallowed so the partial read is reportable.
+  let readFailed = false;
+  stream.on('error', () => { readFailed = true; });
+  const lineReader = readline.createInterface({ input: stream, crlfDelay: Infinity });
+  let stopped = false;
+  let physicalLineIndex = 0;
+  try {
+    for await (const line of lineReader) {
+      const currentIndex = physicalLineIndex;
+      physicalLineIndex += 1;
+      if (line.length === 0) continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
+      if (onRecord(parsed as Record<string, unknown>, currentIndex) === false) {
+        stopped = true;
+        break;
+      }
+    }
+  } catch {
+    // A mid-stream failure that surfaced through the async iterator rather than
+    // the 'error' listener. Same meaning: the file was not read to the end.
+    readFailed = true;
+  } finally {
+    lineReader.close();
+    if (stopped && !stream.destroyed) stream.destroy();
+  }
+  // An early stop is a caller's own decision, not a failure - but it did not
+  // reach the end either, so it is not a complete read.
+  return !readFailed && !stopped;
 }
 
 /**

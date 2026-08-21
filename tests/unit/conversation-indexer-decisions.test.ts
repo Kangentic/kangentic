@@ -3,6 +3,7 @@ import type Database from 'better-sqlite3';
 import {
   ConversationIndexer,
   needsIndex,
+  MAX_SESSIONS_PER_SWEEP,
   type SourceSignature,
 } from '../../src/main/retrieval/conversation/conversation-indexer';
 import type { IndexStateRow, ChunkInput } from '../../src/main/retrieval/types';
@@ -183,6 +184,161 @@ const oneChunk: ChunkInput[] = [
     turnUuidEnd: 'u1',
   },
 ];
+
+describe('ConversationIndexer windowed walk', () => {
+  /** One user turn, the minimum a chunker needs to key off. */
+  function turn(uuid: string): TranscriptEntry {
+    return { kind: 'user', uuid, ts: 10, text: `text ${uuid}` };
+  }
+
+  /** One chunk per entry, numbered from 0 WITHIN each call - exactly how the
+   *  real `chunkTranscript` numbers, and the reason the indexer has to rebase. */
+  function chunkPerEntry(entries: TranscriptEntry[]): ChunkInput[] {
+    return entries.map((entry, index) => ({
+      seq: index,
+      text: entry.uuid,
+      contentHash: `hash-${entry.uuid}`,
+      tokenEstimate: 1,
+      role: 'user',
+      tsStart: entry.ts,
+      tsEnd: entry.ts,
+      turnUuidStart: entry.uuid,
+      turnUuidEnd: entry.uuid,
+    }));
+  }
+
+  it('indexes EVERY turn across windows, with dense 0..n-1 seq and no duplicates', async () => {
+    // The whole point of the windowed walk: a transcript far larger than the
+    // viewer's parse cap is still fully searchable, because the indexer reads
+    // it in bounded pieces rather than materializing it.
+    const state = makeFakeState(makeRecord());
+    const windows = [
+      { entries: [turn('u0'), turn('u1')], nextByteOffset: 100, totalBytes: 300 },
+      { entries: [turn('u2'), turn('u3')], nextByteOffset: 200, totalBytes: 300 },
+      { entries: [turn('u4'), turn('u5')], nextByteOffset: 300, totalBytes: 300 },
+    ];
+    const requestedOffsets: number[] = [];
+    const parseTranscriptWindow = vi.fn(async (
+      _agentSessionId: string, _cwd: string, startByte: number,
+    ) => {
+      requestedOffsets.push(startByte);
+      const next = windows.shift();
+      return { ...next!, sourcePath: '/transcripts/agent-abc.jsonl' };
+    });
+
+    const indexer = new ConversationIndexer({
+      getDb: () => makeFakeDb(state),
+      getAdapter: () => ({ displayName: 'Claude', parseTranscript: vi.fn(), parseTranscriptWindow }),
+      stat: () => null,
+      now: () => fixedNow,
+      chunker: chunkPerEntry,
+      chunkerVersion: 1,
+    });
+
+    const outcome = await indexer.indexSession('project-1', 'session-1');
+
+    expect(outcome).toBe('indexed');
+    // Each window is asked for at the offset the previous one reported, and the
+    // walk stops on reaching totalBytes rather than looping forever.
+    expect(requestedOffsets).toEqual([0, 100, 200]);
+    expect(parseTranscriptWindow).toHaveBeenCalledTimes(3);
+
+    // `seq` is arg index 2 of the memory_chunks INSERT, and `text` is index 7.
+    const insertedSeqs = state.chunkInserts.map((args) => args[2]);
+    const insertedTexts = state.chunkInserts.map((args) => args[7]);
+
+    // Dense and unique across the WHOLE document. The chunker numbers from 0
+    // per call, so without rebasing this is [0,1,0,1,0,1] - which silently
+    // corrupts the diff-upsert, since it skips chunks whose seq is below the
+    // divergence point and would drop most of the conversation from the index.
+    expect(insertedSeqs).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(insertedTexts).toEqual(['u0', 'u1', 'u2', 'u3', 'u4', 'u5']);
+
+    expect(state.indexStateWrites).toEqual([
+      { status: 'ok', entryCount: 6, chunkCount: 6, sourcePath: '/transcripts/agent-abc.jsonl' },
+    ]);
+  });
+
+  it('stops walking when a window reports no forward progress', async () => {
+    // Guards against an adapter that cannot advance past a pathological record:
+    // the walk must terminate rather than spin.
+    const state = makeFakeState(makeRecord());
+    const parseTranscriptWindow = vi.fn(async () => ({
+      entries: [turn('u0')],
+      sourcePath: '/t.jsonl',
+      nextByteOffset: 0,
+      totalBytes: 5000,
+    }));
+
+    const indexer = new ConversationIndexer({
+      getDb: () => makeFakeDb(state),
+      getAdapter: () => ({ displayName: 'Claude', parseTranscript: vi.fn(), parseTranscriptWindow }),
+      stat: () => null,
+      now: () => fixedNow,
+      chunker: chunkPerEntry,
+      chunkerVersion: 1,
+    });
+
+    expect(await indexer.indexSession('project-1', 'session-1')).toBe('indexed');
+    expect(parseTranscriptWindow).toHaveBeenCalledTimes(1);
+  });
+
+  it('never indexes the truncation notice as searchable content', async () => {
+    // An adapter without the window capability returns a bounded TAIL, which
+    // carries a `truncated` system entry explaining the omission. The chunker
+    // indexes system entries verbatim, so without a filter every large session
+    // would gain a chunk reading "Search still covers the full history" - noise
+    // in the corpus, and false for exactly these adapters.
+    const state = makeFakeState(makeRecord());
+    const parseTranscript = vi.fn().mockResolvedValue({
+      entries: [
+        {
+          kind: 'system' as const,
+          subtype: 'truncated' as const,
+          uuid: 'kangentic-truncated:999',
+          ts: 10,
+          text: 'Earlier 121.9 MB of this conversation are not shown.',
+        },
+        turn('u0'),
+        turn('u1'),
+      ],
+      sourcePath: '/t.jsonl',
+    });
+
+    const indexer = new ConversationIndexer({
+      getDb: () => makeFakeDb(state),
+      getAdapter: () => ({ displayName: 'Droid', parseTranscript }),
+      stat: () => null,
+      now: () => fixedNow,
+      chunker: chunkPerEntry,
+      chunkerVersion: 1,
+    });
+
+    expect(await indexer.indexSession('project-1', 'session-1')).toBe('indexed');
+    expect(state.chunkInserts.map((args) => args[7])).toEqual(['u0', 'u1']);
+    expect(state.indexStateWrites[0]).toMatchObject({ entryCount: 2, chunkCount: 2 });
+  });
+
+  it('falls back to parseTranscript for an adapter without the window capability', async () => {
+    const state = makeFakeState(makeRecord());
+    const parseTranscript = vi.fn().mockResolvedValue({
+      entries: [turn('u0'), turn('u1')],
+      sourcePath: '/t.jsonl',
+    });
+
+    const indexer = new ConversationIndexer({
+      getDb: () => makeFakeDb(state),
+      getAdapter: () => ({ displayName: 'Legacy', parseTranscript }),
+      stat: () => null,
+      now: () => fixedNow,
+      chunker: chunkPerEntry,
+      chunkerVersion: 1,
+    });
+
+    expect(await indexer.indexSession('project-1', 'session-1')).toBe('indexed');
+    expect(state.chunkInserts.map((args) => args[2])).toEqual([0, 1]);
+  });
+});
 
 describe('ConversationIndexer.indexSession', () => {
   it("returns 'skipped' when the session record is not found", async () => {
@@ -551,3 +707,217 @@ describe('ConversationIndexer.indexSession - suspend/resume shares one agent tra
     },
   );
 });
+
+// --- sweepProject: MAX_SESSIONS_PER_SWEEP must count every outcome that ----
+// --- actually PARSED, not just 'indexed' -----------------------------------
+
+/**
+ * `sweepProject`'s driving query (`SELECT id FROM sessions WHERE
+ * agent_session_id IS NOT NULL ORDER BY started_at DESC`) has no LIMIT, so the
+ * per-cycle cap (`MAX_SESSIONS_PER_SWEEP`) is the ONLY thing bounding how many
+ * full transcript reads one sweep can run. This fake DB supports the sweep's
+ * two extra SQL shapes beyond `makeSharedFakeDb` above (the session-id listing
+ * query and the chunker-version meta read/write), while reusing the same
+ * multi-session get-by-id and index-state get/set shapes.
+ */
+interface SweepFakeDbState {
+  sessionsById: Map<string, SessionRecord>;
+  indexStateRows: Map<string, Record<string, unknown>>;
+  metaRows: Map<string, string>;
+}
+
+function makeSweepFakeState(records: SessionRecord[], metaEntries: Record<string, string>): SweepFakeDbState {
+  const sessionsById = new Map<string, SessionRecord>();
+  for (const record of records) sessionsById.set(record.id, record);
+  return { sessionsById, indexStateRows: new Map(), metaRows: new Map(Object.entries(metaEntries)) };
+}
+
+function makeSweepFakeDb(state: SweepFakeDbState): Database.Database {
+  return {
+    prepare(sql: string) {
+      return {
+        get: (...args: unknown[]) => {
+          if (sql.includes('FROM sessions WHERE id = ? OR agent_session_id = ?')) {
+            const [lookupId] = args as [string];
+            const matches = [...state.sessionsById.values()].filter(
+              (record) => record.id === lookupId || record.agent_session_id === lookupId,
+            );
+            matches.sort((first, second) => second.started_at.localeCompare(first.started_at));
+            return matches[0];
+          }
+          if (sql.includes('FROM memory_index_state WHERE corpus')) {
+            const [corpus, docId] = args as [string, string];
+            return state.indexStateRows.get(`${corpus}::${docId}`);
+          }
+          if (sql.includes('FROM memory_meta WHERE key')) {
+            const [key] = args as [string];
+            const value = state.metaRows.get(key);
+            return value === undefined ? undefined : { value };
+          }
+          throw new Error(`unexpected get SQL: ${sql}`);
+        },
+        all: (..._args: unknown[]) => {
+          if (sql.includes('SELECT id FROM sessions WHERE agent_session_id IS NOT NULL')) {
+            return [...state.sessionsById.values()]
+              .filter((record) => record.agent_session_id !== null)
+              .sort((first, second) => second.started_at.localeCompare(first.started_at))
+              .map((record) => ({ id: record.id }));
+          }
+          throw new Error(`unexpected all SQL: ${sql}`);
+        },
+        run: (...args: unknown[]) => {
+          if (sql.includes('INSERT INTO memory_index_state')) {
+            const [corpus, docId, sessionId, sourcePath, sourceMtimeMs, sourceSize, entryCount, chunkCount, status, indexedAt] = args;
+            state.indexStateRows.set(`${String(corpus)}::${String(docId)}`, {
+              corpus,
+              doc_id: docId,
+              session_id: sessionId,
+              source_path: sourcePath,
+              source_mtime_ms: sourceMtimeMs,
+              source_size: sourceSize,
+              entry_count: entryCount,
+              chunk_count: chunkCount,
+              status,
+              indexed_at: indexedAt,
+            });
+            return { changes: 1, lastInsertRowid: 0 };
+          }
+          if (sql.includes('INSERT INTO memory_meta')) {
+            const [key, value] = args as [string, string];
+            state.metaRows.set(key, value);
+            return { changes: 1 };
+          }
+          throw new Error(`unexpected run SQL: ${sql}`);
+        },
+      };
+    },
+    transaction: (fn: () => unknown) => fn,
+  } as unknown as Database.Database;
+}
+
+/** `sweepProject`'s own chunker-version meta key. Reproduced as a literal
+ *  (rather than imported) because it is private to conversation-indexer.ts;
+ *  seeding it matching `chunkerVersion` below keeps the purge-and-reindex
+ *  branch out of these tests, which are about the per-cycle cap, not purge. */
+const SWEEP_CHUNKER_VERSION_META_KEY = 'chunker_version';
+
+function makeSweepSessionRecords(count: number, prefix: string): SessionRecord[] {
+  return Array.from({ length: count }, (_unused, index) =>
+    makeRecord({
+      id: `${prefix}-session-${index}`,
+      agent_session_id: `${prefix}-agent-${index}`,
+      started_at: `2026-06-01T00:${String(index).padStart(2, '0')}:00Z`,
+    }),
+  );
+}
+
+describe('ConversationIndexer.sweepProject - per-cycle cap counts every PARSED outcome', () => {
+  it(
+    "counts an 'error' outcome toward MAX_SESSIONS_PER_SWEEP, capping an unbounded run of failing parses " +
+      '(the driving query has no LIMIT)',
+    async () => {
+      const totalSessions = MAX_SESSIONS_PER_SWEEP + 5;
+      const records = makeSweepSessionRecords(totalSessions, 'sweep-error');
+      const state = makeSweepFakeState(records, { [SWEEP_CHUNKER_VERSION_META_KEY]: '1' });
+      const parseTranscript = vi.fn(async () => {
+        throw new Error('parse boom');
+      });
+      const indexer = new ConversationIndexer({
+        getDb: () => makeSweepFakeDb(state),
+        getAdapter: () => ({ displayName: 'Claude', parseTranscript }),
+        stat: () => null,
+        now: () => fixedNow,
+        chunker: () => oneChunk,
+        chunkerVersion: 1,
+      });
+
+      await indexer.sweepProject('project-1', () => true);
+
+      // Crisp red-green anchor: reverting the cap's condition to
+      // `outcome === 'indexed'` alone lets every failing session parse (35
+      // calls here), since 'error' outcomes would be free and the driving
+      // query has no LIMIT to fall back on.
+      expect(parseTranscript).toHaveBeenCalledTimes(MAX_SESSIONS_PER_SWEEP);
+      // Every visited session still got an index-state row recorded (the cap
+      // stops PARSING further sessions, it does not silently drop bookkeeping
+      // for the ones it did parse).
+      expect(state.indexStateRows.size).toBe(MAX_SESSIONS_PER_SWEEP);
+    },
+  );
+
+  it(
+    "counts a 'missing-source' outcome (agent_session_id set, parse yields zero entries) toward the cap too",
+    async () => {
+      const totalSessions = MAX_SESSIONS_PER_SWEEP + 5;
+      const records = makeSweepSessionRecords(totalSessions, 'sweep-missing');
+      const state = makeSweepFakeState(records, { [SWEEP_CHUNKER_VERSION_META_KEY]: '1' });
+      const parseTranscript = vi.fn(async () => ({ entries: [], sourcePath: null }));
+      const indexer = new ConversationIndexer({
+        getDb: () => makeSweepFakeDb(state),
+        getAdapter: () => ({ displayName: 'Claude', parseTranscript }),
+        stat: () => null,
+        now: () => fixedNow,
+        chunker: () => oneChunk,
+        chunkerVersion: 1,
+      });
+
+      await indexer.sweepProject('project-1', () => true);
+
+      expect(parseTranscript).toHaveBeenCalledTimes(MAX_SESSIONS_PER_SWEEP);
+    },
+  );
+
+  it(
+    "'skipped' outcomes (already-indexed, unchanged signature) do NO file reading and stay free, " +
+      'so a steady-state sweep visits every session without being throttled by the cap',
+    async () => {
+      // No locateSessionHistoryFile on the adapter => sourceSignature is
+      // always the all-null signature, so pre-seeding an index-state row with
+      // a matching all-null signature makes needsIndex return false for every
+      // session, before the parser is ever asked to run.
+      const totalSessions = MAX_SESSIONS_PER_SWEEP + 5;
+      const records = makeSweepSessionRecords(totalSessions, 'sweep-skipped');
+      const state = makeSweepFakeState(records, { [SWEEP_CHUNKER_VERSION_META_KEY]: '1' });
+      for (const record of records) {
+        const docId = record.agent_session_id ?? record.id;
+        state.indexStateRows.set(`conversation::${docId}`, {
+          corpus: 'conversation',
+          doc_id: docId,
+          session_id: record.id,
+          source_path: null,
+          source_mtime_ms: null,
+          source_size: null,
+          entry_count: 1,
+          chunk_count: 1,
+          status: 'ok',
+          indexed_at: fixedNow,
+        });
+      }
+      const parseTranscript = vi.fn(async () => ({ entries: [oneUserTurn()], sourcePath: null }));
+      const getAdapter = vi.fn(() => ({ displayName: 'Claude', parseTranscript }));
+      const indexer = new ConversationIndexer({
+        getDb: () => makeSweepFakeDb(state),
+        getAdapter,
+        stat: () => null,
+        now: () => fixedNow,
+        chunker: () => oneChunk,
+        chunkerVersion: 1,
+      });
+
+      await indexer.sweepProject('project-1', () => true);
+
+      // The parser never ran: every session's signature already matched.
+      expect(parseTranscript).not.toHaveBeenCalled();
+      // But the loop still visited every one of the (totalSessions >
+      // MAX_SESSIONS_PER_SWEEP) sessions - `getAdapter` is called once per
+      // session unconditionally inside `indexSession`, before the skip
+      // decision. A cap that (incorrectly) counted 'skipped' would stop this
+      // partway through and leave some sessions unvisited.
+      expect(getAdapter).toHaveBeenCalledTimes(totalSessions);
+    },
+  );
+});
+
+function oneUserTurn(): TranscriptEntry {
+  return { kind: 'user', uuid: 'skip-probe', ts: 10, text: 'already indexed' };
+}

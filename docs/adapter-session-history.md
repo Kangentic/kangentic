@@ -212,7 +212,7 @@ Claude **also** declares a `runtime.sessionHistory` block, but as a **background
 
 The two sources never race: on the **first** successful `status.json` parse, `StatusFileReader` fires `onFirstStatus`, which detaches the transcript reader (see "Claude status-file pipeline" below), so `status.json`'s full usage replace cleanly supersedes the fallback's partial merge. If a background session is never opened, the fallback keeps the card current for its whole life.
 
-The same transcript JSONL is still read on demand by `transcript-parser.ts` for the renderer's Transcript tab and for lifetime-token refinement (`refineTranscriptTokens` on exit paths) - those are unchanged.
+The same transcript JSONL is still read on demand by `transcript-parser.ts` for the renderer's Transcript tab and for lifetime-token refinement (`refineTranscriptTokens` on exit paths), but both read paths are now bounded. `parseTranscript` reads at most the most recent `MAX_PARSE_SOURCE_BYTES` (16MB) rather than the whole file, prepending a `truncated` system entry when it does; reading an unbounded transcript whole is what OOM'd the main process. `refineTranscriptTokens` / `refineTranscriptToolCounts` stream the file instead of materializing it, and are serialized through a shared `PQueue({concurrency: 1})` in `session-metrics.ts`, so several sessions ending together can no longer each launch a concurrent whole-file read. The fallback tailing pipeline described above (`ClaudeSessionHistoryParser`) is unaffected.
 
 ### What the fallback parser reads
 

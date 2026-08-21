@@ -1,7 +1,8 @@
-import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { TranscriptEntry, TranscriptBlock } from '../../../../shared/types';
+import { readJsonlWindow } from '../../shared/history-scan';
+import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
 import { cwdToSessionSlug } from './session-id-capture';
 
 /**
@@ -38,15 +39,14 @@ import { cwdToSessionSlug } from './session-id-capture';
  * the markdown formatter falls back to a plain `## Assistant` header.
  */
 export async function parseDroidTranscript(filePath: string): Promise<TranscriptEntry[]> {
-  let content: string;
-  try {
-    content = await fs.readFile(filePath, 'utf-8');
-  } catch {
-    return [];
-  }
+  // Bounded tail read rather than a whole-file one: a transcript has no size
+  // ceiling (it grows for as long as the user keeps working), and reading one
+  // whole is what OOM'd the main process.
+  const window = await readJsonlWindow(filePath, { maxBytes: parseWindowBytes() });
+  if (window.totalBytes === 0) return [];
 
   const entries: TranscriptEntry[] = [];
-  const lines = content.split(/\r?\n/);
+  const lines = window.text.split(/\r?\n/);
 
   for (const line of lines) {
     if (line.length === 0) continue;
@@ -120,7 +120,7 @@ export async function parseDroidTranscript(filePath: string): Promise<Transcript
     }
   }
 
-  return entries;
+  return prependTruncationMarker(entries, window.omittedBytes, window.totalBytes);
 }
 
 /**

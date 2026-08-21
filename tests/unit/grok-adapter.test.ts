@@ -10,6 +10,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { setParseWindowBytesForTests } from '../../src/main/agent/shared/transcript-truncation';
 import { GrokAdapter } from '../../src/main/agent/adapters/grok/grok-adapter';
 import { GrokCommandBuilder, grokMcpWiringEnabled } from '../../src/main/agent/adapters/grok/command-builder';
 import type { GrokCommandOptions } from '../../src/main/agent/adapters/grok/command-builder';
@@ -1065,6 +1066,90 @@ describe('parseGrokTranscript', () => {
     const assistantEntry = entries[1] as { blocks: Array<{ type: string; input?: unknown }> };
     const toolUse = assistantEntry.blocks.find((block) => block.type === 'tool_use') as { input: unknown };
     expect(toolUse.input).toBe('{not valid json');
+  });
+
+  it('anchors each uuid to the ABSOLUTE physical line index, counting blank and skipped lines', async () => {
+    const home = useTempGrokHome();
+    const cwd = '/home/dev/line-index-project';
+    const sessionDir = path.join(home, 'sessions', cwdToSessionsDirName(cwd), SESSION_ID);
+    fs.mkdirSync(sessionDir, { recursive: true });
+
+    // Deliberately interleaved with a blank line and a skipped 'system' record,
+    // because `lineIndex` counts EVERY physical line - blank ones included -
+    // while only some lines yield an entry. Written line by line rather than
+    // via join() on the record list so the blanks are explicit.
+    const lines = [
+      JSON.stringify({ type: 'system', content: 'You are Grok.' }), // line 0, skipped
+      '',                                                            // line 1, blank
+      JSON.stringify({ type: 'user', content: { type: 'text', text: '<user_query>\nfix it\n</user_query>' } }), // line 2
+      JSON.stringify({ type: 'assistant', content: 'On it.', model_id: 'grok-4.6' }), // line 3
+      '',                                                            // line 4, blank
+      JSON.stringify({ type: 'tool_result', tool_call_id: 'call-1', content: 'done' }), // line 5
+    ];
+    fs.writeFileSync(path.join(sessionDir, 'chat_history.jsonl'), lines.join('\n'));
+
+    const { entries } = await parseGrokTranscript(SESSION_ID, cwd);
+
+    // These uuids are the persisted citation anchors that `sliceTranscriptAroundUuid`
+    // resolves against (see inspect-commands.ts), so the exact STRING is the
+    // contract, not merely uniqueness or ordering. A reader that renumbers lines
+    // (dropping blanks, or restarting the count inside a windowed read) still
+    // produces well-formed, correctly ordered entries and would pass every other
+    // assertion in this file while silently breaking every stored citation.
+    expect(entries.map((entry) => entry.uuid)).toEqual([
+      `${SESSION_ID}:2`,
+      `${SESSION_ID}:3`,
+      `${SESSION_ID}:5`,
+    ]);
+  });
+
+  it('keeps uuids ABSOLUTE when the transcript exceeds the parse cap and only its tail is read', async () => {
+    // The dangerous half of the line-index invariant. A large transcript is
+    // read as a tail window, so line indices within that window start at 0 -
+    // and numbering the entries from there would renumber every uuid the
+    // moment a conversation grew past the cap, silently invalidating stored
+    // citation anchors for exactly the longest sessions.
+    const cap = 2 * 1024;
+    setParseWindowBytesForTests(cap);
+    try {
+      const home = useTempGrokHome();
+      const cwd = '/home/dev/absolute-uuid-project';
+      const sessionDir = path.join(home, 'sessions', cwdToSessionsDirName(cwd), SESSION_ID);
+      fs.mkdirSync(sessionDir, { recursive: true });
+
+      const lines: string[] = [];
+      let totalLines = 0;
+      let written = 0;
+      while (written <= cap * 2) {
+        const line = JSON.stringify({
+          type: 'user',
+          content: { type: 'text', text: `<user_query>\nturn ${totalLines} ${'z'.repeat(120)}\n</user_query>` },
+        });
+        lines.push(line);
+        written += Buffer.byteLength(`${line}\n`, 'utf-8');
+        totalLines += 1;
+      }
+      fs.writeFileSync(path.join(sessionDir, 'chat_history.jsonl'), `${lines.join('\n')}\n`);
+
+      const { entries } = await parseGrokTranscript(SESSION_ID, cwd);
+
+      // Truncated, so the first physical line is NOT in the window.
+      expect(entries.length).toBeLessThan(totalLines);
+
+      // Every uuid still names its absolute physical line, and the last entry
+      // is the file's last line - not a window-relative index.
+      const parsedIndexes = entries
+        .filter((entry) => entry.uuid.startsWith(`${SESSION_ID}:`))
+        .map((entry) => Number(entry.uuid.slice(SESSION_ID.length + 1)));
+      expect(parsedIndexes[0]).toBeGreaterThan(0);
+      expect(parsedIndexes[parsedIndexes.length - 1]).toBe(totalLines - 1);
+      // Contiguous and ascending: one uuid per physical line of the window.
+      for (let offset = 1; offset < parsedIndexes.length; offset += 1) {
+        expect(parsedIndexes[offset]).toBe(parsedIndexes[offset - 1] + 1);
+      }
+    } finally {
+      setParseWindowBytesForTests();
+    }
   });
 });
 

@@ -13,7 +13,10 @@
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { agentRegistry } from '../../src/main/agent/agent-registry';
-import { refineTranscriptTokens } from '../../src/main/ipc/handlers/session-metrics';
+import {
+  refineTranscriptTokens,
+  drainTranscriptReadQueueForTests,
+} from '../../src/main/ipc/handlers/session-metrics';
 import type { SessionManager } from '../../src/main/pty/session-manager';
 import type { SessionRepository } from '../../src/main/db/repositories/session-repository';
 import type { AgentAdapter } from '../../src/main/agent/agent-adapter';
@@ -92,6 +95,58 @@ describe('refineTranscriptTokens orchestration', () => {
     const [calledId, calledTokens] = updateTranscriptTokensCalls[0];
     expect(calledId).toBe('record-1');
     expect(calledTokens).toEqual({ totalInputTokens: 50_000, totalOutputTokens: 8_000 });
+  });
+
+  it('serializes concurrent transcript reads instead of launching one per ending session', async () => {
+    // These backfills fire un-awaited from every run-ending path, so N sessions
+    // ending together (a multi-card drag, a reconcile sweep) used to launch N
+    // simultaneous whole-file transcript reads on the main process with nothing
+    // between them. Each read is proportional to the transcript, so the peak
+    // scaled with how many cards the user happened to move at once.
+    let concurrent = 0;
+    let peakConcurrent = 0;
+    const releases: Array<() => void> = [];
+
+    vi.spyOn(agentRegistry, 'get').mockReturnValue({
+      transcriptUsage: vi.fn(() => {
+        concurrent += 1;
+        peakConcurrent = Math.max(peakConcurrent, concurrent);
+        return new Promise((resolve) => {
+          releases.push(() => {
+            concurrent -= 1;
+            resolve({ inputTokens: 1, outputTokens: 1 });
+          });
+        });
+      }),
+    } as unknown as AgentAdapter);
+
+    const manager = makeStubManager({ agentName: 'stub-agent' });
+    const { repo } = makeStubRepo();
+
+    for (let index = 0; index < 5; index += 1) {
+      refineTranscriptTokens(manager, repo, `session-${index}`, `record-${index}`);
+    }
+    await flushAsync();
+
+    // Only the head of the queue is in flight; the rest are waiting.
+    expect(peakConcurrent).toBe(1);
+
+    // Drain, releasing each read as it starts, and confirm the bound holds for
+    // the whole run rather than only at the first tick.
+    let guard = 0;
+    while (releases.length > 0 && guard < 20) {
+      guard += 1;
+      const release = releases.shift();
+      release?.();
+      await flushAsync();
+    }
+    expect(peakConcurrent).toBe(1);
+
+    // Every read has been released above, so this settles immediately. It is
+    // here to leave the process-wide queue provably idle: it is module scope
+    // shared by every test in this file, so work bleeding out of this one would
+    // surface as a mystery failure in a later test rather than here.
+    await drainTranscriptReadQueueForTests();
   });
 
   it('does NOT call updateTranscriptTokens when the adapter transcriptUsage resolves null', async () => {

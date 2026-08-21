@@ -5,6 +5,7 @@ import { ClaudeStatusParser } from './status-parser';
 import {
   locateClaudeTranscriptFile,
   parseClaudeTranscript,
+  parseClaudeTranscriptWindow,
   parseClaudeTranscriptUsage,
   parseClaudeTranscriptToolCounts,
 } from './transcript-parser';
@@ -24,6 +25,7 @@ import type {
   SpawnCommandOptions,
   SettingsChangeSpec,
   ParsedTranscript,
+  ParsedTranscriptWindow,
 } from '../../agent-adapter';
 import type {
   AgentPermissionEntry,
@@ -211,6 +213,18 @@ export class ClaudeAdapter implements AgentAdapter {
     const filePath = locateClaudeTranscriptFile(agentSessionId, cwd);
     const entries = await parseClaudeTranscript(filePath);
     return { entries, sourcePath: filePath };
+  }
+
+  /** Stateless bounded window, for the conversation indexer's whole-file walk. */
+  async parseTranscriptWindow(
+    agentSessionId: string,
+    cwd: string,
+    startByte: number,
+    maxBytes: number,
+  ): Promise<ParsedTranscriptWindow> {
+    const filePath = locateClaudeTranscriptFile(agentSessionId, cwd);
+    const window = await parseClaudeTranscriptWindow(filePath, startByte, maxBytes);
+    return { ...window, sourcePath: filePath };
   }
 
   /**

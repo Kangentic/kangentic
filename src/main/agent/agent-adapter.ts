@@ -31,6 +31,22 @@ export interface ParsedTranscript {
 }
 
 /**
+ * Result of `AgentAdapter.parseTranscriptWindow`: one bounded slice of a
+ * transcript, plus where the next slice starts.
+ *
+ * `nextByteOffset` is opaque to the caller and must be passed back verbatim -
+ * it is not simply `startByte + text.length`, because a window ends on a record
+ * boundary rather than wherever the byte budget happened to land. The walk is
+ * finished when `nextByteOffset >= totalBytes` (or stops advancing).
+ */
+export interface ParsedTranscriptWindow {
+  entries: TranscriptEntry[];
+  sourcePath: string | null;
+  nextByteOffset: number;
+  totalBytes: number;
+}
+
+/**
  * Description of a column-level settings change (model and/or effort)
  * passed to `AgentAdapter.getInjectionSequence` so the adapter can produce
  * the correct CLI-specific writes to apply the change to a live session.
@@ -280,6 +296,35 @@ export interface AgentAdapter {
    * the structured format is unsupported and points at `format: "raw"`.
    */
   parseTranscript?(agentSessionId: string, cwd: string): Promise<ParsedTranscript>;
+
+  /**
+   * Optional: parse ONE bounded byte window of the native transcript, retaining
+   * nothing between calls.
+   *
+   * `parseTranscript` returns only the most recent `MAX_PARSE_SOURCE_BYTES` of
+   * a large transcript, because reading a whole one is what OOM'd the main
+   * process (a measured 137.9MB file becomes a 275.9MB UTF-16 string). That
+   * bound is right for a reader - the viewer cannot usefully render more - but
+   * wrong for the conversation INDEX, which would silently stop covering the
+   * older ~83% of exactly the longest sessions, and search would just quietly
+   * stop finding things.
+   *
+   * So indexers walk with this instead: window by window from offset 0, chunk
+   * each window, drop its entries, ask for the next. The whole file gets
+   * indexed while only one window is ever resident.
+   *
+   * Implementations MUST NOT cache or retain per-file state here. A sweep
+   * touches every session on the machine, so retaining would evict the live
+   * viewer's hot parse state in favour of one-shot indexing churn - which is
+   * precisely how the incremental-state cache came to be packed with the
+   * largest transcripts on the machine.
+   */
+  parseTranscriptWindow?(
+    agentSessionId: string,
+    cwd: string,
+    startByte: number,
+    maxBytes: number,
+  ): Promise<ParsedTranscriptWindow>;
 
   /**
    * Optional: parse CUMULATIVE lifetime token usage for a session from the

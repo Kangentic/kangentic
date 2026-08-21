@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { TranscriptEntry, TranscriptBlock } from '../../../../shared/types';
+import { readJsonlWindow } from '../../shared/history-scan';
+import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
 
 /**
  * Parse Codex CLI's native rollout JSONL into agent-agnostic
@@ -32,15 +34,13 @@ import type { TranscriptEntry, TranscriptBlock } from '../../../../shared/types'
  * Defensive parsing throughout: a malformed line is skipped, never thrown.
  */
 export async function parseCodexTranscript(filePath: string): Promise<TranscriptEntry[]> {
-  let content: string;
-  try {
-    content = await fs.promises.readFile(filePath, 'utf-8');
-  } catch {
-    return [];
-  }
+  // Bounded tail read rather than a whole-file one: a transcript has no size
+  // ceiling, and reading one whole is what OOM'd the main process.
+  const window = await readJsonlWindow(filePath, { maxBytes: parseWindowBytes() });
+  if (window.totalBytes === 0) return [];
 
   const entries: TranscriptEntry[] = [];
-  const lines = content.split(/\r?\n/);
+  const lines = window.text.split(/\r?\n/);
   let currentModel: string | undefined;
   let entryIndex = 0;
 
@@ -127,7 +127,7 @@ export async function parseCodexTranscript(filePath: string): Promise<Transcript
     }
   }
 
-  return entries;
+  return prependTruncationMarker(entries, window.omittedBytes, window.totalBytes);
 }
 
 /**

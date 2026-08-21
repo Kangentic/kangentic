@@ -1,4 +1,4 @@
-import type { TranscriptEntry, TranscriptBlock } from './types';
+import type { TranscriptEntry, TranscriptBlock, TranscriptSystemSubtype } from './types';
 import { sanitizeTranscriptText } from './ansi-strip';
 
 /**
@@ -245,7 +245,7 @@ export function renderTranscriptBudgeted(
 
 /** Render a `kind: 'system'` transcript entry as a markdown section. */
 function renderSystemEntry(
-  subtype: 'compaction' | 'command' | 'command_output' | 'session_boundary',
+  subtype: TranscriptSystemSubtype,
   text: string,
 ): string {
   const clean = sanitizeTranscriptText(text).trim();
@@ -254,6 +254,11 @@ function renderSystemEntry(
   }
   if (subtype === 'command') {
     return `\`[command: ${clean}]\``;
+  }
+  if (subtype === 'truncated') {
+    // Rendered as a plain note, not a heading: it describes the transcript
+    // itself rather than being part of the conversation.
+    return `_${clean}_`;
   }
   if (subtype === 'session_boundary') {
     // Already a ready-to-display label (e.g. "New session - Claude Code

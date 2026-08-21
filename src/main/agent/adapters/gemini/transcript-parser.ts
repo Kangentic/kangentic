@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { TranscriptEntry, TranscriptBlock } from '../../../../shared/types';
+import { readJsonlWindow } from '../../shared/history-scan';
+import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
 import { computeGeminiProjectDirName } from './session-history-parser';
 
 /**
@@ -34,12 +36,11 @@ import { computeGeminiProjectDirName } from './session-history-parser';
  * older sessions still parse. Defensive throughout: malformed lines skipped.
  */
 export async function parseGeminiTranscript(filePath: string): Promise<TranscriptEntry[]> {
-  let content: string;
-  try {
-    content = await fs.promises.readFile(filePath, 'utf-8');
-  } catch {
-    return [];
-  }
+  // Bounded tail read rather than a whole-file one: a transcript has no size
+  // ceiling, and reading one whole is what OOM'd the main process.
+  const window = await readJsonlWindow(filePath, { maxBytes: parseWindowBytes() });
+  if (window.totalBytes === 0) return [];
+  const content = window.text;
 
   // Dedupe by message id, last-wins, first-seen order preserved.
   const messagesById = new Map<string, Record<string, unknown>>();
@@ -52,7 +53,17 @@ export async function parseGeminiTranscript(filePath: string): Promise<Transcrip
   };
 
   const trimmed = content.trim();
-  if (trimmed.startsWith('{') && trimmed.endsWith('}') && !trimmed.includes('\n')) {
+  // `window.omittedBytes === 0` is load-bearing, not belt-and-braces. The legacy
+  // form is ONE JSON object spanning the whole file, so it is detected by the
+  // file containing no newlines - but a tail window of a legacy document larger
+  // than the cap also contains no newline, while being a fragment whose opening
+  // brace was cut off. Without this guard it would fall through to the JSONL
+  // loop and silently yield zero entries instead of the conversation.
+  // Both ends checked, not just the head: `omittedBytes === 0` alone only means
+  // the window started at byte 0, which would still be true of a document read
+  // from the start and cut short at the cap.
+  const isWholeFile = window.omittedBytes === 0 && window.nextByteOffset >= window.totalBytes;
+  if (isWholeFile && trimmed.startsWith('{') && trimmed.endsWith('}') && !trimmed.includes('\n')) {
     // Legacy single-object form: one JSON object with a messages[] array.
     const parsed = tryParseJson(trimmed);
     if (isRecord(parsed) && Array.isArray(parsed.messages)) {
@@ -129,7 +140,7 @@ export async function parseGeminiTranscript(filePath: string): Promise<Transcrip
     for (const result of toolResults) entries.push(result);
   }
 
-  return entries;
+  return prependTruncationMarker(entries, window.omittedBytes, window.totalBytes);
 }
 
 /**

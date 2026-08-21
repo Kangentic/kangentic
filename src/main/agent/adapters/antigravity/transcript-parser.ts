@@ -5,6 +5,8 @@ import {
   scanForSubmittedText,
   type UserTurnRecord,
 } from '../../shared/submitted-text-verifier';
+import { readJsonlWindow } from '../../shared/history-scan';
+import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
 import { antigravityTranscriptPath } from './data-paths';
 
 /**
@@ -57,16 +59,21 @@ export function locateAntigravityTranscriptFile(conversationId: string): string 
  *  moves (transcriptToolCounts via session-metrics refine) - a sync read
  *  would stall IPC and PTY flushing app-wide, which is why the Claude and
  *  Grok transcript parsers read async too. */
-async function readSteps(transcriptPath: string): Promise<AntigravityStep[]> {
-  let raw: string;
-  try {
-    raw = await fs.promises.readFile(transcriptPath, 'utf-8');
-  } catch {
-    return [];
+async function readSteps(
+  transcriptPath: string,
+): Promise<{ steps: AntigravityStep[]; omittedBytes: number; totalBytes: number }> {
+  // Bounded tail read rather than a whole-file one. The JSDoc above already
+  // recognised that this file "grows for the life of a session" and made the
+  // read async so it would not stall IPC - but an async read of an unbounded
+  // file still puts the whole thing on the heap, which is the part that OOM'd
+  // the main process.
+  const window = await readJsonlWindow(transcriptPath, { maxBytes: parseWindowBytes() });
+  if (window.totalBytes === 0) {
+    return { steps: [], omittedBytes: 0, totalBytes: 0 };
   }
 
   const byIndex = new Map<number, AntigravityStep>();
-  for (const line of raw.split('\n')) {
+  for (const line of window.text.split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed.startsWith('{')) continue;
     let parsed: unknown;
@@ -80,7 +87,11 @@ async function readSteps(transcriptPath: string): Promise<AntigravityStep[]> {
     if (typeof step.step_index !== 'number') continue;
     byIndex.set(step.step_index, step); // last-write-wins on a re-emitted index
   }
-  return Array.from(byIndex.values()).sort((left, right) => left.step_index - right.step_index);
+  return {
+    steps: Array.from(byIndex.values()).sort((left, right) => left.step_index - right.step_index),
+    omittedBytes: window.omittedBytes,
+    totalBytes: window.totalBytes,
+  };
 }
 
 /** Pull the user's actual prompt out of a USER_INPUT step's wrapped content. */
@@ -133,7 +144,8 @@ export async function parseAntigravityTranscriptFile(sourcePath: string): Promis
   // that tool call's error result.
   let lastToolUseId: string | null = null;
 
-  for (const step of await readSteps(sourcePath)) {
+  const { steps, omittedBytes, totalBytes } = await readSteps(sourcePath);
+  for (const step of steps) {
     const uuid = `step-${step.step_index}`;
     const ts = stepTimestamp(step);
 
@@ -196,7 +208,10 @@ export async function parseAntigravityTranscriptFile(sourcePath: string): Promis
     }
   }
 
-  return { entries, sourcePath };
+  return {
+    entries: prependTruncationMarker(entries, omittedBytes, totalBytes),
+    sourcePath,
+  };
 }
 
 /**

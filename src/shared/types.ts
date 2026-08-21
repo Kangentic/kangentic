@@ -4049,7 +4049,28 @@ export type TranscriptEntry =
   // misleading "## User" turns: conversation-compaction boundaries/summaries,
   // slash-command invocations and their local stdout, and (session_boundary)
   // the seam between two sessions stitched into one task-level view.
-  | { kind: 'system'; uuid: string; ts: number; subtype: 'compaction' | 'command' | 'command_output' | 'session_boundary'; text: string };
+  | { kind: 'system'; uuid: string; ts: number; subtype: TranscriptSystemSubtype; text: string };
+
+/**
+ * The `kind: 'system'` entry variants.
+ *
+ * Named rather than inlined because this union had been hand-copied into four
+ * other places (the renderer's SystemRow, the markdown formatter, the
+ * normalized event stream, and the mobile wire mapper), so adding a member
+ * meant finding all of them by chasing type errors. The protocol package's
+ * `TranscriptSystemSubtypeWire` is deliberately NOT one of them: it stays at
+ * the four wire-visible members, and `truncated` is mapped onto
+ * `session_boundary` before it crosses. `truncated` marks a transcript too large
+ * to parse whole: only its most recent `MAX_PARSE_SOURCE_BYTES` were read, and
+ * its `text` names how much was left out. Like `session_boundary`, its text is
+ * a ready-to-display sentence rather than raw payload behind a canned label.
+ */
+export type TranscriptSystemSubtype =
+  | 'compaction'
+  | 'command'
+  | 'command_output'
+  | 'session_boundary'
+  | 'truncated';
 
 export type TranscriptBlock =
   | { type: 'text'; text: string }

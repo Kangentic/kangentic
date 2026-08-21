@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { parseGeminiTranscript } from '../../src/main/agent/adapters/gemini/transcript-parser';
+import { setParseWindowBytesForTests } from '../../src/main/agent/shared/transcript-truncation';
 
 function writeFixture(lines: string[]): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gemini-transcript-'));
@@ -47,6 +48,60 @@ describe('parseGeminiTranscript', () => {
     expect(entries).toEqual([
       { kind: 'user', uuid: 'u1', ts: expect.any(Number), text: 'real prompt' },
     ]);
+  });
+
+  it('parses the legacy single-JSON-document form (one line, no newlines)', async () => {
+    // The legacy branch is gated on the whole file containing ZERO newlines
+    // (transcript-parser.ts's `!trimmed.includes('\n')`), so it is reachable
+    // only when the entire session is one physical line. Nothing else in this
+    // suite exercises it: every other fixture is multi-line JSONL and takes the
+    // line loop instead. Any reader that hands the parser text line by line, or
+    // that reads only a trailing window of a file, stops satisfying that gate
+    // and silently drops the whole conversation to zero entries.
+    tmpFile = writeFixture([
+      JSON.stringify({
+        messages: [
+          { id: 'u1', type: 'user', content: [{ text: 'legacy prompt' }] },
+          { id: 'g1', type: 'gemini', content: 'legacy reply', model: 'gemini-3-pro', thoughts: [] },
+        ],
+      }),
+    ]);
+
+    const entries = await parseGeminiTranscript(tmpFile);
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toMatchObject({ kind: 'user', uuid: 'u1', text: 'legacy prompt' });
+    expect(entries[1]).toMatchObject({
+      kind: 'assistant',
+      uuid: 'g1',
+      model: 'gemini-3-pro',
+      blocks: [{ type: 'text', text: 'legacy reply' }],
+    });
+  });
+
+  it('does not mis-parse a legacy single-document session that exceeded the parse cap', async () => {
+    // The legacy branch is detected by the file containing no newlines. A TAIL
+    // WINDOW of an oversized legacy document also contains no newline, but it
+    // is a fragment whose opening brace was cut off - so without an explicit
+    // "did we read the whole file" guard it would take the legacy branch,
+    // fail to parse, and return zero entries with no explanation at all.
+    setParseWindowBytesForTests(512);
+    try {
+      const messages = Array.from({ length: 40 }, (unused, index) => ({
+        id: `u${index}`,
+        type: 'user',
+        content: [{ text: `legacy prompt ${index} ${'y'.repeat(40)}` }],
+      }));
+      tmpFile = writeFixture([JSON.stringify({ messages })]);
+      expect(fs.statSync(tmpFile).size).toBeGreaterThan(512);
+
+      const entries = await parseGeminiTranscript(tmpFile);
+
+      // Whatever else happens, the user is TOLD the transcript was cut rather
+      // than being shown a silently empty conversation.
+      expect(entries[0]).toMatchObject({ kind: 'system', subtype: 'truncated' });
+    } finally {
+      setParseWindowBytesForTests();
+    }
   });
 
   it('parses the pinned fixture: thoughts -> thinking, toolCalls -> tool_use + tool_result', async () => {
