@@ -70,13 +70,17 @@ The PowerShell case fixes a Windows PowerShell 5.1 quirk: it treats `[` / `]` in
 | node-pty | Prebuilt NAPI binaries, no rebuild needed | Included via `files`, prebuilds unpacked from asar via `asarUnpack` |
 | sherpa-onnx-node | Prebuilt platform-specific binaries (no rebuild needed) | Included via `files` (`sherpa-onnx-node/**` plus the `sherpa-onnx-*/**` platform packages), unpacked from asar via `asarUnpack: node_modules/sherpa-onnx-*/**` (voice dictation engine) |
 | font-list | Shells out to `fc-list` (Linux) / a PowerShell script (Windows) / a bundled binary (macOS); no rebuild needed | Included via `files` (`font-list/**`), unpacked from asar via `asarUnpack` since the macOS binary is spawned via `child_process` (Terminal Font Family picker) |
+| sqlite-vec | Loadable SQLite extension shipped as per-platform binary packages; no rebuild needed | Included via `files` (`sqlite-vec/**` plus the `sqlite-vec-*/**` platform packages), unpacked via `asarUnpack` because SQLite's dlopen cannot read a loadable extension inside an asar archive (conversation-memory retrieval) |
+| @huggingface/transformers | Pure JavaScript (transformers.js); no rebuild needed | Included via `files`, unpacked via `asarUnpack` so the embed worker resolves it from the unpacked tree by plain node_modules resolution |
+| onnxruntime-node | Prebuilt native binaries (`onnxruntime_binding.node`, plus `onnxruntime.dll` and `DirectML.dll` on Windows) | Included via `files`, unpacked via `asarUnpack` because a native `.node` addon cannot be dlopen'd from inside asar (the embed worker's execution provider) |
+| onnxruntime-web | Pure JavaScript; retained only as transformers' optional peer, its wasm path currently unused | Included via `files` and unpacked alongside the others |
 | simple-git | Pure JavaScript, bundled by esbuild | Not in node_modules (bundled into main process) |
 
-The `files` array in `electron-builder.yml` explicitly whitelists `.vite/build/**`, `better-sqlite3`, `node-pty`, `sherpa-onnx-node`, the `sherpa-onnx-*` platform packages, `font-list`, `bindings`, and `file-uri-to-path`. Everything else is excluded from the packaged app.
+The `files` array in `electron-builder.yml` explicitly whitelists `.vite/build/**`, `package.json`, `better-sqlite3`, `node-pty`, `sherpa-onnx-node`, the `sherpa-onnx-*` platform packages, `font-list`, `bindings`, `file-uri-to-path`, `sqlite-vec`, the `sqlite-vec-*` platform packages, `@huggingface/transformers`, `onnxruntime-node`, and `onnxruntime-web`. Everything else is excluded from the packaged app.
 
 ### Bridge Script Unpacking
 
-Bridge scripts (`event-bridge.js`, `status-bridge.js`) are executed by Claude Code hooks in a separate `node` process outside Electron. Plain Node.js cannot read files inside asar archives, so `asar.unpackDir` extracts `.vite/build/` to `app.asar.unpacked/`. The `resolveBridgeScript()` function in `src/main/agent/shared/bridge-utils.ts` rewrites `app.asar` to `app.asar.unpacked` in resolved paths when running in a packaged build.
+Bridge scripts (`event-bridge.js`, `status-bridge.js`) are executed by Claude Code hooks in a separate `node` process outside Electron. Plain Node.js cannot read files inside asar archives, so `asarUnpack` names them individually, alongside `embed-worker.js`, `line-count-worker.js`, and `plugins/**` (unpacked for the retrieval and embedding subsystem rather than for the hook bridges). Only those five entries under `.vite/build/` are extracted to `app.asar.unpacked/`; the rest of the directory stays inside the archive. The `resolveBridgeScript()` function in `src/main/agent/shared/bridge-utils.ts` rewrites `app.asar` to `app.asar.unpacked` in resolved paths when running in a packaged build.
 
 ## Config Directory Locations
 

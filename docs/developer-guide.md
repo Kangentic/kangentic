@@ -361,10 +361,13 @@ electron-builder handles platform-specific packaging via `electron-builder.yml`:
 | Linux | Package | deb, rpm |
 
 Native modules:
-- `better-sqlite3` -- rebuilt against Electron headers via `scripts/rebuild-native.js`
-- `node-pty` -- uses prebuilt NAPI binaries, no rebuild needed
-- `sherpa-onnx-node` -- prebuilt platform-specific binaries, no rebuild needed (voice dictation; unpacked from asar via the `sherpa-onnx-*` glob in `asarUnpack`)
-- `font-list` -- shells out to `fc-list` / a PowerShell script / a bundled macOS binary, no rebuild needed (Terminal Font Family picker; unpacked from asar via `asarUnpack` since the macOS binary is spawned via `child_process`)
+- `better-sqlite3` - rebuilt against Electron headers via `scripts/rebuild-native.js`
+- `node-pty` - uses prebuilt NAPI binaries, no rebuild needed
+- `sherpa-onnx-node` - prebuilt platform-specific binaries, no rebuild needed (voice dictation; unpacked from asar via the `sherpa-onnx-*` glob in `asarUnpack`)
+- `font-list` - shells out to `fc-list` / a PowerShell script / a bundled macOS binary, no rebuild needed (Terminal Font Family picker; unpacked from asar via `asarUnpack` since the macOS binary is spawned via `child_process`)
+- `sqlite-vec` - a loadable SQLite extension shipped as per-platform binary packages, no rebuild needed (conversation-memory retrieval; unpacked via the `sqlite-vec-*` glob in `asarUnpack`, since dlopen cannot read an extension inside asar)
+- `onnxruntime-node` - prebuilt native binaries (`onnxruntime_binding.node`, plus `onnxruntime.dll` and `DirectML.dll` on Windows), no rebuild needed (the embed worker's execution provider; unpacked via `asarUnpack`)
+- `@huggingface/transformers` and `onnxruntime-web` - pure JavaScript, but both shipped and unpacked so the embed worker resolves them from the unpacked tree
 
 Security fuses enabled: no RunAsNode, no NodeOptions, no inspection, cookie encryption, ASAR integrity validation.
 
