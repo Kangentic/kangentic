@@ -185,11 +185,19 @@ export interface JsonlWindowOptions {
   maxBytes: number;
   /**
    * Count physical lines before the window by streaming `[0, startByte)` and
-   * counting newline bytes (O(1) memory, no JSON.parse). Off by default because
-   * it costs a full scan of the omitted head. Exists solely for Grok, whose
-   * transcript entry uuids are `<sessionId>:<physicalLineIndex>` and are the
-   * persisted anchors citations resolve against - it is the one parser that
-   * cannot renumber lines when its read stops covering the whole file.
+   * counting newline bytes (O(1) memory, no JSON.parse). Off by default, and
+   * on for every parser whose transcript entry uuids embed
+   * `<sessionId>:<physicalLineIndex>` - those uuids are the persisted anchors
+   * citations resolve against, so a parser that renumbers lines when its read
+   * stops covering the whole file silently breaks every stored citation.
+   *
+   * The scan is free below the parse cap (`endByte <= 0` returns immediately)
+   * and cheap above it: measured against the real transcripts on a dev machine,
+   * the worst case was 27ms to scan the 121.9MB omitted head of a 137.9MB
+   * transcript, and it only reruns when the file has actually changed (the
+   * transcript cache is stat-validated). That is why parsers which need the
+   * count only as a FALLBACK still just set this flag rather than resolving it
+   * lazily - the laziness measured as noise and cost a second code shape.
    */
   countOmittedLines?: boolean;
 }
@@ -259,7 +267,19 @@ export async function readJsonlWindow(
     // No explicit start means a tail window: the most recent `maxBytes`.
     const requestedStart = options.startByte ?? Math.max(0, size - maxBytes);
     if (requestedStart >= size) {
-      return { ...empty, startByte: size, nextByteOffset: size, omittedBytes: size, totalBytes: size };
+      // `omittedLineCount` has to be computed here too, not left at the spread
+      // `empty`'s 0. This branch reports the WHOLE file as omitted, so a caller
+      // deriving absolute line indices from it would restart at 0 and mint
+      // uuids colliding with the file's real first lines. Unreachable on the
+      // tail path (`requestedStart` is `size - maxBytes`, and `size <= 0` has
+      // already returned), but reachable the moment a windowed walk asks for an
+      // offset at or past EOF.
+      const omittedLineCount = options.countOmittedLines
+        ? await countNewlinesBefore(filePath, size)
+        : 0;
+      return {
+        ...empty, startByte: size, nextByteOffset: size, omittedBytes: size, omittedLineCount, totalBytes: size,
+      };
     }
 
     const readLength = Math.min(maxBytes, size - requestedStart);

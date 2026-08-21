@@ -35,20 +35,45 @@ import { computeGeminiProjectDirName } from './session-history-parser';
  * Also tolerates the legacy single-JSON-object form (`{ messages: [...] }`) so
  * older sessions still parse. Defensive throughout: malformed lines skipped.
  */
-export async function parseGeminiTranscript(filePath: string): Promise<TranscriptEntry[]> {
+export async function parseGeminiTranscript(
+  agentSessionId: string,
+  filePath: string,
+): Promise<TranscriptEntry[]> {
   // Bounded tail read rather than a whole-file one: a transcript has no size
   // ceiling, and reading one whole is what OOM'd the main process.
-  const window = await readJsonlWindow(filePath, { maxBytes: parseWindowBytes() });
+  const window = await readJsonlWindow(filePath, {
+    maxBytes: parseWindowBytes(),
+    countOmittedLines: true,
+  });
   if (window.totalBytes === 0) return [];
   const content = window.text;
 
+  // Only used when a message lacks its own `id`. See the Qwen parser for why
+  // this is resolved up front rather than lazily.
+  const lineIndexBase = window.omittedLineCount;
+
   // Dedupe by message id, last-wins, first-seen order preserved.
+  //
+  // The map KEY is the entry uuid. Deriving both from one value is the point:
+  // the key used to fall back to `gemini-${messagesById.size}` while the uuid
+  // fell back to `''`, so an id-less message was keyed distinctly but then
+  // emitted with a uuid shared by every other id-less message - and
+  // `resolveTaskTranscript` dedups by uuid keeping the first, so all but one
+  // vanished from the stitched Conversation tab. The fallback is now the
+  // session-scoped absolute line index used by the Codex and Kimi parsers.
   const messagesById = new Map<string, Record<string, unknown>>();
-  const addMessage = (message: unknown): void => {
+  const addMessage = (message: unknown, lineIndex: number, indexWithinLine: number | null): void => {
     if (!isRecord(message)) return;
     const type = message.type;
     if (type !== 'user' && type !== 'gemini') return;
-    const messageId = typeof message.id === 'string' ? message.id : `gemini-${messagesById.size}`;
+    let messageId = typeof message.id === 'string' && message.id.length > 0 ? message.id : null;
+    if (messageId === null) {
+      const absoluteLine = lineIndexBase + lineIndex;
+      // A `$set` line seeds SEVERAL messages, so the line alone is not unique.
+      messageId = indexWithinLine === null
+        ? `${agentSessionId}:${absoluteLine}`
+        : `${agentSessionId}:${absoluteLine}.${indexWithinLine}`;
+    }
     messagesById.set(messageId, message);
   };
 
@@ -67,27 +92,33 @@ export async function parseGeminiTranscript(filePath: string): Promise<Transcrip
     // Legacy single-object form: one JSON object with a messages[] array.
     const parsed = tryParseJson(trimmed);
     if (isRecord(parsed) && Array.isArray(parsed.messages)) {
-      for (const message of parsed.messages) addMessage(message);
+      // The legacy form is one object on one line, so every message shares
+      // line 0 and is distinguished by its index within the array.
+      for (const [index, message] of parsed.messages.entries()) addMessage(message, 0, index);
     }
   } else {
-    for (const line of content.split(/\r?\n/)) {
+    const lines = content.split(/\r?\n/);
+    for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+      const line = lines[lineIndex];
       if (line.length === 0) continue;
       const parsed = tryParseJson(line);
       if (!isRecord(parsed)) continue;
       // `$set` patch line: fold in any seeded messages, ignore other keys.
       if (isRecord(parsed.$set)) {
         if (Array.isArray(parsed.$set.messages)) {
-          for (const message of parsed.$set.messages) addMessage(message);
+          for (const [index, message] of parsed.$set.messages.entries()) {
+            addMessage(message, lineIndex, index);
+          }
         }
         continue;
       }
-      addMessage(parsed);
+      addMessage(parsed, lineIndex, null);
     }
   }
 
   const entries: TranscriptEntry[] = [];
-  for (const message of messagesById.values()) {
-    const uuid = typeof message.id === 'string' ? message.id : '';
+  // The key IS the uuid (see `addMessage`).
+  for (const [uuid, message] of messagesById) {
     const ts = parseTimestamp(message.timestamp);
 
     if (message.type === 'user') {

@@ -22,6 +22,8 @@ describe('droidTranscriptFilePath', () => {
   });
 });
 
+const SESSION_ID = 'aaaa-bbbb-cccc-dddd';
+
 function writeFixture(lines: object[]): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'droid-transcript-test-'));
   const file = path.join(dir, 'session.jsonl');
@@ -40,8 +42,23 @@ describe('parseDroidTranscript', () => {
   });
 
   it('returns [] for missing files', async () => {
-    const entries = await parseDroidTranscript(path.join(os.tmpdir(), 'does-not-exist.jsonl'));
+    const entries = await parseDroidTranscript(SESSION_ID, path.join(os.tmpdir(), 'does-not-exist.jsonl'));
     expect(entries).toEqual([]);
+  });
+
+  it('gives id-less records distinct session-scoped uuids rather than a shared empty one', async () => {
+    // `''` is not an absent uuid but a SHARED one, and `resolveTaskTranscript`
+    // dedups by uuid keeping the first - so every id-less entry after the
+    // first used to vanish from the stitched Conversation tab.
+    tmpFile = writeFixture([
+      { type: 'message', timestamp: '2026-06-12T10:00:00Z', message: { role: 'user', content: [{ type: 'text', text: 'first' }] } },
+      { type: 'message', timestamp: '2026-06-12T10:00:01Z', message: { role: 'user', content: [{ type: 'text', text: 'second' }] } },
+    ]);
+    const entries = await parseDroidTranscript(SESSION_ID, tmpFile);
+
+    expect(entries).toHaveLength(2);
+    expect(entries.map((entry) => entry.uuid)).toEqual([`${SESSION_ID}:0`, `${SESSION_ID}:1`]);
+    expect(entries.every((entry) => entry.uuid.length > 0)).toBe(true);
   });
 
   it('parses user, assistant, and tool_result entries from the message envelope', async () => {
@@ -85,7 +102,7 @@ describe('parseDroidTranscript', () => {
       },
     ]);
 
-    const entries = await parseDroidTranscript(tmpFile);
+    const entries = await parseDroidTranscript(SESSION_ID, tmpFile);
     expect(entries).toHaveLength(4);
     expect(entries[0]).toMatchObject({ kind: 'user', uuid: 'u1', text: 'list files' });
     expect(entries[1]).toMatchObject({
@@ -126,7 +143,7 @@ describe('parseDroidTranscript', () => {
       },
     ]);
 
-    const entries = await parseDroidTranscript(tmpFile);
+    const entries = await parseDroidTranscript(SESSION_ID, tmpFile);
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({
       kind: 'user',
@@ -157,7 +174,7 @@ describe('parseDroidTranscript', () => {
       },
     ]);
 
-    const entries = await parseDroidTranscript(tmpFile);
+    const entries = await parseDroidTranscript(SESSION_ID, tmpFile);
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({
       kind: 'tool_result',
@@ -194,7 +211,7 @@ describe('parseDroidTranscript', () => {
       },
     ]);
 
-    const entries = await parseDroidTranscript(tmpFile);
+    const entries = await parseDroidTranscript(SESSION_ID, tmpFile);
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({
       kind: 'assistant',
@@ -227,7 +244,7 @@ describe('parseDroidTranscript', () => {
       },
     ]);
 
-    const entries = await parseDroidTranscript(tmpFile);
+    const entries = await parseDroidTranscript(SESSION_ID, tmpFile);
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({ kind: 'user', text: 'hello' });
   });
@@ -240,7 +257,7 @@ describe('parseDroidTranscript', () => {
       { type: 'message', id: 'd', timestamp: '2026-04-09T00:00:03Z', message: { role: 'user', content: [{ type: 'text', text: 'real' }] } },
     ]);
 
-    const entries = await parseDroidTranscript(tmpFile);
+    const entries = await parseDroidTranscript(SESSION_ID, tmpFile);
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({ kind: 'user', text: 'real' });
   });
@@ -261,7 +278,7 @@ describe('parseDroidTranscript', () => {
       },
     ]);
 
-    const entries = await parseDroidTranscript(tmpFile);
+    const entries = await parseDroidTranscript(SESSION_ID, tmpFile);
     expect(entries).toEqual([]);
   });
 
@@ -272,7 +289,7 @@ describe('parseDroidTranscript', () => {
     fs.appendFileSync(tmpFile, '\n{not valid json\n');
     fs.appendFileSync(tmpFile, JSON.stringify({ type: 'message', id: 'u2', timestamp: '2026-04-09T00:00:01Z', message: { role: 'user', content: [{ type: 'text', text: 'two' }] } }) + '\n');
 
-    const entries = await parseDroidTranscript(tmpFile);
+    const entries = await parseDroidTranscript(SESSION_ID, tmpFile);
     expect(entries).toHaveLength(2);
     expect(entries[0]).toMatchObject({ text: 'one' });
     expect(entries[1]).toMatchObject({ text: 'two' });
@@ -301,7 +318,7 @@ describe('parseDroidTranscript', () => {
       },
     ]);
 
-    const entries = await parseDroidTranscript(tmpFile);
+    const entries = await parseDroidTranscript(SESSION_ID, tmpFile);
     // tool_result is emitted first, then the user text entry follows.
     expect(entries).toHaveLength(2);
     expect(entries[0]).toMatchObject({
@@ -335,7 +352,7 @@ describe('parseDroidTranscript', () => {
       },
     ]);
 
-    const entries = await parseDroidTranscript(tmpFile);
+    const entries = await parseDroidTranscript(SESSION_ID, tmpFile);
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({
       kind: 'tool_result',
@@ -361,7 +378,7 @@ describe('parseDroidTranscript', () => {
       },
     ]);
 
-    const entries = await parseDroidTranscript(tmpFile);
+    const entries = await parseDroidTranscript(SESSION_ID, tmpFile);
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({
       kind: 'tool_result',
@@ -388,7 +405,7 @@ describe('parseDroidTranscript', () => {
     ]);
     const afterMs = Date.now();
 
-    const entries = await parseDroidTranscript(tmpFile);
+    const entries = await parseDroidTranscript(SESSION_ID, tmpFile);
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({ kind: 'user', text: 'numeric timestamp' });
     // `ts` should be a Date.now() fallback within the test window.
@@ -419,7 +436,7 @@ describe('parseDroidTranscript', () => {
       tmpFile = writeFixture(lines);
       expect(fs.statSync(tmpFile).size).toBeGreaterThan(cap);
 
-      const entries = await parseDroidTranscript(tmpFile);
+      const entries = await parseDroidTranscript(SESSION_ID, tmpFile);
 
       // The oldest turn is gone, the newest is present: a TAIL window.
       expect(entries.length).toBeLessThan(lines.length);
@@ -433,12 +450,65 @@ describe('parseDroidTranscript', () => {
     }
   });
 
+  it('keeps a fallback uuid stable when id-less records grow past the cap and the window slides', async () => {
+    // `countOmittedLines: true` is functionally dead unless a test combines
+    // BOTH an id-less record (the only path that reads `lineIndexBase`) and a
+    // transcript that outgrows the parse cap. The over-cap test above gives
+    // every record a real `id` (`u${lineIndex}`) and so never exercises this
+    // path at all - deleting `countOmittedLines: true` from the parser makes
+    // zero tests in this file fail.
+    const cap = 2 * 1024;
+    setParseWindowBytesForTests(cap);
+    try {
+      const lines: object[] = [];
+      let written = 0;
+      let lineIndex = 0;
+      while (written <= cap * 3) {
+        const fixtureLine = {
+          type: 'message',
+          timestamp: '2026-04-09T00:00:00Z',
+          message: { role: 'user', content: [{ type: 'text', text: `turn ${lineIndex} ${'q'.repeat(200)}` }] },
+        };
+        lines.push(fixtureLine);
+        written += Buffer.byteLength(JSON.stringify(fixtureLine), 'utf-8') + 1;
+        lineIndex += 1;
+      }
+      tmpFile = writeFixture(lines);
+      const before = await parseDroidTranscript(SESSION_ID, tmpFile);
+
+      // Append only a couple of turns, so the window slides far enough to
+      // drop the oldest but still overlaps the previous one.
+      const appended = [0, 1].map((offset) => ({
+        type: 'message',
+        timestamp: '2026-04-09T00:00:00Z',
+        message: { role: 'user', content: [{ type: 'text', text: `turn ${lines.length + offset} ${'q'.repeat(200)}` }] },
+      }));
+      fs.writeFileSync(tmpFile, [...lines, ...appended].map((line) => JSON.stringify(line)).join('\n'));
+      const after = await parseDroidTranscript(SESSION_ID, tmpFile);
+
+      // The window slid: the oldest turn of the first parse is gone from the
+      // second, which is what makes this a real test of the sliding case.
+      const firstTurn = before.find((entry) => entry.kind === 'user');
+      const lastTurnBefore = before[before.length - 1];
+      expect(after.some((entry) => entry.uuid === firstTurn!.uuid)).toBe(false);
+
+      // ...but a turn present in BOTH windows keeps the SAME uuid.
+      const sameTurnAfter = after.find(
+        (entry) => entry.kind === 'user' && lastTurnBefore.kind === 'user' && entry.text === lastTurnBefore.text,
+      );
+      expect(sameTurnAfter).toBeDefined();
+      expect(sameTurnAfter!.uuid).toBe(lastTurnBefore.uuid);
+    } finally {
+      setParseWindowBytesForTests();
+    }
+  });
+
   it('parses the real-shape fixture end-to-end', async () => {
     // Sanitized capture from a real Droid 0.109.1 session (read tool over
     // a sample.txt). Locks the parser against the actual on-disk schema:
     // any field-name drift in a future Droid version will fail this test.
     const fixturePath = path.join(__dirname, '..', 'fixtures', 'droid-real-session.jsonl');
-    const entries = await parseDroidTranscript(fixturePath);
+    const entries = await parseDroidTranscript(SESSION_ID, fixturePath);
 
     // Expected: user prompt -> assistant tool_use -> tool_result -> assistant final text
     // The session_start line is not surfaced as a transcript entry.

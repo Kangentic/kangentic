@@ -16,8 +16,15 @@ import {
  * The invariants that matter are the ones a caller silently depends on: a
  * window must never hand back a partial line, consecutive windows must tile the
  * file exactly once with no gap and no overlap, and the stream's physical line
- * index must match `content.split(/\r?\n/)` indexing including blank lines
- * (Grok's citation-anchor uuids are built from it).
+ * index must match `content.split(/\r?\n/)` indexing including blank lines.
+ *
+ * On that last one, mind WHICH mechanism backs the persisted citation anchors.
+ * The session-scoped `<sessionId>:<lineIndex>` uuids come from
+ * `readJsonlWindow`'s `omittedLineCount`, which counts `0x0A` BYTES; they are
+ * not built from `streamJsonlRecords`, whose line index every current caller
+ * discards. The two are not interchangeable: readline also breaks on a bare
+ * `\r`, which `/\r?\n/` does not, so an anchor derived from the stream index
+ * could drift where the byte count would not.
  */
 
 function record(index: number, payload = 'x'): string {
@@ -116,6 +123,27 @@ describe('readJsonlWindow', () => {
     // Five physical lines precede the window (2 records, 2 blanks, 1 record).
     expect(window.omittedLineCount).toBe(5);
     expect(window.text.trim()).toBe(record(3));
+  });
+
+  it('still counts omitted lines when the requested start is at or past EOF', async () => {
+    // That branch reports the WHOLE file as omitted but used to return
+    // `omittedLineCount: 0` from a spread of the empty window. A caller
+    // deriving absolute line indices from it would restart numbering at 0 and
+    // mint uuids colliding with the file's real first lines. Unreachable on
+    // the tail path, reachable the moment a windowed walk asks for EOF.
+    const lines = [record(0), record(1), record(2)];
+    fs.writeFileSync(file, `${lines.join('\n')}\n`);
+    const totalBytes = fs.statSync(file).size;
+
+    const window = await readJsonlWindow(file, {
+      startByte: totalBytes,
+      maxBytes: 1024,
+      countOmittedLines: true,
+    });
+
+    expect(window.text).toBe('');
+    expect(window.omittedBytes).toBe(totalBytes);
+    expect(window.omittedLineCount).toBe(lines.length);
   });
 
   it('keeps a final record that has no trailing newline', async () => {
@@ -294,7 +322,10 @@ describe('streamJsonlRecords', () => {
   it('advances the physical line index across blank and unparseable lines', async () => {
     // Must match `content.split(/\r?\n/)` indexing exactly: index 0 is the
     // first record, index 1 the blank, index 2 the malformed line, index 3 the
-    // second record. Anything that renumbers here breaks Grok's uuids.
+    // second record. No persisted uuid is derived from THIS index (the citation
+    // anchors come from `readJsonlWindow`'s `omittedLineCount`), but the
+    // contract is what lets an aggregate reader line a record up with the
+    // physical line a windowed reader would give it.
     const raw = [record(0), '', '{not json', record(1)].join('\n');
     fs.writeFileSync(file, `${raw}\n`);
 

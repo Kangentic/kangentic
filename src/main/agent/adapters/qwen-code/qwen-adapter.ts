@@ -243,7 +243,7 @@ export class QwenAdapter implements AgentAdapter {
 
   async parseTranscript(agentSessionId: string, cwd: string): Promise<ParsedTranscript> {
     const filePath = locateQwenTranscriptFile(agentSessionId, cwd);
-    const entries = await parseQwenTranscript(filePath);
+    const entries = await parseQwenTranscript(agentSessionId, filePath);
     return { entries, sourcePath: filePath };
   }
 

@@ -207,7 +207,7 @@ export class DroidAdapter implements AgentAdapter {
 
   async parseTranscript(agentSessionId: string, cwd: string): Promise<ParsedTranscript> {
     const filePath = droidTranscriptFilePath(agentSessionId, cwd);
-    const entries = await parseDroidTranscript(filePath);
+    const entries = await parseDroidTranscript(agentSessionId, filePath);
     return { entries, sourcePath: filePath };
   }
 

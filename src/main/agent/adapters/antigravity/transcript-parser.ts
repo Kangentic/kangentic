@@ -133,11 +133,21 @@ export async function parseAntigravityTranscript(
 ): Promise<ParsedTranscript> {
   const sourcePath = locateAntigravityTranscriptFile(agentSessionId);
   if (!sourcePath) return { entries: [], sourcePath: null };
-  return parseAntigravityTranscriptFile(sourcePath);
+  return parseAntigravityTranscriptFile(sourcePath, agentSessionId);
 }
 
-/** Parse a known transcript file path (the `transcriptPath`-driven callers). */
-export async function parseAntigravityTranscriptFile(sourcePath: string): Promise<ParsedTranscript> {
+/**
+ * Parse a known transcript file path (the `transcriptPath`-driven callers).
+ *
+ * `agentSessionId` namespaces the entry uuids. It is optional because the
+ * tool-count reader can be handed a bare `transcriptPath` with no session id,
+ * and that caller only counts tool calls - it never persists a uuid. Every
+ * caller whose entries reach the viewer or the retrieval index passes one.
+ */
+export async function parseAntigravityTranscriptFile(
+  sourcePath: string,
+  agentSessionId?: string,
+): Promise<ParsedTranscript> {
   const entries: TranscriptEntry[] = [];
   // The id of the most recent tool_use block, so a following ERROR_MESSAGE
   // step (agy records tool failures as their own step) can be attached as
@@ -146,7 +156,12 @@ export async function parseAntigravityTranscriptFile(sourcePath: string): Promis
 
   const { steps, omittedBytes, totalBytes } = await readSteps(sourcePath);
   for (const step of steps) {
-    const uuid = `step-${step.step_index}`;
+    // `step_index` is already absolute (readSteps dedups and sorts by it), so
+    // only the session namespace was missing: `resolveTaskTranscript` stitches
+    // every session a task has had and dedups by uuid keeping the first, so two
+    // agy sessions on one task both minting `step-0..N` made the second
+    // session's steps vanish from the Conversation tab.
+    const uuid = agentSessionId ? `${agentSessionId}:step-${step.step_index}` : `step-${step.step_index}`;
     const ts = stepTimestamp(step);
 
     switch (step.type) {

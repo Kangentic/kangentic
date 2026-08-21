@@ -25,16 +25,27 @@ import { qwenChatsDir } from './session-history-parser';
  * GenAI part schema (no real tool-call sessions were available locally to
  * pin them); they are handled defensively and degrade to text if absent.
  */
-export async function parseQwenTranscript(filePath: string): Promise<TranscriptEntry[]> {
+export async function parseQwenTranscript(
+  agentSessionId: string,
+  filePath: string,
+): Promise<TranscriptEntry[]> {
   // Bounded tail read rather than a whole-file one: a transcript has no size
   // ceiling, and reading one whole is what OOM'd the main process.
-  const window = await readJsonlWindow(filePath, { maxBytes: parseWindowBytes() });
+  const window = await readJsonlWindow(filePath, {
+    maxBytes: parseWindowBytes(),
+    countOmittedLines: true,
+  });
   if (window.totalBytes === 0) return [];
 
   const entries: TranscriptEntry[] = [];
-  let entryIndex = 0;
+  const lines = window.text.split(/\r?\n/);
+  // Only used when a record turns out to lack its own `uuid`. Resolved up
+  // front rather than lazily: the scan is free below the cap and ~27ms on the
+  // largest transcript measured, which is not worth a second code shape.
+  const lineIndexBase = window.omittedLineCount;
 
-  for (const line of window.text.split(/\r?\n/)) {
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    const line = lines[lineIndex];
     if (line.length === 0) continue;
     let raw: unknown;
     try {
@@ -51,10 +62,16 @@ export async function parseQwenTranscript(filePath: string): Promise<TranscriptE
     const parts = message.parts;
     if (!Array.isArray(parts)) continue;
 
-    // WINDOW-relative counter: above MAX_PARSE_SOURCE_BYTES the same turn gets a
-    // different uuid as the tail window slides. See the fuller note in the Codex
-    // parser; same limitation, same graceful degradation for citation anchors.
-    const uuid = `qwen-${entryIndex++}`;
+    // The record's own `uuid` is the best anchor available: intrinsic, stable
+    // across re-parses, and already unique per session (real sessions carry
+    // `uuid` / `parentUuid` / `sessionId` per line). Older or partial writers
+    // may omit it, so fall back to the session-scoped absolute line index the
+    // Codex and Kimi parsers use - see the fuller note there for why both
+    // halves matter. Sharing one uuid across the several entries a single
+    // record can emit is deliberate and pre-existing (Droid does the same).
+    const uuid = typeof raw.uuid === 'string' && raw.uuid.length > 0
+      ? raw.uuid
+      : `${agentSessionId}:${lineIndexBase + lineIndex}`;
     const ts = parseTimestamp(raw.timestamp);
 
     if (type === 'user') {

@@ -535,6 +535,8 @@ interface SharedFakeChunkRow {
   sessionId: string | null;
   taskId: string | null;
   contentHash: string;
+  turnUuidStart: string | null;
+  turnUuidEnd: string | null;
 }
 
 interface SharedFakeDbState {
@@ -572,12 +574,18 @@ function makeSharedFakeDb(state: SharedFakeDbState): Database.Database {
           throw new Error(`unexpected get SQL: ${sql}`);
         },
         all: (...args: unknown[]) => {
-          if (sql.includes('SELECT id, seq, content_hash FROM memory_chunks')) {
+          if (sql.includes('SELECT id, seq, content_hash') && sql.includes('FROM memory_chunks')) {
             const [corpus, docId] = args as [string, string];
             return state.chunks
               .filter((chunk) => chunk.corpus === corpus && chunk.docId === docId)
               .sort((first, second) => first.seq - second.seq)
-              .map((chunk) => ({ id: chunk.id, seq: chunk.seq, content_hash: chunk.contentHash }));
+              .map((chunk) => ({
+                id: chunk.id,
+                seq: chunk.seq,
+                content_hash: chunk.contentHash,
+                turn_uuid_start: chunk.turnUuidStart ?? null,
+                turn_uuid_end: chunk.turnUuidEnd ?? null,
+              }));
           }
           throw new Error(`unexpected all SQL: ${sql}`);
         },
@@ -608,8 +616,12 @@ function makeSharedFakeDb(state: SharedFakeDbState): Database.Database {
             const sessionId = (args[3] as string | null) ?? null;
             const taskId = (args[4] as string | null) ?? null;
             const contentHash = String(args[8]);
+            const turnUuidStart = (args[12] as string | null) ?? null;
+            const turnUuidEnd = (args[13] as string | null) ?? null;
             const id = state.nextChunkId++;
-            state.chunks.push({ id, corpus, docId, seq, sessionId, taskId, contentHash });
+            state.chunks.push({
+              id, corpus, docId, seq, sessionId, taskId, contentHash, turnUuidStart, turnUuidEnd,
+            });
             return { changes: 1, lastInsertRowid: id };
           }
           if (sql.includes('DELETE FROM memory_chunks WHERE id IN')) {
@@ -618,6 +630,17 @@ function makeSharedFakeDb(state: SharedFakeDbState): Database.Database {
             const removedCount = state.chunks.length - remaining.length;
             state.chunks = remaining;
             return { changes: removedCount };
+          }
+          if (sql.includes('UPDATE memory_chunks SET turn_uuid_start')) {
+            // The diff-upsert's re-anchor of the untouched leading prefix,
+            // keyed by row id: WHERE id = ?.
+            const [turnUuidStart, turnUuidEnd, id] = args as [string | null, string | null, number];
+            const target = state.chunks.find((chunk) => chunk.id === id);
+            if (target) {
+              target.turnUuidStart = turnUuidStart;
+              target.turnUuidEnd = turnUuidEnd;
+            }
+            return { changes: target ? 1 : 0 };
           }
           if (sql.includes('UPDATE memory_chunks SET session_id')) {
             // The diff-upsert's ownership re-point over the untouched leading

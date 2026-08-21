@@ -271,7 +271,7 @@ export class CodexAdapter implements AgentAdapter {
   async parseTranscript(agentSessionId: string, _cwd: string): Promise<ParsedTranscript> {
     const filePath = locateCodexTranscriptFile(agentSessionId);
     if (!filePath) return { entries: [], sourcePath: null };
-    const entries = await parseCodexTranscript(filePath);
+    const entries = await parseCodexTranscript(agentSessionId, filePath);
     return { entries, sourcePath: filePath };
   }
 

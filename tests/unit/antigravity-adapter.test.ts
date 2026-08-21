@@ -627,18 +627,51 @@ describe('parseAntigravityTranscriptFile', () => {
       fs.writeFileSync(filePath, steps.join('\n') + '\n');
       expect(fs.statSync(filePath).size).toBeGreaterThan(cap);
 
-      const parsed = await parseAntigravityTranscriptFile(filePath);
+      const parsed = await parseAntigravityTranscriptFile(filePath, 'agy-session-1');
 
       // The oldest step is gone, the newest is present: a TAIL window.
       expect(parsed.entries.length).toBeLessThan(steps.length);
-      expect(parsed.entries.some((entry) => entry.uuid === 'step-0')).toBe(false);
-      expect(parsed.entries.some((entry) => entry.uuid === `step-${lastStepIndex}`)).toBe(true);
+      expect(parsed.entries.some((entry) => entry.uuid === 'agy-session-1:step-0')).toBe(false);
+      expect(parsed.entries.some((entry) => entry.uuid === `agy-session-1:step-${lastStepIndex}`)).toBe(true);
 
       // The omission is reported in-band as the first entry.
       expect(parsed.entries[0]).toMatchObject({ kind: 'system', subtype: 'truncated' });
     } finally {
       setParseWindowBytesForTests();
       fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('namespaces step uuids by session so two sessions on one task cannot collide', async () => {
+    // `step_index` restarts at 0 per session, so the unscoped `step-N` made
+    // the second session's steps collide with the first's in the task stitch,
+    // which dedups by uuid keeping the first.
+    const filePath = writeTranscriptFixture();
+    try {
+      const one = await parseAntigravityTranscriptFile(filePath, 'agy-session-1');
+      const two = await parseAntigravityTranscriptFile(filePath, 'agy-session-2');
+
+      expect(one.entries[0].uuid).toBe('agy-session-1:step-0');
+      expect(two.entries[0].uuid).toBe('agy-session-2:step-0');
+      const overlap = one.entries
+        .map((entry) => entry.uuid)
+        .filter((uuid) => two.entries.some((entry) => entry.uuid === uuid));
+      expect(overlap).toEqual([]);
+    } finally {
+      fs.rmSync(path.dirname(filePath), { recursive: true, force: true });
+    }
+  });
+
+  it('falls back to the unscoped step id when no session id is supplied', async () => {
+    // The tool-count reader can be handed a bare transcriptPath. It only
+    // counts tool calls and never persists a uuid, so an unscoped id is fine
+    // there - but it must still parse rather than mint `undefined:step-0`.
+    const filePath = writeTranscriptFixture();
+    try {
+      const parsed = await parseAntigravityTranscriptFile(filePath);
+      expect(parsed.entries[0].uuid).toBe('step-0');
+    } finally {
+      fs.rmSync(path.dirname(filePath), { recursive: true, force: true });
     }
   });
 });
@@ -828,6 +861,11 @@ describe('parseAntigravityTranscript (async entry point)', () => {
     expect(parsed.sourcePath).toBe(expectedPath);
     expect(parsed.entries).toHaveLength(1);
     expect(parsed.entries[0].kind).toBe('user');
+    // Every existing namespacing test calls parseAntigravityTranscriptFile
+    // directly with a hand-picked session id. `agentSessionId` is OPTIONAL on
+    // that function, so nothing else forces this real call chain (the one the
+    // viewer and the retrieval index actually use) to keep forwarding it.
+    expect(parsed.entries[0].uuid).toBe(`${conversationId}:step-0`);
   });
 
   it('resolves to empty entries and a null sourcePath without throwing when no transcript exists', async () => {

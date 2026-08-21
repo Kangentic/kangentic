@@ -30,26 +30,55 @@ import { findSessionWireFile } from './session-history-parser';
  * defensively. Tool calls/results and user prompts ARE pinned to the verified
  * on-disk shapes.
  */
-export async function parseKimiTranscript(filePath: string): Promise<TranscriptEntry[]> {
+export async function parseKimiTranscript(
+  agentSessionId: string,
+  filePath: string,
+): Promise<TranscriptEntry[]> {
   // Bounded tail read rather than a whole-file one: a transcript has no size
   // ceiling, and reading one whole is what OOM'd the main process.
-  const window = await readJsonlWindow(filePath, { maxBytes: parseWindowBytes() });
+  // `countOmittedLines` because the uuids below embed the ABSOLUTE physical
+  // line index. `wire.jsonl` is an append-only event stream, so it is stable.
+  const window = await readJsonlWindow(filePath, {
+    maxBytes: parseWindowBytes(),
+    countOmittedLines: true,
+  });
   if (window.totalBytes === 0) return [];
 
   const entries: TranscriptEntry[] = [];
+  const lines = window.text.split(/\r?\n/);
   let pendingAssistantText = '';
   let pendingTs = 0;
-  // WINDOW-relative counter: above MAX_PARSE_SOURCE_BYTES the same turn gets a
-  // different uuid as the tail window slides. See the fuller note in the Codex
-  // parser; same limitation, same graceful degradation for citation anchors.
-  let entryIndex = 0;
+  // The line the CURRENT pending run of ContentPart fragments started on,
+  // captured alongside `pendingTs` for the same reason: the flushed entry
+  // belongs to where its text began, not to the boundary record that happened
+  // to trigger the flush. It is also what keeps the uuid unique - a boundary
+  // line emits at most its own entry plus this flush, and the two therefore
+  // never claim the same line.
+  //
+  // KNOWN RESIDUAL, over-cap transcripts only. This is the line the run starts
+  // on IN THIS WINDOW, which is its true start only while the whole run is
+  // visible. Once the tail window slides into the middle of a run, the flush
+  // anchors to the first fragment still visible instead. Usually harmless: the
+  // dropped fragment also changes the flushed text, so the chunk diverges and
+  // is re-inserted with the new anchor rather than keeping a stale one. It goes
+  // stale only when the dropped leading fragment contributes nothing after
+  // `.trim()` (a whitespace-only fragment), leaving byte-identical text under a
+  // shifted uuid. Resolving it means carrying the run's start across parses,
+  // which this deliberately stateless parser has no place to keep.
+  let pendingLineIndex = 0;
+  // Session-scoped and ABSOLUTE; see the fuller note in the Codex parser, which
+  // has the identical shape and the identical two bugs behind it. Kimi's wire
+  // records carry no per-record id either (only ToolCall/ToolResult do, as a
+  // shared pair).
+  const lineIndexBase = window.omittedLineCount;
+  const uuidForLine = (lineIndex: number): string => `${agentSessionId}:${lineIndexBase + lineIndex}`;
 
   const flushAssistantText = (): void => {
     const text = pendingAssistantText.trim();
     if (text.length > 0) {
       entries.push({
         kind: 'assistant',
-        uuid: `kimi-${entryIndex++}`,
+        uuid: uuidForLine(pendingLineIndex),
         ts: pendingTs,
         blocks: [{ type: 'text', text }],
       });
@@ -57,7 +86,8 @@ export async function parseKimiTranscript(filePath: string): Promise<TranscriptE
     pendingAssistantText = '';
   };
 
-  for (const line of window.text.split(/\r?\n/)) {
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    const line = lines[lineIndex];
     if (line.length === 0) continue;
     let raw: unknown;
     try {
@@ -77,14 +107,17 @@ export async function parseKimiTranscript(filePath: string): Promise<TranscriptE
     if (type === 'TurnBegin' || type === 'SteerInput') {
       flushAssistantText();
       const text = extractUserInputText(payload.user_input);
-      if (text) entries.push({ kind: 'user', uuid: `kimi-${entryIndex++}`, ts, text });
+      if (text) entries.push({ kind: 'user', uuid: uuidForLine(lineIndex), ts, text });
       continue;
     }
 
     if (type === 'ContentPart') {
       const fragment = extractContentPartText(payload);
       if (fragment) {
-        if (pendingAssistantText.length === 0) pendingTs = ts;
+        if (pendingAssistantText.length === 0) {
+          pendingTs = ts;
+          pendingLineIndex = lineIndex;
+        }
         pendingAssistantText += fragment;
       }
       continue;
@@ -99,7 +132,7 @@ export async function parseKimiTranscript(filePath: string): Promise<TranscriptE
         ? (tryParseJson(callFunction.arguments) ?? callFunction.arguments)
         : callFunction.arguments;
       const blocks: TranscriptBlock[] = [{ type: 'tool_use', id, name, input }];
-      entries.push({ kind: 'assistant', uuid: `kimi-${entryIndex++}`, ts, blocks });
+      entries.push({ kind: 'assistant', uuid: uuidForLine(lineIndex), ts, blocks });
       continue;
     }
 
@@ -108,7 +141,7 @@ export async function parseKimiTranscript(filePath: string): Promise<TranscriptE
       const returnValue = isRecord(payload.return_value) ? payload.return_value : {};
       entries.push({
         kind: 'tool_result',
-        uuid: `kimi-${entryIndex++}`,
+        uuid: uuidForLine(lineIndex),
         ts,
         toolUseId,
         content: extractToolResultContent(returnValue),

@@ -80,8 +80,8 @@ function findRun(calls: RecordedCall[], needle: string): RecordedCall | undefine
 describe('RetrievalStore.upsertDocument diff', () => {
   it('deletes from the first divergent seq and inserts only the new chunk, leaving the identical prefix', () => {
     const existing = [
-      { id: 10, seq: 0, content_hash: 'hashA' },
-      { id: 11, seq: 1, content_hash: 'hashB' },
+      { id: 10, seq: 0, content_hash: 'hashA', turn_uuid_start: 'u0', turn_uuid_end: 'u0' },
+      { id: 11, seq: 1, content_hash: 'hashB', turn_uuid_start: 'u1', turn_uuid_end: 'u1' },
     ];
     const { db, calls } = makeRecordingDb({
       all: (sql) => (sql.includes('content_hash') ? existing : []),
@@ -107,8 +107,8 @@ describe('RetrievalStore.upsertDocument diff', () => {
 
   it('preserves an identical document (no delete/insert) but re-points its ownership at the current session', () => {
     const existing = [
-      { id: 10, seq: 0, content_hash: 'hashA' },
-      { id: 11, seq: 1, content_hash: 'hashB' },
+      { id: 10, seq: 0, content_hash: 'hashA', turn_uuid_start: 'u0', turn_uuid_end: 'u0' },
+      { id: 11, seq: 1, content_hash: 'hashB', turn_uuid_start: 'u1', turn_uuid_end: 'u1' },
     ];
     const { db, calls } = makeRecordingDb({
       all: (sql) => (sql.includes('content_hash') ? existing : []),
@@ -128,10 +128,49 @@ describe('RetrievalStore.upsertDocument diff', () => {
     // session-delete trigger (which keys on session_id) track the live session.
     const ownershipUpdate = findRun(calls, 'UPDATE memory_chunks SET session_id');
     expect(ownershipUpdate?.args).toEqual(['session-1', 'task-1', 'conversation', 'doc-1', 2]);
+
+    // The anchors already match, so nothing is re-anchored.
+    expect(findRun(calls, 'UPDATE memory_chunks SET turn_uuid_start')).toBeUndefined();
+  });
+
+  it('re-anchors an identical prefix whose turn uuids changed, without touching its embeddings', () => {
+    // `content_hash` is sha1(TEXT) only, so a chunk whose text is unchanged
+    // while its turn uuids changed is invisible to the divergence walk and
+    // used to keep its stale anchors forever - which is exactly what a
+    // uuid-scheme change produces, and why "Rebuild index" could not fix one.
+    const existing = [
+      { id: 10, seq: 0, content_hash: 'hashA', turn_uuid_start: 'codex-0', turn_uuid_end: 'codex-0' },
+      { id: 11, seq: 1, content_hash: 'hashB', turn_uuid_start: 'codex-1', turn_uuid_end: 'codex-1' },
+    ];
+    const { db, calls } = makeRecordingDb({
+      all: (sql) => (sql.includes('content_hash') ? existing : []),
+    });
+
+    const result = new RetrievalStore(db).upsertDocument(ref, [chunk(0, 'hashA'), chunk(1, 'hashB')]);
+
+    // Still no churn: the rows (and their embeddings) stay put.
+    expect(result.deletedIds).toEqual([]);
+    expect(result.insertedIds).toEqual([]);
+    expect(findRun(calls, 'DELETE FROM memory_chunks')).toBeUndefined();
+    expect(calls.some((call) => call.sql.includes('INSERT INTO memory_chunks'))).toBe(false);
+
+    // ...but both rows are re-anchored in place, keyed by row id.
+    const reanchorCalls = calls.filter(
+      (call) => call.method === 'run' && call.sql.includes('UPDATE memory_chunks SET turn_uuid_start'),
+    );
+    expect(reanchorCalls.map((call) => call.args)).toEqual([
+      ['u0', 'u0', 10],
+      ['u1', 'u1', 11],
+    ]);
+    // `content_hash` is never rewritten, so no chunk is re-embedded. Asserted
+    // over EVERY statement the pass issued, not just the re-anchor ones: the
+    // re-anchor sql is a fixed literal that structurally cannot mention
+    // `content_hash`, so scoping this to those calls could never fail.
+    expect(calls.some((call) => call.sql.includes('SET content_hash'))).toBe(false);
   });
 
   it('appends a new trailing chunk without deleting the identical prefix', () => {
-    const existing = [{ id: 10, seq: 0, content_hash: 'hashA' }];
+    const existing = [{ id: 10, seq: 0, content_hash: 'hashA', turn_uuid_start: 'u0', turn_uuid_end: 'u0' }];
     const { db, calls } = makeRecordingDb({
       all: (sql) => (sql.includes('content_hash') ? existing : []),
       run: (sql) => (sql.includes('INSERT INTO memory_chunks') ? { lastInsertRowid: 300, changes: 1 } : { changes: 1 }),

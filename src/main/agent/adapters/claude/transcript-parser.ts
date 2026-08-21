@@ -75,6 +75,20 @@ function parseTranscriptLine(
   }
   if (!isRecord(raw)) return;
 
+  // KNOWN GAP, id-less records only. `''` is not an absent uuid but a SHARED
+  // one, and `resolveTaskTranscript` dedups by uuid keeping the first, so a
+  // second id-less entry would vanish from the stitched Conversation tab.
+  //
+  // Every other adapter falls back to a session-scoped absolute line index.
+  // Claude cannot, for a structural reason rather than a cost one: none of its
+  // three read paths can supply a physical line index. This function is shared
+  // by all three with deliberately identical per-line semantics (see the note
+  // above it); the incremental path parses out of a carry buffer that has no
+  // line notion at all; and `parseClaudeTranscriptWindow` is called once per
+  // window by the indexer, so counting the omitted head per window would make
+  // a whole-file walk quadratic. Closing this means giving the shared line
+  // parser a line-numbering contract across all three, which is its own change
+  // - hence a follow-up rather than a bend through the hot incremental path.
   const uuid = typeof raw.uuid === 'string' ? raw.uuid : '';
   const ts = parseTimestamp(raw.timestamp);
   const type = raw.type;
