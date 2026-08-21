@@ -371,6 +371,19 @@ test.describe('Terminal width-drift echo re-assert', () => {
     try {
       const ownerDims = await openDetailAndCaptureOwnerDims(page);
 
+      // Quiescence gate + re-clear, the same guard the other tests in this file
+      // use, and this test is the one that was missing it. Without it the window
+      // manager's own layout-settle flush (see clearResizeCalls) can land AFTER
+      // openDetailAndCaptureOwnerDims already cleared, at the SAME dims as
+      // ownerDims - so the "no resize" assertion below reads benign window
+      // housekeeping as a corrective re-assert. Seen on CI as a flake: one call
+      // at exactly ownerDims, green on retry.
+      await waitForTerminalTraceQuiescence(page);
+      await clearResizeCalls(page);
+
+      // Both counters snapshot AFTER the gate: the mount replay itself performs
+      // scrollback reads, so a pre-gate baseline can be stale by the time the
+      // no-replay assertion compares against it.
       const scrollbackReadsBefore = await page.evaluate(
         () => (window as unknown as TestWindow).__scrollbackReads ?? 0,
       );
