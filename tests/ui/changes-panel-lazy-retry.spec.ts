@@ -24,6 +24,7 @@ import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
 import { waitForViteReady } from './helpers';
+import type { RendererErrorContext } from '../../src/shared/types';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
@@ -170,6 +171,31 @@ test.describe('Changes panel: lazy-import failure is scoped and recoverable', ()
     // "Something went wrong" page, and the dialog is still open.
     await expect(page.locator('text=Something went wrong')).not.toBeVisible();
     await expect(page.locator('[data-testid="task-detail-dialog"]')).toBeVisible();
+
+    // The catch above ran through a MOUNTED PanelErrorBoundary under a live React
+    // reconciler and the real UI-tier mock (tests/ui/mock-electron-api.js), unlike
+    // tests/unit/panel-error-boundary.test.ts, which hand-instantiates the class and
+    // stubs window.electronAPI.analytics.trackRendererError with a bare vi.fn(). This
+    // is the only place that proves the two-argument (message, context) call actually
+    // round-trips end to end and that the mock records both rather than dropping the
+    // second one.
+    //
+    // A failed dynamic import also fires `window`'s unhandledrejection listener
+    // (index.tsx's separate reporter, boundary: 'unhandled_rejection') independently
+    // of React's own catch, so this filters to the panel-boundary report rather than
+    // asserting a total call count.
+    const trackedErrors = await page.evaluate(
+      () =>
+        (
+          window as unknown as {
+            __mockTrackRendererErrorCalls?: Array<{ message: string; context?: RendererErrorContext }>;
+          }
+        ).__mockTrackRendererErrorCalls ?? [],
+    );
+    const panelReports = trackedErrors.filter((entry) => entry.context?.boundary === 'panel');
+    expect(panelReports).toHaveLength(1);
+    expect(typeof panelReports[0].message).toBe('string');
+    expect(panelReports[0].context).toMatchObject({ boundary: 'panel', panel: 'Changes panel' });
 
     // A chunk-load failure cannot be healed by a remount (the module URL is
     // poisoned in the module map), so the boundary offers Reload, not Retry.
