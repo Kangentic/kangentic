@@ -43,7 +43,6 @@
   let browserUrls = {};
   // taskId -> leased dev-server port, so a test can exercise a pane defaulting
   // to its OWN task's dev server rather than the project-wide default.
-  let browserTaskPorts = {};
   // Which project each task URL was saved against, so a test can assert a
   // popped-out or backgrounded pane wrote to its OWN project's sidecar.
   let browserUrlProjects = {};
@@ -3740,11 +3739,6 @@
         return {
           projectDefault: projectDefault,
           taskOverride: browserUrls[taskId] || null,
-          // The task's leased dev-server port, as a URL. Null unless a test
-          // seeds one via __mockBrowserTaskPorts.
-          taskPortUrl: (browserTaskPorts && browserTaskPorts[taskId])
-            ? 'http://localhost:' + browserTaskPorts[taskId]
-            : null,
         };
       },
       setTaskUrl: async function (taskId, url, projectId) {
@@ -3857,7 +3851,6 @@
   window.__mockBrowser = {
     reset: function () {
       browserUrls = {};
-      browserTaskPorts = {};
       browserUrlProjects = {};
       browserCaptureCalls = [];
       browserPaneCalls = [];
@@ -3886,10 +3879,6 @@
     },
     seedTaskUrl: function (taskId, url) {
       browserUrls[taskId] = url;
-    },
-    /** Give a task a leased dev-server port, as allocateDevPort would. */
-    seedTaskPort: function (taskId, port) {
-      browserTaskPorts[taskId] = port;
     },
     /** The project a task URL was last saved against (null if never saved). */
     getTaskUrlProject: function (taskId) {

@@ -1,6 +1,9 @@
 import { reserveDevPorts, getDevPortsForTask } from '../../dev-ports/dev-port-allocator';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
 
+/** Bounded so a single call cannot drain the range. */
+const MAX_PORTS_PER_REQUEST = 10;
+
 /**
  * Reserve free dev-server ports.
  *
@@ -23,18 +26,27 @@ export const handleReserveDevPorts: CommandHandler = async (
     return { success: false, error: 'taskId is required. Resolve it with kangentic_get_current_task first.' };
   }
 
-  const rawCount = typeof params.count === 'number' ? params.count : 1;
-  if (!Number.isFinite(rawCount) || rawCount < 1 || rawCount > MAX_PORTS_PER_REQUEST) {
+  // Rejected rather than coerced, and the offending value is named. Flooring
+  // 2.5 to 2 would hand back one fewer port than asked for with nothing in the
+  // response to say why, and a caller that binds three servers would then
+  // collide on the third.
+  const count = params.count === undefined ? 1 : params.count;
+  if (
+    typeof count !== 'number'
+    || !Number.isInteger(count)
+    || count < 1
+    || count > MAX_PORTS_PER_REQUEST
+  ) {
     return {
       success: false,
-      error: `count must be between 1 and ${MAX_PORTS_PER_REQUEST}. Ask for the ports you are about to bind, not a pool to draw from later.`,
+      error: `count must be a whole number between 1 and ${MAX_PORTS_PER_REQUEST}; got ${JSON.stringify(count)}. Ask for the ports you are about to bind, not a pool to draw from later.`,
     };
   }
 
   const ports = await reserveDevPorts(
     context.projectId,
     taskId,
-    rawCount,
+    count,
     context.getDevServerPortRange(),
   );
 
@@ -45,18 +57,14 @@ export const handleReserveDevPorts: CommandHandler = async (
     };
   }
 
-  const short = ports.length < rawCount;
   return {
     success: true,
-    message: short
-      ? `Reserved ${ports.length} of ${rawCount} requested ports: ${ports.join(', ')}. The range ran out - use your project's own configured ports for the rest.`
+    message: ports.length < count
+      ? `Reserved ${ports.length} of ${count} requested ports: ${ports.join(', ')}. The range ran out - use your project's own configured ports for the rest.`
       : `Reserved ${ports.length === 1 ? 'port' : 'ports'} ${ports.join(', ')} for this task. Nothing else on this machine will be given them.`,
-    data: { ports, requested: rawCount, reserved: ports.length },
+    data: { ports, requested: count, reserved: ports.length },
   };
 };
-
-/** Bounded so a single call cannot drain the range. */
-const MAX_PORTS_PER_REQUEST = 10;
 
 /** Read back what a task already holds, without reserving anything more. */
 export const handleListDevPorts: CommandHandler = (
@@ -64,13 +72,13 @@ export const handleListDevPorts: CommandHandler = (
 ): CommandResponse => {
   const taskId = typeof params.taskId === 'string' && params.taskId ? params.taskId : null;
   if (!taskId) {
-    return { success: false, error: 'taskId is required.' };
+    return { success: false, error: 'taskId is required. Resolve it with kangentic_get_current_task first.' };
   }
   const ports = getDevPortsForTask(taskId);
   return {
     success: true,
     message: ports.length === 0
-      ? 'This task has no reserved ports.'
+      ? 'This task has no reserved ports. That is the normal state - reserve some with kangentic_reserve_dev_ports when you are about to start a server.'
       : `Reserved ports: ${ports.join(', ')}.`,
     data: { ports },
   };
