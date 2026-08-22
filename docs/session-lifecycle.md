@@ -49,7 +49,7 @@ The in-memory `SessionStatus` does not include `orphaned` (that is a DB-only con
 | `running` | `suspended` | Task moved to Done or `auto_spawn=false` column |
 | `running` | `suspended` | A column or Board Profile edit flips `auto_spawn` to false while the task is already sitting there, with no move at all (`reconcileAutoSpawnChange`, `suspended_by='system'`) |
 | `running` | `exited` | Task moved to To Do (full cleanup via `cleanupTaskSession`) |
-| `running` | `exited` | Process exits naturally or is killed. Every `-> exited` transition also destroys any offscreen browser lanes that session opened (`destroyLanesForSession`), which is the guarantee that lanes cannot outlive their agent - see [Embedded Browser](embedded-browser.md) decision 24 |
+| `running` | `exited` | Process exits naturally or is killed. Every `-> exited` transition also destroys any offscreen browser lanes that session opened (`destroyLanesForSession`), which is the guarantee that lanes cannot outlive their agent - see [Embedded Browser](embedded-browser.md) decision 29 |
 | `running` | `exited` | The agent CLI exited on its own while its shell PTY survived, so no PTY exit ever fired. The bg-shell watcher's [agent-absence sweep](#a-session-whose-agent-exited-under-a-surviving-shell) confirms it over two probes and retires the session |
 | `running` | `orphaned` | App crashes, leftover `running` DB record found on next launch |
 | `queued` | `orphaned` | App crashes, leftover `queued` DB record found on next launch |
