@@ -29,6 +29,24 @@ The rig creates its own task, reserves its own port through
 `kangentic_reserve_dev_ports` (so the port feature dogfoods itself), serves its
 own page on it, and cleans all of it up on exit.
 
+## Two entry points
+
+`rig.mjs` covers concurrent contention. `handoff.mjs` covers #542 - the user
+closing a task-detail window while an agent is driving its pane - and is
+SEPARATE on purpose: it asserts on the implicit-target path an agent actually
+uses, and that path refuses with `multiple-panes` when several panes match the
+task, so leftover lanes from the contention scenarios would make its result
+unreadable. Run it against a preview that has none.
+
+```
+node scripts/rigs/browser-contention/handoff.mjs
+```
+
+It opens a real pane, confirms the agent can drive it, clicks the task-detail
+close control, and then requires all four of: the user's pane is gone, a
+hand-off lane took over, **the same caller can still drive**, and the hand-off
+is logged.
+
 ## What it asserts
 
 | | |
@@ -83,6 +101,16 @@ locking changes.
 It needs a live `/preview` and a real MCP server over HTTP, so it cannot ride
 unit, UI, or E2E. It is a manual rig, run when the browser-automation or
 dev-port subsystems change.
+
+## Two traps in `handoff.mjs` too
+
+The task-detail close control is found by `data-testid="task-detail-close"`,
+never by title: the OS window's close button is ALSO titled "Close", and
+clicking that one quits the app - which is what happened on the first attempt.
+
+And the first `open_pane` on a cold preview can exceed the tool's own 10s bound
+while the window and its webview mount, so it retries once. A cold-start
+timeout there is not a failure of the pane path.
 
 ## Known environment limit
 
