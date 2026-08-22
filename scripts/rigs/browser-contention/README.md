@@ -47,6 +47,35 @@ close control, and then requires all four of: the user's pane is gone, a
 hand-off lane took over, **the same caller can still drive**, and the hand-off
 is logged.
 
+`lifecycle.mjs` covers the lane-cleanup guarantee (#F): do lanes die with the
+session that owns them? Also SEPARATE, and for a sharper reason - it is the one
+probe that must spawn through the BOARD rather than `sessions.spawn`.
+
+```
+node scripts/rigs/browser-contention/lifecycle.mjs
+```
+
+## The trap that made this probe lie
+
+Its first version used the raw `SESSION_SPAWN` passthrough with a mock command,
+the way `rig.mjs` does, and reported three leaked lanes. That was the RIG's bug.
+
+The raw passthrough creates a registry session with **no row in the `sessions`
+table**. `markRecordExited` resolves its record through
+`sessionRepo.findByAnyId`, so with no row there is no record, the CAS never
+runs, and `destroyLanesForSession` is never reached. `spawn-entry-point-parity.md`
+says exactly this: the raw passthrough is allowlisted as NOT a task-agent spawn.
+
+A real agent always has a record. So `lifecycle.mjs` points the claude CLI at
+`tests/fixtures/mock-claude.cmd` (zero quota) and moves a task into a spawning
+column - the production entry point, which does create one. Verified red-green
+by removing the `destroyLanesForSession` call: 3 lanes survive without it, 0
+with it.
+
+The lesson generalises: a rig that takes a shortcut around the production entry
+point can report a failure the product does not have, and that is just as
+expensive as missing one it does.
+
 ## What it asserts
 
 | | |
