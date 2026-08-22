@@ -222,7 +222,12 @@ export interface DevPortStatus {
  *
  * Probes sequentially, like every other probe here: callers pass a handful of
  * ports, and a parallel sweep would open that many sockets at once for no gain.
- * Bound the list at the call site - PROBE_TIMEOUT_MS is the per-port worst case.
+ *
+ * It takes NO cap of its own, so every caller must bring one. PROBE_TIMEOUT_MS
+ * is 500 and probing is serial, so the wall clock is 0.5s per port in the worst
+ * case: the MCP handler's 20-port ceiling is a deliberate 10s bound on a tool
+ * call, not a round number. A second caller has to make that same decision
+ * rather than inherit it.
  */
 export async function describeDevPorts(taskId: string, ports: number[]): Promise<DevPortStatus[]> {
   const statuses: DevPortStatus[] = [];
