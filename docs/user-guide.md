@@ -835,9 +835,9 @@ the camera stays where you left it, and **Reset view** is the way home.
 
 **Asking.** Search answers "which conversations". For an actual question - "why did we drop the
 sphere fit?", "what did we try for the resize race?" - the results are correct and still leave you
-the reading. **Ask** appears above them once a search has matches: it hands the best two dozen
-matching passages to your project's agent along with the question, and shows the answer above the
-cards with a number on every claim. Clicking a number selects that conversation on the map, so
+the reading. **Ask** sits beside the search box and lights up once a search has matches: it hands
+the best two dozen matching passages to an agent along with the question, and shows the answer above
+the cards with a number on every claim. Clicking a number selects that conversation on the map, so
 nothing has to be taken on faith.
 
 Three things worth knowing. It is a **second, explicit act** - typing searches, free and instantly;
@@ -845,10 +845,16 @@ Ask costs one agent call, and the button names the agent before you press it. Th
 you can drop to the source whenever you distrust the answer. And when more conversations matched
 than fit in one question, it **says how many it left out** rather than implying it read everything.
 
-Ask is offered only when your project's agent can do it, and answers only from the excerpts it was
-given. Asked something the index does not cover, it says so rather than guessing - and it cannot
-answer questions about the board itself ("what is the largest task?"), because those are facts about
-tasks rather than anything written in a conversation.
+**Which agent answers** is its own setting, because the agent that runs your tasks and the agent
+that reads their history are different choices, and not every agent can do the second. Settings >
+Memory > **Answering agent** lists the ones that can. It defaults to **Follow the project**, which
+uses your project's default agent when that agent is capable and any capable agent when it is not.
+Ask is hidden entirely when nothing installed can answer.
+
+Ask answers only from the excerpts it was given. Asked something the index does not cover, it says
+so rather than guessing - and it cannot answer questions about the board itself ("what is the
+largest task?"), because those are facts about tasks rather than anything written in a
+conversation.
 
 **The coverage strip** across the top reports what is actually indexed. Two entries are worth
 understanding:
