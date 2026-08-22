@@ -273,9 +273,9 @@ export function registerSessionTools(server: McpServer, resolver: RequestResolve
       callHandler('reserve_dev_ports', { taskId, count }, ctx, 'Failed to reserve dev ports')),
   );
 
-  // --- kangentic_list_dev_ports ---
+  // --- kangentic_check_dev_ports ---
   server.registerTool(
-    'kangentic_list_dev_ports',
+    'kangentic_check_dev_ports',
     {
       description: 'Report what Kangentic has reserved for a task AND whether anything is actually listening on those ports right now. Every port is probed, so this also answers the case the reservation ledger cannot: a dev server started outside Kangentic, on a port Kangentic never handed out. Pass `ports` to ask about specific numbers - your project\'s own configured 4200 or 3000, say - and each comes back as reserved-by-you, reserved-by-another-task, in-use-outside-Kangentic, or free. Use it to recover ports you were given earlier in a session (after a resume, or before restarting a server) instead of reserving again, and to check a port before binding it. Reserves nothing.',
       inputSchema: z.object({
@@ -286,7 +286,7 @@ export function registerSessionTools(server: McpServer, resolver: RequestResolve
       annotations: READ_ONLY_ANNOTATIONS,
     },
     async ({ taskId, ports, project }) => withProject(resolver, project, (ctx) =>
-      callHandler('list_dev_ports', { taskId, ports }, ctx, 'Failed to list dev ports')),
+      callHandler('check_dev_ports', { taskId, ports }, ctx, 'Failed to check dev ports')),
   );
 
   // --- kangentic_query_db ---

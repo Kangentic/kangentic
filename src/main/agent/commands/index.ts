@@ -18,7 +18,7 @@ import { handleGetHandoffContext } from './handoff-commands';
 import { handleGetTranscript, handleQueryDb } from './inspect-commands';
 import { handleGetSessionFiles, handleGetSessionEvents } from './session-files-commands';
 import { handleGetActivityIntervals } from './activity-interval-commands';
-import { handleReserveDevPorts, handleListDevPorts } from './dev-port-commands';
+import { handleReserveDevPorts, handleCheckDevPorts } from './dev-port-commands';
 import type { CommandHandler } from './types';
 
 /**
@@ -64,5 +64,5 @@ export const commandHandlers: Record<string, CommandHandler> = {
   get_session_events: handleGetSessionEvents,
   get_activity_intervals: handleGetActivityIntervals,
   reserve_dev_ports: handleReserveDevPorts,
-  list_dev_ports: handleListDevPorts,
+  check_dev_ports: handleCheckDevPorts,
 };

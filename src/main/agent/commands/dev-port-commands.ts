@@ -10,9 +10,10 @@ import type { CommandContext, CommandHandler, CommandResponse } from './types';
 const MAX_PORTS_PER_REQUEST = 10;
 
 /**
- * Bounded because listing PROBES, and the probe is sequential with a 500ms
- * worst case per port. An unbounded list would be a wall-clock hole in an MCP
- * call rather than a memory problem.
+ * Bounded because checking PROBES, and a probe momentarily binds a free port
+ * (see isPortFree's race note). NOT for time: 20 ports measures at ~7ms, so
+ * this is a blast-radius cap, not a latency one. A caller should be naming the
+ * ports it is about to bind, and twenty is already generous for that.
  */
 const MAX_PORTS_PER_QUERY = 20;
 
@@ -109,7 +110,7 @@ function describeStatus(status: DevPortStatus): string {
  * Reserves nothing, ever. A caller that finds a port taken reserves a different
  * one with kangentic_reserve_dev_ports.
  */
-export const handleListDevPorts: CommandHandler = async (
+export const handleCheckDevPorts: CommandHandler = async (
   params: Record<string, unknown>,
 ): Promise<CommandResponse> => {
   const taskId = typeof params.taskId === 'string' && params.taskId ? params.taskId : null;

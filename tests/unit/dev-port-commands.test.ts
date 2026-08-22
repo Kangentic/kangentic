@@ -38,7 +38,7 @@ function status(
   return { port, reservation, listening };
 }
 
-const { handleReserveDevPorts, handleListDevPorts } = await import(
+const { handleReserveDevPorts, handleCheckDevPorts } = await import(
   '../../src/main/agent/commands/dev-port-commands'
 );
 
@@ -151,12 +151,12 @@ describe('handleReserveDevPorts', () => {
   });
 });
 
-describe('handleListDevPorts', () => {
+describe('handleCheckDevPorts', () => {
   it('probes what the task holds, and never reserves', async () => {
     getDevPortsForTask.mockReturnValue([7300, 7301]);
     describeDevPorts.mockResolvedValue([status(7300, 'this-task', true), status(7301, 'this-task', false)]);
 
-    const result = await handleListDevPorts({ taskId: 'task-1' }, context);
+    const result = await handleCheckDevPorts({ taskId: 'task-1' }, context);
 
     expect(result.success).toBe(true);
     expect(describeDevPorts).toHaveBeenCalledWith('task-1', [7300, 7301]);
@@ -170,7 +170,7 @@ describe('handleListDevPorts', () => {
   it('tells an agent holding nothing that this is normal, and what to call', async () => {
     // Empty is the usual state now that nothing is reserved up front. A bare
     // "no ports" reads like a failure and invites a pointless retry.
-    const result = await handleListDevPorts({ taskId: 'task-1' }, context);
+    const result = await handleCheckDevPorts({ taskId: 'task-1' }, context);
     expect(result.success).toBe(true);
     expect(result.message).toContain('normal state');
     expect(result.message).toContain('kangentic_reserve_dev_ports');
@@ -178,7 +178,7 @@ describe('handleListDevPorts', () => {
   });
 
   it('requires a taskId', async () => {
-    const result = await handleListDevPorts({}, context);
+    const result = await handleCheckDevPorts({}, context);
     expect(result.success).toBe(false);
     expect(getDevPortsForTask).not.toHaveBeenCalled();
   });
@@ -188,34 +188,34 @@ describe('handleListDevPorts', () => {
     // give, and the reason this tool probes at all.
     it('reports a port in use OUTSIDE Kangentic as taken', async () => {
       describeDevPorts.mockResolvedValue([status(4200, null, true)]);
-      const result = await handleListDevPorts({ taskId: 'task-1', ports: [4200] }, context);
+      const result = await handleCheckDevPorts({ taskId: 'task-1', ports: [4200] }, context);
       expect(result.success).toBe(true);
       expect(result.message).toContain('IN USE by something outside Kangentic');
     });
 
     it('reports an unreserved, unlistened port as free', async () => {
       describeDevPorts.mockResolvedValue([status(3000, null, false)]);
-      const result = await handleListDevPorts({ taskId: 'task-1', ports: [3000] }, context);
+      const result = await handleCheckDevPorts({ taskId: 'task-1', ports: [3000] }, context);
       expect(result.message).toContain('free');
     });
 
     it('says a port is yours with a server already on it', async () => {
       getDevPortsForTask.mockReturnValue([7300]);
       describeDevPorts.mockResolvedValue([status(7300, 'this-task', true)]);
-      const result = await handleListDevPorts({ taskId: 'task-1' }, context);
+      const result = await handleCheckDevPorts({ taskId: 'task-1' }, context);
       expect(result.message).toContain('yours, server running');
     });
 
     it('says a port is yours with nothing on it, so a restart is safe', async () => {
       getDevPortsForTask.mockReturnValue([7300]);
       describeDevPorts.mockResolvedValue([status(7300, 'this-task', false)]);
-      const result = await handleListDevPorts({ taskId: 'task-1' }, context);
+      const result = await handleCheckDevPorts({ taskId: 'task-1' }, context);
       expect(result.message).toContain('free to start on');
     });
 
     it('warns off another task\'s reservation without naming the task', async () => {
       describeDevPorts.mockResolvedValue([status(7305, 'other-task', true)]);
-      const result = await handleListDevPorts({ taskId: 'task-1', ports: [7305] }, context);
+      const result = await handleCheckDevPorts({ taskId: 'task-1', ports: [7305] }, context);
       expect(result.message).toContain('do not use');
       expect(result.message).not.toContain('task-2');
     });
@@ -224,14 +224,14 @@ describe('handleListDevPorts', () => {
   describe('the ports argument', () => {
     it('probes the task\'s own reservations AND the ports asked about', async () => {
       getDevPortsForTask.mockReturnValue([7300]);
-      await handleListDevPorts({ taskId: 'task-1', ports: [4200, 3000] }, context);
+      await handleCheckDevPorts({ taskId: 'task-1', ports: [4200, 3000] }, context);
       expect(describeDevPorts).toHaveBeenCalledWith('task-1', [3000, 4200, 7300]);
     });
 
     it('deduplicates a port the task already holds', async () => {
       // Otherwise it is probed twice and reported as two disagreeing rows.
       getDevPortsForTask.mockReturnValue([7300]);
-      await handleListDevPorts({ taskId: 'task-1', ports: [7300] }, context);
+      await handleCheckDevPorts({ taskId: 'task-1', ports: [7300] }, context);
       expect(describeDevPorts).toHaveBeenCalledWith('task-1', [7300]);
     });
 
@@ -239,13 +239,13 @@ describe('handleListDevPorts', () => {
       // A caller reading just that field gets what it always got.
       getDevPortsForTask.mockReturnValue([7300]);
       describeDevPorts.mockResolvedValue([status(4200, null, true), status(7300, 'this-task', true)]);
-      const result = await handleListDevPorts({ taskId: 'task-1', ports: [4200] }, context);
+      const result = await handleCheckDevPorts({ taskId: 'task-1', ports: [4200] }, context);
       expect((result.data as { ports: number[] }).ports).toEqual([7300]);
     });
 
     it('refuses more than 20, because every one is probed', async () => {
       const tooMany = Array.from({ length: 21 }, (unused, index) => 3000 + index);
-      const result = await handleListDevPorts({ taskId: 'task-1', ports: tooMany }, context);
+      const result = await handleCheckDevPorts({ taskId: 'task-1', ports: tooMany }, context);
       expect(result.success).toBe(false);
       expect(result.error).toContain('at most 20');
       expect(describeDevPorts).not.toHaveBeenCalled();
@@ -253,12 +253,12 @@ describe('handleListDevPorts', () => {
 
     it('accepts exactly 20', async () => {
       const atCap = Array.from({ length: 20 }, (unused, index) => 3000 + index);
-      const result = await handleListDevPorts({ taskId: 'task-1', ports: atCap }, context);
+      const result = await handleCheckDevPorts({ taskId: 'task-1', ports: atCap }, context);
       expect(result.success).toBe(true);
     });
 
     it('refuses a non-array and says how to omit it', async () => {
-      const result = await handleListDevPorts({ taskId: 'task-1', ports: 4200 }, context);
+      const result = await handleCheckDevPorts({ taskId: 'task-1', ports: 4200 }, context);
       expect(result.success).toBe(false);
       expect(result.error).toContain('array');
       expect(describeDevPorts).not.toHaveBeenCalled();
@@ -275,7 +275,7 @@ describe('handleListDevPorts', () => {
 
     for (const [label, value] of badPorts) {
       it(`refuses ${label} and probes nothing`, async () => {
-        const result = await handleListDevPorts({ taskId: 'task-1', ports: [value] }, context);
+        const result = await handleCheckDevPorts({ taskId: 'task-1', ports: [value] }, context);
         expect(result.success).toBe(false);
         expect(result.error).toContain('between 1 and 65535');
         expect(describeDevPorts).not.toHaveBeenCalled();
@@ -283,7 +283,7 @@ describe('handleListDevPorts', () => {
     }
 
     it('names the offending entry so the agent can see what it sent', async () => {
-      const result = await handleListDevPorts({ taskId: 'task-1', ports: [4200, 80.5] }, context);
+      const result = await handleCheckDevPorts({ taskId: 'task-1', ports: [4200, 80.5] }, context);
       expect(result.error).toContain('80.5');
     });
   });

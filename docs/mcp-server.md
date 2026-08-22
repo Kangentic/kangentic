@@ -870,7 +870,7 @@ common framework defaults - 3000, 4200, 4321, 5000, 5173, 8000, 8080.
 | `count` | number | No | How many ports to reserve (1-10). Default 1. Ask for all of them at once. |
 | `project` | string | No | Project selector (name or UUID). Defaults to the URL-path project. |
 
-### kangentic_list_dev_ports
+### kangentic_check_dev_ports
 
 Report what Kangentic has reserved for a task **and** what the machine actually says about those
 ports. Reserves nothing.
