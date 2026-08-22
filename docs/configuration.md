@@ -47,6 +47,7 @@ These settings appear only in App Settings and cannot be overridden per-project:
 - `dictation.*` (all voice dictation settings)
 - `memory.*` (conversation search + recall, in the Memory tab)
 - `mobileBridge.*` (mobile companion app pairing/relay, in the Mobile Devices tab)
+- `devServer.*` (dev-server port reservation range; global-only because the ledger is machine-wide, and not exposed in Settings UI)
 - `hotkeyOverrides`
 
 ### Per-Project Overridable Settings
@@ -269,6 +270,32 @@ profiles (including across projects) via the `kangentic_*_board_profile` MCP too
 | `mcpServer.enabled` | boolean | `true` | Allow agents to create and query tasks via MCP tools. When disabled, no kangentic MCP server is injected into sessions. See [MCP Server](mcp-server.md). |
 | `mcpServer.bindAddress` | string | `'127.0.0.1'` | Interface the in-process MCP HTTP server listens on. Not exposed in Settings UI - edit `config.json` directly. Widening past loopback exposes the server to other machines; read once at startup. Use a wildcard (`0.0.0.0`), which binds loopback too - binding one specific non-loopback interface leaves loopback unbound and breaks every local agent. See [MCP Server > Network Access](mcp-server.md). |
 | `mcpServer.callbackHost` | string \| undefined | unset | Not exposed in Settings UI - edit `config.json` directly. Allowlisted alongside `bindAddress` for DNS-rebinding-protection so a real external request is not rejected. Does not auto-wire a remote OpenCode session (see [MCP Server > Network Access](mcp-server.md)). |
+
+### devServer.*
+
+Reservation range for `kangentic_reserve_dev_ports` / `kangentic_check_dev_ports`.
+Kangentic does not decide what a project's ports should be - the project already
+does, in its own config - so nothing is reserved until an agent asks. See
+[MCP Server](mcp-server.md) for the tools and
+[Database](database.md) for the `dev_ports` ledger.
+
+Neither key is exposed in Settings UI - edit `config.json` directly. Note that
+neither appears in `DEFAULT_CONFIG` either: the defaults below come from
+`DEFAULT_DEV_PORT_RANGE_START` / `DEFAULT_DEV_PORT_RANGE_END` in
+`src/main/dev-ports/dev-port-allocator.ts`, applied when the key is unset.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `devServer.portRangeStart` | number | `7300` | First port considered when reserving. |
+| `devServer.portRangeEnd` | number | `7499` | Last port considered, inclusive. |
+
+The 7300-7499 window is deliberately boring: it misses every common framework
+default (3000, 4200, 4321, 5000, 5173-5174, 8000, 8080, 9000, 9229), so a
+collision is the exception the probe handles rather than the first thing that
+happens. An earlier default of 4200 is Angular's, and the first reservation on an
+Angular developer's machine landed on their own running app. Widening this range
+to overlap a running dev server is safe but pointless: the probe refuses any port
+something is listening on.
 
 ### notifications.*
 

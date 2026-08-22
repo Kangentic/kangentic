@@ -1351,7 +1351,7 @@ same caveat the Claude adapter documents).
 
 ## Prompt Templates
 
-Actions of type `spawn_agent` can define a `promptTemplate` with `{{placeholder}}` variables. The full variable set (`task_xml`, `title`, `description`, `taskId`, `worktreePath`, `branchName`, `baseBranch`, `prUrl`, `prNumber`, `attachments`) is documented once, in the transition engine's [Template Variables](transition-engine.md#template-variables) section. The two families worth calling out for prompt authoring:
+Actions of type `spawn_agent` can define a `promptTemplate` with `{{placeholder}}` variables. The full variable set (`task_xml`, `title`, `description`, `taskId`, `worktreePath`, `branchName`, `baseBranch`, `prUrl`, `prNumber`, `attachments`, `port`) is documented once, in the transition engine's [Template Variables](transition-engine.md#template-variables) section. The two families worth calling out for prompt authoring:
 
 - `{{task_xml}}` is the preferred default: a `<task><title>...</title><description>...</description></task>` envelope (escaped).
 - `{{title}}` / `{{description}}` remain for backward compatibility with custom prose templates.

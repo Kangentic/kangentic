@@ -140,7 +140,7 @@ One declaration (`src/shared/task-template-vars.ts`) drives every consumer: the
 `promptTemplate`, the Automation section's "Template variable" picker, and this
 table - see `tests/unit/task-template-vars-parity.test.ts`. Because the picker
 shows each entry's `description`, that field is user-facing copy and should stay
-to one line. All 10 keywords resolve
+to one line. All 11 keywords resolve
 identically in both `auto_command` and `promptTemplate`; `send_command` /
 `run_script` / `webhook` use the same values but keep literal, non-collapsing
 substitution (an unknown or empty `{{key}}` is left as-is, matching

@@ -4,7 +4,7 @@
 
 Kangentic uses a two-database design:
 
-- **Global DB** (`<configDir>/index.db`) -- stores the project list and global configuration.
+- **Global DB** (`<configDir>/index.db`) -- stores the project list, global configuration, and dev-server port reservations.
 - **Per-project DB** (`<configDir>/projects/<projectId>.db`) -- stores tasks, swimlanes, actions, and sessions for a single project.
 
 This separation keeps project data isolated. Deleting a project removes only its database file.
@@ -64,6 +64,32 @@ All queries are synchronous via **better-sqlite3** -- they block the Node.js eve
 |--------|------|-------------|
 | key | TEXT | PRIMARY KEY |
 | value | TEXT | NOT NULL |
+
+### dev_ports table
+
+Dev-server port reservations. GLOBAL rather than per-project by necessity, not
+by policy: ports are a machine-wide resource, so two projects both defaulting to
+5173 is exactly the collision a per-project table could not see.
+
+| Column | Type | Constraints |
+|--------|------|-------------|
+| port | INTEGER | PRIMARY KEY |
+| project_id | TEXT | NOT NULL |
+| task_id | TEXT | NOT NULL |
+| allocated_at | TEXT | NOT NULL |
+
+Indexes: `idx_dev_ports_project` on `project_id`, and `idx_dev_ports_task` on
+`task_id`. The `task_id` index is deliberately **NOT unique** -- a task may hold
+several ports (an API, a frontend, a mock server), reserved together so a
+sibling task cannot be handed one in between. `port` stays the primary key, so a
+PORT still cannot be held twice.
+
+A row is ADVISORY, never authoritative: whether a port is actually usable is
+answered by a bind-and-connect probe (`src/main/dev-ports/dev-port-allocator.ts`),
+which is what lets a stale reservation self-correct instead of permanently
+burning a port. Rows are released when the task is deleted
+(`TaskRepository.delete`) or its project is removed (`ProjectRepository.delete`);
+there is no background reclaim.
 
 ## Per-Project DB Schema
 
@@ -608,6 +634,7 @@ Listed in execution order (idempotent, gated on `IF NOT EXISTS` / `pragma table_
 2. **`group_id` column on projects** -- adds nullable foreign key linking projects to their group.
 3. **`position` column on projects** -- adds explicit project ordering. Backfills positions based on `last_opened DESC` order to preserve the original visual order.
 4. **`default_model` and `default_effort` columns on projects** - adds `default_model TEXT` and `default_effort TEXT` (both nullable, no default). Per-project model/effort defaults mirroring the existing `default_agent`; unlike `default_agent`, NULL is a valid "no project preference" state that falls through to the CLI/agent default. Read at spawn time as the tier between a column's `model_override`/`effort_override` and the CLI default, but only when the agent the spawn resolves to equals `default_agent` - these ids are adapter-specific, so the project tier does not follow a task or column that overrides the agent (`projectModelDefaultsApply`). Idempotent guarded `ALTER TABLE`.
+5. **`dev_ports` table** - creates the dev-server reservation ledger plus `idx_dev_ports_project` and a NON-unique `idx_dev_ports_task`, so one task can hold several ports. The migration also carries a guarded drop of an earlier UNIQUE index on `task_id`. That guard only ever fires against a database built by an intermediate commit of the same change (a developer's own preview, or a reviewer who ran the branch twice) - no RELEASED version carried the unique shape, so do not read the drop as evidence that shipped data does.
 
 ## Repository Pattern
 
@@ -787,6 +814,25 @@ Operates on a per-project DB. Append-only ledger of finalized session usage. Dec
 | `countSessionsRepresented(since, until, ids)` | COUNT of the given `session_record_id`s already in the window's ledger - the live-session dedup for the SESSIONS KPI. |
 
 The aggregation is pushed into SQL (replacing the old raw-row `listRowsAfter` + JS fold) so the synchronous main-process JS work is O(buckets), not O(historical rows); the remaining folds live in the pure functions of `src/main/usage-stats/bucketing.ts`, consumed by the `USAGE_GET_DASHBOARD_STATS` IPC handler and the `kangentic_get_usage_stats` MCP tool via `usageStatsService`.
+
+### DevPortRepository
+
+Operates on the global DB (`getGlobalDb()`), like `ProjectRepository`. Deliberately
+narrow: every method has a live caller, and reads this table could support but
+nothing asks for are left unwritten rather than kept warm.
+
+| Method | Description |
+|--------|-------------|
+| `listForTask(taskId)` | Every port a task holds, lowest first |
+| `getByTaskId(taskId)` | The task's lowest-numbered reservation, or null (what `{{port}}` resolves to) |
+| `getByPort(port)` | The reservation on a port, or null |
+| `claim(port, projectId, taskId)` | `INSERT OR IGNORE`; false when the port was taken between the caller's probe and this write, so a racing allocator retries the next candidate instead of throwing |
+| `releaseByTaskId(taskId)` | Release every port a task holds |
+
+Project removal releases that project's ports too, but does so with raw SQL inside
+`ProjectRepository.delete`'s transaction (both tables live in the global DB and the
+delete has to be atomic with it), so there is deliberately no `releaseForProject`
+here.
 
 ## Connection Management
 

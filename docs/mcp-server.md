@@ -986,6 +986,7 @@ Tool categories (16 tools):
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `url` | string | No | Absolute http(s) URL to load. Falls back to the task's saved Browser URL, then the project default. |
+| `isolated` | boolean | No | Open a private offscreen LANE instead of the user's visible pane, and return its handle. Pass that handle back as `sessionId` on every later call, or the drive falls back to the shared pane and the isolation silently does nothing. See [Isolated browser lanes](#isolated-browser-lanes). |
 
 The URL is part of the same call by necessity: a pane with no URL renders the empty state and registers no `<webview>` guest, so it is invisible to `list_panes`, `navigate`, `screenshot`, and every other tool in the family. An open-without-navigate would strand the agent in a state nothing can act on. When no `url` is passed and neither fallback exists, the tool fails with `no-url` rather than opening an unusable pane.
 
