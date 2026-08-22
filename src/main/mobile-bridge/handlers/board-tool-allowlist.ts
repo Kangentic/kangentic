@@ -79,6 +79,14 @@ export const MOBILE_EXCLUDED_BOARD_TOOLS: ReadonlySet<string> = new Set([
   'list_tasks',
   'list_columns',
   'list_backlog',
+  // Dev-server port reservations are about processes on the DEVELOPER'S
+  // machine: an agent asks for ports it is about to bind, and the answer is
+  // only meaningful next to the dev servers themselves. There is nothing for a
+  // phone to do with one, and reserving from a phone would take a port out of
+  // the pool with nothing ever binding it. Excluded rather than classified, so
+  // neither name has to enter the published protocol tuples.
+  'reserve_dev_ports',
+  'check_dev_ports',
 ]);
 
 /** True only for a `commandHandlers` key that is both classified here and not on the exclusion list. */
