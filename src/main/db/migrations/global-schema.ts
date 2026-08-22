@@ -94,6 +94,14 @@ export function runGlobalMigrations(db: Database.Database): void {
   // between - which a unique index makes impossible. Dropped and recreated
   // non-unique; `port` stays the primary key, so a PORT still cannot be held
   // twice.
+  //
+  // No RELEASED version ever had the unique index - `dev_ports` and this drop
+  // land in the same change, verified against the real global database, which
+  // has no dev_ports table at all. So this branch only ever fires on a database
+  // built by an intermediate commit of that same change: a developer's own
+  // preview, or a reviewer who ran the branch twice. Kept because it is four
+  // idempotent lines and those databases are real; do not read it as evidence
+  // that shipped data carries the old shape.
   const devPortIndexes = db.pragma('index_list(dev_ports)') as Array<{ name: string; unique: number }>;
   const taskIndex = devPortIndexes.find((index) => index.name === 'idx_dev_ports_task');
   if (taskIndex?.unique) {
