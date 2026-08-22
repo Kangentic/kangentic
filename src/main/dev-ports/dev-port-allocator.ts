@@ -78,51 +78,112 @@ export interface DevPortRangeOptions {
 }
 
 /**
- * True when nothing is listening on `port` on the loopback interface.
+ * True when `port` is genuinely available: nothing is listening on it, and we
+ * can still bind it ourselves.
  *
- * Probes 127.0.0.1 specifically because that is what the Browser pane connects
- * to. A dev server bound to 0.0.0.0 still collides with this bind, so the
- * broader case is covered without probing every interface.
+ * TWO PHASES, and both are load-bearing. This shipped as bind-only and was
+ * wrong - caught by driving a preview, not by any test.
  *
- * Any bind error at all (not just EADDRINUSE) counts as "not free": a port we
- * cannot bind is a port we cannot promise, whatever the reason.
+ *   1. CONNECT to the loopback address on both families. Answers "is something
+ *      listening", including servers this process could never have detected by
+ *      binding.
+ *   2. Only if nothing answered, BIND 127.0.0.1. Answers "can we actually take
+ *      it" - a port can be unbindable while nothing accepts on it.
  *
- * Accepted race, stated because it is inherent to bind-probing rather than a
- * bug to fix: for the ~0.4ms this holds a free port, a dev server trying to
- * bind that exact port fails with EADDRINUSE. A connect probe would avoid it
- * but cannot tell "nothing listening" from "listening and refusing us", which
- * is the distinction the whole ledger rests on. The window is sub-millisecond
- * and the ports probed are ones a caller is about to bind itself.
+ * Why the connect phase exists, measured on Windows (Electron 41, Node 24). A
+ * bind conflict is per-exact-address here, so a bind probe only sees a listener
+ * on the identical address:
+ *
+ *   listener      bind 127.0.0.1   bind ::1     connect (both families)
+ *   127.0.0.1     detected         MISSED       detected
+ *   ::1           MISSED           detected     detected
+ *   0.0.0.0       MISSED           MISSED       detected
+ *   :: (default)  MISSED           MISSED       detected
+ *
+ * The old header claimed "a dev server bound to 0.0.0.0 still collides with
+ * this bind, so the broader case is covered". That is false on Windows - row
+ * three - and the miss that mattered is row two: VITE binds ::1 by default, so
+ * the single most common dev server was invisible to the probe. Reserving could
+ * hand out a port Vite already held, and checking reported it free.
+ *
+ * Linux is stricter about cross-address binds, so some of those rows detect
+ * there. Do not rely on that: assert the OUTCOME (a listener on any of the four
+ * is seen), never which phase caught it. See cross-platform-parity.md.
+ *
+ * Both families are connected EXPLICITLY rather than via 'localhost', so the
+ * answer does not depend on how a machine resolves that name. A host with no
+ * IPv6 errors immediately on the ::1 attempt, which falls through to the bind
+ * phase exactly as "nothing listening" should.
+ *
+ * Any error at all (not just EADDRINUSE) counts as "not free": a port we cannot
+ * bind is a port we cannot promise, whatever the reason.
+ *
+ * Accepted race, inherent to the bind phase rather than a bug to fix: for the
+ * ~0.4ms it holds a free port, a dev server binding that exact port fails with
+ * EADDRINUSE. Connecting FIRST shrinks the exposure - a port anything is
+ * listening on short-circuits and is never bound at all - and the ports that do
+ * reach phase two are ones the caller is about to bind itself.
  */
 export function isPortFree(port: number): Promise<boolean> {
   return new Promise((resolve) => {
-    const probe = net.createServer();
     let settled = false;
+    let socket: net.Socket | null = null;
+    let binder: net.Server | null = null;
 
     const finish = (free: boolean): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      probe.removeAllListeners();
-      try {
-        probe.close();
-      } catch {
-        // Already closed, or never opened. Nothing to do.
+      if (socket) {
+        socket.removeAllListeners();
+        socket.destroy();
+        socket = null;
+      }
+      if (binder) {
+        binder.removeAllListeners();
+        try {
+          binder.close();
+        } catch {
+          // Already closed, or never opened. Nothing to do.
+        }
+        binder = null;
       }
       resolve(free);
     };
 
+    // One budget across BOTH phases: a connect can hang where a bind cannot
+    // (a firewalled address drops the SYN rather than refusing it).
     const timer = setTimeout(() => finish(false), PROBE_TIMEOUT_MS);
     timer.unref?.();
 
-    probe.once('error', () => finish(false));
-    probe.once('listening', () => finish(true));
+    /** Phase 2: nothing answered, so can we take it? */
+    const tryBind = (): void => {
+      if (settled) return;
+      binder = net.createServer();
+      binder.once('error', () => finish(false));
+      binder.once('listening', () => finish(true));
+      try {
+        binder.listen({ port, host: '127.0.0.1', exclusive: true });
+      } catch {
+        finish(false);
+      }
+    };
 
-    try {
-      probe.listen({ port, host: '127.0.0.1', exclusive: true });
-    } catch {
-      finish(false);
-    }
+    /** Phase 1, once per family. `next` runs when this family finds nothing. */
+    const tryConnect = (host: string, next: () => void): void => {
+      if (settled) return;
+      const attempt = net.createConnection({ port, host });
+      socket = attempt;
+      attempt.once('connect', () => finish(false));
+      attempt.once('error', () => {
+        attempt.removeAllListeners();
+        attempt.destroy();
+        if (socket === attempt) socket = null;
+        next();
+      });
+    };
+
+    tryConnect('127.0.0.1', () => tryConnect('::1', tryBind));
   });
 }
 
@@ -227,27 +288,26 @@ export interface DevPortStatus {
  * `listening: true` - in use by something outside this ledger, which is the
  * one no amount of ledger reading could have told them.
  *
- * CHEAP, measured rather than assumed - a loopback bind is a syscall pair, not
- * a network round trip. Medians on a Windows dev machine over 200 samples each:
+ * CHEAP, measured rather than assumed - loopback syscalls, not network round
+ * trips. Medians on a Windows dev machine, 200 samples each:
  *
- *   free port    0.41ms   (the bind succeeds, so a socket is actually created)
- *   busy port    0.03ms   (EADDRINUSE returns before anything is allocated)
- *   20 ports     7ms      (the MCP handler's whole ceiling)
+ *   free port    0.84ms   (two connects find nothing, then a bind succeeds)
+ *   busy port    0.37ms   (the first connect answers; no bind happens at all)
+ *   20 ports     15ms     (the MCP handler's whole ceiling)
+ *   200 ports    145ms    (a full default range, which only a scan reaches)
  *
- * Note the inversion: the OCCUPIED case is ~15x faster, so a caller probing
- * ports that are genuinely in use pays even less than these numbers suggest.
- * PROBE_TIMEOUT_MS (500) is a hang guard for a bind that neither succeeds nor
- * errors; it does not fire on loopback and is nowhere near the operating cost.
- * Do not quote it as the budget - a previous version of this comment did, and
- * overstated a 20-port call by three orders of magnitude.
+ * Note the inversion: the OCCUPIED case is ~2x faster, because a port something
+ * answers on short-circuits at phase one. PROBE_TIMEOUT_MS (500) is a hang
+ * guard covering both phases; it does not fire on loopback and is nowhere near
+ * the operating cost. Do not quote it as the budget - an earlier version of
+ * this comment did, and overstated a 20-port call by three orders of magnitude.
  *
- * Probes sequentially anyway, like every other probe here: at 7ms for the full
- * cap there is nothing to win by opening 20 sockets at once, and serial keeps
- * the momentary bind below one at a time (see the race note under isPortFree).
+ * Probes sequentially, like every other probe here: at 15ms for the full cap
+ * there is nothing to win by opening 20 sockets at once, and serial keeps the
+ * momentary bind to one at a time (see the race note under isPortFree).
  *
  * It takes no cap of its own, so a caller that probes an UNBOUNDED list should
- * bring one - not for time, but because each probe momentarily binds a free
- * port.
+ * bring one - not for time, but because a free port gets momentarily bound.
  */
 export async function describeDevPorts(taskId: string, ports: number[]): Promise<DevPortStatus[]> {
   const statuses: DevPortStatus[] = [];

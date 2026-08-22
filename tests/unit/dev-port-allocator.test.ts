@@ -54,12 +54,23 @@ const {
   DEFAULT_DEV_PORT_RANGE_END,
 } = await import('../../src/main/dev-ports/dev-port-allocator');
 
-/** Occupy a real loopback port for the duration of a test. */
-async function occupyPort(): Promise<{ port: number; release: () => Promise<void> }> {
+/**
+ * Occupy a real loopback port for the duration of a test.
+ *
+ * `host` is a parameter and not a constant for a reason. Every fixture here
+ * bound 127.0.0.1, which is the address the probe bound, so probe and fixture
+ * agreed by construction and the suite was green while the probe could not see
+ * a server on ::1 or 0.0.0.0 - the miss that let VITE (which binds ::1) be
+ * reported as free. A fixture that can only reproduce what the implementation
+ * already does is not testing the implementation.
+ */
+async function occupyPort(
+  host: string = '127.0.0.1',
+): Promise<{ port: number; release: () => Promise<void> }> {
   const server = net.createServer();
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
-    server.listen({ port: 0, host: '127.0.0.1' }, () => resolve());
+    server.listen({ port: 0, host }, () => resolve());
   });
   const address = server.address();
   if (address === null || typeof address === 'string') {
@@ -73,6 +84,24 @@ async function occupyPort(): Promise<{ port: number; release: () => Promise<void
       }),
   };
 }
+
+/**
+ * Whether this machine can listen on IPv6 loopback at all. A CI container with
+ * IPv6 disabled throws EAFNOSUPPORT, and skipping is correct there: the point
+ * of the ::1 cases is a Windows-and-Linux desktop behaviour, not a claim that
+ * every runner has IPv6.
+ */
+async function ipv6LoopbackAvailable(): Promise<boolean> {
+  try {
+    const held = await occupyPort('::1');
+    await held.release();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const HAS_IPV6 = await ipv6LoopbackAvailable();
 
 let opened: Array<() => Promise<void>> = [];
 
@@ -98,6 +127,50 @@ describe('isPortFree', () => {
     const { port } = held;
     await held.release();
     expect(await isPortFree(port)).toBe(true);
+  });
+
+  // The regression this suite existed to catch and did not. A bind conflict is
+  // per-exact-address on Windows, so a 127.0.0.1-only probe saw a 127.0.0.1
+  // listener and nothing else - and Vite, the most common dev server there is,
+  // binds ::1. Assert the OUTCOME for each listener shape, never which phase of
+  // the probe caught it: Linux is stricter about cross-address binds, so the
+  // mechanism legitimately differs by OS while the answer must not.
+  it('sees a listener bound to IPv6 loopback (the Vite default)', async () => {
+    if (!HAS_IPV6) return;
+    const held = await occupyPort('::1');
+    opened.push(held.release);
+    expect(await isPortFree(held.port)).toBe(false);
+  });
+
+  it('sees a listener bound to all IPv4 interfaces', async () => {
+    const held = await occupyPort('0.0.0.0');
+    opened.push(held.release);
+    expect(await isPortFree(held.port)).toBe(false);
+  });
+
+  it('sees a listener on the unspecified (dual-stack) address', async () => {
+    // No host at all - what a server that calls listen(port) with nothing else
+    // gets, which is a very common shape.
+    const server = net.createServer();
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen({ port: 0 }, () => resolve());
+    });
+    const address = server.address() as net.AddressInfo;
+    opened.push(() => new Promise<void>((resolve) => { server.close(() => resolve()); }));
+    expect(await isPortFree(address.port)).toBe(false);
+  });
+
+  it('still reports free when the listener on every shape is gone', async () => {
+    // Guards the inverse: a probe that answered "busy" unconditionally would
+    // pass all four cases above.
+    const shapes = HAS_IPV6 ? ['127.0.0.1', '::1', '0.0.0.0'] : ['127.0.0.1', '0.0.0.0'];
+    for (const host of shapes) {
+      const held = await occupyPort(host);
+      const { port } = held;
+      await held.release();
+      expect(await isPortFree(port)).toBe(true);
+    }
   });
 });
 
@@ -164,7 +237,21 @@ describe('reserveDevPorts', () => {
     const held = await occupyPort();
     opened.push(held.release);
     // Scan a one-port range that is genuinely occupied: the lease table is
-    // empty, so only the bind probe can save us here.
+    // empty, so only the probe can save us here.
+    const ports = await reserveDevPorts('proj-1', 'task-1', 1, {
+      rangeStart: held.port,
+      rangeEnd: held.port,
+    });
+    expect(ports).toEqual([]);
+  });
+
+  it('never hands out a port an IPv6-only server holds', async () => {
+    // The reserve path has to inherit the probe fix, not just isPortFree: this
+    // is the case where Kangentic would have handed an agent a port Vite was
+    // already serving on.
+    if (!HAS_IPV6) return;
+    const held = await occupyPort('::1');
+    opened.push(held.release);
     const ports = await reserveDevPorts('proj-1', 'task-1', 1, {
       rangeStart: held.port,
       rangeEnd: held.port,
@@ -260,6 +347,15 @@ describe('describeDevPorts', () => {
     const held = await occupyPort();
     opened.push(held.release);
 
+    const [status] = await describeDevPorts('task-1', [held.port]);
+    expect(status).toEqual({ port: held.port, reservation: null, listening: true });
+  });
+
+  it('reports an IPv6-only listener as in use outside Kangentic', async () => {
+    // The row the whole feature exists for, on the address Vite actually uses.
+    if (!HAS_IPV6) return;
+    const held = await occupyPort('::1');
+    opened.push(held.release);
     const [status] = await describeDevPorts('task-1', [held.port]);
     expect(status).toEqual({ port: held.port, reservation: null, listening: true });
   });

@@ -10,8 +10,8 @@ import type { CommandContext, CommandHandler, CommandResponse } from './types';
 const MAX_PORTS_PER_REQUEST = 10;
 
 /**
- * Bounded because checking PROBES, and a probe momentarily binds a free port
- * (see isPortFree's race note). NOT for time: 20 ports measures at ~7ms, so
+ * Bounded because checking PROBES, and probing a FREE port momentarily binds it
+ * (see isPortFree's race note). NOT for time: 20 ports measures at ~15ms, so
  * this is a blast-radius cap, not a latency one. A caller should be naming the
  * ports it is about to bind, and twenty is already generous for that.
  */
