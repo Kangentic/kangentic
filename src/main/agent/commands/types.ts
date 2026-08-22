@@ -2,8 +2,20 @@ import type Database from 'better-sqlite3';
 import type { BoardProfile, Task, Swimlane } from '../../../shared/types';
 
 export interface CommandContext {
+  /**
+   * The project this call is scoped to. Bound to the REQUEST's project, not the
+   * active one, exactly like `getProjectPath` - a cross-project tool call must
+   * record against the board it targets.
+   */
+  projectId: string;
   getProjectDb: () => Database.Database;
   getProjectPath: () => string;
+  /**
+   * The machine-wide dev-server port range. Global rather than per-project
+   * because ports are a machine resource: two projects competing for one is the
+   * collision the range exists to avoid.
+   */
+  getDevServerPortRange: () => { rangeStart?: number; rangeEnd?: number };
   /**
    * This project's Board Profiles, read from `kangentic.json`. Profiles are
    * config-only (no DB table), so `getProjectDb` cannot reach them.

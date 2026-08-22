@@ -257,6 +257,37 @@ export function registerSessionTools(server: McpServer, resolver: RequestResolve
     }),
   );
 
+  // --- kangentic_reserve_dev_ports ---
+  server.registerTool(
+    'kangentic_reserve_dev_ports',
+    {
+      description: 'Reserve free TCP ports before you start a dev server, so two agents working at the same time never bind the same one. Kangentic does NOT decide what your ports should be - your project already does, in angular.json, a vite config, a compose file - so nothing is reserved until you ask. What Kangentic can do that your project cannot is see every task and every project on this machine at once. Ask ONLY when your configured port might already be taken (several tasks in one column run concurrently, and they all default to the same port). Request every port you are about to bind in ONE call: a project needing an API and a frontend asks for 2, because asking twice leaves a window where another task takes the second. Each returned port has been probed as genuinely free, not merely unclaimed. Fewer ports than requested means the range ran out - fall back to your project\'s own configured ports for the rest. Ports stay reserved for the task until it is deleted, so a restart reuses the same ones.',
+      inputSchema: z.object({
+        taskId: z.string().describe('The task reserving the ports (numeric display ID or UUID). Resolve it with kangentic_get_current_task.'),
+        count: z.number().int().min(1).max(10).optional().describe('How many ports you are about to bind. Default 1. Ask for all of them at once.'),
+        project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
+      }),
+      annotations: MUTATING_ANNOTATIONS,
+    },
+    async ({ taskId, count, project }) => withProject(resolver, project, (ctx) =>
+      callHandler('reserve_dev_ports', { taskId, count }, ctx, 'Failed to reserve dev ports')),
+  );
+
+  // --- kangentic_list_dev_ports ---
+  server.registerTool(
+    'kangentic_list_dev_ports',
+    {
+      description: 'List the TCP ports already reserved by a task, without reserving more. Use it to recover the ports you were given earlier in a session (for example after a resume, or before restarting a server) instead of calling kangentic_reserve_dev_ports again. An empty list means the task has reserved none, which is the normal state for a task using its project\'s own configured ports.',
+      inputSchema: z.object({
+        taskId: z.string().describe('Task ID (numeric display ID or UUID).'),
+        project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
+      }),
+      annotations: READ_ONLY_ANNOTATIONS,
+    },
+    async ({ taskId, project }) => withProject(resolver, project, (ctx) =>
+      callHandler('list_dev_ports', { taskId }, ctx, 'Failed to list dev ports')),
+  );
+
   // --- kangentic_query_db ---
   server.registerTool(
     'kangentic_query_db',

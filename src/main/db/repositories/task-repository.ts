@@ -617,18 +617,18 @@ export class TaskRepository {
     });
     tx();
 
-    // Return the task's dev-server port to the pool.
+    // Return the task's dev-server ports to the pool.
     //
     // Deliberately here rather than at the five delete call sites: this is the
-    // one place every task deletion passes through, so the lease cannot be
-    // leaked by a new caller that forgets.
+    // one place every task deletion passes through, so a reservation cannot be
+    // leaked by a new caller that forgets. There is no background sweeper to
+    // catch one that is - this path and ProjectRepository.delete are the only
+    // two that release, by design (see dev-port-allocator.ts's header).
     //
     // Equally deliberately NOT in cleanupTaskResources, which also runs when a
-    // task moves to Done. A lease survives a Done round-trip so the task keeps
-    // the same port for its whole life - its saved Browser-pane URL points at
-    // that port, and re-leasing on the way back would silently stale it.
-    // Genuinely orphaned leases (a task row gone without this path running) are
-    // swept at startup by reclaimStaleDevPorts.
+    // task moves to Done. A reservation survives a Done round-trip so the task
+    // keeps the same ports for its whole life: an agent that comes back to
+    // restart its dev server should find the numbers it was already using.
     //
     // Outside the transaction because it writes the GLOBAL database, which the
     // project-scoped transaction above does not cover.

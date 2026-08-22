@@ -49,13 +49,18 @@ export class DevPortRepository {
     return rows.map(rowToLease);
   }
 
-  /** The lease held by a task, or null. This is the read `{{port}}` resolves. */
-  getByTaskId(taskId: string): DevPortLease | null {
+  /** Every port this task holds, lowest first. A task may hold several. */
+  listForTask(taskId: string): DevPortLease[] {
     const db = getGlobalDb();
-    const row = db
-      .prepare('SELECT * FROM dev_ports WHERE task_id = ?')
-      .get(taskId) as DevPortRow | undefined;
-    return row ? rowToLease(row) : null;
+    const rows = db
+      .prepare('SELECT * FROM dev_ports WHERE task_id = ? ORDER BY port ASC')
+      .all(taskId) as DevPortRow[];
+    return rows.map(rowToLease);
+  }
+
+  /** The task's lowest-numbered reservation, or null. */
+  getByTaskId(taskId: string): DevPortLease | null {
+    return this.listForTask(taskId)[0] ?? null;
   }
 
   getByPort(port: number): DevPortLease | null {
@@ -71,8 +76,8 @@ export class DevPortRepository {
    * caller's scan and this write, so a racing allocator retries the next
    * candidate rather than throwing.
    *
-   * `INSERT OR IGNORE` covers both unique constraints at once: the `port`
-   * primary key and the `task_id` unique index.
+   * `INSERT OR IGNORE` turns the `port` primary-key collision into that false.
+   * A task may hold several ports, so only the PORT is unique here.
    */
   claim(port: number, projectId: string, taskId: string): boolean {
     const db = getGlobalDb();

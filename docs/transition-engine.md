@@ -158,7 +158,7 @@ substitution (an unknown or empty `{{key}}` is left as-is, matching
 | `{{prUrl}}` | Pull request URL (empty if none) |
 | `{{prNumber}}` | Pull request number as string (empty if none) |
 | `{{attachments}}` | Bare file paths (one per line) when present |
-| `{{port}}` | Dev-server port leased to this task (empty if none) - a raw read, never falls back to another task's port. Typical use: `npm run dev -- --port {{port}}` |
+| `{{port}}` | Lowest dev-server port this task has RESERVED (empty if none, which is the normal state) - a raw read, never falls back to another task's port |
 
 In `auto_command` and `promptTemplate` specifically, an empty-valued or unknown
 `{{key}}` is dropped and surrounding horizontal whitespace collapses (newlines
@@ -166,12 +166,15 @@ are preserved), so `/code-review {{baseBranch}}` with no configured default
 still yields `/code-review`, not a trailing space or a literal placeholder.
 
 Note what that means for a FLAG-shaped placeholder: `--port {{port}}` with no
-lease collapses to a bare `--port`, which most CLIs reject. That is deliberate.
-A task without a port failing loudly is better than it silently starting a dev
-server on a port another task owns, which is the collision `{{port}}` exists to
-prevent. A worktree task is leased a port when its worktree is created, so in
-practice only a task with no worktree resolves empty - and such a task should
-not use `{{port}}`.
+reservation collapses to a bare `--port`, which most CLIs reject.
+
+That matters more than it used to, because Kangentic reserves NOTHING up front.
+A port exists for a task only once its agent asked for one
+(`kangentic_reserve_dev_ports`), so empty is the normal state, not the edge
+case. A column `auto_command` shared by every task in a column therefore should
+not template `{{port}}` in - most of those tasks hold no reservation. Prefer
+letting the agent reserve the ports it is about to bind and use them directly;
+reach for `{{port}}` only where the task is known to hold one.
 
 Shortcut commands use a separate set of template variables. See [Configuration](configuration.md#shortcuts) for the full list.
 

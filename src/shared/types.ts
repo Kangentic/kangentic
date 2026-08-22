@@ -5112,10 +5112,7 @@ export interface ElectronAPI {
      * resolving these against the ambient current project wrote one project's
      * task URL into another project's sidecar.
      */
-    /** `taskPortUrl` is derived from the task's leased dev-server port, and
-     *  outranks the project default: that default is one value shared by every
-     *  task, so with several tasks running at once it is right for at most one. */
-    getUrls: (taskId: string, projectId?: string | null) => Promise<{ projectDefault: string | null; taskOverride: string | null; taskPortUrl: string | null }>;
+    getUrls: (taskId: string, projectId?: string | null) => Promise<{ projectDefault: string | null; taskOverride: string | null }>;
     setTaskUrl: (taskId: string, url: string, projectId?: string | null) => Promise<void>;
     clearTaskUrl: (taskId: string, projectId?: string | null) => Promise<void>;
     clearStorage: () => Promise<void>;

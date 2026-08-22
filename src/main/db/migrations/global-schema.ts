@@ -84,7 +84,21 @@ export function runGlobalMigrations(db: Database.Database): void {
       last_seen_at TEXT
     );
 
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_dev_ports_task ON dev_ports(task_id);
     CREATE INDEX IF NOT EXISTS idx_dev_ports_project ON dev_ports(project_id);
   `);
+
+  // Migration: a task may hold MORE THAN ONE port.
+  //
+  // The index started UNIQUE, from a design where Kangentic assigned each task a
+  // single port. Real projects bind several (an API, a frontend, a mock server),
+  // and they are reserved together so a sibling task cannot be handed one in
+  // between - which a unique index makes impossible. Dropped and recreated
+  // non-unique; `port` stays the primary key, so a PORT still cannot be held
+  // twice.
+  const devPortIndexes = db.pragma('index_list(dev_ports)') as Array<{ name: string; unique: number }>;
+  const taskIndex = devPortIndexes.find((index) => index.name === 'idx_dev_ports_task');
+  if (taskIndex?.unique) {
+    db.exec('DROP INDEX idx_dev_ports_task');
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_dev_ports_task ON dev_ports(task_id)');
 }

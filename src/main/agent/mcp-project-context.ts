@@ -34,8 +34,13 @@ export function buildCommandContextForProject(
   const projectPath = project.path;
 
   return {
+    projectId,
     getProjectDb: () => getProjectDb(projectId),
     getProjectPath: () => projectPath,
+    getDevServerPortRange: () => {
+      const devServer = ipcContext.configManager.getEffectiveConfig(projectPath).devServer;
+      return { rangeStart: devServer?.portRangeStart, rangeEnd: devServer?.portRangeEnd };
+    },
     // Explicit path, not the active project: a cross-project tool call must
     // resolve its profile selector against the board it is targeting. The same
     // reason applies to the write - an agent syncing profiles between projects

@@ -61,8 +61,8 @@ export class ProjectRepository {
       // transaction because both tables live in the GLOBAL database, and here
       // rather than at the three delete call sites because this is the one path
       // every project removal passes through - the same reasoning as
-      // TaskRepository.delete. Without it a removed project's leases would
-      // block their ports until a range-exhausted allocation swept them.
+      // TaskRepository.delete. Without it a removed project's reservations
+      // would block their ports permanently - nothing sweeps them later.
       db.prepare('DELETE FROM dev_ports WHERE project_id = ?').run(id);
       db.prepare('DELETE FROM projects WHERE id = ?').run(id);
       // Reindex positions to keep them contiguous (0..N-1)

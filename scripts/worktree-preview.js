@@ -107,6 +107,24 @@ function isJunction(p) {
 
 // ---------------------------------------------------------------------------
 // Port finder
+//
+// This deliberately does NOT read Kangentic's dev-port ledger
+// (src/main/dev-ports/dev-port-allocator.ts), even though that ledger exists
+// precisely to stop two things picking the same number.
+//
+// Two reasons, and the first is the load-bearing one. The scan window here
+// (5174-5273) and the reservation range (7300-7499) are disjoint by design, so
+// a preview and an agent's reserved port cannot collide at all. And where a
+// user hand-widens the reserve range in config to overlap this window, the
+// allocator's own bind probe refuses any port a running preview holds - the
+// probe is the protection, not the ledger.
+//
+// The alternative was real cost for that non-collision: this is a plain
+// CommonJS script outside Electron, so reading the global database would mean
+// node:sqlite access to a file better-sqlite3 has open, and registering a lease
+// would mean an ephemeral preview owning one with no release path on a hard
+// close. Not worth it. If the two ranges are ever made to overlap on purpose,
+// revisit this comment first.
 // ---------------------------------------------------------------------------
 
 function isPortFree(port) {

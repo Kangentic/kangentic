@@ -8,7 +8,7 @@ import { TransitionEngine } from '../../transition-engine/transition-engine';
 import { getProjectDb } from '../../db/database';
 import { interpolateTaskTemplate, resolveTaskTemplateVars } from '../../agent/shared';
 import { resolveDefaultBaseBranch } from '../handlers/git-stats-capture';
-import { allocateDevPort, getDevPortForTask } from '../../dev-ports/dev-port-allocator';
+import { getDevPortForTask } from '../../dev-ports/dev-port-allocator';
 import { agentRegistry } from '../../agent/agent-registry';
 import { buildSessionHistoryReference } from '../../agent/handoff/session-history-reference';
 import { DEFAULT_AGENT } from '../../../shared/types';
@@ -197,39 +197,15 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
   // an enclosing task-move).
   const project = options.projectId ? context.projectRepo.getById(options.projectId) : null;
 
-  // Lease this task's dev-server port BEFORE anything interpolates {{port}}.
+  // NOTE: no dev-server port is reserved here, deliberately.
   //
-  // Allocation lives at the spawn chokepoint rather than inside the template
-  // resolver on purpose: `resolveTaskTemplateVars` builds one object that feeds
-  // send_command / run_script / webhook too, and transition-engine.ts builds it
-  // at two call sites, so a lazily-allocating resolver would be a side effect
-  // fanning out across all of them. See
-  // .claude/rules/task-template-vars-parity.md clause 7.
+  // An earlier version leased one per task at spawn. That was backwards: a
+  // project configures its OWN ports (angular.json, vite config, a compose
+  // file), often several, so a number Kangentic invents is meaningless to it -
+  // and reserving one implied a server existed there when nothing had been
+  // started. Ports are now RESERVED ON REQUEST, by whoever is about to bind
+  // one: see kangentic_reserve_dev_ports.
   //
-  // Idempotent per task, so repeated spawns reuse the same port - which is what
-  // makes a task's dev-server URL stable across suspend/resume. Failure is
-  // non-fatal: an exhausted range leaves {{port}} empty rather than blocking a
-  // spawn over a dev-server convenience.
-  if (options.projectId) {
-    try {
-      const devServerConfig = context.configManager.getEffectiveConfig(
-        options.projectPath ?? context.currentProjectPath ?? '',
-      ).devServer;
-      await allocateDevPort(options.projectId, task.id, {
-        rangeStart: devServerConfig?.portRangeStart,
-        rangeEnd: devServerConfig?.portRangeEnd,
-        // Consulted only if the range is exhausted. A lease whose project is no
-        // longer registered cannot belong to anything that will come back, so
-        // it is safe to reclaim once its port also probes free. Deliberately
-        // NOT "the task is gone": that needs the project's own database, and
-        // opening one by an id we have not validated would create a stray file.
-        isLeaseReclaimable: (lease) => context.projectRepo.getById(lease.projectId) === undefined,
-      });
-    } catch (error) {
-      console.warn(`[dev-ports] Could not lease a port for task ${task.id.slice(0, 8)}:`, error);
-    }
-  }
-
   // Auto_command template vars for the current task snapshot. defaultBaseBranch
   // is resolved once per spawn (board config -> project/global config ->
   // 'main') so {{baseBranch}} matches resolveDefaultBaseBranch everywhere else

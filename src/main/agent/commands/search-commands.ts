@@ -5,7 +5,7 @@ import { listActiveSwimlanes } from './column-resolver';
 import { BACKLOG_PRIORITY_LABELS } from '../../../shared/types';
 import type { Task, BacklogTask } from '../../../shared/types';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
-import { getDevPortForTask } from '../../dev-ports/dev-port-allocator';
+import { getDevPortsForTask } from '../../dev-ports/dev-port-allocator';
 
 export type SearchScope = 'board' | 'backlog' | 'both';
 
@@ -339,19 +339,12 @@ export const handleGetCurrentTask: CommandHandler = (
     prUrl: task.pr_url,
     useWorktree: task.use_worktree,
     status: task.archived_at ? 'completed' : 'active',
-    // The dev-server port leased to THIS task, so an agent asked to "start the
-    // app and debug it" can pick its own port without being told one.
-    //
-    // Without this the port is only reachable by the user wiring {{port}} into
-    // a column's auto_command, which is opt-in config. Several tasks sit in one
-    // column at once, all sharing that column's settings, so an agent that
-    // guesses (or uses the framework default) collides with its siblings and
-    // ends up verifying against another task's running app.
-    //
-    // Null when the task has no lease - a task with no worktree, or one created
-    // before it ever spawned. Agents should fall back to their own default
-    // rather than inventing a number.
-    devPort: getDevPortForTask(task.id),
+    // Ports this task has already RESERVED, so an agent recovers them after a
+    // resume instead of reserving again. Usually empty: nothing is reserved
+    // until something asks (kangentic_reserve_dev_ports), because a project
+    // configures its own ports and a number Kangentic invents means nothing to
+    // it.
+    devPorts: getDevPortsForTask(task.id),
   });
 
   if (matches.length === 0) {

@@ -29,73 +29,66 @@ import { describe, it, expect } from 'vitest';
 // stale copy. If the hook's precedence changes again, change it here too.
 function resolveEffectiveUrl(
   taskOverride: string | null,
-  taskPortUrl: string | null,
   projectDefault: string | null,
 ): string | null {
-  return taskOverride ?? taskPortUrl ?? projectDefault ?? null;
+  return taskOverride ?? projectDefault ?? null;
 }
 
-describe('useBrowserUrl resolution rule (taskOverride > taskPortUrl > projectDefault > null)', () => {
-  it('taskOverride wins over everything', () => {
-    expect(
-      resolveEffectiveUrl('http://task.example.com/', 'http://localhost:4200', 'http://project.example.com/'),
-    ).toBe('http://task.example.com/');
-  });
-
-  it('the task"s own leased port beats the project default', () => {
-    // The load-bearing case for parallel work: the project default is ONE value
-    // shared by every task, so with several tasks running it is right for at
-    // most one of them - and pointing a pane at another task's dev server is
-    // exactly the collision the per-task lease exists to remove.
-    expect(resolveEffectiveUrl(null, 'http://localhost:4200', 'http://project.example.com/')).toBe(
-      'http://localhost:4200',
+describe('useBrowserUrl resolution rule (taskOverride > projectDefault > null)', () => {
+  it('taskOverride wins when both are set', () => {
+    expect(resolveEffectiveUrl('http://task.example.com/', 'http://project.example.com/')).toBe(
+      'http://task.example.com/',
     );
   });
 
-  it('projectDefault is used when the task has neither', () => {
-    expect(resolveEffectiveUrl(null, null, 'http://project.example.com/')).toBe(
+  it('projectDefault is used when taskOverride is null', () => {
+    expect(resolveEffectiveUrl(null, 'http://project.example.com/')).toBe(
       'http://project.example.com/',
     );
   });
 
-  it('returns null when all are null (empty state rendered)', () => {
-    expect(resolveEffectiveUrl(null, null, null)).toBeNull();
+  it('returns null when both are null (empty state rendered)', () => {
+    expect(resolveEffectiveUrl(null, null)).toBeNull();
+  });
+
+  it('a RESERVED dev-server port is not part of this rule at all', () => {
+    // Deliberate, and it was briefly wrong the other way. Reserving a port is
+    // not evidence anything is SERVING on it - the project decides its own
+    // ports - so a pane that auto-navigated to a reservation rendered a blank
+    // page for a server nobody had started. The empty state is the better
+    // answer: it at least says what to do next.
+    expect(resolveEffectiveUrl(null, null)).toBeNull();
   });
 
   it('empty-string taskOverride does NOT fall through (falsy but not null)', () => {
     // An empty string task override is a cleared sentinel. `??` treats "" as a
     // non-null value, so it still wins. This documents the raw `??` semantics,
     // not the mock's `|| null` normalisation.
-    expect(resolveEffectiveUrl('', 'http://localhost:4200', 'http://project.example.com/')).toBe('');
+    expect(resolveEffectiveUrl('', 'http://project.example.com/')).toBe('');
   });
 });
 
 // --- source label ---
-type UrlSource = 'task' | 'task-port' | 'project' | 'none';
+type UrlSource = 'task' | 'project' | 'none';
 function resolveSource(
   taskOverride: string | null,
-  taskPortUrl: string | null,
   projectDefault: string | null,
 ): UrlSource {
-  return taskOverride ? 'task' : taskPortUrl ? 'task-port' : projectDefault ? 'project' : 'none';
+  return taskOverride ? 'task' : projectDefault ? 'project' : 'none';
 }
 
 describe('useBrowserUrl source label', () => {
   it('reports task when taskOverride is non-empty', () => {
-    expect(resolveSource('http://task.local/', null, null)).toBe('task');
-    expect(resolveSource('http://task.local/', 'http://localhost:4200', 'http://project.local/')).toBe('task');
-  });
-
-  it('reports task-port when the task has a lease and no override', () => {
-    expect(resolveSource(null, 'http://localhost:4200', 'http://project.local/')).toBe('task-port');
+    expect(resolveSource('http://task.local/', null)).toBe('task');
+    expect(resolveSource('http://task.local/', 'http://project.local/')).toBe('task');
   });
 
   it('reports project when only projectDefault is set', () => {
-    expect(resolveSource(null, null, 'http://project.local/')).toBe('project');
+    expect(resolveSource(null, 'http://project.local/')).toBe('project');
   });
 
-  it('reports none when all are null', () => {
-    expect(resolveSource(null, null, null)).toBe('none');
+  it('reports none when both are null', () => {
+    expect(resolveSource(null, null)).toBe('none');
   });
 });
 

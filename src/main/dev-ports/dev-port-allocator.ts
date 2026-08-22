@@ -1,21 +1,39 @@
 import net from 'node:net';
 import { devPortRepository } from '../db/repositories/dev-port-repository';
-import type { DevPortLease } from '../../shared/types';
 
 /**
- * Dev-server port allocation.
+ * Dev-server port reservations.
  *
- * Kangentic allocates and REMEMBERS a port per task; it never launches or
- * supervises a dev server. The user's own column `auto_command` runs
- * `npm run dev -- --port {{port}}`, so this stays framework-agnostic: nothing
- * here parses a dev server's output or owns a child process.
+ * Kangentic does NOT decide what a project's ports should be. The project
+ * already does, in angular.json, a vite config, a compose file - and a real
+ * project often pins several. Nothing is reserved up front, and a task that
+ * never asks never holds a port.
+ *
+ * What Kangentic can do that a project cannot is see across every task and
+ * every project on the machine. So this answers a QUESTION - "give me N ports
+ * nothing else is using" - and its only job is to stop two agents starting
+ * servers at the same moment from picking the same number. It never launches or
+ * supervises a dev server, and nothing here parses a server's output or owns a
+ * child process.
  *
  * Two-source truth, and the ordering matters:
  *   1. the lease table says what Kangentic has PROMISED,
  *   2. a bind probe says what is ACTUALLY free.
- * A candidate must clear both. That is what makes a leaked lease self-correct
- * rather than permanently burning a port, and it is also what stops Kangentic
- * handing out a port some unrelated process already holds.
+ * A candidate must clear both. The probe is what stops Kangentic handing out a
+ * port some unrelated process already holds.
+ *
+ * LEASE LIFETIME, stated plainly because there is no sweeper. A lease is
+ * released when its task is deleted (TaskRepository.delete) or its project is
+ * removed (ProjectRepository.delete), and those are the only two paths. There
+ * is deliberately no background reclaim: judging whether some other project's
+ * task is still alive would mean opening that project's database from here, and
+ * the two release paths above cover every ordinary case.
+ *
+ * The residual, untreated: a task that reserves ports, finishes, and is neither
+ * deleted nor archived away holds them for its whole life. Reservations are
+ * on-demand and the default range is 200 wide, so this drains slowly if at all -
+ * but it drains in one direction only. If the range ever runs dry in practice,
+ * that is the signal to add a reclaim, not a sign the probe failed.
  */
 
 /**
@@ -48,19 +66,6 @@ const PROBE_TIMEOUT_MS = 500;
 export interface DevPortRangeOptions {
   rangeStart?: number;
   rangeEnd?: number;
-  /**
-   * Whether a lease may be reclaimed if its port also turns out to be free.
-   *
-   * Consulted ONLY when the range is exhausted, which is what keeps the normal
-   * path free of any extra work. Both conditions are required: a task whose dev
-   * server is merely restarting has a live lease and a temporarily silent port,
-   * and stealing that would hand its port to someone else moments before it
-   * comes back.
-   *
-   * Omit it and nothing is ever reclaimed, which is the safe default for a
-   * caller that cannot judge liveness.
-   */
-  isLeaseReclaimable?: (lease: DevPortLease) => boolean;
 }
 
 /**
@@ -127,68 +132,51 @@ export function getDevPortForTask(taskId: string): number | null {
 }
 
 /**
- * Lease a port for a task, or return the one it already holds.
+ * Reserve `count` free ports for a task, in one pass.
  *
- * Idempotent per task: calling twice never allocates twice, which is what lets
- * `ensureWorktree` call it unconditionally.
+ * This is the primitive the whole subsystem exists for. Kangentic does not
+ * decide what a project's ports should be - the project already does, in its own
+ * config - so nothing is assigned up front. A caller about to BIND ports asks
+ * for them, and the ledger's job is only to stop two concurrent agents being
+ * handed the same number.
  *
- * Returns null when the whole range is exhausted. Callers treat that as "no
- * port", not as an error - a task with no lease resolves `{{port}}` to empty
- * and the user's `auto_command` falls back to its own default.
+ * Reserved TOGETHER on purpose: a project that needs an API and a frontend needs
+ * both before it starts either, and asking twice leaves a window where a sibling
+ * task takes the second one. Each candidate still clears the bind probe, so a
+ * port something else already holds is never handed out.
+ *
+ * Returns fewer than `count` only when the range runs out; callers should treat
+ * a short result as "use my own configured ports for the rest" rather than an
+ * error. Already-held ports are returned first and do not count against fresh
+ * reservations, so calling twice with the same count is stable.
  */
-export async function allocateDevPort(
+export async function reserveDevPorts(
   projectId: string,
   taskId: string,
+  count: number,
   options?: DevPortRangeOptions,
-): Promise<number | null> {
-  const existing = devPortRepository.getByTaskId(taskId);
-  if (existing) return existing.port;
+): Promise<number[]> {
+  const wanted = Math.max(1, Math.floor(count));
+  const held = devPortRepository.listForTask(taskId).map((lease) => lease.port);
+  if (held.length >= wanted) return held.slice(0, wanted);
 
   const { start, end } = resolveRange(options);
+  const reserved = [...held];
 
-  const leased = await scanRange(start, end, projectId, taskId);
-  if (leased !== null) return leased;
-
-  // Exhausted. Before giving up, reclaim leases that are provably dead and try
-  // once more.
-  //
-  // Deliberately here rather than on a timer or a startup pass: a timer would
-  // run for the life of the app to serve a table most sessions never fill, and
-  // a startup pass only helps the crash that happened before the last launch.
-  // Running out of ports is the exact moment reclaiming is worth anything, so
-  // that is when it runs - and the normal path pays nothing for it.
-  if (!options?.isLeaseReclaimable) return null;
-  const reclaimed = await reclaimStaleDevPorts((lease) => !options.isLeaseReclaimable!(lease));
-  if (reclaimed.length === 0) return null;
-
-  return scanRange(start, end, projectId, taskId);
-}
-
-/** One pass over the range: first port that is both unleased and bindable. */
-async function scanRange(
-  start: number,
-  end: number,
-  projectId: string,
-  taskId: string,
-): Promise<number | null> {
-  for (let port = start; port <= end; port += 1) {
-    // Cheap check first: skip anything already promised to another task
-    // without paying for a socket probe.
+  for (let port = start; port <= end && reserved.length < wanted; port += 1) {
     if (devPortRepository.getByPort(port)) continue;
-
-    // Sequential on purpose: a parallel sweep of the whole range would open
-    // hundreds of sockets at once just to find one free port.
+    // Sequential by design: a parallel sweep would open the whole range's
+    // worth of sockets just to find a few.
     if (!(await isPortFree(port))) continue;
-
-    // The claim can still lose to a concurrent allocator between the probe and
-    // the write. INSERT OR IGNORE makes that a `false`, not a throw, so we
-    // simply move to the next candidate.
-    if (devPortRepository.claim(port, projectId, taskId)) {
-      return port;
-    }
+    if (devPortRepository.claim(port, projectId, taskId)) reserved.push(port);
   }
 
-  return null;
+  return reserved;
+}
+
+/** Every port currently reserved by a task. */
+export function getDevPortsForTask(taskId: string): number[] {
+  return devPortRepository.listForTask(taskId).map((lease) => lease.port);
 }
 
 export function releaseDevPortForTask(taskId: string): void {
@@ -197,34 +185,4 @@ export function releaseDevPortForTask(taskId: string): void {
 
 export function releaseDevPortsForProject(projectId: string): void {
   devPortRepository.releaseForProject(projectId);
-}
-
-/**
- * Drop leases whose task no longer exists AND whose port nothing is listening
- * on. Both conditions are required: a task mid dev-server restart has a live
- * lease and a temporarily silent port, and reclaiming that would hand its port
- * to someone else moments before it comes back.
- *
- * `isTaskAlive` is injected rather than imported so this stays testable without
- * a project database, and so the caller decides what "alive" means (a task can
- * exist in a project whose DB is not currently open).
- *
- * Returns the ports actually reclaimed, for logging.
- */
-export async function reclaimStaleDevPorts(
-  isTaskAlive: (lease: DevPortLease) => boolean,
-): Promise<number[]> {
-  const reclaimed: number[] = [];
-
-  for (const lease of devPortRepository.list()) {
-    if (isTaskAlive(lease)) continue;
-
-    // Sequential on purpose; this runs once at startup over a small table.
-    if (!(await isPortFree(lease.port))) continue;
-
-    devPortRepository.releaseByPort(lease.port);
-    reclaimed.push(lease.port);
-  }
-
-  return reclaimed;
 }

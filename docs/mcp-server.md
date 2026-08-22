@@ -837,6 +837,46 @@ Response shape:
 | `sessionId` | string | No | Kangentic session UUID (the `sessions.id` column). Returns intervals for that session only. |
 | `project` | string | No | Project selector (name or UUID). Defaults to the URL-path project. |
 
+### kangentic_reserve_dev_ports
+
+Reserve free TCP ports before starting a dev server, so two agents working at the same time never
+bind the same one.
+
+Kangentic does not decide what a project's ports should be - the project already does, in
+`angular.json`, a vite config, a compose file - so **nothing is reserved until something asks**.
+What Kangentic can do that a project cannot is see every task and every project on the machine at
+once. Reach for this only when the configured port might already be taken: several tasks sit in one
+board column and run concurrently, and they all default to the same port.
+
+Request every port you are about to bind in ONE call. A project needing an API and a frontend asks
+for 2, because asking twice leaves a window where a sibling task takes the second. Each returned
+port has been probed as genuinely free, not merely unclaimed. Fewer ports than requested means the
+range ran out - fall back to the project's own configured ports for the rest.
+
+Reservations persist for the life of the task, so a restart reuses the same ports. They are released
+when the task (or its project) is deleted, and a reservation whose project is gone is reclaimed
+automatically once the range is exhausted.
+
+The scan range is machine-wide (`devServer.portRangeStart` / `portRangeEnd`, default 7300-7499),
+chosen to miss the common framework defaults - 3000, 4200, 4321, 5000, 5173, 8000, 8080.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `taskId` | string | Yes | The task reserving the ports. Resolve it with `kangentic_get_current_task`. |
+| `count` | number | No | How many ports to reserve (1-10). Default 1. Ask for all of them at once. |
+| `project` | string | No | Project selector (name or UUID). Defaults to the URL-path project. |
+
+### kangentic_list_dev_ports
+
+List the ports a task has already reserved, without reserving more. Use it to recover ports granted
+earlier in a session (after a resume, or before restarting a server) instead of reserving again. An
+empty list is the normal state for a task using its project's own configured ports.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `taskId` | string | Yes | Task ID. |
+| `project` | string | No | Project selector (name or UUID). Defaults to the URL-path project. |
+
 ### kangentic_query_db
 
 Run a read-only SQL query against the project database. The connection uses `PRAGMA query_only = ON` to prevent any write operations.
