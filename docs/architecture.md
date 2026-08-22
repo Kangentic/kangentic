@@ -439,7 +439,7 @@ Detach a registered UI surface (usage stats, git changes, the task Browser pane,
 ### Search (1 channel)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `search:everything` | invoke | Unified search across tasks, backlog items, session events (`events.jsonl`), and registered projects. Powers the global search palette (Ctrl+Shift+F / Ctrl+F). A `#<number>` query (e.g. `#42`) short-circuits to a ticket lookup: only board tasks whose display ID prefix-matches the number, skipping backlog/session-event/project hits entirely. |
+| `search:everything` | invoke | Unified search across tasks, backlog items, session events (`events.jsonl`), registered projects, and past agent conversations. Powers the global search palette (Ctrl+Shift+F / Ctrl+F). A `#<number>` query (e.g. `#42`) short-circuits to a ticket lookup: only board tasks whose display ID prefix-matches the number, skipping backlog, session-event, conversation, and project hits entirely. |
 
 ### Transcript (2 channels)
 Read-only structured-transcript access for the conversation viewer. Prefer the explicit `projectId`, falling back to the ambient current project.
