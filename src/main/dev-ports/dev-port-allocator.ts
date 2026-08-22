@@ -10,17 +10,26 @@ import { devPortRepository } from '../db/repositories/dev-port-repository';
  * never asks never holds a port.
  *
  * What Kangentic can do that a project cannot is see across every task and
- * every project on the machine. So this answers a QUESTION - "give me N ports
- * nothing else is using" - and its only job is to stop two agents starting
- * servers at the same moment from picking the same number. It never launches or
- * supervises a dev server, and nothing here parses a server's output or owns a
- * child process.
+ * every project it holds. So this answers a QUESTION - "give me N ports nothing
+ * else is using" - and its only job is to stop two agents starting servers at
+ * the same moment from picking the same number. It never launches or supervises
+ * a dev server, and nothing here parses a server's output or owns a child
+ * process.
+ *
+ * SCOPE, precisely: the ledger lives in the global database, which resolves
+ * under `PATHS.configDir` and therefore honours KANGENTIC_DATA_DIR. So it spans
+ * every project in ONE Kangentic instance, not the machine. A `/preview` runs
+ * with its own data dir and so keeps its own ledger - correct for a throwaway
+ * instance, but it means a reservation made in one instance is invisible to
+ * another. Which is fine, because of the next paragraph.
  *
  * Two-source truth, and the ordering matters:
  *   1. the lease table says what Kangentic has PROMISED,
  *   2. a bind probe says what is ACTUALLY free.
- * A candidate must clear both. The probe is what stops Kangentic handing out a
- * port some unrelated process already holds.
+ * A candidate must clear both. The probe is the part that holds across
+ * instances and across every process on the machine: it is what stops a port
+ * some unrelated process already holds - another Kangentic included - from ever
+ * being handed out.
  *
  * LEASE LIFETIME, stated plainly because there is no sweeper. A lease is
  * released when its task is deleted (TaskRepository.delete) or its project is
