@@ -67,7 +67,7 @@ export const handleReserveDevPorts: CommandHandler = async (
   if (ports.length === 0) {
     return {
       success: false,
-      error: 'No free ports are available in the configured range. Widen it in Settings, or use your project\'s own configured ports.',
+      error: 'No free ports are available in the configured range. Use your project\'s own configured ports instead - retrying will not help, since nothing releases a port until its task or project is deleted. The range is `devServer.portRangeStart` / `devServer.portRangeEnd` in the global config.json; there is no Settings UI for it.',
     };
   }
 

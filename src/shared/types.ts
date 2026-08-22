@@ -2597,10 +2597,16 @@ export interface AppConfig {
   };
 
   /**
-   * Dev-server port leases. GLOBAL (per-machine) by necessity, not by policy:
-   * ports are a machine-wide resource, so a per-project range could not see
-   * that another project already holds 4200. Kangentic leases a port per task
-   * and exposes it as {{port}}; it never starts or supervises a dev server.
+   * Dev-server port leases. Held in the GLOBAL database by necessity, not by
+   * policy: ports are a shared resource, so a per-project range could not see
+   * that another project already holds 4200. That scopes the ledger to one
+   * Kangentic INSTANCE rather than the machine, since `configDir` honours
+   * KANGENTIC_DATA_DIR - a bind probe, not the ledger, is what keeps two
+   * instances from colliding.
+   *
+   * Nothing is leased up front: a task holds ports only once its agent asked
+   * via kangentic_reserve_dev_ports, and {{port}} exposes the lowest of them.
+   * Kangentic never starts or supervises a dev server.
    */
   devServer?: {
     /** First port considered when leasing. Default 7300, chosen to miss every

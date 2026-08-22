@@ -134,6 +134,61 @@ describe('resolveTaskTemplateVars: {{baseBranch}} effective-default fix (red-gre
   });
 });
 
+describe('resolveTaskTemplateVars: {{port}} resolves the task\'s leased dev-server port (red-green)', () => {
+  it('resolves the reserved devPort as a string', () => {
+    const vars = resolveTaskTemplateVars({
+      task: makeTask(),
+      defaultBaseBranch: 'main',
+      attachmentPaths: [],
+      devPort: 7300,
+    });
+    expect(vars.port).toBe('7300');
+  });
+
+  // Normal state: nothing is reserved until an agent asks for one via
+  // kangentic_reserve_dev_ports, so most tasks resolve empty. A raw read
+  // like {{worktreePath}} / {{branchName}} - it must never fall back to
+  // another task's port, which is exactly the collision this exists to
+  // prevent.
+  it('resolves to an empty string when the task holds no port reservation (devPort: null)', () => {
+    const vars = resolveTaskTemplateVars({
+      task: makeTask(),
+      defaultBaseBranch: 'main',
+      attachmentPaths: [],
+      devPort: null,
+    });
+    expect(vars.port).toBe('');
+  });
+});
+
+describe('{{port}} in a flag-shaped template: the documented drop-and-collapse hazard (red-green)', () => {
+  // .claude/rules/task-template-vars-parity.md clause 6: an empty-valued
+  // placeholder is DROPPED and surrounding horizontal whitespace collapses.
+  // For {{port}} that means an unreserved task turns "--port {{port}}" into a
+  // bare "--port" with no value, which most CLIs reject. This is a documented
+  // hazard, not a bug - pinning it stops a future "helpful" change from
+  // silently altering the collapse behavior for this one keyword.
+  it('collapses "--port {{port}}" to a bare "--port" when the task has no reservation', () => {
+    const vars = resolveTaskTemplateVars({
+      task: makeTask(),
+      defaultBaseBranch: 'main',
+      attachmentPaths: [],
+      devPort: null,
+    });
+    expect(interpolateTaskTemplate('--port {{port}}', vars)).toBe('--port');
+  });
+
+  it('inserts the reserved port verbatim when the task holds one', () => {
+    const vars = resolveTaskTemplateVars({
+      task: makeTask(),
+      defaultBaseBranch: 'main',
+      attachmentPaths: [],
+      devPort: 7300,
+    });
+    expect(interpolateTaskTemplate('--port {{port}}', vars)).toBe('--port 7300');
+  });
+});
+
 describe('interpolateTaskTemplate: drop-and-collapse semantics', () => {
   it('drops an empty-valued placeholder along with its leading separator', () => {
     expect(interpolateTaskTemplate('/code-review {{baseBranch}}', { baseBranch: '' })).toBe('/code-review');

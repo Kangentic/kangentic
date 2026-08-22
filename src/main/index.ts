@@ -50,6 +50,7 @@ const configFileExistedAtLaunch = fs.existsSync(PATHS.configFile);
 import { initStartupTimer, mark, phase, endPhase, finishStartupTimer } from './startup-timer';
 import { resolveBackgroundColor, resolveIconPath, resolveWindowBounds, resolveRendererIndexPath } from './window-utils';
 import { popOutWindowManager } from './pop-out/pop-out-window-manager';
+import { destroyAllLanes } from './browser/browser-lane-manager';
 import { loadReactDevTools } from './devtools';
 import { syncShutdownCleanup, startHardShutdownFailsafe } from './shutdown';
 import { prRefreshScheduler } from './pr/pr-refresh-scheduler';
@@ -844,6 +845,31 @@ const createWindow = () => {
   // window-all-closed / app.on('activate') behave correctly either way.
   mainWindow.on('close', () => {
     popOutWindowManager.destroyAll();
+  });
+
+  // Browser LANES are OS BrowserWindows too (offscreen and never shown, but
+  // still counted by getAllWindows), so they hold the window count above zero
+  // exactly like an orphan pop-out. That is worse here than for a pop-out: the
+  // only caller of destroyAllLanes is syncShutdownCleanup, which runs from
+  // before-quit, so a surviving lane blocks the very path that would have
+  // cleaned it up. PTYs are never killed, session records never suspended, DBs
+  // never closed, and on Windows the invisible orphan keeps the single-instance
+  // lock so the next launch exits silently.
+  //
+  // On 'closed', NOT 'close', and the difference is load-bearing. Destroying the
+  // window tears down its <webview> guests, each of which fires the registry's
+  // guest-destroyed path -> the lane hand-off -> a BRAND NEW lane, created
+  // synchronously (openLane registers before its first await). That all happens
+  // after 'close' handlers return, so sweeping there would be undone by the very
+  // teardown that triggered it. 'closed' runs once the guests are already gone.
+  //
+  // The accepted cost: on macOS the app outlives its window, so this ends an
+  // agent's lane when the user closes the window rather than quitting. That is
+  // the deliberate trade - the alternative is a lane holding getAllWindows()
+  // above zero, which makes app.on('activate') refuse to rebuild the window and
+  // locks the user out of the app entirely.
+  mainWindow.on('closed', () => {
+    destroyAllLanes();
   });
 
   // Register IPC handlers early so speculative preloading (below) can use them.

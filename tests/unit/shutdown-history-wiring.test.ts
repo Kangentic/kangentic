@@ -79,11 +79,21 @@ vi.mock('../../src/main/transition-engine/session-lifecycle', () => ({
   markRecordSuspended: vi.fn(),
 }));
 
+// Mocked so the "destroyAllLanes was called" assertion below is observing a
+// spy rather than the real lane manager (which would be a silent no-op here
+// since no lane was ever opened - electron resolves to a path string outside
+// a real Electron process, so the module loads but nothing in it can be
+// asserted on without this mock).
+vi.mock('../../src/main/browser/browser-lane-manager', () => ({
+  destroyAllLanes: vi.fn(),
+}));
+
 // ---------------------------------------------------------------------------
 // Import under test (after all mocks)
 // ---------------------------------------------------------------------------
 
 import { syncShutdownCleanup } from '../../src/main/shutdown';
+import { destroyAllLanes } from '../../src/main/browser/browser-lane-manager';
 
 // ---------------------------------------------------------------------------
 // Fixture factories
@@ -202,5 +212,28 @@ describe('syncShutdownCleanup history wire-up', () => {
 
     // Queued sessions are marked exited but never go through captureSessionMetrics.
     expect(mockCaptureSessionMetrics).not.toHaveBeenCalled();
+  });
+});
+
+describe('syncShutdownCleanup lane cleanup wiring (red-green)', () => {
+  // This describe is a sibling of 'syncShutdownCleanup history wire-up' above,
+  // so it does not inherit that block's beforeEach - clear the spy explicitly
+  // or an earlier test's syncShutdownCleanup call inflates this count.
+  beforeEach(() => {
+    vi.mocked(destroyAllLanes).mockClear();
+  });
+
+  // Pins that shutdown.ts still calls destroyAllLanes(). Nothing else in the
+  // suite exercises this call site: browser-lane-manager.test.ts proves
+  // destroyAllLanes ITSELF tears down every lane window, but nothing asserted
+  // that syncShutdownCleanup actually reaches for it - deleting the call
+  // (src/main/shutdown.ts) would leak every offscreen lane window on quit and
+  // every existing test here would stay green.
+  it('destroys every offscreen browser lane exactly once during shutdown', () => {
+    const dependencies = buildMockDependencies([]);
+
+    syncShutdownCleanup(dependencies);
+
+    expect(destroyAllLanes).toHaveBeenCalledTimes(1);
   });
 });

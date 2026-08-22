@@ -1,5 +1,6 @@
 import { browserPaneRegistry, type BrowserPaneEntry, type PaneUnregisterReason } from './browser-pane-registry';
 import { openLane, destroyHandoffLanesForTask, hasHandoffLaneForTask } from './browser-lane-manager';
+import { isShuttingDown } from '../shutdown-state';
 
 /**
  * Keep an agent's browser alive when the user closes the task's window.
@@ -48,8 +49,17 @@ import { openLane, destroyHandoffLanesForTask, hasHandoffLaneForTask } from './b
 export interface LaneHandoffDependencies {
   /** True when the task still has a live agent session worth preserving for. */
   hasLiveSession(taskId: string): boolean;
-  /** The task's worktree directory, so the lane shares its cookie jar. */
-  getTaskWorktreePath(taskId: string): string | null;
+  /**
+   * The task's worktree directory, so the lane shares its cookie jar.
+   *
+   * Takes the PANE's own project id rather than letting the implementation read
+   * the ambient current project. A pane is retained across a project switch
+   * (see `.claude/rules/retained-pane-never-remounts.md`), so by the time it
+   * closes the open project is routinely not the one the task belongs to - and
+   * an ambient lookup would then miss, yielding a null path and dropping the
+   * lane into the legacy SHARED cookie jar instead of the task's own.
+   */
+  getTaskWorktreePath(taskId: string, projectId: string): string | null;
 }
 
 let dependencies: LaneHandoffDependencies | null = null;
@@ -69,6 +79,11 @@ const HANDOFF_REASONS: ReadonlySet<PaneUnregisterReason> = new Set([
 
 function onPaneClosed(entry: BrowserPaneEntry, reason: PaneUnregisterReason): void {
   if (!dependencies) return;
+  // Quitting is not a hand-off. `openLane` builds its BrowserWindow
+  // synchronously, so a pane torn down during shutdown would construct a fresh
+  // OS window inside the teardown stack - and a lane outliving the sweep holds
+  // the window count above zero, which is what stops the app quitting at all.
+  if (isShuttingDown()) return;
   // Never hand off a lane. A lane closing is either the agent's own decision or
   // a cleanup path, and re-opening it would make lanes impossible to close.
   if (entry.kind === 'lane') return;
@@ -79,7 +94,11 @@ function onPaneClosed(entry: BrowserPaneEntry, reason: PaneUnregisterReason): vo
   if (!dependencies.hasLiveSession(entry.taskId)) return;
   if (hasHandoffLaneForTask(entry.taskId)) return;
 
-  const worktreePath = dependencies.getTaskWorktreePath(entry.taskId);
+  // `entry.projectId` and not the ambient current project: the pane may well be
+  // closing while a DIFFERENT project is open (a retained pane survives a
+  // project switch), and that is precisely the backgrounded-agent case this
+  // hand-off exists for.
+  const worktreePath = dependencies.getTaskWorktreePath(entry.taskId, entry.projectId);
 
   void openLane({
     taskId: entry.taskId,

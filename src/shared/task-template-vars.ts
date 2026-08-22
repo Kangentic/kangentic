@@ -88,6 +88,6 @@ export const TASK_TEMPLATE_VARS: readonly TaskTemplateVarInfo[] = [
   {
     name: 'port',
     chip: '{{port}}',
-    description: "Dev-server port leased to this task (empty if none). e.g. npm run dev -- --port {{port}}",
+    description: 'Dev-server port this task reserved. Usually empty - one exists only once an agent asks for it.',
   },
 ];

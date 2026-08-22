@@ -29,7 +29,7 @@ The rig creates its own task, reserves its own port through
 `kangentic_reserve_dev_ports` (so the port feature dogfoods itself), serves its
 own page on it, and cleans all of it up on exit.
 
-## Two entry points
+## Four entry points
 
 `rig.mjs` covers concurrent contention. `handoff.mjs` covers #542 - the user
 closing a task-detail window while an agent is driving its pane - and is
@@ -53,6 +53,26 @@ probe that must spawn through the BOARD rather than `sessions.spawn`.
 
 ```
 node scripts/rigs/browser-contention/lifecycle.mjs
+```
+
+`idle-reclaim.mjs` covers the other half of that guarantee: the 30-minute idle
+sweep must reap a lane nobody is using WITHOUT reaping one that is. It is
+separate because it is the only probe that has to control the clock - `IDLE_MS`
+overrides the reclaim window so the run takes seconds rather than half an hour.
+
+```
+node scripts/rigs/browser-contention/idle-reclaim.mjs
+```
+
+Set the window with the `IDLE_MS` environment variable. In PowerShell that is
+two statements, so set it first:
+
+```
+$env:IDLE_MS = 6000
+```
+
+```
+node scripts/rigs/browser-contention/idle-reclaim.mjs
 ```
 
 ## The trap that made this probe lie

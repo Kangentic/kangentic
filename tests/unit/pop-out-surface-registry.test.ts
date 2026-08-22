@@ -26,8 +26,12 @@ const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx']);
  * no renderer-side surface descriptor - so routing it through the pop-out
  * manager would mean teaching that manager about a window it can never show.
  * It has its own lifecycle (owned by the agent session that opened it) and its
- * own synchronous teardown in `shutdown.ts`. Adding a FOURTH entry needs the
- * same kind of justification, not an appeal to this one.
+ * own synchronous teardown, in BOTH `shutdown.ts` and the main window's
+ * `closed` handler - the second is not redundant: an offscreen window still
+ * counts in `getAllWindows()`, so a lane outliving the main window stops
+ * `window-all-closed` firing and `shutdown.ts` then never runs at all. Adding a
+ * FOURTH entry needs the same kind of justification, not an appeal to this one,
+ * and needs a main-window teardown of its own.
  */
 const ALLOWED_BROWSER_WINDOW_FILES = new Set([
   'src/main/index.ts',
@@ -64,8 +68,8 @@ describe('pop-out surface registry', () => {
     }
     expect(
       offenders,
-      `Only src/main/index.ts (createWindow) and src/main/pop-out/pop-out-window-manager.ts may ` +
-      `construct a BrowserWindow - every other window must go through the pop-out registry. Offenders:\n${offenders.join('\n')}`,
+      `Only ${[...ALLOWED_BROWSER_WINDOW_FILES].join(', ')} may construct a BrowserWindow - ` +
+      `every other window must go through the pop-out registry. Offenders:\n${offenders.join('\n')}`,
     ).toEqual([]);
   });
 
@@ -116,5 +120,43 @@ describe('pop-out surface registry', () => {
       `Surface descriptor(s) exported but never passed to registerSurface() in ` +
       `src/renderer/pop-out/surfaces/index.ts: ${missingRegistrations.join(', ')}`,
     ).toEqual([]);
+  });
+
+  /**
+   * The Critical bug this pins (fixed 2026-08): a browser LANE is an OFFSCREEN
+   * BrowserWindow, but it is still counted by Electron's own
+   * `BrowserWindow.getAllWindows()`. If the main window closes while a lane
+   * survives, `window-all-closed` never fires, so `app.quit()` never fires,
+   * so `before-quit` never fires - and `before-quit` is the ONLY thing that
+   * runs `syncShutdownCleanup` (which is where `destroyAllLanes()` ALSO
+   * lives, per the test above). Without a teardown on the main window's own
+   * close, the app cannot quit at all: PTYs are never killed, session
+   * records never marked suspended, DBs never closed.
+   *
+   * The teardown must be on 'closed', not 'close': destroying the window
+   * tears down its <webview> guests, which is what fires the pane hand-off
+   * (browser-lane-handoff.ts) that would otherwise construct a BRAND NEW
+   * lane after the window is gone. 'close' handlers run before those guests
+   * are torn down; 'closed' runs once they already are.
+   */
+  it('destroys every browser lane from mainWindow "closed" (not "close"), so a fresh lane cannot be constructed after teardown starts', () => {
+    const indexSource = fs.readFileSync(path.join(REPO_ROOT, 'src/main/index.ts'), 'utf-8');
+
+    const closedHandlerMatch = indexSource.match(/mainWindow\.on\('closed',\s*\(\)\s*=>\s*\{([^}]*)\}\)/);
+    expect(
+      closedHandlerMatch,
+      `Expected to find a mainWindow.on('closed', () => { ... }) handler in src/main/index.ts`,
+    ).not.toBeNull();
+    expect(closedHandlerMatch?.[1] ?? '').toContain('destroyAllLanes()');
+
+    const closeHandlerMatch = indexSource.match(/mainWindow\.on\('close',\s*\(\)\s*=>\s*\{([^}]*)\}\)/);
+    expect(
+      closeHandlerMatch,
+      `Expected to find a mainWindow.on('close', () => { ... }) handler in src/main/index.ts`,
+    ).not.toBeNull();
+    // The 'close' handler owns popOutWindowManager.destroyAll() only - if
+    // destroyAllLanes() moves there, the <webview> guests it tears down are
+    // still alive at that point and the hand-off would resurrect a lane.
+    expect(closeHandlerMatch?.[1] ?? '').not.toContain('destroyAllLanes()');
   });
 });

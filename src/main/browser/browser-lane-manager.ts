@@ -135,6 +135,41 @@ export function laneIdsForTask(taskId: string): string[] {
   return [...lanes.values()].filter((lane) => lane.taskId === taskId).map((lane) => lane.laneId);
 }
 
+/**
+ * How long a lane's initial load may take before it is abandoned.
+ *
+ * Matches NAVIGATE_TIMEOUT_MS in `browser-pane-driver.ts` for the same reason:
+ * `loadURL` resolves on load and rejects on failure, but a dev server that
+ * accepts the connection and never responds leaves it pending forever. That is
+ * the normal state of a build in progress, so an unbounded load here would hang
+ * `kangentic_browser_open_pane { isolated: true }` with no way for the agent to
+ * recover, and strand the fire-and-forget hand-off path silently.
+ *
+ * Not imported from the driver: `browser-pane-driver.ts` imports `touchLane`
+ * from this module, so reaching back for `navigateGuest` would close an import
+ * cycle.
+ */
+const LANE_LOAD_TIMEOUT_MS = 20_000;
+
+/** Load a lane's first URL, bounded. Abandons rather than cancels - Electron
+ *  exposes no way to cancel an in-flight `loadURL` - which is fine here because
+ *  the caller destroys the lane on failure. */
+async function loadLaneUrl(guest: WebContents, url: string): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  const bounded = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`it did not load within ${LANE_LOAD_TIMEOUT_MS / 1000}s. The dev server may be starting, unreachable, or hung.`)),
+      LANE_LOAD_TIMEOUT_MS,
+    );
+    timer.unref?.();
+  });
+  try {
+    await Promise.race([guest.loadURL(url), bounded]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export interface OpenLaneInput {
   taskId: string;
   projectId: string;
@@ -218,7 +253,7 @@ export async function openLane(input: OpenLaneInput): Promise<OpenLaneResult> {
   });
 
   try {
-    await guest.loadURL(input.url);
+    await loadLaneUrl(guest, input.url);
   } catch (error) {
     destroyLane(laneId);
     return {
@@ -322,11 +357,25 @@ export function destroyIdleLanes(idleMs: number, now: number = Date.now()): numb
  *
  * Runs from the `before-quit` path alongside `browserPaneRegistry.detachAll()`,
  * so it must stay synchronous - see `.claude/rules/synchronous-shutdown.md`.
+ *
+ * ALSO runs from the main window's `close`, where the app keeps running on
+ * macOS - which is why it goes through `destroyLane` rather than clearing the
+ * map itself. Clearing the map directly leaves a `kind: 'lane'` entry in the
+ * registry pointing at a destroyed webContents, and that was only ever harmless
+ * because `detachAll()` happens to run first on the quit path.
+ *
+ * Each destroy is isolated: this sits ahead of session preservation, PTY kill
+ * and DB close in `syncShutdownCleanup`'s single try, so one throwing window
+ * must not skip them.
  */
 export function destroyAllLanes(): void {
   for (const lane of [...lanes.values()]) {
-    lanes.delete(lane.laneId);
-    if (!lane.window.isDestroyed()) lane.window.destroy();
+    try {
+      destroyLane(lane.laneId);
+    } catch (error) {
+      console.warn(`[browser-lane] Could not destroy lane ${lane.laneId}:`, error);
+      lanes.delete(lane.laneId);
+    }
   }
 }
 

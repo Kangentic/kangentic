@@ -41,8 +41,6 @@
   // a call log so tests can assert the prompt payload that would have been
   // shipped to the agent.
   let browserUrls = {};
-  // taskId -> leased dev-server port, so a test can exercise a pane defaulting
-  // to its OWN task's dev server rather than the project-wide default.
   // Which project each task URL was saved against, so a test can assert a
   // popped-out or backgrounded pane wrote to its OWN project's sidecar.
   let browserUrlProjects = {};

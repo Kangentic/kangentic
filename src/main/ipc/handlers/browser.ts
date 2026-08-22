@@ -88,9 +88,15 @@ export function registerBrowserHandlers(context: IpcContext): void {
         return false;
       }
     },
-    getTaskWorktreePath: (taskId) => {
+    getTaskWorktreePath: (taskId, projectId) => {
       try {
-        const projectId = context.currentProjectId;
+        // The PANE's project, handed in by the caller - never
+        // `context.currentProjectId`. A retained pane outlives a project switch,
+        // so the open project at close time is routinely not the task's, and an
+        // ambient lookup would miss in the wrong project's DB and hand back
+        // null. `openLane` turns a null path into the LEGACY SHARED cookie jar,
+        // which is a silently wrong answer: the agent meets a sign-in wall for
+        // an app the user is already authenticated into.
         if (!projectId) return null;
         return getProjectRepos(context, projectId).tasks.getById(taskId)?.worktree_path ?? null;
       } catch {

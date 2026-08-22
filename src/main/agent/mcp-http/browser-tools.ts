@@ -121,6 +121,40 @@ function clampNumber(value: number | undefined, defaultValue: number, max: numbe
   return Math.min(value, max);
 }
 
+/** How long caller-authored JavaScript may hold the guest before it is abandoned. */
+const EVALUATE_TIMEOUT_MS = 20_000;
+
+/**
+ * `runtimeEvaluate`, bounded, in the shape that function already returns.
+ *
+ * A timeout is reported as an ordinary evaluation error rather than thrown, so
+ * `kangentic_browser_eval` surfaces `evaluate-failed` exactly as it does for a
+ * page exception. Abandons rather than cancels: CDP offers no way to cancel an
+ * in-flight `Runtime.evaluate`, so the expression may still settle later - what
+ * matters is that the guest's drive lock is released.
+ */
+async function boundedEvaluate(
+  webContents: WebContents,
+  expression: string,
+): Promise<{ value: unknown; error: string | null }> {
+  let timer: NodeJS.Timeout | undefined;
+  const bounded = new Promise<{ value: null; error: string }>((resolve) => {
+    timer = setTimeout(
+      () => resolve({
+        value: null,
+        error: `The expression did not settle within ${EVALUATE_TIMEOUT_MS / 1000}s and was abandoned. It probably awaits a promise that never resolves.`,
+      }),
+      EVALUATE_TIMEOUT_MS,
+    );
+    timer.unref?.();
+  });
+  try {
+    return await Promise.race([runtimeEvaluate(webContents, expression), bounded]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export function registerBrowserTools(
   server: McpServer,
   getAutomationConfig: AutomationConfigReader,
@@ -713,7 +747,16 @@ export function registerBrowserTools(
     },
     async ({ sessionId, taskId, expression }) => {
       const result = await drive('eval', { sessionId, taskId }, (webContents) =>
-        runtimeEvaluate(webContents, expression),
+        // Bounded, because this is the one body that runs CALLER-AUTHORED page
+        // JavaScript and `runtimeEvaluate` defaults to `awaitPromise: true`. An
+        // expression that never settles (`new Promise(() => {})`, an await on an
+        // unreachable host) holds the guest's drive lock forever: the drive lock
+        // bounds ACQUISITION only, so once the body starts it runs to
+        // completion, and every later call on that guest then fails with
+        // GuestBusyError until the app restarts. The other `runtimeEvaluate`
+        // callers pass fixed, short probes, so the bound lives here rather than
+        // in the shared CDP driver, which the dev inspection bridge also uses.
+        boundedEvaluate(webContents, expression),
       );
       if (result.ok && result.data.error) {
         return errorToolResult({ kind: 'evaluate-failed', detail: result.data.error });

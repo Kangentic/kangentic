@@ -33,6 +33,12 @@ vi.mock('../../src/main/browser/browser-lane-manager', () => ({
   hasHandoffLaneForTask: () => handoffLaneExists,
 }));
 
+let shuttingDown = false;
+vi.mock('../../src/main/shutdown-state', () => ({
+  isShuttingDown: () => shuttingDown,
+  setShuttingDown: vi.fn(),
+}));
+
 const { installLaneHandoff, uninstallLaneHandoff } = await import(
   '../../src/main/browser/browser-lane-handoff'
 );
@@ -53,14 +59,33 @@ function pane(overrides: Partial<BrowserPaneEntry> = {}): BrowserPaneEntry {
 
 let liveTasks = new Set<string>(['task-1']);
 
+/**
+ * Per-project worktree paths, keyed by projectId. Deliberately NOT a single
+ * fixed return value: the fixed-arrow stub this replaces
+ * (`getTaskWorktreePath: () => 'C:\\Users\\dev\\...'`) ignored its arguments
+ * entirely, so it passed identically whether the hand-off resolved the
+ * CLOSING PANE's own project or some other ambient notion of "current
+ * project" - exactly the High bug this test now pins.
+ */
+const worktreePathsByProject: Record<string, string> = {
+  'project-1': 'C:\\Users\\dev\\repo\\.kangentic\\worktrees\\7',
+  'project-2': 'C:\\Users\\dev\\other-repo\\.kangentic\\worktrees\\3',
+};
+let getTaskWorktreePathCalls: Array<{ taskId: string; projectId: string }> = [];
+
 beforeEach(() => {
   openLane.mockClear();
   destroyHandoffLanesForTask.mockClear();
   handoffLaneExists = false;
+  shuttingDown = false;
   liveTasks = new Set(['task-1']);
+  getTaskWorktreePathCalls = [];
   installLaneHandoff({
     hasLiveSession: (taskId) => liveTasks.has(taskId),
-    getTaskWorktreePath: () => 'C:\\Users\\dev\\repo\\.kangentic\\worktrees\\7',
+    getTaskWorktreePath: (taskId, projectId) => {
+      getTaskWorktreePathCalls.push({ taskId, projectId });
+      return worktreePathsByProject[projectId] ?? null;
+    },
   });
 });
 
@@ -84,6 +109,30 @@ describe('pane hand-off', () => {
       projectId: 'project-1',
       url: 'http://localhost:4200',
       handoff: true,
+    });
+  });
+
+  // The High bug this pins: getTaskWorktreePath used to be called with just
+  // the taskId, so its real implementation resolved against whatever project
+  // happened to be ambiently "current" - wrong whenever a BACKGROUND project's
+  // pane closes (a retained pane survives a project switch, per
+  // retained-pane-never-remounts.md, so the open project routinely differs
+  // from the one the closing pane belongs to). The fix threads the pane's OWN
+  // entry.projectId through as a second argument.
+  it('resolves the worktree against the CLOSING PANE\'s own project, not any other project', async () => {
+    closePane(pane({ projectId: 'project-2' }));
+    await vi.waitFor(() => expect(openLane).toHaveBeenCalledTimes(1));
+
+    // getTaskWorktreePath must have been called with the pane's own
+    // projectId ('project-2'), never a fixed/ambient default.
+    expect(getTaskWorktreePathCalls).toEqual([{ taskId: 'task-1', projectId: 'project-2' }]);
+
+    // And the lane it opens must carry THAT project's worktree as cwd, so the
+    // handed-off browser shares project-2's cookie jar, not project-1's.
+    expect(openLane.mock.calls[0][0]).toMatchObject({
+      taskId: 'task-1',
+      projectId: 'project-2',
+      cwd: worktreePathsByProject['project-2'],
     });
   });
 
@@ -112,6 +161,19 @@ describe('pane hand-off', () => {
 
   it('does not stack a second lane when one is already standing in', async () => {
     handoffLaneExists = true;
+    closePane(pane());
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(openLane).not.toHaveBeenCalled();
+  });
+
+  // Same failure class as the main-window 'closed' teardown pinned in
+  // pop-out-surface-registry.test.ts, on the other side of the same wall:
+  // openLane() builds its OS BrowserWindow synchronously, so a pane torn down
+  // DURING shutdown would construct a fresh lane inside the teardown stack -
+  // and a lane outliving the sweep holds getAllWindows() above zero, which is
+  // what stops the app quitting at all.
+  it('never hands off during shutdown, because openLane would build a fresh OS window inside the teardown stack', async () => {
+    shuttingDown = true;
     closePane(pane());
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(openLane).not.toHaveBeenCalled();

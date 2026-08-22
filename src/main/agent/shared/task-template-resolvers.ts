@@ -19,8 +19,10 @@ import { buildTaskXml } from './prompt-xml';
  * `executeAction` builds one vars object that feeds send_command / run_script /
  * webhook as well, and transition-engine.ts builds it at two call sites, so a
  * resolver that allocated lazily would be a side effect fanning out across all
- * of them with a real double-allocation risk. Leasing happens once, in
- * ensureWorktree. See .claude/rules/task-template-vars-parity.md clause 7.
+ * of them with a real double-allocation risk. Nothing here allocates: a task
+ * has a port only once its agent asked for one via kangentic_reserve_dev_ports,
+ * so `devPort` is null for most tasks and that is the normal state.
+ * See .claude/rules/task-template-vars-parity.md clause 7.
  */
 export interface TaskTemplateContext {
   task: Task;

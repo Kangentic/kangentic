@@ -29,8 +29,11 @@ import { detachDebugger, isDebuggerAttached } from './cdp/cdp';
  * keeps a single resolver, a single liveness self-heal, and a single shutdown
  * path, so `withGuest` needed no change at all to drive one. What the field
  * buys is the two places where the distinction is real - `list_panes` labels
- * lanes, and `close_pane` ignores them, because a lane's lifetime belongs to
- * the caller that opened it rather than to a user gesture.
+ * lanes, and `close_pane` destroys them in main instead of pushing a close to
+ * the renderer. A lane has no task-detail window and no `browserOpenTasks` flag,
+ * so the push would do nothing and report the lane still registered; destroying
+ * it directly is what makes `close_pane` the escape hatch the lane-limit error
+ * points callers at.
  */
 export type BrowserSurfaceKind = 'pane' | 'lane';
 
