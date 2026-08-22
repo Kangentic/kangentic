@@ -24,8 +24,6 @@ let leases: StoredLease[] = [];
 
 vi.mock('../../src/main/db/repositories/dev-port-repository', () => ({
   devPortRepository: {
-    list: () => [...leases].sort((a, b) => a.port - b.port),
-    listForProject: (projectId: string) => leases.filter((l) => l.projectId === projectId),
     listForTask: (taskId: string) =>
       leases.filter((l) => l.taskId === taskId).sort((a, b) => a.port - b.port),
     getByTaskId: (taskId: string) =>
@@ -36,32 +34,22 @@ vi.mock('../../src/main/db/repositories/dev-port-repository', () => ({
       // task_id is deliberately NOT unique: a project that runs an API and a
       // frontend needs two.
       if (leases.some((l) => l.port === port)) return false;
-      leases.push({ port, projectId, taskId, allocatedAt: '2026-08-20T00:00:00.000Z', lastSeenAt: null });
+      leases.push({ port, projectId, taskId, allocatedAt: '2026-08-20T00:00:00.000Z' });
       return true;
-    },
-    markSeen: (port: number) => {
-      const lease = leases.find((l) => l.port === port);
-      if (lease) lease.lastSeenAt = '2026-08-20T00:00:00.000Z';
     },
     releaseByTaskId: (taskId: string) => {
       leases = leases.filter((l) => l.taskId !== taskId);
-    },
-    releaseByPort: (port: number) => {
-      leases = leases.filter((l) => l.port !== port);
-    },
-    releaseForProject: (projectId: string) => {
-      leases = leases.filter((l) => l.projectId !== projectId);
     },
   },
 }));
 
 const {
   reserveDevPorts,
+  describeDevPorts,
   getDevPortForTask,
   getDevPortsForTask,
   isPortFree,
   releaseDevPortForTask,
-  releaseDevPortsForProject,
   DEFAULT_DEV_PORT_RANGE_START,
   DEFAULT_DEV_PORT_RANGE_END,
 } = await import('../../src/main/dev-ports/dev-port-allocator');
@@ -263,11 +251,62 @@ describe('release', () => {
     expect(second).toEqual(first);
   });
 
-  it('frees a whole project at once', async () => {
-    await reserveDevPorts('proj-1', 'task-1', 2);
-    await reserveDevPorts('proj-2', 'task-2', 1);
-    releaseDevPortsForProject('proj-1');
-    expect(leases).toHaveLength(1);
-    expect(leases[0].projectId).toBe('proj-2');
+});
+
+describe('describeDevPorts', () => {
+  it('reports a port IN USE outside Kangentic, which the ledger cannot see', async () => {
+    // The whole reason this function exists. Nothing has reserved this port,
+    // so a ledger read reports nothing at all - only the probe knows.
+    const held = await occupyPort();
+    opened.push(held.release);
+
+    const [status] = await describeDevPorts('task-1', [held.port]);
+    expect(status).toEqual({ port: held.port, reservation: null, listening: true });
+  });
+
+  it('reports a genuinely free port', async () => {
+    const held = await occupyPort();
+    const { port } = held;
+    await held.release();
+
+    const [status] = await describeDevPorts('task-1', [port]);
+    expect(status).toEqual({ port, reservation: null, listening: false });
+  });
+
+  it('distinguishes the asking task\'s own reservation from another task\'s', async () => {
+    const [mine] = await reserveDevPorts('proj-1', 'task-1', 1);
+    const [theirs] = await reserveDevPorts('proj-1', 'task-2', 1);
+
+    const statuses = await describeDevPorts('task-1', [mine, theirs]);
+    expect(statuses.map((status) => status.reservation)).toEqual(['this-task', 'other-task']);
+  });
+
+  it('never names the other task, only that the port is spoken for', async () => {
+    const [theirs] = await reserveDevPorts('proj-1', 'task-2', 1);
+    const [status] = await describeDevPorts('task-1', [theirs]);
+    expect(JSON.stringify(status)).not.toContain('task-2');
+  });
+
+  it('reports a reservation whose server is DOWN as reserved but not listening', async () => {
+    // The restart case: the port is still yours, there is just nothing on it.
+    const [mine] = await reserveDevPorts('proj-1', 'task-1', 1);
+    const [status] = await describeDevPorts('task-1', [mine]);
+    expect(status).toEqual({ port: mine, reservation: 'this-task', listening: false });
+  });
+
+  it('reserves nothing and releases nothing', async () => {
+    const held = await occupyPort();
+    opened.push(held.release);
+    await describeDevPorts('task-1', [held.port, 7300, 7301]);
+    expect(leases).toHaveLength(0);
+  });
+
+  it('returns one row per port, in the order asked', async () => {
+    const statuses = await describeDevPorts('task-1', [7302, 7300, 7301]);
+    expect(statuses.map((status) => status.port)).toEqual([7302, 7300, 7301]);
+  });
+
+  it('returns an empty list for an empty request without probing', async () => {
+    expect(await describeDevPorts('task-1', [])).toEqual([]);
   });
 });

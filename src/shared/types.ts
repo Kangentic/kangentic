@@ -19,20 +19,21 @@ export interface ProjectGroupCreateInput {
 }
 
 /**
- * A dev-server port leased to one task, held in the GLOBAL database because
- * ports are a machine-wide resource shared across every project.
+ * A dev-server port reserved by one task, held in the GLOBAL database because
+ * ports are a shared resource across every project in the instance.
  *
- * The lease is advisory: an actual bind probe decides whether a port is usable,
- * which is what lets an orphaned lease self-correct instead of permanently
- * burning a port. `lastSeenAt` is null until something is first observed
- * listening on it.
+ * A reservation is advisory, and a promise rather than a fact: whether a port
+ * is actually usable is answered by a bind probe (`describeDevPorts`), never by
+ * this row. That split is deliberate - it is what lets a stale reservation
+ * self-correct instead of permanently burning a port, and it is the only way to
+ * see a dev server the user started outside Kangentic on a port nothing here
+ * ever handed out.
  */
 export interface DevPortLease {
   port: number;
   projectId: string;
   taskId: string;
   allocatedAt: string;
-  lastSeenAt: string | null;
 }
 
 export interface Project {

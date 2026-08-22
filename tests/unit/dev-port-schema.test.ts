@@ -64,12 +64,20 @@ function openMigratedDb(): { db: Database.Database; close: () => void } {
   return { db: shim, close: () => handle.close() };
 }
 
-/** Insert one reservation, reporting whether the engine accepted it. */
+/**
+ * Insert one reservation, reporting whether the engine accepted it.
+ *
+ * Names its columns explicitly, exactly as DevPortRepository.claim does, and
+ * omits `last_seen_at` - a fresh table no longer has that column, and one
+ * created before it was dropped still accepts an insert without it because it
+ * is nullable. That is the whole compatibility claim, and the suite below
+ * exercises both shapes through this one helper.
+ */
 function claim(db: Database.Database, port: number, taskId: string): boolean {
   try {
     db.prepare(
-      `INSERT INTO dev_ports (port, project_id, task_id, allocated_at, last_seen_at)
-       VALUES (?, ?, ?, ?, NULL)`,
+      `INSERT INTO dev_ports (port, project_id, task_id, allocated_at)
+       VALUES (?, ?, ?, ?)`,
     ).run(port, 'proj-1', taskId, '2026-08-21T00:00:00.000Z');
     return true;
   } catch {
@@ -103,6 +111,25 @@ describeWithSqlite('dev_ports schema (fresh database)', () => {
       runGlobalMigrations(db);
       expect(claim(db, 7300, 'task-1')).toBe(true);
       expect(claim(db, 7300, 'task-2')).toBe(false);
+    } finally {
+      close();
+    }
+  });
+
+  it('does not create a last_seen_at column', () => {
+    // It was written for a liveness trail that never had a writer, so every row
+    // held NULL. Live status is answered by describeDevPorts' bind probe now,
+    // which is a fact rather than a remembered one.
+    const { db, close } = openMigratedDb();
+    try {
+      runGlobalMigrations(db);
+      const columns = db.pragma('table_info(dev_ports)') as Array<{ name: string }>;
+      expect(columns.map((column) => column.name)).toEqual([
+        'port',
+        'project_id',
+        'task_id',
+        'allocated_at',
+      ]);
     } finally {
       close();
     }
@@ -169,6 +196,23 @@ describeWithSqlite('dev_ports schema (upgrade from the unique-index shape)', () 
       expect(claim(db, 7301, 'task-1')).toBe(true);
       const indexes = db.pragma('index_list(dev_ports)') as IndexRow[];
       expect(indexes.find((index) => index.name === 'idx_dev_ports_task')?.unique).toBe(0);
+    } finally {
+      close();
+    }
+  });
+
+  it('still accepts a claim on a database that predates the column drop', () => {
+    // The column is left in place rather than dropped by migration: it is
+    // nullable, so an INSERT that omits it works, and a DROP COLUMN on every
+    // existing database would be churn for a column nothing reads.
+    const { db, close } = openMigratedDb();
+    try {
+      seedLegacySchema(db);
+      runGlobalMigrations(db);
+      expect(claim(db, 7300, 'task-1')).toBe(true);
+      expect(claim(db, 7301, 'task-1')).toBe(true);
+      const stored = db.prepare('SELECT last_seen_at FROM dev_ports WHERE port = 7300').get();
+      expect(stored).toEqual({ last_seen_at: null });
     } finally {
       close();
     }

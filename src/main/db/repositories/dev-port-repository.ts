@@ -18,7 +18,6 @@ interface DevPortRow {
   project_id: string;
   task_id: string;
   allocated_at: string;
-  last_seen_at: string | null;
 }
 
 function rowToLease(row: DevPortRow): DevPortLease {
@@ -27,28 +26,15 @@ function rowToLease(row: DevPortRow): DevPortLease {
     projectId: row.project_id,
     taskId: row.task_id,
     allocatedAt: row.allocated_at,
-    lastSeenAt: row.last_seen_at,
   };
 }
 
+/**
+ * Deliberately narrow. Every method here has a live caller; a read this table
+ * could support but nothing asks for (list-everything, list-by-project) is left
+ * unwritten rather than kept warm for a hypothetical Settings panel.
+ */
 export class DevPortRepository {
-  /** Every lease on this machine, lowest port first. */
-  list(): DevPortLease[] {
-    const db = getGlobalDb();
-    const rows = db
-      .prepare('SELECT * FROM dev_ports ORDER BY port ASC')
-      .all() as DevPortRow[];
-    return rows.map(rowToLease);
-  }
-
-  listForProject(projectId: string): DevPortLease[] {
-    const db = getGlobalDb();
-    const rows = db
-      .prepare('SELECT * FROM dev_ports WHERE project_id = ? ORDER BY port ASC')
-      .all(projectId) as DevPortRow[];
-    return rows.map(rowToLease);
-  }
-
   /** Every port this task holds, lowest first. A task may hold several. */
   listForTask(taskId: string): DevPortLease[] {
     const db = getGlobalDb();
@@ -83,36 +69,25 @@ export class DevPortRepository {
     const db = getGlobalDb();
     const result = db
       .prepare(
-        `INSERT OR IGNORE INTO dev_ports (port, project_id, task_id, allocated_at, last_seen_at)
-         VALUES (?, ?, ?, ?, NULL)`,
+        `INSERT OR IGNORE INTO dev_ports (port, project_id, task_id, allocated_at)
+         VALUES (?, ?, ?, ?)`,
       )
       .run(port, projectId, taskId, new Date().toISOString());
     return result.changes > 0;
-  }
-
-  /** Record that something was observed listening on this lease's port. */
-  markSeen(port: number): void {
-    const db = getGlobalDb();
-    db.prepare('UPDATE dev_ports SET last_seen_at = ? WHERE port = ?').run(
-      new Date().toISOString(),
-      port,
-    );
   }
 
   releaseByTaskId(taskId: string): void {
     const db = getGlobalDb();
     db.prepare('DELETE FROM dev_ports WHERE task_id = ?').run(taskId);
   }
-
-  releaseByPort(port: number): void {
-    const db = getGlobalDb();
-    db.prepare('DELETE FROM dev_ports WHERE port = ?').run(port);
-  }
-
-  releaseForProject(projectId: string): void {
-    const db = getGlobalDb();
-    db.prepare('DELETE FROM dev_ports WHERE project_id = ?').run(projectId);
-  }
 }
+
+/**
+ * Project removal releases that project's ports too, but it does so with raw
+ * SQL inside ProjectRepository.delete's transaction - both tables live in the
+ * global database, and the delete has to be atomic with it. So there is no
+ * `releaseForProject` here: a second, non-transactional way to do it would only
+ * be a way to do it wrong.
+ */
 
 export const devPortRepository = new DevPortRepository();

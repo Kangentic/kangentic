@@ -854,11 +854,15 @@ port has been probed as genuinely free, not merely unclaimed. Fewer ports than r
 range ran out - fall back to the project's own configured ports for the rest.
 
 Reservations persist for the life of the task, so a restart reuses the same ports. They are released
-when the task (or its project) is deleted, and a reservation whose project is gone is reclaimed
-automatically once the range is exhausted.
+when the task (or its project) is deleted, and those are the only two release paths - nothing
+reclaims in the background, so a range that fills up stays full.
 
-The scan range is machine-wide (`devServer.portRangeStart` / `portRangeEnd`, default 7300-7499),
-chosen to miss the common framework defaults - 3000, 4200, 4321, 5000, 5173, 8000, 8080.
+The ledger spans every project in ONE Kangentic instance, not the machine: it lives in the global
+database, whose path honours `KANGENTIC_DATA_DIR`, so a `/preview` keeps its own. The bind probe is
+what holds across instances and against every other process on the machine.
+
+The scan range is `devServer.portRangeStart` / `portRangeEnd` (default 7300-7499), chosen to miss the
+common framework defaults - 3000, 4200, 4321, 5000, 5173, 8000, 8080.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -868,14 +872,36 @@ chosen to miss the common framework defaults - 3000, 4200, 4321, 5000, 5173, 800
 
 ### kangentic_list_dev_ports
 
-List the ports a task has already reserved, without reserving more. Use it to recover ports granted
-earlier in a session (after a resume, or before restarting a server) instead of reserving again. An
-empty list is the normal state for a task using its project's own configured ports.
+Report what Kangentic has reserved for a task **and** what the machine actually says about those
+ports. Reserves nothing.
+
+Every port reported is probed, because a reservation is a promise rather than a fact. Reading the
+ledger alone is silent about the case that bites most often: a dev server the user started outside
+Kangentic entirely, on a port the ledger never handed out. Pass `ports` to ask about specific
+numbers - the ones a project's own config pins - which is the only way to learn that short of trying
+to bind and failing.
+
+Each port comes back with two fields, giving four answers:
+
+| `reservation` | `listening` | Means |
+|---|---|---|
+| `this-task` | `true` | Yours, server already running |
+| `this-task` | `false` | Yours, nothing on it - free to start |
+| `other-task` | either | Another task holds it; reserve a different one |
+| `null` | `true` | **In use outside Kangentic** - taken, though nothing reserved it |
+| `null` | `false` | Genuinely free |
+
+The other task is deliberately not named: a caller needs to know a port is spoken for, not whose it
+is. An empty result is the normal state for a task using its project's own configured ports.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `taskId` | string | Yes | Task ID. |
+| `ports` | number[] | No | Extra ports to check alongside the task's own reservations (at most 20). Each is probed. |
 | `project` | string | No | Project selector (name or UUID). Defaults to the URL-path project. |
+
+Returns `data.ports` (the task's own reservations, unchanged) and `data.statuses` (one
+`{ port, reservation, listening }` row per port checked).
 
 ### kangentic_query_db
 

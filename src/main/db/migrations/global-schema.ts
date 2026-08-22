@@ -80,8 +80,7 @@ export function runGlobalMigrations(db: Database.Database): void {
       port INTEGER PRIMARY KEY,
       project_id TEXT NOT NULL,
       task_id TEXT NOT NULL,
-      allocated_at TEXT NOT NULL,
-      last_seen_at TEXT
+      allocated_at TEXT NOT NULL
     );
 
     CREATE INDEX IF NOT EXISTS idx_dev_ports_project ON dev_ports(project_id);

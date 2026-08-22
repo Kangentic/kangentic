@@ -277,15 +277,16 @@ export function registerSessionTools(server: McpServer, resolver: RequestResolve
   server.registerTool(
     'kangentic_list_dev_ports',
     {
-      description: 'List the TCP ports already reserved by a task, without reserving more. Use it to recover the ports you were given earlier in a session (for example after a resume, or before restarting a server) instead of calling kangentic_reserve_dev_ports again. An empty list means the task has reserved none, which is the normal state for a task using its project\'s own configured ports.',
+      description: 'Report what Kangentic has reserved for a task AND whether anything is actually listening on those ports right now. Every port is probed, so this also answers the case the reservation ledger cannot: a dev server started outside Kangentic, on a port Kangentic never handed out. Pass `ports` to ask about specific numbers - your project\'s own configured 4200 or 3000, say - and each comes back as reserved-by-you, reserved-by-another-task, in-use-outside-Kangentic, or free. Use it to recover ports you were given earlier in a session (after a resume, or before restarting a server) instead of reserving again, and to check a port before binding it. Reserves nothing.',
       inputSchema: z.object({
         taskId: z.string().describe('Task ID (numeric display ID or UUID).'),
+        ports: z.array(z.number().int().min(1).max(65535)).max(20).optional().describe('Extra ports to check alongside this task\'s own reservations, for example the ports your project config pins. Each is probed, so ask about the ones you are about to bind.'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
       annotations: READ_ONLY_ANNOTATIONS,
     },
-    async ({ taskId, project }) => withProject(resolver, project, (ctx) =>
-      callHandler('list_dev_ports', { taskId }, ctx, 'Failed to list dev ports')),
+    async ({ taskId, ports, project }) => withProject(resolver, project, (ctx) =>
+      callHandler('list_dev_ports', { taskId, ports }, ctx, 'Failed to list dev ports')),
   );
 
   // --- kangentic_query_db ---

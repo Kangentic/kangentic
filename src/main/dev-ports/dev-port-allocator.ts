@@ -192,6 +192,50 @@ export function releaseDevPortForTask(taskId: string): void {
   devPortRepository.releaseByTaskId(taskId);
 }
 
-export function releaseDevPortsForProject(projectId: string): void {
-  devPortRepository.releaseForProject(projectId);
+/** What Kangentic PROMISED about a port, and what the machine actually says. */
+export interface DevPortStatus {
+  port: number;
+  /**
+   * Who holds a Kangentic reservation: the asking task, some other task in this
+   * instance's ledger, or nobody. The other task is not named - a caller needs
+   * to know a port is spoken for, not whose it is.
+   */
+  reservation: 'this-task' | 'other-task' | null;
+  /** Whether something is listening RIGHT NOW, reserved or not. */
+  listening: boolean;
+}
+
+/**
+ * Report both sources of truth for each port.
+ *
+ * The reason this exists: a reservation is a promise, not a fact. Reading the
+ * ledger alone answers "what did Kangentic hand out", which is silent about the
+ * case that actually bites - a dev server the user started outside Kangentic
+ * entirely, on a port the ledger has never heard of. Only the bind probe sees
+ * that, and the probe used to be private to `reserveDevPorts`.
+ *
+ * The four answers a caller cares about fall out of the two fields: their own
+ * reserved port with a server up, their own with nothing on it (restart it),
+ * someone else's reservation (do not take it), and `reservation: null` with
+ * `listening: true` - in use by something outside this ledger, which is the
+ * one no amount of ledger reading could have told them.
+ *
+ * Probes sequentially, like every other probe here: callers pass a handful of
+ * ports, and a parallel sweep would open that many sockets at once for no gain.
+ * Bound the list at the call site - PROBE_TIMEOUT_MS is the per-port worst case.
+ */
+export async function describeDevPorts(taskId: string, ports: number[]): Promise<DevPortStatus[]> {
+  const statuses: DevPortStatus[] = [];
+
+  for (const port of ports) {
+    const lease = devPortRepository.getByPort(port);
+    const listening = !(await isPortFree(port));
+    statuses.push({
+      port,
+      reservation: lease ? (lease.taskId === taskId ? 'this-task' : 'other-task') : null,
+      listening,
+    });
+  }
+
+  return statuses;
 }
