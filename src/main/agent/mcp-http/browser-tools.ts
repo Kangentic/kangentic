@@ -83,11 +83,19 @@ export type AutomationConfigReader = () => ResolvedBrowserAutomationConfig;
 export interface BrowserSessionLookup {
   getSessionTaskId(sessionId: string): string | undefined;
   /**
-   * The task's worktree directory, so an isolated lane can share the task's
-   * browser partition and inherit whatever the user is already logged into.
-   * Optional: an older host that does not supply it just gets the project path.
+   * The task's worktree directory, so an isolated lane shares the task's
+   * browser partition and inherits whatever the user is already logged into.
+   *
+   * REQUIRED, and deliberately not optional. It shipped optional and nothing
+   * implemented it: `SessionManager` satisfies the rest of this interface
+   * structurally, so `getTaskWorktreePath?.()` returned undefined on every
+   * call and no type or test complained. A null path is NOT a graceful
+   * degradation - `browserPartitionForWorktree(null)` returns the LEGACY
+   * SHARED jar, so every lane silently landed in the one cookie jar that
+   * per-worktree isolation exists to replace (decision 1). Required makes the
+   * next wiring gap a compile error instead of a silent regression.
    */
-  getTaskWorktreePath?(taskId: string): string | null;
+  getTaskWorktreePath(taskId: string): string | null;
 }
 
 export interface BrowserToolDependencies {
@@ -268,7 +276,7 @@ export function registerBrowserTools(
         isolated,
         // A lane shares the task's worktree cookie jar, so a subagent inherits
         // the user's existing login rather than landing on a sign-in wall.
-        cwd: callerTaskId && sessions ? sessions.getTaskWorktreePath?.(callerTaskId) ?? null : null,
+        cwd: callerTaskId && sessions ? sessions.getTaskWorktreePath(callerTaskId) ?? null : null,
         // Opening always loads a URL, so this is a navigation-tier action:
         // "Allow navigation" off in Settings disables this tool too.
         capability: 'navigate',

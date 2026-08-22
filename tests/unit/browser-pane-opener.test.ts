@@ -55,6 +55,7 @@ vi.mock('../../src/main/browser/browser-lane-manager', () => ({
 import { browserPaneRegistry } from '../../src/main/browser/browser-pane-registry';
 import { withGuest, capabilityGate, validateNavigationUrl } from '../../src/main/browser/browser-pane-driver';
 import { browserUrlStore } from '../../src/main/browser/browser-url-store';
+import { openLane } from '../../src/main/browser/browser-lane-manager';
 import {
   openPaneForCallerTask,
   closePanes,
@@ -485,6 +486,68 @@ describe('openPaneForCallerTask', () => {
       vi.mocked(browserPaneRegistry.list).mockReturnValue([] as never);
       const result = await openPaneForCallerTask(openInput(undefined));
       expect(result).toMatchObject({ ok: false, error: { kind: 'pane-destroyed' } });
+    });
+  });
+
+  describe('isolated lane cwd resolution', () => {
+    // `input.cwd ?? (projectIsOpen ? host.currentProjectPath : null)` - three
+    // branches, asserted on what openLane actually RECEIVES as `cwd`, since
+    // that value is what selects the lane's cookie-jar partition
+    // (browser-lane-manager.ts's browserPartitionForWorktree).
+    //
+    // NOTE: at the time these tests were added, `openPaneForCallerTask` has
+    // exactly one caller (`kangentic_browser_open_pane` in browser-tools.ts),
+    // and that caller's `cwd` argument is itself always null in production -
+    // `BrowserSessionLookup.getTaskWorktreePath` is declared but has no real
+    // implementation anywhere (SessionManager does not define it), so
+    // `sessions.getTaskWorktreePath?.(callerTaskId)` is always `undefined`.
+    // That makes the first branch below (an explicit `input.cwd`) currently
+    // unreachable from any real call site - it is still `openPaneForCallerTask`'s
+    // own documented contract and worth pinning on its own terms, but it is not
+    // proof the feature described in browser-tools.ts's `getTaskWorktreePath`
+    // JSDoc ("a lane shares the task's worktree cookie jar") is live today.
+    beforeEach(() => {
+      vi.mocked(browserPaneRegistry.getByTaskId).mockReturnValue([]);
+      vi.mocked(browserPaneRegistry.list).mockReturnValue([
+        pane({ sessionId: 'lane_abc12345', kind: 'lane', url: 'http://localhost:4200' }),
+      ] as never);
+    });
+
+    it('passes an explicit input.cwd straight through, even while the project is open', async () => {
+      const explicitCwd = 'C:\\Users\\dev\\repo\\.kangentic\\worktrees\\7';
+      const result = await openPaneForCallerTask({
+        ...openInput('http://localhost:4200'),
+        isolated: true,
+        cwd: explicitCwd,
+      });
+      expect(result.ok).toBe(true);
+      expect(openLane).toHaveBeenCalledWith(expect.objectContaining({ cwd: explicitCwd }));
+    });
+
+    it('falls back to the OPEN project\'s path when no explicit cwd is given', async () => {
+      const result = await openPaneForCallerTask({
+        ...openInput('http://localhost:4200'),
+        isolated: true,
+      });
+      expect(result.ok).toBe(true);
+      // installHost() (the default from the outer beforeEach) sets
+      // currentProjectPath to '/projects/app'.
+      expect(openLane).toHaveBeenCalledWith(expect.objectContaining({ cwd: '/projects/app' }));
+    });
+
+    it('falls back to null when the project is backgrounded and no explicit cwd is given', async () => {
+      // currentProjectPath is deliberately non-null here: this is what
+      // discriminates "not this caller's open project" from "no path
+      // available at all" - a mismatched projectId must win over a truthy
+      // currentProjectPath, or a backgrounded caller would get handed
+      // whatever OTHER project happens to be open's cookie jar.
+      installHost({ currentProjectId: 'other-project', currentProjectPath: '/projects/other' });
+      const result = await openPaneForCallerTask({
+        ...openInput('http://localhost:4200'),
+        isolated: true,
+      });
+      expect(result.ok).toBe(true);
+      expect(openLane).toHaveBeenCalledWith(expect.objectContaining({ cwd: null }));
     });
   });
 });
