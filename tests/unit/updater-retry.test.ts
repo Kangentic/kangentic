@@ -60,11 +60,11 @@ vi.mock('fs', async () => {
   return { ...actual, existsSync: mocks.existsSync };
 });
 
-// updater.ts short-circuits initUpdater() on Linux (`if (!app.isPackaged ||
-// process.platform === 'linux') return`). CI runs on Ubuntu, so without this
-// stub the error listener is never registered and every test that calls
-// getRegisteredListener('error') fails. Tests should exercise the full
-// init path regardless of host OS.
+// initUpdater() no longer short-circuits on Linux, but it still picks
+// per-platform branches (autoInstallOnAppQuit on Linux, disableDifferentialDownload
+// on macOS). Pin the platform so these tests exercise one deterministic wiring
+// path whether they run on a Windows dev host or Ubuntu CI. The Linux-specific
+// branch has its own coverage in updater-init-guard.test.ts.
 Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
 
 // initUpdater() reads process.resourcesPath via manifestPath(). It is

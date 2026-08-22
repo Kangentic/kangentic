@@ -8,6 +8,7 @@ import { TransitionEngine } from '../../transition-engine/transition-engine';
 import { getProjectDb } from '../../db/database';
 import { interpolateTaskTemplate, resolveTaskTemplateVars } from '../../agent/shared';
 import { resolveDefaultBaseBranch } from '../handlers/git-stats-capture';
+import { getDevPortForTask } from '../../dev-ports/dev-port-allocator';
 import { agentRegistry } from '../../agent/agent-registry';
 import { buildSessionHistoryReference } from '../../agent/handoff/session-history-reference';
 import { DEFAULT_AGENT } from '../../../shared/types';
@@ -196,6 +197,15 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
   // an enclosing task-move).
   const project = options.projectId ? context.projectRepo.getById(options.projectId) : null;
 
+  // NOTE: no dev-server port is reserved here, deliberately.
+  //
+  // An earlier version leased one per task at spawn. That was backwards: a
+  // project configures its OWN ports (angular.json, vite config, a compose
+  // file), often several, so a number Kangentic invents is meaningless to it -
+  // and reserving one implied a server existed there when nothing had been
+  // started. Ports are now RESERVED ON REQUEST, by whoever is about to bind
+  // one: see kangentic_reserve_dev_ports.
+  //
   // Auto_command template vars for the current task snapshot. defaultBaseBranch
   // is resolved once per spawn (board config -> project/global config ->
   // 'main') so {{baseBranch}} matches resolveDefaultBaseBranch everywhere else
@@ -206,6 +216,7 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
       task: currentTask,
       defaultBaseBranch: resolveDefaultBaseBranch(context, options.projectPath),
       attachmentPaths: options.attachments?.getPathsForTask(currentTask.id) ?? [],
+      devPort: getDevPortForTask(currentTask.id),
     });
 
   const run = async (): Promise<void> => {

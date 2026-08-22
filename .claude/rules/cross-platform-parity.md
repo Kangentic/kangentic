@@ -76,7 +76,7 @@ A test must pass on CI's headless Linux runner, not merely on local Windows. Con
   `tests/unit/test-fs-writes-sandboxed.test.ts` statically scans `tests/**` for a write call
   (`mkdirSync`, `writeFileSync`, `rmSync`, `mkdtempSync`, and the rest) whose first argument is a
   hardcoded absolute string literal, and fails before the test ever runs. It rides the unit tier,
-  so it runs on CI as a PR check (caught and fixed by the Tests column's `/pull-request`
+  so it runs on CI as a PR check (caught and fixed by the Testing column's `/pull-request`
   monitor-and-fix loop) and also locally in `/merge-back` Step 0 for a direct push and in a manual
   `/test` run. Because it is a static scan it flags the absolute-write subclass on any OS, without a
   Linux runner, closing the "green locally, red on CI" gap that let `main` go red by design.

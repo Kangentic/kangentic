@@ -327,7 +327,7 @@ Resolve the task that corresponds to the current working directory and/or git br
 | `cwd` | string | No | Absolute working directory path. The tool extracts the worktree folder name from `.kangentic/worktrees/<folder>` and matches against `tasks.worktree_path`. |
 | `branch` | string | No | Current git branch name. Exact (case-insensitive) match against `tasks.branch_name`. |
 
-At least one parameter is required. Returns the same task fields as `kangentic_find_task` (id, displayId, title, description, column, branchName, baseBranch, worktreePath, prNumber, prUrl, useWorktree, status). Returns `data: null` when no match is found, a single task object when one matches, or an array when multiple tasks match.
+At least one parameter is required. Returns the same task fields as `kangentic_find_task` (id, displayId, title, description, column, branchName, baseBranch, worktreePath, prNumber, prUrl, useWorktree, status). It deliberately does NOT report reserved ports: this serializer is a per-project read and the ledger is in the GLOBAL database, so including them made every task lookup depend on a second database and cost one query per matched task. Use `kangentic_check_dev_ports`, which answers that question and probes each port besides. Returns `data: null` when no match is found, a single task object when one matches, or an array when multiple tasks match.
 
 ### kangentic_board_summary
 
@@ -427,7 +427,7 @@ Update a task's title, description (full replace, in-place find/replace edits, o
 
 At least one updatable field is required.
 
-Setting `prUrl` or `prNumber` also clears the task's stored PR state, so the three PR columns never disagree; a forced resolve fires immediately after the write and fills the state back in from the PR itself, so the card shows its state chip without waiting for the background sweep. See [PR Integration](pr-integration.md#where-pr-state-is-persisted).
+Setting `prUrl` or `prNumber` also clears the task's stored PR state, so the three PR columns never disagree; a forced resolve fires immediately after the write and fills the state back in from the PR itself, so the card shows its state chip without waiting for the background sweep. The exception is a write that re-points nothing (the same `prUrl` and `prNumber` the task already holds, on a row whose `pr_state` is non-null): that is treated as a no-op, and both the clear and the resolve are skipped so the card's state chip does not blank and come back. See [PR Integration](pr-integration.md#where-pr-state-is-persisted).
 
 `profile` is **mutually exclusive** with `model` / `effort` / `permissionMode` / `runMode:
 "agent_override"` (and the task's `agent_override`): setting a profile clears the pins and forces
@@ -701,6 +701,8 @@ Structured output is shaped by three agent-agnostic levers, applied to the parse
 - `search`: case-insensitive substring; return only entries whose content (including a tool result inlined under its owning tool call) contains the term.
 - `aroundUuid` + `context`: center the returned entries on the turn with `aroundUuid` (the `turnUuid` from a `kangentic_search` conversation hit) and include `context` turns either side (default 3). This is the citation-first fetch - pull just the neighborhood of a cited turn rather than the whole transcript. A stale/absent uuid degrades to the full transcript.
 
+A very large transcript is bounded twice, at two different layers, and the two notices mean different things. The parser reads at most `MAX_PARSE_SOURCE_BYTES` (16MB) from the END of the native history file, because reading an unbounded one whole is what OOM'd the main process; when it does, the omission is announced in-band as a `system` entry with subtype `truncated` ("Earlier N MB of this conversation are not shown"). That is a READ bound and it is the same for every caller. The `maxChars` budget below is a separate RESPONSE bound applied afterwards. A single huge transcript can carry both notices at once. `kangentic_search`'s conversation index is unaffected for Claude, whose adapter implements `parseTranscriptWindow` and walks the whole file in bounded windows. For every other agent the indexer falls back to `parseTranscript`, so above `MAX_PARSE_SOURCE_BYTES` search coverage is bounded at the same point the reader's is, not the full history.
+
 Output is bounded by a character budget (default ~50,000 chars; raise via `maxChars`, hard ceiling 500,000). When the result exceeds the budget it keeps the **most recent** entries and prepends a `[Truncated: N earlier entries omitted ...]` note. `view`/`tail`/`search` apply to `structured` only; the `maxChars` budget also caps `raw` scrollback (keeping the most recent portion).
 
 Structured-format support by agent:
@@ -839,6 +841,72 @@ Response shape:
 | `sessionId` | string | No | Kangentic session UUID (the `sessions.id` column). Returns intervals for that session only. |
 | `project` | string | No | Project selector (name or UUID). Defaults to the URL-path project. |
 
+### kangentic_reserve_dev_ports
+
+Reserve free TCP ports before starting a dev server, so two agents working at the same time never
+bind the same one.
+
+Kangentic does not decide what a project's ports should be - the project already does, in
+`angular.json`, a vite config, a compose file - so **nothing is reserved until something asks**.
+What Kangentic can do that a project cannot is see every task and every project on the machine at
+once. Reach for this only when the configured port might already be taken: several tasks sit in one
+board column and run concurrently, and they all default to the same port.
+
+Request every port you are about to bind in ONE call. A project needing an API and a frontend asks
+for 2, because asking twice leaves a window where a sibling task takes the second. Each returned
+port has been probed as genuinely free, not merely unclaimed. Fewer ports than requested means the
+range ran out - fall back to the project's own configured ports for the rest.
+
+Reservations persist for the life of the task, so a restart reuses the same ports. They are released
+when the task (or its project) is deleted, and those are the only two release paths - nothing
+reclaims in the background, so a range that fills up stays full.
+
+The ledger spans every project in ONE Kangentic instance, not the machine: it lives in the global
+database, whose path honours `KANGENTIC_DATA_DIR`, so a `/preview` keeps its own. The bind probe is
+what holds across instances and against every other process on the machine.
+
+The scan range is `devServer.portRangeStart` / `portRangeEnd` (default 7300-7499), chosen to miss the
+common framework defaults - 3000, 4200, 4321, 5000, 5173, 8000, 8080.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `taskId` | string | Yes | The task reserving the ports. Resolve it with `kangentic_get_current_task`. |
+| `count` | number | No | How many ports to reserve (1-10). Default 1. Ask for all of them at once. |
+| `project` | string | No | Project selector (name or UUID). Defaults to the URL-path project. |
+
+### kangentic_check_dev_ports
+
+Report what Kangentic has reserved for a task **and** what the machine actually says about those
+ports. Reserves nothing.
+
+Every port reported is probed, because a reservation is a promise rather than a fact. Reading the
+ledger alone is silent about the case that bites most often: a dev server the user started outside
+Kangentic entirely, on a port the ledger never handed out. Pass `ports` to ask about specific
+numbers - the ones a project's own config pins - which is the only way to learn that short of trying
+to bind and failing.
+
+Each port comes back with two fields, giving four answers:
+
+| `reservation` | `listening` | Means |
+|---|---|---|
+| `this-task` | `true` | Yours, server already running |
+| `this-task` | `false` | Yours, nothing on it - free to start |
+| `other-task` | either | Another task holds it; reserve a different one |
+| `null` | `true` | **In use outside Kangentic** - taken, though nothing reserved it |
+| `null` | `false` | Genuinely free |
+
+The other task is deliberately not named: a caller needs to know a port is spoken for, not whose it
+is. An empty result is the normal state for a task using its project's own configured ports.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `taskId` | string | Yes | Task ID. |
+| `ports` | number[] | No | Extra ports to check alongside the task's own reservations (at most 20). Each is probed. |
+| `project` | string | No | Project selector (name or UUID). Defaults to the URL-path project. |
+
+Returns `data.ports` (the task's own reservations, unchanged) and `data.statuses` (one
+`{ port, reservation, listening }` row per port checked).
+
 ### kangentic_query_db
 
 Run a read-only SQL query against the project database. The connection uses `PRAGMA query_only = ON` to prevent any write operations.
@@ -922,6 +990,7 @@ Tool categories (16 tools):
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `url` | string | No | Absolute http(s) URL to load. Falls back to the task's saved Browser URL, then the project default. |
+| `isolated` | boolean | No | Open a private offscreen LANE instead of the user's visible pane, and return its handle. Pass that handle back as `sessionId` on every later call, or the drive falls back to the shared pane and the isolation silently does nothing. See [Isolated browser lanes](#isolated-browser-lanes). |
 
 The URL is part of the same call by necessity: a pane with no URL renders the empty state and registers no `<webview>` guest, so it is invisible to `list_panes`, `navigate`, `screenshot`, and every other tool in the family. An open-without-navigate would strand the agent in a state nothing can act on. When no `url` is passed and neither fallback exists, the tool fails with `no-url` rather than opening an unusable pane.
 
@@ -957,7 +1026,57 @@ Every **driving** tool below takes the same optional target pair. They are liste
 | `sessionId` | string | No | Session whose Browser pane to target. Must name a pane in your own project. |
 | `taskId` | string | No | Task whose Browser pane to target. An alternative to `sessionId`, likewise same-project. |
 
-Omitting both resolves your own pane, then the single pane open in the project. Alongside the per-tool errors listed below, any driving tool can return the shared refusals raised while resolving and attaching to a pane: `no-pane-open`, `multiple-panes` (more than one is open and neither argument was given; the error carries the candidates), `foreign-project`, `pane-destroyed`, `pane-not-rendering`, `cdp-attach-failed`, and `driver-error`.
+Omitting both resolves your own pane, then the single pane open in the project. Alongside the per-tool errors listed below, any driving tool can return the shared refusals raised while resolving and attaching to a pane: `no-pane-open`, `multiple-panes` (more than one is open and neither argument was given; the error carries the candidates), `foreign-project`, `pane-destroyed`, `pane-not-rendering`, `cdp-attach-failed`, `pane-busy`, and `driver-error`.
+
+### An agent's browser survives the window closing
+
+A browser an agent is using belongs to the agent, not to a piece of UI. The user is free to close the
+task detail, move around the board, and switch projects without disconnecting an agent midway through
+verifying something.
+
+An Electron `<webview>` guest dies the instant its DOM node unmounts, so closing the task's detail
+window really does destroy the visible pane. When that happens and the task still has a live agent
+session, main hands the page off to an offscreen lane at the same URL, registered under the same
+task. The agent's next call resolves to it through the ordinary caller-task rule, so nothing about
+the agent changes - it does not know a hand-off happened and does not need to. Reopening the task's
+Browser pane stands the hand-off lane down, because the visible pane is the better answer whenever it
+exists and two surfaces for one task would make every implicit call ambiguous.
+
+This is distinct from retention (`.claude/rules/retained-pane-never-remounts.md`), which keeps a
+window that stays OPEN alive across a project switch. Retention covers the window staying; the
+hand-off covers the window going away.
+
+### Isolated browser lanes
+
+`kangentic_browser_open_pane` accepts `isolated: true`, which opens a private browser LANE instead of
+the task's shared pane and returns a `laneId`. Pass that id back as `sessionId` on every later
+`kangentic_browser_*` call - forget it and the call silently falls back to the shared pane, which
+undoes the isolation. Use a lane whenever several agents work on one task at the same time: without
+one they all resolve to the same pane and interleave navigations, clicks and screenshots while each
+believes it has exclusive control.
+
+A lane is offscreen. It does not appear on screen, does not disturb the pane the user is looking at,
+and cannot take their keyboard focus. It shares the task's worktree cookie jar, so it inherits
+whatever the user is already signed into. Lanes are capped per task; past the cap `open_pane` returns
+`lane-limit` and names the lanes to reuse. Close one with `kangentic_browser_close_pane`, which
+destroys lanes directly. A lane is also destroyed when the session that opened it ends, when it goes
+idle, and on app quit - so forgetting to close one leaks nothing.
+
+`kangentic_browser_list_panes` reports a lane's `kind` so an agent can tell its own lane from the
+task's shared pane.
+
+`kangentic_browser_screenshot` additionally returns `dev-server-error` when the dev server is showing
+a build-error overlay. Without it the tool returns a faithful picture of a full-screen red overlay,
+which costs a turn to interpret - and when several agents share one dev server, the one that sees the
+overlay is usually not the one who broke the build, so the error names that possibility. Detection is
+by custom element (`vite-error-overlay`, `nextjs-portal`), so a dev server that renders neither
+behaves exactly as before: no overlay recognized means "nothing detected", never "the page is fine".
+
+Drives against one pane are SERIALIZED. Only one runs at a time per guest, so two agents sharing a
+pane get slow-but-correct behavior instead of interleaved clicks, keystrokes and navigations. A
+drive that cannot get its turn within 30s returns `pane-busy` rather than hanging. Serialization
+fixes interleaving, not intent: it cannot stop another agent navigating away from the page you were
+midway through verifying, so concurrent workers should take their own panes rather than share one.
 
 The capability gate (`capabilityGate` in `src/main/browser/browser-pane-driver.ts`, the single source of the tier rules) adds four more: `automation-disabled` when the master switch is off, and `interaction-disabled` / `navigation-disabled` / `eval-disabled` for the tool's own tier. `automation-disabled` is reachable even though the family is not registered while the master switch is off, because the policy is read live per request: a switch flipped mid-session refuses the next call rather than waiting for a reconnect.
 

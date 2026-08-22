@@ -29,6 +29,7 @@ describe('shouldArmFocusGuard', () => {
       hasActiveElement: true,
       activeIsBody: false,
       activeInsidePane: false,
+      activeIsTextTarget: false,
     })).toBe(true);
   });
 
@@ -37,6 +38,7 @@ describe('shouldArmFocusGuard', () => {
       hasActiveElement: false,
       activeIsBody: false,
       activeInsidePane: false,
+      activeIsTextTarget: false,
     })).toBe(false);
   });
 
@@ -47,6 +49,7 @@ describe('shouldArmFocusGuard', () => {
       hasActiveElement: true,
       activeIsBody: true,
       activeInsidePane: false,
+      activeIsTextTarget: false,
     })).toBe(false);
   });
 
@@ -57,6 +60,57 @@ describe('shouldArmFocusGuard', () => {
       hasActiveElement: true,
       activeIsBody: false,
       activeInsidePane: true,
+      activeIsTextTarget: false,
+    })).toBe(false);
+  });
+
+  it('DOES arm for an opted-in text input inside the pane', () => {
+    // The pane's own note input is inside the pane, so the rule above read it as
+    // the user's business and the guard never armed - which meant a drive stole
+    // focus out of a sentence they were mid-way through typing, and every
+    // keystroke after that went into the page with nothing to route it back.
+    // The whole point of the "inside the pane" carve-out is a focus move the
+    // user made themselves; this is one they did not.
+    expect(shouldArmFocusGuard({
+      hasActiveElement: true,
+      activeIsBody: false,
+      activeInsidePane: true,
+      activeIsTextTarget: true,
+    })).toBe(true);
+  });
+
+  it('still does not arm for a NON-text element inside the pane', () => {
+    // The contrast case, and the one that keeps the exception narrow. A guest
+    // the user clicked into surfaces as the <webview> element and the toolbar is
+    // buttons; neither is a text target. Arming for those would snapshot a
+    // terminal session and deliver keystrokes there while the user was typing
+    // into the page - a misroute, which is worse than the drop it replaces.
+    expect(shouldArmFocusGuard({
+      hasActiveElement: true,
+      activeIsBody: false,
+      activeInsidePane: true,
+      activeIsTextTarget: false,
+    })).toBe(false);
+  });
+
+  it('a text target OUTSIDE the pane arms too, unchanged', () => {
+    expect(shouldArmFocusGuard({
+      hasActiveElement: true,
+      activeIsBody: false,
+      activeInsidePane: false,
+      activeIsTextTarget: true,
+    })).toBe(true);
+  });
+
+  it('body still wins over a text target claim', () => {
+    // Order matters: the body short-circuit runs first, so a nonsensical input
+    // combination cannot arm the guard on an element there is nothing to
+    // restore to.
+    expect(shouldArmFocusGuard({
+      hasActiveElement: true,
+      activeIsBody: true,
+      activeInsidePane: false,
+      activeIsTextTarget: true,
     })).toBe(false);
   });
 });

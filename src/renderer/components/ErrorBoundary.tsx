@@ -22,7 +22,10 @@ export class ErrorBoundary extends React.Component<Props, State> {
 
   componentDidCatch(error: Error, info: React.ErrorInfo): void {
     console.error('ErrorBoundary caught:', error, info.componentStack);
-    window.electronAPI?.analytics?.trackRendererError(error.message);
+    window.electronAPI?.analytics?.trackRendererError(error.message, {
+      boundary: 'root',
+      componentStack: info.componentStack ?? undefined,
+    });
   }
 
   handleRetry = () => {

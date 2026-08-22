@@ -18,13 +18,40 @@ This downloads the pre-built binary for your platform, installs it, and launches
 |----------|-----------------|-------------|
 | Windows | `electron-updater` (NSIS) | Review the release notes in the modal and click "Restart to update", or quit normally - installs silently on next launch. |
 | macOS | `electron-updater` | Review the release notes in the modal and click "Restart to update". Requires code signing - see [macOS signing note](#macos-auto-update-requires-signing). |
-| Linux | None | Re-run `npx kangentic` or download from [GitHub Releases](https://github.com/Kangentic/kangentic/releases). |
+| Linux | `electron-updater` (deb/rpm) | Review the release notes in the modal and click "Restart to update", then approve the system authentication prompt. Unlike the other platforms there is no install-on-quit - see [Linux auto-update](#linux-auto-update). |
 
 Auto-update is implemented in `src/main/updater.ts`. It checks for updates 5 seconds after launch, then every 4 hours. Updates download in the background; when ready, a centered modal shows the new version's release notes (rendered markdown, sourced from `RELEASE_NOTES.md` baked into the update manifest at build time - see [Release Sequencing](#release-sequencing)) with "Restart to update" and "Later". The modal auto-opens once per version; "Later" dismisses it in favor of a persistent title-bar indicator that reopens it. A version whose release carried no notes falls back to the legacy persistent toast. v0.1.0 users must manually update to v0.2.0 - auto-update kicks in from v0.2.0 onward.
 
-That modal is strictly **pre-restart**, so on its own it reaches only the user who happens to read it before relaunching. Its counterpart is the **"What's New" dialog** (`src/renderer/components/dialogs/WhatsNewDialog.tsx`), which shows the notes for the version now RUNNING, once, on the first launch after the version changes. It covers everyone the pre-restart modal cannot: a user who restarts straight from the toast, one whose update was installed silently on a normal quit by `autoInstallOnAppQuit`, a manual installer run, and Linux, where the updater never runs at all. The status-bar version pill is a permanent way back in, and the dialog links to the full GitHub release. It is gated on its own `lastWhatsNewShownVersion` config key rather than `lastSeenReleaseNotesVersion` (see [Configuration](configuration.md)), and is suppressed on a fresh install so it never stacks on the onboarding walkthrough.
+That modal is strictly **pre-restart**, so on its own it reaches only the user who happens to read it before relaunching. Its counterpart is the **"What's New" dialog** (`src/renderer/components/dialogs/WhatsNewDialog.tsx`), which shows the notes for the version now RUNNING, once, on the first launch after the version changes. It covers everyone the pre-restart modal cannot: a user who restarts straight from the toast, one whose update was installed silently on a normal quit by `autoInstallOnAppQuit`, a manual installer run, and a `npx kangentic` upgrade. The status-bar version pill is a permanent way back in, and the dialog links to the full GitHub release. It is gated on its own `lastWhatsNewShownVersion` config key rather than `lastSeenReleaseNotesVersion` (see [Configuration](configuration.md)), and is suppressed on a fresh install so it never stacks on the onboarding walkthrough.
 
 Its notes do not come from the update manifest, which the relaunched app no longer has: `RELEASE_NOTES.md` is inlined into the renderer bundle at build time (`src/renderer/lib/baked-release-notes.ts`, via Vite's `?raw`), so the notes ship inside the build they describe. That needs no network and no update manifest, which is what lets it cover fresh and manual installs. The file is not in the packaged app (`electron-builder.yml`'s `files:` is a whitelist), so inlining is also the only way to read it at runtime.
+
+### Linux auto-update
+
+Linux updates in place like the other platforms, through the same modal and the same "Restart to update" button. Nothing extra is configured to make that work:
+
+- `electron-updater` ships `DebUpdater`, `RpmUpdater`, and `PacmanUpdater` beside `AppImageUpdater`. Its `autoUpdater` export picks one by reading a `package-type` marker from `resourcesPath`.
+- `electron-builder` writes that marker, plus `app-update.yml`, into every fpm target in its `supportsAutoUpdate` list (`deb`, `rpm`, `pacman`). Both files are already inside the shipped `.deb` and `.rpm`.
+- Installing shells out to the system package manager. For rpm it prefers `zypper` / `dnf` / `yum` and falls back to `rpm -Uvh`, so dependencies resolve through the distro's own tooling. For deb it runs `dpkg -i` first and only calls `apt-get install -f -y` afterwards to repair missing dependencies, using `apt` directly just when `dpkg` is absent. Note this is the reverse of the launcher's own order, which prefers `apt` (see [packages/launcher/README.md](../packages/launcher/README.md)).
+
+Two Linux-specific behaviors follow from that:
+
+**A system authentication prompt appears on install.** The package manager always elevates. `electron-updater` prefers a graphical helper (`pkexec`, `gksudo`, `kdesudo`, `beesu`) and falls back to `sudo`. On a desktop with a polkit agent this is a normal password dialog.
+
+**There is no install-on-quit.** `autoInstallOnAppQuit` is forced to `false` on Linux (`src/main/updater.ts`), because an auth prompt raised as the window disappears is both confusing and liable to lose a race with session teardown. The update stays staged until the user explicitly restarts. Upstream made the same call for these targets in a later major.
+
+If a Linux desktop has no polkit agent and no usable `sudo` TTY, the install fails and surfaces through the updater's existing `error` handler rather than failing silently. The user can always fall back to `npx kangentic@latest`.
+
+#### What verifies a Linux update
+
+Integrity is checked, authenticity is not signature-based:
+
+- **Checked:** the manifest is fetched over HTTPS from GitHub, and the downloaded package is verified against the `sha512` that manifest declares (`AppUpdater.executeDownload`). A tampered or truncated download is rejected before anything is installed.
+- **Not checked:** the package's own GPG signature. Our deb/rpm are unsigned (there is no Linux signing key, which is also why the CI install gate passes `--nogpgcheck`), and electron-updater installs them with `--nogpgcheck` / `--allow-unsigned-rpm` / `dpkg -i` accordingly.
+
+That is the same trust anchor the `npx kangentic` install path has always used - HTTPS to GitHub plus a checksum - so in-app updating is no less verified than the route it replaces. It is weaker than Windows, where electron-updater additionally checks the Authenticode signature against the publisher name embedded in `app-update.yml`.
+
+Tightening this requires two things together, and neither exists yet: GPG-signing the packages at release time, and electron-updater's `allowUnverifiedLinuxPackages: false`, which is a v27 flag not present in the 6.x line this app pins. Setting the flag without the signing key would break every Linux update, so the two must land together.
 
 ### Install a Specific Version
 
@@ -96,24 +123,45 @@ Electron's `autoUpdater` on macOS only works with signed apps (Electron docs: "m
 
 ### Draft Releases Are Invisible to Auto-Updater
 
-`electron-updater` only sees **published** releases. Draft releases are invisible to the auto-updater and to `npx kangentic`. The manual publish step is the review gate -- always verify artifacts before publishing.
+`electron-updater` only sees **published** releases. Draft releases are invisible to the auto-updater and to `npx kangentic`.
+
+That invisibility is what made the v0.35.0 failure user-facing: the three platform jobs each raced
+to create their own draft for the same tag, the publish step resolved the tag to the Windows one,
+and the macOS and Linux artifacts stayed on drafts nobody could download. Two things now prevent a
+repeat. `create-draft-release` creates the single draft before any build starts, so every platform
+job attaches to the same release. Then `scripts/verify-release-assets.js` runs before
+`--draft=false` and fails the release unless the tag resolves to exactly one release object
+carrying all 11 expected assets, all fully uploaded. A build that succeeds on every platform is
+not evidence that the release is complete; only the asset check is.
 
 ### GitHub Actions Workflows
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
 | `ci.yml` | Push to main, PRs | Typecheck, unit tests, UI tests |
-| `release.yml` | Tag push (`v*`) or `workflow_dispatch` | Build + sign + draft GitHub Release, then publish with notes (one atomic `gh release edit`) + publish launcher to npm (via OIDC trusted publishing) |
+| `release.yml` | Tag push (`v*`) or `workflow_dispatch` | Create one draft Release, build + sign on all 3 platforms into it, verify the asset manifest, then publish with notes (one atomic `gh release edit`) + publish launcher to npm (via OIDC trusted publishing) |
 
 ### CI Build Matrix
 
-The release workflow produces 3 builds:
+The release workflow produces 3 builds, contributing 11 assets in total to one release. The full
+expected filename set is `scripts/release-assets.js`, which the publish gate checks against and
+`tests/unit/release-asset-manifest.test.ts` keeps in sync with `electron-builder.yml` and the
+launcher.
 
 | Runner | Platform | Artifacts |
 |--------|----------|-----------|
-| `ubuntu-latest` | linux-x64 | `.deb`, `.rpm` |
-| `windows-latest` | windows-x64 | `Setup.exe`, `.nupkg` |
-| `macos-latest` | macos-arm64 | `.dmg`, `.zip` |
+| `ubuntu-latest` | linux-x64 | `.deb`, `.rpm`, `latest-linux.yml` |
+| `windows-latest` | windows-x64 | `Setup.exe`, `.exe.blockmap`, `latest.yml` |
+| `macos-latest` | macos-arm64 | `.dmg`, `.zip`, a `.blockmap` for each, `latest-mac.yml` |
+
+The three `latest*.yml` files are the update manifests `electron-updater` fetches, so a release
+missing one is broken for that platform even when its installer uploaded fine.
+
+Every artifact filename is pinned via `artifactName` in `electron-builder.yml` rather than
+inherited from electron-builder's defaults. Three of the five templates (the macOS zip, the dmg,
+and the deb) were inherited until v0.35.0; only `nsis` and `rpm` were already pinned. The launcher
+hardcodes the names it downloads, so a default change would have silently 404'd `npx kangentic` on
+that platform.
 
 Linux arm64 and macOS x64 are not built in v1. Documented in the [Installation Guide](installation.md).
 
@@ -140,6 +188,12 @@ The installed app and `npm run dev` share the same data directory. Set `KANGENTI
 ### Rollback
 
 Run `npx kangentic@X.Y.Z` with the desired version to download and install that specific release.
+
+On Linux this installs cleanly only when the target version is NEWER than what is installed. Going
+backwards is a downgrade, which `dnf install`, `zypper install`, and `rpm -U` all refuse by default,
+so a Linux rollback needs the distro's explicit downgrade command (`sudo dnf downgrade <file>.rpm`,
+`sudo zypper install --oldpackage <file>.rpm`, or `sudo dpkg -i <file>.deb`) against the artifact
+downloaded from [GitHub Releases](https://github.com/Kangentic/kangentic/releases).
 
 ### Clearing update cache
 

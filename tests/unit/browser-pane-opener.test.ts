@@ -33,14 +33,29 @@ vi.mock('../../src/main/browser/browser-pane-driver', () => ({
   withGuest: vi.fn(async () => ({ ok: true, data: null })),
   capabilityGate: vi.fn(() => null),
   validateNavigationUrl: vi.fn((url: string) => ({ ok: true, url })),
+  // The opener loads through the driver's BOUNDED navigate helper rather than
+  // a bare loadURL, so that an unbounded load cannot hold the guest's drive
+  // lock against every other caller.
+  navigateGuest: vi.fn(async (webContents: { loadURL: (url: string) => Promise<void> }, url: string) => {
+    await webContents.loadURL(url);
+  }),
 }));
 vi.mock('../../src/main/browser/browser-url-store', () => ({
   browserUrlStore: { get: vi.fn(() => null), set: vi.fn() },
 }));
 
+// The lane manager owns real Electron windows and has its own suite
+// (browser-lane-manager.test.ts). Here it is a seam, so these tests can assert
+// the opener's ROUTING - which branch runs, and what it does or does not touch.
+vi.mock('../../src/main/browser/browser-lane-manager', () => ({
+  openLane: vi.fn(async () => ({ ok: true, laneId: 'lane_abc12345', webContents: {} })),
+  destroyLane: vi.fn(() => true),
+}));
+
 import { browserPaneRegistry } from '../../src/main/browser/browser-pane-registry';
 import { withGuest, capabilityGate, validateNavigationUrl } from '../../src/main/browser/browser-pane-driver';
 import { browserUrlStore } from '../../src/main/browser/browser-url-store';
+import { openLane } from '../../src/main/browser/browser-lane-manager';
 import {
   openPaneForCallerTask,
   closePanes,
@@ -328,6 +343,105 @@ describe('openPaneForCallerTask', () => {
       vi.mocked(browserPaneRegistry.list).mockReturnValue([pane()] as never);
     });
 
+    it('opens an isolated LANE for a backgrounded project, with no pane and no window', async () => {
+      // The reported real-world dead end (#542), reproduced live: close a task's
+      // detail window and its <webview> guest is destroyed - correctly, the node
+      // unmounted; the registry log names it `reason=guest-destroyed`. Switch
+      // projects too and the agent still running in the backgrounded project has
+      // no pane AND no way to get one: every drive returns `no-pane-open`, whose
+      // hint says to call open_pane, which refused with `project-not-open`.
+      //
+      // A lane is the way out precisely because it needs no task-detail window,
+      // so it must sit AHEAD of that guard rather than behind it.
+      installHost({ currentProjectId: 'other-project', currentProjectPath: null });
+      vi.mocked(browserPaneRegistry.getByTaskId).mockReturnValue([]);
+      // openLane registers the lane for real; the mock stands in for that.
+      vi.mocked(browserPaneRegistry.list).mockReturnValue([
+        pane({ sessionId: 'lane_abc12345', kind: 'lane', url: 'http://localhost:4200' }),
+      ] as never);
+
+      const result = await openPaneForCallerTask({
+        ...openInput('http://localhost:4200'),
+        isolated: true,
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('expected the lane to open');
+      expect(result.data.laneId).toBe('lane_abc12345');
+      // No renderer involvement at all: no window push, no URL sidecar write.
+      expect(sent).toEqual([]);
+      expect(browserUrlStore.set).not.toHaveBeenCalled();
+    });
+
+    it('tells a backgrounded caller to pass a url rather than failing vaguely', async () => {
+      // The saved URL and project default live behind the project path, which is
+      // exactly what is unavailable here - so say that, and say the lane itself
+      // still works, instead of refusing with project-not-open.
+      installHost({ currentProjectId: 'other-project', currentProjectPath: null });
+      vi.mocked(browserPaneRegistry.getByTaskId).mockReturnValue([]);
+
+      const result = await openPaneForCallerTask({ ...openInput(undefined), isolated: true });
+
+      expect(result).toMatchObject({ ok: false, error: { kind: 'no-url' } });
+      if (result.ok) throw new Error('expected a refusal');
+      expect(result.error.detail).toContain('the lane itself will open fine');
+    });
+
+    it('never hands the shared pane to a caller that asked for isolation', async () => {
+      // Silently returning the shared pane would give the caller the exact
+      // opposite of what it asked for, and it would not find out. The enclosing
+      // describe leaves a LIVE shared pane registered, which is what makes this
+      // meaningful: the isolated branch has to win against a resolvable pane.
+      vi.mocked(browserPaneRegistry.list).mockReturnValue([
+        pane(),
+        pane({ sessionId: 'lane_abc12345', kind: 'lane', url: 'http://localhost:4200' }),
+      ] as never);
+
+      const result = await openPaneForCallerTask({
+        ...openInput('http://localhost:4200'),
+        isolated: true,
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('expected a lane');
+      expect(result.data.laneId).toBeTruthy();
+      expect(result.data.pane.sessionId).not.toBe(CALLER_SESSION);
+    });
+
+    it('navigates a RETAINED live pane whose project is backgrounded', async () => {
+      // Task #542 Finding B. Retention deliberately keeps a backgrounded
+      // project's pane alive so its agent can keep driving it, but the
+      // project-not-open guard used to run BEFORE the live-pane lookup, so the
+      // one pane retention exists to preserve was the one open_pane refused.
+      //
+      // Worse, the two composed: `no-pane-open` tells the agent to call
+      // open_pane, which returned project-not-open, so an agent with a live,
+      // driveable pane had no way back to it and worked blind.
+      installHost({ currentProjectId: 'other-project', currentProjectPath: null });
+      runWithGuestBody();
+
+      const result = await openPaneForCallerTask(openInput('http://localhost:7777'));
+
+      expect(result).toMatchObject({ ok: true, data: { opened: false, navigated: true } });
+      expect(loadedUrls).toEqual(['http://localhost:7777']);
+      // Nothing project-scoped may run on this path: `taskExists` resolves a
+      // project DB by id, and getProjectDb CREATES the file for an unrecognized
+      // id, so reaching it with a backgrounded project would leave a stray db.
+      expect(sent).toEqual([]);
+      expect(browserUrlStore.set).not.toHaveBeenCalled();
+    });
+
+    it('reports a retained pane"s status while its project is backgrounded', async () => {
+      installHost({ currentProjectId: 'other-project', currentProjectPath: null });
+      vi.mocked(browserPaneRegistry.list).mockReturnValue([pane({ url: 'http://localhost:4200' })] as never);
+
+      const result = await openPaneForCallerTask(openInput(undefined));
+
+      expect(result).toMatchObject({
+        ok: true,
+        data: { opened: false, navigated: false, url: 'http://localhost:4200' },
+      });
+    });
+
     it('navigates a live pane instead of re-seeding its locked src', async () => {
       // BrowserPane locks its <webview> src at first mount, so a seeded URL
       // would be silently ignored and the agent told it navigated when it did not.
@@ -372,6 +486,68 @@ describe('openPaneForCallerTask', () => {
       vi.mocked(browserPaneRegistry.list).mockReturnValue([] as never);
       const result = await openPaneForCallerTask(openInput(undefined));
       expect(result).toMatchObject({ ok: false, error: { kind: 'pane-destroyed' } });
+    });
+  });
+
+  describe('isolated lane cwd resolution', () => {
+    // `input.cwd ?? (projectIsOpen ? host.currentProjectPath : null)` - three
+    // branches, asserted on what openLane actually RECEIVES as `cwd`, since
+    // that value is what selects the lane's cookie-jar partition
+    // (browser-lane-manager.ts's browserPartitionForWorktree).
+    //
+    // NOTE: at the time these tests were added, `openPaneForCallerTask` has
+    // exactly one caller (`kangentic_browser_open_pane` in browser-tools.ts),
+    // and that caller's `cwd` argument is itself always null in production -
+    // `BrowserSessionLookup.getTaskWorktreePath` is declared but has no real
+    // implementation anywhere (SessionManager does not define it), so
+    // `sessions.getTaskWorktreePath?.(callerTaskId)` is always `undefined`.
+    // That makes the first branch below (an explicit `input.cwd`) currently
+    // unreachable from any real call site - it is still `openPaneForCallerTask`'s
+    // own documented contract and worth pinning on its own terms, but it is not
+    // proof the feature described in browser-tools.ts's `getTaskWorktreePath`
+    // JSDoc ("a lane shares the task's worktree cookie jar") is live today.
+    beforeEach(() => {
+      vi.mocked(browserPaneRegistry.getByTaskId).mockReturnValue([]);
+      vi.mocked(browserPaneRegistry.list).mockReturnValue([
+        pane({ sessionId: 'lane_abc12345', kind: 'lane', url: 'http://localhost:4200' }),
+      ] as never);
+    });
+
+    it('passes an explicit input.cwd straight through, even while the project is open', async () => {
+      const explicitCwd = 'C:\\Users\\dev\\repo\\.kangentic\\worktrees\\7';
+      const result = await openPaneForCallerTask({
+        ...openInput('http://localhost:4200'),
+        isolated: true,
+        cwd: explicitCwd,
+      });
+      expect(result.ok).toBe(true);
+      expect(openLane).toHaveBeenCalledWith(expect.objectContaining({ cwd: explicitCwd }));
+    });
+
+    it('falls back to the OPEN project\'s path when no explicit cwd is given', async () => {
+      const result = await openPaneForCallerTask({
+        ...openInput('http://localhost:4200'),
+        isolated: true,
+      });
+      expect(result.ok).toBe(true);
+      // installHost() (the default from the outer beforeEach) sets
+      // currentProjectPath to '/projects/app'.
+      expect(openLane).toHaveBeenCalledWith(expect.objectContaining({ cwd: '/projects/app' }));
+    });
+
+    it('falls back to null when the project is backgrounded and no explicit cwd is given', async () => {
+      // currentProjectPath is deliberately non-null here: this is what
+      // discriminates "not this caller's open project" from "no path
+      // available at all" - a mismatched projectId must win over a truthy
+      // currentProjectPath, or a backgrounded caller would get handed
+      // whatever OTHER project happens to be open's cookie jar.
+      installHost({ currentProjectId: 'other-project', currentProjectPath: '/projects/other' });
+      const result = await openPaneForCallerTask({
+        ...openInput('http://localhost:4200'),
+        isolated: true,
+      });
+      expect(result.ok).toBe(true);
+      expect(openLane).toHaveBeenCalledWith(expect.objectContaining({ cwd: null }));
     });
   });
 });

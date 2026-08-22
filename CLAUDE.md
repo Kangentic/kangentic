@@ -287,13 +287,13 @@ Three test tiers (unit / UI / E2E). Setup, commands, the headless mock, and tier
 guidance live in [docs/developer-guide.md](docs/developer-guide.md). The scoped-run discipline
 below is the part that must stay in context.
 
-#### The board test gate (Tests and Ship It columns)
+#### The board test gate (Testing and Merge columns)
 
 The expensive and flaky tiers now run on CI as PR checks, not on the local machine. Moving a task
-into the **Tests** column runs `/pull-request`: it creates a PR and drives its CI checks (lint,
+into the **Testing** column runs `/pull-request`: it creates a PR and drives its CI checks (lint,
 typecheck, unit, build, the UI shards, and the Linux Electron E2E shards) to all-green, auto-fixing
 the code and de-flaking or rewriting tests along the way, then stops without merging. Moving it into
-**Ship It** runs `/merge-pull-request`: it merges the green PR and fast-forwards the local `main`
+**Merge** runs `/merge-pull-request`: it merges the green PR and fast-forwards the local `main`
 checkout for HMR. PRs are the normal path to `main` (CI gates it); `/merge-back` stays a direct
 quick-push escape hatch for admins. `/test` is now for **manual local runs** only - it is no longer
 wired to a column.
@@ -304,7 +304,7 @@ task's OWN worktree (`isolated` isolates the conversation, not the filesystem - 
 agent's session and kills its PTY, so the two never overlap - but it leaves that agent's
 UNCOMMITTED work in the shared tree, which is why the review pass commits by set math over
 `git status` and never `git add -A`. It auto-fixes findings, adds tests, and commits that pass
-itself, so Tests can open on a branch carrying a `*(review)` commit no local agent authored. That is
+itself, so Testing can open on a branch carrying a `*(review)` commit no local agent authored. That is
 expected, not corruption. A finished pass normally leaves the tree clean; a fix on an already-dirty
 path stays uncommitted by design, so a dirty tree means the pass is either in flight or left those
 paths deliberately mixed.
@@ -402,9 +402,9 @@ overrides in a gitignored `CLAUDE.local.md` at the project root.
 - A plain **local commit** (snapshot work in progress, protect changes before `/preview`) goes
   through `/commit`: it stages and commits on the current branch only, with no push and no
   rebase. A bare request to "commit" / "commit changes" means `/commit`, never `/merge-back`.
-- **Landing changes goes through a PR by default.** The board drives it: the **Tests** column runs
+- **Landing changes goes through a PR by default.** The board drives it: the **Testing** column runs
   `/pull-request` (commit, conventional branch, push, create the PR, drive its CI checks to green),
-  and the **Ship It** column runs `/merge-pull-request` (merge the green PR, pull back to local
+  and the **Merge** column runs `/merge-pull-request` (merge the green PR, pull back to local
   `main`). For a deliberate direct quick-push that bypasses the PR gate (admin only - CI is down, a
   one-line hotfix), use `/merge-back`. Only push, land, or merge when the user explicitly asks.
 - `/commit`, `/pull-request`, `/merge-pull-request`, and `/merge-back` all write conventional-commit

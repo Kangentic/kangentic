@@ -8,6 +8,8 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { KANGENTIC_HOSTED_RELAY_URL } from '../../src/shared/relay';
+import { IPC } from '../../src/shared/ipc-channels';
+import type { RendererErrorContext } from '../../src/shared/types';
 
 // ── Hoisted mocks ─────────────────────────────────────────────────────────
 
@@ -109,9 +111,29 @@ vi.mock('../../src/main/agent/adapters/claude/hook-manager', () => ({
   buildHooks: vi.fn(),
   removeHooks: vi.fn(),
 }));
+// Must mirror every export register-all.ts imports from this module. A missing one
+// is invisible here (this suite only counts registrations, it never invokes a
+// handler) but throws "is not a function" the moment a test calls one.
+//
+// `summarizeComponentStack` is deliberately NOT importOriginal'd here: the real
+// analytics.ts module-level-imports `@aptabase/electron/main`, a real node_modules
+// package whose own internal `from 'electron'` import is externalized by vitest
+// (bypasses the `vi.mock('electron', ...)` above entirely) and resolves to the
+// real 'electron' npm shim, which has no named exports outside a real Electron
+// process - importOriginal here throws "Named export 'ipcMain' not found" for
+// EVERY test in this file, not just the new ones. So it stays a stub, but a
+// deliberately non-constant one: it returns a fixed non-empty trail only when
+// handed a non-empty string, so the TRACK_RENDERER_ERROR handler's
+// `if (components) props.components = ...` conditional is exercised truthfully
+// in both directions without duplicating the real regex coverage already
+// pinned in tests/unit/summarize-component-stack.test.ts.
 vi.mock('../../src/main/analytics/analytics', () => ({
   trackEvent: vi.fn(),
-  sanitizeErrorMessage: vi.fn((msg: string) => msg),
+  sanitizeErrorMessage: vi.fn((message: string) => message),
+  summarizeComponentStack: vi.fn((stack: string | undefined) =>
+    typeof stack === 'string' && stack.length > 0 ? 'Foo < Bar' : ''
+  ),
+  MAX_ANALYTICS_STRING_LENGTH: 180,
 }));
 vi.mock('node-pty', () => ({ spawn: vi.fn() }));
 vi.mock('better-sqlite3', () => ({ default: vi.fn() }));
@@ -431,4 +453,121 @@ describe('registerAllIpc idempotency', () => {
       relayUrl: new URL('wss://relay.example.com').href,
     });
   }, 30000);
+
+  describe('TRACK_RENDERER_ERROR analytics handler', () => {
+    // register-all.ts wires exactly one direct `ipcMain.on(...)` call (the
+    // rest of the suite only exercises `registerXxxHandlers`, which are
+    // themselves mocked out and never touch the real ipcMain.on). Coverage
+    // hole this closes: nothing else in the repo ever invokes this callback,
+    // so reverting its second parameter to the old one-arg form, or removing
+    // a runtime guard, would fail nothing without these tests.
+    type TrackRendererErrorCallback = (
+      event: unknown,
+      message: string,
+      context?: RendererErrorContext,
+    ) => void;
+
+    function getTrackRendererErrorCallback(): TrackRendererErrorCallback {
+      const entry = mockOn.mock.calls.find((call) => call[0] === IPC.TRACK_RENDERER_ERROR);
+      if (!entry) {
+        throw new Error('ipcMain.on was never called with IPC.TRACK_RENDERER_ERROR');
+      }
+      return entry[1] as TrackRendererErrorCallback;
+    }
+
+    it('sends boundary, panel, and a real component trail when full context is provided', async () => {
+      const { registerAllIpc } = await import('../../src/main/ipc/register-all');
+      const { trackEvent } = await import('../../src/main/analytics/analytics');
+      registerAllIpc(makeMockWindow(1));
+
+      const callback = getTrackRendererErrorCallback();
+      callback({}, 'Cannot read properties of undefined (reading split)', {
+        boundary: 'panel',
+        panel: 'Changes panel',
+        componentStack: '    at Foo (x)\n    at Bar (y)',
+      });
+
+      // `components` is produced by the REAL summarizeComponentStack (see the
+      // importOriginal mock above), not a stub - this would go red if the
+      // trail-building logic broke, not just if the call were dropped.
+      expect(vi.mocked(trackEvent)).toHaveBeenCalledWith('app_error', {
+        source: 'error_boundary',
+        message: 'Cannot read properties of undefined (reading split)',
+        boundary: 'panel',
+        panel: 'Changes panel',
+        components: 'Foo < Bar',
+      });
+    }, 30000);
+
+    it('omits boundary, panel, and components when no context argument is given', async () => {
+      const { registerAllIpc } = await import('../../src/main/ipc/register-all');
+      const { trackEvent } = await import('../../src/main/analytics/analytics');
+      registerAllIpc(makeMockWindow(1));
+
+      const callback = getTrackRendererErrorCallback();
+      callback({}, 'boom');
+
+      const trackEventMock = vi.mocked(trackEvent);
+      expect(trackEventMock).toHaveBeenCalledTimes(1);
+      const [, props] = trackEventMock.mock.calls[0];
+      // An explicit key-presence check, not toEqual/toHaveBeenCalledWith:
+      // Jest/vitest's default object equality treats a key present with an
+      // `undefined` value the same as a key that is genuinely absent, so
+      // toEqual({ source, message }) would pass even if the handler
+      // regressed to unconditionally writing `props.boundary = undefined`.
+      // The keys must be ABSENT, which only Object.keys can prove.
+      expect(Object.keys(props ?? {}).sort()).toEqual(['message', 'source']);
+      expect(props).toMatchObject({ source: 'error_boundary', message: 'boom' });
+    }, 30000);
+
+    it('does not throw on a malformed payload and omits only the malformed fields', async () => {
+      const { registerAllIpc } = await import('../../src/main/ipc/register-all');
+      const { trackEvent } = await import('../../src/main/analytics/analytics');
+      registerAllIpc(makeMockWindow(1));
+
+      const callback = getTrackRendererErrorCallback();
+      // RendererErrorContext is erased at the IPC boundary: a renderer could
+      // send a payload that violates the compile-time type at runtime.
+      // `panel` as a number and `componentStack` as an object are exactly the
+      // shapes that would throw inside `.slice()` / `.split()` without the
+      // per-field typeof guards - a throw here silently drops the error
+      // report (the global uncaughtException handler swallows it).
+      const malformedContext = {
+        boundary: 'panel',
+        panel: 42,
+        componentStack: { not: 'a string' },
+      } as unknown as RendererErrorContext;
+
+      expect(() => {
+        callback({}, undefined as unknown as string, malformedContext);
+      }).not.toThrow();
+
+      const trackEventMock = vi.mocked(trackEvent);
+      expect(trackEventMock).toHaveBeenCalledTimes(1);
+      const [, props] = trackEventMock.mock.calls[0];
+      expect(Object.keys(props ?? {}).sort()).toEqual(['boundary', 'message', 'source']);
+      expect(props).toMatchObject({
+        source: 'error_boundary',
+        message: 'Unknown error',
+        boundary: 'panel',
+      });
+    }, 30000);
+
+    it('truncates panel to MAX_ANALYTICS_STRING_LENGTH characters', async () => {
+      const { registerAllIpc } = await import('../../src/main/ipc/register-all');
+      const { trackEvent, MAX_ANALYTICS_STRING_LENGTH } = await import(
+        '../../src/main/analytics/analytics'
+      );
+      registerAllIpc(makeMockWindow(1));
+
+      const callback = getTrackRendererErrorCallback();
+      const longPanel = 'p'.repeat(MAX_ANALYTICS_STRING_LENGTH + 20);
+      callback({}, 'boom', { boundary: 'panel', panel: longPanel });
+
+      const trackEventMock = vi.mocked(trackEvent);
+      const [, props] = trackEventMock.mock.calls[0];
+      expect(props?.panel).toBe(longPanel.slice(0, MAX_ANALYTICS_STRING_LENGTH));
+      expect(props?.panel).toHaveLength(MAX_ANALYTICS_STRING_LENGTH);
+    }, 30000);
+  });
 });

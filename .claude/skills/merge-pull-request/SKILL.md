@@ -1,22 +1,22 @@
 ---
-description: Merge an already-green PR (rebase merge, delete branch) and fast-forward the local main checkout for HMR. This is the Ship It column skill. It assumes the Tests column (/pull-request) already drove the PR to green. Not for creating a PR (use /pull-request) or a direct quick-push (use /merge-back).
+description: Merge an already-green PR (rebase merge, delete branch) and fast-forward the local main checkout for HMR. This is the Merge column skill. It assumes the Testing column (/pull-request) already drove the PR to green. Not for creating a PR (use /pull-request) or a direct quick-push (use /merge-back).
 allowed-tools: Read, Glob, Grep, Edit, Write, Bash(git:*), Bash(npm:*), Bash(gh:*), Agent, mcp__kangentic__kangentic_get_current_task, mcp__kangentic__kangentic_link_pr
 ---
 
 # Merge Pull Request
 
 Merge a green pull request and pull the result back into the local `main` checkout so the
-dogfooding `npm start` picks it up via HMR. This is the **Ship It column** skill. It assumes the
-**Tests column** (`/pull-request`) already created the PR and drove its CI checks to all-green and
+dogfooding `npm start` picks it up via HMR. This is the **Merge column** skill. It assumes the
+**Testing column** (`/pull-request`) already created the PR and drove its CI checks to all-green and
 flake-free.
 
 It verifies the CI checks are green, then merges with `--admin` to waive the review requirement:
 `main` requires one approving review, but a maintainer's own PRs get no second reviewer, so that
-bypass is the normal Ship It path. It NEVER bypasses the CI checks - those are confirmed green
+bypass is the normal Merge path. It NEVER bypasses the CI checks - those are confirmed green
 first; the `--admin` only waives the missing review. (For a deliberate direct quick-push that skips
 the whole PR gate, use `/merge-back` instead.)
 
-**This skill merges.** By the time a task reaches Ship It the decision to ship has been made, and
+**This skill merges.** By the time a task reaches Merge the decision to ship has been made, and
 this skill executes it. Red or pending CI is the only thing that may stop a run, and even then only
 until the checks resolve. Anything else it finds - a stale doc, a bad comment, a lint nit - it
 **fixes here and then merges**, accepting a second CI round as the price. It never hands the problem
@@ -31,7 +31,7 @@ All git commands run from the **current working directory** - never `cd <path> &
 `git -C <path>` to target another directory.
 
 1. **Detect mode:** worktree mode requires CWD to contain `.kangentic/worktrees/`. If this is the
-   main repo (no worktree), stop and tell the user this skill runs from a task worktree (the Ship It
+   main repo (no worktree), stop and tell the user this skill runs from a task worktree (the Merge
    column); a direct push from the main checkout is `/merge-back`.
 2. Get the current branch: `git rev-parse --abbrev-ref HEAD`. If `HEAD` (detached), warn and stop.
 3. Derive the project root: two directories above `.kangentic/worktrees/<slug>/` (strip
@@ -58,8 +58,8 @@ to the head branch only when there is no stored number.
      (covers older PRs where the local branch IS the head); `<pr>` is the first match's number.
 3. Run `gh pr view <pr> --json number,url,state,mergeable,mergeStateStatus,statusCheckRollup,headRefName`.
    Record `<prHead>` = `headRefName` (the PR's REMOTE head branch - the push and merge target).
-4. If no PR resolves either way, stop and report that the Tests column should have created one (run
-   `/pull-request` from the Tests column first). Do not create a PR here.
+4. If no PR resolves either way, stop and report that the Testing column should have created one (run
+   `/pull-request` from the Testing column first). Do not create a PR here.
 
 Every later `gh pr` command (view, checks, merge) targets `<pr>` or `<prHead>`; the local `<branch>`
 is for local git only.
@@ -70,14 +70,14 @@ The doc audit's real home is `/pull-request`, BEFORE the PR is created (its Step
 runs against the branch diff even when the tree is clean). This step is a cheap BACKSTOP for what
 that pass missed.
 
-**If the backstop finds a gap, FIX IT HERE.** Do not bounce the task back to Tests, do not file a
+**If the backstop finds a gap, FIX IT HERE.** Do not bounce the task back to Testing, do not file a
 follow-up task, do not merge around it, and do not end the run with the PR still open. Edit the doc,
 commit it, push it, wait out the CI round it re-triggers, and then merge. **Running CI twice is an
 accepted cost** - it is cheaper than shipping a doc that lies, and far cheaper than a human
 round-trip through the board to fix one sentence.
 
-This was learned from a real Ship It that stalled: the backstop found a genuinely stale sentence,
-refused to merge, and told the user to move the task back to Tests. The finding was right and the
+This was learned from a real Merge run that stalled: the backstop found a genuinely stale sentence,
+refused to merge, and told the user to move the task back to Testing. The finding was right and the
 refusal was wrong - it left a 24/24-green PR sitting open over a one-clause doc edit this skill was
 perfectly able to make.
 
@@ -127,8 +127,8 @@ perfectly able to make.
    step 4); never `--admin` past a red or pending check.
 4. If the rebase (step 2) re-triggered checks and they are pending, wait for them with
    `gh pr checks <pr> --watch --fail-fast --interval 30` (Bash `timeout` about `2400000` ms). If
-   they go red, stop and report - this should be rare because Tests already drove them green; the
-   user can move the task back to Tests to re-run `/pull-request`.
+   they go red, stop and report - this should be rare because Testing already drove them green; the
+   user can move the task back to Testing to re-run `/pull-request`.
 
 ## Step 3 - Merge the PR
 
@@ -160,7 +160,7 @@ report the unmet requirement and stop.
 ### Refresh the board's PR status
 
 The board caches each task's PR state and only re-resolves it on a background timer (default 5 min)
-or on project open, so the Ship It card would otherwise keep showing "PR #<pr> open" for minutes
+or on project open, so the Merge card would otherwise keep showing "PR #<pr> open" for minutes
 after this merge. Force an immediate re-resolve so the card flips to "merged" right away:
 
 - If Step 0 resolved a `<taskId>`, call `kangentic_link_pr` with that task ID. It re-resolves the PR

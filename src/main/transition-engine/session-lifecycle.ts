@@ -1,5 +1,6 @@
 import type { SessionRepository } from '../db/repositories/session-repository';
 import type { SuspendedBy } from '../../shared/types';
+import { destroyLanesForSession } from '../browser/browser-lane-manager';
 
 // ---------------------------------------------------------------------------
 // Session lifecycle: centralized state machine for session DB records
@@ -32,12 +33,33 @@ export function markRecordExited(
   recordId: string,
   extra?: { exit_code?: number; exited_at?: string },
 ): boolean {
-  return sessionRepo.compareAndUpdateStatus(
+  const transitioned = sessionRepo.compareAndUpdateStatus(
     recordId,
     ['running', 'queued'],
     'exited',
     { exit_code: extra?.exit_code, exited_at: extra?.exited_at ?? new Date().toISOString() },
   );
+
+  // Destroy any offscreen browser lanes this session opened.
+  //
+  // This is the GUARANTEE that lanes cannot leak, and it lives here rather than
+  // on a hook because only one of the ten supported agent CLIs emits a
+  // SubagentStop signal. A session ending is a lifecycle every agent goes
+  // through, whatever CLI it runs. The idle timeout and the synchronous
+  // shutdown sweep are the backstops behind it.
+  //
+  // Guarded on the transition so a repeated onExit does not re-run it, and kept
+  // best-effort: a lane that fails to close must never stop a session record
+  // from being marked exited, or the board would keep counting a dead agent.
+  if (transitioned) {
+    try {
+      destroyLanesForSession(recordId);
+    } catch (error) {
+      console.warn(`[browser-lane] Could not close lanes for session ${recordId.slice(0, 8)}:`, error);
+    }
+  }
+
+  return transitioned;
 }
 
 /**

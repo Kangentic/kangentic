@@ -118,11 +118,38 @@ reveals what that one cannot avoid.
   `encodeTerminalKey` returns null for anything it has no safe mapping for, and null means DROP. A
   wrong byte sequence in a live shell is worse than a missing one, so do not grow that module into a
   general input layer.
+
+  **The destination may also be a TEXT INPUT**, which is a different mechanism, not a
+  second spelling of the same one. A terminal takes bytes over IPC; a React-controlled input takes
+  a native-setter write plus a dispatched `input` event, and `src/renderer/utils/text-target.ts`
+  owns that. Eligibility is ALLOW-BY-DEFAULT - any focused text field in the app qualifies - with
+  structural exclusions rather than a maintained list: a `type` that does not hold prose
+  (`password` above all), disabled, read-only, a `data-no-text-target` opt-out on the field or an
+  ancestor, and **xterm's `.xterm-helper-textarea`**. That last one is the exclusion to never
+  remove: it is a real `<textarea>`, so an allow-by-default rule matches it, and routing a terminal
+  through the DOM path would write into a hidden node xterm clears on the next keystroke - the text
+  vanishes and the shell never sees it.
+
+  `decodeBytesForTextTarget` undoes the terminal encoding for the two cases that are unambiguous -
+  a printable character and Backspace - and returns null, meaning DROP, for everything else. It is
+  as small as `encodeTerminalKey` for the same reason, and must stay that way. **Enter is in the
+  drop set deliberately:** Enter in the note input SENDS the capture and the note to the agent, and
+  firing that off a keystroke the user aimed at a web page would post a half-written note with a
+  screenshot attached and no way to take it back.
 - **The restore happens only AFTER the drive ends, never during it.** The steal does surface as a
   trusted `focusout` on the victim, so an early fire is tempting and was the original design.
   Measured: restoring mid-drive breaks the running tool - `kangentic_browser_type` is a click
   followed by char events, and the same call produced an EMPTY input after a restore and the full
   text without one. Do not reintroduce a `focusout` trigger.
+- **"Focus was already inside the pane" does not cover a text input inside the pane.**
+  `shouldArmFocusGuard` skips arming when the user was already working in the pane, because a focus
+  move within it is theirs, not a steal. The pane's own note input sits inside the pane and is the
+  exception: a drive takes focus out of it mid-sentence exactly as it does out of a terminal. So an
+  text target arms even when it is inside the pane, and nothing else inside the pane does.
+  Keep that exception narrow. A guest the user clicked into surfaces as the `<webview>` element and
+  the toolbar is buttons, so neither qualifies - and arming for them would snapshot a terminal
+  session and deliver keystrokes there while the user was typing into the page, which is a
+  MISROUTE, strictly worse than the drop it would replace.
 - **A user gesture disarms the guard only when it names a DIFFERENT target.** The reported bug is
   "type in the terminal while an agent drives", and a drive is short enough that an actively typing
   user lands a keystroke inside it. That keystroke is a trusted `keydown` on the guarded element -
@@ -145,6 +172,44 @@ reveals what that one cannot avoid.
 - **Dictation deliberately ignores `openedByAgent`.** `resolveFocusedWindowTerminal` is shared
   between dictation and arrival focus and must stay ONE resolver; the two differ in POLICY.
   Dictation is a later user action and must resolve a target; arrival focus must abstain.
+
+  `resolveDictationTarget` resolves a focused TEXT INPUT as a tier ABOVE that shared
+  resolver, never by changing it - arrival focus decides which terminal wins among arriving
+  terminals and has nothing to say about a focused `<input>`. New non-terminal targets go in the
+  same place, for the same reason.
+- **Dictating into the GUEST PAGE goes through `executeJavaScript`, never the CDP driver.** This was
+  first recorded as a non-goal on the grounds that it needed a new non-agent CDP path; that was
+  wrong, and the correction matters because the wrong version would have flashed "Agent typing here"
+  and armed this guard on the user's own dictation. `<webview>.executeJavaScript` runs in the guest
+  from the renderer in 1-2ms and touches neither `withGuest` nor the agent-input signal. Keep it
+  that way: a guest write must never route through the driver.
+
+  **A password field REFUSES, everywhere, and says so.** It stops the whole resolution rather than
+  merely failing eligibility - falling through would route a spoken password into a terminal. The
+  concrete reason is that dictation's Cloud refinement engine POSTs raw audio to a configured
+  endpoint, so this would send a credential off-machine; on-device engines make it prudence rather
+  than protection, but the refusal stays unconditional because engine-dependent behaviour is
+  invisible from the field.
+
+  **A dictation guard names the RESOURCE it protects, never "something is busy".** An auto-submit
+  paste must not have fresh bytes split its bracketed content, so a press into the terminal that is
+  still pasting is refused - and ONLY that terminal. As one global boolean this also refused a
+  different terminal, the note input, an app field, and a guest page, none of which can touch a PTY.
+  It was silent too, and the window is not short: `terminal-submit.ts` waits for the TUI to settle
+  rather than sleeping a fixed amount, so it stretches under load (measured: 2.1s of dead
+  push-to-talk). Silent plus global plus seconds long reads as a broken button, which is how it was
+  reported. Refuse narrowly and say so on screen.
+
+  **A guest field is FILLED, never submitted.** Auto-submit means pressing Enter, and in someone
+  else's page that commits a form we know nothing about. Running the host's multi-field rule on the
+  guest's form was tried and removed: it is our inference about a page we do not control, and one
+  field is not automatically safe. Do not add a guest submit path back.
+- **A guest consumes the mouse, so main forwards its back/forward buttons.** Measured with a real
+  mouse: one back press produced 31 events in the page and ZERO on the host window, so no renderer
+  listener can see it. `webContents.on('input-event')` is the only hook that does, and it reports a
+  real down/up pair. Timestamps come from MAIN, because the renderer's clock is congested by the
+  work a press starts and would misfile a tap as a hold. `mouseLeave` must synthesise a release, or
+  a press whose pointer leaves the webview strands dictation with the microphone open.
 - **No agent-reachable surface autofocuses on mount.** `BrowserEmptyState` can mount from
   `kangentic_browser_open_pane`, so it focuses its URL input only when `focusIsInTypingSurface()` is
   false.
@@ -181,8 +246,17 @@ reveals what that one cannot avoid.
   `cdp.ts` through a spying fake debugger and pins that `attachDebugger` alone does NOT enable focus
   emulation (the dev-bridge guard), that `ensureFocusEmulation` sends once per session and re-arms
   after a detach, and the exact mouse/key payloads.
+- **Test (text targets):** `tests/unit/text-target.test.ts` pins the pure half of the
+  controlled-input mechanism: which element is eligible (allow-by-default, so enabled and
+  text-shaped, never `password`, never xterm's helper textarea, and an explicit `data-no-text-target`
+  opt-out), that a revised transcript REPLACES its anchored span rather than appending, and that
+  the byte decoder drops Enter, Tab, Escape, and the CSI sequences. The DOM half - the native-setter
+  write actually reaching React - has no unit tier without jsdom and is covered by the two UI specs
+  below, which drive a real controlled input.
 - **Test (policy):** `tests/unit/agent-input-focus-guard.test.ts` pins the three pure decisions, in
-  particular that a keystroke into the guarded element does NOT disarm. `terminal-arrival-focus.test.ts`
+  particular that a keystroke into the guarded element does NOT disarm, and that a text
+  target arms even inside the pane while a non-text element inside the pane still does not.
+  `terminal-arrival-focus.test.ts`
   pins the `agent-window` tier. TWO of its cases are constructed so the tier below would have
   ALLOWED - the arriving session matches the agent-opened window's, so tier 2 alone returns
   `window` - and those are the ones proving the tier flips the outcome. The other two arrive with a
@@ -198,7 +272,16 @@ reveals what that one cannot avoid.
   stopped arriving terminals from focusing would pass the first and break the app), and that the
   user's click on the agent-opened frame clears the stamp. Verified red-green: removing
   `openedByAgent` from the bridge moves focus to task B.
-  `tests/ui/browser-pane-agent-input-focus.spec.ts` covers the guard and the keystroke routing.
+  `tests/ui/browser-pane-agent-input-focus.spec.ts` covers the guard and the keystroke routing, to
+  a terminal AND to the pane's note input, plus that an intercepted Enter still does not Send.
+- **Test (dictation, real flow):** `tests/ui/dictation-note-input.spec.ts` drives the actual
+  push-to-talk hotkey against the real note input, so it exercises both things a store write cannot
+  reach: the target resolved from `document.activeElement` inside the capture-phase press handler,
+  and the native-setter write reaching React rather than only the DOM node. It is the only spec in
+  the tree that needs a microphone, so it launches its own browser with Chromium's fake media
+  device; no assertion depends on the audio content. Its converse case (focus a terminal, and the
+  transcript still goes to the PTY with the note input untouched) is what stops a "fix" that merely
+  stopped routing to terminals from passing.
 - **Test (real guest):** `tests/e2e/browser-popup-window.spec.ts` is the only tier with a live
   `<webview>`, so it is the only place the popup's origin title and shared `Session` can be checked.
 - **Review:** `/code-review` flags a new agent-reachable path that focuses, and a new `openWindow`

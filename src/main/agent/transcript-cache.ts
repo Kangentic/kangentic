@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import type { TranscriptEntry } from '../../shared/types';
+import { touchBounded } from './shared/bounded-lru';
 
 /** Per-block/content clamp so a multi-MB transcript never ships whole over IPC
  *  into React state. Individual spans over this are truncated with a marker.
@@ -21,6 +22,20 @@ export const MAX_SPAN_CHARS = 20_000;
  * larger count cannot turn into unbounded memory: parsed entries are roughly
  * proportional to their source file, and a handful of 50MB transcripts would
  * otherwise dwarf everything else. Whichever bound binds first evicts.
+ *
+ * THE BYTE BUDGET COUNTS SOURCE BYTES, NOT RETAINED HEAP. `record.size` is the
+ * transcript's size on disk, which is a CONSERVATIVE proxy: measured on a real
+ * 137.9MB transcript, a whole-file parse retained 12.7MB of entries (0.09x
+ * source), and these records are truncated on top of that. So the nominal 192MB
+ * corresponds to well under 192MB of heap in practice. The one place the proxy
+ * understates cost is tool-heavy transcripts, because `truncateEntries` passes
+ * `tool_use` blocks through by reference with their `input` deliberately
+ * unclamped.
+ *
+ * Kept at 192MB rather than lowered: the working set this exists to hold was
+ * measured at 20 files / 319MB behind a single mobile Home-feed refresh, and
+ * cutting under that reintroduces the thrash described above. The per-parse cap
+ * (`MAX_PARSE_SOURCE_BYTES`) is what keeps any SINGLE record small.
  */
 const CACHE_LIMIT = 64;
 const CACHE_BYTE_BUDGET = 192 * 1024 * 1024;
@@ -62,21 +77,17 @@ interface CacheRecord {
 
 const cache = new Map<string, CacheRecord>();
 
-/** Move `key` to the most-recently-used end and evict the oldest entry past
- *  the cap. Map iteration order is insertion order, so re-inserting after a
- *  delete is enough to implement LRU without a separate linked list. */
+/** Move `key` to the most-recently-used end and evict past both bounds. The
+ *  eviction itself lives in `shared/bounded-lru.ts`: this loop used to be
+ *  hand-copied into the sibling caches, and one copy silently dropped the byte
+ *  budget, which is what caused a main-process OOM. */
 function touch(key: string, record: CacheRecord): void {
-  cache.delete(key);
-  cache.set(key, record);
-  let heldBytes = 0;
-  for (const held of cache.values()) heldBytes += held.size;
-  while (cache.size > CACHE_LIMIT || (heldBytes > CACHE_BYTE_BUDGET && cache.size > 1)) {
-    const oldestKey = cache.keys().next().value;
-    if (oldestKey === undefined) break;
-    const evicted = cache.get(oldestKey);
-    cache.delete(oldestKey);
-    if (evicted) heldBytes -= evicted.size;
-  }
+  touchBounded(cache, key, record, {
+    limit: CACHE_LIMIT,
+    byteBudget: CACHE_BYTE_BUDGET,
+    sizeOf: (held) => held.size,
+    minRetained: 1,
+  });
 }
 
 export interface ParsedTranscriptResult {

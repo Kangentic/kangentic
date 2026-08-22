@@ -5,6 +5,8 @@ import {
   scanForSubmittedText,
   type UserTurnRecord,
 } from '../../shared/submitted-text-verifier';
+import { readJsonlWindow } from '../../shared/history-scan';
+import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
 import { antigravityTranscriptPath } from './data-paths';
 
 /**
@@ -57,16 +59,21 @@ export function locateAntigravityTranscriptFile(conversationId: string): string 
  *  moves (transcriptToolCounts via session-metrics refine) - a sync read
  *  would stall IPC and PTY flushing app-wide, which is why the Claude and
  *  Grok transcript parsers read async too. */
-async function readSteps(transcriptPath: string): Promise<AntigravityStep[]> {
-  let raw: string;
-  try {
-    raw = await fs.promises.readFile(transcriptPath, 'utf-8');
-  } catch {
-    return [];
+async function readSteps(
+  transcriptPath: string,
+): Promise<{ steps: AntigravityStep[]; omittedBytes: number; totalBytes: number }> {
+  // Bounded tail read rather than a whole-file one. The JSDoc above already
+  // recognised that this file "grows for the life of a session" and made the
+  // read async so it would not stall IPC - but an async read of an unbounded
+  // file still puts the whole thing on the heap, which is the part that OOM'd
+  // the main process.
+  const window = await readJsonlWindow(transcriptPath, { maxBytes: parseWindowBytes() });
+  if (window.totalBytes === 0) {
+    return { steps: [], omittedBytes: 0, totalBytes: 0 };
   }
 
   const byIndex = new Map<number, AntigravityStep>();
-  for (const line of raw.split('\n')) {
+  for (const line of window.text.split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed.startsWith('{')) continue;
     let parsed: unknown;
@@ -80,7 +87,11 @@ async function readSteps(transcriptPath: string): Promise<AntigravityStep[]> {
     if (typeof step.step_index !== 'number') continue;
     byIndex.set(step.step_index, step); // last-write-wins on a re-emitted index
   }
-  return Array.from(byIndex.values()).sort((left, right) => left.step_index - right.step_index);
+  return {
+    steps: Array.from(byIndex.values()).sort((left, right) => left.step_index - right.step_index),
+    omittedBytes: window.omittedBytes,
+    totalBytes: window.totalBytes,
+  };
 }
 
 /** Pull the user's actual prompt out of a USER_INPUT step's wrapped content. */
@@ -122,19 +133,35 @@ export async function parseAntigravityTranscript(
 ): Promise<ParsedTranscript> {
   const sourcePath = locateAntigravityTranscriptFile(agentSessionId);
   if (!sourcePath) return { entries: [], sourcePath: null };
-  return parseAntigravityTranscriptFile(sourcePath);
+  return parseAntigravityTranscriptFile(sourcePath, agentSessionId);
 }
 
-/** Parse a known transcript file path (the `transcriptPath`-driven callers). */
-export async function parseAntigravityTranscriptFile(sourcePath: string): Promise<ParsedTranscript> {
+/**
+ * Parse a known transcript file path (the `transcriptPath`-driven callers).
+ *
+ * `agentSessionId` namespaces the entry uuids. It is optional because the
+ * tool-count reader can be handed a bare `transcriptPath` with no session id,
+ * and that caller only counts tool calls - it never persists a uuid. Every
+ * caller whose entries reach the viewer or the retrieval index passes one.
+ */
+export async function parseAntigravityTranscriptFile(
+  sourcePath: string,
+  agentSessionId?: string,
+): Promise<ParsedTranscript> {
   const entries: TranscriptEntry[] = [];
   // The id of the most recent tool_use block, so a following ERROR_MESSAGE
   // step (agy records tool failures as their own step) can be attached as
   // that tool call's error result.
   let lastToolUseId: string | null = null;
 
-  for (const step of await readSteps(sourcePath)) {
-    const uuid = `step-${step.step_index}`;
+  const { steps, omittedBytes, totalBytes } = await readSteps(sourcePath);
+  for (const step of steps) {
+    // `step_index` is already absolute (readSteps dedups and sorts by it), so
+    // only the session namespace was missing: `resolveTaskTranscript` stitches
+    // every session a task has had and dedups by uuid keeping the first, so two
+    // agy sessions on one task both minting `step-0..N` made the second
+    // session's steps vanish from the Conversation tab.
+    const uuid = agentSessionId ? `${agentSessionId}:step-${step.step_index}` : `step-${step.step_index}`;
     const ts = stepTimestamp(step);
 
     switch (step.type) {
@@ -196,7 +223,10 @@ export async function parseAntigravityTranscriptFile(sourcePath: string): Promis
     }
   }
 
-  return { entries, sourcePath };
+  return {
+    entries: prependTruncationMarker(entries, omittedBytes, totalBytes),
+    sourcePath,
+  };
 }
 
 /**

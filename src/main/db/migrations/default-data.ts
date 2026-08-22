@@ -15,8 +15,8 @@ export function seedDefaultSwimlanes(db: Database.Database): void {
     { name: 'Planning', role: null, color: '#8b5cf6', icon: 'map', archived: 0, permission_mode: 'plan', auto_spawn: 1, auto_command: null },
     { name: 'Executing', role: null, color: '#3b82f6', icon: 'square-terminal', archived: 0, permission_mode: null, auto_spawn: 1, auto_command: null },
     { name: 'Code Review', role: null, color: '#f59e0b', icon: 'code', archived: 0, permission_mode: null, auto_spawn: 1, auto_command: null },
-    { name: 'Tests', role: null, color: '#06b6d4', icon: 'flask-conical', archived: 0, permission_mode: null, auto_spawn: 1, auto_command: null },
-    { name: 'Ship It', role: null, color: '#F97316', icon: 'sailboat', archived: 0, permission_mode: null, auto_spawn: 1, auto_command: null },
+    { name: 'Testing', role: null, color: '#06b6d4', icon: 'flask-conical', archived: 0, permission_mode: null, auto_spawn: 1, auto_command: null },
+    { name: 'Merge', role: null, color: '#f97316', icon: 'merge', archived: 0, permission_mode: null, auto_spawn: 1, auto_command: null },
     { name: 'Done', role: 'done', color: '#10b981', icon: 'circle-check-big', archived: 1, permission_mode: null, auto_spawn: 0, auto_command: null },
   ];
 

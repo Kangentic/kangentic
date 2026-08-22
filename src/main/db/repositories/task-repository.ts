@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type Database from 'better-sqlite3';
 import type { Task, TaskCreateInput, TaskUpdateInput, TaskMoveInput, ArchivedTasksPreview, AutoCommandState } from '../../../shared/types';
 import { worktreeFolderUnderRoot } from '../../../shared/worktree-folder';
+import { devPortRepository } from './dev-port-repository';
 
 /** Raw row from SQLite - labels stored as JSON string. */
 interface TaskRow extends Omit<Task, 'labels'> {
@@ -615,5 +616,22 @@ export class TaskRepository {
         .run(task.swimlane_id, task.position);
     });
     tx();
+
+    // Return the task's dev-server ports to the pool.
+    //
+    // Deliberately here rather than at the five delete call sites: this is the
+    // one place every task deletion passes through, so a reservation cannot be
+    // leaked by a new caller that forgets. There is no background sweeper to
+    // catch one that is - this path and ProjectRepository.delete are the only
+    // two that release, by design (see dev-port-allocator.ts's header).
+    //
+    // Equally deliberately NOT in cleanupTaskResources, which also runs when a
+    // task moves to Done. A reservation survives a Done round-trip so the task
+    // keeps the same ports for its whole life: an agent that comes back to
+    // restart its dev server should find the numbers it was already using.
+    //
+    // Outside the transaction because it writes the GLOBAL database, which the
+    // project-scoped transaction above does not cover.
+    devPortRepository.releaseByTaskId(id);
   }
 }

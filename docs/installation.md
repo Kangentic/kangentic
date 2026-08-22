@@ -11,7 +11,7 @@
 npx kangentic
 ```
 
-This downloads the pre-built binary for your platform, installs it, and launches the app. After the first run, auto-updates handle everything (Windows and macOS). Linux users re-run `npx kangentic` to update.
+This downloads the pre-built binary for your platform, installs it, and launches the app. After the first run, auto-updates handle everything on Windows, macOS, and Linux.
 
 To open a specific project:
 
@@ -31,8 +31,8 @@ Download the latest release for your platform from [GitHub Releases](https://git
 
 | Platform | File | Notes |
 |----------|------|-------|
-| Windows | `Kangentic Setup X.Y.Z.exe` | NSIS installer. Auto-updates. |
-| macOS | `Kangentic-X.Y.Z.dmg` | Drag to Applications. See [Gatekeeper note](#macos-gatekeeper). |
+| Windows | `Kangentic-Setup-X.Y.Z.exe` | NSIS installer. Auto-updates. |
+| macOS (Apple Silicon) | `Kangentic-X.Y.Z-arm64.dmg` | Drag to Applications. See [Gatekeeper note](#macos-gatekeeper). |
 | Linux (Debian/Ubuntu) | `kangentic_X.Y.Z_amd64.deb` | `sudo apt install ./kangentic_*.deb` |
 | Linux (Fedora/RHEL/openSUSE) | `kangentic-X.Y.Z-1.x86_64.rpm` | `sudo dnf install kangentic-*.rpm` |
 
@@ -77,7 +77,9 @@ sudo zypper install kangentic-X.Y.Z-1.x86_64.rpm
 and `rpm -i` (still supported) do not - a missing library fails with a raw dependency error
 instead of being installed.
 
-Linux does not have built-in auto-updates. Download new releases manually from GitHub.
+Linux has built-in auto-updates: the app downloads the new deb/rpm and installs it when you click
+"Restart to update", asking for your password once. Unlike Windows and macOS there is no
+install-on-quit. See [Linux auto-update](deployment.md#linux-auto-update).
 
 ### WSL Note
 

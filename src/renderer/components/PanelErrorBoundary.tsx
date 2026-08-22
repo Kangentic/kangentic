@@ -48,7 +48,11 @@ export class PanelErrorBoundary extends React.Component<
 
   componentDidCatch(error: Error, info: React.ErrorInfo): void {
     console.error('PanelErrorBoundary caught:', error, info.componentStack);
-    window.electronAPI?.analytics?.trackRendererError(error.message);
+    window.electronAPI?.analytics?.trackRendererError(error.message, {
+      boundary: 'panel',
+      panel: this.props.label,
+      componentStack: info.componentStack ?? undefined,
+    });
   }
 
   handleRetry = () => {

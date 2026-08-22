@@ -1,4 +1,3 @@
-import fs from 'node:fs/promises';
 import type {
   TranscriptEntry,
   TranscriptBlock,
@@ -6,6 +5,8 @@ import type {
   TranscriptToolCounts,
   PerToolStat,
 } from '../../../../shared/types';
+import { readJsonlWindow, streamJsonlRecords } from '../../shared/history-scan';
+import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
 import { grokChatHistoryPath, grokUpdatesJsonlPath } from './session-paths';
 
 /**
@@ -41,16 +42,24 @@ export async function parseGrokTranscript(
   cwd: string,
 ): Promise<{ entries: TranscriptEntry[]; sourcePath: string | null }> {
   const filePath = grokChatHistoryPath(cwd, agentSessionId);
-  let content: string;
-  try {
-    content = await fs.readFile(filePath, 'utf-8');
-  } catch {
+  // Bounded tail read rather than a whole-file one, and `countOmittedLines`
+  // because Grok's uuids embed the ABSOLUTE physical line index (see below).
+  const window = await readJsonlWindow(filePath, {
+    maxBytes: parseWindowBytes(),
+    countOmittedLines: true,
+  });
+  if (window.totalBytes === 0) {
     return { entries: [], sourcePath: null };
   }
 
   const entries: TranscriptEntry[] = [];
   const parseTimeTs = Date.now();
-  const lines = content.split(/\r?\n/);
+  const lines = window.text.split(/\r?\n/);
+  // Line indices must stay absolute within the FILE, not relative to the
+  // window: these uuids are the persisted citation anchors that
+  // `sliceTranscriptAroundUuid` resolves against, so renumbering them when a
+  // transcript grows past the cap would silently break every stored citation.
+  const lineIndexBase = window.omittedLineCount;
   // Reasoning records precede the assistant record they belong to; buffer
   // their summaries and attach as thinking blocks on the next assistant.
   let pendingThinking: string[] = [];
@@ -65,7 +74,7 @@ export async function parseGrokTranscript(
       continue;
     }
     if (!isRecord(raw)) continue;
-    const uuid = `${agentSessionId}:${lineIndex}`;
+    const uuid = `${agentSessionId}:${lineIndexBase + lineIndex}`;
 
     if (raw.type === 'user') {
       if (typeof raw.synthetic_reason === 'string' && raw.synthetic_reason.length > 0) continue;
@@ -110,7 +119,10 @@ export async function parseGrokTranscript(
     // has no system-prompt kind, and the viewer renders conversation.
   }
 
-  return { entries, sourcePath: filePath };
+  return {
+    entries: prependTruncationMarker(entries, window.omittedBytes, window.totalBytes),
+    sourcePath: filePath,
+  };
 }
 
 /**
@@ -122,20 +134,20 @@ export async function grokTranscriptUsage(
   agentSessionId: string,
   cwd: string,
 ): Promise<TranscriptUsage | null> {
-  const records = await readUpdateRecords(agentSessionId, cwd);
-  if (!records) return null;
-
   let latest: TranscriptUsage | null = null;
-  for (const update of records) {
-    if (update.sessionUpdate !== 'turn_completed') continue;
+  const readWholeFile = await forEachUpdateRecord(agentSessionId, cwd, (update) => {
+    if (update.sessionUpdate !== 'turn_completed') return;
     const usage = update.usage;
-    if (!isRecord(usage)) continue;
+    if (!isRecord(usage)) return;
     const inputTokens = usage.inputTokens;
     const outputTokens = usage.outputTokens;
-    if (typeof inputTokens !== 'number' || typeof outputTokens !== 'number') continue;
+    if (typeof inputTokens !== 'number' || typeof outputTokens !== 'number') return;
     latest = { inputTokens, outputTokens };
-  }
-  return latest;
+  });
+  // A truncated read can stop before the LAST turn_completed, which is the one
+  // that carries the session's cumulative totals - so a partial read does not
+  // under-report slightly, it reports an earlier turn's numbers as the latest.
+  return readWholeFile ? latest : null;
 }
 
 /**
@@ -148,22 +160,20 @@ export async function grokTranscriptToolCounts(
   agentSessionId: string,
   cwd: string,
 ): Promise<TranscriptToolCounts | null> {
-  const records = await readUpdateRecords(agentSessionId, cwd);
-  if (!records) return null;
-
   const seenIds = new Set<string>();
   const countsByTool = new Map<string, number>();
-  for (const update of records) {
-    if (update.sessionUpdate !== 'tool_call') continue;
+  const readWholeFile = await forEachUpdateRecord(agentSessionId, cwd, (update) => {
+    if (update.sessionUpdate !== 'tool_call') return;
     const toolCallId = typeof update.toolCallId === 'string' ? update.toolCallId : null;
     if (toolCallId) {
-      if (seenIds.has(toolCallId)) continue;
+      if (seenIds.has(toolCallId)) return;
       seenIds.add(toolCallId);
     }
     const toolName = grokToolCallName(update);
     countsByTool.set(toolName, (countsByTool.get(toolName) ?? 0) + 1);
-  }
+  });
 
+  if (!readWholeFile) return null; // partial read undercounts; keep the live count
   if (seenIds.size === 0 && countsByTool.size === 0) return null;
 
   const toolBreakdown: PerToolStat[] = Array.from(countsByTool.entries())
@@ -175,30 +185,34 @@ export async function grokTranscriptToolCounts(
 
 // ---------- Internal helpers ----------
 
-async function readUpdateRecords(
+/**
+ * Stream `updates.jsonl`, handing each `params.update` record to `onUpdate`.
+ *
+ * STREAMED and NOT windowed, deliberately. Both callers compute session-
+ * CUMULATIVE aggregates (the last `turn_completed.usage`, distinct tool-call
+ * ids), so a bounded tail read would under-report them - the same reason
+ * Claude's usage and tool-count readers stream the whole file rather than
+ * taking the parse cap. Streaming keeps the peak at one line instead of the
+ * whole file plus an array of every record in it.
+ *
+ * A missing file simply yields no records. Both callers already return null
+ * when they find nothing, so the previous explicit missing-file null is
+ * behaviourally identical.
+ *
+ * Returns whether the file was read to the end, which a cumulative aggregate
+ * must check: a partial read produces a plausible number rather than an
+ * obviously absent one.
+ */
+async function forEachUpdateRecord(
   agentSessionId: string,
   cwd: string,
-): Promise<Array<Record<string, unknown>> | null> {
+  onUpdate: (update: Record<string, unknown>) => void,
+): Promise<boolean> {
   const filePath = grokUpdatesJsonlPath(cwd, agentSessionId);
-  let content: string;
-  try {
-    content = await fs.readFile(filePath, 'utf-8');
-  } catch {
-    return null;
-  }
-  const updates: Array<Record<string, unknown>> = [];
-  for (const line of content.split(/\r?\n/)) {
-    if (line.length === 0) continue;
-    let raw: unknown;
-    try {
-      raw = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    if (!isRecord(raw) || !isRecord(raw.params) || !isRecord(raw.params.update)) continue;
-    updates.push(raw.params.update);
-  }
-  return updates;
+  return streamJsonlRecords(filePath, (raw) => {
+    if (!isRecord(raw.params) || !isRecord(raw.params.update)) return;
+    onUpdate(raw.params.update);
+  });
 }
 
 function grokToolCallName(update: Record<string, unknown>): string {

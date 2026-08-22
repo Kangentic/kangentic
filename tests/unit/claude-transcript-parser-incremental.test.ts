@@ -4,9 +4,13 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   parseClaudeTranscript,
+  parseClaudeTranscriptWindow,
   resetIncrementalParseStateForTests,
   incrementalStateSizeForTests,
+  incrementalStateBytesForTests,
+  setIncrementalStateBudgetForTests,
 } from '../../src/main/agent/adapters/claude/transcript-parser';
+import { setParseWindowBytesForTests } from '../../src/main/agent/shared/transcript-truncation';
 
 /**
  * Covers the incremental-append parse path in `parseClaudeTranscript`: when a
@@ -63,6 +67,8 @@ describe('parseClaudeTranscript incremental append', () => {
   });
 
   afterEach(() => {
+    // Module-scope cap: restore it or a lowered value leaks into later files.
+    setParseWindowBytesForTests();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -204,6 +210,170 @@ describe('parseClaudeTranscript incremental append', () => {
       text: 'appended while cached',
     });
     expect(incrementalStateSizeForTests()).toBeLessThanOrEqual(32);
+  });
+
+  it('evicts on the BYTE budget while the count cap is still satisfied', async () => {
+    // The map was capped by file COUNT only, while each record retains a full
+    // untruncated entries array, so retention scaled with transcript SIZE and
+    // nothing bounded it. (Measured, so the guard is not oversold: one
+    // whole-file parse of the 137.9MB transcript retains 12.7MB of entries, so
+    // 32 such slots is ~0.4GB - a real ceiling worth bounding, but the parse
+    // PEAK is what actually OOM'd the process. See the parse-cap test below.)
+    //
+    // The assertion has to be on BYTES. Ten files is far under the count cap of
+    // 32, so the pre-fix implementation retains every one of them and passes
+    // any count-based assertion while holding the whole working set.
+    const seedTenFiles = async (prefix: string): Promise<void> => {
+      for (let fileIndex = 0; fileIndex < 10; fileIndex += 1) {
+        const distinctPath = path.join(tmpDir, `${prefix}-${fileIndex}.jsonl`);
+        fs.writeFileSync(distinctPath, userLine(`u${fileIndex}`, 'p'.repeat(900)));
+        await parseClaudeTranscript(distinctPath);
+      }
+    };
+
+    // CONTROL: with no binding byte budget, the count cap alone retains all ten
+    // and roughly 10KB. This is the pre-fix behavior, and it is what makes the
+    // assertions below a genuine red-green rather than a tautology.
+    setIncrementalStateBudgetForTests(Number.MAX_SAFE_INTEGER);
+    await seedTenFiles('control');
+    expect(incrementalStateSizeForTests()).toBe(10);
+    expect(incrementalStateBytesForTests()).toBeGreaterThan(4 * 1024);
+
+    resetIncrementalParseStateForTests();
+    setIncrementalStateBudgetForTests(4 * 1024);
+    await seedTenFiles('budget');
+
+    expect(incrementalStateSizeForTests()).toBeLessThan(10);
+    expect(incrementalStateBytesForTests()).toBeLessThanOrEqual(4 * 1024);
+  });
+
+  it('parses only the tail of a transcript larger than the parse cap, marking the omission', async () => {
+    // The peak-allocation bound, and the load-bearing half of this fix. A byte
+    // budget cannot provide it: eviction runs only AFTER a parse has
+    // allocated. Without a cap here, reading the 137.9MB transcript builds a
+    // 275.9MB UTF-16 string every time, and several such reads were routinely
+    // in flight at once - which is how the heap reached 3.4GB.
+    const cap = 4 * 1024;
+    setParseWindowBytesForTests(cap);
+
+    const parts: string[] = [];
+    let written = 0;
+    let lineIndex = 0;
+    while (written <= cap * 3) {
+      const line = userLine(`u${lineIndex}`, `turn ${lineIndex} ${'q'.repeat(200)}`);
+      parts.push(line);
+      written += Buffer.byteLength(line, 'utf-8');
+      lineIndex += 1;
+    }
+    const lastUuid = `u${lineIndex - 1}`;
+    fs.writeFileSync(file, parts.join(''));
+    expect(fs.statSync(file).size).toBeGreaterThan(cap);
+
+    const entries = await parseClaudeTranscript(file);
+
+    // The oldest turn is gone, the newest is present: this is a TAIL window.
+    expect(entries.some((entry) => entry.uuid === 'u0')).toBe(false);
+    expect(entries.some((entry) => entry.uuid === lastUuid)).toBe(true);
+
+    // The omission is reported in-band rather than silently dropping turns.
+    const marker = entries[0];
+    expect(marker).toMatchObject({ kind: 'system', subtype: 'truncated' });
+    expect((marker as { text: string }).text).toContain('not shown');
+
+    // Retention is bounded by the window, not by the file size.
+    expect(incrementalStateBytesForTests()).toBeLessThanOrEqual(cap);
+  });
+
+  it('keeps parsing correctly after an append to an already-truncated transcript', async () => {
+    const cap = 4 * 1024;
+    setParseWindowBytesForTests(cap);
+
+    const parts: string[] = [];
+    let written = 0;
+    let lineIndex = 0;
+    while (written <= cap * 2) {
+      const line = userLine(`u${lineIndex}`, `turn ${lineIndex} ${'q'.repeat(200)}`);
+      parts.push(line);
+      written += Buffer.byteLength(line, 'utf-8');
+      lineIndex += 1;
+    }
+    fs.writeFileSync(file, parts.join(''));
+    await parseClaudeTranscript(file);
+
+    fs.appendFileSync(file, userLine('u-after-truncation', 'appended past the cap'));
+    const reparsed = await parseClaudeTranscript(file);
+
+    // An append to an over-cap file still lands, and retention stays bounded.
+    expect(reparsed[reparsed.length - 1]).toMatchObject({
+      kind: 'user',
+      uuid: 'u-after-truncation',
+      text: 'appended past the cap',
+    });
+    expect(incrementalStateBytesForTests()).toBeLessThanOrEqual(cap);
+  });
+
+  it('carries exactly one truncation marker across a re-window as the file keeps growing', async () => {
+    // A live session past the cap keeps appending, and every cap-worth of
+    // growth forces a fresh window (the `canIncrement` gate). Each full parse
+    // prepends a marker, so if a re-window ever appended to the previous array
+    // instead of rebuilding, markers would stack up at the head of the
+    // conversation, one per re-window.
+    const cap = 4 * 1024;
+    setParseWindowBytesForTests(cap);
+
+    const appendTurns = (startIndex: number, count: number): void => {
+      let batch = '';
+      for (let offset = 0; offset < count; offset += 1) {
+        batch += userLine(`u${startIndex + offset}`, `turn ${'q'.repeat(300)}`);
+      }
+      fs.appendFileSync(file, batch);
+    };
+
+    appendTurns(0, 20);
+    await parseClaudeTranscript(file);
+
+    // Push well past the cap several times over, re-parsing after each burst.
+    let nextIndex = 20;
+    for (let burst = 0; burst < 4; burst += 1) {
+      appendTurns(nextIndex, 20);
+      nextIndex += 20;
+      const entries = await parseClaudeTranscript(file);
+      const markers = entries.filter(
+        (entry) => entry.kind === 'system' && entry.subtype === 'truncated',
+      );
+      expect(markers.length).toBeLessThanOrEqual(1);
+      // When present it is always at the head, describing the omitted prefix.
+      if (markers.length === 1) expect(entries[0]).toBe(markers[0]);
+      expect(incrementalStateBytesForTests()).toBeLessThanOrEqual(cap);
+    }
+  });
+
+  it('parseClaudeTranscriptWindow walks a whole file in windows and retains NO state', async () => {
+    // The indexer's path: every turn is seen, but nothing is cached - a sweep
+    // over every session must not evict the viewer's hot state (before this
+    // existed, a sweep was exactly what packed the state map with the largest
+    // files on the machine).
+    const lines: string[] = [];
+    for (let turn = 0; turn < 40; turn += 1) {
+      lines.push(userLine(`u${turn}`, `turn ${turn} ${'x'.repeat(200)}`));
+    }
+    fs.writeFileSync(file, lines.join(''));
+    const totalBytes = fs.statSync(file).size;
+
+    const seen: string[] = [];
+    let offset = 0;
+    let guard = 0;
+    while (offset < totalBytes && guard < 200) {
+      guard += 1;
+      const window = await parseClaudeTranscriptWindow(file, offset, 1024);
+      if (window.nextByteOffset <= offset) break;
+      for (const entry of window.entries) seen.push(entry.uuid);
+      offset = window.nextByteOffset;
+    }
+
+    // Every turn indexed exactly once, no gap and no duplicate.
+    expect(seen).toEqual(Array.from({ length: 40 }, (unused, turn) => `u${turn}`));
+    expect(incrementalStateSizeForTests()).toBe(0);
   });
 
   it('parses a CRLF-terminated line appended incrementally to a CRLF-terminated transcript', async () => {

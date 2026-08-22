@@ -233,7 +233,7 @@ export class KimiAdapter implements AgentAdapter {
   async parseTranscript(agentSessionId: string, _cwd: string): Promise<ParsedTranscript> {
     const filePath = locateKimiTranscriptFile(agentSessionId);
     if (!filePath) return { entries: [], sourcePath: null };
-    const entries = await parseKimiTranscript(filePath);
+    const entries = await parseKimiTranscript(agentSessionId, filePath);
     return { entries, sourcePath: filePath };
   }
 

@@ -92,6 +92,49 @@ export function sanitizeErrorMessage(message: string): string {
 }
 
 /**
+ * Aptabase truncates a string property at 180 characters server-side (appending
+ * "..."), so anything longer is silently lost. Cap locally at the same length so
+ * what we send is what lands.
+ */
+export const MAX_ANALYTICS_STRING_LENGTH = 180;
+
+/**
+ * Reduce a React componentStack to a PII-free trail of component names,
+ * innermost first (e.g. "BrowserPane < WindowContent < App").
+ *
+ * The raw stack is NOT sent. A production frame reads
+ * `at BrowserPane (file:///C:/Users/dev/.../index-abc.js:1:2)`, so it carries the
+ * user's home directory in a URL form that sanitizeErrorMessage only partly
+ * catches. Keeping just the identifier after `at` / `in` is PII-free by
+ * construction rather than by pattern-matching.
+ *
+ * KNOW THIS BEFORE RELYING ON THE OUTPUT: React derives frame names from
+ * `fn.name`, and the production renderer bundle is minified with name mangling,
+ * so a packaged build yields mangled names ("t < Yn < Ao") rather than readable
+ * ones. Since telemetry is gated on `app.isPackaged`, that is the ONLY build this
+ * ever runs in. The value is still real (mangled names are stable within a build,
+ * so distinct trails mean distinct code paths, and a matching build's sourcemap
+ * resolves them) but it is not human-readable on arrival. `boundary` and `panel`
+ * are the fields that read directly, because a string literal and a prop both
+ * survive minification. Making this readable would need name preservation turned
+ * on for the renderer build, which is a bundle-size tradeoff, not a free switch.
+ */
+export function summarizeComponentStack(
+  stack: string | null | undefined,
+  maxFrames = 6
+): string {
+  if (!stack) return '';
+  const names: string[] = [];
+  for (const line of stack.split('\n')) {
+    const match = /^\s*(?:at|in)\s+([A-Za-z0-9_$.]+)/.exec(line);
+    if (!match) continue;
+    names.push(match[1]);
+    if (names.length >= maxFrames) break;
+  }
+  return names.join(' < ').slice(0, MAX_ANALYTICS_STRING_LENGTH);
+}
+
+/**
  * Track an event and return its delivery promise. Use this when the caller
  * needs to await delivery (e.g. during shutdown) rather than fire-and-forget.
  */

@@ -52,6 +52,9 @@
   let browserAgentInputSubscribers = [];
   let browserDownloadSubscribers = [];
   let browserUserKeySubscribers = [];
+  // Guest mouse back/forward presses forwarded from main. A real guest
+  // consumes the mouse, so this push is the only way they reach the renderer.
+  let browserGuestMouseSubscribers = [];
   // Pop-out engine call log: open/close/focus invocations, so a test can
   // assert the title-bar / surface-header trigger called the right verb
   // (e.g. focus() instead of toggling the in-app overlay) without a real
@@ -332,13 +335,15 @@
     return snapshotOverridableDefaults();
   }
 
+  // Mirrors the production seed in src/main/db/migrations/default-data.ts;
+  // tests/unit/default-swimlanes-seed-parity.test.ts binds the two lists.
   var DEFAULT_SWIMLANES = [
     { name: 'To Do', description: null, role: 'todo', color: '#6b7280', icon: 'layers', is_archived: false, is_ghost: false, permission_mode: null, auto_spawn: false, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
     { name: 'Planning', description: null, role: null, color: '#8b5cf6', icon: 'map', is_archived: false, is_ghost: false, permission_mode: 'plan', auto_spawn: true, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: '__executing__', agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
     { name: 'Executing', description: null, role: null, color: '#3b82f6', icon: 'square-terminal', is_archived: false, is_ghost: false, permission_mode: null, auto_spawn: true, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
     { name: 'Code Review', description: null, role: null, color: '#f59e0b', icon: 'code', is_archived: false, is_ghost: false, permission_mode: null, auto_spawn: true, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
-    { name: 'Tests', description: null, role: null, color: '#06b6d4', icon: 'flask-conical', is_archived: false, is_ghost: false, permission_mode: null, auto_spawn: true, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
-    { name: 'Ship It', description: null, role: null, color: '#F97316', icon: 'sailboat', is_archived: false, is_ghost: false, permission_mode: null, auto_spawn: true, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
+    { name: 'Testing', description: null, role: null, color: '#06b6d4', icon: 'flask-conical', is_archived: false, is_ghost: false, permission_mode: null, auto_spawn: true, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
+    { name: 'Merge', description: null, role: null, color: '#f97316', icon: 'merge', is_archived: false, is_ghost: false, permission_mode: null, auto_spawn: true, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
     { name: 'Done', description: null, role: 'done', color: '#10b981', icon: 'circle-check-big', is_archived: true, is_ghost: false, permission_mode: null, auto_spawn: false, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
   ];
 
@@ -1196,6 +1201,22 @@
           if (idx >= 0) listeners.splice(idx, 1);
         };
       },
+      onPrLinkChanged: function (callback) {
+        // Tests can fire this via window.__mockFireTaskPrLinkChanged(projectId).
+        if (!window.__mockTaskPrLinkChangedListeners) window.__mockTaskPrLinkChangedListeners = [];
+        window.__mockTaskPrLinkChangedListeners.push(callback);
+        if (!window.__mockFireTaskPrLinkChanged) {
+          window.__mockFireTaskPrLinkChanged = function (projectId) {
+            var listeners = (window.__mockTaskPrLinkChangedListeners || []).slice();
+            for (var i = 0; i < listeners.length; i++) { listeners[i](projectId); }
+          };
+        }
+        return function () {
+          var listeners = window.__mockTaskPrLinkChangedListeners || [];
+          var idx = listeners.indexOf(callback);
+          if (idx >= 0) listeners.splice(idx, 1);
+        };
+      },
       onSpawnProgress: function (callback) {
         // Tests can fire this via window.__mockFireSpawnProgress(taskId, label).
         if (!window.__mockSpawnProgressListeners) window.__mockSpawnProgressListeners = [];
@@ -2012,8 +2033,26 @@
       },
       // Each entry is { sessionId, text, eraseCount }.
       __submits: [],
+      // Test hook: hold `submit` open so a spec can observe the window during
+      // which an auto-submit paste is still landing. Real submits are NOT
+      // instant - `terminal-submit.ts` waits for the TUI to settle rather than
+      // sleeping a fixed amount, so on a loaded machine this window has been
+      // measured past two seconds. A mock that always resolves immediately
+      // cannot see any of the behaviour that depends on it.
+      __submitGate: null,
+      __blockSubmit: function () {
+        var release = function () {};
+        window.electronAPI.dictation.__submitGate = new Promise(function (resolve) { release = resolve; });
+        window.electronAPI.dictation.__releaseSubmit = function () {
+          release();
+          window.electronAPI.dictation.__submitGate = null;
+        };
+      },
+      __releaseSubmit: function () {},
       submit: async function (sessionId, text, eraseCount) {
         window.electronAPI.dictation.__submits.push({ sessionId: sessionId, text: text, eraseCount: eraseCount });
+        var gate = window.electronAPI.dictation.__submitGate;
+        if (gate) await gate;
         return true;
       },
       getInfo: async function () {
@@ -2562,7 +2601,13 @@
     },
 
     analytics: {
-      trackRendererError: function () {},
+      // Records rather than discarding, like the other fire-and-forget mocks, so a
+      // UI test can assert what a boundary actually reported.
+      // context carries { boundary, panel?, componentStack? }.
+      trackRendererError: function (message, context) {
+        window.__mockTrackRendererErrorCalls = window.__mockTrackRendererErrorCalls || [];
+        window.__mockTrackRendererErrorCalls.push({ message: message, context: context });
+      },
     },
 
     app: {
@@ -3769,6 +3814,17 @@
           if (index >= 0) browserPaneCloseSubscribers.splice(index, 1);
         };
       },
+      // Main -> renderer push for a mouse back/forward press inside the guest.
+      // A real guest consumes the mouse outright, so this channel is the ONLY
+      // way those presses reach the renderer; there is no DOM event to simulate
+      // instead. Driven via window.__mockBrowser.emitGuestMouseButton(...).
+      onGuestMouseButton: function (callback) {
+        browserGuestMouseSubscribers.push(callback);
+        return function () {
+          const index = browserGuestMouseSubscribers.indexOf(callback);
+          if (index >= 0) browserGuestMouseSubscribers.splice(index, 1);
+        };
+      },
     },
 
     // Platform string. Defaults to 'win32' (matches the most common dev
@@ -3830,6 +3886,21 @@
     emitZoomChanged: function (factor, webContentsId) {
       browserZoomSubscribers.slice().forEach(function (callback) {
         callback(factor, webContentsId);
+      });
+    },
+    /**
+     * Fire main's guest mouse back/forward push. `at` defaults to now, and is
+     * the MAIN-side clock the renderer measures tap-vs-hold against - pass an
+     * explicit pair to model a hold without actually waiting.
+     */
+    emitGuestMouseButton: function (webContentsId, button, phase, at) {
+      browserGuestMouseSubscribers.slice().forEach(function (callback) {
+        callback({
+          webContentsId: webContentsId,
+          button: button,
+          phase: phase,
+          at: typeof at === 'number' ? at : Date.now(),
+        });
       });
     },
     /** Fire main's "open this task's Browser pane" push (kangentic_browser_open_pane). */

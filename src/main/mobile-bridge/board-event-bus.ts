@@ -11,10 +11,14 @@ export interface BoardChangedEvent {
 /**
  * A single main-process-internal event stream for every agent-driven board
  * mutation, consolidating the ad-hoc `IPC.*_BY_AGENT` renderer pushes
- * (fired from `buildCommandContextForProject`'s six callbacks in
+ * (fired from `buildCommandContextForProject`'s callbacks in
  * mcp-project-context.ts, plus the PR-linking push in pr-linking.ts) into
  * one place a bridge session can subscribe to and filter by projectId,
  * instead of listening to each ad-hoc channel individually.
+ *
+ * A PR-link reconcile reaches this bus as a plain `task-updated`, even though
+ * its renderer push is the quiet `TASK_PR_LINK_CHANGED`: toast-worthiness is a
+ * renderer concern, and a subscriber here still needs to know the row moved.
  *
  * This is purely additive: it is fed alongside the existing renderer
  * `sendToRenderer(...)` calls, never replacing them, so the renderer's

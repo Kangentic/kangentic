@@ -78,8 +78,10 @@ function makeFakeSessionManager() {
   return {
     isWritable: () => false,
     getActivityCache: () => ({}),
-    findLiveSessionByTaskId: () => undefined,
-    getSessionTaskId: () => undefined,
+    findLiveSessionByTaskId: (taskId: string) =>
+      (taskId === 'task-with-worktree' ? { id: 'sess-1', cwd: 'C:/w/worktrees/7' } : undefined),
+    getSessionTaskId: (sessionId: string) =>
+      (sessionId === 'caller-session-xyz' ? 'task-with-worktree' : undefined),
     getSessionProjectId: () => undefined,
     on() { return this; },
     off() { return this; },
@@ -147,7 +149,18 @@ describe('startMcpHttpServer - resolveBrowser caller-scope wiring', () => {
       projectId: 'proj-1',
       callerSessionId: 'caller-session-xyz',
     });
-    expect(dependencies.sessions).toBe(fakeSessionManager);
+    // Deliberately NOT `toBe(fakeSessionManager)`. resolveBrowser passes an
+    // ADAPTER now, because SessionManager satisfies the rest of
+    // BrowserSessionLookup structurally while having no getTaskWorktreePath -
+    // which is exactly how that lookup once shipped dead, sending every
+    // isolated lane to the legacy shared cookie jar. Behaviour is the stronger
+    // assertion anyway: identity never proved the lookup resolved anything.
+    expect(dependencies.sessions?.getSessionTaskId('caller-session-xyz')).toBe('task-with-worktree');
+    expect(dependencies.sessions?.getTaskWorktreePath('task-with-worktree')).toBe('C:/w/worktrees/7');
+    // A task with no live session yields null rather than throwing; openLane
+    // then falls back to the shared jar, which is the honest answer when there
+    // is no worktree to key on.
+    expect(dependencies.sessions?.getTaskWorktreePath('task-without-session')).toBeNull();
   });
 
   it('scopes each request to ITS OWN projectId - a second project never inherits the first\'s scope', async () => {

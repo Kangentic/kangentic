@@ -7,8 +7,8 @@
 //     the release that introduces it: that payload arrives in the OLD client, so
 //     there would be nothing to read back on the first upgrade into this code.
 //   - Inlining also covers the paths the in-app updater never reaches at all -
-//     a fresh install, a manual NSIS/DMG install, and Linux, where initUpdater()
-//     early-returns (see src/main/updater.ts).
+//     a fresh install, a manual NSIS/DMG/deb/rpm install, and an `npx kangentic`
+//     upgrade, which replaces the package from outside the app.
 //
 // The repo root is the Vite root in every build path (vite.config.mts declares
 // no `root:` and lives at the repo root; scripts/dev.js's worktree branch sets

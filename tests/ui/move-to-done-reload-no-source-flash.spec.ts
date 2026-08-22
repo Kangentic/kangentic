@@ -18,7 +18,7 @@
  * whole flight. This spec drags a task to Done, fires loadBoard() mid-flight,
  * and asserts the dragged task never reappears in its source column across
  * sampled frames. It runs from multiple source columns, since the reporter saw
- * it "from any column" (most often "Ship It").
+ * it "from any column" (most often the last pre-Done column, seeded as "Merge").
  *
  * Without the fix the re-injected card lingers in the source lane for the rest
  * of the flight, so the rAF sampler reliably catches it (red); with the fix the
@@ -38,7 +38,7 @@ const PROJECT_ID = 'proj-done-reload-flash';
 // of any column name, so a textContent scan of a lane is unambiguous.
 const SOURCES: Array<{ column: string; taskId: string; title: string }> = [
   { column: 'Executing', taskId: 'task-reload-flash-exec', title: 'Exec Reload Flash Probe' },
-  { column: 'Ship It', taskId: 'task-reload-flash-shipit', title: 'ShipIt Reload Flash Probe' },
+  { column: 'Merge', taskId: 'task-reload-flash-merge', title: 'Landing Reload Flash Probe' },
 ];
 
 async function launch(): Promise<{ browser: Browser; page: Page }> {

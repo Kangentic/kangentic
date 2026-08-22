@@ -25,6 +25,7 @@ import { webContents, BrowserWindow } from 'electron';
 import { attachDebugger, ensureFocusEmulation, isDebuggerAttached } from '../../src/main/browser/cdp/cdp';
 import { withGuest, validateNavigationUrl } from '../../src/main/browser/browser-pane-driver';
 import { browserPaneRegistry } from '../../src/main/browser/browser-pane-registry';
+import { resetGuestDriveQueuesForTests } from '../../src/main/browser/guest-drive-queue';
 import {
   setAgentInputSender,
   resetAgentInputSignalForTests,
@@ -74,6 +75,10 @@ describe('withGuest - agent input signalling', () => {
     vi.clearAllMocks();
     vi.mocked(attachDebugger).mockReturnValue(true);
     vi.mocked(isDebuggerAttached).mockReturnValue(false);
+    // These suites share one guest id against the real registry singleton, so
+    // the per-guest drive queues must be dropped between tests or a test that
+    // leaves a drive in flight stalls every later one.
+    resetGuestDriveQueuesForTests();
     browserPaneRegistry.detachAll();
     browserPaneRegistry.register({ sessionId: 's', taskId: 't', projectId: 'p', webContentsId: 7, url: null });
     seedGuest(7);
@@ -200,22 +205,46 @@ describe('withGuest - agent input signalling', () => {
     expect(signalled).toEqual([]);
   });
 
-  it('emits only the outer edges when two drives overlap on one guest', async () => {
-    // Refcounted, not a boolean: a `wait` polling while a `click` lands must not
-    // let the first one to finish end the guard for the other.
-    let releaseOuter: (() => void) | undefined;
-    const outerHeld = new Promise<void>((resolve) => { releaseOuter = resolve; });
-    const outer = withGuest({ selector: { projectId: 'p' }, capability: 'observe', config: config() }, async () => {
-      await outerHeld;
-      return 'outer';
-    });
-    await withGuest({ selector: { projectId: 'p' }, capability: 'interact', config: config() }, async () => 'inner');
+  it('serializes two concurrent drives on one guest instead of interleaving them', async () => {
+    // The reported bug: three subagents drove one pane at once, interleaving
+    // clicks, navigations and screenshots. `withGuest` now holds a per-guest
+    // FIFO, so a second drive does not start until the first has finished.
+    const order: string[] = [];
+    let releaseFirst: (() => void) | undefined;
+    const firstHeld = new Promise<void>((resolve) => { releaseFirst = resolve; });
 
-    // The inner call finished, but the outer one is still driving.
+    const first = withGuest({ selector: { projectId: 'p' }, capability: 'observe', config: config() }, async () => {
+      order.push('first:start');
+      await firstHeld;
+      order.push('first:end');
+      return 'first';
+    });
+    const second = withGuest({ selector: { projectId: 'p' }, capability: 'interact', config: config() }, async () => {
+      order.push('second:start');
+      return 'second';
+    });
+
+    // Let any microtasks settle. The second body must NOT have started: under
+    // the old unguarded driver it would already have run to completion here.
+    await Promise.resolve();
+    expect(order).toEqual(['first:start']);
+
+    releaseFirst?.();
+    await Promise.all([first, second]);
+    expect(order).toEqual(['first:start', 'first:end', 'second:start']);
+  });
+
+  it('announces one burst across back-to-back drives, not one per call', async () => {
+    // The refcount + quiet window still matter with serialization in place:
+    // consecutive calls (a `wait` polling between a click and a screenshot) must
+    // read as ONE burst to the renderer rather than flapping the guard open and
+    // shut between them, which oscillated the user's focus.
+    await withGuest({ selector: { projectId: 'p' }, capability: 'observe', config: config() }, async () => 'a');
+    await withGuest({ selector: { projectId: 'p' }, capability: 'interact', config: config() }, async () => 'b');
+
+    // Both finished, but the quiet window has not elapsed, so no end edge yet.
     expect(signalled).toEqual([{ guestId: 7, active: true }]);
 
-    releaseOuter?.();
-    await outer;
     settleBurst();
     expect(signalled).toEqual([
       { guestId: 7, active: true },
@@ -229,6 +258,10 @@ describe('withGuest - capability gating', () => {
     vi.clearAllMocks();
     vi.mocked(attachDebugger).mockReturnValue(true);
     vi.mocked(isDebuggerAttached).mockReturnValue(false);
+    // These suites share one guest id against the real registry singleton, so
+    // the per-guest drive queues must be dropped between tests or a test that
+    // leaves a drive in flight stalls every later one.
+    resetGuestDriveQueuesForTests();
     browserPaneRegistry.detachAll();
     browserPaneRegistry.register({ sessionId: 's', taskId: 't', projectId: 'p', webContentsId: 7, url: null });
     seedGuest(7);
@@ -265,6 +298,10 @@ describe('withGuest - resolution and attach', () => {
     vi.clearAllMocks();
     vi.mocked(attachDebugger).mockReturnValue(true);
     vi.mocked(isDebuggerAttached).mockReturnValue(false);
+    // These suites share one guest id against the real registry singleton, so
+    // the per-guest drive queues must be dropped between tests or a test that
+    // leaves a drive in flight stalls every later one.
+    resetGuestDriveQueuesForTests();
     browserPaneRegistry.detachAll();
   });
 

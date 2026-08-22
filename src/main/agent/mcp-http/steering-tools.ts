@@ -22,7 +22,9 @@ import type { SessionSendCoordinator, SentMessageRecord } from './session-send';
 
 /** The `SessionManager` lookups the tool layer needs to resolve a target and a caller. */
 export interface SteeringSessionLookup {
-  findLiveSessionByTaskId(taskId: string): { id: string } | undefined;
+  /** `cwd` is the session's worktree directory, which the browser tools use to
+   *  derive an isolated lane's cookie-jar partition. */
+  findLiveSessionByTaskId(taskId: string): { id: string; cwd: string } | undefined;
   getSessionTaskId(sessionId: string): string | undefined;
   getSessionProjectId(sessionId: string): string | undefined;
 }

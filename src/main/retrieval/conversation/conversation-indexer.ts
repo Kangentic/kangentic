@@ -3,18 +3,24 @@ import type Database from 'better-sqlite3';
 import { getProjectDb } from '../../db/database';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { agentRegistry } from '../../agent/agent-registry';
-import type { ParsedTranscript } from '../../agent/agent-adapter';
+import type { ParsedTranscript, ParsedTranscriptWindow } from '../../agent/agent-adapter';
 import type { SessionRecord, TranscriptEntry } from '../../../shared/types';
 import { RetrievalStore } from '../retrieval-store';
 import type { ChunkInput, IndexStateRow } from '../types';
 import { chunkTranscript, CHUNKER_VERSION } from './transcript-chunker';
-import { ConversationUsageStore, extractTurnUsageRecords } from './conversation-usage-store';
+import {
+  ConversationUsageStore,
+  extractTurnUsageRecords,
+  type TurnUsageInput,
+} from './conversation-usage-store';
 
 const CORPUS = 'conversation';
 const CHUNKER_VERSION_KEY = 'chunker_version';
 /** Max sessions actually (re)indexed per backfill sweep, so a large history's
- *  cost amortizes across project opens instead of one long CPU burst. */
-const MAX_SESSIONS_PER_SWEEP = 25;
+ *  cost amortizes across project opens instead of one long CPU burst. Exported
+ *  so tests can assert the cap by the real value rather than a copied-in
+ *  literal that could silently drift from it. */
+export const MAX_SESSIONS_PER_SWEEP = 25;
 
 /** Cheap staleness signature: the source file's path/mtime/size, without
  *  parsing it. */
@@ -45,7 +51,36 @@ export function needsIndex(state: IndexStateRow | undefined, signature: SourceSi
 interface AdapterLike {
   displayName: string;
   parseTranscript?: (agentSessionId: string, cwd: string) => Promise<ParsedTranscript>;
+  parseTranscriptWindow?: (
+    agentSessionId: string,
+    cwd: string,
+    startByte: number,
+    maxBytes: number,
+  ) => Promise<ParsedTranscriptWindow>;
   locateSessionHistoryFile?: (agentSessionId: string, cwd: string) => Promise<string | null>;
+}
+
+/**
+ * Source bytes the indexer parses at a time when walking a transcript in
+ * windows.
+ *
+ * Deliberately its OWN constant rather than the parser's
+ * `MAX_PARSE_SOURCE_BYTES`. They answer different questions: the parser's cap
+ * is a RETENTION bound the user sees directly (turns missing from the top of
+ * the viewer), while this is an internal WORKING-SET bound with no user-visible
+ * effect at all - every window is chunked and dropped, so the whole file is
+ * indexed regardless of how this is tuned. Sharing one constant would couple a
+ * product decision to a memory-profiling one.
+ */
+const INDEX_WINDOW_BYTES = 8 * 1024 * 1024;
+
+/** A transcript reduced to everything indexing needs, with no entries retained. */
+interface WalkedTranscript {
+  sourcePath: string | null;
+  /** Total entries seen across all windows (for the index-state row only). */
+  entryCount: number;
+  chunks: ChunkInput[];
+  usageRecords: TurnUsageInput[];
 }
 
 export interface ConversationIndexerDeps {
@@ -149,8 +184,11 @@ export class ConversationIndexer {
 
     const adapter = this.deps.getAdapter(record.session_type);
 
-    // Raw-only agent: no structured parser. Terminal 'unsupported'.
-    if (!adapter?.parseTranscript) {
+    // Raw-only agent: no structured parser. Terminal 'unsupported'. Either
+    // capability qualifies - gating on `parseTranscript` alone would reject an
+    // adapter that implements ONLY the windowed walk before the walk it was
+    // written for could ever run.
+    if (!adapter?.parseTranscript && !adapter?.parseTranscriptWindow) {
       this.writeState(store, record, { path: null, mtimeMs: null, size: null }, 'unsupported', 0, 0);
       return 'unsupported';
     }
@@ -167,26 +205,25 @@ export class ConversationIndexer {
     const state = store.getIndexState(CORPUS, record.agent_session_id ?? record.id);
     if (!needsIndex(state, signature)) return 'skipped';
 
-    let parsed: ParsedTranscript;
+    let walked: WalkedTranscript;
     try {
-      parsed = await adapter.parseTranscript(record.agent_session_id, record.cwd);
+      walked = await this.walkTranscript(adapter, record.agent_session_id, record.cwd);
     } catch {
       this.writeState(store, record, signature, 'error', 0, 0);
       return 'error';
     }
-    if (parsed.entries.length === 0) {
+    if (walked.entryCount === 0) {
       this.writeState(
         store,
         record,
-        { ...signature, path: parsed.sourcePath ?? signature.path },
+        { ...signature, path: walked.sourcePath ?? signature.path },
         'missing-source',
         0,
         0,
       );
       return 'missing-source';
     }
-
-    const chunks = this.deps.chunker(parsed.entries);
+    const chunks = walked.chunks;
     store.upsertDocument(
       {
         corpus: CORPUS,
@@ -216,7 +253,7 @@ export class ConversationIndexer {
           sessionId: record.id,
           taskId: record.task_id,
         },
-        extractTurnUsageRecords(parsed.entries),
+        walked.usageRecords,
         this.deps.now(),
       );
     } catch (error) {
@@ -226,12 +263,87 @@ export class ConversationIndexer {
     this.writeState(
       store,
       record,
-      { ...signature, path: parsed.sourcePath ?? signature.path },
+      { ...signature, path: walked.sourcePath ?? signature.path },
       'ok',
-      parsed.entries.length,
+      walked.entryCount,
       chunks.length,
     );
     return 'indexed';
+  }
+
+  /**
+   * Read a session's whole transcript and reduce it to chunks + usage records,
+   * WITHOUT ever holding the whole thing.
+   *
+   * Prefers the adapter's windowed walk: chunk a window, keep only its
+   * (small, owned-string) chunks and usage records, drop its entries, advance.
+   * Peak is therefore one window PLUS this session's accumulated chunk and
+   * usage output, not one window flat - the chunks are held until the single
+   * upsert at the end. That output runs roughly 0.05-0.1x source bytes, so a
+   * 137.9MB transcript costs one 8MB window plus low tens of MB, rather than
+   * the 275.9MB string a whole-file read would have materialized.
+   * `parseTranscript` is the fallback for adapters without the capability, and
+   * it returns only a bounded tail of a large file - so an adapter that has not
+   * implemented `parseTranscriptWindow` indexes only recent history. That is
+   * the deliberate trade: bounded memory everywhere, full search coverage
+   * wherever the walk exists.
+   */
+  private async walkTranscript(
+    adapter: AdapterLike,
+    agentSessionId: string,
+    cwd: string,
+  ): Promise<WalkedTranscript> {
+    const chunks: ChunkInput[] = [];
+    const usageRecords: TurnUsageInput[] = [];
+    let sourcePath: string | null = null;
+    let entryCount = 0;
+
+    // `seq` must be 0-based and DENSE across the whole document, but the
+    // chunker numbers from 0 per call, so per-window numbering has to be
+    // rebased here rather than trusted.
+    const collect = (entries: TranscriptEntry[]): void => {
+      // Drop the "earlier N MB are not shown" notice before chunking. It is a
+      // presentation artifact of the READER's size cap, not conversation
+      // content, and the chunker indexes `system` entries verbatim - so every
+      // large session would otherwise carry a searchable chunk describing the
+      // viewer's truncation, which is pure noise in the corpus.
+      const indexable = entries.filter(
+        (entry) => !(entry.kind === 'system' && entry.subtype === 'truncated'),
+      );
+      entryCount += indexable.length;
+      for (const chunk of this.deps.chunker(indexable)) {
+        chunks.push({ ...chunk, seq: chunks.length });
+      }
+      for (const usage of extractTurnUsageRecords(indexable)) usageRecords.push(usage);
+    };
+
+    if (adapter.parseTranscriptWindow) {
+      let offset = 0;
+      // Bounds the walk against a pathological file or an adapter that fails to
+      // advance. At INDEX_WINDOW_BYTES per window this still covers far more
+      // than any real transcript.
+      for (let windowIndex = 0; windowIndex < 4096; windowIndex += 1) {
+        const window = await adapter.parseTranscriptWindow(
+          agentSessionId, cwd, offset, INDEX_WINDOW_BYTES,
+        );
+        sourcePath = window.sourcePath ?? sourcePath;
+        collect(window.entries);
+        if (window.nextByteOffset <= offset) break;
+        offset = window.nextByteOffset;
+        if (offset >= window.totalBytes) break;
+      }
+      return { sourcePath, entryCount, chunks, usageRecords };
+    }
+
+    // Narrowed rather than asserted: `indexSession` only reaches here when at
+    // least one of the two capabilities exists, and the window branch above
+    // consumed the other - but that reasoning lives in a different method, so
+    // let the type system carry it instead of a `!`.
+    if (!adapter.parseTranscript) return { sourcePath, entryCount, chunks, usageRecords };
+    const parsed = await adapter.parseTranscript(agentSessionId, cwd);
+    sourcePath = parsed.sourcePath;
+    collect(parsed.entries);
+    return { sourcePath, entryCount, chunks, usageRecords };
   }
 
   /**
@@ -263,12 +375,21 @@ export class ConversationIndexer {
         .all() as Array<{ id: string }>
     ).map((row) => row.id);
 
-    let indexed = 0;
+    let parsedThisSweep = 0;
     for (const sessionId of sessionIds) {
       if (!shouldContinue()) return;
-      if (indexed >= MAX_SESSIONS_PER_SWEEP) return;
+      if (parsedThisSweep >= MAX_SESSIONS_PER_SWEEP) return;
       const outcome = await this.indexSession(projectId, sessionId);
-      if (outcome === 'indexed') indexed += 1;
+      // Count every outcome that actually PARSED, not just the ones that
+      // produced chunks. The cap previously incremented on 'indexed' alone,
+      // while the driving query has no LIMIT - so sessions that parsed and then
+      // returned 'error' or 'missing-source' were free, and one sweep could run
+      // an unbounded number of full transcript reads. 'skipped' (signature
+      // unchanged) and 'unsupported' (no parser) do no file reading and stay
+      // free, which is what keeps the steady-state sweep cheap.
+      if (outcome === 'indexed' || outcome === 'error' || outcome === 'missing-source') {
+        parsedThisSweep += 1;
+      }
       // Yield between sessions so a large sweep never blocks the event loop.
       await new Promise((resolve) => setImmediate(resolve));
     }

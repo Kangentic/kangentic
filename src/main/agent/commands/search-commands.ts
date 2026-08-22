@@ -346,6 +346,12 @@ export const handleGetCurrentTask: CommandHandler = (
     prUrl: task.pr_url,
     useWorktree: task.use_worktree,
     status: task.archived_at ? 'completed' : 'active',
+    // Deliberately no reserved-port field here. This serializer is a
+    // per-project read and the ledger lives in the GLOBAL database, so
+    // reporting ports made every task lookup depend on a second database - and
+    // `matches.map(toData)` below turned that into one global query per matched
+    // task. `kangentic_check_dev_ports` answers the question properly, and
+    // probes each port besides.
   });
 
   if (matches.length === 0) {

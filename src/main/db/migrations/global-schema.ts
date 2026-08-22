@@ -64,4 +64,48 @@ export function runGlobalMigrations(db: Database.Database): void {
   if (!projectColumns.some((col) => col.name === 'default_effort')) {
     db.exec('ALTER TABLE projects ADD COLUMN default_effort TEXT DEFAULT NULL');
   }
+
+  // Migration: dev-server port leases.
+  //
+  // GLOBAL rather than per-project on purpose: ports are a machine-wide
+  // resource, so two projects both defaulting to 5173 is exactly the collision
+  // a per-project table could not see. Deliberately NOT stored in the
+  // worktree's `.kangentic/`, which is wiped when a preview exits.
+  //
+  // Keyed on task_id, never worktree_path: a Done round-trip nulls
+  // `worktree_path` and removes the directory, so a path-keyed lease would
+  // orphan on every round trip and slowly eat the range.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS dev_ports (
+      port INTEGER PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      task_id TEXT NOT NULL,
+      allocated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_dev_ports_project ON dev_ports(project_id);
+  `);
+
+  // Migration: a task may hold MORE THAN ONE port.
+  //
+  // The index started UNIQUE, from a design where Kangentic assigned each task a
+  // single port. Real projects bind several (an API, a frontend, a mock server),
+  // and they are reserved together so a sibling task cannot be handed one in
+  // between - which a unique index makes impossible. Dropped and recreated
+  // non-unique; `port` stays the primary key, so a PORT still cannot be held
+  // twice.
+  //
+  // No RELEASED version ever had the unique index - `dev_ports` and this drop
+  // land in the same change, verified against the real global database, which
+  // has no dev_ports table at all. So this branch only ever fires on a database
+  // built by an intermediate commit of that same change: a developer's own
+  // preview, or a reviewer who ran the branch twice. Kept because it is four
+  // idempotent lines and those databases are real; do not read it as evidence
+  // that shipped data carries the old shape.
+  const devPortIndexes = db.pragma('index_list(dev_ports)') as Array<{ name: string; unique: number }>;
+  const taskIndex = devPortIndexes.find((index) => index.name === 'idx_dev_ports_task');
+  if (taskIndex?.unique) {
+    db.exec('DROP INDEX idx_dev_ports_task');
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_dev_ports_task ON dev_ports(task_id)');
 }

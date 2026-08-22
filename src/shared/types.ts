@@ -18,6 +18,24 @@ export interface ProjectGroupCreateInput {
   name: string;
 }
 
+/**
+ * A dev-server port reserved by one task, held in the GLOBAL database because
+ * ports are a shared resource across every project in the instance.
+ *
+ * A reservation is advisory, and a promise rather than a fact: whether a port
+ * is actually usable is answered by a bind probe (`describeDevPorts`), never by
+ * this row. That split is deliberate - it is what lets a stale reservation
+ * self-correct instead of permanently burning a port, and it is the only way to
+ * see a dev server the user started outside Kangentic on a port nothing here
+ * ever handed out.
+ */
+export interface DevPortLease {
+  port: number;
+  projectId: string;
+  taskId: string;
+  allocatedAt: string;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -2579,6 +2597,26 @@ export interface AppConfig {
   };
 
   /**
+   * Dev-server port leases. Held in the GLOBAL database by necessity, not by
+   * policy: ports are a shared resource, so a per-project range could not see
+   * that another project already holds 4200. That scopes the ledger to one
+   * Kangentic INSTANCE rather than the machine, since `configDir` honours
+   * KANGENTIC_DATA_DIR - a bind probe, not the ledger, is what keeps two
+   * instances from colliding.
+   *
+   * Nothing is leased up front: a task holds ports only once its agent asked
+   * via kangentic_reserve_dev_ports, and {{port}} exposes the lowest of them.
+   * Kangentic never starts or supervises a dev server.
+   */
+  devServer?: {
+    /** First port considered when leasing. Default 7300, chosen to miss every
+     *  common framework default (3000, 4200, 4321, 5000, 5173, 8000, 8080). */
+    portRangeStart?: number;
+    /** Last port considered when leasing (inclusive). Default 7499. */
+    portRangeEnd?: number;
+  };
+
+  /**
    * Conversation memory: local index over agent conversation transcripts for
    * search and recall. GLOBAL/shared scope (below the settings separator, in
    * the Memory tab). Works offline with no API key.
@@ -2639,7 +2677,8 @@ export interface AppConfig {
     releaseBufferMs?: number;
     /** Which live UI surface to show while dictating (experiment switcher).
      *  `popup` = floating panel; `docked` = bar by the terminal input; `live` =
-     *  type directly into the terminal as you speak. Default `popup`. */
+     *  type directly into the resolved target as you speak. Default `popup`,
+     *  though `live` is what actually ships (see `useDictation`). */
     experience?: 'popup' | 'docked' | 'live';
     /** Remote backend (used when engineMode = `remote`). */
     remote?: DictationRemoteEndpoint;
@@ -4048,7 +4087,28 @@ export type TranscriptEntry =
   // misleading "## User" turns: conversation-compaction boundaries/summaries,
   // slash-command invocations and their local stdout, and (session_boundary)
   // the seam between two sessions stitched into one task-level view.
-  | { kind: 'system'; uuid: string; ts: number; subtype: 'compaction' | 'command' | 'command_output' | 'session_boundary'; text: string };
+  | { kind: 'system'; uuid: string; ts: number; subtype: TranscriptSystemSubtype; text: string };
+
+/**
+ * The `kind: 'system'` entry variants.
+ *
+ * Named rather than inlined because this union had been hand-copied into four
+ * other places (the renderer's SystemRow, the markdown formatter, the
+ * normalized event stream, and the mobile wire mapper), so adding a member
+ * meant finding all of them by chasing type errors. The protocol package's
+ * `TranscriptSystemSubtypeWire` is deliberately NOT one of them: it stays at
+ * the four wire-visible members, and `truncated` is mapped onto
+ * `session_boundary` before it crosses. `truncated` marks a transcript too large
+ * to parse whole: only its most recent `MAX_PARSE_SOURCE_BYTES` were read, and
+ * its `text` names how much was left out. Like `session_boundary`, its text is
+ * a ready-to-display sentence rather than raw payload behind a canned label.
+ */
+export type TranscriptSystemSubtype =
+  | 'compaction'
+  | 'command'
+  | 'command_output'
+  | 'session_boundary'
+  | 'truncated';
 
 export type TranscriptBlock =
   | { type: 'text'; text: string }
@@ -4322,6 +4382,36 @@ export interface DevSeedLargeConversationResult {
   filePath: string;
 }
 
+/** A mouse back/forward press inside a Browser pane's guest page, forwarded from
+ *  main. See `ElectronAPI['browser']['onGuestMouseButton']`. */
+export interface GuestMouseButtonEvent {
+  webContentsId: number;
+  button: 'back' | 'forward';
+  phase: 'down' | 'up';
+  /** `Date.now()` in the MAIN process, when the button actually moved. */
+  at: number;
+}
+
+/**
+ * Where a renderer error came from, sent alongside the message on
+ * `ElectronAPI['analytics']['trackRendererError']`.
+ *
+ * The message alone is not locatable: `Cannot read properties of undefined
+ * (reading 'split')` told us nothing about which surface threw it, because all
+ * three reporters (both error boundaries and the bare unhandled-rejection
+ * listener) sent a message and nothing else.
+ */
+export interface RendererErrorContext {
+  /** Which reporter caught it. The most useful field by far: it says whether a
+   *  component stack exists at all, since only the boundaries have one. */
+  boundary: 'root' | 'panel' | 'unhandled_rejection';
+  /** `PanelErrorBoundary`'s static `label` prop ("Changes", "Monitor"). */
+  panel?: string;
+  /** React's `info.componentStack`. Main reduces it to component names before
+   *  sending; the raw value never leaves the process. */
+  componentStack?: string;
+}
+
 export interface ElectronAPI {
   // Dev-only (preview): present only when __KANGENTIC_DEV__ (build-excluded in prod).
   dev?: {
@@ -4466,6 +4556,19 @@ export interface ElectronAPI {
     onUpdatedByAgent: (callback: (taskId: string, taskTitle: string, projectId?: string) => void) => () => void;
     onDeletedByAgent: (callback: (taskId: string, taskTitle: string, projectId?: string) => void) => () => void;
     onSessionResync: (callback: (projectId?: string) => void) => () => void;
+    /**
+     * A task's PR link or PR state was reconciled by the app rather than by an
+     * agent: the periodic refresh sweep, the session-idle auto-link, the
+     * link-time re-resolve that follows a link write, or the task-detail
+     * "Link / refresh PR" control.
+     *
+     * Deliberately quiet, like `onSessionResync`. The board still has to reload
+     * (the card's PR chip is stale), but announcing it as "Task updated by
+     * agent" is wrong twice over: no agent updated anything, and the sweep can
+     * fire it for several tasks at once. An agent's OWN `update_task` /
+     * `link_pr` tool call still goes out on `onUpdatedByAgent` and still toasts.
+     */
+    onPrLinkChanged: (callback: (projectId?: string) => void) => () => void;
     onSpawnProgress: (callback: (taskId: string, label: string | null) => void) => () => void;
     /**
      * Queryable snapshot of in-flight spawn-progress labels (keyed by taskId).
@@ -4632,7 +4735,8 @@ export interface ElectronAPI {
     getDashboardStats: (scope: UsageStatsScope, period: UsageTimePeriod, drill?: UsageDayDrill | null, customWindow?: UsageCustomWindow | null) => Promise<UsageDashboardStats>;
   };
 
-  // Voice-to-text dictation (push-to-talk -> live popup -> focused terminal).
+  // Voice-to-text dictation (push-to-talk -> live transcript -> focused text
+  // field, or a terminal when nothing writable has focus).
   // Channels are by session id, not task-scoped, so they carry no projectId
   // (same category as session write). See .claude/rules/ipc-7-layer-parity.md.
   dictation: {
@@ -4806,7 +4910,7 @@ export interface ElectronAPI {
 
   // Analytics
   analytics: {
-    trackRendererError: (message: string) => void;
+    trackRendererError: (message: string, context?: RendererErrorContext) => void;
   };
 
   // App
@@ -5083,6 +5187,20 @@ export interface ElectronAPI {
      */
     onUserKeyDuringDrive: (
       callback: (webContentsId: number, data: string) => void,
+    ) => () => void;
+    /**
+     * The user pressed or released a mouse BACK / FORWARD button while this
+     * guest held focus.
+     *
+     * Forwarded from main because a guest consumes the mouse outright - measured
+     * on a live guest, a real back press produced 31 events in the page and ZERO
+     * on the host window - so nothing in the renderer can observe it directly.
+     * `at` is stamped in MAIN: the renderer's own clock is congested by the work
+     * a press starts (mic permission, engine load), which would turn a tap into
+     * an apparent hold.
+     */
+    onGuestMouseButton: (
+      callback: (event: GuestMouseButtonEvent) => void,
     ) => () => void;
   };
 

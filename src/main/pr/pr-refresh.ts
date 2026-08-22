@@ -47,8 +47,10 @@ function isEligibleForRefresh(task: Task, isTodoLane: boolean): boolean {
  * design: it naturally staggers the work, and the global `gh` concurrency cap (3)
  * plus the per-task 60s TTL in the backbone already bound the burst. Best-effort
  * and silent: a per-task failure is swallowed (the backbone already degrades and
- * one-time-hint-guards), and `linkPR`'s `onLinked` pushes TASK_UPDATED_BY_AGENT
- * so cards update live.
+ * one-time-hint-guards), and `linkPR`'s `onLinked` pushes TASK_PR_LINK_CHANGED
+ * so cards update live. That channel is deliberately toast-free: a sweep that
+ * finds N changed tasks would otherwise raise N "Task updated by agent" toasts
+ * for work no agent did.
  */
 export async function refreshProjectPRs(context: IpcContext, projectId: string): Promise<void> {
   let eligible: Task[];

@@ -1,7 +1,8 @@
-import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { TranscriptEntry, TranscriptBlock } from '../../../../shared/types';
+import { readJsonlWindow } from '../../shared/history-scan';
+import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
 import { cwdToSessionSlug } from './session-id-capture';
 
 /**
@@ -37,18 +38,27 @@ import { cwdToSessionSlug } from './session-id-capture';
  * too fragile to scrape. Assistant entries therefore carry no `model` field;
  * the markdown formatter falls back to a plain `## Assistant` header.
  */
-export async function parseDroidTranscript(filePath: string): Promise<TranscriptEntry[]> {
-  let content: string;
-  try {
-    content = await fs.readFile(filePath, 'utf-8');
-  } catch {
-    return [];
-  }
+export async function parseDroidTranscript(
+  agentSessionId: string,
+  filePath: string,
+): Promise<TranscriptEntry[]> {
+  // Bounded tail read rather than a whole-file one: a transcript has no size
+  // ceiling (it grows for as long as the user keeps working), and reading one
+  // whole is what OOM'd the main process.
+  const window = await readJsonlWindow(filePath, {
+    maxBytes: parseWindowBytes(),
+    countOmittedLines: true,
+  });
+  if (window.totalBytes === 0) return [];
 
   const entries: TranscriptEntry[] = [];
-  const lines = content.split(/\r?\n/);
+  const lines = window.text.split(/\r?\n/);
+  // Only used when a record turns out to lack its own `id`. See the Qwen
+  // parser for why this is resolved up front rather than lazily.
+  const lineIndexBase = window.omittedLineCount;
 
-  for (const line of lines) {
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    const line = lines[lineIndex];
     if (line.length === 0) continue;
     let raw: unknown;
     try {
@@ -60,7 +70,14 @@ export async function parseDroidTranscript(filePath: string): Promise<Transcript
 
     if (raw.type !== 'message') continue;
 
-    const uuid = typeof raw.id === 'string' ? raw.id : '';
+    // An id-less record used to fall back to `''`, which is not an absent uuid
+    // but a SHARED one: `resolveTaskTranscript` dedups by uuid keeping the
+    // first, so every such entry after the first vanished from the stitched
+    // Conversation tab. Fall back to the session-scoped absolute line index
+    // instead (the Codex/Kimi shape) so the entry keeps a real identity.
+    const uuid = typeof raw.id === 'string' && raw.id.length > 0
+      ? raw.id
+      : `${agentSessionId}:${lineIndexBase + lineIndex}`;
     const ts = parseTimestamp(raw.timestamp);
     const message = raw.message;
     if (!isRecord(message)) continue;
@@ -120,7 +137,7 @@ export async function parseDroidTranscript(filePath: string): Promise<Transcript
     }
   }
 
-  return entries;
+  return prependTruncationMarker(entries, window.omittedBytes, window.totalBytes);
 }
 
 /**

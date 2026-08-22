@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import { SessionRepository } from '../db/repositories/session-repository';
 import { agentRegistry } from './agent-registry';
 import { RetrievalStore } from '../retrieval/retrieval-store';
+import { touchBounded, heldBytes } from './shared/bounded-lru';
 import {
   clampSpan,
   getCachedTranscript,
@@ -207,24 +208,84 @@ interface StitchMemoRecord {
 /** Task-level stitch memo, capped so a long-running app does not grow this
  *  unbounded across many opened tasks. */
 const STITCH_MEMO_LIMIT = 64;
+
+/**
+ * Byte budget across all retained stitch memos, in SOURCE bytes, summed from
+ * the `fileSignatures` each record already carries.
+ *
+ * A memo's `entries` array is NEW, but its ELEMENTS are the very objects the
+ * file cache holds: the stitch pushes cached entries by reference (an assistant
+ * entry gets a shallow-spread shell, but shares its `blocks` and `usage`). So
+ * this budget double-counts with `CACHE_BYTE_BUDGET` for as long as both hold
+ * the same objects, and it is deliberately budgeted anyway - the memo is an
+ * INDEPENDENT RETENTION ROOT. It is designed to outlive file-cache eviction
+ * (see the `fileSignatures` note above: that independence "is the whole
+ * point"), which means the file cache's budget provably does not bound it, and
+ * 64 tasks x the union of every resumed session's entries had no byte bound at
+ * all.
+ *
+ * Matched to the file cache rather than sized independently, precisely because
+ * the two overlap: a memo holding entries the cache also holds costs nothing
+ * extra, and one holding entries the cache has already evicted is the case this
+ * is here to bound.
+ *
+ * Mutable only so tests can exercise eviction against a few KB of stitched
+ * entries instead of writing 192MB of temp transcripts (mirrors
+ * `incrementalStateByteBudget` in the Claude transcript parser).
+ */
+const STITCH_MEMO_BYTE_BUDGET = 192 * 1024 * 1024;
+let stitchMemoByteBudget = STITCH_MEMO_BYTE_BUDGET;
 const stitchMemoByTaskId = new Map<string, StitchMemoRecord>();
 
+/** Source bytes behind one memo. Zero when the stitch had no statable file
+ *  (an index/none source), which is also when its fast path is disabled. */
+function stitchMemoSourceBytes(record: StitchMemoRecord): number {
+  let total = 0;
+  for (const signature of record.fileSignatures) total += signature.size;
+  return total;
+}
+
 function touchStitchMemo(taskId: string, record: StitchMemoRecord): void {
-  stitchMemoByTaskId.delete(taskId);
-  stitchMemoByTaskId.set(taskId, record);
-  while (stitchMemoByTaskId.size > STITCH_MEMO_LIMIT) {
-    const oldestTaskId = stitchMemoByTaskId.keys().next().value;
-    if (oldestTaskId === undefined) break;
-    stitchMemoByTaskId.delete(oldestTaskId);
-  }
+  touchBounded(stitchMemoByTaskId, taskId, record, {
+    limit: STITCH_MEMO_LIMIT,
+    byteBudget: stitchMemoByteBudget,
+    sizeOf: stitchMemoSourceBytes,
+    // Evicting a memo only costs a re-stitch from the file cache, never
+    // correctness: `resolveTaskTranscript` hands `record.entries` to callers, so
+    // dropping the record is safe while removing the field would not be.
+    minRetained: 1,
+  });
 }
 
 /** Test-only: clear both the file-level transcript cache and the task-level
- *  stitch memo between test cases. */
+ *  stitch memo between test cases, AND restore the byte budget, so a case that
+ *  lowered it cannot leak a shrunken cap into the next one. */
 export function resetForTests(): void {
   resetTranscriptCacheForTests();
   stitchMemoByTaskId.clear();
   nextEntriesArrayToken = 1;
+  stitchMemoByteBudget = STITCH_MEMO_BYTE_BUDGET;
+}
+
+/** Test-only: current number of tasks retained in the stitch memo, so a test
+ *  can assert the `STITCH_MEMO_LIMIT` count cap holds independently of bytes. */
+export function stitchMemoSizeForTests(): number {
+  return stitchMemoByTaskId.size;
+}
+
+/** Test-only: current SOURCE bytes retained across the stitch memo. The byte
+ *  cap is the one this module regressed on (a count cap alone, see the memo
+ *  above), and a count-based assertion stays green while it is broken, so
+ *  tests must assert on this. */
+export function stitchMemoBytesForTests(): number {
+  return heldBytes(stitchMemoByTaskId, stitchMemoSourceBytes);
+}
+
+/** Test-only: shrink the stitch memo's byte budget so eviction can be
+ *  exercised against a few KB of fixtures instead of writing 192MB of temp
+ *  transcripts. Pass no argument to restore the default. */
+export function setStitchMemoBudgetForTests(bytes?: number): void {
+  stitchMemoByteBudget = bytes ?? STITCH_MEMO_BYTE_BUDGET;
 }
 
 function toSessionMeta(record: SessionRecord, agentName: string): ConversationSessionMeta {

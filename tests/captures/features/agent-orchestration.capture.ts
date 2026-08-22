@@ -62,8 +62,8 @@ test.describe('Agent Orchestration Captures', () => {
     await reviewColumn.locator('text=Add rate limiting').hover();
     await page.waitForTimeout(600);
 
-    const testsColumn = page.locator('[data-swimlane-name="Tests"]');
-    await testsColumn.locator('text=Integration test coverage').hover();
+    const testingColumn = page.locator('[data-swimlane-name="Testing"]');
+    await testingColumn.locator('text=Integration test coverage').hover();
     await page.waitForTimeout(800);
 
     // Close context to finalize video

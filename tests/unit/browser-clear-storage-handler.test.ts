@@ -34,6 +34,8 @@ const {
   fakeReaddirSync,
   fakeRegistryRegister,
   fakeRegistryUnregister,
+  fakeRegistrySetPaneClosedHandler,
+  fakeRegistrySetPaneRegisteredHandler,
 } = vi.hoisted(() => {
   const capturedHandlers = new Map<string, (...args: unknown[]) => unknown>();
 
@@ -53,6 +55,8 @@ const {
 
   const fakeRegistryRegister = vi.fn();
   const fakeRegistryUnregister = vi.fn();
+  const fakeRegistrySetPaneClosedHandler = vi.fn();
+  const fakeRegistrySetPaneRegisteredHandler = vi.fn();
 
   return {
     capturedHandlers,
@@ -63,6 +67,8 @@ const {
     fakeReaddirSync,
     fakeRegistryRegister,
     fakeRegistryUnregister,
+    fakeRegistrySetPaneClosedHandler,
+    fakeRegistrySetPaneRegisteredHandler,
   };
 });
 
@@ -115,6 +121,11 @@ vi.mock('../../src/main/browser/browser-pane-registry', () => ({
   browserPaneRegistry: {
     register: fakeRegistryRegister,
     unregister: fakeRegistryUnregister,
+    // registerBrowserHandlers installs the lane hand-off, which subscribes to
+    // both registry callbacks. Omitting them makes every test in this file
+    // throw at registration time, before it reaches its own subject.
+    setPaneClosedHandler: fakeRegistrySetPaneClosedHandler,
+    setPaneRegisteredHandler: fakeRegistrySetPaneRegisteredHandler,
   },
 }));
 

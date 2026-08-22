@@ -44,9 +44,79 @@ jobs:
           git tag -a "v${{ inputs.version }}" -m "Release v${{ inputs.version }}"
           git push origin "v${{ inputs.version }}"
 
-  release:
+  # Create THE single draft release, before any platform build starts.
+  #
+  # electron-builder's GitHub publisher does a check-then-create with no locking:
+  # getOrCreateRelease() lists releases, scans for a matching tag_name, and creates
+  # a draft if it finds none (electron-publish/out/gitHubPublisher.js:55, verified
+  # against electron-builder 26.8.1 - a caret range, so re-check the line numbers
+  # after a bump). The three matrix legs each run `npm run publish` in parallel, so
+  # on v0.35.0 all three listed before any had created, all three saw nothing, and
+  # all three created a draft. GitHub permits duplicate drafts for one tag (a draft
+  # binds no git ref), so all three succeeded and the release split three ways.
+  #
+  # Pre-creating the draft closes that: `needs:` is a hard barrier, so the draft
+  # provably exists before any leg lists releases, and every leg then takes the
+  # `if (release.draft) return release` branch at gitHubPublisher.js:66 and reuses
+  # it. The legs upload disjoint filenames and never read-modify-write the release
+  # object, so nothing else races.
+  #
+  # Deliberately carries no `environment:`: the matrix legs gate on the
+  # release-<platform> environments, and a required reviewer or wait timer here
+  # would stall draft creation for all three.
+  create-draft-release:
     needs: [create-tag]
     if: always() && (needs.create-tag.result == 'success' || needs.create-tag.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.version) || github.ref }}
+
+      - name: Determine version tag
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=v${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Idempotent, so a re-run reuses whatever already exists. Titled without the
+      # leading "v" to match what electron-builder's own createRelease() produces.
+      #
+      # Page 1 only, unlike scripts/verify-release-assets.js, which pages to 20.
+      # The tag being created is by definition among the newest releases, so it
+      # cannot have fallen off page 1 here. The deeper paging matters only in the
+      # verify gate, which must also SEE a duplicate to fail on it. If this check
+      # ever did miss an existing release, the result is a second draft, and that
+      # gate then fails the release rather than publishing a partial one.
+      - name: Create the draft release if absent
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${{ steps.version.outputs.tag }}"
+          existing=$(gh api "repos/${{ github.repository }}/releases?per_page=100" \
+            --jq "[.[] | select(.tag_name == \"$tag\")] | length")
+          if [ "$existing" -gt 0 ]; then
+            echo "A release already exists for $tag; reusing it."
+            exit 0
+          fi
+          gh release create "$tag" \
+            --draft \
+            --title "${tag#v}" \
+            --notes-file RELEASE_NOTES.md \
+            --repo "${{ github.repository }}"
+
+  release:
+    needs: [create-tag, create-draft-release]
+    # The create-draft-release clause is load-bearing. always() is present to
+    # tolerate the conditional create-tag, which means adding a job to needs:
+    # without also naming it here would let the matrix run when draft creation
+    # FAILED, straight back to the three-way split this job exists to prevent.
+    if: always() && (needs.create-tag.result == 'success' || needs.create-tag.result == 'skipped') && needs.create-draft-release.result == 'success'
     environment: release-${{ matrix.platform }}
     strategy:
       fail-fast: false
@@ -157,6 +227,34 @@ jobs:
           }
           Write-Host "Found $manifest"
 
+      # Linux needs a SECOND file the other platforms do not. electron-updater's
+      # `autoUpdater` export picks between AppImageUpdater / DebUpdater /
+      # RpmUpdater by reading `package-type` from resourcesPath; without it a
+      # deb/rpm install silently falls back to AppImageUpdater and every install
+      # fails. electron-builder writes both files together for any fpm target in
+      # its supportsAutoUpdate list, so a missing one means the publish config
+      # did not resolve at build time and Linux auto-update is dead on arrival.
+      - name: Verify app-update.yml and package-type are packaged (Linux)
+        if: matrix.platform == 'linux'
+        run: |
+          set -e
+          missing=0
+          for file in app-update.yml package-type; do
+            path="out/linux-unpacked/resources/$file"
+            if [ ! -f "$path" ]; then
+              echo "::error::Missing $path"
+              missing=1
+            else
+              echo "Found $path"
+            fi
+          done
+          [ "$missing" = "0" ]
+          package_type=$(cat out/linux-unpacked/resources/package-type)
+          case "$package_type" in
+            deb|rpm|pacman) echo "package-type: $package_type" ;;
+            *) echo "::error::Unexpected package-type '$package_type' (electron-updater maps only deb/rpm/pacman)"; exit 1 ;;
+          esac
+
       # Actually installs the built .rpm/.deb on clean distro containers. A hand-maintained
       # dependency name can look correct and still fail on a real system - this is what would
       # have caught the libXShmfence bug (a package name no RPM distro has ever shipped) before
@@ -206,9 +304,126 @@ jobs:
           docker run --rm -v "$PWD/out:/out:ro" ubuntu:24.04 sh -c \
             "apt-get update -qq && apt-get install -y \"/out/$(basename "$deb_file")\""
 
-  # Only publish the draft release when ALL platform builds succeed.
-  # This prevents partial releases (e.g. missing macOS artifacts) from
-  # reaching users. If any platform fails, the release stays as a draft.
+      # The four steps above prove a FRESH install. Upgrading is the primary path
+      # now that electron-updater installs the new package over the running one
+      # (src/main/updater.ts no longer bails out on Linux), and an upgrade can
+      # fail where a fresh install succeeds: file conflicts between versions,
+      # scriptlet ordering, or a dependency only the old package pulled in.
+      #
+      # `/releases/latest` returns the PREVIOUS release here - the one being built
+      # is still a draft at this point and the API skips drafts - so this upgrades
+      # from exactly what users are running today.
+      #
+      # Skipping is deliberately narrow: only "there is no published release to
+      # upgrade FROM" skips, which happens once, on the first release ever. A
+      # baseline that exists but whose package cannot be downloaded FAILS,
+      # because the only ways that happens are an incomplete previous release or
+      # an artifact rename - and a gate that silently stops testing on a rename
+      # is worse than no gate, since it still reads as coverage.
+      - name: Verify rpm upgrades from the previous release
+        if: matrix.platform == 'linux'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Authenticated, and branching on the HTTP status rather than on curl's
+          # exit code. Unauthenticated api.github.com is 60 req/hour per runner IP
+          # and shared with every other job on that host, so a bare `if curl` folds
+          # a 403 into the same empty-tag branch as "no release exists" and skips
+          # the gate while reporting green. Only a real 404 may skip.
+          status=$(curl -sSL -o /tmp/prev-release.json -w '%{http_code}' \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/latest")
+          if [ "$status" = "404" ]; then
+            echo "No previously published release found; skipping rpm upgrade check."
+            exit 0
+          fi
+          if [ "$status" != "200" ]; then
+            echo "::error::GitHub API returned HTTP $status resolving the previous release."
+            echo "::error::Refusing to skip the upgrade check on a transport failure - that would report green without testing anything."
+            exit 1
+          fi
+          prev_tag=$(jq -r '.tag_name // empty' /tmp/prev-release.json)
+          if [ -z "$prev_tag" ]; then
+            echo "::error::Release API returned HTTP 200 with no tag_name."
+            exit 1
+          fi
+          prev_version="${prev_tag#v}"
+          prev_file="kangentic-${prev_version}-1.x86_64.rpm"
+          mkdir -p prev
+          if ! curl -fsSL -o "prev/$prev_file" "https://github.com/${{ github.repository }}/releases/download/${prev_tag}/${prev_file}"; then
+            echo "::error::$prev_file is missing from release $prev_tag."
+            echo "::error::Either that release is incomplete, or the rpm artifact naming changed - which would also break the npx launcher (packages/launcher/bin/kangentic.js builds this exact filename)."
+            exit 1
+          fi
+          # Assigned in two steps, not `basename "$(ls ...)"`: with the ls nested
+          # inside basename's argument the assignment carries BASENAME's exit
+          # status, so a zero-match glob sails past `set -e` with new_file empty
+          # and fails later as an opaque docker error. Direct assignment aborts
+          # here, matching the fresh-install steps above.
+          rpm_path=$(ls out/kangentic-*-1.x86_64.rpm)
+          new_file=$(basename "$rpm_path")
+          new_version=$(echo "$new_file" | sed -E 's/^kangentic-(.+)-1\.x86_64\.rpm$/\1/')
+          echo "Upgrading rpm $prev_version -> $new_version"
+          # `rpm -q kangentic-$new_version` asks for that exact name-version rather
+          # than grepping the full NVR, where an unanchored pattern would let the
+          # version's dots match any character.
+          docker run --rm -v "$PWD/out:/out:ro" -v "$PWD/prev:/prev:ro" fedora:latest sh -c \
+            "dnf install -y --nogpgcheck /prev/$prev_file && dnf install -y --nogpgcheck /out/$new_file && rpm -q kangentic-$new_version"
+
+      - name: Verify deb upgrades from the previous release
+        if: matrix.platform == 'linux'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Same status-code branching as the rpm step above: only a real 404 skips.
+          status=$(curl -sSL -o /tmp/prev-release.json -w '%{http_code}' \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/latest")
+          if [ "$status" = "404" ]; then
+            echo "No previously published release found; skipping deb upgrade check."
+            exit 0
+          fi
+          if [ "$status" != "200" ]; then
+            echo "::error::GitHub API returned HTTP $status resolving the previous release."
+            echo "::error::Refusing to skip the upgrade check on a transport failure - that would report green without testing anything."
+            exit 1
+          fi
+          prev_tag=$(jq -r '.tag_name // empty' /tmp/prev-release.json)
+          if [ -z "$prev_tag" ]; then
+            echo "::error::Release API returned HTTP 200 with no tag_name."
+            exit 1
+          fi
+          prev_version="${prev_tag#v}"
+          prev_file="kangentic_${prev_version}_amd64.deb"
+          mkdir -p prev
+          if ! curl -fsSL -o "prev/$prev_file" "https://github.com/${{ github.repository }}/releases/download/${prev_tag}/${prev_file}"; then
+            echo "::error::$prev_file is missing from release $prev_tag."
+            echo "::error::Either that release is incomplete, or the deb artifact naming changed - which would also break the npx launcher (packages/launcher/bin/kangentic.js builds this exact filename)."
+            exit 1
+          fi
+          # Two-step assignment for the same set -e reason as the rpm step above.
+          deb_path=$(ls out/kangentic_*_amd64.deb)
+          new_file=$(basename "$deb_path")
+          new_version=$(echo "$new_file" | sed -E 's/^kangentic_(.+)_amd64\.deb$/\1/')
+          echo "Upgrading deb $prev_version -> $new_version"
+          # -xF: whole-line fixed-string, so the installed version must equal the
+          # new one rather than merely contain a regex that matches it.
+          docker run --rm -v "$PWD/out:/out:ro" -v "$PWD/prev:/prev:ro" debian:stable sh -c \
+            "apt-get update -qq && apt-get install -y /prev/$prev_file && apt-get install -y /out/$new_file && dpkg-query -W -f='\${Version}' kangentic | grep -qxF '$new_version'"
+
+  # Publish the draft release, but only after verifying what is actually attached
+  # to it.
+  #
+  # The needs.release.result == 'success' gate is necessary and not sufficient. On
+  # v0.35.0 every platform job DID succeed and the release still shipped Windows-
+  # only, because the artifacts landed on three separate release objects and this
+  # job published one of them. Build success says nothing about what is attached to
+  # the release being published, so the asset-manifest check below is the gate that
+  # actually prevents a partial release. A failure here leaves the release a draft.
   #
   # Publishing (--draft=false) and setting the notes body happen in the SAME
   # `gh release edit` call so the release is never live with an empty body:
@@ -234,6 +449,13 @@ jobs:
           else
             echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           fi
+
+      # Must run BEFORE --draft=false: a failure here has to leave the release
+      # unpublished rather than roll one back.
+      - name: Verify the release carries every expected asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/verify-release-assets.js "${{ steps.version.outputs.tag }}" --repo ${{ github.repository }}
 
       - name: Publish release with notes (remove draft status)
         env:

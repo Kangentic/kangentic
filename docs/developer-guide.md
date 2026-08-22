@@ -87,7 +87,9 @@ src/
     ipc/
       register-all.ts      # Thin orchestrator, creates IpcContext, re-exports
       ipc-context.ts       # Shared IpcContext interface
-      helpers.ts           # Shared helper functions (ensureGitignore, getProjectRepos, etc.)
+      send-to-renderer.ts  # sendToRenderer: main-window push chokepoint (destroyed-window guard + IPC recorder)
+      task-lifecycle-lock.ts # withTaskLock: serializes per-task async mutation
+      helpers/             # Shared helper functions (ensureGitignore, getProjectRepos, etc.)
       handlers/
         backlog.ts         # Backlog CRUD, import, promotion handlers
         board.ts           # Swimlane, Action, Transition, Attachment CRUD
@@ -265,7 +267,7 @@ Release-time manual validation against real authenticated agent CLIs lives in [r
 
 The `/test` command is the full local gate: typecheck, build, then unit + UI + E2E (all tests,
 no selection heuristic). `/test quick` runs unit + UI only for the fast inner loop. It is for
-manual local runs - the automated gate now runs on CI as PR checks (the **Tests** column runs
+manual local runs - the automated gate now runs on CI as PR checks (the **Testing** column runs
 `/pull-request`, which pushes a branch and drives the CI checks to green; CI runs lint, typecheck,
 unit, build, the UI shards, and the Linux Electron E2E shards under xvfb). To run tiers directly:
 
@@ -361,10 +363,13 @@ electron-builder handles platform-specific packaging via `electron-builder.yml`:
 | Linux | Package | deb, rpm |
 
 Native modules:
-- `better-sqlite3` -- rebuilt against Electron headers via `scripts/rebuild-native.js`
-- `node-pty` -- uses prebuilt NAPI binaries, no rebuild needed
-- `sherpa-onnx-node` -- prebuilt platform-specific binaries, no rebuild needed (voice dictation; unpacked from asar via the `sherpa-onnx-*` glob in `asarUnpack`)
-- `font-list` -- shells out to `fc-list` / a PowerShell script / a bundled macOS binary, no rebuild needed (Terminal Font Family picker; unpacked from asar via `asarUnpack` since the macOS binary is spawned via `child_process`)
+- `better-sqlite3` - rebuilt against Electron headers via `scripts/rebuild-native.js`
+- `node-pty` - uses prebuilt NAPI binaries, no rebuild needed
+- `sherpa-onnx-node` - prebuilt platform-specific binaries, no rebuild needed (voice dictation; unpacked from asar via the `sherpa-onnx-*` glob in `asarUnpack`)
+- `font-list` - shells out to `fc-list` / a PowerShell script / a bundled macOS binary, no rebuild needed (Terminal Font Family picker; unpacked from asar via `asarUnpack` since the macOS binary is spawned via `child_process`)
+- `sqlite-vec` - a loadable SQLite extension shipped as per-platform binary packages, no rebuild needed (conversation-memory retrieval; unpacked via the `sqlite-vec-*` glob in `asarUnpack`, since dlopen cannot read an extension inside asar)
+- `onnxruntime-node` - prebuilt native binaries (`onnxruntime_binding.node`, plus `onnxruntime.dll` and `DirectML.dll` on Windows), no rebuild needed (the embed worker's execution provider; unpacked via `asarUnpack`)
+- `@huggingface/transformers` and `onnxruntime-web` - pure JavaScript, but both shipped and unpacked so the embed worker resolves them from the unpacked tree
 
 Security fuses enabled: no RunAsNode, no NodeOptions, no inspection, cookie encryption, ASAR integrity validation.
 

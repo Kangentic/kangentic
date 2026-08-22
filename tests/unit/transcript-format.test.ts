@@ -38,6 +38,24 @@ describe('transcriptToMarkdown - system entries', () => {
     expect(md).toContain('**Command output:**');
     expect(md).toContain('Goodbye!');
   });
+
+  it('renders a truncated system entry as a plain italic note, not a heading or a Command output block', () => {
+    const md = transcriptToMarkdown([
+      {
+        kind: 'system',
+        uuid: 's1',
+        ts: 0,
+        subtype: 'truncated',
+        text: 'Earlier 121.9 MB of this conversation are not shown (the transcript is 137.9 MB). Search still covers the full history.',
+      },
+    ]);
+    expect(md).toContain('_Earlier 121.9 MB of this conversation are not shown');
+    // Deliberately NOT a heading: it describes the transcript itself rather
+    // than being part of the conversation. Falling through to the default
+    // ('Command output') branch is the exact revert this pins against.
+    expect(md).not.toContain('## ');
+    expect(md).not.toContain('Command output');
+  });
 });
 
 describe('transcriptToMarkdown - orphaned tool results', () => {

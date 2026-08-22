@@ -12,6 +12,7 @@ import { WorktreeManager, prepareWorktreeForRemoval, GitQueuePriority } from '..
 import { prepareWorktreeFolder } from '../git/task-worktree-folder';
 import { agentRegistry } from '../agent/agent-registry';
 import { appendCallerSession } from '../agent/mcp-http/caller-url';
+import { getDevPortForTask } from '../dev-ports/dev-port-allocator';
 import { retireRecord, markRecordSuspended } from './session-lifecycle';
 import { resolveEffectivePermissionMode } from './spawn-preamble';
 import { resolveSpawnIntent } from './spawn-intent';
@@ -93,6 +94,7 @@ export class TransitionEngine {
       task,
       defaultBaseBranch: this.getConfig().gitConfig.defaultBaseBranch,
       attachmentPaths,
+      devPort: getDevPortForTask(task.id),
     });
     await this.executeSpawnAgent({
       promptTemplate: skipPromptTemplate ? undefined : '{{task_xml}}{{attachments}}',
@@ -127,6 +129,7 @@ export class TransitionEngine {
       task,
       defaultBaseBranch: this.getConfig().gitConfig.defaultBaseBranch,
       attachmentPaths,
+      devPort: getDevPortForTask(task.id),
     });
 
     switch (action.type) {

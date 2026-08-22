@@ -47,6 +47,7 @@ These settings appear only in App Settings and cannot be overridden per-project:
 - `dictation.*` (all voice dictation settings)
 - `memory.*` (conversation search + recall, in the Memory tab)
 - `mobileBridge.*` (mobile companion app pairing/relay, in the Mobile Devices tab)
+- `devServer.*` (dev-server port reservation range; global-only because the ledger is machine-wide, and not exposed in Settings UI)
 - `hotkeyOverrides`
 
 ### Per-Project Overridable Settings
@@ -97,7 +98,7 @@ These settings appear in both App Settings (as defaults) and Project Settings (a
 | `restoreWindowPosition` | boolean | `true` | Remember window size and position between launches. Global-only. |
 | `hasCompletedFirstRun` | boolean | `false` | Legacy: set true on first task creation, kept for schema/fixture compatibility. No onboarding UI reads it, and it is not the walkthrough gate: creating a task is step 3 of the walkthrough, so this flips mid-flow. The walkthrough is suppressed once `onboardedProjectIds` is non-empty. Auto-set, not shown in UI. |
 | `lastSeenReleaseNotesVersion` | string | `''` | The version whose release-notes modal has already been auto-shown (see [Auto-Update Behavior](deployment.md#auto-update-behavior)), so it does not reopen on every relaunch after "Later". Auto-set, not shown in UI. |
-| `lastWhatsNewShownVersion` | string | `''` | The version whose post-update ["What's New" dialog](deployment.md#auto-update-behavior) has already been shown. Deliberately separate from `lastSeenReleaseNotesVersion`, which records the PENDING version when the pre-restart modal is dismissed: a user who clicks "Later" and then quits normally has the update installed by `autoInstallOnAppQuit`, and would relaunch with the new version already marked seen and the notes never read. Written when the dialog OPENS, not when it closes, so quitting with it open does not re-arm it. Seeded to the running version on a fresh install (no `config.json` existed at launch), so a first-time user is not shown notes for software they have never run. Auto-set, not shown in UI. |
+| `lastWhatsNewShownVersion` | string | `''` | The version whose post-update ["What's New" dialog](deployment.md#auto-update-behavior) has already been shown. Deliberately separate from `lastSeenReleaseNotesVersion`, which records the PENDING version when the pre-restart modal is dismissed: a user who clicks "Later" and then quits normally has the update installed by `autoInstallOnAppQuit` (Windows and macOS; Linux defers to an explicit restart, see [Linux auto-update](deployment.md#linux-auto-update)), and would relaunch with the new version already marked seen and the notes never read. Written when the dialog OPENS, not when it closes, so quitting with it open does not re-arm it. Seeded to the running version on a fresh install (no `config.json` existed at launch), so a first-time user is not shown notes for software they have never run. Auto-set, not shown in UI. |
 | `dismissedAnnouncementIds` | string[] | `[]` | Ids of [in-app announcements](#in-app-announcements) dismissed from the banner. Pruned on write to ids still present in the active feed, so the array stays bounded with no separate cleanup. That prune is also why READ-state is not stored here: it would drain as soon as an announcement expired. Read-state lives on the [local archive](#the-local-archive) entry instead. Auto-set, not shown in UI. |
 | `onboardedProjectIds` | string[] \| undefined | `undefined` | Project ids whose onboarding checklist the user has dismissed. `undefined` means the one-time upgrade backfill (on first app hydration) has not run yet; `[]` means it has run and nothing is dismissed. Global, keyed by project id like `lastActiveTaskByProject`. **Emptiness, not membership, gates the walkthrough:** the checklist auto-opens only while this list is empty, because the walkthrough teaches the app rather than a repo and must not replay on every newly added project. It becomes non-empty by three routes, all meaning "not a first run": the backfill finding an existing project, a real dismissal, or all five steps completed. A fourth, dev-only route SHRINKS it: the Developer settings tab's "Restart checklist" trigger (`resetOnboarding` in `config-store.ts`) removes one project's id, and if that was the only entry the list is empty again, re-arming the persisted install-scoped auto-open gate until the next dismissal or completion. A per-session latch still applies, so a project already auto-opened this session waits for the next launch; the trigger itself opens the checklist directly rather than relying on auto-open. That trigger is excluded from production builds. Auto-set, not shown in UI. |
 | `onboardingBaseline` | Record\<string, object\> \| undefined | `undefined` | Per-project snapshot of the settings the onboarding checklist watches (`defaultAgent`, `defaultModel`, `defaultEffort`, `permissionMode`, and a `swimlaneSignature` string encoding of the board's shape), captured on first checklist open. Adding a project does not capture one by itself. While `onboardedProjectIds` is still empty, arriving at a project earns one auto-open per session, so a second project added during that first-run window does get a baseline. Once the list is non-empty the install-scoped gate is closed for good, so a project added later has no baseline until the Developer settings tab's dev-only trigger opens the checklist there, and that trigger is not reachable in a production build. Checklist steps 1 and 2 tick when live state DIFFERS from this, so opening a settings screen and closing it unchanged earns no checkmark. Both are guarded on the baseline existing, so a baseline-less project reports them un-ticked rather than complete. Keyed by project id; replaced wholesale on write (a `CONFIG_DICTIONARY_PATHS` entry). That replace semantics is what lets the same dev-only trigger DROP one project's entry so the checklist re-baselines on the next open; the first-write-wins capture never re-baselines on an ordinary reopen. Auto-set, not shown in UI. |
@@ -270,6 +271,32 @@ profiles (including across projects) via the `kangentic_*_board_profile` MCP too
 | `mcpServer.bindAddress` | string | `'127.0.0.1'` | Interface the in-process MCP HTTP server listens on. Not exposed in Settings UI - edit `config.json` directly. Widening past loopback exposes the server to other machines; read once at startup. Use a wildcard (`0.0.0.0`), which binds loopback too - binding one specific non-loopback interface leaves loopback unbound and breaks every local agent. See [MCP Server > Network Access](mcp-server.md). |
 | `mcpServer.callbackHost` | string \| undefined | unset | Not exposed in Settings UI - edit `config.json` directly. Allowlisted alongside `bindAddress` for DNS-rebinding-protection so a real external request is not rejected. Does not auto-wire a remote OpenCode session (see [MCP Server > Network Access](mcp-server.md)). |
 
+### devServer.*
+
+Reservation range for `kangentic_reserve_dev_ports` / `kangentic_check_dev_ports`.
+Kangentic does not decide what a project's ports should be - the project already
+does, in its own config - so nothing is reserved until an agent asks. See
+[MCP Server](mcp-server.md) for the tools and
+[Database](database.md) for the `dev_ports` ledger.
+
+Neither key is exposed in Settings UI - edit `config.json` directly. Note that
+neither appears in `DEFAULT_CONFIG` either: the defaults below come from
+`DEFAULT_DEV_PORT_RANGE_START` / `DEFAULT_DEV_PORT_RANGE_END` in
+`src/main/dev-ports/dev-port-allocator.ts`, applied when the key is unset.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `devServer.portRangeStart` | number | `7300` | First port considered when reserving. |
+| `devServer.portRangeEnd` | number | `7499` | Last port considered, inclusive. |
+
+The 7300-7499 window is deliberately boring: it misses every common framework
+default (3000, 4200, 4321, 5000, 5173-5174, 8000, 8080, 9000, 9229), so a
+collision is the exception the probe handles rather than the first thing that
+happens. An earlier default of 4200 is Angular's, and the first reservation on an
+Angular developer's machine landed on their own running app. Widening this range
+to overlap a running dev server is safe but pointless: the probe refuses any port
+something is listening on.
+
 ### notifications.*
 
 | Key | Type | Default | Description |
@@ -341,9 +368,16 @@ Global-only policy (no per-project override) for whether and how an agent may dr
 
 ### Dictation
 
-Free, fully-local push-to-talk voice-to-text into the focused terminal: hold a key (default a mouse
-side button), speak, watch a live transcript stream into the input, and on release the finalized text
-is inserted (and optionally submitted). Global-only (App Settings only; no per-project override).
+Free, fully-local push-to-talk voice-to-text into whatever the user is focused in: hold a key
+(default a mouse side button), speak, watch a live transcript stream into the target, and on release
+the finalized text is inserted (and optionally submitted). The TARGET is resolved by precedence, and
+a focused text field outranks every terminal tier - any input, textarea, or rich-text host anywhere
+in the app, plus fields inside an embedded browser's guest page; a terminal is the fallback, not the
+rule. A password field REFUSES outright rather than falling through to a terminal, and says so on the
+chip. Because the default binding is a mouse button that also means "back", press DURATION separates
+the two: a hold dictates, and a tap under `NAVIGATION_TAP_MS` instead navigates an active Browser
+pane's history. See `docs/embedded-browser.md` decisions 21 and 24 for the target rules in full.
+Global-only (App Settings only; no per-project override).
 Engines run on-device via `sherpa-onnx-node`; a Cloud refinement option routes only the final clip to
 an OpenAI-compatible endpoint. The first six keys below are settings-panel rows; the rest are
 config-only (driven by the Mode preset + Live/Refinement model dropdowns).
@@ -353,14 +387,14 @@ config-only (driven by the Mode preset + Live/Refinement model dropdowns).
 | `dictation.enabled` | boolean | `false` | Master on/off. Enables push-to-talk. (Transcription section row.) |
 | `dictation.language` | string (BCP-47) | `'en'` | Spoken language. The Live/Refinement model dropdowns narrow to models that support it; non-English uses the multilingual Whisper builds. (Transcription section row.) |
 | `dictation.punctuation` | boolean | `true` | Add punctuation + capitalization to the committed text. (Transcription section row.) |
-| `dictation.autoSubmit` | boolean | `true` | Press Enter automatically after inserting (via the paste engine's settle -> Enter -> evidence path), or leave the text in the input for review. (Input section row.) |
+| `dictation.autoSubmit` | boolean | `true` | Press Enter automatically after inserting, or leave the text in the target for review. How that happens depends on the target: a terminal goes through the paste engine's settle -> Enter -> evidence path, a text field gets a plain Enter dispatched on it. It is REFUSED in two cases regardless of this setting - a field inside a `<form>` holding more than one text field (so dictating a title into New Task cannot create the task with the rest empty), and any field inside a guest page (fill only, since Enter there commits a form we do not control). The chip shows the resolved decision, so its hint never promises a send that will not happen. (Input section row.) |
 | `dictation.releaseBufferMs` | number | `250` | Keep capturing this many ms after release so the last word is not clipped; snaps to 50ms steps (0-500); 0 = off. (Input section row.) |
 | `dictation.remote` | DictationRemoteEndpoint \| undefined | `undefined` | OpenAI-compatible `/v1/audio/transcriptions` endpoint (`url`, `apiKey`, `model`) used when the Refinement model is set to Cloud. (Cloud backend section row.) |
 | `dictation.engineMode` | DictationEngineMode | `'auto'` | Engine selection (`'auto'` tiers by hardware; `'remote'` = cloud final). Config-only; set by the Refinement dropdown's Cloud option. |
 | `dictation.modelId` | string \| null | `null` | The FINAL (accurate) model id, `null` = the tier default (Parakeet), `'none'` = no post-processing pass. Config-only (Refinement dropdown). |
 | `dictation.liveModelId` | string \| null | `undefined` | The LIVE (preview) model id: absent = the streaming Zipformer, an offline id = chunked live, `'none'` = no live preview. Config-only (Live dropdown). |
 | `dictation.mode` | `'fast'`/`'balanced'`/`'accurate'`/`'custom'` | `undefined` | Quality preset. A preset sets AND locks the Live + Refinement models; `'custom'` unlocks them. UI-only; the engine reads the resolved model ids. |
-| `dictation.experience` | `'popup'`/`'docked'`/`'live'` | `'popup'` | Live UI surface. Ships as `'live'` (transcript types straight into the terminal). Config-only. |
+| `dictation.experience` | `'popup'`/`'docked'`/`'live'` | `'popup'` | Live UI surface. Ships as `'live'` (the transcript types straight into the resolved target, terminal or text field, each revision replacing the last in place). Config-only. |
 
 ### Hotkeys
 

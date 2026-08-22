@@ -218,7 +218,7 @@ export class GeminiAdapter implements AgentAdapter {
   async parseTranscript(agentSessionId: string, cwd: string): Promise<ParsedTranscript> {
     const filePath = locateGeminiTranscriptFile(agentSessionId, cwd);
     if (!filePath) return { entries: [], sourcePath: null };
-    const entries = await parseGeminiTranscript(filePath);
+    const entries = await parseGeminiTranscript(agentSessionId, filePath);
     return { entries, sourcePath: filePath };
   }
 

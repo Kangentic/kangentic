@@ -140,7 +140,7 @@ One declaration (`src/shared/task-template-vars.ts`) drives every consumer: the
 `promptTemplate`, the Automation section's "Template variable" picker, and this
 table - see `tests/unit/task-template-vars-parity.test.ts`. Because the picker
 shows each entry's `description`, that field is user-facing copy and should stay
-to one line. All 10 keywords resolve
+to one line. All 11 keywords resolve
 identically in both `auto_command` and `promptTemplate`; `send_command` /
 `run_script` / `webhook` use the same values but keep literal, non-collapsing
 substitution (an unknown or empty `{{key}}` is left as-is, matching
@@ -158,11 +158,23 @@ substitution (an unknown or empty `{{key}}` is left as-is, matching
 | `{{prUrl}}` | Pull request URL (empty if none) |
 | `{{prNumber}}` | Pull request number as string (empty if none) |
 | `{{attachments}}` | Bare file paths (one per line) when present |
+| `{{port}}` | Lowest dev-server port this task has RESERVED (empty if none, which is the normal state) - a raw read, never falls back to another task's port |
 
 In `auto_command` and `promptTemplate` specifically, an empty-valued or unknown
 `{{key}}` is dropped and surrounding horizontal whitespace collapses (newlines
 are preserved), so `/code-review {{baseBranch}}` with no configured default
 still yields `/code-review`, not a trailing space or a literal placeholder.
+
+Note what that means for a FLAG-shaped placeholder: `--port {{port}}` with no
+reservation collapses to a bare `--port`, which most CLIs reject.
+
+That matters more than it used to, because Kangentic reserves NOTHING up front.
+A port exists for a task only once its agent asked for one
+(`kangentic_reserve_dev_ports`), so empty is the normal state, not the edge
+case. A column `auto_command` shared by every task in a column therefore should
+not template `{{port}}` in - most of those tasks hold no reservation. Prefer
+letting the agent reserve the ports it is about to bind and use them directly;
+reach for `{{port}}` only where the task is known to hold one.
 
 Shortcut commands use a separate set of template variables. See [Configuration](configuration.md#shortcuts) for the full list.
 
@@ -210,7 +222,7 @@ Two special roles affect behavior:
 | `todo` | Task moves here → session killed (not suspended), worktree preserved |
 | `done` | Task moves here → session suspended (resumable), task archived |
 
-All other columns (including Planning, Running, Code Review, etc.) are custom columns with no special role. Their behavior is controlled by `auto_spawn`, `auto_command`, `permission_mode`, and `plan_exit_target_id`.
+All other columns (including Planning, Executing, Code Review, etc.) are custom columns with no special role. Their behavior is controlled by `auto_spawn`, `auto_command`, `permission_mode`, and `plan_exit_target_id`.
 
 ## auto_spawn Flag
 

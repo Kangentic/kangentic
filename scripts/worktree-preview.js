@@ -107,6 +107,29 @@ function isJunction(p) {
 
 // ---------------------------------------------------------------------------
 // Port finder
+//
+// This deliberately does NOT read Kangentic's dev-port ledger
+// (src/main/dev-ports/dev-port-allocator.ts), even though that ledger exists
+// precisely to stop two things picking the same number.
+//
+// The reason is that there is nothing here to read. A preview launches with its
+// own KANGENTIC_DATA_DIR, and the ledger lives in that dir's index.db, so a
+// preview instance has its OWN dev_ports table. An agent working inside a
+// preview reserves from the preview's ledger, which is the right isolation for
+// a throwaway instance - and it means the main instance's reservations were
+// never in scope for this scan in the first place.
+//
+// Two things cover the seam that leaves. The window scanned here (5174-5273)
+// and the default reservation range (7300-7499) are disjoint, so a preview and
+// a reserved port cannot collide by construction. And where they are made to
+// overlap (the range is config-editable), the allocator's bind probe refuses
+// any port a running preview actually holds. The probe is the protection that
+// works across instances; a ledger read never could be.
+//
+// Reading it anyway would also cost something real: this is a plain CommonJS
+// script outside Electron, so it would mean node:sqlite access to a file
+// better-sqlite3 has open, and registering a lease would mean an ephemeral
+// preview owning one with no release path on a hard close.
 // ---------------------------------------------------------------------------
 
 function isPortFree(port) {

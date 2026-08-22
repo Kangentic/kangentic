@@ -1,4 +1,7 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import type Database from 'better-sqlite3';
 import type { SessionRecord } from '../../src/shared/types';
 
@@ -20,6 +23,7 @@ vi.mock('../../src/main/agent/agent-registry', () => ({
 
 import { resolveTaskTranscript } from '../../src/main/agent/transcript-service';
 import { agentRegistry } from '../../src/main/agent/agent-registry';
+import { parseCodexTranscript } from '../../src/main/agent/adapters/codex/transcript-parser';
 
 function makeRecord(overrides: Partial<SessionRecord> = {}): SessionRecord {
   return {
@@ -106,6 +110,61 @@ function makeFakeDb(options: FakeDbOptions): Database.Database {
 const getBySessionType = vi.mocked(agentRegistry.getBySessionType);
 
 describe('resolveTaskTranscript', () => {
+  let tmpDir: string | null = null;
+  afterEach(() => {
+    if (tmpDir) {
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      tmpDir = null;
+    }
+  });
+
+  it('keeps both sessions\' turns when a task has two sessions of the same agent', async () => {
+    // The uuid dedupe below (`a resume replays parent turns verbatim`) keeps
+    // the FIRST entry for a uuid. Codex/Kimi/Qwen/Antigravity used to mint
+    // parse-relative uuids restarting at 0 per session, so a task's SECOND
+    // session collided with the first entry-for-entry and vanished from the
+    // Conversation tab entirely. Driven through the REAL Codex parser, since
+    // the fix is that the parser namespaces its uuids by session.
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stitch-two-sessions-'));
+    const writeRollout = (name: string, text: string): string => {
+      const filePath = path.join(tmpDir!, name);
+      fs.writeFileSync(filePath, JSON.stringify({
+        type: 'response_item',
+        timestamp: '2026-06-01T10:00:00Z',
+        payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] },
+      }));
+      return filePath;
+    };
+    const rolloutBySession: Record<string, string> = {
+      'agent-old': writeRollout('old.jsonl', 'from the old session'),
+      'agent-new': writeRollout('new.jsonl', 'from the new session'),
+    };
+
+    const older = makeRecord({ id: 'session-old', started_at: '2026-06-01T10:00:00Z', session_type: 'codex_agent', agent_session_id: 'agent-old' });
+    const newer = makeRecord({ id: 'session-new', started_at: '2026-06-01T12:00:00Z', session_type: 'codex_agent', agent_session_id: 'agent-new' });
+    const db = makeFakeDb({
+      sessionsById: { 'session-old': older, 'session-new': newer },
+      sessionsByTask: { 'task-1': [newer, older] },
+      taskTitle: 'Wire the auth flow',
+    });
+    getBySessionType.mockReturnValue({
+      displayName: 'Codex',
+      parseTranscript: async (agentSessionId: string) => ({
+        entries: await parseCodexTranscript(agentSessionId, rolloutBySession[agentSessionId]),
+        sourcePath: rolloutBySession[agentSessionId],
+      }),
+    } as unknown as ReturnType<typeof agentRegistry.getBySessionType>);
+
+    const result = await resolveTaskTranscript(db, 'session-new');
+
+    const userTexts = result!.entries.filter((entry) => entry.kind === 'user').map((entry) => entry.text);
+    expect(userTexts).toEqual(['from the old session', 'from the new session']);
+
+    // Nothing was deduped away, which means no uuid was shared across sessions.
+    const uuids = result!.entries.map((entry) => entry.uuid);
+    expect(new Set(uuids).size).toBe(uuids.length);
+  });
+
   it('returns null when the anchor session id resolves to no record at all', async () => {
     const db = makeFakeDb({ sessionsById: {}, sessionsByTask: {} });
     getBySessionType.mockReturnValue(undefined);

@@ -45,7 +45,7 @@
 - **Command Terminal** - Ctrl+Shift+P / Cmd+Shift+P opens an ephemeral agent session over any board, no task card needed. Run up to four tiled side by side, with a layout that persists across projects and restarts.
 - **Context Bar** - a live strip under every terminal: model, cost, tokens, tool calls, elapsed time, context-window fraction, and Claude rate-limit meters. The profile, model, and effort pills double as pickers.
 - **Embedded browser** - point a sandboxed Chromium pane at any URL inside the task dialog, annotate it, and send the frame to the agent. Agents can screenshot, inspect, and click the same pane through MCP.
-- **Voice dictation** - hold your push-to-talk button, talk, release: on-device speech-to-text drops your words into the agent's terminal, with a streaming preview and a refinement pass.
+- **Voice dictation** - hold your push-to-talk button, talk, release: on-device speech-to-text drops your words wherever you are focused, a text field or the agent's terminal, with a streaming preview and a refinement pass.
 - **Your CLIs, your machine** - runs on your desktop (Windows, macOS, Linux, and WSL) with your data in a local database. No OAuth, no wrappers, no API proxies: Kangentic launches the native CLIs you already have, with your own logins and subscriptions.
 
 ## How It Works

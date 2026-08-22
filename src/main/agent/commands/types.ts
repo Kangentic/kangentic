@@ -2,8 +2,20 @@ import type Database from 'better-sqlite3';
 import type { BoardProfile, Task, Swimlane } from '../../../shared/types';
 
 export interface CommandContext {
+  /**
+   * The project this call is scoped to. Bound to the REQUEST's project, not the
+   * active one, exactly like `getProjectPath` - a cross-project tool call must
+   * record against the board it targets.
+   */
+  projectId: string;
   getProjectDb: () => Database.Database;
   getProjectPath: () => string;
+  /**
+   * The machine-wide dev-server port range. Global rather than per-project
+   * because ports are a machine resource: two projects competing for one is the
+   * collision the range exists to avoid.
+   */
+  getDevServerPortRange: () => { rangeStart?: number; rangeEnd?: number };
   /**
    * This project's Board Profiles, read from `kangentic.json`. Profiles are
    * config-only (no DB table), so `getProjectDb` cannot reach them.
@@ -25,6 +37,19 @@ export interface CommandContext {
   setBoardProfiles: (profiles: BoardProfile[]) => void;
   onTaskCreated: (task: Task, columnName: string, swimlaneId: string) => void;
   onTaskUpdated: (task: Task) => void;
+  /**
+   * The quiet twin of `onTaskUpdated`, for a PR link/state the APP reconciled
+   * rather than the agent: the forced re-resolve that follows a link write.
+   * It invalidates the board without claiming an agent updated the task, so it
+   * raises no toast (see `IPC.TASK_PR_LINK_CHANGED`).
+   *
+   * Optional because ~23 test suites hand-build a context; the only production
+   * builder is `buildCommandContextForProject`, which the mobile bridge reuses.
+   * A builder that omits it loses the board reload AND the board event for
+   * these writes, not just the toast - so implement it, do not rely on the
+   * caller's `?.`.
+   */
+  onTaskPrLinkChanged?: (task: Task) => void;
   onTaskDeleted: (task: Task) => void;
   onTaskMove: (input: { taskId: string; targetSwimlaneId: string; targetPosition: number }) => Promise<void>;
   /**

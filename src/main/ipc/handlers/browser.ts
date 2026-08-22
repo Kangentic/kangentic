@@ -9,6 +9,8 @@ import { getProjectRepos, resolveProjectContext } from '../helpers/project-repos
 import { browserUrlStore } from '../../browser/browser-url-store';
 import { browserPaneRegistry } from '../../browser/browser-pane-registry';
 import { setBrowserPaneOpenerHost } from '../../browser/browser-pane-opener';
+import { installLaneHandoff } from '../../browser/browser-lane-handoff';
+
 import { PasteSubmitError } from '../../pty/terminal-submit';
 import { agentRegistry } from '../../agent/agent-registry';
 import {
@@ -67,6 +69,41 @@ export function registerBrowserHandlers(context: IpcContext): void {
       return true;
     },
   }));
+
+  // A browser an agent is using belongs to the AGENT, not to a piece of UI. The
+  // user must be free to close the task detail and move around the board without
+  // disconnecting an agent that is midway through verifying something - but an
+  // Electron <webview> guest dies the moment its DOM node unmounts, so closing
+  // the window destroys it. This hands the page off to an offscreen lane
+  // instead, and stands that lane down when the user's pane comes back.
+  installLaneHandoff({
+    hasLiveSession: (taskId) => {
+      try {
+        // Live (running/queued) specifically, not merely registered: a
+        // suspended or exited session has no agent to keep a browser for.
+        return context.sessionManager.findLiveSessionByTaskId(taskId) !== undefined;
+      } catch {
+        // Never let a lookup failure decide policy: no hand-off is the safe
+        // answer, since a spurious one would open a browser nobody asked for.
+        return false;
+      }
+    },
+    getTaskWorktreePath: (taskId, projectId) => {
+      try {
+        // The PANE's project, handed in by the caller - never
+        // `context.currentProjectId`. A retained pane outlives a project switch,
+        // so the open project at close time is routinely not the task's, and an
+        // ambient lookup would miss in the wrong project's DB and hand back
+        // null. `openLane` turns a null path into the LEGACY SHARED cookie jar,
+        // which is a silently wrong answer: the agent meets a sign-in wall for
+        // an app the user is already authenticated into.
+        if (!projectId) return null;
+        return getProjectRepos(context, projectId).tasks.getById(taskId)?.worktree_path ?? null;
+      } catch {
+        return null;
+      }
+    },
+  });
 
   ipcMain.handle(IPC.BROWSER_CAPTURE_SEND, async (_event, input: BrowserCaptureInput) => {
     if (!input.sessionId) throw new Error('captureAndSend requires a sessionId');
@@ -158,6 +195,10 @@ export function registerBrowserHandlers(context: IpcContext): void {
     const overrides = context.configManager.loadProjectOverrides(projectPath);
     const projectDefault = overrides?.browser?.defaultUrl ?? null;
     const taskOverride = browserUrlStore.get(projectPath, taskId);
+    // Deliberately does NOT report a reserved dev-server port. A reservation is
+    // not evidence anything is serving there - the project decides its own ports
+    // - so pointing the pane at one renders a blank page for a server nobody
+    // started. See useBrowserUrl's resolution comment.
     return { projectDefault, taskOverride };
   });
 

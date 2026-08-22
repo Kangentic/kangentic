@@ -161,11 +161,24 @@ export async function startMcpHttpServer(
   const resolveBrowser = (
     projectId: string,
     callerSessionId?: string,
-  ): BrowserToolDependencies => ({
-    projectId,
-    callerSessionId,
-    sessions: getSteeringContext()?.sessionManager ?? null,
-  });
+  ): BrowserToolDependencies => {
+    const sessionManager = getSteeringContext()?.sessionManager ?? null;
+    return {
+      projectId,
+      callerSessionId,
+      // An explicit adapter rather than the raw SessionManager. It satisfies
+      // `getSessionTaskId` structurally but has no `getTaskWorktreePath`, and
+      // passing it directly is exactly how that lookup shipped dead - every
+      // isolated lane fell back to the legacy shared cookie jar. The session's
+      // own `cwd` IS the worktree path (see Session.cwd), so no project-repo
+      // access is needed here.
+      sessions: sessionManager && {
+        getSessionTaskId: (sessionId: string) => sessionManager.getSessionTaskId(sessionId),
+        getTaskWorktreePath: (taskId: string) =>
+          sessionManager.findLiveSessionByTaskId(taskId)?.cwd ?? null,
+      },
+    };
+  };
 
   const httpServer: Server = createServer((req, res) => {
     handleHttpRequest(req, res, expectedTokenBuffer, buildContext, taskCounter, getBrowserAutomationConfig, networkConfig, resolveSteering, resolveBrowser)

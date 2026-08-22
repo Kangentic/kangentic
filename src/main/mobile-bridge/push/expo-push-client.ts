@@ -21,8 +21,6 @@ const NETWORK_RETRY_DELAY_MS = 5000;
 export interface ExpoPushMessage {
   /** The device's Expo push token (ExponentPushToken[...]). */
   to: string;
-  /** Android notification channel id; ignored by iOS. */
-  channelId: string;
   /**
    * OS-visible placeholder text. Optional: both omitted makes this a
    * data-only message, which is what Android gets so that
@@ -85,7 +83,6 @@ export async function sendExpoPush(fetchImpl: FetchLike, message: ExpoPushMessag
     ...(message.body !== undefined ? { body: message.body } : {}),
     data: { blob: message.dataBlob },
     priority: 'high',
-    channelId: message.channelId,
     // Required for iOS: without mutable-content:1 the Notification Service
     // Extension that decrypts the envelope is never invoked. Expo maps this
     // camelCase field to the APNs header; Android ignores it.
@@ -137,7 +134,6 @@ export function createExpoWakeChannel(fetchImpl: FetchLike): WakeChannel {
     send(message: WakeMessage): Promise<WakeResult> {
       return sendExpoPush(fetchImpl, {
         to: message.token,
-        channelId: message.channelId,
         // Conditional spread, matching sendExpoPush below: a plain
         // `title: message.title` would leave `title` an own key holding
         // undefined on the data-only Android path, which is the one

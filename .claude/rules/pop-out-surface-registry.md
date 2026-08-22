@@ -20,9 +20,20 @@ pop-outs, and do not conflate the two layers.
 
 ## The rule
 
-- **Every OS `BrowserWindow` is created in exactly one of two places:** the main window in
-  `createWindow()` (`src/main/index.ts`), or a pop-out window in
-  `src/main/pop-out/pop-out-window-manager.ts`. No other file may call `new BrowserWindow(`.
+- **Every OS `BrowserWindow` is created in exactly one of three places:** the main window in
+  `createWindow()` (`src/main/index.ts`), a pop-out window in
+  `src/main/pop-out/pop-out-window-manager.ts`, or an offscreen browser LANE in
+  `src/main/browser/browser-lane-manager.ts` (a headless surface an agent drives; see
+  [[browser-automation-driver]]). No other file may call `new BrowserWindow(`.
+- **Every such site is also torn down when the MAIN window goes away.** Creation parity is not
+  the property that matters on its own: Electron fires `window-all-closed` only at window-count
+  zero, so any surviving window silently prevents `app.quit()`, which means `before-quit` never
+  fires and `syncShutdownCleanup` never runs - PTYs unkilled, session records unsuspended, DBs
+  unclosed, and on Windows the invisible orphan keeps the single-instance lock so the next launch
+  exits at once. Pop-outs are swept in the main window's `close` handler; lanes in its `closed`
+  handler, because destroying the window tears down its `<webview>` guests, which can trigger the
+  lane hand-off and construct a NEW lane after `close` handlers have already returned. A fourth
+  construction site needs a teardown of its own, in whichever of the two the same reasoning picks.
 - **Every `PopOutKind` has a shared metadata entry** in `POP_OUT_SURFACES`
   (`src/shared/pop-out.ts`): title, default bounds/min size, `needsWebview`, and the push
   `channels` fanned to that surface's open windows. This is the single source both processes read

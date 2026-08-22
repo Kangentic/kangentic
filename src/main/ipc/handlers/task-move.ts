@@ -21,6 +21,7 @@ import { autoLinkPRForTask } from '../../pr/pr-linking';
 import { resolveProjectContext } from '../helpers/project-repos';
 import { interpolateTaskTemplate, resolveTaskTemplateVars } from '../../agent/shared';
 import { trackEvent } from '../../analytics/analytics';
+import { getDevPortForTask } from '../../dev-ports/dev-port-allocator';
 import { parseModelId } from '../../../shared/model-id';
 import { captureSessionMetrics, refineTranscriptTokens, refineTranscriptToolCounts } from './session-metrics';
 import { markRecordExited, markRecordSuspended } from '../../transition-engine/session-lifecycle';
@@ -618,6 +619,7 @@ export async function handleTaskMove(
                 task,
                 defaultBaseBranch: effectiveDefaultBranch,
                 attachmentPaths: attachments.getPathsForTask(task.id),
+                devPort: getDevPortForTask(task.id),
               }))
             : '';
           // Read ONCE and share with the 2b fallback below, so the plan and the

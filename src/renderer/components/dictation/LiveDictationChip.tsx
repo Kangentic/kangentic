@@ -1,17 +1,17 @@
-import type { CSSProperties } from 'react';
+import { useRef, type CSSProperties } from 'react';
 import { Download, Mic, RotateCcw } from 'lucide-react';
 import { useDictationStore } from '../../stores/dictation-store';
-import { useConfigStore } from '../../stores/config-store';
 import { useOverlayPhase } from '../../hooks/useOverlayPhase';
-import { useFocusedTerminalRect } from '../../hooks/useFocusedTerminalRect';
+import { useDictationChipPosition } from '../../hooks/useDictationChipPosition';
 import { dictationPopupActions } from '../../hooks/useDictation';
 
 /**
  * The `live` dictation experience: the transcript streams straight into the
- * focused terminal's input as you speak, so this is only a small status chip
- * (mic state + a Clear control), not a transcript surface. While the model is
- * downloading on first use it shows progress, since no live typing can happen
- * until it is ready. Renders nothing while idle.
+ * focused target as you speak - a terminal, or any focused text field - so this
+ * is only a small status chip (mic state +
+ * a Clear control), not a transcript surface. While the model is downloading on
+ * first use it shows progress, since no live typing can happen until it is
+ * ready. Renders nothing while idle.
  */
 export function LiveDictationChip() {
   const status = useDictationStore((state) => state.status);
@@ -24,20 +24,27 @@ export function LiveDictationChip() {
 function LiveDictationChipContent() {
   const status = useDictationStore((state) => state.status);
   const error = useDictationStore((state) => state.error);
-  const targetSessionId = useDictationStore((state) => state.targetSessionId);
+  const targetKind = useDictationStore((state) => state.targetKind);
+  // What release will actually do, resolved at press time. NOT the raw setting:
+  // a field inside a multi-field form refuses to submit even with auto-submit
+  // on, and a hint that said "Release to send" there would be a lie.
+  const willSubmit = useDictationStore((state) => state.willSubmit);
+  const refusal = useDictationStore((state) => state.refusal);
   const modelProgress = useDictationStore((state) => state.modelProgress);
   const { contentClassName, onAnimationEnd } = useOverlayPhase(() => undefined, { variant: 'popover' });
-  // Sit at the bottom-center of the focused terminal, raised just above the bottom
-  // context bar so it sits over the input the user is watching. null = bottom
-  // panel / no focus, where the fixed fallback applies.
-  const anchor = useFocusedTerminalRect();
-  const anchoredStyle: CSSProperties | undefined = anchor
+  // Sit against the thing the words are actually landing in: the focused text
+  // field, or the bottom edge of the terminal's pane. Below it where there is
+  // room, above it where there is not - which is the usual case, since both real
+  // targets live at the bottom of their pane. null = nothing anchorable, where
+  // the fixed corner fallback applies. See `utils/dictation-anchor.ts`.
+  const chipRef = useRef<HTMLDivElement | null>(null);
+  const placement = useDictationChipPosition(chipRef);
+  const anchoredStyle: CSSProperties | undefined = placement
     ? {
         position: 'fixed',
-        left: (anchor.left + anchor.right) / 2,
-        top: anchor.bottom - 45,
+        left: placement.left,
+        top: placement.top,
         maxWidth: '92vw',
-        transform: 'translate(-50%, -100%)',
       }
     : undefined;
 
@@ -46,44 +53,69 @@ function LiveDictationChipContent() {
   const downloadPercent = downloading && modelProgress.totalBytes > 0
     ? Math.min(100, Math.round((modelProgress.downloadedBytes / modelProgress.totalBytes) * 100))
     : 0;
-  // Whether releasing push-to-talk submits the text or just leaves it in the
-  // input. It is the one thing the terminal itself cannot show you, which is why
-  // it earns the space the old "(typing into the terminal)" hint used to take.
-  const autoSubmit = useConfigStore((state) => state.globalConfig.dictation?.autoSubmit ?? true);
 
   // Capturing with nowhere to put the text. Its own state, not a suffix: the
   // words go nowhere, so saying "Listening" in the live tone would be a lie.
-  const noTarget = !targetSessionId && (recording || status === 'finalizing');
+  //
+  // Keyed on the target KIND, not on `targetSessionId`: an input target has no
+  // session behind it (the renderer writes to the DOM node directly), so a
+  // session-id test would report every one of them as "no target".
+  const noTarget = targetKind === null && (recording || status === 'finalizing');
+
+  // Declined, not recording: the target terminal's previous auto-submit is still
+  // landing and fresh bytes would split its bracketed paste. Named plainly, in
+  // the attention tone, because the button doing nothing for a second or two is
+  // what made this read as broken.
+  const busy = status === 'busy';
 
   const label = error
     ? error
-    : downloading
+    : busy
+      ? 'Still sending the last one'
+      : downloading
       ? `Preparing model... ${downloadPercent}%`
       : noTarget
-        ? 'No terminal focused'
+        ? (refusal === 'password'
+          // Naming the reason matters here: the user is looking straight at a
+          // field they just clicked, so "nothing focused" reads as a bug rather
+          // than as the deliberate refusal it is.
+          ? 'Dictation is off in password fields'
+          : 'No terminal or input focused')
         : recording
           ? 'Listening'
           : status === 'finalizing'
-            ? (autoSubmit ? 'Sending...' : 'Inserting...')
+            ? (willSubmit ? 'Sending...' : 'Inserting...')
             : 'Dictation';
 
   // Trailing hint, separated by spacing and a muted tone rather than a glyph.
   const hint = recording && !noTarget
-    ? (autoSubmit ? 'Release to send' : 'Release to insert')
+    ? (willSubmit ? 'Release to send' : 'Release to insert')
     : null;
 
   return (
     <div
-      className={anchoredStyle ? 'fixed z-50' : 'fixed bottom-8 left-8 z-50'}
+      ref={chipRef}
+      // Top of everything, deliberately one above the portaled-popover tier
+      // (`z-[2147483646]`, see .claude/rules/popover-escapes-clipping.md). This
+      // is a transient status readout for a live microphone: whatever else is on
+      // screen, it must be the thing the user can see, and at z-50 it sat under
+      // toasts (60), the walkthrough (70), every portaled menu, and the tile
+      // splitters (2000000000). 2147483647 is the CSS maximum, so nothing can
+      // outrank it without going out of range. Its nearest stacking context is
+      // the document root (verified: chip -> div -> #root -> body, none of them
+      // trapping), so the value actually applies globally rather than being
+      // scoped to a subtree.
+      className={anchoredStyle
+        ? 'fixed z-[2147483647]'
+        : 'fixed bottom-8 left-8 z-[2147483647]'}
       style={anchoredStyle}
       data-testid="dictation-live-chip"
+      data-placement={placement?.placement ?? 'fallback'}
     >
       <div
-        // The min width holds the chip steady across state changes. When anchored
-        // to a focused terminal it is centred with translate(-50%) (see
-        // anchoredStyle above), so a label that shrinks (Listening -> Sending...)
-        // would otherwise snap the whole chip narrower and re-centre it under the
-        // user's cursor at the exact moment they release the key.
+        // The min width holds the chip steady across state changes: a label that
+        // shrinks (Listening -> Sending...) would otherwise snap the whole chip
+        // narrower and re-place it at the exact moment the user releases the key.
         className={`flex min-w-[min(17rem,80vw)] items-center gap-2 rounded-full border border-edge bg-surface px-3 py-1.5 shadow-lg ${contentClassName}`}
         onAnimationEnd={onAnimationEnd}
       >
@@ -100,10 +132,10 @@ function LiveDictationChipContent() {
           {recording && (
             <span
               className={`absolute -right-1 -top-1 h-2 w-2 rounded-full animate-pulse ${
-                noTarget ? 'bg-attention' : 'bg-active'
+                noTarget || busy ? 'bg-attention' : 'bg-active'
               }`}
               data-testid="dictation-recording-dot"
-              data-tone={noTarget ? 'attention' : 'active'}
+              data-tone={noTarget || busy ? 'attention' : 'active'}
             />
           )}
         </span>

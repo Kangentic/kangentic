@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { TranscriptEntry, TranscriptBlock } from '../../../../shared/types';
+import { readJsonlWindow } from '../../shared/history-scan';
+import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
 
 /**
  * Parse Codex CLI's native rollout JSONL into agent-agnostic
@@ -31,20 +33,29 @@ import type { TranscriptEntry, TranscriptBlock } from '../../../../shared/types'
  *
  * Defensive parsing throughout: a malformed line is skipped, never thrown.
  */
-export async function parseCodexTranscript(filePath: string): Promise<TranscriptEntry[]> {
-  let content: string;
-  try {
-    content = await fs.promises.readFile(filePath, 'utf-8');
-  } catch {
-    return [];
-  }
+export async function parseCodexTranscript(
+  agentSessionId: string,
+  filePath: string,
+): Promise<TranscriptEntry[]> {
+  // Bounded tail read rather than a whole-file one: a transcript has no size
+  // ceiling, and reading one whole is what OOM'd the main process.
+  // `countOmittedLines` because the uuids below embed the ABSOLUTE physical
+  // line index (see there). A rollout is append-only, so that index is stable.
+  const window = await readJsonlWindow(filePath, {
+    maxBytes: parseWindowBytes(),
+    countOmittedLines: true,
+  });
+  if (window.totalBytes === 0) return [];
 
   const entries: TranscriptEntry[] = [];
-  const lines = content.split(/\r?\n/);
+  const lines = window.text.split(/\r?\n/);
   let currentModel: string | undefined;
-  let entryIndex = 0;
+  // Line indices must stay absolute within the FILE, not relative to the
+  // window (the Grok precedent).
+  const lineIndexBase = window.omittedLineCount;
 
-  for (const line of lines) {
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    const line = lines[lineIndex];
     if (line.length === 0) continue;
     let raw: unknown;
     try {
@@ -64,7 +75,19 @@ export async function parseCodexTranscript(filePath: string): Promise<Transcript
 
     if (raw.type !== 'response_item' || !isRecord(raw.payload)) continue;
     const payload = raw.payload;
-    const uuid = `codex-${entryIndex++}`;
+    // Session-scoped and ABSOLUTE. Both halves are load-bearing, and a rollout
+    // carries no per-record id to derive either from (only `function_call` /
+    // `function_call_output` have a `call_id`, and they share it as a pair).
+    //   - absolute, because these uuids are the persisted citation anchors
+    //     `sliceTranscriptAroundUuid` resolves against. The window-relative
+    //     counter this replaced renumbered every turn once a transcript grew
+    //     past the read cap and the tail window started sliding.
+    //   - session-scoped, because `resolveTaskTranscript` stitches every
+    //     session a task has had and dedups by uuid keeping the first. Two
+    //     Codex sessions on one task both minted `codex-0..N`, so the second
+    //     session's turns collided with the first's and vanished from the
+    //     Conversation tab. That bug did not need a large transcript.
+    const uuid = `${agentSessionId}:${lineIndexBase + lineIndex}`;
 
     if (payload.type === 'message') {
       const role = payload.role;
@@ -127,7 +150,7 @@ export async function parseCodexTranscript(filePath: string): Promise<Transcript
     }
   }
 
-  return entries;
+  return prependTruncationMarker(entries, window.omittedBytes, window.totalBytes);
 }
 
 /**

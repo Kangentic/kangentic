@@ -45,6 +45,14 @@ vi.mock('simple-git', () => ({
 const repos = vi.hoisted(() => ({ value: {} as unknown }));
 vi.mock('../../src/main/ipc/helpers/project-repos', () => ({ getProjectRepos: () => repos.value }));
 
+// linkPR's onLinked pushes through the shared `sendToRenderer`, which mirrors
+// every send into the IPC recorder. The recorder imports `electron` at module
+// scope (for its inbound ipcMain.handle patch), so it is stubbed here for the
+// same reason getProjectRepos is above - and the spy doubles as the assertion
+// that the PR-link push is no longer invisible to `kangentic_get_ipc_log`.
+const recordPushSpy = vi.hoisted(() => vi.fn());
+vi.mock('../../src/main/diagnostics/ipc-recorder', () => ({ recordPush: recordPushSpy }));
+
 vi.mock('../../src/main/pr/pr-registry', () => {
   class PRResolverUnavailableError extends Error {
     constructor(message: string) { super(message); this.name = 'PRResolverUnavailableError'; }
@@ -72,6 +80,7 @@ vi.mock('../../src/main/pr/pr-registry', () => {
 import { linkPRForTask, linkPR } from '../../src/main/pr/pr-linking';
 import { PRResolverUnavailableError, PRResolverTransientError } from '../../src/main/pr/pr-registry';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
+import { IPC } from '../../src/shared/ipc-channels';
 
 let idCounter = 0;
 function makeTask(overrides: Partial<Task> = {}): Task {
@@ -106,6 +115,7 @@ beforeEach(() => {
   conn.byNumber = null; conn.byBranch = null; conn.byCommit = null; conn.detect = null; conn.calls = []; conn.lastArgs = {};
   git.branch = 'real-branch'; git.sha = 'sha-current'; git.aheadCount = '1';
   repos.value = {}; // no state leaks into the ladder tests, which never touch getProjectRepos
+  recordPushSpy.mockClear(); // module-scope spy: a stale call would satisfy the wrong test
 });
 
 describe('linkPRForTask confidence ladder', () => {
@@ -451,5 +461,105 @@ describe('linkPR (IPC wrapper): preserveLinkOnNotFound reaches the backbone', ()
     expect(result.status).toBe('not-found');
     expect(updateSpy).toHaveBeenCalledWith(expect.objectContaining({ pr_number: null, pr_url: null, pr_state: null }));
     expect(result.task?.pr_number).toBeNull();
+  });
+});
+
+/**
+ * The wrapper's `onLinked` notification, which the toast-storm fix rewrote.
+ *
+ * Two independent regressions are pinned here because they live on the same
+ * three lines:
+ *   1. It must push the QUIET `task:prLinkChanged`, never `task:updatedByAgent`.
+ *      Every caller reaching linkPR is the app reconciling a link on its own (the
+ *      refresh sweep, autoLinkPRForTask, a pr-candidate hit, the task-detail
+ *      "Link / refresh PR" control), so a toast there announced agent news for
+ *      work no agent did - and a sweep touching N tasks raised N toasts.
+ *   2. It must go through `sendToRenderer`, so the push reaches `recordPush`.
+ *      The old raw `webContents.send` bypassed the recorder entirely, which is
+ *      why these toasts left no trace in ipc-*.jsonl.
+ *
+ * The board event is asserted alongside because it must NOT go quiet with the
+ * toast: the monitor and the mobile bridge's board-event bus both consume it.
+ */
+describe('linkPR (IPC wrapper): onLinked notifies quietly and is recorded', () => {
+  function contextFor(task: Task, updateSpy: ReturnType<typeof vi.fn>) {
+    const send = vi.fn();
+    const emitBoardChanged = vi.fn();
+    repos.value = { tasks: { getById: () => task, update: updateSpy } as never };
+    const context = {
+      currentProjectId: 'proj-1',
+      projectRepo: { getById: () => ({ id: 'proj-1', path: '/repo' }) },
+      configManager: { getEffectiveConfig: () => ({ git: { defaultBaseBranch: 'main' } }) },
+      mainWindow: { isDestroyed: () => false, webContents: { send } },
+      boardEvents: { emitBoardChanged },
+      sessionManager: { getSessionProjectId: () => null },
+    } as never as IpcContext;
+    return { context, send, emitBoardChanged };
+  }
+
+  it('a newly linked PR pushes task:prLinkChanged (not task:updatedByAgent), records it, and still emits the board event', async () => {
+    conn.byNumber = { url: 'https://github.com/o/r/pull/7', number: 7, state: 'open' };
+    const updateSpy = vi.fn((patch: Partial<Task>) => ({ ...makeTask({ pr_number: 240 }), ...patch }) as Task);
+    const task = makeTask({
+      pr_number: 240, pr_url: 'u240', pr_state: null,
+      worktree_path: null, head_sha: null, branch_name: null,
+    });
+    const { context, send, emitBoardChanged } = contextFor(task, updateSpy);
+
+    await linkPR(context, { projectId: 'proj-1', taskId: task.id, force: true });
+
+    expect(send).toHaveBeenCalledTimes(1);
+    const [channel, ...args] = send.mock.calls[0];
+    expect(channel).toBe(IPC.TASK_PR_LINK_CHANGED);
+    // Payload is the bare projectId, mirroring task:sessionResync. Asserted so a
+    // future widening to (id, title, projectId) cannot silently re-tempt a toast.
+    expect(args).toEqual(['proj-1']);
+
+    // Revert proof: restoring the raw `context.mainWindow.webContents.send(...)`
+    // reds this line while leaving the channel assertions above green.
+    expect(recordPushSpy).toHaveBeenCalledWith(IPC.TASK_PR_LINK_CHANGED, ['proj-1']);
+
+    // Must NOT go quiet with the toast - other main-process consumers need it.
+    expect(emitBoardChanged).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: 'proj-1', change: 'task-updated', ids: [task.id] }),
+    );
+  });
+
+  it('the prCleared branch notifies on the same quiet channel', async () => {
+    // The second onLinked call site (a stale link the sweep cleared). It is the
+    // sweep noticing its own housekeeping, so it is quiet for the same reason -
+    // and a test that only covered the "linked" branch would miss it entirely.
+    conn.byNumber = null;
+    const updateSpy = vi.fn((patch: Partial<Task>) => patch as Task);
+    const task = makeTask({
+      pr_number: 240, pr_url: 'u240', pr_state: 'open',
+      worktree_path: null, head_sha: null, branch_name: null,
+    });
+    const { context, send } = contextFor(task, updateSpy);
+
+    const result = await linkPR(context, { projectId: 'proj-1', taskId: task.id, force: true });
+
+    expect(result.status).toBe('not-found');
+    expect(updateSpy).toHaveBeenCalled();
+    expect(send).toHaveBeenCalledWith(IPC.TASK_PR_LINK_CHANGED, 'proj-1');
+  });
+
+  it('a destroyed main window records the push as dropped instead of throwing', async () => {
+    // The old hand-rolled `if (!isDestroyed())` guard simply skipped the send and
+    // left no trace. Routing through sendToRenderer means a lost push is still
+    // recorded with a PushDropped marker.
+    conn.byNumber = { url: 'https://github.com/o/r/pull/7', number: 7, state: 'open' };
+    const updateSpy = vi.fn((patch: Partial<Task>) => ({ ...makeTask({ pr_number: 240 }), ...patch }) as Task);
+    const task = makeTask({
+      pr_number: 240, pr_url: 'u240', pr_state: null,
+      worktree_path: null, head_sha: null, branch_name: null,
+    });
+    const { context, send } = contextFor(task, updateSpy);
+    (context.mainWindow as unknown as { isDestroyed: () => boolean }).isDestroyed = () => true;
+
+    await linkPR(context, { projectId: 'proj-1', taskId: task.id, force: true });
+
+    expect(send).not.toHaveBeenCalled();
+    expect(recordPushSpy).toHaveBeenCalledWith(IPC.TASK_PR_LINK_CHANGED, ['proj-1'], { dropped: true });
   });
 });

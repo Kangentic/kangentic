@@ -18,6 +18,25 @@ import { detachDebugger, isDebuggerAttached } from './cdp/cdp';
  *
  * Main-process state, so no HMR concerns (esbuild does not Fast-Refresh main).
  */
+/**
+ * What kind of surface an entry points at.
+ *
+ * `pane` is the user-visible `<webview>` inside a task-detail window, owned by
+ * the renderer. `lane` is a main-process offscreen `BrowserWindow` opened for
+ * one caller so concurrent workers stop sharing a viewport.
+ *
+ * A lane deliberately lives in THIS registry rather than a parallel one: it
+ * keeps a single resolver, a single liveness self-heal, and a single shutdown
+ * path, so `withGuest` needed no change at all to drive one. What the field
+ * buys is the two places where the distinction is real - `list_panes` labels
+ * lanes, and `close_pane` destroys them in main instead of pushing a close to
+ * the renderer. A lane has no task-detail window and no `browserOpenTasks` flag,
+ * so the push would do nothing and report the lane still registered; destroying
+ * it directly is what makes `close_pane` the escape hatch the lane-limit error
+ * points callers at.
+ */
+export type BrowserSurfaceKind = 'pane' | 'lane';
+
 export interface BrowserPaneEntry {
   sessionId: string;
   taskId: string;
@@ -27,6 +46,11 @@ export interface BrowserPaneEntry {
   /** Last known navigated URL (null until the first navigation lands). */
   url: string | null;
   registeredAt: number;
+  /**
+   * Defaults to `pane` when absent, so every existing renderer registration and
+   * every existing test fixture keeps its meaning without being touched.
+   */
+  kind?: BrowserSurfaceKind;
 }
 
 /** A pane entry enriched with live status for `list()` / discovery. */
@@ -107,6 +131,38 @@ const FOREIGN_PROJECT_HINT =
 const NO_PANE_OPEN_HINT =
   'Call kangentic_browser_open_pane with a url to open and load your own task\'s Browser pane, then retry.';
 
+/**
+ * Why a pane left the registry. Every deletion names one.
+ *
+ * These are indistinguishable from the outside - all four make a later
+ * explicit-`sessionId` call return `no-pane-open` - which is precisely what made
+ * task #542's retained-pane death hard to attribute.
+ */
+export type PaneUnregisterReason =
+  /** The renderer's effect cleanup ran (component unmounted). */
+  | 'renderer-unmount'
+  /** Same, but compare-and-delete matched this instance's own guest id. */
+  | 'renderer-unmount-matched'
+  /** The guest webContents emitted `destroyed`. */
+  | 'guest-destroyed'
+  /** Self-heal: the entry pointed at a guest that no longer exists. */
+  | 'self-heal-dead-guest'
+  /**
+   * Main destroyed an offscreen lane (agent closed it, its session ended, it
+   * went idle, or a hand-off lane stood down because the visible pane returned).
+   *
+   * Distinct from `renderer-unmount` even though both run through `unregister`:
+   * a lane has no renderer to unmount, and reporting one would point an
+   * investigation at the wrong process - the exact ambiguity this enum exists
+   * to remove.
+   */
+  | 'lane-destroyed';
+
+// `detachAll` is deliberately absent. It bulk-clears on the synchronous
+// `before-quit` path (see .claude/rules/synchronous-shutdown.md), where adding
+// per-pane console I/O would slow the one path that must stay fast - and a
+// deletion during shutdown needs no attribution, since the app is going away.
+
 export type ResolveGuestResult =
   | { ok: true; entry: BrowserPaneEntry; webContents: WebContents }
   | { ok: false; kind: 'pane-destroyed'; detail: string };
@@ -136,6 +192,8 @@ export class BrowserPaneRegistry {
     projectId: string | null;
     webContentsId: number;
     url: string | null;
+    /** Omitted by the renderer, which only ever registers real panes. */
+    kind?: BrowserSurfaceKind;
   }): void {
     this.panes.set(input.sessionId, {
       sessionId: input.sessionId,
@@ -144,13 +202,77 @@ export class BrowserPaneRegistry {
       webContentsId: input.webContentsId,
       url: input.url,
       registeredAt: Date.now(),
+      kind: input.kind ?? 'pane',
     });
+    try {
+      this.paneRegisteredHandler?.(this.panes.get(input.sessionId)!);
+    } catch (error) {
+      console.warn('[browser-pane] pane-registered handler failed:', error);
+    }
     this.notifyWaiters();
   }
 
-  unregister(sessionId: string): void {
+  /**
+   * Say WHY a pane left the registry.
+   *
+   * Four call paths delete an entry, and from the outside they are
+   * indistinguishable: every one of them makes a later explicit-`sessionId`
+   * call return `no-pane-open`. Task #542 hit exactly that wall - a retained
+   * pane's guest was destroyed on a project switch, and narrowing it down to a
+   * deleter meant reasoning backwards from an error kind that four paths share,
+   * across a boundary where the renderer's unmount and the guest's `destroyed`
+   * event look identical.
+   *
+   * One line each removes that ambiguity. It is deliberately unconditional
+   * rather than dev-gated: the repro is rare, timing-dependent, and needs a
+   * restart to instrument, so the one time it happens the evidence has to
+   * already be in the log.
+   */
+  private forget(sessionId: string, reason: PaneUnregisterReason): void {
+    const entry = this.panes.get(sessionId);
+    if (!entry) return;
     this.panes.delete(sessionId);
+    console.log(
+      `[browser-pane] unregister session=${sessionId.slice(0, 8)} task=${entry.taskId.slice(0, 8)} ` +
+        `wc=${entry.webContentsId} project=${entry.projectId ?? 'none'} reason=${reason}`,
+    );
     this.notifyWaiters();
+    // Injected rather than imported, so the registry stays free of any
+    // dependency on the lane manager (which imports the registry, so a direct
+    // import would be a cycle). Never allowed to break a deletion.
+    try {
+      this.paneClosedHandler?.(entry, reason);
+    } catch (error) {
+      console.warn('[browser-pane] pane-closed handler failed:', error);
+    }
+  }
+
+  private paneClosedHandler: ((entry: BrowserPaneEntry, reason: PaneUnregisterReason) => void) | null = null;
+
+  /**
+   * Observe pane closures. Wired once at startup by the lane hand-off, which
+   * keeps an agent's browser alive when the user closes the task's window.
+   */
+  setPaneClosedHandler(
+    handler: ((entry: BrowserPaneEntry, reason: PaneUnregisterReason) => void) | null,
+  ): void {
+    this.paneClosedHandler = handler;
+  }
+
+  /** Observe pane REGISTRATION, so a hand-off lane can stand down when the
+   *  user's own pane comes back. */
+  setPaneRegisteredHandler(handler: ((entry: BrowserPaneEntry) => void) | null): void {
+    this.paneRegisteredHandler = handler;
+  }
+
+  private paneRegisteredHandler: ((entry: BrowserPaneEntry) => void) | null = null;
+
+  /**
+   * @param reason defaults to the renderer's unmount, which is every caller
+   *   except the lane manager - a lane has no renderer, so it says so.
+   */
+  unregister(sessionId: string, reason: PaneUnregisterReason = 'renderer-unmount'): void {
+    this.forget(sessionId, reason);
   }
 
   /** Unregister sessionId's pane ONLY if its current entry still has this exact
@@ -161,8 +283,7 @@ export class BrowserPaneRegistry {
   unregisterIfMatches(sessionId: string, webContentsId: number): void {
     const entry = this.panes.get(sessionId);
     if (entry && entry.webContentsId === webContentsId) {
-      this.panes.delete(sessionId);
-      this.notifyWaiters();
+      this.forget(sessionId, 'renderer-unmount-matched');
     }
   }
 
@@ -170,8 +291,7 @@ export class BrowserPaneRegistry {
   unregisterByWebContentsId(webContentsId: number): void {
     for (const [sessionId, entry] of this.panes) {
       if (entry.webContentsId === webContentsId) {
-        this.panes.delete(sessionId);
-        this.notifyWaiters();
+        this.forget(sessionId, 'guest-destroyed');
         return;
       }
     }
@@ -421,7 +541,7 @@ export class BrowserPaneRegistry {
   resolveLiveGuest(entry: BrowserPaneEntry): ResolveGuestResult {
     const guest = electronWebContents.fromId(entry.webContentsId);
     if (!guest || guest.isDestroyed()) {
-      this.panes.delete(entry.sessionId);
+      this.forget(entry.sessionId, 'self-heal-dead-guest');
       return {
         ok: false,
         kind: 'pane-destroyed',

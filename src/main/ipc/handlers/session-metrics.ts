@@ -1,3 +1,4 @@
+import PQueue from 'p-queue';
 import { agentRegistry } from '../../agent/agent-registry';
 import type { SessionRepository } from '../../db/repositories/session-repository';
 import type { UsageHistoryRepository } from '../../db/repositories/usage-history-repository';
@@ -96,6 +97,29 @@ export function captureSessionMetrics(
 }
 
 /**
+ * Serializes every transcript read these two backfills issue, process-wide.
+ *
+ * They are fired back to back on the same session record from every run-ending
+ * path (suspend / move / reconcile), and both are deliberately un-awaited so
+ * file I/O stays outside the `withTaskLock` region. The consequence was that
+ * ONE card move launched two concurrent whole-file reads of the SAME
+ * transcript, and a multi-card drag or a reconcile sweep multiplied that by the
+ * number of sessions ending together, with nothing serializing them.
+ *
+ * Concurrency 1 rather than a higher cap: these are best-effort background
+ * backfills with no latency requirement, and the whole point is that N ending
+ * sessions cannot stack N transcript reads on the main process at once.
+ * Callers stay un-awaited, so the lock-region design is unchanged - only the
+ * reads queue.
+ */
+const transcriptReadQueue = new PQueue({ concurrency: 1 });
+
+/** Test-only: wait for every queued transcript backfill to finish. */
+export function drainTranscriptReadQueueForTests(): Promise<void> {
+  return transcriptReadQueue.onIdle();
+}
+
+/**
  * Fire-and-forget refinement of a session record's cumulative token columns from
  * the agent's transcript (the authoritative lifetime token source; the snapshot
  * captured by {@link captureSessionMetrics} is current-context only). Call right
@@ -133,8 +157,11 @@ export function refineTranscriptTokens(
     const cwd = record?.cwd ?? null;
     if (!transcriptPath && !(agentSessionId && cwd)) return;
 
-    void adapter
-      .transcriptUsage({ transcriptPath, agentSessionId, cwd })
+    // Bound after the capability guard: the queued closure runs later, and TS
+    // does not carry the optional-method narrowing across it.
+    const readTranscriptUsage = adapter.transcriptUsage.bind(adapter);
+    void transcriptReadQueue
+      .add(() => readTranscriptUsage({ transcriptPath, agentSessionId, cwd }))
       .then((transcriptUsage) => {
         if (!transcriptUsage) return;
         sessionRepo.updateTranscriptTokens(recordId, {
@@ -200,8 +227,10 @@ export function refineTranscriptToolCounts(
     const cwd = record?.cwd ?? null;
     if (!transcriptPath && !(agentSessionId && cwd)) return;
 
-    void adapter
-      .transcriptToolCounts({ transcriptPath, agentSessionId, cwd })
+    // Bound after the capability guard, as in refineTranscriptTokens.
+    const readTranscriptToolCounts = adapter.transcriptToolCounts.bind(adapter);
+    void transcriptReadQueue
+      .add(() => readTranscriptToolCounts({ transcriptPath, agentSessionId, cwd }))
       .then((counts) => {
         if (!counts) return;
         sessionRepo.updateTranscriptToolCounts(recordId, counts);

@@ -12,7 +12,7 @@ Prerequisites:
 
 - `opencode --version` resolves on PATH
 - OpenCode is authenticated (logged in to a provider, model selected)
-- A scratch project opened in Kangentic with the default swimlanes (`To Do`, `Planning`, `Executing`, `Code Review`, `Tests`, `Ship It`, `Done`) and OpenCode set as the project default agent
+- A scratch project opened in Kangentic with the default swimlanes (`To Do`, `Planning`, `Executing`, `Code Review`, `Testing`, `Merge`, `Done`) and OpenCode set as the project default agent
 - The scratch project contains a file with non-trivial prose (e.g. a real `README.md`) so the prompt in step 1 has something to summarize
 
 Steps:

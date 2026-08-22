@@ -69,7 +69,7 @@ export function BrowserEmptyState({ onSubmit }: BrowserEmptyStateProps) {
           <h3 className="text-base font-semibold text-fg">Open a URL to preview</h3>
           <p className="text-xs text-fg-muted leading-relaxed max-w-sm">
             Local dev server, staging, production, or any http(s) page.
-            The first URL you open is saved as this project&apos;s default.
+            This task remembers where you were; other tasks keep their own.
           </p>
         </div>
 

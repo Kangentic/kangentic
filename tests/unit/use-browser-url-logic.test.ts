@@ -21,7 +21,12 @@
 import { describe, it, expect } from 'vitest';
 
 // --- URL resolution rule ---
-// Mirrors useBrowserUrl.ts line 106: `const effectiveUrl = taskOverride ?? projectDefault ?? null`
+//
+// These MIRROR the hook rather than importing it (the hook needs a React
+// renderer, and the vitest config has no jsdom). That is a real hazard and it
+// already bit once: this file kept asserting `taskOverride ?? projectDefault`
+// after the hook grew a third tier, and passed the whole time - against its own
+// stale copy. If the hook's precedence changes again, change it here too.
 function resolveEffectiveUrl(
   taskOverride: string | null,
   projectDefault: string | null,
@@ -46,20 +51,24 @@ describe('useBrowserUrl resolution rule (taskOverride > projectDefault > null)',
     expect(resolveEffectiveUrl(null, null)).toBeNull();
   });
 
-  it('empty-string taskOverride does NOT win (falsy but not null)', () => {
-    // An empty string task override is a cleared sentinel. The ?? operator
-    // treats "" as a non-null value, so it still wins over projectDefault.
-    // This mirrors the production behaviour: "" is the cleared-URL sentinel
-    // used by deepMerge (see mock-electron-api.js comment at line 631).
-    // The hook converts "" from getUrls to null via `|| null` in the mock,
-    // so in practice the rendered component receives null, not "". The test
-    // here documents the raw ?? semantics, not the mock normalisation.
+  it('a RESERVED dev-server port is not part of this rule at all', () => {
+    // Deliberate, and it was briefly wrong the other way. Reserving a port is
+    // not evidence anything is SERVING on it - the project decides its own
+    // ports - so a pane that auto-navigated to a reservation rendered a blank
+    // page for a server nobody had started. The empty state is the better
+    // answer: it at least says what to do next.
+    expect(resolveEffectiveUrl(null, null)).toBeNull();
+  });
+
+  it('empty-string taskOverride does NOT fall through (falsy but not null)', () => {
+    // An empty string task override is a cleared sentinel. `??` treats "" as a
+    // non-null value, so it still wins. This documents the raw `??` semantics,
+    // not the mock's `|| null` normalisation.
     expect(resolveEffectiveUrl('', 'http://project.example.com/')).toBe('');
   });
 });
 
 // --- source label ---
-// Mirrors useBrowserUrl.ts lines 107-111.
 type UrlSource = 'task' | 'project' | 'none';
 function resolveSource(
   taskOverride: string | null,

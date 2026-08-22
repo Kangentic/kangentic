@@ -15,7 +15,7 @@
  * See `feedback_conversation_viewer_transcript_fidelity` in memory.
  */
 
-import type { TranscriptEntry, TranscriptBlock } from './types';
+import type { TranscriptEntry, TranscriptBlock, TranscriptSystemSubtype } from './types';
 import { parseFileEditTool, type FileEdit } from './tool-diff';
 
 /** Bump when the event shape changes so a consumer (e.g. a pinned mobile client)
@@ -49,7 +49,7 @@ export type ConversationEvent =
       edit: FileEdit;
       result: ToolOutcome | null;
     }
-  | { type: 'system'; uuid: string; ts: number; subtype: 'compaction' | 'command' | 'command_output' | 'session_boundary'; text: string };
+  | { type: 'system'; uuid: string; ts: number; subtype: TranscriptSystemSubtype; text: string };
 
 /**
  * Flatten a structured transcript into the normalized event stream. Tool results

@@ -157,7 +157,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   {
     id: 'dictation.pushToTalk',
     label: 'Push-to-Talk (Hold)',
-    description: 'Hold to dictate; release to populate the focused terminal.',
+    description: 'Hold to dictate; release to populate the focused terminal or text field.',
     group: 'Dictation',
     scope: 'global',
     defaultCombo: 'Mouse:Back',

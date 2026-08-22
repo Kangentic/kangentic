@@ -288,6 +288,13 @@ describe('ipc-recorder - outbound push recording', () => {
     expect(__INTERNAL.SAFE_PUSH_CHANNELS.has('task:createdByAgent')).toBe(true);
     expect(__INTERNAL.SAFE_PUSH_CHANNELS.has('swimlane:updatedByAgent')).toBe(true);
     expect(__INTERNAL.SAFE_PUSH_CHANNELS.has('backlog:changedByAgent')).toBe(true);
+    // The two quiet invalidation channels carry a bare projectId. They are on
+    // the allowlist for the same reason as their loud siblings - and omitting
+    // one is a silent failure: the push is still recorded, but with its args
+    // replaced by `{ redacted: true }`, which is exactly the blind spot the PR
+    // linker's raw send used to have.
+    expect(__INTERNAL.SAFE_PUSH_CHANNELS.has('task:sessionResync')).toBe(true);
+    expect(__INTERNAL.SAFE_PUSH_CHANNELS.has('task:prLinkChanged')).toBe(true);
     // A mutating inbound channel is not a safe push channel.
     expect(__INTERNAL.SAFE_PUSH_CHANNELS.has('config:set')).toBe(false);
   });

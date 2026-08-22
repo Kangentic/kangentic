@@ -50,6 +50,7 @@ import type {
   TranscriptSource,
   TranscriptUnavailableReason,
   TranscriptBlock,
+  TranscriptSystemSubtype,
 } from '../../../shared/types';
 
 /** Result bodies longer than this are clamped with a "Show all" toggle. */
@@ -784,7 +785,7 @@ function SystemRow({
   subtype,
   text,
 }: {
-  subtype: 'compaction' | 'command' | 'command_output' | 'session_boundary';
+  subtype: TranscriptSystemSubtype;
   text: string;
 }) {
   const clean = sanitizeTranscriptText(text).trim();
@@ -793,10 +794,10 @@ function SystemRow({
       ? 'Conversation compacted'
       : subtype === 'command'
         ? `[command] ${clean}`
-        // session_boundary's text is already a ready-to-display label (e.g.
+        // session_boundary and truncated both carry ready-to-display text (e.g.
         // "New session - Claude Code (isolated: Executing)"), unlike the
         // other subtypes whose text is raw payload behind a canned label.
-        : subtype === 'session_boundary'
+        : subtype === 'session_boundary' || subtype === 'truncated'
           ? clean
           : 'Command output';
   return (

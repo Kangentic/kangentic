@@ -111,11 +111,16 @@ function prNumberFromUrl(prUrl: string): number | null {
  * `pr_state` null and the board card shows a bare PR pill with no state chip.
  *
  * Fire-and-forget: `linkPRForTask` takes the task lock itself, and its `onLinked`
- * routes through `context.onTaskUpdated`, which pushes TASK_UPDATED_BY_AGENT and
- * a board-changed event (see `mcp-project-context.ts`), so the card repaints
+ * routes through `context.onTaskPrLinkChanged`, which pushes TASK_PR_LINK_CHANGED
+ * and a board-changed event (see `mcp-project-context.ts`), so the card repaints
  * without the tool call awaiting a `gh` round-trip. `preserveLinkOnNotFound`
  * because a resolve fired BY a link write must never undo that write; an
  * explicit `link_pr` deliberately does not set it.
+ *
+ * The QUIET channel, not `onTaskUpdated`: this resolve exists only because the
+ * caller just wrote a link, and that write already toasted. Routing it through
+ * the loud channel meant one `update_task` produced two "Task updated by agent"
+ * toasts, the second announcing a state the first had just cleared.
  */
 function scheduleLinkTimeResolve(
   taskId: string,
@@ -127,7 +132,7 @@ function scheduleLinkTimeResolve(
     projectPath: context.getProjectPath(),
     force: true,
     preserveLinkOnNotFound: true,
-    onLinked: (linked) => context.onTaskUpdated(linked),
+    onLinked: (linked) => context.onTaskPrLinkChanged?.(linked),
   }).catch((error) => {
     console.error(`[pr-linking] link-time resolve failed for task ${taskId.slice(0, 8)}:`, error);
   });
@@ -449,8 +454,26 @@ export const handleUpdateTask: CommandHandler = (
   // three fields must always agree (the linker writes them atomically), and a
   // stale terminal `merged`/`closed` would otherwise short-circuit every
   // non-force resolve, freezing the task on a PR it no longer points at. The
-  // link-time resolve fired after `onTaskUpdated` below refills it.
-  if (newPrUrl !== null || newPrNumber !== null) updates.pr_state = null;
+  // link-time resolve scheduled below refills it.
+  //
+  // Unless the write re-points nothing. A `/pull-request` flow routinely writes
+  // the link a sweep or auto-link already discovered, and nulling `pr_state`
+  // there blanked the card's PR chip until a forced `gh` round-trip put back the
+  // value it just cleared. `prLinkUnchanged` must PROVE equality rather than
+  // infer it from an omitted field: a `prNumber`-only write naming a DIFFERENT
+  // PR leaves `updates.pr_url` unset, and treating absent as "matches" would
+  // keep the old PR's state and skip the resolve - worse than the churn. So it
+  // requires both fields present and equal, plus a state actually worth
+  // preserving (a link with a null state, e.g. from a `preserveLinkOnNotFound`,
+  // still needs its resolve).
+  const effectivePrNumber = updates.pr_number;
+  const prLinkUnchanged =
+    typeof updates.pr_url === 'string'
+    && updates.pr_url === task.pr_url
+    && typeof effectivePrNumber === 'number'
+    && effectivePrNumber === task.pr_number
+    && task.pr_state != null;
+  if ((newPrUrl !== null || newPrNumber !== null) && !prLinkUnchanged) updates.pr_state = null;
   if (newAgent !== null) updates.agent = newAgent;
   if (newPriority !== null) updates.priority = Number(newPriority);
   if (newLabels !== null) updates.labels = newLabels;
@@ -523,8 +546,11 @@ export const handleUpdateTask: CommandHandler = (
   // through, and `isFinite` rejects the NaN a non-numeric `prNumber` produces
   // (the mobile bridge hands raw wire params to the handler, unlike the MCP
   // tool layer, whose zod schema has already validated a positive int).
+  //
+  // `prLinkUnchanged` also skips it: the row already holds this exact link AND a
+  // non-null state, so there is nothing for a forced `gh` round-trip to refill.
   const linkedUrl = typeof updates.pr_url === 'string' ? updates.pr_url.trim() : '';
-  if (linkedUrl !== '' || Number.isFinite(updates.pr_number)) {
+  if (!prLinkUnchanged && (linkedUrl !== '' || Number.isFinite(updates.pr_number))) {
     scheduleLinkTimeResolve(updated.id, taskRepo, context);
   }
 

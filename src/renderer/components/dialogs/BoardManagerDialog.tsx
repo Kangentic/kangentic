@@ -456,7 +456,7 @@ function DisabledSectionNotice({ reason }: { reason: string }) {
 }
 
 /**
- * The auto-command's template-variable inserter.
+ * The agent-message field's template-variable inserter.
  *
  * This replaced a row of ten always-on `{{chip}}` buttons. Ten monospace tokens
  * are a wall of syntax the user has to read past to reach the field they
@@ -1620,7 +1620,6 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                 <SettingField
                   label="Description"
                   className={SECTION_FULL_SPAN}
-                  description="Shown when you hover the column header. Shared with your team via kangentic.json."
                 >
                   <textarea
                     value={draft.description ?? ''}
@@ -1962,18 +1961,18 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                       </Select>
                     </SettingField>
 
-                <SettingField label="Auto-command" className={SECTION_FULL_SPAN}>
+                <SettingField label="Message to agent" className={SECTION_FULL_SPAN}>
                 <p className={`${SETTING_DESCRIPTION_CLASS} -mt-2 mb-2`}>
-                  Runs in the agent on startup, the moment a task enters this column. Supports template variables.
+                  Sent to the agent when a task enters this column.
                 </p>
                 <textarea
                   ref={autoCommandRef}
                   value={draft.auto_command ?? ''}
                   onChange={(event) => updateDraft((current) => ({ ...current, auto_command: event.target.value }))}
-                  rows={1}
-                  placeholder="/review {{title}}"
+                  rows={2}
+                  placeholder="Review the latest changes and fix any issues you find"
                   data-testid="auto-command-input"
-                  className="w-full bg-surface-control border border-edge-input rounded px-3 py-1.5 text-sm text-fg-tertiary font-mono placeholder-fg-muted focus:outline-none focus:border-accent resize-y"
+                  className="w-full bg-surface-control border border-edge-input rounded px-3 py-1.5 text-sm text-fg-tertiary placeholder-fg-muted focus:outline-none focus:border-accent resize-y"
                 />
                 {/* The field's own footer row: what you can PUT in the command
                     on the left, WHEN it runs on the right. Timing was a separate
@@ -1992,11 +1991,11 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                       does not fire the mouse events a tooltip needs. */}
                   <span
                     title={hasAutoCommandDraft
-                      ? 'Whether the command interrupts the agent or waits for it to finish what it is doing.'
-                      : 'Set an auto-command to choose when it runs.'}
+                      ? 'Whether the message interrupts the agent or waits for it to finish its current turn.'
+                      : 'Enter a message to choose when it is sent.'}
                   >
                     <SegmentedControl
-                      ariaLabel="Auto-command timing"
+                      ariaLabel="Message timing"
                       testId="auto-command-mode"
                       disabled={!hasAutoCommandDraft}
                       value={draft.auto_command_mode}

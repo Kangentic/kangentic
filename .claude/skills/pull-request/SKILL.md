@@ -1,17 +1,17 @@
 ---
-description: Create a PR and drive its CI checks to all-green (auto-fixing code and de-flaking/rewriting tests), then stop. Never merges. This is the Tests column skill. Use /merge-pull-request to merge a green PR.
+description: Create a PR and drive its CI checks to all-green (auto-fixing code and de-flaking/rewriting tests), then stop. Never merges. This is the Testing column skill. Use /merge-pull-request to merge a green PR.
 allowed-tools: Read, Glob, Grep, Edit, Write, Bash(git:*), Bash(npm:*), Bash(npx:*), Bash(gh:*), Agent
 argument-hint: [commit message]
 ---
 
 # Pull Request
 
-Commit, rebase, create a pull request, and drive its CI checks to all-green. This is the **Tests
+Commit, rebase, create a pull request, and drive its CI checks to all-green. This is the **Testing
 column** skill: it offloads the expensive and flaky test tiers (unit, UI, and the Windows Electron
 E2E tier) to GitHub Actions PR checks instead of running them on the local machine, then auto-fixes
 any failures and de-flakes any flaky tests until the PR is green and flake-free.
 
-It **never merges**. When the PR is green, the user manually moves the task Tests -> Ship It, where
+It **never merges**. When the PR is green, the user manually moves the task Testing -> Merge, where
 `/merge-pull-request` merges it and pulls the result back into the local `main` checkout.
 
 **Usage:** `/pull-request [commit message]`
@@ -231,7 +231,7 @@ Write any missing tests for the new functionality BEFORE the PR is created, so C
    `.kangentic/COMMIT_MSG.tmp` and `git commit -F .kangentic/COMMIT_MSG.tmp`.
 
 Keep this proportional: a clean no-op on a thin or trivial diff is the expected outcome, so the
-Tests column stays fast.
+Testing column stays fast.
 
 **Re-run any tests the Code Review pass added.** Those files went green when `/code-review` wrote
 them, but against the tree as it stood **then** - and Step 3 has since rebased onto a source branch
@@ -388,7 +388,7 @@ The PR is green and flake-free. Report:
 - PR URL (with link) and branch name.
 - Number of commits and any tests written (Step 3.5) or rewritten/removed (Step 7).
 - "All checks green, no flaky tests."
-- Next step: the user moves the task Tests -> Ship It, where `/merge-pull-request` merges it.
+- Next step: the user moves the task Testing -> Merge, where `/merge-pull-request` merges it.
 
 **Do NOT merge.** Merging is `/merge-pull-request`'s job.
 

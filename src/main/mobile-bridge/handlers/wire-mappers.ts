@@ -168,7 +168,21 @@ export function toTranscriptEntryWire(entry: TranscriptEntry): TranscriptEntryWi
         ...(entry.isError !== undefined ? { isError: entry.isError } : {}),
       };
     case 'system':
-      return { kind: 'system', uuid: entry.uuid, ts: entry.ts, subtype: entry.subtype, text: entry.text };
+      return {
+        kind: 'system',
+        uuid: entry.uuid,
+        ts: entry.ts,
+        // 'truncated' is desktop-only and is mapped onto the wire's
+        // 'session_boundary' rather than widening TranscriptSystemSubtypeWire.
+        // Adding a wire member would make every already-shipped mobile build
+        // receive a subtype it cannot render, and would drag a protocol release
+        // into an unrelated fix. 'session_boundary' is the right stand-in
+        // because it is the other subtype whose `text` is a ready-to-display
+        // sentence, so the phone renders the omission notice verbatim and
+        // correctly, with no schema change on either side.
+        subtype: entry.subtype === 'truncated' ? 'session_boundary' : entry.subtype,
+        text: entry.text,
+      };
   }
 }
 

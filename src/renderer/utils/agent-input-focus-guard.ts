@@ -43,6 +43,7 @@
 
 import { useEffect } from 'react';
 import { getLastFocusedTerminalSessionId, isRunningSession } from './dictation-target';
+import { applyBytesToTextTarget, isTextTarget, type TextTargetElement } from './text-target';
 
 /**
  * How long after a drive ends to keep watching for the focus move.
@@ -70,8 +71,20 @@ export function shouldArmFocusGuard(input: {
   /** The user was ALREADY working inside this pane, so a move within it is
    *  their own business rather than a steal. */
   activeInsidePane: boolean;
+  /** The active element is an eligible text input (`text-target.ts`).
+   *
+   *  This is the ONE exception to the rule above, and it is narrow on purpose.
+   *  The pane's own note input sits inside the pane, so "inside the pane" alone
+   *  read it as the user's business - but a drive steals focus out of it exactly
+   *  the way it steals focus out of a terminal, mid-sentence, and their words
+   *  then go into the page. The guest itself surfaces as the `<webview>` element
+   *  and the toolbar is buttons, so neither qualifies: a user genuinely typing
+   *  IN the page still does not arm, which matters because there is no way to
+   *  know which of the page's fields they are in. */
+  activeIsTextTarget: boolean;
 }): boolean {
   if (!input.hasActiveElement || input.activeIsBody) return false;
+  if (input.activeIsTextTarget) return true;
   return !input.activeInsidePane;
 }
 
@@ -192,6 +205,7 @@ export function useAgentInputFocusGuard({
           hasActiveElement: true,
           activeIsBody: activeElement === document.body,
           activeInsidePane: isInsidePane(activeElement, paneRef.current),
+          activeIsTextTarget: isTextTarget(activeElement),
         });
         if (!arm || !(activeElement instanceof HTMLElement)) {
           disarm();
@@ -232,32 +246,45 @@ export function useAgentInputFocusGuard({
     const unsubscribeUserKey = window.electronAPI?.browser?.onUserKeyDuringDrive?.(
       (webContentsId, data) => {
         if (webContentsId !== guestWebContentsIdRef.current) return;
-        // Route ONLY when the drive interrupted someone typing in a TERMINAL.
-        //
+        const target = restoreTarget;
+        if (!target) return;
+        // Still in the document, checked BEFORE either branch. A detached node
+        // keeps its class and its attributes, so nothing below can tell a live
+        // target from one whose window closed or whose session suspend-killed
+        // mid-drive. `restoreIfStolen` already makes this distinction; the
+        // delivery path must make it too, or a keystroke aimed at a torn-down
+        // terminal gets written somewhere else.
+        if (!document.contains(target)) return;
+
         // `restoreTarget` is what the user was actually in when the drive armed,
-        // and it is the only honest basis for this. Resolving the target
-        // ambiently instead would misroute the one case that is easy to hit: a
+        // and it is the only honest basis for routing this. Resolving the target
+        // ambiently instead would misroute the case that is easiest to hit: a
         // user typing in the pane's own note input gets their focus stolen the
         // same way, and their words would be delivered to a shell as if they had
         // been commands.
+        if (target.classList.contains('xterm-helper-textarea')) {
+          // Only the session we armed on, and only while it is still running.
+          // Both checks fail CLOSED to a dropped keystroke, which this feature
+          // already accepts: a lost character beats a misdirected one.
+          if (!isRunningSession(armedSessionId)) return;
+          void window.electronAPI.sessions.write(armedSessionId, data).catch(() => {});
+          return;
+        }
+
+        // An eligible text input (the pane's own note input today). This used to
+        // be dropped: the only delivery mechanism was PTY bytes, and prose in a
+        // live shell is worse than a lost keystroke. Writing into a controlled
+        // React input is a different mechanism, and `text-target.ts` now owns it.
         //
-        // Anything other than a terminal is dropped rather than guessed at. The
-        // keystroke is already safely out of the page, which was the point;
-        // landing a note-input keystroke back in the note input needs a
-        // different mechanism (writing into a controlled input, not PTY bytes)
-        // and is tracked separately.
-        if (!restoreTarget?.classList.contains('xterm-helper-textarea')) return;
-        // Still in the document. A detached node keeps its class, so the check
-        // above cannot tell a live terminal from one whose window closed or
-        // whose session suspend-killed mid-drive. `restoreIfStolen` already
-        // makes this distinction; the delivery path must make it too, or a
-        // keystroke aimed at a torn-down terminal gets written somewhere else.
-        if (!document.contains(restoreTarget)) return;
-        // Only the session we armed on, and only while it is still running.
-        // Both checks fail CLOSED to a dropped keystroke, which this feature
-        // already accepts: a lost character beats a misdirected one.
-        if (!isRunningSession(armedSessionId)) return;
-        void window.electronAPI.sessions.write(armedSessionId, data).catch(() => {});
+        // It decodes back only what is unambiguous - printable characters and
+        // Backspace - and drops everything else, Enter included, exactly as
+        // `encodeTerminalKey` drops what it has no safe mapping for.
+        if (isTextTarget(target)) {
+          applyBytesToTextTarget(target as TextTargetElement, data);
+          return;
+        }
+        // Anything else is still dropped rather than guessed at. The keystroke is
+        // already safely out of the page, which was the point.
       },
     );
 

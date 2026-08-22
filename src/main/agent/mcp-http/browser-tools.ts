@@ -4,6 +4,7 @@ import { z } from 'zod/v4';
 import {
   withGuest,
   validateNavigationUrl,
+  navigateGuest,
   type BrowserCapability,
   type DriverResult,
 } from '../../browser/browser-pane-driver';
@@ -13,6 +14,7 @@ import {
 } from '../../browser/browser-pane-registry';
 import { openPaneForCallerTask, closePanes } from '../../browser/browser-pane-opener';
 import type { ResolvedBrowserAutomationConfig } from '../../browser/browser-automation-config';
+import { detectDevServerError, describeDevServerError, type DevServerError } from '../../browser/dev-server-error';
 import {
   clickAtCenterOfSelector,
   dispatchMouseEvent,
@@ -80,6 +82,20 @@ export type AutomationConfigReader = () => ResolvedBrowserAutomationConfig;
  */
 export interface BrowserSessionLookup {
   getSessionTaskId(sessionId: string): string | undefined;
+  /**
+   * The task's worktree directory, so an isolated lane shares the task's
+   * browser partition and inherits whatever the user is already logged into.
+   *
+   * REQUIRED, and deliberately not optional. It shipped optional and nothing
+   * implemented it: `SessionManager` satisfies the rest of this interface
+   * structurally, so `getTaskWorktreePath?.()` returned undefined on every
+   * call and no type or test complained. A null path is NOT a graceful
+   * degradation - `browserPartitionForWorktree(null)` returns the LEGACY
+   * SHARED jar, so every lane silently landed in the one cookie jar that
+   * per-worktree isolation exists to replace (decision 1). Required makes the
+   * next wiring gap a compile error instead of a silent regression.
+   */
+  getTaskWorktreePath(taskId: string): string | null;
 }
 
 export interface BrowserToolDependencies {
@@ -111,6 +127,40 @@ function sleep(milliseconds: number): Promise<void> {
 function clampNumber(value: number | undefined, defaultValue: number, max: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return defaultValue;
   return Math.min(value, max);
+}
+
+/** How long caller-authored JavaScript may hold the guest before it is abandoned. */
+const EVALUATE_TIMEOUT_MS = 20_000;
+
+/**
+ * `runtimeEvaluate`, bounded, in the shape that function already returns.
+ *
+ * A timeout is reported as an ordinary evaluation error rather than thrown, so
+ * `kangentic_browser_eval` surfaces `evaluate-failed` exactly as it does for a
+ * page exception. Abandons rather than cancels: CDP offers no way to cancel an
+ * in-flight `Runtime.evaluate`, so the expression may still settle later - what
+ * matters is that the guest's drive lock is released.
+ */
+async function boundedEvaluate(
+  webContents: WebContents,
+  expression: string,
+): Promise<{ value: unknown; error: string | null }> {
+  let timer: NodeJS.Timeout | undefined;
+  const bounded = new Promise<{ value: null; error: string }>((resolve) => {
+    timer = setTimeout(
+      () => resolve({
+        value: null,
+        error: `The expression did not settle within ${EVALUATE_TIMEOUT_MS / 1000}s and was abandoned. It probably awaits a promise that never resolves.`,
+      }),
+      EVALUATE_TIMEOUT_MS,
+    );
+    timer.unref?.();
+  });
+  try {
+    return await Promise.race([runtimeEvaluate(webContents, expression), bounded]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 export function registerBrowserTools(
@@ -208,15 +258,25 @@ export function registerBrowserTools(
           .describe(
             "Absolute http(s) URL to load, e.g. http://localhost:5173. Omit to reuse the task's saved Browser URL, or the project default. If neither exists, pass one - a pane with no URL registers nothing and cannot be driven.",
           ),
+        isolated: z
+          .boolean()
+          .optional()
+          .describe(
+            'Open a private browser lane of your own instead of the task\'s shared pane. Use this when several agents are working on one task at the same time, so you do not fight over one viewport. The response returns a laneId - pass it as `sessionId` on EVERY later kangentic_browser_* call, or you will silently fall back to the shared pane. A lane is offscreen: it does not disturb the user\'s pane and cannot take their keyboard focus.',
+          ),
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ url }) => {
+    async ({ url, isolated }) => {
       const result = await openPaneForCallerTask({
         projectId,
         callerSessionId,
         callerTaskId,
         url,
+        isolated,
+        // A lane shares the task's worktree cookie jar, so a subagent inherits
+        // the user's existing login rather than landing on a sign-in wall.
+        cwd: callerTaskId && sessions ? sessions.getTaskWorktreePath(callerTaskId) ?? null : null,
         // Opening always loads a URL, so this is a navigation-tier action:
         // "Allow navigation" off in Settings disables this tool too.
         capability: 'navigate',
@@ -283,7 +343,9 @@ export function registerBrowserTools(
       const validated = validateNavigationUrl(url, config);
       if (!validated.ok) return errorToolResult(validated.error);
       const result = await drive<{ ok: true; url: string }>('navigate', { sessionId, taskId }, async (webContents) => {
-        await webContents.loadURL(validated.url);
+        // Bounded: an unbounded load holds the guest's drive lock against every
+        // other caller if the dev server accepts the connection and then stalls.
+        await navigateGuest(webContents, validated.url);
         return { ok: true, url: validated.url };
       }, config);
       return driverToolResult(result);
@@ -306,17 +368,35 @@ export function registerBrowserTools(
       annotations: READ_ONLY_ANNOTATIONS,
     },
     async ({ sessionId, taskId, fullPage, format, quality, maxBytes }) => {
-      const result = await drive('observe', { sessionId, taskId }, (webContents) =>
-        captureScreenshotWithBudget(webContents, {
-          format: format ?? 'jpeg',
-          quality: quality ?? (format === 'png' ? undefined : 80),
-          fullPage: fullPage === true,
-          maxBytes,
-        }),
-      );
+      // Probe for a build-error overlay in the SAME drive as the capture, so the
+      // two cannot disagree about what was on screen. Returning a picture of a
+      // full-screen error overlay is technically correct and practically
+      // useless: the agent spends a turn identifying the red rectangle, and
+      // when several agents share one dev server the one that sees the overlay
+      // usually is not the one who broke the build.
+      type ScreenshotOutcome =
+        | { blocked: DevServerError }
+        | { blocked: null; shot: Awaited<ReturnType<typeof captureScreenshotWithBudget>> };
+
+      const result = await drive<ScreenshotOutcome>('observe', { sessionId, taskId }, async (webContents) => {
+        const devServerError = await detectDevServerError(webContents);
+        if (devServerError) return { blocked: devServerError };
+        return {
+          blocked: null,
+          shot: await captureScreenshotWithBudget(webContents, {
+            format: format ?? 'jpeg',
+            quality: quality ?? (format === 'png' ? undefined : 80),
+            fullPage: fullPage === true,
+            maxBytes,
+          }),
+        };
+      });
       if (!result.ok) return errorToolResult(result.error);
-      if (!result.data) return errorToolResult({ kind: 'screenshot-failed', detail: 'Page.captureScreenshot returned no data.' });
-      return screenshotToolResult({ ok: true, data: result.data });
+      if (result.data.blocked) {
+        return errorToolResult({ kind: 'dev-server-error', detail: describeDevServerError(result.data.blocked) });
+      }
+      if (!result.data.shot) return errorToolResult({ kind: 'screenshot-failed', detail: 'Page.captureScreenshot returned no data.' });
+      return screenshotToolResult({ ok: true, data: result.data.shot });
     },
   );
 
@@ -481,26 +561,50 @@ export function registerBrowserTools(
       if (!selector && !domText) {
         return errorToolResult({ kind: 'missing-condition', detail: 'Provide a selector or domText to wait for.' });
       }
-      const result = await drive('observe', { sessionId, taskId }, async (webContents) => {
-        const timeout = clampNumber(timeoutMs, 30000, 60000);
-        const interval = clampNumber(intervalMs, 250, 5000);
-        const deadline = Date.now() + timeout;
-        while (Date.now() < deadline) {
-          if (selector) {
-            const html = await getOuterHtml(webContents, selector);
-            if (html !== null && (!domText || html.includes(domText))) {
-              return { matched: true, matchedAt: new Date().toISOString() };
-            }
-          } else if (domText) {
-            const html = await getOuterHtml(webContents, 'body');
-            if (html !== null && html.includes(domText)) {
-              return { matched: true, matchedAt: new Date().toISOString() };
-            }
-          }
-          await sleep(interval);
+      const timeout = clampNumber(timeoutMs, 30000, 60000);
+      const interval = clampNumber(intervalMs, 250, 5000);
+      const deadline = Date.now() + timeout;
+
+      // Each POLL takes the guest, not the whole wait.
+      //
+      // This body used to sit inside one `drive()` for up to 60 seconds. Once
+      // drives are serialized per guest, that would make `wait` a 60-second
+      // denial of service on the pane: any other caller's click or screenshot
+      // would queue behind it and most would hit the acquisition bound. A poll
+      // is a single DOM read, so acquiring per poll costs one extra lock
+      // round-trip and lets other work interleave between polls, which is the
+      // correct granularity - the waiting is not driving.
+      //
+      // The sleep happens OUTSIDE the lock deliberately. At the default 250ms
+      // interval the drive-burst quiet window (400ms) keeps the burst open
+      // across polls, so the pane does not flap. At a longer interval the burst
+      // legitimately closes between polls, which is also right: an agent
+      // sleeping five seconds between DOM reads is not driving the pane, and
+      // the user should get their focus back.
+      let result: DriverResult<{ matched: boolean; matchedAt?: string; timedOutAfterMs?: number }> | null = null;
+      for (;;) {
+        result = await drive('observe', { sessionId, taskId }, async (webContents) => {
+          const target = selector ?? 'body';
+          const html = await getOuterHtml(webContents, target);
+          const hit = selector
+            ? html !== null && (!domText || html.includes(domText))
+            : html !== null && !!domText && html.includes(domText);
+          return hit
+            ? { matched: true, matchedAt: new Date().toISOString() }
+            : { matched: false };
+        });
+
+        // A refusal (pane gone, busy, policy) ends the wait immediately rather
+        // than being retried until the deadline: re-polling a pane that has
+        // been destroyed just burns the full timeout to report the same thing.
+        if (!result.ok) break;
+        if (result.data.matched) break;
+        if (Date.now() >= deadline) {
+          result = { ok: true, data: { matched: false, timedOutAfterMs: timeout } };
+          break;
         }
-        return { matched: false, timedOutAfterMs: timeout };
-      });
+        await sleep(interval);
+      }
       return driverToolResult(result);
     },
   );
@@ -651,7 +755,16 @@ export function registerBrowserTools(
     },
     async ({ sessionId, taskId, expression }) => {
       const result = await drive('eval', { sessionId, taskId }, (webContents) =>
-        runtimeEvaluate(webContents, expression),
+        // Bounded, because this is the one body that runs CALLER-AUTHORED page
+        // JavaScript and `runtimeEvaluate` defaults to `awaitPromise: true`. An
+        // expression that never settles (`new Promise(() => {})`, an await on an
+        // unreachable host) holds the guest's drive lock forever: the drive lock
+        // bounds ACQUISITION only, so once the body starts it runs to
+        // completion, and every later call on that guest then fails with
+        // GuestBusyError until the app restarts. The other `runtimeEvaluate`
+        // callers pass fixed, short probes, so the bound lives here rather than
+        // in the shared CDP driver, which the dev inspection bridge also uses.
+        boundedEvaluate(webContents, expression),
       );
       if (result.ok && result.data.error) {
         return errorToolResult({ kind: 'evaluate-failed', detail: result.data.error });

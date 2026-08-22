@@ -3,7 +3,7 @@
  *
  * Covers scenarios introduced by the priority-ordered TASK_MOVE handler:
  *  1. To Do → non-agent column (Code Review) spawns a fresh session
- *  2. Active session survives moves between same-permission columns (Executing → Code Review → Tests)
+ *  2. Active session survives moves between same-permission columns (Executing → Code Review → Testing)
  *  3. Done → unarchive to non-agent column (Code Review) resumes suspended session
  *
  * Uses the mock Claude CLI (tests/fixtures/mock-claude) which outputs
@@ -201,7 +201,7 @@ test.describe('Claude Agent -- Session Move Lifecycle', () => {
     expect(taskSession).toBeTruthy();
   });
 
-  test('active session survives move between same-permission columns (Executing → Code Review → Tests)', async () => {
+  test('active session survives move between same-permission columns (Executing → Code Review → Testing)', async () => {
     const title = `Survive Move ${runId}`;
     await createTask(page, title, 'Test session survives same-permission move');
 
@@ -243,14 +243,14 @@ test.describe('Claude Agent -- Session Move Lifecycle', () => {
     expect(sessionAfterReview).toBeTruthy();
     expect(sessionAfterReview.id).toBe(sessionIdBefore);
 
-    // Move to Tests → session still alive
-    await moveTask(page, taskId, lanes['Tests']);
+    // Move to Testing → session still alive
+    await moveTask(page, taskId, lanes['Testing']);
     await expect.poll(async () => {
       return page.evaluate(async (tid) => {
         const tasks = await window.electronAPI.tasks.list();
         return tasks.find((t: { id: string; swimlane_id: string }) => t.id === tid)?.swimlane_id;
       }, taskId);
-    }, { timeout: 3000 }).toBe(lanes['Tests']);
+    }, { timeout: 3000 }).toBe(lanes['Testing']);
 
     const sessionAfterRunning = await page.evaluate(async (tid) => {
       const sessions = await window.electronAPI.sessions.list();

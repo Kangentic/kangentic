@@ -22,10 +22,19 @@
  * perform the same shallow merge a real reconciler would, so `handleRetry`'s
  * real body runs untouched and its effect on `instance.state` is directly
  * observable.
+ *
+ * This file also covers `componentDidCatch`'s analytics wiring for BOTH
+ * `PanelErrorBoundary` and the root `ErrorBoundary`. `componentDidCatch` is a
+ * plain instance method (no reconciler needed to call it), and
+ * `window.electronAPI` is stubbed with `vi.stubGlobal` the same way
+ * `dictation-sink.test.ts` stubs `window` for a DOM-less unit test. Coverage
+ * hole this closes: if either boundary's second `trackRendererError`
+ * argument were ever dropped, no existing test would fail.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import React from 'react';
 import { PanelErrorBoundary } from '../../src/renderer/components/PanelErrorBoundary';
+import { ErrorBoundary } from '../../src/renderer/components/ErrorBoundary';
 
 interface BoundaryState {
   hasError: boolean;
@@ -163,5 +172,88 @@ describe('PanelErrorBoundary', () => {
     // Do NOT invoke the click handler: jsdom is not available here, and
     // handleReload calls the real window.location.reload(), which is
     // neither implemented nor safe to trigger in a unit test process.
+  });
+});
+
+describe('componentDidCatch analytics wiring', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function stubTrackRendererError(): ReturnType<typeof vi.fn> {
+    const trackRendererError = vi.fn();
+    vi.stubGlobal('window', { electronAPI: { analytics: { trackRendererError } } });
+    return trackRendererError;
+  }
+
+  it('PanelErrorBoundary forwards boundary "panel", the label prop as panel, and the component stack', () => {
+    const trackRendererError = stubTrackRendererError();
+    // componentDidCatch also calls console.error; silence it so the test's
+    // own output stays clean, as instructed by the established pattern.
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const children = React.createElement('span', null, 'child content');
+    const instance = new PanelErrorBoundary({ children, label: 'Changes panel' });
+
+    instance.componentDidCatch(new Error('Cannot read properties of undefined (reading map)'), {
+      componentStack: '\n    at Foo (x)\n    at Bar (y)',
+    });
+
+    // The real production label ('Changes panel') must land in `panel`, not
+    // just any string - this is the specific regression Hole 2 calls out:
+    // PanelErrorBoundary forwarding its OWN `label` prop, not a hardcoded one.
+    expect(trackRendererError).toHaveBeenCalledTimes(1);
+    expect(trackRendererError).toHaveBeenCalledWith(
+      'Cannot read properties of undefined (reading map)',
+      {
+        boundary: 'panel',
+        panel: 'Changes panel',
+        componentStack: '\n    at Foo (x)\n    at Bar (y)',
+      },
+    );
+
+    consoleErrorSpy.mockRestore();
+  });
+
+  it('PanelErrorBoundary forwards panel: undefined when no label prop is given', () => {
+    const trackRendererError = stubTrackRendererError();
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const children = React.createElement('span', null, 'child content');
+    const instance = new PanelErrorBoundary({ children });
+
+    instance.componentDidCatch(new Error('boom'), { componentStack: '\n    at Foo (x)' });
+
+    expect(trackRendererError).toHaveBeenCalledWith('boom', {
+      boundary: 'panel',
+      panel: undefined,
+      componentStack: '\n    at Foo (x)',
+    });
+
+    consoleErrorSpy.mockRestore();
+  });
+
+  it('ErrorBoundary sends boundary "root" with the component stack, and no panel field', () => {
+    const trackRendererError = stubTrackRendererError();
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const children = React.createElement('span', null, 'child content');
+    const instance = new ErrorBoundary({ children });
+
+    instance.componentDidCatch(new Error('Something went wrong'), {
+      componentStack: '\n    at App (x)',
+    });
+
+    expect(trackRendererError).toHaveBeenCalledTimes(1);
+    expect(trackRendererError).toHaveBeenCalledWith('Something went wrong', {
+      boundary: 'root',
+      componentStack: '\n    at App (x)',
+    });
+    // ErrorBoundary's context never carries a `panel` key at all - unlike
+    // PanelErrorBoundary, which always sets it (to undefined without a label).
+    const [, context] = trackRendererError.mock.calls[0];
+    expect(context).not.toHaveProperty('panel');
+
+    consoleErrorSpy.mockRestore();
   });
 });

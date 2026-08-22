@@ -13,6 +13,8 @@ interface ExistingChunkRow {
   id: number;
   seq: number;
   content_hash: string;
+  turn_uuid_start: string | null;
+  turn_uuid_end: string | null;
 }
 
 interface StoredChunkRow {
@@ -99,7 +101,7 @@ export class RetrievalStore {
     const run = this.db.transaction(() => {
       const existing = this.db
         .prepare(
-          'SELECT id, seq, content_hash FROM memory_chunks WHERE corpus = ? AND doc_id = ? ORDER BY seq ASC',
+          'SELECT id, seq, content_hash, turn_uuid_start, turn_uuid_end FROM memory_chunks WHERE corpus = ? AND doc_id = ? ORDER BY seq ASC',
         )
         .all(ref.corpus, ref.docId) as ExistingChunkRow[];
       const existingBySeq = new Map<number, ExistingChunkRow>();
@@ -137,6 +139,37 @@ export class RetrievalStore {
            embedded_model, meta_json, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
       );
+      // Re-anchor the identical leading prefix. Those rows are left in place to
+      // preserve their embeddings, but `content_hash` is `sha1(text)` only, so a
+      // chunk whose TEXT is unchanged while its turn uuids changed looks
+      // identical to the diff above and would keep its old anchors forever. That
+      // is not hypothetical: it is what a uuid-scheme change produces, and it is
+      // why "Rebuild index" (`resetIndexState`) could not repair one. Updating
+      // these two columns fires no FTS trigger (that one is `AFTER UPDATE OF
+      // text`) and leaves `content_hash` alone, so nothing is re-embedded.
+      //
+      // Reach, precisely: this repairs a document only on a pass that actually
+      // re-parses it. A sweep SKIPS a session whose source signature is
+      // unchanged (`needsIndex`), so a finished session is repaired only once
+      // "Rebuild index" clears the state rows and forces the re-parse. A
+      // session whose transcript is GONE is never repaired at all: it returns
+      // `missing-source` before reaching here and keeps its chunks, and
+      // `entriesFromIndex` is exactly what serves those stale anchors to the
+      // viewer. Both populations degrade gracefully (an unresolvable anchor
+      // opens the full transcript), but neither self-heals.
+      const reanchor = this.db.prepare(
+        'UPDATE memory_chunks SET turn_uuid_start = ?, turn_uuid_end = ? WHERE id = ?',
+      );
+      for (const chunk of chunks) {
+        if (chunk.seq >= divergence) continue;
+        const stored = existingBySeq.get(chunk.seq);
+        if (!stored) continue;
+        if (stored.turn_uuid_start === chunk.turnUuidStart && stored.turn_uuid_end === chunk.turnUuidEnd) {
+          continue;
+        }
+        reanchor.run(chunk.turnUuidStart, chunk.turnUuidEnd, stored.id);
+      }
+
       for (const chunk of chunks) {
         if (chunk.seq < divergence) continue;
         const result = insert.run(

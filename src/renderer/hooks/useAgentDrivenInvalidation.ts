@@ -9,19 +9,29 @@
  *     single reload).
  *   - Otherwise mark the target project's cache as stale so the next
  *     warm switch refetches instead of restoring obsolete data.
- *   - Toast unconditionally (the toast is live user feedback regardless
- *     of which project is open).
+ *   - Toast if the push is agent-driven news (the toast is live user
+ *     feedback regardless of which project is open).
  *
- * Why a hook and not inline in App.tsx: the five listeners share the
+ * Why a hook and not inline in App.tsx: these listeners share the
  * identical decision pattern (current vs background project) and the
  * shared 250ms debouncers. Co-locating them keeps the invalidation
  * policy reviewable in one place rather than spread across 100 lines
  * of repetitive IPC wiring in App.tsx.
  *
- * `onSessionResync` is the deliberate exception to "toast unconditionally"
- * below: it fires after a column-model-change restart to keep the board
- * store's task.session_id current, which is a board-consistency reconcile
- * the user already knows they triggered, not agent-driven news.
+ * Whether a push toasts is decided by PROVENANCE, not volume: a change an
+ * agent made is news, a reconcile the app performed is not. Two channels
+ * exist purely to carry the quiet half, and both invalidate without toasting:
+ *   - `onSessionResync` fires after a column-model-change restart (and the
+ *     orphan-worktree prune, and auto-spawn reconcile) to keep the board
+ *     store's task.session_id current - a board-consistency reconcile the
+ *     user already knows they triggered.
+ *   - `onPrLinkChanged` fires when the app resolved a task's PR link itself:
+ *     the refresh sweep, the session-idle auto-link, the re-resolve that
+ *     follows a link write, or the task-detail "Link / refresh PR" control.
+ *     Landing one PR used to raise three "Task updated by agent" toasts per
+ *     task, two of them announcing a round trip that netted to no change.
+ * (`backlog.onChangedByAgent` and `onLabelColorsChanged` are also silent, but
+ * for a different reason: neither push names a subject worth announcing.)
  *
  * Not included here (and intentionally left in App.tsx):
  *   - `tasks.onAutoMoved`: agent-driven but tangled with notification
@@ -169,6 +179,27 @@ export function useAgentDrivenInvalidation(): void {
         }
         // Deliberately no toast: this is a quiet board-consistency reconcile
         // after the user's own column model-change restart, not agent news.
+      }));
+    }
+
+    if (tasks?.onPrLinkChanged) {
+      cleanups.push(tasks.onPrLinkChanged((prLinkProjectId) => {
+        const activeProjectId = useProjectStore.getState().currentProject?.id;
+        const matchesActiveProject = !prLinkProjectId || prLinkProjectId === activeProjectId;
+        console.debug('[agent-push] task:prLinkChanged received', {
+          pushProjectId: prLinkProjectId,
+          activeProjectId,
+          action: matchesActiveProject ? 'reload' : 'invalidate-cache',
+        });
+        if (matchesActiveProject) {
+          scheduleBoardReload();
+        } else {
+          invalidateProject(prLinkProjectId);
+        }
+        // Deliberately no toast: the app resolved this PR link itself, so no
+        // agent updated the task. The board still reloads because the card's
+        // PR chip is stale. The agent's own update_task / link_pr call arrives
+        // separately on onUpdatedByAgent and does toast.
       }));
     }
 

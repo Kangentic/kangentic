@@ -72,8 +72,8 @@ test.describe('BoardManagerDialog', () => {
     await nameInput.fill('Reviews');
 
     // Switching to a different tab keeps Code Review's name change.
-    await page.locator('[data-testid="board-manager-tab"][data-tab-name="Tests"]').click();
-    await expect(nameInput).toHaveValue('Tests');
+    await page.locator('[data-testid="board-manager-tab"][data-tab-name="Testing"]').click();
+    await expect(nameInput).toHaveValue('Testing');
 
     await page.locator('[data-testid="board-manager-tab"][data-tab-name="Code Review"]').click();
     await expect(nameInput).toHaveValue('Reviews');
@@ -98,7 +98,7 @@ test.describe('BoardManagerDialog', () => {
     await openManagerByHeader('Code Review');
     await page.locator('[data-testid="board-manager-name"]').fill('Reviews');
 
-    await page.locator('[data-testid="board-manager-tab"][data-tab-name="Tests"]').click();
+    await page.locator('[data-testid="board-manager-tab"][data-tab-name="Testing"]').click();
     await page.locator('[data-testid="board-manager-name"]').fill('QA');
 
     await page.locator('[data-testid="board-manager-save"]').click();
@@ -113,7 +113,7 @@ test.describe('BoardManagerDialog', () => {
     await page.locator('[data-testid="board-manager-name"]').fill('Code Review');
     // Tab name on reopen is the current store name ("QA"), not the original.
     await page.locator('[data-testid="board-manager-tab"][data-tab-name="QA"]').click();
-    await page.locator('[data-testid="board-manager-name"]').fill('Tests');
+    await page.locator('[data-testid="board-manager-name"]').fill('Testing');
     await page.locator('[data-testid="board-manager-save"]').click();
     await page.locator('[data-testid="board-manager-dialog"]').waitFor({ state: 'detached', timeout: 3000 });
   });

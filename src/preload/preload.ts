@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '../shared/ipc-channels';
-import type { ElectronAPI, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, SessionEvent, UpdateDownloadedInfo, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, BrowserDownloadDone } from '../shared/types';
+import type { ElectronAPI, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, SessionEvent, UpdateDownloadedInfo, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, BrowserDownloadDone, GuestMouseButtonEvent, RendererErrorContext } from '../shared/types';
 import type { AnnouncementsChangedPayload } from '../shared/announcements';
 import { POPOUT_ARG_PREFIX } from '../shared/pop-out';
 import type { PopOutDescriptor, PopOutKind, PopOutParamsByKind } from '../shared/pop-out';
@@ -136,6 +136,12 @@ const api: ElectronAPI = {
         callback(projectId);
       ipcRenderer.on(IPC.TASK_SESSION_RESYNC, handler);
       return () => ipcRenderer.removeListener(IPC.TASK_SESSION_RESYNC, handler);
+    },
+    onPrLinkChanged: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, projectId?: string) =>
+        callback(projectId);
+      ipcRenderer.on(IPC.TASK_PR_LINK_CHANGED, handler);
+      return () => ipcRenderer.removeListener(IPC.TASK_PR_LINK_CHANGED, handler);
     },
     onSpawnProgress: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, taskId: string, label: string | null) =>
@@ -465,7 +471,8 @@ const api: ElectronAPI = {
   },
 
   analytics: {
-    trackRendererError: (message: string) => ipcRenderer.send(IPC.TRACK_RENDERER_ERROR, message),
+    trackRendererError: (message: string, context?: RendererErrorContext) =>
+      ipcRenderer.send(IPC.TRACK_RENDERER_ERROR, message, context),
   },
 
   app: {
@@ -647,6 +654,12 @@ const api: ElectronAPI = {
         callback(webContentsId, data);
       ipcRenderer.on(IPC.BROWSER_USER_KEY_DURING_DRIVE, handler);
       return () => ipcRenderer.removeListener(IPC.BROWSER_USER_KEY_DURING_DRIVE, handler);
+    },
+    onGuestMouseButton: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: GuestMouseButtonEvent) =>
+        callback(payload);
+      ipcRenderer.on(IPC.BROWSER_GUEST_MOUSE_BUTTON, handler);
+      return () => ipcRenderer.removeListener(IPC.BROWSER_GUEST_MOUSE_BUTTON, handler);
     },
   },
 
