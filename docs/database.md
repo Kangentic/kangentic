@@ -834,6 +834,15 @@ Project removal releases that project's ports too, but does so with raw SQL insi
 delete has to be atomic with it), so there is deliberately no `releaseForProject`
 here.
 
+Every method above **fails soft**: if the global database cannot be opened, each
+returns its empty answer (`[]`, `null`, `false`) and logs once, rather than
+throwing. That is a design property, not a convenience. This table is in the
+GLOBAL database while its callers are per-project TASK paths - resolving
+`{{port}}`, deleting a task - so a throw here would take an unrelated task
+operation down with it. A row is advisory anyway (the bind probe is the
+authority), so "the ledger is unreachable" correctly reads as "this task holds
+no reservations".
+
 ## Connection Management
 
 - `getGlobalDb()` -- singleton, created on first access.

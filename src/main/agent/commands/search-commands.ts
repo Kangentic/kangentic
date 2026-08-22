@@ -338,11 +338,12 @@ export const handleGetCurrentTask: CommandHandler = (
     prUrl: task.pr_url,
     useWorktree: task.use_worktree,
     status: task.archived_at ? 'completed' : 'active',
-    // Ports this task has already RESERVED, so an agent recovers them after a
-    // resume instead of reserving again. Usually empty: nothing is reserved
-    // until something asks (kangentic_reserve_dev_ports), because a project
-    // configures its own ports and a number Kangentic invents means nothing to
-    // it.
+    // Deliberately no reserved-port field here. This serializer is a
+    // per-project read and the ledger lives in the GLOBAL database, so
+    // reporting ports made every task lookup depend on a second database - and
+    // `matches.map(toData)` below turned that into one global query per matched
+    // task. `kangentic_check_dev_ports` answers the question properly, and
+    // probes each port besides.
   });
 
   if (matches.length === 0) {
