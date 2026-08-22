@@ -5,7 +5,6 @@ import { listActiveSwimlanes } from './column-resolver';
 import { BACKLOG_PRIORITY_LABELS } from '../../../shared/types';
 import type { Task, BacklogTask } from '../../../shared/types';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
-import { getDevPortsForTask } from '../../dev-ports/dev-port-allocator';
 
 export type SearchScope = 'board' | 'backlog' | 'both';
 
@@ -344,7 +343,6 @@ export const handleGetCurrentTask: CommandHandler = (
     // until something asks (kangentic_reserve_dev_ports), because a project
     // configures its own ports and a number Kangentic invents means nothing to
     // it.
-    devPorts: getDevPortsForTask(task.id),
   });
 
   if (matches.length === 0) {

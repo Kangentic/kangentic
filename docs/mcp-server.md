@@ -325,7 +325,7 @@ Resolve the task that corresponds to the current working directory and/or git br
 | `cwd` | string | No | Absolute working directory path. The tool extracts the worktree folder name from `.kangentic/worktrees/<folder>` and matches against `tasks.worktree_path`. |
 | `branch` | string | No | Current git branch name. Exact (case-insensitive) match against `tasks.branch_name`. |
 
-At least one parameter is required. Returns the same task fields as `kangentic_find_task` (id, displayId, title, description, column, branchName, baseBranch, worktreePath, prNumber, prUrl, useWorktree, status, devPorts). `devPorts` is the ports this task has reserved, lowest first, and is normally an EMPTY array - nothing is reserved until something calls `kangentic_reserve_dev_ports`. Returns `data: null` when no match is found, a single task object when one matches, or an array when multiple tasks match.
+At least one parameter is required. Returns the same task fields as `kangentic_find_task` (id, displayId, title, description, column, branchName, baseBranch, worktreePath, prNumber, prUrl, useWorktree, status). It deliberately does NOT report reserved ports: this serializer is a per-project read and the ledger is in the GLOBAL database, so including them made every task lookup depend on a second database and cost one query per matched task. Use `kangentic_check_dev_ports`, which answers that question and probes each port besides. Returns `data: null` when no match is found, a single task object when one matches, or an array when multiple tasks match.
 
 ### kangentic_board_summary
 

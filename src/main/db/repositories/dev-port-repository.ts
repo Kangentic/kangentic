@@ -11,7 +11,44 @@ import type { DevPortLease } from '../../../shared/types';
  * usable" is an actual bind probe (see `dev-port-allocator.ts`), which is what
  * makes an orphaned lease self-correcting rather than a permanently burned
  * port.
+ *
+ * ## Every method FAILS SOFT, and that is a design property
+ *
+ * This table lives in the GLOBAL database while its callers are per-project
+ * task paths: serializing a task, resolving `{{port}}`, deleting a task. That
+ * coupling is unavoidable (ports are machine-wide) but it must never be load
+ * bearing - a task delete cannot fail because a ledger of advisory rows was
+ * unreachable, and a spawn cannot fail because a port lookup threw.
+ *
+ * It shipped throwing, and CI caught it: `better-sqlite3` is an Electron ABI
+ * build, so under plain Node `getGlobalDb()` throws NODE_MODULE_VERSION on the
+ * first call. Fourteen tests across five files that had nothing to do with dev
+ * ports went red, because touching a task now reached this table. A read that
+ * degrades to "no reservations" is the correct answer for an advisory ledger;
+ * a throw that takes the caller down with it never was.
  */
+
+/**
+ * Run a ledger query, degrading to `fallback` if the global database cannot be
+ * reached. Logged ONCE per process: the failure is a standing condition, not a
+ * per-call event, and a line per task serialization would bury everything else.
+ */
+let ledgerUnavailableLogged = false;
+function softly<T>(operation: string, fallback: T, run: () => T): T {
+  try {
+    return run();
+  } catch (error) {
+    if (!ledgerUnavailableLogged) {
+      ledgerUnavailableLogged = true;
+      console.warn(
+        `[dev-ports] Reservation ledger unavailable (${operation}); treating every task as holding `
+        + 'no ports. Reservations will not persist until the global database is reachable.',
+        error,
+      );
+    }
+    return fallback;
+  }
+}
 
 interface DevPortRow {
   port: number;
@@ -37,11 +74,13 @@ function rowToLease(row: DevPortRow): DevPortLease {
 export class DevPortRepository {
   /** Every port this task holds, lowest first. A task may hold several. */
   listForTask(taskId: string): DevPortLease[] {
-    const db = getGlobalDb();
-    const rows = db
-      .prepare('SELECT * FROM dev_ports WHERE task_id = ? ORDER BY port ASC')
-      .all(taskId) as DevPortRow[];
-    return rows.map(rowToLease);
+    return softly('listForTask', [], () => {
+      const db = getGlobalDb();
+      const rows = db
+        .prepare('SELECT * FROM dev_ports WHERE task_id = ? ORDER BY port ASC')
+        .all(taskId) as DevPortRow[];
+      return rows.map(rowToLease);
+    });
   }
 
   /** The task's lowest-numbered reservation, or null. */
@@ -50,11 +89,13 @@ export class DevPortRepository {
   }
 
   getByPort(port: number): DevPortLease | null {
-    const db = getGlobalDb();
-    const row = db
-      .prepare('SELECT * FROM dev_ports WHERE port = ?')
-      .get(port) as DevPortRow | undefined;
-    return row ? rowToLease(row) : null;
+    return softly('getByPort', null, () => {
+      const db = getGlobalDb();
+      const row = db
+        .prepare('SELECT * FROM dev_ports WHERE port = ?')
+        .get(port) as DevPortRow | undefined;
+      return row ? rowToLease(row) : null;
+    });
   }
 
   /**
@@ -66,19 +107,23 @@ export class DevPortRepository {
    * A task may hold several ports, so only the PORT is unique here.
    */
   claim(port: number, projectId: string, taskId: string): boolean {
-    const db = getGlobalDb();
-    const result = db
-      .prepare(
-        `INSERT OR IGNORE INTO dev_ports (port, project_id, task_id, allocated_at)
-         VALUES (?, ?, ?, ?)`,
-      )
-      .run(port, projectId, taskId, new Date().toISOString());
-    return result.changes > 0;
+    return softly('claim', false, () => {
+      const db = getGlobalDb();
+      const result = db
+        .prepare(
+          `INSERT OR IGNORE INTO dev_ports (port, project_id, task_id, allocated_at)
+           VALUES (?, ?, ?, ?)`,
+        )
+        .run(port, projectId, taskId, new Date().toISOString());
+      return result.changes > 0;
+    });
   }
 
   releaseByTaskId(taskId: string): void {
-    const db = getGlobalDb();
-    db.prepare('DELETE FROM dev_ports WHERE task_id = ?').run(taskId);
+    softly('releaseByTaskId', undefined, () => {
+      const db = getGlobalDb();
+      db.prepare('DELETE FROM dev_ports WHERE task_id = ?').run(taskId);
+    });
   }
 }
 
