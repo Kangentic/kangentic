@@ -591,6 +591,179 @@ describe('runSearchEverything', () => {
       }
     });
 
+    it('ranks the archived tiebreak last even when the archived match has a smaller display_id', async () => {
+      // ticketFixtureTasks above is NOT discriminating for the archived tiebreak:
+      // its only archived match (#400) is also the numerically LARGEST match, so
+      // plain ascending order already puts it last - deleting the
+      // `firstArchived`/`secondArchived` comparator lines entirely still yields
+      // [4, 40, 41, 400]. This fixture flips that: the archived match (#40) is
+      // numerically SMALLER than a non-archived match sharing the same prefix
+      // (#41), so only the archived-last tiebreak (not ascending display_id) can
+      // produce the expected order. The fixture's input order is also scrambled
+      // (#40 first, not last) so a hypothetical "sort removed entirely" mutation
+      // does not vacuously pass by matching input order.
+      const archivedTiebreakFixtureTasks = [
+        { id: 'task-tiebreak-40', display_id: 40, title: 'Forty, archived', description: '', archived_at: '2026-04-15T00:00:00Z' },
+        { id: 'task-tiebreak-4', display_id: 4, title: 'Exact four', description: '', archived_at: null },
+        { id: 'task-tiebreak-41', display_id: 41, title: 'Forty one, still active', description: '', archived_at: null },
+      ];
+      const project = makeProject({ path: tempProjectRoot });
+      const fixture: FakeProjectFixture = { project, tasks: archivedTiebreakFixtureTasks, backlog: [], sessions: [] };
+      const db = makeMockDb(fixture);
+
+      const hits = await runSearchEverything({
+        query: '#4',
+        projects: [project],
+        includeProjectHits: false,
+        getDb: () => db,
+      });
+
+      const order = hits.map((hit) => (hit.kind === 'task' ? hit.displayId : -1));
+      // Correct comparator: non-archived first (#4 exact, then #41 ascending),
+      // archived last (#40). A reverted comparator (no archived tiebreak, plain
+      // exact-then-ascending) would instead yield [4, 40, 41] - #40 sorting
+      // before #41 purely on numeric value - which is what this test catches.
+      expect(order).toEqual([4, 41, 40]);
+      const archivedHit = hits[hits.length - 1];
+      if (archivedHit.kind === 'task') {
+        expect(archivedHit.displayId).toBe(40);
+        expect(archivedHit.archived).toBe(true);
+      }
+    });
+
+    it('collects ticket hits from multiple projects for a #<digits> query', async () => {
+      // Mirrors "collects hits from multiple projects under scope=all" above but
+      // for the ticket short-circuit path in runSearchEverything. Every existing
+      // ticket test above passes projects: [project] (a single project), so
+      // nothing exercises the `for (const project of input.projects)` loop in
+      // the ticket branch; a regression that only scanned input.projects[0]
+      // would still pass every prior ticket test.
+      const ticketProjectAlphaRoot = path.join(tempProjectRoot, 'ticket-alpha');
+      const ticketProjectBetaRoot = path.join(tempProjectRoot, 'ticket-beta');
+      fs.mkdirSync(ticketProjectAlphaRoot, { recursive: true });
+      fs.mkdirSync(ticketProjectBetaRoot, { recursive: true });
+
+      const ticketProjectAlpha = makeProject({
+        id: '55555555-5555-4555-8555-555555555555',
+        name: 'TicketAlpha',
+        path: ticketProjectAlphaRoot,
+      });
+      const ticketProjectBeta = makeProject({
+        id: '66666666-6666-4666-8666-666666666666',
+        name: 'TicketBeta',
+        path: ticketProjectBetaRoot,
+      });
+
+      const ticketAlphaFixture: FakeProjectFixture = {
+        project: ticketProjectAlpha,
+        tasks: [{ id: 'task-alpha-4', display_id: 4, title: 'Alpha four', description: '', archived_at: null }],
+        backlog: [],
+        sessions: [],
+      };
+      const ticketBetaFixture: FakeProjectFixture = {
+        project: ticketProjectBeta,
+        tasks: [{ id: 'task-beta-41', display_id: 41, title: 'Beta forty one', description: '', archived_at: null }],
+        backlog: [],
+        sessions: [],
+      };
+      const ticketAlphaDb = makeMockDb(ticketAlphaFixture);
+      const ticketBetaDb = makeMockDb(ticketBetaFixture);
+
+      const hits = await runSearchEverything({
+        query: '#4',
+        projects: [ticketProjectAlpha, ticketProjectBeta],
+        includeProjectHits: false,
+        getDb: (projectId: string) => {
+          if (projectId === ticketProjectAlpha.id) return ticketAlphaDb;
+          return ticketBetaDb;
+        },
+      });
+
+      const taskHits = hits.filter((hit) => hit.kind === 'task');
+      expect(taskHits.length).toBe(2);
+      const projectIds = taskHits.map((hit) => hit.projectId).sort();
+      expect(projectIds).toEqual([ticketProjectAlpha.id, ticketProjectBeta.id].sort());
+    });
+
+    it('shares the task budget across projects for a ticket query, so project order decides who survives the cap', async () => {
+      // Mirrors "stops collecting ticket hits once the per-kind budget is
+      // exhausted" above, but with TWO projects, to prove the budget is a
+      // SINGLE shared counter threaded across the `for (const project of
+      // input.projects)` loop, not one budget.task allowance re-granted per
+      // project. If pushTaskHitsByDisplayId were (incorrectly) called with a
+      // fresh copy of the budget per project, project Beta's task would still
+      // appear even after project Alpha alone exhausts PER_KIND_CAP.task; under
+      // the correct shared-budget behavior it must not.
+      const { PER_KIND_CAP } = await import('../../src/main/search/search-core');
+      const budgetProjectAlphaRoot = path.join(tempProjectRoot, 'budget-alpha');
+      const budgetProjectBetaRoot = path.join(tempProjectRoot, 'budget-beta');
+      fs.mkdirSync(budgetProjectAlphaRoot, { recursive: true });
+      fs.mkdirSync(budgetProjectBetaRoot, { recursive: true });
+
+      const budgetProjectAlpha = makeProject({
+        id: '77777777-7777-4777-8777-777777777777',
+        name: 'BudgetAlpha',
+        path: budgetProjectAlphaRoot,
+      });
+      const budgetProjectBeta = makeProject({
+        id: '88888888-8888-4888-8888-888888888888',
+        name: 'BudgetBeta',
+        path: budgetProjectBetaRoot,
+      });
+
+      const taskCount = PER_KIND_CAP.task + 5;
+      // All display_ids are in the 1000s range so every one matches the "#1"
+      // query prefix, and none equals exactValue (1), so the sort stays plain
+      // ascending within project Alpha's fixture.
+      const budgetAlphaTasks = Array.from({ length: taskCount }, (_, index) => ({
+        id: `alpha-ticket-budget-${index}`,
+        display_id: 1000 + index,
+        title: `alpha ticket budget task ${index}`,
+        description: '',
+        archived_at: null,
+      }));
+      const budgetBetaTasks = [
+        { id: 'beta-ticket-budget-0', display_id: 1999, title: 'beta ticket budget task', description: '', archived_at: null },
+      ];
+
+      const budgetAlphaFixture: FakeProjectFixture = { project: budgetProjectAlpha, tasks: budgetAlphaTasks, backlog: [], sessions: [] };
+      const budgetBetaFixture: FakeProjectFixture = { project: budgetProjectBeta, tasks: budgetBetaTasks, backlog: [], sessions: [] };
+      const budgetAlphaDb = makeMockDb(budgetAlphaFixture);
+      const budgetBetaDb = makeMockDb(budgetBetaFixture);
+
+      const getDb = (projectId: string) => {
+        if (projectId === budgetProjectAlpha.id) return budgetAlphaDb;
+        return budgetBetaDb;
+      };
+
+      const hits = await runSearchEverything({
+        query: '#1',
+        projects: [budgetProjectAlpha, budgetProjectBeta],
+        includeProjectHits: false,
+        getDb,
+      });
+
+      const taskHits = hits.filter((hit) => hit.kind === 'task');
+      expect(taskHits.length).toBe(PER_KIND_CAP.task);
+      // Every surviving hit came from project Alpha; the shared budget hit zero
+      // before project Beta's turn in the loop, so Beta contributes nothing
+      // despite its own task also matching the "#1" prefix.
+      expect(taskHits.every((hit) => hit.kind === 'task' && hit.projectId === budgetProjectAlpha.id)).toBe(true);
+
+      // Vacuous-pass guard: confirm project Beta's task DOES match the "#1"
+      // prefix on its own (isolated from Alpha's budget pressure), so the
+      // "Beta contributes nothing" assertion above is actually proving the
+      // shared budget, not just a fixture that never matched in the first place.
+      const betaOnlyHits = await runSearchEverything({
+        query: '#1',
+        projects: [budgetProjectBeta],
+        includeProjectHits: false,
+        getDb,
+      });
+      const betaOnlyTaskHits = betaOnlyHits.filter((hit) => hit.kind === 'task');
+      expect(betaOnlyTaskHits.length).toBe(1);
+    });
+
     it('returns no hits when no display_id matches the prefix', async () => {
       const project = makeProject({ path: tempProjectRoot });
       const fixture: FakeProjectFixture = { project, tasks: ticketFixtureTasks, backlog: [], sessions: [] };

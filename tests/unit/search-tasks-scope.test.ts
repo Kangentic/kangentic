@@ -298,6 +298,35 @@ describe('handleSearchTasks - #<number> ticket search', () => {
     expect(mockBacklogRepoList).toHaveBeenCalled();
   });
 
+  it('matches an archived task by display_id via the ticket path, not text', () => {
+    // TASK_BETA_ARCHIVED has display_id 2. Neither its title ('beta unrelated')
+    // nor its description ('alpha-search shows up only in body') contains the
+    // literal string "#2", so a regression that left the archived branch
+    // (the `statusFilter === 'completed' || statusFilter === 'all'` loop) on
+    // plain text matching instead of routing through matchesQuery's ticket path
+    // would find nothing here, while the correct display_id-prefix matching
+    // finds display_id 2. Every ticket test above queries '#1' or '#9' - neither
+    // is a prefix of display_id 2 - so the archived branch's matching behavior
+    // was never actually exercised by a hit before this test.
+    const result = handleSearchTasks({ query: '#2' }, makeContext());
+
+    expect(result.success).toBe(true);
+    const data = result.data as {
+      tasks: Array<{ id: string; displayId: number; status: string }>;
+      backlog: Array<{ id: string }>;
+      totalActive: number;
+      totalCompleted: number;
+    };
+    // display_id 1 (alpha) does not start with "2"; display_id 2 (beta,
+    // archived) does.
+    expect(data.tasks.map((task) => task.id)).toEqual(['task-beta']);
+    expect(data.tasks[0].displayId).toBe(2);
+    expect(data.tasks[0].status).toBe('completed');
+    expect(data.totalActive).toBe(0);
+    expect(data.totalCompleted).toBe(1);
+    expect(data.backlog).toEqual([]);
+  });
+
   it('scope "backlog" + a ticket query returns nothing from either surface', () => {
     // includeBoard is false (scope isn't 'board'/'both'), and includeBacklog
     // is also false because a ticket query forces ticketDigits !== null

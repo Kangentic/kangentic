@@ -256,7 +256,11 @@ function pushTaskHits(
  * Match tasks by ticket number for a `#<digits>` query. Prefix-matches
  * `display_id` (so `#4` -> 4, 40, 41, ...) and ranks non-archived before
  * archived, the exact hit first, then remaining prefix hits by ascending
- * `display_id`. Each hit carries a zero-width match (`matchStart === matchEnd`)
+ * `display_id`. That ranking holds WITHIN one project: the caller drains the
+ * shared `budget.task` cap project by project, so under `scope: 'all'` an
+ * earlier project with enough prefix matches can exhaust the budget and drop a
+ * later project's hits entirely, exact match included. (The text-search path
+ * has the same per-project shape.) Each hit carries a zero-width match (`matchStart === matchEnd`)
  * with the title as its snippet, which the palette renders plainly; the
  * `#{displayId}` badge in the result row header is what signals the match.
  */

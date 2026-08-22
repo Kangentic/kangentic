@@ -73,8 +73,6 @@ export const handleSearchTasks: CommandHandler = (
   // A `#<digits>` query is a ticket lookup: match board tasks by display_id
   // (prefix) rather than text. Backlog items have no display_id, so they are
   // never returned for a ticket query. See src/shared/ticket-query.ts.
-  // `query` is already the coerced query string; the ticket regex only matches
-  // `#` + digits, which are case-invariant, so the lowercased form is fine.
   const ticketDigits = parseTicketQuery(query);
 
   const db = context.getProjectDb();

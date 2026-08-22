@@ -4,10 +4,11 @@
 // (prefix) instead of substring-matching title/description.
 //
 // This lives in `src/shared/` so the one `#`-trigger rule is single-sourced
-// across the main process (the unified search core / MCP `kangentic_search`)
-// and the renderer (the board toolbar filter). Keeping the trigger in one place
-// is what stops the two surfaces from disagreeing about what counts as a ticket
-// query.
+// across all three consumers: the unified search core (`search:everything` /
+// MCP `kangentic_search`), the board-scoped MCP search (`kangentic_search_tasks`
+// in `search-commands.ts`), and the renderer's board toolbar filter. Keeping the
+// trigger in one place is what stops those surfaces from disagreeing about what
+// counts as a ticket query.
 
 /**
  * Parse a search query as a ticket lookup.
