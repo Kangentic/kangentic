@@ -477,6 +477,56 @@ export function MemoryGraphBody() {
     });
   }, [query, facetIndices, answerIndices, taskScope, indexByDocKey]);
 
+  /**
+   * The visible hits, one row per TASK.
+   *
+   * Retrieval already collapses to one hit per CONVERSATION, and that is
+   * correct - but a task runs several sessions, so "Mobile Bridge Phase 1"
+   * legitimately returned three rows with the same title and different
+   * snippets. Measured on the real corpus: 29 hits, 29 distinct conversations,
+   * 24 distinct titles. Nothing was duplicated; the unit was just wrong for
+   * reading, because the reader thinks in tasks.
+   *
+   * So the rows are tasks, and a task carries its conversations. Ordered by the
+   * best-ranked conversation in each, since that is what retrieval decided.
+   * A conversation with NO task stays its own row rather than merging into a
+   * bucket of unrelated work.
+   */
+  const groupedHits = useMemo(() => {
+    const groups: Array<{
+      key: string;
+      title: string;
+      hits: typeof visibleHits;
+      /** Every kind that matched anywhere in the task, deduped. */
+      kinds: string[];
+      /** Passages that matched across the whole task. */
+      matchCount: number;
+    }> = [];
+    const byKey = new Map<string, number>();
+    for (const hit of visibleHits) {
+      const key = hit.taskId ?? `conversation:${hit.docKey}`;
+      const existing = byKey.get(key);
+      if (existing === undefined) {
+        byKey.set(key, groups.length);
+        groups.push({
+          key,
+          title: hit.taskTitle ?? 'Untitled conversation',
+          hits: [hit],
+          kinds: [hit.matchKind],
+          matchCount: hit.matchCount,
+        });
+        continue;
+      }
+      const group = groups[existing];
+      group.hits.push(hit);
+      // A task matched "on wording AND meaning" when its conversations did,
+      // which is a stronger statement than either alone.
+      if (!group.kinds.includes(hit.matchKind)) group.kinds.push(hit.matchKind);
+      group.matchCount += hit.matchCount;
+    }
+    return groups;
+  }, [visibleHits]);
+
   const selectedNode = selectedIndex !== null ? nodes?.[selectedIndex] ?? null : null;
 
   /** The selected node's OWN search hit, so the panel can say why it is here. */
@@ -636,6 +686,10 @@ export function MemoryGraphBody() {
           {query ? (
             <>
               <span className="flex-shrink-0 text-[11px] tabular-nums text-fg-muted">
+                {/* Conversations, which is what the MAP draws and what the
+                    denominator counts. The rail groups those into tasks and
+                    says so on each row, so the two never claim to be the same
+                    unit. */}
                 {visibleHits.length} of {projection.nodes.length}
               </span>
               <button
@@ -786,7 +840,7 @@ export function MemoryGraphBody() {
           underneath the rail entirely. A control that does not move is easier to
           find than one that is correctly placed. */}
       {selectedNode ? (
-        <div data-graph-chrome="right" className="overlay-panel-in absolute bottom-14 right-3 top-3 z-10 w-80">
+        <div data-graph-chrome="right" className="overlay-panel-in absolute bottom-14 right-3 top-3 z-10 w-[26rem]">
           <div className={`h-full overflow-hidden rounded-lg border border-edge bg-surface-raised/85 shadow-xl backdrop-blur-md`}>
             <MemoryNodeDetail
               node={selectedNode}
@@ -804,7 +858,7 @@ export function MemoryGraphBody() {
           </div>
         </div>
       ) : query ? (
-        <div data-graph-chrome="right" className="overlay-panel-in absolute bottom-14 right-3 top-3 z-10 w-80">
+        <div data-graph-chrome="right" className="overlay-panel-in absolute bottom-14 right-3 top-3 z-10 w-[26rem]">
           <aside
             className="h-full overflow-y-auto rounded-lg border border-edge bg-surface-raised/85 shadow-xl backdrop-blur-md"
             data-testid="memory-graph-results"
@@ -844,10 +898,14 @@ export function MemoryGraphBody() {
               </p>
             ) : (
               <ul>
-                {visibleHits.map((hit) => {
-                  const index = indexByDocKey.get(hit.docKey);
+                {groupedHits.map((group) => {
+                  // The best-ranked conversation of the task is what a click
+                  // opens: retrieval ordered them, so the first is the one most
+                  // likely to hold the answer.
+                  const lead = group.hits[0];
+                  const index = indexByDocKey.get(lead.docKey);
                   return (
-                    <li key={hit.sessionId}>
+                    <li key={group.key}>
                       <button
                         type="button"
                         onClick={() => selectNode(index ?? null)}
@@ -858,13 +916,37 @@ export function MemoryGraphBody() {
                         className="w-full border-b border-edge px-4 py-3 text-left hover:bg-surface-hover cursor-pointer"
                         data-testid="memory-graph-result-card"
                       >
-                        <div className="truncate text-xs font-medium text-fg">
-                          {hit.taskTitle ?? 'Untitled conversation'}
-                        </div>
-                        <p className="mt-1 line-clamp-3 text-xs text-fg-muted">{hit.snippet}</p>
-                        <div className="mt-1.5 flex items-center gap-2 text-[11px] text-fg-muted">
-                          <span>{hit.matchKind}</span>
-                          {hit.matchCount > 1 ? <span>{hit.matchCount} matches</span> : null}
+                        <div className="truncate text-xs font-medium text-fg">{group.title}</div>
+                        <p className="mt-1 line-clamp-3 text-xs text-fg-muted">{lead.snippet}</p>
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-fg-muted">
+                          {/* HOW it matched, as a badge rather than a bare word.
+                              It is the visible proof that this is semantic
+                              retrieval and not a text scan, so it should read as
+                              a property of the result, not as leftover text. */}
+                          {group.kinds.map((kind) => (
+                            <span
+                              key={kind}
+                              data-testid="memory-graph-match-kind"
+                              data-kind={kind}
+                              className={`rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide ${
+                                kind === 'semantic'
+                                  ? 'bg-accent/15 text-accent-fg'
+                                  : kind === 'hybrid'
+                                    ? 'bg-active/15 text-active'
+                                    : 'bg-surface-control text-fg-muted'
+                              }`}
+                            >
+                              {kind}
+                            </span>
+                          ))}
+                          {/* A task with several sessions says so, rather than
+                              appearing as repeated rows with one title. */}
+                          {group.hits.length > 1 ? (
+                            <span data-testid="memory-graph-result-sessions">
+                              {group.hits.length} conversations
+                            </span>
+                          ) : null}
+                          {group.matchCount > 1 ? <span>{group.matchCount} matches</span> : null}
                           {/* A node the map does not hold: the projection is
                               older than this conversation. Said, not hidden. */}
                           {index === undefined ? <span>not on the map yet</span> : null}

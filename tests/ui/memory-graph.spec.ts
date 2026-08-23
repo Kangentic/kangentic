@@ -639,6 +639,58 @@ test.describe('memory graph', () => {
         };
       });`;
 
+  test('groups a task\'s conversations into one row, and badges how it matched', async () => {
+    // Retrieval collapses to one hit per CONVERSATION, which is correct - but a
+    // task runs several sessions, so one task returned three rows sharing a
+    // title and differing only in snippet. Measured on the real corpus: 29
+    // hits, 29 distinct conversations, 24 distinct titles. Nothing was
+    // duplicated; the unit was wrong for reading.
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}
+      window.__mockPreConfigure(function () {
+        return {
+          memoryGraphQueryResult: {
+            query: 'mobile',
+            semantic: true,
+            hits: [
+              { docKey: 'conversation::doc-3', sessionId: 's-3', taskId: 't-mobile', taskTitle: 'Mobile Bridge Phase 1', agentName: 'claude', snippet: 'semantic passage', score: 0.9, matchKind: 'semantic', matchCount: 3, turnTs: null },
+              { docKey: 'conversation::doc-7', sessionId: 's-7', taskId: 't-mobile', taskTitle: 'Mobile Bridge Phase 1', agentName: 'claude', snippet: 'lexical passage', score: 0.7, matchKind: 'lexical', matchCount: 4, turnTs: null },
+              { docKey: 'conversation::doc-9', sessionId: 's-9', taskId: 't-relay', taskTitle: 'Relay config', agentName: 'claude', snippet: 'other work', score: 0.5, matchKind: 'lexical', matchCount: 1, turnTs: null }
+            ],
+          },
+        };
+      });`;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await openMemoryGraph(page);
+      await page.locator('[data-testid="memory-graph-search-input"]').fill('mobile');
+
+      // Three conversations, TWO rows: the two Phase 1 sessions are one task.
+      const cards = page.locator('[data-testid="memory-graph-result-card"]');
+      await expect(cards).toHaveCount(2);
+      await expect(cards.first()).toContainText('Mobile Bridge Phase 1');
+      await expect(cards.first()).toContainText('2 conversations');
+
+      // Both kinds are badged, because a task that matched on wording AND
+      // meaning is a stronger result than one that matched on either.
+      const kinds = cards.first().locator('[data-testid="memory-graph-match-kind"]');
+      await expect(kinds).toHaveCount(2);
+      await expect(kinds.nth(0)).toHaveText('semantic');
+      await expect(kinds.nth(1)).toHaveText('lexical');
+
+      // Matches are summed across the task, not reported per session.
+      await expect(cards.first()).toContainText('7 matches');
+
+      // A single-session task says nothing about session count.
+      await expect(cards.nth(1)).toContainText('Relay config');
+      await expect(cards.nth(1)).not.toContainText('conversations');
+
+      // The COUNT still reports conversations, which is what the map draws.
+      await expect(page.getByText('3 of 30', { exact: false }).first()).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('offers Ask as a second act, and says what it costs before it runs', async () => {
     const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}${askQuery}`;
     const { browser, page } = await launchWithState(preConfig);
