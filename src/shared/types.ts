@@ -2656,6 +2656,21 @@ export interface AppConfig {
      * the registry key and the display name is copy that can change.
      */
     answerAgent?: string | null;
+    /**
+     * Which MODEL the answering agent runs at.
+     *
+     * The reason this exists is cost. Ask is a read-only summarize over your own
+     * local index, and running it at the same frontier model that writes your
+     * code spends subscription budget on re-reading transcripts. A cheaper model
+     * answers most questions about "what did we decide" perfectly well, and
+     * without this field the agent's own default is the only option.
+     *
+     * An ADAPTER-SPECIFIC model id (Claude `haiku`, `opus`), so it is cleared
+     * whenever `answerAgent` changes - an id from one CLI means nothing to
+     * another. Unset leaves the agent's own default in place, which is what
+     * shipped before this field.
+     */
+    answerModel?: string | null;
   };
 
   /**

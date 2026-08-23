@@ -123,9 +123,12 @@ const MOCK_PROJECTION = {
   clusterings: [{ granularity: 'balanced', regions: [{ label: 'framing', size: 3, x: 0, y: 0, z: 0 }] }],
 };
 
+/** Global memory settings for the context double, per test. */
+let memoryConfig: Record<string, unknown> = {};
+
 function makeContext(defaultAgent: string | null = 'claude') {
   return {
-    configManager: { load: vi.fn(() => ({ agent: { cliPaths: {} }, memory: {} })) },
+    configManager: { load: vi.fn(() => ({ agent: { cliPaths: {} }, memory: memoryConfig })) },
     projectRepo: { list: vi.fn(() => [{ id: 'project-1', default_agent: defaultAgent, path: '/repo' }]) },
     currentProjectId: 'project-1',
     currentProjectPath: '/repo',
@@ -143,6 +146,7 @@ describe('the Ask handler', () => {
   beforeEach(() => {
     capturedHandlers.clear();
     searchSpy.mockClear();
+    memoryConfig = {};
     vi.mocked(graphService.getSnapshot).mockReturnValue({
       projectId: 'project-1',
       projection: MOCK_PROJECTION,
@@ -269,6 +273,60 @@ describe('the Ask handler', () => {
     expect(result.taskCount).toBe(2);
     // The protocol line never reaches the reader.
     expect(result.answer).toBe('Framing work.');
+  });
+
+  it('runs the answer at the configured model', async () => {
+    // The whole point of the setting: reading your own index is lighter work
+    // than writing code, so it should not have to run at the model that does.
+    memoryConfig = { answerAgent: 'claude', answerModel: 'haiku' };
+    const answerSpy = vi.fn(async () => 'Answered.');
+    mockAdapters = [{
+      name: 'claude',
+      displayName: 'Claude Code',
+      detect: async () => ({ found: true, path: '/usr/bin/claude', version: '1' }),
+      answerFromContext: answerSpy,
+    }];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the context is a narrow test double
+    registerSearchHandlers(makeContext() as any);
+
+    await ask('anything');
+    expect(answerSpy.mock.calls[0][3]).toBe('haiku');
+  });
+
+  it('ignores a model configured against a DIFFERENT agent', async () => {
+    // The UI clears the model when the agent changes, but a config written by
+    // an older build or edited by hand can still pair them wrongly. A stale
+    // pairing must fall back to the agent's default rather than passing one
+    // CLI's model id to another, which is a hard CLI error.
+    memoryConfig = { answerAgent: 'codex', answerModel: 'gpt-5.5' };
+    const answerSpy = vi.fn(async () => 'Answered.');
+    mockAdapters = [{
+      name: 'claude',
+      displayName: 'Claude Code',
+      detect: async () => ({ found: true, path: '/usr/bin/claude', version: '1' }),
+      answerFromContext: answerSpy,
+    }];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the context is a narrow test double
+    registerSearchHandlers(makeContext() as any);
+
+    await ask('anything');
+    // Resolved to claude (codex is not registered), so codex's model is dropped.
+    expect(answerSpy.mock.calls[0][3]).toBeNull();
+  });
+
+  it('passes no model when none is configured', async () => {
+    const answerSpy = vi.fn(async () => 'Answered.');
+    mockAdapters = [{
+      name: 'claude',
+      displayName: 'Claude Code',
+      detect: async () => ({ found: true, path: '/usr/bin/claude', version: '1' }),
+      answerFromContext: answerSpy,
+    }];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the context is a narrow test double
+    registerSearchHandlers(makeContext() as any);
+
+    await ask('anything');
+    expect(answerSpy.mock.calls[0][3]).toBeNull();
   });
 
   it('checks the agent BEFORE retrieving, so a dead end costs no work', async () => {

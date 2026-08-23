@@ -290,10 +290,19 @@ export function registerSearchHandlers(context: IpcContext): void {
         }
         if (!taskTable || !projection) return { ok: false, reason: 'the map is still building' };
 
+        // The model is only meaningful for the agent it was chosen against, and
+        // the setting is cleared when the agent changes - but a config written
+        // by an older build, or hand-edited, can still pair them wrongly. Passed
+        // only when the RESOLVED agent is the one the setting names, so a stale
+        // pairing falls back to the agent's default instead of a bad flag.
+        const configuredAnswerModel = config.memory?.answerModel ?? null;
+        const answerModel = config.memory?.answerAgent === agentName ? configuredAnswerModel : null;
+
         const raw = await adapter.answerFromContext(
           buildAnswerPrompt(trimmed, context_.sources, { tasks: taskTable, nowMs: Date.now() }),
           info.path,
           context.currentProjectPath ?? process.cwd(),
+          answerModel,
         );
         if (!raw) return { ok: false, reason: 'the agent returned nothing' };
 

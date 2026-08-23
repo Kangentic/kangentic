@@ -275,10 +275,18 @@ export class ClaudeAdapter implements AgentAdapter {
    * stronger one: the prompt is pure reading, and an agent handed a repository
    * and a question about it will otherwise start editing to answer it.
    */
-  async answerFromContext(prompt: string, cliPath: string, cwd: string): Promise<string> {
+  async answerFromContext(
+    prompt: string,
+    cliPath: string,
+    cwd: string,
+    model?: string | null,
+  ): Promise<string> {
     return runCliPrintAnswer({
       cliPath,
-      args: ['--print', '--permission-mode', 'plan'],
+      // The flag is OMITTED when no model is chosen, rather than passed empty:
+      // `--model ''` is an error, and the absence of the flag is exactly what
+      // "use the agent's own default" means to the CLI.
+      args: ['--print', '--permission-mode', 'plan', ...(model ? ['--model', model] : [])],
       prompt,
       cwd,
     });

@@ -1,9 +1,12 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { MessageSquare, Sparkles, Check, RotateCcw } from 'lucide-react';
 import { SectionHeader, SettingRow, SettingToggleRow, Select, DownloadProgressBar, useScopedUpdate } from '../shared';
 import { settingProps } from '../settings-registry';
 import { useProjectStore } from '../../../stores/project-store';
 import { useConfigStore } from '../../../stores/config-store';
+import { useAgentCapabilityResolution } from '../../../hooks/useAgentCapabilityResolution';
+import { ModelCombobox } from '../../dialogs/ModelCombobox';
+import { resolveAnswerAgent } from '../../../../shared/answer-agent';
 import { EMBEDDING_MODELS } from '../../../../shared/embedding-models';
 import type { AppConfig, MemoryStatus, MemoryAcceleration } from '../../../../shared/types';
 
@@ -43,8 +46,29 @@ export function MemoryTab({ globalConfig }: { globalConfig: AppConfig }) {
   const acceleration = globalConfig.memory?.acceleration ?? 'auto';
   // Installed agents that declare `answerFromContext`. Read from the capability
   // rather than a hardcoded list, per `agent-adapters-boundary.md`.
-  const answerCapableAgents = useConfigStore((state) => state.agentList)
+  const agentList = useConfigStore((state) => state.agentList);
+  const answerCapableAgents = agentList
     .filter((agent) => agent.found && agent.supportsAnswerFromContext);
+  const configuredAnswerAgent = globalConfig.memory?.answerAgent ?? null;
+  const projectDefaultAgent = useProjectStore((state) => state.currentProject?.default_agent ?? null);
+  /**
+   * The agent a question would actually run against right now, resolved through
+   * the SAME chain main uses. The model list has to follow the EFFECTIVE agent,
+   * not the configured one: on "Follow the project" the setting is null while a
+   * real agent still answers, and showing no models there would read as an
+   * agent that cannot take one.
+   */
+  const effectiveAnswerAgent = useMemo(
+    () => resolveAnswerAgent({
+      agents: agentList,
+      configured: configuredAnswerAgent,
+      projectAgent: projectDefaultAgent,
+      requireFound: true,
+    }),
+    [agentList, configuredAnswerAgent, projectDefaultAgent],
+  );
+  const { models: answerModels, supportsModelOverride } =
+    useAgentCapabilityResolution(effectiveAnswerAgent?.name ?? null);
 
   // Poll the semantic-layer status while the feature is on so the model-download
   // progress and readiness update live. Cleared on unmount / when turned off.
@@ -201,22 +225,49 @@ export function MemoryTab({ globalConfig }: { globalConfig: AppConfig }) {
               follow. The whole row is hidden when nothing can answer, since
               picking between zero options is not a decision. */}
           {answerCapableAgents.length > 0 ? (
-            <SettingRow {...settingProps('memory.answerAgent')}>
-              <Select
-                value={globalConfig.memory?.answerAgent ?? ''}
-                onChange={(event) => updateGlobal({
-                  memory: { answerAgent: event.target.value === '' ? null : event.target.value },
-                })}
-                data-testid="memory-answer-agent-select"
-              >
-                {/* Empty string rather than a sentinel name: it is the ABSENCE
-                    of a choice, which is what null means in the config. */}
-                <option value="">Follow the project</option>
-                {answerCapableAgents.map((agent) => (
-                  <option key={agent.name} value={agent.name}>{agent.displayName}</option>
-                ))}
-              </Select>
-            </SettingRow>
+            <>
+              <SettingRow {...settingProps('memory.answerAgent')}>
+                <Select
+                  value={configuredAnswerAgent ?? ''}
+                  onChange={(event) => updateGlobal({
+                    memory: {
+                      answerAgent: event.target.value === '' ? null : event.target.value,
+                      // A model id belongs to ONE CLI - Claude's `haiku` means
+                      // nothing to Codex - so changing the agent clears it
+                      // rather than carrying a flag the new agent will reject.
+                      answerModel: null,
+                    },
+                  })}
+                  data-testid="memory-answer-agent-select"
+                >
+                  {/* Empty string rather than a sentinel name: it is the ABSENCE
+                      of a choice, which is what null means in the config. */}
+                  <option value="">Follow the project</option>
+                  {answerCapableAgents.map((agent) => (
+                    <option key={agent.name} value={agent.name}>{agent.displayName}</option>
+                  ))}
+                </Select>
+              </SettingRow>
+
+              {/* Mirrors the Agent tab's Agent + Model pair, scoped to this
+                  feature. Rendered only when the resolved agent actually takes
+                  a model override, on the same rule as every other row here: a
+                  control that cannot do anything is worse than no control. */}
+              {supportsModelOverride ? (
+                <SettingRow {...settingProps('memory.answerModel')}>
+                  <ModelCombobox
+                    value={globalConfig.memory?.answerModel ?? ''}
+                    onChange={(next) => updateGlobal({
+                      memory: { answerModel: next === '' ? null : next },
+                    })}
+                    availableModels={answerModels}
+                    placeholder="Agent default"
+                    placeholderVariant="muted"
+                    testId="memory-answer-model"
+                  />
+                </SettingRow>
+              ) : null}
+            </>
           ) : null}
         </div>
       ) : null}

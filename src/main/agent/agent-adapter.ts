@@ -605,6 +605,9 @@ export interface AgentAdapter {
    * Implementations should:
    * - Use the adapter's read-only / no-edit mode. The prompt is pure reading,
    *   and an agent given a repo and a question will otherwise start editing.
+   * - Pass `model` through as the CLI's own model flag when present, and omit
+   *   the flag entirely when it is not. The id is adapter-specific, so the
+   *   caller never builds the argument.
    * - Call `runCliPrintAnswer`, which carries the answer budgets and cleanup.
    *   `runCliPrintSummarize` would flatten the answer to its first line.
    * - Throw on failure rather than returning placeholder text.
@@ -612,7 +615,14 @@ export interface AgentAdapter {
    * Absent means this agent cannot answer; the renderer gates on
    * `supportsAnswerFromContext` rather than on the agent's name.
    */
-  answerFromContext?(prompt: string, cliPath: string, cwd: string): Promise<string>;
+  answerFromContext?(
+    prompt: string,
+    cliPath: string,
+    cwd: string,
+    /** Adapter-specific model id, or undefined for the agent's own default.
+     *  Each adapter owns the flag; nothing upstream knows the syntax. */
+    model?: string | null,
+  ): Promise<string>;
 
   /**
    * Optional: notify the adapter that per-cwd data must move from `oldPath` to
