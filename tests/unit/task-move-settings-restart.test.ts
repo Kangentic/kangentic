@@ -211,6 +211,7 @@ function makeContext(taskRepo: unknown, swimlaneRepo: unknown) {
   const context = {
     currentProjectId: 'proj-test',
     currentProjectPath: '/mock/project',
+    boardEvents: { emitBoardChanged: vi.fn() },
     mainWindow: { isDestroyed: vi.fn(() => false), webContents: { send: vi.fn() } },
     sessionManager,
     configManager: {
@@ -348,7 +349,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
       taskId: 'task-aaa00001',
       targetSwimlaneId: EXECUTING_LANE_ID,
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     // Permission-only delta: keep alive.
     expect(markRecordSuspended).not.toHaveBeenCalled();
@@ -376,7 +377,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
       taskId: 'task-aaa00001',
       targetSwimlaneId: EXECUTING_LANE_ID,
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     expect(markRecordSuspended).toHaveBeenCalledWith(expect.anything(), 'rec-main', 'system');
     expect(context.sessionManager.suspend).toHaveBeenCalledWith('active-session-1');
@@ -409,7 +410,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
       taskId: 'task-aaa00001',
       targetSwimlaneId: EXECUTING_LANE_ID,
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     // Live injection: slash fires, no suspend, no spawn.
     expect(context.terminalSubmitScheduler.scheduleKeystrokes).toHaveBeenCalledTimes(1);
@@ -447,7 +448,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
       taskId: 'task-aaa00001',
       targetSwimlaneId: EXECUTING_LANE_ID,
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
     const spawnArg = mockSpawnAgent.mock.calls[0][0] as {
@@ -478,6 +479,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
     await handleTaskMove(
       context as never,
       { taskId: 'task-aaa00001', targetSwimlaneId: EXECUTING_LANE_ID, targetPosition: 0 },
+      'renderer',
       undefined,
       undefined,
       { continuationPrompt: continuation },
@@ -503,7 +505,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
       taskId: 'task-aaa00001',
       targetSwimlaneId: EXECUTING_LANE_ID,
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
     const spawnArg = mockSpawnAgent.mock.calls[0][0] as { continuationPrompt?: string };
@@ -522,7 +524,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
       taskId: 'task-aaa00001',
       targetSwimlaneId: EXECUTING_LANE_ID,
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
     const spawnArg = mockSpawnAgent.mock.calls[0][0] as { suppressAutoCommand?: boolean };
@@ -546,7 +548,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
       taskId: 'task-aaa00001',
       targetSwimlaneId: EXECUTING_LANE_ID,
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
     const spawnArg = mockSpawnAgent.mock.calls[0][0] as { suppressAutoCommand?: boolean };
@@ -576,7 +578,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
       taskId: 'task-aaa00001',
       targetSwimlaneId: EXECUTING_LANE_ID,
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     expect(context.terminalSubmitScheduler.scheduleKeystrokes).toHaveBeenCalledTimes(1);
     expect(hoisted.updateAppliedSettings).toHaveBeenCalledWith('active-session-1', { effort: 'xhigh' });
@@ -600,7 +602,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
       taskId: 'task-aaa00001',
       targetSwimlaneId: EXECUTING_LANE_ID,
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     expect(context.terminalSubmitScheduler.scheduleKeystrokes).toHaveBeenCalledTimes(1);
     expect(hoisted.updateAppliedSettings).not.toHaveBeenCalled();
@@ -629,7 +631,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
       taskId: 'task-aaa00001',
       targetSwimlaneId: EXECUTING_LANE_ID,
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     // applied_effort='xhigh' == destination effort_override='xhigh' -> no delta -> no respawn.
     expect(context.sessionManager.suspend).not.toHaveBeenCalled();
@@ -650,7 +652,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
       taskId: 'task-aaa00001',
       targetSwimlaneId: EXECUTING_LANE_ID,
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     // Delta exists: applied='low', target='xhigh' -> respawn.
     expect(context.sessionManager.suspend).toHaveBeenCalledWith('active-session-1');
@@ -677,7 +679,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
       taskId: 'task-aaa00001',
       targetSwimlaneId: EXECUTING_LANE_ID,
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     expect(context.sessionManager.suspend).toHaveBeenCalledWith('active-session-1');
     expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
@@ -706,7 +708,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
       taskId: 'task-aaa00001',
       targetSwimlaneId: EXECUTING_LANE_ID,
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     expect(vi.mocked(prepareInjectionPlan)).toHaveBeenCalledTimes(1);
     const planArg = vi.mocked(prepareInjectionPlan).mock.calls[0][0] as { liveEffort?: string | null };
@@ -730,7 +732,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
       taskId: 'task-aaa00001',
       targetSwimlaneId: EXECUTING_LANE_ID,
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     expect(context.sessionManager.suspend).not.toHaveBeenCalled();
     expect(mockSpawnAgent).not.toHaveBeenCalled();
@@ -755,7 +757,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
       taskId: 'task-aaa00001',
       targetSwimlaneId: EXECUTING_LANE_ID,
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     expect(context.sessionManager.suspend).toHaveBeenCalledWith('active-session-1');
     expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
@@ -775,7 +777,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
       taskId: 'task-aaa00001',
       targetSwimlaneId: EXECUTING_LANE_ID,
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     expect(context.sessionManager.suspend).not.toHaveBeenCalled();
     expect(markRecordSuspended).not.toHaveBeenCalled();
@@ -828,7 +830,7 @@ describe('handleTaskMove live-inject: {{baseBranch}} template resolution (task-t
       taskId: 'task-aaa00001',
       targetSwimlaneId: EXECUTING_LANE_ID,
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     expect(vi.mocked(prepareInjectionPlan)).toHaveBeenCalledTimes(1);
     const planArg = vi.mocked(prepareInjectionPlan).mock.calls[0][0] as { autoCommand?: string };
@@ -858,7 +860,7 @@ describe('handleTaskMove live-inject: {{baseBranch}} template resolution (task-t
       taskId: 'task-aaa00001',
       targetSwimlaneId: EXECUTING_LANE_ID,
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     // Wiring: the destructured `attachments` repo (added by this diff to
     // handleTaskMove's getProjectRepos call) reaches resolveTaskTemplateVars

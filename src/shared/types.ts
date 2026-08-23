@@ -4569,6 +4569,22 @@ export interface ElectronAPI {
      * `link_pr` tool call still goes out on `onUpdatedByAgent` and still toasts.
      */
     onPrLinkChanged: (callback: (projectId?: string) => void) => () => void;
+    /**
+     * A task was moved from the paired mobile app.
+     *
+     * Deliberately quiet, like `onPrLinkChanged` and `onSessionResync`. The
+     * board must reload (the card is rendering in the column it just left), but
+     * it is not agent news: `onUpdatedByAgent` would toast `Task updated by
+     * agent`, and no agent was involved in a card the user dragged on their own
+     * phone. The move is already confirmed on the device that made it, and the
+     * card visibly relocating is the feedback here.
+     *
+     * A third provenance, not a reuse of the other two: those mean "the app
+     * reconciled something itself", and this one means "you did this, elsewhere".
+     * Keeping it distinct also keeps the dev IPC log honest about where a move
+     * came from.
+     */
+    onMovedByMobile: (callback: (projectId?: string) => void) => () => void;
     onSpawnProgress: (callback: (taskId: string, label: string | null) => void) => () => void;
     /**
      * Queryable snapshot of in-flight spawn-progress labels (keyed by taskId).

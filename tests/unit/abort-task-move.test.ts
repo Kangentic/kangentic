@@ -190,6 +190,7 @@ function makeContext(overrides: Record<string, unknown> = {}) {
   const context = {
     currentProjectId: 'proj-abort-test',
     currentProjectPath: '/mock/abort-test-project',
+    boardEvents: { emitBoardChanged: vi.fn() },
     mainWindow: {
       isDestroyed: vi.fn(() => false),
       webContents: { send: vi.fn() },
@@ -298,7 +299,7 @@ describe('abortTaskMove', () => {
     const moveInput = { taskId: TASK_ID, targetSwimlaneId: TARGET_LANE_ID, targetPosition: 0 };
 
     // Start the move but do not await yet - it is parked at Phase 2.
-    const movePromise = handleTaskMove(context as never, moveInput);
+    const movePromise = handleTaskMove(context as never, moveInput, 'renderer');
 
     // Yield so Phase 1 (sync lock body) can run and register the controller.
     await new Promise<void>((resolve) => setTimeout(resolve, 0));

@@ -19,9 +19,15 @@ export async function handleMoveTask(
   // from the wire payload - it is deliberately excluded from the raw
   // renderer-facing input shape, and a phone is no more trusted than the
   // renderer here.
+  //
+  // The 'mobile' origin is what makes the desktop board and every other paired
+  // phone hear about this move. It stays a plain argument rather than a
+  // fan-out block here: this handler is a thin verb wrapper, and putting the
+  // notifications at the call site is exactly how this path came to be silent.
   await handleTaskMove(
     context,
     { taskId: payload.taskId, targetSwimlaneId: payload.targetSwimlaneId, targetPosition: payload.targetPosition },
+    'mobile',
     projectId,
     projectPath,
   );

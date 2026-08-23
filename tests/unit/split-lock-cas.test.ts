@@ -71,6 +71,15 @@ vi.mock('../../src/main/analytics/analytics', () => ({
   trackEvent: vi.fn(),
 }));
 
+// handleTaskMove fires this itself now (it used to live at the call sites these
+// tests bypass), so without the mock every successful move here runs the real
+// helper against mocked repositories. It swallows its own errors, so the damage
+// is invisible rather than absent - the same reason the other task-move suites
+// already mock it.
+vi.mock('../../src/main/pr/pr-linking', () => ({
+  autoLinkPRForTask: vi.fn(),
+}));
+
 vi.mock('../../src/main/transition-engine/session-lifecycle', () => ({
   markRecordExited: vi.fn(),
   markRecordSuspended: vi.fn(),
@@ -185,6 +194,7 @@ function createMockContext() {
   return {
     currentProjectId: 'proj-1',
     currentProjectPath: '/mock/project',
+    boardEvents: { emitBoardChanged: vi.fn() },
     mainWindow: {
       isDestroyed: vi.fn(() => false),
       webContents: { send: vi.fn() },
@@ -282,7 +292,7 @@ describe('TASK_MOVE split-lock CAS', () => {
       taskId: 'task-1',
       targetSwimlaneId: 'lane-doing',
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     expect(mockEnsureTaskWorktree).toHaveBeenCalledTimes(1);
     expect(mockEnsureTaskBranchCheckout).toHaveBeenCalledTimes(1);
@@ -314,7 +324,7 @@ describe('TASK_MOVE split-lock CAS', () => {
       taskId: 'task-1',
       targetSwimlaneId: 'lane-doing',
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     await phase2Entered;
 
@@ -338,7 +348,7 @@ describe('TASK_MOVE split-lock CAS', () => {
       taskId: 'task-1',
       targetSwimlaneId: 'lane-doing',
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     await phase2Entered;
 
@@ -428,7 +438,7 @@ describe('TASK_MOVE Priority 3a - agent handoff', () => {
       taskId: 'task-3a',
       targetSwimlaneId: 'lane-review',
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     // Phase 1 must have suspended the old session.
     expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-running');
@@ -463,7 +473,7 @@ describe('TASK_MOVE Priority 3a - agent handoff', () => {
       taskId: 'task-3a',
       targetSwimlaneId: 'lane-review',
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     await phase2Entered;
 
@@ -562,7 +572,7 @@ describe('TASK_MOVE AbortError cleanup', () => {
       taskId: 'task-abort',
       targetSwimlaneId: 'lane-doing',
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     await phase2Entered;
 
@@ -577,7 +587,7 @@ describe('TASK_MOVE AbortError cleanup', () => {
       taskId: 'task-abort',
       targetSwimlaneId: 'lane-doing',
       targetPosition: 1,
-    });
+    }, 'renderer');
 
     // Neither move should throw - AbortError is caught and returns void.
     await expect(firstMovePromise).resolves.toBeUndefined();
@@ -740,7 +750,7 @@ describe('TASK_MOVE Phase 2 worktree error - revert locked micro-step', () => {
         taskId: 'task-revert',
         targetSwimlaneId: 'lane-doing',
         targetPosition: 0,
-      }),
+      }, 'renderer'),
     ).rejects.toThrow('Worktree setup failed: branch already exists');
 
     // Forward move ran: task went to lane-doing.

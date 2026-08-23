@@ -143,6 +143,12 @@ const api: ElectronAPI = {
       ipcRenderer.on(IPC.TASK_PR_LINK_CHANGED, handler);
       return () => ipcRenderer.removeListener(IPC.TASK_PR_LINK_CHANGED, handler);
     },
+    onMovedByMobile: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, projectId?: string) =>
+        callback(projectId);
+      ipcRenderer.on(IPC.TASK_MOVED_BY_MOBILE, handler);
+      return () => ipcRenderer.removeListener(IPC.TASK_MOVED_BY_MOBILE, handler);
+    },
     onSpawnProgress: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, taskId: string, label: string | null) =>
         callback(taskId, label);

@@ -182,6 +182,7 @@ function makeContext(taskRepo: unknown, swimlaneRepo: unknown) {
   const context = {
     currentProjectId: 'proj-test',
     currentProjectPath: '/mock/project',
+    boardEvents: { emitBoardChanged: vi.fn() },
     mainWindow: { isDestroyed: vi.fn(() => false), webContents: { send: vi.fn() } },
     sessionManager,
     configManager: { getEffectiveConfig: vi.fn(() => ({ git: { defaultBaseBranch: 'main' } })) },
@@ -239,7 +240,7 @@ describe('handleTaskMove session switch', () => {
 
     await handleTaskMove(context as never, {
       taskId: 'task-aaa00001', targetSwimlaneId: REVIEW_ISOLATED_LANE_ID, targetPosition: 0,
-    });
+    }, 'renderer');
 
     // Suspended the live (main) line.
     expect(markRecordSuspended).toHaveBeenCalledWith(expect.anything(), 'rec-main', 'system');
@@ -282,7 +283,7 @@ describe('handleTaskMove session switch', () => {
 
     await handleTaskMove(context as never, {
       taskId: 'task-aaa00001', targetSwimlaneId: EXEC_LANE_ID, targetPosition: 0,
-    });
+    }, 'renderer');
 
     // Suspended the live isolated line (not kept alive).
     expect(markRecordSuspended).toHaveBeenCalledWith(expect.anything(), 'rec-isolated', 'system');
@@ -322,7 +323,7 @@ describe('handleTaskMove session switch', () => {
 
     await handleTaskMove(context as never, {
       taskId: 'task-aaa00001', targetSwimlaneId: 'lane-other', targetPosition: 0,
-    });
+    }, 'renderer');
 
     // No line switch: the live main session is kept alive (no suspend, no respawn).
     expect(markRecordSuspended).not.toHaveBeenCalled();
@@ -365,7 +366,7 @@ describe('handleTaskMove session switch', () => {
 
     await handleTaskMove(context as never, {
       taskId: 'task-aaa00001', targetSwimlaneId: 'lane-reset', targetPosition: 0,
-    });
+    }, 'renderer');
 
     // Suspended the live main session and routed to Phase 3 to spawn fresh.
     expect(markRecordSuspended).toHaveBeenCalledWith(expect.anything(), 'rec-main', 'system');

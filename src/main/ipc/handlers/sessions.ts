@@ -777,20 +777,23 @@ export function registerSessionHandlers(context: IpcContext): void {
       if (!target) return;
 
       const position = tasks.list(target.id).length;
+      // 'auto-move' sends TASK_AUTO_MOVED, emits the board-changed event this
+      // path never used to, and resolves the PR for the new lane - all inside
+      // handleTaskMove now. The push in particular used to be a raw
+      // webContents.send here, which bypassed sendToRenderer and so never
+      // reached the IPC recorder: a plan-exit auto-move was invisible in the
+      // dev IPC log, which is exactly the blind spot that made this class of
+      // staleness bug hard to attribute.
       await handleTaskMove(
         context,
         { taskId: task.id, targetSwimlaneId: target.id, targetPosition: position },
+        'auto-move',
         resolvedProjectId,
         resolvedProjectPath,
         { continuationPrompt: PLAN_EXIT_CONTINUATION_PROMPT },
       );
 
-      if (!context.mainWindow.isDestroyed()) {
-        context.mainWindow.webContents.send(IPC.TASK_AUTO_MOVED, task.id, target.id, task.title, resolvedProjectId);
-      }
       console.log(`[plan-exit] Auto-moved "${task.title}" -> "${target.name}"`);
-      // Resolve the PR for the new (non-To Do) lane - runs after the move's lock released.
-      autoLinkPRForTask(context, task.id, resolvedProjectId);
     } catch (err) {
       console.error('[plan-exit] Auto-move failed:', err);
     }

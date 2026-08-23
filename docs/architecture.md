@@ -72,7 +72,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `projectGroup:reorder` | invoke | Reorder groups by ID array |
 | `projectGroup:setCollapsed` | invoke | Toggle group collapsed state |
 
-### Tasks (26 channels)
+### Tasks (27 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `task:list` | invoke | Fetch tasks, optionally by swimlane |
@@ -96,6 +96,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `task:deletedByAgent` | on | Event: task was deleted by an agent via MCP tool call |
 | `task:sessionResync` | on | Event: quiet (toast-free) board re-sync after a column model-change session restart, so the board store's stale `task.session_id` reloads |
 | `task:prLinkChanged` | on | Event: quiet (toast-free) board re-sync after the APP reconciled a task's PR link or state - the refresh sweep, the session-idle auto-link, the forced re-resolve that follows a link write, or the task-detail "Link / refresh PR" control. Distinct from `task:updatedByAgent` because no agent made the change: an agent's own `update_task` / `link_pr` still goes out on that channel and still toasts. Payload is the bare `projectId` |
+| `task:movedByMobile` | on | Event: quiet (toast-free) board reload after a task was moved from the paired mobile app. A third provenance, distinct from both siblings above: `task:updatedByAgent` would announce "Task updated by agent" for a card the user dragged on their own phone, and this is not the app reconciling itself either. Payload is the bare `projectId` |
 | `task:spawnBlocked` | on | Event: the task was created, promoted, unarchived or MCP-auto-spawned, but its agent could not start because its worktree could not be created or its branch could not be checked out. Any git failure at those two steps fires this, not only the case where another task holds the checkout. Those paths deliberately keep the task, so without this the result is indistinguishable from a healthy spawn |
 | `task:autoCommandResult` | on | Event: the outcome of a task's auto_command injection (`AutoCommandResultNotice`: state, command, reason, discardedDraft, interruptedTurn, escalated). Rationed by `shouldNotify` so a routine delivery stays silent and only a failure, an escalation, or a discarded draft reaches the user |
 | `task:spawnProgress` | on | Event: spawn progress phase label during a task move or a restore from Done |

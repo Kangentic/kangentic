@@ -225,6 +225,7 @@ function makeContext() {
   return {
     currentProjectId: 'proj-branchguard',
     currentProjectPath: '/mock/branchguard-project',
+    boardEvents: { emitBoardChanged: vi.fn() },
     mainWindow: {
       isDestroyed: vi.fn(() => false),
       webContents: { send: vi.fn() },
@@ -280,7 +281,7 @@ async function runFailingMove(task: Task): Promise<void> {
       taskId: task.id,
       targetSwimlaneId: TARGET_LANE_ID,
       targetPosition: 0,
-    }),
+    }, 'renderer'),
   ).rejects.toThrow(/Worktree setup failed/);
 }
 

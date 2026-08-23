@@ -58,12 +58,18 @@ describe('handleMoveTask', () => {
     expect(response.ok).toBe(true);
     expect(response.payload).toEqual({ ok: true });
     expect(handleTaskMoveMock).toHaveBeenCalledTimes(1);
-    const [passedContext, passedInput, passedProjectId, passedProjectPath, passedOptions] = handleTaskMoveMock.mock.calls[0];
+    const [passedContext, passedInput, passedOrigin, passedProjectId, passedProjectPath, passedOptions] = handleTaskMoveMock.mock.calls[0];
     expect(passedContext).toBe(context);
     expect(passedInput).toEqual({ taskId: 't-1', targetSwimlaneId: 'lane-2', targetPosition: 3 });
     expect(passedProjectId).toBe('proj-1');
     expect(passedProjectPath).toBe('/projects/proj-1');
     expect(passedOptions).toBeUndefined();
+
+    // The whole point of the origin: it is what makes handleTaskMove announce
+    // the move to the desktop board and to every other paired phone. A phone
+    // move used to land in the DB and tell nobody, leaving the desktop card
+    // rendering in the column it had just left.
+    expect(passedOrigin).toBe('mobile');
   });
 
   it('reports a failed response when handleTaskMove throws', async () => {

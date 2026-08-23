@@ -191,6 +191,7 @@ function makeContext(taskRepo: unknown, swimlaneRepo: unknown) {
   const context = {
     currentProjectId: 'proj-test',
     currentProjectPath: PROJECT_PATH,
+    boardEvents: { emitBoardChanged: vi.fn() },
     mainWindow: { isDestroyed: vi.fn(() => false), webContents: { send: vi.fn() } },
     sessionManager,
     configManager: { getEffectiveConfig: vi.fn(() => ({ git: { defaultBaseBranch: 'main' } })) },
@@ -247,7 +248,7 @@ describe('handleTaskMove git-churn capture wiring', () => {
 
     await handleTaskMove(context as never, {
       taskId: TASK_ID, targetSwimlaneId: 'lane-done', targetPosition: 0,
-    });
+    }, 'renderer');
 
     expect(hoisted.resolveDefaultBaseBranch).toHaveBeenCalledWith(context, PROJECT_PATH);
     expect(hoisted.captureGitChurn).toHaveBeenCalledWith(
@@ -284,7 +285,7 @@ describe('handleTaskMove git-churn capture wiring', () => {
 
     await handleTaskMove(context as never, {
       taskId: TASK_ID, targetSwimlaneId: 'lane-no-spawn', targetPosition: 0,
-    });
+    }, 'renderer');
 
     expect(context.sessionManager.suspend).toHaveBeenCalledWith('active-session-1');
     expect(hoisted.captureGitChurn).toHaveBeenCalledWith(
@@ -325,7 +326,7 @@ describe('handleTaskMove git-churn capture wiring', () => {
 
     await handleTaskMove(context as never, {
       taskId: TASK_ID, targetSwimlaneId: 'lane-review-isolated', targetPosition: 0,
-    });
+    }, 'renderer');
 
     expect(hoisted.captureGitChurn).toHaveBeenCalledWith(
       expect.objectContaining({ id: TASK_ID }),
@@ -366,7 +367,7 @@ describe('handleTaskMove git-churn capture wiring', () => {
 
     await handleTaskMove(context as never, {
       taskId: TASK_ID, targetSwimlaneId: 'lane-codex', targetPosition: 0,
-    });
+    }, 'renderer');
 
     expect(hoisted.captureGitChurn).toHaveBeenCalledWith(
       expect.objectContaining({ id: TASK_ID }),
@@ -408,7 +409,7 @@ describe('handleTaskMove git-churn capture wiring', () => {
 
     await handleTaskMove(context as never, {
       taskId: TASK_ID, targetSwimlaneId: 'lane-target', targetPosition: 0,
-    });
+    }, 'renderer');
 
     expect(context.sessionManager.suspend).toHaveBeenCalledWith('active-session-1');
     expect(hoisted.captureGitChurn).toHaveBeenCalledWith(

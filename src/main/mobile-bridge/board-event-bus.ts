@@ -9,12 +9,20 @@ export interface BoardChangedEvent {
 }
 
 /**
- * A single main-process-internal event stream for every agent-driven board
- * mutation, consolidating the ad-hoc `IPC.*_BY_AGENT` renderer pushes
+ * A single main-process-internal event stream for every board mutation,
+ * whatever caused it: an agent tool call, a session lifecycle edge, or a plain
+ * desktop drag. It consolidates the ad-hoc `IPC.*_BY_AGENT` renderer pushes
  * (fired from `buildCommandContextForProject`'s callbacks in
  * mcp-project-context.ts, plus the PR-linking push in pr-linking.ts) into
  * one place a bridge session can subscribe to and filter by projectId,
  * instead of listening to each ad-hoc channel individually.
+ *
+ * A task move is the exception to the "fed right next to a renderer push"
+ * shape below: `handleTaskMove` owns that fan-out for all four of its callers
+ * and emits here itself, keyed on the origin it was given. That is also why
+ * this bus hears a plain RENDERER-origin drag, which no `*_BY_AGENT` channel
+ * ever carries - the subscribers here (paired phones, the Agent Monitor) are
+ * external to whoever moved the card, so they need it just the same.
  *
  * A PR-link reconcile reaches this bus as a plain `task-updated`, even though
  * its renderer push is the quiet `TASK_PR_LINK_CHANGED`: toast-worthiness is a

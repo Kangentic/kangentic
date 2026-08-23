@@ -180,6 +180,7 @@ function makeContext(taskRepo: unknown, swimlaneRepo: unknown) {
   const context = {
     currentProjectId: 'proj-test',
     currentProjectPath: '/mock/project',
+    boardEvents: { emitBoardChanged: vi.fn() },
     mainWindow: { isDestroyed: vi.fn(() => false), webContents: { send: vi.fn() } },
     sessionManager,
     configManager: { getEffectiveConfig: vi.fn(() => ({ git: { defaultBaseBranch: 'main' } })) },
@@ -228,7 +229,7 @@ async function moveTaskToDone(task: Task): Promise<void> {
     taskId: task.id,
     targetSwimlaneId: DONE_LANE_ID,
     targetPosition: 0,
-  });
+  }, 'renderer');
 }
 
 function getTaskCompleteProps(): Record<string, string | number | boolean> {

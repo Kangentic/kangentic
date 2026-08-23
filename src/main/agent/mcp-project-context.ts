@@ -121,16 +121,12 @@ export function buildCommandContextForProject(
       ipcContext.boardEvents.emitBoardChanged({ projectId, change: 'task-deleted', ids: [task.id] });
     },
 
+    // The only callback here that does NOT hand-roll its own push + bus pair.
+    // handleTaskMove owns the fan-out for every one of its callers, keyed on the
+    // origin passed in - which also drops the raw-SQL re-read this used to need
+    // purely to recover a title for the toast.
     onTaskMove: async (input) => {
-      await handleTaskMove(ipcContext, input, projectId, projectPath);
-      // Notify renderer to reload board (handleTaskMove assumes UI initiated)
-      const movedTask = getProjectDb(projectId)
-        .prepare('SELECT id, title FROM tasks WHERE id = ?')
-        .get(input.taskId) as { id: string; title: string } | undefined;
-      if (movedTask) {
-        sendToRenderer(ipcContext.mainWindow, IPC.TASK_UPDATED_BY_AGENT, movedTask.id, movedTask.title, projectId);
-        ipcContext.boardEvents.emitBoardChanged({ projectId, change: 'task-updated', ids: [movedTask.id] });
-      }
+      await handleTaskMove(ipcContext, input, 'agent', projectId, projectPath);
     },
 
     onTasksReordered: (swimlane, orderedTaskIds) => {

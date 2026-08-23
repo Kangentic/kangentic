@@ -82,6 +82,16 @@ vi.mock('../../src/main/analytics/analytics', () => ({
   trackEvent: vi.fn(),
 }));
 
+// handleTaskMove fires this itself now (it used to live at the call sites these
+// tests bypass), so without the mock every successful move here runs the real
+// helper against mocked repositories. It swallows its own errors, so the damage
+// is invisible rather than absent - the same reason the other task-move suites
+// already mock it.
+const mockAutoLinkPRForTask = vi.fn();
+vi.mock('../../src/main/pr/pr-linking', () => ({
+  autoLinkPRForTask: (...args: unknown[]) => mockAutoLinkPRForTask(...args),
+}));
+
 vi.mock('../../src/main/transition-engine/session-lifecycle', () => ({
   markRecordExited: vi.fn(),
   markRecordSuspended: vi.fn(),
@@ -179,6 +189,7 @@ interface MockSessionManager {
 interface MockContext {
   currentProjectId: string;
   currentProjectPath: string;
+  boardEvents: { emitBoardChanged: ReturnType<typeof vi.fn> };
   mainWindow: {
     isDestroyed: ReturnType<typeof vi.fn>;
     webContents: { send: ReturnType<typeof vi.fn> };
@@ -277,6 +288,7 @@ function makeContext(
   const context: MockContext = {
     currentProjectId: 'proj-test',
     currentProjectPath: '/mock/project',
+    boardEvents: { emitBoardChanged: vi.fn() },
     mainWindow: {
       isDestroyed: vi.fn(() => false),
       webContents: { send: vi.fn() },
@@ -372,7 +384,7 @@ describe('handleTaskMove shutdown protection', () => {
     const context = makeContext(taskRepo, swimlaneRepo);
 
     await expect(
-      handleTaskMove(context as never, MOVE_INPUT),
+      handleTaskMove(context as never, MOVE_INPUT, 'renderer'),
     ).resolves.toBeUndefined();
 
     // Phase 1 forward move ran (DB write committed before shutdown checked).
@@ -381,6 +393,17 @@ describe('handleTaskMove shutdown protection', () => {
     expect(mockEnsureTaskWorktree).not.toHaveBeenCalled();
     expect(mockEnsureTaskBranchCheckout).not.toHaveBeenCalled();
     expect(mockSpawnAgent).not.toHaveBeenCalled();
+
+    // The announce block's own shutdown gate. This is the one case where the
+    // move DID commit (taskRepo.move above) and yet must stay silent, so
+    // `moveCommitted` alone would not have suppressed it: dropping
+    // `!isShuttingDown()` from the guard makes every assertion below fail.
+    // The DB is already closed and the window is going away, but sendToRenderer
+    // would still record the push into the dev IPC log and the board-changed
+    // bus would still wake a phone subscription mid-teardown.
+    expect(context.boardEvents.emitBoardChanged).not.toHaveBeenCalled();
+    expect(context.mainWindow.webContents.send).not.toHaveBeenCalled();
+    expect(mockAutoLinkPRForTask).not.toHaveBeenCalled();
   });
 
   // =========================================================================
@@ -403,7 +426,7 @@ describe('handleTaskMove shutdown protection', () => {
     const context = makeContext(taskRepo, swimlaneRepo);
 
     await expect(
-      handleTaskMove(context as never, MOVE_INPUT),
+      handleTaskMove(context as never, MOVE_INPUT, 'renderer'),
     ).resolves.toBeUndefined();
 
     // Phase 2 ran (it's where the flag flipped).

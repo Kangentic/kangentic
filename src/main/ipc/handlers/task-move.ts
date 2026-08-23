@@ -18,6 +18,7 @@ import {
   spawnAgent,
 } from '../helpers';
 import { autoLinkPRForTask } from '../../pr/pr-linking';
+import { sendToRenderer } from '../send-to-renderer';
 import { resolveProjectContext } from '../helpers/project-repos';
 import { interpolateTaskTemplate, resolveTaskTemplateVars } from '../../agent/shared';
 import { trackEvent } from '../../analytics/analytics';
@@ -155,9 +156,52 @@ type MoveSpawnPlan = {
   suppressAutoCommand: boolean;
 };
 
+/**
+ * Who asked for this move. Required (not optional, and never a field on the
+ * `options` bag) so a new call site cannot forget it: adding a caller without
+ * naming its origin is a compile error, not a board that silently goes stale.
+ *
+ * This exists because `handleTaskMove` used to announce nothing at all, leaving
+ * each caller to fan out the notifications itself. Three of the four got it
+ * wrong in different ways, and the mobile bridge did neither half - a task moved
+ * from the phone left the desktop board rendering the card in its old column
+ * indefinitely.
+ */
+export type TaskMoveOrigin = 'renderer' | 'agent' | 'mobile' | 'auto-move';
+
+/**
+ * The renderer push for each origin, or null for "say nothing".
+ *
+ * A `Record` rather than a switch so a new `TaskMoveOrigin` member is a compile
+ * error here too. The asymmetry is deliberate:
+ *
+ * - `renderer` is silent because it initiated the move and already updated
+ *   optimistically. Pushing would cost a redundant board reload, and on the
+ *   agent channel the user would toast themselves.
+ * - `mobile` gets its own QUIET channel rather than reusing
+ *   TASK_UPDATED_BY_AGENT, whose listener toasts `Task updated by agent`. No
+ *   agent touched a task the user dragged on their own phone.
+ *
+ * The board-changed bus emit is NOT part of this table: it is unconditional for
+ * every origin. See the announce block at the end of `handleTaskMove` for why.
+ */
+const MOVE_PUSH_BY_ORIGIN: Record<
+  TaskMoveOrigin,
+  ((context: IpcContext, projectId: string, input: { taskId: string; targetSwimlaneId: string }, title: string) => void) | null
+> = {
+  renderer: null,
+  agent: (context, projectId, input, title) =>
+    sendToRenderer(context.mainWindow, IPC.TASK_UPDATED_BY_AGENT, input.taskId, title, projectId),
+  mobile: (context, projectId) =>
+    sendToRenderer(context.mainWindow, IPC.TASK_MOVED_BY_MOBILE, projectId),
+  'auto-move': (context, projectId, input, title) =>
+    sendToRenderer(context.mainWindow, IPC.TASK_AUTO_MOVED, input.taskId, input.targetSwimlaneId, title, projectId),
+};
+
 export async function handleTaskMove(
   context: IpcContext,
   input: { taskId: string; targetSwimlaneId: string; targetPosition: number },
+  origin: TaskMoveOrigin,
   projectId?: string | null,
   projectPath?: string | null,
   // Kept out of `input` (which flows raw from the renderer over IPC) so the
@@ -178,10 +222,24 @@ export async function handleTaskMove(
   // projects stay distinguishable in the dev terminal. Resolve the name from
   // the same id Phase 1 resolves; an unresolvable id (no project open) skips
   // the tag so the body inherits no misleading ambient context.
-  const logProjectId = projectId ?? context.currentProjectId;
-  const logProjectName = logProjectId
-    ? context.projectRepo.getById(logProjectId)?.name ?? null
+  const announceProjectId = projectId ?? context.currentProjectId;
+  const logProjectName = announceProjectId
+    ? context.projectRepo.getById(announceProjectId)?.name ?? null
     : null;
+
+  // Whether Phase 1's DB write actually landed, and the title captured with it.
+  //
+  // Both are set INSIDE the lock, on the line after the move + archive pair,
+  // rather than where Phase 1 returns: Phase 1 crosses await boundaries after
+  // the move (see the shutdown comment on the catch below), so a throw in that
+  // window would otherwise lose a change that is already committed.
+  //
+  // The title has to be captured rather than read at announce time. `task` is
+  // scoped to the Phase 1 closure and only escapes via the returned
+  // MoveSpawnPlan, and Phase 1 returns null for every move it fully handles -
+  // so on the common paths there is no task in scope by the time we announce.
+  let moveCommitted = false;
+  let movedTaskTitle = '';
   const runMove = async (): Promise<void> => {
   try {
     // === Phase 1 (locked, short) ===
@@ -263,6 +321,12 @@ export async function handleTaskMove(
         tasks.clearArchived(input.taskId);
         console.log(`[TASK_MOVE] Unarchived task ${input.taskId.slice(0, 8)} (moved out of Done)`);
       }
+
+      // The board row has changed on disk from here on, so it must be announced
+      // even if everything downstream fails. See the announce block after the
+      // try/catch for why "the move threw" does not imply "nothing changed".
+      moveCommitted = true;
+      movedTaskTitle = task.title;
 
       // Within-column reorder: no side effects needed
       if (fromSwimlaneId === input.targetSwimlaneId) return null;
@@ -1049,7 +1113,72 @@ export async function handleTaskMove(
   }
   };
 
-  return logProjectName ? runWithProjectLogContext(logProjectName, runMove) : runMove();
+  let moveSucceeded = false;
+  try {
+    await (logProjectName ? runWithProjectLogContext(logProjectName, runMove) : runMove());
+    moveSucceeded = true;
+  } finally {
+    // Announce iff the DB write committed - NOT merely "iff the move succeeded".
+    //
+    // A failed move can still leave a committed change. The rollback skips the
+    // revert entirely on the abort path (`!abort &&` in its guard), skips it
+    // again when its CAS sees a concurrent move already relocated the task, and
+    // is itself best-effort inside its own try/catch. Announcing only on the
+    // success path would therefore reproduce the exact bug this whole change
+    // exists to fix: a real board change that nobody is told about.
+    //
+    // Erring toward announcing is cheap. A redundant push coalesces into the
+    // renderer's 250ms debounced board reload, the Monitor debounces too, and
+    // phones already tolerate duplicate board events (the session-lifecycle
+    // feed deliberately double-emits). A missing one is the bug.
+    //
+    // A `finally` does not swallow the rethrow, and the shutdown gate is
+    // load-bearing rather than defensive: on that path the DB is already closed
+    // and the window is going away, but sendToRenderer would still record a push.
+    if (moveCommitted && announceProjectId && !isShuttingDown()) {
+      // Every origin, including `renderer`. The subscribers here (paired phones
+      // via the mobile bridge, and the Agent Monitor) are external to whoever
+      // made the move, so a desktop drag has to reach them just as an agent's
+      // move does. Sent as 'task-updated' rather than a new 'task-moved' kind
+      // because read-board forwards `change` straight onto the wire, making a
+      // new member a phone-visible protocol change for no gain.
+      //
+      // Both calls are wrapped because this runs in a `finally`: BoardEventBus
+      // is a plain EventEmitter, so it dispatches synchronously on this stack,
+      // and a subscriber that threw would REPLACE whatever error runMove was
+      // already propagating (the rollback tests assert the original surfaces)
+      // or turn a clean move into a rejection. Announcing is best-effort by
+      // design, so a failure to announce must never become the move's outcome.
+      try {
+        context.boardEvents.emitBoardChanged({
+          projectId: announceProjectId,
+          change: 'task-updated',
+          ids: [input.taskId],
+        });
+        MOVE_PUSH_BY_ORIGIN[origin]?.(context, announceProjectId, input, movedTaskTitle);
+      } catch (announceError) {
+        console.error(`[TASK_MOVE] Announce failed for task ${input.taskId.slice(0, 8)}:`, announceError);
+      }
+
+      // PR linking is deliberately SUCCESS-only, unlike the two announcements
+      // above. It used to live at the call sites, where it ran only once
+      // `await handleTaskMove` had resolved, so the TIMING is unchanged; folding
+      // it into the committed-but-failed case would newly fire gh queries for
+      // moves that blew up after writing. Gated on a branch + non-To Do lane
+      // inside the helper, and fire-and-forget so a slow query never blocks.
+      //
+      // The COVERAGE is not unchanged, and that is the one deliberate behavior
+      // change in this block: only the renderer and plan-exit call sites ever
+      // called this, so an agent's `move_task` and a phone's move never linked
+      // a PR for the lane they landed in. Both do now, which means both can
+      // spawn a `gh` query they previously did not. The helper's own lane and
+      // anchor gates plus `linkPR`'s 60s per-task throttle are what keep a
+      // scripted loop of agent moves from turning into a subprocess per move.
+      if (moveSucceeded) {
+        autoLinkPRForTask(context, input.taskId, announceProjectId);
+      }
+    }
+  }
 }
 
 export function registerTaskMoveHandlers(context: IpcContext): void {
@@ -1062,12 +1191,10 @@ export function registerTaskMoveHandlers(context: IpcContext): void {
       // ambient one. handleTaskMove keeps the ambient fallback for main-process
       // internal callers that pass undefined.
       const { projectId: resolvedProjectId, projectPath: resolvedProjectPath } = resolveProjectContext(context, projectId);
-      const result = await handleTaskMove(context, input, resolvedProjectId, resolvedProjectPath);
-      // After the move's task lock has released, resolve the PR for the new lane
-      // (gated on a branch + non-To Do lane inside the helper). Fire-and-forget so
-      // a slow gh query never blocks the move response.
-      autoLinkPRForTask(context, input.taskId, resolvedProjectId ?? context.currentProjectId);
-      return result;
+      // 'renderer': the board already moved the card optimistically, so this is
+      // the one origin that sends no push. It still reaches paired phones and
+      // the Monitor via the unconditional board-changed emit inside the handler.
+      return await handleTaskMove(context, input, 'renderer', resolvedProjectId, resolvedProjectPath);
     } catch (error) {
       // Shutdown closes the DB synchronously; any handler that crossed an
       // await boundary will throw "database connection is not open" or an
