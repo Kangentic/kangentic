@@ -685,7 +685,12 @@ export function MemoryGraphBody() {
               {answering
                 ? <Loader2 size={13} className="flex-shrink-0 animate-spin text-fg-muted" aria-hidden />
                 : <Sparkles size={13} className="flex-shrink-0 text-accent-fg" aria-hidden />}
-              <span className="text-xs text-fg">
+              {/* `text-sm` to match the search input beside it, and that is
+                  alignment rather than taste: both sit in `py-2` boxes, so the
+                  label's line height IS the control's height. At `text-xs` the
+                  button came out 34px against the box's 39px and read as
+                  misaligned even though both were top-anchored. */}
+              <span className="text-sm text-fg">
                 {answering ? `Asking ${askAgentLabel}` : `Ask ${askAgentLabel}`}
               </span>
             </button>

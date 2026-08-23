@@ -8,39 +8,58 @@
  * which is the thing this surface exists not to ask of anyone.
  */
 
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import type { Components } from 'react-markdown';
 import { Sparkles, X, AlertTriangle } from 'lucide-react';
 import type { MemoryAnswerCitation, MemoryAnswerTaskRef, MemoryGraphAnswerResult } from '../../../shared/types';
 
-/**
- * Splits answer text on the two things in it that are references.
- *
- * `[3]` is an EXCERPT, and `T12` is a TASK. Both are vocabulary the prompt
- * handed the agent, so both have somewhere to go, and until now only the first
- * one did: asked about mobile work the agent named 22 tasks inline and every
- * one of them rendered as dead text.
- *
- * Deliberately a plain scan rather than markdown rendering. The answer is prose
- * about a codebase and legitimately contains brackets, backticks and fenced
- * code; these two are the only things that have to become interactive, and
- * everything else is safer left as the text the agent wrote.
- */
-export type AnswerPart = { text: string } | { cite: number } | { task: number };
+const REMARK_PLUGINS = [remarkGfm];
 
-export function splitOnCitations(text: string): AnswerPart[] {
-  const parts: AnswerPart[] = [];
-  // One pass over both, so a `[3]` and a `T12` cannot be split by the other's
-  // scan and land out of order.
-  const pattern = /\[(\d{1,3})\]|\bT(\d{1,4})\b/g;
-  let cursor = 0;
-  let match = pattern.exec(text);
-  while (match !== null) {
-    if (match.index > cursor) parts.push({ text: text.slice(cursor, match.index) });
-    parts.push(match[1] !== undefined ? { cite: Number(match[1]) } : { task: Number(match[2]) });
-    cursor = match.index + match[0].length;
-    match = pattern.exec(text);
-  }
-  if (cursor < text.length) parts.push({ text: text.slice(cursor) });
-  return parts;
+/**
+ * Rewrites the answer's two reference forms into markdown links, so markdown
+ * rendering and interactive references can coexist.
+ *
+ * The answer is MARKDOWN. Agents write headings, bold, bullets and fenced code
+ * without being asked, and rendering that as preformatted text put `**Mobile
+ * Bridge phases**` on screen literally. But the answer also carries two things
+ * that must become CONTROLS - `[3]` for an excerpt and `T12` for a task - and a
+ * plain markdown render would flatten both back into text.
+ *
+ * Rewriting them into links with a private HASH FRAGMENT lets the markdown
+ * parser do the parsing while the `a` component decides what each one renders
+ * as. A fragment rather than a custom `kng-task:` protocol because
+ * react-markdown sanitizes unknown URL schemes to an EMPTY href, which silently
+ * produced plain links matching nothing - measured, not assumed. That is
+ * strictly better than splitting the raw string ourselves: the previous scan
+ * had no idea what a code fence was, so a `T12` inside example code became a
+ * button.
+ *
+ * Code is the one place refs are left alone, tracked here rather than by
+ * regex-with-lookbehind because fences and inline spans nest differently.
+ */
+export function linkifyReferences(answer: string): string {
+  const lines = answer.split('\n');
+  let inFence = false;
+  return lines.map((line) => {
+    // A fence toggles regardless of language tag or indentation.
+    if (/^\s*(```|~~~)/.test(line)) {
+      inFence = !inFence;
+      return line;
+    }
+    if (inFence) return line;
+
+    // Split on inline-code spans and rewrite only the parts outside them.
+    return line.split(/(`[^`]*`)/g).map((part) => {
+      if (part.startsWith('`')) return part;
+      return part
+        // `[3]` is only a citation when it is not ALREADY a markdown link or
+        // image; those carry a following `(` or a leading `!`.
+        .replace(/(!?)\[(\d{1,3})\](?!\()/g, (whole, bang: string, index: string) =>
+          (bang ? whole : `[${index}](#kng-cite-${index})`))
+        .replace(/\bT(\d{1,4})\b/g, (_whole, ref: string) => `[T${ref}](#kng-task-${ref})`);
+    }).join('');
+  }).join('\n');
 }
 
 function CitationMark({
@@ -147,6 +166,48 @@ export function MemoryAnswer({
   // and reading `.map` off undefined would unmount the surface.
   const taskByRef = new Map((answer.taskRefs ?? []).map((entry) => [entry.ref, entry]));
 
+  // One `a` override handles both reference schemes and leaves a real link
+  // alone. Built here rather than at module scope because it closes over this
+  // answer's citation and task maps.
+  const components: Components = {
+    a: ({ href, children, ...rest }) => {
+      const citeMatch = /^#kng-cite-(\d+)$/.exec(href ?? '');
+      if (citeMatch) {
+        return (
+          <CitationMark
+            index={Number(citeMatch[1])}
+            citation={byIndex.get(Number(citeMatch[1]))}
+            onSelect={onSelectCitation}
+          />
+        );
+      }
+      const taskMatch = /^#kng-task-(\d+)$/.exec(href ?? '');
+      if (taskMatch) {
+        return (
+          <TaskMark
+            taskRef={Number(taskMatch[1])}
+            entry={taskByRef.get(Number(taskMatch[1]))}
+            onSelect={onSelectTask}
+          />
+        );
+      }
+      // A genuine link the agent wrote. Opened externally rather than
+      // navigating this window, matching `MarkdownRenderer`.
+      return (
+        <a
+          {...rest}
+          href={href}
+          onClick={(event) => {
+            event.preventDefault();
+            if (href) window.electronAPI.shell.openExternal(href);
+          }}
+        >
+          {children}
+        </a>
+      );
+    },
+  };
+
   return (
     <div className="border-b border-edge px-3 py-3" data-testid="memory-answer">
       <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-fg-muted">
@@ -163,32 +224,17 @@ export function MemoryAnswer({
         </button>
       </div>
 
-      {/* `whitespace-pre-wrap`, so the paragraphs the agent wrote survive. */}
-      <p className="whitespace-pre-wrap text-sm leading-relaxed text-fg">
-        {splitOnCitations(answer.answer).map((part, position) => {
-          if ('cite' in part) {
-            return (
-              <CitationMark
-                key={position}
-                index={part.cite}
-                citation={byIndex.get(part.cite)}
-                onSelect={onSelectCitation}
-              />
-            );
-          }
-          if ('task' in part) {
-            return (
-              <TaskMark
-                key={position}
-                taskRef={part.task}
-                entry={taskByRef.get(part.task)}
-                onSelect={onSelectTask}
-              />
-            );
-          }
-          return <span key={position}>{part.text}</span>;
-        })}
-      </p>
+      {/* Rendered as markdown, because that is what the agent writes: headings,
+          bold, bullets and fenced code arrive unasked, and as preformatted text
+          they showed up as literal `**Mobile Bridge phases**`. The references
+          survive it by being rewritten into links first (see
+          `linkifyReferences`), so the parser handles the prose and the `a`
+          component decides what a reference renders as. */}
+      <div className="markdown-body memory-answer-body text-sm leading-relaxed text-fg">
+        <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={components}>
+          {linkifyReferences(answer.answer)}
+        </ReactMarkdown>
+      </div>
 
       {/* Stated rather than swallowed: an answer drawn from 24 of 60 matches is
           a different claim from one drawn from all of them, and the reader is
