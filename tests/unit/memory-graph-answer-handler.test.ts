@@ -73,6 +73,7 @@ vi.mock('../../src/main/db/repositories/task-repository', () => ({
 }));
 
 import { registerSearchHandlers } from '../../src/main/ipc/handlers/search';
+import { graphService } from '../../src/main/retrieval/graph/graph-service';
 
 function chunk(id: number, text = `Passage ${id}`): StoredChunk {
   return {
@@ -92,6 +93,35 @@ function hit(chunkId: number): TranscriptSearchHit {
     score: 0.02, matchKind: 'hybrid', matchCount: 1,
   };
 }
+
+/**
+ * A cached projection for the handler to read the task table out of.
+ *
+ * Ask now reads the WHOLE board, not just retrieved passages, so the snapshot is
+ * no longer incidental to these tests: without it the handler has no table and
+ * correctly refuses. Two tasks, one of them spanning two conversations, so the
+ * per-task rollup is exercised on the real path rather than only in the pure
+ * unit test.
+ */
+function graphNode(docKey: string, taskId: string, title: string, costUsd: number) {
+  return {
+    docKey, x: 0, y: 0, z: 0, chunkCount: 5, title,
+    sessionId: `session-${docKey}`, taskId, agent: 'Claude Code', model: 'claude-opus-5',
+    effort: null, durationMs: 60_000, costUsd, tokens: 1_000,
+    lastActivityMs: 1_760_000_000_000, outcome: 'done' as const,
+    clusters: { coarse: 0, balanced: 0, fine: 0 },
+  };
+}
+
+const MOCK_PROJECTION = {
+  nodes: [
+    graphNode('conversation::doc-1', 'task-1', 'Sphere fit framing', 10),
+    graphNode('conversation::doc-2', 'task-1', 'Sphere fit framing', 15),
+    graphNode('conversation::doc-3', 'task-2', 'Terminal scrollback repaint', 4),
+  ],
+  edges: [],
+  clusterings: [{ granularity: 'balanced', regions: [{ label: 'framing', size: 3, x: 0, y: 0, z: 0 }] }],
+};
 
 function makeContext(defaultAgent: string | null = 'claude') {
   return {
@@ -113,6 +143,15 @@ describe('the Ask handler', () => {
   beforeEach(() => {
     capturedHandlers.clear();
     searchSpy.mockClear();
+    vi.mocked(graphService.getSnapshot).mockReturnValue({
+      projectId: 'project-1',
+      projection: MOCK_PROJECTION,
+      coverage: {},
+      building: false,
+      stale: false,
+      semanticAvailable: true,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- narrow test double
+    } as any);
     mockChunks = [chunk(1), chunk(2)];
     mockHits = [hit(1), hit(2)];
   });
@@ -146,9 +185,12 @@ describe('the Ask handler', () => {
     expect(prompt).toContain('Passage 1');
   });
 
-  it('answers an empty retrieval without spawning anything', async () => {
+  it('still answers when NO passage matched, because the board is also a source', async () => {
+    // This was a refusal before the task table existed, and the refusal was the
+    // bug: "how many tasks were abandoned?" matches no passage and is perfectly
+    // answerable. Retrieval finding nothing is not the same as knowing nothing.
     mockHits = [];
-    const answerSpy = vi.fn(async () => 'should never run');
+    const answerSpy = vi.fn(async () => 'Two tasks, T1 and T2.');
     mockAdapters = [{
       name: 'claude',
       displayName: 'Claude Code',
@@ -158,14 +200,75 @@ describe('the Ask handler', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the context is a narrow test double
     registerSearchHandlers(makeContext() as any);
 
+    const result = await ask('how many tasks are there?');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(answerSpy).toHaveBeenCalled();
+    // And the prompt says so plainly rather than shipping an empty section.
+    expect(answerSpy.mock.calls[0][0]).toMatch(/EXCERPTS: none matched/);
+  });
+
+  it('refuses without spawning when there is nothing on EITHER side', async () => {
+    // The original guard, narrowed to what it was always for: a real call could
+    // only produce this same sentence, and a surface that charges for that once
+    // is distrusted for the rest of the session.
+    mockHits = [];
+    const answerSpy = vi.fn(async () => 'should never run');
+    mockAdapters = [{
+      name: 'claude',
+      displayName: 'Claude Code',
+      detect: async () => ({ found: true, path: '/usr/bin/claude', version: '1' }),
+      answerFromContext: answerSpy,
+    }];
+    vi.mocked(graphService.getSnapshot).mockReturnValue({
+      projectId: 'project-1',
+      projection: { nodes: [], edges: [], clusterings: [] },
+      coverage: {}, building: false, stale: false, semanticAvailable: true,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- narrow test double
+    } as any);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the context is a narrow test double
+    registerSearchHandlers(makeContext() as any);
+
     const result = await ask('something nothing matches');
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.answer).toMatch(/nothing to answer from/i);
     expect(result.citations).toEqual([]);
-    // The point of the case: that call could only produce this same sentence at
-    // the cost of a real one.
     expect(answerSpy).not.toHaveBeenCalled();
+  });
+
+  it('carries the whole board, and scopes the map to the tasks an answer selects', async () => {
+    // The two properties the feature exists for. The table must hold every task
+    // whether or not it was retrieved (task-2 has no hit here), and a selection
+    // must come back as docKeys the map can filter on - INCLUDING the second
+    // conversation of a selected task, which no retrieval returned.
+    const answerSpy = vi.fn(async () => 'Framing work.\nSELECTED: T1');
+    mockAdapters = [{
+      name: 'claude',
+      displayName: 'Claude Code',
+      detect: async () => ({ found: true, path: '/usr/bin/claude', version: '1' }),
+      answerFromContext: answerSpy,
+    }];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the context is a narrow test double
+    registerSearchHandlers(makeContext() as any);
+
+    const result = await ask('which tasks touched framing?');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const prompt = answerSpy.mock.calls[0][0] as string;
+    // Rolled up per TASK: task-1's two conversations sum to 25, not 10 and 15.
+    expect(prompt).toContain('T1|Sphere fit framing|2|25.00');
+    // Present despite never being retrieved.
+    expect(prompt).toContain('Terminal scrollback repaint');
+    // A "which tasks" question gets the completeness rules.
+    expect(prompt).toMatch(/return EVERY task that qualifies/);
+
+    // Both of task-1's conversations light up, and task-2's does not.
+    expect(result.selectedDocKeys).toEqual(['conversation::doc-1', 'conversation::doc-2']);
+    expect(result.taskCount).toBe(2);
+    // The protocol line never reaches the reader.
+    expect(result.answer).toBe('Framing work.');
   });
 
   it('checks the agent BEFORE retrieving, so a dead end costs no work', async () => {

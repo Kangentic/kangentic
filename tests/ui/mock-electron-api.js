@@ -3700,10 +3700,10 @@
             : { query: query, hits: [], semantic: true },
         );
       },
-      answerFromGraph: function (question, projectId) {
+      answerFromGraph: function (question, projectId, granularity) {
         if (typeof window !== 'undefined') {
           if (!window.__mockGraphAnswerCalls) window.__mockGraphAnswerCalls = [];
-          window.__mockGraphAnswerCalls.push({ question: question, projectId: projectId === undefined ? null : projectId });
+          window.__mockGraphAnswerCalls.push({ question: question, projectId: projectId === undefined ? null : projectId, granularity: granularity === undefined ? null : granularity });
         }
         // Defaults to a FAILURE, deliberately. Ask spawns a real CLI, so a spec
         // that has not said what the agent returns has not set up the case it is

@@ -8,7 +8,8 @@ import { getProjectDb } from '../../db/database';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { graphService } from '../../retrieval/graph/graph-service';
 import { selectAnswerSources, MAX_ANSWER_SOURCES } from '../../retrieval/answer-context';
-import { buildAnswerPrompt, NO_SOURCES_ANSWER } from '../../retrieval/answer-prompt';
+import { buildAnswerPrompt, NO_SOURCES_ANSWER, parseSelectedRefs } from '../../retrieval/answer-prompt';
+import { buildAnswerTaskTable } from '../../retrieval/answer-tasks';
 import { broadcast } from '../../pop-out/window-broadcast';
 import { resolveEmbeddingModel } from '../../../shared/embedding-models';
 import { resolveAnswerAgent } from '../../../shared/answer-agent';
@@ -191,7 +192,15 @@ export function registerSearchHandlers(context: IpcContext): void {
    */
   ipcMain.handle(
     IPC.MEMORY_GRAPH_ANSWER,
-    async (_event, question: string, projectId?: string | null): Promise<MemoryGraphAnswerResult> => {
+    async (
+      _event,
+      question: string,
+      projectId?: string | null,
+      // The granularity the user is LOOKING at, so a region named in the answer
+      // is a region they can see. Defaulted rather than required: a caller that
+      // does not care gets the same default the map opens on.
+      granularity = 'balanced',
+    ): Promise<MemoryGraphAnswerResult> => {
       try {
         const trimmed = (question ?? '').trim();
         if (!trimmed) return { ok: false, reason: 'ask a question first' };
@@ -254,29 +263,59 @@ export function registerSearchHandlers(context: IpcContext): void {
         );
         const context_ = selectAnswerSources(hits, chunks);
 
-        // Answered WITHOUT spawning. That call could only produce this same
-        // sentence at the cost of a real one, and a surface that charges for
-        // that once is distrusted for the rest of the session.
-        if (context_.sources.length === 0) {
+        // The board half: EVERY task, not a retrieved subset. This is what makes
+        // "which tasks are X" and "what was the most expensive" answerable at
+        // all - an agent shown 24 of 347 tasks answers confidently about 24.
+        // Read from the cached projection, which is a cheap read by contract.
+        const model = resolveEmbeddingModel(config.memory?.embeddingModel);
+        const snapshot = graphService.getSnapshot(resolvedProjectId, model.modelTag);
+        const projection = snapshot.projection;
+        const taskTable = projection ? buildAnswerTaskTable(projection, granularity) : null;
+
+        // Answered WITHOUT spawning, and now only when there is genuinely
+        // nothing on either side. A question with no matching passages is still
+        // answerable from the table ("how many tasks were abandoned?"), so the
+        // old passage-only check refused questions it could have answered.
+        if (context_.sources.length === 0 && (!taskTable || taskTable.rows.length === 0)) {
           return {
             ok: true,
             answer: NO_SOURCES_ANSWER,
             citations: [],
+            selectedDocKeys: [],
+            taskCount: 0,
             agentName: adapter.displayName,
             droppedConversations: 0,
           };
         }
+        if (!taskTable || !projection) return { ok: false, reason: 'the map is still building' };
 
-        const answer = await adapter.answerFromContext(
-          buildAnswerPrompt(trimmed, context_.sources),
+        const raw = await adapter.answerFromContext(
+          buildAnswerPrompt(trimmed, context_.sources, { tasks: taskTable, nowMs: Date.now() }),
           info.path,
           context.currentProjectPath ?? process.cwd(),
         );
-        if (!answer) return { ok: false, reason: 'the agent returned nothing' };
+        if (!raw) return { ok: false, reason: 'the agent returned nothing' };
+
+        // A selection answer carries its refs on a trailing line. Resolved back
+        // to docKeys HERE rather than in the renderer, because the ref-to-task
+        // mapping is this table's row order and nothing else should have to know
+        // that. An out-of-range ref is dropped rather than failing the answer:
+        // the prose is still worth showing.
+        const { refs, text: answer } = parseSelectedRefs(raw);
+        const selectedTaskIds = refs
+          .map((ref) => taskTable.rows[ref - 1]?.taskId ?? null)
+          .filter((taskId): taskId is string => taskId !== null);
+        const selectedDocKeys = selectedTaskIds.length > 0
+          ? projection.nodes
+            .filter((node) => node.taskId !== null && selectedTaskIds.includes(node.taskId))
+            .map((node) => node.docKey)
+          : [];
 
         return {
           ok: true,
           answer,
+          selectedDocKeys,
+          taskCount: taskTable.rows.length,
           // Every source, not only the ones the answer happened to cite: an
           // uncited source is still what the answer was allowed to see, and the
           // reader checking "did it miss something?" needs that list.

@@ -680,8 +680,8 @@ const api: ElectronAPI = {
     refreshGraph: (projectId) => ipcRenderer.invoke(IPC.MEMORY_GRAPH_REFRESH, projectId),
     queryGraph: (query: string, projectId?: string | null) =>
       ipcRenderer.invoke(IPC.MEMORY_GRAPH_QUERY, query, projectId),
-    answerFromGraph: (question: string, projectId?: string | null) =>
-      ipcRenderer.invoke(IPC.MEMORY_GRAPH_ANSWER, question, projectId),
+    answerFromGraph: (question: string, projectId?: string | null, granularity?: string) =>
+      ipcRenderer.invoke(IPC.MEMORY_GRAPH_ANSWER, question, projectId, granularity),
     relatedToTask: (taskId: string, projectId?: string | null) =>
       ipcRenderer.invoke(IPC.MEMORY_RELATED_TO_TASK, taskId, projectId),
     onGraphChanged: (callback: (projectId: string) => void) => {

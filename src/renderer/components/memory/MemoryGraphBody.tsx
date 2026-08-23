@@ -56,6 +56,26 @@ const QUERY_DEBOUNCE_MS = 220;
  *  read without scrolling. */
 const DETAIL_NEIGHBOR_COUNT = 6;
 
+/**
+ * Is this text a question rather than a set of keywords?
+ *
+ * Decides only ONE thing: whether typing keeps re-filtering the map live. It is
+ * deliberately loose at the edges because both mistakes are cheap - an
+ * unrecognised question filters as it always did, and a false positive costs
+ * one Enter. What it must not do is treat "mobile relay pairing" as a question,
+ * which is why it wants either a question mark or a leading question word plus
+ * enough words to be a sentence.
+ */
+export function looksLikeQuestion(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return false;
+  if (trimmed.endsWith('?')) return true;
+  const words = trimmed.split(/\s+/);
+  if (words.length < 3) return false;
+  return /^(what|why|which|who|when|where|how|show|list|find|tell|give|compare|summari[sz]e)$/i
+    .test(words[0]);
+}
+
 function CenteredNotice({ icon, title, body }: { icon: React.ReactNode; title: string; body: string }) {
   return (
     <div className="flex-1 min-h-0 flex items-center justify-center p-8">
@@ -155,18 +175,31 @@ export function MemoryGraphBody() {
     `${selectedIndex !== null}:${query !== null}`,
   );
 
-  // Search as you type. The premise is watching matches light up on the map,
-  // which a submit-to-search box cannot do; retrieval is local and free, so
-  // there is no cost reason to make the user press Enter.
+  // Search as you type, EXCEPT while a question is being typed.
+  //
+  // Live filtering is right for keywords: you watch the map narrow and stop
+  // when you see what you want, and retrieval is local and free. It is wrong
+  // for a question. "What was the most" is a meaningless intermediate state,
+  // and acting on it churned the map through half a dozen scopings on the way
+  // to a sentence that was never a filter in the first place. Worse, Ask then
+  // inherited that accidental scope as its evidence.
+  //
+  // So a question waits for Enter or Ask. Detection is conservative and fails
+  // softly in both directions: an unrecognised question just filters live as
+  // before, and a false positive costs one keypress.
+  const isQuestion = looksLikeQuestion(queryText);
   useEffect(() => {
     if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    // A cleared box always takes effect, or clearing a question would leave the
+    // previous result standing with nothing on screen explaining it.
+    if (isQuestion && queryText.trim()) return;
     debounceTimer.current = setTimeout(() => {
       void runQuery(queryText);
     }, QUERY_DEBOUNCE_MS);
     return () => {
       if (debounceTimer.current) clearTimeout(debounceTimer.current);
     };
-  }, [queryText, runQuery]);
+  }, [queryText, runQuery, isQuestion]);
 
   // A new query is a new question, so it replaces any neighbourhood being
   // explored rather than compounding with it.
@@ -359,11 +392,39 @@ export function MemoryGraphBody() {
     if (!colorModes.includes(colorMode)) setColorMode('cluster');
   }, [colorMode, colorModes]);
 
+  /**
+   * The tasks an answer SELECTED, when the question asked which rather than why.
+   *
+   * This is what makes "show me the terminal bug fixes" a filter instead of a
+   * paragraph about a filter: the agent read every task, decided which qualify,
+   * and the map scopes to exactly those. Nothing here re-derives that judgement.
+   */
+  const answerIndices = useMemo(() => {
+    // Optional-chained deliberately: an answer that predates the selection
+    // field (one in flight across a reload, or a detached window's older
+    // payload) is a perfectly good prose answer, and reading `.length` off it
+    // unmounts the whole surface through PanelErrorBoundary. The type says the
+    // field is always there; the wire does not have to agree.
+    if (!answer?.ok || !answer.selectedDocKeys?.length) return null;
+    const set = new Set<number>();
+    for (const docKey of answer.selectedDocKeys) {
+      const index = indexByDocKey.get(docKey);
+      if (index !== undefined) set.add(index);
+    }
+    // An answer whose every task has since left the map scopes to nothing,
+    // which would read as a broken filter rather than a stale one.
+    return set.size > 0 ? set : null;
+  }, [answer, indexByDocKey]);
+
   const highlighted = useMemo(() => {
     // Explore wins: it is the most recent, most specific thing the user asked
-    // for, and it is dismissible without losing the query underneath it.
+    // for, and it is dismissible without losing the query underneath it. An
+    // answer's selection comes next, ahead of the raw query it was asked from -
+    // the agent read the whole board to produce it, where the query text only
+    // ever matched words.
     let asked: Set<number> | undefined;
     if (exploreIndices) asked = exploreIndices;
+    else if (answerIndices) asked = answerIndices;
     else if (queryIndices) asked = queryIndices;
 
     // Facets INTERSECT rather than replace. They answer a different question
@@ -375,7 +436,7 @@ export function MemoryGraphBody() {
     const both = new Set<number>();
     for (const index of asked) if (facetIndices.has(index)) both.add(index);
     return both;
-  }, [exploreIndices, queryIndices, facetIndices]);
+  }, [exploreIndices, answerIndices, queryIndices, facetIndices]);
 
   /**
    * The search hits that survive the facet rows.
@@ -386,12 +447,17 @@ export function MemoryGraphBody() {
    */
   const visibleHits = useMemo(() => {
     if (!query) return [];
-    if (!facetIndices) return query.hits;
+    // An answer's selection narrows the list the same way it narrows the map -
+    // the two must never disagree about what is on screen. Hits are kept in
+    // result order rather than the agent's, since the cards are still ranked
+    // retrieval output.
+    const scopes = [facetIndices, answerIndices].filter((scope): scope is Set<number> => scope !== null && scope !== undefined);
+    if (scopes.length === 0) return query.hits;
     return query.hits.filter((hit) => {
       const index = indexByDocKey.get(hit.docKey);
-      return index !== undefined && facetIndices.has(index);
+      return index !== undefined && scopes.every((scope) => scope.has(index));
     });
-  }, [query, facetIndices, indexByDocKey]);
+  }, [query, facetIndices, answerIndices, indexByDocKey]);
 
   const selectedNode = selectedIndex !== null ? nodes?.[selectedIndex] ?? null : null;
 
@@ -526,6 +592,15 @@ export function MemoryGraphBody() {
         className="absolute left-1/2 top-3 z-10 w-[26rem] max-w-[calc(100%-30rem)] -translate-x-1/2"
         onSubmit={(event) => {
           event.preventDefault();
+          // Enter commits whatever was typed. For a question that means ASKING,
+          // since a question was never a filter and running it as one is what
+          // produced a scoped map nobody asked for. Falls back to searching when
+          // no agent can answer, so Enter always does something.
+          if (isQuestion && canAsk) {
+            void runQuery(queryText);
+            void askQuestion(queryText, granularity);
+            return;
+          }
           void runQuery(queryText);
         }}
       >
@@ -534,8 +609,8 @@ export function MemoryGraphBody() {
           <input
             value={queryText}
             onChange={(event) => setQueryText(event.target.value)}
-            placeholder="Search these conversations"
-            aria-label="Search indexed conversations"
+            placeholder={canAsk ? 'Search, or ask a question' : 'Search these conversations'}
+            aria-label="Search indexed conversations, or ask a question"
             data-testid="memory-graph-search-input"
             className="min-w-0 flex-1 bg-transparent text-sm text-fg placeholder:text-fg-muted outline-none"
           />
@@ -570,16 +645,21 @@ export function MemoryGraphBody() {
             instantly - and it names the AGENT up front so the fallback chain is
             never silent. The cost is one hover away rather than a permanent
             second line, because the button is the control and the tooltip is
-            the detail. */}
-        {canAsk && query && visibleHits.length > 0 && !answer ? (
+            the detail.
+
+            Offered whenever there is TEXT, not whenever the search found
+            something. Gating on hits hid the agent at exactly the moment it was
+            most useful: "show me the terminal bug fixes" returns nothing
+            lexically, and that is the question only an agent can answer. */}
+        {canAsk && queryText.trim() && !answer ? (
           <HoverTip
-            label={`${askAgentLabel} reads the matches and answers with citations. One agent call.`}
+            label={`${askAgentLabel} reads all ${projection.nodes.length} conversations and every task, and answers with citations. One agent call.`}
             className="absolute left-full top-0 ml-2"
             testId="memory-graph-ask-tip"
           >
             <button
               type="button"
-              onClick={() => void askQuestion(query.query)}
+              onClick={() => void askQuestion(queryText, granularity)}
               disabled={answering}
               data-testid="memory-graph-ask"
               className="flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-edge bg-surface-raised/85 px-3 py-2 shadow-xl backdrop-blur-md transition-colors hover:bg-surface-hover disabled:cursor-default disabled:hover:bg-surface-raised/85 cursor-pointer"

@@ -78,7 +78,9 @@ interface MemoryGraphState {
    */
   answeredQuestion: string | null;
   /** Asks the CURRENT query text. Never fires on its own. */
-  askQuestion: (question: string) => Promise<void>;
+  /** Asks the CURRENT query text. `granularity` is the detail level the user is
+   *  looking at, so a region the answer names is one they can see. */
+  askQuestion: (question: string, granularity?: string) => Promise<void>;
   clearAnswer: () => void;
 
   loadSnapshot: (projectId?: string | null) => Promise<void>;
@@ -156,14 +158,18 @@ function createMemoryGraphStore() {
     answering: false,
     answeredQuestion: null,
 
-    askQuestion: async (question) => {
+    askQuestion: async (question, granularity) => {
       const trimmed = question.trim();
       if (!trimmed || get().answering) return;
       // Cleared first, so a previous answer cannot sit under a spinner looking
       // like the answer to the question now being asked.
       set({ answering: true, answer: null, answeredQuestion: null });
       try {
-        const result = await window.electronAPI.memory.answerFromGraph(trimmed, get().projectId);
+        const result = await window.electronAPI.memory.answerFromGraph(
+          trimmed,
+          get().projectId,
+          granularity,
+        );
         set({ answer: result, answering: false, answeredQuestion: trimmed });
       } catch (error) {
         set({

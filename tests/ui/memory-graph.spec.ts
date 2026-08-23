@@ -651,9 +651,8 @@ test.describe('memory graph', () => {
       await page.locator('[data-testid="memory-graph-search-input"]').fill('sphere fit');
       await expect(page.locator('[data-testid="memory-graph-result-card"]')).toHaveCount(2);
 
-      // Appears only once there are matches, names the agent it will run, and
-      // states the cost - the two controls are separate acts, not one box with
-      // a hidden mode.
+      // Appears once there is TEXT, names the agent it will run, and states the
+      // cost - the two verbs are separate acts, not one box with a hidden mode.
       await expect(ask).toBeVisible();
       // The AGENT is on the button itself, so the fallback chain is never
       // silent about who will run.
@@ -708,7 +707,11 @@ test.describe('memory graph', () => {
       // (`.claude/rules/project-scoped-ipc.md`).
       expect(await page.evaluate(() => (window as unknown as {
         __mockGraphAnswerCalls?: Array<{ question: string }>;
-      }).__mockGraphAnswerCalls ?? [])).toEqual([{ question: 'sphere fit', projectId: 'project-1' }]);
+        // The granularity travels with the question, so a region the answer
+        // names is a region the user can currently see.
+      }).__mockGraphAnswerCalls ?? [])).toEqual([
+        { question: 'sphere fit', projectId: 'project-1', granularity: 'balanced' },
+      ]);
 
       // The cards stay. This is one more reading of them, not a replacement, so
       // a reader who distrusts the answer can drop straight to the source.
@@ -838,6 +841,96 @@ test.describe('memory graph', () => {
       // Every reason is actionable - no CLI, the agent cannot answer, a timeout -
       // so a generic failure line would take that away.
       await expect(page.locator('[data-testid="memory-answer-error"]')).toContainText('CLI not found');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('offers Ask even when the search matched nothing', async () => {
+    // The gate used to be "has hits", which hid the agent at exactly the moment
+    // it was most useful: a question phrased as a sentence rarely matches
+    // lexically, and answering it is the one thing search cannot do.
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}
+      window.__mockPreConfigure(function () {
+        return { memoryGraphQueryResult: { query: 'nothing matches this', semantic: true, hits: [] } };
+      });`;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await openMemoryGraph(page);
+      await page.locator('[data-testid="memory-graph-search-input"]').fill('nothing matches this');
+      await expect(page.locator('[data-testid="memory-graph-result-card"]')).toHaveCount(0);
+      await expect(page.locator('[data-testid="memory-graph-ask"]')).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a question waits for Enter rather than re-filtering the map on every keystroke', async () => {
+    // Typing "What was the most expensive task?" fired a retrieval per
+    // keystroke, each one re-scoping the map to whatever those partial words
+    // matched. The user never asked to filter, and Ask then inherited that
+    // accidental scope as its evidence.
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}${askQuery}`;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await openMemoryGraph(page);
+      const input = page.locator('[data-testid="memory-graph-search-input"]');
+
+      // A keyword query still searches as you type: that is the mode where
+      // watching the map narrow is the point.
+      await input.fill('sphere fit');
+      await expect(page.locator('[data-testid="memory-graph-result-card"]')).toHaveCount(2);
+
+      await input.fill('');
+      await expect(page.locator('[data-testid="memory-graph-result-card"]')).toHaveCount(0);
+
+      // A question does not. Given generously more than the debounce.
+      await input.fill('What was the most expensive task?');
+      await page.waitForTimeout(600);
+      await expect(page.locator('[data-testid="memory-graph-result-card"]')).toHaveCount(0);
+
+      // Enter commits it, and for a question that means ASKING.
+      await input.press('Enter');
+      await expect.poll(async () => (await page.evaluate(() => (window as unknown as {
+        __mockGraphAnswerCalls?: unknown[];
+      }).__mockGraphAnswerCalls ?? [])).length).toBe(1);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('scopes the map to the tasks an answer selected', async () => {
+    // "Show me the tasks related to terminal bug fixes" wants the map filtered,
+    // not a paragraph describing a filter. The agent read every task and said
+    // which qualify; the surface treats that as the scope.
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}${askQuery}
+      window.__mockPreConfigure(function () {
+        return {
+          memoryGraphAnswerResult: {
+            ok: true,
+            agentName: 'Claude Code',
+            answer: 'Two tasks touch the terminal.',
+            citations: [],
+            selectedDocKeys: ['conversation::doc-3', 'conversation::doc-7'],
+            taskCount: 30,
+            droppedConversations: 0,
+          },
+        };
+      });`;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await openMemoryGraph(page);
+      await page.locator('[data-testid="memory-graph-search-input"]').fill('sphere fit');
+      // The query alone matches two of thirty.
+      await expect(page.locator('[data-testid="memory-graph-result-card"]')).toHaveCount(2);
+
+      await page.locator('[data-testid="memory-graph-ask"]').click();
+      await expect(page.locator('[data-testid="memory-answer"]')).toContainText('Two tasks touch the terminal');
+
+      // The count reflects the SELECTION, and the cards agree with the map -
+      // a scoped map beside an unscoped list reads as a broken filter.
+      await expect(page.locator('[data-testid="memory-graph-result-card"]')).toHaveCount(2);
+      await expect(page.getByText('2 of 30', { exact: false }).first()).toBeVisible();
     } finally {
       await browser.close();
     }

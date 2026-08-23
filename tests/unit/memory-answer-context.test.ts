@@ -12,7 +12,23 @@ import {
   ANSWER_TOKEN_BUDGET,
   MAX_ANSWER_SOURCES,
 } from '../../src/main/retrieval/answer-context';
-import { buildAnswerPrompt } from '../../src/main/retrieval/answer-prompt';
+import {
+  buildAnswerPrompt,
+  parseSelectedRefs,
+  wantsTaskSelection,
+} from '../../src/main/retrieval/answer-prompt';
+import type { AnswerTaskTable } from '../../src/main/retrieval/answer-tasks';
+
+/** The board half of the prompt. Kept minimal here: the table's own rollup and
+ *  formatting are pinned in `memory-answer-tasks.test.ts`. */
+const EMPTY_TASKS: AnswerTaskTable = {
+  rows: [],
+  droppedTasks: 0,
+  conversationCount: 0,
+  earliestMs: null,
+  latestMs: null,
+};
+const PROMPT_CONTEXT = { tasks: EMPTY_TASKS, nowMs: Date.UTC(2026, 7, 22) };
 import type { StoredChunk } from '../../src/main/retrieval/types';
 import type { TranscriptSearchHit } from '../../src/main/retrieval/memory-search';
 
@@ -135,7 +151,7 @@ describe('answer context selection', () => {
 describe('the answer prompt', () => {
   it('numbers every excerpt and asks for those numbers back', () => {
     const context = selectAnswerSources([hit(1), hit(2)], chunkMap([chunk(1), chunk(2)]));
-    const prompt = buildAnswerPrompt('Why did we drop the sphere fit?', context.sources);
+    const prompt = buildAnswerPrompt('Why did we drop the sphere fit?', context.sources, PROMPT_CONTEXT);
 
     expect(prompt).toContain('[1] Conversation 1');
     expect(prompt).toContain('[2] Conversation 2');
@@ -143,9 +159,12 @@ describe('the answer prompt', () => {
     expect(prompt).toContain('Question: Why did we drop the sphere fit?');
     // The citation instruction has to name the SHAPE, or the answer cites titles.
     expect(prompt).toMatch(/\[3\] or \[1\]\[4\]/);
-    // And the refusal has to be offered, or a question the excerpts do not cover
+    // And the refusal has to be offered, or a question NEITHER source covers
     // gets answered from the model's own knowledge of the codebase.
-    expect(prompt).toMatch(/do not answer the question, say so/i);
+    expect(prompt).toMatch(/if neither answers the question, say so/i);
+    // The table has to be declared COMPLETE, or the model hedges every
+    // superlative with "of the tasks I can see".
+    expect(prompt).toMatch(/TASKS table is complete/i);
   });
 
   it('states corroboration only where there is some', () => {
@@ -153,7 +172,7 @@ describe('the answer prompt', () => {
       [hit(1, { matchCount: 7 }), hit(2, { matchCount: 1 })],
       chunkMap([chunk(1), chunk(2)]),
     );
-    const prompt = buildAnswerPrompt('anything', context.sources);
+    const prompt = buildAnswerPrompt('anything', context.sources, PROMPT_CONTEXT);
     expect(prompt).toContain('matched in 7 passages');
     // Not "matched in 1 passages", and not a bare "1" the model has to interpret.
     expect(prompt).not.toContain('matched in 1 passages');
@@ -167,7 +186,7 @@ describe('the answer prompt', () => {
         chunk(2, { tsStart: null, tsEnd: null }),
       ]),
     );
-    const prompt = buildAnswerPrompt('anything', context.sources);
+    const prompt = buildAnswerPrompt('anything', context.sources, PROMPT_CONTEXT);
     expect(prompt).toContain('2026-03-12');
     expect(prompt).toContain('date unknown');
   });
@@ -177,8 +196,8 @@ describe('the answer prompt', () => {
       [hit(1), hit(2)],
       chunkMap([chunk(1, { text: 'y'.repeat(20_000), tokenEstimate: 10 }), chunk(2)]),
     );
-    const prompt = buildAnswerPrompt('anything', context.sources);
+    const prompt = buildAnswerPrompt('anything', context.sources, PROMPT_CONTEXT);
     expect(prompt).toContain('Passage 2');
-    expect(prompt.length).toBeLessThan(6_000);
+    expect(prompt.length).toBeLessThan(9_000);
   });
 });

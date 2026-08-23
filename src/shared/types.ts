@@ -5306,7 +5306,7 @@ export interface ElectronAPI {
      * failure comes back as `{ ok: false, reason }` rather than throwing, so the
      * surface can say what went wrong instead of showing an empty answer.
      */
-    answerFromGraph: (question: string, projectId?: string | null) => Promise<MemoryGraphAnswerResult>;
+    answerFromGraph: (question: string, projectId?: string | null, granularity?: string) => Promise<MemoryGraphAnswerResult>;
     /**
      * Earlier conversations semantically near a task, excluding the task's own.
      * Proactive recall: what have I already figured out about this?
@@ -5624,6 +5624,18 @@ export type MemoryGraphAnswerResult =
     ok: true;
     answer: string;
     citations: MemoryAnswerCitation[];
+    /**
+     * Nodes the answer SELECTED, when the question asked which tasks rather than
+     * for an explanation ("show me the terminal bug fixes").
+     *
+     * Empty for an ordinary answer. Non-empty means the surface should scope the
+     * map to these, which is what makes a semantic query a first-class filter
+     * rather than a paragraph describing one.
+     */
+    selectedDocKeys: string[];
+    /** Tasks the agent was given. The answer's coverage, stated so a reader can
+     *  tell "none matched" from "it only saw a sample". */
+    taskCount: number;
     /** Which agent produced it, so the surface can say whose answer this is. */
     agentName: string;
     /**
