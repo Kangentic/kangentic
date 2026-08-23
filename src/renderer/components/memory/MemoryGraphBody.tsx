@@ -130,6 +130,17 @@ export function MemoryGraphBody() {
 
   const [queryText, setQueryText] = useState('');
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  /**
+   * A task the reader clicked in an answer.
+   *
+   * Its own scope rather than reusing `exploreFromIndex`: explore follows one
+   * conversation's LINKS, where this is a task's own conversations, and a task
+   * with three sessions is not a neighbourhood. Carries the title so the
+   * breadcrumb can name what it scoped to.
+   */
+  const [taskScope, setTaskScope] = useState<
+    { ref: number; title: string; indices: Set<number> } | null
+  >(null);
   const [showEdges, setShowEdges] = useState(true);
   const [showLabels, setShowLabels] = useState(true);
   const [showTitles, setShowTitles] = useState(true);
@@ -205,6 +216,7 @@ export function MemoryGraphBody() {
   // explored rather than compounding with it.
   useEffect(() => {
     setExploreFromIndex(null);
+    setTaskScope(null);
   }, [query]);
 
   const nodes = snapshot?.projection?.nodes;
@@ -399,6 +411,10 @@ export function MemoryGraphBody() {
    * paragraph about a filter: the agent read every task, decided which qualify,
    * and the map scopes to exactly those. Nothing here re-derives that judgement.
    */
+  useEffect(() => {
+    setTaskScope(null);
+  }, [answer]);
+
   const answerIndices = useMemo(() => {
     // Optional-chained deliberately: an answer that predates the selection
     // field (one in flight across a reload, or a detached window's older
@@ -424,6 +440,7 @@ export function MemoryGraphBody() {
     // ever matched words.
     let asked: Set<number> | undefined;
     if (exploreIndices) asked = exploreIndices;
+    else if (taskScope) asked = taskScope.indices;
     else if (answerIndices) asked = answerIndices;
     else if (queryIndices) asked = queryIndices;
 
@@ -436,7 +453,7 @@ export function MemoryGraphBody() {
     const both = new Set<number>();
     for (const index of asked) if (facetIndices.has(index)) both.add(index);
     return both;
-  }, [exploreIndices, answerIndices, queryIndices, facetIndices]);
+  }, [exploreIndices, taskScope, answerIndices, queryIndices, facetIndices]);
 
   /**
    * The search hits that survive the facet rows.
@@ -451,13 +468,14 @@ export function MemoryGraphBody() {
     // the two must never disagree about what is on screen. Hits are kept in
     // result order rather than the agent's, since the cards are still ranked
     // retrieval output.
-    const scopes = [facetIndices, answerIndices].filter((scope): scope is Set<number> => scope !== null && scope !== undefined);
+    const scopes = [facetIndices, answerIndices, taskScope?.indices ?? null]
+      .filter((scope): scope is Set<number> => scope !== null && scope !== undefined);
     if (scopes.length === 0) return query.hits;
     return query.hits.filter((hit) => {
       const index = indexByDocKey.get(hit.docKey);
       return index !== undefined && scopes.every((scope) => scope.has(index));
     });
-  }, [query, facetIndices, answerIndices, indexByDocKey]);
+  }, [query, facetIndices, answerIndices, taskScope, indexByDocKey]);
 
   const selectedNode = selectedIndex !== null ? nodes?.[selectedIndex] ?? null : null;
 
@@ -678,6 +696,30 @@ export function MemoryGraphBody() {
             Searched text only. Turn on semantic search for meaning-based matches.
           </p>
         ) : null}
+        {/* A task the reader clicked in an answer. Same shape as the explore
+            chip, because it is the same promise: the map is narrowed, here is
+            what to, and here is how to undo it. */}
+        {taskScope ? (
+          <div
+            className="mt-1.5 flex items-center gap-2 rounded-md border border-edge bg-surface-raised/85 px-2 py-1 text-[11px] text-fg-muted backdrop-blur"
+            data-testid="memory-graph-task-chip"
+          >
+            <Network size={11} className="flex-shrink-0" aria-hidden />
+            <span className="min-w-0 flex-1 truncate">
+              {taskScope.title} ({taskScope.indices.size}{' '}
+              {taskScope.indices.size === 1 ? 'conversation' : 'conversations'})
+            </span>
+            <button
+              type="button"
+              onClick={() => setTaskScope(null)}
+              className="rounded p-0.5 hover:bg-surface-hover hover:text-fg cursor-pointer"
+              aria-label="Stop scoping to this task"
+              data-testid="memory-graph-task-clear"
+            >
+              <X size={11} />
+            </button>
+          </div>
+        ) : null}
         {/* Says what the map is currently scoped to, and takes it back. Without
             this the explored neighbourhood is an unexplained narrowing the user
             cannot undo except by clearing the search. */}
@@ -772,6 +814,22 @@ export function MemoryGraphBody() {
               onSelectCitation={(citation) => {
                 const index = indexByDocKey.get(citation.docKey);
                 if (index !== undefined) selectNode(index);
+              }}
+              // A task ref is a different unit from a citation: it names a whole
+              // task, which is usually several conversations. So it EXPLORES
+              // rather than selects - the map scopes to that task's work and the
+              // rail lists it - where a citation opens one specific excerpt.
+              onSelectTask={(entry) => {
+                const indices = entry.docKeys
+                  .map((docKey) => indexByDocKey.get(docKey))
+                  .filter((index): index is number => index !== undefined);
+                if (indices.length === 0) return;
+                setTaskScope({ ref: entry.ref, title: entry.title, indices: new Set(indices) });
+                // Deliberately does NOT select a conversation. Selecting swaps
+                // the rail to the detail panel, so clicking a task would drop
+                // the reader into ONE of its conversations and hide the list of
+                // the others - the opposite of what naming a task asks for.
+                selectNode(null);
               }}
             />
 

@@ -76,15 +76,42 @@ export function wantsTaskSelection(question: string): boolean {
  * a malformed envelope would cost the whole answer where a missing line costs
  * only the selection.
  */
-export function parseSelectedRefs(answer: string): { refs: number[]; text: string } {
+export function parseSelectedRefs(answer: string): {
+  refs: number[];
+  mentioned: number[];
+  text: string;
+} {
+  // Every ref the answer NAMES, wherever it names it. This is the load-bearing
+  // half, and it exists because the protocol line is not reliable: asked to
+  // describe mobile work, the agent wrote an essay naming 22 tasks inline as
+  // `T133` and never emitted the trailing line at all. Those refs are real and
+  // resolvable, and they were rendering as dead text - so the vocabulary the
+  // prompt hands out is read back out of the PROSE rather than only out of a
+  // format the model may decline to use.
+  //
+  // Bounded to 1-4 digits with word boundaries, so a `T1` inside an identifier
+  // is not mistaken for a reference.
+  const mentioned = new Set(
+    [...answer.matchAll(/\bT(\d{1,4})\b/g)].map((entry) => Number.parseInt(entry[1], 10)),
+  );
+
   const match = answer.match(/^[ \t]*SELECTED:[ \t]*(.*)$/im);
-  if (!match) return { refs: [], text: answer };
-  const refs = [...match[1].matchAll(/T(\d+)/gi)]
-    .map((entry) => Number.parseInt(entry[1], 10))
-    .filter((value) => Number.isFinite(value));
-  // Deduped and ordered: a repeated ref would be a duplicate card.
-  const unique = [...new Set(refs)].sort((left, right) => left - right);
-  return { refs: unique, text: answer.replace(match[0], '').trimEnd() };
+  if (!match) {
+    return { refs: [], mentioned: [...mentioned].sort((a, b) => a - b), text: answer };
+  }
+  const refs = [...new Set(
+    [...match[1].matchAll(/T(\d+)/gi)]
+      .map((entry) => Number.parseInt(entry[1], 10))
+      .filter((value) => Number.isFinite(value)),
+  )].sort((left, right) => left - right);
+  // A task named ONLY in the line still counts as mentioned: the line is a
+  // statement about the answer, not decoration on top of the prose.
+  for (const ref of refs) mentioned.add(ref);
+  return {
+    refs,
+    mentioned: [...mentioned].sort((a, b) => a - b),
+    text: answer.replace(match[0], '').trimEnd(),
+  };
 }
 
 /** ISO date, which is unambiguous and needs no locale. */

@@ -172,15 +172,43 @@ describe('selection questions', () => {
     expect(text).toBe('Terminal and PTY work.');
   });
 
-  it('treats "none" as an empty selection rather than a parse failure', () => {
-    const { refs, text } = parseSelectedRefs('Nothing matched.\nSELECTED: none');
+  it('collects refs the answer named INLINE, with no protocol line at all', () => {
+    // The case measured against a real agent: asked to describe mobile work it
+    // wrote an essay naming 22 tasks as `T133` and never emitted SELECTED. Those
+    // refs were real and rendered as dead text, so they are parsed out of the
+    // prose rather than only out of a format the model may decline to use.
+    const answer = 'Mobile work spans T133 Phase 1, T84 Phase 2, and T323 the protocol package.';
+    const { refs, mentioned } = parseSelectedRefs(answer);
+    // No SELECTED line, so nothing is claimed as a selection...
     expect(refs).toEqual([]);
+    // ...but every named task is still resolvable.
+    expect(mentioned).toEqual([84, 133, 323]);
+  });
+
+  it('does not mistake a T inside an identifier for a task ref', () => {
+    // Word-bounded, or `T1` in a token like `WT12` would light a random task.
+    const { mentioned } = parseSelectedRefs('The WT12 branch and PART3 both changed.');
+    expect(mentioned).toEqual([]);
+  });
+
+  it('counts a task named only in the protocol line as mentioned', () => {
+    // The line is a statement about the answer, not decoration on the prose, so
+    // a ref that appears nowhere else still has to resolve.
+    const { refs, mentioned } = parseSelectedRefs('Two matched.\nSELECTED: T4, T8');
+    expect(refs).toEqual([4, 8]);
+    expect(mentioned).toEqual([4, 8]);
+  });
+
+  it('treats "none" as an empty selection rather than a parse failure', () => {
+    const { refs, mentioned, text } = parseSelectedRefs('Nothing matched.\nSELECTED: none');
+    expect(refs).toEqual([]);
+    expect(mentioned).toEqual([]);
     expect(text).toBe('Nothing matched.');
   });
 
   it('returns the answer untouched when there is no selection line', () => {
     // An ordinary answer must survive the parser completely unchanged.
     const answer = 'We dropped it because a sphere circumscribes [2].';
-    expect(parseSelectedRefs(answer)).toEqual({ refs: [], text: answer });
+    expect(parseSelectedRefs(answer)).toEqual({ refs: [], mentioned: [], text: answer });
   });
 });

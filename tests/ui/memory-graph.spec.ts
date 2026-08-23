@@ -936,6 +936,54 @@ test.describe('memory graph', () => {
     }
   });
 
+  test('makes a task the answer named a control, and scopes the map to it', async () => {
+    // Measured against a real agent: asked about mobile work it wrote an essay
+    // naming 22 tasks inline as `T133` and never emitted the protocol line, so
+    // every one of them rendered as dead text pointing at nothing.
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}${askQuery}
+      window.__mockPreConfigure(function () {
+        return {
+          memoryGraphAnswerResult: {
+            ok: true,
+            agentName: 'Claude Code',
+            answer: 'Mobile work spans T4 the bridge and T9 the relay.',
+            citations: [],
+            selectedDocKeys: [],
+            taskRefs: [
+              { ref: 4, title: 'Mobile Bridge Phase 1', docKeys: ['conversation::doc-3', 'conversation::doc-7'] }
+            ],
+            taskCount: 30,
+            droppedConversations: 0,
+          },
+        };
+      });`;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await openMemoryGraph(page);
+      await page.locator('[data-testid="memory-graph-search-input"]').fill('mobile');
+      await page.locator('[data-testid="memory-graph-ask"]').click();
+      await expect(page.locator('[data-testid="memory-answer"]')).toContainText('Mobile work spans');
+
+      // T4 resolved, so it is a control. T9 did not, so it stays plain text
+      // rather than becoming a button that cannot act.
+      const chips = page.locator('[data-testid="memory-answer-task"]');
+      await expect(chips).toHaveCount(1);
+      await expect(chips.first()).toHaveText('T4');
+
+      // Clicking it scopes the map to that task's conversations, and says so.
+      await chips.first().click();
+      await expect(page.locator('[data-testid="memory-graph-task-chip"]')).toContainText('Mobile Bridge Phase 1');
+      await expect(page.locator('[data-testid="memory-graph-task-chip"]')).toContainText('2 conversations');
+      await expect(page.locator('[data-testid="memory-graph-result-card"]')).toHaveCount(2);
+
+      // And the scope is undoable, like every other narrowing on this surface.
+      await page.locator('[data-testid="memory-graph-task-clear"]').click();
+      await expect(page.locator('[data-testid="memory-graph-task-chip"]')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('does not offer Ask when the agent cannot answer', async () => {
     // The gate is the CAPABILITY, never the agent's name
     // (`.claude/rules/agent-adapters-boundary.md`). An agent without it gets no

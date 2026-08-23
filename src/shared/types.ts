@@ -5619,6 +5619,16 @@ export interface MemoryAnswerCitation {
   ts: number | null;
 }
 
+/** One `T<n>` an answer named, resolved to the conversations behind that task. */
+export interface MemoryAnswerTaskRef {
+  /** The number as written in the answer, so the renderer can match `T12`. */
+  ref: number;
+  title: string;
+  /** Every conversation belonging to the task. A task runs several sessions,
+   *  so selecting it lights all of them rather than an arbitrary one. */
+  docKeys: string[];
+}
+
 export type MemoryGraphAnswerResult =
   | {
     ok: true;
@@ -5633,6 +5643,17 @@ export type MemoryGraphAnswerResult =
      * rather than a paragraph describing one.
      */
     selectedDocKeys: string[];
+    /**
+     * Every task the answer NAMED, resolved back to the map.
+     *
+     * The agent is handed a `T<n>` vocabulary and uses it naturally in prose
+     * ("T133 Mobile Bridge Phase 1..."), which rendered as dead text. Each of
+     * these makes one `T<n>` a control that selects that task's conversations.
+     *
+     * Distinct from `selectedDocKeys`: naming a task while explaining something
+     * is not the same as saying the map should scope to it.
+     */
+    taskRefs: MemoryAnswerTaskRef[];
     /** Tasks the agent was given. The answer's coverage, stated so a reader can
      *  tell "none matched" from "it only saw a sample". */
     taskCount: number;

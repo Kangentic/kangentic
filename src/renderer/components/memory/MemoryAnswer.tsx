@@ -9,24 +9,33 @@
  */
 
 import { Sparkles, X, AlertTriangle } from 'lucide-react';
-import type { MemoryAnswerCitation, MemoryGraphAnswerResult } from '../../../shared/types';
+import type { MemoryAnswerCitation, MemoryAnswerTaskRef, MemoryGraphAnswerResult } from '../../../shared/types';
 
 /**
- * Splits answer text on its citation markers.
+ * Splits answer text on the two things in it that are references.
+ *
+ * `[3]` is an EXCERPT, and `T12` is a TASK. Both are vocabulary the prompt
+ * handed the agent, so both have somewhere to go, and until now only the first
+ * one did: asked about mobile work the agent named 22 tasks inline and every
+ * one of them rendered as dead text.
  *
  * Deliberately a plain scan rather than markdown rendering. The answer is prose
  * about a codebase and legitimately contains brackets, backticks and fenced
- * code; the ONE thing that has to become interactive is `[n]`, and everything
- * else is safer left as the text the agent wrote.
+ * code; these two are the only things that have to become interactive, and
+ * everything else is safer left as the text the agent wrote.
  */
-export function splitOnCitations(text: string): Array<{ text: string } | { cite: number }> {
-  const parts: Array<{ text: string } | { cite: number }> = [];
-  const pattern = /\[(\d{1,3})\]/g;
+export type AnswerPart = { text: string } | { cite: number } | { task: number };
+
+export function splitOnCitations(text: string): AnswerPart[] {
+  const parts: AnswerPart[] = [];
+  // One pass over both, so a `[3]` and a `T12` cannot be split by the other's
+  // scan and land out of order.
+  const pattern = /\[(\d{1,3})\]|\bT(\d{1,4})\b/g;
   let cursor = 0;
   let match = pattern.exec(text);
   while (match !== null) {
     if (match.index > cursor) parts.push({ text: text.slice(cursor, match.index) });
-    parts.push({ cite: Number(match[1]) });
+    parts.push(match[1] !== undefined ? { cite: Number(match[1]) } : { task: Number(match[2]) });
     cursor = match.index + match[0].length;
     match = pattern.exec(text);
   }
@@ -61,13 +70,48 @@ function CitationMark({
   );
 }
 
+/**
+ * A task the answer named. Clicking it scopes the map to that task's work.
+ *
+ * Rendered as its own kind rather than folded into a citation: a `[3]` points
+ * at ONE excerpt, where a `T12` points at a whole task, usually several
+ * conversations. Same affordance, different unit, so the label keeps its `T`.
+ */
+function TaskMark({
+  taskRef,
+  entry,
+  onSelect,
+}: {
+  taskRef: number;
+  entry: MemoryAnswerTaskRef | undefined;
+  onSelect: (entry: MemoryAnswerTaskRef) => void;
+}) {
+  // A ref with no task behind it - out of range, or a task that has since left
+  // the map. Plain text rather than a dead button, as with an unknown citation.
+  if (!entry) return <span className="text-fg-faint">T{taskRef}</span>;
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(entry)}
+      title={entry.title}
+      data-testid="memory-answer-task"
+      data-task-ref={taskRef}
+      className="mx-0.5 rounded bg-surface-control px-1 text-[11px] font-medium text-fg align-baseline hover:bg-surface-hover cursor-pointer"
+    >
+      T{taskRef}
+    </button>
+  );
+}
+
 export function MemoryAnswer({
   answer,
   onSelectCitation,
+  onSelectTask,
   onDismiss,
 }: {
   answer: MemoryGraphAnswerResult | null;
   onSelectCitation: (citation: MemoryAnswerCitation) => void;
+  onSelectTask: (entry: MemoryAnswerTaskRef) => void;
   onDismiss: () => void;
 }) {
   // The pending state lives on the Ask button, beside the question, because
@@ -99,6 +143,9 @@ export function MemoryAnswer({
   }
 
   const byIndex = new Map(answer.citations.map((citation) => [citation.index, citation]));
+  // `?? []` because an answer that predates this field is still a good answer,
+  // and reading `.map` off undefined would unmount the surface.
+  const taskByRef = new Map((answer.taskRefs ?? []).map((entry) => [entry.ref, entry]));
 
   return (
     <div className="border-b border-edge px-3 py-3" data-testid="memory-answer">
@@ -118,18 +165,29 @@ export function MemoryAnswer({
 
       {/* `whitespace-pre-wrap`, so the paragraphs the agent wrote survive. */}
       <p className="whitespace-pre-wrap text-sm leading-relaxed text-fg">
-        {splitOnCitations(answer.answer).map((part, position) => (
-          'cite' in part
-            ? (
+        {splitOnCitations(answer.answer).map((part, position) => {
+          if ('cite' in part) {
+            return (
               <CitationMark
                 key={position}
                 index={part.cite}
                 citation={byIndex.get(part.cite)}
                 onSelect={onSelectCitation}
               />
-            )
-            : <span key={position}>{part.text}</span>
-        ))}
+            );
+          }
+          if ('task' in part) {
+            return (
+              <TaskMark
+                key={position}
+                taskRef={part.task}
+                entry={taskByRef.get(part.task)}
+                onSelect={onSelectTask}
+              />
+            );
+          }
+          return <span key={position}>{part.text}</span>;
+        })}
       </p>
 
       {/* Stated rather than swallowed: an answer drawn from 24 of 60 matches is

@@ -282,6 +282,7 @@ export function registerSearchHandlers(context: IpcContext): void {
             answer: NO_SOURCES_ANSWER,
             citations: [],
             selectedDocKeys: [],
+            taskRefs: [],
             taskCount: 0,
             agentName: adapter.displayName,
             droppedConversations: 0,
@@ -301,20 +302,36 @@ export function registerSearchHandlers(context: IpcContext): void {
         // mapping is this table's row order and nothing else should have to know
         // that. An out-of-range ref is dropped rather than failing the answer:
         // the prose is still worth showing.
-        const { refs, text: answer } = parseSelectedRefs(raw);
-        const selectedTaskIds = refs
-          .map((ref) => taskTable.rows[ref - 1]?.taskId ?? null)
-          .filter((taskId): taskId is string => taskId !== null);
-        const selectedDocKeys = selectedTaskIds.length > 0
-          ? projection.nodes
-            .filter((node) => node.taskId !== null && selectedTaskIds.includes(node.taskId))
-            .map((node) => node.docKey)
-          : [];
+        const { refs, mentioned, text: answer } = parseSelectedRefs(raw);
+        const docKeysForRefs = (rowRefs: ReadonlyArray<number>): string[] => {
+          const taskIds = new Set(rowRefs
+            .map((ref) => taskTable.rows[ref - 1]?.taskId ?? null)
+            .filter((taskId): taskId is string => taskId !== null));
+          if (taskIds.size === 0) return [];
+          return projection.nodes
+            .filter((node) => node.taskId !== null && taskIds.has(node.taskId))
+            .map((node) => node.docKey);
+        };
+        const selectedDocKeys = docKeysForRefs(refs);
+
+        // Every task the answer NAMED, so `T133` in prose is a control rather
+        // than dead text. Separate from the selection on purpose: naming a task
+        // while explaining something is not the same as saying the map should
+        // scope to it, and conflating them would re-scope the map on every
+        // answer that happens to mention a task.
+        const taskRefs = mentioned.flatMap((ref) => {
+          const row = taskTable.rows[ref - 1];
+          if (!row) return [];
+          const docKeys = docKeysForRefs([ref]);
+          if (docKeys.length === 0) return [];
+          return [{ ref, title: row.title, docKeys }];
+        });
 
         return {
           ok: true,
           answer,
           selectedDocKeys,
+          taskRefs,
           taskCount: taskTable.rows.length,
           // Every source, not only the ones the answer happened to cite: an
           // uncited source is still what the answer was allowed to see, and the
