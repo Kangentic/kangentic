@@ -9,7 +9,8 @@ import { createKimiCommandInjectionVerifier } from './command-injection-verifier
 import { parseKimiTranscript, locateKimiTranscriptFile } from './transcript-parser';
 import { migrateKimiProjectData } from './project-relocation';
 import { discoverKimiCapabilities } from './capability-discovery';
-import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
+import { runCliPrintSummarize,
+  runCliPrintAnswer, buildSummarizePrompt } from '../../shared/auto-name';
 import type { AgentAdapter, AgentInfo, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript } from '../../agent-adapter';
 import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier, AgentCapabilities } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
@@ -253,6 +254,31 @@ export class KimiAdapter implements AgentAdapter {
       cliPath,
       args: ['--print', '--quiet'],
       prompt: buildSummarizePrompt(prompt),
+      cwd,
+    });
+  }
+
+  /**
+   * Answer a question from retrieved conversation passages (Memory Graph Ask).
+   *
+   * Kimi mirrors Claude's flag surface, plan mode included.
+   *
+   * The prompt, its rules and the retrieval budget are all built upstream and
+   * handed over whole; this only decides the CLI's flags.
+   */
+  async answerFromContext(
+    prompt: string,
+    cliPath: string,
+    cwd: string,
+    model?: string | null,
+  ): Promise<string> {
+    return runCliPrintAnswer({
+      cliPath,
+      // The model flag is OMITTED when none is chosen: passing an
+      // empty value is an error, and the absence of the flag is what
+      // "the agent's own default" means to the CLI.
+      args: ['--print', '--quiet', '--permission-mode', 'plan', ...(model ? ['--model', model] : [])],
+      prompt,
       cwd,
     });
   }

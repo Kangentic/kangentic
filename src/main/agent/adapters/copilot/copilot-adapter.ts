@@ -7,7 +7,8 @@ import { CopilotStreamParser } from './stream-parser';
 import { migrateCopilotProjectData } from './project-relocation';
 import { discoverCopilotCapabilities } from './capability-discovery';
 import { createCopilotCommandInjectionVerifier } from './command-injection-verifier';
-import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
+import { runCliPrintSummarize,
+  runCliPrintAnswer, buildSummarizePrompt } from '../../shared/auto-name';
 import type { AgentAdapter, AgentInfo, SpawnCommandOptions, SettingsChangeSpec } from '../../agent-adapter';
 import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier, AgentCapabilities } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
@@ -241,6 +242,36 @@ export class CopilotAdapter implements AgentAdapter {
       cliPath,
       args: ['--silent', '-p'],
       prompt: buildSummarizePrompt(prompt),
+      cwd,
+      promptVia: 'arg',
+    });
+  }
+
+  /**
+   * Answer a question from retrieved conversation passages (Memory Graph Ask).
+   *
+   * Copilot's `-p` print mode with status output silenced.
+   *
+   * The prompt, its rules and the retrieval budget are all built upstream and
+   * handed over whole; this only decides the CLI's flags.
+   */
+  async answerFromContext(
+    prompt: string,
+    cliPath: string,
+    cwd: string,
+    model?: string | null,
+  ): Promise<string> {
+    return runCliPrintAnswer({
+      cliPath,
+      // The model flag is OMITTED when none is chosen: passing an
+      // empty value is an error, and the absence of the flag is what
+      // "the agent's own default" means to the CLI.
+      //
+      // It goes BEFORE the print flag, because `promptVia: 'arg'` appends the
+      // prompt as the final positional argument - anything after `-p` would be
+      // read as the prompt, and the real prompt as a stray trailing arg.
+      args: ['--silent', ...(model ? ['--model', model] : []), '-p'],
+      prompt,
       cwd,
       promptVia: 'arg',
     });

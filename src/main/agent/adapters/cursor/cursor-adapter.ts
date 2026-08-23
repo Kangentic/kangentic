@@ -4,7 +4,8 @@ import { AgentDetector } from '../../shared/agent-detector';
 import { interpolateTemplate } from '../../shared/template-utils';
 import { quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import { CursorStreamParser } from './stream-parser';
-import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
+import { runCliPrintSummarize,
+  runCliPrintAnswer, buildSummarizePrompt } from '../../shared/auto-name';
 import { discoverCursorCapabilities } from './capability-discovery';
 import type { AgentAdapter, AgentInfo, SpawnCommandOptions, SettingsChangeSpec } from '../../agent-adapter';
 import type {
@@ -336,6 +337,36 @@ export class CursorAdapter implements AgentAdapter {
       cliPath,
       args: ['--output-format', 'text', '-p'],
       prompt: buildSummarizePrompt(prompt),
+      cwd,
+      promptVia: 'arg',
+    });
+  }
+
+  /**
+   * Answer a question from retrieved conversation passages (Memory Graph Ask).
+   *
+   * Cursor takes the prompt positionally after `-p`, not on stdin.
+   *
+   * The prompt, its rules and the retrieval budget are all built upstream and
+   * handed over whole; this only decides the CLI's flags.
+   */
+  async answerFromContext(
+    prompt: string,
+    cliPath: string,
+    cwd: string,
+    model?: string | null,
+  ): Promise<string> {
+    return runCliPrintAnswer({
+      cliPath,
+      // The model flag is OMITTED when none is chosen: passing an
+      // empty value is an error, and the absence of the flag is what
+      // "the agent's own default" means to the CLI.
+      //
+      // It goes BEFORE the print flag, because `promptVia: 'arg'` appends the
+      // prompt as the final positional argument - anything after `-p` would be
+      // read as the prompt, and the real prompt as a stray trailing arg.
+      args: ['--output-format', 'text', ...(model ? ['--model', model] : []), '-p'],
+      prompt,
       cwd,
       promptVia: 'arg',
     });

@@ -226,12 +226,20 @@ export function MemoryTab({ globalConfig }: { globalConfig: AppConfig }) {
               picking between zero options is not a decision. */}
           {answerCapableAgents.length > 0 ? (
             <>
+              {/* The RESOLVED agent, never a "Follow the project" sentinel.
+                  Kangentic requires at least one working agent, so there is
+                  always a real answer here, and an option meaning "whatever
+                  that other setting says" is a second name for a value the row
+                  can simply show. It still DEFAULTS to the project's agent -
+                  that is what the chain resolves to while the setting is unset
+                  - so choosing that same agent explicitly is a no-op the user
+                  never has to think about. */}
               <SettingRow {...settingProps('memory.answerAgent')}>
                 <Select
-                  value={configuredAnswerAgent ?? ''}
+                  value={effectiveAnswerAgent?.name ?? ''}
                   onChange={(event) => updateGlobal({
                     memory: {
-                      answerAgent: event.target.value === '' ? null : event.target.value,
+                      answerAgent: event.target.value,
                       // A model id belongs to ONE CLI - Claude's `haiku` means
                       // nothing to Codex - so changing the agent clears it
                       // rather than carrying a flag the new agent will reject.
@@ -240,9 +248,6 @@ export function MemoryTab({ globalConfig }: { globalConfig: AppConfig }) {
                   })}
                   data-testid="memory-answer-agent-select"
                 >
-                  {/* Empty string rather than a sentinel name: it is the ABSENCE
-                      of a choice, which is what null means in the config. */}
-                  <option value="">Follow the project</option>
                   {answerCapableAgents.map((agent) => (
                     <option key={agent.name} value={agent.name}>{agent.displayName}</option>
                   ))}

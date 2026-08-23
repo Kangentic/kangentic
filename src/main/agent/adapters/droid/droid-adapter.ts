@@ -4,7 +4,8 @@ import { captureSessionIdFromFilesystem, locateSessionFile } from './session-id-
 import { droidTranscriptFilePath, parseDroidTranscript } from './transcript-parser';
 import { migrateDroidProjectData } from './project-relocation';
 import { discoverDroidCapabilities } from './capability-discovery';
-import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
+import { runCliPrintSummarize,
+  runCliPrintAnswer, buildSummarizePrompt } from '../../shared/auto-name';
 import type { AgentAdapter, AgentInfo, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript } from '../../agent-adapter';
 import type {
   AgentPermissionEntry,
@@ -230,6 +231,34 @@ export class DroidAdapter implements AgentAdapter {
       cliPath,
       args: ['exec', '-o', 'text'],
       prompt: buildSummarizePrompt(prompt),
+      cwd,
+      promptVia: 'arg',
+    });
+  }
+
+  /**
+   * Answer a question from retrieved conversation passages (Memory Graph Ask).
+   *
+   * `droid exec` is already non-interactive and makes no edits
+    // without an explicit auto level, so there is no separate read-only flag
+    // to pass.
+   *
+   * The prompt, its rules and the retrieval budget are all built upstream and
+   * handed over whole; this only decides the CLI's flags.
+   */
+  async answerFromContext(
+    prompt: string,
+    cliPath: string,
+    cwd: string,
+    model?: string | null,
+  ): Promise<string> {
+    return runCliPrintAnswer({
+      cliPath,
+      // The model flag is OMITTED when none is chosen: passing an
+      // empty value is an error, and the absence of the flag is what
+      // "the agent's own default" means to the CLI.
+      args: ['exec', '-o', 'text', ...(model ? ['--model', model] : [])],
+      prompt,
       cwd,
       promptVia: 'arg',
     });
