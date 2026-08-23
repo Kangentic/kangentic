@@ -452,6 +452,12 @@ describe('a committed move announces even when the move later fails', () => {
 
     expect(context.boardEvents.emitBoardChanged).toHaveBeenCalledTimes(1);
     expect(pushedChannels(context)).toEqual([IPC.TASK_MOVED_BY_MOBILE]);
+    // moveSucceeded is set once runMove resolves without throwing, and the
+    // abort path returns rather than throwing - so PR linking, which is gated
+    // on moveSucceeded (not "the caller's promise resolved cleanly with no
+    // abort"), fires here too. The 60s per-task throttle in linkPRForTask is
+    // what keeps a burst of superseded moves from becoming a burst of gh calls.
+    expect(mockAutoLinkPRForTask).toHaveBeenCalledTimes(1);
   });
 
   it('still announces when Phase 2 throws and the move is rethrown', async () => {
@@ -490,5 +496,81 @@ describe('a committed move announces even when the move later fails', () => {
     expect(context.boardEvents.emitBoardChanged).not.toHaveBeenCalled();
     expect(pushedChannels(context)).toEqual([]);
     expect(mockAutoLinkPRForTask).not.toHaveBeenCalled();
+  });
+});
+
+describe('the announce block never clobbers the move outcome', () => {
+  // BoardEventBus is a plain EventEmitter, so a subscriber's own throw
+  // dispatches synchronously on handleTaskMove's stack. The announce block
+  // wraps both the bus emit and the renderer push in a try/catch specifically
+  // so that throw cannot replace whatever runMove was already propagating, nor
+  // turn a clean move into a rejection - "announcing is best-effort" has to
+  // hold even when a listener is broken.
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockEnsureTaskWorktree.mockResolvedValue(null);
+  });
+
+  it('resolves cleanly and still links the PR when the bus subscriber throws on a successful move', async () => {
+    const context = makeContext(makeTask());
+    context.boardEvents.emitBoardChanged.mockImplementation(() => {
+      throw new Error('subscriber exploded');
+    });
+
+    await expect(
+      handleTaskMove(
+        context as never,
+        { taskId: TASK_ID, targetSwimlaneId: QUIET_TARGET_LANE_ID, targetPosition: 0 },
+        'mobile',
+      ),
+    ).resolves.toBeUndefined();
+
+    // PR linking sits OUTSIDE the announce try/catch, gated only on
+    // moveSucceeded - it must still fire even though the emit right before it
+    // threw. If the try/catch's scope ever widened to swallow this too (or
+    // moved inside it), this assertion is what would catch it; a bare
+    // "resolves" alone would pass either way.
+    expect(mockAutoLinkPRForTask).toHaveBeenCalledTimes(1);
+  });
+
+  it('propagates the original error, not the subscriber error, when the bus subscriber throws during a failed move', async () => {
+    mockEnsureTaskWorktree.mockRejectedValue(new Error('Worktree setup failed: disk full'));
+
+    const context = makeContext(makeTask());
+    context.boardEvents.emitBoardChanged.mockImplementation(() => {
+      throw new Error('subscriber exploded');
+    });
+
+    // Without the try/catch, the announce block's throw happens inside a
+    // `finally`, which would REPLACE the rejection runMove was already
+    // propagating - the rollback suite's assertions on the original error
+    // message depend on that not happening.
+    await expect(
+      handleTaskMove(
+        context as never,
+        { taskId: TASK_ID, targetSwimlaneId: SPAWNING_TARGET_LANE_ID, targetPosition: 0 },
+        'mobile',
+      ),
+    ).rejects.toThrow('Worktree setup failed');
+  });
+
+  it('resolves cleanly when the renderer push throws after a successful bus emit', async () => {
+    // Pins that BOTH calls in the announce block are inside the try, not just
+    // the first one - a narrowing regression (try around the emit only) would
+    // let this throw escape uncaught.
+    const context = makeContext(makeTask());
+    context.mainWindow.webContents.send.mockImplementation(() => {
+      throw new Error('renderer push exploded');
+    });
+
+    await expect(
+      handleTaskMove(
+        context as never,
+        { taskId: TASK_ID, targetSwimlaneId: QUIET_TARGET_LANE_ID, targetPosition: 0 },
+        'mobile',
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(context.boardEvents.emitBoardChanged).toHaveBeenCalledTimes(1);
   });
 });
