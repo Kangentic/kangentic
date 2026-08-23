@@ -229,6 +229,61 @@ describe('createWriteBatcher', () => {
       await drainMicrotasks();
       expect(write.mock.calls).toEqual([['r1'], ['typed']]);
     });
+
+    it('clamps the pace wait against a backward wall-clock jump (NTP, sleep/resume skew)', () => {
+      // Without the `Math.min(..., paceMs)` clamp, `lastPacedWriteAt + paceMs
+      // - Date.now()` can come out far larger than paceMs once the clock has
+      // jumped backward, scheduling one long stall instead of the intended
+      // per-report floor.
+      const write = vi.fn<[string], void>();
+      const batcher = createWriteBatcher(write, PACE_MS);
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+
+      batcher.writePaced('r1'); // writes immediately; sets lastPacedWriteAt
+      const baseTime = Date.now();
+
+      // Simulate an NTP-style correction: the wall clock jumps backward by
+      // many pace intervals' worth of time.
+      vi.setSystemTime(baseTime - PACE_MS * 20);
+
+      batcher.writePaced('r2');
+
+      const scheduledDelay = setTimeoutSpy.mock.calls.at(-1)?.[1];
+      expect(scheduledDelay).toBe(PACE_MS);
+    });
+
+    it('a synchronous drain that finds an already-due paced head clears the still-pending timer instead of leaving it stale', () => {
+      // The head's own paceTimer is scheduled by the first writePaced('r2')
+      // call below. A second, independent writePaced call can reach drain()
+      // synchronously once real elapsed time has already cleared that head's
+      // deadline but before the timer's OWN callback has run - the timer
+      // bookkeeping must clear the stale reference right there, not leave it
+      // dangling once the head it was scheduled for has already been consumed.
+      const write = vi.fn<[string], void>();
+      const batcher = createWriteBatcher(write, PACE_MS);
+      const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout');
+
+      batcher.writePaced('r1'); // writes immediately, no timer touched
+      batcher.writePaced('r2'); // under the pace floor: schedules a paceTimer
+      expect(clearTimeoutSpy).not.toHaveBeenCalled();
+
+      // The wall clock reaches r2's deadline without that scheduled timer's
+      // own callback having run yet.
+      vi.setSystemTime(Date.now() + PACE_MS);
+
+      // This call reaches drain() synchronously and finds r2 already due.
+      batcher.writePaced('r3');
+
+      // r2 wrote through this synchronous path, not the (now-stale) timer's
+      // own callback, and the stale reference was cleared exactly once.
+      expect(write.mock.calls).toEqual([['r1'], ['r2']]);
+      expect(clearTimeoutSpy).toHaveBeenCalledTimes(1);
+
+      // r3 still gets its own fresh pace-floor timer - the clear did not also
+      // skip scheduling the next one.
+      vi.advanceTimersByTime(PACE_MS);
+      expect(write.mock.calls).toEqual([['r1'], ['r2'], ['r3']]);
+    });
   });
 
   // Nothing today fails if useTerminal.ts's onData routing line is deleted or

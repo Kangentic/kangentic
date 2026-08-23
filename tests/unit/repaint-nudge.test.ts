@@ -119,6 +119,18 @@ describe('isUserInputData', () => {
     ['SGR wheel down, buttonByte=65 (no motion bit)', '\x1b[<65;10;5M', true],
     ['X10 mouse motion', '\x1b[M' + x10MotionByte, false],
     ['X10 mouse click', '\x1b[M' + x10ClickByte, true],
+    // X10_MOUSE_REPORT_PATTERN is anchored at both ends (this diff), matching
+    // SGR_MOUSE_REPORT_PATTERN's pre-existing anchoring. A payload this
+    // predicate cannot resolve to one clean report - trailing bytes, or two
+    // reports joined by a coalesced onData burst - falls through to `true`
+    // the same way an unparseable SGR payload already does: conservatively
+    // treat it as real input rather than risk silently swallowing a genuine
+    // keystroke riding alongside the reports. Pinned here so a future change
+    // to the shared pattern cannot silently flip this fallback without a
+    // failing test - `isMouseReport`'s own tests only prove these payloads
+    // are NOT a single clean report, not what isUserInputData does with them.
+    ['an X10 report with trailing bytes - falls through to true (unparseable as one report)', '\x1b[M' + x10MotionByte + 'hello', true],
+    ['two X10 reports joined into one chunk - same fallback as above', '\x1b[M' + x10MotionByte + '\x1b[M' + x10MotionByte, true],
     ['an ordinary typed character', 'a', true],
     ['a carriage return (Enter)', '\r', true],
     ['Ctrl+C', '\x03', true],
