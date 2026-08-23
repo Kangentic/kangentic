@@ -846,10 +846,9 @@ you can drop to the source whenever you distrust the answer. And when more conve
 than fit in one question, it **says how many it left out** rather than implying it read everything.
 
 **Which agent answers** is its own setting, because the agent that runs your tasks and the agent
-that reads their history are different choices, and not every agent can do the second. Settings >
-Memory > **Answering agent** lists the ones that can. It defaults to **Follow the project**, which
-uses your project's default agent when that agent is capable and any capable agent when it is not.
-Ask is hidden entirely when nothing installed can answer.
+that reads their history are different choices. Settings > Memory > **Answering agent** defaults to
+the project's agent and can be pointed at any installed one, with **Answering model** beside it -
+reading the index is lighter work than writing code, so a cheaper model is usually enough.
 
 Ask answers only from the excerpts it was given. Asked something the index does not cover, it says
 so rather than guessing - and it cannot answer questions about the board itself ("what is the
