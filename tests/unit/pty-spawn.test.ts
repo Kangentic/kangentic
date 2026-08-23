@@ -13,6 +13,7 @@ import {
   resolveSpawnCwd,
   diagnoseSpawnFailure,
   FULL_REPAINT_ENV_KEY,
+  SCROLL_SPEED_ENV_KEY,
 } from '../../src/main/pty/spawn/pty-spawn';
 
 describe('resolveShellArgs', () => {
@@ -152,6 +153,50 @@ describe('buildSpawnEnv full-repaint keeplist', () => {
       'linux',
     );
     expect(env[FULL_REPAINT_ENV_KEY]).toBe('1');
+    expect(env.CLAUDECODE).toBeUndefined();
+    expect(env.CLAUDE_CODE_SESSION_ID).toBeUndefined();
+  });
+});
+
+// CLAUDE_CODE_SCROLL_SPEED is keeplisted (a user's exported tuning survives
+// the identity-marker strip) but deliberately NOT defaulted: a default of 3
+// was shipped and reverted the same day, because the fullscreen TUI's
+// differential renderer mis-assembles frames on large scrolled jumps and the
+// 3x multiplier tripled every coalesced-read jump past that threshold. The
+// CLI default of 1 matches the native terminals verified clean. These pin the
+// no-default decision and the keeplist survival.
+describe('buildSpawnEnv scroll-speed keeplist', () => {
+  let savedHostValue: string | undefined;
+
+  beforeEach(() => {
+    // Hermetic: a dogfooding machine may legitimately export the key globally.
+    savedHostValue = process.env[SCROLL_SPEED_ENV_KEY];
+    delete process.env[SCROLL_SPEED_ENV_KEY];
+  });
+
+  afterEach(() => {
+    if (savedHostValue === undefined) delete process.env[SCROLL_SPEED_ENV_KEY];
+    else process.env[SCROLL_SPEED_ENV_KEY] = savedHostValue;
+  });
+
+  it.each(['win32', 'linux', 'darwin'] as const)(
+    'applies NO default on %s - the CLI default of 1 is the clean-scroll regime',
+    (platform) => {
+      const env = buildSpawnEnv({}, platform);
+      expect(env[SCROLL_SPEED_ENV_KEY]).toBeUndefined();
+    },
+  );
+
+  it('keeplists an explicit user value through the strip while identity markers still drop', () => {
+    const env = buildSpawnEnv(
+      {
+        [SCROLL_SPEED_ENV_KEY]: '5',
+        CLAUDECODE: '1',
+        CLAUDE_CODE_SESSION_ID: 'parent-session-uuid',
+      },
+      'linux',
+    );
+    expect(env[SCROLL_SPEED_ENV_KEY]).toBe('5');
     expect(env.CLAUDECODE).toBeUndefined();
     expect(env.CLAUDE_CODE_SESSION_ID).toBeUndefined();
   });

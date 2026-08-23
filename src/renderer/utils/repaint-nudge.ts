@@ -33,6 +33,10 @@
  * The before/after grid comparison is REPORTING ONLY. It never gates the nudge.
  * That is what keeps this threshold-free while still producing a real-world
  * defect rate, which is the evidence an upstream report needs.
+ *
+ * UNWIND(claude-code#83714): this entire module is a workaround for that
+ * upstream renderer defect. When upstream fixes it, delete the module along
+ * with its useTerminal wiring and tests.
  */
 
 /** FocusOut then FocusIn. Costs the TUI one render and moves no cursor. */
@@ -65,7 +69,11 @@ export const REPAINT_NUDGE_BYTES = '\x1b[O\x1b[I';
  */
 const FOCUS_REPORT_PATTERN = /^\x1b\[[IO]$/;
 const SGR_MOUSE_REPORT_PATTERN = /^\x1b\[<(\d+);\d+;\d+[Mm]$/;
-const X10_MOUSE_REPORT_PATTERN = /^\x1b\[M([\s\S])/;
+/** A complete X10 report is CSI M plus exactly three bytes (button, x, y).
+ *  Anchored at both ends like the SGR pattern above: a payload that only
+ *  STARTS with a report (trailing bytes, two reports joined) must not
+ *  classify as one. */
+const X10_MOUSE_REPORT_PATTERN = /^\x1b\[M([\s\S])[\s\S]{2}$/;
 /** Bit 5 of a mouse report's button byte marks motion (drift or drag). */
 const MOUSE_MOTION_BIT = 32;
 
@@ -84,6 +92,21 @@ export function isUserInputData(data: string): boolean {
   if (x10Report) return ((x10Report[1].charCodeAt(0) - 32) & MOUSE_MOTION_BIT) === 0;
 
   return true;
+}
+
+/**
+ * True when `data` is a single mouse report (SGR or X10), motion and wheel
+ * included. Used by the input path to give each report its OWN paced PTY
+ * write (write-batcher.ts): a fullscreen TUI processes a chunk as one input
+ * batch, so a burst of wheel reports coalesced into one write becomes one
+ * multi-line jump, and the TUI's differential frame for that jump
+ * intermittently mis-assembles (verified by controlled injection: spaced
+ * reports render clean, the same reports in one chunk splice stale rows).
+ * Unlike isUserInputData above - an arming policy about intent - this is
+ * about encoding, so motion counts too.
+ */
+export function isMouseReport(data: string): boolean {
+  return SGR_MOUSE_REPORT_PATTERN.test(data) || X10_MOUSE_REPORT_PATTERN.test(data);
 }
 
 /**

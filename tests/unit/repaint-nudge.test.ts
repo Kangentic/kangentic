@@ -17,6 +17,7 @@ import {
   shouldSendRepaintNudge,
   diffViewportRows,
   isUserInputData,
+  isMouseReport,
   REPAINT_NUDGE_BYTES,
   type RepaintNudgeGate,
 } from '../../src/renderer/utils/repaint-nudge';
@@ -140,6 +141,45 @@ describe('isUserInputData', () => {
     ['Page Up', '\x1b[5~', true],
   ])('%s', (_label, data, expected) => {
     expect(isUserInputData(data as string)).toBe(expected as boolean);
+  });
+});
+
+describe('isMouseReport', () => {
+  // The input path routes every mouse report through the write batcher's paced
+  // path so each one reaches the PTY as its own chunk - coalesced reports
+  // become one multi-line jump whose differential frame intermittently
+  // mis-assembles upstream. Motion and wheel are deliberately INCLUDED here
+  // (unlike isUserInputData, which is an arming policy): chunk isolation is
+  // about encoding, not intent. And ONLY a single complete report classifies:
+  // a payload that merely starts with one (trailing bytes, two reports
+  // joined) would ride the paced path as one unsplit chunk, recreating the
+  // exact coalesced jump writePaced exists to prevent.
+  const x10MotionReportBytes = String.fromCharCode(32 + 35, 40, 40);
+  const x10ClickReportBytes = String.fromCharCode(32 + 0, 40, 40);
+
+  it.each([
+    ['SGR wheel up', '\x1b[<64;10;5M', true],
+    ['SGR wheel down', '\x1b[<65;10;5M', true],
+    ['SGR click press', '\x1b[<0;10;5M', true],
+    ['SGR click release (lowercase m)', '\x1b[<0;10;5m', true],
+    ['SGR motion', '\x1b[<35;10;5M', true],
+    ['X10 mouse motion', '\x1b[M' + x10MotionReportBytes, true],
+    ['X10 mouse click', '\x1b[M' + x10ClickReportBytes, true],
+    ['an SGR report with trailing bytes', '\x1b[<64;10;5Mhello', false],
+    ['an X10 report with trailing bytes', '\x1b[M' + x10MotionReportBytes + 'hello', false],
+    ['two SGR reports joined into one chunk', '\x1b[<64;10;5M\x1b[<65;10;5M', false],
+    [
+      'two X10 reports joined into one chunk',
+      '\x1b[M' + x10MotionReportBytes + '\x1b[M' + x10MotionReportBytes,
+      false,
+    ],
+    ['a FocusIn report (not a mouse report)', '\x1b[I', false],
+    ['an ordinary typed character', 'a', false],
+    ['a carriage return', '\r', false],
+    ['an arrow-key sequence', '\x1b[A', false],
+    ['a multi-character paste', 'hello world', false],
+  ])('%s', (_label, data, expected) => {
+    expect(isMouseReport(data as string)).toBe(expected as boolean);
   });
 });
 

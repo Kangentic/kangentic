@@ -96,8 +96,9 @@ export function resolveShellArgs(shell: string): ShellInvocation {
  */
 
 /**
- * The one `CLAUDE_CODE_*` key that survives the strip, and its Windows
- * default. Unlike the identity markers above, this is a renderer tuning flag:
+ * The first of the two `CLAUDE_CODE_*` keys that survive the strip (the
+ * keeplist is KEEPLISTED_CLAUDE_CODE_KEYS below), and its Windows default.
+ * Unlike the identity markers above, this is a renderer tuning flag:
  * it cannot re-parent a child session. Claude Code's fullscreen TUI
  * intermittently omits history entries from its incremental scrolled-view
  * updates (deep scroll up, ride back down: entries vanish with the layout
@@ -109,10 +110,30 @@ export function resolveShellArgs(shell: string): ShellInvocation {
  * user's opt-out) always wins, and non-Claude agents ignore the var, the
  * same argument the strip itself relies on. PARTIAL mitigation: it removes
  * the dominant closed-up flavor, while the rarer blank-band flavor (a
- * window-assembly defect upstream) persists. Unwind this default once the
- * upstream issue is fixed.
+ * window-assembly defect upstream) persists.
+ * UNWIND(claude-code#83714): drop this default once the upstream issue is
+ * fixed.
  */
 export const FULL_REPAINT_ENV_KEY = 'CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT';
+
+/**
+ * The second keeplisted renderer tuning flag - keeplisted so a user's
+ * exported value survives the strip, but deliberately NOT defaulted. A
+ * default of 3 (vim's, per the fullscreen docs) was shipped and reverted the
+ * same day: the fullscreen TUI's differential renderer intermittently
+ * mis-assembles frames on large scrolled jumps, pipe reads coalesce rapid
+ * wheel reports into one jump, and a 3x multiplier tripled every such jump
+ * past the corruption threshold (dogfooded; single 3-line jumps rendered
+ * clean under controlled injection, coalesced multiples spliced rows). The
+ * CLI default of 1 matches the native terminals verified clean. Non-Claude
+ * agents ignore the var, the same argument the strip itself relies on.
+ */
+export const SCROLL_SPEED_ENV_KEY = 'CLAUDE_CODE_SCROLL_SPEED';
+
+const KEEPLISTED_CLAUDE_CODE_KEYS: ReadonlySet<string> = new Set([
+  FULL_REPAINT_ENV_KEY,
+  SCROLL_SPEED_ENV_KEY,
+]);
 
 export function buildSpawnEnv(
   inputEnv: Record<string, string> | undefined,
@@ -126,7 +147,7 @@ export function buildSpawnEnv(
   const result: Record<string, string> = {};
   for (const [key, value] of Object.entries(merged)) {
     if (value === undefined) continue;
-    if (key === 'CLAUDECODE' || (key.startsWith('CLAUDE_CODE_') && key !== FULL_REPAINT_ENV_KEY)) continue;
+    if (key === 'CLAUDECODE' || (key.startsWith('CLAUDE_CODE_') && !KEEPLISTED_CLAUDE_CODE_KEYS.has(key))) continue;
     if (key === 'NO_COLOR' && stripNoColor) continue;
     result[key] = value;
   }

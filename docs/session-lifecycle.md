@@ -847,6 +847,26 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   path uses, skipping when a replay is already in flight so a mount-time replay is never aborted
   and re-issued for the same frame. Both registries are kept: only parking additionally makes the
   incoming queue ack-and-discard, so neither subsumes the other.
+- **Mouse reports are paced, never batched.** Outgoing terminal input rides a microtask write
+  batcher (`src/renderer/utils/write-batcher.ts`) that coalesces synchronous onData bursts into
+  one IPC write - byte-safe, but not semantics-safe for a fullscreen TUI, which treats a chunk
+  as one input batch: a run of wheel reports delivered together becomes one multi-line jump, and
+  the TUI's differential frame for a multi-line jump intermittently mis-assembles (the
+  missing-entries family below). Verified by controlled injection (2026-08-23): ten spaced
+  reports produced ten clean frames and ~29KB of output; the same ten in one chunk produced one
+  ~2KB spliced frame. Unbatching alone is NOT enough - a pipe preserves no message boundaries,
+  so reports written back-to-back still land in one read while the TUI renders the previous
+  frame. So `useTerminal` routes every mouse report (`isMouseReport`) through `writePaced`: an
+  ordered queue that writes each report as its own payload at a 16ms-per-report floor, restoring
+  the physical-wheel cadence a native terminal delivers; typed bytes keep arrival order across
+  the two paths, and teardown drops pending reports rather than writing them joined.
+  (Ack-clocking each report to the TUI's answer was tried and reverted: the TUI coalesces
+  repaints onto its own frame clock, so input-clocking capped scrolling at ~10Hz.) The jump a
+  coalesced read still produces is bounded by keeping `CLAUDE_CODE_SCROLL_SPEED` at the CLI
+  default of 1 - see [docs/cross-platform.md](cross-platform.md) for why Kangentic no longer
+  raises it. This targets the wheel-scroll flavor at the source; single-report multi-line jumps
+  the CLI performs internally (Ctrl+End, PageUp/Down) remain exposed and are what the repaint
+  nudge below repairs.
 - **Post-interaction repaint nudge.** A fullscreen TUI intermittently emits a frame that erases
   the grid and then redraws only some of it, leaving either the whole transcript blank or a
   contiguous band of rows missing mid-frame. Its renderer is differential, so it never revisits
@@ -860,7 +880,14 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   not-parked plus no-replay-pending, floored at one per 750ms per session. `isUserInputData`
   filters out xterm's OWN focus and motion reports, which arrive through the same `onData` channel
   and would otherwise self-arm a nudge on every mount replay. The before/after grid comparison is
-  reporting only and never gates the nudge. Upstream: anthropics/claude-code#83714.
+  reporting only and never gates the nudge. A richer repair layer (resize and replay arming
+  channels, a spaced focus pair, mid-burst fires, floor deferral, a persisted verdict log) was
+  built, dogfooded, and removed the same day: against a producer-side defect it bought visible
+  repair flicker, not correctness. Upstream: anthropics/claude-code#83714 - reproduced NATIVELY
+  (PowerShell, wheel-scrolling deep into a large resumed session), so this whole family is the
+  CLI renderer's, not the host's. Every host-side workaround site carries an
+  `UNWIND(claude-code#83714)` marker; grep for it and sweep them out when upstream fixes the
+  renderer.
 - **Trace vocabulary for the two mechanisms above.** `focus-union-gained` / `focus-union-lost`
   (main, `recomputeFocusedUnion`), `terminal-unfocus` / `terminal-refocus` (renderer,
   `focused-terminals.ts`), and `repaint-repaired` / `repaint-verified` (renderer,

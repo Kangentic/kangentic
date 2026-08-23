@@ -17,7 +17,7 @@ import {
   registerDevtoolsTerminal,
   traceTerminalRenderer,
 } from '../utils/terminal-grid-registry';
-import { createRepaintNudge, isUserInputData, type RepaintNudgeController } from '../utils/repaint-nudge';
+import { createRepaintNudge, isUserInputData, isMouseReport, type RepaintNudgeController } from '../utils/repaint-nudge';
 import { registerMountedTerminal } from '../utils/terminal-mount-registry';
 import { registerTerminalAnchor } from '../utils/terminal-anchor-registry';
 import type { PtyResizeOrigin, TerminalColorOverrides } from '../../shared/types';
@@ -920,14 +920,28 @@ export function useTerminal(options: UseTerminalOptions) {
     // Send user input to PTY (via the microtask-batched queue above).
     if (options.sessionId) {
       terminal.onData((data) => {
-        // Arms the post-interaction repaint nudge. Any REAL input counts, not
-        // just a wheel event: the confirmed repro of the missing-rows family is
-        // a KEYBOARD jump (Ctrl+End / Ctrl+Home), so a wheel-only trigger would
-        // miss it entirely. But `onData` also carries xterm's own focus and
+        // Arms the repaint nudge. Any REAL input counts:
+        // wheel-scroll-then-stop is the primary real-world repro of the
+        // missing-rows family, and the keyboard jump (Ctrl+End / Ctrl+Home) is
+        // the secondary one, so neither a wheel-only nor a keys-only trigger
+        // would cover it. But `onData` also carries xterm's own focus and
         // mouse-motion reports, which are not input at all and would otherwise
         // self-arm the nudge on every replay - see isUserInputData.
         if (isUserInputData(data)) repaintNudgeRef.current?.noteInput();
-        batcher.schedule(data);
+        // UNWIND(claude-code#83714): revert to plain batcher.schedule(data)
+        // for all input when upstream fixes the fullscreen renderer.
+        // A mouse report must reach the TUI as its OWN small jump. Joined
+        // into one chunk (or read-coalesced from a fast burst - a pipe keeps
+        // no message boundaries), a run of reports becomes one multi-line
+        // jump whose differential frame intermittently splices stale rows
+        // (the missing-entries family). So reports are PACED, not just
+        // unbatched: one write per MOUSE_REPORT_PACE_MS restores the
+        // physical-wheel cadence a native terminal delivers. The jump each
+        // single report produces is CLAUDE_CODE_SCROLL_SPEED's territory, not
+        // this path's - see write-batcher.ts for the schemes tried and
+        // rejected. Ordering against typed bytes holds.
+        if (isMouseReport(data)) batcher.writePaced(data);
+        else batcher.schedule(data);
       });
 
       // Debounced PTY resize -- coalesces rapid dimension changes so the
@@ -1153,6 +1167,8 @@ export function useTerminal(options: UseTerminalOptions) {
     // Post-interaction repaint nudge (see repaint-nudge.ts). Created alongside
     // the queue so it shares the session's lifetime, and reached from the input
     // side through a ref because that hook lives in initTerminal.
+    // UNWIND(claude-code#83714): delete this block and the onData noteInput
+    // arm when upstream fixes the fullscreen renderer.
     const repaintNudge = createRepaintNudge({
       readGate: () => {
         const terminal = xtermRef.current;

@@ -273,12 +273,19 @@ from inside a Claude Code session, and those markers would otherwise re-parent t
 the launching session, so a later `--resume` finds nothing. A Kangentic-spawned agent must always be
 a clean top-level session. `ANTHROPIC_*` keys (BYOK / API auth) are deliberately left untouched.
 
-One key is keeplisted: `CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT`. It is a renderer tuning flag, not an
-identity marker, so it cannot re-parent a session. Kangentic defaults it to `1` on **win32 only**,
-matching what Claude Code's own agent views do on Windows, because the fullscreen TUI otherwise
-intermittently drops history entries from its incremental scrolled-view updates. An explicit value
-already present in the environment always wins, including a user's opt-out. Non-Claude agents ignore
-the variable.
+Two keys are keeplisted, both renderer tuning flags rather than identity markers, so neither can
+re-parent a session. An explicit value already present in the environment always wins for both,
+including a user's opt-out, and non-Claude agents ignore them.
+
+- `CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT`: defaulted to `1` on **win32 only**, matching what Claude
+  Code's own agent views do on Windows, because the fullscreen TUI otherwise intermittently drops
+  history entries from its incremental scrolled-view updates.
+- `CLAUDE_CODE_SCROLL_SPEED`: keeplisted only, **no default**. A default of `3` was shipped and
+  reverted the same day: the fullscreen TUI's differential renderer intermittently mis-assembles
+  frames on large scrolled jumps, pipe reads coalesce rapid wheel reports into one jump, and the
+  3x multiplier tripled every such jump past that corruption threshold. The CLI default of `1`
+  matches the native terminals verified clean; the keeplist exists so a user's exported tuning
+  still survives the identity-marker strip.
 
 `NO_COLOR` is stripped too, but only when the merged environment also carries `CLAUDECODE`. Claude
 Code exports `NO_COLOR=1` into its tool shells alongside `CLAUDECODE`, so a dev/preview Kangentic

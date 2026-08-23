@@ -371,11 +371,11 @@ The actual root cause of the #255 bug was unrelated to a missing transcript: whe
 launched from inside a Claude Code session it leaked `CLAUDE_CODE_*` markers into spawned agents,
 so a Claude spawned with `--session-id <id>` never persisted a transcript under that id and the
 later `--resume` found nothing. The cure was `buildSpawnEnv` stripping `CLAUDECODE` plus every
-`CLAUDE_CODE_*` identity marker (`src/main/pty/spawn/pty-spawn.ts`, commit `4b236593`; the sole
-exception is the keeplisted `CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT` renderer flag, which carries no
-session identity), which makes every spawned Claude a clean top-level session that persists its
-own resumable transcript. With that in
-place the resume target reliably exists, so the presence guard earns nothing and was dropped.
+`CLAUDE_CODE_*` identity marker (`src/main/pty/spawn/pty-spawn.ts`, commit `4b236593`; the
+exceptions are the keeplisted `CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT` and `CLAUDE_CODE_SCROLL_SPEED`
+renderer tuning flags, which carry no session identity), which makes every spawned Claude a clean
+top-level session that persists its own resumable transcript. With that in place the resume
+target reliably exists, so the presence guard earns nothing and was dropped.
 
 The non-Claude agents never exhibited an analogous missing-resume-target failure: each captures
 or owns its session id against a store the CLI itself writes, and none inherits the Claude env
