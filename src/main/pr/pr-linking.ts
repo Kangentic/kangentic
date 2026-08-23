@@ -350,8 +350,11 @@ export async function linkPR(context: IpcContext, options: LinkPROptions): Promi
  * branch/worktree and a non-To Do lane.
  *
  * The shared auto-link entry point for every implicit trigger: a task-move
- * (called AFTER `handleTaskMove` returns, outside the move's task lock), the
- * plan-exit auto-move, and a session going idle (a PR was likely just created).
+ * (called from inside `handleTaskMove`'s own announce block, which runs after
+ * every one of its task locks has released, so the timing is unchanged from
+ * when each call site fired this itself), and a session going idle (a PR was
+ * likely just created). The move case now covers all four origins, including
+ * the agent and mobile ones that never reached here before.
  * All run NON-force, so the per-task 60s throttle in `linkPRForTask` coalesces
  * them.
  */
