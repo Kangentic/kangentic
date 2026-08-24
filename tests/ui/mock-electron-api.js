@@ -381,6 +381,15 @@
 
   function noop() {}
 
+  // `config.onChanged` subscribers. A REAL list rather than a stub: the
+  // Memory Graph re-reads its snapshot on this signal, so a no-op made that
+  // path untestable and any spec asserting live refresh would pass without
+  // exercising it. Tests fire it with `window.__mockEmitConfigChanged()`.
+  const mockConfigChangedListeners = [];
+  window.__mockEmitConfigChanged = function () {
+    mockConfigChangedListeners.slice().forEach(function (listener) { listener(); });
+  };
+
   // Board Profiles live in kangentic.json, not the DB, so the mock keeps them
   // in a plain module-scope array. Declared here (alongside noop) rather than
   // beside the boardConfig object, whose neighbouring `state` bindings belong to
@@ -2237,7 +2246,13 @@
       syncDefaultToProjects: async function () {
         return 0;
       },
-      onChanged: function (/* callback() */) { return noop; },
+      onChanged: function (callback) {
+        mockConfigChangedListeners.push(callback);
+        return function () {
+          const index = mockConfigChangedListeners.indexOf(callback);
+          if (index >= 0) mockConfigChangedListeners.splice(index, 1);
+        };
+      },
     },
 
     keybindings: {

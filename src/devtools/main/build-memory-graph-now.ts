@@ -28,6 +28,7 @@ import {
   runProjectionPass,
   writeProjectionCache,
 } from '../../main/retrieval/graph/projection-engine';
+import { graphService } from '../../main/retrieval/graph/graph-service';
 
 export interface BuildMemoryGraphNowResult {
   nodes: number;
@@ -63,6 +64,11 @@ export async function buildMemoryGraphNow(projectId: string): Promise<BuildMemor
   if (!result) return null;
 
   writeProjectionCache(store, result.projection, result.sums);
+  // Announce it, exactly as the paced pass does on completion. Writing the
+  // cache silently left an OPEN Memory Graph showing the pre-seed state - zero
+  // conversations over a freshly mirrored index - until it was closed and
+  // reopened, which reads as the seed having failed.
+  graphService.notifyChanged(projectId);
   return {
     nodes: result.projection.nodes.length,
     edges: result.projection.edges.length,

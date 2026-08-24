@@ -112,6 +112,19 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
       onChanged = listener;
     },
 
+    /**
+     * Announce that this project's cached projection changed.
+     *
+     * The paced pass fires this itself on completion. It is exposed because a
+     * caller can legitimately write the cache WITHOUT running that pass - the
+     * dev seeders build at full speed and write directly - and a cache that
+     * changed with no push leaves every open surface rendering the previous
+     * state until something unrelated triggers a reload.
+     */
+    notifyChanged(projectId: string): void {
+      onChanged?.(projectId);
+    },
+
     /** Cheap read. Never runs the pass. */
     getSnapshot(projectId: string, modelTag: string): GraphSnapshot {
       const store = storeFor(projectId);

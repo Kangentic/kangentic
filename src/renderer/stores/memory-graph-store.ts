@@ -97,6 +97,8 @@ let inFlight: Promise<void> | null = import.meta.hot?.data?.memoryGraphInFlight 
 // @ts-expect-error -- Vite handles import.meta.hot
 let unsubscribeChanged: (() => void) | null = import.meta.hot?.data?.memoryGraphUnsubscribe ?? null;
 // @ts-expect-error -- Vite handles import.meta.hot
+let unsubscribeConfig: (() => void) | null = import.meta.hot?.data?.memoryGraphUnsubscribeConfig ?? null;
+// @ts-expect-error -- Vite handles import.meta.hot
 let fetchOrdinal: number = import.meta.hot?.data?.memoryGraphFetchOrdinal ?? 0;
 // @ts-expect-error -- Vite handles import.meta.hot
 let queryOrdinal: number = import.meta.hot?.data?.memoryGraphQueryOrdinal ?? 0;
@@ -107,6 +109,7 @@ if (import.meta.hot) {
   import.meta.hot.dispose((data: Record<string, unknown>) => {
     data.memoryGraphInFlight = inFlight;
     data.memoryGraphUnsubscribe = unsubscribeChanged;
+    data.memoryGraphUnsubscribeConfig = unsubscribeConfig;
     data.memoryGraphFetchOrdinal = fetchOrdinal;
     data.memoryGraphQueryOrdinal = queryOrdinal;
   });
@@ -198,6 +201,28 @@ function createMemoryGraphStore() {
     toggle: (projectId) => (get().graphOpen ? get().close() : get().open(projectId)),
 
     attach: () => {
+      /**
+       * A CONFIG change is the other thing this surface renders, and it used to
+       * be invisible here.
+       *
+       * The snapshot carries `semanticAvailable` and the coverage counts
+       * alongside the projection, but only a projection PASS pushed an update.
+       * Turning semantic search on changes the first two immediately and starts
+       * no pass, so the surface kept showing "Semantic search is off" over an
+       * index that was working - a stale frame the user could only clear by
+       * closing and reopening.
+       *
+       * `config.onChanged` is a bare signal fanned to every window (the main one
+       * and any pop-out), so re-reading the snapshot on it keeps a detached
+       * graph honest too. It is cheap by contract: `getSnapshot` reads the cache
+       * and never runs the pass.
+       */
+      if (!unsubscribeConfig) {
+        unsubscribeConfig = window.electronAPI.config.onChanged(() => {
+          if (!get().graphOpen) return;
+          void get().loadSnapshot(get().followsCurrentProject ? null : get().projectId);
+        });
+      }
       if (unsubscribeChanged) return;
       unsubscribeChanged = window.electronAPI.memory.onGraphChanged((changedProjectId) => {
         const { projectId, followsCurrentProject } = get();
@@ -218,6 +243,8 @@ function createMemoryGraphStore() {
     detach: () => {
       unsubscribeChanged?.();
       unsubscribeChanged = null;
+      unsubscribeConfig?.();
+      unsubscribeConfig = null;
     },
 
     loadSnapshot: async (projectId) => {

@@ -371,6 +371,39 @@ test.describe('memory graph', () => {
     }
   });
 
+  test('re-reads the snapshot when settings change, without being reopened', async () => {
+    // Turning semantic search on changes what this surface renders - the
+    // "Semantic search is off" notice comes from the snapshot - but starts no
+    // projection pass. The only push was pass COMPLETION, so the notice stayed
+    // over a working index until the surface was closed and reopened, which
+    // reads as the setting not taking effect.
+    const preConfig = `${snapshotScript({ semanticAvailable: false })}`;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await openMemoryGraph(page);
+      await expect(page.getByText('Semantic search is off')).toBeVisible();
+
+      // Re-point the mock at a snapshot reporting a working semantic layer, as
+      // it would once the setting persisted, then announce the config change.
+      await page.evaluate(() => {
+        const api = (window as unknown as {
+          electronAPI: { memory: { graphSnapshot: () => Promise<unknown> } };
+        }).electronAPI;
+        const previous = api.memory.graphSnapshot.bind(api.memory);
+        api.memory.graphSnapshot = async () => {
+          const snapshot = await previous() as { semanticAvailable: boolean } | null;
+          return snapshot ? { ...snapshot, semanticAvailable: true } : snapshot;
+        };
+        (window as unknown as { __mockEmitConfigChanged: () => void }).__mockEmitConfigChanged();
+      });
+
+      // No reopen, no reload: the notice clears on its own.
+      await expect(page.getByText('Semantic search is off')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('reloads on a completion push for the current project', async () => {
     const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(10) }));
     try {
