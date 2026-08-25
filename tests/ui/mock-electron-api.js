@@ -61,6 +61,10 @@
   // OS window. See window.__mockPopOut below.
   let popOutCalls = [];
   let popOutOpenResult = true;
+  // Call log for window.electronAPI.window.* (minimize/maximize/close), so a
+  // test can assert a title-bar / pop-out-frame control invoked the right verb
+  // without a real OS window. See window.__mockWindowControls below.
+  let windowControlCalls = [];
 
   // Resolve the git diff fixture for a request. A test can seed a single fixture
   // via window.__mockGitDiff, per-scope fixtures via window.__mockGitDiffByScope
@@ -3521,9 +3525,9 @@
     },
 
     window: {
-      minimize: noop,
-      maximize: noop,
-      close: noop,
+      minimize: function () { windowControlCalls.push('minimize'); },
+      maximize: function () { windowControlCalls.push('maximize'); },
+      close: function () { windowControlCalls.push('close'); },
       flashFrame: noop,
       isFocused: function () { return Promise.resolve(true); },
     },
@@ -3988,6 +3992,20 @@
     /** Seed what popOut.open resolves: false = the maxInstances cap refused. */
     setOpenResult: function (value) {
       popOutOpenResult = value;
+    },
+  };
+
+  /**
+   * Test hook: inspect window.electronAPI.window.* call log (minimize/
+   * maximize/close), e.g. to assert PopOutWindowFrame's Escape handler called
+   * (or did not call) window.close() without a real OS window.
+   */
+  window.__mockWindowControls = {
+    reset: function () {
+      windowControlCalls = [];
+    },
+    getCalls: function () {
+      return windowControlCalls.slice();
     },
   };
 
