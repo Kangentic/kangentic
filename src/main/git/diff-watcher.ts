@@ -95,8 +95,9 @@ export class DiffWatcher {
   /**
    * Remove one subscriber's callback from a path, closing the underlying
    * watchers only when it was the last subscriber. `unsubscribe()` still
-   * force-closes every callback for a path (used by the renderer's single
-   * subscriber and by relocation's `releaseUnder`/`closeAll`).
+   * force-closes every callback for a path (used by relocation's
+   * `releaseUnder` and shutdown's `closeAll`; the renderer IPC path refcounts
+   * per sender in DiffSubscriptionRegistry and tears down via this method).
    */
   private removeCallback(worktreePath: string, callback: () => void): void {
     const entry = this.watchers.get(worktreePath);

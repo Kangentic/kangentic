@@ -7,8 +7,21 @@
  * collapse to a single key.
  */
 import { describe, it, expect } from 'vitest';
-import { popOutInstanceKey, isPopOutKind, POP_OUT_SURFACES, POPOUT_KINDS } from '../../src/shared/pop-out';
+import { popOutInstanceKey, isPopOutKind, resolveSurfaceTitle, formatTaskAnchor, POP_OUT_SURFACES, POPOUT_KINDS } from '../../src/shared/pop-out';
 import { IPC } from '../../src/shared/ipc-channels';
+
+describe('POPOUT_KINDS / POP_OUT_SURFACES parity', () => {
+  /**
+   * POPOUT_KINDS is a plain array annotation, NOT exhaustiveness-checked by the
+   * compiler: a kind added to the union and POP_OUT_SURFACES but forgotten here
+   * compiles clean, isPopOutKind() then rejects it, and readPopOutDescriptor()
+   * falls through - the pop-out window silently mounts the full <App/> instead
+   * of its surface. This assertion is what makes the omission loud.
+   */
+  it('POPOUT_KINDS lists exactly the kinds POP_OUT_SURFACES declares', () => {
+    expect([...POPOUT_KINDS].sort()).toEqual(Object.keys(POP_OUT_SURFACES).sort());
+  });
+});
 
 describe('popOutInstanceKey', () => {
   it('collapses the global "stats" surface to its bare kind, ignoring any params', () => {
@@ -108,12 +121,99 @@ describe('POP_OUT_SURFACES fan-out declarations', () => {
   });
 });
 
+describe('the per-file "changes-file" surface', () => {
+  it('keys by kind:projectId:taskId:filePath, with the slash-bearing path as the LAST segment', () => {
+    expect(popOutInstanceKey('changes-file', { taskId: 't1', projectId: 'p1', filePath: 'src/a/b.ts' }))
+      .toBe('changes-file:p1:t1:src/a/b.ts');
+  });
+
+  it('a different filePath yields a distinct key (one window per file)', () => {
+    const first = popOutInstanceKey('changes-file', { taskId: 't1', projectId: 'p1', filePath: 'a.ts' });
+    const second = popOutInstanceKey('changes-file', { taskId: 't1', projectId: 'p1', filePath: 'b.ts' });
+    expect(first).not.toBe(second);
+  });
+
+  /**
+   * scope/commitOid are deliberately NOT in the key: re-opening the same file
+   * from another scope (or a commit's file list) must FOCUS the existing window
+   * rather than spawn a sibling - "one window per file".
+   */
+  it('the same file keyed from different scope/commit selections yields the SAME key', () => {
+    const working = popOutInstanceKey('changes-file', { taskId: 't1', projectId: 'p1', filePath: 'a.ts', scope: 'working' });
+    const staged = popOutInstanceKey('changes-file', { taskId: 't1', projectId: 'p1', filePath: 'a.ts', scope: 'staged' });
+    const commit = popOutInstanceKey('changes-file', { taskId: 't1', projectId: 'p1', filePath: 'a.ts', commitOid: 'abc123' });
+    expect(staged).toBe(working);
+    expect(commit).toBe(working);
+  });
+
+  it('never collides with the whole-surface "changes" key for the same task/project', () => {
+    const changesKey = popOutInstanceKey('changes', { taskId: 't1', projectId: 'p1' });
+    const fileKey = popOutInstanceKey('changes-file', { taskId: 't1', projectId: 'p1', filePath: 'a.ts' });
+    expect(fileKey).not.toBe(changesKey);
+  });
+
+  it('declares a task scope, the diff/config fan-out channels, and no webview', () => {
+    const meta = POP_OUT_SURFACES['changes-file'];
+    expect(meta.scope).toBe('task');
+    expect(meta.needsWebview).toBe(false);
+    expect(meta.channels).toContain(IPC.GIT_DIFF_CHANGED);
+    expect(meta.channels).toContain(IPC.CONFIG_CHANGED);
+  });
+
+  it('declares a window cap (the only multi-window-per-task kind)', () => {
+    expect(POP_OUT_SURFACES['changes-file'].maxInstances).toBe(8);
+  });
+
+  it('opens maximized out of the box (a diff reads best with the whole screen)', () => {
+    expect(POP_OUT_SURFACES['changes-file'].openMaximized).toBe(true);
+  });
+
+  it('titles its window "basename - #N task title" via resolveSurfaceTitle', () => {
+    const meta = POP_OUT_SURFACES['changes-file'];
+    const params = {
+      taskId: 't1',
+      projectId: 'p1',
+      filePath: 'src/a/b.ts',
+      projectPath: '/mock/project',
+      baseBranch: 'main',
+      status: 'M' as const,
+      binary: false,
+      taskDisplayId: 12,
+      taskTitle: 'Fix the parser',
+    };
+    expect(resolveSurfaceTitle(meta, params)).toBe('b.ts - #12 Fix the parser');
+  });
+
+  it('resolveSurfaceTitle falls back to the static title for kinds without a resolver', () => {
+    expect(resolveSurfaceTitle(POP_OUT_SURFACES.changes, { taskId: 't1', projectId: 'p1' })).toBe('Changes');
+  });
+});
+
+describe('formatTaskAnchor', () => {
+  /**
+   * formatTaskAnchor is the single builder for the "#N task title" anchor
+   * shared by resolveTitle's taskbar form (basename prefix, asserted above via
+   * resolveSurfaceTitle) and PopOutSurfaceRoot's frame-header form (full-path
+   * prefix, src/renderer/pop-out/PopOutSurfaceRoot.tsx) - the whole point of
+   * extracting it is that both call sites can never drift apart. Pin its exact
+   * output directly so a format change here (a colon, different spacing, a
+   * dash) is caught even if a caller's own test happens not to be touched.
+   */
+  it('formats "#<displayId> <title>" with a single space, no separator punctuation', () => {
+    expect(formatTaskAnchor(42, 'Fix the thing')).toBe('#42 Fix the thing');
+  });
+
+  it('does not alter or trim the title text', () => {
+    expect(formatTaskAnchor(7, '  spaced title  ')).toBe('#7   spaced title  ');
+  });
+});
+
 describe('isPopOutKind', () => {
-  it.each(['stats', 'changes', 'browser'])('accepts "%s" as a valid PopOutKind', (kind) => {
+  it.each(['stats', 'changes', 'browser', 'changes-file'])('accepts "%s" as a valid PopOutKind', (kind) => {
     expect(isPopOutKind(kind)).toBe(true);
   });
 
-  it.each(['', 'unknown', 'Stats', 'task', 'browser2'])('rejects "%s" as not a valid PopOutKind', (value) => {
+  it.each(['', 'unknown', 'Stats', 'task', 'browser2', 'changesfile'])('rejects "%s" as not a valid PopOutKind', (value) => {
     expect(isPopOutKind(value)).toBe(false);
   });
 });

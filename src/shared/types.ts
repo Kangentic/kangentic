@@ -4909,10 +4909,12 @@ export interface ElectronAPI {
     isFocused: () => Promise<boolean>;
   };
 
-  // Pop-out windows: detach a registered surface (stats, changes, browser) into its own
-  // OS-level BrowserWindow. See src/shared/pop-out.ts.
+  // Pop-out windows: detach a registered surface (stats, changes, browser, a single
+  // file's diff) into its own OS-level BrowserWindow. See src/shared/pop-out.ts.
   popOut: {
-    open: <K extends PopOutKind>(kind: K, params: PopOutParamsByKind[K]) => Promise<void>;
+    /** Resolves false when the kind's `maxInstances` cap refused the open (no
+     *  window was created or focused); true otherwise. */
+    open: <K extends PopOutKind>(kind: K, params: PopOutParamsByKind[K]) => Promise<boolean>;
     close: <K extends PopOutKind>(kind: K, params: PopOutParamsByKind[K]) => Promise<void>;
     focus: <K extends PopOutKind>(kind: K, params: PopOutParamsByKind[K]) => Promise<void>;
     isOpen: <K extends PopOutKind>(kind: K, params: PopOutParamsByKind[K]) => Promise<boolean>;

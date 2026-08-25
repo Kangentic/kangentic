@@ -25,8 +25,11 @@ export interface SurfaceDescriptor<K extends PopOutKind = PopOutKind> {
   /** Re-sync just this surface's store(s) on this window's OWN vite:afterUpdate
    *  (Pattern B, scoped to this window since App.tsx's handler never runs here). */
   hmrResync: () => void;
-  /** The in-app surface this pop-out is mutually exclusive with. */
-  inAppSurface: 'stats-overlay' | 'task-changes' | 'browser-pane' | 'monitor-overlay';
+  /** The in-app surface this pop-out is mutually exclusive with, or null for an
+   *  ADDITIVE surface with no exclusive in-app counterpart (a 'changes-file'
+   *  window must never unmount the inline diff pane it was opened from). See the
+   *  carve-out in .claude/rules/pop-out-surface-registry.md. */
+  inAppSurface: 'stats-overlay' | 'task-changes' | 'browser-pane' | 'monitor-overlay' | null;
 }
 
 // Heterogeneous registry: each entry is fully typed via SurfaceDescriptor<K> at its

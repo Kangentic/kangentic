@@ -1,8 +1,9 @@
-import { BrowserWindow, nativeImage } from 'electron';
+import { BrowserWindow, nativeImage, screen } from 'electron';
 import type { ConfigManager } from '../config/config-manager';
 import { resolveBackgroundColor, resolveIconPath, resolveRendererIndexPath, resolvePopOutBounds, savePopOutBounds } from '../window-utils';
-import { POP_OUT_SURFACES, POPOUT_ARG_PREFIX, popOutInstanceKey } from '../../shared/pop-out';
-import type { PopOutDescriptor, PopOutKind, PopOutParams, PopOutTaskParams } from '../../shared/pop-out';
+import { POP_OUT_SURFACES, POPOUT_ARG_PREFIX, popOutInstanceKey, resolveSurfaceTitle } from '../../shared/pop-out';
+import type { PopOutChangesFileParams, PopOutDescriptor, PopOutKind, PopOutParams, PopOutTaskParams } from '../../shared/pop-out';
+import { cascadePopOutPosition } from './cascade';
 
 const BOUNDS_SAVE_DEBOUNCE_MS = 500;
 
@@ -55,9 +56,12 @@ export class PopOutWindowManager {
     this.openContext = openContext;
   }
 
-  /** Open a surface's pop-out window, or focus it if already open. Throws on an unknown
-   *  kind, a scope/params mismatch, or if called before configure(). */
-  open<K extends PopOutKind>(kind: K, params: PopOutParams<K>): BrowserWindow {
+  /** Open a surface's pop-out window, or focus it if already open. Returns null (no
+   *  window, no throw) when the kind declares `maxInstances` and that many windows of
+   *  it are already live - the IPC handler surfaces that as `false` so the renderer
+   *  can tell the user. Throws on an unknown kind, a scope/params mismatch, or if
+   *  called before configure(). */
+  open<K extends PopOutKind>(kind: K, params: PopOutParams<K>): BrowserWindow | null {
     const key = popOutInstanceKey(kind, params);
     const existing = this.windows.get(key);
     if (existing && !existing.window.isDestroyed()) {
@@ -74,10 +78,21 @@ export class PopOutWindowManager {
     if (meta.scope === 'global' && isTaskParams(params)) {
       throw new Error(`Pop-out surface "${kind}" is global and takes no params`);
     }
+    if (kind === 'changes-file' && typeof (params as PopOutChangesFileParams).filePath !== 'string') {
+      throw new Error(`Pop-out surface "${kind}" requires a filePath param`);
+    }
     if (!this.openContext) {
       throw new Error('PopOutWindowManager.open() called before configure()');
     }
     const openContext = this.openContext;
+
+    // Kind-wide window cap, enforced here because this is the only place that can
+    // see every live window (a pop-out renderer never receives POPOUT_CHANGED, so
+    // a renderer-side count cannot hold). Focusing an existing instance above
+    // never counts against the cap.
+    const liveOfKind = [...this.windows.values()]
+      .filter((tracked) => tracked.kind === kind && !tracked.window.isDestroyed()).length;
+    if (meta.maxInstances !== undefined && liveOfKind >= meta.maxInstances) return null;
 
     const savedBounds = resolvePopOutBounds(kind);
     const iconImage = nativeImage.createFromPath(resolveIconPath());
@@ -89,7 +104,7 @@ export class PopOutWindowManager {
       ...(savedBounds ?? meta.defaultBounds),
       minWidth: meta.minSize.width,
       minHeight: meta.minSize.height,
-      title: meta.title,
+      title: resolveSurfaceTitle(meta, params),
       backgroundColor: resolveBackgroundColor(),
       show: false,
       titleBarStyle: 'hidden',
@@ -108,6 +123,18 @@ export class PopOutWindowManager {
     // macOS uses the app bundle / dock icon, so it is skipped there.
     if (process.platform !== 'darwin') win.setIcon(iconImage);
 
+    // Saved bounds are keyed by KIND, so every additional live window of this kind
+    // would restore exactly stacked on the first. Cascade it down-right instead.
+    // Done post-construction (the window is still `show: false`, so no flicker)
+    // because meta.defaultBounds carries no x/y - Electron centers the window,
+    // and getBounds() is the first place the resolved position exists.
+    if (liveOfKind > 0) {
+      const currentBounds = win.getBounds();
+      const workArea = screen.getDisplayMatching(currentBounds).workArea;
+      const cascaded = cascadePopOutPosition(currentBounds, liveOfKind, workArea);
+      win.setPosition(cascaded.x, cascaded.y);
+    }
+
     // Reveal the window exactly once. `ready-to-show` is the preferred (no-flash)
     // trigger, but a second BrowserWindow does not reliably emit it in every
     // Electron/dev-server setup - a window created with `show: false` whose
@@ -120,7 +147,10 @@ export class PopOutWindowManager {
     const reveal = () => {
       if (hasShown || win.isDestroyed()) return;
       hasShown = true;
-      if (savedBounds?.maximized) win.maximize();
+      // Saved state wins; with none saved yet, an openMaximized kind starts
+      // maximized out of the box (un-maximize restores the defaultBounds float,
+      // cascade offset included - the constructor bounds are the restore rect).
+      if (savedBounds ? savedBounds.maximized : meta.openMaximized) win.maximize();
       win.show();
       win.focus();
     };

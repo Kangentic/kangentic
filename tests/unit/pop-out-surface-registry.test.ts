@@ -100,7 +100,10 @@ describe('pop-out surface registry', () => {
     const exportedDescriptorNames: string[] = [];
     for (const fileName of surfaceFiles) {
       const source = fs.readFileSync(path.join(surfacesDir, fileName), 'utf-8');
-      const kindMatch = source.match(/kind:\s*'([a-z]+)'/);
+      // [a-z-]: kind literals may be hyphenated ('changes-file'); a bare [a-z]+
+      // would stop at the hyphen, silently drop the kind from rendererKinds, and
+      // fail the parity assertion below with a confusing shared-vs-renderer diff.
+      const kindMatch = source.match(/kind:\s*'([a-z][a-z-]*)'/);
       if (kindMatch) rendererKinds.push(kindMatch[1]);
       const exportMatch = source.match(/export const (\w+):\s*SurfaceDescriptor/);
       if (exportMatch) exportedDescriptorNames.push(exportMatch[1]);

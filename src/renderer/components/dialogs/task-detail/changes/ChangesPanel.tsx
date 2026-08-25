@@ -8,6 +8,8 @@ import { DiffErrorBoundary } from './DiffErrorBoundary';
 import { CommitGraphPanel } from '../graph/CommitGraphPanel';
 import { useSessionStore } from '../../../../stores/session-store';
 import { useConfigStore } from '../../../../stores/config-store';
+import { useToastStore } from '../../../../stores/toast-store';
+import { POP_OUT_SURFACES } from '../../../../../shared/pop-out';
 import { useKeybinding } from '../../../../hooks/useKeybinding';
 import { formatRelativeTime } from '../../../../lib/datetime';
 import type { GitBranchSummaryResult, GitCommitGraphCommit, GitDiffFileEntry, GitDiffFilesResult, GitDiffScope, GitFileContentResult, GitFileHistoryCommit, Task } from '../../../../../shared/types';
@@ -62,6 +64,12 @@ interface ChangesPanelProps {
    *  the standalone dialog, the command-terminal embed, and the pop-out root
    *  itself (which must not offer to detach again). */
   popOutParams?: { taskId: string; projectId: string };
+  /** When set, file rows offer "open this file's diff in its own OS window"
+   *  (double-click + the context menu item). SEPARATE from `popOutParams`
+   *  because that prop also gates the whole-surface detach header, which the
+   *  detached Changes window deliberately omits while still offering the
+   *  per-file affordance. Absent for the command-terminal embed (no task). */
+  filePopOutParams?: { taskId: string; projectId: string };
 }
 
 interface ContentCacheEntry {
@@ -78,7 +86,7 @@ interface DisplayedFileContent {
   filePath: string;
 }
 
-export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPath, worktreePath, baseBranch, emptyMessage, panelMode, onExpand, onCollapse, task, popOutParams }: ChangesPanelProps) {
+export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPath, worktreePath, baseBranch, emptyMessage, panelMode, onExpand, onCollapse, task, popOutParams, filePopOutParams }: ChangesPanelProps) {
   const effectiveScrollKey = scrollKey ?? entityId;
   // Expand-full is a PANEL-level action (it acts on the whole Changes surface, not
   // the current diff), so it lives in the shared surface header alongside the
@@ -446,6 +454,55 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
     fetchFileContentRef.current(filePath);
   }, [setSelectedFile]);
 
+  // Detach ONE file's diff into its own OS window ('changes-file' pop-out kind).
+  // The params capture the diff selection the row was double-clicked in (the
+  // pinned commit when one is selected, the live scope otherwise) plus the boot
+  // seed - paths, the file's list entry, and the task label - so the window
+  // fetches and titles itself without waiting on store hydration (see
+  // PopOutChangesFileParams). The cap is enforced main-side (maxInstances); a
+  // refused open resolves false and is surfaced as a toast.
+  // task and filePopOutParams are read through a ref / primitives rather than
+  // depended on directly: both get a fresh identity on every board-store push
+  // (an actively-working task refreshes constantly), and this callback feeds
+  // every FileRowView's memo'd onOpenInNewWindow prop - an unstable identity
+  // here re-renders every visible row on every push, which the sibling
+  // onSelect / onToggleViewed / onContextMenu handlers deliberately avoid.
+  const taskRef = useRef(task);
+  taskRef.current = task;
+  const filePopOutTaskId = filePopOutParams?.taskId;
+  const filePopOutProjectId = filePopOutParams?.projectId;
+  const handleOpenFileWindow = useCallback((filePath: string) => {
+    const currentTask = taskRef.current;
+    if (!filePopOutTaskId || !filePopOutProjectId || !currentTask) return;
+    const entry = filesRef.current.find((file) => file.path === filePath);
+    if (!entry) return;
+    void (async () => {
+      try {
+        const opened = await window.electronAPI.popOut.open('changes-file', {
+          taskId: filePopOutTaskId,
+          projectId: filePopOutProjectId,
+          filePath,
+          scope: changesSelectedCommit ? undefined : scope,
+          commitOid: changesSelectedCommit ?? undefined,
+          projectPath,
+          worktreePath,
+          baseBranch,
+          status: entry.status,
+          oldPath: entry.oldPath,
+          binary: entry.binary,
+          taskDisplayId: currentTask.display_id,
+          taskTitle: currentTask.title,
+        });
+        if (!opened) {
+          const maxInstances = POP_OUT_SURFACES['changes-file'].maxInstances;
+          useToastStore.getState().addToast({ message: `File diff window limit reached (${maxInstances}). Close one to open another.` });
+        }
+      } catch {
+        useToastStore.getState().addToast({ message: 'Could not open the file diff window.' });
+      }
+    })();
+  }, [filePopOutTaskId, filePopOutProjectId, changesSelectedCommit, scope, projectPath, worktreePath, baseBranch]);
+
   const markChangesFileViewed = useSessionStore((state) => state.markChangesFileViewed);
 
   // Cross-file change navigation. When next/prev-change in the DiffViewer reaches a
@@ -749,6 +806,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
             worktreePath={worktreePath}
             projectPath={projectPath}
             onSelectHistoryCommit={handleSelectHistoryCommit}
+            onOpenInNewWindow={filePopOutParams && task ? handleOpenFileWindow : undefined}
           />
         </div>
 

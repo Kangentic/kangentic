@@ -56,6 +56,15 @@ interface DiffViewerProps {
    * Defaults to true.
    */
   blameEligible?: boolean;
+  /**
+   * Whether Monaco's boot phase shows a spinner in the editor area. Defaults to
+   * true (the in-app panel). The per-file pop-out passes false: its host shows
+   * ONE full-body spinner until content arrives, and a second spinner centered
+   * in the editor area (below the toolbar) would visibly shift ~20px right
+   * before the diff paints - the indicator hides once instead, and Monaco boots
+   * against the plain editor background.
+   */
+  showEditorBootSpinner?: boolean;
 }
 
 const STATUS_LABELS: Record<GitDiffStatus, { label: string; colorClass: string }> = {
@@ -105,6 +114,7 @@ export function DiffViewer({
   worktreePath,
   projectPath,
   blameEligible = true,
+  showEditorBootSpinner = true,
 }: DiffViewerProps) {
   const theme = useConfigStore((state) => state.config.theme);
   const themeBase = NAMED_THEMES.find((namedTheme) => namedTheme.id === theme)?.base ?? 'dark';
@@ -812,10 +822,17 @@ export function DiffViewer({
                 contextmenu: false,
                 ...diffRenderOptions,
               }}
+              // A non-null empty node when suppressed: a nullish `loading`
+              // would fall back to @monaco-editor/react's default "Loading..."
+              // text instead of showing nothing.
               loading={
-                <div className="flex items-center justify-center h-full">
-                  <Loader2 size={20} className="animate-spin text-fg-muted" />
-                </div>
+                showEditorBootSpinner ? (
+                  <div className="flex items-center justify-center h-full">
+                    <Loader2 size={20} className="animate-spin text-fg-muted" />
+                  </div>
+                ) : (
+                  <></>
+                )
               }
             />
           </div>

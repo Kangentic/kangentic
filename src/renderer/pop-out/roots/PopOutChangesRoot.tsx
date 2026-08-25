@@ -52,7 +52,10 @@ export function PopOutChangesRoot({ params }: { params: PopOutTaskParams }) {
             trigger ChangesPanel's bare empty-state early return), and `isFocused` so
             keyboard file navigation works in this dedicated window. No `panelMode`
             (there is no split to expand/collapse here) and no `popOutParams` (already
-            detached - must not offer to detach again). */}
+            detached - must not offer to detach again). `filePopOutParams` IS passed:
+            per-file diff windows can be spawned from the detached panel too, and the
+            maxInstances cap is enforced main-side precisely because this window never
+            receives POPOUT_CHANGED and cannot count its siblings. */}
         <ChangesPanel
           entityId={`popout-${task.id}`}
           isFocused
@@ -61,6 +64,7 @@ export function PopOutChangesRoot({ params }: { params: PopOutTaskParams }) {
           worktreePath={task.worktree_path ?? undefined}
           baseBranch={task.base_branch || defaultBaseBranch || 'main'}
           task={task}
+          filePopOutParams={{ taskId: params.taskId, projectId: params.projectId }}
         />
       </Suspense>
     </PanelErrorBoundary>

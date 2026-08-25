@@ -38,6 +38,13 @@ describe('pop-out-store', () => {
       expect(usePopOutStore.getState().isOpen('changes', { taskId: 't1', projectId: 'p1' })).toBe(true);
       expect(usePopOutStore.getState().isOpen('browser', { taskId: 'x', projectId: 'y' })).toBe(false);
     });
+
+    it('matches a per-file "changes-file" key whose path carries slashes and a space', () => {
+      usePopOutStore.getState().setOpen(['changes-file:p1:t1:src/a b/c.ts']);
+
+      expect(usePopOutStore.getState().isOpen('changes-file', { taskId: 't1', projectId: 'p1', filePath: 'src/a b/c.ts' })).toBe(true);
+      expect(usePopOutStore.getState().isOpen('changes-file', { taskId: 't1', projectId: 'p1', filePath: 'src/other.ts' })).toBe(false);
+    });
   });
 
   describe('loadOpen', () => {

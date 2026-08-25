@@ -2,6 +2,7 @@ import { ipcMain } from 'electron';
 import simpleGit from 'simple-git';
 import { IPC } from '../../../shared/ipc-channels';
 import { DiffService } from '../../git/diff-service';
+import { DiffSubscriptionRegistry } from '../../git/diff-subscription-registry';
 import { readWorktreeHead } from '../../git/worktree-head';
 import { getBranchSummary } from '../../git/branch-summary';
 import { getCommitGraph } from '../../git/commit-graph';
@@ -119,12 +120,43 @@ export function registerGitDiffHandlers(context: IpcContext): void {
     return service.getFileContent(input);
   });
 
-  ipcMain.on(IPC.GIT_DIFF_SUBSCRIBE, (_, worktreePath: string) => {
-    watcher.subscribe(worktreePath, () => {
-      // broadcast() already guards a destroyed main window internally, matching the
-      // CONFIG_SET site's guard-free call.
-      broadcast(context.mainWindow, IPC.GIT_DIFF_CHANGED);
-    });
+  // Per-sender refcounting so N windows watching one path (the in-app Changes
+  // panel, the detached Changes window, per-file diff windows) each hold their
+  // own subscription: one window unsubscribing (or being destroyed) never tears
+  // down the others' live updates, and only the path's LAST subscriber leaving
+  // closes the fs.watch handles and drops the merge-base cache.
+  const subscriptionRegistry = new DiffSubscriptionRegistry(
+    (worktreePath) =>
+      watcher.subscribe(worktreePath, () => {
+        // broadcast() already guards a destroyed main window internally, matching the
+        // CONFIG_SET site's guard-free call.
+        broadcast(context.mainWindow, IPC.GIT_DIFF_CHANGED);
+      }),
+    (worktreePath) => serviceCache.delete(worktreePath),
+  );
+  const trackedSenderIds = new Set<number>();
+
+  ipcMain.on(IPC.GIT_DIFF_SUBSCRIBE, (event, worktreePath: string) => {
+    const senderId = event.sender.id;
+    if (!trackedSenderIds.has(senderId)) {
+      trackedSenderIds.add(senderId);
+      // A destroyed renderer (closed pop-out window, crash) never sends its
+      // unsubscribes; release everything it still holds.
+      event.sender.once('destroyed', () => {
+        trackedSenderIds.delete(senderId);
+        subscriptionRegistry.releaseSender(senderId);
+      });
+      // A reload / navigation also never sends unsubscribes (the page is torn
+      // down without React cleanup) while the webContents - and its sender id -
+      // survive, so the old page's refs would stack forever and keep the
+      // fs.watch armed. Release them when the next main-frame navigation
+      // commits; the new page's own subscribes only arrive after the commit,
+      // so they are never swept.
+      event.sender.on('did-navigate', () => {
+        subscriptionRegistry.releaseSender(senderId);
+      });
+    }
+    subscriptionRegistry.subscribe(senderId, worktreePath);
   });
 
   ipcMain.handle(IPC.GIT_CHECK_PENDING_CHANGES, (_, input: GitPendingChangesInput): Promise<GitPendingChangesResult> => {
@@ -151,8 +183,7 @@ export function registerGitDiffHandlers(context: IpcContext): void {
     return getBlame(input);
   });
 
-  ipcMain.on(IPC.GIT_DIFF_UNSUBSCRIBE, (_, worktreePath: string) => {
-    watcher.unsubscribe(worktreePath);
-    serviceCache.delete(worktreePath);
+  ipcMain.on(IPC.GIT_DIFF_UNSUBSCRIBE, (event, worktreePath: string) => {
+    subscriptionRegistry.unsubscribe(event.sender.id, worktreePath);
   });
 }

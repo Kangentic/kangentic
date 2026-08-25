@@ -60,6 +60,7 @@
   // (e.g. focus() instead of toggling the in-app overlay) without a real
   // OS window. See window.__mockPopOut below.
   let popOutCalls = [];
+  let popOutOpenResult = true;
 
   // Resolve the git diff fixture for a request. A test can seed a single fixture
   // via window.__mockGitDiff, per-scope fixtures via window.__mockGitDiffByScope
@@ -3528,7 +3529,9 @@
     },
 
     popOut: {
-      open: function (kind, params) { popOutCalls.push({ type: 'open', kind: kind, params: params }); return Promise.resolve(); },
+      // Resolves the seedable boolean (window.__mockPopOut.setOpenResult): false
+      // simulates the main-side maxInstances cap refusing the open.
+      open: function (kind, params) { popOutCalls.push({ type: 'open', kind: kind, params: params }); return Promise.resolve(popOutOpenResult); },
       close: function (kind, params) { popOutCalls.push({ type: 'close', kind: kind, params: params }); return Promise.resolve(); },
       focus: function (kind, params) { popOutCalls.push({ type: 'focus', kind: kind, params: params }); return Promise.resolve(); },
       isOpen: function (/* kind, params */) { return Promise.resolve(false); },
@@ -3977,9 +3980,14 @@
   window.__mockPopOut = {
     reset: function () {
       popOutCalls = [];
+      popOutOpenResult = true;
     },
     getCalls: function () {
       return popOutCalls.slice();
+    },
+    /** Seed what popOut.open resolves: false = the maxInstances cap refused. */
+    setOpenResult: function (value) {
+      popOutOpenResult = value;
     },
   };
 

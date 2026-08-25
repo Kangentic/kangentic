@@ -1,5 +1,5 @@
 import { useMemo, useState, useRef, useCallback, useEffect, memo, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react';
-import { Search, Plus, Pencil, Minus, ArrowRight, Copy, ChevronRight, ChevronDown, FileQuestion, GitBranch, ArrowUp, ArrowDown, ArrowDownUp, ListTree, List, FoldVertical, UnfoldVertical, FolderOpen, ExternalLink, Check, History, Loader2 } from 'lucide-react';
+import { Search, Plus, Pencil, Minus, ArrowRight, Copy, ChevronRight, ChevronDown, FileQuestion, GitBranch, ArrowUp, ArrowDown, ArrowDownUp, ListTree, List, FoldVertical, UnfoldVertical, FolderOpen, ExternalLink, Check, History, Loader2, AppWindow } from 'lucide-react';
 import { useConfigStore } from '../../../../stores/config-store';
 import type { GitBranchSummaryResult, GitDiffFileEntry, GitDiffScope, GitDiffStatus, GitFileHistoryCommit } from '../../../../../shared/types';
 import { formatRelativeTime } from '../../../../lib/datetime';
@@ -48,6 +48,10 @@ interface FileTreePanelProps {
   /** Fires when the user picks a commit from a file's "View history" popover -
    *  jumps the Changes panel to that file's diff at that commit. */
   onSelectHistoryCommit?: (filePath: string, commit: GitFileHistoryCommit) => void;
+  /** When provided, a file row can detach its diff into a dedicated OS window
+   *  (double-click, and the context menu's "Open in new window"). Absent for
+   *  hosts with no task identity (the command-terminal embed). */
+  onOpenInNewWindow?: (filePath: string) => void;
 }
 
 const STATUS_CONFIG: Record<GitDiffStatus, { icon: typeof Plus; colorClass: string; label: string }> = {
@@ -239,6 +243,7 @@ const FileRowView = memo(function FileRowView({
   onSelect,
   onToggleViewed,
   onContextMenu,
+  onOpenInNewWindow,
 }: {
   row: FlatFileRow;
   isSelected: boolean;
@@ -247,6 +252,7 @@ const FileRowView = memo(function FileRowView({
   onSelect: (filePath: string) => void;
   onToggleViewed: (filePath: string) => void;
   onContextMenu: (file: GitDiffFileEntry, event: ReactMouseEvent) => void;
+  onOpenInNewWindow?: (filePath: string) => void;
 }) {
   const statusConfig = STATUS_CONFIG[row.file.status];
   const StatusIcon = statusConfig.icon;
@@ -266,6 +272,11 @@ const FileRowView = memo(function FileRowView({
     >
       <button
         onClick={() => onSelect(row.file.path)}
+        // Detach this one file's diff into its own OS window. Both clicks of the
+        // double fire onSelect first - selection is idempotent, so that is fine.
+        // On the file button only, never the row div (the viewed toggle beside it
+        // must not detach).
+        onDoubleClick={onOpenInNewWindow ? () => onOpenInNewWindow(row.file.path) : undefined}
         onContextMenu={(event) => onContextMenu(row.file, event)}
         className={`flex items-center gap-1.5 min-w-0 flex-1 px-2 text-xs ${
           isSelected ? 'text-fg' : 'text-fg-secondary'
@@ -321,6 +332,7 @@ function VirtualizedFileTree({
   onSelect,
   onToggleViewed,
   onContextMenu,
+  onOpenInNewWindow,
   defaultExpanded,
 }: {
   files: GitDiffFileEntry[];
@@ -333,6 +345,7 @@ function VirtualizedFileTree({
   onSelect: (filePath: string) => void;
   onToggleViewed: (filePath: string) => void;
   onContextMenu: (file: GitDiffFileEntry, event: ReactMouseEvent) => void;
+  onOpenInNewWindow?: (filePath: string) => void;
   defaultExpanded: boolean;
 }) {
   const tree = useMemo(() => sortDirectoryTree(buildDirectoryTree(files), sort), [files, sort]);
@@ -456,6 +469,7 @@ function VirtualizedFileTree({
                 onSelect={onSelect}
                 onToggleViewed={onToggleViewed}
                 onContextMenu={onContextMenu}
+                onOpenInNewWindow={onOpenInNewWindow}
               />
             ),
           )}
@@ -476,18 +490,21 @@ interface FileContextMenuState {
 }
 
 /** Right-click menu for a changed file: open in the OS default app, reveal in
- *  the file manager, or copy the repo-relative path. Positioned at the cursor,
- *  clamped to the viewport; closes on outside click or Escape. */
+ *  the file manager, copy the repo-relative path, or detach the file's diff
+ *  into its own OS window. Positioned at the cursor, clamped to the viewport;
+ *  closes on outside click or Escape. */
 function FileContextMenu({
   state,
   worktreePath,
   projectPath,
+  onOpenInNewWindow,
   onViewHistory,
   onClose,
 }: {
   state: FileContextMenuState;
   worktreePath?: string;
   projectPath?: string;
+  onOpenInNewWindow?: () => void;
   onViewHistory?: () => void;
   onClose: () => void;
 }) {
@@ -517,7 +534,7 @@ function FileContextMenu({
 
   const menuStyle: CSSProperties = {
     left: Math.min(state.x, window.innerWidth - 220),
-    top: Math.min(state.y, window.innerHeight - 160),
+    top: Math.min(state.y, window.innerHeight - 200),
   };
 
   return (
@@ -561,6 +578,17 @@ function FileContextMenu({
         <Copy size={14} className="text-fg-faint" />
         Copy path
       </button>
+      {onOpenInNewWindow && (
+        <button
+          type="button"
+          onClick={onOpenInNewWindow}
+          className="w-full px-3 py-1.5 text-sm text-fg-secondary text-left hover:bg-surface-hover/40 flex items-center gap-2"
+          data-testid="context-open-new-window"
+        >
+          <AppWindow size={14} className="text-fg-faint" />
+          Open in new window
+        </button>
+      )}
       {onViewHistory && (
         <button
           type="button"
@@ -783,6 +811,7 @@ export function FileTreePanel({
   worktreePath,
   projectPath,
   onSelectHistoryCommit,
+  onOpenInNewWindow,
 }: FileTreePanelProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [contextMenu, setContextMenu] = useState<FileContextMenuState | null>(null);
@@ -954,6 +983,7 @@ export function FileTreePanel({
           onSelect={onSelect}
           onToggleViewed={onToggleViewed}
           onContextMenu={handleFileContextMenu}
+          onOpenInNewWindow={onOpenInNewWindow}
           defaultExpanded
         />
       )}
@@ -963,6 +993,7 @@ export function FileTreePanel({
           state={contextMenu}
           worktreePath={worktreePath}
           projectPath={projectPath}
+          onOpenInNewWindow={onOpenInNewWindow ? () => { onOpenInNewWindow(contextMenu.file.path); setContextMenu(null); } : undefined}
           onViewHistory={onSelectHistoryCommit ? handleViewHistory : undefined}
           onClose={() => setContextMenu(null)}
         />

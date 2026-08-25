@@ -268,6 +268,7 @@ export function TaskDetailBody({
           onCollapse={handleChangesCollapse}
           task={task}
           popOutParams={projectId ? { taskId: task.id, projectId } : undefined}
+          filePopOutParams={projectId ? { taskId: task.id, projectId } : undefined}
         />
       </Suspense>
     </PanelErrorBoundary>

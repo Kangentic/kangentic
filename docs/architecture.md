@@ -354,8 +354,8 @@ Machine-global (like Config), not project-scoped - backs the Mobile Devices sett
 | `git:listBranches` | invoke | List branches for a repository |
 | `git:diffFiles` | invoke | List changed files with status and stats for a scope (working / staged / branch), or for a single commit (`<oid>^..<oid>`) when `commitOid` is set, overriding `scope` |
 | `git:fileContent` | invoke | Fetch original and modified file content for diff display (per scope, or for a single commit when `commitOid` is set) |
-| `git:diffSubscribe` | send | Subscribe to file-system watcher for live diff updates on a worktree (working tree plus git metadata) |
-| `git:diffUnsubscribe` | send | Unsubscribe from diff change watcher for a worktree |
+| `git:diffSubscribe` | send | Subscribe to file-system watcher for live diff updates on a worktree (working tree plus git metadata). Refcounted per sender window, so N windows (the in-app panel, the detached Changes window, per-file diff windows) can watch one path; the underlying watch arms once |
+| `git:diffUnsubscribe` | send | Release THIS window's subscription for a worktree; the watcher and merge-base cache are torn down only when the path's last subscriber leaves (a destroyed window releases its subscriptions automatically) |
 | `git:diffChanged` | on | Debounced event fired when watched worktree files or git metadata change on disk |
 | `git:checkPendingChanges` | invoke | Check whether a path has uncommitted or unpushed changes |
 | `git:branchSummary` | invoke | Lightweight branch summary for the Changes panel header: current branch, ahead/behind commit counts vs the base branch, and the HEAD tip commit (hash, subject, timestamp). Cheap enough to run on every panel open and watcher fire |
@@ -378,10 +378,10 @@ Machine-global (like Config), not project-scoped - backs the Mobile Devices sett
 | `window:isFocused` | invoke | Check if the sending window has focus (for the renderer's spawn-stall/plan-complete notification gating; the idle/crash desktop notifier resolves focus synchronously in main instead - see `src/main/notifications/desktop-notifier.ts`) |
 
 ### Pop-out Windows (6 channels)
-Detach a registered UI surface (usage stats, git changes, the task Browser pane, the Agent Monitor) into its own OS-level `BrowserWindow`. See `src/shared/pop-out.ts` for the surface registry (`PopOutKind`, params, per-surface push fan-out) and `src/main/pop-out/` for the window manager + broadcast helper. Distinct from the in-app DOM window manager (`src/renderer/window-manager/`), which tiles movable panes inside the single main `BrowserWindow`.
+Detach a registered UI surface (usage stats, git changes, a single changed file's diff, the task Browser pane, the Agent Monitor) into its own OS-level `BrowserWindow`. See `src/shared/pop-out.ts` for the surface registry (`PopOutKind`, params, per-surface push fan-out) and `src/main/pop-out/` for the window manager + broadcast helper. Distinct from the in-app DOM window manager (`src/renderer/window-manager/`), which tiles movable panes inside the single main `BrowserWindow`. Most kinds are singletons per instance key; `changes-file` is additive (one window per file, opened by double-clicking a Changes file row) with a main-side `maxInstances` cap and a cascade offset for each additional window of the kind. It opens maximized until the user resizes, moves, or maximizes one (that preference then persists per kind, like every pop-out; un-maximizing restores the default float).
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `popOut:open` | invoke | Open a surface's pop-out window (kind + params), or focus it if already open |
+| `popOut:open` | invoke | Open a surface's pop-out window (kind + params), or focus it if already open; resolves `false` when the kind's `maxInstances` cap refused the open (currently only `changes-file`) |
 | `popOut:close` | invoke | Close a surface's pop-out window |
 | `popOut:focus` | invoke | Focus (and restore if minimized) a surface's pop-out window |
 | `popOut:isOpen` | invoke | Whether a surface's pop-out window is currently open |

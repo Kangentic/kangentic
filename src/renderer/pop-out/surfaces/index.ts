@@ -1,6 +1,7 @@
 import { registerSurface } from '../surface-registry';
 import { statsSurface } from './stats-surface';
 import { changesSurface } from './changes-surface';
+import { changesFileSurface } from './changes-file-surface';
 import { browserSurface } from './browser-surface';
 import { monitorSurface } from './monitor-surface';
 
@@ -8,5 +9,6 @@ import { monitorSurface } from './monitor-surface';
 // populates the surface registry before any pop-out window's getSurface() call.
 registerSurface(statsSurface);
 registerSurface(changesSurface);
+registerSurface(changesFileSurface);
 registerSurface(browserSurface);
 registerSurface(monitorSurface);
