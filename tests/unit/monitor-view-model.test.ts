@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  applyProjectScope,
   bucketOf,
   filterRows,
   groupRows,
@@ -95,6 +96,16 @@ describe('filterRows', () => {
     expect(kept.map((row) => row.sessionId)).toEqual(['b']);
   });
 
+  it('keeps a chosen SUBSET of projects, not just one', () => {
+    const mixed = [
+      makeRow({ sessionId: 'a' }),
+      makeRow({ sessionId: 'b', projectId: 'project-2' }),
+      makeRow({ sessionId: 'c', projectId: 'project-3' }),
+    ];
+    const kept = filterRows(mixed, { ...VIEW, projectFilter: ['project-1', 'project-3'] });
+    expect(kept.map((row) => row.sessionId)).toEqual(['a', 'c']);
+  });
+
   it('an empty projectFilter means every project, not none', () => {
     expect(filterRows(rows, { ...VIEW, projectFilter: [] })).toHaveLength(4);
   });
@@ -113,6 +124,29 @@ describe('filterRows', () => {
     expect(filterRows(searchable, { ...VIEW, textFilter: 'LANDING' }).map((r) => r.sessionId)).toEqual(['a']);
     expect(filterRows(searchable, { ...VIEW, textFilter: 'crypto' }).map((r) => r.sessionId)).toEqual(['b']);
     expect(filterRows(searchable, { ...VIEW, textFilter: '#999' }).map((r) => r.sessionId)).toEqual(['c']);
+  });
+});
+
+describe('applyProjectScope', () => {
+  const rows = [
+    makeRow({ sessionId: 'a' }),
+    makeRow({ sessionId: 'b', projectId: 'project-2' }),
+    makeRow({ sessionId: 'c', projectId: 'project-3' }),
+  ];
+
+  it('returns the SAME array reference for an empty filter', () => {
+    // Load-bearing, not an optimisation nicety: MonitorSummaryCards is memoized
+    // on the rows identity, so the common unscoped path must not allocate.
+    expect(applyProjectScope(rows, [])).toBe(rows);
+  });
+
+  it('keeps only rows from the named project', () => {
+    expect(applyProjectScope(rows, ['project-2']).map((row) => row.sessionId)).toEqual(['b']);
+  });
+
+  it('keeps rows from EACH project of a multi-project filter', () => {
+    const scoped = applyProjectScope(rows, ['project-1', 'project-3']);
+    expect(scoped.map((row) => row.sessionId)).toEqual(['a', 'c']);
   });
 });
 

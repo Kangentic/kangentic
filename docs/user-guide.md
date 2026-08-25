@@ -746,7 +746,7 @@ Totals are read from the durable usage ledgers, so they survive task and session
 
 Open the monitor from the activity icon in the title bar or with `Mod+Shift+M`. It answers "what are all my agents doing right now?" in one place, across **every** registered project rather than just the one whose board is open. The title-bar icon itself is the ambient signal: green while any agent anywhere is working, amber the moment one starts waiting on you.
 
-Each session shows its owning project and column, the task title and ticket number, live activity state, agent, model, effort and permission mode, how long it has been running, and what the agent is doing right now. Four tiles across the top count what needs you, what is active, what is paused, and how many projects have something live.
+Each session shows its owning project and column, the task title and ticket number, live activity state, agent, model, effort and permission mode, how long it has been running, and what the agent is doing right now. Four tiles across the top count what needs you, what is active, what is paused, and how many projects have something live. The tiles follow the Projects filter, so a scoped view counts only the projects in view.
 
 Every card also carries a **live output peek**: the last few rendered lines of that session's terminal, in a shaded panel where a task description would otherwise sit. It updates in place as the agent works (at most twice a second, and only when the visible text actually changes), so you can see what a session is saying without opening it. The panel is a fixed height, so a card never resizes as messages land.
 
@@ -757,7 +757,7 @@ You choose how it looks, and the choice is remembered (including across a restar
 - **Layout** - cards (which reflow into 2 or 3 columns as the window widens), a dense sortable table, or a one-line-per-session list.
 - **Grouping** - by status (Idle / Active / Paused / Recently finished) or by project. Rows are always sectioned, which is what keeps anything waiting on you at the top without you having to sort for it.
 - **Sort** - Oldest or Newest, applied within each section. The table layout sorts by its own column headers instead.
-- **Filters** - a text filter across title, project, column, agent, model, ticket number and labels, plus a "Live only" toggle that drops paused and recently finished sessions.
+- **Filters** - a project scope multi-select that narrows the whole view (list and tiles) to a chosen subset of projects; its pill reads "All projects" until narrowed (then e.g. "2 of 5 projects") and appears once more than one project has sessions, staying while narrowed - as long as any project has a session - so Clear is always reachable. Plus a text filter across title, project, column, agent, model, ticket number and labels, and a "Live only" toggle that drops paused and recently finished sessions.
 
 Clicking a row opens that task's full detail - terminal included - **in the monitor**, so several agents across several projects can be watched and driven from one surface without leaving for another project's board. Right-click a row and choose **Open on board** for the old behavior. A task's detail is only ever open in one place: opening it somewhere else moves it rather than making a second copy, and its tab leaves the bottom panel while it is open.
 

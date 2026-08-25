@@ -173,11 +173,32 @@ function createMonitorStore() {
      * a genuine no-op, since zustand skips the notify when the updater returns the
      * same state object.
      */
-    applySnapshot: (snapshot) => set((state) => {
-      const rows = reconcileMonitorRows(state.rows, snapshot.rows);
-      if (rows === state.rows && state.loaded) return state;
-      return { rows, loaded: true, snapshotGeneration: state.snapshotGeneration + 1 };
-    }),
+    applySnapshot: (snapshot) => {
+      set((state) => {
+        const rows = reconcileMonitorRows(state.rows, snapshot.rows);
+        if (rows === state.rows && state.loaded) return state;
+        return { rows, loaded: true, snapshotGeneration: state.snapshotGeneration + 1 };
+      });
+
+      // Reconcile the project filter against what the snapshot actually carries:
+      // drop ids whose project has no session in these rows, THROUGH setView so
+      // the trim persists and every host converges. This keeps the guarantee the
+      // old hydrate-time wipe existed for - every persisted filter id is one the
+      // toolbar's Projects dropdown (whose options derive from these same rows)
+      // can still represent and undo. Runs even when the merge above was a
+      // no-op, because that is what catches a filter seeded by hydrateView
+      // before any rows existed; the common case (an empty filter) costs one
+      // length check per push. Skipped for an EMPTY snapshot - a session-less
+      // morning must not erase the preference. Accepted consequence: a scoped
+      // project whose last session leaves a non-empty snapshot is dropped from
+      // the filter, persistently.
+      const { rows, view } = get();
+      if (view.projectFilter.length === 0 || rows.length === 0) return;
+      const presentProjects = new Set(rows.map((row) => row.projectId));
+      const retainedFilter = view.projectFilter.filter((projectId) => presentProjects.has(projectId));
+      if (retainedFilter.length === view.projectFilter.length) return;
+      get().setView({ projectFilter: retainedFilter });
+    },
 
     /**
      * Patch one row's live state without a refetch. The snapshot is the authority
@@ -251,12 +272,17 @@ function createMonitorStore() {
      * with nothing selected and the list ordered by the fallback - looking broken
      * rather than migrated.
      *
-     * The two list filters get the harshest treatment: they are CLEARED, not
-     * sanitized. No control writes them any more (the project scope picker was
-     * removed - a view whose whole job is every agent everywhere does not need a
-     * one-project scope), so a value an older build persisted would hide rows with
-     * nothing in the UI able to bring them back. An unreachable filter is worse
-     * than a stale enum, which at least falls back to a working default.
+     * `stateFilter` gets the harshest treatment: it is CLEARED, not sanitized.
+     * No control writes it (Live only covers the case users actually asked for),
+     * so a value an older build persisted would hide rows with nothing in the UI
+     * able to bring them back. An unreachable filter is worse than a stale enum,
+     * which at least falls back to a working default.
+     *
+     * `projectFilter` IS kept - the toolbar's Projects dropdown writes it now -
+     * only sanitized to a deduped string array. Ids naming a project with no
+     * current session cannot be validated here: the main window hydrates before
+     * any snapshot exists, and the pop-out re-hydrates on every config change.
+     * That reconcile lives in applySnapshot, where the rows are.
      */
     hydrateView: (view) => {
       // Legacy shapes, migrated rather than discarded: silently resetting a
@@ -285,7 +311,9 @@ function createMonitorStore() {
           groupBy: valid(merged.groupBy, ['state', 'project'], DEFAULT_CONFIG.monitor.groupBy),
           sort: valid(merged.sort, ['longest-running', 'recently-started'], 'longest-running'),
           liveOnly: legacy.liveOnly ?? legacy.hideIdle ?? DEFAULT_CONFIG.monitor.liveOnly,
-          projectFilter: [],
+          projectFilter: Array.isArray(merged.projectFilter)
+            ? [...new Set(merged.projectFilter.filter((projectId) => typeof projectId === 'string'))]
+            : [],
           stateFilter: [],
         },
       });

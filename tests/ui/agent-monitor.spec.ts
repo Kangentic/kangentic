@@ -167,6 +167,90 @@ function monitorPreConfig(): string {
   `;
 }
 
+/**
+ * Exactly one project has ever had a session, and its Projects filter is
+ * already persisted. Exercises the visibility gate's OR-clause: with a single
+ * represented project the "2+ options" half can never fire, so only a
+ * persisted `projectFilter` naming that lone project keeps the control (and
+ * its Clear) reachable.
+ */
+function singleProjectMonitorPreConfig(): string {
+  return `
+    window.__mockPreConfigure(function (state) {
+      var ts = new Date().toISOString();
+      state.projects.push({
+        id: '${PROJECT_A}',
+        name: 'Monitor Alpha',
+        path: '/mock/monitor-a',
+        github_url: null,
+        default_agent: 'claude',
+        last_opened: ts,
+        created_at: ts,
+      });
+
+      state.DEFAULT_SWIMLANES.forEach(function (lane, index) {
+        state.swimlanes.push({
+          id: 'lane-monitor-single-' + index,
+          name: lane.name,
+          role: lane.role,
+          color: lane.color,
+          icon: lane.icon,
+          is_archived: lane.is_archived,
+          permission_strategy: lane.permission_strategy || null,
+          auto_spawn: lane.auto_spawn || false,
+          position: index,
+          created_at: ts,
+        });
+      });
+
+      state.tasks.push({
+        id: 'task-single-a',
+        title: 'Solo project task',
+        description: '',
+        display_id: 501,
+        swimlane_id: 'lane-monitor-single-0',
+        position: 0,
+        labels: [],
+        priority: 0,
+        run_mode: 'agent',
+        archived_at: null,
+        created_at: ts,
+        updated_at: ts,
+      });
+
+      state.sessions.push({
+        id: 'sess-single-a',
+        taskId: 'task-single-a',
+        projectId: '${PROJECT_A}',
+        pid: 5300,
+        status: 'running',
+        shell: 'bash',
+        cwd: '/mock/monitor-a',
+        startedAt: ts,
+        exitCode: null,
+      });
+
+      // Persisted ahead of any snapshot, exactly the boot-order scenario the
+      // toolbar's numerator/denominator comment describes.
+      state.config.monitor.projectFilter = ['${PROJECT_A}'];
+
+      return { currentProjectId: '${PROJECT_A}' };
+    });
+
+    window.__mockMonitorRows = [
+      {
+        sessionId: 'sess-single-a', projectId: '${PROJECT_A}', projectName: 'Monitor Alpha',
+        taskId: 'task-single-a', taskTitle: 'Solo project task', outputPeek: [], displayId: 501,
+        columnName: 'To Do', commandTerminalBranch: null, labels: [], prUrl: null, prNumber: null, prState: null,
+        agentName: 'claude', modelDisplayName: 'Opus 5', effort: 'medium', permissionMode: 'auto',
+        startedAt: '2026-01-01T00:00:00.000Z', exitedAt: null,
+        status: 'running', activity: 'thinking', activityReason: null,
+        lastEvent: null, contextPercent: null, isolated: false, isCommandTerminal: false
+      }
+    ];
+  `;
+}
+
 async function launchWithState(preConfigScript: string): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady(VITE_URL);
   const browser = await chromium.launch({ headless: true });
@@ -577,6 +661,261 @@ test.describe('agent monitor', () => {
       await page.locator('[data-testid="monitor-text-filter"]').fill('Landing');
       await expect(cards).toHaveCount(1);
       await expect(page.locator('[data-session-id="sess-other-project"]')).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the Projects filter scopes the list and the tiles, and never narrows its own options', async () => {
+    const { browser, page } = await launchWithState(monitorPreConfig());
+    try {
+      await openMonitor(page);
+      const cards = page.locator('[data-testid="monitor-card"]');
+      await expect(cards).toHaveCount(4);
+      await expect(page.locator('[data-testid="monitor-summary-projects-value"]')).toHaveText('2');
+
+      // The trigger sits in the secondary tier and reads as live scope state,
+      // not a static label ("Projects" beside the Group control's own "Project"
+      // option read as more grouping); the menu portals to body.
+      const trigger = page.locator('[data-testid="monitor-project-filter"] button');
+      await expect(trigger).toHaveText('All projects');
+      await trigger.click();
+      const menu = page.locator('[data-testid="filter-menu-projects"]');
+      await expect(menu).toBeVisible();
+
+      // Left-anchored to the trigger (align="left"), because in this toolbar the
+      // LEFT edge is the stable one: the trigger text widens as selections
+      // toggle, and the menu's position is computed once at open, so a
+      // right-anchored menu visibly detached from the moving edge.
+      const triggerBoxAtOpen = await trigger.boundingBox();
+      const menuBox = await menu.boundingBox();
+      if (!triggerBoxAtOpen || !menuBox) throw new Error('missing geometry for the alignment check');
+      expect(Math.abs(menuBox.x - triggerBoxAtOpen.x)).toBeLessThanOrEqual(2);
+      // Options are (id, name) pairs: the testid carries the project id, the
+      // rendered text the display name.
+      const optionAlpha = page.locator(`[data-testid="filter-option-projects-${PROJECT_A}"]`);
+      const optionBeta = page.locator(`[data-testid="filter-option-projects-${PROJECT_B}"]`);
+      await expect(optionAlpha).toContainText('Monitor Alpha');
+      await expect(optionBeta).toContainText('Monitor Beta');
+
+      await optionAlpha.click();
+      await expect(cards).toHaveCount(2);
+      await expect(trigger).toHaveText('1 of 2 projects');
+      // The toggle changed the trigger's text width; the open menu must stay
+      // glued to the trigger's (stable) left edge regardless.
+      const triggerBoxAfterToggle = await trigger.boundingBox();
+      const menuBoxAfterToggle = await menu.boundingBox();
+      if (!triggerBoxAfterToggle || !menuBoxAfterToggle) throw new Error('missing geometry for the alignment check');
+      expect(Math.abs(menuBoxAfterToggle.x - triggerBoxAfterToggle.x)).toBeLessThanOrEqual(2);
+      await expect(page.locator('[data-session-id="sess-other-project"]')).toHaveCount(0);
+      // The "N of M" chip is what explains where the missing sessions went.
+      const visibleCount = page.locator('[data-testid="monitor-visible-count"]');
+      await expect(visibleCount).toBeVisible();
+      await expect(visibleCount.locator('span').first()).toHaveText('2');
+      // The tiles follow the scope: Alpha alone is one project with one active
+      // and one paused session.
+      await expect(page.locator('[data-testid="monitor-summary-projects-value"]')).toHaveText('1');
+      await expect(page.locator('[data-testid="monitor-summary-working-value"]')).toHaveText('1');
+      await expect(page.locator('[data-testid="monitor-summary-idle-value"]')).toHaveText('1');
+
+      // The option list derives from the UNFILTERED rows: scoping to Alpha must
+      // not drop Beta from the menu, or the selection could never be widened
+      // again. (The menu also stays open across a toggle.)
+      await expect(menu).toBeVisible();
+      await expect(optionBeta).toBeVisible();
+      await expect(optionAlpha.locator('input')).toBeChecked();
+      await expect(optionBeta.locator('input')).not.toBeChecked();
+
+      // Clear restores every project, retires the chip, and resets the trigger.
+      await menu.getByText('Clear').click();
+      await expect(cards).toHaveCount(4);
+      await expect(visibleCount).toHaveCount(0);
+      await expect(trigger).toHaveText('All projects');
+      await expect(page.locator('[data-testid="monitor-summary-projects-value"]')).toHaveText('2');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('unchecking one of two selected projects removes only that project from the filter', async () => {
+    // Drives the REMOVE branch of toggleProject with something ELSE already
+    // selected: every other test here either adds a single project to an
+    // empty filter or clears the whole thing via Clear, so a toggleProject
+    // that always appended (never removed on an already-checked option)
+    // would still pass every one of them - only re-checking a box while a
+    // sibling stays checked exercises the `.filter(...)` branch at all.
+    const { browser, page } = await launchWithState(monitorPreConfig());
+    try {
+      await openMonitor(page);
+      const cards = page.locator('[data-testid="monitor-card"]');
+      const trigger = page.locator('[data-testid="monitor-project-filter"] button');
+      await trigger.click();
+
+      const optionAlpha = page.locator(`[data-testid="filter-option-projects-${PROJECT_A}"]`);
+      const optionBeta = page.locator(`[data-testid="filter-option-projects-${PROJECT_B}"]`);
+
+      await optionAlpha.click();
+      await expect(trigger).toHaveText('1 of 2 projects');
+      await optionBeta.click();
+      await expect(trigger).toHaveText('2 of 2 projects');
+      // Both projects selected covers every row in the fixture.
+      await expect(cards).toHaveCount(4);
+
+      // Re-click the ALREADY-CHECKED Alpha option: this is the remove branch.
+      await optionAlpha.click();
+      await expect(trigger).toHaveText('1 of 2 projects');
+      await expect(optionAlpha.locator('input')).not.toBeChecked();
+      await expect(optionBeta.locator('input')).toBeChecked();
+
+      // Only Beta's rows remain: sess-other-project and sess-command-terminal.
+      // A broken remove branch that always appends would still show all 4.
+      // Scoped to the card testid, not a bare data-session-id: sess-working is
+      // PROJECT_A's live session, and it is ALSO the id on the bottom terminal
+      // panel's own tab (see "the bottom panel yields its terminal..." below),
+      // which stays mounted regardless of what the monitor's filter hides.
+      await expect(cards).toHaveCount(2);
+      await expect(page.locator('[data-session-id="sess-other-project"]')).toBeVisible();
+      await expect(page.locator('[data-session-id="sess-command-terminal"]')).toBeVisible();
+      await expect(page.locator('[data-testid="monitor-card"][data-session-id="sess-working"]')).toHaveCount(0);
+      await expect(page.locator('[data-testid="monitor-card"][data-session-id="sess-paused"]')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the Projects control stays reachable with only one project, reading singular "1 of 1 project"', async () => {
+    // With only one project ever represented, `projectOptions.length >= 2` can
+    // never be true - only the OR-clause's second half (a persisted filter
+    // naming that lone represented project) keeps Clear reachable. Deleting
+    // that clause hides the control here without failing any other test,
+    // since every other fixture in this file seeds two projects.
+    const { browser, page } = await launchWithState(singleProjectMonitorPreConfig());
+    try {
+      await openMonitor(page);
+      await expect(page.locator('[data-testid="monitor-card"]')).toHaveCount(1);
+
+      const control = page.locator('[data-testid="monitor-project-filter"]');
+      await expect(control).toBeVisible();
+      await expect(control.locator('button')).toHaveText('1 of 1 project');
+
+      // Still fully undoable from here - after Clear there is nothing left to
+      // subset (one project, no filter), so the control retires itself.
+      await control.locator('button').click();
+      await page.locator('[data-testid="filter-menu-projects"]').getByText('Clear').click();
+      await expect(page.locator('[data-testid="monitor-project-filter"]')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a persisted Projects filter with zero sessions anywhere hides the control entirely', async () => {
+    // The other edge of the same gate: with no rows at all, projectOptions is
+    // empty, so neither half of the OR-clause can be true - a persisted filter
+    // naming a project that currently has no session must not resurrect a
+    // control with nothing to show and nothing to undo.
+    const preConfig = `${singleProjectMonitorPreConfig()}
+      window.__mockMonitorRows = [];
+    `;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await openMonitor(page);
+      await expect(page.locator('[data-testid="monitor-empty"]')).toBeVisible();
+      await expect(page.locator('[data-testid="monitor-project-filter"]')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a persisted project filter is honoured on boot, and stale ids reconcile away', async () => {
+    // The red-green for removing hydrateView's unconditional wipe: before the
+    // Projects control existed, the persisted filter was force-cleared on every
+    // launch, which would now read as the control losing its state on restart.
+    const preConfig = monitorPreConfig() + `
+      window.__mockPreConfigure(function (state) {
+        state.config.monitor.projectFilter = ['${PROJECT_A}', 'proj-gone'];
+        return {};
+      });
+    `;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await openMonitor(page);
+      const cards = page.locator('[data-testid="monitor-card"]');
+      // Only Alpha's two sessions: the persisted scope survived the boot.
+      await expect(cards).toHaveCount(2);
+      await expect(page.locator('[data-session-id="sess-other-project"]')).toHaveCount(0);
+
+      // The id naming no current project is dropped against the first snapshot
+      // and the trim persists through the normal debounced setView path.
+      await expect.poll(async () => page.evaluate(async () => {
+        const api = (window as unknown as {
+          electronAPI: { config: { getGlobal: () => Promise<{ monitor?: { projectFilter?: string[] } }> } };
+        }).electronAPI;
+        const config = await api.config.getGlobal();
+        return config.monitor?.projectFilter ?? [];
+      }), { timeout: 10000 }).toEqual([PROJECT_A]);
+
+      // And the surviving scope is still fully undoable from the control.
+      await page.locator('[data-testid="monitor-project-filter"] button').click();
+      await page.locator('[data-testid="filter-menu-projects"]').getByText('Clear').click();
+      await expect(cards).toHaveCount(4);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('clicking a Projects option leaves an open monitor detail window alone', async () => {
+    const { browser, page } = await launchWithState(monitorPreConfig());
+    try {
+      await openMonitor(page);
+      const monitorWindows = () => page.evaluate(
+        () => document.querySelectorAll('#monitor-detail-layer-root [data-testid^="window-frame-"]').length,
+      );
+      // An Alpha task's detail, so its row stays listed once the scope narrows
+      // to Alpha below.
+      await page.locator('[data-session-id="sess-working"] [data-testid="monitor-card-title"]').click();
+      await expect.poll(monitorWindows, { timeout: 10000 }).toBe(1);
+
+      // The window spawns over the toolbar, which would block the trigger click
+      // (Playwright refuses a click the window would swallow). Drag it to the
+      // lower half first - the same title-bar drag window-drag-free-move.spec.ts
+      // uses - after polling the entrance animation settled.
+      const titleBar = page.locator(
+        '#monitor-detail-layer-root [data-testid^="window-frame-"] [data-testid="task-detail-titlebar"]',
+      );
+      await titleBar.waitFor({ state: 'visible', timeout: 10000 });
+      let titleBarBox = await titleBar.boundingBox();
+      await expect.poll(async () => {
+        const nextBox = await titleBar.boundingBox();
+        const settled = !!titleBarBox && !!nextBox
+          && Math.abs(nextBox.x - titleBarBox.x) < 1 && Math.abs(nextBox.y - titleBarBox.y) < 1;
+        titleBarBox = nextBox;
+        return settled;
+      }, { timeout: 5000 }).toBe(true);
+      const overlayBox = await page.locator('[data-testid="monitor-page"]').boundingBox();
+      if (!titleBarBox || !overlayBox) throw new Error('missing geometry for the window drag');
+      await page.mouse.move(titleBarBox.x + titleBarBox.width / 2, titleBarBox.y + titleBarBox.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(
+        overlayBox.x + overlayBox.width * 0.55,
+        overlayBox.y + overlayBox.height * 0.8,
+        { steps: 12 },
+      );
+      await page.mouse.up();
+      await expect.poll(monitorWindows, { timeout: 10000 }).toBe(1);
+
+      // The menu portals to document.body - OUTSIDE the monitor's
+      // data-dismiss-layer subtree - and OverlayPopover marks it
+      // data-dismissable-layer, so a real click on an option applies the filter
+      // and nothing else (.claude/rules/light-dismiss-denylist.md).
+      await page.locator('[data-testid="monitor-project-filter"] button').click();
+      await page.locator(`[data-testid="filter-option-projects-${PROJECT_A}"]`).click();
+      await expect(page.locator('[data-testid="monitor-card"]')).toHaveCount(2);
+
+      // Intentional fixed wait - a wrongly-scheduled dismiss has nothing to poll
+      // for; give it time to fire, then assert it did not (the same
+      // non-occurrence pattern as window-click-outside-close.spec.ts).
+      await page.waitForTimeout(400);
+      expect(await monitorWindows()).toBe(1);
     } finally {
       await browser.close();
     }

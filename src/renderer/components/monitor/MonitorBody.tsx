@@ -16,7 +16,7 @@ import { MonitorTable } from './MonitorTable';
 import { MonitorRowContextMenu } from './MonitorRowContextMenu';
 import { requestMonitorDetail } from './MonitorDetailLayer';
 import { useMonitorPeekSubscription } from './useMonitorPeekSubscription';
-import { bucketOf, filterRows, groupRows, sortRows, toRenderUnits } from './monitor-view-model';
+import { applyProjectScope, bucketOf, filterRows, groupRows, sortRows, toRenderUnits } from './monitor-view-model';
 
 /**
  * The monitor's body. Reads purely from stores and returns a bare fragment, so it
@@ -156,6 +156,15 @@ export function MonitorBody() {
     };
   }, [rows, view, columns]);
 
+  // Project-scope-only rows for the summary tiles; see the comment at the
+  // render site below for why the tiles follow the scope but not the other
+  // filters. Identity-stable when the filter is empty (the common case), so
+  // MonitorSummaryCards' memo on `rows` keeps working.
+  const scopedRows = useMemo(
+    () => applyProjectScope(rows, view.projectFilter),
+    [rows, view.projectFilter],
+  );
+
   const virtualizer = useVirtualizer({
     count: units.list.length,
     getScrollElement: () => scrollRef.current,
@@ -256,15 +265,19 @@ export function MonitorBody() {
 
   return (
     <>
-      {/* Summary ABOVE the controls, deliberately. These counts are over every
-          session regardless of the filters below, so leading with them says
-          "here is the whole machine" before the controls narrow what is listed.
-          (The usage dashboard puts its tiles under its toolbar because there the
-          controls change what the tiles measure; here they do not.) */}
+      {/* Summary ABOVE the controls, deliberately. The tiles follow the Projects
+          SCOPE - the projects the user chose to watch ARE "the whole machine" as
+          far as they are concerned, and counts for hidden projects above cards
+          that never show them read as a bug - but they still ignore the
+          transient slicing below (Live only / state / text), which narrows the
+          LIST: tiles that followed those would just restate the visible cards,
+          and "Live only" must not zero the Paused tile. (The usage dashboard
+          puts its tiles under its toolbar because there the controls change what
+          the tiles measure; here only the scope does.) */}
       {/* Dropped entirely when nothing is running: four tiles reading 0 with a
           blank line under each, stacked above a zero-state that already says "no
           agents running", is four restatements of one fact. */}
-      {rows.length > 0 && <MonitorSummaryCards rows={rows} />}
+      {scopedRows.length > 0 && <MonitorSummaryCards rows={scopedRows} />}
       <MonitorToolbar view={view} rows={rows} visibleCount={units.visibleCount} setView={setView} />
 
       {/* `pt-3` belongs HERE, not on the group header. With grouping switched off

@@ -1,6 +1,8 @@
+import { useMemo } from 'react';
 import { LayoutGrid, Rows3, Table2, Search, Layers, ArrowUpDown } from 'lucide-react';
 import type { MonitorSessionRow, MonitorView } from '../../../shared/types';
 import { ButtonGroup } from '../ButtonGroup';
+import { MultiSelectDropdown } from '../MultiSelectDropdown';
 
 /**
  * The monitor's header, built to the same structure as the usage dashboard's.
@@ -54,7 +56,49 @@ interface MonitorToolbarProps {
 }
 
 export function MonitorToolbar({ view, rows, visibleCount, setView }: MonitorToolbarProps) {
+  // Derived from the UNFILTERED rows, deliberately: built from the filtered set
+  // the option list would narrow to the current selection and deselecting a
+  // project could never bring the others back. Rows are also the only source of
+  // (id, name) pairs that exists in BOTH hosts - the detached pop-out never
+  // seeds the project store. Sorted by name to match groupRows' project order.
+  const projectOptions = useMemo(() => {
+    const namesById = new Map<string, string>();
+    for (const row of rows) {
+      if (!namesById.has(row.projectId)) namesById.set(row.projectId, row.projectName);
+    }
+    return [...namesById]
+      .map(([projectId, projectName]) => ({ value: projectId, label: projectName }))
+      .sort((left, right) => left.label.localeCompare(right.label));
+  }, [rows]);
 
+  const selectedProjects = useMemo(() => new Set(view.projectFilter), [view.projectFilter]);
+
+  // The trigger reads as live SCOPE STATE ("All projects", "2 of 5 projects"),
+  // not a static "Projects" label: sitting beside the Group control's own
+  // "Project" option, a bare noun read as more grouping and the affordance went
+  // unfound in dogfooding. State copy says "this narrows what you are seeing",
+  // the same vocabulary as the stats dashboard's scope picker.
+  //
+  // The numerator counts only filter ids the option list can represent, never
+  // the raw persisted filter: the two sets differ whenever a persisted filter
+  // arrives before the snapshot that reconciles it (boot, or a pop-out
+  // re-hydrate), and a raw count then reads "2 of 1 project" - or "1 of 0"
+  // against an empty morning. Intersecting keeps numerator and denominator on
+  // the same source of truth, this window's own rows.
+  const representableSelectionCount = projectOptions.reduce(
+    (count, option) => count + (selectedProjects.has(option.value) ? 1 : 0),
+    0,
+  );
+  const projectTriggerText = representableSelectionCount === 0
+    ? 'All projects'
+    : `${representableSelectionCount} of ${projectOptions.length} ${projectOptions.length === 1 ? 'project' : 'projects'}`;
+
+  const toggleProject = (projectId: string) => {
+    const next = selectedProjects.has(projectId)
+      ? view.projectFilter.filter((existingProjectId) => existingProjectId !== projectId)
+      : [...view.projectFilter, projectId];
+    setView({ projectFilter: next });
+  };
 
   return (
     <div className="flex-shrink-0" data-testid="monitor-toolbar">
@@ -63,10 +107,14 @@ export function MonitorToolbar({ view, rows, visibleCount, setView }: MonitorToo
           equally-weighted rows stacked 8px apart read as one dense block of pills
           with nothing telling the eye where to start. */}
       <div className="flex items-center gap-3 flex-wrap px-4 py-3">
-        {/* There is deliberately NO project scope picker. This view exists to show
-            every agent across every project; narrowing it to one project is what
-            the board already does, and each row names its owning project anyway.
-            Removing it leaves the layout selector room to be a chunkier control. */}
+        {/* Still NO single-project scope picker up here: narrowing to one project
+            is what the board already does, and each row names its owning project
+            anyway. The Projects control in the filter bar below is a different
+            affordance - a cross-project view over MANY projects needs SUBSETTING
+            (keep the two being worked in, drop the noisy ones), which is slicing,
+            so it lives with the other slicing controls rather than as a primary
+            scope. Its absence here leaves the layout selector room to be a
+            chunkier control. */}
         <div
           className="flex items-center gap-1 rounded-xl border border-edge bg-surface/60 p-1"
           role="group"
@@ -124,6 +172,31 @@ export function MonitorToolbar({ view, rows, visibleCount, setView }: MonitorToo
             label="Sort"
             ariaLabel="Sort sessions by"
           />
+        )}
+
+        {/* A SUBSET filter, not a scope switch: keep the projects being worked
+            in, hide the rest. Options come from the unfiltered rows (see
+            projectOptions above), and the menu portals to document.body, where
+            it sits outside the monitor's dismiss scope subtree and is marked
+            data-dismissable-layer by OverlayPopover, so clicking an option
+            never light-dismisses a monitor detail window. Hidden when there is
+            nothing to subset, but kept while a filter is active so Clear stays
+            reachable - only while at least one project is listed, though: with
+            zero rows (a session-less morning holding a persisted filter) the
+            control has no options to show and nothing it hides, and its trigger
+            would read "1 of 0 projects". */}
+        {(projectOptions.length >= 2 || (view.projectFilter.length > 0 && projectOptions.length > 0)) && (
+          <div data-testid="monitor-project-filter">
+            <MultiSelectDropdown
+              label="Projects"
+              triggerText={projectTriggerText}
+              align="left"
+              options={projectOptions}
+              selected={selectedProjects}
+              onToggle={toggleProject}
+              onClear={() => setView({ projectFilter: [] })}
+            />
+          </div>
         )}
 
         {/* "Live only", not "Hide inactive": this hides PAUSED and finished

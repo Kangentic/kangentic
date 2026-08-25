@@ -160,6 +160,22 @@ export function filterRows(rows: MonitorSessionRow[], view: MonitorView): Monito
 }
 
 /**
+ * The PROJECT-scope half of the view's filters on its own, for consumers that
+ * follow the scope but not the transient slicing (the summary tiles). Returns
+ * the input array untouched when the filter is empty, so memoized consumers
+ * keyed on row identity see no change on the common path. Not routed through
+ * `filterRows`, which stays a single pass over all four filters.
+ */
+export function applyProjectScope(
+  rows: MonitorSessionRow[],
+  projectFilter: string[],
+): MonitorSessionRow[] {
+  if (projectFilter.length === 0) return rows;
+  const projectSet = new Set(projectFilter);
+  return rows.filter((row) => projectSet.has(row.projectId));
+}
+
+/**
  * Sort a COPY of the rows per the view's sort mode. Never mutates the input.
  *
  * Ordering by attention is deliberately absent: rows are always grouped, and

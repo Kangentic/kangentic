@@ -11,12 +11,15 @@ import { BUCKET_LABELS, bucketOf, formatMonitorStatus, needsUser } from './monit
 /**
  * The dense layout: one line per session, sortable, in the shared DataTable.
  *
- * Columns deliberately declare NO width. Under DataTable's `w-full table-fixed`
- * that splits the container evenly at any width, which is the app's proven way to
- * fill a 2560px screen with a list (PerProjectTable does the same with 13
- * columns). The backlog's fixed-px convention is deliberately NOT copied: there
- * the surplus all pools into one title column and the rest of the screen sits
- * empty, which is the exact failure this view exists to avoid.
+ * LABELED columns deliberately declare NO width. Under DataTable's `w-full
+ * table-fixed` that splits the container evenly at any width, which is the app's
+ * proven way to fill a 2560px screen with a list (PerProjectTable does the same
+ * with 13 columns). The backlog's fixed-px convention is deliberately NOT copied:
+ * there the surplus all pools into one title column and the rest of the screen
+ * sits empty, which is the exact failure this view exists to avoid. The one
+ * exception is the unlabeled state-glyph column, pinned to the backlog's 40px
+ * icon-column width: an even share hands a 15px glyph a couple hundred pixels of
+ * dead air between it and the Task column.
  *
  * Sorting here is the table's own column sort, which intentionally overrides the
  * toolbar's sort while this layout is active - clicking a header should do what
@@ -68,6 +71,7 @@ export function MonitorTable({
     {
       key: 'state',
       label: '',
+      width: 'w-[40px]',
       sortValue: (row) => BUCKET_LABELS[bucketOf(row)],
       render: (row) => <StateCell row={row} />,
       headerTitle: 'Whether the agent is working, waiting on you, paused, or finished',

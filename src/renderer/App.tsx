@@ -890,6 +890,7 @@ if (import.meta.env.DEV) {
     project: useProjectStore,
     session: useSessionStore,
     window: useWindowStore,
+    monitor: useMonitorStore,
     commandWindow: commandWindowManager.store,
     usageDashboard: useUsageDashboardStore,
     popOut: usePopOutStore,

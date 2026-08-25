@@ -10,6 +10,10 @@
  *    of silently resetting a remembered preference on upgrade,
  *  - hydrateView discards values whose option was REMOVED ('flat' grouping,
  *    'attention' sort) rather than leaving a control with nothing selected,
+ *  - hydrateView KEEPS a persisted projectFilter (the toolbar's Projects
+ *    dropdown writes it) while still clearing stateFilter, and applySnapshot
+ *    reconciles the kept filter against the projects a non-empty snapshot
+ *    actually carries,
  *  - setView merges rather than replaces, and persists through the GLOBAL config
  *    merge (which is what makes the view survive a crash, not only a clean close),
  *  - applyActivity patches a known row in place and DROPS a push for a session
@@ -119,16 +123,29 @@ describe('monitor-store', () => {
       expect(useMonitorStore.getState().view.liveOnly).toBe(false);
     });
 
-    it('clears a filter no control can undo', () => {
-      // An older build shipped a project scope picker. Honouring what it wrote
-      // would hide rows on this build with nothing in the UI able to unhide them.
+    it('keeps a persisted projectFilter, sanitized to a deduped string array', () => {
+      // The toolbar's Projects dropdown writes this filter, so honouring it is
+      // what makes a chosen scope survive a restart - and, in the pop-out, its
+      // own persist round-trip, which re-enters hydrateView on every config
+      // change. Junk entries (a hand-edited blob) are dropped, not thrown on.
       useMonitorStore.getState().hydrateView(legacyView({
-        projectFilter: ['a-project-that-no-longer-exists'],
-        stateFilter: ['finished'],
+        projectFilter: ['project-a', 'project-a', 'project-b', 42],
       }));
-      const { view } = useMonitorStore.getState();
-      expect(view.projectFilter).toEqual([]);
-      expect(view.stateFilter).toEqual([]);
+      expect(useMonitorStore.getState().view.projectFilter).toEqual(['project-a', 'project-b']);
+    });
+
+    it('treats a non-array projectFilter as empty rather than throwing', () => {
+      useMonitorStore.getState().hydrateView(legacyView({ projectFilter: 'project-a' }));
+      expect(useMonitorStore.getState().view.projectFilter).toEqual([]);
+    });
+
+    it('still clears stateFilter, which no control writes', () => {
+      // A persisted stateFilter would hide rows with nothing in the UI able to
+      // bring them back. projectFilter no longer shares this treatment: ids
+      // naming a project with no current session are reconciled when a snapshot
+      // lands instead (see the projectFilter reconcile describe).
+      useMonitorStore.getState().hydrateView(legacyView({ stateFilter: ['finished'] }));
+      expect(useMonitorStore.getState().view.stateFilter).toEqual([]);
     });
 
     it('falls back to the default for an option that no longer exists', () => {
@@ -293,6 +310,70 @@ describe('monitor-store', () => {
         generatedAt: 'y',
       });
       expect(useMonitorStore.getState().rows.map((row) => row.sessionId)).toEqual(['a']);
+    });
+  });
+
+  describe('projectFilter reconcile on applySnapshot', () => {
+    // The modern form of the guarantee the old hydrate-time wipe provided:
+    // every persisted filter id is one the toolbar's Projects dropdown (whose
+    // options derive from the same rows) can still represent and undo.
+    it('drops ids absent from a non-empty snapshot and persists the trim', async () => {
+      vi.useFakeTimers();
+      useMonitorStore.setState({
+        view: {
+          ...DEFAULT_CONFIG.monitor,
+          projectFilter: ['project-1', 'a-project-that-no-longer-exists'],
+        },
+      });
+      useMonitorStore.getState().applySnapshot({ rows: [makeRow()], generatedAt: 'x' });
+      expect(useMonitorStore.getState().view.projectFilter).toEqual(['project-1']);
+
+      // Through setView, so the trim reaches the persisted blob like any other
+      // view change and every host converges on it.
+      await vi.advanceTimersByTimeAsync(500);
+      expect(configSetMock).toHaveBeenCalledTimes(1);
+      expect(configSetMock.mock.calls[0][0].monitor?.projectFilter).toEqual(['project-1']);
+    });
+
+    it('an EMPTY snapshot neither erases the filter nor schedules a write', async () => {
+      // A session-less morning must not erase the preference.
+      vi.useFakeTimers();
+      useMonitorStore.setState({
+        view: { ...DEFAULT_CONFIG.monitor, projectFilter: ['project-1'] },
+      });
+      useMonitorStore.getState().applySnapshot({ rows: [], generatedAt: 'x' });
+      expect(useMonitorStore.getState().view.projectFilter).toEqual(['project-1']);
+
+      await vi.advanceTimersByTimeAsync(500);
+      expect(configSetMock).not.toHaveBeenCalled();
+    });
+
+    it('a snapshot carrying every filtered project changes nothing and schedules no write', async () => {
+      vi.useFakeTimers();
+      useMonitorStore.setState({
+        view: { ...DEFAULT_CONFIG.monitor, projectFilter: ['project-1'] },
+      });
+      const viewBefore = useMonitorStore.getState().view;
+      useMonitorStore.getState().applySnapshot({ rows: [makeRow()], generatedAt: 'x' });
+
+      // Object identity: setView was never called, not merely called with the
+      // same value - a redundant call would schedule a pointless config write.
+      expect(useMonitorStore.getState().view).toBe(viewBefore);
+      await vi.advanceTimersByTimeAsync(500);
+      expect(configSetMock).not.toHaveBeenCalled();
+    });
+
+    it('reconciles a filter seeded by hydrateView on the attach path too', async () => {
+      // Boot order in the main window: hydrateView keeps the persisted ids with
+      // no rows to validate them against; the first snapshot (attach's
+      // subscribe handshake) is where the truth arrives.
+      vi.useFakeTimers();
+      subscribeMock.mockResolvedValue({ rows: [makeRow()], generatedAt: 'x' });
+      useMonitorStore.setState({
+        view: { ...DEFAULT_CONFIG.monitor, projectFilter: ['a-project-that-no-longer-exists'] },
+      });
+      await useMonitorStore.getState().attach();
+      expect(useMonitorStore.getState().view.projectFilter).toEqual([]);
     });
   });
 
