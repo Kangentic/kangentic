@@ -625,6 +625,32 @@ describe('task-archive handlers', () => {
       expect(spawnArg.tasks).toBe(taskRepo);
     });
 
+    it('threads onProgress + projectId into both git helpers', async () => {
+      // Mirrors task-create-handler.test.ts's "threads onProgress + projectId
+      // into both git helpers" test for the unarchive/restore entry point.
+      const task = createMockTask('task-progress');
+      taskRepo = createMockTaskRepo([task]);
+      mockGetProjectRepos.mockReturnValue({
+        tasks: taskRepo,
+        swimlanes: swimlaneRepo,
+        actions: { getTransitionsFor: vi.fn(() => []) },
+        attachments: { deleteByTaskId: vi.fn() },
+      });
+
+      await callHandler(IPC.TASK_UNARCHIVE, {
+        id: 'task-progress',
+        targetSwimlaneId: 'lane-doing',
+      });
+
+      const worktreeOptions = mockEnsureTaskWorktree.mock.calls[0][4] as { onProgress?: unknown; projectId?: unknown };
+      expect(typeof worktreeOptions.onProgress).toBe('function');
+      expect(worktreeOptions.projectId).toBe('proj-123');
+
+      const checkoutOptions = mockEnsureTaskBranchCheckout.mock.calls[0][3] as { onProgress?: unknown; projectId?: unknown };
+      expect(typeof checkoutOptions.onProgress).toBe('function');
+      expect(checkoutOptions.projectId).toBe('proj-123');
+    });
+
     it('still returns the unarchived task when spawnAgent rejects', async () => {
       const task = createMockTask('task-spawn-err');
       taskRepo = createMockTaskRepo([task]);
@@ -1069,6 +1095,41 @@ describe('task-archive handlers', () => {
         expect('settingsSourceLane' in spawnArg).toBe(false);
         expect(spawnArg.projectId).toBe('proj-123');
         expect(spawnArg.projectPath).toBe('/mock/project');
+      }
+    });
+
+    it('threads onProgress + projectId into both git helpers for every task in the batch', async () => {
+      // Mirrors the single-unarchive test above; bulk restore threads the same
+      // pair per task, not just for the first one processed.
+      const tasks = [
+        createMockTask('task-bulk-progress-a'),
+        createMockTask('task-bulk-progress-b'),
+      ];
+      taskRepo = createMockTaskRepo(tasks);
+      mockGetProjectRepos.mockReturnValue({
+        tasks: taskRepo,
+        swimlanes: swimlaneRepo,
+        actions: { getTransitionsFor: vi.fn(() => []) },
+        attachments: { deleteByTaskId: vi.fn() },
+      });
+
+      await callHandler(
+        IPC.TASK_BULK_UNARCHIVE,
+        ['task-bulk-progress-a', 'task-bulk-progress-b'],
+        'lane-doing',
+      );
+
+      expect(mockEnsureTaskWorktree).toHaveBeenCalledTimes(2);
+      expect(mockEnsureTaskBranchCheckout).toHaveBeenCalledTimes(2);
+      for (const call of mockEnsureTaskWorktree.mock.calls) {
+        const options = call[4] as { onProgress?: unknown; projectId?: unknown };
+        expect(typeof options.onProgress).toBe('function');
+        expect(options.projectId).toBe('proj-123');
+      }
+      for (const call of mockEnsureTaskBranchCheckout.mock.calls) {
+        const options = call[3] as { onProgress?: unknown; projectId?: unknown };
+        expect(typeof options.onProgress).toBe('function');
+        expect(options.projectId).toBe('proj-123');
       }
     });
 

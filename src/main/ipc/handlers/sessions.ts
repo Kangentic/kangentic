@@ -180,7 +180,10 @@ export function registerSessionHandlers(context: IpcContext): void {
         // WorktreeManager.projectQueues. AbortSignal cancels in-flight fetch
         // when SESSION_SUSPEND / a newer SESSION_RESUME / SESSION_RESET fires.
         try {
-          await ensureTaskWorktree(context, planTask, tasks, resolvedProjectPath, { signal });
+          // The explicit projectId: if the user switches projects during this
+          // slow git phase, a base-fetch failure's spawn warning must stamp
+          // the resumed task's project, not whatever became ambient.
+          await ensureTaskWorktree(context, planTask, tasks, resolvedProjectPath, { signal, projectId: resolvedProjectId });
         } catch (worktreeError) {
           if (isAbortError(worktreeError)) throw worktreeError;
           const message = worktreeError instanceof Error ? worktreeError.message : String(worktreeError);

@@ -84,6 +84,7 @@ vi.mock('../../src/main/diagnostics/project-log-context', () => ({
 }));
 
 import { autoSpawnForTask } from '../../src/main/ipc/helpers/agent-spawn';
+import { getInFlightSpawnProgress, __resetSpawnProgressForTest } from '../../src/main/transition-engine/spawn-progress';
 import type { BoardProfile, Swimlane } from '../../src/shared/types';
 
 const TASK_ID = 'task-1';
@@ -111,6 +112,9 @@ function makeContext(boardProfiles: BoardProfile[] = []) {
   return {
     projectRepo: { getById: vi.fn(() => ({ id: 'proj-1', name: 'Example', path: '/mock/project' })) },
     boardConfigManager: { getBoardProfiles: vi.fn(() => boardProfiles) },
+    // createProgressCallback / clearSpawnProgress (the real, unmocked
+    // spawn-progress module) both read context.mainWindow.
+    mainWindow: { isDestroyed: vi.fn(() => false), webContents: { send: vi.fn() } },
   } as never;
 }
 
@@ -278,5 +282,49 @@ describe('autoSpawnForTask: a failed branch checkout also tells the user', () =>
     expect(step).toBe('checkout');
     expect(error).toBe(checkoutError);
     expect(projectId).toBe('proj-1');
+  });
+});
+
+describe('autoSpawnForTask: threads onProgress + projectId, and clears the label on every exit', () => {
+  beforeEach(() => {
+    __resetSpawnProgressForTest();
+  });
+
+  it('threads onProgress + projectId into both git helpers, and clears the label in the finally', async () => {
+    mockSwimlaneGetById.mockReturnValue(makeLane({ auto_spawn: true }));
+    mockTaskGetById.mockReturnValue({
+      id: TASK_ID, title: 'Progress task', swimlane_id: LANE_ID, profile_id: null,
+    });
+    // The mocked worktree helper stands in for the real one emitting
+    // 'fetching'; the label demonstrably landing is what makes the
+    // "cleared in finally" assertion below non-vacuous (see task-create-
+    // handler.test.ts's identical pattern). Stop before spawnAgent runs (its
+    // real implementation pulls in SessionRepository et al, which this file
+    // does not mock) the same way the checkout-failure test above does.
+    mockEnsureTaskWorktree.mockImplementation(async (
+      _context: unknown, _task: unknown, _tasks: unknown, _path: unknown,
+      options?: { onProgress?: (phase: string) => void },
+    ) => {
+      options?.onProgress?.('fetching');
+      return null;
+    });
+    const checkoutError = new Error('fatal: another agent is running in that directory');
+    mockEnsureTaskBranchCheckout.mockRejectedValue(checkoutError);
+
+    await autoSpawnForTask(makeContext([]), 'proj-1', { id: TASK_ID, title: 'Progress task' }, LANE_ID);
+
+    expect(mockEnsureTaskWorktree).toHaveBeenCalledTimes(1);
+    const worktreeOptions = mockEnsureTaskWorktree.mock.calls[0][4] as { onProgress?: unknown; projectId?: unknown };
+    expect(typeof worktreeOptions.onProgress).toBe('function');
+    expect(worktreeOptions.projectId).toBe('proj-1');
+
+    expect(mockEnsureTaskBranchCheckout).toHaveBeenCalledTimes(1);
+    const checkoutOptions = mockEnsureTaskBranchCheckout.mock.calls[0][3] as { onProgress?: unknown; projectId?: unknown };
+    expect(typeof checkoutOptions.onProgress).toBe('function');
+    expect(checkoutOptions.projectId).toBe('proj-1');
+
+    // The finally cleared the label the 'fetching' push landed, so an HMR
+    // reconcile after this blocked auto-spawn cannot strand the card.
+    expect(getInFlightSpawnProgress()).toEqual({});
   });
 });

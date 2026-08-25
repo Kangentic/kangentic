@@ -119,6 +119,16 @@ export function spawnWithAbort(
 
     child.on('close', (code, signalName) => {
       if (signalName) {
+        // `error` and `close` race on an aborted child (first settle wins).
+        // When `close` wins for an EXTERNAL abort, use the same wording the
+        // `error` path produces: asserting the timeout here would classify a
+        // deliberate cancellation (a superseding move's AbortController) as a
+        // 'timeout' failure downstream (classifyFetchFailure), turning a
+        // clean cancel into a spurious staleness toast.
+        if (externalSignal?.aborted) {
+          settleReject(new Error(`${label} aborted (external abort) (child process killed)`));
+          return;
+        }
         const timeoutSuffix = signalKillAssertsTimeout ? ` after ${timeoutMs}ms timeout` : '';
         settleReject(new Error(`${label} killed by signal ${signalName}${timeoutSuffix}`));
         return;

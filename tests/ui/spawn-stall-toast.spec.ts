@@ -292,4 +292,33 @@ test.describe('spawn stall: waiting label + notification', () => {
       await browser.close();
     }
   });
+
+  // -------------------------------------------------------------------------
+  // Gap 6: the isGitQueueWait regex is deliberately NOT $-anchored, so a
+  // staleness note trailing the "(waiting Ns)" qualifier (e.g.
+  // "Removing worktree (waiting 45s) (base fetch failed)", from
+  // setSpawnStaleNote decorating a queue-wait label) must still classify as a
+  // git-queue wait. An accidental re-anchor to `/\(waiting \d+s\)$/` would
+  // make the decorated label fall through to the non-queue branch instead,
+  // which lowercases and lightly formats the RAW label - so the assertion
+  // that the toast never leaks the raw "(base fetch failed)" suffix is what
+  // makes a regression here legible.
+  // -------------------------------------------------------------------------
+  test('a staleness-decorated queue-wait label still classifies as a git-queue wait', async () => {
+    const { browser, page } = await launchWithState(true);
+    try {
+      await page.locator('[data-swimlane-name="Planning"]').waitFor({ state: 'visible', timeout: 15000 });
+
+      await seedSpawnProgress(page, TASK_ID, 'Removing worktree (waiting 45s) (base fetch failed)');
+
+      await page.clock.fastForward(STALL_THRESHOLD_MS + 500);
+
+      const toast = page.getByTestId('toast');
+      await expect(toast).toBeVisible({ timeout: 5000 });
+      await expect(toast).toContainText('waiting on the git queue');
+      await expect(toast).not.toContainText('base fetch failed');
+    } finally {
+      await browser.close();
+    }
+  });
 });

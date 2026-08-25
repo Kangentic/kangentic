@@ -192,6 +192,14 @@ function createMockContext() {
   return {
     currentProjectId: 'proj-1',
     currentProjectPath: '/mock/project',
+    // Phase 2's finally always calls clearSpawnProgress(context.mainWindow, ...)
+    // (the real, unmocked spawn-progress module), which reads mainWindow -
+    // without this it throws inside the fire-and-forget IIFE's own catch,
+    // which is silently swallowed but noisy on stderr.
+    mainWindow: {
+      isDestroyed: vi.fn(() => false),
+      webContents: { send: vi.fn() },
+    },
     sessionManager: {
       listSessions: vi.fn(() => []),
       removeByTaskId: vi.fn(),
@@ -395,6 +403,33 @@ describe('BACKLOG_PROMOTE AbortError cleanup', () => {
     expect(spawnAgentArgs.projectPath).toBe(context.currentProjectPath);
     expect(spawnAgentArgs.fromSwimlaneId).toBe('*');
     expect(spawnAgentArgs.toLane).toEqual(expect.objectContaining({ id: 'lane-doing' }));
+  });
+
+  it('threads onProgress + projectId into both git helpers during Phase 2', async () => {
+    // The promotion spawn used to be progress-silent; the card now shows the
+    // same fetch/branch/worktree phases the drag path does. Mirrors the
+    // "threads onProgress + projectId" test in task-create-handler.test.ts.
+    const handler = capturedHandlers.get(IPC.BACKLOG_PROMOTE);
+    if (!handler) throw new Error('BACKLOG_PROMOTE handler not registered');
+
+    await handler(null, {
+      backlogTaskIds: ['backlog-1'],
+      targetSwimlaneId: 'lane-doing',
+    });
+
+    // Phase 2 is a fire-and-forget IIFE; wait for both git helper calls to land.
+    await vi.waitFor(() => {
+      expect(mockEnsureTaskWorktree).toHaveBeenCalledTimes(1);
+      expect(mockEnsureTaskBranchCheckout).toHaveBeenCalledTimes(1);
+    });
+
+    const worktreeOptions = mockEnsureTaskWorktree.mock.calls[0][4] as { onProgress?: unknown; projectId?: unknown };
+    expect(typeof worktreeOptions.onProgress).toBe('function');
+    expect(worktreeOptions.projectId).toBe(context.currentProjectId);
+
+    const checkoutOptions = mockEnsureTaskBranchCheckout.mock.calls[0][3] as { onProgress?: unknown; projectId?: unknown };
+    expect(typeof checkoutOptions.onProgress).toBe('function');
+    expect(checkoutOptions.projectId).toBe(context.currentProjectId);
   });
 });
 

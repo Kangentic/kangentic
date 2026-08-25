@@ -423,3 +423,57 @@ describe('handleTaskMove git-churn capture wiring', () => {
     expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('handleTaskMove projectId threading into ensureTaskWorktree / ensureTaskBranchCheckout', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    hoisted.activeRecord = null;
+    hoisted.resolveDefaultBaseBranch.mockReturnValue(RESOLVED_BRANCH);
+    mockResolveTargetAgent.mockReturnValue({ agent: 'claude', isHandoff: false });
+    mockPrepareInjectionPlan.mockReturnValue(null);
+    mockEnsureTaskWorktree.mockResolvedValue(null);
+    mockEnsureTaskBranchCheckout.mockResolvedValue(undefined);
+    mockSpawnAgent.mockResolvedValue(undefined);
+  });
+
+  it('Priority 4 (no active session): threads the explicit projectId into both git helpers\' options, not the ambient one', async () => {
+    // An explicit projectId that DIFFERS from context.currentProjectId is the
+    // discriminating case: against the ambient default the two values are
+    // identical and this test could not tell threading from fallback (see
+    // project-scoped-ipc.md).
+    const EXPLICIT_PROJECT_ID = 'proj-explicit';
+    const todoLane = makeSwimlane(EXEC_LANE_ID, { role: 'todo' });
+    const targetLane = makeSwimlane('lane-target', { role: null, auto_spawn: true });
+    const swimlaneRepo = {
+      getById: vi.fn((id: string) => (id === EXEC_LANE_ID ? todoLane : id === 'lane-target' ? targetLane : null)),
+      list: vi.fn(() => [todoLane, targetLane]),
+    };
+
+    const taskRepo = {
+      getById: vi.fn(() => makeTask({ swimlane_id: EXEC_LANE_ID, session_id: null })),
+      move: vi.fn(),
+      update: vi.fn(),
+      archive: vi.fn(),
+      list: vi.fn(() => [makeTask()]),
+    };
+    const context = makeContext(taskRepo, swimlaneRepo);
+
+    await handleTaskMove(
+      context as never,
+      { taskId: TASK_ID, targetSwimlaneId: 'lane-target', targetPosition: 0 },
+      'renderer',
+      EXPLICIT_PROJECT_ID,
+      PROJECT_PATH,
+    );
+
+    expect(mockEnsureTaskWorktree).toHaveBeenCalledTimes(1);
+    const worktreeOptions = mockEnsureTaskWorktree.mock.calls[0][4] as { projectId?: unknown };
+    expect(worktreeOptions.projectId).toBe(EXPLICIT_PROJECT_ID);
+    expect(worktreeOptions.projectId).not.toBe(context.currentProjectId);
+
+    expect(mockEnsureTaskBranchCheckout).toHaveBeenCalledTimes(1);
+    const checkoutOptions = mockEnsureTaskBranchCheckout.mock.calls[0][3] as { projectId?: unknown };
+    expect(checkoutOptions.projectId).toBe(EXPLICIT_PROJECT_ID);
+    expect(checkoutOptions.projectId).not.toBe(context.currentProjectId);
+  });
+});
