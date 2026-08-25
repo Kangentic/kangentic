@@ -553,7 +553,11 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   holed frame. `PtyBufferManager.getReplaySnapshot` therefore serves the headless PARSED grid
   (the same serialized frame `getSerializedFrame` gives the mobile seed) when the session is in
   the alt screen, and the raw byte replay otherwise - a plain shell's scrollback IS the bytes,
-  and truncation there only loses old history.
+  and truncation there only loses old history. Every parser on this path - the headless grid,
+  the renderer xterm that replays it, and the hand-rolled `VirtualScreen` probes - runs the
+  Unicode 11 width table via `src/shared/xterm-unicode11.ts`, because xterm's default V6 table
+  scores emoji single-width and drifts every autowrapped row of an agent TUI frame one column
+  per emoji (see `.claude/rules/xterm-unicode11-parity.md`).
 - **Do not trim the byte replay to the last full-screen clear.** Tried and reverted: it cut a
   512KB ring to ~1.5KB but produced a permanently black terminal on a fast open/close/reopen.
   Slicing at the last clear discards write-once cells, and a sample landing at or just after a

@@ -9,6 +9,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { extractNumberedOptions, extractPromptOptions } from '../../../src/main/mobile-bridge/prompt-options-probe';
+import { wcwidthV11 } from '../../../src/shared/xterm-unicode11';
 
 /** Wrap a plain-text dialog body in serialized-frame dressing (colors, title, prior output). */
 function frameWith(dialogLines: string[]): string {
@@ -92,6 +93,27 @@ describe('extractPromptOptions', () => {
       "Yes, and don't ask again for this command",
       'No, and tell Claude what to do differently',
     ]);
+  });
+
+  it('parses a dialog whose emoji row is padded to the full width and reaches the next row by autowrap', () => {
+    // Claude Code pads each row with spaces to the FULL terminal width,
+    // counting emoji as double width, and relies on autowrap rather than
+    // CR/LF to reach the next row. A parser scoring the check marks one
+    // column narrow wraps three characters late here, shearing the '1.' and
+    // '2.' anchors off the option rows (task #557).
+    const cols = 40;
+    // Widths come from wcwidthV11, not a hand-rolled table, so this fixture
+    // builder models the producing TUI's padding with the exact table the
+    // parser runs and can never drift from it.
+    const columnsOf = (line: string): number =>
+      Array.from(line).reduce((width, glyph) => width + wcwidthV11(glyph.codePointAt(0) ?? 0), 0);
+    const padToFullWidth = (line: string): string => line + ' '.repeat(cols - columnsOf(line));
+    const frame = [
+      'All checks ✅ ✅ ✅ ready to proceed?',
+      '❯ 1. Yes',
+      '  2. No',
+    ].map(padToFullWidth).join('');
+    expect(extractPromptOptions(frame, { cols, rows: 10 })).toEqual(['Yes', 'No']);
   });
 });
 

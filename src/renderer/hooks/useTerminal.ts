@@ -21,6 +21,7 @@ import { createRepaintNudge, isUserInputData, isMouseReport, type RepaintNudgeCo
 import { registerMountedTerminal } from '../utils/terminal-mount-registry';
 import { registerTerminalAnchor } from '../utils/terminal-anchor-registry';
 import type { PtyResizeOrigin, TerminalColorOverrides } from '../../shared/types';
+import { activateUnicode11 } from '../../shared/xterm-unicode11';
 import '@xterm/xterm/css/xterm.css';
 
 /**
@@ -836,6 +837,11 @@ export function useTerminal(options: UseTerminalOptions) {
       allowProposedApi: true,
       linkHandler: createTerminalLinkHandler((url) => window.electronAPI.shell.openExternal(url)),
     });
+
+    // Unicode 11 widths, in lockstep with main's headless parser: the mount
+    // replay writes a frame main serialized under its width table, so a
+    // mismatch here would drift the replay against the live view.
+    activateUnicode11(terminal);
 
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);

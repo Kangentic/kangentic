@@ -1,5 +1,6 @@
 import { Terminal, type ITerminalAddon } from '@xterm/headless';
 import { SerializeAddon } from '@xterm/addon-serialize';
+import { activateUnicode11 } from '../../../shared/xterm-unicode11';
 
 /**
  * Scrollback rows retained by the headless parser and included in a serialized
@@ -64,6 +65,11 @@ export class HeadlessFrameBuffer {
     });
     this.serializer = new SerializeAddon();
     this.terminal.loadAddon(this.serializer as unknown as HeadlessTerminalAddon);
+    // Unicode 11 widths, in lockstep with the renderer terminals that replay
+    // this parser's serialized frames. Needs none of the HeadlessTerminalAddon
+    // cast machinery above: the helper's structural parameter type bridges
+    // both packages.
+    activateUnicode11(this.terminal);
   }
 
   /** Feed a raw PTY chunk into the parser (the same bytes the scrollback ring receives). */

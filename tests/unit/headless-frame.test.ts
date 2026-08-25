@@ -1,14 +1,18 @@
 import { describe, it, expect } from 'vitest';
 import { Terminal } from '@xterm/headless';
 import { HeadlessFrameBuffer } from '../../src/main/pty/buffer/headless-frame';
+import { activateUnicode11 } from '../../src/shared/xterm-unicode11';
 
 /**
  * Cold-replay a serialized frame into a fresh parser, exactly as the renderer
- * does (xterm.reset() then write). Awaits xterm's own write callback so the
- * parse has actually landed before the assertions read the buffer.
+ * does (xterm.reset() then write) - including the renderer's Unicode 11 width
+ * table, so round-trip assertions exercise the real serialize/replay pair.
+ * Awaits xterm's own write callback so the parse has actually landed before
+ * the assertions read the buffer.
  */
 async function replayIntoFreshTerminal(payload: string, cols = 80, rows = 24): Promise<Terminal> {
   const terminal = new Terminal({ cols, rows, allowProposedApi: true });
+  activateUnicode11(terminal);
   await new Promise<void>((resolve) => {
     terminal.write(payload, () => resolve());
   });
@@ -35,11 +39,13 @@ function readScrollRegion(terminal: Terminal): { top: number; bottom: number } {
  * flush-barrier boundary that makes serialize()'s content cutoff exact, are
  * already exercised through PtyBufferManager in pty-buffer-manager.test.ts.
  *
- * This file targets the one behavior that lives entirely inside
- * HeadlessFrameBuffer and is not observable through those higher-level
- * callers: serialize() REJECTS (rather than throwing into xterm's own
- * write/parse loop as an uncaught main-process exception) when the
- * serializer itself throws mid-callback.
+ * This file targets behavior that lives entirely inside HeadlessFrameBuffer
+ * and is not observable through those higher-level callers: serialize()
+ * REJECTS (rather than throwing into xterm's own write/parse loop as an
+ * uncaught main-process exception) when the serializer itself throws
+ * mid-callback; the DECSTBM/origin-mode suffix round trip; and the Unicode 11
+ * width table that keeps the parsed grid aligned with what the producing TUI
+ * drew (see the 'Unicode 11 width parity' block).
  *
  * Real timers throughout: serialize() awaits xterm's own macrotask flush
  * barrier (a zero-length terminal.write callback), matching the real-timer
@@ -204,6 +210,68 @@ describe('HeadlessFrameBuffer', () => {
       const replayed = await replayIntoFreshTerminal(frame);
 
       expect(readScrollRegion(replayed)).toEqual({ top: 4, bottom: 23 });
+
+      buffer.dispose();
+      replayed.dispose();
+    });
+  });
+
+  /**
+   * Agent TUIs (Claude Code) pad each row with spaces to the FULL terminal
+   * width, counting modern emoji as double width, and rely on autowrap - not
+   * CR/LF - to reach the next row. xterm's default Unicode V6 table scores
+   * those emoji single width, so every emoji left the row one column short,
+   * the wrap fired one character late, and each following row drifted one
+   * column further left (task #557). The parser must run the Unicode 11
+   * table (activateUnicode11) to wrap where the producer expected.
+   */
+  describe('Unicode 11 width parity', () => {
+    // The task's live repro shape at 40 columns: row 0 is exactly full when
+    // the check mark counts as TWO columns (1 + 2 + 37), so 'B' and 'C' reach
+    // their rows purely by autowrap.
+    const EMOJI_AUTOWRAP_FRAME =
+      'A✅' + ' '.repeat(37) + 'B' + ' '.repeat(39) + 'C';
+
+    // The frame's padding is WRITTEN spaces, which translateToString(true)
+    // keeps (it trims only never-written null cells), so the row readers trim
+    // trailing whitespace themselves - same as the devtools forensics dump.
+    // What the assertions pin is where the wrap fired: under V6 the 'B'
+    // survives any trim because it sits at the END of row 0.
+    it('scores emoji double width, so autowrapped rows land where the TUI drew them', async () => {
+      const buffer = new HeadlessFrameBuffer(40, 24);
+      buffer.write(EMOJI_AUTOWRAP_FRAME);
+
+      // serialize() carries the flush barrier; lineAt() deliberately does not,
+      // so the grid is only readable after the await.
+      await buffer.serialize();
+      const sourceRow = (row: number): string => buffer.lineAt(row).replace(/\s+$/u, '');
+
+      expect(sourceRow(0)).toBe('A✅');
+      expect(sourceRow(1)).toBe('B');
+      expect(sourceRow(2)).toBe('C');
+
+      buffer.dispose();
+    });
+
+    it('round-trips an emoji frame through serialize into a fresh terminal without drift', async () => {
+      const buffer = new HeadlessFrameBuffer(40, 24);
+      buffer.write(EMOJI_AUTOWRAP_FRAME);
+
+      const replayed = await replayIntoFreshTerminal(await buffer.serialize(), 40, 24);
+      const replayedRow = (row: number): string =>
+        (replayed.buffer.active.getLine(row)?.translateToString(true) ?? '').replace(/\s+$/u, '');
+      const sourceRow = (row: number): string => buffer.lineAt(row).replace(/\s+$/u, '');
+
+      // The ABSOLUTE expectations are load-bearing: a rows-match-the-source
+      // assertion alone would pass with BOTH parsers on V6 (drifting in
+      // lockstep), and if either side alone ever lost the addon would fail
+      // only via the mismatch. Pinning 'B' to row 1 keeps this red in both
+      // failure shapes.
+      expect(replayedRow(0)).toBe('A✅');
+      expect(replayedRow(1)).toBe('B');
+      expect(replayedRow(2)).toBe('C');
+      expect([replayedRow(0), replayedRow(1), replayedRow(2)])
+        .toEqual([sourceRow(0), sourceRow(1), sourceRow(2)]);
 
       buffer.dispose();
       replayed.dispose();

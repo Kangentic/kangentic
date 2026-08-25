@@ -138,6 +138,68 @@ describe('VirtualScreen', () => {
     screen.write('\x1b[38;2;177;185;249m\x1b]0;window title\x07X\x1b[m');
     expect(screen.text()).toBe('X\n');
   });
+
+  // Widths come from wcwidthV11 - the same Unicode 11 table every xterm in
+  // the app runs - so this grid wraps where an agent TUI that pads rows to
+  // the full width (counting emoji as double) expects it to (task #557).
+  it('a wide emoji occupies two columns, so an absolute reposition lands after it', () => {
+    const screen = new VirtualScreen(20, 2);
+    screen.write('A✅');
+    screen.write('\x1b[1;4HB');
+    expect(screen.text()).toBe('A✅B\n');
+  });
+
+  it('a wide char that does not fit wraps whole instead of straddling the row edge', () => {
+    // Exactly ONE column remains when the emoji arrives, so only the
+    // width-aware `cursorColumn + width > cols` guard wraps it; the old
+    // single-width `cursorColumn >= cols` check would straddle it across the
+    // row edge.
+    const screen = new VirtualScreen(3, 2);
+    screen.write('ab✅C');
+    expect(screen.text()).toBe('ab\n✅C');
+  });
+
+  it('an astral emoji never splits its surrogate pair across cells or rows', () => {
+    const screen = new VirtualScreen(3, 2);
+    screen.write('ab😀c');
+    expect(screen.text()).toBe('ab\n😀c');
+  });
+
+  it('a combining mark joins the previous cell instead of occupying its own', () => {
+    const screen = new VirtualScreen(20, 2);
+    screen.write('e\u0301');
+    screen.write('\x1b[1;2Hz');
+    expect(screen.text()).toBe('e\u0301z\n');
+  });
+
+  it('a combining mark with nothing before it drops instead of taking a cell', () => {
+    const screen = new VirtualScreen(20, 2);
+    screen.write('\u0301x');
+    expect(screen.text()).toBe('x\n');
+  });
+
+  it('a combining mark after a wide glyph attaches to the glyph, not its spacer cell', () => {
+    const screen = new VirtualScreen(20, 2);
+    screen.write('\u2705\u0301');
+    // text()'s join('') cannot show WHICH cell holds the mark: a correct
+    // attach (glyph's cell) and a wrong one (the spacer cell beside it)
+    // render identically until something overwrites the spacer. Positioning
+    // onto the spacer and overwriting it is the only way to observe that the
+    // mark survived in the glyph's cell instead of being destroyed here.
+    screen.write('\x1b[1;2HX');
+    expect(screen.text()).toBe('\u2705\u0301X\n');
+  });
+
+  it('drops width-0 DEL/C1 controls instead of gluing them onto the previous cell', () => {
+    // wcwidthV11 scores DEL (0x7f) and the C1 range (0x80-0x9f, e.g. 0x85)
+    // as width 0, same as a genuine combining mark - but putChar's
+    // `codepoint >= 0xa0` guard keeps them from reaching appendCombining, so
+    // a stray control byte in a parsed label is dropped instead of
+    // corrupting the preceding cell.
+    const screen = new VirtualScreen(20, 2);
+    screen.write('A\x7f\x85B');
+    expect(screen.text()).toBe('AB\n');
+  });
 });
 
 describe('parseModelPickerScreen', () => {

@@ -3,6 +3,7 @@ import * as http from 'node:http';
 import * as path from 'node:path';
 import { app, type BrowserWindow } from 'electron';
 import { Terminal } from '@xterm/headless';
+import { activateUnicode11 } from '../../shared/xterm-unicode11';
 import {
   clickAtCenterOfSelector,
   dispatchKeyEvent,
@@ -814,6 +815,9 @@ async function renderFrameToRows(frame: string, cols: number, rows: number): Pro
     rows: Math.max(1, rows),
     allowProposedApi: true,
   });
+  // Unicode 11 widths, matching the parsers this dump is used to diagnose; a
+  // V6 re-parse here would manufacture phantom row mismatches on emoji frames.
+  activateUnicode11(terminal);
   try {
     await new Promise<void>((resolve) => {
       terminal.write(frame, () => resolve());
