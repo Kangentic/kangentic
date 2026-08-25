@@ -2830,7 +2830,22 @@
         }
         return { hasPendingChanges: false, uncommittedFileCount: 0, unpushedCommitCount: 0, currentBranch: null };
       },
-      branchSummary: async function () {
+      branchSummary: async function (request) {
+        // Test hook: record every branchSummary call (worktreePath, projectPath,
+        // baseBranch, refreshRemote) so a test can assert how the mount-only
+        // remote-refresh opt-in (ChangesPanel's refreshBranchSummaryFromRemote)
+        // differs from the flagless fs.watch refetch (fetchBranchSummary) -
+        // used by changes-panel-remote-refresh.spec.ts. Mirrors the diffFiles
+        // call log above.
+        if (typeof window !== 'undefined') {
+          window.__mockBranchSummaryCalls = window.__mockBranchSummaryCalls || [];
+          window.__mockBranchSummaryCalls.push({
+            worktreePath: (request && request.worktreePath) || null,
+            projectPath: (request && request.projectPath) || null,
+            baseBranch: (request && request.baseBranch) || null,
+            refreshRemote: Boolean(request && request.refreshRemote),
+          });
+        }
         // Test hook: override the header context (branch name, ahead/behind, last commit).
         if (typeof window !== 'undefined' && window.__mockBranchSummary) {
           return window.__mockBranchSummary;
