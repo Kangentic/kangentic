@@ -25,10 +25,17 @@
  *   `colsChanged: false` proves the PTY is at the owner's grid. Never used as
  *   a poll - each probe call would itself heal the PTY and mask a broken fix.
  * - Linux only: the TUI fixture embeds the width it drew at into its ruler
- *   line (`RULER-<cols>-`), so scrollback shows the rogue-width frame appear
- *   and the owner-width frame return. Gated off win32: ConPTY delivers no
- *   SIGWINCH to the grandchild fixture, so it never redraws at new dims there
- *   (measured; see mock-claude.js). CI's gate is Linux, where the full set runs.
+ *   line (`RULER-<cols>-`). This oracle is DIAGNOSTIC ONLY, not load-bearing
+ *   in either direction: the fixture cancels and re-arms its repaint timer on
+ *   every observed resize (see mock-claude.js onResizeObserved), so whether a
+ *   given resize (rogue or corrective) ever produces a drawn ruler is itself
+ *   a race against whichever resize arrives next. Requiring the rogue-width
+ *   frame to manifest would flake in exact proportion to how well the heal -
+ *   the feature under test - is working, since the heal is allowed and
+ *   encouraged to win that race and supersede the draw before it happens.
+ *   Gated off win32: ConPTY delivers no SIGWINCH to the grandchild fixture,
+ *   so it never redraws at new dims there (measured; see mock-claude.js).
+ *   CI's gate is Linux, where the full set runs.
  * - A grid-width recorder on `.xterm-screen`: the heal must re-assert the
  *   OWNER's grid, never refit the visible xterm to the rogue dims - exactly
  *   one distinct detail-window width across injection + heal.
@@ -137,9 +144,11 @@ test.beforeAll(async () => {
       // draws at the CURRENT grid when the timer fires (see mock-claude.js
       // onResizeObserved), so if the heal's corrective SIGWINCH arrives before
       // the rogue-width draw timer has fired, the rogue frame is silently
-      // superseded and positive control 3 below can never see it. The margin
-      // must absorb CI scheduling drift on the fixture process, not just the
-      // nominal delay.
+      // superseded and the diagnostic ruler read at the end of this test can
+      // never see it - the heal legitimately wins that race. The margin here
+      // narrows how OFTEN that happens; it cannot eliminate the race, so
+      // nothing in this test blocks on the rogue frame actually manifesting
+      // (see THE ORACLES at the top of this file).
       MOCK_CLAUDE_TUI_REPAINT_DELAY_MS: '20',
       // Diagnostic output only, never an oracle (empty by construction on
       // Windows - see mock-claude.js). The `start:` line is the liveness signal.
@@ -272,18 +281,21 @@ test.describe('terminal width-drift self-heal', () => {
       }, { timeout: 10000, intervals: [100] })
       .toBe(true);
 
-    if (process.platform !== 'win32') {
-      // Positive control 3: the user-visible incident occurred - the TUI drew
-      // a full frame at the rogue width while the window xterm sat at the
-      // owner grid. The fixture's 20ms repaint delay sits far under the 150ms
-      // heal debounce so the rogue frame lands before the corrective SIGWINCH
-      // even under CI scheduling drift - see the extraEnv comment for why the
-      // margin matters (a late corrective resize CANCELS a still-pending
-      // rogue draw).
-      await expect
-        .poll(async () => rulerWidths(await scrollbackForSession(page, sessionId)), { timeout: 15000, intervals: [250] })
-        .toContain(rogueCols);
-    }
+    // NOTE: there is deliberately no assertion here that the rogue-width
+    // frame appears in scrollback before the heal. Positive controls 1 and 2
+    // above already prove - deterministically - that the rogue resize reached
+    // the PTY: injectionResult.colsChanged and the append-only echo log both
+    // resolve from main's own synchronous resize handling, not from the
+    // fixture's repaint. Whether the fixture ALSO manages to draw a full
+    // frame at the rogue width before the heal's corrective SIGWINCH arrives
+    // is a separate race the heal is allowed - encouraged - to win (see THE
+    // ORACLES at the top of this file for why that oracle is diagnostic
+    // only). A prior version of this test polled scrollback for the
+    // rogue-width ruler here and blocked on it; on a fast or loaded CI worker
+    // the heal legitimately won that race before the ruler ever landed,
+    // timing out a precondition that had nothing to do with whether the heal
+    // itself worked. See the diagnostic ruler read at the end of this test
+    // for what actually happened on a given run.
 
     // THE HEAL: the mounted owner re-asserts its grid; main applies it and
     // echoes the owner dims back as the final word.
@@ -305,8 +317,15 @@ test.describe('terminal width-drift self-heal', () => {
     ]);
 
     if (process.platform !== 'win32') {
-      // The fixture repainted at the healed width: the last frame in the ring
-      // (and therefore what the repair replay painted) is owner-width.
+      // Diagnostic only, not load-bearing (see THE ORACLES at the top of this
+      // file): IF the fixture drew a fresh frame anywhere in this window, the
+      // last one is at the owner's healed width. This can also be satisfied
+      // vacuously by the pre-injection baseline ruler alone, on a run where
+      // the fixture's repaint timer never got a clean shot to fire again
+      // post-heal - a real, observed outcome (see the end-of-test ruler log
+      // for what actually happened). The deterministic proof that the heal
+      // occurred is the echo-log assertion above (`finalEchoes` /
+      // `lastRogueIndex`), which does not depend on the fixture repainting.
       await expect
         .poll(async () => {
           const widths = rulerWidths(await scrollbackForSession(page, sessionId));
@@ -339,8 +358,20 @@ test.describe('terminal width-drift self-heal', () => {
     );
     expect(probeResult.colsChanged).toBe(false);
 
+    // Diagnostic-only ruler read (see THE ORACLES at the top of this file):
+    // rulers accumulate in scrollback rather than being erased by the heal,
+    // so one unpolled read here - after every assertion above has already
+    // run its course - sees every frame the fixture managed to draw across
+    // the whole injection+heal window, whichever of the rogue and owner
+    // widths (if any) it won the race to draw. Not asserted on: on win32 this
+    // is always [] (no SIGWINCH reaches the fixture there), and on Linux it
+    // can legitimately show just the pre-injection baseline if the heal's
+    // corrective resize beat the fixture's repaint timer on every attempt.
+    const observedRulerWidths = rulerWidths(await scrollbackForSession(page, sessionId));
+
     console.log('[width-drift-selfheal] echoes: ' + JSON.stringify(finalEchoes));
     console.log('[width-drift-selfheal] detail widths: ' + JSON.stringify(detailWidths));
+    console.log('[width-drift-selfheal] ruler widths (diagnostic): ' + JSON.stringify(observedRulerWidths));
 
     await page.evaluate(() => {
       const globalScope = window as unknown as {
