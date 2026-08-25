@@ -59,10 +59,13 @@ describe('checkout-occupancy guard lives in exactly one place', () => {
     const source = fs.readFileSync(path.join(MAIN_ROOT, CANONICAL_SITE), 'utf8');
     expect(source).toContain('assertNoOtherAgentInDirectory');
     expect(source).toContain('BranchCheckoutBlockedError');
-    // Both checkout arms must be covered: the custom-branch arm is the one the
-    // old guard missed entirely.
+    // Both checkout arms must be covered, and each arm asserts TWICE: at entry,
+    // and again after its fetch await (the entry assert is point-in-time, and a
+    // session that never enters the git queue can start during the fetch's
+    // timeout budget - re-running the synchronous in-memory scan right before
+    // the mutation closes that window for free).
     const guardCallCount = (source.match(/assertNoOtherAgentInDirectory\(context,/g) ?? []).length;
-    expect(guardCallCount).toBe(2);
+    expect(guardCallCount).toBe(4);
   });
 
   it('no longer exports the removed handler-side guard', () => {
