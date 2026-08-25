@@ -159,6 +159,19 @@ describe('VirtualScreen', () => {
     expect(screen.text()).toBe('ab\n✅C');
   });
 
+  it('a wide char that fits exactly at the row edge does not wrap', () => {
+    // Exactly TWO columns remain when the emoji arrives, so it fits flush
+    // against the edge (`cursorColumn + width === cols`). The neighbor test
+    // above only pins the strict `>` side of the guard - reverting to the
+    // old `cursorColumn >= cols` check would already fail there. A weakened
+    // `cursorColumn + width >= cols` would NOT fail there (4 >= 3 is still
+    // true, still wraps) but would wrongly wrap this exact-fit case one
+    // glyph early.
+    const screen = new VirtualScreen(4, 2);
+    screen.write('ab✅');
+    expect(screen.text()).toBe('ab✅\n');
+  });
+
   it('an astral emoji never splits its surrogate pair across cells or rows', () => {
     const screen = new VirtualScreen(3, 2);
     screen.write('ab😀c');
