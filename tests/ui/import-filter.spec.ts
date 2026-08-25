@@ -416,6 +416,49 @@ test.describe('ImportDialog - filter and streaming behaviour', () => {
     await browser.close();
   });
 
+  test('the Status filter menu stays right-anchored to its trigger (MultiSelectDropdown\'s default align)', async () => {
+    // MultiSelectDropdown defaults `align` to 'right': the Import dialog's
+    // filter cluster sits at the dialog's right edge, so its menus hang left
+    // of the trigger with their RIGHT edges glued together - the mirror image
+    // of the agent monitor toolbar's align="left" assertion (its LEFT edges
+    // glued together instead), which is the only other geometry check on this
+    // component. Nothing in this file asserted alignment before this, so
+    // flipping the default (or inverting the `align !== 'left'` ternary that
+    // derives `preferRight`) passed every existing test here.
+    const { browser, page } = await launchPage();
+
+    await seedGitHubSource(page);
+
+    await page.evaluate(
+      ([page1Issue, page2Issue]) => {
+        (window as unknown as { __mockImportFetchPages?: unknown }).__mockImportFetchPages = [
+          { issues: [page1Issue], totalCount: 2, hasNextPage: true },
+          { issues: [page2Issue], totalCount: 2, hasNextPage: false },
+        ];
+      },
+      [
+        makeIssue({ externalId: 'align-page1-issue', title: 'Align check page one', state: 'open' }),
+        makeIssue({ externalId: 'align-page2-issue', title: 'Align check page two', state: 'triaged' }),
+      ],
+    );
+
+    await createProject(page, 'import-status-align-right-test');
+    await openImportDialog(page);
+    await waitForStreamingSettled(page);
+
+    const statusTrigger = page.locator('button', { hasText: 'Status' });
+    const menu = page.locator('[data-testid="filter-menu-status"]');
+    await statusTrigger.click();
+    await expect(menu).toBeVisible();
+
+    const triggerBox = await statusTrigger.boundingBox();
+    const menuBox = await menu.boundingBox();
+    if (!triggerBox || !menuBox) throw new Error('missing geometry for the alignment check');
+    expect(Math.abs((menuBox.x + menuBox.width) - (triggerBox.x + triggerBox.width))).toBeLessThanOrEqual(2);
+
+    await browser.close();
+  });
+
   test('a filter set while a later page is still loading keeps matching items that arrive after', async () => {
     const { browser, page } = await launchPage();
 
