@@ -5642,6 +5642,23 @@ export interface MemoryAnswerTaskRef {
   /** Every conversation belonging to the task. A task runs several sessions,
    *  so selecting it lights all of them rather than an arbitrary one. */
   docKeys: string[];
+  /**
+   * The task's own facts, already totalled across its sessions.
+   *
+   * Carried so a rail row can present the TASK rather than a passage from one
+   * of its conversations. Asked "which is the biggest", a row reading
+   * `Tool: ToolSearch {"query":...}` answers nothing: the snippet is the best
+   * matching passage, which is right for "find conversations about X" and
+   * wrong for a question about the work itself.
+   *
+   * Null on any metric the sessions never recorded - never zero, which would
+   * make an unmeasured task look like a free one.
+   */
+  costUsd: number | null;
+  durationMs: number | null;
+  outcome: 'done' | 'abandoned' | 'active' | null;
+  /** Sessions the task ran, which is part of why its totals are what they are. */
+  sessions: number;
 }
 
 export type MemoryGraphAnswerResult =

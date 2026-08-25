@@ -76,6 +76,22 @@ export function looksLikeQuestion(text: string): boolean {
     .test(words[0]);
 }
 
+/** Outcome as the reader sees it elsewhere on this surface. */
+const OUTCOME_LABELS: Record<'done' | 'abandoned' | 'active', string> = {
+  done: 'Reached Done',
+  abandoned: 'Abandoned',
+  active: 'Still on the board',
+};
+
+/** Compact duration for a rail row: minutes under an hour, hours above. */
+function formatDuration(ms: number): string {
+  const minutes = Math.round(ms / 60_000);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return remainder ? `${hours}h ${remainder}m` : `${hours}h`;
+}
+
 function CenteredNotice({ icon, title, body }: { icon: React.ReactNode; title: string; body: string }) {
   return (
     <div className="flex-1 min-h-0 flex items-center justify-center p-8">
@@ -415,22 +431,45 @@ export function MemoryGraphBody() {
     setTaskScope(null);
   }, [answer]);
 
+  /**
+   * The tasks an answer is ABOUT, whether or not it used the protocol line.
+   *
+   * `selectedDocKeys` is the explicit statement and wins when present. But the
+   * agent emits that line inconsistently - asked which mobile task was biggest
+   * it named six tasks in prose and emitted nothing - and the result was an
+   * answer discussing six tasks beside a rail reading "1 of 673". Those refs
+   * are already resolved for the inline chips, so falling back to them costs
+   * nothing and makes the rail agree with the answer above it.
+   *
+   * MENTIONED is a weaker claim than SELECTED, and only the rail consumes the
+   * fallback - clicking a chip still scopes deliberately, which is the user
+   * saying "this one" rather than the surface guessing.
+   */
+  const answerTaskRefs = useMemo(
+    () => (answer?.ok ? answer.taskRefs ?? [] : []),
+    [answer],
+  );
+
   const answerIndices = useMemo(() => {
     // Optional-chained deliberately: an answer that predates the selection
     // field (one in flight across a reload, or a detached window's older
     // payload) is a perfectly good prose answer, and reading `.length` off it
     // unmounts the whole surface through PanelErrorBoundary. The type says the
     // field is always there; the wire does not have to agree.
-    if (!answer?.ok || !answer.selectedDocKeys?.length) return null;
+    if (!answer?.ok) return null;
+    const docKeys = answer.selectedDocKeys?.length
+      ? answer.selectedDocKeys
+      : answerTaskRefs.flatMap((entry) => entry.docKeys);
+    if (docKeys.length === 0) return null;
     const set = new Set<number>();
-    for (const docKey of answer.selectedDocKeys) {
+    for (const docKey of docKeys) {
       const index = indexByDocKey.get(docKey);
       if (index !== undefined) set.add(index);
     }
     // An answer whose every task has since left the map scopes to nothing,
     // which would read as a broken filter rather than a stale one.
     return set.size > 0 ? set : null;
-  }, [answer, indexByDocKey]);
+  }, [answer, answerTaskRefs, indexByDocKey]);
 
   const highlighted = useMemo(() => {
     // Explore wins: it is the most recent, most specific thing the user asked
@@ -690,7 +729,13 @@ export function MemoryGraphBody() {
                     denominator counts. The rail groups those into tasks and
                     says so on each row, so the two never claim to be the same
                     unit. */}
-                {visibleHits.length} of {projection.nodes.length}
+                {/* The count names the UNIT the rail is showing. An answer that
+                    ranked six tasks under a line reading "1 of 673" was the
+                    reported confusion: the number was counting conversations
+                    while the list had become something else. */}
+                {answerTaskRefs.length > 0
+                  ? `${answerTaskRefs.length} ${answerTaskRefs.length === 1 ? 'task' : 'tasks'}`
+                  : `${visibleHits.length} of ${projection.nodes.length}`}
               </span>
               <button
                 type="button"
@@ -892,7 +937,76 @@ export function MemoryGraphBody() {
               }}
             />
 
-            {visibleHits.length === 0 ? (
+            {/* TASK rows, when the answer is about tasks.
+                A conversation card shows the best-matching PASSAGE, which is
+                right for "find conversations about X" and useless for "which
+                task is biggest" - the reported case rendered
+                `Tool: ToolSearch {"query":...}` under an answer ranking tasks
+                by cost. These rows show what the answer was reasoning over. */}
+            {answerTaskRefs.length > 0 ? (
+              <ul data-testid="memory-graph-answer-tasks">
+                {answerTaskRefs.map((entry) => {
+                  const indices = entry.docKeys
+                    .map((docKey) => indexByDocKey.get(docKey))
+                    .filter((index): index is number => index !== undefined);
+                  return (
+                    <li key={entry.ref}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (indices.length === 0) return;
+                          setTaskScope({
+                            ref: entry.ref,
+                            title: entry.title,
+                            indices: new Set(indices),
+                          });
+                          selectNode(null);
+                        }}
+                        disabled={indices.length === 0}
+                        className="w-full border-b border-edge px-4 py-3 text-left hover:bg-surface-hover disabled:cursor-default disabled:hover:bg-transparent cursor-pointer"
+                        data-testid="memory-graph-answer-task-row"
+                        data-task-ref={entry.ref}
+                      >
+                        <div className="flex items-start gap-2">
+                          {/* The ref the answer used, so a claim above maps to a
+                              row below without the reader counting. */}
+                          <span className="mt-0.5 flex-shrink-0 rounded bg-surface-control px-1 text-[10px] font-medium text-fg-muted">
+                            T{entry.ref}
+                          </span>
+                          <span className="min-w-0 flex-1 text-xs font-medium text-fg">
+                            {entry.title}
+                          </span>
+                        </div>
+                        <div className="mt-1.5 flex flex-wrap items-center gap-2 pl-7 text-[11px] text-fg-muted">
+                          {/* Each fact is omitted when the sessions never
+                              recorded it, rather than printed as a zero the
+                              task has not earned. */}
+                          {/* `== null` catches BOTH null and undefined. An
+                              answer whose refs predate these fields - one in
+                              flight across a reload, or a detached window's
+                              older payload - is still a good answer, and
+                              `.toFixed()` on undefined unmounts the entire
+                              surface through PanelErrorBoundary. The type says
+                              the fields are always there; the wire does not
+                              have to agree. */}
+                          {entry.costUsd != null ? (
+                            <span className="tabular-nums text-fg-secondary">
+                              ${entry.costUsd.toFixed(2)}
+                            </span>
+                          ) : null}
+                          {entry.durationMs != null ? (
+                            <span className="tabular-nums">{formatDuration(entry.durationMs)}</span>
+                          ) : null}
+                          {entry.outcome ? <span>{OUTCOME_LABELS[entry.outcome]}</span> : null}
+                          {(entry.sessions ?? 0) > 1 ? <span>{entry.sessions} conversations</span> : null}
+                          {indices.length === 0 ? <span>not on the map yet</span> : null}
+                        </div>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : visibleHits.length === 0 ? (
               <p className="p-4 text-sm text-fg-muted">
                 Nothing in this project&apos;s indexed conversations matched.
               </p>

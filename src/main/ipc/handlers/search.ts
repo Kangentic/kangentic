@@ -333,7 +333,17 @@ export function registerSearchHandlers(context: IpcContext): void {
           if (!row) return [];
           const docKeys = docKeysForRefs([ref]);
           if (docKeys.length === 0) return [];
-          return [{ ref, title: row.title, docKeys }];
+          // The row's own totals ride along, so the rail can render the TASK
+          // rather than a passage from one of its conversations.
+          return [{
+            ref,
+            title: row.title,
+            docKeys,
+            costUsd: row.costUsd,
+            durationMs: row.durationMs,
+            outcome: row.outcome,
+            sessions: row.sessions,
+          }];
         });
 
         return {

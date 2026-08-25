@@ -1059,11 +1059,83 @@ test.describe('memory graph', () => {
       await chips.first().click();
       await expect(page.locator('[data-testid="memory-graph-task-chip"]')).toContainText('Mobile Bridge Phase 1');
       await expect(page.locator('[data-testid="memory-graph-task-chip"]')).toContainText('2 conversations');
-      await expect(page.locator('[data-testid="memory-graph-result-card"]')).toHaveCount(2);
+      // The rail lists the TASK the answer named, not conversation cards: an
+      // answer about tasks is answered with tasks. The row count follows the
+      // refs, so scoping to one of them leaves that one row.
+      await expect(page.locator('[data-testid="memory-graph-answer-task-row"]')).toHaveCount(1);
 
       // And the scope is undoable, like every other narrowing on this surface.
       await page.locator('[data-testid="memory-graph-task-clear"]').click();
       await expect(page.locator('[data-testid="memory-graph-task-chip"]')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('lists the tasks an answer named, as tasks, with no protocol line', async () => {
+    // The reported case: "What is the biggest mobile task?" produced a correct
+    // ranking naming six tasks, and the rail beneath it read "1 of 673" over a
+    // single card showing a raw tool-call snippet. The agent emitted no
+    // SELECTED line, so the rail kept the original search while the answer
+    // discussed tasks it had already resolved.
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}
+      window.__mockPreConfigure(function () {
+        return {
+          memoryGraphQueryResult: {
+            query: 'biggest mobile task',
+            semantic: true,
+            hits: [
+              { docKey: 'conversation::doc-3', sessionId: 's-3', taskId: 't-3', taskTitle: 'Some conversation', agentName: 'claude', snippet: 'Tool: ToolSearch {"query":"select:mcp__kangentic"}', score: 0.9, matchKind: 'semantic', matchCount: 1, turnTs: null }
+            ],
+          },
+          memoryGraphAnswerResult: {
+            ok: true,
+            agentName: 'Claude Code',
+            answer: 'Ranking by cost: T1 (Research: Mobile App) at $308.42 is the largest, then T5.',
+            citations: [],
+            // No SELECTED line, exactly as the real agent behaved.
+            selectedDocKeys: [],
+            taskRefs: [
+              { ref: 1, title: 'Research: Mobile App', docKeys: ['conversation::doc-3', 'conversation::doc-7'], costUsd: 308.42, durationMs: 7_680_000, outcome: 'done', sessions: 2 },
+              { ref: 5, title: 'Codex Agent-to-Board MCP', docKeys: ['conversation::doc-9'], costUsd: 199.76, durationMs: null, outcome: 'active', sessions: 1 }
+            ],
+            taskCount: 30,
+            droppedConversations: 0,
+          },
+        };
+      });`;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await openMemoryGraph(page);
+      await page.locator('[data-testid="memory-graph-search-input"]').fill('biggest mobile task');
+      await page.locator('[data-testid="memory-graph-ask"]').click();
+      await expect(page.locator('[data-testid="memory-answer"]')).toContainText('Ranking by cost');
+
+      // TASK rows, not conversation cards - and both tasks, not the one hit.
+      const rows = page.locator('[data-testid="memory-graph-answer-task-row"]');
+      await expect(rows).toHaveCount(2);
+      await expect(page.locator('[data-testid="memory-graph-result-card"]')).toHaveCount(0);
+
+      // Each row presents the TASK: its ref, title, and own totals. The raw
+      // tool-call snippet that made the old card useless is gone.
+      await expect(rows.first()).toContainText('T1');
+      await expect(rows.first()).toContainText('Research: Mobile App');
+      await expect(rows.first()).toContainText('$308.42');
+      await expect(rows.first()).toContainText('2h 8m');
+      await expect(rows.first()).toContainText('Reached Done');
+      await expect(rows.first()).toContainText('2 conversations');
+      await expect(rows.first()).not.toContainText('ToolSearch');
+
+      // A task with no duration recorded omits it rather than printing a zero.
+      await expect(rows.nth(1)).toContainText('$199.76');
+      await expect(rows.nth(1)).not.toContainText('0m');
+
+      // And the count names the unit the rail is actually showing.
+      await expect(page.getByText('2 tasks', { exact: false }).first()).toBeVisible();
+
+      // Clicking a row scopes the map to that task's work.
+      await rows.first().click();
+      await expect(page.locator('[data-testid="memory-graph-task-chip"]')).toContainText('Research: Mobile App');
     } finally {
       await browser.close();
     }
