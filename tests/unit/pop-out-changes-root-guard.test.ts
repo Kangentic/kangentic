@@ -81,6 +81,28 @@ function findByType(node: unknown, type: unknown): ElementLike | null {
   return null;
 }
 
+/**
+ * ChangesPanel is dynamically `lazy()`-imported by PopOutChangesRoot, so its
+ * element's `type` is React's lazy-wrapper object, not the real ChangesPanel
+ * function reference - findByType(output, ChangesPanel) can never match it.
+ * Locate it instead by a prop name unique to that element in this tree.
+ */
+function findElementWithProp(node: unknown, propName: string): ElementLike | null {
+  if (node === null || node === undefined || typeof node === 'boolean') return null;
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = findElementWithProp(child, propName);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (isElementLike(node)) {
+    if (propName in node.props) return node;
+    return findElementWithProp(node.props.children, propName);
+  }
+  return null;
+}
+
 const NO_WORKTREE_TASK: Task = {
   id: 'task-1',
   display_id: 1,
@@ -132,6 +154,21 @@ describe('PopOutChangesRoot worktree_path guard', () => {
 
     expect(findByType(output, PanelErrorBoundary)).not.toBeNull();
     expect(collectText(output)).not.toContain('No changes on this branch');
+  });
+
+  it('passes filePopOutParams to ChangesPanel matching the root params, so per-file diff windows resolve the right task/project', () => {
+    resetMockState();
+    mockState.tasks = [WORKTREE_TASK];
+
+    const params = { taskId: WORKTREE_TASK.id, projectId: 'proj-1' };
+    const output = PopOutChangesRoot({ params });
+
+    const changesPanelElement = findElementWithProp(output, 'filePopOutParams');
+    expect(changesPanelElement).not.toBeNull();
+    expect(changesPanelElement?.props.filePopOutParams).toEqual({
+      taskId: params.taskId,
+      projectId: params.projectId,
+    });
   });
 
   it('mounts the panel for a worktree-backed task (no regression)', () => {

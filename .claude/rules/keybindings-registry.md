@@ -31,15 +31,18 @@ the same array.
     xterm's own key pipeline, not a window listener). They are registered in `KEYBINDINGS` as
     display-only entries (`rebindable: false, terminalUnsafe: true`) so the panel lists them and
     the conflict checker can warn against them.
-  - Structural Escape, in two shapes. A dialog's own dismissal (BaseDialog's Escape), and a
-    TRANSIENT IN-GESTURE cancel that must beat the dialog dismissal to the event: BrowserPane's
+  - Structural Escape, in three shapes. A dialog's own dismissal (BaseDialog's Escape), a
+    pop-out window's own dismissal (`PopOutWindowFrame`'s bubble-phase Escape closes the OS
+    window, guarded so open overlays, DOM windows, and focused text fields keep their Escape),
+    and a TRANSIENT IN-GESTURE cancel that must beat the dialog dismissal to the event: BrowserPane's
     Esc-cancels-Inspect and `useWindowDrag`'s Esc-cancels-drag. Both of the latter register a
     CAPTURE-phase listener and call `stopImmediatePropagation`, because the focused window closes
     itself on a bubble-phase `document` Escape - without the capture-phase intercept, Escape
     during the gesture closes the window instead of cancelling. Each gates on the gesture being
     in flight and returns early otherwise, so a plain Escape still reaches the dialog. Escape is
-    registered display-only as `dialog.dismiss` and is not rebindable; these do not add entries,
-    since a second entry for the same physical key would only invent a phantom conflict.
+    registered display-only as `dialog.dismiss` and is not rebindable; none of the three shapes
+    adds an entry, since a second entry for the same physical key would only invent a phantom
+    conflict.
   - The description editor's text-formatting combos (`description.bold` / `.italic` / `.link` /
     `.pastePlain`, handled in `DescriptionEditor`'s own `onKeyDown`). They are decisions made
     while already inspecting the keystroke, alongside bare Enter and Tab, against the textarea's
