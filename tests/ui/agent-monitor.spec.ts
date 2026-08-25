@@ -783,6 +783,37 @@ test.describe('agent monitor', () => {
     }
   });
 
+  test('the trigger text intersects the filter with representable projects, not a raw count', async () => {
+    // Pins `representableSelectionCount`: the numerator is the filter
+    // INTERSECTED with `projectOptions`, not `view.projectFilter.length`
+    // directly. Every other test in this file keeps the two counts equal at
+    // every assertion point (a fresh toggle, or a boot-time id that has
+    // already been reconciled away by the time any assertion runs), so a raw
+    // `.length` read would pass them all too. Driving the divergence through
+    // `setView` (not `applySnapshot`, which is what reconciles stale ids
+    // against rows) lands a steady-state case with no boot-order race: the
+    // filter holds 'proj-gone', which projectOptions can never represent,
+    // alongside PROJECT_A, which it can.
+    const { browser, page } = await launchWithState(monitorPreConfig());
+    try {
+      await openMonitor(page);
+      const trigger = page.locator('[data-testid="monitor-project-filter"] button');
+      await expect(trigger).toHaveText('All projects');
+
+      await page.evaluate((projectId) => {
+        window.__zustandStores?.monitor?.getState().setView({
+          projectFilter: ['proj-gone', projectId],
+        });
+      }, PROJECT_A);
+
+      // A raw projectFilter.length (2) would read "2 of 2 projects" here; the
+      // intersection with the two representable options reads "1 of 2".
+      await expect(trigger).toHaveText('1 of 2 projects');
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('the Projects control stays reachable with only one project, reading singular "1 of 1 project"', async () => {
     // With only one project ever represented, `projectOptions.length >= 2` can
     // never be true - only the OR-clause's second half (a persisted filter
