@@ -8,7 +8,11 @@ import type { GitBranchSummaryInput, GitBranchSummaryResult } from '../../shared
  *
  * Deliberately local and cheap (no remote fetch, no `gh` lookup): it runs on
  * every panel open, fs.watch fire, and manual refresh, so it must not pay the
- * cost of the Done-dialog probe ({@link probePendingChanges}). Ahead/behind use
+ * cost of the Done-dialog probe ({@link probePendingChanges}). This function
+ * NEVER fetches; a caller that wants `behind` measured against the actual
+ * remote passes `refreshRemote` to the IPC handler, which runs the throttled
+ * fetchAllRemotesIfStale OUTSIDE this function before calling it (the Changes
+ * panel does this once per mount, never on fs.watch refires). Ahead/behind use
  * `rev-list --left-right --count <base>...HEAD`, whose output is "<behind>
  * <ahead>" (commits only in the base on the left, commits only in HEAD on the
  * right). The base ref prefers `origin/<base>` (the local ref may be stale) and

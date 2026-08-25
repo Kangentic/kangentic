@@ -1124,6 +1124,23 @@
           if (index !== -1) listeners.splice(index, 1);
         };
       },
+      onSpawnWarning: function (callback) {
+        // Tests fire this via window.__mockFireTaskSpawnWarning(taskId, message, projectId).
+        if (!window.__mockTaskSpawnWarningListeners) window.__mockTaskSpawnWarningListeners = [];
+        window.__mockTaskSpawnWarningListeners.push(callback);
+        if (!window.__mockFireTaskSpawnWarning) {
+          window.__mockFireTaskSpawnWarning = function (taskId, message, projectId) {
+            var listeners = (window.__mockTaskSpawnWarningListeners || []).slice();
+            listeners.forEach(function (listener) { listener(taskId, message, projectId); });
+          };
+        }
+        // A REAL unsubscribe, for the same reason onSpawnBlocked returns one.
+        return function () {
+          var listeners = window.__mockTaskSpawnWarningListeners || [];
+          var index = listeners.indexOf(callback);
+          if (index !== -1) listeners.splice(index, 1);
+        };
+      },
       onAutoCommandResult: function (callback) {
         // Tests fire this via window.__mockFireAutoCommandResult(notice), where
         // `notice` is an AutoCommandResultNotice.
@@ -1359,6 +1376,13 @@
         }
         tasks[idx] = Object.assign({}, task, updates);
         return withAttachmentCount(tasks[idx]);
+      },
+      updateFromBase: async function (input) {
+        var exists = tasks.some(function (t) { return t.id === input.taskId; });
+        if (!exists) throw new Error('Task not found: ' + input.taskId);
+        // Tests steer the outcome by setting window.__mockUpdateFromBaseResult
+        // to any TaskUpdateFromBaseResult shape.
+        return window.__mockUpdateFromBaseResult || { status: 'already-up-to-date', baseBranch: 'main' };
       },
       bulkUnarchive: async function (ids, targetSwimlaneId) {
         for (var i = 0; i < ids.length; i++) {

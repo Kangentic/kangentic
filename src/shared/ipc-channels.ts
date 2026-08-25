@@ -57,9 +57,13 @@ export const IPC = {
   TASK_PR_LINK_CHANGED: 'task:prLinkChanged',
   TASK_MOVED_BY_MOBILE: 'task:movedByMobile',
   TASK_SPAWN_BLOCKED: 'task:spawnBlocked',
+  // Non-blocking spawn anomaly: the agent still started, but from a base that
+  // could not be freshened (network/credential fetch failure).
+  TASK_SPAWN_WARNING: 'task:spawnWarning',
   TASK_AUTO_COMMAND_RESULT: 'task:autoCommandResult',
   TASK_SPAWN_PROGRESS: 'task:spawnProgress',
   TASK_GET_SPAWN_PROGRESS: 'task:getSpawnProgress',
+  TASK_UPDATE_FROM_BASE: 'task:updateFromBase',
   TASK_SET_RUNTIME_OVERRIDE: 'task:setRuntimeOverride',
   TASK_RESOLVE_PR: 'task:resolvePr',
   TASK_SET_DETAIL_VIEW_STATE: 'task:setDetailViewState',

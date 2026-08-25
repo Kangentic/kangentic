@@ -19,6 +19,7 @@ import {
 import { resolveProjectContext } from '../helpers/project-repos';
 import { linkPR } from '../../pr/pr-linking';
 import { applyProfileToLane } from '../../transition-engine/column-strategy';
+import { createProgressCallback, clearSpawnProgress } from '../../transition-engine/spawn-progress';
 import { loadTaskProfile } from '../helpers/task-profile';
 import { withTaskLock } from '../task-lifecycle-lock';
 import type { IpcContext } from '../ipc-context';
@@ -118,39 +119,48 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
       // the lock, a concurrent TASK_DELETE could clean up resources mid-spawn
       // or a TASK_MOVE could race the transition engine.
       await withTaskLock(task.id, async () => {
+        // A born-into-a-column spawn used to be progress-silent end to end,
+        // which is how #538-class failures hid; the card now shows the same
+        // fetch/branch/worktree phases the drag path does. The finally clears
+        // the label on every exit, including the notifySpawnBlocked returns.
+        const onProgress = createProgressCallback(context.mainWindow, task.id);
         try {
-          await ensureTaskWorktree(context, task, tasks, projectPath);
-        } catch (worktreeError) {
-          console.error('[TASK_CREATE] Worktree creation failed:', worktreeError);
-          notifySpawnBlocked(context, task, 'worktree', worktreeError, projectId);
-          return;
-        }
+          try {
+            await ensureTaskWorktree(context, task, tasks, projectPath, { onProgress, projectId });
+          } catch (worktreeError) {
+            console.error('[TASK_CREATE] Worktree creation failed:', worktreeError);
+            notifySpawnBlocked(context, task, 'worktree', worktreeError, projectId);
+            return;
+          }
 
-        // Checkout the task's branch in the main repo (non-worktree tasks only).
-        // If checkout fails, the task is still created but no agent is spawned.
-        try {
-          await ensureTaskBranchCheckout(context, task, projectPath);
-        } catch (checkoutError) {
-          console.error('[TASK_CREATE] Branch checkout failed:', checkoutError);
-          notifySpawnBlocked(context, task, 'checkout', checkoutError, projectId);
-          return;
-        }
+          // Checkout the task's branch in the main repo (non-worktree tasks only).
+          // If checkout fails, the task is still created but no agent is spawned.
+          try {
+            await ensureTaskBranchCheckout(context, task, projectPath, { onProgress, projectId });
+          } catch (checkoutError) {
+            console.error('[TASK_CREATE] Branch checkout failed:', checkoutError);
+            notifySpawnBlocked(context, task, 'checkout', checkoutError, projectId);
+            return;
+          }
 
-        const db = getProjectDb(projectId);
-        const sessionRepo = new SessionRepository(db);
-        const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachments, projectId, projectPath);
+          const db = getProjectDb(projectId);
+          const sessionRepo = new SessionRepository(db);
+          const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachments, projectId, projectPath);
 
-        // Route through the shared spawn chokepoint (spawn preamble: the
-        // first-spawn override lock + agent resolution, then transition
-        // actions, fallback spawn, and auto_command delivery). '*' as
-        // fromSwimlaneId - no source column on creation, matches wildcard
-        // transitions. settingsSourceLane is omitted deliberately: spawnAgent
-        // falls back to toLane, and the New Task dialog displayed inherit
-        // values against the creation column itself.
-        try {
-          await spawnAgent({ context, engine, tasks, sessionRepo, task, fromSwimlaneId: '*', toLane, projectId, projectPath, attachments });
-        } catch (err) {
-          console.error('[TASK_CREATE] Failed to start session:', err);
+          // Route through the shared spawn chokepoint (spawn preamble: the
+          // first-spawn override lock + agent resolution, then transition
+          // actions, fallback spawn, and auto_command delivery). '*' as
+          // fromSwimlaneId - no source column on creation, matches wildcard
+          // transitions. settingsSourceLane is omitted deliberately: spawnAgent
+          // falls back to toLane, and the New Task dialog displayed inherit
+          // values against the creation column itself.
+          try {
+            await spawnAgent({ context, engine, tasks, sessionRepo, task, fromSwimlaneId: '*', toLane, projectId, projectPath, attachments });
+          } catch (err) {
+            console.error('[TASK_CREATE] Failed to start session:', err);
+          }
+        } finally {
+          clearSpawnProgress(context.mainWindow, task.id);
         }
       });
     }

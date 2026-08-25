@@ -1,6 +1,6 @@
 import { useState, useRef, useMemo, useEffect, type ReactNode } from 'react';
 import { useCopyDisplayId } from './useCopyDisplayId';
-import { X, Trash2, Pencil, Loader2, FolderGit2, FolderGit, GitPullRequest, GitCompare, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, Clock, SquareChevronRight, Zap, Archive, Inbox, Copy, Check, Globe, RefreshCw, PictureInPicture2, MessageSquare, AlignLeft } from 'lucide-react';
+import { X, Trash2, Pencil, Loader2, FolderGit2, FolderGit, GitPullRequest, GitCompare, GitMerge, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, Clock, SquareChevronRight, Zap, Archive, Inbox, Copy, Check, Globe, RefreshCw, PictureInPicture2, MessageSquare, AlignLeft } from 'lucide-react';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
 import { useFormattedCombo } from '../../../hooks/useKeybinding';
 import { getSwimlaneIcon } from '../../../utils/swimlane-icons';
@@ -571,7 +571,51 @@ function TaskDetailKebabItems({
   const [showMoveSubmenu, setShowMoveSubmenu] = useState(false);
   const [showCommandsSubmenu, setShowCommandsSubmenu] = useState(false);
   const [linkingPr, setLinkingPr] = useState(false);
+  const [updatingFromBase, setUpdatingFromBase] = useState(false);
   const { projectId: hostProjectId } = useTaskDetailHost();
+
+  const handleUpdateFromBase = async () => {
+    if (updatingFromBase) return;
+    setUpdatingFromBase(true);
+    try {
+      const result = await window.electronAPI.tasks.updateFromBase({ taskId: task.id }, hostProjectId || null);
+      const toast = useToastStore.getState();
+      switch (result.status) {
+        case 'updated':
+          toast.addToast({
+            message: `Updated from ${result.baseBranch}: fast-forwarded ${result.commitCount} commit${result.commitCount === 1 ? '' : 's'}.`,
+            variant: 'success',
+          });
+          break;
+        case 'already-up-to-date':
+          toast.addToast({ message: `Already up to date with ${result.baseBranch}.`, variant: 'info' });
+          break;
+        case 'cannot-ff':
+          toast.addToast({
+            message: `Cannot fast-forward: this branch has its own commits (${result.ahead} ahead, ${result.behind} behind ${result.baseBranch}). Rebase or merge in the session instead.`,
+            variant: 'warning',
+          });
+          break;
+        case 'dirty-tree':
+          toast.addToast({ message: 'Cannot update: the worktree has uncommitted changes.', variant: 'warning' });
+          break;
+        case 'fetch-failed':
+          toast.addToast({
+            message: `Could not fetch ${result.baseBranch} from origin. ${(result.reason.split('\n')[0] ?? '').trim()}`.trim(),
+            variant: 'warning',
+          });
+          break;
+        case 'no-remote':
+          toast.addToast({ message: `No origin remote to fetch ${result.baseBranch} from.`, variant: 'info' });
+          break;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      useToastStore.getState().addToast({ message: `Update from base failed: ${message}`, variant: 'warning' });
+    } finally {
+      setUpdatingFromBase(false);
+    }
+  };
 
   const handleLinkPr = async () => {
     if (linkingPr) return;
@@ -692,6 +736,21 @@ function TaskDetailKebabItems({
           label={task.pr_url ? 'Refresh PR' : 'Link PR'}
           onClick={() => { closeAll(); void handleLinkPr(); }}
           disabled={linkingPr}
+        />
+      )}
+
+      {/* Update from base - fetch the base and fast-forward the worktree.
+          Disabled while a session is active. isSessionActive is a SUPERSET of
+          the handler's running/queued guard (it also covers initializing /
+          preparing), so this conservatively over-disables and the click can
+          never land on the handler's error path. */}
+      {Boolean(task.worktree_path) && !isArchived && (
+        <KebabMenuItem
+          icon={updatingFromBase ? <Loader2 size={14} className="animate-spin" /> : <GitMerge size={14} />}
+          label="Update from base"
+          onClick={() => { closeAll(); void handleUpdateFromBase(); }}
+          disabled={updatingFromBase || isSessionActive}
+          data-testid="update-from-base-btn"
         />
       )}
 

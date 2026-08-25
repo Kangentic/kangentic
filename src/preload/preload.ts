@@ -93,6 +93,7 @@ const api: ElectronAPI = {
     bulkDelete: (ids, projectId) => ipcRenderer.invoke(IPC.TASK_BULK_DELETE, ids, projectId),
     bulkUnarchive: (ids, targetSwimlaneId, projectId) => ipcRenderer.invoke(IPC.TASK_BULK_UNARCHIVE, ids, targetSwimlaneId, projectId),
     switchBranch: (input, projectId) => ipcRenderer.invoke(IPC.TASK_SWITCH_BRANCH, input, projectId),
+    updateFromBase: (input, projectId) => ipcRenderer.invoke(IPC.TASK_UPDATE_FROM_BASE, input, projectId),
     setRuntimeOverride: (input, projectId) => ipcRenderer.invoke(IPC.TASK_SET_RUNTIME_OVERRIDE, input, projectId),
     resolvePr: (taskId, projectId) => ipcRenderer.invoke(IPC.TASK_RESOLVE_PR, taskId, projectId),
     setDetailViewState: (taskId, state, projectId) => ipcRenderer.invoke(IPC.TASK_SET_DETAIL_VIEW_STATE, taskId, state, projectId),
@@ -107,6 +108,12 @@ const api: ElectronAPI = {
         callback(taskId, taskTitle, message, projectId);
       ipcRenderer.on(IPC.TASK_SPAWN_BLOCKED, handler);
       return () => ipcRenderer.removeListener(IPC.TASK_SPAWN_BLOCKED, handler);
+    },
+    onSpawnWarning: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, taskId: string, message: string, projectId?: string) =>
+        callback(taskId, message, projectId);
+      ipcRenderer.on(IPC.TASK_SPAWN_WARNING, handler);
+      return () => ipcRenderer.removeListener(IPC.TASK_SPAWN_WARNING, handler);
     },
     onAutoCommandResult: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, result: AutoCommandResultNotice) => callback(result);

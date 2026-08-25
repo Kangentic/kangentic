@@ -167,7 +167,12 @@ export function registerGitDiffHandlers(context: IpcContext): void {
     });
   });
 
-  ipcMain.handle(IPC.GIT_BRANCH_SUMMARY, (_, input: GitBranchSummaryInput) => {
+  ipcMain.handle(IPC.GIT_BRANCH_SUMMARY, async (_, input: GitBranchSummaryInput) => {
+    // The fetch lives HERE, not in getBranchSummary, so that function keeps
+    // its local-and-cheap contract for the fs.watch-driven refires.
+    if (input.refreshRemote) {
+      await fetchAllRemotesIfStale(input.worktreePath ?? input.projectPath);
+    }
     return getBranchSummary(input);
   });
 

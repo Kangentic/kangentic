@@ -1714,6 +1714,14 @@ export interface GitBranchSummaryInput {
   worktreePath?: string;
   projectPath: string;
   baseBranch: string;
+  /**
+   * When true, the HANDLER refreshes remote-tracking refs first (via the
+   * throttled, 5s-budget, never-rejecting fetchAllRemotesIfStale) so `behind`
+   * reflects the actual remote rather than the last time anyone fetched.
+   * getBranchSummary itself stays fetch-free; the Changes panel opts in from
+   * its mount effect only, and fs.watch refires never pass it.
+   */
+  refreshRemote?: boolean;
 }
 
 /** Tip commit of the worktree's HEAD, for the header's last-commit line. */
@@ -3519,6 +3527,26 @@ export interface TaskSwitchBranchInput {
   enableWorktree?: boolean;
 }
 
+export interface TaskUpdateFromBaseInput {
+  taskId: string;
+}
+
+/**
+ * Outcome of the explicit "Update from base" task action: fetch the task's
+ * effective base, then fast-forward the task's worktree from `origin/<base>`.
+ * This action is the only thing that MOVES a reused worktree - spawn-time
+ * freshening deliberately never fast-forwards an existing tree, it only
+ * surfaces drift. `cannot-ff` is a normal outcome, not an error: a branch
+ * carrying its own commits legitimately stays where it is.
+ */
+export type TaskUpdateFromBaseResult =
+  | { status: 'updated'; baseBranch: string; commitCount: number }
+  | { status: 'already-up-to-date'; baseBranch: string }
+  | { status: 'cannot-ff'; baseBranch: string; ahead: number; behind: number }
+  | { status: 'dirty-tree'; baseBranch: string }
+  | { status: 'fetch-failed'; baseBranch: string; reason: string }
+  | { status: 'no-remote'; baseBranch: string };
+
 export interface TaskMoveInput {
   taskId: string;
   targetSwimlaneId: string;
@@ -4526,6 +4554,12 @@ export interface ElectronAPI {
     bulkDelete: (ids: string[], projectId?: string | null) => Promise<TaskBulkDeleteResult>;
     bulkUnarchive: (ids: string[], targetSwimlaneId: string, projectId?: string | null) => Promise<void>;
     switchBranch: (input: TaskSwitchBranchInput, projectId?: string | null) => Promise<Task>;
+    /**
+     * One-click "Update from base": fetch the task's effective base and
+     * fast-forward its worktree from origin/<base>. Refuses while a session is
+     * running; every non-throw outcome is a TaskUpdateFromBaseResult status.
+     */
+    updateFromBase: (input: TaskUpdateFromBaseInput, projectId?: string | null) => Promise<TaskUpdateFromBaseResult>;
     setRuntimeOverride: (input: TaskSetRuntimeOverrideInput, projectId?: string | null) => Promise<TaskSetRuntimeOverrideResult>;
     /** On-demand authoritative branch->PR resolve + link for a task (works without a live session). */
     resolvePr: (taskId: string, projectId?: string | null) => Promise<TaskResolvePrResult>;
@@ -4541,6 +4575,15 @@ export interface ElectronAPI {
      * the renderer already toasts.
      */
     onSpawnBlocked: (callback: (taskId: string, taskTitle: string, message: string, projectId?: string) => void) => () => void;
+    /**
+     * Non-blocking spawn warning: the agent STARTED, but its base branch could
+     * not be freshened (a network or credential fetch failure), so it may be
+     * running from a stale base. `message` is already user-facing; unlike
+     * onSpawnBlocked the renderer adds no copy of its own, because "did not
+     * start its agent" would be a lie here. Cooldown-guarded in main so a bulk
+     * unarchive while offline produces one toast per project, not one per task.
+     */
+    onSpawnWarning: (callback: (taskId: string, message: string, projectId?: string) => void) => () => void;
     /**
      * A column's auto_command finished delivering, and the result is worth
      * telling the user about.

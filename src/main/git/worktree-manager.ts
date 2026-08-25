@@ -8,7 +8,7 @@ import { worktreesRootFor } from './task-worktree-folder';
 import { isGitRepo, isInsideWorktree } from './git-checks';
 import { resolveWorktreeBase, describeUnresolvableBase, refResolvesLocally } from './base-branch';
 import { linkNodeModules, removeNodeModulesPath } from './node-modules-link';
-import { fetchIfStale } from './fetch-throttle';
+import { fetchIfStale, type FetchIfStaleOutcome } from './fetch-throttle';
 import { removeWithRetry, type RemoveWithRetryOptions } from './rm-with-retry';
 import { runGitWithTimeout as runGitWithTimeoutShared } from './git-spawn';
 import { runInitScript, INIT_SCRIPT_TIMEOUT_MS } from './run-init-script';
@@ -444,7 +444,7 @@ export class WorktreeManager {
   async ensureWorktree(
     task: { id: string; title: string; display_id: number; worktree_path: string | null; worktree_folder?: string | null; branch_name?: string | null; base_branch?: string | null; use_worktree?: number | null },
     gitConfig: { worktreesEnabled: boolean; defaultBaseBranch: string; copyFiles: string[]; initScript?: string | null; linkNodeModules?: boolean },
-    options?: { onProgress?: (phase: string) => void; signal?: AbortSignal },
+    options?: { onProgress?: (phase: string) => void; signal?: AbortSignal; onFetchOutcome?: (outcome: FetchIfStaleOutcome) => void },
   ): Promise<WorktreeCreateResult | null> {
     // Trust worktree_path only if the worktree still genuinely exists on disk.
     // A Done cleanup that could not delete the directory (Windows pinned-CWD)
@@ -494,6 +494,9 @@ export class WorktreeManager {
       ? resolution.baseBranch
       : (gitConfig.defaultBaseBranch || 'main');
 
+    // The fetch outcome is NOT threaded into resolveWorktreeBase's own fetch
+    // pass: a candidate miss there either resolves via another candidate (not
+    // a stale-base event) or ends in the already-loud unresolvable throw above.
     return this.createWorktree(task, resolution.baseBranch, gitConfig.copyFiles, task.branch_name, {
       onProgress: options?.onProgress,
       signal: options?.signal,
@@ -501,6 +504,7 @@ export class WorktreeManager {
       initScript: gitConfig.initScript,
       linkNodeModules: gitConfig.linkNodeModules,
       verifiedStartPoint: resolution.startPoint,
+      onFetchOutcome: options?.onFetchOutcome,
     });
   }
 
@@ -555,6 +559,15 @@ export class WorktreeManager {
        * plain fetch-or-bare-name behavior.
        */
       verifiedStartPoint?: string;
+      /**
+       * Observes the base fetch's real outcome (fetched / throttled / a
+       * classified failure). The `verifiedStartPoint` fallback below makes a
+       * failed fetch invisible in the RESULT - the worktree is still created,
+       * just from the last fetched state - so callers that surface staleness
+       * need this seam. WorktreeManager stays IPC-agnostic; the caller decides
+       * what a failure means to the user.
+       */
+      onFetchOutcome?: (outcome: FetchIfStaleOutcome) => void;
     },
   ): Promise<WorktreeCreateResult> {
     const shortId = task.id.slice(0, 8);
@@ -605,7 +618,10 @@ export class WorktreeManager {
     // in the queue flips from the "Waiting..." label to "Fetching latest..."
     // the instant it actually starts the fetch.
     options?.onProgress?.('fetching');
-    const fetched = await fetchIfStale(this.git, this.projectPath, baseBranch, { signal: options?.signal });
+    const fetched = await fetchIfStale(this.git, this.projectPath, baseBranch, {
+      signal: options?.signal,
+      onOutcome: options?.onFetchOutcome,
+    });
     // A fetch that actually landed `origin/<branch>` wins (freshest code). Otherwise fall back
     // to a ref already OBSERVED to resolve, because both of fetchIfStale's other outcomes give
     // a start point that can fail `git worktree add`: on failure it returns the bare branch

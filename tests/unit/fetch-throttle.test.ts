@@ -27,7 +27,8 @@ vi.mock('../../src/main/git/git-spawn', () => ({
   isGitTimeoutError: mockIsGitTimeoutError,
 }));
 
-import { fetchIfStale, fetchAllRemotesIfStale, clearFetchCache } from '../../src/main/git/fetch-throttle';
+import { fetchIfStale, fetchAllRemotesIfStale, clearFetchCache, classifyFetchFailure } from '../../src/main/git/fetch-throttle';
+import type { FetchFailureReason, FetchIfStaleOutcome } from '../../src/main/git/fetch-throttle';
 import type { SimpleGit } from 'simple-git';
 
 const PROJECT_PATH = '/mock/project';
@@ -128,6 +129,154 @@ describe('fetchIfStale', () => {
       ['fetch', 'origin', BRANCH],
       expect.objectContaining({ signal: controller.signal }),
     );
+  });
+});
+
+describe('fetchIfStale onOutcome', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    clearFetchCache();
+    mockRunGitWithTimeout.mockReset();
+    mockIsGitTimeoutError.mockClear();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  it('reports fetched on success', async () => {
+    mockRunGitWithTimeout.mockResolvedValueOnce({ stdout: '', stderr: '' });
+    const outcomes: FetchIfStaleOutcome[] = [];
+
+    await fetchIfStale(stubGit, PROJECT_PATH, BRANCH, { onOutcome: (outcome) => outcomes.push(outcome) });
+
+    expect(outcomes).toEqual([{ kind: 'fetched' }]);
+  });
+
+  it('reports throttled on a cache hit, without spawning', async () => {
+    mockRunGitWithTimeout.mockResolvedValueOnce({ stdout: '', stderr: '' });
+    await fetchIfStale(stubGit, PROJECT_PATH, BRANCH);
+    mockRunGitWithTimeout.mockClear();
+
+    const outcomes: FetchIfStaleOutcome[] = [];
+    const result = await fetchIfStale(stubGit, PROJECT_PATH, BRANCH, { onOutcome: (outcome) => outcomes.push(outcome) });
+
+    expect(result).toBe(`origin/${BRANCH}`);
+    expect(outcomes).toEqual([{ kind: 'throttled' }]);
+    expect(mockRunGitWithTimeout).not.toHaveBeenCalled();
+  });
+
+  it('reports a classified failure carrying the error message', async () => {
+    const timeoutError = new Error('git fetch origin main aborted (timeout after 15000ms) (child process killed)');
+    mockRunGitWithTimeout.mockRejectedValueOnce(timeoutError);
+    const outcomes: FetchIfStaleOutcome[] = [];
+
+    const result = await fetchIfStale(stubGit, PROJECT_PATH, BRANCH, { onOutcome: (outcome) => outcomes.push(outcome) });
+
+    expect(result).toBe(BRANCH);
+    expect(outcomes).toEqual([{ kind: 'failed', reason: 'timeout', message: timeoutError.message }]);
+  });
+
+  it('a throwing onOutcome never changes the returned start point', async () => {
+    const throwingObserver = () => { throw new Error('observer bug'); };
+
+    mockRunGitWithTimeout.mockResolvedValueOnce({ stdout: '', stderr: '' });
+    await expect(fetchIfStale(stubGit, PROJECT_PATH, BRANCH, { onOutcome: throwingObserver }))
+      .resolves.toBe(`origin/${BRANCH}`);
+
+    clearFetchCache();
+    mockRunGitWithTimeout.mockRejectedValueOnce(new Error('fatal: unable to access remote'));
+    await expect(fetchIfStale(stubGit, PROJECT_PATH, BRANCH, { onOutcome: throwingObserver }))
+      .resolves.toBe(BRANCH);
+  });
+});
+
+describe('classifyFetchFailure', () => {
+  // Realistic messages in the shape spawnWithAbort actually rejects with:
+  // `${label} exited with code ${code}: ${stderr}` for non-zero exits, and the
+  // abort/timeout/kill shapes for the rest.
+  const cases: Array<{ label: string; message: string; expected: FetchFailureReason }> = [
+    {
+      label: 'timeout abort',
+      message: 'git fetch origin main aborted (timeout after 15000ms) (child process killed)',
+      expected: 'timeout',
+    },
+    {
+      label: 'signal kill asserting timeout',
+      message: 'git fetch origin main killed by signal SIGKILL after 15000ms timeout',
+      expected: 'timeout',
+    },
+    {
+      label: 'external abort',
+      message: 'git fetch origin main aborted (external abort) (child process killed)',
+      expected: 'abort',
+    },
+    {
+      label: 'abort before spawn',
+      message: 'git fetch origin main aborted before spawn',
+      expected: 'abort',
+    },
+    {
+      label: 'branch missing on remote',
+      message: "git fetch origin foo exited with code 128: fatal: couldn't find remote ref foo",
+      expected: 'branch-missing',
+    },
+    {
+      label: 'no remote configured',
+      message: "git fetch origin main exited with code 128: fatal: 'origin' does not appear to be a git repository",
+      expected: 'no-remote',
+    },
+    {
+      label: 'https authentication failed',
+      message: "git fetch origin main exited with code 128: fatal: Authentication failed for 'https://github.com/acme/app.git/'",
+      expected: 'auth',
+    },
+    {
+      label: 'ssh publickey denied (auth wins over its network-sounding tail)',
+      message: 'git fetch origin main exited with code 128: Permission denied (publickey).\nfatal: Could not read from remote repository.',
+      expected: 'auth',
+    },
+    {
+      label: 'credential prompt disabled',
+      message: "git fetch origin main exited with code 128: fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+      expected: 'auth',
+    },
+    {
+      label: 'https 403 wrapped in unable-to-access (auth wins over network)',
+      message: "git fetch origin main exited with code 128: fatal: unable to access 'https://github.com/acme/app.git/': The requested URL returned error: 403",
+      expected: 'auth',
+    },
+    {
+      label: 'dns resolution failure',
+      message: "git fetch origin main exited with code 128: fatal: unable to access 'https://github.com/acme/app.git/': Could not resolve host: github.com",
+      expected: 'network',
+    },
+    {
+      label: 'connection refused over ssh',
+      message: 'git fetch origin main exited with code 128: ssh: connect to host github.com port 22: Connection refused\nfatal: Could not read from remote repository.',
+      expected: 'network',
+    },
+    {
+      label: 'unrecognized git error',
+      message: 'git fetch origin main exited with code 128: fatal: bad config line 3 in file .git/config',
+      expected: 'other',
+    },
+    {
+      // Red-green for the "Permission denied \(" narrowing: git-for-Windows
+      // emits a BARE "Permission denied" for local file locks (antivirus, a
+      // live agent holding a pack file). That is not an auth failure, and
+      // toasting "authentication failed" for it would be confidently wrong.
+      label: 'windows local file lock (bare Permission denied is NOT auth)',
+      message: "git fetch origin main exited with code 128: error: unable to unlink old '.git/objects/pack/pack-1a2b3c.idx': Permission denied",
+      expected: 'other',
+    },
+  ];
+
+  for (const { label, message, expected } of cases) {
+    it(`classifies ${label} as ${expected}`, () => {
+      expect(classifyFetchFailure(new Error(message))).toBe(expected);
+    });
+  }
+
+  it('classifies a non-Error value as other', () => {
+    expect(classifyFetchFailure('exploded')).toBe('other');
   });
 });
 

@@ -280,8 +280,10 @@ export function App() {
       // The 8s timer arms for any preparing label, so describe the actual cause
       // rather than always claiming a git-queue wait. A git-queue wait is either
       // the bare fallback ("Waiting...", "Waiting (2 ahead)") or the running form
-      // that ends in a "(waiting 45s)" qualifier; both collapse to one phrase.
-      const isGitQueueWait = label.startsWith('Waiting') || /\(waiting \d+s\)$/.test(label);
+      // carrying a "(waiting 45s)" qualifier; both collapse to one phrase. Not
+      // anchored to the end: a staleness note may trail the qualifier (e.g.
+      // "Removing worktree (waiting 45s) (base fetch failed)").
+      const isGitQueueWait = label.startsWith('Waiting') || /\(waiting \d+s\)/.test(label);
       const detail = isGitQueueWait
         ? 'waiting on the git queue'
         : label.replace(/\.\.\.$/, '').toLowerCase();
@@ -677,6 +679,22 @@ export function App() {
           // the first of those created anything - "was created" would be a lie
           // on three of the four paths.
           message: `"${taskTitle}" did not start its agent. ${message}`,
+          variant: 'warning',
+          duration: 12000,
+        });
+      }));
+    }
+
+    // The agent started, but from a base that could not be freshened (network
+    // or credential fetch failure). Main composes the whole message and
+    // cooldown-guards it, so this toasts verbatim. Current project only, same
+    // as onSpawnBlocked: the message names a task from that project's board.
+    if (tasks?.onSpawnWarning) {
+      cleanups.push(tasks.onSpawnWarning((_taskId, message, warningProjectId) => {
+        const activeProjectId = useProjectStore.getState().currentProject?.id;
+        if (warningProjectId && warningProjectId !== activeProjectId) return;
+        useToastStore.getState().addToast({
+          message,
           variant: 'warning',
           duration: 12000,
         });

@@ -323,6 +323,21 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
     }
   }, [worktreePath, projectPath, baseBranch]);
 
+  // Truthful `behind`: without a fetch, the counts only reflect the last time
+  // anyone fetched, so a branch can read "0 behind" while origin has moved on.
+  // refreshRemote makes the HANDLER run the throttled all-remotes fetch first
+  // (5s budget, never rejects). Mount-only by design - the cheap local summary
+  // above paints immediately and this corrects it once; the fs.watch refires
+  // stay flagless so file edits never trigger network I/O.
+  const refreshBranchSummaryFromRemote = useCallback(async () => {
+    try {
+      const summary = await window.electronAPI.git.branchSummary({ worktreePath, projectPath, baseBranch, refreshRemote: true });
+      setBranchSummary(summary);
+    } catch {
+      // Best-effort context: leave the previous summary in place on failure.
+    }
+  }, [worktreePath, projectPath, baseBranch]);
+
   // Working-diff file count for the history browser's "Uncommitted changes" row
   // badge. Always scope-based (never commitOid) so the badge stays accurate even
   // while the user is browsing a different commit's detail.
@@ -367,6 +382,21 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
       fetchUncommittedCountRef.current();
     }
   }, [worktreePath, projectPath, baseBranch, scope, changesSelectedCommit]);
+
+  // One remote-refreshed summary per panel identity, NOT per scope or
+  // commit-selection change - browsing commits must never re-fetch the
+  // network. The callback's own deps are exactly the panel identity
+  // (worktreePath / projectPath / baseBranch), so depending on it keys this
+  // effect correctly. Runs after the flagless mount fetch above, so the header
+  // shows the cheap local counts immediately and corrects them within the
+  // probe budget (or silently keeps them when offline).
+  // hmr-safe: a Vite Fast Refresh remount re-runs this like a fresh mount;
+  // that is accepted because the handler's fetch is throttled to one real
+  // fetch per repo per 30s and never rejects - do not "fix" that throttle
+  // window down on the strength of the mount-only comment above.
+  useEffect(() => {
+    void refreshBranchSummaryFromRemote();
+  }, [refreshBranchSummaryFromRemote]);
 
   // Restore content for the persisted selected file after files load.
   // `files` is in the dependency array so this re-evaluates after the initial

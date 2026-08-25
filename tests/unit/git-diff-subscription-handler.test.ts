@@ -12,7 +12,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { IPC } from '../../src/shared/ipc-channels';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
-import type { GitDiffFilesInput } from '../../src/shared/types';
+import type { GitBranchSummaryInput, GitDiffFilesInput } from '../../src/shared/types';
 
 // vi.mock() calls are hoisted above every other statement in this file
 // (including plain `const` declarations), so any outer variable a factory
@@ -49,6 +49,8 @@ vi.mock('../../src/main/git/local-only-commits', () => ({ countLocalOnlyCommits:
 vi.mock('../../src/main/pop-out/window-broadcast', () => ({ broadcast: vi.fn() }));
 
 import { registerGitDiffHandlers } from '../../src/main/ipc/handlers/git-diff';
+import { getBranchSummary } from '../../src/main/git/branch-summary';
+import { fetchAllRemotesIfStale } from '../../src/main/git/fetch-throttle';
 
 const WORKTREE_PATH_A = '/mock/worktrees/task-a';
 const WORKTREE_PATH_B = '/mock/worktrees/task-b';
@@ -207,5 +209,59 @@ describe('registerGitDiffHandlers GIT_DIFF_SUBSCRIBE / GIT_DIFF_UNSUBSCRIBE wiri
 
     expect(sender.listenerCount('destroyed')).toBe(1);
     expect(sender.listenerCount('did-navigate')).toBe(1);
+  });
+});
+
+describe('registerGitDiffHandlers GIT_BRANCH_SUMMARY refreshRemote flag', () => {
+  type SummaryHandler = (event: unknown, input: GitBranchSummaryInput) => Promise<unknown>;
+
+  function getSummaryHandler(): SummaryHandler {
+    const entry = mockHandle.mock.calls.find((call) => call[0] === IPC.GIT_BRANCH_SUMMARY);
+    if (!entry) throw new Error('ipcMain.handle was never called with IPC.GIT_BRANCH_SUMMARY');
+    return entry[1] as SummaryHandler;
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getBranchSummary).mockResolvedValue({ currentBranch: 'main', ahead: 0, behind: 0, lastCommit: null });
+    vi.mocked(fetchAllRemotesIfStale).mockResolvedValue(undefined);
+
+    const context = {
+      mainWindow: {},
+      diffWatcher: { subscribe: vi.fn(() => vi.fn()) },
+    } as unknown as IpcContext;
+    registerGitDiffHandlers(context);
+  });
+
+  it('a flagless call never fetches - the fs.watch refire path stays local and cheap', async () => {
+    const handler = getSummaryHandler();
+
+    await handler(null, { worktreePath: WORKTREE_PATH_A, projectPath: '/mock/project', baseBranch: 'main' });
+
+    expect(fetchAllRemotesIfStale).not.toHaveBeenCalled();
+    expect(getBranchSummary).toHaveBeenCalledWith(
+      expect.objectContaining({ worktreePath: WORKTREE_PATH_A, baseBranch: 'main' }),
+    );
+  });
+
+  it('refreshRemote awaits the throttled all-remotes fetch BEFORE computing the summary', async () => {
+    const handler = getSummaryHandler();
+
+    await handler(null, { worktreePath: WORKTREE_PATH_A, projectPath: '/mock/project', baseBranch: 'main', refreshRemote: true });
+
+    expect(fetchAllRemotesIfStale).toHaveBeenCalledWith(WORKTREE_PATH_A);
+    // Order matters: a summary computed before the refs land would report the
+    // same stale `behind` the flag exists to correct.
+    const fetchOrder = vi.mocked(fetchAllRemotesIfStale).mock.invocationCallOrder[0];
+    const summaryOrder = vi.mocked(getBranchSummary).mock.invocationCallOrder[0];
+    expect(fetchOrder).toBeLessThan(summaryOrder);
+  });
+
+  it('refreshRemote falls back to projectPath when there is no worktreePath', async () => {
+    const handler = getSummaryHandler();
+
+    await handler(null, { projectPath: '/mock/project', baseBranch: 'main', refreshRemote: true });
+
+    expect(fetchAllRemotesIfStale).toHaveBeenCalledWith('/mock/project');
   });
 });

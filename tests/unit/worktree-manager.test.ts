@@ -495,6 +495,58 @@ describe('WorktreeManager -- fetch and base branch', () => {
     expect(worktreeAddCall![0][worktreeAddCall![0].length - 1]).toBe('main');
   });
 
+  it('reports the fetch outcome to onFetchOutcome and still creates from the verified start point on failure', async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    mockWorktreeGit.raw.mockResolvedValue('');
+    spawnOverrides.push({
+      match: (args) => args[0] === 'fetch' && args[1] === 'origin',
+      behavior: { exitCode: 128, stderr: "fatal: unable to access 'https://github.com/acme/app.git/': Could not resolve host: github.com" },
+    });
+    mockProjectGit.raw.mockImplementation((args: string[]) => {
+      if (args[0] === 'rev-parse' && args[1] === '--verify') {
+        return Promise.reject(new Error('not found'));
+      }
+      return Promise.resolve('');
+    });
+
+    const outcomes: Array<{ kind: string; reason?: string }> = [];
+    const mgr = new WorktreeManager('/project');
+    await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Outcome test'), 'main', [], null, {
+      verifiedStartPoint: 'origin/main',
+      onFetchOutcome: (outcome) => outcomes.push(outcome),
+    });
+
+    // The verifiedStartPoint fallback makes the failure invisible in the
+    // RESULT (the worktree is still created), which is exactly why the
+    // outcome seam exists: it is the only place a caller can learn the tree
+    // was cut from the last fetched state rather than a fresh one.
+    expect(outcomes).toEqual([expect.objectContaining({ kind: 'failed', reason: 'network' })]);
+    const worktreeAddCall = mockProjectGit.raw.mock.calls.find(
+      (c: string[][]) => c[0]?.includes('worktree') && c[0]?.includes('add'),
+    );
+    expect(worktreeAddCall).toBeDefined();
+    expect(worktreeAddCall![0][worktreeAddCall![0].length - 1]).toBe('origin/main');
+  });
+
+  it('reports a successful fetch to onFetchOutcome', async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    mockWorktreeGit.raw.mockResolvedValue('');
+    mockProjectGit.raw.mockImplementation((args: string[]) => {
+      if (args[0] === 'rev-parse' && args[1] === '--verify') {
+        return Promise.reject(new Error('not found'));
+      }
+      return Promise.resolve('');
+    });
+
+    const outcomes: Array<{ kind: string }> = [];
+    const mgr = new WorktreeManager('/project');
+    await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Outcome ok test'), 'develop', [], null, {
+      onFetchOutcome: (outcome) => outcomes.push(outcome),
+    });
+
+    expect(outcomes).toEqual([{ kind: 'fetched' }]);
+  });
+
   it('stores kangentic.baseBranch in worktree git config', async () => {
     vi.mocked(fs.existsSync).mockReturnValue(true);
     mockProjectGit.raw.mockImplementation((args: string[]) => {
@@ -895,6 +947,30 @@ describe('WorktreeManager -- ensureWorktree', () => {
       (call) => call.command === 'git' && call.args[0] === 'fetch' && call.args[2] === 'develop',
     );
     expect(fetchSpawn).toBeDefined();
+  });
+
+  it('forwards options.onFetchOutcome into its own createWorktree call', async () => {
+    // Existing tests in this file only call createWorktree directly, so a
+    // dropped forward here breaks nothing else - this pins the plumbing at the
+    // ensureWorktree level. Asserting reference identity (not that the callback
+    // fired) is deliberate: end-to-end, resolveWorktreeBase's own fetch pass
+    // could report a throttle hit instead of a fresh fetch, which would make
+    // this test about the fetch cache instead of the forward.
+    const mgr = new WorktreeManager('/project');
+    const onFetchOutcome = vi.fn();
+    const createSpy = vi
+      .spyOn(mgr, 'createWorktree')
+      .mockResolvedValue({ worktreePath: '/project/.kangentic/worktrees/test-abcd1234', branchName: 'test-abcd1234', worktreeFolder: 'test-abcd1234' });
+
+    await mgr.ensureWorktree(
+      { id: 'abcd1234', title: 'Test', display_id: 7, worktree_path: null },
+      gitConfig,
+      { onFetchOutcome },
+    );
+
+    expect(createSpy).toHaveBeenCalledTimes(1);
+    const forwardedOptions = createSpy.mock.calls[0][4] as { onFetchOutcome?: unknown };
+    expect(forwardedOptions.onFetchOutcome).toBe(onFetchOutcome);
   });
 });
 

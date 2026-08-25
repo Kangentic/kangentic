@@ -182,7 +182,7 @@ When a project's mode for an agent is `remote`:
 |-----|------|---------|-------------|
 | `git.worktreesEnabled` | boolean | `true` | Enable git worktrees for task isolation |
 | `git.autoCleanup` | boolean | `true` | Delete branches when worktrees are removed |
-| `git.defaultBaseBranch` | string | `'main'` | Default base branch for worktrees |
+| `git.defaultBaseBranch` | string | `'main'` | Default base branch tasks start from (worktree cuts, and the non-worktree branch checkout) |
 | `git.copyFiles` | string[] | `[]` | Files to copy from repo root into worktrees |
 | `git.initScript` | string \| null | `null` | Shell script run in each new worktree after creation (and after `node_modules` linking). Runs via the platform shell (cmd.exe on Windows, sh on POSIX). A non-zero exit, timeout (10 min cap), or cancellation fails worktree creation. |
 | `git.linkNodeModules` | boolean | `true` | Symlink the root `node_modules` into each worktree so agents skip a fresh install. Disable to let `git.initScript` install dependencies inside the worktree instead. |

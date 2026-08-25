@@ -138,7 +138,7 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
       try {
         // Create worktree if needed (any non-backlog column gets an agent)
         try {
-          await ensureTaskWorktree(context, task, tasks, resolvedProjectPath, { onProgress });
+          await ensureTaskWorktree(context, task, tasks, resolvedProjectPath, { onProgress, projectId: resolvedProjectId });
         } catch (worktreeError) {
           console.error('[TASK_UNARCHIVE] Worktree creation failed:', worktreeError);
           notifySpawnBlocked(context, task, 'worktree', worktreeError, resolvedProjectId);
@@ -148,7 +148,7 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
         // Checkout the task's branch in the main repo (non-worktree tasks only).
         // If checkout fails, the task is still unarchived but no agent is spawned.
         try {
-          await ensureTaskBranchCheckout(context, task, resolvedProjectPath, { onProgress });
+          await ensureTaskBranchCheckout(context, task, resolvedProjectPath, { onProgress, projectId: resolvedProjectId });
         } catch (checkoutError) {
           console.error('[TASK_UNARCHIVE] Branch checkout failed:', checkoutError);
           notifySpawnBlocked(context, task, 'checkout', checkoutError, resolvedProjectId);
@@ -236,7 +236,7 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
         // can only ever retire this task's label, never a sibling's.
         try {
           try {
-            await ensureTaskWorktree(context, task, tasks, resolvedProjectPath, { onProgress });
+            await ensureTaskWorktree(context, task, tasks, resolvedProjectPath, { onProgress, projectId: resolvedProjectId });
           } catch (worktreeError) {
             console.error(`[TASK_BULK_UNARCHIVE] Worktree creation failed for task ${id.slice(0, 8)}:`, worktreeError);
             notifySpawnBlocked(context, task, 'worktree', worktreeError, resolvedProjectId);
@@ -246,7 +246,7 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
           // Checkout the task's branch in the main repo (non-worktree tasks only).
           // Catch per-task so one failure doesn't block the entire batch.
           try {
-            await ensureTaskBranchCheckout(context, task, resolvedProjectPath, { onProgress });
+            await ensureTaskBranchCheckout(context, task, resolvedProjectPath, { onProgress, projectId: resolvedProjectId });
           } catch (checkoutError) {
             console.error(`[TASK_BULK_UNARCHIVE] Branch checkout failed for task ${id.slice(0, 8)}:`, checkoutError);
             notifySpawnBlocked(context, task, 'checkout', checkoutError, resolvedProjectId);

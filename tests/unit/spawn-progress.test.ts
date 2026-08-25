@@ -20,6 +20,9 @@ import {
   clearSpawnProgress,
   getInFlightSpawnProgress,
   onSpawnProgressTransition,
+  setSpawnStaleNote,
+  beginSpawnStaleProbe,
+  touchSpawnStaleProbe,
   __resetSpawnProgressForTest,
 } from '../../src/main/transition-engine/spawn-progress';
 
@@ -108,6 +111,13 @@ describe('spawn-progress queryable map', () => {
     emitSpawnWaiting(window, 'task-1', 1, { label: 'rename-branch:1a2b3c4d', elapsedMs: 8_000 });
 
     expect(getInFlightSpawnProgress()['task-1']).toBe('Renaming branch (waiting 8s)');
+  });
+
+  it('emitSpawnWaiting names a running update-from-base job', () => {
+    const { window } = makeWindow();
+    emitSpawnWaiting(window, 'task-1', 1, { label: 'update-from-base:1a2b3c4d', elapsedMs: 20_000 });
+
+    expect(getInFlightSpawnProgress()['task-1']).toBe('Updating from base (waiting 20s)');
   });
 
   it('emitSpawnWaiting falls back to a generic phrase for an unknown running label', () => {
@@ -256,5 +266,201 @@ describe('spawn-progress queryable map', () => {
     // At 270_001ms: pruned (past TTL from the last push at 150s).
     nowSpy.mockReturnValue(150_000 + 120_001);
     expect(getInFlightSpawnProgress()['task-seq']).toBeUndefined();
+  });
+});
+
+describe('spawn-progress stale note', () => {
+  beforeEach(() => {
+    __resetSpawnProgressForTest();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('setting a note re-pushes the current label decorated, immediately', () => {
+    const { window, send } = makeWindow();
+    emitSpawnProgress(window, 'task-1', 'starting-agent');
+    send.mockClear();
+
+    setSpawnStaleNote(window, 'task-1', 'base 3 behind');
+
+    expect(send).toHaveBeenCalledWith('task:spawnProgress', 'task-1', 'Starting agent... (base 3 behind)');
+    expect(getInFlightSpawnProgress()['task-1']).toBe('Starting agent... (base 3 behind)');
+  });
+
+  it('the note decorates every subsequent phase emit', () => {
+    const { window, send } = makeWindow();
+    emitSpawnProgress(window, 'task-1', 'fetching');
+    setSpawnStaleNote(window, 'task-1', 'base fetch failed');
+    send.mockClear();
+
+    emitSpawnProgress(window, 'task-1', 'starting-agent');
+
+    expect(send).toHaveBeenCalledWith('task:spawnProgress', 'task-1', 'Starting agent... (base fetch failed)');
+    expect(getInFlightSpawnProgress()['task-1']).toBe('Starting agent... (base fetch failed)');
+  });
+
+  it('decorates the queue-wait label too (the stall watcher regex tolerates the suffix)', () => {
+    const { window } = makeWindow();
+    emitSpawnWaiting(window, 'task-1', 1, { label: 'remove-worktree:1a2b3c4d', elapsedMs: 45_000 });
+    setSpawnStaleNote(window, 'task-1', 'base fetch failed');
+
+    expect(getInFlightSpawnProgress()['task-1']).toBe('Removing worktree (waiting 45s) (base fetch failed)');
+  });
+
+  it('a TOKENLESS note no-ops when the task has no in-flight entry', () => {
+    const { window, send } = makeWindow();
+
+    setSpawnStaleNote(window, 'task-1', 'base 3 behind');
+    expect(send).not.toHaveBeenCalled();
+    expect(getInFlightSpawnProgress()).toEqual({});
+
+    // A later, unrelated spawn of the same task starts undecorated.
+    emitSpawnProgress(window, 'task-1', 'fetching');
+    expect(getInFlightSpawnProgress()['task-1']).toBe('Fetching latest...');
+  });
+
+  it('a probe-token note with no entry PENDS and decorates the spawn\'s next label push', () => {
+    // The reuse-spawn shape: nothing is in flight between the move and Phase
+    // 3's 'starting-agent', which is exactly when the drift probe resolves.
+    // Dropping the note there meant reuse drift effectively never surfaced.
+    const { window } = makeWindow();
+    const probeGeneration = beginSpawnStaleProbe('task-1');
+
+    setSpawnStaleNote(window, 'task-1', 'base 1 behind', probeGeneration);
+    expect(getInFlightSpawnProgress()).toEqual({});
+
+    emitSpawnProgress(window, 'task-1', 'starting-agent');
+    expect(getInFlightSpawnProgress()['task-1']).toBe('Starting agent... (base 1 behind)');
+  });
+
+  it('a pended note is voided by a clear - the task\'s NEXT spawn starts undecorated', () => {
+    const { window } = makeWindow();
+    const probeGeneration = beginSpawnStaleProbe('task-1');
+    setSpawnStaleNote(window, 'task-1', 'base 1 behind', probeGeneration);
+
+    // The probed spawn ends without ever pushing a label (the promote/MCP
+    // shape); the clear must take the pending note with it.
+    clearSpawnProgress(window, 'task-1');
+
+    emitSpawnProgress(window, 'task-1', 'fetching');
+    expect(getInFlightSpawnProgress()['task-1']).toBe('Fetching latest...');
+  });
+
+  it('a probe token captured before a clear cannot decorate the next spawn, even mid-flight', () => {
+    const { window } = makeWindow();
+    // Probe starts during spawn A...
+    emitSpawnProgress(window, 'task-1', 'starting-agent');
+    const staleToken = beginSpawnStaleProbe('task-1');
+    // ...spawn A clears, spawn B starts...
+    clearSpawnProgress(window, 'task-1');
+    emitSpawnProgress(window, 'task-1', 'fetching');
+
+    // ...and spawn A's probe finally resolves. Spawn B's freshly-cut tree is
+    // not behind; spawn A's verdict must not stick to it.
+    setSpawnStaleNote(window, 'task-1', 'base 5 behind', staleToken);
+    expect(getInFlightSpawnProgress()['task-1']).toBe('Fetching latest...');
+  });
+
+  it('clearSpawnProgress drops the note - the next spawn of the same task is undecorated', () => {
+    const { window } = makeWindow();
+    emitSpawnProgress(window, 'task-1', 'fetching');
+    setSpawnStaleNote(window, 'task-1', 'base 3 behind');
+    clearSpawnProgress(window, 'task-1');
+
+    emitSpawnProgress(window, 'task-1', 'starting-agent');
+    expect(getInFlightSpawnProgress()['task-1']).toBe('Starting agent...');
+  });
+
+  it('TTL prune removes the note along with the entry', () => {
+    const nowSpy = vi.spyOn(Date, 'now');
+    const { window } = makeWindow();
+
+    nowSpy.mockReturnValue(0);
+    emitSpawnProgress(window, 'task-1', 'starting-agent');
+    setSpawnStaleNote(window, 'task-1', 'base 3 behind');
+
+    nowSpy.mockReturnValue(120_001);
+    expect(getInFlightSpawnProgress()['task-1']).toBeUndefined();
+
+    // A fresh spawn after the prune starts undecorated.
+    emitSpawnProgress(window, 'task-1', 'fetching');
+    expect(getInFlightSpawnProgress()['task-1']).toBe('Fetching latest...');
+  });
+
+  it('the sweep drops a pending note past the probe horizon, bounding the map', () => {
+    const nowSpy = vi.spyOn(Date, 'now');
+    const { window } = makeWindow();
+
+    nowSpy.mockReturnValue(0);
+    const probeGeneration = beginSpawnStaleProbe('task-1');
+    setSpawnStaleNote(window, 'task-1', 'base 1 behind', probeGeneration);
+
+    // Past the 60s horizon, a snapshot read sweeps the orphaned pending entry.
+    nowSpy.mockReturnValue(60_001);
+    getInFlightSpawnProgress();
+
+    emitSpawnProgress(window, 'task-1', 'starting-agent');
+    expect(getInFlightSpawnProgress()['task-1']).toBe('Starting agent...');
+  });
+
+  it('the sweep never drops a clear-generation baseline out from under a live probe', () => {
+    const nowSpy = vi.spyOn(Date, 'now');
+    const { window } = makeWindow();
+
+    // A clear at T0 creates the generation entry...
+    nowSpy.mockReturnValue(0);
+    emitSpawnProgress(window, 'task-1', 'starting-agent');
+    clearSpawnProgress(window, 'task-1');
+
+    // ...a probe starts 50s later (touching the entry)...
+    nowSpy.mockReturnValue(50_000);
+    const probeGeneration = beginSpawnStaleProbe('task-1');
+
+    // ...a sweep runs 99s after the clear but only 49s after the touch...
+    nowSpy.mockReturnValue(99_000);
+    getInFlightSpawnProgress();
+
+    // ...and the probe's note still lands on the spawn in flight.
+    emitSpawnProgress(window, 'task-1', 'starting-agent');
+    setSpawnStaleNote(window, 'task-1', 'base 1 behind', probeGeneration);
+    expect(getInFlightSpawnProgress()['task-1']).toBe('Starting agent... (base 1 behind)');
+  });
+
+  it('touchSpawnStaleProbe keeps a git-queue-delayed probe\'s baseline alive across a sweep', () => {
+    const nowSpy = vi.spyOn(Date, 'now');
+    const { window } = makeWindow();
+
+    // A clear at T0 creates the generation entry, and a probe captures it...
+    nowSpy.mockReturnValue(0);
+    emitSpawnProgress(window, 'task-1', 'starting-agent');
+    clearSpawnProgress(window, 'task-1');
+    const probeGeneration = beginSpawnStaleProbe('task-1');
+
+    // ...the probe sits in the git queue until T55s, then re-touches when it
+    // finally starts running...
+    nowSpy.mockReturnValue(55_000);
+    touchSpawnStaleProbe('task-1');
+
+    // ...so a sweep at T110s (110s after capture, 55s after the touch) keeps
+    // the baseline, and the probe's late note still lands.
+    nowSpy.mockReturnValue(110_000);
+    getInFlightSpawnProgress();
+    emitSpawnProgress(window, 'task-1', 'starting-agent');
+    setSpawnStaleNote(window, 'task-1', 'base 1 behind', probeGeneration);
+    expect(getInFlightSpawnProgress()['task-1']).toBe('Starting agent... (base 1 behind)');
+  });
+
+  it('notes are per-task', () => {
+    const { window } = makeWindow();
+    emitSpawnProgress(window, 'task-1', 'starting-agent');
+    emitSpawnProgress(window, 'task-2', 'starting-agent');
+    setSpawnStaleNote(window, 'task-1', 'base 3 behind');
+
+    expect(getInFlightSpawnProgress()).toEqual({
+      'task-1': 'Starting agent... (base 3 behind)',
+      'task-2': 'Starting agent...',
+    });
   });
 });

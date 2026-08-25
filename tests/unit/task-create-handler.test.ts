@@ -148,6 +148,7 @@ const capturedHandlers = new Map<string, (...args: unknown[]) => unknown>();
 
 import { registerTaskCrudHandlers } from '../../src/main/ipc/handlers/task-crud';
 import { IPC } from '../../src/shared/ipc-channels';
+import { getInFlightSpawnProgress, __resetSpawnProgressForTest } from '../../src/main/transition-engine/spawn-progress';
 
 // ---------------------------------------------------------------------------
 // Helper types
@@ -332,6 +333,7 @@ describe('TASK_CREATE handler', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     capturedHandlers.clear();
+    __resetSpawnProgressForTest();
 
     targetLane = createMockSwimlane('lane-doing', { auto_spawn: true });
     task = createMockTask('task-new', { swimlane_id: 'lane-doing' });
@@ -536,6 +538,59 @@ describe('TASK_CREATE handler', () => {
     });
 
     expect(result).toMatchObject({ id: 'task-new' });
+  });
+
+  // =========================================================================
+  // Spawn progress wiring (born-into-a-column spawns used to be silent)
+  // =========================================================================
+
+  it('threads onProgress + projectId into both git helpers and pushes their phases to the card', async () => {
+    // The mocked helper stands in for the real one emitting 'fetching'; the
+    // handler's createProgressCallback must resolve it and push over IPC.
+    mockEnsureTaskWorktree.mockImplementation(async (
+      _context: unknown, _task: unknown, _tasks: unknown, _path: unknown,
+      options?: { onProgress?: (phase: string) => void },
+    ) => {
+      options?.onProgress?.('fetching');
+      return null;
+    });
+
+    await callCreateHandler(context, {
+      swimlane_id: 'lane-doing',
+      title: 'Progress task',
+    });
+
+    const worktreeOptions = mockEnsureTaskWorktree.mock.calls[0][4] as { onProgress?: unknown; projectId?: unknown };
+    expect(typeof worktreeOptions.onProgress).toBe('function');
+    expect(worktreeOptions.projectId).toBe('proj-123');
+    const checkoutOptions = mockEnsureTaskBranchCheckout.mock.calls[0][3] as { onProgress?: unknown; projectId?: unknown };
+    expect(typeof checkoutOptions.onProgress).toBe('function');
+    expect(checkoutOptions.projectId).toBe('proj-123');
+
+    expect(context.mainWindow.webContents.send).toHaveBeenCalledWith(
+      IPC.TASK_SPAWN_PROGRESS, 'task-new', 'Fetching latest...',
+    );
+    // The finally cleared the label, so an HMR reconcile after the create
+    // cannot strand the card on a stale phase.
+    expect(getInFlightSpawnProgress()).toEqual({});
+  });
+
+  it('clears the in-flight label even when a git step fails', async () => {
+    mockEnsureTaskWorktree.mockImplementation(async (
+      _context: unknown, _task: unknown, _tasks: unknown, _path: unknown,
+      options?: { onProgress?: (phase: string) => void },
+    ) => {
+      options?.onProgress?.('creating-worktree');
+      throw new Error('git worktree add failed');
+    });
+
+    await callCreateHandler(context, {
+      swimlane_id: 'lane-doing',
+      title: 'Progress cleanup task',
+    });
+
+    // The notifySpawnBlocked early-return still flows through the finally.
+    expect(getInFlightSpawnProgress()).toEqual({});
   });
 
   // =========================================================================

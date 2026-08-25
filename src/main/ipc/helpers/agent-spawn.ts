@@ -23,7 +23,7 @@ import { loadTaskProfile } from './task-profile';
 import { buildCommandInjectionVerifier } from '../../transition-engine/injection-plan';
 import type { CommandVerifier } from '../../transition-engine/terminal-submit-scheduler';
 import { reportAutoCommandOutcome } from './auto-command-outcome';
-import { emitSpawnProgress, createProgressCallback } from '../../transition-engine/spawn-progress';
+import { emitSpawnProgress, createProgressCallback, clearSpawnProgress } from '../../transition-engine/spawn-progress';
 import { ensureTaskWorktree, ensureTaskBranchCheckout, notifySpawnBlocked } from './task-git';
 import { getProjectRepos } from './project-repos';
 import { withTaskLock } from '../task-lifecycle-lock';
@@ -556,38 +556,46 @@ export async function autoSpawnForTask(
       const toLane = applyProfileToLane(rawLane, loadTaskProfile(context, fullTask, projectPath)) ?? rawLane;
       if (!toLane.auto_spawn) return;
 
+      // MCP auto-spawn used to be progress-silent end to end; the card now
+      // shows the same fetch/branch/worktree phases the drag path does. The
+      // finally clears the label on every exit, including the blocked returns.
+      const onProgress = createProgressCallback(context.mainWindow, fullTask.id);
       try {
-        await ensureTaskWorktree(context, fullTask, tasks, projectPath);
-      } catch (worktreeError) {
-        console.error('[MCP auto-spawn] Worktree creation failed:', worktreeError);
-        notifySpawnBlocked(context, fullTask, 'worktree', worktreeError, projectId);
-        return;
+        try {
+          await ensureTaskWorktree(context, fullTask, tasks, projectPath, { onProgress, projectId });
+        } catch (worktreeError) {
+          console.error('[MCP auto-spawn] Worktree creation failed:', worktreeError);
+          notifySpawnBlocked(context, fullTask, 'worktree', worktreeError, projectId);
+          return;
+        }
+
+        // Checkout the task's branch for non-worktree tasks. ensureTaskBranchCheckout
+        // decides for itself whether there is anything to check out, and refuses to
+        // touch a directory another task's agent is live in. The occupancy check
+        // used to be inlined here "to avoid circular import with task-move.ts";
+        // that cycle never existed from task-git.ts, and the copy had drifted from
+        // the original in exactly the way that let a custom-branch task through.
+        try {
+          await ensureTaskBranchCheckout(context, fullTask, projectPath, { onProgress, projectId });
+        } catch (checkoutError) {
+          console.error('[MCP auto-spawn] Branch checkout failed:', checkoutError);
+          // The explicit projectId, never the ambient current one: MCP auto-spawn
+          // targets whichever project the tool named, which is often not the
+          // focused one. Falling back to `context.currentProjectId` would stamp
+          // the notice with the wrong project, and the renderer filters on it.
+          notifySpawnBlocked(context, fullTask, 'checkout', checkoutError, projectId);
+          return;
+        }
+
+        const sessionRepo = new SessionRepository(db);
+        const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachments, projectId, projectPath);
+
+        await spawnAgent({ context, engine, tasks, sessionRepo, task: fullTask, fromSwimlaneId: '*', toLane, projectId, projectPath, attachments });
+
+        console.log(`[MCP auto-spawn] Spawned agent for "${task.title}" in ${toLane.name}`);
+      } finally {
+        clearSpawnProgress(context.mainWindow, fullTask.id);
       }
-
-      // Checkout the task's branch for non-worktree tasks. ensureTaskBranchCheckout
-      // decides for itself whether there is anything to check out, and refuses to
-      // touch a directory another task's agent is live in. The occupancy check
-      // used to be inlined here "to avoid circular import with task-move.ts";
-      // that cycle never existed from task-git.ts, and the copy had drifted from
-      // the original in exactly the way that let a custom-branch task through.
-      try {
-        await ensureTaskBranchCheckout(context, fullTask, projectPath);
-      } catch (checkoutError) {
-        console.error('[MCP auto-spawn] Branch checkout failed:', checkoutError);
-        // The explicit projectId, never the ambient current one: MCP auto-spawn
-        // targets whichever project the tool named, which is often not the
-        // focused one. Falling back to `context.currentProjectId` would stamp
-        // the notice with the wrong project, and the renderer filters on it.
-        notifySpawnBlocked(context, fullTask, 'checkout', checkoutError, projectId);
-        return;
-      }
-
-      const sessionRepo = new SessionRepository(db);
-      const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachments, projectId, projectPath);
-
-      await spawnAgent({ context, engine, tasks, sessionRepo, task: fullTask, fromSwimlaneId: '*', toLane, projectId, projectPath, attachments });
-
-      console.log(`[MCP auto-spawn] Spawned agent for "${task.title}" in ${toLane.name}`);
     } catch (err) {
       console.error('[MCP auto-spawn] Failed:', err);
     }

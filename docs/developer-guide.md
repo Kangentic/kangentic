@@ -97,7 +97,7 @@ src/
         session-metrics.ts # Session summary and metrics aggregation
         sessions.ts        # SESSION_* handlers, PTY event listeners
         system.ts          # Config, Claude, Shell, Git, Dialog, Window, Notifications
-        task-branch.ts     # TASK_SWITCH_BRANCH handler
+        task-branch.ts     # TASK_SWITCH_BRANCH / TASK_UPDATE_FROM_BASE handlers
         task-crud.ts       # TASK_LIST, CREATE, UPDATE, DELETE, archive handlers
         task-move.ts       # TASK_MOVE handler with priority rules
         tasks.ts           # Task handler orchestrator, bulk operations

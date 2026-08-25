@@ -186,6 +186,17 @@ that error goes depends on the entry point:
   to the renderer's `invoke()` call, not a toast from this list, but however the branch-switch UI
   surfaces a rejected mutation.
 
+A related but distinct signal: a spawn that REUSES a pre-existing worktree (created eagerly from
+the branch picker, or by an earlier move of a long-lived task) never re-fetches or moves that
+tree. `ensureTaskWorktree` instead runs a fire-and-forget drift probe (throttled base fetch plus
+one `rev-list` against `origin/<base>`) and, when the tree's base is behind, decorates the card's
+spawn-progress labels with `(base N behind)`. The remedy is explicit, never automatic: the
+task-detail kebab's "Update from base" (`TASK_UPDATE_FROM_BASE`, same file) fetches the effective
+base and fast-forwards the worktree, refusing cleanly when the branch carries its own commits or
+the tree is dirty. A base fetch that genuinely fails (network, credentials) during any spawn path
+decorates the labels with `(base fetch failed)` and pushes one cooldown-guarded `task:spawnWarning`
+toast per project, so "started from a stale base" is never silent.
+
 The two failure modes:
 
 - **A stale directory** at the computed worktree path could not be removed and is not an empty,

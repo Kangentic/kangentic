@@ -927,7 +927,7 @@ export async function handleTaskMove(
       // back to its original column so it doesn't get stuck without a session.
       try {
         const { tasks: tasksPhase2 } = getProjectRepos(context, resolvedProjectId);
-        await ensureTaskWorktree(context, task, tasksPhase2, resolvedProjectPath, { signal, onProgress, onWaitProgress });
+        await ensureTaskWorktree(context, task, tasksPhase2, resolvedProjectPath, { signal, onProgress, onWaitProgress, projectId: resolvedProjectId });
       } catch (error) {
         // Let AbortError propagate to the outer catch for centralized handling
         if (isAbortError(error)) throw error;
@@ -1014,7 +1014,7 @@ export async function handleTaskMove(
       // the outer catch which also handles AbortError cleanup. That includes
       // BranchCheckoutBlockedError, which reaches the user as a toast here, so
       // this is the one call site that needs no notifySpawnBlocked.
-      await ensureTaskBranchCheckout(context, task, resolvedProjectPath, { signal, onProgress, onWaitProgress });
+      await ensureTaskBranchCheckout(context, task, resolvedProjectPath, { signal, onProgress, onWaitProgress, projectId: resolvedProjectId });
 
       // === Phase 3 (locked, short) ===
       // CAS-check invariants before spawning. If a newer move ran during our

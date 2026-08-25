@@ -11,6 +11,7 @@ import { BacklogAttachmentRepository } from '../../db/repositories/backlog-attac
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { cleanupTaskResources, createTransitionEngine, getProjectRepos, ensureTaskWorktree, ensureTaskBranchCheckout, notifySpawnBlocked, spawnAgent, openAttachmentFile } from '../helpers';
 import { isAbortError } from '../../../shared/abort-utils';
+import { createProgressCallback, clearSpawnProgress } from '../../transition-engine/spawn-progress';
 import { withTaskLock } from '../task-lifecycle-lock';
 import type { IpcContext } from '../ipc-context';
 import type {
@@ -187,9 +188,13 @@ export function registerBacklogHandlers(context: IpcContext): void {
             // for the same task. AbortController is wired up outside the lock so
             // a concurrent move can preempt this promotion before it acquires.
             await withTaskLock(task.id, async () => {
+              // Promotion spawns used to be progress-silent; the card now shows
+              // the same fetch/branch/worktree phases the drag path does. The
+              // finally clears on every exit, including the abort path.
+              const onProgress = createProgressCallback(context.mainWindow, task.id);
               try {
                 try {
-                  await ensureTaskWorktree(context, task, tasks, projectPath, { signal });
+                  await ensureTaskWorktree(context, task, tasks, projectPath, { signal, onProgress, projectId });
                 } catch (worktreeError) {
                   if (isAbortError(worktreeError)) throw worktreeError;
                   console.error('[BACKLOG_PROMOTE] Worktree creation failed:', worktreeError);
@@ -198,7 +203,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
                 }
 
                 try {
-                  await ensureTaskBranchCheckout(context, task, projectPath, { signal });
+                  await ensureTaskBranchCheckout(context, task, projectPath, { signal, onProgress, projectId });
                 } catch (checkoutError) {
                   if (isAbortError(checkoutError)) throw checkoutError;
                   console.error('[BACKLOG_PROMOTE] Branch checkout failed:', checkoutError);
@@ -220,6 +225,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
                 }
                 throw error;
               } finally {
+                clearSpawnProgress(context.mainWindow, task.id);
                 if (promotionControllers.get(task.id) === promotionController) {
                   promotionControllers.delete(task.id);
                 }
