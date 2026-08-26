@@ -153,7 +153,12 @@ The check lives in that function rather than in a caller, deliberately. It previ
 `usesCustomBranch || base_branch`, so a task with a custom branch and no base branch checked out with
 the guard never running. Co-locating the guard with the checkout makes that class of drift
 impossible, and running it inside the per-project git queue (which already wraps the checkout) makes
-the probe atomic against every other checkout on the project without adding a third lock.
+the probe atomic against every other checkout on the project without adding a third lock. The queue
+covers only other checkouts, though, so each checkout arm re-asserts the guard immediately after its
+fetch await: the entry assert is point-in-time, and a session that never enters the git queue (a
+resume, a base-less task's spawn, a Command Terminal) can start during the fetch's timeout budget.
+The scan is synchronous and in-memory, so re-running it right before the mutation closes that window
+for free.
 
 Where the error goes depends on the entry point, exactly as worktree failures do. A task **move**
 surfaces it as a toast. Create, promote, unarchive and MCP auto-spawn deliberately keep the task and
@@ -195,7 +200,7 @@ task-detail kebab's "Update from base" (`TASK_UPDATE_FROM_BASE`, same file) fetc
 base and fast-forwards the worktree, refusing cleanly when the branch carries its own commits or
 the tree is dirty. A base fetch that genuinely fails (network, credentials) during any spawn path
 decorates the labels with `(base fetch failed)` and pushes one cooldown-guarded `task:spawnWarning`
-toast per project, so "started from a stale base" is never silent.
+toast per project per reason class, so "started from a stale base" is never silent.
 
 The two failure modes:
 
