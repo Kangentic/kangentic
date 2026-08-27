@@ -1739,6 +1739,83 @@ describe('PtyBufferManager', () => {
       manager.removeSession(SESSION);
     });
 
+    it('an OSC window title split across chunks (no terminator in the first chunk) does not arm the takeover predicate', async () => {
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
+      manager.initSession(SESSION, '', 80, 24);
+
+      // The OSC title from the sibling single-chunk test above, but with its
+      // \x07 terminator withheld from the first chunk - the shape a real PTY
+      // read boundary can produce. stripAnsiSequences's printable check must
+      // still swallow the WHOLE unterminated payload (the doc's "terminator
+      // OPTIONAL" guarantee): if the terminator were required to recognize
+      // the OSC as a control sequence, the bare regex would fall through to
+      // the single ESC+char eraser, leave the path text as literal
+      // characters, and register it as printable - consuming the one-shot on
+      // ConPTY's escape-only startup clear (arriving in the SECOND chunk)
+      // with nothing real to strip.
+      manager.onData(SESSION, '\x1b]0;C:\\Program Files\\PowerShell\\7\\pwsh.exe');
+      manager.onData(SESSION, '\x07\x1b[?25l\x1b[2J\x1b[m\x1b[H');
+      manager.onData(SESSION, 'PS C:\\Users\\dev> node agent.js\r\n');
+      let scrolledOutput = '';
+      for (let line = 1; line <= 40; line += 1) {
+        scrolledOutput += `banner text line ${line}\r\n`;
+      }
+      manager.onData(SESSION, scrolledOutput);
+      manager.onResize(SESSION, 120, 30);
+      manager.onData(SESSION, '\x1b[2J\x1b[1;1HTUI FRAME ROW');
+
+      // The strip stayed armed through the split title+clear preamble and
+      // fired on the REAL takeover clear: the echo is gone from the gated
+      // frame.
+      const snapshot = await manager.getReplaySnapshot(SESSION);
+      expect(snapshot).toContain('TUI FRAME ROW');
+      expect(snapshot).not.toContain('PS C:');
+
+      manager.removeSession(SESSION);
+    });
+
+    it('a takeover clear split across chunks stamps the SAME boundary as an unsplit one (the modeParseCarry correction)', async () => {
+      const onFlush = vi.fn();
+      const manager = new PtyBufferManager({ onFlush, onDrain: vi.fn() });
+      manager.initSession(SESSION, '', 80, 24);
+
+      // The echo, ending mid-escape-sequence: the trailing '\x1b[' is a valid
+      // partial CSI opener, so it rides state.modeParseCarry into the next
+      // chunk rather than landing in `data` there. The clear-detection scan
+      // (run on `combined = modeParseCarry + data`) still finds the clear,
+      // but both the tuiStartIndex stamp and the live ED3 injection point
+      // must correct for the carry's length - otherwise they land 2 bytes
+      // into the NEXT chunk instead of at the true ring/data boundary.
+      manager.onData(SESSION, 'PS C:\\Users\\dev> node agent.js\r\n\x1b[');
+      manager.onData(SESSION, '2J\x1b[1;1HTUI FRAME ROW');
+
+      await expect
+        .poll(() => onFlush.mock.calls.length > 0, { timeout: 2000, interval: 10 })
+        .toBe(true);
+      await new Promise((resolve) => setTimeout(resolve, 40));
+
+      const flushed = onFlush.mock.calls.map((call) => call[1] as string).join('');
+      const clearIndex = flushed.indexOf('\x1b[2J');
+      const injectedIndex = flushed.indexOf('\x1b[3J');
+      expect(clearIndex).toBeGreaterThanOrEqual(0);
+      // Exactly one ED3, landing immediately behind the (unmangled) clear -
+      // a dropped carry-length correction on the injection line would place
+      // it 2 bytes later, splitting the clear sequence itself.
+      expect(flushed.split('\x1b[3J').length - 1).toBe(1);
+      expect(injectedIndex).toBe(clearIndex + '\x1b[2J'.length);
+
+      // The raw byte route's tuiStartIndex stamp must land at the SAME
+      // boundary: the clear sequence intact and unmangled, with no leftover
+      // pre-TUI echo. A dropped carry-length correction there instead slices
+      // 2 bytes late, leaving a dangling literal "2J" (its leading ESC eaten
+      // into the "stripped" half) rather than an intact \x1b[2J.
+      const rawReplay = manager.getScrollback(SESSION);
+      expect(rawReplay).not.toContain('PS C:');
+      expect(rawReplay).toContain('\x1b[2J\x1b[1;1HTUI FRAME ROW');
+
+      manager.removeSession(SESSION);
+    });
+
     it('a single chunk coalescing the ConPTY startup clear, the shell echo, and the takeover clear strips on the qualifying clear only', async () => {
       const onFlush = vi.fn();
       const manager = new PtyBufferManager({ onFlush, onDrain: vi.fn() });
