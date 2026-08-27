@@ -81,6 +81,11 @@ vi.mock('../../src/main/pr/pr-registry', () => ({
 
 vi.mock('../../src/shared/paths', () => ({
   adaptCommandForShell: (cmd: string) => cmd,
+  // performSpawn's deferred command write calls this ~100ms after every
+  // spawn under this file's REAL timers; a factory without it throws
+  // "buildSpawnClearPrelude is not a function" as an unhandled error after
+  // the test body has already returned.
+  buildSpawnClearPrelude: () => '',
 }));
 
 // trace-recorder is the only module the onExit body touches that the
