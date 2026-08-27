@@ -53,8 +53,10 @@ bonus rather than a fix.
 
 This is load-bearing rather than cosmetic. Moving a task to Done nulls `worktree_path`, so moving it
 back out is a **fresh creation**. If it landed at a different path, the agent's transcript would be
-orphaned (Claude keys it by a slug of the cwd, so `--resume` reports "No conversation found") and
-the worktree's browser cookie jar would be dropped (`browserPartitionForWorktree` hashes the path).
+orphaned (Claude keys it by a slug of the cwd, so `--resume` reports "No conversation found"). The
+browser cookie jar is no longer a reason here: it is keyed by task identity
+(`browserPartitionForTask`), so a path change cannot drop it - only the transcript keeps this
+invariant.
 
 For a task that predates the column and has already been through Done, both `worktree_path` and
 `worktree_folder` are null. `TaskRepository.recoverLegacyWorktreeFolder` recovers the original name
