@@ -19,7 +19,7 @@ import { safeKillPty } from './pty-kill';
 import { resolveShellArgs, buildSpawnEnv, resolveSpawnCwd } from '../spawn/pty-spawn';
 import { handleSpawnFailure } from '../spawn/spawn-failure-handler';
 import { isShuttingDown } from '../../shutdown-state';
-import { adaptCommandForShell } from '../../../shared/paths';
+import { adaptCommandForShell, buildSpawnClearPrelude } from '../../../shared/paths';
 
 /**
  * Default PTY dimensions a session is spawned at, before any renderer-driven
@@ -130,8 +130,11 @@ export async function performSpawn(
   // Carry over previous scrollback BEFORE removing state so scroll history
   // is preserved across respawns (including resume). Claude CLI's TUI uses
   // full-screen draws that overwrite the active viewport without corrupting
-  // scroll history.
+  // scroll history. The geometry the carried bytes were drawn for rides
+  // along so initSession can keep the replay's geometry gate accurate
+  // instead of conservatively frame-routing every respawn.
   const previousScrollback = existing ? context.bufferManager.getRawScrollback(existing.id) : '';
+  const previousGeometry = existing ? context.bufferManager.getCarryoverGeometry(existing.id) : null;
 
   // Remove old session from map and caches so findByTaskId returns
   // the new session, and stale usage/activity data doesn't persist.
@@ -242,7 +245,12 @@ export async function performSpawn(
   // truthfully: an unchanged width (PTY spawned at the fitted size) reports
   // false and skips the repaint-settle, while the cold-launch 120-to-fitted
   // change reports true and arms it. See PtyBufferManager.onResize.
-  context.bufferManager.initSession(id, previousScrollback, spawnCols, spawnRows);
+  // previousGeometry lets initSession carry the replay geometry gate through a
+  // same-geometry respawn (the common resume) instead of frame-routing it.
+  // transient mirrors the clear-prelude exemption below: a Command Terminal
+  // has no spawn echo for the pre-TUI strip to hunt, and arming it there
+  // would let a user shell's later \x1b[2J wipe genuine scrollback.
+  context.bufferManager.initSession(id, previousScrollback, spawnCols, spawnRows, previousGeometry, input.transient === true);
   context.sessionFiles.register({
     sessionId: id,
     statusOutputPath: input.statusOutputPath || null,
@@ -534,7 +542,13 @@ export async function performSpawn(
         ptyProcess.write(cwdFixupCommand + '\r');
       }
       if (input.command) {
-        const cmd = adaptCommandForShell(input.command, shellName);
+        // Non-transient (agent) spawns get the shell's own clear prefixed
+        // onto the typed line, so the shell erases its startup preamble and
+        // command echo at execution time - see buildSpawnClearPrelude for why
+        // this beats every marker heuristic. Transient Command Terminals stay
+        // a normal shell experience and skip it.
+        const prelude = input.transient ? '' : buildSpawnClearPrelude(shellName);
+        const cmd = prelude + adaptCommandForShell(input.command, shellName);
         if (cwdFixupCommand) {
           setTimeout(() => ptyProcess.write(cmd + '\r'), 200);
         } else {

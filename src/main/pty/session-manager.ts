@@ -1538,9 +1538,11 @@ export class SessionManager extends EventEmitter {
     if (this.registry.get(sessionId)?.pty) {
       await this.bufferManager.waitForResizeRepaint(sessionId);
     }
-    // Alt-screen sessions get the parsed-grid frame, everything else the raw
-    // byte replay - see PtyBufferManager.getReplaySnapshot for why a capped
-    // byte ring cannot reconstruct a fullscreen TUI's write-once cells.
+    // Alt-screen sessions and sessions whose byte ring spans a geometry
+    // change get the parsed-grid frame, everything else the raw byte replay -
+    // see PtyBufferManager.getReplaySnapshot for why a capped byte ring
+    // cannot reconstruct a fullscreen TUI's write-once cells, and why a
+    // multi-geometry ring replays with stale-geometry rows interleaved.
     return this.bufferManager.getReplaySnapshot(sessionId);
   }
 
@@ -1673,6 +1675,7 @@ export class SessionManager extends EventEmitter {
     pendingRepaintAt: number | null;
     pendingRepaintStacked: boolean;
     inAltScreen: boolean;
+    geometryChangedAtRingIndex: number | null;
   }> {
     const rows = [];
     for (const session of this.registry.values()) {
@@ -1694,6 +1697,7 @@ export class SessionManager extends EventEmitter {
         pendingRepaintAt: buffer?.pendingRepaintAt ?? null,
         pendingRepaintStacked: buffer?.pendingRepaintStacked ?? false,
         inAltScreen: buffer?.inAltScreen ?? false,
+        geometryChangedAtRingIndex: buffer?.geometryChangedAtRingIndex ?? null,
       });
     }
     return rows;

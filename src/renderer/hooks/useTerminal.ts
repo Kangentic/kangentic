@@ -493,6 +493,13 @@ export interface ReplayWidthInput {
  *   written narrow there has already re-wrapped itself correctly and a re-issue
  *   would be pure churn. Only the ALTERNATE buffer (a full-screen agent TUI) is
  *   never reflowed, and that is exactly where a stale width is permanent.
+ *   Caveat, accepted: a GEOMETRY-GATED non-alt session (one whose byte ring
+ *   spans a resize - see PtyBufferManager.getReplaySnapshot) replays a
+ *   serialized frame whose hard-positioned TUI rows do not fully reflow, so
+ *   the premise is weaker there. The renderer cannot tell the shapes apart
+ *   (the payload is a bare string), the exposure window is one reload-time
+ *   width race, and the very next reload refetches a frame serialized at the
+ *   current PTY width - so this stays an accept rather than an IPC widening.
  * - `attempt-cap`: the budget is spent. Accepting a visibly wrong frame is worse
  *   than one more round trip but far better than an unbounded loop.
  *
@@ -684,12 +691,13 @@ export function useTerminal(options: UseTerminalOptions) {
    * by construction inside `scrollback`, whichever shape the sample takes. A
    * byte replay: main appends to its ring and its pending buffer from the same
    * bytes, clears the pending buffer at sample time, and IPC replies are
-   * ordered against the flush stream. A parsed-grid frame (an alt-screen
-   * session's sample, PtyBufferManager.getReplaySnapshot): every byte fed
-   * before the sample is baked into the frame (the serialize is atomic with
-   * the parser's flush barrier), bytes racing the sample ride the reply as an
-   * appended tail, and main holds the session's flush ticks for the sample's
-   * duration so none of those bytes can arrive here ahead of the reply. Main's
+   * ordered against the flush stream. A parsed-grid frame (an alt-screen or
+   * geometry-gated session's sample, PtyBufferManager.getReplaySnapshot):
+   * every byte fed before the sample is baked into the frame (the serialize
+   * is atomic with the parser's flush barrier), bytes racing the sample ride
+   * the reply as an appended tail, and main holds the session's flush ticks
+   * for the sample's duration so none of those bytes can arrive here ahead of
+   * the reply. Main's
    * half of the double-delivery guard has always been there; this is the
    * renderer's half, for the bytes main can no longer recall.
    *

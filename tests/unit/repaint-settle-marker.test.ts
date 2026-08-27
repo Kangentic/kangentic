@@ -76,8 +76,10 @@ describe('repaint settle: what the user sees first on a panel -> window handoff'
     const settle = manager.waitForResizeRepaint(SESSION);
 
     // The genuine SIGWINCH repaint arrives later, as it always does - the agent
-    // has to be scheduled, re-measure, and redraw.
-    const repaintTimer = setTimeout(() => manager.onData(SESSION, REPAINT_FRAME), 100);
+    // has to be scheduled, re-measure, and redraw. 60ms keeps it inside the
+    // marker window (MARKERLESS_REPAINT_MIN_WAIT_MS) with margin for CI
+    // scheduling jitter, so the markerless fallback cannot race it here.
+    const repaintTimer = setTimeout(() => manager.onData(SESSION, REPAINT_FRAME), 60);
 
     await settle;
     const sample = manager.getScrollback(SESSION);
@@ -132,12 +134,13 @@ describe('repaint settle: what the user sees first on a panel -> window handoff'
     // the settle arms anyway.
     expect(manager.onResize(SESSION, PANEL_COLS, WINDOW_ROWS)).toBe(false);
 
-    // A routine partial update lands first, then the genuine rows repaint.
+    // A routine partial update lands first, then the genuine rows repaint
+    // (60ms: inside the marker window with CI margin, see the cols test).
     manager.onData(SESSION, CURSOR_HOME);
     const settle = manager.waitForResizeRepaint(SESSION);
     const repaintTimer = setTimeout(
       () => manager.onData(SESSION, frameAtRows(WINDOW_ROWS, 'DRAWN-AT-WINDOW-HEIGHT')),
-      100,
+      60,
     );
 
     const startedAt = Date.now();
@@ -230,16 +233,116 @@ describe('repaint settle: what the user sees first on a panel -> window handoff'
     expect(sample).toContain('REDRAWN-PROMPT>');
   });
 
-  it('is bounded by the deadline when the repaint never comes', async () => {
-    // A TUI that never re-erases has no trustworthy signal, so the wait rides its
-    // deadline rather than settling on an ordinary partial update. This is the
-    // deliberate trade the fix makes: bounded latency in the rare no-repaint case,
-    // instead of a wrong frame shown on every handoff. The bound is what matters -
-    // a missing repaint must never hang the read.
+  it('settles a marker-less TUI repaint on its quiesce after the marker window, not the deadline', async () => {
+    // Claude's default renderer repaints after SIGWINCH WITHOUT a full-screen
+    // erase while the session is IDLE (measured live 2026-08-26: 12 of 12
+    // detail opens of an idle session settled `deadline` at 407-422ms, zero
+    // post-resize \x1b[2J, while ACTIVE turns settled `marker` in 15-160ms).
+    // Riding the full deadline there was priced when a premature sample
+    // replayed RAW stale-geometry bytes; a settle-armed sample now takes the
+    // parsed-grid route (the resize arms the geometry gate), so the worst a
+    // markerless quiesce can sample is a correctly-shaped frame the live
+    // stream then updates. The fallback still gives a genuine marker the
+    // whole measured arrival window (21-122ms) first: it only fires past
+    // MARKERLESS_REPAINT_MIN_WAIT_MS from the resize, so a spinner tick plus
+    // an ordinary lull cannot preempt a repaint that is coming.
     const manager = createManager();
     manager.onData(SESSION, STALE_FRAME);
     manager.onResize(SESSION, WINDOW_COLS);
-    manager.onData(SESSION, 'partial redraw with no clear');
+    manager.onData(SESSION, 'markerless idle repaint, no clear');
+
+    const startedAt = Date.now();
+    await manager.waitForResizeRepaint(SESSION);
+    const waited = Date.now() - startedAt;
+
+    // Lower bound: the fallback honored the marker window (a bare 50ms
+    // quiesce would settle at ~50ms and reintroduce the spinner-tick race).
+    // Upper bound: it did NOT ride the 400ms deadline. Both are generous for
+    // CI timing; the red case (deadline) sits at ~400-420ms.
+    expect(waited).toBeGreaterThanOrEqual(120);
+    expect(waited).toBeLessThan(330);
+    expect(manager.getScrollback(SESSION)).toContain('markerless idle repaint, no clear');
+  });
+
+  it('applies the same markerless fallback to a STACKED resize once everything is quiet', async () => {
+    // Stacked marker settles stay marker-AND-quiesce (an early marker can be
+    // the previous geometry's repaint). The markerless fallback is different
+    // evidence: no marker at all plus a real lull past the marker window
+    // means both repaints (markerless, like the idle default renderer's) have
+    // landed and stopped - the double-resize open flow would otherwise pay
+    // the deadline on every idle open.
+    const manager = createManager();
+    manager.onData(SESSION, STALE_FRAME);
+    manager.onResize(SESSION, WINDOW_COLS);
+    manager.onResize(SESSION, PANEL_COLS); // stacks: second change within REPAINT_MAX_WAIT_MS
+    manager.onData(SESSION, 'stacked markerless repaint');
+
+    const startedAt = Date.now();
+    await manager.waitForResizeRepaint(SESSION);
+    const waited = Date.now() - startedAt;
+
+    expect(waited).toBeGreaterThanOrEqual(120);
+    expect(waited).toBeLessThan(330);
+    expect(manager.getScrollback(SESSION)).toContain('stacked markerless repaint');
+  });
+
+  it('a resize landing MID-wait re-anchors the markerless floor', async () => {
+    // The markerless quiesce floor (MARKERLESS_REPAINT_MIN_WAIT_MS) and its
+    // quiesce check are anchored on the LIVE pendingRepaintAt
+    // (`current.pendingRepaintAt ?? stamp`), not the stamp captured at wait
+    // ENTRY. A second effective resize landing while the wait is already in
+    // flight re-stamps pendingRepaintAt, so the floor must restart from that
+    // new resize - otherwise quiet inherited from BEFORE the second resize
+    // (the first resize's own marker-less chunk, long since quiesced) would
+    // settle the wait with zero grace for the SECOND repaint.
+    const manager = createManager();
+    manager.onData(SESSION, STALE_FRAME);
+    manager.onResize(SESSION, WINDOW_COLS);
+    manager.onData(SESSION, 'markerless chunk after first resize');
+
+    const startedAt = Date.now();
+    const settle = manager.waitForResizeRepaint(SESSION);
+
+    // The second effective resize lands well inside the first resize's own
+    // marker window (MARKERLESS_REPAINT_MIN_WAIT_MS=150) - by 100ms the
+    // ORIGINAL floor has not fired yet, so this is a genuine mid-wait
+    // re-stamp, not a race against the first wait already having settled.
+    const secondResizeTimer = setTimeout(() => {
+      manager.onResize(SESSION, PANEL_COLS);
+      manager.onData(SESSION, 'markerless chunk after second resize');
+    }, 100);
+
+    await settle;
+    const waited = Date.now() - startedAt;
+    clearTimeout(secondResizeTimer);
+
+    // New (correct) behavior: the floor restarts from the SECOND resize, so
+    // the wait cannot settle before ~100 (when the second resize lands) +
+    // 150 (the floor) = ~250ms. Old (reverted) behavior settles on the
+    // FIRST resize's own floor at ~150-190ms regardless of the second
+    // resize's timing - well below this lower bound. Upper bound stays
+    // comfortably under the 400ms deadline (empirically ~250-290ms).
+    expect(
+      waited,
+      'the markerless floor did not re-anchor on the second resize - it '
+      + 'settled using quiet inherited from before that resize.',
+    ).toBeGreaterThanOrEqual(220);
+    expect(waited).toBeLessThan(350);
+    expect(manager.getScrollback(SESSION)).toContain('markerless chunk after second resize');
+  });
+
+  it('is bounded by the deadline when nothing at all arrives after the resize', async () => {
+    // A known-TUI session that answers the SIGWINCH with silence has no
+    // signal to settle on: the quiesce fallback requires POST-resize bytes,
+    // so this rides the deadline. The bound is what matters - a missing
+    // repaint must never hang the read. The pre-resize frame must be
+    // measurably OLDER than the resize: the settle's `>=` stamp comparison
+    // deliberately counts same-millisecond bytes as post-resize, and in this
+    // synchronous fixture both land in one millisecond.
+    const manager = createManager();
+    manager.onData(SESSION, STALE_FRAME);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    manager.onResize(SESSION, WINDOW_COLS);
 
     const startedAt = Date.now();
     await manager.waitForResizeRepaint(SESSION);

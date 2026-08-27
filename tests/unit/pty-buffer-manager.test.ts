@@ -1,5 +1,24 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { Terminal } from '@xterm/headless';
 import { PtyBufferManager } from '../../src/main/pty/buffer/pty-buffer-manager';
+import { activateUnicode11 } from '../../src/shared/xterm-unicode11';
+
+/**
+ * Cold-replay a snapshot payload into a fresh parser, exactly as the renderer
+ * does (a freshly constructed xterm, then write) - including the renderer's
+ * Unicode 11 width table, so assertions exercise the real replay pair. Awaits
+ * xterm's own write callback so the parse has landed before the assertions
+ * read the buffer. (Duplicated from headless-frame.test.ts: test files here
+ * never import from sibling test files.)
+ */
+async function replayIntoFreshTerminal(payload: string, cols = 80, rows = 24): Promise<Terminal> {
+  const terminal = new Terminal({ cols, rows, allowProposedApi: true });
+  activateUnicode11(terminal);
+  await new Promise<void>((resolve) => {
+    terminal.write(payload, () => resolve());
+  });
+  return terminal;
+}
 
 describe('PtyBufferManager', () => {
   const SESSION = 'test-session';
@@ -192,6 +211,12 @@ describe('PtyBufferManager', () => {
       const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
       manager.initSession(SESSION, '', 120, 30);
       manager.onData(SESSION, tui ? '\x1b[2Jold frame at 120 cols' : 'plain shell output');
+      // The old frame must be measurably OLDER than the resize: the settle's
+      // `>=` stamp comparison deliberately counts same-millisecond bytes as
+      // post-resize, and under fake timers everything above lands in one
+      // frozen millisecond. Every test in this block runs fake timers before
+      // calling this helper.
+      vi.advanceTimersByTime(10);
       expect(manager.onResize(SESSION, 190, 30)).toBe(true);
       return manager;
     }
@@ -202,6 +227,8 @@ describe('PtyBufferManager', () => {
       const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
       manager.initSession(SESSION, '', 120, 30);
       manager.onData(SESSION, tui ? '\x1b[2Jold frame at 30 rows' : 'plain shell output');
+      // Same clock separation as armWidthChange, same reason.
+      vi.advanceTimersByTime(10);
       expect(manager.onResize(SESSION, 120, 50)).toBe(false);
       return manager;
     }
@@ -218,8 +245,11 @@ describe('PtyBufferManager', () => {
       // tests/unit/repaint-settle-marker.test.ts for the harness that isolates it.
       //
       // For a session this wait has already identified as a fullscreen TUI, only a
-      // full-screen ERASE means the frame was redrawn. Everything else rides the
-      // deadline.
+      // full-screen ERASE means the frame was redrawn. Inside the marker-arrival
+      // window nothing else may settle it; past MARKERLESS_REPAINT_MIN_WAIT_MS a
+      // markerless quiesce may (the idle default renderer repaints without an
+      // erase - see repaint-settle-marker.test.ts), and true silence rides the
+      // deadline. This test's assertions all sit inside the marker window.
       vi.useFakeTimers();
       const manager = armWidthChange();
 
@@ -1388,6 +1418,50 @@ describe('PtyBufferManager', () => {
     });
   });
 
+  describe('initSession geometry-gate carry-over', () => {
+    it('marks a carried ring geometry-suspect when the prior drawn-at geometry is unknown', () => {
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
+      manager.initSession(SESSION, 'carried', 80, 24);
+      // Without evidence the carried bytes match the spawn geometry, the whole
+      // carried ring is suspect: gate at its end so the replay takes the
+      // parsed grid until the carried bytes trim out.
+      expect(manager.getDimensionState(SESSION)?.geometryChangedAtRingIndex).toBe('carried'.length);
+      manager.removeSession(SESSION);
+    });
+
+    it('carries the prior gate through a same-geometry respawn (the common resume)', () => {
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
+      manager.initSession(SESSION, 'carried', 80, 24, { cols: 80, rows: 24, geometryChangedAtRingIndex: null });
+      // Prior geometry known and unchanged, prior ring single-geometry: the
+      // full raw history stays replayable across the respawn.
+      expect(manager.getDimensionState(SESSION)?.geometryChangedAtRingIndex).toBeNull();
+      manager.removeSession(SESSION);
+
+      manager.initSession(SESSION, 'carried', 80, 24, { cols: 80, rows: 24, geometryChangedAtRingIndex: 3 });
+      // A carried ring can internally span geometries even when the respawn
+      // keeps the last one: the old gate rides along index-for-index (the
+      // carried string IS the old ring).
+      expect(manager.getDimensionState(SESSION)?.geometryChangedAtRingIndex).toBe(3);
+      manager.removeSession(SESSION);
+    });
+
+    it('marks the carried ring suspect when the respawn geometry differs from the prior one', () => {
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
+      manager.initSession(SESSION, 'carried', 80, 24, { cols: 210, rows: 48, geometryChangedAtRingIndex: null });
+      expect(manager.getDimensionState(SESSION)?.geometryChangedAtRingIndex).toBe('carried'.length);
+      manager.removeSession(SESSION);
+    });
+
+    it('a fresh spawn with no carried scrollback starts ungated', () => {
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
+      manager.initSession(SESSION, '', 80, 24, { cols: 210, rows: 48, geometryChangedAtRingIndex: 5 });
+      // No carried bytes means nothing was drawn at any prior geometry,
+      // whatever the previous session's state said.
+      expect(manager.getDimensionState(SESSION)?.geometryChangedAtRingIndex).toBeNull();
+      manager.removeSession(SESSION);
+    });
+  });
+
   describe('getSerializedFrame (parsed-grid mobile seed)', () => {
     // Real timers: the headless parser drains its write buffer on a macrotask,
     // and getSerializedFrame awaits that flush before serializing.
@@ -1498,16 +1572,514 @@ describe('PtyBufferManager', () => {
       manager.removeSession(SESSION);
     });
 
-    it('passes a non-alt-screen session through to the raw byte replay', async () => {
+    it('the geometry-gated (non-alt) frame also folds the DEC private mode prefix, not just the alt route', async () => {
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
+      manager.initSession(SESSION, '', 80, 24);
+      // Mouse-encoding mode (1006, SGR) plus printable content, never
+      // entering the alt screen - only the effective resize below arms the
+      // frame route.
+      manager.onData(SESSION, '\x1b[?1006hnormal-buffer TUI output');
+      manager.onResize(SESSION, 120, 30);
+      expect(manager.getDimensionState(SESSION)?.geometryChangedAtRingIndex).not.toBeNull();
+
+      const snapshot = await manager.getReplaySnapshot(SESSION);
+      // The addon's serialize cannot emit the mouse ENCODING modes; the
+      // folded DEC prefix must re-assert 1006 on the geometry-gated route
+      // too, not only the alt-screen route.
+      expect(snapshot).toMatch(/\x1b\[\?(?:[0-9]+;)*1006[;h]/);
+
+      manager.removeSession(SESSION);
+    });
+
+    it('passes a non-alt-screen session with no effective geometry change through to the raw byte replay', async () => {
       const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
       manager.initSession(SESSION, '', 80, 24);
       manager.onData(SESSION, 'plain shell output\r\nsecond line');
 
       const snapshot = await manager.getReplaySnapshot(SESSION);
-      // Byte-for-byte the getScrollback value (stable across reads with no new
-      // data), preamble and all.
+      // The raw route is gated on geometryChangedAtRingIndex === null: this
+      // fixture never resizes after content, so the full byte history is
+      // preserved (not the parsed grid's 500-row window) - the property this
+      // test pins. Byte-for-byte the getScrollback value (stable across reads
+      // with no new data), preamble and all.
       expect(snapshot).toBe(manager.getScrollback(SESSION));
       expect(snapshot).toContain('plain shell output');
+
+      manager.removeSession(SESSION);
+    });
+
+    it('rows-only geometry changes arm the gate too, not just width changes', async () => {
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
+      manager.initSession(SESSION, '', 80, 24);
+      manager.onData(SESSION, 'drawn at 24 rows');
+
+      // Same cols, different rows: onResize RETURNS false (its report is
+      // cols-only by contract) but must still arm the gate - the reported
+      // corruption included 48-vs-15-row mismatches.
+      expect(manager.onResize(SESSION, 80, 48)).toBe(false);
+      expect(manager.getDimensionState(SESSION)?.geometryChangedAtRingIndex).toBe('drawn at 24 rows'.length);
+
+      const snapshot = await manager.getReplaySnapshot(SESSION);
+      expect(snapshot).not.toBe(manager.getScrollback(SESSION));
+      expect(snapshot).toContain('drawn at 24 rows');
+
+      manager.removeSession(SESSION);
+    });
+
+    it('a second effective resize OVERWRITES the gate to the later ring index, not the first', async () => {
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
+      manager.initSession(SESSION, '', 80, 24);
+      manager.onData(SESSION, 'A'.repeat(10));
+      manager.onResize(SESSION, 120, 30);
+      expect(manager.getDimensionState(SESSION)?.geometryChangedAtRingIndex).toBe(10);
+
+      // A LATER effective geometry change must overwrite the gate to the
+      // NEW ring index, not preserve the first one - the trim-shift
+      // self-heal in onData only clears the gate once the trim passes the
+      // MOST RECENT change, so a preserved-at-first gate would self-heal too
+      // early and route a still-suspect ring back to the raw byte replay.
+      manager.onData(SESSION, 'B'.repeat(5));
+      manager.onResize(SESSION, 200, 40);
+      expect(manager.getDimensionState(SESSION)?.geometryChangedAtRingIndex).toBe(15);
+
+      manager.removeSession(SESSION);
+    });
+
+    it('the geometry-gated frame strips pre-TUI shell noise like the byte replay does', async () => {
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
+      manager.initSession(SESSION, '', 80, 24);
+
+      // The shell echoes the spawn command before the agent TUI takes over -
+      // the exact noise getScrollback's tuiStartIndex strip hides on the byte
+      // route. The frame route must not resurrect it. The echo must be IN the
+      // parser's scrollback when the first clear lands (a bare \x1b[2J erases
+      // viewport cells in place), so scroll it off with banner-like output
+      // first - the real repro's shape.
+      manager.onData(SESSION, 'PS C:\\Users\\dev> node agent.js --permission-mode acceptEdits\r\n');
+      let bannerLines = '';
+      for (let line = 1; line <= 40; line += 1) {
+        bannerLines += `banner and task text line ${line}\r\n`;
+      }
+      manager.onData(SESSION, bannerLines);
+      manager.onResize(SESSION, 120, 30);
+      manager.onData(SESSION, '\x1b[2J\x1b[1;1HTUI FRAME ROW');
+
+      const snapshot = await manager.getReplaySnapshot(SESSION);
+      expect(snapshot).toContain('TUI FRAME ROW');
+      expect(snapshot).not.toContain('PS C:');
+      expect(snapshot).not.toContain('acceptEdits');
+      // The mobile seed reads the same parser, so it is cleaned too.
+      const mobileFrame = await manager.getSerializedFrame(SESSION);
+      expect(mobileFrame).not.toContain('PS C:');
+      // The ring stays raw: getScrollback's read-time tuiStartIndex strip is
+      // the byte route's own mechanism, never an injected byte.
+      expect(manager.getRawScrollback(SESSION)).not.toContain('\x1b[3J');
+
+      manager.removeSession(SESSION);
+    });
+
+    it('ConPTY\'s startup clear does not consume the pre-TUI strip', async () => {
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
+      manager.initSession(SESSION, '', 80, 24);
+
+      // Captured verbatim from a live pwsh spawn: ConPTY opens the stream
+      // with its OWN \x1b[2J before any printable output. The strip must not
+      // fire there (nothing to strip yet) - the TUI-takeover clear is the
+      // first one PRECEDED by printable output (the prompt/echo).
+      manager.onData(SESSION, '\x1b[?9001h\x1b[?1004h\x1b[?25l\x1b[2J\x1b[m\x1b[H');
+      manager.onData(SESSION, 'PS C:\\Users\\dev> node agent.js --permission-mode acceptEdits\r\n');
+      let scrolledOutput = '';
+      for (let line = 1; line <= 40; line += 1) {
+        scrolledOutput += `banner and task text line ${line}\r\n`;
+      }
+      manager.onData(SESSION, scrolledOutput);
+      manager.onResize(SESSION, 120, 30);
+      manager.onData(SESSION, '\x1b[2J\x1b[1;1HTUI FRAME ROW');
+
+      // The geometry-gated frame route is stripped ...
+      const snapshot = await manager.getReplaySnapshot(SESSION);
+      expect(snapshot).toContain('TUI FRAME ROW');
+      expect(snapshot).not.toContain('PS C:');
+      // ... and so is the raw byte route: tuiStartIndex is stamped at the
+      // SAME takeover clear, not ConPTY's startup clear, so the two routes
+      // agree on where the session's replayable history begins.
+      const rawReplay = manager.getScrollback(SESSION);
+      expect(rawReplay).toContain('TUI FRAME ROW');
+      expect(rawReplay).not.toContain('PS C:');
+
+      manager.removeSession(SESSION);
+    });
+
+    it('printable characters INSIDE escape payloads (an OSC window title) do not arm the takeover predicate', async () => {
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
+      manager.initSession(SESSION, '', 80, 24);
+
+      // The one false-positive that would re-create the ConPTY bug: an OSC
+      // window title carries a full filesystem path, and if its payload
+      // counted as printable output, a startup clear arriving AFTER the title
+      // would consume the one-shot strip with nothing to strip. Order matters
+      // on real machines (the captured pwsh preamble happens to title AFTER
+      // its clear), so pin the title-first order explicitly.
+      manager.onData(SESSION, '\x1b]0;C:\\Program Files\\PowerShell\\7\\pwsh.exe\x07\x1b[?25l\x1b[2J\x1b[m\x1b[H');
+      manager.onData(SESSION, 'PS C:\\Users\\dev> node agent.js\r\n');
+      let scrolledOutput = '';
+      for (let line = 1; line <= 40; line += 1) {
+        scrolledOutput += `banner text line ${line}\r\n`;
+      }
+      manager.onData(SESSION, scrolledOutput);
+      manager.onResize(SESSION, 120, 30);
+      manager.onData(SESSION, '\x1b[2J\x1b[1;1HTUI FRAME ROW');
+
+      // The strip stayed armed through the title+clear preamble and fired on
+      // the REAL takeover clear: the echo is gone from the gated frame.
+      const snapshot = await manager.getReplaySnapshot(SESSION);
+      expect(snapshot).toContain('TUI FRAME ROW');
+      expect(snapshot).not.toContain('PS C:');
+
+      manager.removeSession(SESSION);
+    });
+
+    it('a single chunk coalescing the ConPTY startup clear, the shell echo, and the takeover clear strips on the qualifying clear only', async () => {
+      const onFlush = vi.fn();
+      const manager = new PtyBufferManager({ onFlush, onDrain: vi.fn() });
+      manager.initSession(SESSION, '', 80, 24);
+
+      let bannerLines = '';
+      for (let line = 1; line <= 40; line += 1) {
+        bannerLines += `banner and task text line ${line}\r\n`;
+      }
+      // ConPTY's escape-only startup clear, the shell echo, AND the real
+      // takeover clear, all coalesced into ONE PTY chunk - the shape a fast
+      // spawn can deliver in a single read. The scan must walk FORWARD past
+      // the disqualified first \x1b[2J and fire on the second.
+      manager.onData(
+        SESSION,
+        '\x1b[?9001h\x1b[?1004h\x1b[?25l\x1b[2J\x1b[m\x1b[H'
+        + 'PS C:\\Users\\dev> node agent.js\r\n'
+        + bannerLines
+        + '\x1b[2J\x1b[1;1HTUI FRAME ROW',
+      );
+
+      await expect
+        .poll(() => onFlush.mock.calls.length > 0, { timeout: 2000, interval: 10 })
+        .toBe(true);
+      await new Promise((resolve) => setTimeout(resolve, 40));
+
+      const flushed = onFlush.mock.calls.map((call) => call[1] as string).join('');
+      expect(flushed.split('\x1b[3J').length - 1).toBe(1);
+
+      const replay = manager.getScrollback(SESSION);
+      expect(replay).not.toContain('PS C:');
+      expect(replay).toContain('TUI FRAME ROW');
+
+      manager.removeSession(SESSION);
+    });
+
+    it('a DECSCUSR cursor-style set and a DCS payload do not count as printable output', async () => {
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
+      manager.initSession(SESSION, '', 80, 24);
+
+      // DECSCUSR (a CSI sequence with an intermediate byte) and a DCS string
+      // payload, BEFORE ConPTY's escape-only startup clear. Neither payload
+      // may register as printable: if it did, the startup clear below would
+      // wrongly read as the takeover clear (printable output already seen)
+      // and consume the one-shot with nothing real to strip.
+      manager.onData(SESSION, '\x1b[2 q\x1bPpayload-text\x1b\\\x1b[?25l\x1b[2J\x1b[m\x1b[H');
+      manager.onData(SESSION, 'PS C:\\Users\\dev> node agent.js\r\n');
+      let scrolledOutput = '';
+      for (let line = 1; line <= 40; line += 1) {
+        scrolledOutput += `banner text line ${line}\r\n`;
+      }
+      manager.onData(SESSION, scrolledOutput);
+      manager.onResize(SESSION, 120, 30);
+      manager.onData(SESSION, '\x1b[2J\x1b[1;1HTUI FRAME ROW');
+
+      // The one-shot stayed armed through the DECSCUSR/DCS preamble and
+      // fired on the REAL takeover clear: the echo is gone from the gated
+      // frame.
+      const snapshot = await manager.getReplaySnapshot(SESSION);
+      expect(snapshot).toContain('TUI FRAME ROW');
+      expect(snapshot).not.toContain('PS C:');
+
+      manager.removeSession(SESSION);
+    });
+
+    it('a Clear-Host-style prelude (per-row erases + \\x1b[3J, no \\x1b[2J) cleans the frame purely in-stream', async () => {
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
+      manager.initSession(SESSION, '', 80, 24);
+
+      // The spawn clear prelude's SOURCE layer must not depend on the 2J
+      // detection layer at all: pwsh's Clear-Host renders through ConPTY as
+      // per-row EL erases plus an \x1b[3J scrollback erase and NEVER emits
+      // \x1b[2J (captured live 2026-08-26). The parser must come out clean
+      // from those bytes alone - this is what keeps the prelude zero-
+      // maintenance against shell updates, with no Kangentic parsing in the
+      // loop.
+      manager.onData(SESSION, 'PS C:\\Users\\dev> Clear-Host; node agent.js\r\n');
+      let scrolledOutput = '';
+      for (let line = 1; line <= 40; line += 1) {
+        scrolledOutput += `pre-clear preamble line ${line}\r\n`;
+      }
+      manager.onData(SESSION, scrolledOutput);
+      // Clear-Host's rendered output, shaped like the live capture.
+      manager.onData(SESSION, `\x1b[m\x1b[H${'\x1b[K\r\n'.repeat(23)}\x1b[K\x1b[H\x1b[3J`);
+      manager.onData(SESSION, 'agent output after the prelude clear');
+
+      // The bare parser read (no gate, no settle, no injected ED3 triggered -
+      // there is no \x1b[2J anywhere in this stream): everything pre-clear is
+      // gone because the STREAM removed it.
+      const mobileFrame = await manager.getSerializedFrame(SESSION);
+      expect(mobileFrame).toContain('agent output after the prelude clear');
+      expect(mobileFrame).not.toContain('PS C:');
+      expect(mobileFrame).not.toContain('pre-clear preamble');
+
+      manager.removeSession(SESSION);
+    });
+
+    it('a terminal mounted at spawn gets the pre-TUI strip LIVE, exactly once, at the first clear', async () => {
+      const onFlush = vi.fn();
+      const manager = new PtyBufferManager({ onFlush, onDrain: vi.fn() });
+      manager.initSession(SESSION, '', 80, 24);
+
+      // No replay in this scenario: the terminal was already mounted when the
+      // session spawned, so everything it shows arrives via the flush stream.
+      manager.onData(SESSION, 'PS C:\\Users\\dev> node agent.js\r\n');
+      manager.onData(SESSION, '\x1b[2J\x1b[1;1HTUI FRAME ROW');
+      manager.onData(SESSION, '\x1b[2J\x1b[1;1Hsecond repaint');
+      await expect
+        .poll(() => onFlush.mock.calls.length > 0, { timeout: 2000, interval: 10 })
+        .toBe(true);
+
+      const flushed = onFlush.mock.calls.map((call) => call[1] as string).join('');
+      // Exactly one ED 3, ordered after the FIRST clear so the live xterm
+      // drops the echo from its scrollback the moment the TUI takes over;
+      // later repaints must not re-trigger it.
+      expect(flushed.split('\x1b[3J').length - 1).toBe(1);
+      expect(flushed.indexOf('\x1b[2J')).toBeLessThan(flushed.indexOf('\x1b[3J'));
+
+      manager.removeSession(SESSION);
+    });
+
+    it('an alt-screen entry coalesced with the clear in the same chunk leaves the one-shot armed for a later normal-buffer clear', async () => {
+      const onFlush = vi.fn();
+      const manager = new PtyBufferManager({ onFlush, onDrain: vi.fn() });
+      manager.initSession(SESSION, '', 80, 24);
+
+      // Printable echo first, so the takeover predicate has evidence.
+      manager.onData(SESSION, 'PS C:\\Users\\dev> node agent.js\r\n');
+      // Alt-screen enter AND a full clear together in one chunk - a
+      // fullscreen TUI clearing on entry. inAltScreen is read AFTER
+      // updateModeState, so this reads as alt and must be SKIPPED: the
+      // one-shot stays armed for a later NORMAL-buffer clear.
+      manager.onData(SESSION, '\x1b[?1049h\x1b[2J\x1b[1;1Halt frame');
+      // Exit alt screen, then a genuine normal-buffer takeover clear.
+      manager.onData(SESSION, '\x1b[?1049l');
+      manager.onData(SESSION, '\x1b[2J\x1b[1;1HTUI FRAME ROW');
+
+      await expect
+        .poll(() => onFlush.mock.calls.length > 0, { timeout: 2000, interval: 10 })
+        .toBe(true);
+      await new Promise((resolve) => setTimeout(resolve, 40));
+
+      const flushed = onFlush.mock.calls.map((call) => call[1] as string).join('');
+      // Exactly one ED3 in the whole stream, landing AFTER the alt frame -
+      // the alt-chunk clear did not consume the one-shot.
+      expect(flushed.split('\x1b[3J').length - 1).toBe(1);
+      expect(flushed.indexOf('\x1b[3J')).toBeGreaterThan(flushed.indexOf('alt frame'));
+
+      manager.removeSession(SESSION);
+    });
+
+    it('the injected ED3 lands at the clear boundary within the chunk, not at chunk end', async () => {
+      const onFlush = vi.fn();
+      const manager = new PtyBufferManager({ onFlush, onDrain: vi.fn() });
+      manager.initSession(SESSION, '', 80, 24);
+
+      let postClearLines = '';
+      for (let line = 1; line <= 40; line += 1) {
+        postClearLines += `post-clear line ${line}\r\n`;
+      }
+      // Printable echo, the takeover clear, and enough post-clear TUI output
+      // in the SAME chunk to scroll the 24-row viewport, so some post-clear
+      // lines land in the parser's retained SCROLLBACK, not just its
+      // viewport. A chunk-end injection would erase those along with the
+      // pre-TUI echo.
+      manager.onData(
+        SESSION,
+        'PS C:\\Users\\dev> node agent.js\r\n'
+        + '\x1b[2J'
+        + postClearLines,
+      );
+
+      await expect
+        .poll(() => onFlush.mock.calls.length > 0, { timeout: 2000, interval: 10 })
+        .toBe(true);
+      await new Promise((resolve) => setTimeout(resolve, 40));
+
+      const flushed = onFlush.mock.calls.map((call) => call[1] as string).join('');
+      const clearIndex = flushed.indexOf('\x1b[2J');
+      const injectedIndex = flushed.indexOf('\x1b[3J');
+      const firstPostClearLineIndex = flushed.indexOf('post-clear line 1\r\n');
+      expect(clearIndex).toBeGreaterThanOrEqual(0);
+      expect(injectedIndex).toBe(clearIndex + '\x1b[2J'.length);
+      expect(injectedIndex).toBeLessThan(firstPostClearLineIndex);
+
+      // The parsed grid confirms the early post-clear lines (scrolled into
+      // the parser's retained scrollback) survive, while the pre-clear echo
+      // is gone.
+      const frame = await manager.getSerializedFrame(SESSION);
+      expect(frame).toContain('post-clear line 1');
+      expect(frame).not.toContain('PS C:');
+
+      manager.removeSession(SESSION);
+    });
+
+    it('a carried-over ring\'s scrollback is never wiped by the NEW process\'s first clear', async () => {
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
+      // Enough carried lines that the early ones sit in the parser's
+      // SCROLLBACK (a \x1b[2J only erases the viewport, in both routes).
+      // Unknown prior geometry: gate armed conservatively, frame route
+      // serves the replay.
+      let carriedHistory = '';
+      for (let line = 1; line <= 40; line += 1) {
+        carriedHistory += `carried-history line ${line}\r\n`;
+      }
+      manager.initSession(SESSION, carriedHistory, 80, 24);
+      manager.onData(SESSION, '\x1b[2J\x1b[1;1Hrespawned frame');
+
+      const snapshot = await manager.getReplaySnapshot(SESSION);
+      // The pre-TUI strip is a fresh-spawn rule (mirroring tuiStartIndex's
+      // carried-ring opt-out at initSession): carried history is genuine user
+      // content, and the new process's first full clear must not trigger the
+      // parser-side scrollback wipe on it.
+      expect(snapshot).toContain('carried-history line 1');
+      expect(snapshot).toContain('respawned frame');
+
+      manager.removeSession(SESSION);
+    });
+
+    it('a transient session never arms the pre-TUI strip', async () => {
+      const onFlush = vi.fn();
+      const manager = new PtyBufferManager({ onFlush, onDrain: vi.fn() });
+      manager.initSession(SESSION, '', 80, 24, null, true);
+
+      manager.onData(SESSION, 'PS C:\\Users\\dev> some-command\r\n');
+      manager.onData(SESSION, '\x1b[2J\x1b[1;1Hcleared viewport');
+
+      await expect
+        .poll(() => onFlush.mock.calls.length > 0, { timeout: 2000, interval: 10 })
+        .toBe(true);
+      await new Promise((resolve) => setTimeout(resolve, 40));
+
+      const flushed = onFlush.mock.calls.map((call) => call[1] as string).join('');
+      // A Command Terminal shell has no spawn command to strip, and a later
+      // ordinary \x1b[2J (which by spec erases the viewport only) must never
+      // be upgraded into a scrollback wipe.
+      expect(flushed).not.toContain('\x1b[3J');
+      expect(manager.getRawScrollback(SESSION)).toContain('some-command');
+
+      manager.removeSession(SESSION);
+    });
+
+    it('a resize with an empty ring never arms the gate (the common first fit after spawn)', async () => {
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
+      manager.initSession(SESSION, '', 120, 30);
+
+      // The renderer's mount fit lands before any PTY output: nothing in the
+      // ring was drawn at the spawn geometry, so the session keeps the raw
+      // full-history route for life.
+      manager.onResize(SESSION, 210, 48);
+      expect(manager.getDimensionState(SESSION)?.geometryChangedAtRingIndex).toBeNull();
+
+      manager.onData(SESSION, 'first output after the fit');
+      const snapshot = await manager.getReplaySnapshot(SESSION);
+      expect(snapshot).toBe(manager.getScrollback(SESSION));
+
+      manager.removeSession(SESSION);
+    });
+
+    it('self-heals to the raw byte replay once the trim passes the geometry change', async () => {
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
+      manager.initSession(SESSION, '', 80, 24);
+      manager.onData(SESSION, 'pre-change bytes');
+      manager.onResize(SESSION, 100, 24);
+      expect(manager.getDimensionState(SESSION)?.geometryChangedAtRingIndex).toBe('pre-change bytes'.length);
+
+      // Flood well past the 768KB trim threshold (same pattern as the
+      // parsed-grid ring-cap fixture above, without the alt-screen enter) so
+      // the trim removes the whole pre-change prefix.
+      const MAX_SCROLLBACK = 512 * 1024;
+      const dynamicUnit = '\x1b[24;1H' + 'x'.repeat(20); // stays on row 24, 20 cols < 100: no wrap, no scroll
+      const dynamicChunk = dynamicUnit.repeat(80);
+      let floodedBytes = 0;
+      while (floodedBytes < MAX_SCROLLBACK + 400 * 1024) {
+        manager.onData(SESSION, dynamicChunk);
+        floodedBytes += dynamicChunk.length;
+      }
+
+      // Every remaining ring byte postdates the change: gate cleared, raw
+      // full-history replay restored.
+      expect(manager.getDimensionState(SESSION)?.geometryChangedAtRingIndex).toBeNull();
+      const snapshot = await manager.getReplaySnapshot(SESSION);
+      expect(snapshot).toBe(manager.getScrollback(SESSION));
+
+      manager.removeSession(SESSION);
+    });
+
+    it('replays a geometry-spanning non-alt session through the parsed grid, so no stale-geometry frame stitches into the current one', async () => {
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
+      manager.initSession(SESSION, '', 210, 48);
+
+      // Frame A: a normal-buffer TUI repaint drawn for a 48-row grid (Claude
+      // Code's default renderer with fullscreen disabled) - absolute CUP per
+      // row, EL to clear the remainder, every line short enough that no
+      // geometry wraps it. No \x1b[2J anywhere: a full clear would trip the
+      // tuiStartIndex strip in getScrollback and mask the geometry defect.
+      let frameForTallGrid = '';
+      for (let row = 2; row <= 40; row += 1) {
+        frameForTallGrid += `\x1b[${row};1HFRAME_ALPHA_${String(row).padStart(2, '0')}\x1b[K`;
+      }
+      manager.onData(SESSION, frameForTallGrid);
+      // Flush barrier: headless.write is queued on a macrotask while
+      // headless.resize applies immediately, so without this the resize would
+      // overtake frame A and the parser would lay it out at the SHORT grid.
+      // In production the queue drains within the same tick burst; a bare
+      // serialize (getSerializedFrame) awaits exactly that barrier.
+      await manager.getSerializedFrame(SESSION);
+
+      // The window is restored: the PTY shrinks and the TUI repaints its
+      // whole frame for the new 24-row grid.
+      manager.onResize(SESSION, 80, 24);
+      let frameForShortGrid = '';
+      for (let row = 1; row <= 24; row += 1) {
+        frameForShortGrid += `\x1b[${row};1HFRAME_BRAVO_${String(row).padStart(2, '0')}\x1b[K`;
+      }
+      manager.onData(SESSION, frameForShortGrid);
+
+      const snapshot = await manager.getReplaySnapshot(SESSION);
+
+      // Replay at a THIRD geometry, like a detail-window xterm whose fit
+      // matches neither historical grid.
+      const terminal = await replayIntoFreshTerminal(snapshot, 120, 30);
+      const activeBuffer = terminal.buffer.active;
+      const alphaRows: number[] = [];
+      const bravoRows: number[] = [];
+      for (let row = 0; row < activeBuffer.length; row += 1) {
+        const rowText = activeBuffer.getLine(row)?.translateToString(true) ?? '';
+        const hasAlpha = rowText.includes('FRAME_ALPHA');
+        const hasBravo = rowText.includes('FRAME_BRAVO');
+        // The reported corruption: two frames' texts on the same row.
+        expect(hasAlpha && hasBravo).toBe(false);
+        if (hasAlpha) alphaRows.push(row);
+        if (hasBravo) bravoRows.push(row);
+      }
+      // Both frames survive somewhere (guards a vacuous pass) ...
+      expect(alphaRows.length).toBeGreaterThan(0);
+      expect(bravoRows.length).toBeGreaterThan(0);
+      // ... and history rows strictly precede current-frame rows. A raw byte
+      // replay clamps frame A's rows 31..40 onto the 30-row grid and strands
+      // them BELOW frame B - stale-geometry text under the live frame.
+      expect(Math.max(...alphaRows)).toBeLessThan(Math.min(...bravoRows));
 
       manager.removeSession(SESSION);
     });
@@ -1525,6 +2097,30 @@ describe('PtyBufferManager', () => {
       // so nothing baked into the frame is delivered a second time.
       await new Promise((resolve) => setTimeout(resolve, 25));
       expect(onFlush).not.toHaveBeenCalled();
+
+      manager.removeSession(SESSION);
+    });
+
+    it('the geometry-gated non-alt route runs the same sampling protocol as the alt route', async () => {
+      const onFlush = vi.fn();
+      const manager = new PtyBufferManager({ onFlush, onDrain: vi.fn() });
+      manager.initSession(SESSION, '', 80, 24);
+      manager.onData(SESSION, 'seed drawn pre-resize');
+      manager.onResize(SESSION, 120, 30);
+      manager.onData(SESSION, 'pending frame bytes');
+
+      const snapshot = await manager.getReplaySnapshot(SESSION);
+      // Drain semantics: bytes pending at sample time ride the reply (baked
+      // into the frame or tail-folded), never a later flush - the renderer
+      // drops held bytes as already-replayed, so a flush here would lose them.
+      expect(snapshot).toContain('pending frame bytes');
+      expect(manager.getBufferStats(SESSION)?.pendingBytes).toBe(0);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(onFlush).not.toHaveBeenCalled();
+      // Never-alt shape: the serialize addon emits the 1049h switch only when
+      // the active buffer is alternate, and nothing else may sneak one in - a
+      // switch here would strand the replayed frame in the wrong buffer.
+      expect(snapshot).not.toContain('\x1b[?1049h');
 
       manager.removeSession(SESSION);
     });
@@ -1694,6 +2290,37 @@ describe('PtyBufferManager', () => {
     });
   });
 
+  describe('pre-TUI takeover-clear one-shot window expiry', () => {
+    // Isolate the one fake-timer test in this cluster so a failure that
+    // skips the inline vi.useRealTimers() restore cannot leak fake timers
+    // into a sibling real-timer test elsewhere in the file that awaits the
+    // headless parser's macrotask flush (same guard as the replay-drain
+    // onDrain seam block below).
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('the one-shot expires after PRE_TUI_TAKEOVER_WINDOW_MS: a qualifying clear past the window does not strip', async () => {
+      vi.useFakeTimers();
+      const onFlush = vi.fn();
+      const manager = new PtyBufferManager({ onFlush, onDrain: vi.fn() });
+      manager.initSession(SESSION, '', 80, 24);
+
+      manager.onData(SESSION, 'PS C:\\Users\\dev> node agent.js\r\n');
+      // Past the 15s takeover window: onData disarms the one-shot without
+      // firing before it even scans this next chunk for a clear.
+      await vi.advanceTimersByTimeAsync(16_000);
+      manager.onData(SESSION, '\x1b[2J\x1b[1;1HTUI FRAME ROW');
+      await vi.advanceTimersByTimeAsync(100);
+
+      const flushed = onFlush.mock.calls.map((call) => call[1] as string).join('');
+      expect(flushed).not.toContain('\x1b[3J');
+
+      vi.useRealTimers();
+      manager.removeSession(SESSION);
+    });
+  });
+
   describe('replay-drain onDrain seam (focus-independent data-tap feeder)', () => {
     // A replay sample's double-delivery guard empties state.buffer without an
     // onFlush, which is correct for the requesting renderer (the bytes are
@@ -1852,6 +2479,41 @@ describe('PtyBufferManager', () => {
         [SESSION, 'AWAIT_WINDOW_BYTES'],
       ]);
       expect(onFlush).not.toHaveBeenCalled();
+
+      vi.useRealTimers();
+      manager.removeSession(SESSION);
+    });
+
+    it('the serialize-deadline fallback degrades the geometry-gated (non-alt) route to the byte replay, not black', async () => {
+      vi.useFakeTimers();
+      const onFlush = vi.fn();
+      const onDrain = vi.fn();
+      const manager = new PtyBufferManager({ onFlush, onDrain });
+      manager.initSession(SESSION, '', 80, 24);
+      manager.onData(SESSION, 'drawn at the old geometry');
+      manager.onResize(SESSION, 120, 30);
+      manager.onData(SESSION, 'drawn at the new geometry');
+      expect(manager.getDimensionState(SESSION)?.geometryChangedAtRingIndex).not.toBeNull();
+
+      // Wedge the parser so the sample rides the REPLAY_SERIALIZE_MAX_WAIT_MS
+      // deadline into the byte-replay fallback (mirrors the alt-route
+      // wedged-serialize test above, without entering the alt screen).
+      interface ManagerInternals {
+        buffers: Map<string, { headless: { serialize: () => Promise<string> } }>;
+      }
+      const bufferState = (manager as unknown as ManagerInternals).buffers.get(SESSION);
+      if (!bufferState) throw new Error('test setup: session buffer state missing');
+      bufferState.headless.serialize = () => new Promise<string>(() => {});
+
+      const pendingSnapshot = manager.getReplaySnapshot(SESSION);
+      await vi.advanceTimersByTimeAsync(1100);
+      const snapshot = await pendingSnapshot;
+
+      // Degrades to the byte replay - not black, not empty - and matches
+      // getScrollback's own value for the same (now-drained) state.
+      expect(snapshot).toContain('drawn at the old geometry');
+      expect(snapshot).toContain('drawn at the new geometry');
+      expect(snapshot).toBe(manager.getScrollback(SESSION));
 
       vi.useRealTimers();
       manager.removeSession(SESSION);

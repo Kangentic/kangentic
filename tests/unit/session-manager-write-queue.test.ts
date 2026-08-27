@@ -53,6 +53,7 @@ vi.mock('../../src/main/pty/spawn/shell-resolver', () => {
 
 vi.mock('../../src/shared/paths', () => ({
   adaptCommandForShell: (cmd: string) => cmd,
+  buildSpawnClearPrelude: () => '',
   isUncPath: (pathString: string) => /^[\\/]{2}[^\\/]/.test(pathString),
 }));
 

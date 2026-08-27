@@ -86,16 +86,33 @@ const MAX_BYTES_PER_FLUSH = 256 * 1024;
  *
  *  - QUIESCE: no new data for this long counts as "the repaint has landed".
  *    ~3 flush ticks (16ms each), long enough to bridge a multi-chunk redraw.
- *    Required IN ADDITION to the marker on a stacked resize; it is NOT a
- *    standalone fallback, because "some bytes, then quiet" is satisfied by a
- *    spinner tick. A marker-less repaint rides the MAX_WAIT deadline instead.
+ *    Required IN ADDITION to the marker on a stacked resize; it is not an
+ *    IMMEDIATE standalone fallback, because "some bytes, then quiet" is
+ *    satisfied by a spinner tick.
+ *  - MARKERLESS_MIN_WAIT: how long a marker-less repaint waits before a
+ *    quiesce alone may settle it. Claude's default renderer repaints after
+ *    SIGWINCH WITHOUT a full-screen erase while IDLE (measured live
+ *    2026-08-26: 12/12 idle detail opens settled `deadline` at 407-422ms with
+ *    zero post-resize \x1b[2J, while active turns settled `marker` in
+ *    15-160ms), so riding the full deadline made every idle open pay ~410ms
+ *    of black. The floor sits above the measured marker-arrival window
+ *    (21-122ms), so a repaint that IS going to carry the erase almost always
+ *    wins first and the spinner-tick race stays closed. The residual trade -
+ *    a repaint slower than the floor gets sampled pre-repaint - became
+ *    acceptable when the sampling routes changed: a settle-armed sample now
+ *    takes the parsed-grid frame (the same resize arms
+ *    geometryChangedAtRingIndex), so a premature sample is a correctly-shaped
+ *    slightly-stale frame the held live bytes then update, not the raw
+ *    wrapped-stale-bytes flicker this wait was originally built against.
  *  - MAX_WAIT: hard ceiling from wait entry. A geometry change with no repaint
- *    (or a genuinely slow one) adds at most this to a first paint.
+ *    (a session that answers SIGWINCH with silence) adds at most this to a
+ *    first paint.
  *  - STALE: a pending-repaint stamp older than this is treated as settled - the
  *    repaint has long since landed, so sample immediately.
  *  - POLL: settle poll cadence, matched to the flush tick.
  */
 const REPAINT_QUIESCE_MS = 50;
+const MARKERLESS_REPAINT_MIN_WAIT_MS = 150;
 const REPAINT_MAX_WAIT_MS = 400;
 const REPAINT_STALE_MS = 2000;
 const REPAINT_POLL_MS = 16;
@@ -210,6 +227,64 @@ function updateModeState(state: ModeState, text: string): void {
 const FULL_FRAME_CLEAR = '\x1b[2J';
 
 /**
+ * Erase-scrollback-only (ED 3). Injected right after a fresh session's first
+ * NORMAL-buffer FULL_FRAME_CLEAR into two streams (never the ring): the
+ * HEADLESS PARSER, so the parser's retained scrollback starts where the TUI
+ * took over, and the LIVE FLUSH buffer, so a terminal that was already
+ * mounted at spawn drops the same pre-TUI noise the moment the TUI's first
+ * clear lands instead of keeping it until a remount. Together these mirror
+ * getScrollback's tuiStartIndex strip: without them, a geometry-gated
+ * serialized frame (or the live view) resurrects the shell's spawn-command
+ * echo that the byte replay has always sliced off. Alt-screen sessions skip
+ * the injection: the alt buffer has no scrollback for ED 3 to act on, and
+ * their normal-buffer scrollback is not user-visible.
+ */
+const PRE_TUI_SCROLLBACK_CLEAR = '\x1b[3J';
+
+/**
+ * How long after initSession the takeover-clear one-shot stays armed. The
+ * takeover clear is a SPAWN event - the shell preamble, echoed command, and
+ * the agent TUI's first draw all land within the first seconds - so a
+ * FULL_FRAME_CLEAR arriving later is a mid-session repaint (Claude's active
+ * turns settle `marker` in 15-160ms after a resize, i.e. they DO emit \x1b[2J
+ * routinely), and firing the one-shot then would ED3 genuine user-scrollable
+ * history out of the live terminal and the parser. Expiring the arm bounds
+ * that: past the window the session degrades to the pre-strip behavior (the
+ * pre-TUI noise stays until a remount), which is the safe direction.
+ */
+const PRE_TUI_TAKEOVER_WINDOW_MS = 15_000;
+
+/**
+ * Best-effort removal of escape/control sequences so the pre-TUI strip can
+ * ask "has any PRINTABLE output preceded this clear?". ConPTY opens every
+ * stream with its own \x1b[2J inside a run of pure escape sequences
+ * (\x1b[?9001h\x1b[?1004h\x1b[?25l\x1b[2J...), so keying the strip on the
+ * bare first clear consumed the one-shot trigger before the shell had
+ * printed anything - the wipe fired on an empty scrollback and the REAL
+ * TUI-takeover clear passed unstripped. Over-stripping here is safe (a
+ * missed trigger stays armed for the next clear; TUIs repaint); counting
+ * escape payloads as printable is not (it re-creates the ConPTY bug), so
+ * string-type sequences (OSC window titles carry paths; DCS/APC/PM/SOS
+ * likewise) are removed whole, terminator OPTIONAL so a sequence split at a
+ * chunk boundary still cannot leak its payload. That split tolerance is why
+ * this does not reuse shared/ansi-strip.ts's stripAnsiControlCodes: that
+ * stripper requires the terminator (correct for its transcript consumers,
+ * which see whole strings), and an unterminated tail there would leak here.
+ * CSI uses the full ECMA-48 byte ranges (params 0x30-0x3f, intermediates
+ * 0x20-0x2f, final 0x40-0x7e) so DECSCUSR's `\x1b[2 q` or a colon SGR cannot
+ * shed printable-looking residue, and an unterminated CSI at the very end of
+ * the chunk is dropped whole for the same split-tolerance reason.
+ */
+function stripAnsiSequences(text: string): string {
+  return text
+    .replace(/\x1b[\]P_^X][^\x07\x1b]*(?:\x07|\x1b\\)?/g, '')
+    .replace(/\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]/g, '')
+    .replace(/\x1b\[[\x20-\x3f]*$/, '')
+    .replace(/\x1b[\s\S]/g, '')
+    .replace(/[\r\n\x00-\x1f]/g, '');
+}
+
+/**
  * Hard ceiling on getReplaySnapshot's wait for the headless serialize. The
  * barrier normally resolves in a few milliseconds; it can only hang when the
  * headless terminal is disposed mid-sample (removeSession racing a replay) or
@@ -272,6 +347,22 @@ interface BufferState {
    *  settle while the session streams). Adjusted downward when the scrollback
    *  is trimmed mid-wait; cleared together with pendingRepaintAt. */
   pendingRepaintScrollbackLength: number | null;
+  /** scrollback.length at the most recent EFFECTIVE geometry change (cols or
+   *  rows actually changed while the ring already held bytes), or null when
+   *  every byte in the ring was drawn at the current geometry. Bytes before
+   *  the index were drawn for a different grid, and a raw byte replay of them
+   *  into a differently-sized xterm lands absolute-CUP writes on the wrong
+   *  rows (Claude Code's default renderer is a normal-buffer TUI, and Windows
+   *  ConPTY re-emits even plain shell output with absolute addressing), so
+   *  getReplaySnapshot routes a non-null session through the parsed-grid
+   *  frame instead. Overwritten (not preserved) on each later change so it
+   *  always refers to the LATEST one; shifted down by ring trims like
+   *  pendingRepaintScrollbackLength and cleared to null at <= 0 - the
+   *  remaining ring is then single-geometry and the session self-heals back
+   *  to the raw byte replay. Carried across respawn via initSession's
+   *  previousGeometry. Unlike the pendingRepaint* trio this is ring-content
+   *  state, not an in-flight wait, so nothing else clears it. */
+  geometryChangedAtRingIndex: number | null;
   /** True when the pending geometry change landed while a PREVIOUS repaint was
    *  still unconsumed (rapid resize ping-pong). Disables the marker-only
    *  early settle for this wait: the next marker may be the previous
@@ -289,8 +380,33 @@ interface BufferState {
   lastDataAt: number | null;
   /** Position of the first \x1b[2J (clear screen) in the scrollback, or -1
    *  if not found yet. Set once and cached. Used by getScrollback() to strip
-   *  shell command noise that precedes the agent TUI's first draw. */
+   *  shell command noise that precedes the agent TUI's first draw. The frame
+   *  route and the live view get the same strip via
+   *  pendingPreTuiScrollbackClear below. */
   tuiStartIndex: number;
+  /** True until the session's TUI-takeover clear arrives: the first
+   *  NORMAL-buffer FULL_FRAME_CLEAR preceded by PRINTABLE output (ConPTY's
+   *  own startup clear arrives inside a run of pure escape sequences and must
+   *  not consume this one-shot - see stripAnsiSequences). At that clear,
+   *  onData injects PRE_TUI_SCROLLBACK_CLEAR into the headless parser's
+   *  stream and the live flush buffer (and flips this false) so both the
+   *  parsed-grid replay and an already-mounted live terminal drop the pre-TUI
+   *  shell noise, and stamps tuiStartIndex at the same boundary so the byte
+   *  replay agrees. Starts false on carry-over, mirroring tuiStartIndex's
+   *  carried-ring opt-out: carried scrollback is genuine user content, and
+   *  the NEW process's first clear must not wipe it. Also starts false for
+   *  TRANSIENT sessions (a Command Terminal has no spawn command to strip,
+   *  and a user shell's later \x1b[2J - which by spec erases the viewport
+   *  only - must never be upgraded into a scrollback wipe), and expires at
+   *  preTuiWindowEndsAt so a mid-session repaint clear cannot fire it late. */
+  pendingPreTuiScrollbackClear: boolean;
+  /** Wall-clock bound on the one-shot above: past this, onData disarms it
+   *  without firing (see PRE_TUI_TAKEOVER_WINDOW_MS). 0 when never armed. */
+  preTuiWindowEndsAt: number;
+  /** Whether any printable (non-escape) output has been seen while the
+   *  pre-TUI strip is still pending; feeds the takeover-clear predicate
+   *  above. Meaningless (and no longer updated) once the strip fires. */
+  preTuiPrintableSeen: boolean;
   /** Sticky DEC private input/reporting modes (DECCKM etc.) currently active,
    *  tracked from the live stream so getScrollback() can re-assert them after
    *  xterm.reset() wipes them on replay. Survives scrollback trimming. #313. */
@@ -313,10 +429,20 @@ interface BufferState {
    *  Its serialized frame is a snapshot of the PARSED grid, served instead of
    *  the raw byte replay so write-once static TUI cells (whose drawing bytes
    *  have aged out of the 512KB window) survive a cold replay. Two consumers:
-   *  the mobile seed (getSerializedFrame) and the desktop alt-screen replay
-   *  (getReplaySnapshot); desktop non-alt sessions still read the raw
-   *  `scrollback`. Disposed in removeSession. */
+   *  the mobile seed (getSerializedFrame) and the desktop replay
+   *  (getReplaySnapshot, for alt-screen and geometry-gated sessions); desktop
+   *  non-alt sessions still read the raw `scrollback` while their ring holds
+   *  a single geometry. Disposed in removeSession. */
   headless: HeadlessFrameBuffer;
+}
+
+/** The geometry the bytes in a session's ring were drawn for, captured by
+ *  performSpawn BEFORE removeSession so initSession can decide whether a
+ *  carried-over ring is geometry-suspect (see getCarryoverGeometry). */
+export interface CarryoverGeometry {
+  cols: number;
+  rows: number;
+  geometryChangedAtRingIndex: number | null;
 }
 
 /** Clear the pending-repaint tracking as one unit. The three fields are set
@@ -342,7 +468,7 @@ export class PtyBufferManager {
     this.callbacks = callbacks;
   }
 
-  initSession(sessionId: string, previousScrollback: string, initialCols: number, initialRows: number = DEFAULT_HEADLESS_ROWS): void {
+  initSession(sessionId: string, previousScrollback: string, initialCols: number, initialRows: number = DEFAULT_HEADLESS_ROWS, previousGeometry?: CarryoverGeometry | null, transientSession: boolean = false): void {
     // Sized to the initial PTY geometry so the very first serialized frame is
     // laid out at the right width; onResize keeps it in step thereafter.
     const headless = new HeadlessFrameBuffer(initialCols, initialRows);
@@ -350,6 +476,22 @@ export class PtyBufferManager {
     // respawn's first frame reconstructs the prior grid, mirroring how the raw
     // scrollback path replays previousScrollback.
     if (previousScrollback) headless.write(previousScrollback);
+    // Geometry gate for a carried-over ring (like tuiStartIndex, this is
+    // ring-content state, so it follows the scrollback rather than resetting
+    // with the modes): without evidence the carried bytes match the spawn
+    // geometry, mark the whole carried ring suspect so the replay takes the
+    // parsed grid; when the prior drawn-at geometry is known and unchanged,
+    // carry the old gate through unchanged (a carried ring can internally
+    // span geometries even when the respawn keeps the last one).
+    let geometryChangedAtRingIndex: number | null = null;
+    if (previousScrollback) {
+      const priorGeometryMatches = previousGeometry != null
+        && previousGeometry.cols === initialCols
+        && previousGeometry.rows === initialRows;
+      geometryChangedAtRingIndex = priorGeometryMatches
+        ? previousGeometry.geometryChangedAtRingIndex
+        : previousScrollback.length;
+    }
     this.buffers.set(sessionId, {
       buffer: '',
       flushScheduled: false,
@@ -359,10 +501,19 @@ export class PtyBufferManager {
       lastRows: initialRows,
       pendingRepaintAt: null,
       pendingRepaintScrollbackLength: null,
+      geometryChangedAtRingIndex,
       pendingRepaintStacked: false,
       repaintSettle: null,
       lastDataAt: null,
       tuiStartIndex: previousScrollback ? 0 : -1,
+      // Armed only for a fresh non-transient spawn (see the field doc), and
+      // only within the takeover window - both bounds keep the injected ED3
+      // pointed at spawn noise, never at genuine session scrollback.
+      pendingPreTuiScrollbackClear: !previousScrollback && !transientSession,
+      preTuiWindowEndsAt: !previousScrollback && !transientSession
+        ? Date.now() + PRE_TUI_TAKEOVER_WINDOW_MS
+        : 0,
+      preTuiPrintableSeen: false,
       // Start empty/false even on carry-over: the new process re-emits its own modes.
       decPrivateModes: new Set<number>(),
       inAltScreen: false,
@@ -385,9 +536,55 @@ export class PtyBufferManager {
     // ESC-free bulk output unless a partial set is pending. Parse `combined`
     // only; append the original `data` below so the carry never duplicates
     // bytes into buffer/scrollback.
+    let clearParserScrollbackAfterWrite = false;
+    let preTuiInjectionIndex = 0;
+    // The takeover window: a qualifying clear is a spawn event, so past the
+    // window disarm the one-shot without firing - a \x1b[2J minutes in is a
+    // mid-session repaint whose ED3 would wipe genuine scrollback. Checked
+    // up front (not inside the escape-bearing branch) so expiry also stops
+    // the printable-tracking cost below.
+    if (state.pendingPreTuiScrollbackClear && Date.now() > state.preTuiWindowEndsAt) {
+      state.pendingPreTuiScrollbackClear = false;
+    }
     if (state.modeParseCarry || data.includes('\x1b')) {
       const combined = state.modeParseCarry + data;
       updateModeState(state, combined);
+      // The TUI-takeover clear of a fresh session: the first NORMAL-buffer
+      // full clear PRECEDED by printable output (ConPTY's escape-only startup
+      // clear stays armed - see the field and stripAnsiSequences docs).
+      // Scanned on `combined` so a clear split across two chunks is still
+      // caught, and scanned FORWARD past disqualified matches so a chunk that
+      // coalesces ConPTY's escape-only startup clear, the printable shell
+      // echo, AND the real takeover clear still fires on the qualifying one
+      // (stopping at the first \x1b[2J would leave the one-shot armed with
+      // the takeover clear already consumed into the ring). inAltScreen is
+      // read after updateModeState, so a chunk that both clears and enters
+      // the alt screen counts as alt (a fullscreen TUI clearing on entry)
+      // and is skipped.
+      if (state.pendingPreTuiScrollbackClear && !state.inAltScreen) {
+        let clearIndex = combined.indexOf(FULL_FRAME_CLEAR);
+        while (clearIndex !== -1
+          && !state.preTuiPrintableSeen
+          && stripAnsiSequences(combined.slice(0, clearIndex)).length === 0) {
+          clearIndex = combined.indexOf(FULL_FRAME_CLEAR, clearIndex + 1);
+        }
+        if (clearIndex !== -1) {
+          state.pendingPreTuiScrollbackClear = false;
+          clearParserScrollbackAfterWrite = true;
+          // Stamp the byte route's strip at the SAME boundary. The carry's
+          // bytes are already counted in scrollback.length (they arrived in
+          // the previous chunk), and `data` has not been appended yet, so the
+          // ring index of this clear is:
+          state.tuiStartIndex = state.scrollback.length - state.modeParseCarry.length + clearIndex;
+          // Where the ED3 must land within THIS chunk: immediately behind the
+          // clear, not behind the whole chunk - post-clear TUI drawing in the
+          // same chunk can already push its own fresh lines into scrollback,
+          // and a chunk-end ED3 would erase those along with the pre-TUI
+          // noise. The clear can begin inside the carry (whose bytes went to
+          // the parser with the PREVIOUS chunk), so clamp at 0.
+          preTuiInjectionIndex = Math.max(0, clearIndex + FULL_FRAME_CLEAR.length - state.modeParseCarry.length);
+        }
+      }
       // A carry can only be a partial sequence at the very END of `combined`,
       // and it is bounded to MODE_CARRY_MAX_LENGTH, so scan just the trailing
       // window - a full-chunk scan here is redundant on the hot path. The `!?`
@@ -401,11 +598,39 @@ export class PtyBufferManager {
           : '';
     }
 
-    state.buffer += data;
+    // Track printable output for the takeover-clear predicate above. Runs for
+    // EVERY chunk while the strip is pending (an escape-free chunk skips the
+    // mode block entirely), and stops costing anything once printable output
+    // is seen, the strip has fired, or the window expired. An ESC-free chunk
+    // needs no 4-pass strip: printable there just means "any non-control
+    // character" (\x7f deliberately counts, matching the full strip).
+    if (state.pendingPreTuiScrollbackClear && !state.preTuiPrintableSeen) {
+      const chunkHasPrintable = data.includes('\x1b')
+        ? stripAnsiSequences(data).length > 0
+        : /[^\x00-\x1f]/.test(data);
+      if (chunkHasPrintable) state.preTuiPrintableSeen = true;
+    }
+
     state.scrollback += data;
     // Feed the headless parser the SAME bytes so its parsed grid (the mobile
-    // seed source) stays in lockstep with the raw scrollback ring.
-    state.headless.write(data);
+    // seed source) stays in lockstep with the raw scrollback ring. The one
+    // deliberate divergence: the ED 3 injected directly behind a fresh
+    // session's takeover clear (at preTuiInjectionIndex, mid-chunk when the
+    // clear sits mid-chunk), which goes to the PARSER and the LIVE FLUSH
+    // buffer but never the ring (the ring keeps every byte, and getScrollback
+    // applies its equivalent strip at read time). The flush copy is what lets
+    // a terminal already mounted at spawn drop the pre-TUI noise live.
+    if (clearParserScrollbackAfterWrite) {
+      const bytesBeforeInjection = data.slice(0, preTuiInjectionIndex);
+      const bytesAfterInjection = data.slice(preTuiInjectionIndex);
+      state.buffer += bytesBeforeInjection + PRE_TUI_SCROLLBACK_CLEAR + bytesAfterInjection;
+      if (bytesBeforeInjection) state.headless.write(bytesBeforeInjection);
+      state.headless.write(PRE_TUI_SCROLLBACK_CLEAR);
+      if (bytesAfterInjection) state.headless.write(bytesAfterInjection);
+    } else {
+      state.buffer += data;
+      state.headless.write(data);
+    }
     // Stamp the arrival so a pending repaint-settle can tell that the
     // post-resize redraw has landed (data after the resize) and then quiesced.
     state.lastDataAt = Date.now();
@@ -421,6 +646,15 @@ export class PtyBufferManager {
       if (state.pendingRepaintScrollbackLength !== null) {
         const removedCharacters = lengthBeforeTrim - state.scrollback.length;
         state.pendingRepaintScrollbackLength = Math.max(0, state.pendingRepaintScrollbackLength - removedCharacters);
+      }
+      // Shift the geometry gate the same way, but clear it (no Math.max clamp:
+      // 0 is not a valid gate) once the trim passes it - every remaining ring
+      // byte then postdates the LATEST geometry change, so the raw byte replay
+      // is safe again and the session self-heals off the parsed-grid route.
+      if (state.geometryChangedAtRingIndex !== null) {
+        const removedCharacters = lengthBeforeTrim - state.scrollback.length;
+        const shiftedIndex = state.geometryChangedAtRingIndex - removedCharacters;
+        state.geometryChangedAtRingIndex = shiftedIndex > 0 ? shiftedIndex : null;
       }
       // Reset cached index after truncation
       state.tuiStartIndex = -1;
@@ -526,6 +760,15 @@ export class PtyBufferManager {
         state.pendingRepaintAt !== null && now - state.pendingRepaintAt < REPAINT_MAX_WAIT_MS;
       state.pendingRepaintAt = now;
       state.pendingRepaintScrollbackLength = state.scrollback.length;
+      // Arm the replay geometry gate: everything in the ring predates this
+      // change, so a raw byte replay would land its absolute-CUP writes on
+      // the wrong rows (see the field doc). An empty ring needs no gate -
+      // nothing was drawn at the old geometry (the common first fit after
+      // spawn). Overwrite unconditionally: each later change supersedes,
+      // which is what keeps the trim-shift's clear-at-zero sound.
+      if (state.scrollback.length > 0) {
+        state.geometryChangedAtRingIndex = state.scrollback.length;
+      }
     }
     return colsChanged;
   }
@@ -599,7 +842,13 @@ export class PtyBufferManager {
     // - with the resting park live, every reopen is a geometry-changing mount
     // that crosses exactly this path. It USUALLY means a plain shell though,
     // and a shell answers SIGWINCH with little or nothing, so this wait is
-    // shaped differently from the TUI path below:
+    // shaped differently from the TUI path below. (One deliberate narrowing
+    // of "usually": on POSIX shells the spawn clear prelude's `clear` emits a
+    // \x1b[2J into every non-transient agent ring at spawn, so a non-TUI
+    // agent there takes the TUI path below - acceptable, since the markerless
+    // quiesce settles it near this path's latency and only true post-resize
+    // silence pays the full deadline. Transient Command Terminals skip the
+    // prelude and keep this fast path.)
     //  - a post-resize erase marker upgrades to a frame-boundary sample (the
     //    TUI's first frame just landed);
     //  - marker-less bytes that arrived and went quiet sample on the lull;
@@ -695,13 +944,12 @@ export class PtyBufferManager {
         // Claude session: 169 cursor-homes to 56 full-screen clears in one 512KB
         // ring, so the false marker outnumbered the true one 3:1.
         //
-        // A TUI that repaints without erasing has no marker to key on, so it rides
-        // the full REPAINT_MAX_WAIT_MS deadline below rather than settling early.
-        // That is deliberate, not an oversight: as the note on `settled` explains,
-        // a quiesce alone cannot stand in for the erase marker here (a spinner tick
-        // plus an ordinary lull satisfies it), and settling early on that was the
-        // other half of the flicker. Correct if slower - the previous behavior
-        // traded correctness for that latency on EVERY session.
+        // A TUI that repaints without erasing has no marker to key on. It used
+        // to ride the full REPAINT_MAX_WAIT_MS deadline; it now settles on the
+        // floored markerless quiesce below (see MARKERLESS_REPAINT_MIN_WAIT_MS
+        // for why the floor keeps a genuine marker winning and why a premature
+        // sample stopped being the flicker hazard it was in the raw-replay
+        // era).
         const markerSampleSafe =
           scanOffset !== null &&
           !current.synchronizedOpen &&
@@ -713,26 +961,50 @@ export class PtyBufferManager {
           current.lastDataAt !== null &&
           current.lastDataAt >= stamp &&
           now - current.lastDataAt >= REPAINT_QUIESCE_MS;
-        // A quiesce ALONE cannot stand in for the repaint on a session we already
-        // know is a fullscreen TUI (this wait only arms when the scrollback shows
-        // a full-screen clear). "Some bytes arrived, then it went quiet for 50ms"
-        // is satisfied by a spinner tick followed by an ordinary lull, and that is
-        // the other half of the flicker: with the false cursor-home marker removed,
-        // the quiesce path still settled on the tick and sampled the pre-resize
-        // frame. The erase marker is the only byte sequence that actually means
-        // "the frame was redrawn", so for a TUI it is required, bounded by the
-        // deadline below so a genuinely missing repaint can still never hang.
+        // An IMMEDIATE quiesce cannot stand in for the repaint on a session we
+        // already know is a fullscreen TUI (this wait only arms when the
+        // scrollback shows a full-screen clear): "some bytes arrived, then it
+        // went quiet for 50ms" is satisfied by a spinner tick followed by an
+        // ordinary lull, and settling on that sampled the pre-resize frame.
+        // The markerless fallback therefore only opens AFTER the measured
+        // marker-arrival window has passed with no marker (floored on the
+        // RESIZE stamp, not wait entry, so a late-entering sampler does not
+        // re-pay it) - by then an erase that was coming has essentially always
+        // arrived, and the remaining sessions are the idle default renderer's
+        // markerless repaints that previously rode the deadline. Requires
+        // post-resize bytes plus the quiesce: silence still means "no repaint,
+        // wait for the deadline".
         //
-        // Stacked resizes additionally require quiesce: the first post-resize
-        // erase can be the PREVIOUS geometry's repaint arriving late, so both
-        // must have landed and stopped.
+        // Anchored on the LIVE stamp, not this wait's entry stamp: a resize
+        // landing MID-wait re-stamps pendingRepaintAt (and re-anchors
+        // markerSampleSafe's scan offset via pendingRepaintScrollbackLength),
+        // so the markerless floor and its quiesce must re-anchor with it -
+        // otherwise quiet inherited from BEFORE that resize settles it with
+        // zero grace for the new repaint. Still bounded by this wait's own
+        // deadline. The `?? stamp` covers a concurrent newer wait having
+        // already cleared the pending stamp.
+        //
+        // Stacked marker settles additionally require quiesce: the first
+        // post-resize erase can be the PREVIOUS geometry's repaint arriving
+        // late, so both must have landed and stopped. The markerless fallback
+        // needs no stacked variant - it already demands total quiet past the
+        // floor, which covers both in-flight repaints at once.
+        const liveStamp = current.pendingRepaintAt ?? stamp;
+        const markerlessQuiesced =
+          !markerSampleSafe &&
+          now - liveStamp >= MARKERLESS_REPAINT_MIN_WAIT_MS &&
+          current.lastDataAt !== null &&
+          current.lastDataAt >= liveStamp &&
+          now - current.lastDataAt >= REPAINT_QUIESCE_MS;
         const settled = current.pendingRepaintStacked
-          ? markerSampleSafe && quiesced
-          : markerSampleSafe;
+          ? (markerSampleSafe && quiesced) || markerlessQuiesced
+          : markerSampleSafe || markerlessQuiesced;
         if (settled || now >= deadline) {
           traceTerminal(sessionId, 'settle', {
             reason: (settled
-              ? (current.pendingRepaintStacked ? 'marker-and-quiesce' : 'marker')
+              ? (markerSampleSafe
+                ? (current.pendingRepaintStacked ? 'marker-and-quiesce' : 'marker')
+                : 'markerless-quiesce')
               : 'deadline') satisfies RepaintSettleReason,
             waitedMs: now - entryTime,
             // The geometry the bytes about to be sampled were DRAWN at. If it
@@ -787,6 +1059,7 @@ export class PtyBufferManager {
     pendingRepaintAt: number | null;
     pendingRepaintStacked: boolean;
     inAltScreen: boolean;
+    geometryChangedAtRingIndex: number | null;
   } | null {
     const state = this.buffers.get(sessionId);
     if (!state) return null;
@@ -796,6 +1069,10 @@ export class PtyBufferManager {
       pendingRepaintAt: state.pendingRepaintAt,
       pendingRepaintStacked: state.pendingRepaintStacked,
       inAltScreen: state.inAltScreen,
+      // The raw gate, not a derived route: together with inAltScreen it lets
+      // the forensics reader derive getReplaySnapshot's routing predicate
+      // without a second copy of it that could drift.
+      geometryChangedAtRingIndex: state.geometryChangedAtRingIndex,
     };
   }
 
@@ -895,12 +1172,13 @@ export class PtyBufferManager {
     // the session actually is. Gated on inAltScreen so a classic normal-buffer
     // session's replay is byte-for-byte unchanged (see the #313 comment on
     // RESTORABLE_DEC_PRIVATE_MODES). Through the app's replay path this branch
-    // now fires only rarely: getReplaySnapshot routes an alt-screen session to
-    // the parsed-grid frame and reaches here alt-gated only via its
-    // serialize-deadline fallback, so in normal operation this method serves
-    // non-alt sessions (plus direct callers and unit tests). A dangling
-    // synchronized-output frame is closed at the very end so a mid-frame
-    // sample can't stall xterm's renderer for its ~1s safety timeout.
+    // now fires only rarely: getReplaySnapshot routes alt-screen and
+    // geometry-gated sessions to the parsed-grid frame and reaches here for
+    // them only via its serialize-deadline fallback, so in normal operation
+    // this method serves stable-geometry non-alt sessions (plus direct
+    // callers and unit tests). A dangling synchronized-output frame is closed
+    // at the very end so a mid-frame sample can't stall xterm's renderer for
+    // its ~1s safety timeout.
     return (state.inAltScreen ? '\x1b[?1049h' : '')
       + buildDecPrivateModePrefix(state.decPrivateModes)
       + '\x1b[0m'
@@ -921,6 +1199,24 @@ export class PtyBufferManager {
    */
   getRawScrollback(sessionId: string): string {
     return this.buffers.get(sessionId)?.scrollback || '';
+  }
+
+  /**
+   * The geometry the session's ring bytes were drawn for, plus its current
+   * geometry gate, for performSpawn's carry-over (captured alongside
+   * getRawScrollback, BEFORE removeSession). Lets initSession keep the gate
+   * accurate across a respawn instead of conservatively marking every carried
+   * ring geometry-suspect. A production accessor by design - not
+   * getDimensionState, which is pinned as dev-diagnostics-only.
+   */
+  getCarryoverGeometry(sessionId: string): CarryoverGeometry | null {
+    const state = this.buffers.get(sessionId);
+    if (!state) return null;
+    return {
+      cols: state.lastCols,
+      rows: state.lastRows,
+      geometryChangedAtRingIndex: state.geometryChangedAtRingIndex,
+    };
   }
 
   /**
@@ -946,8 +1242,8 @@ export class PtyBufferManager {
 
   /**
    * The desktop replay payload: the parsed-grid serialized frame when the
-   * session is in the alt screen, the raw byte replay (getScrollback)
-   * otherwise.
+   * session is in the alt screen OR its byte ring spans an effective geometry
+   * change, the raw byte replay (getScrollback) otherwise.
    *
    * A fullscreen TUI does not redraw every cell after every clear, so once the
    * ring outgrows MAX_SCROLLBACK the bytes that drew its write-once static
@@ -956,25 +1252,44 @@ export class PtyBufferManager {
    * permanently holed frame until a cols-changing resize. The parsed grid
    * reconstructs every visible cell whatever its draw age, and the alt buffer
    * has no user-reachable scrollback, so serving the frame there loses nothing
-   * the user could scroll to. Non-alt sessions (plain shells, agents without a
-   * TUI) keep the byte replay: their scrollback IS the bytes, and truncation
-   * there only loses old history.
+   * the user could scroll to.
    *
-   * The frame carries the addon's own alt-screen switch and mode re-asserts
-   * (mid-stream, after the serialized normal buffer, not a leading prefix),
-   * followed by two appendices of ours: the folded DEC private mode prefix
-   * (the addon cannot emit the mouse ENCODING modes 1005/1006/1015/1016, so
-   * without it wheel scroll died after every same-grid remount - see the tail
-   * fold below) and any bytes that raced the sample.
+   * Non-alt sessions default to the byte replay: their scrollback IS the
+   * bytes, and the frame route would cap replayable history at the parser's
+   * 500 retained rows (SERIALIZED_SCROLLBACK_LINES) where the ring holds far
+   * more. But that is only safe while every ring byte was drawn at the
+   * CURRENT geometry. Claude Code's default renderer is a TUI in the NORMAL
+   * buffer, addressing rows absolutely per-geometry, and Windows ConPTY
+   * re-emits even plain shell output with absolute addressing - so replaying
+   * a multi-geometry ring lands stale-geometry CUP writes mid-history and
+   * interleaves two frames' text on one row. geometryChangedAtRingIndex (see
+   * its field doc) gates exactly that case onto the frame route; its
+   * trim-driven self-heal returns the session to the full-history byte
+   * replay once the suspect prefix ages out.
    */
   async getReplaySnapshot(sessionId: string): Promise<string> {
     const state = this.buffers.get(sessionId);
     if (!state?.scrollback) return '';
-    if (!state.inAltScreen) {
+    if (!state.inAltScreen && state.geometryChangedAtRingIndex === null) {
       const scrollback = this.getScrollback(sessionId);
       traceTerminal(sessionId, 'scrollback-sample', { source: 'byte-replay', bytes: scrollback.length });
       return scrollback;
     }
+    return this.sampleParsedGridFrame(sessionId, state, state.inAltScreen ? 'alt-screen' : 'geometry-change');
+  }
+
+  /**
+   * The parsed-grid sampling protocol shared by both frame routes (alt-screen
+   * and geometry-gated non-alt; `route` only labels the traces). The frame
+   * carries the addon's own alt-screen switch and mode re-asserts (mid-stream,
+   * after the serialized normal buffer, not a leading prefix - and for a
+   * never-alt session the addon emits no 1049h switch at all), followed by two
+   * appendices of ours: the folded DEC private mode prefix (the addon cannot
+   * emit the mouse ENCODING modes 1005/1006/1015/1016, so without it wheel
+   * scroll died after every same-grid remount - see the tail fold below) and
+   * any bytes that raced the sample.
+   */
+  private async sampleParsedGridFrame(sessionId: string, state: BufferState, route: 'alt-screen' | 'geometry-change'): Promise<string> {
     // Exactly-once accounting for bytes that race the sample. The drain and
     // the serialize() call are back-to-back synchronous statements, so the
     // drained set is exactly the bytes fed to the headless parser before the
@@ -1016,16 +1331,18 @@ export class PtyBufferManager {
         // while this sample was in flight, a presence check would pass on the
         // NEW state while the tail fold below read - and reported to data-tap -
         // the dead generation's buffer under a live session id.
-        traceTerminal(sessionId, 'scrollback-sample', { source: 'parsed-grid-torn-down', bytes: 0 });
+        traceTerminal(sessionId, 'scrollback-sample', { source: 'parsed-grid-torn-down', route, bytes: 0 });
         return '';
       }
       if (frame === null) {
         // Deadline: the parser is wedged or was disposed without settling its
         // barrier. Degrade to the byte replay (whose alt-screen branch
         // hand-builds the \x1b[?1049h + mode prefix for exactly this case)
-        // rather than replying with a black frame.
+        // rather than replying with a black frame. On the geometry-change
+        // route this degrades to the pre-gate multi-geometry replay - bounded,
+        // traced, and still better than black.
         const scrollback = this.getScrollback(sessionId);
-        traceTerminal(sessionId, 'scrollback-sample', { source: 'byte-replay-deadline', bytes: scrollback.length });
+        traceTerminal(sessionId, 'scrollback-sample', { source: 'byte-replay-deadline', route, bytes: scrollback.length });
         return scrollback;
       }
       // Tail fold: bytes that arrived during the await postdate the frame, so
@@ -1043,7 +1360,7 @@ export class PtyBufferManager {
       // prefix covers every mode in RESTORABLE_DEC_PRIVATE_MODES, and
       // re-asserting one the addon already emitted is a no-op.
       const payload = frame + buildDecPrivateModePrefix(state.decPrivateModes) + tail;
-      traceTerminal(sessionId, 'scrollback-sample', { source: 'parsed-grid', bytes: payload.length, tailBytes: tail.length });
+      traceTerminal(sessionId, 'scrollback-sample', { source: 'parsed-grid', route, bytes: payload.length, tailBytes: tail.length });
       return payload;
     } finally {
       state.replaySamplesInFlight -= 1;

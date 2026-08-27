@@ -130,6 +130,38 @@ export function isCmdShell(shellName: string): boolean {
 }
 
 /**
+ * The shell-native "clear the screen" statement to prefix onto a typed
+ * agent-spawn command, so the SHELL erases its own startup preamble and
+ * command echo the instant it executes - before the agent's first byte.
+ *
+ * This is the spawn-boundary strategy that stays out of the heuristics
+ * business: the pre-agent noise (ConPTY init, prompt, echoed command line)
+ * is bytes Kangentic does not control and pwsh/ConPTY updates keep
+ * reshaping (pwsh 7.6 started emitting \x1b[?25l and \x1b[2J in its startup
+ * preamble, which broke every marker that tried to INFER where the shell
+ * ends and the agent begins). A clear emitted BY the shell rides the real
+ * byte stream, so the live terminal, the scrollback ring, the headless
+ * parser, every replay, and the phone all clean themselves natively with
+ * zero Kangentic-side parsing - and it hands the buffer manager's pre-TUI
+ * strip (PtyBufferManager.pendingPreTuiScrollbackClear) a deterministic
+ * clear to anchor on, emitted by us rather than guessed from TUI behavior.
+ *
+ * Statement separators are deliberate per family: `;` continues after the
+ * clear in PowerShell and POSIX-ish shells (bash, zsh, fish, nu, git-bash,
+ * WSL all ship a `clear` builtin/binary), cmd chains with `&`.
+ */
+export function buildSpawnClearPrelude(shellName: string): string {
+  const lower = shellName.toLowerCase();
+  if (lower.includes('powershell') || lower.includes('pwsh')) {
+    return 'Clear-Host; ';
+  }
+  if (isCmdShell(shellName)) {
+    return 'cls & ';
+  }
+  return 'clear; ';
+}
+
+/**
  * Convert the executable path at the start of a command string for the
  * target shell. Only transforms on Windows; returns unmodified on macOS/Linux.
  *

@@ -34,6 +34,7 @@ export type RepaintSettleReason =
   | 'no-marker-deadline'
   | 'marker'
   | 'marker-and-quiesce'
+  | 'markerless-quiesce'
   | 'deadline';
 
 export interface TerminalTraceEvent {

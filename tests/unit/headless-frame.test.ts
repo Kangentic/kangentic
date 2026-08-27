@@ -75,6 +75,41 @@ describe('HeadlessFrameBuffer', () => {
 
       buffer.dispose();
     });
+
+    it('a never-alt session serializes as a pure normal-buffer frame with its scrollback', async () => {
+      const buffer = new HeadlessFrameBuffer(80, 24);
+      // 40 numbered lines on a 24-row grid: the first ones scroll off into
+      // the parser's retained scrollback.
+      let lines = 'normal-buffer session\r\n';
+      for (let lineNumber = 1; lineNumber <= 40; lineNumber += 1) {
+        lines += `line ${lineNumber}\r\n`;
+      }
+      buffer.write(lines);
+
+      const frame = await buffer.serialize();
+      // The serialize addon emits the \x1b[?1049h switch only when the active
+      // buffer is alternate; a never-alt frame must carry none, or the desktop
+      // geometry-gated replay (getReplaySnapshot) would strand the session's
+      // history in the wrong buffer.
+      expect(frame).not.toContain('\x1b[?1049h');
+      // And the frame round-trips through a cold replay: exact-row matches so
+      // 'line 1' cannot pass as a substring of 'line 10'.
+      const terminal = await replayIntoFreshTerminal(frame);
+      const activeBuffer = terminal.buffer.active;
+      const rowTexts: string[] = [];
+      for (let row = 0; row < activeBuffer.length; row += 1) {
+        rowTexts.push(activeBuffer.getLine(row)?.translateToString(true) ?? '');
+      }
+      // Normal-buffer SCROLLBACK is serialized too (bounded by the retention
+      // window): these two scrolled off the 24-row viewport long before the
+      // serialize and only the retained scrollback can carry them.
+      expect(rowTexts).toContain('normal-buffer session');
+      expect(rowTexts).toContain('line 1');
+      // The live viewport rides along as well.
+      expect(rowTexts).toContain('line 40');
+
+      buffer.dispose();
+    });
   });
 
   /**

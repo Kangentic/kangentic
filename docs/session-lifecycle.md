@@ -117,7 +117,7 @@ sessions bypass all of this (not task agents).
      - Start status file watcher (100ms debounce)
      - Start events file watcher (50ms debounce)
      - Set up output handler (16ms batched flush, 512KB scrollback)
-     - After 100ms delay, write CLI command to PTY stdin
+     - After 100ms delay, write CLI command to PTY stdin (agent spawns prefixed with the shell's own clear via `buildSpawnClearPrelude`; transient Command Terminals exempt)
 
 ## Queue
 
@@ -546,14 +546,49 @@ The handoff is transparent to the user - the task card shows spawn progress phas
 - PTY `onData` accumulates into a per-session buffer.
 - A 16ms flush interval (~60fps) emits buffered data via IPC `session:data`.
 - A 512KB scrollback ring buffer per session supports terminal restoration.
-- **Alt-screen sessions replay the parsed grid, not the byte tail.** A raw byte replay is not a
+- **Alt-screen sessions - and non-alt sessions whose byte ring spans an effective geometry
+  change - replay the parsed grid, not the byte tail.** A raw byte replay is not a
   frame snapshot: a fullscreen TUI leaves write-once static cells (box rules, mode labels)
   undrawn after a clear, so once a session outgrows the 512KB ring their drawing bytes are gone
   and a remount at unchanged geometry (no SIGWINCH, so no fresh repaint) paints a permanently
-  holed frame. `PtyBufferManager.getReplaySnapshot` therefore serves the headless PARSED grid
-  (the same serialized frame `getSerializedFrame` gives the mobile seed) when the session is in
-  the alt screen, and the raw byte replay otherwise - a plain shell's scrollback IS the bytes,
-  and truncation there only loses old history. Every parser on this path - the headless grid,
+  holed frame. A multi-geometry ring is the normal-buffer twin of that problem: Claude Code's
+  default (non-fullscreen) renderer is a TUI in the normal buffer addressing rows absolutely
+  per-geometry, and Windows ConPTY re-emits even plain shell output the same way, so replaying
+  bytes drawn at one grid into an xterm at another lands stale CUP writes mid-history and
+  interleaves two frames' text on one row. `PtyBufferManager.getReplaySnapshot` therefore
+  serves the headless PARSED grid (the same serialized frame `getSerializedFrame` gives the
+  mobile seed) when the session is in the alt screen or its ring is geometry-suspect, and the
+  raw byte replay for stable-geometry non-alt sessions - a plain shell's scrollback IS the
+  bytes, and truncation there only loses old history. The gate
+  (`BufferState.geometryChangedAtRingIndex`) is armed by an effective resize while the ring
+  holds bytes, shifted down by ring trims, and cleared once the suspect prefix trims out, so a
+  long-lived session self-heals back to the full-history byte replay; a respawn carries it
+  across via `initSession`'s `previousGeometry` (conservatively marking the carried ring
+  suspect when the prior drawn-at geometry is unknown or changed). The pre-TUI strip is
+  mirrored beyond the byte replay too, in two layers. The SOURCE layer: an agent spawn's
+  typed command line is prefixed with the shell's own clear
+  (`buildSpawnClearPrelude`: `Clear-Host; ` / `cls & ` / `clear; `; transient Command
+  Terminals skip it), so the shell erases its startup preamble and command echo the instant
+  the command executes - a real clear in the real byte stream that every consumer (live
+  terminal, ring, parser, replays, phone) honors natively, immune to pwsh/ConPTY updates
+  reshaping their startup bytes. The DETECTION layer: a fresh session's TUI-takeover clear
+  (the first NORMAL-buffer `\x1b[2J` PRECEDED by printable output - ConPTY's own escape-only
+  startup clear must not consume the one-shot) injects an `\x1b[3J` (erase scrollback only)
+  into the HEADLESS PARSER's stream and the LIVE FLUSH buffer (never the ring) and stamps
+  `tuiStartIndex` at the same boundary, so neither a serialized frame nor a terminal that
+  was already mounted at spawn resurrects the echo. The two layers are deliberately
+  INDEPENDENT, not chained: pwsh's `Clear-Host` renders through ConPTY as per-row erases
+  plus `\x1b[3J` with no `\x1b[2J` at all, so the prelude cleans every consumer purely
+  in-stream while the detection layer keys on whichever real `2J` the TUI itself emits -
+  either alone suffices. The one-shot is bounded to the spawn: transient Command Terminals
+  never arm it (no spawn echo to strip, and a user shell's later `\x1b[2J` - viewport-only by
+  spec - must not be upgraded into a scrollback wipe), and it expires after a takeover window
+  (`PRE_TUI_TAKEOVER_WINDOW_MS`) so a mid-session repaint clear can never fire it against
+  genuine accumulated history. Alt-screen sessions skip the
+  injection (no user-visible scrollback to protect), and a carried-over ring opts out
+  exactly like `tuiStartIndex` does, so a respawn's first clear cannot wipe genuine carried
+  history. Every parser on this
+  path - the headless grid,
   the renderer xterm that replays it, and the hand-rolled `VirtualScreen` probes - runs the
   Unicode 11 width table via `src/shared/xterm-unicode11.ts`, because xterm's default V6 table
   scores emoji single-width and drifts every autowrapped row of an agent TUI frame one column
@@ -562,8 +597,9 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   512KB ring to ~1.5KB but produced a permanently black terminal on a fast open/close/reopen.
   Slicing at the last clear discards write-once cells, and a sample landing at or just after a
   clear replays a clear with nothing after it. The parsed-grid snapshot above is the safe shape,
-  not a byte-offset heuristic; and since the byte path now serves normal-buffer sessions, a trim
-  there would discard genuine user-scrollable history, not just a TUI's redraw bytes.
+  not a byte-offset heuristic; and since the byte path now serves stable-geometry normal-buffer
+  sessions, a trim there would discard genuine user-scrollable history, not just a TUI's redraw
+  bytes.
 - **One grid width per mount (deterministic fit).** `describeProposedDimensions`
   (`src/renderer/addons/fit-addon.ts`, the single implementation that both `proposeDimensions` and
   `fit` read) is a pure function of two inputs and no others: the container geometry, and the ACTIVE
@@ -743,7 +779,14 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   the bytes appended after the resize, outside any open synchronized-output frame - instead of
   burning the whole ceiling and sampling mid-repaint. The marker is the `\x1b[2J` erase ONLY: a
   bare `\x1b[H` cursor-home was tried and reverted, since TUIs emit it for ordinary partial
-  updates (a live session showed 169 cursor-homes to 56 erases). STACKED resizes (a second
+  updates (a live session showed 169 cursor-homes to 56 erases). A MARKER-LESS repaint no longer
+  rides the whole ceiling: past `MARKERLESS_REPAINT_MIN_WAIT_MS` (a floor above the measured
+  21-122ms marker-arrival window, so a genuine erase still wins) post-resize bytes that have
+  quiesced settle the wait, because Claude's default renderer repaints WITHOUT an erase while
+  idle (measured 2026-08-26: 12/12 idle detail opens rode the deadline at 407-422ms) and a
+  premature sample is no longer the raw-replay wrapped-bytes flicker - every settle-armed sample
+  takes the parsed-grid route, so the worst case is a correctly-shaped slightly-stale frame the
+  held live bytes then update. True post-resize silence still rides the ceiling. STACKED resizes (a second
   geometry change while a RECENT previous repaint is still pending, e.g. rapidly closing and
   reopening a task detail ping-pongs the PTY between the dialog and bottom-panel widths) disable
   the marker-only settle - the first marker may be the previous geometry's late repaint - and
@@ -778,14 +821,19 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   paste, ...) from the live stream and re-asserts them as a prefix on `getScrollback` (#313), and
   a synchronized-output frame (mode 2026) left open by a mid-frame sample is closed with a
   trailing `\x1b[?2026l` so it cannot stall the renderer's ~1s safety timeout. Alt-screen (mode
-  1049/47/1047) is tracked separately as `inAltScreen`; it routes the replay (see
+  1049/47/1047) is tracked separately as `inAltScreen`; together with the geometry gate it routes
+  the replay (see
   `getReplaySnapshot` above), and a session in the alt screen gets a serialized frame that carries
   its own addon-emitted alt-screen switch and mode re-asserts (mid-stream, after the serialized
   normal buffer - not a leading prefix, so nothing may `startsWith` on it), so the replay paints
   into the alt buffer with the right input modes (a replay landing in the normal buffer was
-  previously the cause of a cursor left visually disconnected from the TUI frame). One mode class
+  previously the cause of a cursor left visually disconnected from the TUI frame). A
+  geometry-gated NON-alt session gets the same frame shape minus the switch: the addon emits
+  `\x1b[?1049h` only when the active buffer is alternate, so a never-alt frame carries none and
+  replays into the normal buffer where the session lives. One mode class
   the addon cannot emit is the mouse ENCODING modes (1005/1006/1015/1016 - it re-asserts mouse
-  TRACKING only), so `getReplaySnapshot` folds the tracked DEC-mode prefix onto the frame; without
+  TRACKING only), so `getReplaySnapshot` folds the tracked DEC-mode prefix onto every frame it
+  serves (both routes); without
   it, a same-grid remount left xterm reporting legacy X10 mouse bytes that an SGR-expecting TUI
   ignores, and wheel scroll went dead until the TUI happened to re-assert its own modes.
   A SECOND thing the addon cannot emit is the DECSTBM scroll region: it builds its prefix from

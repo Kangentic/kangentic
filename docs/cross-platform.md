@@ -43,6 +43,18 @@ three quote forms a command builder can emit: a bare path, a double-quoted path,
 single-quoted path `quoteArg` produces for unix-like shells. UNC exe paths (`\\server\share\...`)
 are normalized the same way.
 
+Agent spawns (never transient Command Terminals) additionally prefix the typed line with the
+shell's own clear via `buildSpawnClearPrelude()` (same module): `Clear-Host; ` for the
+PowerShell family, `cls & ` for cmd, and `clear; ` for every other shell (bash, zsh, fish, nu,
+dash, ksh, sh, WSL, Git Bash - the default arm, not a closed list). The shell then erases its
+startup preamble and command echo the instant the command
+executes - a real clear in the real byte stream that every consumer (live terminal, scrollback
+ring, headless parser, replays, phone) honors natively. This is the source-level guard against
+shell/ConPTY updates reshaping their startup bytes (pwsh 7.6 started emitting `\x1b[?25l` and
+`\x1b[2J` inside its escape-only startup preamble, which broke every heuristic that keyed on
+those markers); see [session-lifecycle](session-lifecycle.md) for the detection layer it pairs
+with.
+
 ### Spawn-time cwd fixups (Windows)
 
 `resolveSpawnCwd()` (`src/main/pty/spawn/pty-spawn.ts`) passes the working directory to node-pty via its `cwd` option, but two Windows shells mishandle certain valid directories at startup. In those cases it returns a `cwdFixupCommand` that the spawn flow writes into the PTY (raw, before the agent command) so the session lands in the real project directory:

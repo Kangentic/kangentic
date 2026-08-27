@@ -81,13 +81,16 @@ vi.mock('../../src/main/pr/pr-registry', () => ({
 // "writes the fixup command RAW" below).
 vi.mock('../../src/shared/paths', () => ({
   adaptCommandForShell: vi.fn((cmd: string) => cmd),
+  // Default to no prelude so the write-order assertions below stay
+  // byte-exact; the dedicated prelude test overrides this with a marker.
+  buildSpawnClearPrelude: vi.fn(() => ''),
 }));
 
 // ---- Import under test (after all vi.mock hoisting) ----
 import { performSpawn, DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS } from '../../src/main/pty/lifecycle/session-spawn-flow';
 import { SessionRegistry } from '../../src/main/pty/session-registry';
 import { resolveSpawnCwd } from '../../src/main/pty/spawn/pty-spawn';
-import { adaptCommandForShell } from '../../src/shared/paths';
+import { adaptCommandForShell, buildSpawnClearPrelude } from '../../src/shared/paths';
 import * as ptyModule from 'node-pty';
 
 // ---- Helpers ----
@@ -132,6 +135,7 @@ function makeContext(): SpawnFlowContext {
     registry,
     bufferManager: {
       getRawScrollback: vi.fn(() => ''),
+      getCarryoverGeometry: vi.fn(() => null),
       removeSession: vi.fn(),
       initSession: vi.fn(),
       onData: vi.fn(),
@@ -328,6 +332,41 @@ describe('performSpawn - resume path does not adopt bg shells', () => {
   });
 });
 
+describe('performSpawn - scrollback carry-over geometry', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('captures the carried ring geometry BEFORE removal and hands it to bufferManager.initSession', async () => {
+    const context = makeContext();
+    const carryoverGeometry = { cols: 210, rows: 48, geometryChangedAtRingIndex: 7 };
+    (context.bufferManager.getRawScrollback as ReturnType<typeof vi.fn>).mockReturnValue('carried bytes');
+    (context.bufferManager.getCarryoverGeometry as ReturnType<typeof vi.fn>).mockReturnValue(carryoverGeometry);
+    // An existing session for the task makes this a respawn; pty: null skips
+    // the orphan-kill path so no fake PTY shape is needed.
+    context.registry.set('old-session-id', {
+      id: 'old-session-id',
+      taskId: 'task-001',
+      projectId: 'project-001',
+      pty: null,
+      status: 'running',
+    } as never);
+
+    await performSpawn(makeInput(), context);
+
+    // Read off the OLD session's buffer state while it still exists ...
+    expect(context.bufferManager.getCarryoverGeometry).toHaveBeenCalledWith('old-session-id');
+    const geometryOrder = (context.bufferManager.getCarryoverGeometry as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
+    const removeOrder = (context.bufferManager.removeSession as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
+    expect(geometryOrder).toBeLessThan(removeOrder);
+    // ... and handed to the new session's initSession with the carried
+    // scrollback, so the replay geometry gate stays accurate across respawn.
+    const initCall = (context.bufferManager.initSession as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(initCall?.[1]).toBe('carried bytes');
+    expect(initCall?.[4]).toBe(carryoverGeometry);
+  });
+});
+
 describe('performSpawn - caller-owned session ID wiring', () => {
   let warnSpy: ReturnType<typeof vi.spyOn>;
 
@@ -464,6 +503,11 @@ describe('performSpawn - Windows cwd fixup write order', () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.clearAllMocks();
+    // clearAllMocks resets call history but NOT a mockReturnValue implementation,
+    // so restore the suite's no-prelude default here - a failing assertion in
+    // the prelude test must not leak 'CLEARPRE; ' into byte-exact write
+    // assertions elsewhere in this file.
+    vi.mocked(buildSpawnClearPrelude).mockReturnValue('');
   });
 
   it('writes the fixup command first, then the initial command', async () => {
@@ -562,6 +606,66 @@ describe('performSpawn - Windows cwd fixup write order', () => {
     expect(writeMock.mock.calls[0][0]).toBe("Set-Location -LiteralPath 'C:\\Users\\dev\\[foo]\\bar'\r");
     // The initial command DOES go through adaptCommandForShell.
     expect(writeMock.mock.calls[1][0]).toBe('ADAPTED:claude --resume abc\r');
+  });
+
+  it('prefixes the shell clear prelude on agent spawns and skips it for transient shells', async () => {
+    // The prelude makes the SHELL erase its startup preamble and command
+    // echo at execution time (see buildSpawnClearPrelude) - the source-level
+    // guard that stays valid across pwsh/ConPTY updates. Transient Command
+    // Terminals are a normal shell experience and must not be auto-cleared.
+    vi.mocked(buildSpawnClearPrelude).mockReturnValue('CLEARPRE; ');
+
+    const agentContext = makeContext();
+    await performSpawn(makeInput({ command: 'claude --resume abc' }), agentContext);
+    vi.advanceTimersByTime(100);
+    const agentWrite = ptySpawnMock.mock.results[0]?.value.write as ReturnType<typeof vi.fn>;
+    expect(agentWrite.mock.calls[0][0]).toBe('CLEARPRE; claude --resume abc\r');
+
+    vi.clearAllMocks();
+    vi.mocked(buildSpawnClearPrelude).mockReturnValue('CLEARPRE; ');
+    const transientContext = makeContext();
+    await performSpawn(
+      makeInput({ id: 'transient-session-id-000000000', taskId: 'task-002', command: 'echo hi', transient: true }),
+      transientContext,
+    );
+    vi.advanceTimersByTime(100);
+    const transientWrite = ptySpawnMock.mock.results[0]?.value.write as ReturnType<typeof vi.fn>;
+    expect(transientWrite.mock.calls[0][0]).toBe('echo hi\r');
+    // The suite-default '' prelude is restored by this block's afterEach, so a
+    // failing assertion above cannot leak 'CLEARPRE; ' into later tests.
+  });
+
+  it('the prelude rides the cwd-fixup deferred write', async () => {
+    // Both write-order mechanisms active at once: a Windows cwd fixup (100ms
+    // write, then the command 200ms later) AND a non-empty clear prelude. The
+    // fixup is written RAW - no prelude, since it is not the typed agent
+    // command - while the prelude rides along on the DEFERRED command write
+    // that follows it. A regression that prefixed the prelude onto the fixup
+    // write instead of the command write would pass the other tests in this
+    // describe block (which never combine both mocks at once) but fail here.
+    vi.mocked(resolveSpawnCwd).mockReturnValueOnce({
+      effectiveCwd: 'C:\\Users\\dev\\[foo]\\bar',
+      cwdFixupCommand: "Set-Location -LiteralPath 'C:\\Users\\dev\\[foo]\\bar'",
+    });
+    vi.mocked(buildSpawnClearPrelude).mockReturnValue('CLEARPRE; ');
+
+    const context = makeContext();
+    const input = makeInput({ command: 'claude --resume abc' });
+
+    await performSpawn(input, context);
+
+    const writeMock = ptySpawnMock.mock.results[0]?.value.write as ReturnType<typeof vi.fn>;
+
+    vi.advanceTimersByTime(100);
+    // The fixup write at 100ms carries no prelude - it is not the typed
+    // command, and prefixing it would corrupt the Set-Location syntax.
+    expect(writeMock).toHaveBeenCalledTimes(1);
+    expect(writeMock.mock.calls[0][0]).toBe("Set-Location -LiteralPath 'C:\\Users\\dev\\[foo]\\bar'\r");
+
+    vi.advanceTimersByTime(200);
+    // The deferred command write at +200ms carries the prelude.
+    expect(writeMock).toHaveBeenCalledTimes(2);
+    expect(writeMock.mock.calls[1][0]).toBe('CLEARPRE; claude --resume abc\r');
   });
 });
 

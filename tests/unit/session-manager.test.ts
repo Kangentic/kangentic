@@ -25,6 +25,7 @@ vi.mock('../../src/main/pty/spawn/shell-resolver', () => {
 
 vi.mock('../../src/shared/paths', () => ({
   adaptCommandForShell: (cmd: string) => cmd,
+  buildSpawnClearPrelude: () => '',
   isUncPath: (p: string) => /^[\\/]{2}[^\\/]/.test(p),
 }));
 
@@ -260,6 +261,25 @@ describe('Scrollback clearing on resize', () => {
     feedData('\x1b[2Jrepaint at 120x50');
     const scrollback = await manager.getScrollback(session.id);
     expect(scrollback).toContain('repaint at 120x50');
+  });
+
+  it('getTerminalDimensions surfaces geometryChangedAtRingIndex, armed only by an effective resize on top of existing ring content', async () => {
+    const { session, feedData } = await spawnSession();
+
+    // spawnSession()'s own initial resize (120x30) matches the PTY's actual
+    // spawn dims, so it is a same-geometry no-op and never arms the gate -
+    // the diagnostics row reports null for an unresized session.
+    const beforeResize = manager.getTerminalDimensions().find((row) => row.sessionId === session.id);
+    expect(beforeResize?.geometryChangedAtRingIndex).toBeNull();
+
+    feedData('hello world');
+    // An EFFECTIVE resize (cols and rows both change) while the ring already
+    // holds bytes arms the gate at the current ring length: everything
+    // before that index was drawn for the OLD (120x30) geometry.
+    manager.resize(session.id, 200, 40);
+
+    const afterResize = manager.getTerminalDimensions().find((row) => row.sessionId === session.id);
+    expect(afterResize?.geometryChangedAtRingIndex).toBe('hello world'.length);
   });
 
   it('getScrollback skips the repaint-settle wait once the PTY is gone (killed before sampling)', async () => {

@@ -15,6 +15,31 @@ import {
   FULL_REPAINT_ENV_KEY,
   SCROLL_SPEED_ENV_KEY,
 } from '../../src/main/pty/spawn/pty-spawn';
+import { buildSpawnClearPrelude } from '../../src/shared/paths';
+
+describe('buildSpawnClearPrelude', () => {
+  // The prelude makes the SHELL erase its own startup preamble and command
+  // echo the moment the agent command executes - the source-level guard that
+  // stays valid no matter how pwsh/ConPTY reshape their startup bytes (pwsh
+  // 7.6 started emitting \x1b[?25l and \x1b[2J in the preamble, which broke
+  // every heuristic that keyed on those markers).
+  it('uses Clear-Host for the PowerShell family', () => {
+    expect(buildSpawnClearPrelude('pwsh')).toBe('Clear-Host; ');
+    expect(buildSpawnClearPrelude('powershell.exe')).toBe('Clear-Host; ');
+    expect(buildSpawnClearPrelude('C:\\Program Files\\PowerShell\\7\\pwsh.exe')).toBe('Clear-Host; ');
+  });
+
+  it('uses cls with cmd chaining for cmd.exe', () => {
+    expect(buildSpawnClearPrelude('cmd')).toBe('cls & ');
+    expect(buildSpawnClearPrelude('C:\\Windows\\System32\\cmd.exe')).toBe('cls & ');
+  });
+
+  it('uses clear for POSIX-ish shells (bash, zsh, fish, nu, WSL, git-bash)', () => {
+    for (const shell of ['bash', 'zsh', 'fish', 'nu', 'wsl -d Ubuntu', 'C:\\Program Files\\Git\\bin\\bash.exe']) {
+      expect(buildSpawnClearPrelude(shell)).toBe('clear; ');
+    }
+  });
+});
 
 describe('resolveShellArgs', () => {
   it('splits WSL specs into exe + args, appending .exe for the ConPTY resolver', () => {
