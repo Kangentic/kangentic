@@ -24,6 +24,14 @@
  *      round-trip so they are noted as intentionally excluded with rationale).
  *   3. respondStoreState - missing-store 400 guard, mirror-not-installed 503
  *      (reader returns null), store-read-failed 500 (__error branch).
+ *   4. POST /cookie-jar-list dispatch wiring - the eval-disabled 403 guard, and
+ *      that the route is reachable with NO main window at all (it is dispatched
+ *      before the CDP-attached gate, deliberately, per the comment in
+ *      handleRequest - reading a jar's cookies needs no CDP round trip, so
+ *      gating it behind the debugger would break the rig whenever DevTools is
+ *      open). The route's own request-shape validation and 200 envelope are
+ *      covered separately in cookie-jar-routes.test.ts; these two tests pin
+ *      only the dispatcher-level wiring around it.
  *
  * Mocks `electron` because inspection-server.ts imports `app.getVersion()`.
  * The `attachDebugger` function in cdp.ts also calls `debugger.attach()`,
@@ -513,6 +521,97 @@ describe('inspection-server handler behaviors', () => {
       const responseBody = response.body as Record<string, unknown>;
       expect(responseBody.store).toBe('board');
       expect(responseBody.value).toEqual({ taskCount: 3 });
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // 4. POST /cookie-jar-list - dispatch wiring
+  // -------------------------------------------------------------------------
+
+  describe('POST /cookie-jar-list - dispatch wiring', () => {
+    it('returns 403 eval-disabled when Allow Unsafe Operations is off', async () => {
+      stopInspectionServer();
+      let disabledPort: number | null = null;
+      try {
+        disabledPort = await startInspectionServer({
+          getMainWindow: () => fakeWindow,
+          getEvalEnabled: () => false,
+          getSessionManager: () => null,
+          getProjectRoot: () => null,
+          getIpcContext: () => null,
+          getProjectId: () => null,
+        });
+        expect(disabledPort).not.toBeNull();
+
+        const response = await httpRequest(disabledPort!, {
+          method: 'POST',
+          path: '/cookie-jar-list',
+          body: { partition: 'persist:kng-aaaa-bbbb' },
+        });
+        expect(response.status).toBe(403);
+        const responseBody = response.body as { ok: boolean; error: { kind: string; detail: string } };
+        expect(responseBody.ok).toBe(false);
+        expect(responseBody.error.kind).toBe('eval-disabled');
+        expect(responseBody.error.detail).toContain('Allow Unsafe Operations');
+      } finally {
+        // Restore the shared eval-enabled server for subsequent tests, even if
+        // an assertion above threw - a bare stop/start with no finally here
+        // would leave the shared `activeOptions` binding pointed at a dead
+        // server and cascade a failure into every later test in the file.
+        stopInspectionServer();
+        const restoredPort = await startInspectionServer({
+          getMainWindow: () => fakeWindow,
+          getEvalEnabled: () => true,
+          getSessionManager: () => null,
+          getProjectRoot: () => null,
+          getIpcContext: () => null,
+          getProjectId: () => null,
+        });
+        serverPort = restoredPort!;
+      }
+    });
+
+    it('is reachable with no main window at all, because it is dispatched BEFORE the CDP-attached gate', async () => {
+      stopInspectionServer();
+      let noWindowPort: number | null = null;
+      try {
+        noWindowPort = await startInspectionServer({
+          getMainWindow: () => null,
+          getEvalEnabled: () => true,
+          getSessionManager: () => null,
+          getProjectRoot: () => null,
+          getIpcContext: () => null,
+          getProjectId: () => null,
+        });
+        expect(noWindowPort).not.toBeNull();
+
+        // A request with no `partition` field reaches respondCookieJar's OWN
+        // validation (400 missing-target) rather than the window/CDP gate's
+        // 503 no-main-window - proving this route never falls through to the
+        // CDP-backed dispatch below it. If the cookie-jar block were ever
+        // moved after the `if (!window)` check, this would instead see 503
+        // no-main-window.
+        const response = await httpRequest(noWindowPort!, {
+          method: 'POST',
+          path: '/cookie-jar-list',
+          body: {},
+        });
+        expect(response.status).toBe(400);
+        const responseBody = response.body as { ok: boolean; error: { kind: string } };
+        expect(responseBody.ok).toBe(false);
+        expect(responseBody.error.kind).toBe('missing-target');
+      } finally {
+        stopInspectionServer();
+        const restoredPort = await startInspectionServer({
+          getMainWindow: () => fakeWindow,
+          getEvalEnabled: () => true,
+          getSessionManager: () => null,
+          getProjectRoot: () => null,
+          getIpcContext: () => null,
+          getProjectId: () => null,
+        });
+        serverPort = restoredPort!;
+      }
     });
   });
 });

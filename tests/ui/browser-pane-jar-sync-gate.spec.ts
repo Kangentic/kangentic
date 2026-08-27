@@ -121,7 +121,7 @@ const preConfig = `
   });
 `;
 
-type EnsureJarMode = 'deferred' | 'hangForever';
+type EnsureJarMode = 'deferred' | 'hangForever' | 'missing';
 
 /**
  * Overrides `window.electronAPI.browser.ensureJar`, installed as a SECOND
@@ -133,8 +133,17 @@ type EnsureJarMode = 'deferred' | 'hangForever';
  *   should open.
  * - 'hangForever': returns a promise that never settles, so the only way the
  *   pane can proceed is BrowserPane's own 3s cap.
+ * - 'missing': deletes `ensureJar` entirely, simulating an HMR'd renderer
+ *   running against a main/preload build that predates this bridge method
+ *   (see BrowserPane.tsx's `typeof ensureJar !== 'function'` degrade guard).
  */
 function ensureJarOverrideScript(mode: EnsureJarMode): string {
+  if (mode === 'missing') {
+    return `
+      window.__jarSyncCalls = [];
+      delete window.electronAPI.browser.ensureJar;
+    `;
+  }
   const body = mode === 'deferred'
     ? `
       window.electronAPI.browser.ensureJar = function (taskId, projectId) {
@@ -260,6 +269,26 @@ test.describe('BrowserPane jar-sync mount gate', () => {
       await openTaskDetailAndToggleBrowser(page);
 
       await page.locator('[data-testid="browser-pane"]').waitFor({ state: 'visible', timeout: 8000 });
+      await expect(page.locator('[data-testid="browser-pane-jar-syncing"]')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('when ensureJar is not exposed by the main bridge, the pane degrades immediately instead of waiting on the 3s cap', async () => {
+    // Simulates an HMR'd renderer running against an older main/preload build
+    // with no browser:jarEnsure endpoint. BrowserPane's `typeof ensureJar !==
+    // 'function'` guard must call markSynced() synchronously within the mount
+    // effect rather than falling through to `ensureJar(...)`, which would
+    // throw (calling undefined) and either crash the pane or leave it wedged.
+    // The 1.5s budget (well under the 3s cap) is what tells "took the
+    // immediate degrade path" apart from "the guard was removed and the pane
+    // is merely waiting out the timeout cap by coincidence".
+    const { browser, page } = await launch('missing');
+    try {
+      await openTaskDetailAndToggleBrowser(page);
+
+      await page.locator('[data-testid="browser-pane"]').waitFor({ state: 'visible', timeout: 1500 });
       await expect(page.locator('[data-testid="browser-pane-jar-syncing"]')).toHaveCount(0);
     } finally {
       await browser.close();
