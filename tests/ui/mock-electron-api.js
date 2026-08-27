@@ -3815,6 +3815,11 @@
       // mock just resolves so the renderer can exercise the success/error
       // toast paths via test-time monkeypatching.
       clearStorage: function () { return Promise.resolve(); },
+      // Real impl syncs the worktree jar with the project identity jar in main.
+      // The mock resolves instantly so the pane's jar-sync gate opens and every
+      // browser-pane spec still mounts (a test can monkeypatch it to a slow
+      // promise to exercise the timeout-proceed path).
+      ensureJar: function () { return Promise.resolve(); },
       registerPane: function (input) { browserPaneCalls.push({ type: 'register', input: input }); return Promise.resolve(); },
       unregisterPane: function (sessionId, webContentsId) { browserPaneCalls.push({ type: 'unregister', sessionId: sessionId, webContentsId: webContentsId }); return Promise.resolve(); },
       // Ctrl+wheel zoom is applied in the main process and broadcast back.

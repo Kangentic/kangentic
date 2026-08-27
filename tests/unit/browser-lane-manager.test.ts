@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { browserPartitionForTask } from '../../src/shared/browser-partition';
 
 /**
  * Lane bookkeeping and lifetime.
@@ -53,6 +54,13 @@ vi.mock('electron', () => ({
       return win as any;
     }
   },
+  // openLane now syncs the task jar with the project identity jar before creating
+  // the window; a minimal session stub lets that run without erroring.
+  session: {
+    fromPartition: () => ({
+      cookies: { get: async () => [], set: async () => undefined, flushStore: async () => undefined, on: () => undefined },
+    }),
+  },
 }));
 
 const registered: Array<Record<string, unknown>> = [];
@@ -64,6 +72,16 @@ vi.mock('../../src/main/browser/browser-pane-registry', () => ({
     unregister: (sessionId: string, reason?: string) => { unregistered.push({ sessionId, reason }); },
     unregisterByWebContentsId: vi.fn(),
   },
+}));
+
+// openLane seeds the task jar from the project identity jar before creating
+// the window, bounded by JAR_SEED_TIMEOUT_MS. Mocking the module directly
+// (rather than the underlying session.cookies calls) lets tests control
+// timing (a never-resolving sync) and assert call args/ordering precisely.
+const fakeSyncJarFromIdentity = vi.fn();
+
+vi.mock('../../src/main/browser/jar-seeder', () => ({
+  syncJarFromIdentity: fakeSyncJarFromIdentity,
 }));
 
 const {
@@ -88,7 +106,6 @@ const input = (overrides: Record<string, unknown> = {}) => ({
   taskId: 'task-1',
   projectId: 'project-1',
   ownerSessionId: 'session-1',
-  cwd: 'C:\\Users\\dev\\repo\\.kangentic\\worktrees\\7',
   url: 'http://localhost:4200',
   ...overrides,
 });
@@ -99,6 +116,8 @@ beforeEach(() => {
   unregistered.length = 0;
   loadShouldFail = false;
   resetLanesForTests();
+  fakeSyncJarFromIdentity.mockReset();
+  fakeSyncJarFromIdentity.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -130,12 +149,12 @@ describe('openLane', () => {
     expect(created[0].window.webContents.setFrameRate).toHaveBeenCalledWith(LANE_FRAME_RATE);
   });
 
-  it('shares the task worktree cookie jar rather than minting a fresh one', async () => {
+  it('shares the task cookie jar (keyed by task identity) rather than minting a fresh one', async () => {
     // A private jar would land every worker on a sign-in wall for an app the
-    // user is already authenticated into.
+    // user is already authenticated into. The jar is keyed by project + task.
     await openLane(input());
     const options = created[0].options as { webPreferences: { partition: string } };
-    expect(options.webPreferences.partition).toContain('persist:kngbrowser-');
+    expect(options.webPreferences.partition).toBe('persist:kng-project1-task1');
   });
 
   it('refuses past the per-task cap and names the lanes to reuse', async () => {
@@ -259,5 +278,56 @@ describe('lane cleanup backstops', () => {
     expect(created.every((entry) => entry.window.destroyed)).toBe(true);
     expect(laneCountForTask('task-1')).toBe(0);
     expect(laneCountForTask('task-2')).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Jar seeding: openLane syncs the task's cookie jar from the project identity
+// jar BEFORE the offscreen guest attaches, bounded by JAR_SEED_TIMEOUT_MS so a
+// stalled sync degrades to an unseeded lane rather than hanging
+// kangentic_browser_open_pane. Appended last (fake-timer block) so it cannot
+// interact with the vi.setSystemTime drift the idle-reclaim tests above rely
+// on; vi.useRealTimers() at the end restores real timers for any later file.
+// ---------------------------------------------------------------------------
+
+describe('openLane jar seeding', () => {
+  it('syncs the task jar from the project identity BEFORE constructing the window', async () => {
+    let windowCountDuringSync = -1;
+    fakeSyncJarFromIdentity.mockImplementation(async () => {
+      windowCountDuringSync = created.length;
+    });
+
+    const result = await openLane(input());
+
+    expect(result.ok).toBe(true);
+    // The sync ran while no BrowserWindow had been created yet.
+    expect(windowCountDuringSync).toBe(0);
+    expect(fakeSyncJarFromIdentity).toHaveBeenCalledWith(
+      browserPartitionForTask('project-1', 'task-1'),
+      'project-1',
+    );
+  });
+
+  it('does not hang openLane when syncJarFromIdentity never resolves; the JAR_SEED_TIMEOUT_MS cap lets it proceed', async () => {
+    fakeSyncJarFromIdentity.mockReturnValue(new Promise<void>(() => {}));
+    vi.useFakeTimers();
+    try {
+      const resultPromise = openLane(input());
+
+      // Just under the cap: openLane must still be blocked on the seed,
+      // meaning the window has not been constructed yet.
+      await vi.advanceTimersByTimeAsync(2_999);
+      expect(created).toHaveLength(0);
+
+      // The cap elapses: openLane proceeds to create the window even though
+      // syncJarFromIdentity is still pending forever.
+      await vi.advanceTimersByTimeAsync(1);
+      const result = await resultPromise;
+
+      expect(result.ok).toBe(true);
+      expect(created).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

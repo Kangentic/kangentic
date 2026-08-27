@@ -49,17 +49,6 @@ import { isShuttingDown } from '../shutdown-state';
 export interface LaneHandoffDependencies {
   /** True when the task still has a live agent session worth preserving for. */
   hasLiveSession(taskId: string): boolean;
-  /**
-   * The task's worktree directory, so the lane shares its cookie jar.
-   *
-   * Takes the PANE's own project id rather than letting the implementation read
-   * the ambient current project. A pane is retained across a project switch
-   * (see `.claude/rules/retained-pane-never-remounts.md`), so by the time it
-   * closes the open project is routinely not the one the task belongs to - and
-   * an ambient lookup would then miss, yielding a null path and dropping the
-   * lane into the legacy SHARED cookie jar instead of the task's own.
-   */
-  getTaskWorktreePath(taskId: string, projectId: string): string | null;
 }
 
 let dependencies: LaneHandoffDependencies | null = null;
@@ -79,10 +68,9 @@ const HANDOFF_REASONS: ReadonlySet<PaneUnregisterReason> = new Set([
 
 function onPaneClosed(entry: BrowserPaneEntry, reason: PaneUnregisterReason): void {
   if (!dependencies) return;
-  // Quitting is not a hand-off. `openLane` builds its BrowserWindow
-  // synchronously, so a pane torn down during shutdown would construct a fresh
-  // OS window inside the teardown stack - and a lane outliving the sweep holds
-  // the window count above zero, which is what stops the app quitting at all.
+  // Quitting is not a hand-off. A lane opened this late would construct a fresh
+  // OS window inside the teardown and outlive the app-quit sweep, holding the
+  // window count above zero - which is what stops the app quitting at all.
   if (isShuttingDown()) return;
   // Never hand off a lane. A lane closing is either the agent's own decision or
   // a cleanup path, and re-opening it would make lanes impossible to close.
@@ -98,14 +86,11 @@ function onPaneClosed(entry: BrowserPaneEntry, reason: PaneUnregisterReason): vo
   // closing while a DIFFERENT project is open (a retained pane survives a
   // project switch), and that is precisely the backgrounded-agent case this
   // hand-off exists for.
-  const worktreePath = dependencies.getTaskWorktreePath(entry.taskId, entry.projectId);
-
   void openLane({
     taskId: entry.taskId,
     projectId: entry.projectId,
     // Owned by the pane's session, so it dies with the agent it serves.
     ownerSessionId: entry.sessionId,
-    cwd: worktreePath,
     url: entry.url,
     handoff: true,
   })

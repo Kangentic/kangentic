@@ -240,7 +240,7 @@ When the dialog is open, it claims the terminal session and the bottom panel dro
 
 ### Browser Pane
 
-Tasks can host an embedded browser inside the task detail dialog. Use it to preview your dev server, capture screenshots with annotations, and submit framed prompts back to the agent without leaving Kangentic. Each worktree gets its own persistent webview partition (cookie jar), so two tasks logged into dev servers on the same localhost host don't clobber each other's sessions; tasks without a worktree share a single fallback jar.
+Tasks can host an embedded browser inside the task detail dialog. Use it to preview your dev server, capture screenshots with annotations, and submit framed prompts back to the agent without leaving Kangentic. Each task gets its own persistent webview partition (cookie jar), so two tasks logged into dev servers on the same localhost host don't clobber each other's sessions. Non-localhost logins are shared: signing into an identity provider (Google, GitHub, your SSO) in one task's pane carries to the project's other tasks through a per-project identity jar, so you sign in once per project rather than once per task. Holding two different accounts at the same provider across tasks at the same time is unsupported; the Clear Browser Data action wipes every jar, identity included.
 
 Agents can drive the pane themselves through the `kangentic_browser_*` MCP tools (navigate, screenshot, DOM queries, click, type, eval), governed by the [Agent Browser](#agent-browser) settings tab. An agent can also open and close its own task's pane rather than waiting for you to do it, which means it may open that task's detail window on its own if none is open.
 

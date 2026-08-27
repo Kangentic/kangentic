@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { ipcMain, session } from 'electron';
+import { app, ipcMain, session } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
-import { BROWSER_PARTITION, browserPartitionForWorktree } from '../../../shared/browser-partition';
+import { browserPartitionForTask } from '../../../shared/browser-partition';
 import type { BrowserCaptureInput, BrowserPaneRegisterInput } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 import { getProjectRepos, resolveProjectContext } from '../helpers/project-repos';
@@ -10,6 +10,8 @@ import { browserUrlStore } from '../../browser/browser-url-store';
 import { browserPaneRegistry } from '../../browser/browser-pane-registry';
 import { setBrowserPaneOpenerHost } from '../../browser/browser-pane-opener';
 import { installLaneHandoff } from '../../browser/browser-lane-handoff';
+import { enumerateProjectPartitions } from '../../browser/browser-partition-cleanup';
+import { syncJarFromIdentity } from '../../browser/jar-seeder';
 
 import { PasteSubmitError } from '../../pty/terminal-submit';
 import { agentRegistry } from '../../agent/agent-registry';
@@ -86,21 +88,6 @@ export function registerBrowserHandlers(context: IpcContext): void {
         // Never let a lookup failure decide policy: no hand-off is the safe
         // answer, since a spurious one would open a browser nobody asked for.
         return false;
-      }
-    },
-    getTaskWorktreePath: (taskId, projectId) => {
-      try {
-        // The PANE's project, handed in by the caller - never
-        // `context.currentProjectId`. A retained pane outlives a project switch,
-        // so the open project at close time is routinely not the task's, and an
-        // ambient lookup would miss in the wrong project's DB and hand back
-        // null. `openLane` turns a null path into the LEGACY SHARED cookie jar,
-        // which is a silently wrong answer: the agent meets a sign-in wall for
-        // an app the user is already authenticated into.
-        if (!projectId) return null;
-        return getProjectRepos(context, projectId).tasks.getById(taskId)?.worktree_path ?? null;
-      } catch {
-        return null;
       }
     },
   });
@@ -221,33 +208,18 @@ export function registerBrowserHandlers(context: IpcContext): void {
   // AppConfig.browser.defaultUrl) and are intentionally left alone. Those
   // are workflow state, not browsing identity.
   //
-  // Per-worktree isolation means a project has one jar per worktree, so clear
+  // Per-task isolation means a project has one jar per task, so clear
   // them all: the legacy shared jar (data left from before the upgrade, plus
-  // no-worktree panes), the project-root jar, and every worktree jar under
-  // `.kangentic/worktrees/`. Enumerated from disk so no DB / registry coupling.
+  // no-project panes), the project's identity jar, and every task jar the project
+  // owns on disk (`kng-<projectId>-*`). Enumerated by prefix from the Partitions
+  // directory, so no DB is touched.
   ipcMain.handle(IPC.BROWSER_CLEAR_STORAGE, async () => {
-    const partitions = new Set<string>([BROWSER_PARTITION]);
-    const projectRoot = context.currentProjectPath;
-    if (projectRoot) {
-      partitions.add(browserPartitionForWorktree(projectRoot));
-      const worktreesDir = path.join(projectRoot, '.kangentic', 'worktrees');
-      let entries: fs.Dirent[] = [];
-      try {
-        entries = fs.readdirSync(worktreesDir, { withFileTypes: true });
-      } catch {
-        // No worktrees directory yet - just the root + legacy jars.
-      }
-      for (const entry of entries) {
-        if (entry.isDirectory()) {
-          partitions.add(browserPartitionForWorktree(path.join(worktreesDir, entry.name)));
-        }
-      }
-    }
+    const partitions = enumerateProjectPartitions(context.currentProjectId, app.getPath('userData'));
     // Clear the partitions concurrently: they are independent session stores, so
     // the three-call sequence per partition stays ordered while the (legacy +
-    // root + N worktree) jars clear in parallel rather than serially.
+    // identity + N task) jars clear in parallel rather than serially.
     await Promise.all(
-      [...partitions].map(async (partition) => {
+      partitions.map(async (partition) => {
         const browserSession = session.fromPartition(partition);
         await browserSession.clearStorageData({
           storages: ['cookies', 'localstorage', 'indexdb', 'shadercache', 'cachestorage', 'serviceworkers'],
@@ -256,6 +228,26 @@ export function registerBrowserHandlers(context: IpcContext): void {
         await browserSession.clearAuthCache();
       }),
     );
+  });
+
+  // Sync a task's jar with the project identity jar before its guest attaches, so
+  // the pane opens already signed into shared non-localhost (IdP) sessions. A
+  // load-boundary hook: runs on every pane mount, never rejects (a failed or slow
+  // sync must never wedge the pane; the renderer also caps it with a timeout).
+  // See jar-seeder.ts for the share-identity / isolate-localhost model.
+  ipcMain.handle(IPC.BROWSER_JAR_ENSURE, async (_event, taskId: string, projectId?: string | null) => {
+    try {
+      // No ambient-project fallback on purpose: the pane computes its partition
+      // from its OWN projectId prop (legacy shared jar when null), so seeding
+      // `kng-<currentProject>-<task>` here would sync a jar the guest never
+      // binds. A null projectId means the pane bound the legacy jar, which is a
+      // hub partition and needs no seeding.
+      if (!projectId || !taskId) return;
+      const partition = browserPartitionForTask(projectId, taskId);
+      await syncJarFromIdentity(partition, projectId);
+    } catch (error) {
+      console.warn('[browser-pane] ensureJar failed:', error);
+    }
   });
 
   // === Pane registry: track an open Browser pane's guest webContents so the
@@ -284,6 +276,20 @@ export function registerBrowserHandlers(context: IpcContext): void {
       webContentsId: input.webContentsId,
       url: input.url ?? null,
     });
+
+    // Diagnostic (main-side, because the renderer console never persists to
+    // .kangentic/logs): record the jar this pane bound. Derived from the pane's
+    // OWN projectId (the value its partition was computed from), NOT the
+    // registry-resolved one above, so the trace names the jar the guest actually
+    // attached to even if the two ever diverge. The jar is keyed by task
+    // identity now, so the path-change logout it used to guard against cannot
+    // occur; this stays only as a lightweight "which jar did it bind" trace.
+    if (input.projectId) {
+      console.log(
+        `[browser-pane] pane bound partition=${browserPartitionForTask(input.projectId, input.taskId)} `
+          + `task=${input.taskId.slice(0, 8)} session=${input.sessionId.slice(0, 8)} wc=${input.webContentsId}`,
+      );
+    }
   });
 
   ipcMain.handle(IPC.BROWSER_PANE_UNREGISTER, (_event, sessionId: string, webContentsId?: number) => {

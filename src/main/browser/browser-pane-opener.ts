@@ -120,8 +120,6 @@ export interface OpenPaneInput {
    * accepts, so no tool needed a new argument.
    */
   isolated?: boolean;
-  /** Worktree directory for the caller's task, so a lane shares its cookie jar. */
-  cwd?: string | null;
 }
 
 export interface OpenPaneData {
@@ -245,7 +243,7 @@ export async function openPaneForCallerTask(input: OpenPaneInput): Promise<Drive
   //
   // Like the warm path, this reaches no project-scoped state: `callerTaskId`
   // came from the session registry (so a live session is already proof the task
-  // is real) and `cwd` comes from the same place, which is what keeps
+  // is real) and the lane's jar is keyed by that task id, which is what keeps
   // `host.taskExists` - and its stray-database precondition - out of this path.
   if (input.isolated) {
     const projectIsOpen = host.currentProjectId === projectId && Boolean(host.currentProjectPath);
@@ -273,7 +271,6 @@ export async function openPaneForCallerTask(input: OpenPaneInput): Promise<Drive
       taskId: callerTaskId,
       projectId,
       ownerSessionId: callerSessionId,
-      cwd: input.cwd ?? (projectIsOpen ? host.currentProjectPath : null),
       url: validatedLane.url,
     });
     if (!lane.ok) return failure(lane.kind, lane.detail);

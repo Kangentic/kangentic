@@ -361,6 +361,9 @@ export const IPC = {
   BROWSER_URL_SET_TASK: 'browser:urlSetTask',
   BROWSER_URL_CLEAR_TASK: 'browser:urlClearTask',
   BROWSER_CLEAR_STORAGE: 'browser:clearStorage',
+  // Sync a task's jar with the project identity jar before its guest attaches,
+  // so the pane opens already signed into shared (non-localhost) sessions.
+  BROWSER_JAR_ENSURE: 'browser:jarEnsure',
   BROWSER_ZOOM_CHANGED: 'browser:zoomChanged',
   // Register/unregister an open Browser pane's guest webContents so the
   // kangentic_browser_* MCP tools can target it. The renderer is the only

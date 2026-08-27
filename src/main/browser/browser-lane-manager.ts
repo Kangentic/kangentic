@@ -1,7 +1,8 @@
 import { BrowserWindow, type WebContents } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { browserPaneRegistry } from './browser-pane-registry';
-import { browserPartitionForWorktree } from '../../shared/browser-partition';
+import { browserPartitionForTask } from '../../shared/browser-partition';
+import { syncJarFromIdentity } from './jar-seeder';
 
 /**
  * Browser LANES: an isolated, offscreen browser surface per caller.
@@ -151,6 +152,12 @@ export function laneIdsForTask(taskId: string): string[] {
  */
 const LANE_LOAD_TIMEOUT_MS = 20_000;
 
+/** Cap on the pre-attach jar seed, mirroring BrowserPane's own 3s bound: a
+ *  stalled cookie sync degrades to an unseeded lane rather than hanging
+ *  `kangentic_browser_open_pane` (the same failure shape LANE_LOAD_TIMEOUT_MS
+ *  exists for). */
+const JAR_SEED_TIMEOUT_MS = 3_000;
+
 /** Load a lane's first URL, bounded. Abandons rather than cancels - Electron
  *  exposes no way to cancel an in-flight `loadURL` - which is fine here because
  *  the caller destroys the lane on failure. */
@@ -175,8 +182,6 @@ export interface OpenLaneInput {
   projectId: string;
   /** The caller's session, used only to scope cleanup. */
   ownerSessionId?: string;
-  /** Worktree directory, so a lane shares the task's cookie jar. */
-  cwd: string | null;
   url: string;
   /** Created by the pane hand-off rather than requested by the agent. */
   handoff?: boolean;
@@ -210,11 +215,27 @@ export async function openLane(input: OpenLaneInput): Promise<OpenLaneResult> {
 
   const laneId = `${LANE_ID_PREFIX}${randomUUID().slice(0, 8)}`;
 
-  // Share the task's cookie jar rather than minting a fresh one. Isolation here
-  // is about not fighting over a viewport, not about credentials: a lane with
-  // its own jar would land every subagent on a sign-in wall for an app the user
-  // is already authenticated into.
-  const partition = browserPartitionForWorktree(input.cwd);
+  // Share the task's cookie jar rather than minting a fresh one. The jar is keyed
+  // by task identity, so a lane inherits it automatically; isolation here is about
+  // not fighting over a viewport, not credentials.
+  const partition = browserPartitionForTask(input.projectId, input.taskId);
+
+  // Log the jar a lane binds (main-side, since renderer console never persists).
+  console.log(`[browser-lane] open lane=${laneId} task=${input.taskId.slice(0, 8)} partition=${partition}`);
+
+  // Seed the shared (non-localhost) login into this jar before the offscreen
+  // guest attaches, so an agent-opened lane inherits the user's project login the
+  // same way a task's pane does. Best-effort and bounded; a hand-off lane
+  // normally finds the pane's already-synced jar (same task partition), and
+  // syncJarFromIdentity never rejects. See jar-seeder.ts.
+  await new Promise<void>((resolve) => {
+    const seedCap = setTimeout(resolve, JAR_SEED_TIMEOUT_MS);
+    seedCap.unref?.();
+    void syncJarFromIdentity(partition, input.projectId).finally(() => {
+      clearTimeout(seedCap);
+      resolve();
+    });
+  });
 
   const window = new BrowserWindow({
     show: false,

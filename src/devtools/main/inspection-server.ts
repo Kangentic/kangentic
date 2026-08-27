@@ -45,6 +45,7 @@ import { ROTATED_FILE_SUFFIX } from '../../main/diagnostics/async-file-queue';
 import type { SessionManager } from '../../main/pty/session-manager';
 import { readTerminalTrace } from '../../main/pty/terminal-trace';
 import { detailOwnerRegistry } from '../../main/ipc/handlers/task-detail-ownership';
+import { respondCookieJar } from './cookie-jar-routes';
 
 /**
  * Localhost-only HTTP inspection bridge. Bound to a random port via
@@ -195,6 +196,30 @@ async function handleRequest(
 
   if (route === 'GET /console') {
     return respondConsole(options, url, response);
+  }
+
+  // Cookie-jar rig. Dispatched HERE, before the CDP-attached gate below, because
+  // reading/copying a partition's cookies needs no CDP at all - gating it behind
+  // the debugger would make it fail with `cdp-not-attached` whenever the user has
+  // DevTools open. Behind Allow Unsafe Operations, like /eval: cookie values are
+  // credentials.
+  if (route === 'POST /cookie-jar-list' || route === 'POST /cookie-jar-copy') {
+    if (!options.getEvalEnabled()) {
+      return respondError(
+        response,
+        403,
+        'eval-disabled',
+        'Settings → Developer → Allow Unsafe Operations is off (gates the cookie-jar rig; cookie values are credentials).',
+      );
+    }
+    const body = await readJsonBody(request);
+    if (body === null) {
+      return respondError(response, 400, 'invalid-json', 'Request body must be valid JSON.');
+    }
+    return respondCookieJar(route, body, {
+      json: (statusCode, payload) => respondJson(response, statusCode, payload),
+      error: (statusCode, kind, detail) => respondError(response, statusCode, kind, detail),
+    });
   }
 
   // CDP-backed endpoints from this point on need a main window AND an

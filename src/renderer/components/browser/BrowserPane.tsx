@@ -14,7 +14,7 @@ import { ANCHOR_BOUNDS_ATTRIBUTE } from '../../utils/dictation-anchor';
 import { registerBrowserNavigationTarget } from '../../utils/browser-navigation-registry';
 import { useAgentDriveStore, useIsAgentDrivingSession } from '../../stores/agent-drive-store';
 import { PopOutButton } from '../../pop-out/PopOutButton';
-import { browserPartitionForWorktree } from '../../../shared/browser-partition';
+import { browserPartitionForTask } from '../../../shared/browser-partition';
 import type { BrowserPickedElement } from '../../../shared/types';
 import { ALLOW_POPUPS_ATTRIBUTE, type WebviewElement } from './webview-types';
 import { MIN_ZOOM, MAX_ZOOM, stepZoom } from '../../../shared/zoom-steps';
@@ -62,6 +62,32 @@ export function BrowserPane({ sessionId, taskId, cwd, projectId }: BrowserPanePr
     recordNavigation,
   } = useBrowserUrl(taskId, projectId, urlRefreshToken);
 
+  // Sync this task's cookie jar with the project identity jar BEFORE the guest
+  // attaches, so the pane opens already signed into shared non-localhost (IdP)
+  // sessions. A load boundary: it runs on each mount, so a reopened task picks up
+  // a sign-in made in another session (see jar-seeder.ts). Capped at 3s so a
+  // slow/failed sync never wedges the pane, and set true once and never reset,
+  // so a live or retained pane is never blanked by a re-run.
+  const [jarSynced, setJarSynced] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    const markSynced = () => { if (!cancelled) setJarSynced(true); };
+    const ensureJar = window.electronAPI.browser.ensureJar;
+    // Degrade gracefully against an older main build with no jar-sync endpoint
+    // (e.g. an HMR'd renderer running against a preview that predates this):
+    // proceed unsynced rather than throw.
+    if (typeof ensureJar !== 'function') {
+      markSynced();
+      return () => { cancelled = true; };
+    }
+    const timeout = setTimeout(markSynced, 3000);
+    void ensureJar(taskId, projectId).finally(() => {
+      clearTimeout(timeout);
+      markSynced();
+    });
+    return () => { cancelled = true; clearTimeout(timeout); };
+  }, [taskId, projectId]);
+
   if (urlLoading) {
     return (
       <div className="flex items-center justify-center h-full bg-surface" data-testid="browser-pane-loading">
@@ -80,6 +106,18 @@ export function BrowserPane({ sessionId, taskId, cwd, projectId }: BrowserPanePr
       <BrowserEmptyState
         onSubmit={(url) => recordNavigation(url)}
       />
+    );
+  }
+
+  // Hold the guest's first mount until the jar sync settles (or its 3s cap), so
+  // the webview attaches with the shared login already present. Only gates the
+  // FIRST mount: jarSynced never returns to false, so a live pane is never torn
+  // down here (see retained-pane-never-remounts).
+  if (!jarSynced) {
+    return (
+      <div className="flex items-center justify-center h-full bg-surface" data-testid="browser-pane-jar-syncing">
+        <Loader2 size={20} className="animate-spin text-fg-muted" />
+      </div>
     );
   }
 
@@ -125,11 +163,11 @@ function BrowserPaneActive({
   // re-binding the `src` attribute on every render can collapse history to
   // a single step in some webview revisions.
   const [initialSrc] = useState(effectiveUrl);
-  // Per-worktree persistent cookie jar, locked on mount (an Electron webview
-  // partition cannot change after attach). Keyed off the session cwd so
-  // concurrent worktrees' localhost logins stay isolated. See
-  // shared/browser-partition.ts.
-  const [partition] = useState(() => browserPartitionForWorktree(cwd));
+  // Per-task persistent cookie jar, locked on mount (an Electron webview
+  // partition cannot change after attach). Keyed by task identity so it follows
+  // the task through any worktree path change; the identity jar shares the IdP
+  // login across the project. See shared/browser-partition.ts.
+  const [partition] = useState(() => browserPartitionForTask(projectId, taskId));
   const [drawMode, setDrawMode] = useState(false);
   const [note, setNote] = useState('');
   const [sending, setSending] = useState(false);
@@ -688,9 +726,10 @@ function BrowserPaneActive({
         <webview
           ref={webviewRef as unknown as React.Ref<HTMLElement>}
           src={initialSrc}
-          // Per-worktree persistent cookie jar (browserPartitionForWorktree(cwd),
-          // computed above). Sessions sharing a checkout share the jar; concurrent
-          // worktrees stay isolated. Settings -> Browser -> Clear browser data wipes them.
+          // Per-task persistent cookie jar (browserPartitionForTask, computed
+          // above). The jar follows the task through any worktree path change;
+          // the project identity jar shares the IdP login across tasks. Settings
+          // -> Browser -> Clear browser data wipes them.
           partition={partition}
           // Electron disables window.open inside the guest OUTRIGHT unless this
           // is present, so without it the main-process window-open policy never

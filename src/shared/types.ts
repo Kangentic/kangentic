@@ -5184,6 +5184,13 @@ export interface ElectronAPI {
     setTaskUrl: (taskId: string, url: string, projectId?: string | null) => Promise<void>;
     clearTaskUrl: (taskId: string, projectId?: string | null) => Promise<void>;
     clearStorage: () => Promise<void>;
+    /**
+     * Sync this task's cookie jar with the project identity jar before the guest
+     * attaches, so the pane opens already signed into shared non-localhost (IdP)
+     * sessions. Keyed by `taskId` + `projectId` (the jar follows the task, not the
+     * worktree path). Never rejects.
+     */
+    ensureJar: (taskId: string, projectId: string | null) => Promise<void>;
     /** Register an open Browser pane's guest webContents for kangentic_browser_* targeting. */
     registerPane: (input: BrowserPaneRegisterInput) => Promise<void>;
     /** Unregister a Browser pane (on unmount). Pass the webContentsId this

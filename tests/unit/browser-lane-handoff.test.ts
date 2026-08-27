@@ -59,33 +59,14 @@ function pane(overrides: Partial<BrowserPaneEntry> = {}): BrowserPaneEntry {
 
 let liveTasks = new Set<string>(['task-1']);
 
-/**
- * Per-project worktree paths, keyed by projectId. Deliberately NOT a single
- * fixed return value: the fixed-arrow stub this replaces
- * (`getTaskWorktreePath: () => 'C:\\Users\\dev\\...'`) ignored its arguments
- * entirely, so it passed identically whether the hand-off resolved the
- * CLOSING PANE's own project or some other ambient notion of "current
- * project" - exactly the High bug this test now pins.
- */
-const worktreePathsByProject: Record<string, string> = {
-  'project-1': 'C:\\Users\\dev\\repo\\.kangentic\\worktrees\\7',
-  'project-2': 'C:\\Users\\dev\\other-repo\\.kangentic\\worktrees\\3',
-};
-let getTaskWorktreePathCalls: Array<{ taskId: string; projectId: string }> = [];
-
 beforeEach(() => {
   openLane.mockClear();
   destroyHandoffLanesForTask.mockClear();
   handoffLaneExists = false;
   shuttingDown = false;
   liveTasks = new Set(['task-1']);
-  getTaskWorktreePathCalls = [];
   installLaneHandoff({
     hasLiveSession: (taskId) => liveTasks.has(taskId),
-    getTaskWorktreePath: (taskId, projectId) => {
-      getTaskWorktreePathCalls.push({ taskId, projectId });
-      return worktreePathsByProject[projectId] ?? null;
-    },
   });
 });
 
@@ -112,28 +93,19 @@ describe('pane hand-off', () => {
     });
   });
 
-  // The High bug this pins: getTaskWorktreePath used to be called with just
-  // the taskId, so its real implementation resolved against whatever project
-  // happened to be ambiently "current" - wrong whenever a BACKGROUND project's
-  // pane closes (a retained pane survives a project switch, per
-  // retained-pane-never-remounts.md, so the open project routinely differs
-  // from the one the closing pane belongs to). The fix threads the pane's OWN
-  // entry.projectId through as a second argument.
-  it('resolves the worktree against the CLOSING PANE\'s own project, not any other project', async () => {
+  // A BACKGROUND project's pane can close (a retained pane survives a project
+  // switch, per retained-pane-never-remounts.md, so the open project routinely
+  // differs from the one the closing pane belongs to). The lane must be keyed to
+  // the CLOSING PANE's OWN project so the handed-off browser shares that
+  // project's cookie jar - the handoff threads entry.projectId through, and the
+  // jar is keyed by (projectId, taskId).
+  it('keys the lane to the CLOSING PANE\'s own project, not any other project', async () => {
     closePane(pane({ projectId: 'project-2' }));
     await vi.waitFor(() => expect(openLane).toHaveBeenCalledTimes(1));
 
-    // getTaskWorktreePath must have been called with the pane's own
-    // projectId ('project-2'), never a fixed/ambient default.
-    expect(getTaskWorktreePathCalls).toEqual([{ taskId: 'task-1', projectId: 'project-2' }]);
-
-    // And the lane it opens must carry THAT project's worktree as cwd, so the
-    // handed-off browser shares project-2's cookie jar, not project-1's.
-    expect(openLane.mock.calls[0][0]).toMatchObject({
-      taskId: 'task-1',
-      projectId: 'project-2',
-      cwd: worktreePathsByProject['project-2'],
-    });
+    const laneArgs = openLane.mock.calls[0][0] as Record<string, unknown>;
+    expect(laneArgs).toMatchObject({ taskId: 'task-1', projectId: 'project-2' });
+    expect(laneArgs).not.toHaveProperty('cwd');
   });
 
   it('does nothing when the task has no live session', async () => {

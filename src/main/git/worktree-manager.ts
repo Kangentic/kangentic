@@ -533,8 +533,9 @@ export class WorktreeManager {
    * `worktree_path`, so moving back out is a FRESH creation; if it landed at a
    * different path, the agent's transcript would be orphaned (Claude keys it by
    * a slug of the cwd, `~/.claude/projects/<slug-of-cwd>/<id>.jsonl`, so
-   * `--resume` reports "No conversation found") and the worktree's browser
-   * cookie jar would be dropped (`browserPartitionForWorktree` hashes the path).
+   * `--resume` reports "No conversation found"). The browser cookie jar is NOT a
+   * reason here any more: it is keyed by task identity (`browserPartitionForTask`),
+   * so a path change no longer drops it - only the transcript keeps this invariant.
    *
    * Callers must wrap with `withLock()` to serialize concurrent operations
    * on the same project and prevent git lock contention.

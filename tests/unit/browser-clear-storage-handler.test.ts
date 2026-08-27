@@ -133,9 +133,13 @@ vi.mock('../../src/main/browser/browser-pane-registry', () => ({
 // Import under test (must come after all vi.mock() calls)
 // ---------------------------------------------------------------------------
 
-import path from 'node:path';
 import { registerBrowserHandlers } from '../../src/main/ipc/handlers/browser';
-import { BROWSER_PARTITION, browserPartitionForWorktree } from '../../src/shared/browser-partition';
+import {
+  BROWSER_PARTITION,
+  browserPartitionForProjectIdentity,
+  browserPartitionForTask,
+  partitionDirName,
+} from '../../src/shared/browser-partition';
 import { browserUrlStore } from '../../src/main/browser/browser-url-store';
 
 // ---------------------------------------------------------------------------
@@ -253,12 +257,20 @@ describe('BROWSER_CLEAR_STORAGE IPC handler', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Hole #4: multi-partition enumeration when a project path is set
+// Multi-partition enumeration when a project is open: the handler wipes the
+// legacy jar, the project's identity jar, and every task jar it owns on disk,
+// found by prefix-scanning the Partitions directory (readdirSync is mocked).
 // ---------------------------------------------------------------------------
 
-// Fake project root used only as a path string for partition computation.
-// readdirSync is mocked, so nothing is read from disk.
-const FAKE_PROJECT_ROOT = '/mock/kangentic-clear-test';
+const PROJECT_ID = 'abcdef01-2345-6789-abcd-ef0123456789';
+const TASK_A = 'aaaaaaaa-0000-0000-0000-000000000000';
+const TASK_B = 'bbbbbbbb-0000-0000-0000-000000000000';
+const OTHER_PROJECT_TASK_DIR = partitionDirName(
+  browserPartitionForTask('99999999-9999-9999-9999-999999999999', TASK_A),
+);
+const taskDirA = partitionDirName(browserPartitionForTask(PROJECT_ID, TASK_A));
+const taskDirB = partitionDirName(browserPartitionForTask(PROJECT_ID, TASK_B));
+const identityDir = partitionDirName(browserPartitionForProjectIdentity(PROJECT_ID));
 
 async function invokeClearStorageForProject(): Promise<unknown> {
   const handler = capturedHandlers.get('browser:clearStorage');
@@ -266,7 +278,7 @@ async function invokeClearStorageForProject(): Promise<unknown> {
   return handler(undefined);
 }
 
-describe('BROWSER_CLEAR_STORAGE IPC handler - with project path (multi-partition)', () => {
+describe('BROWSER_CLEAR_STORAGE IPC handler - with project open (multi-partition)', () => {
   beforeEach(() => {
     capturedHandlers.clear();
     fakeFromPartition.mockClear();
@@ -278,81 +290,71 @@ describe('BROWSER_CLEAR_STORAGE IPC handler - with project path (multi-partition
     fakeClearCache.mockResolvedValue(undefined);
     fakeClearAuthCache.mockResolvedValue(undefined);
 
-    // Two fake worktree directories under the project's .kangentic/worktrees/
+    // The Partitions directory holds two of this project's task jars, a
+    // different project's jar (must NOT match), and the legacy shared jar.
     fakeReaddirSync.mockReturnValue([
-      { isDirectory: () => true, name: 'wt-a' },
-      { isDirectory: () => true, name: 'wt-b' },
+      { isDirectory: () => true, name: taskDirA },
+      { isDirectory: () => true, name: taskDirB },
+      { isDirectory: () => true, name: OTHER_PROJECT_TASK_DIR },
+      { isDirectory: () => true, name: 'kangentic-browser' },
     ]);
 
     const context = {
-      currentProjectPath: FAKE_PROJECT_ROOT,
-      currentProjectId: null,
-      configManager: {
-        loadProjectOverrides: vi.fn(() => null),
-      },
+      currentProjectPath: '/mock/project',
+      currentProjectId: PROJECT_ID,
+      configManager: { loadProjectOverrides: vi.fn(() => null) },
     };
     registerBrowserHandlers(context as Parameters<typeof registerBrowserHandlers>[0]);
   });
 
-  it('clears all 4 partitions: legacy + project-root + 2 worktrees', async () => {
+  it('clears legacy + identity + the project own task jars, never another project own', async () => {
     await invokeClearStorageForProject();
 
-    const worktreesDir = path.join(FAKE_PROJECT_ROOT, '.kangentic', 'worktrees');
-    const expectedPartitions = [
-      BROWSER_PARTITION,
-      browserPartitionForWorktree(FAKE_PROJECT_ROOT),
-      browserPartitionForWorktree(path.join(worktreesDir, 'wt-a')),
-      browserPartitionForWorktree(path.join(worktreesDir, 'wt-b')),
-    ];
-
-    // Handler uses Promise.all so clearing is concurrent; assert on presence
-    // not ordering.
+    // legacy + identity + task A + task B = 4. The other project's jar and the
+    // legacy shared jar dir do not add a duplicate.
     expect(fakeFromPartition).toHaveBeenCalledTimes(4);
-    for (const partition of expectedPartitions) {
+    for (const partition of [
+      BROWSER_PARTITION,
+      browserPartitionForProjectIdentity(PROJECT_ID),
+      browserPartitionForTask(PROJECT_ID, TASK_A),
+      browserPartitionForTask(PROJECT_ID, TASK_B),
+    ]) {
       expect(fakeFromPartition).toHaveBeenCalledWith(partition);
     }
+    expect(fakeFromPartition).not.toHaveBeenCalledWith(`persist:${OTHER_PROJECT_TASK_DIR}`);
   });
 
-  it('calls the three-step clear sequence once per partition (4 partitions = 4x each)', async () => {
+  it('calls the three-step clear sequence once per partition', async () => {
     await invokeClearStorageForProject();
-
     expect(fakeClearStorageData).toHaveBeenCalledTimes(4);
     expect(fakeClearCache).toHaveBeenCalledTimes(4);
     expect(fakeClearAuthCache).toHaveBeenCalledTimes(4);
   });
 
-  it('skips a worktree entry that is not a directory', async () => {
+  it('skips a Partitions entry that is not a directory', async () => {
     fakeReaddirSync.mockReturnValue([
-      { isDirectory: () => true, name: 'wt-a' },
-      { isDirectory: () => false, name: 'README.md' }, // file, not dir
+      { isDirectory: () => true, name: taskDirA },
+      { isDirectory: () => false, name: `${taskDirB}.tmp` }, // a file, not a dir
     ]);
 
     await invokeClearStorageForProject();
 
-    // Only 3 partitions: legacy + project-root + wt-a (file entry excluded)
+    // legacy + identity + task A = 3 (the file entry is excluded).
     expect(fakeFromPartition).toHaveBeenCalledTimes(3);
-    const worktreesDir = path.join(FAKE_PROJECT_ROOT, '.kangentic', 'worktrees');
-    expect(fakeFromPartition).toHaveBeenCalledWith(
-      browserPartitionForWorktree(path.join(worktreesDir, 'wt-a')),
-    );
-    expect(fakeFromPartition).not.toHaveBeenCalledWith(
-      browserPartitionForWorktree(path.join(worktreesDir, 'README.md')),
-    );
+    expect(fakeFromPartition).toHaveBeenCalledWith(browserPartitionForTask(PROJECT_ID, TASK_A));
   });
 
-  it('clears only legacy + project-root when readdirSync throws (no worktrees dir yet)', async () => {
+  it('clears legacy + identity when the Partitions directory cannot be read', async () => {
     fakeReaddirSync.mockImplementation(() => {
       throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
     });
 
     await invokeClearStorageForProject();
 
-    // Graceful: 2 partitions (legacy + project-root), no throw propagated
+    // Graceful: 2 partitions (legacy + identity), no throw propagated.
     expect(fakeFromPartition).toHaveBeenCalledTimes(2);
     expect(fakeFromPartition).toHaveBeenCalledWith(BROWSER_PARTITION);
-    expect(fakeFromPartition).toHaveBeenCalledWith(
-      browserPartitionForWorktree(FAKE_PROJECT_ROOT),
-    );
+    expect(fakeFromPartition).toHaveBeenCalledWith(browserPartitionForProjectIdentity(PROJECT_ID));
   });
 });
 

@@ -51,6 +51,7 @@ import { initStartupTimer, mark, phase, endPhase, finishStartupTimer } from './s
 import { resolveBackgroundColor, resolveIconPath, resolveWindowBounds, resolveRendererIndexPath } from './window-utils';
 import { popOutWindowManager } from './pop-out/pop-out-window-manager';
 import { destroyAllLanes } from './browser/browser-lane-manager';
+import { sweepOrphanedBrowserPartitions } from './browser/browser-partition-cleanup';
 import { loadReactDevTools } from './devtools';
 import { syncShutdownCleanup, startHardShutdownFailsafe } from './shutdown';
 import { prRefreshScheduler } from './pr/pr-refresh-scheduler';
@@ -1322,6 +1323,24 @@ app.whenReady().then(async () => {
     pruneStaleWorktreeProjects()
       .catch((err) => console.error('[APP] Failed to prune stale worktree projects:', err))
       .finally(() => { endPhase('pruneStaleWorktreeProjects'); });
+  }
+
+  // Reclaim orphaned embedded-Browser cookie jars left by deleted tasks and projects.
+  // Runs in PACKAGED builds too (jars accumulate for every user, holding live
+  // session cookies), unlike the dev-only prune above. Skipped for ephemeral
+  // preview instances (separate --user-data-dir) and E2E (launch-cost parity
+  // with the reaper skip). Fire-and-forget: work is bounded per directory by
+  // removeWithRetry, and the sweep abstains rather than over-delete on any fault.
+  if (!isEphemeral && !isE2ETest) {
+    phase('sweepBrowserPartitions');
+    sweepOrphanedBrowserPartitions(app.getPath('userData'))
+      .then((summary) => {
+        if (summary.removed.length > 0) {
+          console.log(`[browser-partition] startup sweep reclaimed ${summary.removed.length} jar(s).`);
+        }
+      })
+      .catch((err) => console.warn('[browser-partition] startup sweep failed:', err))
+      .finally(() => { endPhase('sweepBrowserPartitions'); });
   }
 });
 

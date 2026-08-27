@@ -1056,7 +1056,7 @@ one they all resolve to the same pane and interleave navigations, clicks and scr
 believes it has exclusive control.
 
 A lane is offscreen. It does not appear on screen, does not disturb the pane the user is looking at,
-and cannot take their keyboard focus. It shares the task's worktree cookie jar, so it inherits
+and cannot take their keyboard focus. It shares the task's cookie jar, so it inherits
 whatever the user is already signed into. Lanes are capped per task; past the cap `open_pane` returns
 `lane-limit` and names the lanes to reuse. Close one with `kangentic_browser_close_pane`, which
 destroys lanes directly. A lane is also destroyed when the session that opened it ends, when it goes

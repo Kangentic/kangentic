@@ -630,6 +630,7 @@ const api: ElectronAPI = {
     setTaskUrl: (taskId, url, projectId) => ipcRenderer.invoke(IPC.BROWSER_URL_SET_TASK, taskId, url, projectId),
     clearTaskUrl: (taskId, projectId) => ipcRenderer.invoke(IPC.BROWSER_URL_CLEAR_TASK, taskId, projectId),
     clearStorage: () => ipcRenderer.invoke(IPC.BROWSER_CLEAR_STORAGE),
+    ensureJar: (taskId, projectId) => ipcRenderer.invoke(IPC.BROWSER_JAR_ENSURE, taskId, projectId),
     registerPane: (input) => ipcRenderer.invoke(IPC.BROWSER_PANE_REGISTER, input),
     unregisterPane: (sessionId, webContentsId) => ipcRenderer.invoke(IPC.BROWSER_PANE_UNREGISTER, sessionId, webContentsId),
     onZoomChanged: (callback) => {
