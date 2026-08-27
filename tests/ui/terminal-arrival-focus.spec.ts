@@ -14,8 +14,15 @@
  * Why the ordering has to be forced. The defect only appears when the background
  * terminal's replay resolves AFTER the detail's, which in production is a genuine
  * race. `window.__mockScrollbackDelayMs` (see `getScrollback` in
- * mock-electron-api.js) pins that order so the spec tests the losing case every
- * run rather than half the time.
+ * mock-electron-api.js) pins that order so spec 1 tests the losing case every
+ * run rather than half the time. Spec 3 (`launch({ delayFallbackReplay: false
+ * })`) leaves it off: its claim is checked against the panel's OWN re-expand
+ * arrival, which does not depend on which of the detail's or the panel's
+ * initial mounts resolves first, and the delay would only spend wall clock
+ * inside `claimArrivalFocus`'s fixed, non-retrying TTL window for no reason
+ * that spec needs. Spec 2 leaves the default on; the delay is inert there too
+ * (it never asserts on the fallback session), so there is nothing to gain by
+ * touching it.
  *
  * Why the waits are causal, not timed. `TerminalTab` renders
  * `data-testid="terminal-replay-veil"` until its scrollback settles, so a pane's
@@ -77,12 +84,24 @@ const PANEL_HEIGHT_PX = 150;
  *  its own error instead of being swallowed by the test cap. */
 const STEP_TIMEOUT_MS = 8000;
 
-function preConfig(): string {
+/**
+ * @param delayFallbackReplay Force the losing order: the panel's fallback
+ * terminal resolves its replay after the detail window's, which is the
+ * arrangement that used to steal focus. Only spec 1 needs the ordering
+ * exercised - spec 3's claim (`onToggleCollapse`) is checked against the
+ * bottom panel's OWN re-expand arrival, which has nothing to do with which
+ * of the detail's or the panel's initial mounts resolves first. There the
+ * delay is pure dead time sitting inside `ARRIVAL_CLAIM_TTL_MS`'s fixed
+ * 4000ms budget (the claim is set once, at the expand click, and the TTL
+ * check has no retry - see terminal-arrival-focus.ts), so spec 3 passes
+ * `false` to keep that budget's wall-clock distance as short as the real
+ * causal chain requires.
+ */
+function preConfig(delayFallbackReplay: boolean): string {
   return `
-    // Force the losing order: the panel's fallback terminal resolves its replay
-    // after the detail window's, which is the arrangement that used to steal focus.
+    ${delayFallbackReplay ? `
     window.__mockScrollbackDelayMs = { '${SESSION_FALLBACK}': ${FALLBACK_REPLAY_DELAY_MS} };
-
+    ` : ''}
     window.__mockPreConfigure(function (state) {
       var ts = new Date().toISOString();
 
@@ -162,13 +181,14 @@ function preConfig(): string {
   `;
 }
 
-async function launch(): Promise<{ browser: Browser; page: Page }> {
+async function launch(options: { delayFallbackReplay?: boolean } = {}): Promise<{ browser: Browser; page: Page }> {
+  const { delayFallbackReplay = true } = options;
   await waitForViteReady(VITE_URL);
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: VIEWPORT });
   const page = await context.newPage();
   await page.addInitScript({ path: MOCK_SCRIPT });
-  await page.addInitScript(preConfig());
+  await page.addInitScript(preConfig(delayFallbackReplay));
   await page.goto(VITE_URL);
   await page.waitForLoadState('load');
   await page.waitForSelector('text=Kangentic', { timeout: 10000 });
@@ -315,7 +335,13 @@ test('clicking a bottom-panel tab still focuses its terminal while a detail wind
 });
 
 test('re-expanding the bottom panel focuses its terminal while a detail window is open', async () => {
-  const { browser, page } = await launch();
+  // No forced fallback-replay delay here (see preConfig's doc comment): this
+  // spec's claim is `onToggleCollapse`'s, checked against the panel's OWN
+  // re-expand arrival, which does not depend on which of the detail's or the
+  // panel's initial mounts resolves first. Delaying it would only burn wall
+  // clock inside `claimArrivalFocus`'s fixed, non-retrying TTL window for no
+  // reason this spec needs.
+  const { browser, page } = await launch({ delayFallbackReplay: false });
   try {
     await page.locator('[data-testid="terminal-session-pane"]').waitFor({ state: 'visible', timeout: STEP_TIMEOUT_MS });
     await markFirstOutput(page, [SESSION_DETAIL, SESSION_FALLBACK]);
@@ -328,6 +354,19 @@ test('re-expanding the bottom panel focuses its terminal while a detail window i
     await expect(frame.locator('[data-testid="terminal-replay-veil"]')).toHaveCount(0, { timeout: STEP_TIMEOUT_MS });
     await expect(frame.locator('.xterm-helper-textarea').first()).toBeFocused({ timeout: STEP_TIMEOUT_MS });
 
+    const fallbackPane = page.locator(
+      `[data-testid="terminal-session-pane"][data-session-id="${SESSION_FALLBACK}"]`,
+    );
+    // Opening the detail evicted the panel's selection onto the fallback
+    // session, mounting its OWN arrival (the race spec 1 exercises) at the
+    // same moment. Let it fully settle before collapsing: collapsing while
+    // it is still in flight unmounts it mid-replay, so the re-expand below
+    // would start from a churning pane instead of a quiescent one - unrelated
+    // noise this spec does not need, since its own claim/arrival pair is the
+    // thing under test.
+    await fallbackPane.waitFor({ state: 'visible', timeout: STEP_TIMEOUT_MS });
+    await expect(fallbackPane.locator('[data-testid="terminal-replay-veil"]')).toHaveCount(0, { timeout: STEP_TIMEOUT_MS });
+
     // Collapsing UNMOUNTS the panel's TerminalTab (`showContent`), so expanding
     // mounts a fresh one - an arrival, competing with a detail window that still
     // holds window-layer focus.
@@ -336,9 +375,13 @@ test('re-expanding the bottom panel focuses its terminal while a detail window i
 
     await page.locator('button[title^="Expand terminal panel"]').click({ timeout: STEP_TIMEOUT_MS });
 
-    const fallbackPane = page.locator(
-      `[data-testid="terminal-session-pane"][data-session-id="${SESSION_FALLBACK}"]`,
-    );
+    // The pane does not exist until the 200ms collapse/expand height
+    // transition ends and `showContent` flips true (`resolveContentAction`'s
+    // 'reveal-on-transition-end' branch, useTerminalResize.ts) - so checking
+    // the veil's count before the pane has mounted matches zero descendants
+    // under zero ancestors and passes on the very first poll, proving
+    // nothing about the replay. Gate on the pane actually mounting first.
+    await fallbackPane.waitFor({ state: 'visible', timeout: STEP_TIMEOUT_MS });
     await expect(fallbackPane.locator('[data-testid="terminal-replay-veil"]')).toHaveCount(0, { timeout: STEP_TIMEOUT_MS });
 
     await expect(fallbackPane.locator('.xterm-helper-textarea').first()).toBeFocused({ timeout: STEP_TIMEOUT_MS });
