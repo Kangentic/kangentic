@@ -174,8 +174,10 @@ test.describe('Claude Agent -- Task Prompt', () => {
     // Drag to Code Review (To Do → Code Review triggers spawn_agent)
     await dragTaskToColumn(title, 'Code Review');
 
-    // The shell echoes the full command including the quoted prompt.
-    // Wait for the title to appear in terminal scrollback.
+    // mock-claude.js prints the delivered prompt itself via its own
+    // MOCK_CLAUDE_PROMPT:<text> marker line, so the title/description text
+    // arriving in scrollback is the mock's own output, not a shell echo of
+    // the invoked command. Wait for the title to appear in terminal scrollback.
     const scrollback = await waitForTerminalOutput(title);
 
     // Verify both title and description are in the prompt
@@ -194,8 +196,19 @@ test.describe('Claude Agent -- Task Prompt', () => {
 
     expect(scrollback).toContain(title);
     expect(scrollback).toContain(description);
-    // Planning column uses --permission-mode plan
-    expect(scrollback).toContain('permission-mode');
+    // Planning column uses --permission-mode plan. Assert on the mock's own
+    // labeled marker line (MOCK_CLAUDE_PERMISSION_MODE:plan), not on the raw
+    // "permission-mode" substring appearing anywhere in scrollback: that
+    // substring can only land in scrollback via the shell's echo of the
+    // invoked command line (mock-claude.js parses and discards
+    // --permission-mode without printing it), and that shell echo is
+    // non-deterministic under CI's loaded 8-worker Linux runner: it can be
+    // pushed out of the ring buffer by a later SIGWINCH repaint stacking a
+    // second banner (this test's own spawn on top of a leftover previous
+    // session), or wiped outright by an ESC[2J ESC[3J clear the shell/ConPTY
+    // emits before the poll observes it. mock-claude.js prints this marker
+    // itself, synchronously, so it is immune to both failure modes.
+    expect(scrollback).toContain('MOCK_CLAUDE_PERMISSION_MODE:plan');
   });
 
   test('prompt includes full description text, not just title', async () => {
