@@ -48,7 +48,7 @@ import { PATHS } from './config/paths';
 // one-shot marker there - so a module-scope load() breaks this too.
 const configFileExistedAtLaunch = fs.existsSync(PATHS.configFile);
 import { initStartupTimer, mark, phase, endPhase, finishStartupTimer } from './startup-timer';
-import { resolveBackgroundColor, resolveIconPath, resolveWindowBounds, resolveRendererIndexPath } from './window-utils';
+import { resolveBackgroundColor, resolveIconPath, resolveWindowBounds, resolveRendererIndexPath, computeWindowTitle } from './window-utils';
 import { popOutWindowManager } from './pop-out/pop-out-window-manager';
 import { destroyAllLanes } from './browser/browser-lane-manager';
 import { sweepOrphanedBrowserPartitions } from './browser/browser-partition-cleanup';
@@ -1044,42 +1044,27 @@ const createWindow = () => {
     mark('did_finish_load');
 
     // Set the window title so the taskbar entry says which build this is and, for a
-    // worktree run, which worktree. One computed string, one setTitle call, so the
-    // dev marker cannot drift between the worktree and non-worktree paths.
+    // worktree run, which worktree. One computed string (computeWindowTitle,
+    // window-utils.ts), one setTitle call, so the dev marker cannot drift between the
+    // worktree and non-worktree paths. A dev build marks itself here the same way the
+    // in-app wordmark does, so the taskbar entry and the window chrome agree about which
+    // instance this is when a packaged build is open alongside `npm start`.
+    //
+    // The __KANGENTIC_DEV__ ternary stays INLINE here rather than moving into
+    // computeWindowTitle: esbuild only folds this reference (and drops the "(dev)"
+    // string literal from the production bundle via dead-code elimination) at the
+    // point __KANGENTIC_DEV__ itself is referenced. Passing a boolean into a separate
+    // module's function would ship the literal, dead but present, in every prod build.
+    // For the MAIN bundle __KANGENTIC_DEV__ means "dev tooling compiled in"
+    // (scripts/dev.js sets it; scripts/build.js only under KANGENTIC_BUILD_DEV=1).
+    //
+    // Set from `did-finish-load`, after Chromium has applied index.html's <title>, so
+    // this wins. The main window does not preventDefault() on 'page-title-updated'
+    // (unlike window-open-policy.ts for popups), so a renderer-side document.title write
+    // would silently clobber it. Nothing in the main-window tree writes one.
     if (mainWindow) {
-      // A dev build marks itself here the same way the in-app wordmark does, so the
-      // taskbar entry and the window chrome agree about which instance this is when a
-      // packaged build is open alongside `npm start`. Folded away in production by
-      // __KANGENTIC_DEV__, which for the MAIN bundle means "dev tooling compiled in"
-      // (scripts/dev.js sets it; scripts/build.js only under KANGENTIC_BUILD_DEV=1).
       const appLabel = __KANGENTIC_DEV__ ? 'Kangentic (dev)' : 'Kangentic';
-      // Outside a worktree this is the whole title, and in production it restates the
-      // string index.html's <title> already produced, so that path stays a no-op.
-      let windowTitle = appLabel;
-      const worktreeMatch = cwd ? cwd.replace(/\\/g, '/').match(/\.kangentic\/worktrees\/([^/]+)/) : null;
-      if (worktreeMatch) {
-        // A preview window gets the task's own `#<id> - <title>` label, with no
-        // app-name prefix: Windows already groups these thumbnails under
-        // Kangentic, so repeating it only pushed the part that identifies the
-        // window past the edge of the thumbnail. The number alone was not enough
-        // either - it still meant scanning the board to learn which task it was.
-        // Same string the title-bar pill renders, so the two cannot drift.
-        //
-        // Outside preview (or when resolution missed), keep the app-name form:
-        // there the title is the only thing distinguishing a worktree run from
-        // the main window. Current worktree folders are the task's display_id;
-        // folders created before that scheme keep their `<slug>-<shortId>` name,
-        // so prefix the numeric form to stop it reading as a window index.
-        const folderName = worktreeMatch[1];
-        const folderLabel = /^\d+$/.test(folderName) ? `#${folderName}` : folderName;
-        const previewLabel = getPreviewTaskTitle();
-        windowTitle = previewLabel ?? `${appLabel} - ${folderLabel}`;
-      }
-      // Set from `did-finish-load`, after Chromium has applied index.html's <title>,
-      // so this wins. The main window does not preventDefault() on 'page-title-updated'
-      // (unlike window-open-policy.ts for popups), so a renderer-side document.title
-      // write would silently clobber it. Nothing in the main-window tree writes one.
-      mainWindow.setTitle(windowTitle);
+      mainWindow.setTitle(computeWindowTitle(appLabel, cwd, getPreviewTaskTitle));
     }
 
     // Await the preload that started during createWindow -- typically already resolved

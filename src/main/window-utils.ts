@@ -40,6 +40,48 @@ export function resolveRendererIndexPath(viteName: string): string {
   return fs.existsSync(standalonePath) ? standalonePath : legacyPath;
 }
 
+/**
+ * Compute the main window's OS/taskbar title.
+ *
+ * Pure: the caller resolves `appLabel` ("Kangentic (dev)" vs "Kangentic") from the
+ * build-time `__KANGENTIC_DEV__` constant AT THE CALL SITE, not in here. Two reasons:
+ * that identifier is an esbuild `define` and does not exist as a runtime global under
+ * vitest; and, more load-bearingly, esbuild's dead-code elimination folds a direct
+ * `__KANGENTIC_DEV__ ? 'Kangentic (dev)' : 'Kangentic'` reference to the `false` branch
+ * and drops the "(dev)" string literal from the production bundle entirely - but only
+ * at the reference site itself. Moving that ternary in here would make it read a plain
+ * `boolean` parameter instead, which esbuild cannot fold across the module boundary, so
+ * the literal would ship (dead, unreachable, but present) in every production build.
+ * Keep the ternary inline at the call site in index.ts; this function only composes the
+ * already-resolved label with the worktree/preview logic.
+ *
+ * `resolvePreviewTaskTitle` is a thunk so it is invoked only when a worktree is actually
+ * detected, preserving the original call site's laziness (that resolver does a real, if
+ * best-effort, DB lookup).
+ *
+ * Outside a worktree, the title is just `appLabel` - in production that already matches
+ * what index.html's static <title> shows, so setTitle restates rather than changes that
+ * case.
+ *
+ * Inside a worktree, a resolved preview task label (`#<id> - <title>`) wins outright with
+ * NO `appLabel` prefix - Windows already groups the thumbnail under the Kangentic taskbar
+ * group, so repeating the app name there only pushes the part that identifies the window
+ * past the edge of the thumbnail. Otherwise it falls back to "<appLabel> - <folderLabel>",
+ * where a purely-numeric worktree folder (the task's display_id) reads as "#<id>" instead
+ * of a bare number, and a legacy `<slug>-<shortId>` folder is used verbatim.
+ */
+export function computeWindowTitle(
+  appLabel: string,
+  cwd: string | null,
+  resolvePreviewTaskTitle: () => string | null,
+): string {
+  const worktreeMatch = cwd ? cwd.replace(/\\/g, '/').match(/\.kangentic\/worktrees\/([^/]+)/) : null;
+  if (!worktreeMatch) return appLabel;
+  const folderName = worktreeMatch[1];
+  const folderLabel = /^\d+$/.test(folderName) ? `#${folderName}` : folderName;
+  return resolvePreviewTaskTitle() ?? `${appLabel} - ${folderLabel}`;
+}
+
 /** Read saved window bounds from config, with screen-boundary validation. */
 export function resolveWindowBounds(): { x: number; y: number; width: number; height: number; maximized: boolean } | null {
   try {
