@@ -326,8 +326,28 @@ async function start() {
     env: spawnEnv,
   });
 
+  const electronLaunchedAt = Date.now();
   electronProc.on('close', (code) => {
     console.log(`[dev] Electron exited with code ${code}`);
+    // A near-instant code-0 exit from a NON-ephemeral launch is almost always
+    // the single-instance lock: another Kangentic (usually the installed app)
+    // already holds it, so main/index.ts calls app.exit(0) silently and the
+    // second-instance handler FOCUSES that other instance. To the person who
+    // just ran npm start, that looks exactly like a successful dev launch
+    // while they are actually using the other build (2026-08-28: days of
+    // "dogfooding main" happened on the 08-23 installed build this way, which
+    // is how already-fixed terminal regressions kept being reported as
+    // unfixed). Ephemeral previews skip the lock, so this branch cannot fire
+    // for them.
+    if (!ephemeral && code === 0 && Date.now() - electronLaunchedAt < 5000) {
+      console.error('');
+      console.error('[dev] *** Electron exited immediately: another Kangentic instance');
+      console.error('[dev] *** (usually the installed app) holds the single-instance lock.');
+      console.error('[dev] *** The window that just came to the foreground is THAT instance,');
+      console.error('[dev] *** NOT this dev build. Quit it first (check the tray and Task');
+      console.error('[dev] *** Manager background processes), then run npm start again.');
+      console.error('');
+    }
     cleanup(code || 0);
   });
 }
