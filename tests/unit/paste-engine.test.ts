@@ -751,6 +751,35 @@ describe('PasteEngine.pasteAndSubmit submission verifier (per-adapter)', () => {
     await expect(promise).resolves.toBeUndefined();
   });
 
+  it("no verifier: evidence resolves via 'data-tap'-only bytes for an UNFOCUSED session (MCP and mobile senders)", async () => {
+    // Regression guard for the 'data' -> 'data-tap' rename in
+    // waitForSubmissionEvidence. MockSessionManager.emitData() fires
+    // 'data-tap' and 'data' back-to-back (mirroring a FOCUSED session), so
+    // every other evidence test in this file would still pass even if the
+    // listener reverted to 'data' - both events carry the same bytes. An
+    // unfocused session (MCP session-send, mobile bridge) never emits
+    // 'data' at all, only the unconditional 'data-tap' fan-out, so this
+    // test emits 'data-tap' alone to prove evidence really resolves off
+    // that event and not the sibling one. (The settle-phase equivalent is
+    // the "UNFOCUSED session settles on 'data-tap'" test above; that
+    // listener is independent of this one and doesn't cover this path.)
+    const promise = engine.pasteAndSubmit('s1', 'hello', { timeoutMs: 30000 });
+    await reachEvidenceWait();
+
+    // Below the floor - engine must still be waiting.
+    mockSessionManager.emit('data-tap', 's1', 'a'.repeat(20));
+    await tick();
+    mockSessionManager.emit('data-tap', 's1', 'b'.repeat(20));
+    await tick();
+    // 40 bytes accumulated - still below the 50-byte floor.
+
+    // Crossing the floor (50 bytes total) resolves the wait, via 'data-tap' alone.
+    mockSessionManager.emit('data-tap', 's1', 'c'.repeat(15));
+    await tick();
+
+    await expect(promise).resolves.toBeUndefined();
+  });
+
   it('verifier wins when it resolves true even though activity has not fired', async () => {
     let resolveVerifier: (value: boolean) => void;
     const verifierPromise = new Promise<boolean>((resolve) => {
