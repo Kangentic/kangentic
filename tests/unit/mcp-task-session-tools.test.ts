@@ -143,6 +143,19 @@ vi.mock('../../src/main/db/repositories/swimlane-repository', () => ({
   },
 }));
 
+// Only used by the create_task ladder-rung wiring test below
+// (laneAgentOverrideForColumn's happy path), which needs a real resolveColumn
+// call instead of hitting its catch-and-return-null fallback. Defaults to
+// "column not found" so every OTHER create test's behavior is unchanged:
+// laneAgentOverrideForColumn still ends up at null either way (via this
+// mock's error shape, or - for every test that never arms a working
+// getProjectDb - via its own catch branch, since context.getProjectDb() is
+// itself undefined on the default mocked withProject context).
+const mockResolveColumn = vi.hoisted(() => vi.fn(() => ({ error: 'Column not found.' })));
+vi.mock('../../src/main/agent/commands/column-resolver', () => ({
+  resolveColumn: mockResolveColumn,
+}));
+
 import { registerTaskTools } from '../../src/main/agent/mcp-http/task-tools';
 import { registerSessionTools } from '../../src/main/agent/mcp-http/session-tools';
 import type { RequestResolver } from '../../src/main/agent/mcp-http/project-resolver';
@@ -547,6 +560,85 @@ describe('kangentic_create_task agent/model/effort/permissionMode/autoCommand ov
 });
 
 // ---------------------------------------------------------------------------
+// kangentic_create_task - validateSpawnOverrides LADDER-RUNG wiring. The
+// override-wiring describe block above only exercises fields the caller
+// passes directly (agentOverride/modelOverride/effortOverride); this covers
+// the values task-tools.ts derives on the caller's behalf before calling the
+// validator - the destination column's agent_override
+// (laneAgentOverrideForColumn), the project's default_agent
+// (resolver.getProjectDefaultAgent), and the agent-config pass-through
+// (resolver.getAgentValidationConfig). None of those were asserted to a real,
+// non-empty value by any prior test: every fake `withProject` context used
+// above has no getProjectDb, so laneAgentOverrideForColumn always hits its
+// catch and returns null regardless of what it is fed - the entire function
+// body (and the resolver.getProjectDefaultAgent / getAgentValidationConfig
+// forwarding) could be deleted and nothing above would fail.
+// ---------------------------------------------------------------------------
+
+describe('kangentic_create_task validateSpawnOverrides ladder-rung wiring', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockDetectCrossProjectMention.mockReturnValue([]);
+  });
+
+  /**
+   * Arm the mocked withProject to hand laneAgentOverrideForColumn a working
+   * getProjectDb, so the real (mocked) resolveColumn call actually runs
+   * instead of hitting its catch. mockImplementationOnce, so this only
+   * affects the very next handler call.
+   */
+  function armColumnFixture(): void {
+    mockWithProject.mockImplementationOnce(
+      async (
+        _resolver: unknown,
+        _selector: unknown,
+        run: (ctx: unknown, resolved: unknown) => Promise<unknown>,
+      ) => {
+        const ctx = { getProjectPath: () => '/projects/default', getProjectDb: () => ({}) };
+        const resolved = {
+          context: ctx,
+          projectId: '11111111-1111-4111-8111-111111111111',
+          projectName: 'Active',
+          isDefault: true,
+        };
+        return run(ctx, resolved);
+      },
+    );
+  }
+
+  it('forwards the destination column\'s agent_override, the project default agent, and the agent config through to validateSpawnOverrides', async () => {
+    armColumnFixture();
+    mockResolveColumn.mockReturnValueOnce({
+      swimlane: { agent_override: 'codex' },
+      allSwimlanes: [],
+    });
+    const server = makeFakeServer();
+    const resolver = makeResolver();
+    (resolver.getProjectDefaultAgent as ReturnType<typeof vi.fn>).mockReturnValue('gemini');
+    (resolver.getAgentValidationConfig as ReturnType<typeof vi.fn>).mockReturnValue({
+      cliPathOverrides: { codex: '/usr/local/bin/codex' },
+      discoveredModelsByAgent: { claude: ['claude-opus-4-8'] },
+    });
+    const taskCounter: TaskCounter = { tryReserve: vi.fn(() => true), limit: () => 50 };
+    registerTaskTools(server as never, resolver, taskCounter);
+
+    await server.getHandler('kangentic_create_task')({
+      title: 'Task with a model pin',
+      column: 'Planning',
+      modelOverride: 'Opus 4.8',
+    });
+
+    expect(mockValidateSpawnOverrides).toHaveBeenCalledOnce();
+    expect(mockValidateSpawnOverrides.mock.calls[0][0]).toMatchObject({
+      laneAgentOverride: 'codex',
+      projectDefaultAgent: 'gemini',
+      cliPathOverrides: { codex: '/usr/local/bin/codex' },
+      discoveredModelsByAgent: { claude: ['claude-opus-4-8'] },
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // kangentic_update_task - model/effort/permissionMode TRI-STATE wiring at the
 // tool layer: omitted forwards undefined (leave untouched downstream),
 // empty-string maps to null (explicit clear), and a concrete value is
@@ -711,11 +803,13 @@ describe('kangentic_update_task validateSpawnOverrides wiring', () => {
 
   /**
    * Arm the mocked withProject to hand agentLadderRungsForTask a working
-   * getProjectDb, and arm resolveTask to report a task whose stored
-   * agent_override is `storedTaskAgentOverride`. Both are mockImplementationOnce
-   * / mockReturnValueOnce, so this only affects the very next handler call.
+   * getProjectDb, and arm resolveTask/SwimlaneRepository to report a task
+   * whose stored agent_override is `storedTaskAgentOverride` and whose
+   * current column's agent_override is `storedLaneAgentOverride`. All are
+   * mockImplementationOnce / mockReturnValueOnce, so this only affects the
+   * very next handler call.
    */
-  function armLadderFixture(storedTaskAgentOverride: string | null): void {
+  function armLadderFixture(storedTaskAgentOverride: string | null, storedLaneAgentOverride: string | null = null): void {
     mockWithProject.mockImplementationOnce(
       async (
         _resolver: unknown,
@@ -733,7 +827,7 @@ describe('kangentic_update_task validateSpawnOverrides wiring', () => {
       },
     );
     mockResolveTask.mockReturnValueOnce({ agent_override: storedTaskAgentOverride, swimlane_id: 'lane-1' });
-    mockSwimlaneGetById.mockReturnValueOnce(null);
+    mockSwimlaneGetById.mockReturnValueOnce({ agent_override: storedLaneAgentOverride });
   }
 
   it('forces taskAgentOverride to null when agent: "" clears the pin, even though the task has one stored', async () => {
@@ -752,6 +846,19 @@ describe('kangentic_update_task validateSpawnOverrides wiring', () => {
 
     expect(mockValidateSpawnOverrides).toHaveBeenCalledOnce();
     expect(mockValidateSpawnOverrides.mock.calls[0][0]).toMatchObject({ taskAgentOverride: 'claude' });
+  });
+
+  it('forwards the current column\'s stored agent_override as laneAgentOverride (rung 2 of the ladder)', async () => {
+    // Every armLadderFixture call above defaulted the lane rung to null, so
+    // this closes the one branch of agentLadderRungsForTask (the
+    // SwimlaneRepository.getById(...)?.agent_override read) that no prior
+    // test forwarded a real value for.
+    armLadderFixture(null, 'codex');
+
+    await server.getHandler('kangentic_update_task')({ taskId: 'task-1', model: 'gpt-5' });
+
+    expect(mockValidateSpawnOverrides).toHaveBeenCalledOnce();
+    expect(mockValidateSpawnOverrides.mock.calls[0][0]).toMatchObject({ laneAgentOverride: 'codex' });
   });
 });
 

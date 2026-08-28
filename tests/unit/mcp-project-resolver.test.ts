@@ -300,6 +300,90 @@ describe('RequestResolver.defaultContextResolved', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// RequestResolver.getProjectDefaultAgent / getAgentValidationConfig - the two
+// spawn-ladder helpers added for validateSpawnOverrides wiring. Neither had a
+// direct test before this: both are exercised only through task-tools.ts's
+// mocked-resolver wiring tests, which stub them out entirely and so cannot
+// catch a regression in their own bodies (e.g. `?? null` becoming
+// `?? DEFAULT_AGENT`, or the config catch swallowing a genuine value).
+// ---------------------------------------------------------------------------
+
+describe('RequestResolver.getProjectDefaultAgent', () => {
+  it('returns the default_agent of the project matching the given id', () => {
+    const resolver = makeResolver(
+      [
+        makeProject({ id: DEFAULT_ID, name: 'Active', default_agent: 'claude' }),
+        makeProject({ id: OTHER_ID, name: 'Kangentic', default_agent: 'codex' }),
+      ],
+      DEFAULT_ID,
+    );
+
+    expect(resolver.getProjectDefaultAgent(OTHER_ID)).toBe('codex');
+  });
+
+  it('returns null when no project matches the given id', () => {
+    const resolver = makeResolver(
+      [makeProject({ id: DEFAULT_ID, name: 'Active', default_agent: 'claude' })],
+      DEFAULT_ID,
+    );
+
+    expect(resolver.getProjectDefaultAgent(THIRD_ID)).toBeNull();
+  });
+});
+
+describe('RequestResolver.getAgentValidationConfig', () => {
+  // Deliberately builds ipcContext.configManager itself rather than reusing
+  // makeResolver (which omits configManager entirely, landing every call in
+  // the catch branch below) - a test against that scaffold would look like it
+  // verified the success path while actually only re-verifying the catch.
+  function makeResolverWithConfigManager(load: () => unknown) {
+    const ipcContext = {
+      projectRepo: { list: () => [makeProject({ id: DEFAULT_ID, name: 'Active' })] },
+      configManager: { load },
+    } as unknown as IpcContext;
+    return new RequestResolver({
+      ipcContext,
+      defaultContext: makeContext(),
+      defaultProjectId: DEFAULT_ID,
+      defaultProjectName: 'Active',
+    });
+  }
+
+  it('returns cliPathOverrides and discoveredModelsByAgent read off a loadable config', () => {
+    const resolver = makeResolverWithConfigManager(() => ({
+      agent: { cliPaths: { codex: '/usr/local/bin/codex' } },
+      discoveredModelsByAgent: { claude: ['claude-opus-4-8'] },
+    }));
+
+    expect(resolver.getAgentValidationConfig()).toEqual({
+      cliPathOverrides: { codex: '/usr/local/bin/codex' },
+      discoveredModelsByAgent: { claude: ['claude-opus-4-8'] },
+    });
+  });
+
+  it('falls back to empty objects when the config carries neither field', () => {
+    const resolver = makeResolverWithConfigManager(() => ({}));
+
+    expect(resolver.getAgentValidationConfig()).toEqual({
+      cliPathOverrides: {},
+      discoveredModelsByAgent: {},
+    });
+  });
+
+  it('degrades to empty objects, without throwing, when configManager.load() throws', () => {
+    const resolver = makeResolverWithConfigManager(() => {
+      throw new Error('config file corrupt');
+    });
+
+    expect(() => resolver.getAgentValidationConfig()).not.toThrow();
+    expect(resolver.getAgentValidationConfig()).toEqual({
+      cliPathOverrides: {},
+      discoveredModelsByAgent: {},
+    });
+  });
+});
+
 describe('withProject', () => {
   beforeEach(() => {
     vi.clearAllMocks();
