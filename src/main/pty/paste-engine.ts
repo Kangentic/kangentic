@@ -29,19 +29,19 @@ import { waitForOutputSettle, type OutputSettleResult } from './output-settle';
  * kernel read as `\e[201~` the submit handler can read stale closure
  * state. The settle wait + floor guarantees React commits before Enter.
  *
- * CALLER CONTRACT: the session must be subscribed (in
- * `SessionManager.focusedSessionIds`) before invoking. The `'data'` event
- * is gated on subscription for IPC-bandwidth reasons, so settle (step 3)
- * and evidence (step 5) only resolve via the data path when the session
- * is focused. Both fall back to wall-clock floors and activity events
- * respectively, but the engine is meaningfully slower and less
- * deterministic without subscription. Browser pane and the keystroke
- * delivery path (TerminalSubmit) both run alongside an active terminal
- * panel that subscribes via `TERMINAL_SUBSCRIBE`, so they satisfy this
- * naturally. The gate is default-closed (an empty focused set forwards
- * NOTHING - e.g. a mobile-bridge paste while the desktop shows the Backlog
- * view), in which case the engine degrades to those wall-clock/activity
- * fallbacks: slower, still correct.
+ * The engine observes PTY output via the UNCONDITIONAL `'data-tap'` event,
+ * not the renderer-gated `'data'` event, so settle (step 3), evidence
+ * (step 5), and the bracketed-paste-mode monitor all work identically for
+ * focused and background sessions. This matters because two real callers
+ * routinely target sessions no renderer is subscribed to - MCP
+ * session-send (agent-to-agent messages) and the mobile bridge (a phone
+ * message while the desktop shows another view). Under the old `'data'`
+ * subscription those callers silently degraded to the wall-clock cap with
+ * no early settle, and the paste-mode modal guard never fired for them at
+ * all (found by the 2026-08-28 fidelity audit; output-settle.ts's header
+ * warns about exactly this trap). For a focused session `'data-tap'` and
+ * `'data'` are emitted back-to-back in the same synchronous fan-out for
+ * the same bytes, so focused-caller timing is unchanged.
  */
 
 export interface PasteOptions {
@@ -171,11 +171,11 @@ type SettleResult = OutputSettleResult;
  * window, or capMs fallback if data never arrives. The floor keeps
  * fast-render small payloads from racing past React's commit cycle.
  *
- * Delegates to the shared `waitForOutputSettle` primitive. Stays on the
- * renderer-gated `'data'` event (not `'data-tap'`) to preserve this engine's
- * documented caller contract: the browser pane and dictation paths run
- * alongside a subscribed terminal, and widening the seam here would change
- * paste timing for reasons unrelated to this change.
+ * Delegates to the shared `waitForOutputSettle` primitive, observing the
+ * unconditional `'data-tap'` event so an unfocused session (MCP
+ * session-send, mobile bridge) settles on real output instead of riding
+ * capMs. Focused-session timing is identical: `'data-tap'` and `'data'`
+ * fire back-to-back in the same fan-out for the same bytes.
  */
 function waitForPasteSettle(
   sessionManager: SessionManager,
@@ -185,7 +185,7 @@ function waitForPasteSettle(
 ): Promise<SettleResult> {
   const capMs = Math.max(SETTLE_CAP_MIN_MS, Math.round(packetLength * SETTLE_CAP_PER_BYTE_MS) + SETTLE_CAP_MIN_MS);
   return waitForOutputSettle(sessionManager, sessionId, {
-    event: 'data',
+    event: 'data-tap',
     idleMs: OUTPUT_SETTLE_IDLE_MS,
     capMs,
     floorMs: MIN_GAP_MS,
@@ -249,7 +249,7 @@ function waitForSubmissionEvidence(
     let postWriteBytes = 0;
 
     const cleanup = (): void => {
-      sessionManager.off('data', onData);
+      sessionManager.off('data-tap', onData);
       sessionManager.off('activity', onActivity);
       signal.removeEventListener('abort', onAbort);
       clearTimeout(timer);
@@ -294,7 +294,7 @@ function waitForSubmissionEvidence(
       reject(new PasteSubmitError('aborted', 'paste-engine: aborted during evidence wait'));
     };
 
-    sessionManager.on('data', onData);
+    sessionManager.on('data-tap', onData);
     sessionManager.on('activity', onActivity);
     signal.addEventListener('abort', onAbort, { once: true });
     const timer = setTimeout(() => finish('timeout'), timeoutMs);
@@ -360,7 +360,7 @@ export function createPasteEngine(sessionManager: SessionManager): PasteEngine {
         if (offIdx > onIdx) pasteModeOff = true;
         else if (onIdx > offIdx) pasteModeOff = false;
       };
-      sessionManager.on('data', monitorPasteMode);
+      sessionManager.on('data-tap', monitorPasteMode);
 
       try {
         await sessionManager.drain(sessionId);
@@ -435,7 +435,7 @@ export function createPasteEngine(sessionManager: SessionManager): PasteEngine {
         }
         throw caughtError;
       } finally {
-        sessionManager.off('data', monitorPasteMode);
+        sessionManager.off('data-tap', monitorPasteMode);
         clearTimeout(timeoutTimer);
         disposeLink();
       }

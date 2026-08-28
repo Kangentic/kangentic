@@ -49,6 +49,11 @@ class MockSessionManager extends EventEmitter {
   }
 
   emitData(sessionId: string, chunk: string): void {
+    // Mirror the real SessionManager fan-out for a FOCUSED session: the
+    // unconditional 'data-tap' first, then the renderer-gated 'data',
+    // back-to-back for the same bytes (session-manager.ts onFlush). The
+    // engine listens on 'data-tap'; the unfocused test emits it alone.
+    this.emit('data-tap', sessionId, chunk);
     this.emit('data', sessionId, chunk);
   }
 
@@ -148,6 +153,47 @@ describe('PasteEngine.pasteAndSubmit', () => {
     await reachEvidenceWait();
     await emitEvidence();
 
+    await expect(promise).resolves.toBeUndefined();
+  });
+
+  it("an UNFOCUSED session settles on 'data-tap' instead of riding the cap (MCP and mobile senders)", async () => {
+    // A background session's bytes reach main only on the unconditional
+    // 'data-tap' fan-out; the renderer-gated 'data' event never fires for it.
+    // Before the settle listened on 'data-tap', every MCP session-send and
+    // mobile-bridge message to an unfocused session rode the full capMs
+    // (payload-scaled, ~3s here) before \r instead of settling at the 1000ms
+    // floor. The 4000-byte payload makes cap (3000ms) clearly distinguishable
+    // from the floor.
+    const big = 'y'.repeat(4000);
+    const promise = engine.pasteAndSubmit('s1', big);
+
+    await tick();
+    mockSessionManager.flushDrain();
+    await tick();
+    // 4000 + 12 markers = 4012 bytes -> 4 chunks; first is synchronous, the
+    // remaining three each need a setImmediate yield.
+    await flushSetImmediate();
+    await tick();
+    await flushSetImmediate();
+    await tick();
+    await flushSetImmediate();
+    await tick();
+    expect(mockSessionManager.writeRawCalls).toHaveLength(4);
+
+    // The TUI's paste-placeholder redraw, arriving on data-tap ONLY.
+    mockSessionManager.emit('data-tap', 's1', '\x1b[K[Pasted text +0 lines]');
+    await tick();
+    vi.advanceTimersByTime(250); // idle window after the burst
+    await tick();
+    vi.advanceTimersByTime(750); // complete the 1000ms React-commit floor
+    await tick();
+
+    // \r must already be queued at the floor, not at the ~3000ms cap.
+    expect(mockSessionManager.writeCalls).toHaveLength(1);
+    expect(mockSessionManager.writeCalls[0].data).toBe('\r');
+
+    await reachEvidenceWait();
+    await emitEvidence();
     await expect(promise).resolves.toBeUndefined();
   });
 
