@@ -23,11 +23,46 @@
  *  that is CLAUDE_CODE_SCROLL_SPEED's job (the CLI default of 1
  *  matches the native terminals verified clean).
  *
- *  UNWIND(claude-code#83714): writePaced and the isMouseReport routing
- *  exist because the fullscreen renderer mis-assembles multi-line-jump
- *  frames. When upstream fixes that, revert mouse reports to plain
- *  schedule() and delete writePaced.
+ *  The paced queue is BOUNDED, not just paced. A flick on a
+ *  high-resolution wheel emits reports faster than the floor drains
+ *  them, so an uncapped queue keeps feeding the TUI scroll commands
+ *  after the hand has stopped, and its depth scales with wheel
+ *  resolution rather than requested travel. Wheel reports therefore
+ *  carry a lane (one wheel direction, supplied by the caller via
+ *  mouseWheelLane): pending same-lane depth is capped at
+ *  MOUSE_WHEEL_LANE_MAX_DEPTH, bounding the post-stop tail near
+ *  depth * paceMs at the deliberate price of truncated travel on very
+ *  large flicks, and a same-axis reversal drops the pending
+ *  opposite-direction reports as stale intent (the same philosophy as
+ *  flush). Laneless paced items (clicks, releases, motion) are never
+ *  counted, capped, or superseded (a dropped release would stick a
+ *  button); teardown flush still drops every pending paced item,
+ *  laneless included, as it always has. The
+ *  16ms floor itself stays as is: the cap changes how many writes
+ *  queue, not the per-write cadence the TUI's read loop needs to
+ *  catch each report individually, and lowering the floor would
+ *  re-open the read-coalescing window the pacing exists to close.
+ *
+ *  UNWIND(claude-code#83714): writePaced, the isMouseReport routing,
+ *  and the lane cap/supersede exist because the fullscreen renderer
+ *  mis-assembles multi-line-jump frames. When upstream fixes that,
+ *  revert mouse reports to plain schedule() and delete writePaced.
  */
+
+/** Marks a paced item as a member of a lane of interchangeable intents
+ *  (one wheel direction). The batcher stays encoding-agnostic: callers
+ *  decide both keys (see mouseWheelLane in repaint-nudge.ts).
+ *  UNWIND(claude-code#83714): lanes bound the paced queue the workaround
+ *  introduces; they go when writePaced goes. */
+export interface PacedLane {
+  /** Pending paced items sharing this key count toward one capped pool. */
+  laneKey: string;
+  /** Pending paced items with THIS key are removed unwritten the moment an
+   *  item in laneKey arrives: a same-axis wheel reversal makes the queued
+   *  opposite-direction scroll stale intent. */
+  supersedesLaneKey?: string;
+}
+
 export interface WriteBatcher {
   /** Push data into the queue and schedule a microtask flush if not already scheduled. */
   schedule: (data: string) => void;
@@ -40,8 +75,16 @@ export interface WriteBatcher {
    *  per paceMs. Ordering against `schedule` data always holds: items drain
    *  strictly in arrival order, whichever path they came in through. A call
    *  drains synchronously, so batched bytes already queued flush immediately
-   *  rather than waiting for their microtask. */
-  writePaced: (data: string) => void;
+   *  rather than waiting for their microtask.
+   *
+   *  With a `lane`, the item joins that lane's pending pool: an arrival
+   *  finding maxPacedLaneDepth same-lane items already pending is dropped
+   *  (same-lane reports are interchangeable scroll intent, and bounded lag
+   *  beats full travel on a large flick), and pending items in
+   *  lane.supersedesLaneKey are removed unwritten (a same-axis reversal
+   *  makes them stale). Laneless items are never counted, capped, or
+   *  superseded. */
+  writePaced: (data: string, lane?: PacedLane) => void;
 }
 
 /** One frame at 60Hz: long enough that the TUI's read loop usually catches
@@ -49,14 +92,23 @@ export interface WriteBatcher {
  *  still lands within a couple hundred milliseconds. */
 const MOUSE_REPORT_PACE_MS = 16;
 
+/** Cap on PENDING same-lane paced reports. Bounds the post-flick lag tail
+ *  near depth * paceMs (128ms at defaults) while keeping short scrolls
+ *  exact: a gesture only loses reports while its lane is saturated. Module
+ *  private like MOUSE_REPORT_PACE_MS; tests inject a small cap through the
+ *  factory param, and production stays tunable without test churn. */
+const MOUSE_WHEEL_LANE_MAX_DEPTH = 8;
+
 interface QueueItem {
   data: string;
   paced: boolean;
+  laneKey?: string;
 }
 
 export function createWriteBatcher(
   write: (payload: string) => void,
   paceMs: number = MOUSE_REPORT_PACE_MS,
+  maxPacedLaneDepth: number = MOUSE_WHEEL_LANE_MAX_DEPTH,
 ): WriteBatcher {
   const queue: QueueItem[] = [];
   let microtaskScheduled = false;
@@ -112,8 +164,44 @@ export function createWriteBatcher(
     }
   };
 
-  const writePaced = (data: string): void => {
-    queue.push({ data, paced: true });
+  const writePaced = (data: string, lane?: PacedLane): void => {
+    // UNWIND(claude-code#83714): the supersede and cap below are part of the
+    // same workaround as the pacing itself and go with it. Neither needs
+    // drain() changes: a pending paceTimer's deadline is the global pace
+    // floor, not a property of the head it was scheduled for, so it validly
+    // delivers whatever the head is when it fires.
+    if (lane !== undefined) {
+      if (lane.supersedesLaneKey !== undefined) {
+        const keptItems = queue.filter(
+          (item) => !(item.paced && item.laneKey === lane.supersedesLaneKey),
+        );
+        if (keptItems.length !== queue.length) {
+          queue.length = 0;
+          queue.push(...keptItems);
+        }
+      }
+      // Within an axis, pending items hold only one direction (each arrival
+      // purges its opposite above), so a supersede that actually removed
+      // items implies this lane had nothing pending and the cap below
+      // cannot also act on the same arrival.
+      let pendingSameLaneCount = 0;
+      for (const item of queue) {
+        if (item.paced && item.laneKey === lane.laneKey) pendingSameLaneCount += 1;
+      }
+      if (pendingSameLaneCount >= maxPacedLaneDepth) {
+        // Drop the INCOMING report, not the oldest: under SUSTAINED
+        // saturation both converge on the same write stream (a finite
+        // burst differs only in which interchangeable same-lane reports
+        // survive, as the cap tests pin), and every drain frees a slot the
+        // next fresh-coordinate arrival fills, so a stale-coordinate window
+        // self-heals within depth * paceMs. Drop-oldest would add a
+        // mid-queue removal path for no observable gain. Still drain,
+        // holding the documented "a call drains synchronously" contract.
+        drain();
+        return;
+      }
+    }
+    queue.push({ data, paced: true, laneKey: lane?.laneKey });
     drain();
   };
 

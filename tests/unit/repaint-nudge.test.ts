@@ -18,6 +18,7 @@ import {
   diffViewportRows,
   isUserInputData,
   isMouseReport,
+  mouseWheelLane,
   REPAINT_NUDGE_BYTES,
   type RepaintNudgeGate,
 } from '../../src/renderer/utils/repaint-nudge';
@@ -192,6 +193,94 @@ describe('isMouseReport', () => {
     ['a multi-character paste', 'hello world', false],
   ])('%s', (_label, data, expected) => {
     expect(isMouseReport(data as string)).toBe(expected as boolean);
+  });
+});
+
+describe('mouseWheelLane', () => {
+  // Wheel reports get a paced-write lane so the batcher can cap their pending
+  // depth and drop pending opposite-direction reports on a same-axis reversal
+  // (write-batcher.ts). Everything else stays laneless (undefined), which the
+  // batcher treats as never-cap, never-supersede: dropping a click release
+  // would stick a button. The supersede target is buttonCode ^ 1, so only
+  // same-axis, same-modifier pairs purge each other: a trackpad diagonal
+  // scroll interleaves vertical and horizontal reports, and a stray
+  // horizontal tick must not eat the pending vertical queue.
+  const x10WheelUpBytes = String.fromCharCode(32 + 64, 40, 40);
+  const x10WheelDownBytes = String.fromCharCode(32 + 65, 40, 40);
+  const x10MotionBytes = String.fromCharCode(32 + 35, 40, 40);
+  const x10ClickBytes = String.fromCharCode(32 + 0, 40, 40);
+
+  it.each([
+    [
+      'SGR wheel up (64) pairs with wheel down',
+      '\x1b[<64;10;5M',
+      { laneKey: 'wheel:64', supersedesLaneKey: 'wheel:65' },
+    ],
+    [
+      'SGR wheel down (65) pairs with wheel up',
+      '\x1b[<65;10;5M',
+      { laneKey: 'wheel:65', supersedesLaneKey: 'wheel:64' },
+    ],
+    [
+      'ctrl+wheel up (80) pairs with ctrl+wheel down, not the plain lanes',
+      '\x1b[<80;10;5M',
+      { laneKey: 'wheel:80', supersedesLaneKey: 'wheel:81' },
+    ],
+    [
+      'ctrl+wheel down (81) pairs with ctrl+wheel up, not the plain lanes',
+      '\x1b[<81;10;5M',
+      { laneKey: 'wheel:81', supersedesLaneKey: 'wheel:80' },
+    ],
+    [
+      'wheel left (66) pairs with wheel right, never the vertical lanes',
+      '\x1b[<66;10;5M',
+      { laneKey: 'wheel:66', supersedesLaneKey: 'wheel:67' },
+    ],
+    [
+      'wheel right (67) pairs with wheel left, never the vertical lanes',
+      '\x1b[<67;10;5M',
+      { laneKey: 'wheel:67', supersedesLaneKey: 'wheel:66' },
+    ],
+    // X10 wheel bytes are the SGR codes offset by 32 on the wire; the lane
+    // uses the DECODED code, so both encodings share one lane per direction:
+    // they are the same physical wheel.
+    [
+      'X10 wheel up (byte 96) shares the SGR wheel-up lane',
+      '\x1b[M' + x10WheelUpBytes,
+      { laneKey: 'wheel:64', supersedesLaneKey: 'wheel:65' },
+    ],
+    [
+      'X10 wheel down (byte 97) shares the SGR wheel-down lane',
+      '\x1b[M' + x10WheelDownBytes,
+      { laneKey: 'wheel:65', supersedesLaneKey: 'wheel:64' },
+    ],
+    ['SGR motion (35)', '\x1b[<35;10;5M', undefined],
+    ['SGR drag (32)', '\x1b[<32;10;5M', undefined],
+    ['SGR click press (0)', '\x1b[<0;10;5M', undefined],
+    ['SGR click release (0, lowercase m)', '\x1b[<0;10;5m', undefined],
+    ['a wheel-shaped code with a release final (lowercase m) stays laneless', '\x1b[<64;10;5m', undefined],
+    ['a code with both wheel and motion bits (96) stays laneless', '\x1b[<96;10;5M', undefined],
+    // Codes past 255 never come from a real wheel; letting one through would
+    // pair a raw-number laneKey with a ToInt32-wrapped supersedesLaneKey
+    // (4294967360 ^ 1 is 65), able to purge a legitimate lane.
+    [
+      'an SGR code past 255 that ToInt32-wraps onto the wheel bit stays laneless',
+      '\x1b[<4294967360;10;5M',
+      undefined,
+    ],
+    [
+      'an SGR code overflowing Number to Infinity stays laneless',
+      '\x1b[<' + '9'.repeat(400) + ';10;5M',
+      undefined,
+    ],
+    ['X10 motion', '\x1b[M' + x10MotionBytes, undefined],
+    ['X10 click', '\x1b[M' + x10ClickBytes, undefined],
+    ['two SGR reports joined into one chunk', '\x1b[<64;10;5M\x1b[<65;10;5M', undefined],
+    ['an SGR report with trailing bytes', '\x1b[<64;10;5Mhello', undefined],
+    ['a FocusIn report', '\x1b[I', undefined],
+    ['an ordinary typed character', 'a', undefined],
+  ])('%s', (_label, data, expected) => {
+    expect(mouseWheelLane(data as string)).toEqual(expected);
   });
 });
 

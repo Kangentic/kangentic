@@ -17,7 +17,7 @@ import {
   registerDevtoolsTerminal,
   traceTerminalRenderer,
 } from '../utils/terminal-grid-registry';
-import { createRepaintNudge, isUserInputData, isMouseReport, type RepaintNudgeController } from '../utils/repaint-nudge';
+import { createRepaintNudge, isUserInputData, isMouseReport, mouseWheelLane, type RepaintNudgeController } from '../utils/repaint-nudge';
 import { registerMountedTerminal } from '../utils/terminal-mount-registry';
 import { registerTerminalAnchor } from '../utils/terminal-anchor-registry';
 import type { PtyResizeOrigin, TerminalColorOverrides } from '../../shared/types';
@@ -950,15 +950,22 @@ export function useTerminal(options: UseTerminalOptions) {
         // jump whose differential frame intermittently splices stale rows
         // (the missing-entries family). So reports are PACED, not just
         // unbatched: one write per MOUSE_REPORT_PACE_MS restores the
-        // physical-wheel cadence a native terminal delivers. The jump each
+        // physical-wheel cadence a native terminal delivers. Wheel reports
+        // additionally carry a direction lane (mouseWheelLane) so the
+        // batcher can cap their pending depth (a high-resolution flick
+        // otherwise queues far past the hand stopping) and drop pending
+        // opposite-direction reports on a same-axis, same-modifier reversal;
+        // clicks, releases, and motion are laneless, never capped or
+        // superseded (teardown flush still drops them like any pending
+        // paced item). The jump each
         // single report produces is CLAUDE_CODE_SCROLL_SPEED's territory, not
         // this path's - see write-batcher.ts for the schemes tried and
         // rejected. Ordering against typed bytes holds.
-        if (isMouseReport(data)) batcher.writePaced(data);
+        if (isMouseReport(data)) batcher.writePaced(data, mouseWheelLane(data));
         else batcher.schedule(data);
       });
 
-      // Debounced PTY resize -- coalesces rapid dimension changes so the
+      // Debounced PTY resize - coalesces rapid dimension changes so the
       // TUI only redraws once after resizing settles.
       const sid = options.sessionId;
       terminal.onResize(({ cols, rows }) => {
@@ -1124,7 +1131,7 @@ export function useTerminal(options: UseTerminalOptions) {
       // REGISTERED here, so this is where the beat the long frame measures ends.
       traceInitTiming('session');
     } else {
-      // No session -- just fit immediately
+      // No session - just fit immediately
       const fitStartedAt = readClock();
       fitAddon.fit();
       fitElapsedMs = readClock() - fitStartedAt;

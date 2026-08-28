@@ -39,6 +39,8 @@
  * with its useTerminal wiring and tests.
  */
 
+import type { PacedLane } from './write-batcher';
+
 /** FocusOut then FocusIn. Costs the TUI one render and moves no cursor. */
 export const REPAINT_NUDGE_BYTES = '\x1b[O\x1b[I';
 
@@ -76,6 +78,9 @@ const SGR_MOUSE_REPORT_PATTERN = /^\x1b\[<(\d+);\d+;\d+[Mm]$/;
 const X10_MOUSE_REPORT_PATTERN = /^\x1b\[M([\s\S])[\s\S]{2}$/;
 /** Bit 5 of a mouse report's button byte marks motion (drift or drag). */
 const MOUSE_MOTION_BIT = 32;
+/** Bit 6 of a mouse report's button code marks a wheel event: 64=up, 65=down,
+ *  66=left, 67=right, with modifier bits (4 shift, 8 meta, 16 ctrl) added on. */
+const MOUSE_WHEEL_BIT = 64;
 
 /**
  * True when `data` is something the USER did, rather than a report xterm
@@ -107,6 +112,51 @@ export function isUserInputData(data: string): boolean {
  */
 export function isMouseReport(data: string): boolean {
   return SGR_MOUSE_REPORT_PATTERN.test(data) || X10_MOUSE_REPORT_PATTERN.test(data);
+}
+
+/**
+ * The paced-write lane for a wheel report, or undefined for everything else
+ * (clicks, releases, motion, non-reports), which must never be capped or
+ * superseded. Lane keys use the DECODED button code, so X10 wheel bytes
+ * (96/97 on the wire) share lanes with their SGR twins (64/65): they are the
+ * same physical wheel. This deliberately re-runs the anchored patterns
+ * isMouseReport just tested; two anchored regex executions per wheel tick are
+ * negligible and keep the routing line's tripwire shape simple.
+ *
+ * The supersede target is `buttonCode ^ 1`: the low bit is direction within
+ * an axis, so 64/65 (up/down), 66/67 (left/right), and modifier-shifted
+ * pairs like ctrl+wheel 80/81 supersede only each other. Cross-axis and
+ * cross-modifier lanes never purge one another: a trackpad diagonal scroll
+ * interleaves vertical and horizontal reports, and a stray horizontal tick
+ * must not eat the pending vertical queue.
+ *
+ * UNWIND(claude-code#83714): lanes bound the paced queue that workaround
+ * introduces; delete this with writePaced.
+ */
+export function mouseWheelLane(data: string): PacedLane | undefined {
+  let buttonCode: number;
+  const sgrReport = SGR_MOUSE_REPORT_PATTERN.exec(data);
+  if (sgrReport !== null) {
+    // Wheel events are press-encoded only (final byte M). A wheel-shaped
+    // code with a release final is nonstandard; leave it laneless rather
+    // than risk dropping a release.
+    if (!data.endsWith('M')) return undefined;
+    buttonCode = Number(sgrReport[1]);
+  } else {
+    const x10Report = X10_MOUSE_REPORT_PATTERN.exec(data);
+    if (x10Report === null) return undefined;
+    buttonCode = x10Report[1].charCodeAt(0) - 32;
+  }
+  // Real button codes stay below 256 (base + modifier + extension bits). A
+  // larger value, reachable only from a synthetic or pasted chunk, can pass
+  // the bitwise checks via ToInt32 wrapping while laneKey keeps the raw
+  // number and supersedesLaneKey the wrapped one (4294967360 ^ 1 is 65) - an
+  // inconsistent pair that could purge a legitimate lane. Laneless is the
+  // safe reading, and it also covers Number() overflowing to Infinity.
+  if (buttonCode > 255) return undefined;
+  if ((buttonCode & MOUSE_WHEEL_BIT) === 0) return undefined;
+  if ((buttonCode & MOUSE_MOTION_BIT) !== 0) return undefined;
+  return { laneKey: `wheel:${buttonCode}`, supersedesLaneKey: `wheel:${buttonCode ^ 1}` };
 }
 
 /**

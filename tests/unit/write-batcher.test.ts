@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createWriteBatcher } from '../../src/renderer/utils/write-batcher';
-import { isMouseReport } from '../../src/renderer/utils/repaint-nudge';
+import { isMouseReport, mouseWheelLane } from '../../src/renderer/utils/repaint-nudge';
 
 /** Wait for all pending microtasks to drain. */
 const drainMicrotasks = () => new Promise<void>((resolve) => queueMicrotask(resolve));
@@ -286,6 +286,264 @@ describe('createWriteBatcher', () => {
     });
   });
 
+  // Lanes bound the paced queue. A high-resolution wheel emits reports faster
+  // than the pace floor drains them, so without a cap the queue keeps feeding
+  // scroll commands after the hand stops, and its depth scales with wheel
+  // resolution rather than requested travel. A lane marks same-direction
+  // wheel reports as interchangeable intent: pending same-lane depth is
+  // capped (drop the INCOMING arrival), and an arrival removes pending items
+  // in its declared supersede target (a same-axis reversal makes them stale).
+  // Laneless paced items (clicks, releases, motion) are exempt from both: a
+  // dropped release would stick a button.
+  describe('writePaced lanes (cap + reversal supersede)', () => {
+    const PACE_MS = 16;
+    const LANE_CAP = 3;
+    const wheelDown = { laneKey: 'wheel:65', supersedesLaneKey: 'wheel:64' };
+    const wheelUp = { laneKey: 'wheel:64', supersedesLaneKey: 'wheel:65' };
+    const wheelLeft = { laneKey: 'wheel:66', supersedesLaneKey: 'wheel:67' };
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('drops same-lane arrivals beyond the pending cap (drop-incoming: earliest survivors write)', () => {
+      const write = vi.fn<[string], void>();
+      const batcher = createWriteBatcher(write, PACE_MS, LANE_CAP);
+
+      batcher.writePaced('r1', wheelDown); // writes immediately, not pending
+      batcher.writePaced('r2', wheelDown);
+      batcher.writePaced('r3', wheelDown);
+      batcher.writePaced('r4', wheelDown); // pending depth now at the cap
+      batcher.writePaced('r5', wheelDown); // dropped
+      batcher.writePaced('r6', wheelDown); // dropped
+
+      expect(write.mock.calls).toEqual([['r1']]);
+
+      // The exact survivor list pins drop-incoming: drop-oldest would have
+      // written r4..r6 instead.
+      vi.advanceTimersByTime(PACE_MS * 10);
+      expect(write.mock.calls).toEqual([['r1'], ['r2'], ['r3'], ['r4']]);
+    });
+
+    it('the default lane cap of 8 applies when maxPacedLaneDepth is not passed to the factory', () => {
+      // Every cap test above injects LANE_CAP (3) as the third factory arg,
+      // and none of them sends more than 3 same-lane reports, so deleting
+      // the production default (MOUSE_WHEEL_LANE_MAX_DEPTH = 8) would leave
+      // maxPacedLaneDepth undefined - where `count >= undefined` is always
+      // false and the cap silently never fires - and this whole suite would
+      // still pass. This test omits the factory arg entirely, pinning that
+      // the default itself, not just an explicitly-injected cap, bounds the
+      // queue in production.
+      const write = vi.fn<[string], void>();
+      const batcher = createWriteBatcher(write, PACE_MS);
+
+      for (let index = 1; index <= 10; index += 1) {
+        batcher.writePaced(`r${index}`, wheelDown);
+      }
+
+      // r1 writes immediately (nothing pending ahead of it, never counted).
+      // r2..r9 each see a pending same-lane depth below the default cap (0
+      // through 7) and are accepted; r10 is the first arrival to see depth 8
+      // and is dropped.
+      expect(write.mock.calls).toEqual([['r1']]);
+
+      vi.advanceTimersByTime(PACE_MS * 20);
+      expect(write.mock.calls).toEqual([
+        ['r1'],
+        ['r2'],
+        ['r3'],
+        ['r4'],
+        ['r5'],
+        ['r6'],
+        ['r7'],
+        ['r8'],
+        ['r9'],
+      ]);
+    });
+
+    it('a drained slot readmits the next same-lane arrival', () => {
+      const write = vi.fn<[string], void>();
+      const batcher = createWriteBatcher(write, PACE_MS, LANE_CAP);
+
+      batcher.writePaced('r1', wheelDown);
+      batcher.writePaced('r2', wheelDown);
+      batcher.writePaced('r3', wheelDown);
+      batcher.writePaced('r4', wheelDown);
+      batcher.writePaced('r5', wheelDown); // dropped at the cap, and stays dropped
+
+      vi.advanceTimersByTime(PACE_MS); // r2 writes, freeing one slot
+      batcher.writePaced('r6', wheelDown); // readmitted into the freed slot
+
+      vi.advanceTimersByTime(PACE_MS * 10);
+      expect(write.mock.calls).toEqual([['r1'], ['r2'], ['r3'], ['r4'], ['r6']]);
+    });
+
+    it('a cap-drop disturbs neither the pace floor nor the pending timer', () => {
+      const write = vi.fn<[string], void>();
+      const batcher = createWriteBatcher(write, PACE_MS, LANE_CAP);
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+
+      batcher.writePaced('r1', wheelDown); // immediate, sets the floor
+      batcher.writePaced('r2', wheelDown); // schedules the one pace timer
+      batcher.writePaced('r3', wheelDown);
+      batcher.writePaced('r4', wheelDown);
+      batcher.writePaced('r5', wheelDown); // dropped
+
+      // Only r2's arrival scheduled a timer; the later arrivals (dropped one
+      // included) found it pending and left it alone.
+      expect(setTimeoutSpy).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(PACE_MS - 1);
+      expect(write.mock.calls).toEqual([['r1']]);
+      vi.advanceTimersByTime(1);
+      expect(write.mock.calls).toEqual([['r1'], ['r2']]);
+    });
+
+    it('a cap-drop still calls drain() synchronously, delivering an already-due pending head', () => {
+      // Mirrors the vi.setSystemTime technique used above for the
+      // already-due head (the writePaced describe's "a synchronous drain
+      // that finds an already-due paced head..." test). In every other cap
+      // test in this file the head is not yet due at drop time, so the drop
+      // path's drain() call (write-batcher.ts, the cap branch) is a no-op
+      // either way - deleting that call would still pass the whole suite.
+      // This test forces the head to be due, via a system-time jump, before
+      // the scheduled paceTimer's own callback has run, then drops an
+      // arrival at the cap. drain() firing on the drop path is the only
+      // thing that can deliver the due head at this point: without it, r2
+      // would sit pending until the fake timer is advanced, which is what
+      // makes asserting synchronously here mutation-detectable.
+      const write = vi.fn<[string], void>();
+      const batcher = createWriteBatcher(write, PACE_MS, LANE_CAP);
+
+      batcher.writePaced('r1', wheelDown); // immediate, sets the floor
+      batcher.writePaced('r2', wheelDown); // pending; schedules the pace timer
+      batcher.writePaced('r3', wheelDown); // pending
+      batcher.writePaced('r4', wheelDown); // pending depth now at the cap
+
+      // The wall clock reaches r2's deadline without that scheduled timer's
+      // own callback having run yet.
+      vi.setSystemTime(Date.now() + PACE_MS);
+
+      batcher.writePaced('r5', wheelDown); // cap-dropped: pending depth is 3
+
+      // Asserted BEFORE any vi.advanceTimersByTime: the dropped arrival's
+      // own drain() call is what delivered the due head synchronously.
+      expect(write.mock.calls).toEqual([['r1'], ['r2']]);
+
+      vi.advanceTimersByTime(PACE_MS * 5);
+      expect(write.mock.calls).toEqual([['r1'], ['r2'], ['r3'], ['r4']]);
+      expect(write.mock.calls.flat()).not.toContain('r5');
+    });
+
+    it('laneless paced items are never capped', () => {
+      const write = vi.fn<[string], void>();
+      const batcher = createWriteBatcher(write, PACE_MS, LANE_CAP);
+
+      for (const payload of ['k1', 'k2', 'k3', 'k4', 'k5', 'k6']) {
+        batcher.writePaced(payload);
+      }
+
+      vi.advanceTimersByTime(PACE_MS * 10);
+      expect(write.mock.calls).toEqual([['k1'], ['k2'], ['k3'], ['k4'], ['k5'], ['k6']]);
+    });
+
+    it('laneless paced items do not count toward a lane\'s pending depth', () => {
+      const write = vi.fn<[string], void>();
+      const batcher = createWriteBatcher(write, PACE_MS, LANE_CAP);
+
+      batcher.writePaced('down1', wheelDown); // immediate
+      batcher.writePaced('click1'); // keyless, pending
+      batcher.writePaced('click2'); // keyless, pending
+      batcher.writePaced('down2', wheelDown); // lane depth 0: accepted
+      batcher.writePaced('down3', wheelDown); // lane depth 1: accepted
+      batcher.writePaced('down4', wheelDown); // lane depth 2: accepted
+      batcher.writePaced('down5', wheelDown); // lane depth at cap: dropped
+
+      vi.advanceTimersByTime(PACE_MS * 10);
+      expect(write.mock.calls).toEqual([
+        ['down1'],
+        ['click1'],
+        ['click2'],
+        ['down2'],
+        ['down3'],
+        ['down4'],
+      ]);
+    });
+
+    it('supersede removes only the declared target lane; laneless and cross-axis items survive in order', () => {
+      const write = vi.fn<[string], void>();
+      const batcher = createWriteBatcher(write, PACE_MS, LANE_CAP);
+
+      batcher.writePaced('down1', wheelDown); // immediate
+      batcher.writePaced('down2', wheelDown); // pending, removed by the reversal
+      batcher.writePaced('click'); // keyless: survives
+      batcher.writePaced('left1', wheelLeft); // cross-axis lane: survives
+      batcher.writePaced('down3', wheelDown); // pending, removed by the reversal
+      batcher.writePaced('up1', wheelUp); // the reversal
+
+      vi.advanceTimersByTime(PACE_MS * 10);
+      expect(write.mock.calls).toEqual([['down1'], ['click'], ['left1'], ['up1']]);
+    });
+
+    it('supersede under a pending timer: the exposed unpaced run writes now, the reused timer delivers the survivor', async () => {
+      const write = vi.fn<[string], void>();
+      const batcher = createWriteBatcher(write, PACE_MS, LANE_CAP);
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+      const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout');
+
+      batcher.writePaced('down1', wheelDown); // immediate; sets the floor
+      batcher.writePaced('down2', wheelDown); // schedules the pace timer for the head
+      batcher.schedule('typed'); // unpaced, queued behind down2
+      batcher.writePaced('up1', wheelUp); // removes down2; queue is now [typed, up1]
+
+      // The drain inside writePaced wrote the exposed unpaced run immediately
+      // (arrival order for typed bytes), while up1 stays under down1's floor.
+      expect(write.mock.calls).toEqual([['down1'], ['typed']]);
+
+      // The pending timer's deadline is the global pace floor, not a property
+      // of the removed head, so the supersede neither cleared nor replaced it.
+      expect(setTimeoutSpy).toHaveBeenCalledTimes(1);
+      expect(clearTimeoutSpy).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(PACE_MS);
+      expect(write.mock.calls).toEqual([['down1'], ['typed'], ['up1']]);
+
+      // schedule('typed') queued a microtask that these synchronous
+      // assertions never let fire. Draining it for real proves it finds an
+      // already-empty queue rather than re-writing 'typed'.
+      await drainMicrotasks();
+      expect(write.mock.calls).toEqual([['down1'], ['typed'], ['up1']]);
+    });
+
+    it('flush still drops pending laned reports along with laneless ones', () => {
+      const write = vi.fn<[string], void>();
+      const batcher = createWriteBatcher(write, PACE_MS, LANE_CAP);
+
+      batcher.writePaced('down1', wheelDown);
+      batcher.writePaced('down2', wheelDown);
+      // Laneless paced item, pending behind down2. The title claims
+      // laneless coverage, but until this line the body only ever queued a
+      // laned pending item plus an unpaced schedule() item - it never
+      // proved a PACED laneless item is dropped by flush too.
+      batcher.writePaced('release1');
+      batcher.schedule('typed');
+      batcher.flush();
+
+      expect(write.mock.calls).toEqual([['down1'], ['typed']]);
+      // release1 was pending and laneless: flush drops it exactly like the
+      // laned down2, not merely omits it from the exact-array check above.
+      expect(write.mock.calls.flat()).not.toContain('release1');
+
+      vi.advanceTimersByTime(PACE_MS * 4);
+      expect(write.mock.calls).toEqual([['down1'], ['typed']]);
+      expect(write.mock.calls.flat()).not.toContain('release1');
+    });
+  });
+
   // Nothing today fails if useTerminal.ts's onData routing line is deleted or
   // inverted: repaint-nudge.test.ts only pins isMouseReport's return value in
   // isolation, and every test above only drives writePaced/schedule directly.
@@ -311,7 +569,7 @@ describe('createWriteBatcher', () => {
       // both - there is no other isMouseReport(data)/batcher.schedule(data)
       // pairing anywhere else in this file for either to accidentally match.
       const mouseReportRoutesToWritePaced =
-        /if\s*\(\s*isMouseReport\(data\)\s*\)\s*\{?\s*batcher\.writePaced\(data\)/;
+        /if\s*\(\s*isMouseReport\(data\)\s*\)\s*\{?\s*batcher\.writePaced\(data,\s*mouseWheelLane\(data\)\)/;
       const elseRoutesToSchedule = /else\s*\{?\s*batcher\.schedule\(data\)/;
 
       expect(source).toMatch(mouseReportRoutesToWritePaced);
@@ -333,7 +591,7 @@ describe('createWriteBatcher', () => {
       // the assertions below are checking what that exact expression DOES,
       // not just that its text is present.
       const routeOnData = (batcher: ReturnType<typeof createWriteBatcher>, data: string): void => {
-        if (isMouseReport(data)) batcher.writePaced(data);
+        if (isMouseReport(data)) batcher.writePaced(data, mouseWheelLane(data));
         else batcher.schedule(data);
       };
 
@@ -385,6 +643,21 @@ describe('createWriteBatcher', () => {
         // And it must never have joined into one payload - that would mean
         // the report went through schedule too.
         expect(write.mock.calls).toEqual([['\x1b[<64;10;5M'], ['a']]);
+      });
+
+      it('a wheel reversal supersedes the pending opposite-direction report end-to-end', () => {
+        const write = vi.fn<[string], void>();
+        const batcher = createWriteBatcher(write, PACE_MS);
+
+        routeOnData(batcher, '\x1b[<65;10;5M'); // wheel down: immediate
+        routeOnData(batcher, '\x1b[<65;10;5M'); // wheel down: queued under the floor
+        routeOnData(batcher, '\x1b[<64;10;5M'); // wheel up: supersedes the pending down
+
+        expect(write.mock.calls).toEqual([['\x1b[<65;10;5M']]);
+
+        // The queued down report never writes; the reversal is what drains.
+        vi.advanceTimersByTime(PACE_MS * 4);
+        expect(write.mock.calls).toEqual([['\x1b[<65;10;5M'], ['\x1b[<64;10;5M']]);
       });
     });
   });
