@@ -107,6 +107,42 @@ vi.mock('../../src/main/agent/commands/task-commands', () => ({
   handleMoveTaskToProject: mockHandleMoveTaskToProject,
 }));
 
+// These tests are about ARGUMENT WIRING, not override validity, and the real
+// validator probes the machine's installed agent CLIs - which would make
+// "is claude-opus-4-8 a known model" depend on the developer's machine and
+// differ on CI. Validation has its own dedicated unit test
+// (mcp-spawn-override-validation.test.ts).
+const mockValidateSpawnOverrides = vi.hoisted(() => vi.fn(async (): Promise<string | null> => null));
+vi.mock('../../src/main/agent/mcp-http/spawn-override-validation', () => ({
+  validateSpawnOverrides: mockValidateSpawnOverrides,
+}));
+
+// Only used by the update_task ladder tests below (kangentic_update_task
+// validateSpawnOverrides wiring - "agent: '' clears the pin" cases), which
+// need agentLadderRungsForTask to resolve a REAL stored agent pin instead of
+// hitting its catch-and-return-null fallback. Defaulting resolveTask to
+// "not found" keeps every other test's behavior unchanged: agentLadderRungsForTask
+// still ends up at { taskAgentOverride: null, laneAgentOverride: null } either
+// way (via its `if (!task)` branch here, or its catch branch when the mocked
+// withProject's default context has no getProjectDb at all).
+const mockResolveTask = vi.hoisted(() => vi.fn(() => undefined));
+vi.mock('../../src/main/agent/commands/task-resolver', () => ({
+  resolveTask: mockResolveTask,
+}));
+const mockSwimlaneGetById = vi.hoisted(() => vi.fn((_swimlaneId: string): { agent_override: string | null } | null => null));
+// A real class, not `vi.fn().mockImplementation(() => ({...}))`: the latter
+// triggers vitest's "did not use 'function' or 'class'" warning when invoked
+// with `new` and silently fails to attach `getById`, which made
+// agentLadderRungsForTask's try block throw and swallow the fixture - a real
+// class has correct `new` semantics.
+vi.mock('../../src/main/db/repositories/swimlane-repository', () => ({
+  SwimlaneRepository: class {
+    getById(swimlaneId: string): { agent_override: string | null } | null {
+      return mockSwimlaneGetById(swimlaneId);
+    }
+  },
+}));
+
 import { registerTaskTools } from '../../src/main/agent/mcp-http/task-tools';
 import { registerSessionTools } from '../../src/main/agent/mcp-http/session-tools';
 import type { RequestResolver } from '../../src/main/agent/mcp-http/project-resolver';
@@ -167,6 +203,8 @@ function makeResolver(): RequestResolver {
     }),
     listProjects: vi.fn(() => []),
     defaultContextResolved: vi.fn(() => makeDefaultContextResolved()),
+    getProjectDefaultAgent: vi.fn(() => null),
+    getAgentValidationConfig: vi.fn(() => ({ cliPathOverrides: {}, discoveredModelsByAgent: {} })),
   } as unknown as RequestResolver;
 }
 
@@ -410,6 +448,51 @@ describe('kangentic_create_task agent/model/effort/permissionMode/autoCommand ov
     registerTaskTools(server as never, resolver, taskCounter);
   });
 
+  it('validates the NORMALIZED model, not the friendly name the caller typed', async () => {
+    // Validating the raw input would reject friendly names the spawn accepts.
+    await server.getHandler('kangentic_create_task')({
+      title: 'Task with friendly model',
+      modelOverride: 'Opus 4.8',
+    });
+
+    expect(mockValidateSpawnOverrides).toHaveBeenCalledOnce();
+    expect(mockValidateSpawnOverrides.mock.calls[0][0]).toMatchObject({ modelOverride: 'claude-opus-4-8' });
+  });
+
+  it('rejects the create when validation fails, creating nothing and burning no quota slot', async () => {
+    mockValidateSpawnOverrides.mockResolvedValueOnce('effortOverride "xtreme" is not valid for agent "claude".');
+
+    const result = await server.getHandler('kangentic_create_task')({
+      title: 'Task with a bad effort',
+      effortOverride: 'xtreme',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('is not valid for agent "claude"');
+    expect(result.content[0].text).toContain('No task was created.');
+    expect(mockCallHandler).not.toHaveBeenCalled();
+    // Ordered before tryReserve for the same reason as the routing guardrail.
+    expect(taskCounter.tryReserve).not.toHaveBeenCalled();
+  });
+
+  it('skips validation entirely when no agent/model/effort is pinned', async () => {
+    // The common create. It must not pay for a capability probe.
+    await server.getHandler('kangentic_create_task')({ title: 'Plain task' });
+
+    expect(mockValidateSpawnOverrides).not.toHaveBeenCalled();
+    expect(mockCallHandler).toHaveBeenCalledOnce();
+  });
+
+  it('skips validation for a Backlog create, which never spawns', async () => {
+    await server.getHandler('kangentic_create_task')({
+      title: 'Backlog item',
+      column: 'backlog',
+      modelOverride: 'Opus 4.8',
+    });
+
+    expect(mockValidateSpawnOverrides).not.toHaveBeenCalled();
+  });
+
   it('converts a friendly model name to the CLI id via resolveModelSelector before forwarding', async () => {
     await server.getHandler('kangentic_create_task')({
       title: 'Task with friendly model',
@@ -543,6 +626,132 @@ describe('kangentic_update_task model/effort/permissionMode tri-state wiring', (
     expect(mockCallHandler).toHaveBeenCalledOnce();
     const [, params] = mockCallHandler.mock.calls[0];
     expect((params as Record<string, unknown>).permissionMode).toBe('plan');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// kangentic_update_task - validateSpawnOverrides wiring. create_task's
+// validation wiring is covered above; this closes the UPDATE side, which was
+// previously untested. The validator's own logic (baseId normalization etc.)
+// has its own dedicated suite (mcp-spawn-override-validation.test.ts) - this
+// block is purely about whether task-tools.ts calls it, with what, and how it
+// handles a rejection.
+// ---------------------------------------------------------------------------
+
+describe('kangentic_update_task validateSpawnOverrides wiring', () => {
+  let server: ReturnType<typeof makeFakeServer>;
+  let resolver: RequestResolver;
+  let taskCounter: TaskCounter;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    server = makeFakeServer();
+    resolver = makeResolver();
+    taskCounter = { tryReserve: vi.fn(() => true), limit: () => 50 };
+    registerTaskTools(server as never, resolver, taskCounter);
+  });
+
+  it('calls validateSpawnOverrides when a model pin is present', async () => {
+    await server.getHandler('kangentic_update_task')({ taskId: 'task-1', model: 'opus' });
+
+    expect(mockValidateSpawnOverrides).toHaveBeenCalledOnce();
+  });
+
+  it('calls validateSpawnOverrides when an effort pin is present', async () => {
+    await server.getHandler('kangentic_update_task')({ taskId: 'task-1', effort: 'high' });
+
+    expect(mockValidateSpawnOverrides).toHaveBeenCalledOnce();
+  });
+
+  it('calls validateSpawnOverrides when an agent pin is present', async () => {
+    await server.getHandler('kangentic_update_task')({ taskId: 'task-1', agent: 'codex' });
+
+    expect(mockValidateSpawnOverrides).toHaveBeenCalledOnce();
+  });
+
+  it('does NOT call validateSpawnOverrides for a labels-only update', async () => {
+    await server.getHandler('kangentic_update_task')({ taskId: 'task-1', labels: ['bug'] });
+
+    expect(mockValidateSpawnOverrides).not.toHaveBeenCalled();
+    expect(mockCallHandler).toHaveBeenCalledOnce();
+  });
+
+  it('does NOT call validateSpawnOverrides when agent is cleared with an empty string', async () => {
+    // '' is the documented clear sentinel, not a pin - the source gates on
+    // truthy `agent`, so a clear must not pay for a capability probe.
+    await server.getHandler('kangentic_update_task')({ taskId: 'task-1', agent: '' });
+
+    expect(mockValidateSpawnOverrides).not.toHaveBeenCalled();
+    expect(mockCallHandler).toHaveBeenCalledOnce();
+  });
+
+  it('returns isError with the rejection text and "The task was not updated." when validation fails, without calling callHandler', async () => {
+    mockValidateSpawnOverrides.mockResolvedValueOnce(
+      'modelOverride "claude-opus-4-9" is not a known model for agent "claude".',
+    );
+
+    const result = await server.getHandler('kangentic_update_task')({ taskId: 'task-1', model: 'claude-opus-4-9' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('modelOverride "claude-opus-4-9" is not a known model for agent "claude".');
+    expect(result.content[0].text).toContain('The task was not updated.');
+    expect(mockCallHandler).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------
+  // agent: "" clears the task's agent pin, which must NOT anchor the
+  // validation ladder - re-checking a model against the OLD agent on a call
+  // whose whole point is to move off it is a false rejection. Distinguishing
+  // "cleared" from "omitted" requires agentLadderRungsForTask to resolve a
+  // REAL stored task, so these two arm a working getProjectDb on the mocked
+  // withProject context for one call each (mockImplementationOnce), backed by
+  // the mockResolveTask / mockSwimlaneGetById mocks declared at the top of
+  // this file.
+  // -------------------------------------------------------------------------
+
+  /**
+   * Arm the mocked withProject to hand agentLadderRungsForTask a working
+   * getProjectDb, and arm resolveTask to report a task whose stored
+   * agent_override is `storedTaskAgentOverride`. Both are mockImplementationOnce
+   * / mockReturnValueOnce, so this only affects the very next handler call.
+   */
+  function armLadderFixture(storedTaskAgentOverride: string | null): void {
+    mockWithProject.mockImplementationOnce(
+      async (
+        _resolver: unknown,
+        _selector: unknown,
+        run: (ctx: unknown, resolved: unknown) => Promise<unknown>,
+      ) => {
+        const ctx = { getProjectPath: () => '/projects/default', getProjectDb: () => ({}) };
+        const resolved = {
+          context: ctx,
+          projectId: '11111111-1111-4111-8111-111111111111',
+          projectName: 'Active',
+          isDefault: true,
+        };
+        return run(ctx, resolved);
+      },
+    );
+    mockResolveTask.mockReturnValueOnce({ agent_override: storedTaskAgentOverride, swimlane_id: 'lane-1' });
+    mockSwimlaneGetById.mockReturnValueOnce(null);
+  }
+
+  it('forces taskAgentOverride to null when agent: "" clears the pin, even though the task has one stored', async () => {
+    armLadderFixture('claude');
+
+    await server.getHandler('kangentic_update_task')({ taskId: 'task-1', agent: '', model: 'gpt-5' });
+
+    expect(mockValidateSpawnOverrides).toHaveBeenCalledOnce();
+    expect(mockValidateSpawnOverrides.mock.calls[0][0]).toMatchObject({ taskAgentOverride: null });
+  });
+
+  it('forwards the task\'s stored agent pin when agent is omitted entirely (contrast: not blanket-nulled)', async () => {
+    armLadderFixture('claude');
+
+    await server.getHandler('kangentic_update_task')({ taskId: 'task-1', model: 'gpt-5' });
+
+    expect(mockValidateSpawnOverrides).toHaveBeenCalledOnce();
+    expect(mockValidateSpawnOverrides.mock.calls[0][0]).toMatchObject({ taskAgentOverride: 'claude' });
   });
 });
 
@@ -772,6 +981,151 @@ describe('kangentic_move_task_to_project wiring', () => {
 
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toBe('unexpected FK violation');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// kangentic_list_tasks / kangentic_search_tasks - label suffix rendering
+// (formatLabelSuffix, task-tools.ts). Neither tool had a test asserting on
+// the rendered text before this, so the ` [a, b]` suffix line could be
+// deleted entirely with nothing failing.
+// ---------------------------------------------------------------------------
+
+describe('kangentic_list_tasks - label suffix rendering', () => {
+  let server: ReturnType<typeof makeFakeServer>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    server = makeFakeServer();
+    const resolver = makeResolver();
+    const taskCounter: TaskCounter = { tryReserve: vi.fn(() => true), limit: () => 50 };
+    registerTaskTools(server as never, resolver, taskCounter);
+  });
+
+  it('renders the " [a, b]" label suffix for a labeled task', async () => {
+    mockRunHandler.mockResolvedValueOnce({
+      success: true,
+      data: [
+        { id: 'task-1', displayId: 1, title: 'Fix the bug', description: '', column: 'To Do', position: 0, labels: ['bug', 'urgent'] },
+      ],
+    });
+
+    const result = await server.getHandler('kangentic_list_tasks')({});
+
+    expect(result.content[0].text).toContain('Fix the bug [bug, urgent] (#1');
+  });
+
+  it('renders no bracketed label group for a task with labels: []', async () => {
+    mockRunHandler.mockResolvedValueOnce({
+      success: true,
+      data: [
+        { id: 'task-1', displayId: 1, title: 'Fix the bug', description: '', column: 'To Do', position: 0, labels: [] },
+      ],
+    });
+
+    const result = await server.getHandler('kangentic_list_tasks')({});
+
+    expect(result.content[0].text).toContain('Fix the bug (#1');
+    expect(result.content[0].text).not.toContain('Fix the bug [');
+  });
+});
+
+describe('kangentic_search_tasks - label suffix rendering', () => {
+  let server: ReturnType<typeof makeFakeServer>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    server = makeFakeServer();
+    const resolver = makeResolver();
+    const taskCounter: TaskCounter = { tryReserve: vi.fn(() => true), limit: () => 50 };
+    registerTaskTools(server as never, resolver, taskCounter);
+  });
+
+  it('renders a labeled board hit\'s " [a, b]" suffix distinctly from the "[<column>]" status tag', async () => {
+    mockRunHandler.mockResolvedValueOnce({
+      success: true,
+      data: {
+        tasks: [
+          { id: 'task-1', displayId: 1, title: 'Fix the bug', description: '', column: 'To Do', status: 'active', labels: ['bug', 'urgent'] },
+        ],
+        backlog: [],
+        totalActive: 1,
+        totalCompleted: 0,
+        totalBacklog: 0,
+        scope: 'both',
+      },
+    });
+
+    const result = await server.getHandler('kangentic_search_tasks')({ query: 'bug' });
+
+    expect(result.content[0].text).toContain('Fix the bug [To Do] [bug, urgent] (#1');
+  });
+
+  it('renders no bracketed label group for a board hit with labels: [], leaving only the status tag bracket', async () => {
+    mockRunHandler.mockResolvedValueOnce({
+      success: true,
+      data: {
+        tasks: [
+          { id: 'task-1', displayId: 1, title: 'Fix the bug', description: '', column: 'To Do', status: 'active', labels: [] },
+        ],
+        backlog: [],
+        totalActive: 1,
+        totalCompleted: 0,
+        totalBacklog: 0,
+        scope: 'both',
+      },
+    });
+
+    const result = await server.getHandler('kangentic_search_tasks')({ query: 'bug' });
+    const text = result.content[0].text;
+
+    expect(text).toContain('Fix the bug [To Do] (#1');
+    // No second bracket group directly after the status tag - a check that
+    // merely asserted "no bracket at all" would falsely pass, since the
+    // status tag itself is bracketed.
+    expect(text).not.toMatch(/\[To Do\] \[/);
+  });
+
+  it('renders a labeled backlog hit\'s " [a, b]" suffix', async () => {
+    mockRunHandler.mockResolvedValueOnce({
+      success: true,
+      data: {
+        tasks: [],
+        backlog: [
+          { id: 'item-1', title: 'Draft the spec', description: '', priority: 0, priorityLabel: 'none', labels: ['docs', 'draft'] },
+        ],
+        totalActive: 0,
+        totalCompleted: 0,
+        totalBacklog: 1,
+        scope: 'both',
+      },
+    });
+
+    const result = await server.getHandler('kangentic_search_tasks')({ query: 'spec' });
+
+    expect(result.content[0].text).toContain('Draft the spec (none) [docs, draft] (id: item-1)');
+  });
+
+  it('renders no bracketed label group for a backlog hit with labels: []', async () => {
+    mockRunHandler.mockResolvedValueOnce({
+      success: true,
+      data: {
+        tasks: [],
+        backlog: [
+          { id: 'item-1', title: 'Draft the spec', description: '', priority: 0, priorityLabel: 'none', labels: [] },
+        ],
+        totalActive: 0,
+        totalCompleted: 0,
+        totalBacklog: 1,
+        scope: 'both',
+      },
+    });
+
+    const result = await server.getHandler('kangentic_search_tasks')({ query: 'spec' });
+    const text = result.content[0].text;
+
+    expect(text).toContain('Draft the spec (none) (id: item-1)');
+    expect(text).not.toContain('Draft the spec (none) [');
   });
 });
 

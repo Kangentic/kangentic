@@ -65,7 +65,7 @@ import {
 } from './mcp-http/session-send';
 import { registerDevtoolsMcpTools } from '../../devtools/mcp/register';
 import { buildServerInstructions } from './mcp-http/server-instructions';
-import { logMcpToolArguments } from './mcp-http/tool-call-logging';
+import { logMcpToolArguments, createToolArgumentNotices, type ToolArgumentNotices } from './mcp-http/tool-call-logging';
 import type { RequestResolver } from './mcp-http/project-resolver';
 
 const SERVER_NAME = 'kangentic';
@@ -342,6 +342,11 @@ export function buildConfiguredMcpServer(
   // scope is the cross-project pane leak this parameter exists to prevent, so
   // there is deliberately no way to omit it.
   browser: BrowserToolDependencies,
+  // Filled in by logMcpToolArguments from the raw request body, which is the
+  // only place that can still tell an absent `labels` from a deliberately
+  // empty one. See the call site in handleHttpRequest for why passing it here,
+  // before it is populated, is safe.
+  toolArgumentNotices?: ToolArgumentNotices,
 ): McpServer {
   const browserAutomationEnabled = getBrowserAutomationConfig().enabled;
   const instructions = buildServerInstructions(resolver, browserAutomationEnabled);
@@ -349,7 +354,7 @@ export function buildConfiguredMcpServer(
     { name: SERVER_NAME, version: SERVER_VERSION },
     { instructions },
   );
-  registerTaskTools(mcpServer, resolver, taskCounter);
+  registerTaskTools(mcpServer, resolver, taskCounter, toolArgumentNotices);
   registerProfileTools(mcpServer, resolver);
   registerSessionTools(mcpServer, resolver);
   registerProjectTools(mcpServer, resolver);
@@ -434,12 +439,19 @@ async function handleHttpRequest(
   // instructions (active-project name, registered-project list) and the
   // browser-tool gating reflect current DB / settings state (see
   // buildConfiguredMcpServer).
+  // One notices record per request, handed to the tools now and filled in by
+  // logMcpToolArguments below. The ordering holds because the fill happens
+  // before `transport.handleRequest`, and JS runs the tool callbacks strictly
+  // after that call begins: no tool can observe it empty.
+  const toolArgumentNotices = createToolArgumentNotices();
+
   const mcpServer = buildConfiguredMcpServer(
     resolver,
     taskCounter,
     getBrowserAutomationConfig,
     resolveSteering(callerSessionId),
     resolveBrowser(projectId, callerSessionId),
+    toolArgumentNotices,
   );
 
   const transport = new StreamableHTTPServerTransport({
@@ -471,7 +483,7 @@ async function handleHttpRequest(
         return;
       }
       // Diagnostics must never break dispatch.
-      try { logMcpToolArguments(parsedBody); } catch { /* ignore logging failure */ }
+      try { logMcpToolArguments(parsedBody, toolArgumentNotices); } catch { /* ignore logging failure */ }
       await transport.handleRequest(req, res, parsedBody);
     } else {
       // GET (SSE stream) and DELETE (session teardown) carry no JSON body.

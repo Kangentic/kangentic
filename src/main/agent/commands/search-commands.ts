@@ -16,6 +16,7 @@ export interface BoardHit {
   description: string;
   column: string;
   status: 'active' | 'completed';
+  labels: string[];
 }
 
 export interface BacklogHit {
@@ -107,6 +108,7 @@ export const handleSearchTasks: CommandHandler = (
               description: task.description,
               column: swimlaneMap.get(task.swimlane_id) ?? 'Unknown',
               status: 'active',
+              labels: task.labels,
             });
           }
         }
@@ -125,6 +127,7 @@ export const handleSearchTasks: CommandHandler = (
             description: task.description,
             column: 'Done',
             status: 'completed',
+            labels: task.labels,
           });
         }
       }

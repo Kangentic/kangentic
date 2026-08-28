@@ -44,7 +44,7 @@ export const handleListTasks: CommandHandler = (
     targetSwimlanes = [matched];
   }
 
-  const tasks: Array<{ id: string; displayId: number; title: string; description: string; column: string; position: number }> = [];
+  const tasks: Array<{ id: string; displayId: number; title: string; description: string; column: string; position: number; labels: string[] }> = [];
   for (const swimlane of targetSwimlanes) {
     // `list()` is ORDER BY position ASC, so the loop index IS the task's
     // zero-based slot in its column. Report that ordinal rather than the raw
@@ -60,6 +60,7 @@ export const handleListTasks: CommandHandler = (
         description: task.description,
         column: swimlane.name,
         position: slot,
+        labels: task.labels,
       });
     });
   }

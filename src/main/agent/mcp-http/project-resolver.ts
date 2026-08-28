@@ -169,6 +169,38 @@ export class RequestResolver {
     return retrievalService.getEmbedder(this.ipcContext);
   }
 
+  /**
+   * A project's `default_agent`, the third rung of the spawn ladder
+   * (`agent_override` -> column -> project -> app default). Read off the
+   * already-cached project list, so this costs no extra query.
+   */
+  getProjectDefaultAgent(projectId: string): string | null {
+    return this.loadProjects().find((project) => project.id === projectId)?.default_agent ?? null;
+  }
+
+  /**
+   * The two global-config values `validateSpawnOverrides` needs: the CLI paths
+   * capability discovery must probe, and the learned model cache the
+   * renderer's own picker unions in. Kept narrow (and failing to an empty
+   * shape) so the tool layer never gets a handle on the whole config.
+   */
+  getAgentValidationConfig(): {
+    cliPathOverrides: Record<string, string | null | undefined>;
+    discoveredModelsByAgent: Record<string, string[]>;
+  } {
+    try {
+      const config = this.ipcContext.configManager.load();
+      return {
+        cliPathOverrides: config.agent?.cliPaths ?? {},
+        discoveredModelsByAgent: config.discoveredModelsByAgent ?? {},
+      };
+    } catch {
+      // An unreadable config must not block a create; validation degrades to
+      // "cannot verify", which is the module's accept-on-empty contract.
+      return { cliPathOverrides: {}, discoveredModelsByAgent: {} };
+    }
+  }
+
   private loadProjects(): Project[] {
     if (this.cachedProjects === null) {
       this.cachedProjects = this.ipcContext.projectRepo.list();

@@ -154,6 +154,94 @@ export const handleGetTaskStats: CommandHandler = (
   };
 };
 
+/**
+ * How many labels the board summary spells out before collapsing the tail
+ * into a "... and N more" line. A mature board accumulates a long tail of
+ * one-off labels; the head is what a caller needs to stay consistent with the
+ * vocabulary, and printing all of it would swamp the rest of the summary.
+ */
+const BOARD_SUMMARY_LABEL_LIMIT = 30;
+
+/** Soft wrap width for the label list, so a wide vocabulary stays readable. */
+const BOARD_SUMMARY_LABEL_WRAP_COLUMNS = 96;
+
+/**
+ * Tally label usage across every item that can carry one: active board tasks,
+ * archived (Done) tasks, and backlog items. Archived tasks are deliberately
+ * included - on a mature board most of the vocabulary lives in Done, so an
+ * active-only tally would report a vocabulary that barely exists.
+ *
+ * `occurrences` counts label USES (a task with three labels contributes to
+ * three of them), while `labelledItems` counts items carrying at least one
+ * label, so the two figures the summary prints reconcile for a caller that
+ * adds them up.
+ */
+export function tallyLabelUsage(
+  itemLabelLists: Array<readonly string[] | null | undefined>,
+): { counts: Map<string, number>; labelledItems: number } {
+  const counts = new Map<string, number>();
+  let labelledItems = 0;
+  for (const labels of itemLabelLists) {
+    if (!labels || labels.length === 0) continue;
+    labelledItems++;
+    for (const label of labels) {
+      counts.set(label, (counts.get(label) ?? 0) + 1);
+    }
+  }
+  return { counts, labelledItems };
+}
+
+/**
+ * Order label entries most-used first, ties broken alphabetically. The tie
+ * break compares codepoints rather than calling `localeCompare`: ICU collation
+ * is not guaranteed identical between a developer's machine and CI, and this
+ * is machine-facing MCP output whose order the tests pin, so a locale-
+ * dependent comparator could sort two equally-used labels differently per
+ * platform.
+ *
+ * Shared by the printed block and the structured `data.labels` array so the
+ * two orderings cannot drift.
+ */
+function sortLabelEntries(counts: Map<string, number>): Array<[string, number]> {
+  return [...counts.entries()].sort(
+    (left, right) => right[1] - left[1] || (left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0),
+  );
+}
+
+/**
+ * Render the label vocabulary block for the board summary: most-used first,
+ * ties broken alphabetically so the output is stable across calls.
+ */
+export function formatLabelVocabulary(
+  counts: Map<string, number>,
+  labelledItems: number,
+): string[] {
+  if (counts.size === 0) {
+    return ['Labels in use: none yet.'];
+  }
+  const ordered = sortLabelEntries(counts);
+  const shown = ordered.slice(0, BOARD_SUMMARY_LABEL_LIMIT);
+  const lines = [
+    `Labels in use (${counts.size} distinct, ${labelledItems} labelled item${labelledItems === 1 ? '' : 's'}):`,
+  ];
+  let currentLine = '';
+  for (let index = 0; index < shown.length; index++) {
+    const [name, count] = shown[index];
+    const entry = `${name} (${count})${index < shown.length - 1 ? ',' : ''}`;
+    if (currentLine && `${currentLine} ${entry}`.length > BOARD_SUMMARY_LABEL_WRAP_COLUMNS) {
+      lines.push(`  ${currentLine}`);
+      currentLine = entry;
+    } else {
+      currentLine = currentLine ? `${currentLine} ${entry}` : entry;
+    }
+  }
+  if (currentLine) lines.push(`  ${currentLine}`);
+  if (ordered.length > shown.length) {
+    lines.push(`  ... and ${ordered.length - shown.length} more`);
+  }
+  return lines;
+}
+
 export const handleBoardSummary: CommandHandler = (
   _params: Record<string, unknown>,
   context: CommandContext,
@@ -173,9 +261,16 @@ export const handleBoardSummary: CommandHandler = (
   let activeSessions = 0;
   const columnLines: string[] = [];
   const columnData: Array<{ name: string; role: string | null; taskCount: number }> = [];
+  // Every label-bearing item on the board, gathered as we already walk each
+  // source for its counts. No extra query and no new repository method.
+  const labelLists: Array<readonly string[] | null | undefined> = [
+    ...archivedTasks.map((task) => task.labels),
+    ...backlogTasks.map((item) => item.labels),
+  ];
 
   for (const swimlane of allSwimlanes) {
     const tasks = taskRepo.list(swimlane.id);
+    for (const task of tasks) labelLists.push(task.labels);
     totalActiveTasks += tasks.length;
     const sessionsInColumn = tasks.filter((task) => task.session_id !== null).length;
     activeSessions += sessionsInColumn;
@@ -196,11 +291,15 @@ export const handleBoardSummary: CommandHandler = (
     tasksWithMetrics++;
   }
 
+  const { counts: labelCounts, labelledItems } = tallyLabelUsage(labelLists);
+
   const lines = [
     `Board Summary:`,
     ``,
     `Columns:`,
     ...columnLines,
+    ``,
+    ...formatLabelVocabulary(labelCounts, labelledItems),
     ``,
     `Active tasks: ${totalActiveTasks}`,
     `Backlog tasks: ${backlogTasks.length}`,
@@ -218,6 +317,7 @@ export const handleBoardSummary: CommandHandler = (
     message: lines.join('\n'),
     data: {
       columns: columnData,
+      labels: sortLabelEntries(labelCounts).map(([name, count]) => ({ name, count })),
       totalActiveTasks,
       backlogTasks: backlogTasks.length,
       completedTasks: archivedTasks.length,

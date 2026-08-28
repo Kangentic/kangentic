@@ -135,14 +135,14 @@ Create a task on the board (default: the To Do column on the active board) or in
 | `description` | string | No | Task description, supports markdown (max 50000 chars for a board task; a backlog item is capped at 10000 and an over-cap backlog description is rejected) |
 | `column` | string | No | Target column name (case-insensitive). Defaults to To Do. Pass `"Backlog"` to route to the backlog staging area instead of the board. |
 | `priority` | number | No | Priority: 0=none (default), 1=low, 2=medium, 3=high, 4=urgent. Applies to both board tasks and backlog items. |
-| `labels` | array | No | Labels for categorization. Each entry is a string or `{ name, color }` object with hex color. Applies to both board tasks and backlog items. |
-| `branchName` | string | No | Custom git branch name. Board tasks only - ignored when routed to the backlog. Rejected if the branch is already checked out anywhere; see the Branch conflict guard note below. |
+| `labels` | array | No | Labels for categorization. Each entry is a string or `{ name, color }` object with hex color. Applies to both board tasks and backlog items. Call [kangentic_board_summary](#kangentic_board_summary) first to see the board's existing label vocabulary. Subject to the large-description drop; see the Labels with a long description note below. |
+| `branchName` | string | No | Custom git branch name. Board tasks only - ignored when routed to the backlog. Recorded on the task and checked out when its worktree is created. Rejected if the branch is already checked out anywhere; see the Branch conflict guard note below. |
 | `baseBranch` | string | No | Base branch for the task. Board tasks only. |
-| `useWorktree` | boolean | No | Whether to use a git worktree. Board tasks only. |
+| `useWorktree` | boolean | No | Whether to use a git worktree. Omit to follow the project setting. `false` means nothing is checked out at all - see the Working in the project directory note below. Board tasks only. |
 | `attachments` | array | No | File attachments: `[{ filePath: string, filename?: string }]`. Files are read from disk and stored in the project's `.kangentic/` directory. |
-| `agentOverride` | string | No | Pin a specific agent for this task's entire lifetime (e.g. `"claude"`, `"codex"`). Locks against column moves. Omit to resolve column override -> project default -> app default. |
-| `modelOverride` | string | No | Model to spawn this task with (e.g. `"opus"`, `"claude-opus-4-8"`, or the friendly `"Opus 4.8"`). Best-effort: a friendly name is converted to the CLI id; an unresolvable model errors at spawn time. Omit to resolve column override -> project default -> agent default. |
-| `effortOverride` | string | No | Effort/reasoning level to spawn this task with (e.g. `"xhigh"`). Valid values are agent-specific. Omit to resolve column override -> project default -> agent default. |
+| `agentOverride` | string | No | Pin a specific agent for this task's entire lifetime (e.g. `"claude"`, `"codex"`). Locks against column moves. Rejected if it is not a registered agent. Omit to resolve column override -> project default -> app default. |
+| `modelOverride` | string | No | Model to spawn this task with (e.g. `"opus"`, `"claude-opus-4-8"`, or the friendly `"Opus 4.8"`). A friendly name is converted to the CLI id and then validated; see the Call-time override validation note below. Omit to resolve column override -> project default -> agent default. |
+| `effortOverride` | string | No | Effort/reasoning level to spawn this task with (e.g. `"xhigh"`). Valid values are agent-specific and validated at call time; see the Call-time override validation note below. Omit to resolve column override -> project default -> agent default. |
 | `permissionMode` | string | No | Permission mode to spawn this task with: `"default"`, `"plan"`, `"acceptEdits"`, `"dontAsk"`, `"bypassPermissions"`, or `"auto"`. Omit to resolve column override -> project default -> app default. |
 | `autoCommand` | string | No | Slash command to run once the agent spawns for this task (e.g. `"/code-review"`, `"/release"`). Overrides the destination column's `auto_command` for this task only. MCP-only - not surfaced in the New Task dialog. |
 | `profile` | string | No | Board Profile this task rides (name or id) - an alternate set of per-column agent/model/effort settings, applied as the task moves. Omit for "Default" (every column uses its own settings). See [kangentic_list_board_profiles](#kangentic_list_board_profiles). |
@@ -159,6 +159,23 @@ The mirror case is rejected for the same reason: any of the four pins alongside 
 If the target column has `auto_spawn` enabled, creating a task there will also spawn an agent session for it. Backlog items never auto-spawn.
 
 **Branch conflict guard:** git allows a branch to be checked out in only one working tree at a time. When `branchName` names a branch that some worktree already holds - including the user's own main checkout - the tool refuses and creates nothing, rather than filing a task whose worktree can never be built. Without this guard the failure was invisible: the tool response is sent before auto-spawn runs, so the card appeared healthy while `git worktree add` failed a second later with `is already used by worktree at <path>`, leaving a null session and null worktree. The refusal names the branch and the path holding it, states that nothing was created, and says what to do - free the branch and re-run, or stop and tell the user, since the holder is often a checkout the calling agent cannot touch. The check is skipped for backlog items (which ignore `branchName`) and fails open if git cannot be probed. It is otherwise unconditional: it does not depend on the destination column's `auto_spawn` (a task filed into a quiet column today can be dragged into a spawning one tomorrow, and the conflict bites then), nor on `useWorktree` (passing `useWorktree: false` is rejected too, since that only moves the same collision to the branch-checkout step instead of avoiding it).
+
+**Working in the project directory (`useWorktree: false`):** nothing is checked out. `ensureWorktree` returns before it resolves a base branch or runs `git worktree add`, so no worktree is created, the user's working tree is untouched, and the agent runs with its cwd set to the project directory on whatever branch the repo currently has out. `branchName` is still recorded on the task (and still subject to the branch conflict guard below, since the task can be moved into a worktree-creating column later), but it is not checked out. Omitting `useWorktree` follows the project's `worktreesEnabled` setting instead.
+
+**Call-time override validation:** `agentOverride`, `modelOverride`, and `effortOverride` are validated when the task is created, not when it spawns. An unknown value is rejected immediately with the valid values listed, and no task is created. Previously a typo produced a task that looked correct on the board and failed hours later, when someone moved it into an executing column - far from the call that caused it.
+
+The valid values come from the resolved agent's adapter-discovered `AgentCapabilities` (`models`, `effortLevels`, `supportsModelOverride`), unioned for models with the learned `discoveredModelsByAgent` cache the in-app model picker also uses. "Resolved agent" follows the normal ladder: `agentOverride` on the call -> the destination column's override -> the project default -> the app default. On [kangentic_update_task](#kangentic_update_task) there is one more rung between the call and the column, the task's own stored `agent_override`, which most tasks that have ever spawned carry; so an update is validated against the agent the task actually runs under, not the column's. The rejection names the resolved agent and where it came from, since the caller usually did not pass one, and that `resolved from` clause is the authoritative statement of which rung won.
+
+Validation is deliberately permissive where it cannot know, in three ways:
+
+- An agent that enumerates nothing accepts the value as given, and its CLI stays the final validator. This covers all three shapes of "nothing": the adapter does no capability discovery, the CLI is not installed (so discovery never runs), or the probe succeeded and found nothing - several agents have no effort flag at all, so their `effortLevels` is legitimately empty.
+- A **floating model alias** (`"opus"`, `"sonnet"`) is always accepted. A discovered model list is built from concrete ids - Claude's comes from `message.model` in transcript history and from the CLI's own `/model` picker, both of which report full ids like `claude-opus-4-8` - so an alias is by construction absent from it even though `--model opus` is valid. Membership is therefore only enforced for a value carrying a trailing numeric version, which is exactly the shape the list enumerates. A mistyped or superseded concrete id (`claude-opus-4-9`) is still caught.
+- **Spelling is normalized before the membership test.** One model is spawnable under several forms - `claude-opus-4-8`, the context-window variant `claude-opus-4-8[1m]`, and the dated pin `claude-opus-4-8-20260101` - and discovery records whichever form the transcript used, deliberately preserving a date rather than collapsing a pin to "latest". Both sides are therefore compared on the base id, with the `[1m]` suffix and any trailing date stripped, so a valid model is never rejected merely because the caller and the discovered list spell it differently.
+- The capability probe is bounded; if it does not settle in time the value is accepted.
+
+Only the fields present on the call are checked, so a later labels-only update never re-validates a task's stored pins.
+
+**Labels with a long description:** when a call carries both a description of roughly 1KB or more and `labels`, the labels can be dropped before they reach the server. The drop happens upstream, in the MCP client's tool-call emission - Kangentic logs the raw request body before normalizing, and `labels` never arrives - so no handler or transport change can recover it. The workaround is a separate labels-only [kangentic_update_task](#kangentic_update_task) right after. The server detects the signature (no `labels` key in the received arguments alongside a large description) and appends a `[Labels not received]` line to the tool response naming the task to follow up on, so a caller learns about it without having to remember the limitation. On a backlog create the line names [kangentic_update_backlog_item](#kangentic_update_backlog_item) instead, since a backlog id does not resolve in `kangentic_update_task`. It is advisory, not an error: the task itself was created correctly, and a caller who deliberately sent no labels never sees the line, because the check is on the argument being *absent*, not empty.
 
 **Cross-project routing guard:** when `project` is omitted (so the task would default to the active project) but the title or description names a *different* registered project, the tool refuses with a routing-check error instead of creating the task. No task is created and no rate-limit slot is consumed. Re-run with `project: "<that project>"` to file it there, or with `project: "<active project>"` to confirm the active project. This catches the common cross-project triage case (filing a bug about one project from another) when the routing cue is only implied by the task text.
 
@@ -290,6 +307,12 @@ non-archived tasks. This is the same slot vocabulary
 straight back. It is deliberately not the raw stored `tasks.position` value, which develops gaps
 as tasks are archived.
 
+Each task also reports its labels, rendered as `[a, b]` after the title - the same shape the
+backlog rows in [kangentic_search_tasks](#kangentic_search_tasks) already use, so board and backlog
+rows read identically. Omitted entirely for a task with no labels. For the board's label vocabulary
+as a whole (with counts) use [kangentic_board_summary](#kangentic_board_summary); a listing is
+filtered and count-free and cannot answer that.
+
 ### kangentic_search_tasks
 
 Search by keyword across both the board (active + archived tasks) and the backlog. This is the default tool for finding a task by title, description, or backlog label - it covers items whether or not they have been promoted from backlog to board. Use `scope` to narrow to a single surface.
@@ -302,7 +325,7 @@ A query of the form `#<number>` (e.g. `#42`) is a ticket lookup instead of a tex
 | `scope` | `'board' \| 'backlog' \| 'both'` | No | Which surface to search. Defaults to `"both"`. |
 | `status` | string | No | Filter board hits: `"active"`, `"completed"`, or `"all"` (default). Ignored for backlog hits. |
 
-Results are grouped under `Board (N):` and `Backlog (N):` sections so the agent can see at a glance which surface each hit came from.
+Results are grouped under `Board (N):` and `Backlog (N):` sections so the agent can see at a glance which surface each hit came from. Board and backlog hits both render their labels as `[a, b]`, omitted when there are none. Note the asymmetry in *matching*: backlog items match on their labels, board tasks match on title and description only, so a board task is not found by searching for one of its labels.
 
 ### kangentic_find_task
 
@@ -331,9 +354,30 @@ At least one parameter is required. Returns the same task fields as `kangentic_f
 
 ### kangentic_board_summary
 
-Get a high-level board overview: task counts per column, active sessions, completed tasks, and aggregate cost/token metrics.
+Get a high-level board overview: task counts per column, the board's label vocabulary, active sessions, completed tasks, and aggregate cost/token metrics.
 
 No parameters.
+
+**Label vocabulary.** The summary lists the labels already in use with their counts, most-used
+first, so a caller can reuse an existing label instead of inventing a near-duplicate and
+fragmenting the vocabulary. This is the answer to "what labels does this board use" - a task
+listing cannot serve it, being paginated and count-free.
+
+Counts span every item that can carry a label: active board tasks, archived (Done) tasks, and
+backlog items. Archived tasks are included deliberately - on a mature board most of the vocabulary
+lives in Done, so an active-only tally would report a vocabulary that barely exists. The two
+figures in the header measure different things and are both needed: `N distinct` is the size of the
+vocabulary, while `M labelled items` counts items carrying at least one label. The per-label counts
+are label *uses*, so a task with three labels contributes to three of them and they sum to more
+than `M`.
+
+The list is capped at 30 entries with a `... and N more` tail. Label colors are deliberately not
+reported: passing an existing label back as a plain string preserves the color it already has, so a
+caller never needs one.
+
+`data.labels` carries the same tally as `{ name, count }` entries in the same most-used-first order,
+and is **not** capped the way the printed list is, so a caller that needs the whole vocabulary can
+read it there.
 
 ### kangentic_get_usage_stats
 
@@ -413,19 +457,24 @@ Update a task's title, description (full replace, in-place find/replace edits, o
 | `appendDescription` | string | No | Text appended to the end of the current description, exactly as given (no separator inserted, max 50000 chars). Mutually exclusive with `description`; may combine with `descriptionEdits` (edits apply first, then this append). |
 | `prUrl` | string | No | Pull request URL (e.g. `https://github.com/owner/repo/pull/123`). This is what links the task to a PR; a URL written into `description` does not. |
 | `prNumber` | number | No | Pull request number. The field the linker anchors on (Tier 1); derived from `prUrl` when omitted, so a URL-only write can never strand the previous PR's number. A number-only write leaves `pr_url` pointing at the previous PR until the immediate link-time resolve re-points it, which is harmless: the resolve follows the number you gave. |
-| `agent` | string | No | Agent name to assign (e.g. `"claude"`, `"codex"`). Empty string clears. |
+| `agent` | string | No | Agent name to assign (e.g. `"claude"`, `"codex"`). Rejected if it is not a registered agent. Empty string clears. |
 | `priority` | number | No | Task priority 0-4 (0=none, 4=highest) |
-| `labels` | string[] | No | Replace the task's label list. Pass `[]` to clear. |
+| `labels` | string[] | No | Replace the task's label list. Pass `[]` to clear. Call [kangentic_board_summary](#kangentic_board_summary) to see the board's existing label vocabulary. Subject to the same large-description drop as [kangentic_create_task](#kangentic_create_task), and the response carries the same `[Labels not received]` advisory when it happens. |
 | `baseBranch` | string | No | Base branch the task's worktree branches from (e.g. `"main"`) |
-| `useWorktree` | boolean | No | Whether the task uses an isolated git worktree |
-| `model` | string | No | Model override for this task (e.g. `"opus"`, `"claude-opus-4-8"`, or the friendly `"Opus 4.8"`). Best-effort friendly-name resolution. Pass empty string to clear. |
-| `effort` | string | No | Effort/reasoning level override for this task (e.g. `"xhigh"`). Pass empty string to clear. |
+| `useWorktree` | boolean | No | Whether the task uses an isolated git worktree. `false` means nothing is checked out - the agent runs in the project directory on whatever branch the repo currently has out. |
+| `model` | string | No | Model override for this task (e.g. `"opus"`, `"claude-opus-4-8"`, or the friendly `"Opus 4.8"`). Friendly-name resolution, then the same call-time validation [kangentic_create_task](#kangentic_create_task) applies. Pass empty string to clear. |
+| `effort` | string | No | Effort/reasoning level override for this task (e.g. `"xhigh"`). Validated at call time against the resolved agent. Pass empty string to clear. |
 | `permissionMode` | string | No | Permission mode override for this task: `"default"`, `"plan"`, `"acceptEdits"`, `"dontAsk"`, `"bypassPermissions"`, or `"auto"`. Pass empty string to clear. |
 | `profile` | string | No | Board Profile this task rides (name or id) - an alternate set of per-column agent/model/effort settings, applied as the task moves. Pass empty string to clear it back to "Default". See [Board Profiles](#board-profiles). |
 | `runMode` | string | No | How the task gets its agent settings: `"column_settings"` (follow each column, clearing the model/effort/permissionMode pins) or `"agent_override"` (pin them for the task's whole life, clearing the profile). Setting any pin implies `"agent_override"`, so pass this only to switch modes without pinning anything; setting a pin alongside `"column_settings"` is rejected as a contradiction (pass the pin as an empty string to clear it instead). Omit to leave the task's current mode alone. |
 | `attachments` | array | No | File attachments to ADD to the task: `[{ filePath: string, filename?: string }]`. Additive - existing attachments are kept, not replaced. Use `kangentic_remove_task_attachment` to remove one. |
 
 At least one updatable field is required.
+
+`agent`, `model`, and `effort` get the same call-time validation as their `create_task`
+counterparts (see [Call-time override validation](#kangentic_create_task)). Only the fields present
+on the call are checked - a task's stored pins are never re-validated, so a labels-only follow-up
+still succeeds on a task carrying a since-deprecated model.
 
 Setting `prUrl` or `prNumber` also clears the task's stored PR state, so the three PR columns never disagree; a forced resolve fires immediately after the write and fills the state back in from the PR itself, so the card shows its state chip without waiting for the background sweep. The exception is a write that re-points nothing (the same `prUrl` and `prNumber` the task already holds, on a row whose `pr_state` is non-null): that is treated as a no-op, and both the clear and the resolve are skipped so the card's state chip does not blank and come back. See [PR Integration](pr-integration.md#where-pr-state-is-persisted).
 
