@@ -177,6 +177,8 @@ Flags:
 - `--ephemeral` - isolated data directory, auto-cleaned on exit (used for worktree previews). The data directory is wiped on every boot, so a previous (possibly crashed) preview's clones never persist. Because the wipe also takes the markers that say what the user has already seen, the boot seeds them back: `hasCompletedFirstRun`, `lastWhatsNewShownVersion`, and every announcement in the committed `announcements.json` stamped read and dismissed. Without that last one the megaphone badge and the announcement banner returned on every preview launch.
 - `--fresh` - ephemeral preview with NO project pre-cloned or auto-opened, so the app starts on the Welcome Screen. Use it to exercise the first-launch experience (pick a folder, land on the board, onboarding checklist). Implies the same wipe as `--ephemeral`, but deliberately gets NONE of the seeded markers above, so onboarding, What's New, and unread announcements all present as they would to a real first-time user.
 
+**Single-instance lock warning:** a non-ephemeral launch whose Electron process exits almost immediately with code 0 means another Kangentic instance (usually the installed app) already holds the single-instance lock -- the loser exits silently and the holder's window is focused, which looks exactly like a successful dev launch while you are actually using the other build. `dev.js` detects that signature (non-ephemeral, exit 0, under 5s from spawn) and prints an unmissable warning: quit the other instance (including its tray icon and any background processes in Task Manager), then run `npm start` again. Ephemeral previews skip the lock and can never trigger it.
+
 ### Production (`npm run build` / `scripts/build.js`)
 
 1. `tsc --noEmit` (type check)
