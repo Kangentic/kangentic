@@ -542,6 +542,42 @@ describe('createWriteBatcher', () => {
       expect(write.mock.calls).toEqual([['down1'], ['typed']]);
       expect(write.mock.calls.flat()).not.toContain('release1');
     });
+
+    it('flush empties a saturated lane so the next burst is not permanently capped', () => {
+      // Lane depth is recomputed by re-scanning `queue` on every arrival, so
+      // flush()'s queue.length = 0 already empties the pool as a side effect
+      // today. That is exactly the property a later perf pass (a persistent
+      // Map<laneKey, count> incremented on push / decremented on drain,
+      // instead of a per-arrival recount) would be tempted to change - and
+      // could easily forget to also clear on flush, leaving the lane
+      // permanently saturated for the rest of the batcher's lifetime. No
+      // existing test drives writePaced after a flush that left a lane at
+      // the cap, so that regression would pass the whole suite silently.
+      const write = vi.fn<[string], void>();
+      const batcher = createWriteBatcher(write, PACE_MS, LANE_CAP);
+
+      batcher.writePaced('d1', wheelDown); // immediate
+      batcher.writePaced('d2', wheelDown); // pending
+      batcher.writePaced('d3', wheelDown); // pending, lane now at the cap
+      batcher.writePaced('d4', wheelDown); // dropped
+      batcher.flush(); // drops d2 and d3 unwritten; lane pool must empty too
+
+      expect(write.mock.calls).toEqual([['d1']]);
+
+      // lastPacedWriteAt survives flush (it is not queue state), so the next
+      // arrival must still clear the pace floor before it writes immediately.
+      vi.advanceTimersByTime(PACE_MS);
+
+      batcher.writePaced('e1', wheelDown); // immediate: the pace floor cleared
+      batcher.writePaced('e2', wheelDown); // pending
+      batcher.writePaced('e3', wheelDown); // pending
+      batcher.writePaced('e4', wheelDown); // pending, lane at the cap again
+      batcher.writePaced('e5', wheelDown); // dropped: proves the cap still works post-flush
+
+      vi.advanceTimersByTime(PACE_MS * 10);
+      expect(write.mock.calls).toEqual([['d1'], ['e1'], ['e2'], ['e3'], ['e4']]);
+      expect(write.mock.calls.flat()).not.toContain('e5');
+    });
   });
 
   // Nothing today fails if useTerminal.ts's onData routing line is deleted or
