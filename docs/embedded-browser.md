@@ -67,7 +67,7 @@ Captures live under the session directory so they're cleaned up by existing life
 
 Per-adapter verification is exposed via each `AgentAdapter`'s `getSubmissionVerifier(contextType: 'paste' | 'command-injection')` method. `BROWSER_CAPTURE_SEND` calls `TerminalSubmit.submitContent` (paste path) which looks up the session's adapter via `agentRegistry.get(sessionManager.getSessionAgentName(sessionId))` and passes `getSubmissionVerifier('paste')` to `pasteAndSubmit` as the optional `verifier` callback. Slash-command bursts route through `TerminalSubmit.submitKeystrokes` and use `getSubmissionVerifier('command-injection')` for the JSONL polling path. Adapters may return `null` to fall back to the activity/data-byte signals. Engine code itself never branches on agent name.
 
-**Caller contract:** the session must be subscribed to (in `SessionManager.focusedSessionIds`) when the engine is invoked. Both the Browser pane and `TerminalSubmitScheduler` run alongside an active terminal panel that subscribes via `TERMINAL_SUBSCRIBE`, so they satisfy this naturally.
+**No subscription requirement:** the engine observes PTY output through `SessionManager`'s unconditional `data-tap` event (settle, submission evidence, and the paste-mode monitor alike), so it behaves identically for focused and background sessions. The old caller contract (session must be in `focusedSessionIds`) is gone: MCP session-send and mobile-bridge messages routinely target sessions no renderer is subscribed to, and under the renderer-gated `data` event those callers silently degraded to the wall-clock cap with a dead paste-mode guard.
 
 ### Capture and Drawing
 
