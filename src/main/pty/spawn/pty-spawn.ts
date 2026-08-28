@@ -127,6 +127,10 @@ export const FULL_REPAINT_ENV_KEY = 'CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT';
  * clean under controlled injection, coalesced multiples spliced rows). The
  * CLI default of 1 matches the native terminals verified clean. Non-Claude
  * agents ignore the var, the same argument the strip itself relies on.
+ * UNWIND(claude-code#83714): the keeplist entry itself stays (a user's
+ * exported value must always survive the strip), but the no-default stance
+ * exists because of the same upstream mis-assembly - re-evaluate a default
+ * alongside the rest of the unwind when upstream fixes the renderer.
  */
 export const SCROLL_SPEED_ENV_KEY = 'CLAUDE_CODE_SCROLL_SPEED';
 

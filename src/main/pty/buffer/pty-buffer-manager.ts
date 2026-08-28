@@ -678,7 +678,12 @@ export class PtyBufferManager {
       // A replay snapshot is mid-sample: hold this tick (re-arm, do not emit)
       // so no flush lands between the sample's drain and its reply. The
       // sample's tail fold delivers whatever is buffered; anything left on its
-      // degraded paths rides the re-armed tick once the counter drops.
+      // degraded paths rides the re-armed tick once the counter drops. Worst
+      // case this holds LIVE delivery for REPLAY_SERIALIZE_MAX_WAIT_MS (the
+      // serialize deadline caps how long the counter can stay up); the
+      // 2026-08-28 fidelity audit observed zero deadline hits through a
+      // mass-resume boot, so this is a bounded correctness guard, not a
+      // live-path tax.
       if (current.replaySamplesInFlight > 0) {
         this.scheduleFlush(sessionId, current);
         return;
