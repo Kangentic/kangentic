@@ -11,6 +11,7 @@ import { chromium, type Page } from '@playwright/test';
 import path from 'node:path';
 import fs from 'node:fs';
 import { getOutputDir } from '../helpers/output-dir';
+import { hideDevOnlyChrome } from '../helpers/capture-page';
 
 const OUTPUT_DIR = getOutputDir('walkthrough');
 const MOCK_SCRIPT = path.join(__dirname, '..', '..', 'ui', 'mock-electron-api.js');
@@ -133,6 +134,10 @@ test('full product walkthrough', async () => {
   `);
 
   await page.addInitScript({ path: MOCK_SCRIPT });
+
+  // This capture builds its own page instead of using launchCapturePage, so it needs
+  // its own call. Without it the walkthrough video and chapter PNGs show the dev badge.
+  await hideDevOnlyChrome(page);
 
   // Enable session spawn in the mock (normally throws in UI tests).
   // Uses __mockPreConfigure to capture internal state references,

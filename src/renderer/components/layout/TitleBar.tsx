@@ -118,7 +118,18 @@ export function TitleBar({
       {/* Branding -- logo + app name */}
       <div className="flex items-center gap-1.5 flex-shrink-0">
         <BrandMark className="w-5 h-5 text-fg-secondary" />
-        <span className="text-sm font-semibold text-fg-secondary">Kangentic</span>
+        <span className="text-sm font-semibold text-fg-secondary">
+          Kangentic
+          {/*
+            Dev-only marker so a `npm start` window is distinguishable from a packaged build
+            when both are open. Nested INSIDE the wordmark span rather than beside it, so it
+            inherits the wordmark's size/weight/tone and is separated by exactly one space
+            instead of the parent flex row's gap. Built out of prod by __KANGENTIC_DEV__, the
+            same gate the preview pill below uses, so nothing ships in a packaged build. A
+            preview window is a dev window, so it gets this too, on top of its pill.
+          */}
+          {__KANGENTIC_DEV__ && <span data-testid="titlebar-dev-badge">{' (dev)'}</span>}
+        </span>
         {/*
           Dev-only (preview): the original task's `#<id> - <title>` label after the
           wordmark, in a muted pill (raised surface + edge border) so it stands out without

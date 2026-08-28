@@ -37,6 +37,37 @@ export interface CapturePage {
 }
 
 /**
+ * Hide dev-only title-bar chrome from marketing assets.
+ *
+ * Captures render against the shared Vite dev server (playwright.config.ts's
+ * `webServer`), so `__KANGENTIC_DEV__` is true and the title-bar wordmark carries
+ * its "(dev)" badge. Every capture is a full-viewport screenshot or screencast that
+ * includes the title bar, and marketing assets must show the shipped wordmark.
+ *
+ * addInitScript, not addStyleTag: an injected <style> does not survive the
+ * `page.goto` that follows, and the walkthrough capture navigates after its setup.
+ * Call this from every capture page setup, not just `launchCapturePage`;
+ * `tests/unit/capture-dev-chrome-parity.test.ts` fails the build if one forgets.
+ *
+ * Scope is the wordmark badge alone. TitleBar's other `__KANGENTIC_DEV__` element,
+ * the preview-task pill, needs no rule here: it renders only when
+ * `window.electronAPI.dev.previewTaskTitle` is set, and the capture mock defines no
+ * `dev` key at all. A third dev-only element would need its selector added below.
+ */
+export async function hideDevOnlyChrome(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const injectStyle = () => {
+      const style = document.createElement('style');
+      style.textContent = '[data-testid="titlebar-dev-badge"] { display: none; }';
+      document.head.appendChild(style);
+    };
+    // Init scripts run at document start, where <head> may not exist yet.
+    if (document.head) injectStyle();
+    else document.addEventListener('DOMContentLoaded', injectStyle, { once: true });
+  });
+}
+
+/**
  * Launch a Chromium page pre-configured for marketing captures.
  * Sets viewport, device scale, theme, injects mock + fixture data,
  * disables animations, and waits for the board to render.
@@ -84,6 +115,8 @@ export async function launchCapturePage(options: CaptureOptions): Promise<Captur
 
   // Inject the mock Electron API
   await page.addInitScript({ path: MOCK_SCRIPT });
+
+  await hideDevOnlyChrome(page);
 
   // Inject the marketing fixture data
   await page.addInitScript(options.preConfigScript);

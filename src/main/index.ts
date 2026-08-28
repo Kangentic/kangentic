@@ -1043,10 +1043,20 @@ const createWindow = () => {
   mainWindow.webContents.on('did-finish-load', async () => {
     mark('did_finish_load');
 
-    // Set window title to include worktree name so the taskbar entry
-    // is distinguishable from the main project window.
-    if (cwd && mainWindow) {
-      const worktreeMatch = cwd.replace(/\\/g, '/').match(/\.kangentic\/worktrees\/([^/]+)/);
+    // Set the window title so the taskbar entry says which build this is and, for a
+    // worktree run, which worktree. One computed string, one setTitle call, so the
+    // dev marker cannot drift between the worktree and non-worktree paths.
+    if (mainWindow) {
+      // A dev build marks itself here the same way the in-app wordmark does, so the
+      // taskbar entry and the window chrome agree about which instance this is when a
+      // packaged build is open alongside `npm start`. Folded away in production by
+      // __KANGENTIC_DEV__, which for the MAIN bundle means "dev tooling compiled in"
+      // (scripts/dev.js sets it; scripts/build.js only under KANGENTIC_BUILD_DEV=1).
+      const appLabel = __KANGENTIC_DEV__ ? 'Kangentic (dev)' : 'Kangentic';
+      // Outside a worktree this is the whole title, and in production it restates the
+      // string index.html's <title> already produced, so that path stays a no-op.
+      let windowTitle = appLabel;
+      const worktreeMatch = cwd ? cwd.replace(/\\/g, '/').match(/\.kangentic\/worktrees\/([^/]+)/) : null;
       if (worktreeMatch) {
         // A preview window gets the task's own `#<id> - <title>` label, with no
         // app-name prefix: Windows already groups these thumbnails under
@@ -1063,8 +1073,13 @@ const createWindow = () => {
         const folderName = worktreeMatch[1];
         const folderLabel = /^\d+$/.test(folderName) ? `#${folderName}` : folderName;
         const previewLabel = getPreviewTaskTitle();
-        mainWindow.setTitle(previewLabel ?? `Kangentic - ${folderLabel}`);
+        windowTitle = previewLabel ?? `${appLabel} - ${folderLabel}`;
       }
+      // Set from `did-finish-load`, after Chromium has applied index.html's <title>,
+      // so this wins. The main window does not preventDefault() on 'page-title-updated'
+      // (unlike window-open-policy.ts for popups), so a renderer-side document.title
+      // write would silently clobber it. Nothing in the main-window tree writes one.
+      mainWindow.setTitle(windowTitle);
     }
 
     // Await the preload that started during createWindow -- typically already resolved

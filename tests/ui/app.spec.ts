@@ -48,6 +48,10 @@ test.describe('App Launch', () => {
 
   test('title bar displays Kangentic branding', async () => {
     await expect(page.locator('.font-semibold:has-text("Kangentic")')).toBeVisible();
+    // The UI tier serves the renderer from `vite` with no --mode production, so
+    // __KANGENTIC_DEV__ is true and the wordmark carries its dev badge. A packaged
+    // build drops it entirely via dead-code elimination.
+    await expect(page.locator('[data-testid="titlebar-dev-badge"]')).toHaveText('(dev)');
   });
 
   test('status bar exists', async () => {
