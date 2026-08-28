@@ -17,7 +17,7 @@ import {
   registerDevtoolsTerminal,
   traceTerminalRenderer,
 } from '../utils/terminal-grid-registry';
-import { createRepaintNudge, isUserInputData, isMouseReport, mouseWheelLane, type RepaintNudgeController } from '../utils/repaint-nudge';
+import { createRepaintNudge, isUserInputData, isMouseReport, mouseReportLane, type RepaintNudgeController } from '../utils/repaint-nudge';
 import { registerMountedTerminal } from '../utils/terminal-mount-registry';
 import { registerTerminalAnchor } from '../utils/terminal-anchor-registry';
 import type { PtyResizeOrigin, TerminalColorOverrides } from '../../shared/types';
@@ -951,17 +951,20 @@ export function useTerminal(options: UseTerminalOptions) {
         // (the missing-entries family). So reports are PACED, not just
         // unbatched: one write per MOUSE_REPORT_PACE_MS restores the
         // physical-wheel cadence a native terminal delivers. Wheel reports
-        // additionally carry a direction lane (mouseWheelLane) so the
+        // additionally carry a direction lane (mouseReportLane) so the
         // batcher can cap their pending depth (a high-resolution flick
         // otherwise queues far past the hand stopping) and drop pending
         // opposite-direction reports on a same-axis, same-modifier reversal;
-        // clicks, releases, and motion are laneless, never capped or
-        // superseded (teardown flush still drops them like any pending
-        // paced item). The jump each
+        // motion reports carry a self-superseding lane keeping only the
+        // newest position (motion generates at display refresh rate, above
+        // the pace floor's drain rate, and everything queued behind a
+        // motion backlog waits it out); clicks and releases are laneless,
+        // never capped or superseded (teardown flush still drops them like
+        // any pending paced item). The jump each
         // single report produces is CLAUDE_CODE_SCROLL_SPEED's territory, not
         // this path's - see write-batcher.ts for the schemes tried and
         // rejected. Ordering against typed bytes holds.
-        if (isMouseReport(data)) batcher.writePaced(data, mouseWheelLane(data));
+        if (isMouseReport(data)) batcher.writePaced(data, mouseReportLane(data));
         else batcher.schedule(data);
       });
 

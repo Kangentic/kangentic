@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createWriteBatcher } from '../../src/renderer/utils/write-batcher';
-import { isMouseReport, mouseWheelLane } from '../../src/renderer/utils/repaint-nudge';
+import { isMouseReport, mouseReportLane } from '../../src/renderer/utils/repaint-nudge';
 
 /** Wait for all pending microtasks to drain. */
 const drainMicrotasks = () => new Promise<void>((resolve) => queueMicrotask(resolve));
@@ -605,7 +605,7 @@ describe('createWriteBatcher', () => {
       // both - there is no other isMouseReport(data)/batcher.schedule(data)
       // pairing anywhere else in this file for either to accidentally match.
       const mouseReportRoutesToWritePaced =
-        /if\s*\(\s*isMouseReport\(data\)\s*\)\s*\{?\s*batcher\.writePaced\(data,\s*mouseWheelLane\(data\)\)/;
+        /if\s*\(\s*isMouseReport\(data\)\s*\)\s*\{?\s*batcher\.writePaced\(data,\s*mouseReportLane\(data\)\)/;
       const elseRoutesToSchedule = /else\s*\{?\s*batcher\.schedule\(data\)/;
 
       expect(source).toMatch(mouseReportRoutesToWritePaced);
@@ -627,7 +627,7 @@ describe('createWriteBatcher', () => {
       // the assertions below are checking what that exact expression DOES,
       // not just that its text is present.
       const routeOnData = (batcher: ReturnType<typeof createWriteBatcher>, data: string): void => {
-        if (isMouseReport(data)) batcher.writePaced(data, mouseWheelLane(data));
+        if (isMouseReport(data)) batcher.writePaced(data, mouseReportLane(data));
         else batcher.schedule(data);
       };
 
@@ -694,6 +694,49 @@ describe('createWriteBatcher', () => {
         // The queued down report never writes; the reversal is what drains.
         vi.advanceTimersByTime(PACE_MS * 4);
         expect(write.mock.calls).toEqual([['\x1b[<65;10;5M'], ['\x1b[<64;10;5M']]);
+      });
+
+      it('a wheel flick after a motion flood is not delayed behind stale positions', () => {
+        // The 143Hz regression (2026-08-28): motion generates at display
+        // refresh rate, above the 62.5/s the floor drains, and the queue is
+        // FIFO - so before motion had a self-superseding lane, a cursor
+        // traverse left a backlog of stale positions and the NEXT flick
+        // waited out all of them (measured: 117 pending, ~2s). With the
+        // lane, only the newest position survives, so the flick clears
+        // within two pace intervals instead of backlog * PACE_MS.
+        const write = vi.fn<[string], void>();
+        const batcher = createWriteBatcher(write, PACE_MS);
+
+        for (let step = 0; step < 20; step += 1) {
+          routeOnData(batcher, `\x1b[<35;${10 + step};5M`);
+        }
+        routeOnData(batcher, '\x1b[<64;40;5M'); // the flick, right after the hand stops
+
+        vi.advanceTimersByTime(PACE_MS * 2);
+        const payloads = write.mock.calls.flat();
+        expect(payloads[0]).toBe('\x1b[<35;10;5M'); // first motion wrote immediately
+        expect(payloads).toContain('\x1b[<64;40;5M'); // the flick is already through
+        // Only the first (already written) and the newest motion survive;
+        // the 18 stale intermediate positions were purged unwritten.
+        expect(payloads.filter((payload) => payload.includes('<35;'))).toHaveLength(2);
+        expect(payloads).toContain('\x1b[<35;29;5M');
+      });
+
+      it('motion purging never removes a click or release sitting between motions', () => {
+        const write = vi.fn<[string], void>();
+        const batcher = createWriteBatcher(write, PACE_MS);
+
+        routeOnData(batcher, '\x1b[<35;10;5M'); // motion: immediate
+        routeOnData(batcher, '\x1b[<35;11;5M'); // motion: pending
+        routeOnData(batcher, '\x1b[<0;12;5m'); // click release: laneless, pending
+        routeOnData(batcher, '\x1b[<35;13;5M'); // motion: purges only the pending motion
+
+        vi.advanceTimersByTime(PACE_MS * 4);
+        expect(write.mock.calls).toEqual([
+          ['\x1b[<35;10;5M'],
+          ['\x1b[<0;12;5m'],
+          ['\x1b[<35;13;5M'],
+        ]);
       });
     });
   });

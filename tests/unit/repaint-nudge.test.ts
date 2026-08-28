@@ -18,7 +18,7 @@ import {
   diffViewportRows,
   isUserInputData,
   isMouseReport,
-  mouseWheelLane,
+  mouseReportLane,
   REPAINT_NUDGE_BYTES,
   type RepaintNudgeGate,
 } from '../../src/renderer/utils/repaint-nudge';
@@ -196,15 +196,20 @@ describe('isMouseReport', () => {
   });
 });
 
-describe('mouseWheelLane', () => {
+describe('mouseReportLane', () => {
   // Wheel reports get a paced-write lane so the batcher can cap their pending
   // depth and drop pending opposite-direction reports on a same-axis reversal
-  // (write-batcher.ts). Everything else stays laneless (undefined), which the
-  // batcher treats as never-cap, never-supersede: dropping a click release
-  // would stick a button. The supersede target is buttonCode ^ 1, so only
+  // (write-batcher.ts). The supersede target is buttonCode ^ 1, so only
   // same-axis, same-modifier pairs purge each other: a trackpad diagonal
   // scroll interleaves vertical and horizontal reports, and a stray
-  // horizontal tick must not eat the pending vertical queue.
+  // horizontal tick must not eat the pending vertical queue. Motion reports
+  // (drift and drags, any modifier) share ONE self-superseding lane so only
+  // the newest pointer position ever waits in the queue: motion generates at
+  // display refresh rate, above the pace floor's drain rate, and a laneless
+  // motion backlog delayed every wheel report and click queued behind it.
+  // Clicks and releases stay laneless (undefined), which the batcher treats
+  // as never-cap, never-supersede: dropping a click release would stick a
+  // button.
   const x10WheelUpBytes = String.fromCharCode(32 + 64, 40, 40);
   const x10WheelDownBytes = String.fromCharCode(32 + 65, 40, 40);
   const x10MotionBytes = String.fromCharCode(32 + 35, 40, 40);
@@ -254,8 +259,21 @@ describe('mouseWheelLane', () => {
       '\x1b[M' + x10WheelDownBytes,
       { laneKey: 'wheel:65', supersedesLaneKey: 'wheel:64' },
     ],
-    ['SGR motion (35)', '\x1b[<35;10;5M', undefined],
-    ['SGR drag (32)', '\x1b[<32;10;5M', undefined],
+    [
+      'SGR motion (35) joins the single self-superseding motion lane',
+      '\x1b[<35;10;5M',
+      { laneKey: 'motion', supersedesLaneKey: 'motion' },
+    ],
+    [
+      'SGR drag (32) shares the motion lane: only the newest position matters',
+      '\x1b[<32;10;5M',
+      { laneKey: 'motion', supersedesLaneKey: 'motion' },
+    ],
+    [
+      'SGR shift+drag (36) shares the motion lane across modifiers',
+      '\x1b[<36;10;5M',
+      { laneKey: 'motion', supersedesLaneKey: 'motion' },
+    ],
     ['SGR click press (0)', '\x1b[<0;10;5M', undefined],
     ['SGR click release (0, lowercase m)', '\x1b[<0;10;5m', undefined],
     ['a wheel-shaped code with a release final (lowercase m) stays laneless', '\x1b[<64;10;5m', undefined],
@@ -273,14 +291,18 @@ describe('mouseWheelLane', () => {
       '\x1b[<' + '9'.repeat(400) + ';10;5M',
       undefined,
     ],
-    ['X10 motion', '\x1b[M' + x10MotionBytes, undefined],
+    [
+      'X10 motion shares the SGR motion lane',
+      '\x1b[M' + x10MotionBytes,
+      { laneKey: 'motion', supersedesLaneKey: 'motion' },
+    ],
     ['X10 click', '\x1b[M' + x10ClickBytes, undefined],
     ['two SGR reports joined into one chunk', '\x1b[<64;10;5M\x1b[<65;10;5M', undefined],
     ['an SGR report with trailing bytes', '\x1b[<64;10;5Mhello', undefined],
     ['a FocusIn report', '\x1b[I', undefined],
     ['an ordinary typed character', 'a', undefined],
   ])('%s', (_label, data, expected) => {
-    expect(mouseWheelLane(data as string)).toEqual(expected);
+    expect(mouseReportLane(data as string)).toEqual(expected);
   });
 });
 

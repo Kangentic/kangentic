@@ -29,15 +29,23 @@
  *  after the hand has stopped, and its depth scales with wheel
  *  resolution rather than requested travel. Wheel reports therefore
  *  carry a lane (one wheel direction, supplied by the caller via
- *  mouseWheelLane): pending same-lane depth is capped at
+ *  mouseReportLane): pending same-lane depth is capped at
  *  MOUSE_WHEEL_LANE_MAX_DEPTH, bounding the post-stop tail near
  *  depth * paceMs at the deliberate price of truncated travel on very
  *  large flicks, and a same-axis reversal drops the pending
  *  opposite-direction reports as stale intent (the same philosophy as
- *  flush). Laneless paced items (clicks, releases, motion) are never
- *  counted, capped, or superseded (a dropped release would stick a
- *  button); teardown flush still drops every pending paced item,
- *  laneless included, as it always has. The
+ *  flush). MOTION reports carry a single SELF-superseding lane: motion
+ *  generates at display refresh rate, which outpaces the floor's drain
+ *  rate on high-refresh displays, and the queue is FIFO, so a laneless
+ *  motion backlog delayed every wheel report and click queued behind
+ *  it (measured 2026-08-28: 117 pending motion reports on a 143Hz
+ *  display, roughly two seconds of stale drain ahead of the next
+ *  flick). Each motion arrival replaces every pending motion report,
+ *  keeping only the newest position - the only one any consumer acts
+ *  on. Laneless paced items (clicks, releases) are never counted,
+ *  capped, or superseded (a dropped release would stick a button);
+ *  teardown flush still drops every pending paced item, laneless
+ *  included, as it always has. The
  *  16ms floor itself stays as is: the cap changes how many writes
  *  queue, not the per-write cadence the TUI's read loop needs to
  *  catch each report individually, and lowering the floor would
@@ -50,8 +58,9 @@
  */
 
 /** Marks a paced item as a member of a lane of interchangeable intents
- *  (one wheel direction). The batcher stays encoding-agnostic: callers
- *  decide both keys (see mouseWheelLane in repaint-nudge.ts).
+ *  (one wheel direction, or all pointer motion). The batcher stays
+ *  encoding-agnostic: callers decide both keys (see mouseReportLane in
+ *  repaint-nudge.ts).
  *  UNWIND(claude-code#83714): lanes bound the paced queue the workaround
  *  introduces; they go when writePaced goes. */
 export interface PacedLane {
@@ -59,7 +68,9 @@ export interface PacedLane {
   laneKey: string;
   /** Pending paced items with THIS key are removed unwritten the moment an
    *  item in laneKey arrives: a same-axis wheel reversal makes the queued
-   *  opposite-direction scroll stale intent. */
+   *  opposite-direction scroll stale intent. May equal laneKey itself: a
+   *  self-superseding lane keeps only its newest arrival (pointer motion,
+   *  where only the latest position means anything). */
   supersedesLaneKey?: string;
 }
 
@@ -180,10 +191,12 @@ export function createWriteBatcher(
           queue.push(...keptItems);
         }
       }
-      // Within an axis, pending items hold only one direction (each arrival
-      // purges its opposite above), so a supersede that actually removed
-      // items implies this lane had nothing pending and the cap below
-      // cannot also act on the same arrival.
+      // A purge that actually removed items leaves this lane empty either
+      // way, so the cap below never also acts on the same arrival: a wheel
+      // arrival purges its OPPOSITE direction, and within an axis pending
+      // items hold only one direction, so its own lane had nothing pending;
+      // a self-superseding arrival (motion) just emptied its own lane
+      // directly.
       let pendingSameLaneCount = 0;
       for (const item of queue) {
         if (item.paced && item.laneKey === lane.laneKey) pendingSameLaneCount += 1;

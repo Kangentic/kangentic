@@ -912,11 +912,17 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   ordered queue that writes each report as its own payload at a 16ms-per-report floor, restoring
   the physical-wheel cadence a native terminal delivers; typed bytes keep arrival order across
   the two paths, and teardown drops pending reports rather than writing them joined. The paced
-  queue is bounded as well as paced: wheel reports carry a direction lane (`mouseWheelLane`),
+  queue is bounded as well as paced: wheel reports carry a direction lane (`mouseReportLane`),
   pending same-lane depth is capped at 8 so a high-resolution flick's post-stop tail is bounded
   near 128ms instead of scaling with wheel resolution, and a same-axis, same-modifier reversal
   drops the pending opposite-direction reports as stale intent (the same philosophy as
-  teardown); clicks, releases, and motion are laneless, never capped or superseded (teardown
+  teardown). Motion reports (drift and drags) carry a single self-superseding lane that keeps
+  only the newest pointer position: motion generates at display refresh rate, above the 16ms
+  floor's 62.5/s drain, so a laneless motion stream grew the queue whenever refresh outpaced
+  the floor (measured 2026-08-28 on a 143Hz display: a two-second cursor traverse left 117
+  motion reports pending), and since the queue is FIFO, every wheel report and click landing
+  after a traverse waited out that stale backlog - the flick-after-move lag the wheel cap
+  alone could not fix. Clicks and releases are laneless, never capped or superseded (teardown
   still drops them like any pending report). The 16ms floor itself stays
   deliberately: the cap changes how many writes queue, not the per-write cadence the TUI's read
   loop needs to catch each report individually.
