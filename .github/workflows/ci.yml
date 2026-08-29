@@ -60,12 +60,25 @@ concurrency:
 # The thin gates run AFTER their shards (`needs`), so they do not consume a
 # shard-phase slot.
 #
-# To scale as the suites grow: E2E is launch-bound and one-waves at workers=8 so
-# ~5 suffices; unit is npm-ci-floored once cached. UI is the tier that matters,
-# and since its imbalance is cost-vs-count rather than count, more shards help
-# only until the pole shard's own heavy files dominate. Past that the levers are
-# PWTEST_SHARD_WEIGHTS (internal, needs a guard test) or a paid plan (Team = 60
-# concurrent).
+# To scale as the suites grow: E2E is launch-bound and its heaviest shards
+# already spill past one workers=8 wave, so 5 is a FLOOR, not a donor (see the
+# e2e-shards note); unit is npm-ci-floored once cached.
+#
+# UI SHARD COUNT IS EXHAUSTED - do not spend another pass on it. Measured
+# 2026-08-29, the heaviest shard's work is flat across counts: N=9 484s,
+# N=11 495s, N=12 465s, N=13 469s. Windows always start at cumulative index 0,
+# and the alphabetical `a*` block occupies indices 0-125, so shrinking the
+# window only trims its tail. Splitting into `agent-monitor` (indices 36-77)
+# would need ~18 shards, which the 21-job cap forbids. The equal-window floor
+# is ~469s of work, roughly a 205s pole against today's ~226s.
+#
+# The pole is now a PACKING problem, not a work problem: shard 4/11 runs at
+# 0.71 utilisation on 408s of work while shard 1 carries 495s at 0.91 and
+# finishes EARLIER. Before touching shard count again, compute per-shard
+# utilisation (aggregate test-seconds / (test-phase wall x workers)); if it is
+# already ~0.9 the work is not the problem. Past this point the only real lever
+# is PWTEST_SHARD_WEIGHTS (internal API, needs a guard test and re-tuning as the
+# suite grows) or a paid plan (Team = 60 concurrent).
 #
 # The job `name:` is the status-check context used by branch protection - keep
 # these in sync with main's required checks if you rename one.
@@ -307,9 +320,13 @@ jobs:
   # apply, so on CI each shard runs workers=8 (set in playwright.config.ts: the
   # top-level cap AND the electron project are both 8; Windows and local stay at
   # 1) and the suite is sharded 5 ways (see the concurrency-budget note at the
-  # top of this file). workers=8 lets a shard launch all its spec files in one
-  # wave (the slowest shards hold ~5-6 files); per-file teardown is I/O-bound so
-  # it overlaps cleanly. Concurrent launches are safe on
+  # top of this file). Per-file teardown is I/O-bound so launches overlap
+  # cleanly. NOTE: the suite has outgrown one launch wave. Measured 2026-08-29,
+  # spec files per shard at 5 shards are 5 / 7 / 10 / 8 / 12, so the heaviest
+  # shards already start a second wave past workers=8. That is why E2E cannot
+  # give a concurrency slot back to the UI tier: dropping to 4 shards puts 14
+  # files on one shard and adds a third wave. Growing the tier means MORE
+  # shards, not fewer. Concurrent launches are safe on
   # CI: the leaked-Electron janitor is a no-op under
   # GITHUB_ACTIONS, each test has an isolated KANGENTIC_DATA_DIR, and the
   # single-instance lock is bypassed under NODE_ENV=test. helpers.ts adds
