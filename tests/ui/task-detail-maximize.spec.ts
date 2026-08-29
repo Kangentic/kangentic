@@ -236,6 +236,17 @@ test.describe('Task Detail: maximize / restore', () => {
     await page.keyboard.press('Control+Shift+B');
     await expect(browserToggle).toHaveAttribute('title', /^Show browser/);
 
+    // Ctrl+Shift+B only HIDES the pane: the second press above left it held
+    // (`browserHeldTasks`), and a held pane counts as mounted, so closing this
+    // window while the task's session is running would PARK it rather than
+    // remove it, leaving an opacity-0 frame that Playwright still calls visible
+    // and that later tests on this shared page would inherit. Discard the pane
+    // the way an agent's close_pane does, which is the only path that clears a
+    // hold, so the close below is a real close.
+    await page.evaluate(({ projectId, taskId }) => {
+      window.__mockBrowser?.emitPaneCloseRequest(projectId, [taskId]);
+    }, { projectId: PROJECT_ID, taskId: TASK_ID });
+
     // Close the dialog so subsequent tests start clean.
     await page.keyboard.press('Control+Shift+W');
     await expect(dialog).not.toBeVisible();
