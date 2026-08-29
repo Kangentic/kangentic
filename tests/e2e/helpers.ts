@@ -593,6 +593,55 @@ export async function waitForScrollback(page: Page, marker: string, timeoutMs = 
   throw new Error(`Timed out waiting for scrollback containing: ${marker}`);
 }
 
+/** Result of {@link waitForTaskScrollback}: the session that produced the
+ *  marker, and the scrollback text that satisfied it. */
+export interface TaskScrollbackResult {
+  sessionId: string;
+  scrollback: string;
+}
+
+/**
+ * Poll ONE task's own session for scrollback containing marker, rather than
+ * joining every live session the way {@link waitForScrollback} does.
+ *
+ * Scoping to the specific task's session is required whenever a spec's
+ * Electron app (and therefore its set of live PTY sessions) is shared across
+ * multiple tests or attempts in one file. Without it, a CI retry that reuses
+ * the same worker - and therefore the same still-alive app - can be
+ * satisfied by a DIFFERENT session's marker: a sibling test's session, or
+ * (worse) the failed attempt's OWN leftover session, which has simply had
+ * more wall-clock time to warm up in the background while later tests in the
+ * file ran. That leftover-session risk is compounded whenever the caller
+ * reuses the same task title across attempts, since `tasks.list()` can then
+ * resolve a lookup back onto the stale task instead of the freshly created
+ * one - callers should give each attempt a title that is unique per retry
+ * (e.g. include `test.info().retry`) so this never happens.
+ *
+ * Returns both the session id (so a follow-up assertion, e.g. an
+ * activity-state poll, can stay scoped to the same session) and the
+ * scrollback text that satisfied the marker.
+ */
+export async function waitForTaskScrollback(
+  page: Page,
+  taskId: string,
+  marker: string,
+  timeoutMs = 15000,
+): Promise<TaskScrollbackResult> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const result = await page.evaluate(async (id) => {
+      const sessions: Session[] = await window.electronAPI.sessions.list();
+      const session = sessions.find((candidate) => candidate.taskId === id);
+      if (!session) return null;
+      const scrollback = await window.electronAPI.sessions.getScrollback(session.id);
+      return { sessionId: session.id, scrollback };
+    }, taskId);
+    if (result && result.scrollback.includes(marker)) return result;
+    await page.waitForTimeout(500);
+  }
+  throw new Error(`Timed out waiting for task ${taskId}'s session scrollback containing: ${marker}`);
+}
+
 /** Wait until at least one session reports status='running' via IPC. */
 export async function waitForRunningSession(page: Page, timeoutMs = 15000): Promise<void> {
   await page.waitForFunction(async () => {
