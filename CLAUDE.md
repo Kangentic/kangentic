@@ -225,11 +225,19 @@ won't be found.
   `ActivityMark` can reach. Every such icon renders each of its branches through
   `components/IconSlot.tsx`, a fixed-size `<span>` that all branches share: React reconciles the
   one span in place across the swap, so the node under the pointer survives, and the span
-  absorbs the pointer on the glyph's behalf. The three sites are `StopButtonIcon`,
-  `PauseButtonIcon`, and `MonitorCard`'s `StateGlyph` - the last is why the neutralization is
-  scoped to the glyph rather than put on the button, since its clickable is a whole card
-  carrying other interactive children. `tests/ui/command-terminal.spec.ts` covers both variants
-  (a mark flip and an element-type swap) with red-green mouse-level tests. There is no `-rest` mark: rest is the `-idle` geometry in a muted
+  absorbs the pointer on the glyph's behalf. Each site wraps ONCE around the icon its branching
+  produced, never per branch, so a future branch cannot silently opt out. The sites
+  fixed so far are `StopButtonIcon`, `PauseButtonIcon`, and `MonitorCard`'s `StateGlyph` - the
+  last is why the neutralization is scoped to the glyph rather than put on the button, since
+  its clickable is a whole card carrying other interactive children. That list is what has been
+  ADOPTED, not where the hazard exists: `MonitorTable`'s `StateCell` (inside `DataTable`'s
+  clickable `<tr>`) and `TerminalPanel`'s session-tab glyph have the same element-type swap and
+  are still unwrapped. A slot also neutralizes the element it wraps, so a mark inside one must
+  label itself with `aria-label` - a native `<title>` child would be inert, which is why
+  `TaskCard` (tooltip-bearing, and a mark FLIP only) is not a slot candidate.
+  `tests/ui/command-terminal.spec.ts` covers both variants (a mark flip and an element-type
+  swap) with red-green mouse-level tests, but only for `StopButtonIcon`; the other two adoptions
+  ride on the shared component. There is no `-rest` mark: rest is the `-idle` geometry in a muted
   tone. `data-rest` on the root is the reduced-motion strategy (`static` / `keep-dash` /
   `drop-dash`), NOT a tone; test selectors key off `data-mark`. The set's grid is a WIDTH
   KEYLINE, not a square ink box: each mark fills its slot's width and takes the height its form

@@ -2228,12 +2228,20 @@ test.describe('Command Terminal', () => {
 
     test('Stop still fires when the icon changes ELEMENT TYPE mid-press', async () => {
       // The harder half of the same bug class, and the one IconSlot exists for.
-      // Going from a running session to no activity swaps StopButtonIcon's whole
-      // branch - an <ActivityMark> subtree becomes a lucide <CircleStop> - so React
-      // unmounts the <svg> the press landed on entirely. Making the injected <g>
+      // StopButtonIcon's branches return different ELEMENT TYPES, so crossing between
+      // them makes React unmount the whole subtree the press landed on - a lucide
+      // <CircleStop> becomes an <ActivityMark> <svg>. Making the injected <g>
       // non-hit-testable cannot help here: the node carrying that style is itself
       // destroyed. Only a stable ancestor that every branch renders through survives,
       // which is IconSlot.
+      //
+      // Driven in the lucide -> mark direction on purpose. A session that has started
+      // but not yet reported activity leaves `activity` undefined, so isThinking and
+      // isIdle are both false and the lucide branch is what renders; seeding 'thinking'
+      // then crosses to the mark. The reverse direction has no legal drive: every member
+      // of ActivityState ('thinking' | 'idle' | 'permission') maps to one of the two
+      // branches, so leaving the mark would mean feeding updateActivity a string outside
+      // its own union and relying on the classifier's undefined lookup falling through.
       const { browser, page } = await launchWithState(
         ringBasePreConfig() + deterministicSpawn
       );
@@ -2241,31 +2249,23 @@ test.describe('Command Terminal', () => {
         await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
         await openOverlayAndMarkSessionReady(page);
 
-        await page.evaluate((sessionId) => {
-          const stores = (window as unknown as {
-            __zustandStores?: { session?: { getState: () => { updateActivity: (id: string, next: string) => void } } };
-          }).__zustandStores;
-          stores?.session?.getState().updateActivity(sessionId, 'thinking');
-        }, RING_SESSION_ID);
-
         const stopButton = page.getByTestId('command-bar-terminate-button');
-        await expect(stopButton.locator('[data-mark="control-stop-working"]')).toBeVisible({ timeout: 3000 });
+        await expect(stopButton.locator('.lucide-circle-stop')).toBeVisible({ timeout: 3000 });
 
         const box = await stopButton.boundingBox();
         if (!box) throw new Error('stop button has no bounding box');
         await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
         await page.mouse.down();
 
-        // Drop the session's readiness so sessionRunning goes false: the mark branch
-        // is abandoned for the plain lucide glyph. Awaiting the lucide class is the
-        // commit barrier, so the swap has definitely landed before mouseup.
+        // Cross to the mark branch mid-press. Awaiting the data-mark is the commit
+        // barrier, so the element-type swap has definitely landed before mouseup.
         await page.evaluate((sessionId) => {
           const stores = (window as unknown as {
-            __zustandStores?: { session?: { getState: () => { clearFirstOutput?: (id: string) => void; updateActivity: (id: string, next: string) => void } } };
+            __zustandStores?: { session?: { getState: () => { updateActivity: (id: string, next: string) => void } } };
           }).__zustandStores;
-          stores?.session?.getState().updateActivity(sessionId, 'exited');
+          stores?.session?.getState().updateActivity(sessionId, 'thinking');
         }, RING_SESSION_ID);
-        await expect(stopButton.locator('.lucide-circle-stop')).toBeVisible({ timeout: 3000 });
+        await expect(stopButton.locator('[data-mark="control-stop-working"]')).toBeVisible({ timeout: 3000 });
 
         await page.mouse.up();
 
@@ -2355,10 +2355,22 @@ test.describe('Command Terminal', () => {
         await openOverlayAndMarkSessionReady(page);
 
         const stopButton = page.getByTestId('command-bar-terminate-button');
+
+        // Seed a live activity mark FIRST, so the "marks are gone" assertion below is
+        // about `stopping` pre-empting the ring rather than about a ring that was never
+        // rendered. Without this the count-0 assertion passes vacuously.
+        await page.evaluate((sessionId) => {
+          const stores = (window as unknown as {
+            __zustandStores?: { session?: { getState: () => { updateActivity: (id: string, next: string) => void } } };
+          }).__zustandStores;
+          stores?.session?.getState().updateActivity(sessionId, 'thinking');
+        }, RING_SESSION_ID);
+        await expect(stopButton.locator('[data-mark="control-stop-working"]')).toBeVisible({ timeout: 3000 });
+
         await stopButton.click();
 
-        // In flight: disabled, spinner, and the activity marks are gone (the pending
-        // branch pre-empts them).
+        // In flight: disabled, spinner, and the activity mark is gone (the pending
+        // branch pre-empts it).
         await expect(stopButton).toBeDisabled({ timeout: 3000 });
         await expect(stopButton.locator('.lucide-loader-circle')).toBeVisible();
         await expect(stopButton.locator('[data-mark^="control-stop-"]')).toHaveCount(0);
@@ -2369,6 +2381,62 @@ test.describe('Command Terminal', () => {
           const resolve = (window as unknown as { __resolveKill?: () => void }).__resolveKill;
           if (resolve) resolve();
         });
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(0, { timeout: 5000 });
+
+        // A successful kill is silent - the error toast below is the OTHER outcome's
+        // signal (see "Stop shows an error toast when the kill fails" just below), and
+        // this is the negative half that pairs with it: nothing here reruns the mock's
+        // kill IPC to fail, so a broadened `if (outcome === 'failed')` (e.g. dropped to
+        // always show) would still slip past this file undetected without this
+        // assertion.
+        //
+        // This is a fixed, non-polling read, not `expect(...).toHaveCount(0)`: a real
+        // toast's own auto-dismiss lifecycle (config default 4s) sits inside
+        // Playwright's default 5s assertion-retry window, so a polling assertion would
+        // pass vacuously by waiting out an ACTUAL wrongly-fired toast rather than
+        // proving one was never shown (this was verified empirically - a broadened,
+        // unconditional `addToast` call still passed a polling `toHaveCount(0)` here).
+        // The window's disappearance is the ordering barrier instead: addToast and
+        // closeWindow are consecutive synchronous statements in handleTerminate with no
+        // await between them, so once the window is confirmed gone above, any toast
+        // this Stop click was going to add has already committed to the DOM - a single
+        // synchronous count read is enough.
+        const failureToastCount = await page.getByTestId('toast').filter({
+          hasText: 'Could not stop the terminal. Its process may still be running.',
+        }).count();
+        expect(failureToastCount).toBe(0);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('Stop shows an error toast when the kill fails, but still closes the window', async () => {
+      // handleTerminate surfaces a toast only when killTransientSessionBySlot
+      // resolves 'failed' (the kill IPC rejected). The window closes on every
+      // outcome regardless - the user asked for this terminal to go away - so
+      // the toast is the only observable signal that something went wrong.
+      // Deleting the `if (outcome === 'failed')` block in CommandTerminalWindow.tsx
+      // currently fails no test; this pins both halves of that behavior.
+      const rejectKill = `
+        window.electronAPI.sessions.killTransient = function () {
+          return Promise.reject(new Error('kill failed'));
+        };
+      `;
+      const { browser, page } = await launchWithState(
+        ringBasePreConfig() + deterministicSpawn + rejectKill
+      );
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        await openOverlayAndMarkSessionReady(page);
+
+        const stopButton = page.getByTestId('command-bar-terminate-button');
+        await stopButton.click();
+
+        const errorToast = page.getByTestId('toast').filter({
+          hasText: 'Could not stop the terminal. Its process may still be running.',
+        });
+        await expect(errorToast).toBeVisible({ timeout: 5000 });
+
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(0, { timeout: 5000 });
       } finally {
         await browser.close();
