@@ -92,6 +92,11 @@ describe('HMR store re-sync', () => {
   it('top-level mutable module state has HMR preservation or opt-out', () => {
     const UTILS_DIR = path.resolve(__dirname, '../../src/renderer/utils');
     const WINDOW_MANAGER_DIR = path.resolve(__dirname, '../../src/renderer/window-manager');
+    // src/renderer/pop-out/ holds renderer modules too (the surface registry, the
+    // popOut:changed consumer). Nothing in it needs preservation today, but it was
+    // outside this scan until a push handler landed there, so the next module-scope
+    // let/Map added would have shipped with no Pattern A guard.
+    const POP_OUT_DIR = path.resolve(__dirname, '../../src/renderer/pop-out');
     const sourceFiles: string[] = [];
     const collect = (dir: string) => {
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -103,6 +108,7 @@ describe('HMR store re-sync', () => {
     collect(STORES_DIR);
     collect(UTILS_DIR);
     collect(WINDOW_MANAGER_DIR);
+    collect(POP_OUT_DIR);
 
     // Match any top-level `let` declaration (column-0 = module scope, since
     // intra-function locals are indented). The dispose-block check and the

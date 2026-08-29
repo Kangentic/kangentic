@@ -7,7 +7,7 @@
  * browser, Electron, or ipcRenderer binding is required.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // The slice imports `useProjectStore` (to stamp the project id on its debounced
 // detail-view-state saves). project-store imports session-store, which eagerly
 // creates its store from the slices - so importing the slice DIRECTLY as the
@@ -241,6 +241,54 @@ describe('toggleBrowserOpen', () => {
       const after = getState().browserGuestTasks;
       actions.clearBrowserGuest('task-1', 52);
       expect(getState().browserGuestTasks).toBe(after); // idempotent
+    });
+  });
+
+  describe('setChangesOpen is idempotent', () => {
+    // Scoped to its own describe (rather than calling vi.useFakeTimers()
+    // inline in the test body) so a failing assertion still runs
+    // vi.useRealTimers() in afterEach and never leaks fake timers into the
+    // other 36 tests in this file.
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    it('a redundant call changes no state and schedules no save', () => {
+      // The pop-out close path (pop-out-changed.ts) drives this directly on
+      // every `popOut:changed` push, including pushes where the panel was
+      // already closed. The early return is what makes a repeated push a
+      // genuine no-op rather than a fresh Set plus a debounced persistence
+      // write on every diff. Set-reference identity DOES catch a dropped
+      // guard (proven below), but `vi.getTimerCount()` would not: a
+      // redundant call that lost the guard still reaches
+      // `scheduleDetailViewSave`, which clears the existing debounce timer
+      // and immediately re-sets a new one, leaving the PENDING count
+      // unchanged even though a fresh save was genuinely scheduled. Spying
+      // on setTimeout's call count (not the pending count) is what actually
+      // observes that absence of work, independent of the identity check.
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+      const { actions, getState } = createTestStore();
+
+      actions.setChangesOpen('task-1', true);
+      const afterFirstOpen = getState().changesOpenTasks;
+      const callsAfterFirstOpen = setTimeoutSpy.mock.calls.length;
+      expect(callsAfterFirstOpen).toBeGreaterThan(0); // the genuine open scheduled a save
+
+      actions.setChangesOpen('task-1', true);
+      expect(setTimeoutSpy.mock.calls.length).toBe(callsAfterFirstOpen); // no new debounce timer: no save
+      expect(getState().changesOpenTasks).toBe(afterFirstOpen); // same reference: no churn
+      expect(getState().changesOpenTasks.has('task-1')).toBe(true);
+
+      actions.setChangesOpen('task-1', false);
+      const callsAfterClose = setTimeoutSpy.mock.calls.length;
+      expect(callsAfterClose).toBeGreaterThan(callsAfterFirstOpen); // the genuine close scheduled a save
+      expect(getState().changesOpenTasks.has('task-1')).toBe(false);
+      const afterClose = getState().changesOpenTasks;
+
+      actions.setChangesOpen('task-1', false);
+      expect(setTimeoutSpy.mock.calls.length).toBe(callsAfterClose); // redundant close scheduled nothing
+      expect(getState().changesOpenTasks).toBe(afterClose);
+
+      setTimeoutSpy.mockRestore();
     });
   });
 
