@@ -344,6 +344,7 @@ src/renderer/components/browser/
 
 src/renderer/window-manager/
   bridge/retained-task-snapshots.ts         frozen task rows a retained window renders from
+  bridge/window-parking.ts                  park-on-close policy + the reaper that ends a park (decisions 35, 36)
   bridge/useBrowserPaneRequestBridge.ts     applies main's open/close pane pushes to browserOpenTasks
   bridge/useBrowserDownloadToast.ts         the download-finished toast + "Show in folder" (decision 13)
   components/
