@@ -34,13 +34,29 @@ function taskHasLiveSession(taskId: string): boolean {
 }
 
 /**
- * True when the task's Browser pane is MOUNTED in its window: showing
- * (`browserOpenTasks`) or hidden-but-held (`browserHeldTasks`, the user put it
- * away while the agent may still be driving it). Either way there is a guest
- * worth keeping.
+ * True when the task has a live `<webview>` guest worth keeping mounted: its
+ * Browser pane is showing (`browserOpenTasks`) or hidden-but-held
+ * (`browserHeldTasks`, the user put it away while the agent may still be
+ * driving it), AND a guest has actually registered for it.
+ *
+ * The guest check is what makes this "worth keeping" rather than merely
+ * "mounted". Pane open state is a store flag the user sets by pressing a pill;
+ * it says nothing about whether a page exists. A pane with no URL renders the
+ * empty state and never attaches a `<webview>`, so without this check, opening
+ * the pane and closing the window would hide a window forever with nothing
+ * inside it to preserve. `browserGuestTasks` is set on the guest's `dom-ready`
+ * and cleared when its node unmounts, so it is exactly the "there is a page
+ * here" fact. It also covers the popped-out case: a pop-out hosts the guest in
+ * its own window and clears this entry here, and an in-app pane that is not
+ * mounted is not worth parking for.
+ *
+ * The open/held check is kept alongside it. A guest can only register while the
+ * pane is mounted, so it is redundant today, but it keeps the predicate honest
+ * about which arrangements it covers rather than relying on that coupling.
  */
-function taskHasMountedPane(taskId: string): boolean {
-  const { browserOpenTasks, browserHeldTasks } = useSessionStore.getState();
+function taskHasPreservableGuest(taskId: string): boolean {
+  const { browserOpenTasks, browserHeldTasks, browserGuestTasks } = useSessionStore.getState();
+  if (!browserGuestTasks.has(taskId)) return false;
   return browserOpenTasks.has(taskId) || browserHeldTasks.has(taskId);
 }
 
@@ -55,7 +71,7 @@ function taskHasMountedPane(taskId: string): boolean {
  */
 export function shouldParkTaskDetailWindowOnClose(managedWindow: ManagedWindow): boolean {
   if (managedWindow.kind !== 'task-detail') return false;
-  if (!taskHasMountedPane(managedWindow.anchor)) return false;
+  if (!taskHasPreservableGuest(managedWindow.anchor)) return false;
   return taskHasLiveSession(managedWindow.anchor);
 }
 
@@ -89,7 +105,7 @@ export function useParkedWindowReaper(): void {
       const store = useWindowStore.getState();
       for (const managedWindow of Object.values(store.windows)) {
         if (managedWindow.parked !== true) continue;
-        if (taskHasMountedPane(managedWindow.anchor) && taskHasLiveSession(managedWindow.anchor)) continue;
+        if (taskHasPreservableGuest(managedWindow.anchor) && taskHasLiveSession(managedWindow.anchor)) continue;
         // The deliberate drop: the guest dies with the node. Main's hand-off is
         // told the close was deliberate only when the agent asked (`close_pane`);
         // a session that ended gets no lane either, since there is no agent
@@ -106,7 +122,11 @@ export function useParkedWindowReaper(): void {
         if (
           state.sessions === previous.sessions &&
           state.browserOpenTasks === previous.browserOpenTasks &&
-          state.browserHeldTasks === previous.browserHeldTasks
+          state.browserHeldTasks === previous.browserHeldTasks &&
+          // The reaper's predicate reads this too, so a guest going away has to
+          // wake it: otherwise a parked window whose page died would sit hidden
+          // until some unrelated store write happened to run the sweep.
+          state.browserGuestTasks === previous.browserGuestTasks
         ) {
           return;
         }
