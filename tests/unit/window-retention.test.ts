@@ -371,6 +371,73 @@ describe('parkWindow / unparkWindow', () => {
     expect(findWindowTreeViolations(store.getState().windows, store.getState().tileTree)).toEqual([]);
   });
 
+  /**
+   * A parked window keeps floating, invisibly, at its old geometry - after a
+   * 2-up dock that is a full-height half, exactly the shape the edge-dock partner
+   * search and the drop-zone resolver look for. Both paired a live window with
+   * the ghost (observed live: the survivor came out tiled beside a partner it
+   * could neither see nor drag away from, and its drag became a group move).
+   */
+  it('never pairs an edge-docked window with a parked one, even when the parked one sits full-height on the other side', () => {
+    const store = makeStore();
+    const first = store.getState().openWindow({ anchor: 'task-a', sessionId: 's-a', title: 'A' });
+    const second = store.getState().openWindow({ anchor: 'task-b', sessionId: 's-b', title: 'B' });
+    // The live sequence: the second window was snapped to the right half, the
+    // first docked left beside it (pairing them), then the second was closed.
+    store.getState().snapWindow(second, { x: 0.5, y: 0, w: 0.5, h: 1 });
+    store.getState().dockWindow(first, 'left');
+    expect(store.getState().tileTree).not.toBeNull();
+    store.getState().parkWindow(second);
+    // The pair dissolved and the parked window floats; put it exactly where the
+    // live one sat, full-height on the right, the shape the partner search wants.
+    expect(store.getState().tileTree).toBeNull();
+    store.getState().setGeometry(second, { x: 0.5, y: 0, w: 0.5, h: 1 });
+    expect(store.getState().windows[second]).toMatchObject({ parked: true, state: 'floating', geometry: { x: 0.5, w: 0.5, h: 1 } });
+
+    store.getState().dockWindow(first, 'left');
+
+    // A lone snap, not a tree with a ghost partner.
+    expect(store.getState().tileTree).toBeNull();
+    expect(store.getState().windows[first].state).toBe('snapped');
+    expect(store.getState().windows[second]).toMatchObject({ parked: true, state: 'floating', leafId: null });
+    expect(findWindowTreeViolations(store.getState().windows, store.getState().tileTree)).toEqual([]);
+  });
+
+  it('refuses to dock a window INTO a parked one, and a parked one into anything', () => {
+    const store = makeStore();
+    const first = store.getState().openWindow({ anchor: 'task-a', sessionId: 's-a', title: 'A' });
+    const second = store.getState().openWindow({ anchor: 'task-b', sessionId: 's-b', title: 'B' });
+    store.getState().parkWindow(second);
+    const before = store.getState().windows;
+
+    store.getState().dockIntoWindow(first, second, 'left');
+    store.getState().dockIntoWindow(second, first, 'right');
+
+    expect(store.getState().tileTree).toBeNull();
+    expect(store.getState().windows[first]).toBe(before[first]);
+    expect(store.getState().windows[second]).toBe(before[second]);
+  });
+
+  it('the invariant checker reports a dormant window referenced by a tile leaf', () => {
+    // Belt and braces for the guards above: any future path that tiles a
+    // window the user cannot see trips the dev tripwire at its source.
+    const parked = makeManagedWindow('task-a', { parked: true, state: 'tiled', leafId: 'leaf-a' });
+    const live = makeManagedWindow('task-b', { state: 'tiled', leafId: 'leaf-b' });
+    const tree = {
+      kind: 'split' as const,
+      id: 'split-1',
+      direction: 'horizontal' as const,
+      children: [
+        { kind: 'leaf' as const, id: 'leaf-a', windowId: parked.id },
+        { kind: 'leaf' as const, id: 'leaf-b', windowId: live.id },
+      ],
+      sizes: [0.5, 0.5],
+    };
+    const violations = findWindowTreeViolations({ [parked.id]: parked, [live.id]: live }, tree);
+    expect(violations.some((violation) => violation.includes('dormant') && violation.includes(parked.id))).toBe(true);
+    expect(violations.some((violation) => violation.includes(live.id))).toBe(false);
+  });
+
   it('is idempotent', () => {
     const store = makeStore();
     const id = store.getState().openWindow({ anchor: 'task-a', sessionId: 's-a', title: 'A' });
