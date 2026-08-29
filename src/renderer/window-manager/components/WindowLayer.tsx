@@ -40,6 +40,7 @@ import { useWindowAutoCloseOnDone } from '../bridge/useWindowAutoCloseOnDone';
 import { useWindowFocusReconcile } from '../bridge/useWindowFocusReconcile';
 import { useWorkspacePersistence } from '../bridge/useWorkspacePersistence';
 import { useClickOutsideToClose } from '../bridge/useClickOutsideToClose';
+import { shouldParkTaskDetailWindowOnClose, useParkedWindowReaper } from '../bridge/window-parking';
 import type { ContainerSize } from '../store/geometry';
 import { resolveTileLayout } from '../tiling/resolve-layout';
 import { WindowFrame } from './WindowFrame';
@@ -256,6 +257,9 @@ function BoardBridges(): null {
   useWindowFocusReconcile();
   useWorkspacePersistence();
   useClickOutsideToClose('board');
+  // Renderer-lifetime on purpose: the windows it reaps are the ones nobody can
+  // see, so it must outlive any per-window subtree.
+  useParkedWindowReaper();
   return null;
 }
 
@@ -295,6 +299,10 @@ function useBoardDetailOwnership(): void {
 
 const BOARD_LAYER_OPTIONS: WindowManagerLayerOptions = {
   minSize: { width: DEFAULT_MIN_WIDTH_PX, height: DEFAULT_MIN_HEIGHT_PX },
+  // Only the board parks: a task-detail window whose Browser pane an agent is
+  // driving is hidden in place on close rather than removed, so reopening the
+  // task re-attaches the same guest. See `bridge/window-parking.ts`.
+  shouldParkOnClose: shouldParkTaskDetailWindowOnClose,
 };
 
 const BOARD_OVERLAY_BASE_CLASS = 'fixed left-0 right-0 top-10 bottom-9 z-40 pointer-events-none';

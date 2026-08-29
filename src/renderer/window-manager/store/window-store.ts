@@ -16,6 +16,7 @@
 
 import { create } from 'zustand';
 import type { StoreApi, UseBoundStore } from 'zustand';
+import { isWindowDormant } from './types';
 import type { FractionalRect, ManagedWindow, TileNode, WindowContentKind } from './types';
 import { clampGeometry, defaultWindowGeometry } from './geometry';
 import type { PixelRect } from './geometry';
@@ -229,7 +230,25 @@ export interface WindowStoreState {
 
   /** Open a window for an anchor, or focus the existing one for that anchor. */
   openWindow: (input: OpenWindowInput) => string;
+  /** Unconditional removal. A USER close on the board goes through the layer's
+   *  policy in `WindowFrame` (`shouldParkOnClose`), which parks a window whose
+   *  Browser pane must outlive the close; a direct caller of this is declaring
+   *  a deliberate DROP (displacement to another host, the task leaving the
+   *  board, the parked-window reaper). */
   closeWindow: (id: string) => void;
+  /** Hide a window in place instead of removing it, so its DOM node (and the
+   *  `<webview>` guest inside it) survives. Untiles it, takes it out of `order`,
+   *  gives up its focus. Idempotent. See `ManagedWindow.parked`. */
+  parkWindow: (id: string) => void;
+  /** Reverse of `parkWindow`: back into `order`, raised, focused. Clears the
+   *  agent stamp exactly as `focusWindow` does, so an agent path re-stamps
+   *  after. No-op for a window that is not parked. */
+  unparkWindow: (id: string) => void;
+  /** Clear `retainedProjectId` from every window retained for `projectId`,
+   *  and nothing else. Called when that project comes back, after
+   *  `applyWorkspace` has adopted what its blob names; what is left is a parked
+   *  window (never in the blob) or a window whose task left the board. */
+  releaseRetainedWindows: (projectId: string) => void;
   /** Raise + focus a window. Raising is a no-op when it is already focused, but
    *  the agent-open stamp is cleared either way: this is only ever called for a
    *  real user gesture or by an open path that re-stamps immediately after. */
@@ -419,6 +438,10 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
       const current = get();
       const target = current.windows[id];
       if (!target) return;
+      // A parked window can never hold focus. This one guard is what keeps every
+      // `enabled: isFocused` keybinding and the window's Escape listener inert
+      // while it is hidden, without a second gate in each of them.
+      if (target.parked) return;
       // Clearing the agent stamp happens BEFORE the already-focused early
       // return. Every caller is either a real user gesture (WindowFrame's
       // pointer-down) or an open path that re-stamps right after, and an
@@ -450,6 +473,63 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
         const target = current.windows[id];
         if (!target || target.openedByAgent) return current;
         return { windows: { ...current.windows, [id]: { ...target, openedByAgent: true as const } } };
+      });
+    },
+
+    parkWindow: (id) => {
+      set((current) => {
+        const target = current.windows[id];
+        if (!target || target.parked) return current;
+        // Same two transitions a close applies, minus the removal: evict from
+        // the tile tree (a hidden pane must not hold a leaf, and the survivors
+        // should reflow), and leave the stacking order so focus and light
+        // dismiss never land on it. Geometry, state and restoreGeometry stay
+        // authoritative, so an un-park reopens the window where it was.
+        const base = evictWindowFromTiling(current.windows, current.tileTree, current.tileTreeRect, id);
+        const evicted = base.windows[id] ?? target;
+        const nextOrder = current.order.filter((candidate) => candidate !== id);
+        return {
+          windows: { ...base.windows, [id]: { ...evicted, parked: true as const } },
+          order: nextOrder,
+          focusedWindowId:
+            current.focusedWindowId === id ? (nextOrder[nextOrder.length - 1] ?? null) : current.focusedWindowId,
+          tileTree: base.tileTree,
+          tileTreeRect: base.tileTreeRect,
+        };
+      });
+    },
+
+    unparkWindow: (id) => {
+      set((current) => {
+        const target = current.windows[id];
+        if (!target?.parked) return current;
+        const zCounter = current.zCounter + 1;
+        // Mirrors `focusWindow`'s raise: the agent stamp is cleared here for the
+        // same reason, so an agent-driven un-park must re-stamp afterwards.
+        const { parked: _unparked, openedByAgent: _raised, ...revived } = target;
+        return {
+          windows: { ...current.windows, [id]: { ...revived, zIndex: zCounter } },
+          order: [...current.order.filter((candidate) => candidate !== id), id],
+          focusedWindowId: id,
+          zCounter,
+        };
+      });
+    },
+
+    releaseRetainedWindows: (projectId) => {
+      set((current) => {
+        let changed = false;
+        const windows: Record<string, ManagedWindow> = {};
+        for (const [id, managedWindow] of Object.entries(current.windows)) {
+          if (managedWindow.retainedProjectId !== projectId) {
+            windows[id] = managedWindow;
+            continue;
+          }
+          const { retainedProjectId: _released, ...rest } = managedWindow;
+          windows[id] = rest;
+          changed = true;
+        }
+        return changed ? { windows } : current;
       });
     },
 
@@ -846,9 +926,11 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
       // project's pane is retained would otherwise write that window into THIS
       // project's blob, and reopening it would restore a phantom window for a
       // task the board cannot resolve. The outgoing project's own layout was
-      // already captured before retention was applied.
+      // already captured before retention was applied. A PARKED window is
+      // excluded for a simpler reason: the user closed it, and persisting it
+      // would restore it visible on the next switch.
       return toSerializedWorkspace(
-        Object.values(current.windows).filter((window) => window.retainedProjectId === undefined),
+        Object.values(current.windows).filter((window) => !isWindowDormant(window)),
         current.tileTree,
         current.tileTreeRect,
         current.focusedWindowId,
@@ -929,10 +1011,13 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
         // window's identity (its id, and therefore its DOM node) and takes only
         // the persisted geometry, so returning to a project restores the layout
         // around a pane that never stopped running.
-        const retained = Object.values(current.windows).filter(
-          (managedWindow) => managedWindow.retainedProjectId !== undefined,
-        );
-        if (retained.length === 0) {
+        // Survivors are every DORMANT window: retained for a backgrounded
+        // project, or parked because the user closed it while its agent was
+        // live. The plain path below replaces `windows` wholesale, so a parked
+        // window left out of this set would be unmounted, destroying the guest
+        // parking exists to keep alive.
+        const dormant = Object.values(current.windows).filter(isWindowDormant);
+        if (dormant.length === 0) {
           return {
             windows: restored.windows,
             order: restored.order,
@@ -943,13 +1028,43 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
           };
         }
 
+        // Only a retained-and-NOT-parked window is adoptable. Adoption clears
+        // retention, applies the restored geometry and puts the id into `order`,
+        // which for a parked window would be exactly "resurrect it into the
+        // layout" - and the user closed it. A restored entry for a PARKED anchor
+        // is dropped instead: the parked window wins, because the close is the
+        // user's most recent word on that task, and it stays parked.
         const retainedByAnchor = new Map(
-          retained.map((managedWindow) => [`${managedWindow.kind}:${managedWindow.anchor}`, managedWindow]),
+          dormant
+            .filter((managedWindow) => managedWindow.retainedProjectId !== undefined && managedWindow.parked === undefined)
+            .map((managedWindow) => [`${managedWindow.kind}:${managedWindow.anchor}`, managedWindow]),
         );
+        const parkedAnchors = new Set(
+          dormant
+            .filter((managedWindow) => managedWindow.parked === true)
+            .map((managedWindow) => `${managedWindow.kind}:${managedWindow.anchor}`),
+        );
+        // Drop the restored copies of parked anchors from the restored layout
+        // FIRST (windows, order and tile tree together), so the survivors reflow
+        // exactly as if those windows had never been in the blob.
+        let restoredWindows = restored.windows;
+        let restoredTileTree = restored.tileTree;
+        let restoredTileTreeRect = restored.tileTreeRect;
+        const droppedRestoredIds = new Set<string>();
+        for (const restoredWindow of Object.values(restored.windows)) {
+          if (!parkedAnchors.has(`${restoredWindow.kind}:${restoredWindow.anchor}`)) continue;
+          const evicted = evictWindowFromTiling(restoredWindows, restoredTileTree, restoredTileTreeRect, restoredWindow.id);
+          const { [restoredWindow.id]: _dropped, ...remaining } = evicted.windows;
+          restoredWindows = remaining;
+          restoredTileTree = evicted.tileTree;
+          restoredTileTreeRect = evicted.tileTreeRect;
+          droppedRestoredIds.add(restoredWindow.id);
+        }
+        const restoredOrder = restored.order.filter((restoredId) => !droppedRestoredIds.has(restoredId));
         const adoptedIds = new Set<string>();
         const nextWindows: Record<string, ManagedWindow> = {};
 
-        for (const restoredWindow of Object.values(restored.windows)) {
+        for (const restoredWindow of Object.values(restoredWindows)) {
           const key = `${restoredWindow.kind}:${restoredWindow.anchor}`;
           const match = retainedByAnchor.get(key);
           if (!match) {
@@ -974,46 +1089,51 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
           };
         }
 
-        // Retained windows for OTHER projects stay retained and stay mounted.
-        for (const managedWindow of retained) {
+        // Dormant windows that were not adopted (retained for OTHER projects, and
+        // every parked window) stay as they are and stay mounted.
+        for (const managedWindow of dormant) {
           if (adoptedIds.has(managedWindow.id)) continue;
           nextWindows[managedWindow.id] = managedWindow;
         }
 
         // A restored window that got adopted contributes its retained id to the
         // order instead of the discarded restored id; still-retained windows go
-        // last so they never sit above the active project's windows.
-        const order = restored.order.map((restoredId) => {
-          const restoredWindow = restored.windows[restoredId];
+        // last so they never sit above the active project's windows. A parked
+        // window is never in `order`: as far as stacking, focus and light
+        // dismiss are concerned it is closed.
+        const order = restoredOrder.map((restoredId) => {
+          const restoredWindow = restoredWindows[restoredId];
           const match = restoredWindow
             ? retainedByAnchor.get(`${restoredWindow.kind}:${restoredWindow.anchor}`)
             : undefined;
           return match ? match.id : restoredId;
         });
-        for (const managedWindow of retained) {
-          if (adoptedIds.has(managedWindow.id)) continue;
+        for (const managedWindow of dormant) {
+          if (adoptedIds.has(managedWindow.id) || managedWindow.parked === true) continue;
           order.push(managedWindow.id);
         }
 
         // Adopted windows keep the restored tile membership, so remap the tree's
         // leaf ids from restored ids to the retained ids that replaced them.
         const idRemap = new Map<string, string>();
-        for (const restoredWindow of Object.values(restored.windows)) {
+        for (const restoredWindow of Object.values(restoredWindows)) {
           const match = retainedByAnchor.get(`${restoredWindow.kind}:${restoredWindow.anchor}`);
           if (match) idRemap.set(restoredWindow.id, match.id);
         }
 
+        const focusedWindowId =
+          restored.focusedWindowId && !droppedRestoredIds.has(restored.focusedWindowId)
+            ? idRemap.get(restored.focusedWindowId) ?? restored.focusedWindowId
+            : null;
         return {
           windows: nextWindows,
           order,
-          focusedWindowId: restored.focusedWindowId
-            ? idRemap.get(restored.focusedWindowId) ?? restored.focusedWindowId
-            : null,
+          focusedWindowId,
           // Counts every window that survived, not just the restored ones, or a
           // later focus would hand out a zIndex that collides with a retained window.
           zCounter: Object.keys(nextWindows).length,
-          tileTree: remapTileTreeWindowIds(restored.tileTree, idRemap),
-          tileTreeRect: restored.tileTreeRect,
+          tileTree: remapTileTreeWindowIds(restoredTileTree, idRemap),
+          tileTreeRect: restoredTileTreeRect,
         };
       });
     },

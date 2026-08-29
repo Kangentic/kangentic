@@ -16,7 +16,7 @@ declare global {
       getCaptureCalls: () => unknown[];
       getPaneCalls: () => Array<
         | { type: 'register'; input: { sessionId: string; taskId: string; projectId: string | null; webContentsId: number; url: string | null } }
-        | { type: 'unregister'; sessionId: string; webContentsId?: number }
+        | { type: 'unregister'; webContentsId: number }
       >;
       seedTaskUrl: (taskId: string, url: string) => void;
       /** The project a task URL was last saved against (null if never saved). */

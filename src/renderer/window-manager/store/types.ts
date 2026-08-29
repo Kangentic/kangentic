@@ -106,6 +106,34 @@ export interface ManagedWindow {
    *  Content-agnostic by design (a project id, not a task), so the generic engine
    *  gains no board dependency; the board layer owns the frozen task snapshot. */
   retainedProjectId?: string;
+  /** Set while the user has CLOSED this window but its content must survive:
+   *  the board parks a task-detail window whose Browser pane is open while the
+   *  task's agent session is live, so reopening the task re-attaches the SAME
+   *  `<webview>` guest (its `sessionStorage`, in-memory state, and the agent's
+   *  CDP session intact) instead of building a new one.
+   *
+   *  A parked window stays in `windows` at its DOM position, hidden exactly like
+   *  a retained one, and is OUT of `order`, focus, the tile tree, the ownership
+   *  report, the terminal claim set, and the persisted workspace: as far as
+   *  stacking and dismissal are concerned it is closed. `unparkWindow` reverses
+   *  it; `closeWindow` drops it for real.
+   *
+   *  Transient, never persisted. Set only when true (same shape as
+   *  `openedByAgent`), so default-by-omission is "not parked". The engine knows
+   *  only the mechanism; WHEN to park is the layer's policy
+   *  (`WindowManagerLayerOptions.shouldParkOnClose`). */
+  parked?: true;
+}
+
+/**
+ * Hidden-but-mounted: parked for a closed window, or retained for a backgrounded
+ * project. Every exclusion a hidden window needs (ownership, terminal claims,
+ * serialization, light dismiss, focus reconcile, dictation) reads THIS predicate
+ * rather than spelling the two flags out, so a third reason to keep a window
+ * mounted invisibly cannot be missed by half of them.
+ */
+export function isWindowDormant(managedWindow: ManagedWindow): boolean {
+  return managedWindow.parked === true || managedWindow.retainedProjectId !== undefined;
 }
 
 /**

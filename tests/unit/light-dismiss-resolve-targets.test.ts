@@ -114,4 +114,28 @@ describe('resolveLightDismissTargets', () => {
       expect(resolveLightDismissTargets('all', {}, null)).toEqual([]);
     });
   });
+
+  // A dormant window (parked after the user closed it, or retained for a
+  // backgrounded project) is hidden and inert. It is not on screen to dismiss,
+  // and closing it would unmount the <webview> guest it is kept alive for.
+  describe('dormant windows', () => {
+    it('`single` ignores a parked window when counting, so the lone visible one still dismisses', () => {
+      const windows = windowSet(['a', 'floating'], ['b', 'floating']);
+      windows.b = { ...windows.b, parked: true };
+      expect(resolveLightDismissTargets('single', windows, 'a')).toEqual(['a']);
+    });
+
+    it('`all` never returns a parked or retained window', () => {
+      const windows = windowSet(['a', 'floating'], ['b', 'floating'], ['c', 'floating']);
+      windows.b = { ...windows.b, parked: true };
+      windows.c = { ...windows.c, retainedProjectId: 'proj-elsewhere' };
+      expect(resolveLightDismissTargets('all', windows, 'a')).toEqual(['a']);
+    });
+
+    it('`focused` never returns a dormant window, even if the pointer is stale', () => {
+      const windows = windowSet(['a', 'floating']);
+      windows.a = { ...windows.a, parked: true };
+      expect(resolveLightDismissTargets('focused', windows, 'a')).toEqual([]);
+    });
+  });
 });

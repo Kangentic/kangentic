@@ -49,6 +49,9 @@ export function useTaskSessionState(input: {
   isArchived: boolean;
   isInTodo: boolean;
   currentSwimlaneRole: string | null | undefined;
+  /** The window is hidden-but-mounted (parked or retained) and hosts no xterm,
+   *  so it must not claim the session: the bottom panel is free to show it. */
+  dormant?: boolean;
 }): TaskSessionState {
   const session = useSessionStore((state) =>
     state.sessions.find((candidate) => candidate.taskId === input.task.id) ?? null,
@@ -103,12 +106,18 @@ export function useTaskSessionState(input: {
   // TerminalTab BEFORE any terminal effects fire (one xterm per PTY).
   // useLayoutEffect runs synchronously after DOM mutations but before paint.
   // Each open window claims its own session; the claim is released on close.
+  //
+  // A dormant window releases the claim in the same synchronous commit that
+  // drops its terminal (park), and re-claims in the commit that remounts it
+  // (un-park), so the bottom panel and the window never both hold an xterm for
+  // one PTY.
+  const dormant = input.dormant === true;
   useLayoutEffect(() => {
     const sessionId = session?.id;
-    if (!sessionId) return;
+    if (!sessionId || dormant) return;
     useSessionStore.getState().claimDialogSession(sessionId);
     return () => useSessionStore.getState().releaseDialogSession(sessionId);
-  }, [session?.id]);
+  }, [session?.id, dormant]);
 
   // Refit terminal when session resumes
   useEffect(() => {

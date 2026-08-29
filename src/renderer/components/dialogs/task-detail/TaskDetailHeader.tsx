@@ -388,7 +388,11 @@ export function TaskDetailHeader({
                 icon={Globe}
                 onClick={onToggleBrowser}
                 active={browserOpen}
-                title={`${browserOpen ? 'Hide' : 'Show'} browser (${browserCombo})`}
+                title={
+                  browserOpen
+                    ? `Hide browser (${browserCombo}). The page is kept while the agent runs.`
+                    : `Show browser (${browserCombo})`
+                }
                 ariaLabel="Toggle browser"
                 testId="browser-toggle"
               />

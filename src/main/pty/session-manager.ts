@@ -1908,6 +1908,14 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
+   * Whether the task has an agent worth preserving state for: a live session
+   * that is NOT already being killed. See `SessionRegistry.hasLiveSessionForTask`.
+   */
+  hasLiveSessionForTask(taskId: string): boolean {
+    return this.registry.hasLiveSessionForTask(taskId);
+  }
+
+  /**
    * Gracefully suspend all running PTY sessions.
    *
    * Sends Ctrl+C then /exit to each Claude Code process so it saves its

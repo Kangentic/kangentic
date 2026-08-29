@@ -29,6 +29,7 @@
 
 import { useEffect, useRef } from 'react';
 import type { TaskDetailHost } from '../../../shared/types';
+import { isWindowDormant } from '../store/types';
 import type { ManagedWindow } from '../store/types';
 import type { WindowManager } from '../store/window-store';
 
@@ -69,13 +70,15 @@ export function deriveOwnedDetails(
     // Only task-detail windows own a detail. A conversation window's anchor is a
     // session id and a command terminal's is a slot.
     if (managedWindow.kind !== 'task-detail') continue;
-    // A window retained for a backgrounded project does NOT own its detail. It
-    // is mounted only to keep its Browser pane's <webview> guest alive and has
-    // dropped its terminal, so it holds nothing the ownership registry arbitrates
-    // over. Excluding it is what lets the user open that same task in the Agent
-    // Monitor while its project is backgrounded; because there is no xterm in a
-    // retained window, doing so cannot produce two terminals on one PTY.
-    if (managedWindow.retainedProjectId !== undefined) continue;
+    // A dormant window (retained for a backgrounded project, or parked after
+    // the user closed it) does NOT own its detail. It is mounted only to keep
+    // its Browser pane's <webview> guest alive and has dropped its terminal, so
+    // it holds nothing the ownership registry arbitrates over. Excluding it is
+    // what lets the user open that same task in the Agent Monitor (or a
+    // pop-out); because there is no xterm in a dormant window, doing so cannot
+    // produce two terminals on one PTY. That other host's mount then displaces
+    // this one via `onCloseHere`, which drops a parked window for real.
+    if (isWindowDormant(managedWindow)) continue;
     const detail = anchorToDetail(managedWindow.anchor);
     if (!detail) continue;
     const key = `${detail.projectId}:${detail.taskId}`;

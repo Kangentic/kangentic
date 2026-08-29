@@ -192,7 +192,7 @@ export async function withGuest<T>(
       capability: options.capability,
       callerSessionId: options.selector.callerSessionId,
       callerTaskId: options.selector.callerTaskId,
-      resolvedSessionId: target.entry.sessionId,
+      resolvedHandle: target.entry.sessionId,
       resolvedTaskId: target.entry.taskId,
       projectId: target.entry.projectId,
       webContentsId: webContents.id,

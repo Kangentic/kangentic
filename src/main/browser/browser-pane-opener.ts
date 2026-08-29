@@ -3,6 +3,7 @@ import { browserUrlStore } from './browser-url-store';
 import {
   browserPaneRegistry,
   type BrowserPaneStatus,
+  type BrowserSurfaceKind,
   type ResolveTargetSelector,
 } from './browser-pane-registry';
 import {
@@ -153,7 +154,9 @@ export interface ClosePaneInput {
 }
 
 export interface ClosedPaneSummary {
+  /** The surface handle that was closed. */
   sessionId: string;
+  kind: BrowserSurfaceKind;
   taskId: string;
   projectId: string | null;
   url: string | null;
@@ -179,6 +182,23 @@ function failure(kind: string, detail: string): { ok: false; error: DriverError 
 /** The pane's `list_panes` shape, so an agent can go straight into driving it. */
 function paneStatus(sessionId: string): BrowserPaneStatus | null {
   return browserPaneRegistry.list().find((pane) => pane.sessionId === sessionId) ?? null;
+}
+
+/**
+ * A live pane may be HIDDEN: held behind the terminal after the user put it
+ * away with the Browser pill, or in a window the user closed while the agent
+ * was live (parked). The renderer keeps the guest mounted in both cases, which
+ * is why the warm path resolves it at all - but the agent asked for its pane
+ * to be OPEN, and before parking existed that call put the pane on screen. So
+ * the warm path pushes the same request the cold path does: the renderer ends
+ * a hold and un-parks a parked window (both style-only on the same guest,
+ * never a remount), and treats it as a no-op for a pane already showing.
+ *
+ * Best-effort on purpose: the pane is registered and driveable whatever the
+ * window does, so a missing window is not a failure of this call.
+ */
+function resurfaceLivePane(host: BrowserPaneOpenerHost, projectId: string, taskId: string): void {
+  host.send(IPC.BROWSER_PANE_OPEN_REQUEST, projectId, taskId);
 }
 
 /**
@@ -306,8 +326,16 @@ export async function openPaneForCallerTask(input: OpenPaneInput): Promise<Drive
   // behind. A registered live pane is its own proof the task is real: the
   // renderer registered it, and main backfilled its `projectId` from the
   // session registry.
+  //
+  // Visible PANES only. A task whose sole live surface is a hand-off lane
+  // (main stood it up when the user closed the task window) is not "already
+  // open" for this tool's purposes: the caller asked for its pane, so the cold
+  // path below mounts the visible one, and its registration stands the lane
+  // down. Handing the lane back here would report `opened: false` for a
+  // surface the agent cannot see and never asked for.
   const live = browserPaneRegistry
     .getByTaskId(callerTaskId, projectId)
+    .filter((entry) => entry.kind === 'pane')
     .find((entry) => browserPaneRegistry.resolveLiveGuest(entry).ok);
 
   // Pure no-op: the pane is already up and the caller named no URL, so nothing
@@ -319,6 +347,7 @@ export async function openPaneForCallerTask(input: OpenPaneInput): Promise<Drive
     const pane = paneStatus(live.sessionId);
     if (!pane) return failure('pane-destroyed', 'The Browser pane closed while opening. Retry.');
     if (pane.url) {
+      resurfaceLivePane(host, projectId, callerTaskId);
       return { ok: true, data: { opened: false, navigated: false, url: pane.url, pane } };
     }
     // A live guest with no URL is a pane sitting on its empty state. Reporting
@@ -342,6 +371,7 @@ export async function openPaneForCallerTask(input: OpenPaneInput): Promise<Drive
     if (!navigateResult.ok) return { ok: false, error: navigateResult.error };
     const pane = paneStatus(live.sessionId);
     if (!pane) return failure('pane-destroyed', 'The Browser pane closed while navigating. Retry.');
+    resurfaceLivePane(host, projectId, callerTaskId);
     return { ok: true, data: { opened: false, navigated: true, url: validatedLive.url, pane } };
   }
 
@@ -350,9 +380,19 @@ export async function openPaneForCallerTask(input: OpenPaneInput): Promise<Drive
   // for a backgrounded project. Refusing here is honest and immediate; pushing
   // anyway would just time out with a vaguer message.
   if (host.currentProjectId !== projectId || !host.currentProjectPath) {
+    // A hand-off lane may be standing in for this task's pane while the project
+    // is backgrounded. It cannot be turned back into a visible pane from here,
+    // but the driving tools still reach it, and the agent deserves to know that
+    // rather than being sent to the user for a browser it already has.
+    const standIn = browserPaneRegistry
+      .getByTaskId(callerTaskId, projectId)
+      .find((entry) => entry.kind === 'lane' && entry.handoff && browserPaneRegistry.resolveLiveGuest(entry).ok);
     return failure(
       'project-not-open',
-      'Your project is not the one currently open in Kangentic, so a Browser pane cannot be opened for it. Ask the user to switch to it, then retry. (A pane that is ALREADY open stays driveable while its project is backgrounded.)',
+      'Your project is not the one currently open in Kangentic, so a Browser pane cannot be opened for it. Ask the user to switch to it, then retry. (A pane that is ALREADY open stays driveable while its project is backgrounded.)' +
+        (standIn
+          ? ` A hand-off lane (${standIn.sessionId}) is standing in for this task's pane: the driving tools reach it when you omit sessionId, or by that handle.`
+          : ''),
     );
   }
   const projectPath = host.currentProjectPath;
@@ -501,6 +541,7 @@ export async function closePanes(input: ClosePaneInput): Promise<DriverResult<Cl
 
   const summarize = (pane: BrowserPaneStatus): ClosedPaneSummary => ({
     sessionId: pane.sessionId,
+    kind: pane.kind,
     taskId: pane.taskId,
     projectId: pane.projectId,
     url: pane.url,
@@ -525,6 +566,12 @@ export async function closePanes(input: ClosePaneInput): Promise<DriverResult<Cl
   if (!host) {
     return failure('app-not-ready', 'The Kangentic window is not available.');
   }
+
+  // This close is the agent's own decision, so the unregister it causes must
+  // not trigger the hand-off that keeps an agent's browser alive when the USER
+  // closes a window. Marked before the push, since the unregister can land
+  // before the push call even returns.
+  browserPaneRegistry.markDeliberateClose(paneTargets.map((pane) => pane.sessionId));
 
   // Push the task ids: pane open state is keyed by task, not session.
   const taskIds = [...new Set(paneTargets.map((pane) => pane.taskId))];

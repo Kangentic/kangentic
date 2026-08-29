@@ -5191,15 +5191,16 @@ export interface ElectronAPI {
      * worktree path). Never rejects.
      */
     ensureJar: (taskId: string, projectId: string | null) => Promise<void>;
-    /** Register an open Browser pane's guest webContents for kangentic_browser_* targeting. */
+    /** Register an open Browser pane's guest webContents for kangentic_browser_*
+     *  targeting. Registering the same guest again (a session rotation, a
+     *  retained window's project settling) updates the owner in place and keeps
+     *  the surface handle main minted for it. */
     registerPane: (input: BrowserPaneRegisterInput) => Promise<void>;
-    /** Unregister a Browser pane (on unmount). Pass the webContentsId this
-     *  instance registered with so the main process only clears the registry
-     *  entry if it still points at this exact guest (see
-     *  unregisterIfMatches in browser-pane-registry.ts) - guards the
-     *  in-app-pane-vs-pop-out-pane handoff race. Omit to unregister
-     *  unconditionally. */
-    unregisterPane: (sessionId: string, webContentsId?: number) => Promise<void>;
+    /** Unregister a Browser pane (on unmount), by the guest id this instance
+     *  registered with. Keyed on the guest rather than the session so an
+     *  out-of-order unmount across the in-app pane and its pop-out can only ever
+     *  remove its OWN guest, never a newer registration for the same task. */
+    unregisterPane: (webContentsId: number) => Promise<void>;
     /**
      * Subscribe to Ctrl+wheel zoom changes that fire inside the embedded
      * webview. The main process applies the zoom and broadcasts the resulting
@@ -5351,6 +5352,8 @@ export interface BrowserCaptureInput {
  * not subject to the trailing-projectId mutation rule.
  */
 export interface BrowserPaneRegisterInput {
+  /** The agent session this pane serves (the registry records it as the
+   *  surface's `ownerSessionId`; the surface HANDLE is minted by main). */
   sessionId: string;
   taskId: string;
   projectId: string | null;

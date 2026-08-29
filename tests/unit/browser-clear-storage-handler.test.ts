@@ -34,8 +34,11 @@ const {
   fakeReaddirSync,
   fakeRegistryRegister,
   fakeRegistryUnregister,
+  fakeRegistryUnregisterByWebContentsId,
   fakeRegistrySetPaneClosedHandler,
   fakeRegistrySetPaneRegisteredHandler,
+  fakeFindLiveSessionByTaskId,
+  capturedHandoffDependencies,
 } = vi.hoisted(() => {
   const capturedHandlers = new Map<string, (...args: unknown[]) => unknown>();
 
@@ -53,10 +56,17 @@ const {
 
   const fakeReaddirSync = vi.fn(() => [] as { isDirectory: () => boolean; name: string }[]);
 
-  const fakeRegistryRegister = vi.fn();
+  // The handler logs the handle the registry minted, so the fake must hand
+  // one back or the trace line throws before the assertion runs.
+  const fakeRegistryRegister = vi.fn(() => ({ sessionId: 'pane_test0001' }));
   const fakeRegistryUnregister = vi.fn();
+  const fakeRegistryUnregisterByWebContentsId = vi.fn();
   const fakeRegistrySetPaneClosedHandler = vi.fn();
   const fakeRegistrySetPaneRegisteredHandler = vi.fn();
+  const fakeFindLiveSessionByTaskId = vi.fn<(taskId: string) => boolean>(() => false);
+  /** The dependencies the handler wires into the lane hand-off, so its
+   *  `hasLiveSession` policy can be exercised directly. */
+  const capturedHandoffDependencies: { hasLiveSession?: (taskId: string) => boolean } = {};
 
   return {
     capturedHandlers,
@@ -67,10 +77,19 @@ const {
     fakeReaddirSync,
     fakeRegistryRegister,
     fakeRegistryUnregister,
+    fakeRegistryUnregisterByWebContentsId,
     fakeRegistrySetPaneClosedHandler,
     fakeRegistrySetPaneRegisteredHandler,
+    fakeFindLiveSessionByTaskId,
+    capturedHandoffDependencies,
   };
 });
+
+vi.mock('../../src/main/browser/browser-lane-handoff', () => ({
+  installLaneHandoff: (dependencies: { hasLiveSession: (taskId: string) => boolean }) => {
+    capturedHandoffDependencies.hasLiveSession = dependencies.hasLiveSession;
+  },
+}));
 
 // ---------------------------------------------------------------------------
 // Module mocks
@@ -121,6 +140,7 @@ vi.mock('../../src/main/browser/browser-pane-registry', () => ({
   browserPaneRegistry: {
     register: fakeRegistryRegister,
     unregister: fakeRegistryUnregister,
+    unregisterByWebContentsId: fakeRegistryUnregisterByWebContentsId,
     // registerBrowserHandlers installs the lane hand-off, which subscribes to
     // both registry callbacks. Omitting them makes every test in this file
     // throw at registration time, before it reaches its own subject.
@@ -163,6 +183,7 @@ function makeContext() {
     // in a pop-out). Tests override the return per case.
     sessionManager: {
       getSessionProjectId: fakeGetSessionProjectId,
+      hasLiveSessionForTask: fakeFindLiveSessionByTaskId,
     },
   };
 }
@@ -370,10 +391,10 @@ async function invokeRegisterPane(input: unknown): Promise<unknown> {
   return handler(undefined, input);
 }
 
-async function invokeUnregisterPane(sessionId: string): Promise<unknown> {
+async function invokeUnregisterPane(webContentsId: unknown): Promise<unknown> {
   const handler = capturedHandlers.get('browser:paneUnregister');
   if (!handler) throw new Error('browser:paneUnregister handler not registered');
-  return handler(undefined, sessionId);
+  return handler(undefined, webContentsId);
 }
 
 describe('BROWSER_PANE_REGISTER IPC handler', () => {
@@ -421,7 +442,7 @@ describe('BROWSER_PANE_REGISTER IPC handler', () => {
     ).rejects.toThrow('invalid webContentsId');
   });
 
-  it('calls browserPaneRegistry.register with the correct fields on valid input', async () => {
+  it('calls browserPaneRegistry.register with the renderer session as the OWNER, never as a handle', async () => {
     await invokeRegisterPane({
       sessionId: VALID_SESSION_ID,
       taskId: 'task-1',
@@ -432,12 +453,15 @@ describe('BROWSER_PANE_REGISTER IPC handler', () => {
 
     expect(fakeRegistryRegister).toHaveBeenCalledOnce();
     expect(fakeRegistryRegister).toHaveBeenCalledWith({
-      sessionId: VALID_SESSION_ID,
+      ownerSessionId: VALID_SESSION_ID,
       taskId: 'task-1',
       projectId: 'proj-1',
       webContentsId: 42,
       url: 'http://localhost:3000',
     });
+    // The handle is the registry's to mint (or keep, for a guest it already
+    // knows); the handler must not pass one.
+    expect(fakeRegistryRegister.mock.calls[0][0]).not.toHaveProperty('handle');
   });
 
   it('maps missing projectId to null and missing url to null', async () => {
@@ -448,7 +472,7 @@ describe('BROWSER_PANE_REGISTER IPC handler', () => {
     });
 
     expect(fakeRegistryRegister).toHaveBeenCalledWith({
-      sessionId: VALID_SESSION_ID,
+      ownerSessionId: VALID_SESSION_ID,
       taskId: 'task-2',
       projectId: null,
       webContentsId: 7,
@@ -493,24 +517,69 @@ describe('BROWSER_PANE_UNREGISTER IPC handler', () => {
   beforeEach(() => {
     capturedHandlers.clear();
     fakeRegistryUnregister.mockClear();
+    fakeRegistryUnregisterByWebContentsId.mockClear();
 
     registerBrowserHandlers(makeContext() as unknown as Parameters<typeof registerBrowserHandlers>[0]);
   });
 
-  it('returns without calling unregister when sessionId is malformed', async () => {
-    await invokeUnregisterPane('not-a-uuid');
+  // The renderer unregisters the exact GUEST it registered. Keyed on the
+  // guest rather than the session so an out-of-order unmount across the
+  // in-app pane and its pop-out can only ever remove its own registration.
+  for (const [name, value] of [
+    ['a float', 1.5],
+    ['zero', 0],
+    ['a negative number', -1],
+    ['a string', 'not-a-number'],
+    ['undefined', undefined],
+  ] as const) {
+    it(`returns without touching the registry when webContentsId is ${name}`, async () => {
+      await invokeUnregisterPane(value);
+      expect(fakeRegistryUnregisterByWebContentsId).not.toHaveBeenCalled();
+      expect(fakeRegistryUnregister).not.toHaveBeenCalled();
+    });
+  }
+
+  it('unregisters by guest id with the renderer-unmount reason on valid input', async () => {
+    await invokeUnregisterPane(42);
+    expect(fakeRegistryUnregisterByWebContentsId).toHaveBeenCalledOnce();
+    expect(fakeRegistryUnregisterByWebContentsId).toHaveBeenCalledWith(42, 'renderer-unmount');
+    // Never the session-keyed form: there is no session to key on any more.
     expect(fakeRegistryUnregister).not.toHaveBeenCalled();
   });
+});
 
-  it('returns without calling unregister when sessionId is an empty string', async () => {
-    await invokeUnregisterPane('');
-    expect(fakeRegistryUnregister).not.toHaveBeenCalled();
+/**
+ * The hand-off's "is there an agent worth preserving a browser for" policy is
+ * the registry's kill-aware liveness query, not a bare "found a running row".
+ * Observed live: the UI's stop flips the renderer's session to exited and drops
+ * the PARKED window at once, whose pane then unregisters while main's registry
+ * still says running (the PTY has not exited yet) - and a lane was stood up for
+ * an agent that was being stopped. The kill-in-flight half of that answer is
+ * pinned in session-registry.test.ts; this pins that the handler asks it.
+ */
+describe('lane hand-off liveness policy', () => {
+  beforeEach(() => {
+    capturedHandlers.clear();
+    fakeFindLiveSessionByTaskId.mockReset();
+    registerBrowserHandlers(makeContext() as unknown as Parameters<typeof registerBrowserHandlers>[0]);
   });
 
-  it('calls browserPaneRegistry.unregister with the sessionId on valid input', async () => {
-    await invokeUnregisterPane(VALID_SESSION_ID);
-    expect(fakeRegistryUnregister).toHaveBeenCalledOnce();
-    expect(fakeRegistryUnregister).toHaveBeenCalledWith(VALID_SESSION_ID);
+  it('asks the kill-aware registry query for the task', () => {
+    fakeFindLiveSessionByTaskId.mockReturnValue(true);
+    expect(capturedHandoffDependencies.hasLiveSession?.('task-1')).toBe(true);
+    expect(fakeFindLiveSessionByTaskId).toHaveBeenCalledWith('task-1');
+  });
+
+  it('does not count a task the registry reports as not live', () => {
+    fakeFindLiveSessionByTaskId.mockReturnValue(false);
+    expect(capturedHandoffDependencies.hasLiveSession?.('task-1')).toBe(false);
+  });
+
+  it('answers false rather than throwing when the lookup fails', () => {
+    fakeFindLiveSessionByTaskId.mockImplementation(() => {
+      throw new Error('registry unavailable');
+    });
+    expect(capturedHandoffDependencies.hasLiveSession?.('task-1')).toBe(false);
   });
 });
 

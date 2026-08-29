@@ -20,11 +20,10 @@
  *     DOM stub and dispatch a synthetic 'dom-ready' event. The effect attaches
  *     its dom-ready listener synchronously on mount, so the dispatch is
  *     reliably caught.
- *   - Unregistration is triggered by closing the task-detail dialog (Escape at
- *     document level), which unmounts BrowserPaneActive and runs its cleanup.
- *     BrowserPane's capture-phase Esc handler only fires cancelInspect() when
- *     inspectActive === true; since we never enter inspect mode, Escape
- *     propagates freely to the TaskDetailDialog's handler which closes it.
+ *   - Unregistration is triggered by an agent's close_pane push (the mock's
+ *     `emitPaneCloseRequest`), which is the one path that unmounts
+ *     BrowserPaneActive while the fixture's session is running: closing the
+ *     window PARKS it and hiding the pane HOLDS it, both keeping the guest.
  *
  * Test isolation: __mockBrowser.reset() clears the pane-call log in openBrowserPane.
  * Full page.goto() in beforeEach reloads mock and React state between tests.
@@ -230,27 +229,29 @@ test.describe('BrowserPaneActive - webContents registration', () => {
     // from the session registry, but a missing field here would silently rot.
     expect(registerPayload?.projectId).toBe(PROJECT_ID);
 
-    // Close the task-detail dialog by dispatching Escape at document level.
-    // This uses document.dispatchEvent (anti-pattern 10 mitigation) so the
-    // event bypasses any focused webview element. BrowserPane's capture-phase
-    // Esc handler is a no-op here (inspectActive === false), so the Escape
-    // propagates to the TaskDetailDialog's bubble-phase handler and closes it.
-    await sharedPage.evaluate(() => {
-      document.dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
-      );
-    });
-    await sharedPage.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 5000 });
+    // Discard the pane the way an agent's close_pane does (main's push). Neither
+    // user path would unmount the pane here, since the task has a running
+    // session: closing the WINDOW parks it, and toggling the pane off HOLDS it
+    // (browser-pane-park-on-close.spec.ts and browser-pane-hold-on-hide.spec.ts
+    // own those). The agent's discard is what unmounts BrowserPaneActive and
+    // runs its cleanup.
+    await sharedPage.evaluate(({ projectId, taskId }) => {
+      window.__mockBrowser?.emitPaneCloseRequest(projectId, [taskId]);
+    }, { projectId: PROJECT_ID, taskId: TASK_ID });
+    await sharedPage.locator('[data-testid="browser-webview"]').waitFor({ state: 'detached', timeout: 5000 });
 
     // Poll for the unregister call. React runs effect cleanup synchronously
     // during unmount (commit phase), so unregisterPane should be recorded
     // as soon as BrowserPaneActive leaves the DOM. The poll gives a budget
-    // for any async scheduling between dialog hide and React cleanup.
+    // for any async scheduling between the toggle and React cleanup. The
+    // unregister names the GUEST this instance registered, never the session:
+    // main keys the surface by its guest, so an out-of-order unmount can only
+    // ever remove its own registration.
     await expect.poll(
-      () => sharedPage.evaluate((sessionId: string) => {
+      () => sharedPage.evaluate((webContentsId: number) => {
         const calls = window.__mockBrowser?.getPaneCalls() ?? [];
-        return calls.some((call) => call.type === 'unregister' && call.sessionId === sessionId);
-      }, SESSION_ID),
+        return calls.some((call) => call.type === 'unregister' && call.webContentsId === webContentsId);
+      }, MOCK_WEB_CONTENTS_ID),
       { timeout: 5000 },
     ).toBe(true);
   });
@@ -314,5 +315,81 @@ test.describe('BrowserPaneActive - webContents registration', () => {
     expect(
       log.filter((call) => call.type === 'unregister' && call.webContentsId === MOCK_WEB_CONTENTS_ID),
     ).toHaveLength(0);
+  });
+
+  // Main binds a surface handle to the GUEST, and keeps it for as long as that
+  // guest lives. A session rotation (`/clear` starts a new agent session for the
+  // same task) changes the pane's `sessionId` prop but not its guest, so the
+  // pane must re-register the same guest under the new owner and never
+  // unregister it: an unregister would retire the handle an agent is holding
+  // for a tab that never went anywhere.
+  test('a session rotation re-registers the same guest under the new owner without unregistering it', async () => {
+    await openBrowserPane(sharedPage);
+    await sharedPage.locator('[data-testid="browser-webview"]').waitFor({ state: 'attached', timeout: 5000 });
+
+    await sharedPage.evaluate((webContentsId: number) => {
+      const element = document.querySelector('[data-testid="browser-webview"]');
+      if (!element) throw new Error('browser-webview element not found in DOM');
+      const stub = element as HTMLElement & {
+        getWebContentsId: () => number;
+        getURL: () => string;
+      };
+      stub.getWebContentsId = () => webContentsId;
+      stub.getURL = () => 'http://localhost:5173/';
+      element.dispatchEvent(new Event('dom-ready'));
+    }, MOCK_WEB_CONTENTS_ID);
+
+    await expect.poll(
+      () => sharedPage.evaluate((expectedId: number) => {
+        const calls = window.__mockBrowser?.getPaneCalls() ?? [];
+        return calls.some((call) => call.type === 'register' && call.input.webContentsId === expectedId);
+      }, MOCK_WEB_CONTENTS_ID),
+      { timeout: 5000 },
+    ).toBe(true);
+
+    // Rotate the task's session in the store, the way a `/clear` lands in the
+    // renderer: the same task now has a different running session.
+    const ROTATED_SESSION_ID = `${SESSION_ID}-rotated`;
+    await sharedPage.evaluate(({ taskId, rotatedSessionId }) => {
+      type MockSession = { id: string; taskId: string; status: string };
+      const stores = (window as unknown as {
+        __zustandStores: {
+          session: {
+            getState: () => { sessions: MockSession[] };
+            setState: (partial: { sessions: MockSession[]; _sessionByTaskId: Map<string, MockSession> }) => void;
+          };
+        };
+      }).__zustandStores;
+      const sessions = stores.session.getState().sessions.map((candidate) =>
+        candidate.taskId === taskId ? { ...candidate, id: rotatedSessionId } : candidate,
+      );
+      stores.session.setState({
+        sessions,
+        _sessionByTaskId: new Map(sessions.map((candidate) => [candidate.taskId, candidate])),
+      });
+    }, { taskId: TASK_ID, rotatedSessionId: ROTATED_SESSION_ID });
+
+    // The same guest registers again under the new owner.
+    await expect.poll(
+      () => sharedPage.evaluate(({ rotatedSessionId, expectedId }) => {
+        const calls = window.__mockBrowser?.getPaneCalls() ?? [];
+        return calls.some((call) =>
+          call.type === 'register' && call.input.sessionId === rotatedSessionId && call.input.webContentsId === expectedId,
+        );
+      }, { rotatedSessionId: ROTATED_SESSION_ID, expectedId: MOCK_WEB_CONTENTS_ID }),
+      { timeout: 5000 },
+    ).toBe(true);
+
+    // Exactly one guest ever registered, and it was never unregistered.
+    const log = await sharedPage.evaluate(() => window.__mockBrowser?.getPaneCalls() ?? []);
+    const registeredGuestIds = new Set(
+      log.filter((call) => call.type === 'register').map((call) => (call.type === 'register' ? call.input.webContentsId : -1)),
+    );
+    expect([...registeredGuestIds]).toEqual([MOCK_WEB_CONTENTS_ID]);
+    expect(
+      log.filter((call) => call.type === 'unregister' && call.webContentsId === MOCK_WEB_CONTENTS_ID),
+    ).toHaveLength(0);
+    // The webview element itself was not replaced either.
+    await expect(sharedPage.locator('[data-testid="browser-webview"]')).toHaveCount(1);
   });
 });

@@ -11,11 +11,14 @@ import { isShuttingDown } from '../shutdown-state';
  * that is midway through verifying something.
  *
  * The mechanism it works around: an Electron `<webview>` guest dies the instant
- * its DOM node unmounts, so closing the task-detail window destroys the guest -
- * correctly, the node went away. Retention (see
- * `.claude/rules/retained-pane-never-remounts.md`) covers only the case where
- * the window STAYS OPEN across a project switch; it does nothing for a window
- * the user actually closed. Reproduced live, and the registry names it:
+ * its DOM node unmounts. The renderer now avoids unmounting a live agent's pane
+ * wherever it can (see `.claude/rules/retained-pane-never-remounts.md`): the
+ * window is retained across a project switch, PARKED when the user closes it,
+ * and the pane is HELD when the user hides it with the Browser pill. What is
+ * left for this file is the pane that genuinely unmounts - a renderer reload,
+ * the pane detaching into a pop-out, a window dropped by displacement to
+ * another host, the task leaving the board. Reproduced live before parking
+ * existed, and the registry names it:
  *
  *   [browser-pane] unregister ... reason=guest-destroyed
  *
@@ -25,14 +28,21 @@ import { isShuttingDown } from '../shutdown-state';
  *
  * ## What happens instead
  *
- * When a user-visible pane closes while its task still has a live agent session,
- * main opens an offscreen LANE at the same URL and registers it under the same
- * task. The agent's next call resolves to it through the ordinary caller-task
- * rule, so nothing about the agent changes - it does not know a hand-off
- * happened, and does not need to.
+ * When a user-visible pane unmounts while its task still has a live agent session,
+ * main opens an offscreen LANE at the same URL and registers it under a NEW
+ * `lane_` handle for the same task. An agent that omits `sessionId` resolves
+ * to it through the ordinary caller-task rule, which ranks a hand-off lane
+ * right behind the visible pane. An agent holding the old `pane_` handle is
+ * told the truth instead of being retargeted: that handle now returns
+ * `surface-gone`, naming the lane and saying that per-tab state did not carry
+ * over (the lane is a fresh document in the same cookie jar).
  *
  * The user's close is still honoured: the window really closes and its renderer
  * surface really goes away. What survives is a headless browser the agent owns.
+ * A pane the AGENT put away with `close_pane` is never handed off: the registry
+ * flags that unregister as deliberate, and resurrecting the page in a lane the
+ * agent just asked to close would be the same class of surprise this file
+ * exists to prevent.
  *
  * ## Standing down
  *
@@ -62,11 +72,10 @@ let dependencies: LaneHandoffDependencies | null = null;
  */
 const HANDOFF_REASONS: ReadonlySet<PaneUnregisterReason> = new Set([
   'renderer-unmount',
-  'renderer-unmount-matched',
   'guest-destroyed',
 ]);
 
-function onPaneClosed(entry: BrowserPaneEntry, reason: PaneUnregisterReason): void {
+function onPaneClosed(entry: BrowserPaneEntry, reason: PaneUnregisterReason, deliberate: boolean): void {
   if (!dependencies) return;
   // Quitting is not a hand-off. A lane opened this late would construct a fresh
   // OS window inside the teardown and outlive the app-quit sweep, holding the
@@ -75,6 +84,9 @@ function onPaneClosed(entry: BrowserPaneEntry, reason: PaneUnregisterReason): vo
   // Never hand off a lane. A lane closing is either the agent's own decision or
   // a cleanup path, and re-opening it would make lanes impossible to close.
   if (entry.kind === 'lane') return;
+  // The agent asked for this pane to go away (`close_pane`). Standing a lane up
+  // behind its back would undo exactly what it requested.
+  if (deliberate) return;
   if (!HANDOFF_REASONS.has(reason)) return;
   // Nothing to preserve: a pane on its empty state has no page to carry over.
   if (!entry.url) return;
@@ -90,7 +102,7 @@ function onPaneClosed(entry: BrowserPaneEntry, reason: PaneUnregisterReason): vo
     taskId: entry.taskId,
     projectId: entry.projectId,
     // Owned by the pane's session, so it dies with the agent it serves.
-    ownerSessionId: entry.sessionId,
+    ownerSessionId: entry.ownerSessionId ?? undefined,
     url: entry.url,
     handoff: true,
   })
@@ -98,7 +110,7 @@ function onPaneClosed(entry: BrowserPaneEntry, reason: PaneUnregisterReason): vo
       if (result.ok) {
         console.log(
           `[browser-pane] handoff task=${entry.taskId.slice(0, 8)} url=${entry.url} lane=${result.laneId} ` +
-            '(window closed, agent keeps its browser)',
+            `(pane unmounted: ${reason}; agent keeps its browser)`,
         );
       } else {
         console.warn(`[browser-pane] handoff failed for task=${entry.taskId.slice(0, 8)}: ${result.detail}`);

@@ -7,10 +7,12 @@ import type { PopOutTaskParams } from '../../../shared/pop-out';
 /**
  * Pop-out root for the 'browser' surface (the hard case). Resolves sessionId +
  * cwd from params.taskId and renders the SAME BrowserPane component the in-app
- * embed uses. BrowserPane's own dom-ready effect re-registers the guest's fresh
- * webContentsId under the same sessionId - see the unregisterIfMatches
- * compare-and-delete in browser-pane-registry.ts, which is what stops the in-app
- * pane's unmount cleanup from clobbering this pop-out's registration.
+ * embed uses. BrowserPane's own dom-ready effect registers the pop-out's fresh
+ * guest, which main binds to a NEW surface handle (a handle names one guest for
+ * its whole life). The in-app pane's unmount cleanup unregisters only the guest
+ * id it registered, so it cannot clobber this registration; an agent still
+ * holding the in-app pane's old handle is told `surface-gone` and pointed at
+ * this one.
  */
 export function PopOutBrowserRoot({ params }: { params: PopOutTaskParams }) {
   const task = useBoardStore((state) => state.tasks.find((candidate) => candidate.id === params.taskId));

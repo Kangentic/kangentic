@@ -56,9 +56,9 @@ import { READ_ONLY_ANNOTATIONS, MUTATING_ANNOTATIONS } from './annotations';
  */
 
 const SESSION_DESC =
-  "Optional Kangentic sessionId of the task whose Browser pane to target. Must name a pane in your own project; a pane in another project is refused. Omit to use your own task's pane, or the single pane open in your project. Use kangentic_browser_list_panes to discover panes.";
+  'Optional browser surface handle (pane_… or lane_…) from kangentic_browser_open_pane or kangentic_browser_list_panes. A handle names exactly one tab for its lifetime; if that tab is gone the call fails with surface-gone and names your task\'s current surface. Must be in your own project. Omit to use your own task\'s surface (its visible pane first, then a hand-off lane, then an isolated lane); a caller with no task falls back to the single pane open in the project. This is NOT a Kangentic agent session id.';
 const TASK_DESC =
-  "Optional Kangentic taskId whose Browser pane to target. An alternative to sessionId, and must likewise be a task in your own project. Omit to use your own task's pane, or the single pane open in your project.";
+  "Optional Kangentic taskId whose Browser surface to target (its visible pane first, then a lane). An alternative to sessionId, and must likewise be a task in your own project. Omit both to use your own task's surface.";
 
 const TARGET_SHAPE = {
   sessionId: z.string().optional().describe(SESSION_DESC),
@@ -193,7 +193,7 @@ export function registerBrowserTools(
     'kangentic_browser_list_panes',
     {
       description:
-        'List the embedded Browser panes open in your project, with their sessionId, taskId, current URL, and whether the pane is alive / debugger-attached. Use this to discover a sessionId/taskId to pass to the other kangentic_browser_* tools, or to confirm the user has a dev server loaded. Panes in other projects are excluded by default and cannot be driven from this connection; pass includeOtherProjects to see them too. Returns an empty list when no pane is open.',
+        'List the embedded Browser surfaces open in your project: each entry carries its surface handle (`sessionId`, pass it back as sessionId), `ownerSessionId` (the agent session it serves), taskId, kind (pane or lane, with `handoff` for a lane standing in for a closed pane), current URL, and whether it is alive / debugger-attached. Use this to discover a handle or taskId to pass to the other kangentic_browser_* tools, or to confirm the user has a dev server loaded. Panes in other projects are excluded by default and cannot be driven from this connection; pass includeOtherProjects to see them too. Returns an empty list when no pane is open.',
       inputSchema: z.object({
         includeOtherProjects: z
           .boolean()
@@ -236,7 +236,7 @@ export function registerBrowserTools(
     'kangentic_browser_open_pane',
     {
       description:
-        "Open the embedded Browser pane for YOUR OWN task and load a URL, so you can then drive it with the other kangentic_browser_* tools. Use this instead of asking the user to open the Browser pill. Opens the task's detail window if it is not already open. Returns the pane once it is registered and driveable, so the very next call can act on it. Only ever targets your own task; there is no way to open a pane for another task or project. Calling it again with a different url navigates the existing pane rather than reopening it.",
+        "Open the embedded Browser pane for YOUR OWN task and load a URL, so you can then drive it with the other kangentic_browser_* tools. Use this instead of asking the user to open the Browser pill. Opens the task's detail window if it is not already open. Returns the pane once it is registered and driveable, so the very next call can act on it; `pane.sessionId` is its surface handle. Only ever targets your own task; there is no way to open a pane for another task or project. Calling it again with a different url navigates the existing pane rather than reopening it, and if the user had hidden the pane or closed its window, it is shown again: the same tab, nothing reloads.",
       inputSchema: z.object({
         url: z
           .string()
@@ -248,7 +248,7 @@ export function registerBrowserTools(
           .boolean()
           .optional()
           .describe(
-            'Open a private browser lane of your own instead of the task\'s shared pane. Use this when several agents are working on one task at the same time, so you do not fight over one viewport. The response returns a laneId - pass it as `sessionId` on EVERY later kangentic_browser_* call, or you will silently fall back to the shared pane. A lane is offscreen: it does not disturb the user\'s pane and cannot take their keyboard focus.',
+            'Open a private browser lane of your own instead of the task\'s shared pane. Use this when several agents are working on one task at the same time, so you do not fight over one viewport. The response returns a laneId (also `pane.sessionId`) - pass it as `sessionId` on EVERY later kangentic_browser_* call, or you will silently fall back to the shared pane. A lane is offscreen: it does not disturb the user\'s pane and cannot take their keyboard focus.',
           ),
       }),
       annotations: MUTATING_ANNOTATIONS,
@@ -273,7 +273,7 @@ export function registerBrowserTools(
     'kangentic_browser_close_pane',
     {
       description:
-        "Close embedded Browser panes, putting them away exactly as the user's Browser pill does. The task's detail window stays open. With no arguments this closes your own task's pane; pass all to close every pane in your project. Panes in other projects are left alone and reported as a count unless you pass includeOtherProjects. The response lists the panes actually closed, so a partial close is never reported as complete.",
+        "Close embedded Browser panes, putting them away exactly as the user's Browser pill does. The task's detail window stays open. With no arguments this closes your own task's pane; pass all to close every pane in your project; a lane named by its handle is destroyed. A pane you close this way is not handed off to a lane. Panes in other projects are left alone and reported as a count unless you pass includeOtherProjects. The response lists the surfaces actually closed, so a partial close is never reported as complete.",
       inputSchema: z.object({
         ...TARGET_SHAPE,
         all: z

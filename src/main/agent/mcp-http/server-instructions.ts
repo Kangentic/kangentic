@@ -38,7 +38,7 @@ const INSTRUCTIONS_PANE_LIST_CAP = 5;
 function buildBrowserSection(activeProjectId: string | null): string[] {
   const lines = [
     'BROWSER VERIFICATION (kangentic_browser_* tools):',
-    'When the user asks you to verify, check, look at, click, type, or test something in the running app or a page in the browser, prefer the kangentic_browser_* tools - they drive the embedded Browser pane of a task (the dev server the user has loaded). Use them over any external or desktop browser-automation tool (for example a Chrome-extension browser MCP) and over writing a separate Playwright/Puppeteer script: those drive a separate real browser, not the in-app pane the user is looking at. Call kangentic_browser_list_panes first; target a tool with sessionId or taskId, or omit both to use your own task\'s pane (or the single pane open in this project). These tools only drive Browser panes in this project; one in another project is refused. If no pane is open, call kangentic_browser_open_pane with a url to open and load your own task\'s pane - you do not need to ask the user. Call kangentic_browser_close_pane when you are done to put the pane away. Do not drive the browser proactively when the user has not asked about on-screen behavior.',
+    'When the user asks you to verify, check, look at, click, type, or test something in the running app or a page in the browser, prefer the kangentic_browser_* tools - they drive the embedded Browser pane of a task (the dev server the user has loaded). Use them over any external or desktop browser-automation tool (for example a Chrome-extension browser MCP) and over writing a separate Playwright/Puppeteer script: those drive a separate real browser, not the in-app pane the user is looking at. Call kangentic_browser_list_panes first; target a tool with the surface handle it lists (passed as sessionId) or with a taskId, or omit both to use your own task\'s surface (a caller with no task falls back to the single pane open in this project). A handle names one tab for its lifetime; if that tab is gone the call fails with surface-gone and names the replacement. These tools only drive Browser panes in this project; one in another project is refused. If no pane is open, call kangentic_browser_open_pane with a url to open and load your own task\'s pane - you do not need to ask the user. Call kangentic_browser_close_pane when you are done to put the pane away. Do not drive the browser proactively when the user has not asked about on-screen behavior.',
   ];
   const panes = browserPaneRegistry
     .list()
@@ -54,7 +54,7 @@ function buildBrowserSection(activeProjectId: string | null): string[] {
       .map((pane) => `task ${pane.taskId}${pane.url ? ` (${pane.url})` : ''}`)
       .join(', ');
     lines.push(
-      `${panes.length} Browser panes are currently open: ${summary}. Drive a specific one with the kangentic_browser_* tools by passing its sessionId or taskId - drive these panes, not a separate external browser.`,
+      `${panes.length} Browser panes are currently open: ${summary}. Drive a specific one with the kangentic_browser_* tools by passing its handle as sessionId or its taskId - drive these panes, not a separate external browser.`,
     );
   }
   return lines;

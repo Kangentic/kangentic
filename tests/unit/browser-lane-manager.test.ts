@@ -131,8 +131,22 @@ describe('openLane', () => {
     const result = await openLane(input());
     expect(result.ok).toBe(true);
     expect(registered).toHaveLength(1);
-    expect(registered[0]).toMatchObject({ taskId: 'task-1', projectId: 'project-1', kind: 'lane' });
-    expect(isLaneId(registered[0].sessionId as string)).toBe(true);
+    expect(registered[0]).toMatchObject({
+      taskId: 'task-1',
+      projectId: 'project-1',
+      kind: 'lane',
+      // The registry keys the lane by this pre-minted handle; the agent session
+      // that asked for it is recorded as the owner, never as the key.
+      ownerSessionId: 'session-1',
+      handoff: false,
+    });
+    expect(isLaneId(registered[0].handle as string)).toBe(true);
+  });
+
+  it('registers a hand-off lane as one, so the resolver can rank it behind the visible pane', async () => {
+    const result = await openLane(input({ handoff: true }));
+    expect(result.ok).toBe(true);
+    expect(registered[0]).toMatchObject({ kind: 'lane', handoff: true });
   });
 
   it('creates an OFFSCREEN, never-shown window', async () => {
