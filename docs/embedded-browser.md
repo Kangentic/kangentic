@@ -334,6 +334,7 @@ src/main/agent/mcp-http/
 src/renderer/components/browser/
   BrowserPane.tsx                           top-level component (loading/empty/active)
   BrowserEmptyState.tsx                     URL prompt + quick picks + WSL hint
+  close-browser.ts                          the user's Close discard (retire the handle, then unmount)
   AttachmentChips.tsx                       chip strip (strokes, picked element)
   captureComposite.ts                       PNG compositor
   useDrawingOverlay.ts                      stroke capture
