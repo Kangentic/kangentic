@@ -47,6 +47,7 @@ import {
 import { useLayerStore } from '../context';
 import { taskDetailSurfaceFor } from '../../utils/task-progress';
 import { registerWindowCloser, unregisterWindowCloser } from '../store/window-close-registry';
+import { isWindowDormant } from '../store/types';
 import { classifySnapZone, nextSnap } from '../dnd/snap-zones';
 import type { SnapDirection } from '../dnd/snap-zones';
 import type { Task, ShortcutConfig, TaskRunMode, SessionDisplayState } from '../../../shared/types';
@@ -120,7 +121,7 @@ export function TaskDetailWindow({
   // this window does about it: no terminal, no terminal claim, no registered
   // closer. What they do not share (which project the pane resolves against)
   // stays on `retainedProjectId` alone.
-  const dormant = parked === true || retainedProjectId !== undefined;
+  const dormant = isWindowDormant({ parked, retainedProjectId });
   // Everything project-scoped comes from the HOST, so this window renders the
   // same whether the board mounted it for the open project or the Agent Monitor
   // mounted it for a task in another one.
