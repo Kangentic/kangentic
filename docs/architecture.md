@@ -622,6 +622,18 @@ Two watchers per session, reading files written by bridge scripts:
 
 Events watcher uses byte offset tracking to only read new lines (no full re-read). Activity state (thinking/idle) is derived from event types -- see [Activity Detection](activity-detection.md).
 
+Both go through `FileWatcher` (`src/main/pty/readers/file-watcher.ts`), which pairs an `fs.watch`
+fast path with a 1s poll that runs unconditionally as the fallback. Two behaviors are load-bearing
+on Windows, where a directory `fs.watch` whose target is deleted emits `rename` at roughly 150k
+events/sec forever, with no `error` event, until `close()`:
+
+- Both files are created (empty) before their watcher is constructed, so each watcher arms on the
+  FILE. When a watcher has to fall back to watching the parent DIRECTORY (the file does not exist
+  yet), it counts raw events ahead of its filename filter and disarms itself on a flood, dropping
+  to the poll and re-arming on the file once it appears.
+- Deleting a live session's directory is therefore survivable: the watcher releases its handle,
+  `repairMissingEventsDir` recreates the directory, and the poll picks the file back up.
+
 ### Shell Resolution
 
 Platform-specific detection order in `src/main/pty/spawn/shell-resolver.ts`:

@@ -58,7 +58,7 @@ import { prRefreshScheduler } from './pr/pr-refresh-scheduler';
 import { retrievalService } from './retrieval/retrieval-service';
 import { lineCountClient } from './git/line-count/line-count-client';
 import { setProjectDbInitializer } from './db/database';
-import { setWorktreeRemovedListener } from './git/worktree-manager';
+import { setWorktreeRemovedListener, setWorktreeRemovingListener } from './git/worktree-manager';
 import { notifyAdaptersWorktreeRemoved } from './ipc/helpers/task-cleanup';
 import { loadVecExtension } from './retrieval/vec-extension';
 import { restoreShellEnv } from './shell-env';
@@ -1116,6 +1116,21 @@ app.whenReady().then(async () => {
   // into the agent registry. Wired here, before any project opens, so no
   // removal path can run un-notified.
   setWorktreeRemovedListener(notifyAdaptersWorktreeRemoved);
+
+  // Symmetric BEFORE hook: release every fs.watch handle we hold under a
+  // worktree ahead of deleting it. On Windows a directory watch whose target is
+  // deleted emits `rename` at ~150k events/sec forever, with no `error` event,
+  // stopping only on close() - and an open handle inside the tree is also what
+  // the removal retry / process-reap / husk machinery exists to fight.
+  //
+  // Both DiffWatcher instances have to be released: the bridge deliberately
+  // owns one separate from the IPC context's, so releasing either alone leaves
+  // half the handles armed over a deleted directory.
+  setWorktreeRemovingListener(async (worktreePath: string) => {
+    const removalContext = getOptionalIpcContext();
+    removalContext?.diffWatcher.releaseUnder(worktreePath);
+    removalContext?.mobileBridgeService.releaseDiffHandlesUnder(worktreePath);
+  });
 
   // Redundant AUMID call inside whenReady -- ensures the ID is set even if
   // Electron clears it during app initialization on some Windows versions.

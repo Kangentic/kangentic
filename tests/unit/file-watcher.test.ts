@@ -6,24 +6,36 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // ── Mocks ──────────────────────────────────────────────────────────────────
 
 const mockWatcherClose = vi.fn();
-const mockWatcherOn = vi.fn();
+
+// Handlers registered via watcher.on('error', ...), oldest first. Captured
+// rather than discarded so the error path can be driven from a test.
+let watchErrorHandlers: Array<() => void> = [];
+const mockWatcherOn = vi.fn((eventName: string, handler: () => void) => {
+  if (eventName === 'error') watchErrorHandlers.push(handler);
+});
 
 // Captured callbacks from fs.watch calls (in order)
 let watchCallbacks: Array<(...args: unknown[]) => void> = [];
+// The path each fs.watch call targeted, in order. Lets a test assert that a
+// re-arm went to the file and not back to the directory.
+let watchPaths: string[] = [];
 let watchShouldThrow = false;
 const mockStatSync = vi.fn(() => ({ mtimeMs: 0, size: 0 }));
+const mockExistsSync = vi.fn(() => false);
 
 vi.mock('node:fs', () => ({
   default: {
-    watch: vi.fn((_path: string, callback: (...args: unknown[]) => void) => {
+    watch: vi.fn((watchPath: string, callback: (...args: unknown[]) => void) => {
       if (watchShouldThrow) {
         watchShouldThrow = false;
         throw new Error('ENOENT');
       }
+      watchPaths.push(watchPath);
       watchCallbacks.push(callback);
       return { close: mockWatcherClose, on: mockWatcherOn };
     }),
     statSync: (...args: unknown[]) => mockStatSync(...args),
+    existsSync: (...args: unknown[]) => mockExistsSync(...args),
   },
 }));
 
@@ -43,6 +55,23 @@ function fireDirWatcher(eventType: string, filename: string | null): void {
   if (lastCallback) lastCallback(eventType, filename);
 }
 
+/** The storm threshold in file-watcher.ts. Exceed it to trip a disarm. */
+const STORM_EVENT_THRESHOLD = 1000;
+
+function fireWatcherTimes(count: number): void {
+  for (let index = 0; index < count; index++) fireWatcher();
+}
+
+function fireDirWatcherTimes(count: number, eventType: string, filename: string | null): void {
+  for (let index = 0; index < count; index++) fireDirWatcher(eventType, filename);
+}
+
+/** Invoke the most recently registered 'error' handler. */
+function fireWatcherError(): void {
+  const lastHandler = watchErrorHandlers[watchErrorHandlers.length - 1];
+  if (lastHandler) lastHandler();
+}
+
 // ── Tests ──────────────────────────────────────────────────────────────────
 
 describe('FileWatcher', () => {
@@ -52,8 +81,12 @@ describe('FileWatcher', () => {
     vi.useFakeTimers();
     vi.clearAllMocks();
     watchCallbacks = [];
+    watchPaths = [];
+    watchErrorHandlers = [];
     watchShouldThrow = false;
     mockStatSync.mockReturnValue({ mtimeMs: 0, size: 0 });
+    // Default false so no existing test gains a re-arm; storm tests opt in.
+    mockExistsSync.mockReturnValue(false);
     onChange = vi.fn();
   });
 
@@ -280,6 +313,179 @@ describe('FileWatcher', () => {
       fireWatcher();
       vi.advanceTimersByTime(50);
       expect(onChange).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('storm disarm', () => {
+    let warnSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      // A disarm warns once, by design. Silence it so the suite output stays clean.
+      warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      warnSpy.mockRestore();
+    });
+
+    it('disarms a flooding directory watcher, and polling still delivers', () => {
+      watchShouldThrow = true;
+      const isStale = vi.fn().mockReturnValue(false);
+      const watcher = createWatcher({
+        filePath: '/test/dir/status.json',
+        debounceMs: 50,
+        pollIntervalMs: 1000,
+        isStale,
+      });
+      expect(watchPaths).toEqual(['/test/dir']);
+
+      // The real Windows flood carries the watched directory's own absolute
+      // path, which never equals the expected filename - so the filter drops
+      // every event and nothing downstream of it ever sees the storm.
+      fireDirWatcherTimes(STORM_EVENT_THRESHOLD + 1, 'rename', '\\\\?\\C:\\test\\dir');
+
+      expect(mockWatcherClose).toHaveBeenCalledTimes(1);
+      expect(onChange).not.toHaveBeenCalled();
+
+      // The poll fallback is untouched by the disarm.
+      isStale.mockReturnValue(true);
+      vi.advanceTimersByTime(1000);
+      vi.advanceTimersByTime(50);
+      expect(onChange).toHaveBeenCalledTimes(1);
+
+      watcher.close();
+    });
+
+    it('disarms a flooding file watcher that never settles its debounce', () => {
+      const watcher = createWatcher({ debounceMs: 50, pollIntervalMs: 100000 });
+
+      // No timer advance: each event clears and re-arms the debounce, so
+      // onChange never fires and the run never resets.
+      fireWatcherTimes(STORM_EVENT_THRESHOLD + 1);
+
+      expect(mockWatcherClose).toHaveBeenCalledTimes(1);
+      expect(onChange).not.toHaveBeenCalled();
+      watcher.close();
+    });
+
+    it('does not disarm on slow sibling churn spread across windows', () => {
+      watchShouldThrow = true;
+      const isStale = vi.fn().mockReturnValue(false);
+      const watcher = createWatcher({
+        filePath: '/test/dir/status.json',
+        debounceMs: 50,
+        pollIntervalMs: 100000,
+        isStale,
+      });
+
+      // Five times the threshold in total, but no single window holds enough.
+      // This is the BoardConfigManager case: a project root where .git, build
+      // output and lockfiles churn while kangentic.json never appears, so
+      // nothing ever dispatches to reset the count.
+      for (let burst = 0; burst < 5; burst++) {
+        fireDirWatcherTimes(500, 'change', 'unrelated.log');
+        vi.advanceTimersByTime(1001);
+      }
+
+      expect(mockWatcherClose).not.toHaveBeenCalled();
+      watcher.close();
+      expect(mockWatcherClose).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not disarm while events keep dispatching', () => {
+      const watcher = createWatcher({ debounceMs: 50, pollIntervalMs: 100000 });
+
+      // Twice the threshold overall, but every batch settles and dispatches.
+      for (let batch = 0; batch < 10; batch++) {
+        fireWatcherTimes(200);
+        vi.advanceTimersByTime(50);
+      }
+
+      expect(onChange).toHaveBeenCalledTimes(10);
+      expect(mockWatcherClose).not.toHaveBeenCalled();
+      watcher.close();
+    });
+
+    it('re-arms a FILE watch from the poll, never the directory', () => {
+      watchShouldThrow = true;
+      const isStale = vi.fn().mockReturnValue(false);
+      const watcher = createWatcher({
+        filePath: '/test/dir/status.json',
+        debounceMs: 50,
+        pollIntervalMs: 1000,
+        isStale,
+      });
+      expect(watchPaths).toEqual(['/test/dir']);
+
+      fireDirWatcherTimes(STORM_EVENT_THRESHOLD + 1, 'rename', '\\\\?\\C:\\test\\dir');
+      expect(mockWatcherClose).toHaveBeenCalledTimes(1);
+
+      // Target still missing: no re-arm, and no fs.watch throw once per second.
+      vi.advanceTimersByTime(1000);
+      expect(watchPaths).toEqual(['/test/dir']);
+
+      // Target back: re-armed on the file, never back onto the directory.
+      mockExistsSync.mockReturnValue(true);
+      vi.advanceTimersByTime(1000);
+      expect(watchPaths).toEqual(['/test/dir', '/test/dir/status.json']);
+
+      watcher.close();
+    });
+
+    it('lets the very next poll run isStale after a disarm', () => {
+      const isStale = vi.fn().mockReturnValue(false);
+      const watcher = createWatcher({ debounceMs: 50, pollIntervalMs: 1000, isStale });
+
+      // A file-arm storm advances lastWatcherNativeFireTime on every event,
+      // which would otherwise suppress the poll's stat for a full interval
+      // after the handle is already gone.
+      fireWatcherTimes(STORM_EVENT_THRESHOLD + 1);
+      expect(mockWatcherClose).toHaveBeenCalledTimes(1);
+      isStale.mockClear();
+
+      vi.advanceTimersByTime(1000);
+      expect(isStale).toHaveBeenCalled();
+
+      watcher.close();
+    });
+
+    it('does not double-close when closed after a disarm', () => {
+      const watcher = createWatcher({ debounceMs: 50, pollIntervalMs: 100000 });
+
+      fireWatcherTimes(STORM_EVENT_THRESHOLD + 1);
+      expect(mockWatcherClose).toHaveBeenCalledTimes(1);
+
+      watcher.close();
+      expect(mockWatcherClose).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('error handling', () => {
+    it('releases the handle on an error event and re-arms from the poll', () => {
+      const isStale = vi.fn().mockReturnValue(false);
+      const watcher = createWatcher({ pollIntervalMs: 1000, isStale });
+      expect(watchPaths).toEqual(['/test/status.json']);
+
+      // Windows raises EPERM here when a watched FILE's directory is deleted.
+      fireWatcherError();
+      expect(mockWatcherClose).toHaveBeenCalledTimes(1);
+
+      mockExistsSync.mockReturnValue(true);
+      vi.advanceTimersByTime(1000);
+      expect(watchPaths).toEqual(['/test/status.json', '/test/status.json']);
+
+      watcher.close();
+    });
+
+    it('does not re-arm after close', () => {
+      const watcher = createWatcher({ pollIntervalMs: 1000 });
+      mockExistsSync.mockReturnValue(true);
+
+      watcher.close();
+      const pathCountAtClose = watchPaths.length;
+
+      vi.advanceTimersByTime(5000);
+      expect(watchPaths).toHaveLength(pathCountAtClose);
     });
   });
 

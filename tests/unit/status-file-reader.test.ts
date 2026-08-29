@@ -97,8 +97,8 @@ describe('StatusFileReader', () => {
       statusFileHook: parser,
     });
 
-    // WAIT: attach() deletes stale status.json on setup, then the watcher
-    // triggers an initial read of the (now-deleted) file. So we need to
+    // WAIT: attach() truncates stale status.json on setup, then the watcher
+    // triggers an initial read of the (now-empty) file. So we need to
     // re-write content AFTER attach.
     fs.writeFileSync(statusPath, '{"fresh":"data"}');
 
@@ -106,13 +106,14 @@ describe('StatusFileReader', () => {
     // debounced watchers but this works for testing dispatch).
     reader.flushPendingEvents('session-1');
 
-    // The initial synchronous read in attach happened on the DELETED file
-    // (ENOENT), so no callback fired there. But we can still verify the
-    // attach lifecycle worked:
+    // The initial synchronous read in attach saw an EMPTY file. Every real
+    // parseStatus returns null for '', so production emits nothing there; this
+    // stub ignores its input, so it is not a useful assertion either way. What
+    // this test pins is the attach lifecycle:
     expect(reader.isAttached('session-1')).toBe(true);
   });
 
-  it('deletes stale status.json on attach so the watcher does not emit cached data', () => {
+  it('truncates stale status.json on attach so the watcher does not emit cached data', () => {
     const statusPath = path.join(tempDir, 'status.json');
     fs.writeFileSync(statusPath, '{"stale":"prev-run"}');
 
@@ -132,8 +133,13 @@ describe('StatusFileReader', () => {
       statusFileHook: parser,
     });
 
-    // File should be deleted by attach.
-    expect(fs.existsSync(statusPath)).toBe(false);
+    // File should exist but be empty, mirroring events.jsonl below. The stub
+    // parser above throws on stale content, so an empty read is what keeps
+    // this green. Truncating rather than unlinking is what puts FileWatcher on
+    // the FILE instead of falling back to watching the session DIRECTORY,
+    // which is the arm that spins a CPU core on Windows once it is deleted.
+    expect(fs.existsSync(statusPath)).toBe(true);
+    expect(fs.readFileSync(statusPath, 'utf-8')).toBe('');
   });
 
   it('truncates stale events.jsonl on attach', () => {

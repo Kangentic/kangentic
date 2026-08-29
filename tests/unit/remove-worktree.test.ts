@@ -178,7 +178,7 @@ vi.mock('simple-git', () => ({
 // Import under test (after mocks)
 // ---------------------------------------------------------------------------
 
-import { WorktreeManager, setWorktreeRemovedListener } from '../../src/main/git/worktree-manager';
+import { WorktreeManager, setWorktreeRemovedListener, setWorktreeRemovingListener } from '../../src/main/git/worktree-manager';
 
 const WORKTREE_PATH = '/mock/project/.kangentic/worktrees/my-task-abcd1234';
 const PROJECT_PATH = '/mock/project';
@@ -546,6 +546,105 @@ describe('WorktreeManager.removeWorktree -- worktree-removed listener', () => {
 
     // No setWorktreeRemovedListener call - default state after the afterEach
     // reset above. Must not throw.
+    await expect(manager.removeWorktree(WORKTREE_PATH)).resolves.toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Worktree-removing listener: release OS handles BEFORE the delete
+// ---------------------------------------------------------------------------
+//
+// The contract is the mirror image of the removed-listener above: it fires
+// before any removal attempt, whether or not the removal goes on to succeed,
+// because its job is to drop handles we hold under the path. On Windows a
+// directory `fs.watch` whose target is deleted spins a CPU core until close(),
+// and an open handle in the tree is also what the retry / reap / husk machinery
+// fights. Also module-level mutable state, so it must be reset in afterEach.
+
+describe('WorktreeManager.removeWorktree - worktree-removing listener', () => {
+  let manager: WorktreeManager;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGitInstances.length = 0;
+    recordedSpawnCalls.length = 0;
+    spawnOverrides.length = 0;
+    mockReapProcessesForWorktree.mockResolvedValue([]);
+    manager = new WorktreeManager(PROJECT_PATH);
+  });
+
+  afterEach(() => {
+    setWorktreeRemovingListener(null);
+  });
+
+  it('fires BEFORE any git command or filesystem removal runs', async () => {
+    mockExistsSync.mockReturnValue(true);
+    let spawnCallsWhenNotified = -1;
+    let removeWithRetryCallsWhenNotified = -1;
+    const listener = vi.fn(async () => {
+      spawnCallsWhenNotified = recordedSpawnCalls.length;
+      removeWithRetryCallsWhenNotified = mockRemoveWithRetry.mock.calls.length;
+    });
+    setWorktreeRemovingListener(listener);
+
+    const result = await manager.removeWorktree(WORKTREE_PATH);
+
+    expect(result).toBe(true);
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledWith(WORKTREE_PATH);
+    // The whole point: nothing had touched the directory yet.
+    expect(spawnCallsWhenNotified).toBe(0);
+    expect(removeWithRetryCallsWhenNotified).toBe(0);
+  });
+
+  it('fires even when the path is already gone - that is the spinning-watcher case', async () => {
+    mockExistsSync.mockReturnValue(false);
+    const listener = vi.fn(async () => {});
+    setWorktreeRemovingListener(listener);
+
+    const result = await manager.removeWorktree(WORKTREE_PATH);
+
+    expect(result).toBe(true);
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it('fires even when the removal fails, unlike the removed-listener', async () => {
+    mockExistsSync.mockReturnValue(true);
+    spawnOverrides.push({
+      match: (args) => args[0] === 'worktree' && args[1] === 'remove',
+      behavior: { exitCode: 1, stderr: 'fatal: unable to remove worktree' },
+    });
+    mockRemoveWithRetry.mockRejectedValue(new Error('EPERM: operation not permitted'));
+    const listener = vi.fn(async () => {});
+    setWorktreeRemovingListener(listener);
+
+    const result = await manager.removeWorktree(WORKTREE_PATH);
+
+    expect(result).toBe(false);
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it('a listener that throws does not fail the removal (best-effort)', async () => {
+    mockExistsSync.mockReturnValue(true);
+    const listener = vi.fn(async () => {
+      throw new Error('diff watcher release blew up');
+    });
+    setWorktreeRemovingListener(listener);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const result = await manager.removeWorktree(WORKTREE_PATH);
+
+    expect(result).toBe(true);
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[WORKTREE] worktree-removing listener failed (non-fatal):',
+      expect.any(Error),
+    );
+    warnSpy.mockRestore();
+  });
+
+  it('is a no-op when no listener is registered', async () => {
+    mockExistsSync.mockReturnValue(true);
+
     await expect(manager.removeWorktree(WORKTREE_PATH)).resolves.toBe(true);
   });
 });
