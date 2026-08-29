@@ -132,7 +132,10 @@ export interface ManagedWindow {
  * rather than spelling the two flags out, so a third reason to keep a window
  * mounted invisibly cannot be missed by half of them.
  */
-export function isWindowDormant(managedWindow: ManagedWindow): boolean {
+export function isWindowDormant(managedWindow: {
+  parked?: boolean;
+  retainedProjectId?: string;
+}): boolean {
   return managedWindow.parked === true || managedWindow.retainedProjectId !== undefined;
 }
 

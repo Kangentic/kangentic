@@ -303,7 +303,7 @@ test.describe('BrowserPaneActive keyboard shortcuts - Esc handling', () => {
     // We use document.dispatchEvent (anti-pattern 10) to bypass xterm capture.
     await openBrowserPane(sharedPage);
 
-    // Dispatch Esc at document level -- should propagate to the window's handler.
+    // Dispatch Esc at document level - should propagate to the window's handler.
     await sharedPage.evaluate(() => {
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
     });
