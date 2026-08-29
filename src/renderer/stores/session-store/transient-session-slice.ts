@@ -30,7 +30,11 @@ export interface TransientSessionEntry {
  *
  * `'no-session'` means the slot held no map entry, so no IPC was issued at all. It is
  * NOT a quiet success: the PTY, if one exists, is still running and now unreachable
- * from this slot.
+ * from this slot. The way that actually happens is a Stop landing before the initial
+ * spawn resolves, since `spawnTransientSession` inserts the entry only after its await;
+ * the spawn then completes unattended and the next layer-open reconciles a window back
+ * for it. `handleTerminate` still closes the window on this outcome and stays silent
+ * about it - see the reasoning there before making it louder.
  */
 export type TransientKillOutcome = 'killed' | 'no-session' | 'failed';
 

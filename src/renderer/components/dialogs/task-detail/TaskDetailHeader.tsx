@@ -46,13 +46,27 @@ function PauseButtonIcon({
   isIdle: boolean;
   isSessionActive: boolean;
 }): ReactNode {
-  // Every branch renders through IconSlot: these branches return different element types,
-  // so a state change mid-press would otherwise destroy the node the press landed on and
-  // Chromium would drop the click (see IconSlot). Clicking here also flips `toggling`, so
-  // this button swaps its own icon by design.
-  if (toggling) {
-    return <IconSlot size={20}><Loader2 size={18} className="animate-spin" /></IconSlot>;
-  }
+  // One IconSlot wraps whatever the branching produces: these branches return different
+  // element types, so a state change mid-press would otherwise destroy the node the press
+  // landed on and Chromium would drop the click (see IconSlot). Clicking here also flips
+  // `toggling`, so this button swaps its own icon by design.
+  return <IconSlot size={20}>{pauseGlyph({ toggling, isThinking, isQueued, isIdle, isSessionActive })}</IconSlot>;
+}
+
+function pauseGlyph({
+  toggling,
+  isThinking,
+  isQueued,
+  isIdle,
+  isSessionActive,
+}: {
+  toggling: boolean;
+  isThinking: boolean;
+  isQueued: boolean;
+  isIdle: boolean;
+  isSessionActive: boolean;
+}): ReactNode {
+  if (toggling) return <Loader2 size={18} className="animate-spin" />;
 
   // Active and idle/permission share one packaged mark, differing only by color and motion
   // (a rotating dashed arc vs a static ring), so the two states read as one visual language.
@@ -64,25 +78,23 @@ function PauseButtonIcon({
   // should be reintroduced, since ring and bars are now one SVG that scales together.
   if (isThinking || isIdle) {
     return (
-      <IconSlot size={20}>
-        <ActivityMark
-          mark={isThinking ? 'control-pause-working' : 'control-pause-idle'}
-          size={20}
-          className={isThinking ? 'text-active' : 'text-attention'}
-        />
-      </IconSlot>
+      <ActivityMark
+        mark={isThinking ? 'control-pause-working' : 'control-pause-idle'}
+        size={20}
+        className={isThinking ? 'text-active' : 'text-attention'}
+      />
     );
   }
 
-  if (isQueued) return <IconSlot size={20}><Clock size={18} /></IconSlot>;
+  if (isQueued) return <Clock size={18} />;
   // Launching (preparing/initializing): a muted grey spinner matching the board
   // card's loading indicator. The agent has not started yet, so it is NOT active-green;
   // once the session is running the engine seeds 'thinking' and this flips to the
   // active ring. Suspended -> the resume control.
   if (isSessionActive) {
-    return <IconSlot size={20}><Loader2 size={18} className="animate-spin text-fg-muted" /></IconSlot>;
+    return <Loader2 size={18} className="animate-spin text-fg-muted" />;
   }
-  return <IconSlot size={20}><CirclePlay size={18} /></IconSlot>;
+  return <CirclePlay size={18} />;
 }
 
 interface TaskDetailHeaderProps {

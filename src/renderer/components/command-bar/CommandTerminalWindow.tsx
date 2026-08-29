@@ -67,28 +67,29 @@ const ChangesPanel = lazy(() => import('../dialogs/task-detail/changes/ChangesPa
  *
  * These branches return DIFFERENT element types, so activity changing swaps the whole subtree
  * rather than re-rendering one, and a node destroyed mid-press makes Chromium drop the click.
- * Every branch renders through `IconSlot`, which is the one element the swap does NOT destroy
- * and which absorbs the pointer on the glyph's behalf. `PauseButtonIcon` has the same shape
- * over five branches and does the same.
+ * The single `IconSlot` below the branching is the one element the swap does NOT destroy, and
+ * it absorbs the pointer on the glyph's behalf. Wrapping once rather than inside each branch
+ * is what makes that structural: a future branch cannot forget it. `PauseButtonIcon` has the
+ * same shape over five branches and does the same.
  */
 function StopButtonIcon({ isThinking, isIdle, stopping }: { isThinking: boolean; isIdle: boolean; stopping: boolean }): ReactNode {
-  // One slot size across every branch: the box is the hit target, while each glyph keeps
-  // the size it already drew at (the 20px mark reads level with the 18px lucide glyphs).
-  if (stopping) {
-    return <IconSlot size={20}><Loader2 size={18} className="animate-spin" /></IconSlot>;
-  }
+  // The slot is 20 across every state, while each glyph keeps the size it already drew at
+  // (the 20px mark reads level with the 18px lucide glyphs), so the button never resizes.
+  return <IconSlot size={20}>{stopGlyph({ isThinking, isIdle, stopping })}</IconSlot>;
+}
+
+function stopGlyph({ isThinking, isIdle, stopping }: { isThinking: boolean; isIdle: boolean; stopping: boolean }): ReactNode {
+  if (stopping) return <Loader2 size={18} className="animate-spin" />;
   if (isThinking || isIdle) {
     return (
-      <IconSlot size={20}>
-        <ActivityMark
-          mark={isThinking ? 'control-stop-working' : 'control-stop-idle'}
-          size={20}
-          className={isThinking ? 'text-active' : 'text-attention'}
-        />
-      </IconSlot>
+      <ActivityMark
+        mark={isThinking ? 'control-stop-working' : 'control-stop-idle'}
+        size={20}
+        className={isThinking ? 'text-active' : 'text-attention'}
+      />
     );
   }
-  return <IconSlot size={20}><CircleStop size={18} /></IconSlot>;
+  return <CircleStop size={18} />;
 }
 
 interface CommandTerminalWindowProps {
@@ -326,7 +327,18 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
     // guaranteed to happen after that unmount commits.
     const grid = gridGetterRef.current?.() ?? undefined;
     try {
-      await useSessionStore.getState().killTransientSessionBySlot(currentProjectId, slot);
+      // Act on the outcome here too, not just in handleTerminate: this path scrubs the
+      // slot and immediately spawns a replacement on it, so a kill that failed leaves the
+      // old PTY running and unreachable while a new one starts under a fresh checkout.
+      // Warn rather than abort - the user asked for the branch switch, and the respawn is
+      // still the useful half of it.
+      const killOutcome = await useSessionStore.getState().killTransientSessionBySlot(currentProjectId, slot);
+      if (killOutcome === 'failed') {
+        useToastStore.getState().addToast({
+          message: 'Could not stop the old terminal. Its process may still be running.',
+          variant: 'warning',
+        });
+      }
       setSessionId(null);
       setTerminalReady(false);
       const result = await useSessionStore.getState().spawnTransientSession(slot, resolvedBranch, grid);
@@ -346,10 +358,19 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
   // (the X / Ctrl+Shift+P / backdrop) is separate and keeps every PTY alive.
   //
   // The window closes on EVERY path, including a kill that found nothing to kill:
-  // the user asked for this terminal to go away. Only a kill that actually failed
-  // is surfaced, because then a PTY may still be running with nothing pointing at
-  // it. All three outcomes used to be silent, so a kill that quietly did nothing
-  // looked exactly like the dropped click this button was also suffering from.
+  // the user asked for this terminal to go away. All three outcomes used to be
+  // silent, so a kill that quietly did nothing looked exactly like the dropped
+  // click this button was also suffering from.
+  //
+  // Only 'failed' is surfaced. 'no-session' is deliberately quiet even though it
+  // carries the same "a PTY may still be running" risk, because in the case that
+  // actually reaches it the window is genuinely all there is to close. The one
+  // known gap: Stop clicked while the initial spawn IPC is still in flight finds
+  // no map entry yet (spawnTransientSession inserts it only after the await), so
+  // the spawn completes unattended and the next layer-open reconciles a window
+  // back for it. Closing the spawn race needs cancellation plumbed through the
+  // mount effect; until then this path cannot tell that case apart from a slot
+  // that never had a PTY, which is why it stays silent rather than crying wolf.
   const handleTerminate = useCallback(async () => {
     if (stopping) return;
     setStopping(true);
@@ -369,9 +390,12 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
       });
     }
     closeWindow(windowId);
-    // Normally unreachable - closing this window unmounts the component. It matters
-    // when the close is a no-op (an id the store no longer holds), which would
-    // otherwise strand the button disabled with a spinner and no way back.
+    // This runs on essentially every Stop, not just the rare path: closeWindow is a
+    // plain Zustand set(), so React cannot commit the unmount between these two
+    // statements. Usually it is a harmless setState just ahead of that unmount. It
+    // is load-bearing only when the close is a no-op (an id the store no longer
+    // holds, which closeWindow returns early on), where no unmount ever follows and
+    // the button would otherwise be stranded disabled with a spinner and no way back.
     if (mountedRef.current) setStopping(false);
   }, [closeWindow, windowId, slot, stopping]);
 
@@ -420,7 +444,10 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
               stopping ? 'text-fg-muted' : showActivityRing ? 'hover:bg-surface-hover' : 'text-red-400 hover:bg-red-400/10'
             }`}
             title={stopping ? 'Stopping...' : 'Stop terminal'}
-            aria-label="Stop terminal"
+            // Tracks `stopping` like the title and the kebab item's label: an explicit
+            // aria-label wins the accessible-name computation, so leaving it static would
+            // hide the pending state from exactly the users who cannot see the spinner.
+            aria-label={stopping ? 'Stopping terminal' : 'Stop terminal'}
             data-testid="command-bar-terminate-button"
           >
             <StopButtonIcon isThinking={isThinking} isIdle={isIdle} stopping={stopping} />

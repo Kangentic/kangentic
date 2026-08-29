@@ -46,12 +46,20 @@ interface MonitorCardProps {
 /**
  * The state glyph, matching TaskCard's vocabulary exactly.
  *
- * Every branch renders through `IconSlot`. The card is a `role="button"` carrying other
- * interactive children, so the glyph cannot be protected by neutralizing the card's
- * children wholesale - the slot scopes that to the glyph itself, which is exactly the
- * case it exists for.
+ * One `IconSlot` wraps whatever the branching produces. The card is a `role="button"`
+ * carrying other interactive children, so the glyph cannot be protected by neutralizing the
+ * card's children wholesale - the slot scopes that to the glyph itself, which is exactly the
+ * case it exists for. Wrapping once rather than per branch is what stops a future branch
+ * from silently opting out.
+ *
+ * The slot is 15 in every state, one px wider than the two lucide branches draw at, so the
+ * glyph column no longer jitters between 15 and 14 as a session finishes.
  */
 function StateGlyph({ row }: { row: MonitorSessionRow }) {
+  return <IconSlot size={15} className="shrink-0">{stateGlyphContent(row)}</IconSlot>;
+}
+
+function stateGlyphContent(row: MonitorSessionRow) {
   const title = row.activityReason ? formatActivityReasonText(row.activityReason) : undefined;
   const bucket = bucketOf(row);
 
@@ -78,32 +86,26 @@ function StateGlyph({ row }: { row: MonitorSessionRow }) {
     // siblings: React reconciles siblings positionally, so an idle/working flip
     // would unmount one and mount the other, restarting the march from zero
     // (the lesson pinned for TaskCard in tests/unit/activity-mark.test.ts).
+    // Labelled with aria-label, never a <title> child: inside an IconSlot the mark's own
+    // <svg> root is not hit-testable, so a native tooltip would never appear (see IconSlot).
     return (
-      <IconSlot size={15} className="shrink-0">
-        <ActivityMark
-          mark={mark}
-          size={15}
-          className={needsYou ? 'text-attention' : 'text-active'}
-          aria-label={title ?? (needsYou ? 'Needs you' : 'Working')}
-        />
-      </IconSlot>
+      <ActivityMark
+        mark={mark}
+        size={15}
+        className={needsYou ? 'text-attention' : 'text-active'}
+        aria-label={title ?? (needsYou ? 'Needs you' : 'Working')}
+      />
     );
   }
   if (bucket === 'finished') {
-    return (
-      <IconSlot size={15} className="shrink-0">
-        <Check size={14} className="text-fg-disabled" aria-label="Finished" />
-      </IconSlot>
-    );
+    return <Check size={14} className="text-fg-disabled" aria-label="Finished" />;
   }
   return (
-    <IconSlot size={15} className="shrink-0">
-      <CirclePause
-        size={14}
-        className="text-fg-faint"
-        aria-label={row.status === 'queued' ? 'Waiting to start' : 'Paused'}
-      />
-    </IconSlot>
+    <CirclePause
+      size={14}
+      className="text-fg-faint"
+      aria-label={row.status === 'queued' ? 'Waiting to start' : 'Paused'}
+    />
   );
 }
 
