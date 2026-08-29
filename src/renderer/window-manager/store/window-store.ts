@@ -636,6 +636,11 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
         ? undefined
         : Object.values(current.windows).find((candidate) => {
             if (candidate.id === id) return false;
+            // A parked or retained window floats invisibly at its old geometry,
+            // often a full-height half: exactly the shape of a partner. It is
+            // not one - nobody can see it, and tiling it would lock the user's
+            // window to a ghost.
+            if (isWindowDormant(candidate)) return false;
             if (candidate.state !== 'snapped' && candidate.state !== 'floating') return false;
             const geometry = candidate.geometry;
             const fullHeight = geometry.y < PARTNER_EDGE_TOLERANCE && geometry.y + geometry.h > 1 - PARTNER_EDGE_TOLERANCE;
@@ -689,6 +694,11 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
       const dragged = current.windows[draggedId];
       const target = current.windows[targetId];
       if (!dragged || !target || draggedId === targetId) return;
+      // Neither side of a dock may be dormant. The drop-zone resolver already
+      // skips dormant targets; this is the store's own guarantee, so no other
+      // caller can tile a window the user cannot see (the invariant checker
+      // below reports it if one ever does).
+      if (isWindowDormant(dragged) || isWindowDormant(target)) return;
 
       // Defensive dedupe: if the dragged window is ALREADY referenced in the tree
       // (a stale leaf left by an earlier op), remove that leaf first so docking MOVES
