@@ -89,7 +89,7 @@ jobs:
   #   unique contribution (the E2E shards do not build the package, and
   #   publish-protocol.yml only runs on a protocol-v* tag) and lives here now.
   checks:
-    name: Checks (lint, typecheck, build)
+    name: Lint, Typecheck, Build
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

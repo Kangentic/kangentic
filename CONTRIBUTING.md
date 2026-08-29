@@ -156,9 +156,10 @@ Allowed types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `buil
 
 ### What to expect
 
-- Your PR must be green on all of the CI checks before it can merge: **Lint (ESLint)**,
-  **Type check (tsc)**, **Unit tests (Vitest)**, **Build (production bundle)**, **UI tests
-  (Playwright)**, and **E2E tests (Electron)**. The lint check runs with `--max-warnings 0`, so any
+- Your PR must be green on all of the CI checks before it can merge: **Lint, Typecheck, Build**,
+  **Unit tests (Vitest)**, **UI tests (Playwright)**, **E2E tests (Electron)**, and **cla**. Lint,
+  typecheck and the build run as three steps of one check, each reporting its own pass or fail, so
+  one failing step does not hide the others. The lint step runs with `--max-warnings 0`, so any
   warning fails it.
 - If a check fails, push a fix and CI re-runs automatically. Contributors cannot re-run checks
   directly (that requires write access), so to re-trigger a run for a failure unrelated to your
