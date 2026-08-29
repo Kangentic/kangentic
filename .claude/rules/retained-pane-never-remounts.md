@@ -61,8 +61,11 @@ assertion:
 - **The store is the mechanism; the board layer is the policy.** `parkWindow` / `unparkWindow`
   hide and revive; `closeWindow` is the unconditional DROP. Every USER close (the X, Escape, light
   dismiss, middle-click) converges on `WindowFrame`'s exit-animation `onClose`, which asks the
-  layer's `shouldParkOnClose` (`bridge/window-parking.ts`: an open Browser pane on a task with a
-  running session). A direct `closeWindow` caller is declaring a deliberate drop (displacement to
+  layer's `shouldParkOnClose` (`bridge/window-parking.ts`: a Browser pane that is showing or held,
+  on a task with a running session, AND with a `<webview>` guest actually registered for it in
+  `browserGuestTasks`). The guest is what parking preserves, so pane-open state alone must never
+  park: a pane with no URL renders the empty state and attaches no guest, and parking on the flag
+  hid a window indefinitely with nothing inside it to save. A direct `closeWindow` caller is declaring a deliberate drop (displacement to
   another host, the task leaving the board, the reaper that ends a park when the pane closes or
   the session stops), and must be listed in `tests/unit/window-parking-close-paths.test.ts`.
 - **A parked window is closed as far as everything but the guest is concerned.** It leaves

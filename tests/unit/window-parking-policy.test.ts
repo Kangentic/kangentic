@@ -69,14 +69,21 @@ function setSessionState(options: {
   session?: Session;
   browserOpenTasks?: Set<string>;
   browserHeldTasks?: Set<string>;
+  /** Tasks with a registered `<webview>` guest. Defaults to none. */
+  guestTasks?: readonly string[];
 }): void {
   const _sessionByTaskId = new Map<string, Session>();
   if (options.session) _sessionByTaskId.set(options.session.taskId, options.session);
+  const browserGuestTasks = new Map<string, number>();
+  for (const [index, taskId] of (options.guestTasks ?? []).entries()) {
+    browserGuestTasks.set(taskId, 5000 + index);
+  }
   useSessionStore.setState({
     sessions: options.session ? [options.session] : [],
     _sessionByTaskId,
     browserOpenTasks: options.browserOpenTasks ?? new Set(),
     browserHeldTasks: options.browserHeldTasks ?? new Set(),
+    browserGuestTasks,
   });
 }
 
@@ -86,18 +93,53 @@ describe('shouldParkTaskDetailWindowOnClose', () => {
   });
 
   it('is false for a window kind other than task-detail, even with a mounted pane and a live session', () => {
-    setSessionState({ session: makeSession('task-a', 'running'), browserOpenTasks: new Set(['task-a']) });
+    setSessionState({
+      session: makeSession('task-a', 'running'),
+      browserOpenTasks: new Set(['task-a']),
+      guestTasks: ['task-a'],
+    });
     const commandWindow = makeWindow({ kind: 'command-terminal' });
     expect(shouldParkTaskDetailWindowOnClose(commandWindow)).toBe(false);
   });
 
+  // Parking exists to preserve a live `<webview>` guest. A pane with no URL
+  // renders the empty state and never attaches one, so the open flag alone must
+  // not park: doing so hid a window indefinitely with nothing inside it to
+  // save. `browserGuestTasks` is the renderer's "a page is really here" fact.
+  it('is false when the pane is open on a running session but no guest ever registered', () => {
+    setSessionState({
+      session: makeSession('task-a', 'running'),
+      browserOpenTasks: new Set(['task-a']),
+    });
+    expect(shouldParkTaskDetailWindowOnClose(makeWindow())).toBe(false);
+  });
+
+  it('is false when the pane is held on a running session but no guest ever registered', () => {
+    setSessionState({
+      session: makeSession('task-a', 'running'),
+      browserHeldTasks: new Set(['task-a']),
+    });
+    expect(shouldParkTaskDetailWindowOnClose(makeWindow())).toBe(false);
+  });
+
+  it("is false when another task's guest is the only one registered", () => {
+    setSessionState({
+      session: makeSession('task-a', 'running'),
+      browserOpenTasks: new Set(['task-a']),
+      guestTasks: ['task-b'],
+    });
+    expect(shouldParkTaskDetailWindowOnClose(makeWindow())).toBe(false);
+  });
+
+  // Each case below differs from the passing case by exactly ONE condition, so
+  // it pins that condition rather than passing for an incidental second reason.
   it('is false when the pane is neither open nor held, even with a running session', () => {
-    setSessionState({ session: makeSession('task-a', 'running') });
+    setSessionState({ session: makeSession('task-a', 'running'), guestTasks: ['task-a'] });
     expect(shouldParkTaskDetailWindowOnClose(makeWindow())).toBe(false);
   });
 
   it('is false when the pane is open but the task has no session at all', () => {
-    setSessionState({ browserOpenTasks: new Set(['task-a']) });
+    setSessionState({ browserOpenTasks: new Set(['task-a']), guestTasks: ['task-a'] });
     expect(shouldParkTaskDetailWindowOnClose(makeWindow())).toBe(false);
   });
 
@@ -107,6 +149,7 @@ describe('shouldParkTaskDetailWindowOnClose', () => {
       setSessionState({
         session: makeSession('task-a', status),
         browserOpenTasks: new Set(['task-a']),
+        guestTasks: ['task-a'],
       });
       expect(shouldParkTaskDetailWindowOnClose(makeWindow())).toBe(false);
     });
@@ -115,23 +158,26 @@ describe('shouldParkTaskDetailWindowOnClose', () => {
       setSessionState({
         session: makeSession('task-a', status),
         browserHeldTasks: new Set(['task-a']),
+        guestTasks: ['task-a'],
       });
       expect(shouldParkTaskDetailWindowOnClose(makeWindow())).toBe(false);
     });
   }
 
-  it('is true when the pane is open and the session is running', () => {
+  it('is true when the pane is open with a live guest and the session is running', () => {
     setSessionState({
       session: makeSession('task-a', 'running'),
       browserOpenTasks: new Set(['task-a']),
+      guestTasks: ['task-a'],
     });
     expect(shouldParkTaskDetailWindowOnClose(makeWindow())).toBe(true);
   });
 
-  it('is true when the pane is only held (not open) and the session is running', () => {
+  it('is true when the pane is only held (not open) with a live guest and the session is running', () => {
     setSessionState({
       session: makeSession('task-a', 'running'),
       browserHeldTasks: new Set(['task-a']),
+      guestTasks: ['task-a'],
     });
     expect(shouldParkTaskDetailWindowOnClose(makeWindow())).toBe(true);
   });
@@ -140,6 +186,7 @@ describe('shouldParkTaskDetailWindowOnClose', () => {
     setSessionState({
       session: makeSession('task-b', 'running'),
       browserOpenTasks: new Set(['task-b']),
+      guestTasks: ['task-b'],
     });
     // task-a's window closing while task-b (a different task) has the live,
     // pane-open agent must not park task-a's window.
