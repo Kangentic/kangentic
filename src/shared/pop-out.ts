@@ -117,6 +117,29 @@ export function popOutInstanceKey<K extends PopOutKind>(kind: K, params: PopOutP
   return taskKey;
 }
 
+/**
+ * Inverse of {@link popOutInstanceKey} for the TASK-SCOPED kinds: recover which kind
+ * and task a key belongs to. Returns null for a global surface (which carries no task),
+ * an unknown kind, or a malformed key.
+ *
+ * Exists because `popOut:changed` pushes the whole open-key SET with no per-key close
+ * event, so a consumer that needs to react to one window disappearing has to diff the
+ * sets and then read the vanished key back. Lives beside the builder so the two cannot
+ * drift; tests/unit/pop-out.test.ts round-trips them.
+ */
+export function parsePopOutInstanceKey(
+  key: string,
+): { kind: PopOutKind; projectId: string; taskId: string } | null {
+  // Segments 1 and 2 are always projectId/taskId, including for 'changes-file' - its
+  // filePath is deliberately the LAST segment, so extra segments never shift these two.
+  const segments = key.split(':');
+  if (segments.length < 3) return null;
+  const [kind, projectId, taskId] = segments;
+  if (!isPopOutKind(kind) || isGlobalPopOutKind(kind)) return null;
+  if (!projectId || !taskId) return null;
+  return { kind, projectId, taskId };
+}
+
 export interface PopOutSurfaceMeta {
   kind: PopOutKind;
   scope: 'global' | 'task';

@@ -234,6 +234,8 @@ Right-click a file in the tree for **View history**, a popover listing the commi
 
 The panel persists its expanded/collapsed state, selected file, selected commit, and divider positions across dialog reopens.
 
+The whole panel can also detach into its own OS window - click the pop-out icon in its header - not just a single file's diff. Unlike the properties above, this is not preserved through a close: while the window is open the header pill still reads **Hide changes**, but closing the window leaves the panel closed instead of restoring it inline; click **Show changes** again to reopen it.
+
 The Changes panel is available for all tasks, whether or not worktrees are enabled. It uses `git merge-base` to show only branch-specific changes, excluding upstream commits.
 
 When the dialog is open, it claims the terminal session and the bottom panel drops that task's tab. Any other running session keeps its tab and its live terminal; the panel only collapses once nothing is left in it. Closing the dialog returns the tab, still selected.

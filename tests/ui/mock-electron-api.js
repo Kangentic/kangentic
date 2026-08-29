@@ -61,6 +61,28 @@
   // OS window. See window.__mockPopOut below.
   let popOutCalls = [];
   let popOutOpenResult = true;
+  // Which pop-out instance keys main currently reports as open, plus the
+  // popOut:changed push subscribers. A spec drives both through
+  // window.__mockFirePopOutChanged below, which is the ONLY way to exercise the
+  // real push path (App.tsx subscribes onChanged at mount).
+  let popOutOpenKeys = [];
+  let popOutChangedSubscribers = [];
+
+  /**
+   * Mirror of shared/pop-out.ts popOutInstanceKey, for the mock's isOpen(). This file is
+   * loaded via addInitScript as plain browser JS, so it cannot import the real builder and
+   * has to hand-copy it. Two things drift silently if pop-out.ts changes: the global-kind
+   * list below duplicates GLOBAL_KINDS, and the segment order duplicates the builder's.
+   * Update both together. Nothing catches a drift today because electronAPI.popOut.isOpen()
+   * has no caller in src/ - the renderer reads openness off pop-out-store instead - so this
+   * mirror is only here to keep the fake API self-consistent with listOpen().
+   */
+  function popOutKeyOf(kind, params) {
+    if (kind === 'stats' || kind === 'monitor') return kind;
+    const taskKey = kind + ':' + (params && params.projectId) + ':' + (params && params.taskId);
+    if (kind === 'changes-file') return taskKey + ':' + (params && params.filePath);
+    return taskKey;
+  }
   // Call log for window.electronAPI.window.* (minimize/maximize/close), so a
   // test can assert a title-bar / pop-out-frame control invoked the right verb
   // without a real OS window. See window.__mockWindowControls below.
@@ -3577,9 +3599,18 @@
       open: function (kind, params) { popOutCalls.push({ type: 'open', kind: kind, params: params }); return Promise.resolve(popOutOpenResult); },
       close: function (kind, params) { popOutCalls.push({ type: 'close', kind: kind, params: params }); return Promise.resolve(); },
       focus: function (kind, params) { popOutCalls.push({ type: 'focus', kind: kind, params: params }); return Promise.resolve(); },
-      isOpen: function (/* kind, params */) { return Promise.resolve(false); },
-      listOpen: function () { return Promise.resolve([]); },
-      onChanged: function (/* callback(openInstanceKeys) */) { return noop; },
+      isOpen: function (kind, params) { return Promise.resolve(popOutOpenKeys.indexOf(popOutKeyOf(kind, params)) !== -1); },
+      // Resolves the same set __mockFirePopOutChanged last pushed, so App.tsx's
+      // mount-time loadOpen() (and its HMR re-sync) cannot land late and clobber
+      // a simulated open set.
+      listOpen: function () { return Promise.resolve(popOutOpenKeys.slice()); },
+      onChanged: function (callback) {
+        popOutChangedSubscribers.push(callback);
+        return function () {
+          var index = popOutChangedSubscribers.indexOf(callback);
+          if (index !== -1) popOutChangedSubscribers.splice(index, 1);
+        };
+      },
       descriptor: null,
     },
 
@@ -4012,12 +4043,13 @@
   };
 
   /**
-   * Test hook: inspect the pop-out engine's open/close/focus call log. The
-   * renderer's pop-out store itself is driven directly via
-   * window.__zustandStores.popOut (exposed dev-only in App.tsx) - a test sets
-   * openInstanceKeys there to simulate "a surface just detached", the same
-   * shape the real popOut:changed push delivers. This hook is only for
-   * asserting which verb a trigger (title-bar button, PopOutButton) called.
+   * Test hook: inspect the pop-out engine's open/close/focus call log. This hook
+   * is only for asserting which verb a trigger (title-bar button, PopOutButton)
+   * called. To simulate a surface actually detaching or its window closing, fire
+   * window.__mockFirePopOutChanged below - it drives the real popOut:changed
+   * push, so the renderer's own side effects run. (Older specs poke
+   * window.__zustandStores.popOut directly, which mirrors the store but skips
+   * those effects.)
    */
   /**
    * Test hook: simulate a task detail being hosted in a DIFFERENT renderer (the
@@ -4035,6 +4067,12 @@
     reset: function () {
       popOutCalls = [];
       popOutOpenResult = true;
+      // The open SET is reset too, not just the call log: a shared-page suite
+      // that fires a push would otherwise leave a surface reported as detached
+      // for every later test in the file. Registered onChanged subscribers are
+      // deliberately NOT dropped - App.tsx subscribes once at mount, so
+      // clearing them would silently make every later push a no-op.
+      popOutOpenKeys = [];
     },
     getCalls: function () {
       return popOutCalls.slice();
@@ -4043,6 +4081,28 @@
     setOpenResult: function (value) {
       popOutOpenResult = value;
     },
+  };
+
+  /**
+   * Test hook: fire main's popOut:changed push with the given open-instance-key
+   * set, e.g. window.__mockFirePopOutChanged(['changes:p1:t1']) to detach a
+   * task's Changes view and then ([]) to close that window.
+   *
+   * Drives the REAL renderer path (App.tsx's onChanged subscription), not just
+   * the pop-out store, which is what makes the push's side effects observable -
+   * closing a `changes` window leaves its in-app panel closed rather than
+   * reclaiming the split. Also updates what listOpen() resolves, so the
+   * mount-time loadOpen() cannot land afterwards and undo the pushed set.
+   *
+   * Deliberately not cleared by __mockPopOut.reset(): App.tsx subscribes once at
+   * mount, and dropping the subscriber would silently make every later push a
+   * no-op.
+   */
+  window.__mockFirePopOutChanged = function (openInstanceKeys) {
+    popOutOpenKeys = (openInstanceKeys || []).slice();
+    popOutChangedSubscribers.slice().forEach(function (callback) {
+      callback(popOutOpenKeys.slice());
+    });
   };
 
   /**
