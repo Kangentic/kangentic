@@ -7,6 +7,7 @@ import { getSwimlaneIcon } from '../../../utils/swimlane-icons';
 import { ICON_REGISTRY } from '../../../utils/swimlane-icons';
 import { ActivityMark } from '../../ActivityMark';
 import { HeaderActionButton } from '../../HeaderActionButton';
+import { IconSlot } from '../../IconSlot';
 import { IsolatedBadge } from '../../IsolatedBadge';
 import { KebabMenu, KebabMenuItem, KebabMenuDivider } from '../../KebabMenu';
 import { CommandSearchList } from './CommandSearchList';
@@ -45,7 +46,13 @@ function PauseButtonIcon({
   isIdle: boolean;
   isSessionActive: boolean;
 }): ReactNode {
-  if (toggling) return <Loader2 size={18} className="animate-spin" />;
+  // Every branch renders through IconSlot: these branches return different element types,
+  // so a state change mid-press would otherwise destroy the node the press landed on and
+  // Chromium would drop the click (see IconSlot). Clicking here also flips `toggling`, so
+  // this button swaps its own icon by design.
+  if (toggling) {
+    return <IconSlot size={20}><Loader2 size={18} className="animate-spin" /></IconSlot>;
+  }
 
   // Active and idle/permission share one packaged mark, differing only by color and motion
   // (a rotating dashed arc vs a static ring), so the two states read as one visual language.
@@ -57,25 +64,25 @@ function PauseButtonIcon({
   // should be reintroduced, since ring and bars are now one SVG that scales together.
   if (isThinking || isIdle) {
     return (
-      <span className="grid place-items-center w-5 h-5">
+      <IconSlot size={20}>
         <ActivityMark
           mark={isThinking ? 'control-pause-working' : 'control-pause-idle'}
           size={20}
           className={isThinking ? 'text-active' : 'text-attention'}
         />
-      </span>
+      </IconSlot>
     );
   }
 
-  if (isQueued) return <Clock size={18} />;
+  if (isQueued) return <IconSlot size={20}><Clock size={18} /></IconSlot>;
   // Launching (preparing/initializing): a muted grey spinner matching the board
   // card's loading indicator. The agent has not started yet, so it is NOT active-green;
   // once the session is running the engine seeds 'thinking' and this flips to the
   // active ring. Suspended -> the resume control.
   if (isSessionActive) {
-    return <Loader2 size={18} className="animate-spin text-fg-muted" />;
+    return <IconSlot size={20}><Loader2 size={18} className="animate-spin text-fg-muted" /></IconSlot>;
   }
-  return <CirclePlay size={18} />;
+  return <IconSlot size={20}><CirclePlay size={18} /></IconSlot>;
 }
 
 interface TaskDetailHeaderProps {

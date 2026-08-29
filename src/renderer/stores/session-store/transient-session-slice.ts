@@ -25,6 +25,15 @@ export interface TransientSessionEntry {
   label?: string;
 }
 
+/**
+ * What a kill request actually did.
+ *
+ * `'no-session'` means the slot held no map entry, so no IPC was issued at all. It is
+ * NOT a quiet success: the PTY, if one exists, is still running and now unreachable
+ * from this slot.
+ */
+export type TransientKillOutcome = 'killed' | 'no-session' | 'failed';
+
 /** Composite map key. One Command Terminal window owns one (project, slot) PTY. */
 export function transientKey(projectId: string, slot: string): string {
   return `${projectId}::${slot}`;
@@ -152,8 +161,14 @@ export interface TransientSessionSlice {
     branch?: string,
     grid?: { cols: number; rows: number },
   ) => Promise<{ session: Session; branch: string; checkoutError?: string }>;
-  /** Kill one slot's transient PTY (IPC) and scrub its renderer state. */
-  killTransientSessionBySlot: (projectId: string, slot: string) => Promise<void>;
+  /** Kill one slot's transient PTY (IPC) and scrub its renderer state.
+   *
+   *  Reports which of the three things actually happened, because they are not
+   *  interchangeable and used to be indistinguishable: a missing map entry issued no
+   *  IPC at all and a rejected kill was swallowed, so both resolved exactly like a
+   *  successful kill. A caller that surfaces "stopped" on every path tells the user a
+   *  PTY died when it may still be running. The renderer state is scrubbed either way. */
+  killTransientSessionBySlot: (projectId: string, slot: string) => Promise<TransientKillOutcome>;
   /** Remove a transient session's renderer state by session id, no IPC (the PTY
    *  already exited naturally). Drops its (project, slot) map entry too. */
   clearTransientSessionById: (sessionId: string) => void;
@@ -230,13 +245,19 @@ export function createTransientSessionSlice(preserved: {
 
     killTransientSessionBySlot: async (projectId, slot) => {
       const entry = get().transientSessions[transientKey(projectId, slot)];
-      if (!entry) return;
+      // No entry means no PTY to address. Nothing was killed, and saying so is the
+      // point: this path issues no IPC and the caller cannot otherwise tell.
+      if (!entry) return 'no-session';
+      let outcome: TransientKillOutcome = 'killed';
       try {
         await window.electronAPI.sessions.killTransient(entry.sessionId);
       } catch {
-        // Best-effort cleanup.
+        // Still scrub below - the renderer must not keep pointing at a PTY it can no
+        // longer address - but report the failure rather than passing as a kill.
+        outcome = 'failed';
       }
       get().clearTransientSessionById(entry.sessionId);
+      return outcome;
     },
 
     clearTransientSessionById: (sessionId) => {

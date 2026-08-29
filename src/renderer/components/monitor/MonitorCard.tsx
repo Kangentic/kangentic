@@ -1,6 +1,7 @@
 import React from 'react';
 import { CirclePause, Check, GitBranch } from 'lucide-react';
 import { ActivityMark } from '../ActivityMark';
+import { IconSlot } from '../IconSlot';
 import type { MonitorSessionRow } from '../../../shared/types';
 import { LabelPills, Pill } from '../Pill';
 import { PrLink } from '../PrLink';
@@ -42,7 +43,14 @@ interface MonitorCardProps {
   hideProject?: boolean;
 }
 
-/** The state glyph, matching TaskCard's vocabulary exactly. */
+/**
+ * The state glyph, matching TaskCard's vocabulary exactly.
+ *
+ * Every branch renders through `IconSlot`. The card is a `role="button"` carrying other
+ * interactive children, so the glyph cannot be protected by neutralizing the card's
+ * children wholesale - the slot scopes that to the glyph itself, which is exactly the
+ * case it exists for.
+ */
 function StateGlyph({ row }: { row: MonitorSessionRow }) {
   const title = row.activityReason ? formatActivityReasonText(row.activityReason) : undefined;
   const bucket = bucketOf(row);
@@ -71,23 +79,31 @@ function StateGlyph({ row }: { row: MonitorSessionRow }) {
     // would unmount one and mount the other, restarting the march from zero
     // (the lesson pinned for TaskCard in tests/unit/activity-mark.test.ts).
     return (
-      <ActivityMark
-        mark={mark}
-        size={15}
-        className={`${needsYou ? 'text-attention' : 'text-active'} shrink-0`}
-        aria-label={title ?? (needsYou ? 'Needs you' : 'Working')}
-      />
+      <IconSlot size={15} className="shrink-0">
+        <ActivityMark
+          mark={mark}
+          size={15}
+          className={needsYou ? 'text-attention' : 'text-active'}
+          aria-label={title ?? (needsYou ? 'Needs you' : 'Working')}
+        />
+      </IconSlot>
     );
   }
   if (bucket === 'finished') {
-    return <Check size={14} className="text-fg-disabled shrink-0" aria-label="Finished" />;
+    return (
+      <IconSlot size={15} className="shrink-0">
+        <Check size={14} className="text-fg-disabled" aria-label="Finished" />
+      </IconSlot>
+    );
   }
   return (
-    <CirclePause
-      size={14}
-      className="text-fg-faint shrink-0"
-      aria-label={row.status === 'queued' ? 'Waiting to start' : 'Paused'}
-    />
+    <IconSlot size={15} className="shrink-0">
+      <CirclePause
+        size={14}
+        className="text-fg-faint"
+        aria-label={row.status === 'queued' ? 'Waiting to start' : 'Paused'}
+      />
+    </IconSlot>
   );
 }
 

@@ -197,6 +197,26 @@ export interface ActivityMarkProps extends React.SVGProps<SVGSVGElement> {
  * reduced-motion dash rule is `svg[data-rest="drop-dash"] *`, so all of them still match one level
  * deeper. It is also harmless to compositing: the animated element is the packaged inner `<g>`,
  * and an extra static ancestor does not stop Blink from promoting it.
+ *
+ * That `<g>` is `pointer-events: none`, and it is LOAD-BEARING for any mark inside a button.
+ * Re-assigning `innerHTML` destroys every child of the `<g>` and builds new ones, so a `mark`
+ * change tears out whatever node the cursor is over. Chromium then drops the click outright:
+ * press the glyph, the agent's activity flips mid-press, and the button does nothing until you
+ * click a second time. It reached users as "the first Stop click never registers". Making the
+ * injected subtree non-hit-testable puts every hit on the React-authored `<svg>`, which survives
+ * a `mark` change because React only updates its attributes. Measured before the fix: the ink
+ * inside the `<g>` covered 15% of the twin pause button, and `control-stop`'s filled square
+ * covers the exact centre, which is where people click.
+ *
+ * Two shapes that look equivalent and are not. `pointer-events: none` must NOT move up to the
+ * `<svg>` root, which has to stay hit-testable for `TaskCard`'s native `<title>` tooltip; and the
+ * `<g>` must NOT get `key={mark}`, which replaces the `<g>` itself (the same teardown one level
+ * up) and discards the `anchorMarkMotionToTimeline` phase anchor. An inline style rather than a
+ * Tailwind class because the packaged `activity.css` arrives unlayered and outranks utilities.
+ *
+ * This covers a mark FLIP. A call site whose icon changes ELEMENT TYPE between states (a lucide
+ * glyph at rest, an ActivityMark when active) unmounts the `<svg>` too, which no change here can
+ * prevent; those buttons neutralize their own children instead. See `StopButtonIcon`.
  */
 export function ActivityMark({
   mark,
@@ -235,7 +255,7 @@ export function ActivityMark({
       role={isLabelled ? 'img' : undefined}
       aria-hidden={isLabelled ? undefined : true}
     >
-      <g ref={markGroupRef} dangerouslySetInnerHTML={{ __html: MARK_INNER[mark] }} />
+      <g ref={markGroupRef} style={{ pointerEvents: 'none' }} dangerouslySetInnerHTML={{ __html: MARK_INNER[mark] }} />
       {children}
     </svg>
   );
