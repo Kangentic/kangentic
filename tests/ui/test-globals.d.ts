@@ -15,8 +15,10 @@ declare global {
       reset: () => void;
       getCaptureCalls: () => unknown[];
       getPaneCalls: () => Array<
-        | { type: 'register'; input: { sessionId: string; taskId: string; projectId: string | null; webContentsId: number; url: string | null } }
+        | { type: 'register'; input: { sessionId: string; taskId: string; projectId: string | null; webContentsId: number; url: string | null; visibility?: string } }
         | { type: 'unregister'; webContentsId: number }
+        | { type: 'user-close'; webContentsId: number }
+        | { type: 'visibility'; webContentsId: number; visibility: string }
       >;
       seedTaskUrl: (taskId: string, url: string) => void;
       /** The project a task URL was last saved against (null if never saved). */
@@ -27,6 +29,8 @@ declare global {
       emitPaneOpenRequest: (projectId: string, taskId: string) => void;
       /** Fire main's close push, as kangentic_browser_close_pane does. */
       emitPaneCloseRequest: (projectId: string, taskIds: string[]) => void;
+      /** Fire main's agent-input push for one guest (an agent is / is no longer driving it). */
+      emitAgentInput: (webContentsId: number, active: boolean) => void;
     };
 
     /** Captures the URL most recently submitted by BrowserEmptyState mounts. */

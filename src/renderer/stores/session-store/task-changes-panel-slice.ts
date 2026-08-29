@@ -60,6 +60,17 @@ export interface TaskChangesPanelSlice {
    */
   browserHeldTasks: Set<string>;
   /**
+   * The guest webContents id behind each task's live Browser pane, keyed by
+   * task ID; published by `BrowserPane` when the guest registers and cleared
+   * when it unmounts. This is the renderer's "a browser is alive for this task"
+   * fact, whichever state the pane is in (showing, hidden, or parked): the
+   * Browser pill's alive dot, the task card's globe, and the kebab's "Close
+   * browser" all read it, and the Close control needs the id to retire the
+   * guest's handle in main. An empty-state pane has no guest and so no entry.
+   * Never persisted.
+   */
+  browserGuestTasks: Map<string, number>;
+  /**
    * Per-task counter that forces `useBrowserUrl` to refetch, keyed by task ID.
    *
    * Exists for one case: `kangentic_browser_open_pane` seeds the task's URL
@@ -134,6 +145,14 @@ export interface TaskChangesPanelSlice {
   setBrowserOpen: (taskId: string, open: boolean, options?: { hold?: boolean }) => void;
   /** End a hold without touching the open flag: the reaper's call when the task's session stops. */
   releaseBrowserHold: (taskId: string) => void;
+  /** A pane's guest registered: record its id for the task. */
+  setBrowserGuest: (taskId: string, webContentsId: number) => void;
+  /**
+   * A pane's guest went away. Clears the task's entry only when it still names
+   * THIS guest, so an in-app pane unmounting after a pop-out registered a newer
+   * guest for the same task cannot erase the newer one.
+   */
+  clearBrowserGuest: (taskId: string, webContentsId: number) => void;
   /** Force `useBrowserUrl` to refetch this task's URLs. See {@link browserUrlRefreshTokens}. */
   refreshBrowserUrl: (taskId: string) => void;
   setChangesSelectedCommit: (taskId: string, commitOid: string | null) => void;
@@ -267,6 +286,7 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
   dividerRatio: {},
   browserOpenTasks: new Set<string>(),
   browserHeldTasks: new Set<string>(),
+  browserGuestTasks: new Map<string, number>(),
   browserUrlRefreshTokens: {},
   changesSelectedCommit: {},
   changesHistoryHeight: {},
@@ -326,6 +346,22 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
     const next = new Set(held);
     next.delete(taskId);
     set({ browserHeldTasks: next });
+  },
+
+  setBrowserGuest: (taskId, webContentsId) => {
+    const current = get().browserGuestTasks;
+    if (current.get(taskId) === webContentsId) return;
+    const next = new Map(current);
+    next.set(taskId, webContentsId);
+    set({ browserGuestTasks: next });
+  },
+
+  clearBrowserGuest: (taskId, webContentsId) => {
+    const current = get().browserGuestTasks;
+    if (current.get(taskId) !== webContentsId) return;
+    const next = new Map(current);
+    next.delete(taskId);
+    set({ browserGuestTasks: next });
   },
 
   refreshBrowserUrl: (taskId) => {

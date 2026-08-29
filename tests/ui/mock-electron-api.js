@@ -3822,6 +3822,12 @@
       ensureJar: function () { return Promise.resolve(); },
       registerPane: function (input) { browserPaneCalls.push({ type: 'register', input: input }); return Promise.resolve(); },
       unregisterPane: function (webContentsId) { browserPaneCalls.push({ type: 'unregister', webContentsId: webContentsId }); return Promise.resolve(); },
+      // The user's Close control and the visibility report, recorded in the same
+      // log so a spec can assert a close was DELIBERATE (main retires the handle
+      // with `user-closed` and stands no lane up) and what the agent would be
+      // told about where the pane is.
+      closePaneByUser: function (webContentsId) { browserPaneCalls.push({ type: 'user-close', webContentsId: webContentsId }); return Promise.resolve(); },
+      setPaneVisibility: function (webContentsId, visibility) { browserPaneCalls.push({ type: 'visibility', webContentsId: webContentsId, visibility: visibility }); return Promise.resolve(); },
       // Ctrl+wheel zoom is applied in the main process and broadcast back.
       // The UI tier has no main process, so the mock just registers the
       // callback and returns a no-op unsubscribe.

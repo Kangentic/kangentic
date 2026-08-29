@@ -108,6 +108,18 @@ describe('pane hand-off', () => {
     expect(openLane).not.toHaveBeenCalled();
   });
 
+  it('does not hand off a pane the USER closed with the Close control', async () => {
+    // The user closed it to get the guest's memory back; a lane is another
+    // renderer process at the same URL, so standing one up would spend it
+    // again behind their back. The renderer sends this reason AHEAD of the
+    // unmount, so the later `renderer-unmount` finds nothing to hand off.
+    browserPaneRegistry.register(pane());
+    browserPaneRegistry.unregisterByWebContentsId(7, 'user-closed');
+    browserPaneRegistry.unregisterByWebContentsId(7, 'renderer-unmount');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(openLane).not.toHaveBeenCalled();
+  });
+
   // A BACKGROUND project's pane can close (a retained pane survives a project
   // switch, per retained-pane-never-remounts.md, so the open project routinely
   // differs from the one the closing pane belongs to). The lane must be keyed to

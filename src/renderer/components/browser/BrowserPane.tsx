@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, Crosshair, Eraser, Loader2, Pencil, Pin, RotateCcw, Send, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CircleStop, Crosshair, Eraser, Loader2, Pencil, Pin, RotateCcw, Send, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
+import { closeBrowserForTask } from './close-browser';
 import { useDrawingOverlay } from './useDrawingOverlay';
 import { compositeCapture } from './captureComposite';
 import { BrowserEmptyState } from './BrowserEmptyState';
@@ -15,7 +16,7 @@ import { registerBrowserNavigationTarget } from '../../utils/browser-navigation-
 import { useAgentDriveStore, useIsAgentDrivingSession } from '../../stores/agent-drive-store';
 import { PopOutButton } from '../../pop-out/PopOutButton';
 import { browserPartitionForTask } from '../../../shared/browser-partition';
-import type { BrowserPickedElement } from '../../../shared/types';
+import type { BrowserPaneVisibility, BrowserPickedElement } from '../../../shared/types';
 import { ALLOW_POPUPS_ATTRIBUTE, type WebviewElement } from './webview-types';
 import { MIN_ZOOM, MAX_ZOOM, stepZoom } from '../../../shared/zoom-steps';
 
@@ -45,9 +46,16 @@ interface BrowserPaneProps {
    * this value, so a wrong one is a cross-project reachability bug.
    */
   projectId: string | null;
+  /**
+   * Where this pane is on the user's screen, reported to main for the agent's
+   * `list_panes` (`showing`, `hidden` behind the terminal, or `parked` in a
+   * closed window). The host decides; the pane only relays. Defaults to
+   * `showing` for hosts that never hide a pane (the pop-out window).
+   */
+  visibility?: BrowserPaneVisibility;
 }
 
-export function BrowserPane({ sessionId, taskId, cwd, projectId }: BrowserPaneProps) {
+export function BrowserPane({ sessionId, taskId, cwd, projectId, visibility = 'showing' }: BrowserPaneProps) {
   // Bumped by the browser-pane request bridge after `kangentic_browser_open_pane`
   // seeds this task's URL in main. Without it a pane already mounted on its empty
   // state would never see the seeded URL, since the fetch keys on taskId +
@@ -127,6 +135,7 @@ export function BrowserPane({ sessionId, taskId, cwd, projectId }: BrowserPanePr
       taskId={taskId}
       cwd={cwd}
       projectId={projectId}
+      visibility={visibility}
       effectiveUrl={effectiveUrl}
       projectDefault={projectDefault}
       saveForProject={saveForProject}
@@ -140,6 +149,7 @@ interface BrowserPaneActiveProps {
   taskId: string;
   cwd: string;
   projectId: string | null;
+  visibility: BrowserPaneVisibility;
   effectiveUrl: string;
   projectDefault: string | null;
   saveForProject: (url: string) => Promise<void>;
@@ -151,6 +161,7 @@ function BrowserPaneActive({
   taskId,
   cwd,
   projectId,
+  visibility,
   effectiveUrl,
   projectDefault,
   saveForProject,
@@ -243,8 +254,8 @@ function BrowserPaneActive({
   // that never went anywhere. The second effect re-sends `registerPane` for the
   // same guest, which main treats as an in-place owner update.
   const registeredWebContentsIdRef = useRef<number | null>(null);
-  const registrationIdentityRef = useRef({ sessionId, taskId, projectId });
-  registrationIdentityRef.current = { sessionId, taskId, projectId };
+  const registrationIdentityRef = useRef({ sessionId, taskId, projectId, visibility });
+  registrationIdentityRef.current = { sessionId, taskId, projectId, visibility };
   useEffect(() => {
     const webview = webviewRef.current;
     if (!webview) return;
@@ -267,6 +278,10 @@ function BrowserPaneActive({
         /* not attached */
       }
       void window.electronAPI.browser.registerPane({ ...registrationIdentityRef.current, webContentsId, url });
+      // The renderer-side "a browser is alive for this task" fact: the pill's
+      // alive dot, the card's globe, and the kebab's Close read it, and Close
+      // needs this id to retire the handle in main.
+      useSessionStore.getState().setBrowserGuest(registrationIdentityRef.current.taskId, webContentsId);
     };
     webview.addEventListener('dom-ready', register);
     register();
@@ -281,9 +296,26 @@ function BrowserPaneActive({
       registeredWebContentsIdRef.current = null;
       if (registeredWebContentsId != null) {
         void window.electronAPI.browser.unregisterPane(registeredWebContentsId);
+        useSessionStore.getState().clearBrowserGuest(registrationIdentityRef.current.taskId, registeredWebContentsId);
       }
     };
   }, []);
+
+  // Where the pane is (showing / hidden / parked) changed on a LIVE guest: tell
+  // main, so the agent's list_panes says whether the user can see it. The
+  // registration above carries the value current at that moment; this covers
+  // every change after it.
+  useEffect(() => {
+    const registeredWebContentsId = registeredWebContentsIdRef.current;
+    if (registeredWebContentsId == null) return;
+    void window.electronAPI.browser.setPaneVisibility(registeredWebContentsId, visibility);
+  }, [visibility]);
+
+  // The user's Close: discard this guest and free its memory. Distinct from
+  // the Browser pill, which only hides. See close-browser.ts for the sequence.
+  const handleCloseBrowser = useCallback(() => {
+    void closeBrowserForTask(taskId);
+  }, [taskId]);
 
   // Identity changed on a LIVE guest: re-register the same guest so main
   // updates its owner in place and keeps the handle. Never unregisters.
@@ -630,6 +662,68 @@ function BrowserPaneActive({
           the end of this toolbar. Hidden inside a pop-out window (its descriptor is
           set), whose OS title bar already provides identity. */}
       <form onSubmit={handleUrlSubmit} className="flex items-center gap-1 px-2 py-1.5 border-b border-edge flex-shrink-0">
+        {/* Stop: LEADING, in the position the Command Terminal gives its Stop,
+            behind its own divider. Placement was chosen by slip risk, measured
+            on a live preview: the trailing end sits beside pop-out, a
+            high-traffic control, so a slip there costs the page's state often;
+            Back / Forward / Reload are low-traffic (the mouse back button takes
+            over), so a slip here lands on something cheap.
+
+            LABELLED and TINTED, unlike Stop terminal's icon-only control, and
+            the difference is the neighbourhood rather than a change of mind.
+            Stop terminal has no lookalikes beside it; this one sits in a row of
+            three grey nav glyphs at a similar size, so icon-only was filed by
+            the eye as a fourth nav button (tried on a live preview, at 14px and
+            again at 18px). The destructive tint is the same visual language as
+            the kebab's destructive items, so it reads as consequential before
+            the word is read.
+
+            The label NAMES THE OBJECT, and that is the part that took four
+            tries. This pane has three plausible things to "stop" - the agent
+            driving the page, the page load, and the browser itself - so a bare
+            verb ("Stop", "Close") leaves the object to inference, and two of
+            the three readings are wrong. "Close browser" cannot be read as
+            either, it pairs with the Browser pill's Hide / Show, and it matches
+            the kebab word for word. It also fails safe: a user who expects the
+            pill's hide loses a page reload, whereas a user who expects to halt
+            the agent would lose their tab AND their model of the app.
+
+            The glyph deliberately does NOT change while the agent drives. It
+            used to swap to the working activity ring, which made the control
+            read as spinner-plus-Stop, i.e. "cancel this operation" - the exact
+            wrong reading, at the moment it is most likely. The pane already
+            says "Agent typing here" and takes the accent border; this button
+            has one job and one appearance. 18px CircleStop, Stop terminal's
+            size.
+
+            Discards the guest and frees its memory; the Browser pill only
+            hides.
+
+            NOT offered inside a pop-out window (same guard the pop-out button
+            uses). This component's close path is renderer-local: it clears
+            `browserOpenTasks` in ITS OWN store, and a pop-out is a separate
+            renderer whose store the board does not share - and which renders
+            this pane unconditionally anyway. Clicking it there would retire the
+            agent's handle in main (locking it out with `surface-gone`) while
+            the guest stayed mounted and its memory stayed spent: the worst of
+            both. The pop-out's OS close button already unmounts the pane, which
+            unregisters the guest properly. */}
+        {!window.electronAPI.popOut?.descriptor && (
+        <button
+          type="button"
+          onClick={handleCloseBrowser}
+          className="flex items-center gap-1.5 px-2 py-1 rounded border border-red-400/30 bg-red-400/10 text-xs text-red-300 hover:bg-red-400/20 hover:text-red-200 transition-colors flex-shrink-0 whitespace-nowrap"
+          title="Close the browser and free its memory. Show reopens the page."
+          aria-label="Close browser"
+          data-testid="browser-close"
+        >
+          <CircleStop size={18} />
+          Close browser
+        </button>
+        )}
+        {!window.electronAPI.popOut?.descriptor && (
+          <div className="w-px h-5 bg-edge mx-1 flex-shrink-0" aria-hidden="true" />
+        )}
         <button
           type="button"
           onClick={() => webviewRef.current?.goBack()}

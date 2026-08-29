@@ -2,7 +2,7 @@ import React, { useCallback, useMemo, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Loader2, CirclePause, Paperclip, Trash2 } from 'lucide-react';
+import { Loader2, CirclePause, Paperclip, Trash2, Globe } from 'lucide-react';
 import { formatRelativeTime } from '../../lib/datetime';
 import { TaskChangesDialog } from '../dialogs/TaskChangesDialog';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
@@ -86,6 +86,10 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
   );
   const setDetailTaskId = useSessionStore((s) => s.setDetailTaskId);
   const displayState = useTaskProgress(task.id, sessionId);
+  // A Browser pane guest is running for this task, in ANY state (showing, hidden
+  // behind the terminal, or parked in a closed window). Parked is the one state
+  // with no pill anywhere on screen, which is why the card carries this.
+  const browserAlive = useSessionStore((s) => s.browserGuestTasks.has(task.id));
 
   const {
     attributes,
@@ -331,6 +335,34 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
           )}
           <div className="text-sm text-fg font-medium truncate flex-1 min-w-0">{task.title}</div>
           {displayIdBadge}
+          {/* A solid green globe at the far RIGHT, after the ticket number, at
+              the badge's scale (12). Four cuts were compared side by side on a
+              live board, and the two decisions that survived are:
+                - PLACEMENT: right cluster, not beside the activity mark. That
+                  slot is the agent's state; a globe there competed with the
+                  activity ring and shifted every title's start. Placement is
+                  also what makes green safe here - green next to the ring's
+                  green lost its identity, but past the title and the ticket
+                  number it reads as its own thing.
+                - NO running dot, unlike the pill: the pill is persistent chrome
+                  (always rendered, so it needs a marker to say whether a guest
+                  is behind it), while this globe renders ONLY while a guest is
+                  running - its presence IS the signal, and at 12px the dot was
+                  a smudge on the glyph rather than a second reading.
+              Solid, not pulsing: a running guest is a steady fact, and a pulse
+              on every such card is motion the board does not need. Whether the
+              agent is DRIVING the page is shown in the pane. Not a click
+              target: the card's own click opens the task, where the kebab's
+              "Close browser" is. */}
+          {browserAlive && (
+            <span
+              className="text-active shrink-0 flex"
+              title="Browser running for the agent. Close it from the task menu to free memory."
+              data-testid="task-card-browser-alive"
+            >
+              <Globe size={12} aria-label="Browser running" />
+            </span>
+          )}
         </div>
 
         {!isCompactDensity && task.pr_url && (

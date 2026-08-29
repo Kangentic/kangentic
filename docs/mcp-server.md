@@ -1054,7 +1054,7 @@ Behavior worth knowing:
 - **It carries the `navigate` capability tier**, since it always loads a URL. Turning off "Allow navigation" in the Agent Browser settings therefore disables this tool too. The tier is checked before anything happens, so a gated-off call never opens a window or seeds a URL first.
 - Refusals it can return besides the shared ones: `no-caller-task` (the connection is not bound to a task, e.g. a Command Terminal), `project-not-open` (the caller's project is not the one currently open in Kangentic, so no window can be mounted for its tasks), `browser-pane-disabled` (the project has the Browser pane turned off), `task-not-found`, `no-url`, `app-not-ready` (Kangentic is still starting, or its window is gone - also reachable from `close_pane`), and `url-seed-failed` (the URL could not be persisted before the pane was opened).
 
-`kangentic_browser_close_pane` puts panes away exactly as the user's Browser pill does. It closes the pane, never the task-detail window hosting it.
+`kangentic_browser_close_pane` discards panes exactly as the user's Close browser control does (the Browser pill only hides, keeping the guest alive for you). It closes the pane, never the task-detail window hosting it.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -1106,8 +1106,12 @@ and when the user hides the pane with the Browser pill or opens Changes over it 
 behind the full-width terminal and showing it again is a style change). In every one of those the
 handle, the CDP session, `sessionStorage`, and in-memory state are intact, and the tools keep working
 on the hidden page. Retention covers the guest surviving; the hand-off covers the guest genuinely
-going away. Only `close_pane` (or the session ending) discards a hidden pane; the user's hide never
-does.
+going away. Three things discard a pane: `close_pane`, the session ending, and the user's own Close browser
+(the red button at the far left of the pane's navigation bar, or the same item in the task
+menu, which is how a hidden or parked pane is closed). The user's hide never does. A user stop retires the handle with reason
+`user-closed` and deliberately stands up NO hand-off lane, since the user closed it to get the
+guest's memory back; the agent's next call gets `surface-gone: the user closed the browser` with
+the `open_pane` hint, and reopening is allowed.
 
 ### Isolated browser lanes
 
@@ -1153,7 +1157,7 @@ List the Browser surfaces open in your project, so you can discover a surface ha
 |-----------|------|----------|-------------|
 | `includeOtherProjects` | boolean | No | Also list panes in other projects. They are listed for visibility only and cannot be driven from this connection. Default false. |
 
-Returns `{ automationEnabled, projectId, panes, otherProjectPaneCount, unknownProjectPaneCount }`. Each surface carries its handle (`sessionId`, the value to pass back), `ownerSessionId` (the agent session it serves), `taskId`, `kind` (`pane` or `lane`) with `handoff` for a lane standing in for a closed pane, `webContentsId`, current URL, liveness / debugger-attached state, plus `sameProject` and `driveable`. The two counts are why an empty `panes` list is never mistaken for an idle machine.
+Returns `{ automationEnabled, projectId, panes, otherProjectPaneCount, unknownProjectPaneCount }`. Each surface carries its handle (`sessionId`, the value to pass back), `ownerSessionId` (the agent session it serves), `taskId`, `kind` (`pane` or `lane`) with `handoff` for a lane standing in for a closed pane, `visibility` (`showing`: the user can see it; `hidden`: the user hid it behind the terminal with the Browser pill; `parked`: the user closed its window; `offscreen`: a lane. Every value is still driveable; this says whether the user can see what you do, not whether you may act), `webContentsId`, current URL, liveness / debugger-attached state, plus `sameProject` and `driveable`. The two counts are why an empty `panes` list is never mistaken for an idle machine. A pane the user CLOSED (the pane's red "Close browser" button or the task menu's item of the same name) is not listed at all: its handle answers `surface-gone` saying the user closed the browser, and `open_pane` opens a fresh one.
 
 ### kangentic_browser_navigate
 

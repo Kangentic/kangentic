@@ -207,6 +207,43 @@ describe('toggleBrowserOpen', () => {
     });
   });
 
+  // The renderer's "a browser guest is alive for this task" fact, published by
+  // the pane on register / unregister. The pill dot, the card globe, and the
+  // kebab's Close all read it, and Close needs the id to retire the handle.
+  describe('browser guest map', () => {
+    it('starts empty and records a guest per task', () => {
+      const { actions, getState } = createTestStore();
+      expect(getState().browserGuestTasks.size).toBe(0);
+      actions.setBrowserGuest('task-1', 41);
+      actions.setBrowserGuest('task-2', 42);
+      expect(getState().browserGuestTasks.get('task-1')).toBe(41);
+      expect(getState().browserGuestTasks.get('task-2')).toBe(42);
+    });
+
+    it('a repeated register of the same guest changes nothing', () => {
+      const { actions, getState } = createTestStore();
+      actions.setBrowserGuest('task-1', 41);
+      const before = getState().browserGuestTasks;
+      actions.setBrowserGuest('task-1', 41);
+      expect(getState().browserGuestTasks).toBe(before);
+    });
+
+    it('clears only when the entry still names THIS guest, so a stale unmount never erases a newer one', () => {
+      // An in-app pane unmounting after a pop-out registered a newer guest for
+      // the same task must not drop the newer registration.
+      const { actions, getState } = createTestStore();
+      actions.setBrowserGuest('task-1', 41);
+      actions.setBrowserGuest('task-1', 52);
+      actions.clearBrowserGuest('task-1', 41);
+      expect(getState().browserGuestTasks.get('task-1')).toBe(52);
+      actions.clearBrowserGuest('task-1', 52);
+      expect(getState().browserGuestTasks.has('task-1')).toBe(false);
+      const after = getState().browserGuestTasks;
+      actions.clearBrowserGuest('task-1', 52);
+      expect(getState().browserGuestTasks).toBe(after); // idempotent
+    });
+  });
+
   it('refreshBrowserUrl bumps only its own task, from an absent start', () => {
     const { actions, getState } = createTestStore();
     expect(getState().browserUrlRefreshTokens['task-1']).toBeUndefined();
