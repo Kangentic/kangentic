@@ -286,27 +286,42 @@ test.describe('BrowserPaneActive keyboard shortcuts - form-field guards', () => 
 });
 
 test.describe('BrowserPaneActive keyboard shortcuts - Esc handling', () => {
-  test('Esc at document level does not close the dialog when inspect is NOT active', async () => {
+  test('Esc at document level reaches the window close when inspect is NOT active', async () => {
     // BrowserPane's capture-phase Esc handler only fires cancelInspect() when
     // inspectActive === true. When inspect is off, Esc propagates normally to
-    // the parent TaskDetailDialog's bubble-phase handler.
+    // the parent window's bubble-phase handler, which closes the window. This
+    // confirms the BrowserPane Esc handler is NOT incorrectly eating the event
+    // when inspect is inactive.
     //
-    // However, TaskDetailDialog's Esc handler closes the dialog. We verify
-    // that the dialog closes (expected Esc behaviour when inspect is off) --
-    // this confirms the BrowserPane Esc handler is NOT incorrectly eating the
-    // event when inspect is inactive.
+    // The fixture's task has a RUNNING session and the pane is open, so the
+    // close PARKS the window (hidden in place so its guest survives for the
+    // agent) rather than removing it - and an opacity-0 frame never reads as
+    // hidden to Playwright. So the close is observed through the store: the
+    // window becomes parked. browser-pane-park-on-close.spec.ts owns parking
+    // itself; this only needs "the Escape got through".
     //
     // We use document.dispatchEvent (anti-pattern 10) to bypass xterm capture.
     await openBrowserPane(sharedPage);
 
-    // Dispatch Esc at document level -- should propagate to dialog's handler.
+    // Dispatch Esc at document level -- should propagate to the window's handler.
     await sharedPage.evaluate(() => {
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
     });
 
-    // When inspect is NOT active the BrowserPane Esc handler does nothing,
-    // so the dialog's own Esc listener fires and closes the dialog.
-    await sharedPage.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
+    await expect.poll(
+      () => sharedPage.evaluate((taskId: string) => {
+        type StoreWindow = { kind: string; anchor: string; parked?: true };
+        const stores = (window as unknown as {
+          __zustandStores: { window: { getState: () => { windows: Record<string, StoreWindow> } } };
+        }).__zustandStores;
+        const match = Object.values(stores.window.getState().windows).find(
+          (candidate) => candidate.kind === 'task-detail' && candidate.anchor === taskId,
+        );
+        // Gone entirely (an unparked close) or parked: either way the Escape got through.
+        return !match || match.parked === true;
+      }, TASK_ID),
+      { timeout: 3000 },
+    ).toBe(true);
   });
 });
 

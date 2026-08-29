@@ -41,6 +41,25 @@ export interface TaskChangesPanelSlice {
   /** Task IDs whose Browser pane is open (persists across dialog open/close). */
   browserOpenTasks: Set<string>;
   /**
+   * Task IDs whose Browser pane is HIDDEN but kept mounted: the user put the
+   * pane away from the UI (the pill, its shortcut, or opening Changes / the
+   * Description peek over it) while the task's agent may still be driving the
+   * page. An Electron `<webview>` guest dies with its DOM node, so unmounting
+   * the pane here used to cost the agent its tab (main handed the page to a
+   * fresh offscreen lane, and showing the pane again built another fresh
+   * document). Held, the same guest stays composited at zero opacity behind the
+   * full-width terminal, and showing the pane again is a style change.
+   *
+   * Only a UI hide holds. An agent's `close_pane` (the request bridge calling
+   * `setBrowserOpen(taskId, false)`) and a hydration DISCARD: the agent asked for
+   * the tab to go. The hold ends when the pane is shown again, when the agent
+   * discards it, or when the task's session stops running (the reaper in
+   * `window-manager/bridge/window-parking.ts`), so a pane hidden a week ago
+   * never re-mounts invisibly under a later session. Never persisted, and
+   * never hydrated.
+   */
+  browserHeldTasks: Set<string>;
+  /**
    * Per-task counter that forces `useBrowserUrl` to refetch, keyed by task ID.
    *
    * Exists for one case: `kangentic_browser_open_pane` seeds the task's URL
@@ -97,14 +116,24 @@ export interface TaskChangesPanelSlice {
   markChangesFileViewed: (taskId: string, filePath: string) => void;
   setChangesViewMode: (taskId: string, mode: 'split' | 'expanded') => void;
   setDividerRatio: (taskId: string, ratio: number) => void;
+  /**
+   * The UI's show / hide. Hiding HOLDS the pane (see {@link browserHeldTasks});
+   * showing ends any hold, since a visible pane needs none.
+   */
   toggleBrowserOpen: (taskId: string) => void;
   /**
    * Set a task's Browser pane open state explicitly. `toggleBrowserOpen`
    * delegates here, and the `kangentic_browser_open_pane` / `_close_pane` MCP
    * tools drive it through the browser-pane request bridge, where a toggle would
    * be wrong (an agent asking to open must not close an already-open pane).
+   *
+   * Closing here DISCARDS the pane unless `options.hold` is set: this is the
+   * agent's `close_pane` and the hydration path, neither of which is a user
+   * putting a pane out of the way. Only `toggleBrowserOpen` passes `hold`.
    */
-  setBrowserOpen: (taskId: string, open: boolean) => void;
+  setBrowserOpen: (taskId: string, open: boolean, options?: { hold?: boolean }) => void;
+  /** End a hold without touching the open flag: the reaper's call when the task's session stops. */
+  releaseBrowserHold: (taskId: string) => void;
   /** Force `useBrowserUrl` to refetch this task's URLs. See {@link browserUrlRefreshTokens}. */
   refreshBrowserUrl: (taskId: string) => void;
   setChangesSelectedCommit: (taskId: string, commitOid: string | null) => void;
@@ -237,6 +266,7 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
   changesViewMode: {},
   dividerRatio: {},
   browserOpenTasks: new Set<string>(),
+  browserHeldTasks: new Set<string>(),
   browserUrlRefreshTokens: {},
   changesSelectedCommit: {},
   changesHistoryHeight: {},
@@ -258,17 +288,44 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
   },
 
   toggleBrowserOpen: (taskId) => {
-    get().setBrowserOpen(taskId, !get().browserOpenTasks.has(taskId));
+    get().setBrowserOpen(taskId, !get().browserOpenTasks.has(taskId), { hold: true });
   },
 
-  setBrowserOpen: (taskId, open) => {
+  setBrowserOpen: (taskId, open, options) => {
     const current = get().browserOpenTasks;
-    if (current.has(taskId) === open) return; // idempotent: no churn, no save
-    const next = new Set(current);
-    if (open) next.add(taskId);
-    else next.delete(taskId);
-    set({ browserOpenTasks: next });
-    scheduleDetailViewSave(taskId, get);
+    const held = get().browserHeldTasks;
+    // A hold only ever accompanies a hide, and a show always ends one. Each set
+    // is replaced only when its own membership changes, so a subscriber keyed on
+    // one set's identity (the park reaper, `has()` selectors) never wakes for
+    // the other, and a redundant call is a genuine no-op: no churn, no save.
+    const nextHeld = open ? false : options?.hold === true;
+    const openChanges = current.has(taskId) !== open;
+    const heldChanges = held.has(taskId) !== nextHeld;
+    if (!openChanges && !heldChanges) return;
+    const patch: Partial<Pick<TaskChangesPanelSlice, 'browserOpenTasks' | 'browserHeldTasks'>> = {};
+    if (openChanges) {
+      const next = new Set(current);
+      if (open) next.add(taskId);
+      else next.delete(taskId);
+      patch.browserOpenTasks = next;
+    }
+    if (heldChanges) {
+      const heldNext = new Set(held);
+      if (nextHeld) heldNext.add(taskId);
+      else heldNext.delete(taskId);
+      patch.browserHeldTasks = heldNext;
+    }
+    set(patch);
+    // The hold is never persisted, so only an open-flag change is worth a save.
+    if (openChanges) scheduleDetailViewSave(taskId, get);
+  },
+
+  releaseBrowserHold: (taskId) => {
+    const held = get().browserHeldTasks;
+    if (!held.has(taskId)) return;
+    const next = new Set(held);
+    next.delete(taskId);
+    set({ browserHeldTasks: next });
   },
 
   refreshBrowserUrl: (taskId) => {

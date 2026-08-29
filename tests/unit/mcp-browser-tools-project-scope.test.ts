@@ -281,7 +281,7 @@ describe('kangentic_browser_* caller scoping', () => {
 
   it('lists only the caller project by default, and reports what it withheld', async () => {
     vi.mocked(browserPaneRegistry.listForProject).mockReturnValue({
-      panes: [{ sessionId: 'sess-a', taskId: 'task-1', projectId: CALLER_PROJECT, webContentsId: 11, url: 'http://localhost:4200', registeredAt: 0, alive: true, debuggerAttached: false }],
+      panes: [{ sessionId: 'pane_aaaaaaaa', ownerSessionId: 'sess-a', taskId: 'task-1', projectId: CALLER_PROJECT, webContentsId: 11, url: 'http://localhost:4200', registeredAt: 0, kind: 'pane', handoff: false, alive: true, debuggerAttached: false }],
       otherProjectPaneCount: 2,
       unknownProjectPaneCount: 1,
     });
@@ -297,8 +297,8 @@ describe('kangentic_browser_* caller scoping', () => {
       unknownProjectPaneCount: number;
     };
     expect(payload.projectId).toBe(CALLER_PROJECT);
-    expect(payload.panes.map((pane) => pane.sessionId)).toEqual(['sess-a']);
-    expect(payload.panes[0]).toMatchObject({ sameProject: true, driveable: true });
+    expect(payload.panes.map((pane) => pane.sessionId)).toEqual(['pane_aaaaaaaa']);
+    expect(payload.panes[0]).toMatchObject({ sameProject: true, driveable: true, ownerSessionId: 'sess-a', kind: 'pane' });
     expect(payload.otherProjectPaneCount).toBe(2);
     expect(payload.unknownProjectPaneCount).toBe(1);
     expect(vi.mocked(browserPaneRegistry.list)).not.toHaveBeenCalled();
@@ -307,8 +307,8 @@ describe('kangentic_browser_* caller scoping', () => {
 
   it('lists other projects on request, tagged as not driveable', async () => {
     vi.mocked(browserPaneRegistry.list).mockReturnValue([
-      { sessionId: 'sess-a', taskId: 'task-1', projectId: CALLER_PROJECT, webContentsId: 11, url: null, registeredAt: 0, alive: true, debuggerAttached: false },
-      { sessionId: 'sess-c', taskId: 'task-3', projectId: 'p2', webContentsId: 33, url: null, registeredAt: 0, alive: true, debuggerAttached: false },
+      { sessionId: 'pane_aaaaaaaa', ownerSessionId: 'sess-a', taskId: 'task-1', projectId: CALLER_PROJECT, webContentsId: 11, url: null, registeredAt: 0, kind: 'pane', handoff: false, alive: true, debuggerAttached: false },
+      { sessionId: 'pane_cccccccc', ownerSessionId: 'sess-c', taskId: 'task-3', projectId: 'p2', webContentsId: 33, url: null, registeredAt: 0, kind: 'pane', handoff: false, alive: true, debuggerAttached: false },
     ]);
     const { client, close } = await connect({ projectId: CALLER_PROJECT });
     const result = await client.callTool({
@@ -318,7 +318,7 @@ describe('kangentic_browser_* caller scoping', () => {
     const payload = result.structuredContent as {
       panes: { sessionId: string; sameProject: boolean; driveable: boolean }[];
     };
-    expect(payload.panes.map((pane) => pane.sessionId)).toEqual(['sess-a', 'sess-c']);
+    expect(payload.panes.map((pane) => pane.sessionId)).toEqual(['pane_aaaaaaaa', 'pane_cccccccc']);
     expect(payload.panes[1]).toMatchObject({ sameProject: false, driveable: false });
     await close();
   });

@@ -71,6 +71,11 @@ interface TaskDetailWindowProps {
    *  keep resolving against its own project or its task URL lookup misses, the
    *  pane falls back to the empty state, and the unmount destroys the guest. */
   retainedProjectId?: string;
+  /** The user CLOSED this window but it stays mounted, hidden, so its Browser
+   *  pane's guest survives for the task's live agent (see `ManagedWindow.parked`).
+   *  Like a retained window it drops its terminal and releases its terminal
+   *  claim; unlike one, it belongs to the OPEN project and resolves live. */
+  parked?: boolean;
 }
 
 /**
@@ -107,7 +112,13 @@ export function TaskDetailWindow({
   titleBarPointerDown,
   requestClose,
   retainedProjectId,
+  parked,
 }: TaskDetailWindowProps) {
+  // Hidden-but-mounted, for either reason. What the two share is everything
+  // this window does about it: no terminal, no terminal claim, no registered
+  // closer. What they do not share (which project the pane resolves against)
+  // stays on `retainedProjectId` alone.
+  const dormant = parked === true || retainedProjectId !== undefined;
   // Everything project-scoped comes from the HOST, so this window renders the
   // same whether the board mounted it for the open project or the Agent Monitor
   // mounted it for a task in another one.
@@ -169,6 +180,7 @@ export function TaskDetailWindow({
     isArchived,
     isInTodo: isInTodo ?? false,
     currentSwimlaneRole: currentSwimlane?.role,
+    dormant,
   });
 
   // A close request only STARTS the frame's exit; the window stays mounted for
@@ -224,6 +236,12 @@ export function TaskDetailWindow({
     setClosingView(sessionViewRef.current);
     requestClose();
   }, [requestClose]);
+  // A window that was PARKED rather than removed keeps its frozen view through
+  // the park (nothing unmounts). Release the freeze on the way back so the
+  // un-parked body renders live state, not the face it wore when closed.
+  useEffect(() => {
+    if (!dormant) setClosingView(null);
+  }, [dormant]);
 
   const actions = useTaskActions({
     task,
@@ -560,9 +578,13 @@ export function TaskDetailWindow({
   // same unsaved-edits guard as Escape and the X. Keyed on `closeWithGuard` so a
   // re-memo re-registers the fresh closure; mirrors the Escape effect lifecycle.
   useEffect(() => {
+    // A dormant window is hidden and inert; no dismiss path may reach its
+    // guarded close, which would unmount it and destroy the guest it is kept
+    // alive for.
+    if (dormant) return;
     registerWindowCloser(windowId, closeWithGuard);
     return () => unregisterWindowCloser(windowId);
-  }, [windowId, closeWithGuard]);
+  }, [windowId, closeWithGuard, dormant]);
 
   // Restore keyboard focus to this window's terminal after a maximize/restore
   // toggle, so the next keystroke lands in the terminal instead of the maximize
@@ -774,6 +796,7 @@ export function TaskDetailWindow({
               browserOpen={browserOpen}
               descriptionPeekOpen={descriptionPeekOpen}
               retainedProjectId={retainedProjectId}
+              dormant={dormant}
             />
           )}
         </div>

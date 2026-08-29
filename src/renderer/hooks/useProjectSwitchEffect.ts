@@ -95,20 +95,22 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
         }
       }
 
-      // Retain the outgoing project's task-detail windows that host an OPEN
-      // Browser pane. An Electron <webview> guest dies the moment its DOM node
-      // is unmounted, so this is the only way an agent in a backgrounded project
-      // can keep driving its own pane. Everything else still closes: retention
-      // is bounded to a surface the user deliberately opened, and a retained
+      // Retain the outgoing project's task-detail windows that host a MOUNTED
+      // Browser pane: showing, or hidden and held after the user put it away.
+      // An Electron <webview> guest dies the moment its DOM node is unmounted,
+      // so this is the only way an agent in a backgrounded project can keep
+      // driving its own pane. Everything else still closes: retention is
+      // bounded to a surface the user deliberately opened, and a retained
       // window drops its terminal, so the standing cost is one composited
       // zero-opacity webview per pane and nothing else.
       // `retainAnchors` and `snapshotTaskIds` are deliberately different sets:
       // only THIS project's windows may be newly retained, but every already-
       // retained window's frozen row must survive the prune. See
       // `planWindowRetention` for why collapsing them breaks retention.
+      const { browserOpenTasks, browserHeldTasks } = useSessionStore.getState();
       const { retainAnchors, snapshotTaskIds } = planWindowRetention(
         Object.values(useWindowStore.getState().windows),
-        useSessionStore.getState().browserOpenTasks,
+        new Set([...browserOpenTasks, ...browserHeldTasks]),
       );
       // Freeze the rows these windows will render from: the board store is
       // project-scoped and is about to stop holding them. Only the outgoing

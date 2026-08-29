@@ -22,10 +22,14 @@ import { useEffect } from 'react';
 import { useSessionStore } from '../../stores/session-store';
 import { useWindowStore } from '../store/window-store';
 
-/** Whether the board layer already has a task-detail window for this task. */
+/** Whether the board layer already has a VISIBLE task-detail window for this
+ *  task. A parked window does not count: it is closed as far as the user is
+ *  concerned, and the request below is what un-parks it (through main's
+ *  arbiter and the bridge's existing-window branch). Returning early here would
+ *  set the pane's open flag and leave the window hidden. */
 function hasDetailWindowFor(taskId: string): boolean {
   return Object.values(useWindowStore.getState().windows).some(
-    (candidate) => candidate.kind === 'task-detail' && candidate.anchor === taskId,
+    (candidate) => candidate.kind === 'task-detail' && candidate.anchor === taskId && candidate.parked === undefined,
   );
 }
 

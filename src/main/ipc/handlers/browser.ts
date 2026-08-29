@@ -82,8 +82,15 @@ export function registerBrowserHandlers(context: IpcContext): void {
     hasLiveSession: (taskId) => {
       try {
         // Live (running/queued) specifically, not merely registered: a
-        // suspended or exited session has no agent to keep a browser for.
-        return context.sessionManager.findLiveSessionByTaskId(taskId) !== undefined;
+        // suspended or exited session has no agent to keep a browser for. And
+        // not a kill already in flight either: `kill()` stamps the session
+        // synchronously, before the PTY actually exits, and the renderer flips
+        // it to exited at the same moment - which drops a PARKED window, whose
+        // pane then unregisters while the registry still says running. Handing
+        // that pane off would stand a lane up for an agent that is being
+        // stopped, only for session end to tear it down moments later
+        // (observed live).
+        return context.sessionManager.hasLiveSessionForTask(taskId);
       } catch {
         // Never let a lookup failure decide policy: no hand-off is the safe
         // answer, since a spurious one would open a browser nobody asked for.
@@ -269,8 +276,10 @@ export function registerBrowserHandlers(context: IpcContext): void {
     // refuses cross-project targets by comparing against this field.
     const resolvedProjectId =
       context.sessionManager.getSessionProjectId(input.sessionId) ?? input.projectId ?? null;
-    browserPaneRegistry.register({
-      sessionId: input.sessionId,
+    // The registry mints (or, for a guest it already knows, keeps) the surface
+    // handle; the renderer's `sessionId` is the agent session that OWNS the pane.
+    const entry = browserPaneRegistry.register({
+      ownerSessionId: input.sessionId,
       taskId: input.taskId,
       projectId: resolvedProjectId,
       webContentsId: input.webContentsId,
@@ -287,25 +296,17 @@ export function registerBrowserHandlers(context: IpcContext): void {
     if (input.projectId) {
       console.log(
         `[browser-pane] pane bound partition=${browserPartitionForTask(input.projectId, input.taskId)} `
-          + `task=${input.taskId.slice(0, 8)} session=${input.sessionId.slice(0, 8)} wc=${input.webContentsId}`,
+          + `task=${input.taskId.slice(0, 8)} owner=${input.sessionId.slice(0, 8)} handle=${entry.sessionId} wc=${input.webContentsId}`,
       );
     }
   });
 
-  ipcMain.handle(IPC.BROWSER_PANE_UNREGISTER, (_event, sessionId: string, webContentsId?: number) => {
-    // Mirror the register handler's input guard (a registered sessionId always
-    // passed it). A bad key would be a harmless Map no-op, but validating keeps
-    // the two sibling handlers symmetric.
-    if (!isValidSessionId(sessionId)) return;
-    // When the caller passes the webContentsId it registered with (every
-    // BrowserPane instance does), scope the unregister to that exact guest so
-    // an out-of-order unmount across the in-app pane and its pop-out cannot
-    // clobber a newer registration for the same sessionId. Falls back to the
-    // unconditional unregister for any caller that omits it.
-    if (typeof webContentsId === 'number' && Number.isInteger(webContentsId) && webContentsId > 0) {
-      browserPaneRegistry.unregisterIfMatches(sessionId, webContentsId);
-    } else {
-      browserPaneRegistry.unregister(sessionId);
-    }
+  ipcMain.handle(IPC.BROWSER_PANE_UNREGISTER, (_event, webContentsId: number) => {
+    // The renderer unregisters the exact guest it registered, never a session:
+    // an out-of-order unmount across the in-app pane and its pop-out can then
+    // only remove its own guest, and a newer registration for the same task
+    // (a different guest) is untouched. A malformed id is a harmless no-op.
+    if (typeof webContentsId !== 'number' || !Number.isInteger(webContentsId) || webContentsId <= 0) return;
+    browserPaneRegistry.unregisterByWebContentsId(webContentsId, 'renderer-unmount');
   });
 }

@@ -27,6 +27,7 @@ vi.mock('../../src/main/browser/browser-pane-registry', () => ({
     resolveLiveGuest: vi.fn(() => ({ ok: true })),
     waitForLivePane: vi.fn(async () => null),
     waitForPanesGone: vi.fn(async () => []),
+    markDeliberateClose: vi.fn(),
   },
 }));
 vi.mock('../../src/main/browser/browser-pane-driver', () => ({
@@ -79,15 +80,30 @@ const CONFIG = {
 function pane(overrides: Record<string, unknown> = {}) {
   return {
     sessionId: CALLER_SESSION,
+    ownerSessionId: CALLER_SESSION,
     taskId: CALLER_TASK,
     projectId: PROJECT,
     webContentsId: 11,
     url: 'http://localhost:5173',
     registeredAt: 0,
+    kind: 'pane',
+    handoff: false,
     alive: true,
     debuggerAttached: false,
     ...overrides,
   };
+}
+
+/** A hand-off lane standing in for the caller task's closed pane. */
+function handoffLane(overrides: Record<string, unknown> = {}) {
+  return pane({
+    sessionId: 'lane_standin1',
+    webContentsId: 12,
+    url: 'http://localhost:4200',
+    kind: 'lane',
+    handoff: true,
+    ...overrides,
+  });
 }
 
 let sent: { channel: string; args: unknown[] }[] = [];
@@ -203,7 +219,7 @@ describe('openPaneForCallerTask', () => {
 
     it('gates the already-open no-op path too, which never reaches withGuest', async () => {
       vi.mocked(browserPaneRegistry.getByTaskId).mockReturnValue([
-        { sessionId: CALLER_SESSION, taskId: CALLER_TASK, projectId: PROJECT, webContentsId: 11, url: null, registeredAt: 0 },
+        pane({ url: null }),
       ] as never);
       vi.mocked(browserPaneRegistry.list).mockReturnValue([pane()] as never);
       vi.mocked(capabilityGate).mockReturnValue({
@@ -338,9 +354,36 @@ describe('openPaneForCallerTask', () => {
   describe('already-open pane (idempotence)', () => {
     beforeEach(() => {
       vi.mocked(browserPaneRegistry.getByTaskId).mockReturnValue([
-        { sessionId: CALLER_SESSION, taskId: CALLER_TASK, projectId: PROJECT, webContentsId: 11, url: null, registeredAt: 0 },
+        pane({ url: null }),
       ] as never);
       vi.mocked(browserPaneRegistry.list).mockReturnValue([pane()] as never);
+    });
+
+    it('does not count a hand-off lane as the open pane: it takes the cold path and mounts the visible one', async () => {
+      // Main stood the lane up when the user closed the task window. The agent
+      // asked for its PANE, and handing the lane back as `opened: false` would
+      // report a surface the agent cannot see and never asked for. The visible
+      // pane's registration is also what stands the lane down.
+      vi.mocked(browserPaneRegistry.getByTaskId).mockReturnValue([handoffLane()] as never);
+      vi.mocked(browserPaneRegistry.list).mockReturnValue([handoffLane()] as never);
+      // Pinned here: `clearAllMocks` keeps implementations, so an earlier test's
+      // resolved value would otherwise decide how the cold path ends.
+      vi.mocked(browserPaneRegistry.waitForLivePane).mockResolvedValue(null as never);
+      const result = await openPaneForCallerTask(openInput('http://localhost:5173'));
+      expect(result).toMatchObject({ ok: false, error: { kind: 'pane-open-timeout' } });
+      expect(browserUrlStore.set).toHaveBeenCalledWith('/projects/app', CALLER_TASK, 'http://localhost:5173');
+      expect(sent[0]).toMatchObject({ channel: IPC.BROWSER_PANE_OPEN_REQUEST, args: [PROJECT, CALLER_TASK] });
+      expect(browserPaneRegistry.waitForLivePane).toHaveBeenCalledWith({ taskId: CALLER_TASK, projectId: PROJECT }, expect.any(Number));
+      expect(withGuest).not.toHaveBeenCalled();
+    });
+
+    it('names the hand-off lane when the project is backgrounded, so the agent knows it still has a browser', async () => {
+      installHost({ currentProjectId: 'other-project', currentProjectPath: null });
+      vi.mocked(browserPaneRegistry.getByTaskId).mockReturnValue([handoffLane()] as never);
+      const result = await openPaneForCallerTask(openInput('http://localhost:5173'));
+      expect(result).toMatchObject({ ok: false, error: { kind: 'project-not-open' } });
+      expect(result.ok === false && result.error.detail).toContain('lane_standin1');
+      expect(sent).toEqual([]);
     });
 
     it('opens an isolated LANE for a backgrounded project, with no pane and no window', async () => {
@@ -426,7 +469,9 @@ describe('openPaneForCallerTask', () => {
       // Nothing project-scoped may run on this path: `taskExists` resolves a
       // project DB by id, and getProjectDb CREATES the file for an unrecognized
       // id, so reaching it with a backgrounded project would leave a stray db.
-      expect(sent).toEqual([]);
+      // The re-surface push is not project-scoped (the renderer's bridge only
+      // ends a hold or un-parks a window it already has), so it still goes out.
+      expect(sent).toEqual([{ channel: IPC.BROWSER_PANE_OPEN_REQUEST, args: [PROJECT, CALLER_TASK] }]);
       expect(browserUrlStore.set).not.toHaveBeenCalled();
     });
 
@@ -450,13 +495,41 @@ describe('openPaneForCallerTask', () => {
       expect(result).toMatchObject({ ok: true, data: { opened: false, navigated: true } });
       expect(loadedUrls).toEqual(['http://localhost:7777']);
       expect(browserUrlStore.set).not.toHaveBeenCalled();
-      expect(sent).toEqual([]);
     });
 
     it('returns the existing pane untouched when no url is passed', async () => {
       const result = await openPaneForCallerTask(openInput(undefined));
       expect(result).toMatchObject({ ok: true, data: { opened: false, navigated: false } });
       expect(withGuest).not.toHaveBeenCalled();
+    });
+
+    it('asks the renderer to SHOW the live pane on both warm paths, since it may be hidden', async () => {
+      // A live pane can be held behind the terminal (the user hid it with the
+      // pill) or sit in a window the user closed (parked); the guest is kept in
+      // both cases, which is exactly why the warm path resolves it. The agent
+      // asked for its pane to be open, so the same push the cold path sends
+      // goes out: the renderer ends the hold / un-parks, and a pane already
+      // showing treats it as a no-op. No URL is seeded here - the guest is live
+      // and a seed would be ignored by its locked src anyway.
+      runWithGuestBody();
+      await openPaneForCallerTask(openInput('http://localhost:7777'));
+      expect(sent).toEqual([{ channel: IPC.BROWSER_PANE_OPEN_REQUEST, args: [PROJECT, CALLER_TASK] }]);
+      expect(browserUrlStore.set).not.toHaveBeenCalled();
+
+      sent.length = 0;
+      await openPaneForCallerTask(openInput(undefined));
+      expect(sent).toEqual([{ channel: IPC.BROWSER_PANE_OPEN_REQUEST, args: [PROJECT, CALLER_TASK] }]);
+    });
+
+    it('does not push when the navigation of a live pane was refused', async () => {
+      // Nothing was shown or changed for the agent, so nothing should move on
+      // the user's screen either.
+      vi.mocked(withGuest).mockResolvedValue({
+        ok: false,
+        error: { kind: 'pane-destroyed', detail: 'gone' },
+      } as never);
+      const result = await openPaneForCallerTask(openInput('http://localhost:7777'));
+      expect(result).toMatchObject({ ok: false, error: { kind: 'pane-destroyed' } });
       expect(sent).toEqual([]);
     });
 
@@ -557,6 +630,27 @@ describe('closePanes', () => {
         callerTaskId: CALLER_TASK,
       }),
     );
+  });
+
+  it('marks its pane targets as deliberate closes BEFORE pushing, so the hand-off leaves them alone', async () => {
+    // The unregister the renderer sends back can land before the push call even
+    // returns, so the mark has to precede the push or the hand-off would stand
+    // a lane up for a pane the agent just asked to put away.
+    let markedBeforePush = false;
+    installHost({
+      send: (channel, ...args) => {
+        markedBeforePush = vi.mocked(browserPaneRegistry.markDeliberateClose).mock.calls.length > 0;
+        sent.push({ channel, args });
+        return true;
+      },
+    });
+    vi.mocked(browserPaneRegistry.resolveTarget).mockReturnValue({
+      ok: true,
+      entry: { sessionId: CALLER_SESSION },
+    } as never);
+    await closePanes(closeInput());
+    expect(browserPaneRegistry.markDeliberateClose).toHaveBeenCalledWith([CALLER_SESSION]);
+    expect(markedBeforePush).toBe(true);
   });
 
   it('actually closes the pane a bare call resolved, rather than reporting an empty success', async () => {

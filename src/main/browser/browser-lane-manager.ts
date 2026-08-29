@@ -285,12 +285,14 @@ export async function openLane(input: OpenLaneInput): Promise<OpenLaneResult> {
   }
 
   browserPaneRegistry.register({
-    sessionId: laneId,
+    handle: laneId,
+    ownerSessionId: input.ownerSessionId ?? null,
     taskId: input.taskId,
     projectId: input.projectId,
     webContentsId: guest.id,
     url: input.url,
     kind: 'lane',
+    handoff: input.handoff === true,
   });
 
   return { ok: true, laneId, webContents: guest };

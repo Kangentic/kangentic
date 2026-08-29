@@ -81,6 +81,21 @@ the two surfaces forking the CDP driver (so click/type/screenshot semantics drif
   caller's project by default. The pane's registered `projectId` is backfilled in
   `BROWSER_PANE_REGISTER` from the session registry, since the renderer's value is ambient
   `currentProject` and a pop-out window's separate store holds it stale across a project switch.
+- **A surface handle names one tab for its lifetime, and a task-bound caller resolves only its own
+  task's surfaces.** The registry (`browser-pane-registry.ts`) keys an entry by a handle bound to the
+  guest webContents (`pane_<8hex>` minted by main, `lane_<8hex>` by the lane manager), never by the
+  agent session id: re-registering the same guest updates its owner in place and keeps the handle,
+  and a different guest always gets a new one. It used to key by session id and overwrite on
+  register, so one id was observed bound to nine guests in a single agent session and an agent
+  holding it silently addressed a different tab (fresh `sessionStorage`) on consecutive calls. A
+  handle whose guest is gone is remembered and answers `surface-gone`, naming the replacement; a
+  value that was never a handle answers `no-pane-open` with the same pointer. The implicit default
+  for a caller with a task ranks that task's surfaces (visible pane, then hand-off lane, then
+  isolated lane) and never falls through to another task's pane; that fall-through was observed
+  navigating a sibling task's logged-in app to an identity-provider URL. Only a caller with no task
+  uses the project-wide single-pane rule. The renderer unregisters by the guest id it registered
+  (`BROWSER_PANE_UNREGISTER` takes a `webContentsId`), which is what makes an out-of-order unmount
+  structurally unable to clobber a newer registration.
 - **A capture against a non-composited pane must fail fast, never hang.** Chromium stops
   compositing a window that is minimized, hidden, or fully occluded, and `Page.captureScreenshot`
   then never resolves: every later command for that guest queues behind it, wedging the pane for

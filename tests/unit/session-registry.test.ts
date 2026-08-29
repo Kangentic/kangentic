@@ -34,6 +34,61 @@ function makeManagedSession(overrides: Partial<ManagedSession> = {}): ManagedSes
 }
 
 // ---------------------------------------------------------------------------
+// hasLiveSessionForTask
+// ---------------------------------------------------------------------------
+
+/**
+ * The kill-aware liveness query the Browser-pane hand-off decides on. Observed
+ * live: the UI's stop stamps `intentionalExit` and flips the renderer's session
+ * to exited at once, which drops the task's PARKED window; its pane unregisters
+ * while the PTY is still exiting, so a "found a running row" check handed the
+ * page off to a lane for an agent that was being stopped.
+ */
+describe('SessionRegistry.hasLiveSessionForTask', () => {
+  it('is true for a running session with no kill in flight', () => {
+    const registry = new SessionRegistry();
+    registry.set('sess-running', makeManagedSession({ id: 'sess-running', taskId: 'task-a', status: 'running' }));
+    expect(registry.hasLiveSessionForTask('task-a')).toBe(true);
+  });
+
+  it('is true for a queued session', () => {
+    const registry = new SessionRegistry();
+    registry.set('sess-queued', makeManagedSession({ id: 'sess-queued', taskId: 'task-a', status: 'queued' }));
+    expect(registry.hasLiveSessionForTask('task-a')).toBe(true);
+  });
+
+  it('is FALSE for a running session whose kill is already in flight', () => {
+    const registry = new SessionRegistry();
+    registry.set('sess-dying', makeManagedSession({
+      id: 'sess-dying',
+      taskId: 'task-a',
+      status: 'running',
+      intentionalExit: true,
+    }));
+    expect(registry.hasLiveSessionForTask('task-a')).toBe(false);
+    // The DTO query still reports the row, which is exactly why the hand-off
+    // must not decide on it.
+    expect(registry.findLiveSessionByTaskId('task-a')).toBeDefined();
+  });
+
+  it('is false for suspended, exited, or absent sessions', () => {
+    const registry = new SessionRegistry();
+    registry.set('sess-suspended', makeManagedSession({ id: 'sess-suspended', taskId: 'task-a', status: 'suspended' }));
+    registry.set('sess-exited', makeManagedSession({ id: 'sess-exited', taskId: 'task-b', status: 'exited' }));
+    expect(registry.hasLiveSessionForTask('task-a')).toBe(false);
+    expect(registry.hasLiveSessionForTask('task-b')).toBe(false);
+    expect(registry.hasLiveSessionForTask('task-nowhere')).toBe(false);
+  });
+
+  it('ignores a dying row when a fresh live spawn shares the taskId', () => {
+    const registry = new SessionRegistry();
+    registry.set('sess-old', makeManagedSession({ id: 'sess-old', taskId: 'task-a', status: 'running', intentionalExit: true }));
+    registry.set('sess-new', makeManagedSession({ id: 'sess-new', taskId: 'task-a', status: 'running' }));
+    expect(registry.hasLiveSessionForTask('task-a')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // findLiveSessionByTaskId
 // ---------------------------------------------------------------------------
 

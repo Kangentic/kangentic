@@ -12,7 +12,7 @@ function record(overrides: Partial<DriveTelemetryRecord> = {}): DriveTelemetryRe
     capability: 'observe',
     callerSessionId: 'caller-session-id',
     callerTaskId: 'caller-task-id',
-    resolvedSessionId: 'resolved-session-id',
+    resolvedHandle: 'pane_resolved',
     resolvedTaskId: 'resolved-task-id',
     projectId: 'project-id',
     webContentsId: 7,
@@ -46,7 +46,8 @@ describe('logDrive', () => {
     expect(warnings).toEqual([]);
     expect(logs).toHaveLength(1);
     expect(logs[0]).toContain('caller=caller-s');
-    expect(logs[0]).toContain('pane=resolved');
+    // The whole handle, never a prefix: `pane_` handles differ only past it.
+    expect(logs[0]).toContain('pane=pane_resolved');
     expect(logs[0]).toContain('wc=7');
     expect(logs[0]).toContain('outcome=ok');
   });

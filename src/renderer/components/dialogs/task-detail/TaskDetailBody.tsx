@@ -95,6 +95,11 @@ interface TaskDetailBodyProps {
    *  place, and keeps the pane resolving against its OWN project rather than the
    *  open board's, which the host context supplies. */
   retainedProjectId?: string;
+  /** Hidden-but-mounted for EITHER reason (retained for a backgrounded project,
+   *  or parked after the user closed it while its agent was live): drop the
+   *  terminal. Defaults to "retained", so a host that never parks (the Agent
+   *  Monitor's layer) needs no change. */
+  dormant?: boolean;
 }
 
 export function TaskDetailBody({
@@ -122,8 +127,10 @@ export function TaskDetailBody({
   browserOpen,
   descriptionPeekOpen = false,
   retainedProjectId,
+  dormant: dormantProp,
 }: TaskDetailBodyProps) {
   const retained = retainedProjectId !== undefined;
+  const dormant = dormantProp ?? retained;
   // Project-scoped values come from the HOST, never from the open board: this
   // surface can be hosted by the Agent Monitor for a task in another project.
   // Default-agent tasks leave `task.agent` null; falling back to the hosting
@@ -171,8 +178,16 @@ export function TaskDetailBody({
   // back to the other panel or the plain terminal) rather than showing it in two
   // places at once.
   const showBrowser = browserOpen && !browserPopOut.isOpen;
+  // The pane was put away from the UI while the task's agent may still be
+  // driving it, so it stays MOUNTED and hidden (see `browserHeldTasks`). Only
+  // while the split row renders at all, which is the live-session face; the
+  // reaper ends the hold once the session stops. A popped-out pane is never
+  // held in-app: the pop-out window owns the guest then.
+  const browserHeld = useSessionStore((state) => state.browserHeldTasks.has(task.id));
+  const browserKept = !browserOpen && browserHeld && !browserPopOut.isOpen;
   // Only meaningful while the pane is actually on screen: a drive against a
-  // popped-out or closed pane must not dim a terminal the user is working in.
+  // popped-out, held, or closed pane must not dim a terminal the user is
+  // working in.
   const agentDrivingBrowser = useIsAgentDrivingSession(sessionId) && showBrowser;
   const showChanges = changesOpen && !showBrowser && !changesPopOut.isOpen;
   const rightPanelPresent = showChanges || showBrowser || descriptionPeekOpen;
@@ -323,35 +338,59 @@ export function TaskDetailBody({
     // Browser, Changes, and the Description peek are mutually exclusive; when one
     // shares the row with the terminal, a draggable divider sets the per-task split.
     const showDivider = rightPanelPresent && !changesExpanded;
-    // The chosen right panel (Browser / Changes / Description) - shown instantly
-    // with no reveal animation.
-    const rightPanelElement = rightPanelPresent && (
+    // The Browser pane's slot, mounted while the pane is showing OR held. It is
+    // its own fixed child of the split row (never the slot Changes / the
+    // Description peek render into) so that hiding the pane, or opening
+    // Changes over it, only restyles this element: React matches the row's
+    // children by index, and moving BrowserPane between slots would remount it
+    // and destroy the guest (.claude/rules/retained-pane-never-remounts.md).
+    // Held, it sits absolutely over the right side of the row at the width it
+    // would show at, so the terminal takes the full row and an agent's
+    // screenshot of the hidden page keeps its proportions. Hidden the retained
+    // way: `opacity: 0` and inert, never `visibility: hidden`, `display: none`
+    // or a zero size - each of those stops the guest compositing, which hangs
+    // `Page.captureScreenshot` for good.
+    const browserSlot = (showBrowser || browserKept) && (
       <div
-        data-testid="task-detail-right-panel"
-        className={`flex-1 min-h-0 min-w-0 overflow-hidden transition-colors ${
-          changesExpanded ? '' : 'border-l'
-        } ${agentDrivingBrowser ? 'border-accent' : 'border-edge'}`}
+        data-testid={showBrowser ? 'task-detail-right-panel' : 'task-detail-browser-held'}
+        className={
+          showBrowser
+            ? `flex-1 min-h-0 min-w-0 overflow-hidden transition-colors border-l ${
+                agentDrivingBrowser ? 'border-accent' : 'border-edge'
+              }`
+            : 'absolute inset-y-0 right-0 min-w-0 overflow-hidden opacity-0 pointer-events-none'
+        }
+        style={showBrowser ? undefined : { width: `${(1 - splitRatio) * 100}%` }}
+        aria-hidden={showBrowser ? undefined : true}
+        inert={showBrowser ? undefined : true}
       >
         <div className="h-full">
-          {showBrowser ? (
-            <BrowserPane
-              sessionId={sessionId}
-              taskId={task.id}
-              cwd={task.worktree_path ?? projectPath}
-              projectId={paneProjectId}
-            />
-          ) : changesPresent ? (
-            changesContent
-          ) : (
-            descriptionPanelContent
-          )}
+          <BrowserPane
+            sessionId={sessionId}
+            taskId={task.id}
+            cwd={task.worktree_path ?? projectPath}
+            projectId={paneProjectId}
+          />
         </div>
+      </div>
+    );
+    // The other right panel (Changes / Description) - shown instantly with no
+    // reveal animation. Never alongside a SHOWING browser (the views are
+    // mutually exclusive), but freely beside a held one.
+    const otherPanelElement = !showBrowser && (changesPresent || descriptionPeekOpen) && (
+      <div
+        data-testid="task-detail-right-panel"
+        className={`flex-1 min-h-0 min-w-0 overflow-hidden transition-colors border-edge ${
+          changesExpanded ? '' : 'border-l'
+        }`}
+      >
+        <div className="h-full">{changesPresent ? changesContent : descriptionPanelContent}</div>
       </div>
     );
 
     return (
       <>
-        <div ref={splitContainerRef} className="flex-1 min-h-0 flex">
+        <div ref={splitContainerRef} className="relative flex-1 min-h-0 flex">
           {!changesExpanded && (
             <div
               className={`${rightPanelPresent ? 'flex-shrink-0 flex-grow-0' : 'flex-1'} min-h-0 relative overflow-hidden`}
@@ -371,17 +410,18 @@ export function TaskDetailBody({
                   agentDrivingBrowser ? 'opacity-40' : 'opacity-100'
                 }`}
               >
-                {/* A retained window is mounted ONLY to keep its Browser pane's
-                    <webview> guest alive while its project is backgrounded, so
-                    the terminal comes down: an xterm parsing PTY output for a
-                    surface nobody can see is pure cost, and it remounts from
-                    scrollback on return exactly as the ownership handoff already
-                    does. Swapping the child here (rather than dropping the
-                    wrapping divs) is deliberate: the sibling slots around
-                    `rightPanelElement` must keep their positions, because React
-                    matches these fixed children by index and a shifted index
-                    would remount BrowserPane and destroy the guest. */}
-                {retained ? null : (
+                {/* A dormant window (retained while its project is backgrounded,
+                    or parked after the user closed it) is mounted ONLY to keep
+                    its Browser pane's <webview> guest alive, so the terminal
+                    comes down: an xterm parsing PTY output for a surface nobody
+                    can see is pure cost, and it remounts from scrollback on
+                    return exactly as the ownership handoff already does.
+                    Swapping the child here (rather than dropping the wrapping
+                    divs) is deliberate: the sibling slots around `browserSlot`
+                    must keep their positions, because React matches these fixed
+                    children by index and a shifted index would remount
+                    BrowserPane and destroy the guest. */}
+                {dormant ? null : (
                   <TerminalTab
                     key={sessionId}
                     sessionId={sessionId}
@@ -397,7 +437,8 @@ export function TaskDetailBody({
             </div>
           )}
           {showDivider && splitDivider}
-          {rightPanelElement}
+          {browserSlot}
+          {otherPanelElement}
           {resizeCaptureOverlay}
         </div>
         <ContextBar sessionId={sessionId} agentFallback={projectDefaultAgent} />

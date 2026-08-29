@@ -129,6 +129,17 @@ async function openTaskDialog(page: Page): Promise<void> {
 
 /** Close the task detail dialog via keyboard (document-level dispatch, safe inside xterm). */
 async function closeTaskDialog(page: Page): Promise<void> {
+  // Discard the Browser pane first. The fixture's task has a RUNNING session,
+  // so closing the window with the pane mounted (showing OR hidden-and-held
+  // after a pill toggle, on its empty state OR a page) would PARK it (hidden in
+  // place so its guest survives for the agent) rather than remove it, and an
+  // opacity-0 frame never reads as hidden to Playwright. The pill would only
+  // HOLD the pane, so the discard is an agent's close_pane push, the one path
+  // that unmounts it. Idempotent when no pane is mounted.
+  await page.evaluate(({ projectId, taskId }) => {
+    window.__mockBrowser?.emitPaneCloseRequest(projectId, [taskId]);
+  }, { projectId: PROJECT_ID, taskId: TASK_ID });
+  await expect(page.locator('[data-testid="browser-pane"], [data-testid="browser-empty-state"]')).toHaveCount(0, { timeout: 3000 });
   await page.evaluate(() => {
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   });

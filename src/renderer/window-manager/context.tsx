@@ -11,6 +11,7 @@
 import { createContext, useContext, useMemo, useRef } from 'react';
 import type { ReactNode } from 'react';
 import type { WindowManager } from './store/window-store';
+import type { ManagedWindow } from './store/types';
 import { createSnapPreviewController } from './dnd/snap-preview-controller';
 import type { SnapPreviewController } from './dnd/snap-preview-controller';
 
@@ -18,6 +19,17 @@ import type { SnapPreviewController } from './dnd/snap-preview-controller';
 export interface WindowManagerLayerOptions {
   /** Pixel floor for a MANUALLY resized window in this layer. */
   minSize: { width: number; height: number };
+  /**
+   * Whether a USER close of this window must PARK it (hide it in place, guest
+   * and all) rather than remove it. Consulted by `WindowFrame` once the close
+   * animation has played, so every close gesture (the X, Escape, light
+   * dismiss, middle-click) reaches one decision. Omitted by layers that always
+   * drop; the board supplies one so a Browser pane an agent is driving survives
+   * the window closing. A property of the layer, not of the window, for the
+   * same reason `renderTaskDetail` is: the answer depends on stores the generic
+   * engine must not import.
+   */
+  shouldParkOnClose?: (managedWindow: ManagedWindow) => boolean;
   /**
    * How this layer turns a task-detail window into rendered content.
    *

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import type { BrowserPaneEntry } from '../../src/main/browser/browser-pane-registry';
+import type { RegisterSurfaceInput } from '../../src/main/browser/browser-pane-registry';
 
 /**
  * Keeping an agent's browser alive when the user closes the task window.
@@ -44,14 +44,16 @@ const { installLaneHandoff, uninstallLaneHandoff } = await import(
 );
 const { browserPaneRegistry } = await import('../../src/main/browser/browser-pane-registry');
 
-function pane(overrides: Partial<BrowserPaneEntry> = {}): BrowserPaneEntry {
+const PANE_HANDLE = 'pane_00000001';
+
+function pane(overrides: Partial<RegisterSurfaceInput> = {}): RegisterSurfaceInput {
   return {
-    sessionId: 'session-1',
+    handle: PANE_HANDLE,
+    ownerSessionId: 'session-1',
     taskId: 'task-1',
     projectId: 'project-1',
     webContentsId: 7,
     url: 'http://localhost:4200',
-    registeredAt: 0,
     kind: 'pane',
     ...overrides,
   };
@@ -76,7 +78,7 @@ afterEach(() => {
 });
 
 /** Register then remove a pane, which is what closing the window does. */
-function closePane(entry: BrowserPaneEntry): void {
+function closePane(entry: RegisterSurfaceInput): void {
   browserPaneRegistry.register(entry);
   browserPaneRegistry.unregisterByWebContentsId(entry.webContentsId);
 }
@@ -90,7 +92,20 @@ describe('pane hand-off', () => {
       projectId: 'project-1',
       url: 'http://localhost:4200',
       handoff: true,
+      // The lane is owned by the AGENT session the pane served, not by the
+      // pane's handle, so it dies with that agent.
+      ownerSessionId: 'session-1',
     });
+  });
+
+  it('does not hand off a pane the agent itself put away with close_pane', async () => {
+    // The agent asked for the pane to go; standing a lane up behind its back
+    // would undo exactly what it requested. `closePanes` marks its targets.
+    browserPaneRegistry.register(pane());
+    browserPaneRegistry.markDeliberateClose([PANE_HANDLE]);
+    browserPaneRegistry.unregisterByWebContentsId(7, 'renderer-unmount');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(openLane).not.toHaveBeenCalled();
   });
 
   // A BACKGROUND project's pane can close (a retained pane survives a project
@@ -126,7 +141,7 @@ describe('pane hand-off', () => {
   it('never hands off a LANE closing', async () => {
     // A lane closing is the agent's own decision or a cleanup path. Re-opening
     // it would make lanes impossible to close.
-    closePane(pane({ sessionId: 'lane_abc', kind: 'lane' }));
+    closePane(pane({ handle: 'lane_abc', kind: 'lane' }));
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(openLane).not.toHaveBeenCalled();
   });
@@ -157,7 +172,7 @@ describe('pane hand-off', () => {
     browserPaneRegistry.register(pane());
     // Resolve against a guest id that does not exist, which triggers the
     // self-heal path rather than a close.
-    browserPaneRegistry.resolveLiveGuest(pane());
+    browserPaneRegistry.resolveLiveGuest(browserPaneRegistry.get(PANE_HANDLE)!);
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(openLane).not.toHaveBeenCalled();
   });
@@ -173,7 +188,7 @@ describe('standing down', () => {
     // Otherwise an agent opening its own isolated lane would tear down the
     // hand-off lane serving a different purpose.
     destroyHandoffLanesForTask.mockClear();
-    browserPaneRegistry.register(pane({ sessionId: 'lane_xyz', kind: 'lane', webContentsId: 11 }));
+    browserPaneRegistry.register(pane({ handle: 'lane_xyz', kind: 'lane', webContentsId: 11 }));
     expect(destroyHandoffLanesForTask).not.toHaveBeenCalled();
   });
 });

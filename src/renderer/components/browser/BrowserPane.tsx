@@ -234,7 +234,17 @@ function BrowserPaneActive({
   // that knows taskId + sessionId + the guest's webContentsId. Registers on
   // dom-ready (the id is valid once the guest attaches) and unregisters on
   // unmount; main also tracks the guest's own destroyed / did-navigate events.
+  //
+  // Two effects, deliberately. The registration is keyed on the GUEST's
+  // lifetime, not on the identity props: main mints a surface handle per guest
+  // and keeps it for as long as that guest lives, so a session rotation
+  // (`/clear`) or a retained window's project settling must NOT unregister and
+  // re-register - that would retire the handle an agent is holding for a tab
+  // that never went anywhere. The second effect re-sends `registerPane` for the
+  // same guest, which main treats as an in-place owner update.
   const registeredWebContentsIdRef = useRef<number | null>(null);
+  const registrationIdentityRef = useRef({ sessionId, taskId, projectId });
+  registrationIdentityRef.current = { sessionId, taskId, projectId };
   useEffect(() => {
     const webview = webviewRef.current;
     if (!webview) return;
@@ -256,18 +266,43 @@ function BrowserPaneActive({
       } catch {
         /* not attached */
       }
-      void window.electronAPI.browser.registerPane({ sessionId, taskId, projectId, webContentsId, url });
+      void window.electronAPI.browser.registerPane({ ...registrationIdentityRef.current, webContentsId, url });
     };
     webview.addEventListener('dom-ready', register);
     register();
     return () => {
       webview.removeEventListener('dom-ready', register);
-      // Pass the webContentsId THIS instance registered with, so an out-of-order
-      // unmount (e.g. this in-app pane unmounting after a pop-out window's pane
-      // already re-registered the same sessionId with a new guest) cannot
-      // clobber the newer registration - see unregisterIfMatches.
-      void window.electronAPI.browser.unregisterPane(sessionId, registeredWebContentsIdRef.current ?? undefined);
+      // Unregister the guest THIS instance registered, by its id, so an
+      // out-of-order unmount (this in-app pane unmounting after a pop-out
+      // window's pane already registered a new guest for the same task) can
+      // only ever remove its own registration. A mount that never registered
+      // (StrictMode's throwaway first mount) has nothing to send.
+      const registeredWebContentsId = registeredWebContentsIdRef.current;
+      registeredWebContentsIdRef.current = null;
+      if (registeredWebContentsId != null) {
+        void window.electronAPI.browser.unregisterPane(registeredWebContentsId);
+      }
     };
+  }, []);
+
+  // Identity changed on a LIVE guest: re-register the same guest so main
+  // updates its owner in place and keeps the handle. Never unregisters.
+  useEffect(() => {
+    const registeredWebContentsId = registeredWebContentsIdRef.current;
+    if (registeredWebContentsId == null) return;
+    let url: string | null = null;
+    try {
+      url = webviewRef.current?.getURL() || null;
+    } catch {
+      /* not attached */
+    }
+    void window.electronAPI.browser.registerPane({
+      sessionId,
+      taskId,
+      projectId,
+      webContentsId: registeredWebContentsId,
+      url,
+    });
   }, [sessionId, taskId, projectId]);
 
   // Lift the dark loading cover once the webview paints. One-shot: it stays

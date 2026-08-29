@@ -295,6 +295,26 @@ export class SessionRegistry {
     return this.findByTaskId(taskId) !== undefined;
   }
 
+  /**
+   * Whether the task has an agent worth preserving state for: a live
+   * (running / queued) session that is NOT already being killed.
+   *
+   * `findLiveSessionByTaskId` answers "is there a running row", which is the
+   * wrong question for anything deciding to keep a browser alive for the agent:
+   * `kill()` stamps `intentionalExit` synchronously and the PTY exits later, so
+   * for that gap the row still reads running while the agent is on its way
+   * out. The `Session` DTO deliberately drops the flag, hence this query.
+   */
+  hasLiveSessionForTask(taskId: string): boolean {
+    for (const session of this.sessions.values()) {
+      if (session.taskId !== taskId) continue;
+      if (session.status !== 'running' && session.status !== 'queued') continue;
+      if (session.intentionalExit === true) continue;
+      return true;
+    }
+    return false;
+  }
+
   getSessionProjectId(sessionId: string): string | undefined {
     return this.sessions.get(sessionId)?.projectId;
   }

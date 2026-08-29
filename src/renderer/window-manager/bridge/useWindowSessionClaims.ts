@@ -45,6 +45,7 @@
 import { useEffect } from 'react';
 import { useSessionStore } from '../../stores/session-store';
 import { allWindowManagers } from '../store/window-store';
+import { isWindowDormant } from '../store/types';
 import { isLayerMounted, subscribeLayerMounts } from '../store/layer-mount-registry';
 
 export function useWindowSessionClaims(): void {
@@ -69,6 +70,11 @@ export function useWindowSessionClaims(): void {
           // Only task-detail windows claim a session by anchor. A conversation
           // window's anchor is a session id, and a command terminal's is a slot.
           if (managedWindow.kind !== 'task-detail') continue;
+          // A dormant window (parked after the user closed it, or retained for a
+          // backgrounded project) hosts no xterm, so it holds no claim. For a
+          // PARKED window this is user-visible: the user closed it, and expects
+          // that session's terminal back in the bottom panel.
+          if (isWindowDormant(managedWindow)) continue;
           const taskId = toTaskId ? toTaskId(managedWindow.anchor) : managedWindow.anchor;
           const session = sessions.find((candidate) => candidate.taskId === taskId);
           if (session && !ownedSessionIds.includes(session.id)) ownedSessionIds.push(session.id);
@@ -102,7 +108,9 @@ export function useWindowSessionClaims(): void {
         parts.push(manager.options.idPrefix);
         for (const managedWindow of Object.values(manager.store.getState().windows)) {
           if (managedWindow.kind !== 'task-detail') continue;
-          parts.push(managedWindow.anchor);
+          // Dormancy changes the claim set without changing the anchor set, so
+          // it has to move the fingerprint or a park / un-park is swallowed.
+          parts.push(isWindowDormant(managedWindow) ? `${managedWindow.anchor}!` : managedWindow.anchor);
         }
       }
       return parts.join('|');

@@ -42,6 +42,13 @@ export interface OverlayPhaseApi {
   requestClose: () => void;
   /** Force back to the entering phase (for open-driven overlays that re-open). */
   reset: () => void;
+  /**
+   * Force the visible phase with NO animation. For a frame that stays mounted
+   * after its exit played (a parked task-detail window) and must present flat
+   * when it comes back, rather than re-running its entrance or staying stuck
+   * in the exiting phase.
+   */
+  markVisible: () => void;
   /** Class for the backdrop element per phase (empty string for the popover variant). */
   backdropClassName: string;
   /** Class for the content element per phase. */
@@ -103,6 +110,11 @@ export function useOverlayPhase(
     setPhase('entering');
   }, []);
 
+  const markVisible = useCallback(() => {
+    closeRequestedRef.current = false;
+    setPhase('visible');
+  }, []);
+
   const onAnimationEnd = useCallback(
     (event: React.AnimationEvent) => {
       // Ignore animations bubbling up from descendants of the content element.
@@ -139,6 +151,7 @@ export function useOverlayPhase(
     isExiting: phase === 'exiting',
     requestClose,
     reset,
+    markVisible,
     backdropClassName,
     contentClassName,
     onAnimationEnd,

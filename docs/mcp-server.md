@@ -1015,7 +1015,9 @@ Enumerate worktrees for one or every registered project. Each `WorktreeRecord` c
 
 These **shipped** tools let an agent drive the embedded **Browser pane** of a task (an Electron `<webview>` showing the user's own dev server, e.g. `ng serve` on `http://localhost:4200`). They are distinct from the dev-only `kangentic_devtools_*` tools below, which debug Kangentic itself. They attach Chrome DevTools Protocol to the pane's guest webContents in-process (no HTTP bridge, no lockfile). Implementation: `src/main/agent/mcp-http/browser-tools.ts` plus `src/main/browser/` (pane registry, driver, shared CDP driver).
 
-Targeting is scoped to the connection's own project (the `<projectId>` segment of the MCP URL). Every **driving** tool (navigate, observe, interact, eval) takes an optional `sessionId` or `taskId`, which must name a pane in that project; one in another project is refused with the `foreign-project` error kind. Omit both and resolution walks a precedence chain: the pane registered under the caller's own sessionId, then the caller's own taskId (a separate step so a session rotation such as `/clear` still finds the task's pane), then the single pane open in the project (errors with candidates when more than one is open). A step that matches nothing falls through to the next, so a caller with no session segment (a human-driven client, or the two-segment `.kangentic/mcp-config.json` URL) still resolves normally. `kangentic_browser_list_panes` lists the panes you can drive.
+Targeting is scoped to the connection's own project (the `<projectId>` segment of the MCP URL). Every **driving** tool (navigate, observe, interact, eval) takes an optional `sessionId` or `taskId`. `sessionId` is a **browser surface handle** (`pane_<8hex>` for a visible pane, `lane_<8hex>` for an offscreen lane), as returned by `kangentic_browser_open_pane` and `kangentic_browser_list_panes`; it is not a Kangentic agent session id. A handle names exactly one guest webContents (one tab) for its whole life: registering the same guest again (a `/clear` rotates the owning session) keeps it, and a new guest always gets a new one, so a handle can never silently retarget to a different tab. When the tab behind a handle is gone, the call fails with `surface-gone`, which says why it went (the task window was closed, the lane was closed, the tab was destroyed), how long ago, that per-tab state (`sessionStorage`, in-memory app state) did not carry over while cookies and `localStorage` did, and names the task's current surface to use instead. A value that was never a handle (an agent session id, say) is refused as `no-pane-open` with the same pointer. Either target must name a surface in the caller's project; one in another project is refused with the `foreign-project` error kind.
+
+Omit both and the implicit default is **own-task-only** for a caller bound to a task: it resolves among that task's surfaces, ranked visible pane first, then a hand-off lane, then an isolated lane, and refuses `multiple-panes` (with candidates) when two share the best rank or `no-pane-open` when the task has none. It never falls through to another task's pane, however many are open in the project; that fall-through was observed navigating a sibling task's logged-in app to an identity-provider URL. Only a caller with no task (a human-driven client, a Command Terminal, or the two-segment `.kangentic/mcp-config.json` URL) uses the project-wide rule: a surface its own session owns, then the single pane open in the project, else `multiple-panes` with candidates. An explicit `taskId` ranks the same way. `kangentic_browser_list_panes` lists the surfaces you can drive.
 
 No tool in the family takes a `project` argument, so there is no way to *drive* another project's pane. Two tools sit outside the driving rule above, both deliberately:
 
@@ -1048,6 +1050,7 @@ Behavior worth knowing:
 - **It opens the task's detail window if one is not already open.** That changes what is on the user's screen, which is deliberate: refusing would put the agent right back at the dead end this tool exists to remove.
 - **It returns only once the pane is registered and driveable**, resolved through the same `withGuest` chokepoint every driving tool uses, so the agent's very next call cannot race it. The wait is bounded (10s), after which it fails with `pane-open-timeout`. The one exception is a call that navigates nothing (the pane is already open and no `url` was passed): that returns the pane's registry status directly, having confirmed the guest is live but not that it is driveable.
 - **It is idempotent.** Called again with a different `url`, it navigates the existing pane rather than reopening it; the response's `opened` / `navigated` flags say which happened.
+- **It shows a hidden pane again.** A pane the user hid with the Browser pill (held) or whose window the user closed while the agent was live (parked) is still registered and driveable, so the call takes the warm path, and it also asks the renderer to show the pane and un-park the window: the same guest and tab, nothing reloads, and the window it raises is agent-stamped so its terminal never takes the user's keyboard. Only `close_pane` discards.
 - **It carries the `navigate` capability tier**, since it always loads a URL. Turning off "Allow navigation" in the Agent Browser settings therefore disables this tool too. The tier is checked before anything happens, so a gated-off call never opens a window or seeds a URL first.
 - Refusals it can return besides the shared ones: `no-caller-task` (the connection is not bound to a task, e.g. a Command Terminal), `project-not-open` (the caller's project is not the one currently open in Kangentic, so no window can be mounted for its tasks), `browser-pane-disabled` (the project has the Browser pane turned off), `task-not-found`, `no-url`, `app-not-ready` (Kangentic is still starting, or its window is gone - also reachable from `close_pane`), and `url-seed-failed` (the URL could not be persisted before the pane was opened).
 
@@ -1072,10 +1075,10 @@ Every **driving** tool below takes the same optional target pair. They are liste
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `sessionId` | string | No | Session whose Browser pane to target. Must name a pane in your own project. |
-| `taskId` | string | No | Task whose Browser pane to target. An alternative to `sessionId`, likewise same-project. |
+| `sessionId` | string | No | Browser surface handle (`pane_…` / `lane_…`) from `open_pane` / `list_panes`. Names one tab for its lifetime; a gone tab returns `surface-gone` naming the replacement. Must be in your own project. |
+| `taskId` | string | No | Task whose Browser surface to target (visible pane first, then a lane). An alternative to `sessionId`, likewise same-project. |
 
-Omitting both resolves your own pane, then the single pane open in the project. Alongside the per-tool errors listed below, any driving tool can return the shared refusals raised while resolving and attaching to a pane: `no-pane-open`, `multiple-panes` (more than one is open and neither argument was given; the error carries the candidates), `foreign-project`, `pane-destroyed`, `pane-not-rendering`, `cdp-attach-failed`, `pane-busy`, and `driver-error`.
+Omitting both resolves your own task's surface (a caller with no task falls back to the single pane open in the project). Alongside the per-tool errors listed below, any driving tool can return the shared refusals raised while resolving and attaching to a pane: `no-pane-open`, `surface-gone` (the handle named a tab that no longer exists; the detail names the task's current surface), `multiple-panes` (more than one surface shares the best rank and neither argument was given; the error carries the candidates), `foreign-project`, `pane-destroyed`, `pane-not-rendering`, `cdp-attach-failed`, `pane-busy`, and `driver-error`.
 
 ### An agent's browser survives the window closing
 
@@ -1083,26 +1086,39 @@ A browser an agent is using belongs to the agent, not to a piece of UI. The user
 task detail, move around the board, and switch projects without disconnecting an agent midway through
 verifying something.
 
-An Electron `<webview>` guest dies the instant its DOM node unmounts, so closing the task's detail
-window really does destroy the visible pane. When that happens and the task still has a live agent
-session, main hands the page off to an offscreen lane at the same URL, registered under the same
-task. The agent's next call resolves to it through the ordinary caller-task rule, so nothing about
-the agent changes - it does not know a hand-off happened and does not need to. Reopening the task's
-Browser pane stands the hand-off lane down, because the visible pane is the better answer whenever it
-exists and two surfaces for one task would make every implicit call ambiguous.
+An Electron `<webview>` guest dies the instant its DOM node unmounts, so a visible pane that
+genuinely unmounts (a hard reload, the pane detaching into a pop-out, a task-detail window that had
+to be dropped) is destroyed. When that happens and the task still has a live agent session, main
+hands the page off to an offscreen lane at the same URL, registered under a NEW `lane_` handle for
+the same task. An agent that omits `sessionId` resolves to it through the own-task rule, which ranks
+a hand-off lane right behind the visible pane. An agent holding the old `pane_` handle is told the
+truth rather than retargeted: that handle now returns `surface-gone`, naming the lane and saying
+that per-tab state did not carry over (the lane is a fresh document in the same cookie jar).
+Reopening the task's Browser pane stands the hand-off lane down, because the visible pane is the
+better answer whenever it exists and two surfaces for one task would make every implicit call
+ambiguous; `open_pane` itself never counts a hand-off lane as "already open" and always mounts the
+visible pane. A pane the agent put away with `close_pane` is never handed off.
 
-This is distinct from retention (`.claude/rules/retained-pane-never-remounts.md`), which keeps a
-window that stays OPEN alive across a project switch. Retention covers the window staying; the
-hand-off covers the window going away.
+This is distinct from retention (`.claude/rules/retained-pane-never-remounts.md`), which keeps the
+guest mounted, hidden, so it never unmounts at all: across a project switch, when the user closes a
+task window whose agent is still live (the window is parked and reopening re-attaches the same tab),
+and when the user hides the pane with the Browser pill or opens Changes over it (the pane is held
+behind the full-width terminal and showing it again is a style change). In every one of those the
+handle, the CDP session, `sessionStorage`, and in-memory state are intact, and the tools keep working
+on the hidden page. Retention covers the guest surviving; the hand-off covers the guest genuinely
+going away. Only `close_pane` (or the session ending) discards a hidden pane; the user's hide never
+does.
 
 ### Isolated browser lanes
 
 `kangentic_browser_open_pane` accepts `isolated: true`, which opens a private browser LANE instead of
-the task's shared pane and returns a `laneId`. Pass that id back as `sessionId` on every later
-`kangentic_browser_*` call - forget it and the call silently falls back to the shared pane, which
-undoes the isolation. Use a lane whenever several agents work on one task at the same time: without
-one they all resolve to the same pane and interleave navigations, clicks and screenshots while each
-believes it has exclusive control.
+the task's shared pane and returns a `laneId` (the lane's surface handle, also `pane.sessionId`).
+Pass that handle back as `sessionId` on every later `kangentic_browser_*` call - forget it and the
+call falls back to the task's visible pane, which undoes the isolation (an isolated lane ranks last
+in the implicit default; two isolated lanes with no handle given refuse `multiple-panes`). Use a
+lane whenever several agents work on one task at the same time: without one they all resolve to the
+same pane and interleave navigations, clicks and screenshots while each believes it has exclusive
+control.
 
 A lane is offscreen. It does not appear on screen, does not disturb the pane the user is looking at,
 and cannot take their keyboard focus. It shares the task's cookie jar, so it inherits
@@ -1111,8 +1127,8 @@ whatever the user is already signed into. Lanes are capped per task; past the ca
 destroys lanes directly. A lane is also destroyed when the session that opened it ends, when it goes
 idle, and on app quit - so forgetting to close one leaks nothing.
 
-`kangentic_browser_list_panes` reports a lane's `kind` so an agent can tell its own lane from the
-task's shared pane.
+`kangentic_browser_list_panes` reports each surface's `kind` (and `handoff` for a lane standing in
+for a closed pane) so an agent can tell its own lane from the task's shared pane.
 
 `kangentic_browser_screenshot` additionally returns `dev-server-error` when the dev server is showing
 a build-error overlay. Without it the tool returns a faithful picture of a full-screen red overlay,
@@ -1131,13 +1147,13 @@ The capability gate (`capabilityGate` in `src/main/browser/browser-pane-driver.t
 
 ### kangentic_browser_list_panes
 
-List the Browser panes open in your project, so you can discover a `sessionId` / `taskId` to drive or confirm the user has a dev server loaded. Returns an empty list when no pane is open. Not a driving tool: it takes no target pair.
+List the Browser surfaces open in your project, so you can discover a surface handle (`sessionId`) or `taskId` to drive or confirm the user has a dev server loaded. Returns an empty list when no pane is open. Not a driving tool: it takes no target pair.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `includeOtherProjects` | boolean | No | Also list panes in other projects. They are listed for visibility only and cannot be driven from this connection. Default false. |
 
-Returns `{ automationEnabled, projectId, panes, otherProjectPaneCount, unknownProjectPaneCount }`. Each pane carries its `sessionId`, `taskId`, current URL, liveness / debugger-attached state, plus `sameProject` and `driveable`. The two counts are why an empty `panes` list is never mistaken for an idle machine.
+Returns `{ automationEnabled, projectId, panes, otherProjectPaneCount, unknownProjectPaneCount }`. Each surface carries its handle (`sessionId`, the value to pass back), `ownerSessionId` (the agent session it serves), `taskId`, `kind` (`pane` or `lane`) with `handoff` for a lane standing in for a closed pane, `webContentsId`, current URL, liveness / debugger-attached state, plus `sameProject` and `driveable`. The two counts are why an empty `panes` list is never mistaken for an idle machine.
 
 ### kangentic_browser_navigate
 
@@ -1145,8 +1161,8 @@ Point the pane at an http(s) URL. This navigates the in-app pane the user has op
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `sessionId` | string | No | Target pane by session. |
-| `taskId` | string | No | Target pane by task. |
+| `sessionId` | string | No | Target a surface by its handle. |
+| `taskId` | string | No | Target a surface by task. |
 | `url` | string | Yes | Absolute http(s) URL to load, e.g. `http://localhost:4200`. |
 
 Returns `{ ok: true, url }` with the validated URL. The URL is checked before the pane is resolved, so a malformed URL or a non-http(s) scheme (`invalid-url`), or a non-local host while `restrictNavigationToLocalhost` is on (`navigation-host-blocked`), is refused without touching the pane.
@@ -1157,8 +1173,8 @@ Capture the pane's loaded page and return an inline image plus viewport and scal
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `sessionId` | string | No | Target pane by session. |
-| `taskId` | string | No | Target pane by task. |
+| `sessionId` | string | No | Target a surface by its handle. |
+| `taskId` | string | No | Target a surface by task. |
 | `fullPage` | boolean | No | Capture the full scrollable page instead of the viewport. Default false. |
 | `format` | string | No | `png` or `jpeg`. Default `jpeg`. |
 | `quality` | number | No | JPEG quality 1-100, ignored for png. Defaults to 80 for jpeg. |
@@ -1172,8 +1188,8 @@ Capture a screenshot clipped to a single element. Capability tier: `observe`.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `sessionId` | string | No | Target pane by session. |
-| `taskId` | string | No | Target pane by task. |
+| `sessionId` | string | No | Target a surface by its handle. |
+| `taskId` | string | No | Target a surface by task. |
 | `selector` | string | Yes | CSS selector (or `text=` / `aria=` form) of the element to capture. |
 | `format` | string | No | `png` or `jpeg`. Default `png`. |
 | `quality` | number | No | JPEG quality 1-100, ignored for png. |
@@ -1187,8 +1203,8 @@ Read the `outerHTML` of the first element matching a selector. Capability tier: 
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `sessionId` | string | No | Target pane by session. |
-| `taskId` | string | No | Target pane by task. |
+| `sessionId` | string | No | Target a surface by its handle. |
+| `taskId` | string | No | Target a surface by task. |
 | `selector` | string | No | CSS selector (or `text=` / `aria=` form). Defaults to `html`. |
 | `includeBox` | boolean | No | Also return the element's `{x, y, width, height}` viewport box. |
 
@@ -1200,8 +1216,8 @@ Measure every element matching a selector in one round-trip, instead of one call
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `sessionId` | string | No | Target pane by session. |
-| `taskId` | string | No | Target pane by task. |
+| `sessionId` | string | No | Target a surface by its handle. |
+| `taskId` | string | No | Target a surface by task. |
 | `selector` | string | Yes | CSS selector (or `text=` / `aria=` form). |
 | `includeHtml` | boolean | No | Include each element's `outerHTML`, clipped to 1024 characters. |
 | `limit` | number | No | Max elements to return. Default 100, max 1000. |
@@ -1214,8 +1230,8 @@ Read the raw CDP box model (content, padding, border, and margin quads) of one e
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `sessionId` | string | No | Target pane by session. |
-| `taskId` | string | No | Target pane by task. |
+| `sessionId` | string | No | Target a surface by its handle. |
+| `taskId` | string | No | Target a surface by task. |
 | `selector` | string | Yes | CSS selector of the element. |
 
 Returns `{ selector, ...boxModel }`. Error mode: `selector-not-found`.
@@ -1226,8 +1242,8 @@ Read console messages captured from the pane. Capability tier: `observe`.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `sessionId` | string | No | Target pane by session. |
-| `taskId` | string | No | Target pane by task. |
+| `sessionId` | string | No | Target a surface by its handle. |
+| `taskId` | string | No | Target a surface by task. |
 | `since` | string | No | ISO timestamp; only return entries at or after this time. |
 | `level` | string | No | One of `log`, `warn`, `error`, `info`, `debug`, `verbose`, `all`. Default `all`. |
 | `limit` | number | No | Max entries, newest last. Default 100, max 500. |
@@ -1240,8 +1256,8 @@ Poll until an element appears, optionally containing text, or until a string app
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `sessionId` | string | No | Target pane by session. |
-| `taskId` | string | No | Target pane by task. |
+| `sessionId` | string | No | Target a surface by its handle. |
+| `taskId` | string | No | Target a surface by task. |
 | `selector` | string | No | CSS selector to wait for. |
 | `domText` | string | No | Text to wait for, within `selector` if given, else anywhere in `body`. |
 | `timeoutMs` | number | No | Max wait. Default 30000, max 60000. |
@@ -1255,8 +1271,8 @@ Click an element by selector, or a point by coordinates. Capability tier: `inter
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `sessionId` | string | No | Target pane by session. |
-| `taskId` | string | No | Target pane by task. |
+| `sessionId` | string | No | Target a surface by its handle. |
+| `taskId` | string | No | Target a surface by task. |
 | `selector` | string | No | CSS selector (or `text=` / `aria=` form) to click at its center. |
 | `x` | number | No | X coordinate. Use with `y` instead of `selector`. |
 | `y` | number | No | Y coordinate. |
@@ -1270,8 +1286,8 @@ Type text into the pane. Capability tier: `interact`.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `sessionId` | string | No | Target pane by session. |
-| `taskId` | string | No | Target pane by task. |
+| `sessionId` | string | No | Target a surface by its handle. |
+| `taskId` | string | No | Target a surface by task. |
 | `text` | string | Yes | Text to type. |
 | `selector` | string | No | CSS selector to focus before typing. Focus is taken by clicking the element's center. |
 | `clearFirst` | boolean | No | Select-all and delete before typing. Requires `selector`, since it runs as part of focusing. |
@@ -1284,8 +1300,8 @@ Send a key or chord. Single printable characters are typed. Capability tier: `in
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `sessionId` | string | No | Target pane by session. |
-| `taskId` | string | No | Target pane by task. |
+| `sessionId` | string | No | Target a surface by its handle. |
+| `taskId` | string | No | Target a surface by task. |
 | `keys` | string | Yes | Key or chord, e.g. `Enter`, `Escape`, `Tab`, `Ctrl+Shift+P`, `ArrowDown`. |
 
 Returns `{ ok: true }`. Error mode: `unknown-key` when the combo cannot be parsed.
@@ -1296,8 +1312,8 @@ Drag from one element to another: mouse press, move in steps, release. Capabilit
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `sessionId` | string | No | Target pane by session. |
-| `taskId` | string | No | Target pane by task. |
+| `sessionId` | string | No | Target a surface by its handle. |
+| `taskId` | string | No | Target a surface by task. |
 | `fromSelector` | string | Yes | CSS selector of the drag source. |
 | `toSelector` | string | Yes | CSS selector of the drop target. |
 | `steps` | number | No | Intermediate move steps. Default 10, max 60. Raise it for libraries that need several move events to register a drag. |
@@ -1310,8 +1326,8 @@ Evaluate a JavaScript expression in the loaded page's origin and return its valu
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `sessionId` | string | No | Target pane by session. |
-| `taskId` | string | No | Target pane by task. |
+| `sessionId` | string | No | Target a surface by its handle. |
+| `taskId` | string | No | Target a surface by task. |
 | `expression` | string | Yes | JavaScript expression to evaluate. The resolved value is returned. |
 
 Returns `{ value }` with the serialized result. Error mode: `evaluate-failed`, carrying the page-side error text.

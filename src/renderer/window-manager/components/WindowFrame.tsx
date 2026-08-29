@@ -8,13 +8,14 @@
  * bar drags it; geometry is fractional, projected to pixels against the overlay.
  */
 
-import { memo, useEffect, useLayoutEffect, useRef } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import type { RefObject } from 'react';
 import { useOverlayPhase } from '../../hooks/useOverlayPhase';
 import type { ContainerSize, PixelRect } from '../store/geometry';
 import { fractionalToPixels } from '../store/geometry';
+import { isWindowDormant } from '../store/types';
 import type { ManagedWindow } from '../store/types';
-import { useLayerStore } from '../context';
+import { useLayerStore, useWindowManager } from '../context';
 import { useWindowDrag } from '../dnd/useWindowDrag';
 import { useWindowResize } from '../dnd/useWindowResize';
 import { scheduleWindowTerminalResize } from '../terminal/resize-coalescer';
@@ -35,12 +36,28 @@ const MAXIMIZED_GEOMETRY = { x: 0, y: 0, w: 1, h: 1 };
 function WindowFrameInner({ managedWindow, containerSize, overlayRef, tiledRect }: WindowFrameProps) {
   const frameRef = useRef<HTMLDivElement>(null);
   const useStore = useLayerStore();
+  const { layer } = useWindowManager();
   const focusWindow = useStore((state) => state.focusWindow);
   const closeWindow = useStore((state) => state.closeWindow);
+  const parkWindow = useStore((state) => state.parkWindow);
   const isFocused = useStore((state) => state.focusedWindowId === managedWindow.id);
+  const isParked = managedWindow.parked === true;
 
-  const { requestClose, contentClassName, onAnimationEnd, isExiting } = useOverlayPhase(
-    () => closeWindow(managedWindow.id),
+  // The ONE place every user close converges (the X, Escape, light dismiss,
+  // middle-click all end here after the exit animation), so the layer's
+  // park-or-drop policy is asked exactly once, against LIVE store state: a
+  // session that ended or a pane that closed during the fade drops instead of
+  // parking. Idempotent, because the animation end and the fallback timer below
+  // can both fire.
+  const finishClose = useCallback(() => {
+    const current = useStore.getState().windows[managedWindow.id];
+    if (!current || current.parked) return;
+    if (layer.shouldParkOnClose?.(current)) parkWindow(current.id);
+    else closeWindow(current.id);
+  }, [useStore, layer, parkWindow, closeWindow, managedWindow.id]);
+
+  const { requestClose, contentClassName, onAnimationEnd, isExiting, markVisible } = useOverlayPhase(
+    finishClose,
     { variant: 'dialog', skipEnterOnHmr: true, skipEnter: managedWindow.skipEnterAnimation ?? false },
   );
 
@@ -49,9 +66,18 @@ function WindowFrameInner({ managedWindow, containerSize, overlayRef, tiledRect 
   // removal so a window can never get stuck in the exiting state.
   useEffect(() => {
     if (!isExiting) return;
-    const fallback = setTimeout(() => closeWindow(managedWindow.id), 300);
+    const fallback = setTimeout(finishClose, 300);
     return () => clearTimeout(fallback);
-  }, [isExiting, closeWindow, managedWindow.id]);
+  }, [isExiting, finishClose]);
+
+  // A park leaves the overlay phase at `exiting` (its exit already played).
+  // Settle it to `visible` now, under the inline `opacity: 0` below so nothing
+  // flashes, so the un-park paints flat (a terminal-hosting window never
+  // animates in - see useTaskDetailWindowBridge) and `isExiting` flipping false
+  // clears the fallback timer.
+  useEffect(() => {
+    if (isParked) markVisible();
+  }, [isParked, markVisible]);
 
   const { titleBarPointerDown, framePointerMove, framePointerUp, framePointerCancel } = useWindowDrag({
     windowId: managedWindow.id,
@@ -78,7 +104,9 @@ function WindowFrameInner({ managedWindow, containerSize, overlayRef, tiledRect 
 
   const isMaximized = managedWindow.state === 'maximized';
   const isTiled = managedWindow.state === 'tiled';
-  const isRetained = managedWindow.retainedProjectId !== undefined;
+  // Hidden-but-mounted: retained for a backgrounded project, or parked because
+  // the user closed it while its agent was live. Both hide the same way.
+  const isDormant = isWindowDormant(managedWindow);
   // A tiled window's rect comes from the tile tree (resolved by WindowLayer), not
   // its own geometry. Falls back to geometry if the resolved rect is missing.
   const pixelRect =
@@ -134,13 +162,14 @@ function WindowFrameInner({ managedWindow, containerSize, overlayRef, tiledRect 
       onPointerUp={handleFramePointerUp}
       onPointerCancel={handleFramePointerCancel}
       onAnimationEnd={onAnimationEnd}
-      // A retained window belongs to a backgrounded project and exists only to
-      // keep its Browser pane's <webview> guest alive. It is hidden with
-      // `opacity: 0`, NOT `visibility: hidden` and NOT by moving it offscreen:
-      // both of those stop the guest compositing, which makes CDP
-      // Page.captureScreenshot never resolve and wedges every later command for
-      // that guest (measured on Electron 41). An opacity-0 subtree keeps
-      // compositing, so the agent can still screenshot its own pane.
+      // A dormant window (retained for a backgrounded project, or parked after
+      // the user closed it) exists only to keep its Browser pane's <webview>
+      // guest alive. It is hidden with `opacity: 0`, NOT `visibility: hidden`
+      // and NOT by moving it offscreen: both of those stop the guest
+      // compositing, which makes CDP Page.captureScreenshot never resolve and
+      // wedges every later command for that guest (measured on Electron 41). An
+      // opacity-0 subtree keeps compositing, so the agent can still screenshot
+      // its own pane.
       style={{
         position: 'absolute',
         left: pixelRect.left,
@@ -148,12 +177,12 @@ function WindowFrameInner({ managedWindow, containerSize, overlayRef, tiledRect 
         width: pixelRect.width,
         height: pixelRect.height,
         zIndex: managedWindow.zIndex,
-        ...(isRetained
+        ...(isDormant
           ? { opacity: 0, pointerEvents: 'none' as const }
           : {}),
       }}
-      aria-hidden={isRetained || undefined}
-      inert={isRetained || undefined}
+      aria-hidden={isDormant || undefined}
+      inert={isDormant || undefined}
       className={`pointer-events-auto group bg-surface-raised border border-edge focus-within:border-accent/40 ${
         isMaximized || isTiled ? 'rounded-none' : 'rounded-lg'
       } ${isTiled ? '' : 'shadow-2xl'} flex flex-col overflow-hidden ${contentClassName}`}

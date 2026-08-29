@@ -1,4 +1,5 @@
 import type { WindowLightDismiss } from '../../../shared/types';
+import { isWindowDormant } from '../store/types';
 import type { ManagedWindow } from '../store/types';
 
 /**
@@ -32,7 +33,11 @@ export function resolveLightDismissTargets(
   windows: Record<string, ManagedWindow>,
   focusedWindowId: string | null,
 ): string[] {
-  const ids = Object.keys(windows);
+  // A dormant window (parked after the user closed it, or retained for a
+  // backgrounded project) is hidden and inert: it is not on screen to dismiss,
+  // must not count toward `single`, and must never be closed by `all` (that
+  // would unmount it and destroy the guest it is kept alive for).
+  const ids = Object.keys(windows).filter((id) => !isWindowDormant(windows[id]));
   switch (policy) {
     case 'off':
       return [];
@@ -41,7 +46,7 @@ export function resolveLightDismissTargets(
       return ids.length === 1 && onlyId ? [onlyId] : [];
     }
     case 'focused':
-      return focusedWindowId && windows[focusedWindowId] ? [focusedWindowId] : [];
+      return focusedWindowId && ids.includes(focusedWindowId) ? [focusedWindowId] : [];
     case 'all':
       return ids;
     default:
