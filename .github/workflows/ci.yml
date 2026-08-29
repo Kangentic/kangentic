@@ -15,37 +15,83 @@ concurrency:
   cancel-in-progress: true
 
 # CI architecture:
-# - Standalone checks (lint, typecheck, build) each run as their own top-level
-#   job, always-visible in the checks list. None consume another's output (build
-#   is a "does it bundle" gate; the UI tier runs the Vite dev server, not build).
+# - ONE always-on `checks` job runs lint, typecheck and build serially, with each
+#   step reporting independently (see the job for why that wiring is required).
 # - The three test tiers (unit / UI / E2E) are sharded matrices, each behind a
 #   thin gate job whose `name:` is the required status check ("Unit tests
 #   (Vitest)", "UI tests (Playwright)", "E2E tests (Electron)"). The shards are
 #   an implementation detail; the gate is the required check.
 #
-# Concurrency budget (GitHub Free caps concurrent jobs at ~20): shard counts are
-# sized so the test shards plus the always-on jobs fit the cap with NO queueing
-# (queueing, not shard count, was the real wall-clock bottleneck). Current
-# budget: UI 9 + E2E 5 + unit 3 = 17 shards, plus lint + typecheck + build + the
-# CLA workflow = 4, totalling 21 - one over the cap, deliberately: the CLA check
-# finishes in ~10-17s and frees its slot, so the single over-cap shard queues
-# only that briefly (far under its ~70-90s runtime) and still lands inside the
-# envelope. node_modules is cached under one shared lockfile-keyed key, so npm ci
-# runs only on a lockfile change. The thin gates run AFTER their shards (`needs`),
-# so they do not consume a shard-phase slot. To scale as the suites grow: either
-# rebalance the shard counts (UI is test-count-bound and wants the most shards;
-# E2E is launch-bound and one-waves at workers=8 so ~5 suffices; unit is npm-ci-
-# floored once cached, so a few shards suffice), or raise the ceiling by upgrading
-# the GitHub plan (Team = 60 concurrent).
+# THE UI TIER IS THE ONLY THING ON THE CRITICAL PATH. Measured 2026-08-29: every
+# other job finishes by ~115s while the UI pole runs ~226s, so ~11 of the ~20
+# slots sit idle for the last ~150s of a run. Two consequences that mislead
+# people who tune this file:
+#   1. Freeing a concurrency slot buys ~0s of wall clock BY ITSELF. Collapsing
+#      lint/typecheck/build was never a speedup - it is what PAYS for UI shards
+#      10 and 11 while keeping the run at 21 jobs instead of 23.
+#   2. Sharding is balanced by TEST COUNT, not cost. Playwright's filterForShard
+#      walks test groups in file order and cuts them into equal-COUNT windows, so
+#      an expensive file makes its window expensive and no amount of splitting a
+#      spec file moves it (splitting keeps the tests contiguous at the same
+#      cumulative indices). At 9 shards this left a 1.88x work spread (297-558s)
+#      across shards whose counts differed by only 1.06x. 11 shards cut the
+#      heaviest shard's work 558s -> ~495s and the pole 304s -> ~226s.
+#
+# Concurrency budget (GitHub Free caps concurrent jobs at ~20): UI 11 + E2E 5 +
+# unit 3 = 19 shards, plus the `checks` job + the CLA workflow (a separate
+# workflow, so it never appears in this run's own job list) = 21 - one over the
+# cap, deliberately: the CLA check finishes in ~10-17s and frees its slot, so the
+# single over-cap job queues only that briefly. Measured max queue delay on an
+# uncontended run: 3s.
+#
+# 21 IS A CEILING, NOT A TARGET. Collapsing the three always-on jobs also removed
+# the three EARLIEST slot releasers (they finished at 37s, 41s and 51s) and
+# replaced them with one ~65s job. At 21 that is harmless because CLA is the
+# release valve, but no cheap early releaser remains: at 22+ jobs the first
+# release becomes a ~70s unit shard, and a queued UI shard would start that late
+# and blow past the pole. The cap is also ACCOUNT-wide, so a concurrent release
+# or publish-protocol run eats into it.
+#
+# node_modules is cached under one shared lockfile-keyed key, so npm ci runs only
+# on a lockfile change. setup-node deliberately does NOT set `cache: npm`: that
+# restores a ~366 MB ~/.npm tree which only `npm ci` reads, and `npm ci` only runs
+# on a node_modules cache MISS, so on the warm path it was ~5.3s of dead weight
+# per job (~106s of runner time per run) sitting on the pole's critical path.
+# The thin gates run AFTER their shards (`needs`), so they do not consume a
+# shard-phase slot.
+#
+# To scale as the suites grow: E2E is launch-bound and one-waves at workers=8 so
+# ~5 suffices; unit is npm-ci-floored once cached. UI is the tier that matters,
+# and since its imbalance is cost-vs-count rather than count, more shards help
+# only until the pole shard's own heavy files dominate. Past that the levers are
+# PWTEST_SHARD_WEIGHTS (internal, needs a guard test) or a paid plan (Team = 60
+# concurrent).
 #
 # The job `name:` is the status-check context used by branch protection - keep
 # these in sync with main's required checks if you rename one.
 
 jobs:
-  lint:
-    name: Lint (ESLint)
+  # lint + typecheck + build, serially, behind ONE checkout/setup/cache. Measured
+  # 62-66s total, against a ~226s UI pole, so it is nowhere near the critical
+  # path. It replaced three separate jobs (72s + 71s + 71s) whose only reason to
+  # be separate was independent reporting, which the step wiring below preserves.
+  #
+  # Every step carries `if: ${{ !cancelled() }}` and an `id:`, and the final step
+  # aggregates the outcomes. WITHOUT that, a lint failure aborts the job and
+  # HIDES a typecheck failure, costing one CI round-trip per broken check.
+  #
+  # Two couplings this job now owns:
+  # - Collapsing the standalone build job is only safe while all 5 e2e-shards
+  #   keep running `npm run build` UNCONDITIONALLY. They are what prove the app
+  #   bundle on every PR. If that ever becomes conditional, restore a dedicated
+  #   bundle check.
+  # - `npm run build -w packages/protocol` was the old build job's genuinely
+  #   unique contribution (the E2E shards do not build the package, and
+  #   publish-protocol.yml only runs on a protocol-v* tag) and lives here now.
+  checks:
+    name: Checks (lint, typecheck, build)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -53,7 +99,6 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: 22
-          cache: npm
       - name: Cache node_modules
         id: cache-node-modules
         uses: actions/cache@v5
@@ -64,31 +109,38 @@ jobs:
         if: steps.cache-node-modules.outputs.cache-hit != 'true'
         run: npm ci
       - name: Lint (ESLint)
+        id: lint
+        if: ${{ !cancelled() }}
         run: npm run lint
-
-  typecheck:
-    name: Type check (tsc)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v5
-      - name: Set up Node.js 22
-        uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          cache: npm
-      - name: Cache node_modules
-        id: cache-node-modules
-        uses: actions/cache@v5
-        with:
-          path: node_modules
-          key: ${{ runner.os }}-node-modules-${{ hashFiles('package-lock.json') }}
-      - name: Install dependencies (npm ci)
-        if: steps.cache-node-modules.outputs.cache-hit != 'true'
-        run: npm ci
       - name: Type check (tsc)
+        id: typecheck
+        if: ${{ !cancelled() }}
         run: npm run typecheck
+      - name: Build (production bundle)
+        id: build
+        if: ${{ !cancelled() }}
+        run: npm run build
+      - name: Build @kangentic/protocol package
+        id: build_protocol
+        if: ${{ !cancelled() }}
+        run: npm run build -w packages/protocol
+      - name: Summarize check results
+        if: ${{ !cancelled() }}
+        run: |
+          status=0
+          check() {
+            if [ "$2" != "success" ]; then
+              echo "FAILED: $1 ($2)"
+              status=1
+            else
+              echo "passed: $1"
+            fi
+          }
+          check "Lint (ESLint)" "${{ steps.lint.outcome }}"
+          check "Type check (tsc)" "${{ steps.typecheck.outcome }}"
+          check "Build (production bundle)" "${{ steps.build.outcome }}"
+          check "Build @kangentic/protocol" "${{ steps.build_protocol.outcome }}"
+          exit $status
 
   # Unit tier, sharded across ubuntu runners like the UI/E2E tiers (Vitest
   # `--shard`). The suite is volume-bound (~360 files, no single long pole), and
@@ -113,7 +165,6 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: 22
-          cache: npm
       - name: Cache node_modules
         id: cache-node-modules
         uses: actions/cache@v5
@@ -153,7 +204,6 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: 22
-          cache: npm
       - name: Cache node_modules
         id: cache-node-modules
         uses: actions/cache@v5
@@ -175,45 +225,12 @@ jobs:
         if: ${{ needs.unit-shards.result != 'success' }}
         run: exit 1
 
-  build:
-    name: Build (production bundle)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v5
-      - name: Set up Node.js 22
-        uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          cache: npm
-      - name: Cache node_modules
-        id: cache-node-modules
-        uses: actions/cache@v5
-        with:
-          path: node_modules
-          key: ${{ runner.os }}-node-modules-${{ hashFiles('package-lock.json') }}
-      - name: Install dependencies (npm ci)
-        if: steps.cache-node-modules.outputs.cache-hit != 'true'
-        run: npm ci
-      - name: Build (production bundle)
-        run: npm run build
-      # @kangentic/protocol publishes through its own independent workflow
-      # (publish-protocol.yml), not this one -- but that workflow only runs
-      # at publish time (a protocol-v* tag push), so without this step a
-      # broken package build (a declaration-emit error, an esbuild config
-      # regression) would go undetected until an actual release attempt.
-      # This proves `npm run build -w packages/protocol` still succeeds on
-      # every PR, same as the app bundle above.
-      - name: Build @kangentic/protocol package
-        run: npm run build -w packages/protocol
-
   # UI tier, sharded across parallel ubuntu runners (Playwright `--shard`). Each
   # shard prints its own per-test results via the `list` reporter (visible in the
   # shard's job log) - there is NO blob upload or merged-report job, so the run is
-  # not gated by a serial merge. npm ci uses --ignore-scripts (the headless UI
-  # tests never load node-pty/better-sqlite3/electron) then rebuilds just esbuild,
-  # which the Vite dev server needs. Chromium's system libs already ship on
+  # not gated by a serial merge. Install is the same plain `npm ci` as every other
+  # tier, restored from the one shared node_modules cache (see the inline note on
+  # the cache step). Chromium's system libs already ship on
   # ubuntu-latest, so the browser install needs no --with-deps; the binary is
   # cached. The single required status check is the thin `ui` gate below.
   playwright-shards:
@@ -223,8 +240,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shardIndex: [1, 2, 3, 4, 5, 6, 7, 8, 9]
-        shardTotal: [9]
+        shardIndex: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+        shardTotal: [11]
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -232,7 +249,6 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: 22
-          cache: npm
       # Shared node_modules cache (keyed on the lockfile, same key as every tier):
       # on a hit the shard skips install entirely; on a miss it runs a full
       # npm ci. The native modules go unused by the headless UI tests, but keeping
@@ -320,7 +336,6 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: 22
-          cache: npm
       - name: Cache node_modules (native build + Electron binary)
         id: cache-node-modules
         uses: actions/cache@v5
