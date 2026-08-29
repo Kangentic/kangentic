@@ -1,10 +1,18 @@
 /**
- * Coalesces window size changes into a single terminal resize, dispatched in a
- * microtask so it lands BEFORE the browser paints.
+ * Coalesces container size changes into a single terminal resize, dispatched in
+ * a microtask so it lands BEFORE the browser paints.
  *
- * A window snap / maximize / restore / resize-commit / overlay-resize changes
- * the terminal's container size. WindowFrame calls this from a `useLayoutEffect`
- * (commit phase, after the DOM is updated, before paint). Scheduling the
+ * Two kinds of caller, both from a `useLayoutEffect` (commit phase, after the
+ * DOM is updated, before paint):
+ *  - the WINDOW changing size: snap / maximize / restore / resize-commit /
+ *    overlay-resize (`WindowFrame`, `MonitorDetailLayer`).
+ *  - the split row INSIDE a task detail changing shape: a right panel appearing
+ *    or going away, or Changes going expanded (`TaskDetailBody`). Same physics,
+ *    smaller box: without a dispatch the only witness is the terminal's
+ *    ResizeObserver at its 200ms debounce, and the terminal visibly reflows
+ *    late after the space is reclaimed.
+ *
+ * Scheduling the
  * `terminal-panel-resize` dispatch in a microtask (not a `requestAnimationFrame`)
  * means it fires at the end of the same commit task, still before the first
  * paint, so a window-hosted terminal (TerminalTab `immediatePanelResize`) can

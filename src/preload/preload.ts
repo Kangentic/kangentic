@@ -633,6 +633,9 @@ const api: ElectronAPI = {
     ensureJar: (taskId, projectId) => ipcRenderer.invoke(IPC.BROWSER_JAR_ENSURE, taskId, projectId),
     registerPane: (input) => ipcRenderer.invoke(IPC.BROWSER_PANE_REGISTER, input),
     unregisterPane: (webContentsId) => ipcRenderer.invoke(IPC.BROWSER_PANE_UNREGISTER, webContentsId),
+    closePaneByUser: (webContentsId) => ipcRenderer.invoke(IPC.BROWSER_PANE_USER_CLOSE, webContentsId),
+    setPaneVisibility: (webContentsId, visibility) =>
+      ipcRenderer.invoke(IPC.BROWSER_PANE_VISIBILITY, webContentsId, visibility),
     onZoomChanged: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, factor: number, webContentsId: number) =>
         callback(factor, webContentsId);

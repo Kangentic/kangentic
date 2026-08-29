@@ -1,6 +1,7 @@
 import { webContents as electronWebContents, type WebContents } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { detachDebugger, isDebuggerAttached } from './cdp/cdp';
+import type { BrowserPaneVisibility } from '../../shared/types';
 
 /**
  * Registry mapping an open embedded Browser pane to its guest `<webview>`
@@ -81,6 +82,14 @@ export interface BrowserPaneEntry {
    * than looked up from the lane manager, which imports this module.
    */
   handoff: boolean;
+  /**
+   * Where the surface is on the user's screen. A pane is `showing` until the
+   * renderer says otherwise (`hidden` behind the terminal after the Browser
+   * pill, `parked` in a window the user closed); a lane is always
+   * `offscreen`. Every value here is still driveable: this tells the agent
+   * whether the user can SEE what it is doing, not whether it may act.
+   */
+  visibility: BrowserPaneVisibility;
 }
 
 /** Input to `register()`. The renderer path never supplies `handle`, `kind`, or `handoff`. */
@@ -96,6 +105,8 @@ export interface RegisterSurfaceInput {
   kind?: BrowserSurfaceKind;
   /** Defaults to false. */
   handoff?: boolean;
+  /** Defaults to `showing` for a pane and `offscreen` for a lane. */
+  visibility?: BrowserPaneVisibility;
 }
 
 /** A pane entry enriched with live status for `list()` / discovery. */
@@ -193,6 +204,13 @@ export type PaneUnregisterReason =
   /** Self-heal: the entry pointed at a guest that no longer exists. */
   | 'self-heal-dead-guest'
   /**
+   * The user's Close control (the pane toolbar or the task kebab). Sent by the
+   * renderer AHEAD of the unmount, so the hand-off sees this reason rather than
+   * `renderer-unmount` and stands no lane up: the user closed it to get the
+   * memory back, and a lane would spend it again.
+   */
+  | 'user-closed'
+  /**
    * Main destroyed an offscreen lane (agent closed it, its session ended, it
    * went idle, or a hand-off lane stood down because the visible pane returned).
    *
@@ -217,6 +235,7 @@ const RETIRED_REASON_WORDS = {
   'guest-destroyed': 'its pane unmounted (the task window was dropped, the pane was closed, or the app reloaded)',
   'lane-destroyed': 'the lane was closed',
   'self-heal-dead-guest': 'its tab was destroyed',
+  'user-closed': 'the user closed the browser',
 } satisfies Record<PaneUnregisterReason, string>;
 
 /** What `forget()` remembers so a later explicit-handle miss can say what happened. */
@@ -318,6 +337,7 @@ export class BrowserPaneRegistry {
       existing.taskId = input.taskId;
       existing.projectId = input.projectId;
       existing.url = input.url ?? existing.url;
+      if (input.visibility) existing.visibility = input.visibility;
       console.log(
         `[browser-pane] rebound handle=${existing.sessionId} owner=${shortId(existing.ownerSessionId)} ` +
           `task=${existing.taskId.slice(0, 8)} wc=${existing.webContentsId}`,
@@ -336,6 +356,7 @@ export class BrowserPaneRegistry {
       registeredAt: Date.now(),
       kind: input.kind ?? 'pane',
       handoff: input.handoff === true,
+      visibility: input.visibility ?? (input.kind === 'lane' ? 'offscreen' : 'showing'),
     };
     this.panes.set(entry.sessionId, entry);
     console.log(
@@ -462,6 +483,19 @@ export class BrowserPaneRegistry {
   unregisterByWebContentsId(webContentsId: number, reason: PaneUnregisterReason = 'guest-destroyed'): void {
     const entry = this.findByWebContentsId(webContentsId);
     if (entry) this.forget(entry.sessionId, reason);
+  }
+
+  /**
+   * Record where a registered pane is on the user's screen. Reported by the
+   * renderer, which is the only side that knows; a guest this registry does
+   * not know is ignored (the report can race a registration either way, and
+   * the registration carries its own visibility).
+   */
+  setVisibility(webContentsId: number, visibility: BrowserPaneVisibility): boolean {
+    const entry = this.findByWebContentsId(webContentsId);
+    if (!entry || entry.visibility === visibility) return false;
+    entry.visibility = visibility;
+    return true;
   }
 
   updateUrl(handle: string, url: string): void {

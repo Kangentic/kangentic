@@ -84,6 +84,58 @@ describe('BrowserPaneRegistry', () => {
   });
 
   /**
+   * Where a surface is on the user's screen is the agent's only way to know
+   * whether the user can SEE what it is doing. The renderer is the only side
+   * that knows, so the registry records what it is told and defaults sanely.
+   */
+  describe('visibility', () => {
+    it('defaults a pane to showing and a lane to offscreen', () => {
+      registry.register(REGISTER_A);
+      registry.register(ISOLATED_LANE);
+      expect(registry.get('pane_aaaaaaaa')?.visibility).toBe('showing');
+      expect(registry.get('lane_22222222')?.visibility).toBe('offscreen');
+    });
+
+    it('takes the visibility a registration carries, and updates it in place on a re-register', () => {
+      registry.register({ ...REGISTER_A, visibility: 'hidden' });
+      expect(registry.get('pane_aaaaaaaa')?.visibility).toBe('hidden');
+      // Same guest, new owner (a session rotation) - the handle and the
+      // reported visibility both survive; a re-register without one keeps it.
+      registry.register({ ...REGISTER_A, handle: undefined, ownerSessionId: 'sess-a2' });
+      expect(registry.get('pane_aaaaaaaa')?.visibility).toBe('hidden');
+      registry.register({ ...REGISTER_A, handle: undefined, visibility: 'parked' });
+      expect(registry.get('pane_aaaaaaaa')?.visibility).toBe('parked');
+    });
+
+    it('setVisibility records a change by guest id, reports whether anything changed, and ignores an unknown guest', () => {
+      registry.register(REGISTER_A);
+      expect(registry.setVisibility(11, 'hidden')).toBe(true);
+      expect(registry.get('pane_aaaaaaaa')?.visibility).toBe('hidden');
+      expect(registry.setVisibility(11, 'hidden')).toBe(false);
+      expect(registry.setVisibility(999, 'parked')).toBe(false);
+    });
+
+    it('lists the visibility alongside the rest of the status, so list_panes carries it', () => {
+      seedGuests(fakeGuest(11));
+      registry.register({ ...REGISTER_A, visibility: 'parked' });
+      expect(registry.list()[0]).toMatchObject({ sessionId: 'pane_aaaaaaaa', visibility: 'parked', alive: true });
+    });
+  });
+
+  /**
+   * The user's Close control retires the handle with its own reason, so the
+   * agent is told WHO closed its tab rather than "the window was closed".
+   */
+  it('words a user-closed retirement as the user closing the browser', () => {
+    registry.register(REGISTER_A);
+    registry.unregisterByWebContentsId(11, 'user-closed');
+    const result = registry.resolveTarget({ sessionId: 'pane_aaaaaaaa', projectId: 'proj-1', callerTaskId: 'task-1' });
+    expect(result).toMatchObject({ ok: false, kind: 'surface-gone' });
+    expect(result.ok === false && result.detail).toContain('the user closed the browser');
+    expect(result.ok === false && result.detail).toContain('kangentic_browser_open_pane');
+  });
+
+  /**
    * The defect this registry was rebuilt around: it used to key entries by the
    * agent session id and overwrite on register, so every remount re-bound the
    * same key to a new guest and an agent holding the key silently addressed a

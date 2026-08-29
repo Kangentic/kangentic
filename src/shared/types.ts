@@ -5202,6 +5202,16 @@ export interface ElectronAPI {
      *  remove its OWN guest, never a newer registration for the same task. */
     unregisterPane: (webContentsId: number) => Promise<void>;
     /**
+     * The user's Close control: retire this guest's surface handle with
+     * reason `user-closed` BEFORE the pane unmounts, so the hand-off never
+     * stands a lane up for it (the point of closing is to free the memory)
+     * and the agent's next call is told the user closed the browser.
+     */
+    closePaneByUser: (webContentsId: number) => Promise<void>;
+    /** Publish where this guest's pane is (showing / hidden / parked), so
+     *  `list_panes` can say so. Sent on every change after registration. */
+    setPaneVisibility: (webContentsId: number, visibility: BrowserPaneVisibility) => Promise<void>;
+    /**
      * Subscribe to Ctrl+wheel zoom changes that fire inside the embedded
      * webview. The main process applies the zoom and broadcasts the resulting
      * factor so the toolbar % can stay in sync.
@@ -5351,6 +5361,22 @@ export interface BrowserCaptureInput {
  * time); this is registry bookkeeping, not a task-state mutation, so it is
  * not subject to the trailing-projectId mutation rule.
  */
+/**
+ * Where a Browser surface is on the user's screen, as reported to the agent
+ * through `kangentic_browser_list_panes` / `_open_pane`. Only the renderer
+ * knows, so it publishes changes over `BROWSER_PANE_VISIBILITY`:
+ *   - `showing`: the pane is visible in an open task window.
+ *   - `hidden`: the user hid it with the Browser pill; the guest is kept
+ *     mounted behind the terminal and stays driveable.
+ *   - `parked`: the user closed the task window; the guest is kept mounted in
+ *     the hidden window and stays driveable.
+ *   - `offscreen`: a lane, which never has a window.
+ * A surface the user CLOSED is not a visibility: its handle is retired with
+ * reason `user-closed` and answers `surface-gone`.
+ */
+export const BROWSER_PANE_VISIBILITIES = ['showing', 'hidden', 'parked', 'offscreen'] as const;
+export type BrowserPaneVisibility = (typeof BROWSER_PANE_VISIBILITIES)[number];
+
 export interface BrowserPaneRegisterInput {
   /** The agent session this pane serves (the registry records it as the
    *  surface's `ownerSessionId`; the surface HANDLE is minted by main). */
@@ -5360,6 +5386,8 @@ export interface BrowserPaneRegisterInput {
   /** The guest webview id from `webview.getWebContentsId()`. */
   webContentsId: number;
   url: string | null;
+  /** Where the pane is at registration time. Defaults to `showing`. */
+  visibility?: BrowserPaneVisibility;
 }
 
 /** A finished Browser-pane download, reported to the renderer so it can toast. */

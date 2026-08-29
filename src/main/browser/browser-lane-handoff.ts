@@ -74,6 +74,8 @@ const HANDOFF_REASONS: ReadonlySet<PaneUnregisterReason> = new Set([
   'renderer-unmount',
   'guest-destroyed',
 ]);
+// `user-closed` is deliberately absent too: the user's Close control exists to
+// free the guest's memory, and a lane would spend it again behind their back.
 
 function onPaneClosed(entry: BrowserPaneEntry, reason: PaneUnregisterReason, deliberate: boolean): void {
   if (!dependencies) return;

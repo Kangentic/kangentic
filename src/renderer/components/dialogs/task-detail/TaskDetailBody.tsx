@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useRef } from 'react';
+import { Suspense, lazy, useEffect, useLayoutEffect, useRef } from 'react';
 import { Loader2, Play, RotateCcw } from 'lucide-react';
 import { TerminalTab } from '../../terminal/TerminalTab';
 import { ContextBar } from '../../terminal/ContextBar';
@@ -10,6 +10,7 @@ import { PriorityBadge } from '../../backlog/PriorityBadge';
 import { LabelPills } from '../../Pill';
 import { useTaskDetailHost } from './task-detail-host';
 import { taskDetailSurfaceFor } from '../../../utils/task-progress';
+import { scheduleWindowTerminalResize } from '../../../window-manager/terminal/resize-coalescer';
 import { QueuedPlaceholder } from './QueuedPlaceholder';
 import { taskHasDescriptionContent } from './description-content';
 import { AttachmentChipStrip } from '../AttachmentChipStrip';
@@ -100,6 +101,10 @@ interface TaskDetailBodyProps {
    *  terminal. Defaults to "retained", so a host that never parks (the Agent
    *  Monitor's layer) needs no change. */
   dormant?: boolean;
+  /** The window was closed by the user and kept for its pane (`ManagedWindow.parked`).
+   *  Only used to tell the pane, and through it the agent, that it is `parked`
+   *  rather than merely hidden. */
+  parked?: boolean;
 }
 
 export function TaskDetailBody({
@@ -128,6 +133,7 @@ export function TaskDetailBody({
   descriptionPeekOpen = false,
   retainedProjectId,
   dormant: dormantProp,
+  parked = false,
 }: TaskDetailBodyProps) {
   const retained = retainedProjectId !== undefined;
   const dormant = dormantProp ?? retained;
@@ -194,6 +200,25 @@ export function TaskDetailBody({
   const changesPresent = showChanges;
   const showDescriptionPanel = descriptionPeekOpen && !showBrowser && !showChanges;
   const changesExpanded = changesPresent && changesViewMode === 'expanded';
+  // The split row's shape just changed, so the terminal's box did too: a panel
+  // appeared or went away (hiding the Browser pane, opening Changes over it,
+  // the description peek), or Changes went expanded and took the row entirely.
+  //
+  // Without this the ONLY thing that noticed was the terminal's ResizeObserver,
+  // which debounces at OBSERVER_REFIT_DEBOUNCE_MS (200ms); add React's commit
+  // and the observer callback and the terminal sat at its old width for ~300ms
+  // after the space was reclaimed, reflowing visibly late. The task-detail
+  // TerminalTab is an `immediatePanelResize` host, so a `terminal-panel-resize`
+  // dispatched from a LAYOUT effect via a microtask (what the coalescer does)
+  // is handled with a synchronous fit before the browser paints - the terminal
+  // fills the new width in the same frame the panel leaves.
+  //
+  // Keyed on the two booleans that actually move the terminal's edges, not on
+  // which panel is showing: swapping Browser for Changes leaves its box alone.
+  // The divider drag has its own dispatch (useTaskSplitResize).
+  useLayoutEffect(() => {
+    scheduleWindowTerminalResize();
+  }, [rightPanelPresent, changesExpanded]);
   const handleChangesExpand = () => setChangesViewMode(task.id, 'expanded');
   const handleChangesCollapse = () => setChangesViewMode(task.id, 'split');
   const taskLabels = task.labels ?? [];
@@ -370,6 +395,9 @@ export function TaskDetailBody({
             taskId={task.id}
             cwd={task.worktree_path ?? projectPath}
             projectId={paneProjectId}
+            // What the agent is told about where its pane is. A retained window
+            // keeps reporting showing / hidden: the user sees it again on return.
+            visibility={parked ? 'parked' : showBrowser ? 'showing' : 'hidden'}
           />
         </div>
       </div>

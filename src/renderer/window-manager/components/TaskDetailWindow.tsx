@@ -22,6 +22,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Check, Copy, Pencil, Trash2, X } from 'lucide-react';
 import { useSessionStore } from '../../stores/session-store';
+import { useIsAgentDrivingSession } from '../../stores/agent-drive-store';
+import { closeBrowserForTask } from '../../components/browser/close-browser';
 import { useConfigStore } from '../../stores/config-store';
 import { resolveShortcutCommand } from '../../../shared/template-vars';
 import { useKeybinding } from '../../hooks/useKeybinding';
@@ -166,6 +168,16 @@ export function TaskDetailWindow({
   const toggleChangesOpen = useSessionStore((s) => s.toggleChangesOpen);
   const browserOpen = useSessionStore((s) => s.browserOpenTasks.has(task.id));
   const toggleBrowserOpen = useSessionStore((s) => s.toggleBrowserOpen);
+  // A Browser pane guest exists for this task (showing, hidden, or parked), and
+  // whether an agent is driving it right now: the pill's alive dot and the
+  // kebab's "Close browser" read these. Close is the user's discard, distinct
+  // from the pill's hide; see components/browser/close-browser.ts.
+  const browserAlive = useSessionStore((s) => s.browserGuestTasks.has(task.id));
+  const browserSessionId = useSessionStore((s) => s._sessionByTaskId.get(task.id)?.id ?? null);
+  const browserDriving = useIsAgentDrivingSession(browserSessionId);
+  const handleCloseBrowser = useCallback(() => {
+    void closeBrowserForTask(task.id);
+  }, [task.id]);
 
   const isArchived = task.archived_at !== null;
   const currentSwimlane = swimlanes.find((s) => s.id === task.swimlane_id);
@@ -650,6 +662,9 @@ export function TaskDetailWindow({
       canShowBrowser={canShowBrowser}
       browserOpen={browserOpen}
       onToggleBrowser={handleToggleBrowser}
+      browserAlive={browserAlive}
+      browserDriving={browserDriving}
+      onCloseBrowser={handleCloseBrowser}
       canShowDescription={canShowDescription}
       descriptionPeekOpen={descriptionPeekOpen}
       onToggleDescription={handleToggleDescription}
@@ -797,6 +812,7 @@ export function TaskDetailWindow({
               descriptionPeekOpen={descriptionPeekOpen}
               retainedProjectId={retainedProjectId}
               dormant={dormant}
+              parked={parked === true}
             />
           )}
         </div>

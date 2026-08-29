@@ -29,9 +29,11 @@ store) when the user puts the pane away with the Browser pill, its shortcut, or 
 the Description peek over it while the agent is live. The pane stays mounted in its own fixed slot
 of the split row (`browserSlot`), absolutely positioned at zero opacity behind the full-width
 terminal, and showing it again is a style change. Only `toggleBrowserOpen` holds; an agent's
-`close_pane` and hydration call `setBrowserOpen(taskId, false)` without `hold` and DISCARD. A held
-pane counts as mounted for parking and retention, and the park reaper releases the hold when the
-session stops.
+`close_pane`, hydration, and the user's own Close browser (`components/browser/close-browser.ts`:
+the red-tinted "Close browser" button leading the pane's navigation bar and the kebab item of the
+same name) call `setBrowserOpen(taskId, false)` without `hold` and DISCARD. A user close tells main FIRST
+(`closePaneByUser`, reason `user-closed`) so the hand-off stands no lane up for it. A held pane counts as mounted for
+parking and retention, and the park reaper releases the hold when the session stops.
 
 The failure mode is silent. A remounted pane looks identical on screen and in the DOM: same
 element, same URL, same everything. What is gone is the guest's identity, and with it the agent's
@@ -86,6 +88,13 @@ assertion:
   detail-ownership set, the terminal claim set (`dialogSessionIds`), light-dismiss targets, focus
   reconcile, and the dictation target. Read `isWindowDormant` for all of these; never spell the
   two flags out separately.
+- **A dormant window is never a dock partner or a drop target.** It keeps floating, invisibly,
+  at its old geometry (after a 2-up dock, a full-height half: exactly the shape the edge-dock
+  partner search and the drop-zone resolver look for), so `collectCandidatePanes`, `dockWindow`'s
+  partner search, and `dockIntoWindow` all skip dormant windows, and `findWindowTreeViolations`
+  reports a leaf that points at one. Shipped once: dragging a window across the half a parked
+  window used to occupy docked it INTO the ghost, and the survivor came out tiled beside a
+  partner it could neither see nor drag away from.
 
 ## Enforcement (self-maintaining)
 

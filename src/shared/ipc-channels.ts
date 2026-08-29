@@ -370,6 +370,12 @@ export const IPC = {
   // place that knows taskId + sessionId + the guest's getWebContentsId().
   BROWSER_PANE_REGISTER: 'browser:paneRegister',
   BROWSER_PANE_UNREGISTER: 'browser:paneUnregister',
+  // The user's Close control: retires the guest's handle with reason
+  // `user-closed` ahead of the unmount, so no hand-off lane is stood up.
+  BROWSER_PANE_USER_CLOSE: 'browser:paneUserClose',
+  // Renderer -> main: where a registered pane is on screen (showing / hidden /
+  // parked), reported through kangentic_browser_list_panes.
+  BROWSER_PANE_VISIBILITY: 'browser:paneVisibility',
   // Main -> renderer: open / close a task's Browser pane on behalf of the
   // kangentic_browser_open_pane / _close_pane MCP tools. Pane open state is
   // renderer-owned (`browserOpenTasks`), so main cannot set it directly.

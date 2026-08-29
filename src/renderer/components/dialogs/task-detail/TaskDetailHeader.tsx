@@ -1,6 +1,6 @@
 import { useState, useRef, useMemo, useEffect, type ReactNode } from 'react';
 import { useCopyDisplayId } from './useCopyDisplayId';
-import { X, Trash2, Pencil, Loader2, FolderGit2, FolderGit, GitPullRequest, GitCompare, GitMerge, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, Clock, SquareChevronRight, Zap, Archive, Inbox, Copy, Check, Globe, RefreshCw, PictureInPicture2, MessageSquare, AlignLeft } from 'lucide-react';
+import { X, Trash2, Pencil, Loader2, FolderGit2, FolderGit, GitPullRequest, GitCompare, GitMerge, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, CircleStop, Clock, SquareChevronRight, Zap, Archive, Inbox, Copy, Check, Globe, RefreshCw, PictureInPicture2, MessageSquare, AlignLeft } from 'lucide-react';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
 import { useFormattedCombo } from '../../../hooks/useKeybinding';
 import { getSwimlaneIcon } from '../../../utils/swimlane-icons';
@@ -109,6 +109,12 @@ interface TaskDetailHeaderProps {
   canShowBrowser: boolean;
   browserOpen: boolean;
   onToggleBrowser: () => void;
+  /** A Browser pane guest is alive for the task (showing, hidden, or parked). */
+  browserAlive: boolean;
+  /** An agent is driving that guest right now. */
+  browserDriving: boolean;
+  /** The user's Close: discard the guest and free its memory (never the pill's hide). */
+  onCloseBrowser: () => void;
   canShowDescription?: boolean;
   descriptionPeekOpen?: boolean;
   onToggleDescription?: () => void;
@@ -192,6 +198,9 @@ export function TaskDetailHeader({
   canShowBrowser,
   browserOpen,
   onToggleBrowser,
+  browserAlive,
+  browserDriving,
+  onCloseBrowser,
   canShowDescription = false,
   descriptionPeekOpen = false,
   onToggleDescription,
@@ -383,19 +392,38 @@ export function TaskDetailHeader({
 
           {/* Browser toggle pill */}
           {showPill('browser') && canShowBrowser && (
-            <div data-pill-id="browser" className="flex-shrink-0">
+            <div data-pill-id="browser" className="relative flex-shrink-0">
               <HeaderActionButton
                 icon={Globe}
                 onClick={onToggleBrowser}
                 active={browserOpen}
                 title={
                   browserOpen
-                    ? `Hide browser (${browserCombo}). The page is kept while the agent runs.`
-                    : `Show browser (${browserCombo})`
+                    ? `Hide browser (${browserCombo}). Kept alive until you close it.`
+                    : browserAlive
+                      ? `Show browser (${browserCombo}). Page kept.`
+                      : `Show browser (${browserCombo})`
                 }
                 ariaLabel="Toggle browser"
                 testId="browser-toggle"
               />
+              {/* Running dot: a browser guest is alive for this task, in ANY
+                  state (showing, hidden, or parked), the way the Command
+                  Terminal toggle shows a live PTY. Green and pulsing because
+                  it is a process that is running and costing memory until Stop
+                  browser ends it; the task card's globe carries the same fact
+                  in the same colour, and whether the agent is DRIVING the page
+                  is shown by the pane's accent border and "Agent typing here",
+                  in neither place. Tailwind's stock pulse: an opacity keyframe,
+                  so it composites. */}
+              {browserAlive && (
+                <span
+                  aria-hidden="true"
+                  data-testid="browser-toggle-alive"
+                  data-driving={browserDriving ? 'true' : undefined}
+                  className="pointer-events-none absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full ring-2 ring-surface-raised bg-active animate-pulse"
+                />
+              )}
             </div>
           )}
 
@@ -468,6 +496,8 @@ export function TaskDetailHeader({
               canShowBrowser={canShowBrowser}
               browserOpen={browserOpen}
               onToggleBrowser={onToggleBrowser}
+              browserAlive={browserAlive}
+              onCloseBrowser={onCloseBrowser}
               canShowDescription={canShowDescription}
               descriptionPeekOpen={descriptionPeekOpen}
               onToggleDescription={onToggleDescription}
@@ -535,6 +565,8 @@ interface TaskDetailKebabItemsProps {
   canShowBrowser: boolean;
   browserOpen: boolean;
   onToggleBrowser: () => void;
+  browserAlive: boolean;
+  onCloseBrowser: () => void;
   canShowDescription?: boolean;
   descriptionPeekOpen?: boolean;
   onToggleDescription?: () => void;
@@ -568,6 +600,8 @@ function TaskDetailKebabItems({
   canShowBrowser,
   browserOpen,
   onToggleBrowser,
+  browserAlive,
+  onCloseBrowser,
   canShowDescription = false,
   descriptionPeekOpen = false,
   onToggleDescription,
@@ -721,6 +755,22 @@ function TaskDetailKebabItems({
           icon={<Globe size={14} />}
           label={browserOpen ? 'Hide browser' : 'Show browser'}
           onClick={() => { closeAll(); onToggleBrowser(); }}
+        />
+      )}
+
+      {/* Close browser: discard the guest and free its memory. Present whenever
+          a guest exists, which is the only reach while the pane is hidden (the
+          pane's own toolbar control cannot be clicked then). Verb pair with the
+          Hide / Show item above: hide keeps the page for the agent, close ends
+          it. The object is named because the pane has three plausible things to
+          "stop" - the agent, the page load, the browser - and only this one is
+          meant. */}
+      {browserAlive && (
+        <KebabMenuItem
+          icon={<CircleStop size={14} />}
+          label="Close browser"
+          onClick={() => { closeAll(); onCloseBrowser(); }}
+          data-testid="kebab-close-browser"
         />
       )}
 

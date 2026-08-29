@@ -3,7 +3,8 @@ import path from 'node:path';
 import { app, ipcMain, session } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import { browserPartitionForTask } from '../../../shared/browser-partition';
-import type { BrowserCaptureInput, BrowserPaneRegisterInput } from '../../../shared/types';
+import { BROWSER_PANE_VISIBILITIES } from '../../../shared/types';
+import type { BrowserCaptureInput, BrowserPaneRegisterInput, BrowserPaneVisibility } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 import { getProjectRepos, resolveProjectContext } from '../helpers/project-repos';
 import { browserUrlStore } from '../../browser/browser-url-store';
@@ -284,6 +285,7 @@ export function registerBrowserHandlers(context: IpcContext): void {
       projectId: resolvedProjectId,
       webContentsId: input.webContentsId,
       url: input.url ?? null,
+      visibility: isPaneVisibility(input.visibility) ? input.visibility : undefined,
     });
 
     // Diagnostic (main-side, because the renderer console never persists to
@@ -309,4 +311,27 @@ export function registerBrowserHandlers(context: IpcContext): void {
     if (typeof webContentsId !== 'number' || !Number.isInteger(webContentsId) || webContentsId <= 0) return;
     browserPaneRegistry.unregisterByWebContentsId(webContentsId, 'renderer-unmount');
   });
+
+  // The user's Close control. The renderer sends this BEFORE it unmounts the
+  // pane, so the handle retires with `user-closed` (the hand-off allowlist does
+  // not include it, so no lane is stood up - the user closed it to get the
+  // memory back) and the agent's next call is told who closed it. The unmount
+  // that follows unregisters a guest this registry no longer knows: a no-op.
+  ipcMain.handle(IPC.BROWSER_PANE_USER_CLOSE, (_event, webContentsId: number) => {
+    if (typeof webContentsId !== 'number' || !Number.isInteger(webContentsId) || webContentsId <= 0) return;
+    browserPaneRegistry.unregisterByWebContentsId(webContentsId, 'user-closed');
+  });
+
+  // Where a registered pane is on the user's screen, for list_panes. Validated
+  // against the shared enum: an unknown value is dropped rather than stored,
+  // since it would be echoed verbatim to every agent that lists panes.
+  ipcMain.handle(IPC.BROWSER_PANE_VISIBILITY, (_event, webContentsId: number, visibility: unknown) => {
+    if (typeof webContentsId !== 'number' || !Number.isInteger(webContentsId) || webContentsId <= 0) return;
+    if (!isPaneVisibility(visibility)) return;
+    browserPaneRegistry.setVisibility(webContentsId, visibility);
+  });
+}
+
+function isPaneVisibility(value: unknown): value is BrowserPaneVisibility {
+  return typeof value === 'string' && (BROWSER_PANE_VISIBILITIES as readonly string[]).includes(value);
 }

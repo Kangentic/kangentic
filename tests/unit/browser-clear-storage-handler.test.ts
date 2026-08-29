@@ -35,6 +35,7 @@ const {
   fakeRegistryRegister,
   fakeRegistryUnregister,
   fakeRegistryUnregisterByWebContentsId,
+  fakeRegistrySetVisibility,
   fakeRegistrySetPaneClosedHandler,
   fakeRegistrySetPaneRegisteredHandler,
   fakeFindLiveSessionByTaskId,
@@ -61,6 +62,7 @@ const {
   const fakeRegistryRegister = vi.fn(() => ({ sessionId: 'pane_test0001' }));
   const fakeRegistryUnregister = vi.fn();
   const fakeRegistryUnregisterByWebContentsId = vi.fn();
+  const fakeRegistrySetVisibility = vi.fn();
   const fakeRegistrySetPaneClosedHandler = vi.fn();
   const fakeRegistrySetPaneRegisteredHandler = vi.fn();
   const fakeFindLiveSessionByTaskId = vi.fn<(taskId: string) => boolean>(() => false);
@@ -78,6 +80,7 @@ const {
     fakeRegistryRegister,
     fakeRegistryUnregister,
     fakeRegistryUnregisterByWebContentsId,
+    fakeRegistrySetVisibility,
     fakeRegistrySetPaneClosedHandler,
     fakeRegistrySetPaneRegisteredHandler,
     fakeFindLiveSessionByTaskId,
@@ -141,6 +144,7 @@ vi.mock('../../src/main/browser/browser-pane-registry', () => ({
     register: fakeRegistryRegister,
     unregister: fakeRegistryUnregister,
     unregisterByWebContentsId: fakeRegistryUnregisterByWebContentsId,
+    setVisibility: fakeRegistrySetVisibility,
     // registerBrowserHandlers installs the lane hand-off, which subscribes to
     // both registry callbacks. Omitting them makes every test in this file
     // throw at registration time, before it reaches its own subject.
@@ -545,6 +549,84 @@ describe('BROWSER_PANE_UNREGISTER IPC handler', () => {
     expect(fakeRegistryUnregisterByWebContentsId).toHaveBeenCalledWith(42, 'renderer-unmount');
     // Never the session-keyed form: there is no session to key on any more.
     expect(fakeRegistryUnregister).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The user's Close control retires the handle with its OWN reason, ahead of the
+ * unmount, so the hand-off (which allowlists reasons) stands no lane up and the
+ * agent is told the user closed the browser. Same input validation as unregister.
+ */
+describe('BROWSER_PANE_USER_CLOSE IPC handler', () => {
+  beforeEach(() => {
+    capturedHandlers.clear();
+    fakeRegistryUnregisterByWebContentsId.mockClear();
+    registerBrowserHandlers(makeContext() as unknown as Parameters<typeof registerBrowserHandlers>[0]);
+  });
+
+  async function invokeUserClose(webContentsId: unknown): Promise<unknown> {
+    const handler = capturedHandlers.get('browser:paneUserClose');
+    if (!handler) throw new Error('browser:paneUserClose handler not registered');
+    return handler(undefined, webContentsId);
+  }
+
+  for (const [name, value] of [
+    ['a float', 1.5],
+    ['zero', 0],
+    ['a string', 'not-a-number'],
+    ['undefined', undefined],
+  ] as const) {
+    it(`returns without touching the registry when webContentsId is ${name}`, async () => {
+      await invokeUserClose(value);
+      expect(fakeRegistryUnregisterByWebContentsId).not.toHaveBeenCalled();
+    });
+  }
+
+  it('retires the guest with the user-closed reason', async () => {
+    await invokeUserClose(42);
+    expect(fakeRegistryUnregisterByWebContentsId).toHaveBeenCalledOnce();
+    expect(fakeRegistryUnregisterByWebContentsId).toHaveBeenCalledWith(42, 'user-closed');
+  });
+});
+
+/**
+ * Where a pane is on screen is echoed verbatim to every agent that lists panes,
+ * so the handler admits only the shared enum's values.
+ */
+describe('BROWSER_PANE_VISIBILITY IPC handler', () => {
+  beforeEach(() => {
+    capturedHandlers.clear();
+    fakeRegistrySetVisibility.mockClear();
+    fakeRegistryRegister.mockClear();
+    registerBrowserHandlers(makeContext() as unknown as Parameters<typeof registerBrowserHandlers>[0]);
+  });
+
+  async function invokeVisibility(webContentsId: unknown, visibility: unknown): Promise<unknown> {
+    const handler = capturedHandlers.get('browser:paneVisibility');
+    if (!handler) throw new Error('browser:paneVisibility handler not registered');
+    return handler(undefined, webContentsId, visibility);
+  }
+
+  it('records each shared-enum value against the guest', async () => {
+    for (const visibility of ['showing', 'hidden', 'parked', 'offscreen']) {
+      await invokeVisibility(42, visibility);
+      expect(fakeRegistrySetVisibility).toHaveBeenLastCalledWith(42, visibility);
+    }
+  });
+
+  it('drops an unknown value and a malformed guest id', async () => {
+    await invokeVisibility(42, 'minimized');
+    await invokeVisibility(42, 7);
+    await invokeVisibility(0, 'hidden');
+    await invokeVisibility('42', 'hidden');
+    expect(fakeRegistrySetVisibility).not.toHaveBeenCalled();
+  });
+
+  it('accepts a visibility carried by the registration itself, and drops an unknown one there too', async () => {
+    await invokeRegisterPane({ sessionId: VALID_SESSION_ID, taskId: 'task-1', projectId: 'proj-1', webContentsId: 42, url: null, visibility: 'hidden' });
+    expect(fakeRegistryRegister).toHaveBeenLastCalledWith(expect.objectContaining({ visibility: 'hidden' }));
+    await invokeRegisterPane({ sessionId: VALID_SESSION_ID, taskId: 'task-1', projectId: 'proj-1', webContentsId: 42, url: null, visibility: 'bogus' });
+    expect(fakeRegistryRegister).toHaveBeenLastCalledWith(expect.objectContaining({ visibility: undefined }));
   });
 });
 
