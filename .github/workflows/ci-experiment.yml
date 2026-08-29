@@ -1,0 +1,302 @@
+name: CI (experiment)
+
+# TEMPORARY measurement pipeline. Delete once its shape is promoted into ci.yml.
+#
+# This is ci.yml with three changes under test (task: CI bottleneck analysis):
+#   1a. lint + typecheck + build collapsed into ONE job with independently
+#       reporting steps.
+#   1b. UI shards 9 -> 11.
+#   1c. `cache: npm` dropped from every setup-node (it restores ~/.npm, which
+#       only `npm ci` reads, and `npm ci` only runs on a node_modules cache MISS,
+#       so on the warm path it is ~5.3s of dead weight on the critical path).
+#
+# Two properties are load-bearing and must not be "tidied up":
+#
+# - It NEVER fires on a normal branch. The ~20 concurrent-job cap is ACCOUNT-WIDE,
+#   so this run (21 jobs) firing alongside a live ci.yml run (21 jobs) would put
+#   42 jobs against a cap of 20 and badly distort BOTH measurements. Hence: no
+#   `pull_request`, and a `push` filter restricted to a dedicated `ci-exp/**`
+#   namespace that no feature branch uses. `workflow_dispatch` is listed too, but
+#   it only becomes usable once this file is on the DEFAULT branch (GitHub only
+#   surfaces workflow_dispatch for workflows present on the default branch), which
+#   is why the `ci-exp/**` push trigger is what actually drives measurement today.
+# - Every job `name:` is prefixed `Exp:`. Status-check contexts are keyed by
+#   name; an un-prefixed name here would report into main's branch protection
+#   (`Lint (ESLint)`, `Build (production bundle)`, ... are required contexts).
+#
+# Its own concurrency group, so a measurement run never cancels a real CI run.
+#
+# Measure by branching a `ci-exp/**` branch off the exact commit of a known
+# ci.yml baseline run and adding ONLY this file. The test content is then
+# identical to the baseline, so the comparison is paired.
+
+on:
+  push:
+    branches: ['ci-exp/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-experiment-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # 1a. lint + typecheck + build, serially, behind ONE checkout/setup/cache.
+  #
+  # Every step carries `if: ${{ !cancelled() }}` and an `id:`, and the final step
+  # aggregates the outcomes. Without that, a lint failure would abort the job and
+  # HIDE a typecheck failure, so the PR fix loop would need one CI round-trip per
+  # broken check even though the run itself got shorter.
+  #
+  # Two couplings this job now owns (see ci.yml notes when promoting):
+  # - Dropping the standalone build job is only safe while all 5 e2e-shards keep
+  #   running `npm run build` UNCONDITIONALLY; they are what prove the app bundle.
+  # - `npm run build -w packages/protocol` is the old build job's genuinely unique
+  #   contribution (the E2E shards do not build the package) and lives here now.
+  checks:
+    name: "Exp: Checks (lint, typecheck, build)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Cache node_modules
+        id: cache-node-modules
+        uses: actions/cache@v5
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-modules-${{ hashFiles('package-lock.json') }}
+      - name: Install dependencies (npm ci)
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: npm ci
+      - name: Lint (ESLint)
+        id: lint
+        if: ${{ !cancelled() }}
+        run: npm run lint
+      - name: Type check (tsc)
+        id: typecheck
+        if: ${{ !cancelled() }}
+        run: npm run typecheck
+      - name: Build (production bundle)
+        id: build
+        if: ${{ !cancelled() }}
+        run: npm run build
+      - name: Build @kangentic/protocol package
+        id: build_protocol
+        if: ${{ !cancelled() }}
+        run: npm run build -w packages/protocol
+      - name: Summarize check results
+        if: ${{ !cancelled() }}
+        run: |
+          status=0
+          check() {
+            if [ "$2" != "success" ]; then
+              echo "FAILED: $1 ($2)"
+              status=1
+            else
+              echo "passed: $1"
+            fi
+          }
+          check "Lint (ESLint)" "${{ steps.lint.outcome }}"
+          check "Type check (tsc)" "${{ steps.typecheck.outcome }}"
+          check "Build (production bundle)" "${{ steps.build.outcome }}"
+          check "Build @kangentic/protocol" "${{ steps.build_protocol.outcome }}"
+          exit $status
+
+  unit-shards:
+    name: "Exp: Unit Test (${{ matrix.shardIndex }}/${{ matrix.shardTotal }})"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        shardIndex: [1, 2, 3]
+        shardTotal: [3]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Cache node_modules
+        id: cache-node-modules
+        uses: actions/cache@v5
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-modules-${{ hashFiles('package-lock.json') }}
+      - name: Install dependencies (npm ci)
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: npm ci
+      - name: Unit tests (shard ${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
+        run: npx vitest run tests/unit --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }} --reporter=blob --reporter=default --outputFile.blob=.vitest/blob/blob-${{ matrix.shardIndex }}.json
+      - name: Upload blob report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: unit-blob-${{ matrix.shardIndex }}
+          path: .vitest/blob/
+          retention-days: 1
+
+  unit:
+    name: "Exp: Unit tests (Vitest)"
+    needs: [unit-shards]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Cache node_modules
+        id: cache-node-modules
+        uses: actions/cache@v5
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-modules-${{ hashFiles('package-lock.json') }}
+      - name: Install dependencies (npm ci)
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: npm ci
+      - name: Download shard blob reports
+        uses: actions/download-artifact@v8
+        with:
+          pattern: unit-blob-*
+          merge-multiple: true
+          path: .vitest/blob
+      - name: Merge blob reports into one Vitest summary
+        run: npx vitest --merge-reports=.vitest/blob --reporter=github-actions --reporter=default
+      - name: Fail if any unit shard job did not succeed
+        if: ${{ needs.unit-shards.result != 'success' }}
+        run: exit 1
+
+  # 1b. 11 shards, up from 9. The UI tier is the run's pole and the only tier on
+  # the critical path: every other job is done by ~115s while the pole runs ~270s,
+  # so ~11 of the ~20 slots sit idle for the last ~150s of a run.
+  #
+  # Playwright balances shards by TEST COUNT, but per-test cost varies ~5x across
+  # this suite, so at 9 shards the per-shard WORK spread was 1.88x (297s to 558s)
+  # while the count spread was 1.06x. The 2 slots freed by collapsing lint /
+  # typecheck / build are what pay for shards 10 and 11 without taking the run to
+  # 23 jobs (see the budget note on the `ui` gate below).
+  playwright-shards:
+    name: "Exp: UI Test (${{ matrix.shardIndex }}/${{ matrix.shardTotal }})"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shardIndex: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+        shardTotal: [11]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Cache node_modules
+        id: cache-node-modules
+        uses: actions/cache@v5
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-modules-${{ hashFiles('package-lock.json') }}
+      - name: Install dependencies (npm ci)
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: npm ci
+      - name: Cache Playwright browsers
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
+          restore-keys: ${{ runner.os }}-playwright-
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium
+      - name: Run UI tests (shard ${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
+        run: npx playwright test --project=ui --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
+
+  # Concurrency budget under test: UI 11 + E2E 5 + unit 3 = 19 shards, plus the
+  # single `checks` job + the CLA workflow = 21. Identical to today's 21, so the
+  # accepted over-cap-by-one and its ~6-15s queue behaviour are unchanged.
+  #
+  # 21 is a CEILING here, not a target. Collapsing the three always-on jobs also
+  # removed the three EARLIEST slot releasers (typecheck 37s, lint 41s, build
+  # 51s) and replaced them with one ~140s job. At 21 that is harmless because the
+  # CLA check frees a slot at 10-17s, but no cheap early releaser remains: at 22+
+  # jobs the first release becomes a ~70s unit shard, and a queued UI shard would
+  # start that late.
+  ui:
+    name: "Exp: UI tests (Playwright)"
+    needs: [playwright-shards]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Gate on shard results
+        run: |
+          if [ "${{ needs.playwright-shards.result }}" != "success" ]; then
+            echo "One or more Playwright shards did not succeed (result: ${{ needs.playwright-shards.result }})"
+            exit 1
+          fi
+          echo "All Playwright shards passed."
+
+  # Still 5 shards, still building unconditionally. That `npm run build` is what
+  # proves the app bundle now that the standalone build job is gone - do not make
+  # it conditional without restoring a dedicated bundle check.
+  #
+  # Deliberately NOT deduplicated: the 5 builds cost ~21s each (~105s of runner
+  # minutes), but E2E finishes at ~115s against a ~240s pole, so it is nowhere
+  # near the critical path, and sharing one bundle via an artifact costs ~20s of
+  # upload plus ~20s of download per shard - no wall-clock win.
+  e2e-shards:
+    name: "Exp: E2E Test (${{ matrix.shardIndex }}/${{ matrix.shardTotal }})"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shardIndex: [1, 2, 3, 4, 5]
+        shardTotal: [5]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Cache node_modules (native build + Electron binary)
+        id: cache-node-modules
+        uses: actions/cache@v5
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-modules-${{ hashFiles('package-lock.json') }}
+      - name: Install dependencies (npm ci, full native build)
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: npm ci
+      - name: Build (production bundle)
+        run: npm run build
+      - name: Run E2E tests (shard ${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
+        run: xvfb-run -a npx playwright test --project=electron --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
+
+  e2e:
+    name: "Exp: E2E tests (Electron)"
+    needs: [e2e-shards]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Gate on shard results
+        run: |
+          if [ "${{ needs.e2e-shards.result }}" != "success" ]; then
+            echo "One or more E2E shards did not succeed (result: ${{ needs.e2e-shards.result }})"
+            exit 1
+          fi
+          echo "All E2E shards passed."
