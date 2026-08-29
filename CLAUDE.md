@@ -213,7 +213,23 @@ won't be found.
   with a blinking chip in the same sidebar row. Marks are `currentColor` only, so the
   CALL SITE supplies `text-active` / `text-attention` / `text-fg-muted` - never hardcode a hex,
   since `--kng-active` / `--kng-attention` are desktop-only values that mobile and web
-  deliberately diverge from. There is no `-rest` mark: rest is the `-idle` geometry in a muted
+  deliberately diverge from. The injected `<g>` is `pointer-events: none`, which is
+  load-bearing for any mark inside a button: re-assigning its `innerHTML` on a `mark` change
+  destroys the node the cursor is over, and Chromium then drops the click outright, which
+  shipped as "the first Stop click never registers" (measured: the injected ink covered 15% of
+  the pause button, and `control-stop`'s filled square covers the exact centre). Hits must land
+  on the React-authored `<svg>`, which survives a `mark` change - so the `none` never moves up
+  to the root, which `TaskCard`'s `<title>` tooltip needs hit-testable, and the `<g>` never gets
+  `key={mark}`. That covers a mark FLIP only; an icon that changes ELEMENT TYPE between states
+  (lucide at rest, `ActivityMark` when active) unmounts the `<svg>` too, which no change inside
+  `ActivityMark` can reach. Every such icon renders each of its branches through
+  `components/IconSlot.tsx`, a fixed-size `<span>` that all branches share: React reconciles the
+  one span in place across the swap, so the node under the pointer survives, and the span
+  absorbs the pointer on the glyph's behalf. The three sites are `StopButtonIcon`,
+  `PauseButtonIcon`, and `MonitorCard`'s `StateGlyph` - the last is why the neutralization is
+  scoped to the glyph rather than put on the button, since its clickable is a whole card
+  carrying other interactive children. `tests/ui/command-terminal.spec.ts` covers both variants
+  (a mark flip and an element-type swap) with red-green mouse-level tests. There is no `-rest` mark: rest is the `-idle` geometry in a muted
   tone. `data-rest` on the root is the reduced-motion strategy (`static` / `keep-dash` /
   `drop-dash`), NOT a tone; test selectors key off `data-mark`. The set's grid is a WIDTH
   KEYLINE, not a square ink box: each mark fills its slot's width and takes the height its form

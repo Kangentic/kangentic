@@ -2225,6 +2225,155 @@ test.describe('Command Terminal', () => {
         await browser.close();
       }
     });
+
+    test('Stop still fires when the icon changes ELEMENT TYPE mid-press', async () => {
+      // The harder half of the same bug class, and the one IconSlot exists for.
+      // Going from a running session to no activity swaps StopButtonIcon's whole
+      // branch - an <ActivityMark> subtree becomes a lucide <CircleStop> - so React
+      // unmounts the <svg> the press landed on entirely. Making the injected <g>
+      // non-hit-testable cannot help here: the node carrying that style is itself
+      // destroyed. Only a stable ancestor that every branch renders through survives,
+      // which is IconSlot.
+      const { browser, page } = await launchWithState(
+        ringBasePreConfig() + deterministicSpawn
+      );
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        await openOverlayAndMarkSessionReady(page);
+
+        await page.evaluate((sessionId) => {
+          const stores = (window as unknown as {
+            __zustandStores?: { session?: { getState: () => { updateActivity: (id: string, next: string) => void } } };
+          }).__zustandStores;
+          stores?.session?.getState().updateActivity(sessionId, 'thinking');
+        }, RING_SESSION_ID);
+
+        const stopButton = page.getByTestId('command-bar-terminate-button');
+        await expect(stopButton.locator('[data-mark="control-stop-working"]')).toBeVisible({ timeout: 3000 });
+
+        const box = await stopButton.boundingBox();
+        if (!box) throw new Error('stop button has no bounding box');
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        await page.mouse.down();
+
+        // Drop the session's readiness so sessionRunning goes false: the mark branch
+        // is abandoned for the plain lucide glyph. Awaiting the lucide class is the
+        // commit barrier, so the swap has definitely landed before mouseup.
+        await page.evaluate((sessionId) => {
+          const stores = (window as unknown as {
+            __zustandStores?: { session?: { getState: () => { clearFirstOutput?: (id: string) => void; updateActivity: (id: string, next: string) => void } } };
+          }).__zustandStores;
+          stores?.session?.getState().updateActivity(sessionId, 'exited');
+        }, RING_SESSION_ID);
+        await expect(stopButton.locator('.lucide-circle-stop')).toBeVisible({ timeout: 3000 });
+
+        await page.mouse.up();
+
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(0, { timeout: 5000 });
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('Stop still fires when the activity mark changes mid-press', async () => {
+      // Regression guard for a dropped first click. ActivityMark injects the packaged
+      // mark with dangerouslySetInnerHTML on an inner <g>, so changing `mark` destroys
+      // every child of that <g>. control-stop's geometry is a FILLED rect covering the
+      // centre of the button, so a press landing where people actually click has its
+      // mousedown target torn out the moment activity flips, and Chromium drops the
+      // click: the handler never runs, no kill IPC is issued, and the window stays open.
+      //
+      // The fix makes the injected subtree non-hit-testable, so the surviving
+      // React-authored <svg> is the event target across a mark change. Without it this
+      // test fails on the final assertion.
+      const { browser, page } = await launchWithState(
+        ringBasePreConfig() + deterministicSpawn
+      );
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        await openOverlayAndMarkSessionReady(page);
+
+        const setActivity = (activityState: string) => page.evaluate(({ sessionId, activityState }) => {
+          const stores = (window as unknown as {
+            __zustandStores?: {
+              session?: { getState: () => { updateActivity: (id: string, next: string) => void } };
+            };
+          }).__zustandStores;
+          stores?.session?.getState().updateActivity(sessionId, activityState);
+        }, { sessionId: RING_SESSION_ID, activityState });
+
+        const stopButton = page.getByTestId('command-bar-terminate-button');
+
+        await setActivity('thinking');
+        await expect(stopButton.locator('[data-mark="control-stop-working"]')).toBeVisible({ timeout: 3000 });
+
+        // Press dead centre, which is inside the mark's filled stop square.
+        const box = await stopButton.boundingBox();
+        if (!box) throw new Error('stop button has no bounding box');
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        await page.mouse.down();
+
+        // Flip the mark mid-press. Awaiting the new data-mark is the commit barrier:
+        // the attribute and the <g>'s innerHTML are written in the same React commit,
+        // so once the attribute is observable the injected children have been replaced
+        // underneath the cursor. Never swap this await for a fixed wait - it is what
+        // makes the race deterministic rather than intermittent.
+        await setActivity('idle');
+        await expect(stopButton.locator('[data-mark="control-stop-idle"]')).toBeVisible({ timeout: 3000 });
+
+        await page.mouse.up();
+
+        // Stop destroys this terminal and closes its window. It was the only one, so
+        // the layer hides with it.
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(0, { timeout: 5000 });
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('Stop shows a pending state while the kill is in flight, then closes', async () => {
+      // Stop awaits a kill IPC before closing. With no pending state the button looked
+      // inert for that whole window, which is indistinguishable from the dropped click
+      // above - that is why the bug read as "nothing happened" rather than as an error.
+      //
+      // The kill is held open here so the in-between state is observable at all; the real
+      // one measured ~10ms. This also covers the recovery ordering in handleTerminate: the
+      // `stopping` flag is cleared after closeWindow so a close that does not unmount
+      // cannot strand the button disabled with a spinner and no way back.
+      const holdKill = `
+        window.__resolveKill = null;
+        window.electronAPI.sessions.killTransient = function () {
+          return new Promise(function (resolve) { window.__resolveKill = resolve; });
+        };
+      `;
+      const { browser, page } = await launchWithState(
+        ringBasePreConfig() + deterministicSpawn + holdKill
+      );
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        await openOverlayAndMarkSessionReady(page);
+
+        const stopButton = page.getByTestId('command-bar-terminate-button');
+        await stopButton.click();
+
+        // In flight: disabled, spinner, and the activity marks are gone (the pending
+        // branch pre-empts them).
+        await expect(stopButton).toBeDisabled({ timeout: 3000 });
+        await expect(stopButton.locator('.lucide-loader-circle')).toBeVisible();
+        await expect(stopButton.locator('[data-mark^="control-stop-"]')).toHaveCount(0);
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1);
+
+        // Releasing the kill lets the close run.
+        await page.evaluate(() => {
+          const resolve = (window as unknown as { __resolveKill?: () => void }).__resolveKill;
+          if (resolve) resolve();
+        });
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(0, { timeout: 5000 });
+      } finally {
+        await browser.close();
+      }
+    });
   });
 
   // ---------------------------------------------------------------------------

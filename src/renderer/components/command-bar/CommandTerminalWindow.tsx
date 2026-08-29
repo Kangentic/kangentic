@@ -21,6 +21,7 @@ import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } fro
 import type { ReactNode } from 'react';
 import { CircleStop, FolderOpen, FolderGit, GitBranch, GitCompare, Loader2, Maximize2, Minimize2, PictureInPicture2, SquareChevronRight, Zap } from 'lucide-react';
 import { ActivityMark } from '../ActivityMark';
+import { IconSlot } from '../IconSlot';
 import { BranchPicker } from '../dialogs/BranchPicker';
 import { LaunchOverlay } from '../LaunchOverlay';
 import { HeaderActionButton } from '../HeaderActionButton';
@@ -32,7 +33,7 @@ import { useKeybinding, useFormattedCombo } from '../../hooks/useKeybinding';
 import { ContextBar } from '../terminal/ContextBar';
 import { CommandTerminalPane, type TerminalGridGetter } from './CommandTerminalPane';
 import { useSessionStore } from '../../stores/session-store';
-import { transientKey } from '../../stores/session-store/transient-session-slice';
+import { transientKey, type TransientKillOutcome } from '../../stores/session-store/transient-session-slice';
 import { commandTerminalChangesEntityId } from '../../stores/session-store/task-changes-panel-slice';
 import { useBoardStore } from '../../stores/board-store';
 import { useConfigStore } from '../../stores/config-store';
@@ -63,20 +64,31 @@ const ChangesPanel = lazy(() => import('../dialogs/task-detail/changes/ChangesPa
  * Ring and square are one packaged mark, so the hand-computed `47 16` dash that used to be
  * duplicated here and in `TaskDetailHeader` is gone. See `PauseButtonIcon` for why 20 is the
  * size that reproduces the old glyph exactly.
+ *
+ * These branches return DIFFERENT element types, so activity changing swaps the whole subtree
+ * rather than re-rendering one, and a node destroyed mid-press makes Chromium drop the click.
+ * Every branch renders through `IconSlot`, which is the one element the swap does NOT destroy
+ * and which absorbs the pointer on the glyph's behalf. `PauseButtonIcon` has the same shape
+ * over five branches and does the same.
  */
-function StopButtonIcon({ isThinking, isIdle }: { isThinking: boolean; isIdle: boolean }): ReactNode {
+function StopButtonIcon({ isThinking, isIdle, stopping }: { isThinking: boolean; isIdle: boolean; stopping: boolean }): ReactNode {
+  // One slot size across every branch: the box is the hit target, while each glyph keeps
+  // the size it already drew at (the 20px mark reads level with the 18px lucide glyphs).
+  if (stopping) {
+    return <IconSlot size={20}><Loader2 size={18} className="animate-spin" /></IconSlot>;
+  }
   if (isThinking || isIdle) {
     return (
-      <span className="grid place-items-center w-5 h-5">
+      <IconSlot size={20}>
         <ActivityMark
           mark={isThinking ? 'control-stop-working' : 'control-stop-idle'}
           size={20}
           className={isThinking ? 'text-active' : 'text-attention'}
         />
-      </span>
+      </IconSlot>
     );
   }
-  return <CircleStop size={18} />;
+  return <IconSlot size={20}><CircleStop size={18} /></IconSlot>;
 }
 
 interface CommandTerminalWindowProps {
@@ -109,6 +121,19 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [branch, setBranch] = useState<string | null>(null);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
+  // Stop is async (kill IPC, then close). Without a pending state the button looks
+  // inert for the duration, which is exactly how a DROPPED click presented, so the
+  // two were indistinguishable to the user.
+  const [stopping, setStopping] = useState(false);
+  // Set inside an effect, not at ref init: StrictMode remounts synthetically in dev
+  // and a ref-init value alone stays false after the synthetic cleanup.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
   const config = useConfigStore((s) => s.config);
   const rawProjectPath = useProjectStore((s) => s.currentProject?.path ?? null);
   // Also the source for CommandTerminalPane's own pasteImageTemplate lookup
@@ -319,17 +344,36 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
   // Stop = destroy THIS terminal's PTY and close its window. The layer's count
   // bridge hides the whole layer when the last window closes. Hiding the layer
   // (the X / Ctrl+Shift+P / backdrop) is separate and keeps every PTY alive.
+  //
+  // The window closes on EVERY path, including a kill that found nothing to kill:
+  // the user asked for this terminal to go away. Only a kill that actually failed
+  // is surfaced, because then a PTY may still be running with nothing pointing at
+  // it. All three outcomes used to be silent, so a kill that quietly did nothing
+  // looked exactly like the dropped click this button was also suffering from.
   const handleTerminate = useCallback(async () => {
+    if (stopping) return;
+    setStopping(true);
     const currentProjectId = useProjectStore.getState().currentProject?.id ?? null;
+    let outcome: TransientKillOutcome = 'no-session';
     try {
       if (currentProjectId) {
-        await useSessionStore.getState().killTransientSessionBySlot(currentProjectId, slot);
+        outcome = await useSessionStore.getState().killTransientSessionBySlot(currentProjectId, slot);
       }
     } catch {
-      // Best-effort cleanup.
+      outcome = 'failed';
+    }
+    if (outcome === 'failed') {
+      useToastStore.getState().addToast({
+        message: 'Could not stop the terminal. Its process may still be running.',
+        variant: 'error',
+      });
     }
     closeWindow(windowId);
-  }, [closeWindow, windowId, slot]);
+    // Normally unreachable - closing this window unmounts the component. It matters
+    // when the close is a no-op (an id the store no longer holds), which would
+    // otherwise strand the button disabled with a spinner and no way back.
+    if (mountedRef.current) setStopping(false);
+  }, [closeWindow, windowId, slot, stopping]);
 
   const handleCommandSelect = useCallback((command: AgentCommand) => {
     setShowCommandPalette(false);
@@ -367,16 +411,19 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
       <div ref={headerRef} className="flex items-center gap-3 px-4 h-[54px] border-b border-edge flex-shrink-0 select-none min-w-0">
         {/* Leading cluster: Stop (protected, measured as one unit). */}
         <div ref={leadingRef} className="flex items-center flex-shrink-0">
+          {/* StopButtonIcon's branches all render through IconSlot, so the node under the
+              pointer survives an activity change mid-press (see IconSlot). */}
           <button
             onClick={handleTerminate}
-            className={`inline-flex items-center justify-center p-1 rounded-full transition-colors flex-shrink-0 ${
-              showActivityRing ? 'hover:bg-surface-hover' : 'text-red-400 hover:bg-red-400/10'
+            disabled={stopping}
+            className={`inline-flex items-center justify-center p-1 rounded-full transition-colors flex-shrink-0 disabled:cursor-not-allowed ${
+              stopping ? 'text-fg-muted' : showActivityRing ? 'hover:bg-surface-hover' : 'text-red-400 hover:bg-red-400/10'
             }`}
-            title="Stop terminal"
+            title={stopping ? 'Stopping...' : 'Stop terminal'}
             aria-label="Stop terminal"
             data-testid="command-bar-terminate-button"
           >
-            <StopButtonIcon isThinking={isThinking} isIdle={isIdle} />
+            <StopButtonIcon isThinking={isThinking} isIdle={isIdle} stopping={stopping} />
           </button>
         </div>
 
@@ -514,8 +561,9 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
                   <KebabMenuDivider />
                   <KebabMenuItem
                     icon={<CircleStop size={14} />}
-                    label="Stop terminal"
+                    label={stopping ? 'Stopping...' : 'Stop terminal'}
                     onClick={() => { close(); handleTerminate(); }}
+                    disabled={stopping}
                     destructive
                     data-testid="command-bar-kebab-stop"
                   />
