@@ -808,4 +808,19 @@ export class MobileBridgeService extends EventEmitter {
     this.disposeAllSessions();
     this.diffWatcher.closeAll();
   }
+
+  /**
+   * Release this service's `fs.watch` handles at or under `pathPrefix`, ahead
+   * of that directory being deleted.
+   *
+   * Exists because the bridge deliberately owns a DiffWatcher separate from
+   * `IpcContext.diffWatcher` (see the field's comment), so releasing only the
+   * IPC one before a worktree removal would leave half the handles armed over
+   * a deleted directory - which on Windows spins a CPU core until close().
+   * A phone left on a task's diff view holds such a subscription with no
+   * renderer involvement at all.
+   */
+  releaseDiffHandlesUnder(pathPrefix: string): void {
+    this.diffWatcher.releaseUnder(pathPrefix);
+  }
 }

@@ -51,7 +51,7 @@ export interface StatusFileAttachOptions {
   /**
    * Adapter-supplied hook (from `runtime.statusFile`) used to decode
    * status.json and events.jsonl content. Optional: when null, the
-   * reader still performs startup file cleanup (delete stale
+   * reader still performs startup file cleanup (truncate stale
    * status.json, truncate stale events.jsonl) but skips watcher setup
    * since there's nothing to parse. This is used by sessions whose
    * adapter does not opt into the hook telemetry pipeline (Codex,
@@ -101,9 +101,10 @@ export class StatusFileReader {
    * paths are optional - a session with neither is a no-op (the
    * adapter isn't using Kangentic's statusline/hook pipeline).
    *
-   * Deletes any stale status.json and truncates any stale events.jsonl
-   * from a prior run with the same path, so the watcher doesn't emit
-   * cached data from the previous session.
+   * Truncates any stale status.json and events.jsonl from a prior run
+   * with the same path, so the watcher doesn't emit cached data from
+   * the previous session. Truncated rather than unlinked so the watcher
+   * arms on the FILE - see the inline note on the truncate below.
    */
   attach(options: StatusFileAttachOptions): void {
     const { sessionId, statusOutputPath, eventsOutputPath, statusFileHook } = options;
@@ -120,11 +121,24 @@ export class StatusFileReader {
       firstStatusDelivered: false,
     };
 
-    // Delete stale status.json so the watcher doesn't emit cached data
+    // Truncate stale status.json so the watcher doesn't emit cached data
     // from a previous session run. Runs regardless of whether a parser
     // is provided - file cleanup is not parser-dependent.
+    //
+    // TRUNCATE, not unlink, and that distinction is load-bearing. Unlinking
+    // left the file absent at the moment FileWatcher was constructed a line
+    // later, so `fs.watch(statusOutputPath)` always threw and the watcher
+    // always fell back to watching the SESSION DIRECTORY, for the whole life of
+    // the session. On Windows a directory watch whose target is deleted then
+    // spins a CPU core forever (see readers/file-watcher.ts). Creating the file
+    // empty puts the watcher on the file itself, which does not have that
+    // failure mode - and matches what the events file below already does.
+    //
+    // Every adapter's parseStatus returns null for '' (Claude's JSON.parse is
+    // wrapped in try/catch; the rest return null unconditionally), so an empty
+    // file emits nothing and cannot satisfy the firstStatusDelivered handoff.
     if (statusOutputPath) {
-      try { fs.unlinkSync(statusOutputPath); } catch { /* may not exist */ }
+      try { fs.writeFileSync(statusOutputPath, ''); } catch { /* dir may not exist */ }
 
       // Only install the watcher when we have a status-file hook to
       // decode changes. Sessions without a hook still need the file

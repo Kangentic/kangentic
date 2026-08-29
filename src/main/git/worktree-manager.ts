@@ -885,6 +885,13 @@ export class WorktreeManager {
     options?: { timeoutMs?: number; removalProfile?: WorktreeRemovalProfile },
   ): Promise<boolean> {
     assertRemovableWorktreePath(this.projectPath, worktreePath);
+
+    // Release our own OS handles under this path first. Deliberately ahead of
+    // the existsSync bail: a path that is ALREADY gone is exactly the case
+    // where a watcher left armed on it is spinning right now, so that is the
+    // one call we least want to skip.
+    await notifyWorktreeRemoving(worktreePath);
+
     if (!fs.existsSync(worktreePath)) return true;
 
     const timeoutMs = options?.timeoutMs ?? GIT_REMOVAL_TIMEOUT_MS;
@@ -1215,5 +1222,48 @@ async function notifyWorktreeRemoved(worktreePath: string): Promise<void> {
     // Best-effort: the worktree is already gone, and a failure here only
     // leaves a stale entry behind. It must never fail the removal.
     console.warn('[WORKTREE] worktree-removed listener failed (non-fatal):', error);
+  }
+}
+
+/**
+ * Notified BEFORE any removal attempt, from `removeWorktreeInternal`.
+ *
+ * The contract is "drop any OS handle you hold under this path, I am about to
+ * delete it", which is why it is deliberately paired with the *internal*
+ * method rather than the public one: unlike the removed-listener above, it is
+ * also correct for the husk clear inside `createWorktree`, whose own failure
+ * path blames "a process holding it" for the husks it leaves behind. We are one
+ * of those holders.
+ *
+ * Two concrete consumers, both measured:
+ *  - `DiffWatcher` keeps a RECURSIVE `fs.watch` on the worktree root plus two
+ *    on `<mainRepo>/.git/worktrees/<name>`, which `git worktree remove --force`
+ *    also deletes. On Windows a directory watch whose target is deleted emits
+ *    `rename` at ~150k events/sec forever, with no `error` event, stopping only
+ *    on close(). Nothing released those handles on removal; only project
+ *    relocation ever called `releaseUnder`.
+ *  - An open handle inside the tree is what the retry, process-reap and husk
+ *    machinery below exists to fight.
+ *
+ * Registered by the main process at startup for the same dependency-direction
+ * reason as the removed-listener: this module must not reach up into the IPC
+ * context or the mobile bridge to find their watchers.
+ */
+type WorktreeRemovingListener = (worktreePath: string) => Promise<void>;
+
+let worktreeRemovingListener: WorktreeRemovingListener | null = null;
+
+export function setWorktreeRemovingListener(listener: WorktreeRemovingListener | null): void {
+  worktreeRemovingListener = listener;
+}
+
+async function notifyWorktreeRemoving(worktreePath: string): Promise<void> {
+  if (!worktreeRemovingListener) return;
+  try {
+    await worktreeRemovingListener(worktreePath);
+  } catch (error) {
+    // Best-effort: failing to release a handle must never block the removal.
+    // The worst case is the pre-existing behaviour.
+    console.warn('[WORKTREE] worktree-removing listener failed (non-fatal):', error);
   }
 }

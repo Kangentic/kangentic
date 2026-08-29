@@ -400,13 +400,28 @@ App reopened
 
 ## Cleanup
 
-### Adapter notification on removal
+### Notification on removal
+
+Two listeners bracket a removal, and they are deliberately NOT symmetric in placement.
 
 Some agent CLIs record per-directory state in a GLOBAL config file, keyed by absolute path. That state outlives the worktree: Kangentic creates one worktree per task, so an adapter keyed this way accumulates a dead entry per task with nothing to clean it up. Codex is the case that forced this (its directory trust in `~/.codex/config.toml` reached 473 dead entries on one machine); Gemini's `trustedFolders.json` and Grok's `~/.grok/trusted_folders.toml` have the same shape (Grok accumulates entries only for worktrees under an undecided project root, since its trust cascades from a decided ancestor).
 
 `WorktreeManager.removeWorktree` is therefore the single notification point: on a successful removal it calls the listener registered at startup (`setWorktreeRemovedListener` in `src/main/index.ts`), which fans out to every adapter's optional `onWorktreeRemoved` (see [Agent Integration](agent-integration.md)). The listener is registered rather than imported so this git module never reaches into the agent registry.
 
-Notifying from the chokepoint is deliberate. Worktree removal is hand-copied across seven call sites (Done move, task delete, archive, MCP delete, project close, startup retry, branch-switch cleanup); an earlier attempt that notified at each site leaked from the ones it missed. The one path that deliberately does NOT notify is `createWorktree`'s husk-clear, which calls the internal removal directly because it is about to reuse the same path rather than vacate it.
+Notifying from the chokepoint is deliberate. Worktree removal is hand-copied across seven call sites (Done move, task delete, archive, MCP delete, project close, startup retry, branch-switch cleanup); an earlier attempt that notified at each site leaked from the ones it missed. The one path that deliberately does NOT fire the REMOVED listener is `createWorktree`'s husk-clear, which calls the internal removal directly because it is about to reuse the same path rather than vacate it.
+
+**Before** a removal is attempted, `removeWorktreeInternal` fires a second listener,
+`setWorktreeRemovingListener` (also wired in `src/main/index.ts`). Its contract is "drop any OS
+handle you hold under this path, I am about to delete it", and it releases both `DiffWatcher`
+instances for that prefix (`IpcContext`'s and the bridge-owned one, see
+[Mobile Bridge](mobile-bridge.md)).
+
+It hangs off the *internal* method rather than the public one precisely because the husk-clear
+above must also fire it: that path's failure mode is a directory that could not be deleted because
+something still held it open, and our own recursive `fs.watch` is one of those holders. It also
+runs ahead of the `existsSync` bail, since an already-gone path is exactly the case where a watcher
+left armed on it is spinning. On Windows a directory `fs.watch` whose target is deleted emits
+`rename` at roughly 150k events/sec forever, with no `error` event, until `close()`.
 
 ### On Project Open
 

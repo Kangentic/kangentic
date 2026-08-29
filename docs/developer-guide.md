@@ -105,7 +105,10 @@ src/
     pty/                   # Terminal session management
       paste-engine.ts      # Bracketed-paste primitive (driven by TerminalSubmit.submitContent)
       pty-buffer-manager.ts # Output buffering, scrollback ring buffer (512KB)
-      session-file-watcher.ts # fs.watch for status.json and events.jsonl
+      readers/             # Telemetry file readers
+        file-watcher.ts    # fs.watch fast path + polling fallback, with a storm guard
+        status-file-reader.ts # Watches status.json + events.jsonl for a session
+        session-history-reader.ts # Tails an agent's native history file
       session-manager.ts   # PTY spawn, output streaming, lifecycle
       session-queue.ts     # Concurrency limiter with reentrancy-safe promotion
       shell-resolver.ts    # Cross-platform shell detection

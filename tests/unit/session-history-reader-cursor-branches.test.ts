@@ -62,6 +62,11 @@ vi.mock('node:fs', () => ({
       return { close: vi.fn(), on: vi.fn() };
     }),
     statSync: (...args: unknown[]) => mockStatSync(...args),
+    // FileWatcher's poll consults existsSync before re-arming a released
+    // handle. Unreachable here (this mock's watch never throws, so the handle
+    // is never null), but stubbed so a future change fails loudly instead of
+    // with a confusing TypeError.
+    existsSync: () => true,
     openSync: (...args: unknown[]) => mockOpenSync(...args),
     closeSync: (...args: unknown[]) => mockCloseSync(...args),
     readSync: (...args: unknown[]) => mockReadSync(...args),
