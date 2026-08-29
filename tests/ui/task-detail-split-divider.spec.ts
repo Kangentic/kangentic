@@ -762,4 +762,71 @@ test.describe('Task Detail split divider: terminal-panel-resize event', () => {
 
     await closeTaskDialog(page);
   });
+
+  /**
+   * A SECOND dispatch site exists besides the drag above: `TaskDetailBody`'s own
+   * `useLayoutEffect`, keyed on `rightPanelPresent` / `changesExpanded`, fires
+   * whenever a right panel appears or leaves - opening/closing Changes or
+   * Browser - so the terminal refits in the same frame instead of waiting out
+   * the ResizeObserver's 200ms debounce. Nothing above exercises it: the drag
+   * test only ever installs its listener AFTER Changes is already open.
+   * Deleting the effect (or the `rightPanelPresent` half of its dependency
+   * array) throws nothing and fails nothing else - the terminal would just sit
+   * at its old width for ~300ms after the panel moves, which is exactly the
+   * silent regression this closes. Verified red: this test fails when the
+   * effect's dependency array is emptied. (The `changesExpanded` half is NOT
+   * covered here - see the comment below the test for why.)
+   */
+  test('opening/closing a right panel dispatches terminal-panel-resize, not only a divider drag', async () => {
+    await openTaskDialog(page);
+    // `changesOpen` is a per-task boolean that survives a dialog close/reopen
+    // (that persistence is Suite 3's own feature), so the prior test in this
+    // shared-page describe block can leave Changes open. Start from a known
+    // baseline rather than assuming one.
+    const divider = page.locator('[data-testid="task-detail-split-divider"]');
+    if (await divider.isVisible().catch(() => false)) {
+      await page.locator('[data-testid="changes-toggle"]').click();
+      await divider.waitFor({ state: 'hidden', timeout: 3000 });
+    }
+    await expect(page.locator('[data-testid="task-detail-split-divider"]')).toHaveCount(0);
+
+    await page.evaluate(() => {
+      (window as unknown as { __terminalPanelResizeCount: number }).__terminalPanelResizeCount = 0;
+      window.addEventListener('terminal-panel-resize', () => {
+        (window as unknown as { __terminalPanelResizeCount: number }).__terminalPanelResizeCount += 1;
+      });
+    });
+
+    // rightPanelPresent false -> true.
+    await page.locator('[data-testid="changes-toggle"]').click();
+    await page.locator('[data-testid="task-detail-split-divider"]').waitFor({ state: 'visible', timeout: 3000 });
+    await expect.poll(
+      () => page.evaluate(() => (window as unknown as { __terminalPanelResizeCount: number }).__terminalPanelResizeCount),
+      { timeout: 2000 },
+    ).toBeGreaterThanOrEqual(1);
+
+    // rightPanelPresent true -> false.
+    await page.evaluate(() => {
+      (window as unknown as { __terminalPanelResizeCount: number }).__terminalPanelResizeCount = 0;
+    });
+    await page.locator('[data-testid="changes-toggle"]').click();
+    await page.locator('[data-testid="task-detail-split-divider"]').waitFor({ state: 'hidden', timeout: 3000 });
+    await expect.poll(
+      () => page.evaluate(() => (window as unknown as { __terminalPanelResizeCount: number }).__terminalPanelResizeCount),
+      { timeout: 2000 },
+    ).toBeGreaterThanOrEqual(1);
+
+    await closeTaskDialog(page);
+  });
+
+  // A `changesExpanded` (Changes going full-row) case was tried here too and
+  // deliberately dropped: red-green showed it passes even with the
+  // TaskDetailBody effect's dependency array broken, because expanding Changes
+  // also perturbs the WINDOW's own measured pixelRect (WindowFrame.tsx's own
+  // `scheduleWindowTerminalResize` layout effect, keyed on
+  // `[pixelRect.width, pixelRect.height, managedWindow.state]`), which
+  // independently dispatches the same event within the poll window. A test
+  // that stays green against the broken behavior it claims to guard proves
+  // nothing; the `rightPanelPresent` case above does not share that confound
+  // (verified red under the same break) and is the one kept.
 });
