@@ -15,6 +15,7 @@ import { useAnnouncementsStore } from './stores/announcements-store';
 import { useUsageDashboardStore } from './stores/usage-dashboard-store';
 import { useMonitorStore } from './stores/monitor-store';
 import { usePopOutStore } from './stores/pop-out-store';
+import { receivePopOutOpenSet } from './pop-out/pop-out-changed';
 import { useDictationStore } from './stores/dictation-store';
 import { useProjectSwitchEffect } from './hooks/useProjectSwitchEffect';
 import { useAgentDrivenInvalidation } from './hooks/useAgentDrivenInvalidation';
@@ -118,9 +119,7 @@ export function App() {
     // live via the popOut:changed push. Only meaningful in the main window (a
     // pop-out window never reads this store); see stores/pop-out-store.ts.
     void usePopOutStore.getState().loadOpen();
-    const cleanupPopOutChanged = window.electronAPI.popOut?.onChanged((openInstanceKeys) => {
-      usePopOutStore.getState().setOpen(openInstanceKeys);
-    });
+    const cleanupPopOutChanged = window.electronAPI.popOut?.onChanged(receivePopOutOpenSet);
 
     // Listen for auto-update downloaded notification
     const cleanupUpdateListener = window.electronAPI.updater?.onUpdateDownloaded((info) => {

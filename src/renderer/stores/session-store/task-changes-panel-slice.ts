@@ -120,6 +120,19 @@ export interface TaskChangesPanelSlice {
    */
   hydratedDetailViewTasks: Set<string>;
   toggleChangesOpen: (taskId: string) => void;
+  /**
+   * Set an entity's Changes panel open state explicitly. `toggleChangesOpen`
+   * delegates here, and the pop-out close path drives it: when a `changes`
+   * pop-out window disappears from the `popOut:changed` open set, the panel is
+   * left CLOSED rather than reclaiming the in-app split (see
+   * renderer/pop-out/pop-out-changed.ts), where a toggle would be wrong.
+   *
+   * `projectId` is for a caller that already knows the task's project (the
+   * pop-out key carries it) and so must not depend on which board happens to be
+   * open when the window closes; it defaults to the current project like every
+   * other setter here.
+   */
+  setChangesOpen: (taskId: string, open: boolean, projectId?: string) => void;
   setChangesSelectedFile: (taskId: string, filePath: string | null) => void;
   setChangesScope: (taskId: string, scope: GitDiffScope) => void;
   setChangesFileTreeWidth: (taskId: string, width: number) => void;
@@ -250,10 +263,15 @@ function isNonTaskDetailViewId(entityId: string): boolean {
  * Schedule a debounced persist of a task's detail-view layout. Captures the
  * project id at interaction time (project-scoped-ipc rule) and the latest blob.
  * Sentinel (non-task) ids are ignored - they have no `tasks` row to write.
+ *
+ * `projectIdOverride` is for a caller that already knows the task's project and
+ * so must not read the ambient one: a `changes` pop-out can be closed after the
+ * user has switched boards, and the ambient read would then write the task's
+ * blob into the wrong project's database.
  */
-function scheduleDetailViewSave(taskId: string, get: () => SessionStore): void {
+function scheduleDetailViewSave(taskId: string, get: () => SessionStore, projectIdOverride?: string): void {
   if (isNonTaskDetailViewId(taskId)) return;
-  const projectId = useProjectStore.getState().currentProject?.id ?? null;
+  const projectId = projectIdOverride ?? useProjectStore.getState().currentProject?.id ?? null;
   detailViewPendingSaves.set(taskId, { state: buildDetailViewBlob(get(), taskId), projectId });
   const existing = detailViewSaveTimers.get(taskId);
   if (existing) clearTimeout(existing);
@@ -294,17 +312,25 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
   hydratedDetailViewTasks: new Set<string>(),
 
   toggleChangesOpen: (taskId) => {
-    const next = new Set(get().changesOpenTasks);
+    get().setChangesOpen(taskId, !get().changesOpenTasks.has(taskId));
+  },
+
+  setChangesOpen: (taskId, open, projectId) => {
+    const current = get().changesOpenTasks;
+    if (current.has(taskId) === open) return; // idempotent: no churn, no save
+    const next = new Set(current);
+    // The view mode rides the open flag: opening seeds the default split, closing
+    // drops the entry so the next open is not resurrected as 'expanded'.
     const viewMode = { ...get().changesViewMode };
-    if (next.has(taskId)) {
-      next.delete(taskId);
-      delete viewMode[taskId];
-    } else {
+    if (open) {
       next.add(taskId);
       viewMode[taskId] = 'split';
+    } else {
+      next.delete(taskId);
+      delete viewMode[taskId];
     }
     set({ changesOpenTasks: next, changesViewMode: viewMode });
-    scheduleDetailViewSave(taskId, get);
+    scheduleDetailViewSave(taskId, get, projectId);
   },
 
   toggleBrowserOpen: (taskId) => {

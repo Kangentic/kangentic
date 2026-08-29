@@ -57,6 +57,22 @@ pop-outs, and do not conflate the two layers.
   dialog / embedded pane) must not also be mounted. Guard the in-app mount site and add a
   `<PopOutButton kind=... params=.../>` to its header/toolbar.
 
+  **Guarding the mount site only SUPPRESSES the render; it does not decide what happens when the
+  window closes.** The in-app open flag survives detachment, so by default the surface RECLAIMS
+  its in-app slot the moment the window closes. Whether that is right is per-surface, and either
+  answer needs a deliberate choice:
+  - `stats` and `monitor` clear their in-app store when the pop-out OPENS
+    (`AppLayout.tsx`), so reopening later starts from a clean closed state.
+  - `changes` clears on CLOSE instead (`renderer/pop-out/pop-out-changed.ts`), because its trigger
+    is a stateful pill reading the same flag: clearing on open would leave the pill inactive over
+    a live detached window.
+
+  A close-driven effect belongs on the `popOut:changed` PUSH, never in `pop-out-store.setOpen()` -
+  `loadOpen()` also calls that on mount and on every HMR `vite:afterUpdate`, so an effect placed
+  there rides a re-sync path and a Fast Refresh could close a user's panel. The push carries the
+  whole open-key set with no per-key close event, so derive the disappearance by diffing the sets
+  and read the vanished key back with `parsePopOutInstanceKey`.
+
   **Carve-out: an ADDITIVE surface declares `inAppSurface: null`.** `changes-file` is a detached
   read of ONE file's diff, opened FROM the inline diff pane - suppressing that pane would defeat
   the surface, so it has no exclusive in-app counterpart and its origin stays mounted while its
@@ -76,6 +92,13 @@ pop-outs, and do not conflate the two layers.
   `Object.values(IPC)`. Runs in CI via `npm run test:unit`.
 - **Test:** `tests/unit/hmr-resync.test.ts` covers the renderer half of Pattern B/E for
   `pop-out-store.ts` (the store mirroring which windows are open).
+- **Test:** `tests/unit/pop-out-changed.test.ts` pins the push-vs-`setOpen` split above: it
+  asserts a raw `setOpen([])` (the shape `loadOpen()` and the HMR re-sync take) leaves the
+  panel open, while the same disappearance arriving through the push closes it. Folding the
+  close effect back into `setOpen` turns it red.
+- **Test:** `tests/unit/pop-out.test.ts` round-trips `popOutInstanceKey` against
+  `parsePopOutInstanceKey` for every task-scoped kind, so the key a close path reads back
+  cannot drift from the one the open path wrote.
 - **Review:** `/code-review` flags a new `new BrowserWindow(` outside the manager, or a new
   in-app surface added without its mutual-exclusivity guard.
 

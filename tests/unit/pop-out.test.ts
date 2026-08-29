@@ -7,7 +7,7 @@
  * collapse to a single key.
  */
 import { describe, it, expect } from 'vitest';
-import { popOutInstanceKey, isPopOutKind, resolveSurfaceTitle, formatTaskAnchor, POP_OUT_SURFACES, POPOUT_KINDS } from '../../src/shared/pop-out';
+import { popOutInstanceKey, parsePopOutInstanceKey, isPopOutKind, resolveSurfaceTitle, formatTaskAnchor, POP_OUT_SURFACES, POPOUT_KINDS } from '../../src/shared/pop-out';
 import { IPC } from '../../src/shared/ipc-channels';
 
 describe('POPOUT_KINDS / POP_OUT_SURFACES parity', () => {
@@ -118,6 +118,46 @@ describe('POP_OUT_SURFACES fan-out declarations', () => {
     const changesKey = popOutInstanceKey('changes', { taskId: 't1', projectId: 'p1' });
     const browserKey = popOutInstanceKey('browser', { taskId: 't1', projectId: 'p1' });
     expect(changesKey).not.toBe(browserKey);
+  });
+});
+
+/**
+ * parsePopOutInstanceKey is the inverse used by the `popOut:changed` consumer:
+ * the push carries the whole open-key set with no per-key close event, so a key
+ * that vanished has to be read back to learn which task's panel to close. It
+ * must therefore agree with the builder for every task-scoped kind.
+ */
+describe('parsePopOutInstanceKey', () => {
+  const taskScopedKinds = POPOUT_KINDS.filter((kind) => POP_OUT_SURFACES[kind].scope === 'task');
+
+  it('covers every task-scoped kind (guards against a new kind slipping past the round-trip)', () => {
+    expect(taskScopedKinds).toEqual(expect.arrayContaining(['changes', 'browser', 'changes-file']));
+  });
+
+  it.each(taskScopedKinds)('round-trips a "%s" key back to its kind, project, and task', (kind) => {
+    // changes-file needs a filePath; the extra param is ignored by the other kinds.
+    const key = popOutInstanceKey(kind, { taskId: 't1', projectId: 'p1', filePath: 'src/a/b.ts' });
+
+    expect(parsePopOutInstanceKey(key)).toEqual({ kind, projectId: 'p1', taskId: 't1' });
+  });
+
+  it('reads the task off a "changes-file" key whose path carries slashes and a space', () => {
+    const key = popOutInstanceKey('changes-file', { taskId: 't1', projectId: 'p1', filePath: 'src/a b/c.ts' });
+
+    expect(parsePopOutInstanceKey(key)).toEqual({ kind: 'changes-file', projectId: 'p1', taskId: 't1' });
+  });
+
+  it('returns null for a global surface, which carries no task', () => {
+    expect(parsePopOutInstanceKey(popOutInstanceKey('stats', {}))).toBeNull();
+    expect(parsePopOutInstanceKey(popOutInstanceKey('monitor', {}))).toBeNull();
+  });
+
+  it('returns null for an unknown kind or a malformed key', () => {
+    expect(parsePopOutInstanceKey('bogus:p1:t1')).toBeNull();
+    expect(parsePopOutInstanceKey('changes:p1')).toBeNull();
+    expect(parsePopOutInstanceKey('changes::t1')).toBeNull();
+    expect(parsePopOutInstanceKey('changes:p1:')).toBeNull();
+    expect(parsePopOutInstanceKey('')).toBeNull();
   });
 });
 
