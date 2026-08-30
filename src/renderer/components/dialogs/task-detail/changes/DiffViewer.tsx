@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { DiffEditor } from '@monaco-editor/react';
 import type { DiffOnMount, Monaco, MonacoDiffEditor } from '@monaco-editor/react';
 import type { editor as MonacoEditorNamespace } from 'monaco-editor';
-import { Loader2, Columns2, Rows2, FileCode, ChevronUp, ChevronDown, Pilcrow, FoldVertical, Eye, UserRound } from 'lucide-react';
+import { Loader2, Columns2, Rows2, FileCode, ChevronUp, ChevronDown, Pilcrow, FoldVertical, WrapText, Eye, UserRound } from 'lucide-react';
 import { MarkdownRenderer } from '../../../MarkdownRenderer';
 import { useConfigStore } from '../../../../stores/config-store';
 import { useKeybinding } from '../../../../hooks/useKeybinding';
@@ -185,6 +185,7 @@ export function DiffViewer({
   // like the split/inline view mode.
   const ignoreWhitespace = useConfigStore((state) => state.config.diffIgnoreWhitespace);
   const collapseUnchanged = useConfigStore((state) => state.config.diffCollapseUnchanged);
+  const wrapLines = useConfigStore((state) => state.config.diffWrapLines);
   const updateConfig = useConfigStore((state) => state.updateConfig);
 
   const diffEditorRef = useRef<MonacoDiffEditor | null>(null);
@@ -438,6 +439,26 @@ export function DiffViewer({
   const handleEditorMount: DiffOnMount = useCallback((diffEditor, monacoInstance) => {
     diffEditorRef.current = diffEditor;
     monacoRef.current = monacoInstance;
+    // Keep the ORIGINAL editor wrappable. Monaco force-sets BOTH wordWrap overrides to
+    // 'off' on it whenever the diff renders inline ("never wrap hidden editor"), but its
+    // side-by-side branch restores only wordWrapOverride1, and override2 outranks
+    // override1 - so after any inline pass the LEFT pane never wraps again. Every narrow
+    // pane hits this, because Monaco collapses to inline on its own below its ~900px
+    // breakpoint. Clearing override2 is safe in both modes: while inline, override1 is
+    // still 'off' and keeps the hidden editor unwrapped.
+    // The first override is baked into the CONSTRUCTION options (Monaco measures a zero
+    // width before the first layout, so it builds the pair inline) and lands before this
+    // handler can listen, hence the direct clear as well as the listener.
+    // See diffEditorEditors.js _adjustOptionsForLeftHandSide.
+    const originalEditor = diffEditor.getOriginalEditor();
+    const wordWrapOverride2Option = monacoInstance.editor.EditorOption.wordWrapOverride2;
+    originalEditor.updateOptions({ wordWrapOverride2: 'inherit' });
+    originalEditor.onDidChangeConfiguration((event) => {
+      if (!event.hasChanged(wordWrapOverride2Option)) return;
+      if (originalEditor.getOption(wordWrapOverride2Option) === 'inherit') return;
+      originalEditor.updateOptions({ wordWrapOverride2: 'inherit' });
+    });
+
     const modifiedEditor = diffEditor.getModifiedEditor();
     modifiedEditor.onDidScrollChange(() => {
       // Ignore clamp noise: events fired while the displayed content belongs to
@@ -540,6 +561,13 @@ export function DiffViewer({
   useEffect(() => {
     diffEditorRef.current?.updateOptions({ ignoreTrimWhitespace: ignoreWhitespace });
   }, [ignoreWhitespace]);
+
+  // Same for wrap. wordWrap is a BASE editor option, not a diff one, but Monaco's
+  // diff widget forwards changed base options down to both sub-editors, and its own
+  // diffWordWrap stays at 'inherit', so this reaches split and inline alike.
+  useEffect(() => {
+    diffEditorRef.current?.updateOptions({ wordWrap: wrapLines ? 'on' : 'off' });
+  }, [wrapLines]);
 
   // Re-apply the fold whenever collapse is toggled. The diff is already loaded
   // here, so applyCollapseFold's disable -> enable is the transition Monaco honors.
@@ -719,6 +747,15 @@ export function DiffViewer({
                 <FoldVertical size={16} />
               </button>
               <button
+                onClick={() => updateConfig({ diffWrapLines: !wrapLines })}
+                className={toolbarButtonClass(wrapLines)}
+                title="Wrap long lines"
+                aria-pressed={wrapLines}
+                data-testid="diff-wrap-lines"
+              >
+                <WrapText size={16} />
+              </button>
+              <button
                 onClick={() => setBlameOn((value) => !value)}
                 disabled={blameUnavailable}
                 className={`${toolbarButtonClass(blameOn)} disabled:opacity-30 disabled:cursor-default disabled:hover:bg-transparent disabled:hover:text-fg-muted`}
@@ -813,6 +850,7 @@ export function DiffViewer({
                 scrollBeyondLastLine: false,
                 minimap: { enabled: false },
                 renderWhitespace: 'boundary',
+                wordWrap: wrapLines ? 'on' : 'off',
                 fontSize: 12,
                 lineHeight: 18,
                 // Monaco's default context menu also surfaces "Command Palette",

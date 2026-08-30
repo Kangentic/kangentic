@@ -117,6 +117,7 @@
     diffDefaultScope: 'working',
     diffIgnoreWhitespace: false,
     diffCollapseUnchanged: false,
+    diffWrapLines: false,
     diffFileSort: 'name',
     diffFlatList: false,
     terminal: {

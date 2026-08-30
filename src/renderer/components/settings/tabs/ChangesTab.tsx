@@ -35,6 +35,11 @@ export function ChangesTab({ globalConfig }: { globalConfig: AppConfig }) {
         checked={globalConfig.diffCollapseUnchanged}
         onChange={(value) => updateGlobal({ diffCollapseUnchanged: value })}
       />
+      <SettingToggleRow
+        {...settingProps('diffWrapLines')}
+        checked={globalConfig.diffWrapLines}
+        onChange={(value) => updateGlobal({ diffWrapLines: value })}
+      />
       <SettingRow {...settingProps('diffFileSort')}>
         <Select
           value={globalConfig.diffFileSort}
