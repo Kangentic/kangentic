@@ -41,7 +41,8 @@ front rather than reaching for ad-hoc fixes later.
    `import.meta.hot.data` pin, so it is strictly worse than the stale closures the self-accept
    exists to prevent. Two stores hit this. `project-store` <-> `session-store` was broken outright
    (`stores/session-lifecycle-hooks.ts` late-binds the two session actions project-store needed, so
-   neither imports the other) and is now guarded by
+   project-store no longer imports session-store; the `session-store` -> `project-store` edge stays,
+   but one direction is not a cycle) and is now guarded by
    `tests/unit/renderer-store-import-cycles.test.ts`. `session-store` sits in a SECOND cycle that
    cannot be designed away - it needs the arrival-focus arbiter, which needs to know which terminal
    the user is looking at, which needs session state - so it PINS WITHOUT SELF-ACCEPTING, and says

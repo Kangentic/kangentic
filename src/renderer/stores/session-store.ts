@@ -214,17 +214,21 @@ export function cancelSync(): void {
  * Electron `<webview>` guest dies with its DOM node, so the agent lost the
  * browser it was driving. Measured with `scripts/hmr-guest-probe.mjs`.
  *
- * The FALLBACK layer is the `import.meta.hot.dispose` stash above, which carries
- * syncController (AbortController), the three transient-session pointers,
- * spawnProgress, pendingCommandLabel, and the conversation-viewer nav signals
- * across the one transition where there is no pinned instance to inherit (the
- * first HMR after a cold boot or a full reload, when `hot.data.sessionStore` is
- * still undefined and the initializer really does run again). Without it that
- * transition orphans live PTY processes, breaks in-flight project switches,
- * strands "Initializing..." indicators on task cards whose spawn-progress pushes
- * arrived pre-reload, and silently closes an open Conversation window mid-edit.
- * `syncController` is module state rather than store state, so the stash is its
- * only protection on every path.
+ * The FALLBACK layer is the `import.meta.hot.dispose` stash above. Under the pin
+ * its one LIVE consumer is `syncController` (an AbortController): that is module
+ * state, not store state, so it is re-declared on every module evaluation and
+ * read back at eval time - the stash is its only carrier, on every path. Without
+ * it a re-eval breaks an in-flight project switch.
+ *
+ * The stash's other values (the transient-session pointers, spawnProgress,
+ * pendingCommandLabel, the conversation-viewer nav signals) are read back only
+ * INSIDE the initializer, and the pin means the initializer no longer re-runs
+ * while `hot.data` survives: `hot.data.sessionStore` is written during the same
+ * evaluation that runs the initializer, so any path that runs it again is one
+ * where `hot.data` is itself fresh and the stash is empty too. They are the
+ * pre-pin protection, kept rather than ripped out in the same change that
+ * introduced the pin, but nothing reads them now - do not add a new value here
+ * expecting it to survive a re-eval. Pin it instead.
  *
  * HMR re-sync: the `vite:afterUpdate` handler in App.tsx calls
  * `syncSessions()` after hot reload. Renaming syncSessions would

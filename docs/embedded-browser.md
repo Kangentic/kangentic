@@ -363,9 +363,11 @@ src/renderer/stores/
                                             self-accepting: it sits in an import cycle, and Vite
                                             answers a circular-import invalidate with a full page
                                             reload, which kills every guest
-  session-lifecycle-hooks.ts                late-bound session actions for project-store, so the two
-                                            stores no longer import each other (that cycle was
-                                            reloading the page on every store-slice save)
+  session-lifecycle-hooks.ts                late-bound session actions for project-store, so
+                                            project-store no longer imports session-store (that
+                                            cycle was reloading the page on every store-slice save;
+                                            the session-store -> project-store edge remains, but
+                                            one direction is not a cycle)
 
 scripts/
   hmr-guest-probe.mjs                       measures whether an edit destroys a live pane guest:

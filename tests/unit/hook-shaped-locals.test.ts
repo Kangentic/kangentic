@@ -37,13 +37,50 @@ function collectSourceFiles(dir: string): string[] {
   return found;
 }
 
+// Indented (so: inside a function body) `const`/`let` whose name starts with
+// `use` followed by an uppercase letter - the shape react-refresh mistakes for
+// a custom hook. The optional `: Type` segment is load-bearing: an annotated
+// `const useStore: WindowManager['store'] = useLayerStore()` is the identical
+// hazard, and a pattern demanding `=` straight after the name walks right past
+// it. `[^=\n]` keeps that segment on the declaration's own line, so the scan
+// cannot span newlines to some later `=` and invent a match.
+// A destructure (`const { useX } = ...`) is not matched and has
+// never occurred here; extend the pattern if it does.
+const HOOK_SHAPED_LOCAL = /^[ \t]+(?:const|let)\s+(use[A-Z][A-Za-z0-9_]*)\s*(?::[^=\n]+)?=/gm;
+
 describe('hook-shaped local variables', () => {
+  // The scan below is vacuously green whenever the tree happens to be clean, so
+  // the PATTERN is what actually has to be pinned. This is not hypothetical: the
+  // sibling Pattern E check in hmr-resync.test.ts passed for a long time on a
+  // wildcard that could not fail, and the un-annotated form of this very regex
+  // shipped blind to `const useStore: T = ...`.
+  it('matches the hook-shaped forms it exists to catch, and nothing else', () => {
+    const matches = (source: string): boolean => {
+      HOOK_SHAPED_LOCAL.lastIndex = 0;
+      return HOOK_SHAPED_LOCAL.test(source);
+    };
+
+    // Caught.
+    expect(matches('  const useStore = useLayerStore();'), 'plain local').toBe(true);
+    expect(matches("  const useStore: WindowManager['store'] = useLayerStore();"), 'type-annotated local').toBe(true);
+    expect(matches('  let useThing: Foo<A, B> = bar();'), 'annotated generic').toBe(true);
+    expect(matches('  const useX: Record<string, () => void> = {};'), 'annotation containing =>').toBe(true);
+
+    // Not caught.
+    expect(matches('export const useBoardStore = create(x);'), 'module-scope store hook').toBe(false);
+    expect(matches('  const layerStore = useLayerStore();'), 'the corrected name').toBe(false);
+    expect(matches('  const used = 1;'), 'lowercase after use').toBe(false);
+    // The `\n` in `[^=\n]` is what stops the annotation clause running off the
+    // declaration's line to reach an `=` further down the file. Drop it and this
+    // case matches, inventing a violation that is not there.
+    expect(
+      matches('  const useThing: Foo\n  bar = 1;'),
+      'annotation clause must not span a newline to a later =',
+    ).toBe(false);
+  });
+
   it('no renderer file binds a `use`-prefixed name to a local variable', () => {
-    // Indented (so: inside a function body) `const`/`let` whose name starts with
-    // `use` followed by an uppercase letter - the shape react-refresh mistakes for
-    // a custom hook. A destructure (`const { useX } = ...`) is not matched and has
-    // never occurred here; extend the pattern if it does.
-    const pattern = /^[ \t]+(?:const|let)\s+(use[A-Z][A-Za-z0-9_]*)\s*=/gm;
+    const pattern = HOOK_SHAPED_LOCAL;
     const violations: string[] = [];
 
     for (const file of collectSourceFiles(RENDERER_DIR)) {
