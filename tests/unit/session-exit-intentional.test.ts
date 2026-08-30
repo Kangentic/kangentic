@@ -151,6 +151,9 @@ function makeContext(): SpawnFlowContext {
     sessionQueue: {
       notifySlotFreed: vi.fn(),
     },
+    firstOutputTracker: {
+      removeSession: vi.fn(),
+    },
     getTranscriptWriter: vi.fn(() => null),
     getShell: vi.fn().mockResolvedValue('/bin/bash'),
     takePendingResize: vi.fn(() => undefined),
