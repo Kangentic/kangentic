@@ -42,7 +42,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { Session, SessionRecord } from '../../src/shared/types';
+import type { Session, SessionRecord, Task } from '../../src/shared/types';
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks (must be declared before any imports of the mocked modules)
@@ -77,9 +77,11 @@ vi.mock('../../src/main/db/repositories/session-repository', () => ({
   },
 }));
 
+const mockTaskGetById = vi.fn(() => null as Task | null);
+
 vi.mock('../../src/main/db/repositories/task-repository', () => ({
   TaskRepository: class {
-    getById = vi.fn(() => null);
+    getById = mockTaskGetById;
   },
 }));
 
@@ -103,6 +105,17 @@ vi.mock('../../src/main/transition-engine/spawn-progress', () => ({
 // The module under test: trackEvent is what we assert against.
 vi.mock('../../src/main/analytics/analytics', () => ({
   trackEvent: vi.fn(),
+}));
+
+// trackFeatureUsed/trackMilestone are mocked as plain spies (rather than
+// leaving usage.ts real) so the enrichment/milestone assertions below aren't
+// entangled with usage.ts's own once-per-day / once-per-install dedup state,
+// which persists across tests within this file (vitest shares module
+// instances per file) and would make only the FIRST matching test in the
+// file observe a call.
+vi.mock('../../src/main/analytics/usage', () => ({
+  trackFeatureUsed: vi.fn(),
+  trackMilestone: vi.fn(),
 }));
 
 vi.mock('../../src/main/ipc/handlers/session-metrics', () => ({
@@ -159,6 +172,7 @@ vi.mock('../../src/main/ipc/helpers', () => ({
 // Import the module under test AFTER all vi.mock declarations.
 import { registerSessionHandlers } from '../../src/main/ipc/handlers/sessions';
 import { trackEvent } from '../../src/main/analytics/analytics';
+import { trackFeatureUsed, trackMilestone } from '../../src/main/analytics/usage';
 
 // ---------------------------------------------------------------------------
 // Shared fixture factory
@@ -300,6 +314,173 @@ describe('session-changed listener - session_spawn fires exactly once per sessio
 });
 
 // ---------------------------------------------------------------------------
+// #1b - Enrichment branch: permissionMode/worktree props + trackFeatureUsed
+// ---------------------------------------------------------------------------
+//
+// The `sessionSpawnAnalyticsFired` fire-once branch performs a best-effort DB
+// read (SessionRepository.getLatestForTask + TaskRepository.getById) to
+// enrich session_spawn's props and fire trackFeatureUsed for worktree/profile
+// adoption. Every test above this point leaves both repository mocks at their
+// declared default (getLatestForTask -> null, TaskRepository.getById -> null),
+// so `if (spawnRecord?.permission_mode)` / `if (taskRow) {...}` never execute
+// and this whole branch is untested - the exact-match `toHaveBeenCalledWith`
+// assertions above pass only because the enrichment adds nothing. Red-green:
+// deleting the enrichment block from sessions.ts would leave
+// `session_spawn`'s props at the bare `{ agent, isTransient }` shape and this
+// test would fail on the missing permissionMode/worktree keys.
+
+describe('session-changed listener - enrichment reads permission mode, worktree, and profile', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    capturedIpcHandlers.clear();
+    capturedSessionEventHandlers.clear();
+    mockGetLatestForTask.mockReturnValue(null);
+    mockTaskGetById.mockReturnValue(null);
+
+    mockGetProjectRepos.mockReturnValue({
+      tasks: { getById: vi.fn(() => null), update: vi.fn() },
+      swimlanes: { getById: vi.fn(() => null) },
+      actions: { getTransitionsFor: vi.fn(() => []) },
+      attachments: { add: vi.fn(), listForTask: vi.fn(() => []) },
+    });
+  });
+
+  it('adds permissionMode + worktree:true to session_spawn props and fires trackFeatureUsed for worktree_session and board_profile', () => {
+    const sessionId = 'analytics-enrichment-full-unique-id-010';
+    mockGetLatestForTask.mockReturnValue({ permission_mode: 'plan' } as unknown as SessionRecord);
+    mockTaskGetById.mockReturnValue({
+      id: 'task-analytics-001',
+      worktree_path: '/mock/project/.kangentic/worktrees/task',
+      profile_id: 'profile-1',
+    } as unknown as Task);
+
+    const context = createMockContext(sessionId, 'claude');
+    registerSessionHandlers(context as never);
+
+    const sessionChangedHandler = capturedSessionEventHandlers.get('session-changed');
+    if (!sessionChangedHandler) throw new Error('session-changed handler was not registered');
+
+    sessionChangedHandler(sessionId, makeRunningSession(sessionId));
+
+    expect(vi.mocked(trackEvent)).toHaveBeenCalledWith('session_spawn', {
+      agent: 'claude',
+      isTransient: false,
+      permissionMode: 'plan',
+      worktree: true,
+    });
+    expect(vi.mocked(trackFeatureUsed)).toHaveBeenCalledWith('worktree_session');
+    expect(vi.mocked(trackFeatureUsed)).toHaveBeenCalledWith('board_profile');
+  });
+
+  it('omits permissionMode, reports worktree:false, and does not fire trackFeatureUsed when the record has no permission_mode and the task has no worktree/profile', () => {
+    const sessionId = 'analytics-enrichment-empty-unique-id-011';
+    mockGetLatestForTask.mockReturnValue(null);
+    mockTaskGetById.mockReturnValue({
+      id: 'task-analytics-001',
+      worktree_path: null,
+      profile_id: null,
+    } as unknown as Task);
+
+    const context = createMockContext(sessionId, 'claude');
+    registerSessionHandlers(context as never);
+
+    const sessionChangedHandler = capturedSessionEventHandlers.get('session-changed');
+    if (!sessionChangedHandler) throw new Error('session-changed handler was not registered');
+
+    sessionChangedHandler(sessionId, makeRunningSession(sessionId));
+
+    // `worktree` is unconditionally set to `!!taskRow.worktree_path` once a
+    // task row is found (unlike `permissionMode`, which is only added when
+    // truthy) - so a found task with no worktree still reports worktree:false.
+    expect(vi.mocked(trackEvent)).toHaveBeenCalledWith('session_spawn', {
+      agent: 'claude',
+      isTransient: false,
+      worktree: false,
+    });
+    expect(vi.mocked(trackFeatureUsed)).not.toHaveBeenCalled();
+  });
+
+  it('omits both permissionMode and worktree when no task row is found at all', () => {
+    const sessionId = 'analytics-enrichment-no-task-unique-id-017';
+    mockGetLatestForTask.mockReturnValue(null);
+    mockTaskGetById.mockReturnValue(null);
+
+    const context = createMockContext(sessionId, 'claude');
+    registerSessionHandlers(context as never);
+
+    const sessionChangedHandler = capturedSessionEventHandlers.get('session-changed');
+    if (!sessionChangedHandler) throw new Error('session-changed handler was not registered');
+
+    sessionChangedHandler(sessionId, makeRunningSession(sessionId));
+
+    expect(vi.mocked(trackEvent)).toHaveBeenCalledWith('session_spawn', {
+      agent: 'claude',
+      isTransient: false,
+    });
+    expect(vi.mocked(trackFeatureUsed)).not.toHaveBeenCalled();
+  });
+
+  // A dedicated "isShuttingDown() === true skips the enrichment reads" case
+  // was considered and deliberately skipped: proving it would require
+  // vi.resetModules() + re-importing sessions.ts (plus every mock it closes
+  // over) mid-file so the real, unmocked shutdown-state module's flag could
+  // be flipped without leaking `true` into every other test in this file
+  // (the flag has no reset export). That is not cheap, and the module-reset
+  // gymnastics risk destabilizing the rest of this shared-mock suite for a
+  // branch that is already covered indirectly: every OTHER test in this file
+  // exercises the isShuttingDown()===false path by construction (the module
+  // default), which is the state that matters for production behavior.
+});
+
+// ---------------------------------------------------------------------------
+// #1c - trackMilestone('first_spawn') fires for a real (non-transient) spawn
+// ---------------------------------------------------------------------------
+
+describe('session-changed listener - trackMilestone("first_spawn")', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    capturedIpcHandlers.clear();
+    capturedSessionEventHandlers.clear();
+    mockGetLatestForTask.mockReturnValue(null);
+    mockTaskGetById.mockReturnValue(null);
+
+    mockGetProjectRepos.mockReturnValue({
+      tasks: { getById: vi.fn(() => null), update: vi.fn() },
+      swimlanes: { getById: vi.fn(() => null) },
+      actions: { getTransitionsFor: vi.fn(() => []) },
+      attachments: { add: vi.fn(), listForTask: vi.fn(() => []) },
+    });
+  });
+
+  it('fires trackMilestone("first_spawn") for a non-transient running transition', () => {
+    const sessionId = 'analytics-milestone-nontransient-unique-id-014';
+    const context = createMockContext(sessionId, 'claude');
+    registerSessionHandlers(context as never);
+
+    const sessionChangedHandler = capturedSessionEventHandlers.get('session-changed');
+    if (!sessionChangedHandler) throw new Error('session-changed handler was not registered');
+
+    sessionChangedHandler(sessionId, makeRunningSession(sessionId));
+
+    expect(vi.mocked(trackMilestone)).toHaveBeenCalledWith('first_spawn');
+  });
+
+  it('does NOT fire trackMilestone("first_spawn") for a transient running transition', () => {
+    const sessionId = 'analytics-milestone-transient-unique-id-015';
+    const context = createMockContext(sessionId, 'claude');
+    registerSessionHandlers(context as never);
+
+    const sessionChangedHandler = capturedSessionEventHandlers.get('session-changed');
+    if (!sessionChangedHandler) throw new Error('session-changed handler was not registered');
+
+    const transientRunningSession: Session = { ...makeRunningSession(sessionId), transient: true };
+    sessionChangedHandler(sessionId, transientRunningSession);
+
+    expect(vi.mocked(trackMilestone)).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // #2 - Cleanup-on-exit: Set entry deleted so re-spawn can fire analytics again
 // ---------------------------------------------------------------------------
 
@@ -310,6 +491,7 @@ describe('exit listener - session_spawn Set entry is cleared so re-spawn fires a
     capturedSessionEventHandlers.clear();
 
     mockGetLatestForTask.mockReturnValue(null);
+    mockTaskGetById.mockReturnValue(null);
 
     mockGetProjectRepos.mockReturnValue({
       tasks: { getById: vi.fn(() => null), update: vi.fn() },
@@ -380,6 +562,7 @@ describe('exit listener - session_exit attaches costUsd/toolCalls from the usage
     capturedSessionEventHandlers.clear();
 
     mockGetLatestForTask.mockReturnValue(null);
+    mockTaskGetById.mockReturnValue(null);
 
     mockGetProjectRepos.mockReturnValue({
       tasks: { getById: vi.fn(() => null), update: vi.fn() },
@@ -395,13 +578,15 @@ describe('exit listener - session_exit attaches costUsd/toolCalls from the usage
    * never tracked (e.g. because sessionStartTimes was never populated).
    * `liveToolCallCount` seeds `sessionManager.getToolCallCount` - the source
    * `toolCalls` reads from directly (not the usage cache's stamped
-   * `toolCallCount`, which this listener no longer reads).
+   * `toolCallCount`, which this listener no longer reads). `intentional` is
+   * forwarded as the exit listener's third positional arg (crash-vs-deliberate).
    */
   function fireRunningThenExit(
     sessionId: string,
     agentName: string,
     usageCacheEntry: Record<string, unknown> | undefined,
     liveToolCallCount = 0,
+    intentional?: boolean,
   ): Record<string, string | number | boolean> {
     const context = createMockContext(sessionId, agentName);
     context.sessionManager.getUsageCache.mockReturnValue(
@@ -420,12 +605,30 @@ describe('exit listener - session_exit attaches costUsd/toolCalls from the usage
     sessionChangedHandler(sessionId, makeRunningSession(sessionId));
     vi.mocked(trackEvent).mockClear();
 
-    exitHandler(sessionId, 0);
+    exitHandler(sessionId, 0, intentional);
 
     const exitCall = vi.mocked(trackEvent).mock.calls.find((call) => call[0] === 'session_exit');
     if (!exitCall) throw new Error('session_exit was never tracked');
     return exitCall[1] as Record<string, string | number | boolean>;
   }
+
+  it('marks session_exit intentional:true when the exit listener\'s third arg is true', () => {
+    // kill()/suspend tag the exit intentional (session-spawn-flow.ts); a
+    // force-killed or user-stopped session must not read as a crash.
+    const sessionId = 'analytics-exit-intentional-true-012';
+
+    const props = fireRunningThenExit(sessionId, 'claude', undefined, 0, true);
+
+    expect(props.intentional).toBe(true);
+  });
+
+  it('marks session_exit intentional:false when the exit listener receives no third arg (genuine agent-side exit)', () => {
+    const sessionId = 'analytics-exit-intentional-false-013';
+
+    const props = fireRunningThenExit(sessionId, 'claude', undefined, 0, undefined);
+
+    expect(props.intentional).toBe(false);
+  });
 
   it('attaches costUsd (rounded to 4 decimals) and toolCalls from the live counter', () => {
     const sessionId = 'analytics-exit-usage-populated-005';

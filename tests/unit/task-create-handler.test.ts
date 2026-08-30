@@ -136,6 +136,21 @@ vi.mock('../../src/main/ipc/handlers/task-move', () => ({
   handleTaskMove: vi.fn(async () => {}),
 }));
 
+const mockTrackEvent = vi.fn();
+vi.mock('../../src/main/analytics/analytics', () => ({
+  trackEvent: (...args: unknown[]) => mockTrackEvent(...args),
+}));
+
+const mockTrackMilestone = vi.fn();
+vi.mock('../../src/main/analytics/usage', () => ({
+  trackMilestone: (...args: unknown[]) => mockTrackMilestone(...args),
+}));
+
+const mockReportHandledError = vi.fn();
+vi.mock('../../src/main/analytics/error-reporting', () => ({
+  reportHandledError: (...args: unknown[]) => mockReportHandledError(...args),
+}));
+
 // ---------------------------------------------------------------------------
 // Capture handlers registered by ipcMain.handle
 // ---------------------------------------------------------------------------
@@ -386,6 +401,27 @@ describe('TASK_CREATE handler', () => {
     expect(mockSpawnAgent).not.toHaveBeenCalled();
   });
 
+  it('fires trackMilestone("first_task") on every create, regardless of auto_spawn', async () => {
+    const noSpawnLane = createMockSwimlane('lane-backlog', { auto_spawn: false });
+    swimlaneRepo = createMockSwimlaneRepo([noSpawnLane]);
+    const noSpawnTask = createMockTask('task-no-spawn', { swimlane_id: 'lane-backlog' });
+    taskRepo = createMockTaskRepo(noSpawnTask);
+
+    mockGetProjectRepos.mockReturnValue({
+      tasks: taskRepo,
+      swimlanes: swimlaneRepo,
+      actions: { getTransitionsFor: vi.fn(() => []) },
+      attachments: attachmentRepo,
+    });
+
+    await callCreateHandler(context, {
+      swimlane_id: 'lane-backlog',
+      title: 'No spawn task',
+    });
+
+    expect(mockTrackMilestone).toHaveBeenCalledWith('first_task');
+  });
+
   it('skips lock block when currentProjectPath is null', async () => {
     context.currentProjectPath = null;
     capturedHandlers.clear();
@@ -538,6 +574,30 @@ describe('TASK_CREATE handler', () => {
     });
 
     expect(result).toMatchObject({ id: 'task-new' });
+  });
+
+  it('tracks spawn_failed and reports the handled error, tagged with the resolved agent, when spawnAgent rejects', async () => {
+    const spawnError = new Error('CLI not found');
+    mockSpawnAgent.mockRejectedValueOnce(spawnError);
+
+    await callCreateHandler(context, {
+      swimlane_id: 'lane-doing',
+      title: 'Spawn failure task',
+    });
+
+    // The resolved agent lives inside spawnAgent and is never returned, so
+    // the handler approximates it from the override chain
+    // (task.agent_override ?? toLane.agent_override ?? 'default'); neither
+    // fixture sets an override here, so 'default' is the expected tag.
+    expect(mockTrackEvent).toHaveBeenCalledWith('spawn_failed', { agent: 'default', reason: 'create_spawn' });
+    // reportHandledError's agent tag is a just-applied fix (pinned here so a
+    // regression to the untagged two-arg call form is caught): the SAME
+    // resolved agent that trackEvent above receives.
+    expect(mockReportHandledError).toHaveBeenCalledWith(spawnError, {
+      source: 'spawn',
+      reason: 'create_spawn',
+      agent: 'default',
+    });
   });
 
   // =========================================================================

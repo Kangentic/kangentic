@@ -166,10 +166,39 @@ vi.mock('../../src/main/retrieval/retrieval-service', () => ({
   retrievalService: { startForProject: vi.fn(), stop: vi.fn(), reconcileEmbedWorker: vi.fn() },
 }));
 
+// The board_snapshot analytics block (registerProjectHandlers' PROJECT_OPEN
+// cold-open) is the ONE place in this file's exercised code paths that calls
+// swimlaneRepo.list() / taskRepo.countAll() directly rather than merely
+// passing the repo instance to an already-mocked function - every other
+// consumer (pruneOrphanedWorktreeTasks, cleanupStaleResourcesAsync,
+// resumeSuspendedSessions, autoSpawnTasks) is itself mocked and never invokes
+// a method on the repo it's handed. Left as the REAL trivial-constructor
+// class (per the file header's rationale), swimlaneRepo.list()/
+// taskRepo.countAll() would call `db.prepare(...)` against the fake `{}` db
+// object from the database mock above and throw, silently swallowed by the
+// snapshot block's own try/catch - which is exactly why trackEvent has never
+// been asserted to receive a 'board_snapshot' call in this file until now.
+const mockSwimlaneList = vi.fn(() => [] as Array<{ name: string }>);
+const mockTaskCountAll = vi.fn(() => 0);
+
+vi.mock('../../src/main/db/repositories/swimlane-repository', () => ({
+  SwimlaneRepository: class {
+    list = (...args: unknown[]) => mockSwimlaneList(...args);
+  },
+}));
+
+vi.mock('../../src/main/db/repositories/task-repository', () => ({
+  TaskRepository: class {
+    countAll = (...args: unknown[]) => mockTaskCountAll(...args);
+  },
+}));
+
 // ---------------------------------------------------------------------------
 // Import under test (after all vi.mock declarations)
 // ---------------------------------------------------------------------------
 
+import { trackEvent } from '../../src/main/analytics/analytics';
+import { DEFAULT_SWIMLANES } from '../../src/main/db/migrations/default-data';
 import {
   registerProjectHandlers,
   openProjectByPath,
@@ -279,6 +308,11 @@ beforeEach(() => {
   state.cleanupGate = null;
   state.resumeError = null;
   state.autoSpawnError = null;
+  // mockReturnValue persists across tests (vi.clearAllMocks() resets call
+  // history, not implementation), so reset both to their neutral defaults
+  // here rather than letting one test's override leak into the next.
+  mockSwimlaneList.mockReturnValue([]);
+  mockTaskCountAll.mockReturnValue(0);
 });
 
 // ---------------------------------------------------------------------------
@@ -419,6 +453,88 @@ describe('PROJECT_OPEN cold-open block (registerProjectHandlers)', () => {
       'resumeSuspendedSessions',
       'autoSpawnTasks',
     ]);
+  });
+
+  // -------------------------------------------------------------------------
+  // 2b. board_snapshot analytics (fired once per cold open, inside the same
+  //     deferred setImmediate block, BEFORE pruneOrphanedTasksAndNotify).
+  // -------------------------------------------------------------------------
+
+  function getBoardSnapshotProps(): Record<string, string | number | boolean> {
+    const call = vi.mocked(trackEvent).mock.calls.find((args) => args[0] === 'board_snapshot');
+    if (!call) throw new Error('board_snapshot was never tracked');
+    return call[1] as Record<string, string | number | boolean>;
+  }
+
+  it('reports customColumns:false for the exact default 7-lane board', async () => {
+    mockSwimlaneList.mockReturnValue(DEFAULT_SWIMLANES.map((lane) => ({ name: lane.name })));
+
+    const context = createMockContext();
+    const project = makeProject();
+    await registerAndOpen(context, project);
+
+    await vi.waitFor(() => {
+      expect(state.callOrder).toContain('autoSpawnTasks');
+    }, { timeout: 2000 });
+
+    expect(getBoardSnapshotProps().customColumns).toBe(false);
+  });
+
+  it('reports customColumns:true when a default-named lane was renamed', async () => {
+    const renamedLanes = DEFAULT_SWIMLANES.map((lane) => ({ name: lane.name }));
+    renamedLanes[0] = { name: 'Backlog' }; // 'To Do' renamed
+    mockSwimlaneList.mockReturnValue(renamedLanes);
+
+    const context = createMockContext();
+    const project = makeProject();
+    await registerAndOpen(context, project);
+
+    await vi.waitFor(() => {
+      expect(state.callOrder).toContain('autoSpawnTasks');
+    }, { timeout: 2000 });
+
+    expect(getBoardSnapshotProps().customColumns).toBe(true);
+  });
+
+  it('reports customColumns:true when an 8th lane was added, even if it duplicates a default name', async () => {
+    // Duplicating an existing default name (rather than adding a novel one)
+    // isolates the LENGTH half of the customColumns check: every lane's name
+    // is still present in the default-name Set, so a name-only comparison
+    // would read this board as non-custom. Only the `lanes.length !==
+    // DEFAULT_SWIMLANES.length` half catches the extra lane.
+    const extraLanes = [
+      ...DEFAULT_SWIMLANES.map((lane) => ({ name: lane.name })),
+      { name: DEFAULT_SWIMLANES[0].name },
+    ];
+    mockSwimlaneList.mockReturnValue(extraLanes);
+
+    const context = createMockContext();
+    const project = makeProject();
+    await registerAndOpen(context, project);
+
+    await vi.waitFor(() => {
+      expect(state.callOrder).toContain('autoSpawnTasks');
+    }, { timeout: 2000 });
+
+    expect(getBoardSnapshotProps().customColumns).toBe(true);
+  });
+
+  it('buckets taskCount from TaskRepository.countAll() into taskBucket', async () => {
+    mockSwimlaneList.mockReturnValue(DEFAULT_SWIMLANES.map((lane) => ({ name: lane.name })));
+    mockTaskCountAll.mockReturnValue(12);
+
+    const context = createMockContext();
+    const project = makeProject();
+    await registerAndOpen(context, project);
+
+    await vi.waitFor(() => {
+      expect(state.callOrder).toContain('autoSpawnTasks');
+    }, { timeout: 2000 });
+
+    // Red: reverting to a stale count source (e.g. `tasks.list().length`, the
+    // full-row scan countAll replaced) or dropping the countAll() call
+    // entirely would leave taskCount at 0 and this at '0' instead of '10-49'.
+    expect(getBoardSnapshotProps().taskBucket).toBe('10-49');
   });
 });
 

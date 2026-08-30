@@ -570,4 +570,65 @@ describe('registerAllIpc idempotency', () => {
       expect(props?.panel).toHaveLength(MAX_ANALYTICS_STRING_LENGTH);
     }, 30000);
   });
+
+  describe('TRACK_FEATURE_USED analytics handler', () => {
+    // register-all.ts wires a second direct `ipcMain.on(...)` call alongside
+    // TRACK_RENDERER_ERROR: a renderer-reported feature name is re-validated
+    // against the curated allowlist (isKnownAnalyticsFeature) before being
+    // forwarded to trackFeatureUsed, since the string is erased at the IPC
+    // boundary and a compromised or drifted renderer could otherwise invent
+    // event vocabulary. `analytics/usage` is left REAL (not mocked) so this
+    // exercises the actual allowlist check, not a stand-in for it; only the
+    // underlying `analytics/analytics` trackEvent sink (which usage.ts's
+    // trackFeatureUsed calls into) is mocked.
+    type TrackFeatureUsedCallback = (event: unknown, feature: string) => void;
+
+    function getTrackFeatureUsedCallback(): TrackFeatureUsedCallback {
+      const entry = mockOn.mock.calls.find((call) => call[0] === IPC.TRACK_FEATURE_USED);
+      if (!entry) {
+        throw new Error('ipcMain.on was never called with IPC.TRACK_FEATURE_USED');
+      }
+      return entry[1] as TrackFeatureUsedCallback;
+    }
+
+    it('forwards a known feature name to trackFeatureUsed', async () => {
+      const { registerAllIpc } = await import('../../src/main/ipc/register-all');
+      const { trackEvent } = await import('../../src/main/analytics/analytics');
+      registerAllIpc(makeMockWindow(1));
+
+      const callback = getTrackFeatureUsedCallback();
+      callback({}, 'quick_find');
+
+      // Red: removing the `isKnownAnalyticsFeature` guard or the
+      // `trackFeatureUsed` call in register-all.ts's TRACK_FEATURE_USED
+      // handler leaves this at 0 matching calls - trackFeatureUsed's own
+      // once-per-day dedup (usage.ts) is real here, so a single call is the
+      // correct expectation for a fresh module instance.
+      expect(vi.mocked(trackEvent)).toHaveBeenCalledWith('feature_used', { feature: 'quick_find' });
+    }, 30000);
+
+    it('drops a non-string feature value with zero forwarding', async () => {
+      const { registerAllIpc } = await import('../../src/main/ipc/register-all');
+      const { trackEvent } = await import('../../src/main/analytics/analytics');
+      registerAllIpc(makeMockWindow(1));
+
+      const callback = getTrackFeatureUsedCallback();
+      callback({}, 123 as unknown as string);
+
+      const featureUsedCalls = vi.mocked(trackEvent).mock.calls.filter((call) => call[0] === 'feature_used');
+      expect(featureUsedCalls).toEqual([]);
+    }, 30000);
+
+    it('drops an unknown feature name with zero forwarding', async () => {
+      const { registerAllIpc } = await import('../../src/main/ipc/register-all');
+      const { trackEvent } = await import('../../src/main/analytics/analytics');
+      registerAllIpc(makeMockWindow(1));
+
+      const callback = getTrackFeatureUsedCallback();
+      callback({}, 'made_up_feature');
+
+      const featureUsedCalls = vi.mocked(trackEvent).mock.calls.filter((call) => call[0] === 'feature_used');
+      expect(featureUsedCalls).toEqual([]);
+    }, 30000);
+  });
 });

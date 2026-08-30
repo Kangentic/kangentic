@@ -62,6 +62,9 @@ vi.mock('../../src/main/git/worktree-manager', () => ({
 const mockTrackEvent = vi.fn();
 vi.mock('../../src/main/analytics/analytics', () => ({ trackEvent: (...args: unknown[]) => mockTrackEvent(...args) }));
 
+const mockTrackMilestone = vi.fn();
+vi.mock('../../src/main/analytics/usage', () => ({ trackMilestone: (...args: unknown[]) => mockTrackMilestone(...args) }));
+
 vi.mock('../../src/main/transition-engine/session-lifecycle', () => ({
   markRecordExited: vi.fn(),
   markRecordSuspended: vi.fn(),
@@ -312,5 +315,51 @@ describe('handleTaskMove task_complete analytics', () => {
 
     const props = getTaskCompleteProps();
     expect(props.costUsd).toBe(0.1235);
+  });
+
+  it('reports the resolved permissionMode the last session actually ran under', async () => {
+    hoisted.latestRecord = {
+      id: 'rec-1',
+      model_id: 'claude-opus-4-8',
+      agent_session_id: null,
+      status: 'suspended',
+      session_type: 'claude_agent',
+      permission_mode: 'acceptEdits',
+    } as unknown as SessionRecord;
+    hoisted.summary = null;
+
+    const task = makeTask({ swimlane_id: DOING_LANE_ID, session_id: null, worktree_path: null, agent: 'claude' });
+    await moveTaskToDone(task);
+
+    const props = getTaskCompleteProps();
+    // Red: reading this from the task's raw permission_mode (an override,
+    // null = inherit) instead of the session record's resolved value would
+    // leave this key absent even though the record carries one.
+    expect(props.permissionMode).toBe('acceptEdits');
+  });
+
+  it('omits permissionMode when the latest session record has none', async () => {
+    hoisted.latestRecord = {
+      id: 'rec-1',
+      model_id: 'claude-opus-4-8',
+      agent_session_id: null,
+      status: 'suspended',
+      session_type: 'claude_agent',
+      permission_mode: null,
+    } as unknown as SessionRecord;
+    hoisted.summary = null;
+
+    const task = makeTask({ swimlane_id: DOING_LANE_ID, session_id: null, worktree_path: null, agent: 'claude' });
+    await moveTaskToDone(task);
+
+    const props = getTaskCompleteProps();
+    expect(props).not.toHaveProperty('permissionMode');
+  });
+
+  it('fires trackMilestone("first_task_complete") on the Done move', async () => {
+    const task = makeTask({ swimlane_id: DOING_LANE_ID, session_id: null, worktree_path: null });
+    await moveTaskToDone(task);
+
+    expect(mockTrackMilestone).toHaveBeenCalledWith('first_task_complete');
   });
 });

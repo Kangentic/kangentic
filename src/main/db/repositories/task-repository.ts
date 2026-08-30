@@ -509,6 +509,18 @@ export class TaskRepository {
   }
 
   /**
+   * Total task count, active plus archived, as a bare COUNT(*). For callers
+   * that need only the number (board_snapshot's bucketed count): list() would
+   * materialize every row plus the attachment-count join just to take .length.
+   */
+  countAll(): number {
+    const { count } = this.db
+      .prepare('SELECT COUNT(*) AS count FROM tasks')
+      .get() as { count: number };
+    return count;
+  }
+
+  /**
    * The newest `limit` archived tasks plus the total archived count. Lets the
    * board hydrate the Done column's count + inline preview without fetching the
    * whole archive (which can be many MB once hundreds of tasks accumulate). The
