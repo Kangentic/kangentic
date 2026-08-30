@@ -22,9 +22,13 @@ vi.mock('../../src/main/browser/cdp/cdp', () => ({
   detachDebugger: vi.fn(),
   isDebuggerAttached: vi.fn(() => false),
 }));
+vi.mock('../../src/main/analytics/usage', () => ({
+  trackFeatureUsed: vi.fn(),
+}));
 
 import { webContents } from 'electron';
 import { detachDebugger, isDebuggerAttached } from '../../src/main/browser/cdp/cdp';
+import { trackFeatureUsed } from '../../src/main/analytics/usage';
 import { BrowserPaneRegistry, type RegisterSurfaceInput } from '../../src/main/browser/browser-pane-registry';
 
 interface FakeGuest {
@@ -71,6 +75,33 @@ describe('BrowserPaneRegistry', () => {
     expect(registry.get('pane_aaaaaaaa')?.ownerSessionId).toBe('sess-a');
     expect(registry.get('pane_aaaaaaaa')?.url).toBe('http://localhost:4200');
     expect(registry.get('pane_aaaaaaaa')).toMatchObject({ kind: 'pane', handoff: false });
+  });
+
+  /**
+   * `trackFeatureUsed('browser_pane')` is the adoption signal added alongside
+   * this registry (see browser-pane-registry.ts's `register()`). It has two
+   * ways to be wrong: counting an offscreen lane (the driver's own plumbing,
+   * never a user opening the Browser pane) as adoption, and re-counting a
+   * rebind of an already-known guest (a `/clear` session rotation) as a new
+   * adoption event.
+   */
+  describe('adoption signal (trackFeatureUsed)', () => {
+    it('fires browser_pane for a new pane registration', () => {
+      registry.register(REGISTER_A);
+      expect(vi.mocked(trackFeatureUsed)).toHaveBeenCalledWith('browser_pane');
+    });
+
+    it('does NOT fire for a lane registration (offscreen driver plumbing, not a user pane)', () => {
+      registry.register(ISOLATED_LANE);
+      expect(vi.mocked(trackFeatureUsed)).not.toHaveBeenCalled();
+    });
+
+    it('does NOT re-fire when the SAME guest re-registers (a rebind, not a new entry)', () => {
+      registry.register(REGISTER_A);
+      vi.mocked(trackFeatureUsed).mockClear();
+      registry.register({ ...REGISTER_A, handle: undefined, ownerSessionId: 'sess-a2' });
+      expect(vi.mocked(trackFeatureUsed)).not.toHaveBeenCalled();
+    });
   });
 
   it('unregisters by handle and by webContentsId', () => {
