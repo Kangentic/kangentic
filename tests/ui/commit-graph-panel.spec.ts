@@ -208,16 +208,31 @@ test.describe('Task Detail Changes panel - commit-history browser', () => {
 
     const historyPanel = page.locator('[data-testid="commit-graph-panel"]');
     await historyPanel.waitFor({ state: 'visible', timeout: 10000 });
-    const beforeHeight = (await historyPanel.boundingBox())!.height;
 
     // The section sits at the BOTTOM of the rail with its resize handle above
     // it, so dragging the handle 80px UP grows the history body (mirrors the
     // file-tree's "drag-resizable" test in changes-panel-scope.spec.ts).
-    const handleBox = (await page.locator('[data-testid="changes-history-resize"]').boundingBox())!;
-    await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
+    //
+    // `hover()` rather than a hand-rolled mouse.move: expanding History runs a
+    // height transition, so a boundingBox read the instant the graph becomes
+    // visible is already stale by the time the press lands, and the press then
+    // misses the 4px handle entirely. Playwright's actionability waits for the
+    // box to STOP moving first, which is the real precondition here. This
+    // showed up as a CI flake on UI shard 4 (the height stayed at its 200px
+    // default, then passed on retry).
+    const handle = page.locator('[data-testid="changes-history-resize"]');
+    await handle.hover();
+    const handleBox = (await handle.boundingBox())!;
+    const beforeHeight = (await historyPanel.boundingBox())!.height;
     await page.mouse.down();
+
+    // The drag is genuinely in flight before any move is dispatched, so the
+    // moves cannot land before the handler installs its document listeners.
+    await expect(handle).toHaveAttribute('data-resizing', 'true');
+
     await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y - 80, { steps: 6 });
     await page.mouse.up();
+    await expect(handle).toHaveAttribute('data-resizing', 'false');
 
     // The history region grew by roughly the drag distance (tolerance for clamping/rounding).
     await expect.poll(async () => (await historyPanel.boundingBox())!.height, { timeout: 5000 }).toBeGreaterThan(beforeHeight + 40);
