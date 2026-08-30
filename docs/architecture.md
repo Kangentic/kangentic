@@ -390,10 +390,11 @@ Detach a registered UI surface (usage stats, git changes, a single changed file'
 | `popOut:listOpen` | invoke | List the instance keys of every currently-open pop-out window |
 | `popOut:changed` | on | Event: the set of open pop-out windows changed; pushed to the main window only. Handled by `renderer/pop-out/pop-out-changed.ts`, which mirrors the set into `pop-out-store.ts` (so in-app triggers - title bar, headers - flip between "open" and "focus") and then applies the effects a window CLOSING implies: a closed `changes` window leaves its task's inline Changes panel CLOSED rather than reclaiming the split. Those effects hang off this push and NOT off `pop-out-store.setOpen()`, which `popOut:listOpen` also drives on mount and on every HMR re-sync; `browser` masks its pane the same way but deliberately still reclaims on close |
 
-### Analytics (1 channel)
+### Analytics (2 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `analytics:trackRendererError` | send | Report a renderer-side error to main, with a `RendererErrorContext` (`boundary`, `panel?`, `componentStack?`) saying where it came from. See [Analytics](analytics.md). |
+| `analytics:trackFeatureUsed` | send | Report one use of a curated adoption feature; main re-validates against `ANALYTICS_FEATURES` and dedups to once per feature per day. See [Analytics](analytics.md). |
 
 ### App (1 channel)
 | Channel | Pattern | Purpose |

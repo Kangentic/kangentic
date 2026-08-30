@@ -4,6 +4,8 @@ import { resolveBackgroundColor, resolveIconPath, resolveRendererIndexPath, reso
 import { POP_OUT_SURFACES, POPOUT_ARG_PREFIX, popOutInstanceKey, resolveSurfaceTitle } from '../../shared/pop-out';
 import type { PopOutChangesFileParams, PopOutDescriptor, PopOutKind, PopOutParams, PopOutTaskParams } from '../../shared/pop-out';
 import { cascadePopOutPosition } from './cascade';
+import { trackFeatureUsed } from '../analytics/usage';
+import { isErrorReportingActive } from '../analytics/error-reporting';
 
 const BOUNDS_SAVE_DEBOUNCE_MS = 500;
 
@@ -114,7 +116,14 @@ export class PopOutWindowManager {
         contextIsolation: true,
         nodeIntegration: false,
         webviewTag: meta.needsWebview,
-        additionalArguments: [`${POPOUT_ARG_PREFIX}${encodedDescriptor}`],
+        additionalArguments: [
+          `${POPOUT_ARG_PREFIX}${encodedDescriptor}`,
+          // Mirrors createWindow() in index.ts: preload derives
+          // analytics.errorReportingEnabled per-window from this flag, so a
+          // window factory that omits it silently disables renderer Sentry
+          // for every window it creates.
+          ...(isErrorReportingActive() ? ['--kangentic-error-reporting'] : []),
+        ],
       },
     });
 
@@ -122,6 +131,10 @@ export class PopOutWindowManager {
     // sufficient (createWindow() in index.ts sets it explicitly for the same reason).
     // macOS uses the app bundle / dock icon, so it is skipped there.
     if (process.platform !== 'darwin') win.setIcon(iconImage);
+
+    // Adoption signal on genuine creation only (the focus/cap early returns
+    // above never reach here); trackFeatureUsed dedups to once per day.
+    trackFeatureUsed('popout_window');
 
     // Saved bounds are keyed by KIND, so every additional live window of this kind
     // would restore exactly stacked on the first. Cascade it down-right instead.

@@ -16,9 +16,10 @@ export function PrivacyTab() {
       <SectionHeader label="What We Collect" />
       <ul className="list-disc list-inside text-sm text-fg-muted space-y-1 ml-1">
         <li>App launches, platform, and architecture</li>
-        <li>App crashes and errors (sanitized, no file paths)</li>
+        <li>App crashes and errors (stack traces with machine-specific paths removed from app code)</li>
         <li>Task and project creation counts</li>
         <li>Agent session starts, exit codes, and duration</li>
+        <li>Which features get used, as daily counts (never their content)</li>
       </ul>
 
       <SectionHeader label="What We Don't Collect" />
@@ -30,9 +31,15 @@ export function PrivacyTab() {
 
       <SectionHeader label="How It Works" />
       <p className="text-sm text-fg-muted leading-relaxed">
-        Analytics are powered by Aptabase, a privacy-first platform.
-        No cookies or persistent identifiers. IP addresses are used
-        for geographic lookup only, then discarded. GDPR-compliant by design.
+        Usage analytics are powered by Aptabase, a privacy-first platform.
+        No cookies. IP addresses are used for geographic lookup only, then
+        discarded. A single anonymous, non-reversible install id counts unique
+        installs; it contains no personal data. GDPR-compliant by design.
+      </p>
+      <p className="text-sm text-fg-muted leading-relaxed">
+        Crash and error reports go to Sentry so bugs can be diagnosed and
+        fixed. Stack traces are recorded with machine-specific paths removed
+        from app code; no task content, code, or personal data is attached.
       </p>
 
       <SectionHeader label="Conversation Search" />
@@ -44,7 +51,10 @@ export function PrivacyTab() {
 
       <SectionHeader label="How to Opt Out" />
       <p className="text-sm text-fg-muted leading-relaxed">
-        Set <code className="font-mono">KANGENTIC_TELEMETRY=0</code> as an environment variable to disable analytics.
+        Set <code className="font-mono">KANGENTIC_TELEMETRY=0</code> as an environment variable to
+        disable all telemetry (analytics and error reporting). Set{' '}
+        <code className="font-mono">KANGENTIC_ERROR_REPORTING=0</code> to disable only error
+        reporting while keeping anonymous analytics.
       </p>
 
       <SectionHeader label="Questions" />

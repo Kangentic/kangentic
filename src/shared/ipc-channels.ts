@@ -213,6 +213,7 @@ export const IPC = {
 
   // Analytics
   TRACK_RENDERER_ERROR: 'analytics:trackRendererError',
+  TRACK_FEATURE_USED: 'analytics:trackFeatureUsed',
 
   // App
   APP_GET_VERSION: 'app:getVersion',

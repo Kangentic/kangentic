@@ -1,5 +1,6 @@
 import React from 'react';
 import { RefreshCw } from 'lucide-react';
+import { reportBoundaryError } from '../error-reporting';
 
 interface Props {
   children: React.ReactNode;
@@ -22,6 +23,10 @@ export class ErrorBoundary extends React.Component<Props, State> {
 
   componentDidCatch(error: Error, info: React.ErrorInfo): void {
     console.error('ErrorBoundary caught:', error, info.componentStack);
+    // Boundary-caught errors never reach Sentry's global handlers (React
+    // swallows them), so hand the real Error over explicitly; the IPC funnel
+    // below keeps Aptabase's coarse app_error pulse alongside it.
+    reportBoundaryError(error);
     window.electronAPI?.analytics?.trackRendererError(error.message, {
       boundary: 'root',
       componentStack: info.componentStack ?? undefined,

@@ -14,6 +14,7 @@ import {
   type ShortAuthenticationString,
 } from '@kangentic/protocol';
 import { isGenuineEncryptionAvailable } from '../boards/shared/auth';
+import { trackFeatureUsed } from '../analytics/usage';
 import { validateRelayUrl } from '../../shared/relay';
 import type { MobileBridgeStatus, MobileBridgeTransportState, MobileDeviceConnectionState } from '../../shared/types';
 import { DevQuickPair } from './dev-quick-pair';
@@ -418,6 +419,11 @@ export class MobileBridgeService extends EventEmitter {
     this.wireSessionListeners(session);
     session.start();
     this.sessions.set(device.deviceId, session);
+    // Adoption signal: fires when the bridge is enabled with a paired device
+    // (startup sync, reconcile, or a fresh pairing). Deliberately NOT on the
+    // transport's 'connected' edge, which re-fires on every reconnect and
+    // ~2-minute re-handshake; trackFeatureUsed dedups to once per day anyway.
+    trackFeatureUsed('mobile_bridge');
     // A roster session is persistent: the first dial can fail outright (a
     // local relay that is not up yet - the desktop-launched-before-relay
     // case), and RelayClient keeps re-dialing with capped backoff while

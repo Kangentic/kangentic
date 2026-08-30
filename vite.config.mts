@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
+import { sentryVitePlugin } from '@sentry/vite-plugin';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import rendererOptimizeDeps from './scripts/renderer-optimize-deps.json';
@@ -9,6 +10,17 @@ import rendererOptimizeDeps from './scripts/renderer-optimize-deps.json';
 // bundled/evaluated as ESM.
 const configDir = path.dirname(fileURLToPath(import.meta.url));
 const isWorktree = configDir.replace(/\\/g, '/').includes('.kangentic/worktrees/');
+
+// Sentry sourcemap upload is a RELEASE-ONLY build step: it activates only when
+// an upload token is present (a CI/release secret, never committed - the repo
+// is public). KANGENTIC_SENTRY_TOKEN is the scoped name (matching the
+// KANGENTIC_TELEMETRY convention, and immune to another repo's generic env);
+// SENTRY_AUTH_TOKEN stays accepted as the conventional CI fallback. Everything
+// is server-side after upload: hidden sourcemaps are generated, uploaded with
+// debug IDs, then deleted from the output, so nothing ships in the artifact
+// and there is zero runtime or bundle cost (docs/analytics.md, "Error Reporting").
+const sentryAuthToken = process.env.KANGENTIC_SENTRY_TOKEN ?? process.env.SENTRY_AUTH_TOKEN;
+const uploadSourcemaps = Boolean(sentryAuthToken);
 
 export default defineConfig(({ mode }) => ({
   // Worktree checkouts share the main repo's physical node_modules via a
@@ -35,7 +47,23 @@ export default defineConfig(({ mode }) => ({
   define: {
     __KANGENTIC_DEV__: JSON.stringify(mode !== 'production'),
   },
-  plugins: [tailwindcss(), react()],
+  plugins: [
+    tailwindcss(),
+    react(),
+    ...(uploadSourcemaps && mode === 'production'
+      ? [
+          sentryVitePlugin({
+            org: 'kangentic',
+            project: 'desktop',
+            authToken: sentryAuthToken,
+            telemetry: false,
+            sourcemaps: {
+              filesToDeleteAfterUpload: ['.vite/build/renderer/**/*.map'],
+            },
+          }),
+        ]
+      : []),
+  ],
   resolve: {
     alias: {
       '@shared': '/src/shared',
@@ -66,6 +94,9 @@ export default defineConfig(({ mode }) => ({
     include: rendererOptimizeDeps,
   },
   build: {
+    // Hidden maps (no sourceMappingURL comment) exist only long enough for the
+    // Sentry plugin above to upload and delete them; see uploadSourcemaps.
+    ...(uploadSourcemaps && mode === 'production' ? { sourcemap: 'hidden' as const } : {}),
     // Electron loads from disk, so large DOWNLOAD sizes are not a concern -
     // but parse/eval at cold start is. Named vendor chunks serve two goals:
     // keep the always-loaded xterm out of the main bundle, and give

@@ -82,13 +82,15 @@ export function trackEvent(eventName: string, props?: Record<string, string | nu
 
 /**
  * Strip file paths from error messages to avoid leaking PII (usernames in paths).
- * Truncates to 200 chars.
+ * Truncates to MAX_ANALYTICS_STRING_LENGTH (180), matching Aptabase's
+ * server-side cap so what we send is what lands (a 200-char local cap
+ * previously let messages 180-200 chars long be silently cut server-side).
  */
 export function sanitizeErrorMessage(message: string): string {
   return message
     .replace(/[A-Z]:\\[^\s:;,)]+/gi, '<path>')       // Windows paths: C:\Users\...
     .replace(/\/(?:home|Users|tmp|var|etc|root|opt)\/[^\s:;,)]+/g, '<path>') // Unix paths
-    .slice(0, 200);
+    .slice(0, MAX_ANALYTICS_STRING_LENGTH);
 }
 
 /**

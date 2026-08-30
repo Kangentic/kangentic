@@ -13,6 +13,35 @@ const projectDir = path.resolve(__dirname, '..');
 // must be physically present in the binary the test launches.
 const keepDevtools = process.env.KANGENTIC_BUILD_DEV === '1';
 
+// Sentry sourcemap upload for the main + preload bundles, release-only: it
+// activates only when an upload token is present (a CI/release secret; the
+// renderer half lives in vite.config.mts behind the same gate).
+// KANGENTIC_SENTRY_TOKEN is the scoped name; SENTRY_AUTH_TOKEN stays accepted
+// as the conventional CI fallback. Maps are generated as separate files
+// (esbuild 'external' = no sourceMappingURL comment), uploaded with debug
+// IDs, then deleted, so nothing ships.
+const sentryAuthToken = process.env.KANGENTIC_SENTRY_TOKEN ?? process.env.SENTRY_AUTH_TOKEN;
+const uploadSourcemaps = Boolean(sentryAuthToken);
+
+// The uploadSourcemaps guard gates the require below (the function itself runs
+// eagerly at module load), so unit tests that require this module for
+// assertVendorChunksLazy never load the Sentry toolchain when no token is set.
+function resolveSentryEsbuildPlugins() {
+  if (!uploadSourcemaps) return [];
+  const { sentryEsbuildPlugin } = require('@sentry/esbuild-plugin');
+  return [
+    sentryEsbuildPlugin({
+      org: 'kangentic',
+      project: 'desktop',
+      authToken: sentryAuthToken,
+      telemetry: false,
+      sourcemaps: {
+        filesToDeleteAfterUpload: ['.vite/build/*.map'],
+      },
+    }),
+  ];
+}
+
 /**
  * Fails the build unless the two heavy lazy-only vendors (recharts behind
  * LazyStatsDashboard, monaco behind the lazy ChangesPanel) stayed OUT of the
@@ -120,8 +149,9 @@ const esbuildCommon = {
     // via esbuild's dead-code elimination. See scripts/dev.js for the dev value.
     '__KANGENTIC_DEV__': keepDevtools ? 'true' : 'false',
   },
-  sourcemap: false,
+  sourcemap: uploadSourcemaps ? 'external' : false,
   minify: true,
+  plugins: resolveSentryEsbuildPlugins(),
 };
 
 async function build() {

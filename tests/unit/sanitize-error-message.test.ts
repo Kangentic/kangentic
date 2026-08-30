@@ -28,8 +28,8 @@ describe('sanitizeErrorMessage', () => {
     expect(result).toBe('Failed at <path>: Cannot read properties of undefined');
   });
 
-  it('truncates to 200 characters', () => {
+  it('truncates to the Aptabase server-side cap (180 characters)', () => {
     const longMessage = 'A'.repeat(300);
-    expect(sanitizeErrorMessage(longMessage)).toHaveLength(200);
+    expect(sanitizeErrorMessage(longMessage)).toHaveLength(180);
   });
 });

@@ -12,6 +12,7 @@ import { applyProfileToLane } from '../../transition-engine/column-strategy';
 import { loadTaskProfile } from '../helpers/task-profile';
 import { handleTaskMove } from './task-move';
 import { trackEvent } from '../../analytics/analytics';
+import { trackFeatureUsed, trackMilestone } from '../../analytics/usage';
 import { parseModelId } from '../../../shared/model-id';
 import { captureSessionMetrics, refineTranscriptTokens, refineTranscriptToolCounts } from './session-metrics';
 import { captureGitChurn, resolveDefaultBaseBranch } from './git-stats-capture';
@@ -506,15 +507,41 @@ export function registerSessionHandlers(context: IpcContext): void {
 
       // Analytics: track spawn intent on the first running transition. Model
       // is not known yet (arrives later via status.json) and is omitted here -
-      // session_exit / task_complete carry the model.
+      // session_exit / task_complete carry the model. permissionMode (the
+      // resolved mode the session record spawned under, not the task's raw
+      // override) and worktree ride the same event as budget-neutral props.
+      // This listener sees EVERY spawn path (board move, create, recovery,
+      // transient), which also makes it the one chokepoint for the
+      // worktree/profile adoption signals and the first_spawn milestone.
       if (!sessionSpawnAnalyticsFired.has(sessionId)) {
         sessionSpawnAnalyticsFired.add(sessionId);
         const spawnAgentName = context.sessionManager.getSessionAgentName(sessionId);
         if (spawnAgentName) {
-          trackEvent('session_spawn', {
+          const spawnProps: Record<string, string | number | boolean> = {
             agent: spawnAgentName,
             isTransient: !!session.transient,
-          });
+          };
+          try {
+            const spawnProjectId = context.sessionManager.getSessionProjectId(sessionId);
+            // Not during shutdown: getProjectDb silently REOPENS a just-closed
+            // project DB (close deletes the cache entry, so the next call
+            // constructs a fresh connection nothing ever closes again).
+            if (!isShuttingDown() && spawnProjectId && session.taskId) {
+              const database = getProjectDb(spawnProjectId);
+              const spawnRecord = new SessionRepository(database).getLatestForTask(session.taskId);
+              if (spawnRecord?.permission_mode) spawnProps.permissionMode = spawnRecord.permission_mode;
+              const taskRow = new TaskRepository(database).getById(session.taskId);
+              if (taskRow) {
+                spawnProps.worktree = !!taskRow.worktree_path;
+                if (taskRow.worktree_path) trackFeatureUsed('worktree_session');
+                if (taskRow.profile_id) trackFeatureUsed('board_profile');
+              }
+            }
+          } catch {
+            // Enrichment is best-effort; the base props still send
+          }
+          trackEvent('session_spawn', spawnProps);
+          if (!session.transient) trackMilestone('first_spawn');
         }
       }
 
@@ -602,6 +629,10 @@ export function registerSessionHandlers(context: IpcContext): void {
         exitProps.costUsd = Math.round(usageForExit.cost.totalCostUsd * 10000) / 10000;
       }
       exitProps.toolCalls = context.sessionManager.getToolCallCount(sessionId);
+      // Crash-vs-deliberate: kill()/suspend tag the exit intentional (see
+      // session-spawn-flow.ts); undefined means a genuine agent-side exit, so
+      // compare === true like every other consumer of the flag.
+      exitProps.intentional = intentional === true;
       trackEvent('session_exit', exitProps);
       sessionStartTimes.delete(sessionId);
       sessionSpawnAnalyticsFired.delete(sessionId);

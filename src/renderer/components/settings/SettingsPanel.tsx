@@ -53,6 +53,12 @@ export function SettingsPanel() {
     setLastSettingsTab(activeTab);
   }, [activeTab, setLastSettingsTab]);
 
+  // Adoption signal, on mount so every open path counts (gear icon,
+  // openProjectSettings, keybinding); main dedups to once per day.
+  useEffect(() => {
+    window.electronAPI?.analytics?.trackFeatureUsed('settings');
+  }, []);
+
   useEffect(() => {
     window.electronAPI.shell.getAvailable().then(setShells).catch(() => {});
     window.electronAPI.font.getAvailable().then(setFonts).catch(() => {});
