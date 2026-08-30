@@ -33,6 +33,24 @@ const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx']);
  *  multi-line JSX element without reaching the previous sibling. */
 const CLASSNAME_LOOKBEHIND = 600;
 
+/**
+ * Tailwind spells a transition list two ways, and this scan must read both.
+ *
+ * The arbitrary form `transition-[transform,opacity]` is what the original two fills use. The
+ * BUILT-IN utility `transition-transform` compiles to the same `transition-property: transform`
+ * and is the idiomatic spelling for a fill that scales - which is exactly the shape this file
+ * exists to police. Matching only the bracket form reported a correct fill as having NO
+ * transition at all (the rail's viewed-progress bar, which does animate), so the guard failed
+ * loudly on compliant code and would have pushed the next author into the less idiomatic form
+ * to appease it.
+ *
+ * Only `transition-transform` is recognized among the named utilities, deliberately.
+ * `transition-all` technically covers transform but also drags `width` back in, and anything
+ * else (`transition-colors`, `transition-opacity`) genuinely does not animate the scale - all of
+ * them keep reporting as MISSING, which is the safe direction for a guard to be wrong in.
+ */
+const TRANSITION_LIST_PATTERN = /transition-\[([^\]]*)\]|\btransition-transform\b/g;
+
 function collectSourceFiles(directory: string): string[] {
   const files: string[] = [];
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
@@ -75,11 +93,14 @@ function findScaledFills(): ScaledFill[] {
       const windowStart = Math.max(0, match.index - CLASSNAME_LOOKBEHIND);
       const preceding = source.slice(windowStart, match.index);
       // The className nearest above the scaling style is the one on the same element.
-      const transitionMatches = [...preceding.matchAll(/transition-\[([^\]]*)\]/g)];
+      const transitionMatches = [...preceding.matchAll(TRANSITION_LIST_PATTERN)];
       const last = transitionMatches.at(-1);
+      // Group 1 is the arbitrary form's inner list; a bare `transition-transform` match has no
+      // group, so normalize it to the property it declares.
+      const transitionList = last ? (last[1] ?? 'transform') : null;
       found.push({
         location: `${relative}:${lineNumberAt(source, match.index)}`,
-        transitionList: last ? last[1] : null,
+        transitionList,
         hasOriginLeft: /\borigin-left\b/.test(preceding),
       });
     }
@@ -90,11 +111,25 @@ function findScaledFills(): ScaledFill[] {
 describe('composited meter fills', () => {
   it('finds the scaled fills, so the scan below cannot pass vacuously', () => {
     const fills = findScaledFills();
-    // ContextUsageFooter (board + monitor cards) and the terminal ContextBar's context fill.
-    expect(fills.length).toBeGreaterThanOrEqual(2);
+    // ContextUsageFooter (board + monitor cards), the terminal ContextBar's context fill, and
+    // the Changes rail's viewed-progress bar.
+    expect(fills.length).toBeGreaterThanOrEqual(3);
     const files = new Set(fills.map((fill) => fill.location.split(':')[0]));
     expect(files).toContain('src/renderer/components/board/ContextUsageFooter.tsx');
     expect(files).toContain('src/renderer/components/terminal/ContextBar.tsx');
+    expect(files).toContain('src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx');
+  });
+
+  it('reads the built-in `transition-transform` utility, not just the arbitrary form', () => {
+    // The scan originally matched only `transition-[...]`, so a fill written with Tailwind's
+    // named utility read as having NO transition and was reported as an offender. Pin the
+    // recognition here: without it the scan is wrong in the LOUD direction (it fails compliant
+    // code), which is how it was found.
+    const railFill = findScaledFills().find((fill) =>
+      fill.location.startsWith('src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx'),
+    );
+    expect(railFill, 'the Changes rail viewed-progress fill should be discovered by the scan').toBeDefined();
+    expect(railFill?.transitionList).toBe('transform');
   });
 
   it('every scaled fill transitions `transform`, never a stale `width`', () => {
