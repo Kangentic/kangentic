@@ -2676,6 +2676,12 @@
         window.__mockTrackRendererErrorCalls = window.__mockTrackRendererErrorCalls || [];
         window.__mockTrackRendererErrorCalls.push({ message: message, context: context });
       },
+      trackFeatureUsed: function (feature) {
+        window.__mockTrackFeatureUsedCalls = window.__mockTrackFeatureUsedCalls || [];
+        window.__mockTrackFeatureUsedCalls.push(feature);
+      },
+      // Sentry never initializes under the UI harness.
+      errorReportingEnabled: false,
     },
 
     app: {

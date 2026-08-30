@@ -1,6 +1,7 @@
 import { webContents as electronWebContents, type WebContents } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { detachDebugger, isDebuggerAttached } from './cdp/cdp';
+import { trackFeatureUsed } from '../analytics/usage';
 import type { BrowserPaneVisibility } from '../../shared/types';
 
 /**
@@ -364,6 +365,10 @@ export class BrowserPaneRegistry {
         `task=${entry.taskId.slice(0, 8)} wc=${entry.webContentsId} kind=${entry.kind}` +
         (entry.handoff ? ' handoff' : ''),
     );
+    // Adoption signal for user-visible panes only: offscreen lanes are the
+    // driver's plumbing, not a user opening the Browser pane. New-entry branch
+    // only, so a rebind of the same guest never re-counts.
+    if (entry.kind === 'pane') trackFeatureUsed('browser_pane');
     this.announceRegistered(entry);
     return entry;
   }

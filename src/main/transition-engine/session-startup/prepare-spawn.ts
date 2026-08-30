@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { agentRegistry } from '../../agent/agent-registry';
+import { trackEvent } from '../../analytics/analytics';
 import type { AgentAdapter } from '../../agent/agent-adapter';
 import type { McpHttpServerHandle } from '../../agent/mcp-http-server';
 import { appendCallerSession } from '../../agent/mcp-http/caller-url';
@@ -148,7 +149,10 @@ export async function prepareAgentSpawn(input: {
     tasks: input.tasks,
   });
   const adapter = agentRegistry.get(agent);
-  if (!adapter) return { ok: false, reason: 'unknown-agent' };
+  if (!adapter) {
+    trackEvent('spawn_failed', { agent, reason: 'unknown_agent' });
+    return { ok: false, reason: 'unknown-agent' };
+  }
 
   // Model/effort ids are adapter-specific, so the project-level default only
   // applies when this spawn actually runs the project's default agent.
@@ -156,7 +160,10 @@ export async function prepareAgentSpawn(input: {
 
   const cliPathOverride = config.agent.cliPaths[agent] ?? null;
   const detection = await adapter.detect(cliPathOverride);
-  if (!detection.found || !detection.path) return { ok: false, reason: 'cli-not-found' };
+  if (!detection.found || !detection.path) {
+    trackEvent('spawn_failed', { agent, reason: 'cli_not_found' });
+    return { ok: false, reason: 'cli-not-found' };
+  }
 
   await adapter.ensureTrust(cwd);
 

@@ -17,6 +17,9 @@ import {
   spawnAgent,
 } from '../helpers';
 import { resolveProjectContext } from '../helpers/project-repos';
+import { trackEvent } from '../../analytics/analytics';
+import { reportHandledError } from '../../analytics/error-reporting';
+import { trackMilestone } from '../../analytics/usage';
 import { linkPR } from '../../pr/pr-linking';
 import { applyProfileToLane } from '../../transition-engine/column-strategy';
 import { createProgressCallback, clearSpawnProgress } from '../../transition-engine/spawn-progress';
@@ -95,6 +98,7 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
     const { tasks, swimlanes, actions, attachments } = getProjectRepos(context, resolvedProjectId);
     const { pendingAttachments, ...taskInput } = input;
     const task = tasks.create(taskInput);
+    trackMilestone('first_task');
 
     // Save any pending attachments from the dialog
     if (pendingAttachments?.length && resolvedProjectPath) {
@@ -158,6 +162,11 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
             await spawnAgent({ context, engine, tasks, sessionRepo, task, fromSwimlaneId: '*', toLane, projectId, projectPath, attachments });
           } catch (err) {
             console.error('[TASK_CREATE] Failed to start session:', err);
+            // The resolved agent lives inside spawnAgent and is not returned;
+            // the override chain is the best available approximation here.
+            const failedAgent = task.agent_override ?? toLane.agent_override ?? 'default';
+            trackEvent('spawn_failed', { agent: failedAgent, reason: 'create_spawn' });
+            reportHandledError(err, { source: 'spawn', reason: 'create_spawn', agent: failedAgent });
           }
         } finally {
           clearSpawnProgress(context.mainWindow, task.id);

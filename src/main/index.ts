@@ -26,6 +26,8 @@ import { isShuttingDown, setShuttingDown } from './shutdown-state';
 import { isBenignStreamWriteError } from './diagnostics/benign-stream-error';
 const windowConfigManager = new ConfigManager();
 import { initAnalytics, trackEvent, sanitizeErrorMessage, shouldEmitHeartbeat, setAnalyticsClientId } from './analytics/analytics';
+import { initErrorReporting, isErrorReportingActive, setErrorReportingUser } from './analytics/error-reporting';
+import { initUsageAnalytics, trackUpdateOutcome } from './analytics/usage';
 import { resolveClientId } from './analytics/client-id';
 import { PATHS } from './config/paths';
 // Whether this launch found an existing global config.json. Read at module
@@ -207,6 +209,13 @@ import { ensureSpawnHelperPermissions } from './pty/spawn/spawn-helper-permissio
 // to register protocol schemes. The analytics module decides whether to activate
 // based on app.isPackaged and the KANGENTIC_TELEMETRY env var.
 initAnalytics();
+
+// Initialize Sentry error reporting beside it (also pre-ready: the SDK wires
+// its renderer IPC/protocol transport during init). Gated by the same
+// KANGENTIC_TELEMETRY superset kill switch plus KANGENTIC_ERROR_REPORTING;
+// scrubbing and event hygiene are the SDK's and Sentry's job, not ours
+// (see analytics/error-reporting.ts).
+initErrorReporting();
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string;
 declare const MAIN_WINDOW_VITE_NAME: string;
@@ -743,20 +752,24 @@ const createWindow = () => {
       // Enable <webview> for the embedded browser side-pane in the task-detail
       // window. Hardened via the will-attach-webview hook below.
       webviewTag: true,
-      // Surface the ephemeral-preview flag (and, when resolvable, the original task
-      // title) to the renderer (read in preload via process.argv). Set ONLY in
+      // Surface boot flags to the renderer (read in preload via process.argv).
+      // --kangentic-error-reporting mirrors main's single Sentry decision so the
+      // renderer-side Sentry.init() can never disagree with it. The ephemeral-preview
+      // flag (and, when resolvable, the original task title) is set ONLY in
       // dev-preview mode (`--ephemeral`), so the dev TestHarness and the preview title
       // stay out of the regular `npm start` dogfood. The title is base64-encoded so a
       // value with spaces / `:` / `/` survives command-line round-tripping intact.
-      additionalArguments:
-        __KANGENTIC_DEV__ && isEphemeral
+      additionalArguments: [
+        ...(isErrorReportingActive() ? ['--kangentic-error-reporting'] : []),
+        ...(__KANGENTIC_DEV__ && isEphemeral
           ? [
               '--kangentic-ephemeral',
               ...(previewTaskTitle
                 ? [`--kangentic-preview-task-title=${Buffer.from(previewTaskTitle, 'utf-8').toString('base64')}`]
                 : []),
             ]
-          : [],
+          : []),
+      ],
     },
   });
 
@@ -1236,6 +1249,17 @@ app.whenReady().then(async () => {
     return isFirstPartyPermissionAllowed(permission);
   });
 
+  // Lifetime usage flags (onboarding milestones, feature first-use, last-run
+  // version) live beside the client-id file in the global config dir. Loaded
+  // BEFORE createWindow(): registerAllIpc (inside it) attaches the
+  // session-changed listener whose trackMilestone('first_spawn') silently
+  // no-ops until these flags load, and startup session recovery can reach
+  // 'running' before post-window init would have run. Loading also arms
+  // update_outcome: an applied update or rollback is detected as a version
+  // change between runs.
+  initUsageAnalytics(path.join(PATHS.configDir, 'analytics-usage.json'));
+  trackUpdateOutcome(app.getVersion());
+
   createWindow();
   initUpdater(mainWindow!);
   initAnnouncements(mainWindow!);
@@ -1278,6 +1302,9 @@ app.whenReady().then(async () => {
     path.join(PATHS.configDir, 'analytics-client-id.json')
   );
   setAnalyticsClientId(clientId);
+  // Same anonymous id as the Sentry user id, so issues carry an affected-
+  // installs count (no-op unless error reporting initialized).
+  setErrorReportingUser(clientId);
 
   // Fire app_launch event (analytics initialized before app.whenReady above).
   // trackEvent is a no-op if analytics is disabled, so no guard needed here.

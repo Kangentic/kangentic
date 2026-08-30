@@ -4,6 +4,7 @@ import { app, BrowserWindow, ipcMain } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import { IPC } from '../shared/ipc-channels';
 import { trackEvent, sanitizeErrorMessage } from './analytics/analytics';
+import { reportHandledError } from './analytics/error-reporting';
 import { normalizeReleaseNotes } from './updater-release-notes';
 
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
@@ -220,6 +221,9 @@ export function initUpdater(mainWindow: BrowserWindow): void {
       source: 'updater',
       message: sanitizeErrorMessage(error.message),
     });
+    // Handled, so Sentry's global handlers never see it; forward the real
+    // error so structural updater failures are diagnosable, not just counted.
+    reportHandledError(error, { source: 'updater' });
   });
 
   // Schedule checks

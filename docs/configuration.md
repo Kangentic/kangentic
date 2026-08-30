@@ -444,7 +444,7 @@ The Mobile Devices tab hosts the desktop half of the mobile companion app's pair
 
 ### Privacy
 
-The Privacy tab is informational only. It displays what anonymous analytics Kangentic collects (app launches, platform, crash reports, task/session counts) and what it does not collect (task content, file paths, usernames, code). Analytics are powered by Aptabase (no cookies, no persistent identifiers, GDPR-compliant). Set `KANGENTIC_TELEMETRY=0` as an environment variable to opt out. It points to the Memory tab for the (fully local) conversation-search controls. Global-only (per-machine).
+The Privacy tab is informational only. It displays what anonymous telemetry Kangentic collects (app launches, platform, crash reports, task/session counts, daily feature-usage counts) and what it does not collect (task content, file paths, usernames, code). Usage analytics are powered by Aptabase (no cookies, GDPR-compliant, plus one anonymous non-reversible install id for unique-install counting); crash and error reports go to Sentry with machine-specific paths removed from stack traces. Set `KANGENTIC_TELEMETRY=0` as an environment variable to disable all telemetry, or `KANGENTIC_ERROR_REPORTING=0` to disable only error reporting (see [analytics.md](analytics.md)). It points to the Memory tab for the (fully local) conversation-search controls. Global-only (per-machine).
 
 ### Developer
 

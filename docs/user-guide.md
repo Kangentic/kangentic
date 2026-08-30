@@ -647,7 +647,7 @@ The Mobile section closes with **How to install and pair**, which opens the [Kan
 
 ### Privacy
 
-The Privacy tab shows what anonymous analytics Kangentic collects and how to opt out. Analytics are powered by Aptabase (no cookies, no persistent identifiers, GDPR-compliant). Set `KANGENTIC_TELEMETRY=0` as an environment variable to disable analytics entirely. It also lists `support@kangentic.com` for questions about what is collected. This tab is informational only - there are no configurable settings.
+The Privacy tab shows what anonymous telemetry Kangentic collects and how to opt out. Usage analytics are powered by Aptabase (no cookies, GDPR-compliant, plus one anonymous non-reversible install id used only to count unique installs); crash and error reports go to Sentry with machine-specific paths removed from stack traces. Set `KANGENTIC_TELEMETRY=0` as an environment variable to disable all telemetry, or `KANGENTIC_ERROR_REPORTING=0` to disable only error reporting. It also lists `support@kangentic.com` for questions about what is collected. This tab is informational only - there are no configurable settings.
 
 ### Developer
 

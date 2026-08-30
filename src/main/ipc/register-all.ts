@@ -7,6 +7,7 @@ import {
   summarizeComponentStack,
   MAX_ANALYTICS_STRING_LENGTH,
 } from '../analytics/analytics';
+import { trackFeatureUsed, isKnownAnalyticsFeature } from '../analytics/usage';
 import { ProjectRepository } from '../db/repositories/project-repository';
 import { ProjectGroupRepository } from '../db/repositories/project-group-repository';
 import { SessionManager } from '../pty/session-manager';
@@ -280,6 +281,16 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
       trackEvent('app_error', props);
     }
   );
+
+  // Analytics: renderer feature-adoption reporting (fire-and-forget). The
+  // feature name is re-validated at RUNTIME against the curated allowlist
+  // (usage.ts) because the string is erased at the IPC boundary; an unknown
+  // value is dropped so the renderer cannot invent event vocabulary. Dedup
+  // (once per feature per day, first-use lifetime) lives in trackFeatureUsed.
+  ipcMain.on(IPC.TRACK_FEATURE_USED, (_event, feature: string) => {
+    if (typeof feature !== 'string' || !isKnownAnalyticsFeature(feature)) return;
+    trackFeatureUsed(feature);
+  });
 }
 
 // Thin wrappers -- same signatures as before, zero changes in index.ts

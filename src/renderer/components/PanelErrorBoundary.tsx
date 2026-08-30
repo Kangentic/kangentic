@@ -1,6 +1,7 @@
 import React from 'react';
 import { RefreshCw } from 'lucide-react';
 import { isChunkLoadError } from '../utils/chunk-load-error';
+import { reportBoundaryError } from '../error-reporting';
 
 interface PanelErrorBoundaryProps {
   children: React.ReactNode;
@@ -48,6 +49,9 @@ export class PanelErrorBoundary extends React.Component<
 
   componentDidCatch(error: Error, info: React.ErrorInfo): void {
     console.error('PanelErrorBoundary caught:', error, info.componentStack);
+    // Boundary-caught errors never reach Sentry's global handlers (React
+    // swallows them); see ErrorBoundary.componentDidCatch.
+    reportBoundaryError(error);
     window.electronAPI?.analytics?.trackRendererError(error.message, {
       boundary: 'panel',
       panel: this.props.label,

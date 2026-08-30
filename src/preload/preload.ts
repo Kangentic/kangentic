@@ -486,6 +486,12 @@ const api: ElectronAPI = {
   analytics: {
     trackRendererError: (message: string, context?: RendererErrorContext) =>
       ipcRenderer.send(IPC.TRACK_RENDERER_ERROR, message, context),
+    trackFeatureUsed: (feature: string) =>
+      ipcRenderer.send(IPC.TRACK_FEATURE_USED, feature),
+    // Appended to additionalArguments by main only when Sentry actually
+    // initialized there (isErrorReportingActive), so the renderer-side
+    // Sentry.init() follows main's single decision.
+    errorReportingEnabled: process.argv.includes('--kangentic-error-reporting'),
   },
 
   app: {

@@ -13,6 +13,19 @@ export default defineConfig({
     // than reaching into its internals via deep relative paths.
     alias: {
       '@kangentic/protocol': path.join(configDir, 'packages/protocol/src'),
+      // The Aptabase SDK's ESM build named-imports from 'electron', which
+      // Node's ESM linker rejects against the CJS electron stub under
+      // plain-node vitest - so any suite whose import graph reaches
+      // src/main/analytics/analytics.ts would fail at link time. This stub
+      // keeps the graph loadable; suites that assert on analytics still
+      // vi.mock the SDK or the analytics module, which overrides the alias.
+      '@aptabase/electron/main': path.join(
+        configDir,
+        'tests/fixtures/aptabase-electron-main-stub.ts'
+      ),
+      // Same ESM-link problem, same cure (see the stub's header comment).
+      '@sentry/electron/main': path.join(configDir, 'tests/fixtures/sentry-electron-stub.ts'),
+      '@sentry/electron/renderer': path.join(configDir, 'tests/fixtures/sentry-electron-stub.ts'),
     },
   },
   // Match the build-time constant used by esbuild (scripts/{dev,build}.js)

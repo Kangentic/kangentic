@@ -66,6 +66,7 @@ import {
 import { registerDevtoolsMcpTools } from '../../devtools/mcp/register';
 import { buildServerInstructions } from './mcp-http/server-instructions';
 import { logMcpToolArguments, createToolArgumentNotices, type ToolArgumentNotices } from './mcp-http/tool-call-logging';
+import { trackFeatureUsed } from '../analytics/usage';
 import type { RequestResolver } from './mcp-http/project-resolver';
 
 const SERVER_NAME = 'kangentic';
@@ -484,6 +485,15 @@ async function handleHttpRequest(
       }
       // Diagnostics must never break dispatch.
       try { logMcpToolArguments(parsedBody, toolArgumentNotices); } catch { /* ignore logging failure */ }
+      // Adoption signal: an `initialize` handshake means an MCP client
+      // actually connected (each client sends exactly one per session).
+      // Deliberately not per tool call; trackFeatureUsed dedups to once/day.
+      try {
+        const rpcMessages = Array.isArray(parsedBody) ? parsedBody : [parsedBody];
+        if (rpcMessages.some((message) => (message as { method?: unknown } | null)?.method === 'initialize')) {
+          trackFeatureUsed('mcp_server');
+        }
+      } catch { /* never break dispatch */ }
       await transport.handleRequest(req, res, parsedBody);
     } else {
       // GET (SSE stream) and DELETE (session teardown) carry no JSON body.

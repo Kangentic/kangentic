@@ -175,6 +175,8 @@ function createUsageDashboardStore() {
     open: () => {
       if (get().statsOpen) return;
       set({ statsOpen: true });
+      // Adoption signal; main dedups to once per day (fire-and-forget).
+      window.electronAPI?.analytics?.trackFeatureUsed('usage_dashboard');
       // Fetch AFTER the flip so the shell paints first (never block first paint).
       void get().loadDashboardStats();
     },

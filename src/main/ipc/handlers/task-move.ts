@@ -22,6 +22,7 @@ import { sendToRenderer } from '../send-to-renderer';
 import { resolveProjectContext } from '../helpers/project-repos';
 import { interpolateTaskTemplate, resolveTaskTemplateVars } from '../../agent/shared';
 import { trackEvent } from '../../analytics/analytics';
+import { trackMilestone } from '../../analytics/usage';
 import { getDevPortForTask } from '../../dev-ports/dev-port-allocator';
 import { parseModelId } from '../../../shared/model-id';
 import { captureSessionMetrics, refineTranscriptTokens, refineTranscriptToolCounts } from './session-metrics';
@@ -356,6 +357,11 @@ export async function handleTaskMove(
         if (latestSessionRecord?.model_id) {
           completeProps.model = parseModelId(latestSessionRecord.model_id).baseId;
         }
+        // The resolved mode the last session actually ran under (the task's
+        // own permission_mode is a raw override, null = inherit).
+        if (latestSessionRecord?.permission_mode) {
+          completeProps.permissionMode = latestSessionRecord.permission_mode;
+        }
         const lifetimeSummary = sessionRepo.getSummaryForTask(task.id);
         if (lifetimeSummary) {
           completeProps.durationSeconds = Math.round(lifetimeSummary.durationMs / 1000);
@@ -365,6 +371,7 @@ export async function handleTaskMove(
           completeProps.toolCalls = lifetimeSummary.toolCallCount;
         }
         trackEvent('task_complete', completeProps);
+        trackMilestone('first_task_complete');
       }
 
       // --- Priority 1: TARGET IS TO DO → full reset (kill session, remove worktree, delete branch) ---

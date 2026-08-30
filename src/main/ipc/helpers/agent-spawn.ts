@@ -7,6 +7,8 @@ import { HandoffRepository } from '../../db/repositories/handoff-repository';
 import { TransitionEngine } from '../../transition-engine/transition-engine';
 import { getProjectDb } from '../../db/database';
 import { interpolateTaskTemplate, resolveTaskTemplateVars } from '../../agent/shared';
+import { trackEvent } from '../../analytics/analytics';
+import { reportHandledError } from '../../analytics/error-reporting';
 import { resolveDefaultBaseBranch } from '../handlers/git-stats-capture';
 import { getDevPortForTask } from '../../dev-ports/dev-port-allocator';
 import { agentRegistry } from '../../agent/agent-registry';
@@ -455,6 +457,10 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
   } catch (error) {
     if (isAbortError(error)) throw error;
     console.error('[spawnAgent] Failed to start session:', error);
+    // The deepest silent failure on the board path: nothing reaches the user,
+    // so at least the failure-rate signal must not stay blind.
+    trackEvent('spawn_failed', { agent: targetAgent, reason: 'resume' });
+    reportHandledError(error, { source: 'spawn', reason: 'resume', agent: targetAgent });
     return;
   }
 
@@ -598,6 +604,17 @@ export async function autoSpawnForTask(
       }
     } catch (err) {
       console.error('[MCP auto-spawn] Failed:', err);
+      // fullTask/toLane are declared inside the try, so re-read the row here;
+      // its override is the best approximation of the agent on this path.
+      let failedAgent = 'default';
+      try {
+        failedAgent =
+          getProjectRepos(context, projectId).tasks.getById(task.id)?.agent_override ?? 'default';
+      } catch {
+        // DB may be closed; keep the placeholder
+      }
+      trackEvent('spawn_failed', { agent: failedAgent, reason: 'auto_spawn' });
+      reportHandledError(err, { source: 'spawn', reason: 'auto_spawn', agent: failedAgent });
     }
     };
     return logProjectName ? runWithProjectLogContext(logProjectName, run) : run();

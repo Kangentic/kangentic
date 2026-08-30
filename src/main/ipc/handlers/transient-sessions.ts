@@ -7,6 +7,7 @@ import { IPC } from '../../../shared/ipc-channels';
 import { resolveProjectRoot } from '../../../shared/git-utils';
 import { fetchIfStale } from '../../git/fetch-throttle';
 import { trackEvent } from '../../analytics/analytics';
+import { trackFeatureUsed } from '../../analytics/usage';
 import { agentRegistry } from '../../agent/agent-registry';
 import { DEFAULT_AGENT } from '../../../shared/types';
 import type {
@@ -128,6 +129,7 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
     });
 
     trackEvent('transient_session_spawn', { agent: adapter.name });
+    trackFeatureUsed('command_terminal');
     return { session, branch, checkoutError };
   });
 

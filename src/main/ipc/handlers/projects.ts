@@ -19,6 +19,8 @@ import { applyRuntimeConfig } from '../../config/apply-runtime-config';
 import { ensureGitignore } from '../helpers';
 import { searchProjectEntries } from '../helpers/project-entry-search';
 import { trackEvent } from '../../analytics/analytics';
+import { trackMilestone, bucketTaskCount } from '../../analytics/usage';
+import { DEFAULT_SWIMLANES } from '../../db/migrations/default-data';
 import { isShuttingDown } from '../../shutdown-state';
 import { runWithProjectLogContext } from '../../diagnostics/project-log-context';
 import { prRefreshScheduler } from '../../pr/pr-refresh-scheduler';
@@ -608,6 +610,7 @@ export function registerProjectHandlers(context: IpcContext): void {
     const defaults = getLastProjectOverrides(context.projectRepo, context.configManager, project.path);
     context.configManager.saveProjectOverrides(project.path, defaults);
     trackEvent('project_create');
+    trackMilestone('first_project');
     return project;
   });
 
@@ -681,6 +684,26 @@ export function registerProjectHandlers(context: IpcContext): void {
           const taskRepo = new TaskRepository(db);
           const sessionRepo = new SessionRepository(db);
           const swimlaneRepo = new SwimlaneRepository(db);
+
+          // Analytics: one board-shape snapshot per cold open (the
+          // recoveredProjects guard above makes this once per project per app
+          // run). Counts only - names and content never leave the machine;
+          // the task count is bucketed so no exact figure is sent.
+          try {
+            const lanes = swimlaneRepo.list();
+            const defaultNames = new Set<string>(DEFAULT_SWIMLANES.map((lane) => lane.name));
+            const taskCount = taskRepo.countAll();
+            trackEvent('board_snapshot', {
+              columns: lanes.length,
+              customColumns:
+                lanes.length !== DEFAULT_SWIMLANES.length ||
+                lanes.some((lane) => !defaultNames.has(lane.name)),
+              taskBucket: bucketTaskCount(taskCount),
+              profiles: context.boardConfigManager.getBoardProfiles(project.path).length,
+            });
+          } catch {
+            // Snapshot must never interfere with recovery below
+          }
 
           // Ordering contract (see pruneOrphanedWorktreeTasks): the prune
           // completes before session recovery reads the DB; the slow

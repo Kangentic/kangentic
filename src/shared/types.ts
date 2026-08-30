@@ -4972,6 +4972,13 @@ export interface ElectronAPI {
   // Analytics
   analytics: {
     trackRendererError: (message: string, context?: RendererErrorContext) => void;
+    /** Report one use of a curated adoption feature (fire-and-forget; main
+     *  validates against ANALYTICS_FEATURES and dedups to once per day). */
+    trackFeatureUsed: (feature: string) => void;
+    /** Synchronous boot value mirroring main's single Sentry decision (read
+     *  from additionalArguments in preload): gates the renderer-side
+     *  Sentry.init() so the two processes can never disagree. */
+    errorReportingEnabled: boolean;
   };
 
   // App

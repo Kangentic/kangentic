@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { isUncPath, isCmdShell } from '../../../shared/paths';
 import { trackEvent, sanitizeErrorMessage } from '../../analytics/analytics';
+import { reportHandledError } from '../../analytics/error-reporting';
 
 /** Shell executable + args, split from a user-facing shell spec. */
 export interface ShellInvocation {
@@ -339,5 +340,15 @@ export function recordSpawnFailure(params: {
     errno: params.diagnostic.errno,
     platform: process.platform,
     arch: process.arch,
+  });
+  // Handled failure: forward to Sentry with the diagnostic as tags so spawn
+  // failures group by errno/shell and are diagnosable beyond a count. The
+  // message is the sanitized form (paths already stripped upstream of Sentry's
+  // own normalization, since this string is hand-assembled, not a stack).
+  reportHandledError(new Error(sanitizeErrorMessage(params.diagnostic.errorMessage)), {
+    source: 'pty_spawn',
+    errno: params.diagnostic.errno ?? 'none',
+    shellExists: String(params.diagnostic.shellExists),
+    cwdExists: String(params.diagnostic.cwdExists),
   });
 }
