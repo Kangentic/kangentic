@@ -744,7 +744,8 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   exactly then). Every renderer resize sender now traces `resize-request` with an origin
   tag (`mount`/`flush`/`reload`/`echo-reassert`/`debounced-onResize`) and main traces every
   resize outcome (`resize-applied`/`resize-noop`/`resize-refused`/`resize-stash`/
-  `resize-ignored`/`resize-invalid`), so `kangentic_devtools_terminal_state`'s merged trace
+  `resize-ignored`/`resize-invalid`, plus `resize-reassert`/`resize-reassert-failed` from the
+  post-first-output re-assert below), so `kangentic_devtools_terminal_state`'s merged trace
   names the trigger if a divergence ever recurs. A resize for a queued or suspended session
   stashes (including suspend's marked-but-alive teardown window, where the PTY is still
   non-null but must not be reshaped or re-echoed); one for a missing or exited session is
@@ -753,6 +754,21 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   `tests/ui/terminal-resize-echo-reassert.spec.ts` (real xterm wiring: re-assert, repair,
   self-echo no-op, budget bound), and `tests/e2e/terminal-width-drift-selfheal.spec.ts` (a real
   PTY driven to the incident by a rogue `sessions.resize`, healed back to the owner grid).
+- **Post-first-output geometry re-assert (the spawn-window race).** ConPTY only delivers a
+  resize to a connected client, so a resize applied while the agent is still booting (the fit
+  lands ~140ms after `pty.spawn`) can be lost, leaving the child composing at the 120-column
+  spawn width inside the fitted grid while `ptyMatchesGrid`/`colsDrift` read healthy. `resize()`
+  arms `ManagedSession.resizeAppliedBeforeFirstOutput` when it applies a resize before the
+  first-output latch trips, and `consumeFirstOutput` then re-delivers the geometry as a jiggle
+  (`cols-1`, then `cols` back, traced `resize-reassert`) via direct `pty.resize()` calls -
+  deliberately bypassing `resize()`'s ladder, whose same-dims short-circuit would eat the
+  restore leg and whose broadcasts would churn the echo budget, phone re-seeds, and settle for
+  net-unchanged geometry. The third-layer diagnostic (`composedCols`/`composedMatchesPty` on
+  `kangentic_devtools_terminal_state`) measures the width the child actually composes at from
+  its raw ring, alt-screen sessions only. Pinned by the `Post-first-output geometry re-assert`
+  block in `tests/unit/session-manager.test.ts` and the respawn latch-cleanup tests in
+  `tests/unit/session-spawn-flow.test.ts`; the diagnostic is exercised by
+  `tests/unit/composed-width.test.ts` and `tests/unit/devtools-terminal-state.test.ts`.
 - **Repaint-settled scrollback sampling.** A session spawns at a default 120x30; on a cold launch
   an auto-resumed PTY sits at that size until a card opens and the renderer fits it wider. When a
   geometry-changing resize fires (cols OR rows), a full-screen agent TUI repaints its frame
