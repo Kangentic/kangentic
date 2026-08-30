@@ -121,10 +121,10 @@ export function ConversationWindow({
   const setPendingTuiAnchor = useSessionStore((state) => state.setPendingTuiAnchor);
   const sessions = useSessionStore((state) => state.sessions);
 
-  const useStore = useLayerStore();
-  const toggleMaximizeWindow = useStore((state) => state.toggleMaximizeWindow);
-  const untileWindow = useStore((state) => state.untileWindow);
-  const isTiled = useStore((state) => state.windows[managedWindow.id]?.state === 'tiled');
+  const layerStore = useLayerStore();
+  const toggleMaximizeWindow = layerStore((state) => state.toggleMaximizeWindow);
+  const untileWindow = layerStore((state) => state.untileWindow);
+  const isTiled = layerStore((state) => state.windows[managedWindow.id]?.state === 'tiled');
 
   const [response, setResponse] = useState<TranscriptGetResponse | null>(null);
   const [loading, setLoading] = useState(true);

@@ -115,7 +115,7 @@ function WindowManagerSurface({
   if (!hostRef.current) hostRef.current = getPortalHost(portalHostId);
 
   const { manager } = useWindowManager();
-  const useStore = manager.store;
+  const layerStore = manager.store;
 
   // Publish this layer's mount state. Renderer-global state derived from windows
   // (`dialogSessionIds`) must not count a layer whose surface is gone: the store
@@ -123,9 +123,9 @@ function WindowManagerSurface({
   // the one that actually unmounts (it lives inside MonitorPage).
   useEffect(() => markLayerMounted(manager), [manager]);
   const [containerSize, setContainerSize] = useState<ContainerSize>({ width: 0, height: 0 });
-  const windows = useStore((state) => state.windows);
-  const tileTree = useStore((state) => state.tileTree);
-  const tileTreeRect = useStore((state) => state.tileTreeRect);
+  const windows = layerStore((state) => state.windows);
+  const tileTree = layerStore((state) => state.tileTree);
+  const tileTreeRect = layerStore((state) => state.tileTreeRect);
 
   // The tile tree lives inside this pixel sub-region of the overlay (the whole
   // overlay for edge-snap pairs; a half-snapped window's footprint for a group

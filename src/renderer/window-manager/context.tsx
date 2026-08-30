@@ -92,7 +92,22 @@ export function useWindowManager(): WindowManagerContextValue {
 }
 
 /** The bound Zustand store hook for the current layer. Call it with a selector
- *  (`useLayerStore()((state) => state.windows)`) or use `.getState()` imperatively. */
+ *  (`useLayerStore()((state) => state.windows)`) or use `.getState()` imperatively.
+ *
+ *  NAME THE RESULT `layerStore`, NEVER `useStore` (or anything else starting with
+ *  `use`). This reads like a style nit and is not: react-refresh's Babel transform
+ *  treats a call to any `use`-prefixed identifier as a custom hook and tries to put
+ *  it in the component's refresh signature. A LOCAL binding cannot go in that
+ *  signature, so the transform falls back to `forceReset: true` - which makes React
+ *  REMOUNT the component on every Fast Refresh of its module, rather than
+ *  preserving its state.
+ *
+ *  For the window manager that meant every task-detail window was rebuilt whenever
+ *  any module in its chain refreshed, and an Electron `<webview>` guest dies with
+ *  its DOM node, so a save destroyed the browser an agent was driving. There was no
+ *  page reload and no Fast Refresh bailout to point at; the pane simply came back
+ *  as a new element. Measured with `scripts/hmr-guest-probe.mjs`, and guarded by
+ *  `tests/unit/hook-shaped-locals.test.ts`. */
 export function useLayerStore(): WindowManager['store'] {
   return useWindowManager().manager.store;
 }

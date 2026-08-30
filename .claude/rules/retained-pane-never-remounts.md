@@ -37,8 +37,15 @@ parking and retention, and the park reaper releases the hold when the session st
 
 The failure mode is silent. A remounted pane looks identical on screen and in the DOM: same
 element, same URL, same everything. What is gone is the guest's identity, and with it the agent's
-CDP session. Two separate causes were found by live testing, neither visible to any DOM-presence
-assertion:
+CDP session.
+
+**A dev-mode save was a third remount path, and the worst of them**, because it fired on every
+edit rather than on a user action: a `use`-prefixed LOCAL (`const useStore = useLayerStore()`) in
+five window-manager components made react-refresh set `forceReset`, remounting the whole
+task-detail subtree on any Fast Refresh of its import chain. See [[hmr-patterns]]; guarded by
+`tests/unit/hook-shaped-locals.test.ts` and measurable with `scripts/hmr-guest-probe.mjs`.
+
+Two more causes were found by live testing, neither visible to any DOM-presence assertion:
 
 - The pane resolved its task URL against the OPEN board's project instead of its own, found
   nothing, fell back to the empty state, and unmounted itself.

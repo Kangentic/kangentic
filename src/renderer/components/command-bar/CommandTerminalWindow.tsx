@@ -110,13 +110,13 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
   // open flag and per-entity panel state (selected file, scroll, scope, ...)
   // never leak across Command Terminal windows.
   const commandTerminalEntityId = commandTerminalChangesEntityId(slot);
-  const useStore = useLayerStore();
-  const toggleMaximizeWindow = useStore((state) => state.toggleMaximizeWindow);
-  const closeWindow = useStore((state) => state.closeWindow);
+  const layerStore = useLayerStore();
+  const toggleMaximizeWindow = layerStore((state) => state.toggleMaximizeWindow);
+  const closeWindow = layerStore((state) => state.closeWindow);
   // Window-layout parity with the task-detail window: pop-out (untile back to
   // floating) for a pane that is currently part of a tile group.
-  const untileWindow = useStore((state) => state.untileWindow);
-  const isTiled = useStore((state) => state.windows[windowId]?.leafId != null);
+  const untileWindow = layerStore((state) => state.untileWindow);
+  const isTiled = layerStore((state) => state.windows[windowId]?.leafId != null);
   const { hideLayer } = useCommandTerminalLayer();
 
   const [sessionId, setSessionId] = useState<string | null>(null);

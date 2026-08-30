@@ -357,6 +357,20 @@ src/renderer/components/dialogs/
 src/renderer/stores/
   agent-drive-store.ts                      which sessions have an agent driving their pane, so the
                                             terminal and the pane can show it (HMR-pinned, Pattern E)
+  session-store.ts                          owns browserOpenTasks / browserHeldTasks /
+                                            browserGuestTasks via its task-changes-panel slice.
+                                            HMR-pinned (Pattern E) but deliberately NOT
+                                            self-accepting: it sits in an import cycle, and Vite
+                                            answers a circular-import invalidate with a full page
+                                            reload, which kills every guest
+  session-lifecycle-hooks.ts                late-bound session actions for project-store, so the two
+                                            stores no longer import each other (that cycle was
+                                            reloading the page on every store-slice save)
+
+scripts/
+  hmr-guest-probe.mjs                       measures whether an edit destroys a live pane guest:
+                                            reload? same webContentsId? pane remounted? plus Vite's
+                                            own reload reason. Exits non-zero when the guest dies
 
 src/renderer/utils/
   agent-input-focus-guard.ts                restores the user's focus after a drive; routes an

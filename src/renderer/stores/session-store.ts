@@ -1,4 +1,4 @@
-import { create } from 'zustand';
+import { create, type StateCreator } from 'zustand';
 import { ACTIVITY_TAB, type Session, type SessionUsage, type SessionEvent } from '../../shared/types';
 import { requiresUserInteraction, isActive } from '../../shared/activity-state';
 import { useProjectStore } from './project-store';
@@ -7,6 +7,7 @@ import type { SessionStore, PendingTuiAnchor } from './session-store/types';
 import { buildSessionByTaskId } from './session-store/session-index';
 import { createTaskChangesPanelSlice } from './session-store/task-changes-panel-slice';
 import { createTransientSessionSlice, transientKey, type TransientSessionEntry } from './session-store/transient-session-slice';
+import { registerSessionLifecycleHooks } from './session-lifecycle-hooks';
 import { mergeRateLimitSnapshot } from '../utils/rate-limit-window';
 import { claimArrivalFocus } from '../utils/terminal-arrival-focus';
 
@@ -205,20 +206,31 @@ export function cancelSync(): void {
  * UI hints, derived helpers) stays inline here because it's tightly
  * coupled and hard to split cleanly.
  *
- * HMR preservation: syncController (AbortController), the three
- * transient-session pointers, spawnProgress, pendingCommandLabel, and the
- * conversation-viewer nav signals (conversationSessionId, scrollToTurnUuid)
- * survive module replacement via `import.meta.hot.dispose`. Without
- * this, hot reload orphans live PTY processes, breaks in-flight
- * project switches, strands "Initializing..." indicators on
- * task cards whose in-flight spawn-progress pushes arrived pre-reload, and
- * silently closes an open Conversation window mid-edit.
+ * HMR, in two layers. The PRIMARY one is the Pattern E instance pin at the
+ * bottom of this file: the whole store survives a re-eval, so none of the state
+ * below resets. That is load-bearing beyond convenience. A slice edit used to
+ * hand the mounted tree a second, empty store, and `browserOpenTasks` /
+ * `browserHeldTasks` reading empty unmounted every live Browser pane - an
+ * Electron `<webview>` guest dies with its DOM node, so the agent lost the
+ * browser it was driving. Measured with `scripts/hmr-guest-probe.mjs`.
+ *
+ * The FALLBACK layer is the `import.meta.hot.dispose` stash above, which carries
+ * syncController (AbortController), the three transient-session pointers,
+ * spawnProgress, pendingCommandLabel, and the conversation-viewer nav signals
+ * across the one transition where there is no pinned instance to inherit (the
+ * first HMR after a cold boot or a full reload, when `hot.data.sessionStore` is
+ * still undefined and the initializer really does run again). Without it that
+ * transition orphans live PTY processes, breaks in-flight project switches,
+ * strands "Initializing..." indicators on task cards whose spawn-progress pushes
+ * arrived pre-reload, and silently closes an open Conversation window mid-edit.
+ * `syncController` is module state rather than store state, so the stash is its
+ * only protection on every path.
  *
  * HMR re-sync: the `vite:afterUpdate` handler in App.tsx calls
  * `syncSessions()` after hot reload. Renaming syncSessions would
  * require updating that handler + the hmr-resync.test.ts unit test.
  */
-export const useSessionStore = create<SessionStore>((set, get, api) => ({
+const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => ({
   sessions: [],
   _sessionByTaskId: new Map(),
   activeSessionId: null,
@@ -803,4 +815,53 @@ export const useSessionStore = create<SessionStore>((set, get, api) => ({
 
   ...createTaskChangesPanelSlice(set, get, api),
   ...createTransientSessionSlice(preservedTransientState)(set, get, api),
-}));
+});
+
+const createSessionStore = () => create<SessionStore>(sessionStoreInitializer);
+
+// HMR instance pinning (Pattern E, see .claude/rules/hmr-patterns.md): this
+// module's only runtime exports are the non-component `useSessionStore` and
+// `cancelSync`, so it is not a React Fast Refresh boundary. A re-eval - most
+// often an edit to one of the ./session-store/ slices, not to this file - would
+// otherwise construct a SECOND store while the mounted tree re-binds to it,
+// serving every consumer empty state for a commit. That is not a cosmetic
+// flicker here: `browserOpenTasks` / `browserHeldTasks` reading empty makes
+// TaskDetailBody drop its `browserSlot`, and an Electron `<webview>` guest dies
+// with its DOM node, so the agent's live browser is destroyed and main stands up
+// a hand-off lane.
+// @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
+const preservedSessionStore: ReturnType<typeof createSessionStore> | undefined = import.meta.hot?.data?.sessionStore;
+
+export const useSessionStore = preservedSessionStore ?? createSessionStore();
+
+// Hand project-store the two session actions it needs, rather than letting it
+// import this module. That import used to close the renderer store graph's only
+// cycle, and Vite answers a circular-import invalidate with a full page reload -
+// which destroys every live Browser pane guest. See ./session-lifecycle-hooks.ts.
+registerSessionLifecycleHooks({
+  killTransientSessionForProject: (projectId) =>
+    useSessionStore.getState().killTransientSessionForProject(projectId),
+  markIdleSessionsSeen: (projectId) =>
+    useSessionStore.getState().markIdleSessionsSeen(projectId),
+});
+
+// Must stay BELOW the declaration above, in its own block: the dispose block
+// near the top of this file runs its callback later (so its forward reference to
+// useSessionStore is safe), but this assignment executes immediately and would
+// hit the temporal dead zone if it were folded in there.
+// @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
+if (import.meta.hot) {
+  // @ts-expect-error -- Vite handles import.meta.hot
+  import.meta.hot.data.sessionStore = useSessionStore;
+  // Deliberately NO `accept(() => invalidate())` here, unlike the other Pattern E
+  // stores. This module sits in an import CYCLE that cannot be designed away:
+  // session-store needs the arrival-focus arbiter (`claimArrivalFocus`), the
+  // arbiter needs `resolveFocusedWindowTerminal`, and resolving which terminal
+  // the user is looking at needs session state - so utils/dictation-target.ts
+  // imports back. Vite answers an `invalidate()` from inside a cycle with
+  //     page reload src/renderer/stores/session-store.ts (circular import invalidate)
+  // and a full page reload destroys every live Browser pane <webview> guest, which
+  // is the exact bug the pin above exists to prevent. Stale closures after editing
+  // THIS file (recoverable with a manual reload) are the cheaper failure.
+  // Measured both ways with `scripts/hmr-guest-probe.mjs`.
+}
