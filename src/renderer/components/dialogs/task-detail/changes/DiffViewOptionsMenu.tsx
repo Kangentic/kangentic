@@ -48,7 +48,7 @@ export function DiffViewOptionsMenu({ blame }: DiffViewOptionsMenuProps) {
   const ignoreWhitespace = useConfigStore((state) => state.config.diffIgnoreWhitespace);
   const collapseUnchanged = useConfigStore((state) => state.config.diffCollapseUnchanged);
   const wrapLines = useConfigStore((state) => state.config.diffWrapLines);
-  const useInlineWhenNarrow = useConfigStore((state) => state.config.diffUseInlineWhenNarrow);
+  const inlineWhenNarrow = useConfigStore((state) => state.config.diffUseInlineWhenNarrow);
   const updateConfig = useConfigStore((state) => state.updateConfig);
   const setSettingsOpen = useConfigStore((state) => state.setSettingsOpen);
   const setLastSettingsTab = useConfigStore((state) => state.setLastSettingsTab);
@@ -83,8 +83,8 @@ export function DiffViewOptionsMenu({ blame }: DiffViewOptionsMenuProps) {
           />
           <KebabMenuCheckItem
             label="Inline when narrow"
-            checked={useInlineWhenNarrow}
-            onChange={() => updateConfig({ diffUseInlineWhenNarrow: !useInlineWhenNarrow })}
+            checked={inlineWhenNarrow}
+            onChange={() => updateConfig({ diffUseInlineWhenNarrow: !inlineWhenNarrow })}
             data-testid="diff-inline-when-narrow"
           />
           {blame && (

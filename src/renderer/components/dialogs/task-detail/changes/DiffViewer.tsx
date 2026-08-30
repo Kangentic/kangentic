@@ -177,7 +177,7 @@ export function DiffViewer({
   const ignoreWhitespace = useConfigStore((state) => state.config.diffIgnoreWhitespace);
   const collapseUnchanged = useConfigStore((state) => state.config.diffCollapseUnchanged);
   const wrapLines = useConfigStore((state) => state.config.diffWrapLines);
-  const useInlineWhenNarrow = useConfigStore((state) => state.config.diffUseInlineWhenNarrow);
+  const inlineWhenNarrow = useConfigStore((state) => state.config.diffUseInlineWhenNarrow);
 
   const diffEditorRef = useRef<MonacoDiffEditor | null>(null);
   const monacoRef = useRef<Monaco | null>(null);
@@ -567,8 +567,8 @@ export function DiffViewer({
   // inline pass never fires, and the wordWrapOverride2 repair in handleEditorMount
   // becomes a harmless no-op.
   useEffect(() => {
-    diffEditorRef.current?.updateOptions({ useInlineViewWhenSpaceIsLimited: useInlineWhenNarrow });
-  }, [useInlineWhenNarrow]);
+    diffEditorRef.current?.updateOptions({ useInlineViewWhenSpaceIsLimited: inlineWhenNarrow });
+  }, [inlineWhenNarrow]);
 
   // Re-apply the fold whenever collapse is toggled. The diff is already loaded
   // here, so applyCollapseFold's disable -> enable is the transition Monaco honors.
@@ -740,7 +740,7 @@ export function DiffViewer({
               <button
                 onClick={() => onViewModeChange('split')}
                 className={toolbarButtonClass(viewMode === 'split')}
-                title={useInlineWhenNarrow ? 'Side by side (a narrow pane renders inline)' : 'Side by side'}
+                title={inlineWhenNarrow ? 'Side by side (a narrow pane renders inline)' : 'Side by side'}
                 data-testid="diff-view-split"
               >
                 <Columns2 size={16} />
@@ -831,7 +831,7 @@ export function DiffViewer({
                 minimap: { enabled: false },
                 renderWhitespace: 'boundary',
                 wordWrap: wrapLines ? 'on' : 'off',
-                useInlineViewWhenSpaceIsLimited: useInlineWhenNarrow,
+                useInlineViewWhenSpaceIsLimited: inlineWhenNarrow,
                 // Pin the enclosing scope's header line while scrolling a long
                 // hunk (VS Code's editor.stickyScroll).
                 stickyScroll: { enabled: true },
