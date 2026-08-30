@@ -40,6 +40,11 @@ export function ChangesTab({ globalConfig }: { globalConfig: AppConfig }) {
         checked={globalConfig.diffWrapLines}
         onChange={(value) => updateGlobal({ diffWrapLines: value })}
       />
+      <SettingToggleRow
+        {...settingProps('diffUseInlineWhenNarrow')}
+        checked={globalConfig.diffUseInlineWhenNarrow}
+        onChange={(value) => updateGlobal({ diffUseInlineWhenNarrow: value })}
+      />
       <SettingRow {...settingProps('diffFileSort')}>
         <Select
           value={globalConfig.diffFileSort}
@@ -48,6 +53,7 @@ export function ChangesTab({ globalConfig }: { globalConfig: AppConfig }) {
           <option value="name">Name</option>
           <option value="status">Status</option>
           <option value="size">Size</option>
+          <option value="ext">Extension</option>
         </Select>
       </SettingRow>
       <SettingToggleRow

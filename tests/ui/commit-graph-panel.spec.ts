@@ -1,15 +1,20 @@
 /**
  * UI tests for the Task Detail Changes panel's commit-history browser.
  *
- * The commit graph is the top region of a vertical split: a pinned
- * "Uncommitted changes" row (`data-testid="commit-history-uncommitted"`,
- * selected by default) above the commit list (SVG DAG + one row per commit,
- * `data-testid="commit-graph-row"`), always visible once Changes is opened
- * (via the `changes-toggle` pill) - there is no separate Files | Graph toggle.
- * Selecting a commit row scopes the detail pane below (file tree + diff) to
- * that commit's diff and shows a `commit-detail-header` with a back button
- * (`commit-detail-back`) that returns to Uncommitted. The commit graph is
- * seeded through the mock via window.__mockCommitGraph.
+ * History is a collapsible section at the BOTTOM of the Changes rail
+ * (`changes-history-section`), collapsed by default: its header row
+ * (`changes-history-toggle`, with a live commit count) is always visible, and
+ * expanding it reveals the pinned "Uncommitted changes" row
+ * (`data-testid="commit-history-uncommitted"`, selected by default) above the
+ * commit list (SVG DAG + one row per commit, `data-testid="commit-graph-row"`).
+ * The graph panel stays MOUNTED while collapsed (hidden), so the count is live
+ * before the first expand. Selecting a commit row scopes the detail pane (file
+ * tree + diff) to that commit's diff and swaps the rail's scope-selector slot
+ * for a `commit-detail-header` with a back button (`commit-detail-back`) that
+ * returns to Uncommitted. In the rail's compact rendering the HEAD ref keeps
+ * its badge (`commit-ref-badge`) while base / PR refs render as tone dots
+ * (`commit-ref-dot-base` / `commit-ref-dot-pr`) with tooltip labels. The commit
+ * graph is seeded through the mock via window.__mockCommitGraph.
  */
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Locator, type Page } from '@playwright/test';
@@ -122,26 +127,36 @@ test.afterAll(async () => {
   await browser?.close();
 });
 
-/** Open the task dialog and the Changes panel (assumed closed on entry). The
- *  commit-history browser renders immediately - there is no separate toggle. */
+/** Open the task dialog, the Changes panel, and EXPAND the History section
+ *  (collapsed by default) so the commit browser is visible. */
 async function openDialogWithChangesPanel(taskLocatorText: string, swimlaneName: string): Promise<Page> {
   const card = page.locator(`[data-swimlane-name="${swimlaneName}"]`).locator(`text=${taskLocatorText}`).first();
   await card.click();
   const dialog = page.locator('[data-testid="task-detail-dialog"]');
   await dialog.waitFor({ state: 'visible', timeout: 5000 });
   await page.locator('[data-testid="changes-toggle"]').click();
+  const historyToggle = page.locator('[data-testid="changes-history-toggle"]');
+  await historyToggle.waitFor({ state: 'visible', timeout: 10000 });
+  if ((await historyToggle.getAttribute('aria-expanded')) !== 'true') {
+    await historyToggle.click();
+  }
   await page.locator('[data-testid="commit-graph-panel"]').waitFor({ state: 'visible', timeout: 10000 });
   return dialog;
 }
 
 /** Close the Changes panel and the dialog, leaving the selection on
- *  "Uncommitted changes" so the next test's dialog reopen starts from the
- *  same known state (persisted per-task in the session store's
- *  changesOpenTasks / changesSelectedCommit). */
+ *  "Uncommitted changes" and the History section COLLAPSED so the next test's
+ *  dialog reopen starts from the same known state (both persisted per-task in
+ *  the session store: changesOpenTasks / changesSelectedCommit /
+ *  changesHistoryOpen). */
 async function closeChangesPanelAndDialog(dialog: Locator): Promise<void> {
   const uncommittedRow = page.locator('[data-testid="commit-history-uncommitted"]');
   if (await uncommittedRow.isVisible() && (await uncommittedRow.getAttribute('aria-pressed')) !== 'true') {
     await uncommittedRow.click();
+  }
+  const historyToggle = page.locator('[data-testid="changes-history-toggle"]');
+  if (await historyToggle.isVisible() && (await historyToggle.getAttribute('aria-expanded')) === 'true') {
+    await historyToggle.click();
   }
   await page.locator('[data-testid="changes-toggle"]').click();
   await page.keyboard.press('Control+Shift+W');
@@ -163,11 +178,12 @@ test.describe('Task Detail Changes panel - commit-history browser', () => {
     await expect(page.locator('[data-testid="changes-scope-select"]')).toBeVisible();
     await expect(page.locator('[data-testid="commit-detail-header"]')).not.toBeVisible();
 
-    // The tip commit is marked HEAD; the branch base is labelled with the base branch.
+    // The tip commit keeps the HEAD badge; the branch base renders the compact
+    // base dot (rail rendering demotes base/PR refs to dots).
     const tipCommitRow = page.locator('[data-testid="commit-graph-row"]').filter({ hasText: 'third commit' });
     await expect(tipCommitRow.locator('[data-testid="commit-ref-badge"]').filter({ hasText: 'HEAD' })).toBeVisible();
     const baseCommitRow = page.locator('[data-testid="commit-graph-row"]').filter({ hasText: 'first commit' });
-    await expect(baseCommitRow.locator('[data-testid="commit-ref-badge"]').filter({ hasText: 'main' })).toBeVisible();
+    await expect(baseCommitRow.locator('[data-testid="commit-ref-dot-base"]')).toBeVisible();
 
     // Select a commit: the detail pane shows the commit-detail header instead
     // of the scope selector, and the row is marked selected.
@@ -187,19 +203,20 @@ test.describe('Task Detail Changes panel - commit-history browser', () => {
     await closeChangesPanelAndDialog(dialog);
   });
 
-  test('the commit-history region is drag-resizable', async () => {
+  test('the History section body is drag-resizable (dragging up grows it)', async () => {
     const dialog = await openDialogWithChangesPanel('Commit Graph Task', 'Code Review');
 
     const historyPanel = page.locator('[data-testid="commit-graph-panel"]');
     await historyPanel.waitFor({ state: 'visible', timeout: 10000 });
     const beforeHeight = (await historyPanel.boundingBox())!.height;
 
-    // Drag the divider 80px down to grow the history region (mirrors the
+    // The section sits at the BOTTOM of the rail with its resize handle above
+    // it, so dragging the handle 80px UP grows the history body (mirrors the
     // file-tree's "drag-resizable" test in changes-panel-scope.spec.ts).
     const handleBox = (await page.locator('[data-testid="changes-history-resize"]').boundingBox())!;
     await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
     await page.mouse.down();
-    await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + 80, { steps: 6 });
+    await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y - 80, { steps: 6 });
     await page.mouse.up();
 
     // The history region grew by roughly the drag distance (tolerance for clamping/rounding).
@@ -410,7 +427,7 @@ test.describe('Commit graph PR-head ref badge', () => {
     await prBadgeBrowser?.close();
   });
 
-  test("renders a PR badge on the commit matching the task's head_sha", async () => {
+  test("renders the PR ref dot on the commit matching the task's head_sha", async () => {
     const card = prBadgePage
       .locator('[data-swimlane-name="Code Review"]')
       .locator('text=PR Badge Graph Task')
@@ -420,14 +437,22 @@ test.describe('Commit graph PR-head ref badge', () => {
     await dialog.waitFor({ state: 'visible', timeout: 5000 });
 
     await prBadgePage.locator('[data-testid="changes-toggle"]').click();
+    // Expand the (default-collapsed) History section to reveal the graph.
+    const historyToggle = prBadgePage.locator('[data-testid="changes-history-toggle"]');
+    await historyToggle.waitFor({ state: 'visible', timeout: 10000 });
+    await historyToggle.click();
     await prBadgePage.locator('[data-testid="commit-graph-svg"]').waitFor({ state: 'visible', timeout: 10000 });
 
+    // Compact (rail) rendering: the PR ref is a tone dot with its label in the
+    // row tooltip, not a text badge.
     const headCommitRow = prBadgePage.locator('[data-testid="commit-graph-row"]').filter({ hasText: 'PR head commit' });
-    await expect(headCommitRow.locator('[data-testid="commit-ref-badge"]').filter({ hasText: 'PR #42' })).toBeVisible();
+    await expect(headCommitRow.locator('[data-testid="commit-ref-dot-pr"]')).toBeVisible();
+    await expect(headCommitRow).toHaveAttribute('title', /PR #42/);
 
-    // The base commit row must NOT carry the PR badge.
+    // The base commit row must NOT carry the PR dot (its own ref is the base dot).
     const baseCommitRow = prBadgePage.locator('[data-testid="commit-graph-row"]').filter({ hasText: 'PR base commit' });
-    await expect(baseCommitRow.locator('[data-testid="commit-ref-badge"]').filter({ hasText: 'PR #42' })).toHaveCount(0);
+    await expect(baseCommitRow.locator('[data-testid="commit-ref-dot-pr"]')).toHaveCount(0);
+    await expect(baseCommitRow.locator('[data-testid="commit-ref-dot-base"]')).toBeVisible();
 
     await prBadgePage.locator('[data-testid="changes-toggle"]').click();
     await prBadgePage.keyboard.press('Control+Shift+W');

@@ -118,6 +118,7 @@
     diffIgnoreWhitespace: false,
     diffCollapseUnchanged: false,
     diffWrapLines: false,
+    diffUseInlineWhenNarrow: true,
     diffFileSort: 'name',
     diffFlatList: false,
     terminal: {

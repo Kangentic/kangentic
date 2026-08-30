@@ -567,6 +567,12 @@
 @keyframes popover-in  { from { opacity: 0; transform: scale(0.96) } }
 @keyframes popover-out { to   { opacity: 0; transform: scale(0.96) } }
 
+/* Changes rail slot swap (scope tabs <-> pinned-commit header): a brief fade on
+   the incoming content. Applied only on the LIVE pin/unpin interaction - a
+   restored pin renders without the class, so nothing replays on hydration. */
+@keyframes rail-slot-in { from { opacity: 0 } }
+.rail-slot-in { animation: rail-slot-in 120ms ease-out; }
+
 /* ── Token-driven overlay animation utilities ──
    Overlays apply these per phase (entering -> *-in, exiting -> *-out) instead of
    hardcoding durations. Backdrops share one fade token-set across all variants. */
@@ -661,6 +667,11 @@
   /* The dialog maximize/restore size tween reads the same preference. */
   .dialog-maximize-anim {
     transition-duration: 0.01ms !important;
+  }
+
+  /* Rail slot-swap fade: nothing waits on its animationend, safe to drop. */
+  .rail-slot-in {
+    animation: none;
   }
 }
 

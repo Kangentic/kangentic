@@ -254,30 +254,46 @@ test.describe('DiffViewer toolbar: rendering toggles, and the surface header exp
     await expect(page.locator('[data-testid="diff-prev-change"]')).toBeVisible();
     await expect(page.locator('[data-testid="diff-next-change"]')).toBeVisible();
 
+    // The rendering preferences live behind the labelled "View options" menu
+    // (they were icon-only toggles nobody could read without hovering), so
+    // each assertion opens the menu, reads aria-checked, and clicks the item.
+    const viewOptions = page.locator('[data-testid="diff-view-options"]');
+    const optionsMenu = page.locator('[data-testid="diff-view-options-menu"]');
+    const openViewOptions = async () => {
+      await viewOptions.click();
+      await expect(optionsMenu).toBeVisible({ timeout: 5000 });
+    };
+
     // Whitespace toggle starts off (config default false) and flips on click.
-    const whitespace = page.locator('[data-testid="diff-ignore-whitespace"]');
-    await expect(whitespace).toHaveAttribute('aria-pressed', 'false');
+    await openViewOptions();
+    const whitespace = optionsMenu.locator('[data-testid="diff-ignore-whitespace"]');
+    await expect(whitespace).toHaveAttribute('aria-checked', 'false');
     await whitespace.click();
-    await expect(whitespace).toHaveAttribute('aria-pressed', 'true');
+    await expect(whitespace).toHaveAttribute('aria-checked', 'true');
     // Restore so the global config does not bleed into other specs.
     await whitespace.click();
-    await expect(whitespace).toHaveAttribute('aria-pressed', 'false');
+    await expect(whitespace).toHaveAttribute('aria-checked', 'false');
 
-    // Collapse-unchanged starts off and flips on.
-    const collapse = page.locator('[data-testid="diff-collapse-unchanged"]');
-    await expect(collapse).toHaveAttribute('aria-pressed', 'false');
+    // Collapse-unchanged starts off and flips on (menu stays open between
+    // toggles - these are view options, not one-shot actions).
+    const collapse = optionsMenu.locator('[data-testid="diff-collapse-unchanged"]');
+    await expect(collapse).toHaveAttribute('aria-checked', 'false');
     await collapse.click();
-    await expect(collapse).toHaveAttribute('aria-pressed', 'true');
+    await expect(collapse).toHaveAttribute('aria-checked', 'true');
     await collapse.click();
-    await expect(collapse).toHaveAttribute('aria-pressed', 'false');
+    await expect(collapse).toHaveAttribute('aria-checked', 'false');
 
     // Wrap-long-lines starts off and flips on.
-    const wrapLines = page.locator('[data-testid="diff-wrap-lines"]');
-    await expect(wrapLines).toHaveAttribute('aria-pressed', 'false');
+    const wrapLines = optionsMenu.locator('[data-testid="diff-wrap-lines"]');
+    await expect(wrapLines).toHaveAttribute('aria-checked', 'false');
     await wrapLines.click();
-    await expect(wrapLines).toHaveAttribute('aria-pressed', 'true');
+    await expect(wrapLines).toHaveAttribute('aria-checked', 'true');
     await wrapLines.click();
-    await expect(wrapLines).toHaveAttribute('aria-pressed', 'false');
+    await expect(wrapLines).toHaveAttribute('aria-checked', 'false');
+
+    // Inline-when-narrow is the fourth option, defaulting ON.
+    await expect(optionsMenu.locator('[data-testid="diff-inline-when-narrow"]')).toHaveAttribute('aria-checked', 'true');
+    await page.keyboard.press('Escape');
 
     await page.evaluate(() => {
       (window as unknown as Record<string, unknown>).__mockGitDiff = null;
@@ -344,15 +360,24 @@ test.describe('DiffViewer toolbar: rendering toggles, and the surface header exp
         return { original: rows('.editor.original'), modified: rows('.editor.modified') };
       });
 
-    const wrapLines = page.locator('[data-testid="diff-wrap-lines"]');
-    await expect(wrapLines).toHaveAttribute('aria-pressed', 'false');
+    // Wrap lives in the "View options" menu; open it, flip the option, and
+    // close so the menu never overlaps the panes being measured.
+    const wrapMenu = page.locator('[data-testid="diff-view-options-menu"]');
+    const toggleWrap = async (expectedAfter: 'true' | 'false') => {
+      await page.locator('[data-testid="diff-view-options"]').click();
+      await expect(wrapMenu).toBeVisible({ timeout: 5000 });
+      const item = wrapMenu.locator('[data-testid="diff-wrap-lines"]');
+      await item.click();
+      await expect(item).toHaveAttribute('aria-checked', expectedAfter);
+      await page.keyboard.press('Escape');
+      await expect(wrapMenu).not.toBeVisible({ timeout: 5000 });
+    };
 
     // Unwrapped: the long line is one row, so each pane renders only a handful.
     await expect.poll(async () => (await renderedRows()).modified).toBeLessThan(10);
     expect((await renderedRows()).original).toBeLessThan(10);
 
-    await wrapLines.click();
-    await expect(wrapLines).toHaveAttribute('aria-pressed', 'true');
+    await toggleWrap('true');
 
     // Wrapped: a 2000-character line reflows into many rows at any plausible width.
     await expect.poll(async () => (await renderedRows()).modified).toBeGreaterThan(15);
@@ -366,8 +391,7 @@ test.describe('DiffViewer toolbar: rendering toggles, and the surface header exp
     await expect.poll(async () => (await renderedRows()).original).toBeGreaterThan(15);
 
     // Turning wrap back off restores single-row rendering.
-    await wrapLines.click();
-    await expect(wrapLines).toHaveAttribute('aria-pressed', 'false');
+    await toggleWrap('false');
     await expect.poll(async () => (await renderedRows()).original).toBeLessThan(10);
 
     // Restore shared state: collapse, un-maximize, clear the diff, close the dialog.
@@ -429,8 +453,9 @@ test.describe('DiffViewer toolbar: rendering toggles, and the surface header exp
     await expect(preview).toBeVisible();
     await expect(preview.locator('h1')).toHaveText('New Heading');
     await expect(page.locator('[data-testid="diff-view-split"]')).not.toBeVisible();
-    await expect(page.locator('[data-testid="diff-ignore-whitespace"]')).not.toBeVisible();
-    await expect(page.locator('[data-testid="diff-wrap-lines"]')).not.toBeVisible();
+    // The whole view-options menu is diff-only, so its trigger goes with the
+    // rest of the diff controls while the rendered preview is showing.
+    await expect(page.locator('[data-testid="diff-view-options"]')).not.toBeVisible();
 
     // Toggle back returns to the diff and restores the diff-only controls.
     await previewToggle.click();

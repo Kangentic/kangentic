@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useLayoutEffect, useRef } from 'react';
+import { Suspense, lazy, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Loader2, Play, RotateCcw } from 'lucide-react';
 import { TerminalTab } from '../../terminal/TerminalTab';
 import { ContextBar } from '../../terminal/ContextBar';
@@ -49,7 +49,9 @@ function warmChangesPanelOnIdle(): void {
 function ChangesPanelSkeleton() {
   return (
     <div className="flex h-full" data-testid="changes-panel-skeleton">
-      <div className="w-[220px] flex-shrink-0 border-r border-edge p-2 space-y-1.5">
+      {/* Mirrors ChangesPanel's RAIL_DEFAULT_WIDTH_CLAMP (kept literal here so
+          the skeleton never imports the lazy chunk it stands in for). */}
+      <div className="flex-shrink-0 border-r border-edge p-2 space-y-1.5" style={{ width: 'clamp(220px, 25%, 420px)' }}>
         {Array.from({ length: 6 }, (_, index) => (
           <div key={index} className="h-4 rounded bg-surface-hover animate-pulse" style={{ opacity: 1 - index * 0.1 }} />
         ))}
@@ -219,8 +221,41 @@ export function TaskDetailBody({
   useLayoutEffect(() => {
     scheduleWindowTerminalResize();
   }, [rightPanelPresent, changesExpanded]);
-  const handleChangesExpand = () => setChangesViewMode(task.id, 'expanded');
-  const handleChangesCollapse = () => setChangesViewMode(task.id, 'split');
+  // Transient expand/collapse animation for the ACTIVE-session split row: the
+  // terminal wrapper's flexBasis transitions between the split ratio and 0
+  // instead of snapping. Set ONLY by the two click handlers (never derived
+  // from the persisted mode), so a hydrated-expanded restore paints flat with
+  // no wrapper and no motion (restore-no-animation-replay). 'start' paints the
+  // FROM basis for one frame; 'run' flips to the TO basis so the CSS
+  // transition has an actual change to animate. A timer (not transitionend)
+  // clears the state, so reduced-motion - where the transition is disabled and
+  // no transitionend ever fires - still settles.
+  const [expandTransition, setExpandTransition] = useState<{ direction: 'expand' | 'collapse'; phase: 'start' | 'run' } | null>(null);
+  useLayoutEffect(() => {
+    if (expandTransition?.phase !== 'start') return;
+    const raf = requestAnimationFrame(() => {
+      setExpandTransition((current) => (current ? { ...current, phase: 'run' } : current));
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [expandTransition]);
+  useEffect(() => {
+    if (expandTransition?.phase !== 'run') return;
+    const timer = setTimeout(() => {
+      setExpandTransition(null);
+      // The collapse animation lands the terminal at its final basis AFTER the
+      // mode-flip dispatch above already fired; refit once more at rest.
+      scheduleWindowTerminalResize();
+    }, 260);
+    return () => clearTimeout(timer);
+  }, [expandTransition]);
+  const handleChangesExpand = () => {
+    setExpandTransition({ direction: 'expand', phase: 'start' });
+    setChangesViewMode(task.id, 'expanded');
+  };
+  const handleChangesCollapse = () => {
+    setExpandTransition({ direction: 'collapse', phase: 'start' });
+    setChangesViewMode(task.id, 'split');
+  };
   const taskLabels = task.labels ?? [];
   const taskPriority = task.priority ?? 0;
   const hasLabelsOrPriority = taskPriority > 0 || taskLabels.length > 0;
@@ -416,13 +451,31 @@ export function TaskDetailBody({
       </div>
     );
 
+    // The terminal wrapper stays mounted through the expand EXIT animation (its
+    // flexBasis transitions to 0, then the timer unmounts it); on collapse it
+    // mounts at basis 0 and transitions up to the split ratio. It is child 0 of
+    // the split row in every state - the conditional occupies the same child
+    // index whether it renders the wrapper or false - so the browserSlot's
+    // index never shifts (retained-pane-never-remounts).
+    const terminalWrapperMounted = !changesExpanded || expandTransition?.direction === 'expand';
+    const terminalBasis = expandTransition
+      ? (expandTransition.direction === 'expand'
+          ? (expandTransition.phase === 'start' ? `${splitRatio * 100}%` : '0%')
+          : (expandTransition.phase === 'start' ? '0%' : `${splitRatio * 100}%`))
+      : rightPanelPresent
+        ? `${splitRatio * 100}%`
+        : undefined;
     return (
       <>
         <div ref={splitContainerRef} className="relative flex-1 min-h-0 flex">
-          {!changesExpanded && (
+          {terminalWrapperMounted && (
             <div
-              className={`${rightPanelPresent ? 'flex-shrink-0 flex-grow-0' : 'flex-1'} min-h-0 relative overflow-hidden`}
-              style={rightPanelPresent ? { flexBasis: `${splitRatio * 100}%` } : undefined}
+              className={`${rightPanelPresent || expandTransition ? 'flex-shrink-0 flex-grow-0' : 'flex-1'} min-h-0 relative overflow-hidden ${
+                // Transition only during the click-driven toggle - never on the
+                // divider drag (1:1 pointer tracking) and never on a restore.
+                expandTransition ? 'transition-[flex-basis] duration-200 ease-out motion-reduce:transition-none' : ''
+              }`}
+              style={terminalBasis !== undefined ? { flexBasis: terminalBasis } : undefined}
             >
               {/* Dimmed while an agent drives the Browser pane.
                   Interacting with a page means clicking it, and a click gives

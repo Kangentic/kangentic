@@ -1,12 +1,14 @@
 /**
  * UI test for the DiffViewer blame gutter (PR 6).
  *
- * Blame is off by default, toggled per file (diff-blame-toggle). When on, it
- * fetches window.electronAPI.git.blame (seeded via window.__mockBlame) and
- * renders a left-gutter `before`-content decoration
- * (.blame-gutter-annotation) on each blamed line of the modified editor.
- * Blame is unavailable (button disabled) for a binary or deleted file, and
- * while browsing a historical commit (DiffViewer's blameEligible prop).
+ * Blame is off by default and toggled per file from the diff toolbar's
+ * "View options" menu (`diff-view-options` -> `diff-blame-toggle`, a
+ * `menuitemcheckbox`). When on, it fetches window.electronAPI.git.blame
+ * (seeded via window.__mockBlame) and renders a left-gutter `before`-content
+ * decoration (.blame-gutter-annotation) on each blamed line of the modified
+ * editor. Blame is unavailable (the menu item disabled) for a binary or
+ * deleted file, and while browsing a historical commit (DiffViewer's
+ * blameEligible prop).
  */
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
@@ -160,6 +162,20 @@ function readLineChangeCount(page: Page): Promise<number> {
   });
 }
 
+/** Open the diff toolbar's "View options" menu and return the blame item. */
+async function openBlameOption(page: Page) {
+  await page.locator('[data-testid="diff-view-options"]').click();
+  const menu = page.locator('[data-testid="diff-view-options-menu"]');
+  await expect(menu).toBeVisible({ timeout: 8000 });
+  return menu.locator('[data-testid="diff-blame-toggle"]');
+}
+
+/** Dismiss the menu so it never overlays the editor being asserted on. */
+async function closeViewOptions(page: Page): Promise<void> {
+  await page.keyboard.press('Escape');
+  await expect(page.locator('[data-testid="diff-view-options-menu"]')).not.toBeVisible({ timeout: 8000 });
+}
+
 test.describe('DiffViewer: blame gutter', () => {
   test('toggling blame renders per-line gutter annotations; toggling off clears them', async () => {
     const card = page.locator('[data-swimlane-name="Code Review"]').locator('text=Blame Gutter Task').first();
@@ -176,19 +192,22 @@ test.describe('DiffViewer: blame gutter', () => {
     await fileTree.locator('text=blamed.ts').click();
     await expect.poll(() => readLineChangeCount(page), { timeout: 15000 }).toBeGreaterThanOrEqual(0);
 
-    const blameToggle = page.locator('[data-testid="diff-blame-toggle"]');
+    const blameToggle = await openBlameOption(page);
     await expect(blameToggle).toBeEnabled();
-    await expect(blameToggle).toHaveAttribute('aria-pressed', 'false');
+    await expect(blameToggle).toHaveAttribute('aria-checked', 'false');
 
     await blameToggle.click();
-    await expect(blameToggle).toHaveAttribute('aria-pressed', 'true');
+    await expect(blameToggle).toHaveAttribute('aria-checked', 'true');
+    await closeViewOptions(page);
     await expect.poll(
       async () => page.locator('.blame-gutter-annotation').count(),
       { timeout: 10000 },
     ).toBeGreaterThan(0);
 
-    await blameToggle.click();
-    await expect(blameToggle).toHaveAttribute('aria-pressed', 'false');
+    const blameToggleAgain = await openBlameOption(page);
+    await blameToggleAgain.click();
+    await expect(blameToggleAgain).toHaveAttribute('aria-checked', 'false');
+    await closeViewOptions(page);
     await expect.poll(
       async () => page.locator('.blame-gutter-annotation').count(),
       { timeout: 10000 },
@@ -212,7 +231,8 @@ test.describe('DiffViewer: blame gutter', () => {
     }
 
     await fileTree.locator('text=deleted.ts').click();
-    await expect(page.locator('[data-testid="diff-blame-toggle"]')).toBeDisabled();
+    await expect(await openBlameOption(page)).toBeDisabled();
+    await closeViewOptions(page);
 
     await page.locator('[data-testid="changes-toggle"]').click();
     await page.keyboard.press('Control+Shift+W');
@@ -232,7 +252,8 @@ test.describe('DiffViewer: blame gutter', () => {
     }
 
     await fileTree.locator('text=logo.png').click();
-    await expect(page.locator('[data-testid="diff-blame-toggle"]')).toBeDisabled();
+    await expect(await openBlameOption(page)).toBeDisabled();
+    await closeViewOptions(page);
 
     await page.locator('[data-testid="changes-toggle"]').click();
     await page.keyboard.press('Control+Shift+W');
@@ -251,10 +272,17 @@ test.describe('DiffViewer: blame gutter', () => {
       await page.locator('[data-testid="changes-toggle"]').click();
     }
 
-    // Sanity: on Uncommitted, blamed.ts's toggle starts enabled.
+    // Sanity: on Uncommitted, blamed.ts's option starts enabled.
     await fileTree.locator('text=blamed.ts').click();
-    const blameToggle = page.locator('[data-testid="diff-blame-toggle"]');
-    await expect(blameToggle).toBeEnabled();
+    await expect(await openBlameOption(page)).toBeEnabled();
+    await closeViewOptions(page);
+
+    // Expand the (default-collapsed) History section to reveal the commit rows.
+    const historyToggle = page.locator('[data-testid="changes-history-toggle"]');
+    await historyToggle.waitFor({ state: 'visible', timeout: 10000 });
+    if ((await historyToggle.getAttribute('aria-expanded')) !== 'true') {
+      await historyToggle.click();
+    }
 
     // Select the historical commit that also touches blamed.ts - the same
     // file path, but blame is not eligible while browsing a commit (content
@@ -262,13 +290,15 @@ test.describe('DiffViewer: blame gutter', () => {
     await page.locator('[data-testid="commit-graph-row"]').filter({ hasText: 'touch blamed.ts' }).click();
     await expect(page.locator('[data-testid="commit-detail-header"]')).toBeVisible({ timeout: 10000 });
     await fileTree.locator('text=blamed.ts').click();
-    await expect(blameToggle).toBeDisabled();
+    await expect(await openBlameOption(page)).toBeDisabled();
+    await closeViewOptions(page);
 
     // Returning to Uncommitted re-enables blame for the same file.
     await page.locator('[data-testid="commit-detail-back"]').click();
     await expect(page.locator('[data-testid="commit-detail-header"]')).not.toBeVisible({ timeout: 10000 });
     await fileTree.locator('text=blamed.ts').click();
-    await expect(blameToggle).toBeEnabled();
+    await expect(await openBlameOption(page)).toBeEnabled();
+    await closeViewOptions(page);
 
     await page.locator('[data-testid="changes-toggle"]').click();
     await page.keyboard.press('Control+Shift+W');

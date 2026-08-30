@@ -455,6 +455,8 @@ export interface TaskDetailViewState {
   changesSelectedCommit?: string;
   /** Manually-set commit-history region height (px) in the Changes panel's vertical split. */
   changesHistoryHeight?: number;
+  /** History section expanded in the Changes rail. Written only when true; absent means collapsed (the default). */
+  changesHistoryOpen?: boolean;
 }
 
 export interface TaskAttachment {
@@ -2434,7 +2436,8 @@ export interface AppConfig {
   diffIgnoreWhitespace: boolean; // hide whitespace-only changes in the diff
   diffCollapseUnchanged: boolean; // fold away large unchanged regions, showing only changed hunks
   diffWrapLines: boolean; // soft-wrap long lines in the diff instead of scrolling horizontally
-  diffFileSort: 'name' | 'status' | 'size'; // Changes panel file ordering
+  diffUseInlineWhenNarrow: boolean; // render a narrow diff pane inline even when Side by side is selected
+  diffFileSort: 'name' | 'status' | 'size' | 'ext'; // Changes panel file ordering
   diffFlatList: boolean; // Changes panel file list: flat full-path list vs nested directory tree
 
   /** Persisted Agent Monitor view. Global-only: the monitor spans every project, so a
@@ -2932,6 +2935,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   diffIgnoreWhitespace: false,
   diffCollapseUnchanged: false,
   diffWrapLines: false,
+  diffUseInlineWhenNarrow: true,
   diffFileSort: 'name',
   diffFlatList: false,
   monitor: {

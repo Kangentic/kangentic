@@ -162,9 +162,11 @@ async function ensureChangesPanelOpen(): Promise<void> {
   // Re-establish the working (Uncommitted) scope: a failed or retried earlier
   // test can leave the file list pinned to the fixture commit, and every test
   // here that needs the working rows would then fail for that unrelated reason.
+  // The rail's commit-detail back button is the always-visible way back (the
+  // Uncommitted row lives inside the default-collapsed History section).
   const workingRow = page.locator('[data-testid="changes-file-row"][data-path="docs/database.md"]');
   if (!(await workingRow.isVisible())) {
-    await page.locator('[data-testid="commit-history-uncommitted"]').click();
+    await page.locator('[data-testid="commit-detail-back"]').click();
     await workingRow.waitFor({ state: 'visible', timeout: 8000 });
   }
 }
@@ -227,8 +229,12 @@ test.describe('Changes panel: per-file diff pop-out', () => {
     await ensureChangesPanelOpen();
     await resetPopOutMock();
 
-    // Select the fixture commit in the history region; the file list swaps to
-    // the commit's diff.
+    // Expand the (default-collapsed) History section, then select the fixture
+    // commit; the file list swaps to the commit's diff.
+    const historyToggle = page.locator('[data-testid="changes-history-toggle"]');
+    if ((await historyToggle.getAttribute('aria-expanded')) !== 'true') {
+      await historyToggle.click();
+    }
     await page.locator('[data-testid="commit-graph-row"]', { hasText: 'commit-scoped fixture' }).click();
     const commitRow = page.locator('[data-testid="changes-file-row"][data-path="docs/commit-file.md"]');
     const commitRowButton = commitRow.getByRole('button', { name: /commit-file\.md/ });
@@ -245,11 +251,12 @@ test.describe('Changes panel: per-file diff pop-out', () => {
     expect(openCall?.params.commitOid).toBe(COMMIT_OID);
     expect(openCall?.params.scope ?? null).toBeNull();
 
-    // Restore the working diff for the tests that follow.
-    await page.locator('[data-testid="commit-history-uncommitted"]').click();
+    // Restore the working diff for the tests that follow (back button + re-collapse).
+    await page.locator('[data-testid="commit-detail-back"]').click();
     await page
       .locator('[data-testid="changes-file-row"][data-path="docs/database.md"]')
       .waitFor({ state: 'visible', timeout: 8000 });
+    await page.locator('[data-testid="changes-history-toggle"]').click();
   });
 
   test('the context menu offers "Open in new window" and it opens the pop-out', async () => {
