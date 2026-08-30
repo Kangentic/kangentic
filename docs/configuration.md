@@ -29,7 +29,7 @@ These settings appear only in App Settings and cannot be overridden per-project:
 - `sidebarVisible`, `boardLayout`, `sidebar.width`
 - `columnWidth`, `terminalPanelVisible`, `animationsEnabled`, `statusBarVisible`, `diffViewMode`
 - `cardDensity`, `showTaskNumbers` (Task tab)
-- `diffDefaultScope`, `diffIgnoreWhitespace`, `diffCollapseUnchanged`, `diffFileSort`, `diffFlatList`
+- `diffDefaultScope`, `diffIgnoreWhitespace`, `diffCollapseUnchanged`, `diffWrapLines`, `diffFileSort`, `diffFlatList`
 - `monitor` (the Agent Monitor's own toolbar controls, not a Settings-panel entry)
 - `restoreWindowPosition`
 - `agent.cliPaths`, `agent.maxConcurrentSessions`, `agent.queueOverflow`, `agent.autoResumeSessionsOnRestart`
@@ -81,6 +81,7 @@ These settings appear in both App Settings (as defaults) and Project Settings (a
 | `diffDefaultScope` | `'working'` \| `'staged'` \| `'branch'` | `'working'` | Which changes a freshly opened Changes panel shows: `working` (uncommitted edits vs the index), `staged` (index vs HEAD), or `branch` (the whole branch vs its base). The in-panel scope control overrides it per session. Global-only. |
 | `diffIgnoreWhitespace` | boolean | `false` | Hide whitespace-only changes in the diff to filter reformatting noise. The in-diff toggle and the Changes tab write this key. Global-only. |
 | `diffCollapseUnchanged` | boolean | `false` | Fold away large unchanged regions so only changed hunks (with a little surrounding context) are shown. Global-only. |
+| `diffWrapLines` | boolean | `false` | Soft-wrap long lines onto the next row instead of scrolling the diff horizontally. Applies to both split and inline mode. The in-diff toggle and the Changes tab write this key. Global-only. |
 | `diffFileSort` | `'name'` \| `'status'` \| `'size'` | `'name'` | How the Changes panel orders files: by name, by status (added / modified / deleted), or by size (most changes first). Global-only. |
 | `diffFlatList` | boolean | `false` | Show changed files as a flat list of full paths instead of a nested directory tree. Global-only. |
 | `monitor` | MonitorView | see below | Persisted Agent Monitor view. Global-only: the monitor spans every project, so a per-project override would be meaningless. Not surfaced in the Settings panel - these are the monitor's own toolbar controls, written debounced on every change so the view survives a quit or crash, not just an orderly close. |

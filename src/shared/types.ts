@@ -2433,6 +2433,7 @@ export interface AppConfig {
   diffDefaultScope: GitDiffScope; // default scope a freshly opened Changes panel uses
   diffIgnoreWhitespace: boolean; // hide whitespace-only changes in the diff
   diffCollapseUnchanged: boolean; // fold away large unchanged regions, showing only changed hunks
+  diffWrapLines: boolean; // soft-wrap long lines in the diff instead of scrolling horizontally
   diffFileSort: 'name' | 'status' | 'size'; // Changes panel file ordering
   diffFlatList: boolean; // Changes panel file list: flat full-path list vs nested directory tree
 
@@ -2930,6 +2931,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   diffDefaultScope: 'working',
   diffIgnoreWhitespace: false,
   diffCollapseUnchanged: false,
+  diffWrapLines: false,
   diffFileSort: 'name',
   diffFlatList: false,
   monitor: {

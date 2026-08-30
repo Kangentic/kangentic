@@ -271,10 +271,111 @@ test.describe('DiffViewer toolbar: rendering toggles, and the surface header exp
     await collapse.click();
     await expect(collapse).toHaveAttribute('aria-pressed', 'false');
 
+    // Wrap-long-lines starts off and flips on.
+    const wrapLines = page.locator('[data-testid="diff-wrap-lines"]');
+    await expect(wrapLines).toHaveAttribute('aria-pressed', 'false');
+    await wrapLines.click();
+    await expect(wrapLines).toHaveAttribute('aria-pressed', 'true');
+    await wrapLines.click();
+    await expect(wrapLines).toHaveAttribute('aria-pressed', 'false');
+
     await page.evaluate(() => {
       (window as unknown as Record<string, unknown>).__mockGitDiff = null;
     });
 
+    await changesPill.click();
+    await page.keyboard.press('Control+Shift+W');
+    await expect(dialog).not.toBeVisible({ timeout: 8000 });
+  });
+
+  test('wrap toggle actually reflows long lines in BOTH diff panes', async () => {
+    // aria-pressed only proves the button flipped. This asserts Monaco really wrapped,
+    // and covers both panes: Monaco force-sets wordWrapOverride1 AND override2 to 'off'
+    // on the ORIGINAL editor whenever the diff renders inline, but restores only
+    // override1 when it goes back side-by-side, and override2 outranks override1. That
+    // left the LEFT pane permanently unwrapped until DiffViewer started clearing the
+    // stale override. Counting rendered .view-line elements (not pixels) keeps this
+    // independent of font metrics, which differ between local Windows and CI's Linux.
+    const longLine = `const veryLongIdentifier = '${'wrap-me-'.repeat(250)}';`;
+    await page.evaluate((line) => {
+      (window as unknown as { __mockGitDiff: unknown }).__mockGitDiff = {
+        files: [
+          {
+            path: 'src/renderer/components/LongLines.tsx',
+            status: 'M',
+            insertions: 1,
+            deletions: 1,
+            binary: false,
+            // Both sides carry a long line so each pane is independently testable.
+            original: `${line}\nconst shared = 1;\n`,
+            modified: `${line}\nconst shared = 2;\n`,
+            language: 'typescript',
+          },
+        ],
+      };
+    }, longLine);
+
+    const card = page
+      .locator('[data-swimlane-name="Code Review"]')
+      .locator('text=DiffViewer Toolbar Task')
+      .first();
+    await card.click();
+
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 5000 });
+
+    const changesPill = page.locator('[data-testid="changes-toggle"]');
+    await changesPill.click();
+    await expect(page.locator('[data-testid="diff-view-split"]')).toBeVisible({ timeout: 8000 });
+
+    // Maximize AND expand the Changes surface so the diff editor clears Monaco's
+    // ~900px side-by-side breakpoint; below it Monaco renders inline on its own and
+    // there is no left pane to check. Maximizing alone is not enough.
+    await page.locator('[data-testid="task-detail-maximize"]').click();
+    await page.locator('[data-testid="changes-expand"]').click();
+    const sideBySide = page.locator('.monaco-diff-editor.side-by-side');
+    await expect(sideBySide).toBeVisible({ timeout: 8000 });
+
+    // Count the rendered rows Monaco produced for each pane's content.
+    const renderedRows = () =>
+      page.evaluate(() => {
+        const rows = (selector: string) =>
+          document.querySelectorAll(`.monaco-diff-editor ${selector} .view-line`).length;
+        return { original: rows('.editor.original'), modified: rows('.editor.modified') };
+      });
+
+    const wrapLines = page.locator('[data-testid="diff-wrap-lines"]');
+    await expect(wrapLines).toHaveAttribute('aria-pressed', 'false');
+
+    // Unwrapped: the long line is one row, so each pane renders only a handful.
+    await expect.poll(async () => (await renderedRows()).modified).toBeLessThan(10);
+    expect((await renderedRows()).original).toBeLessThan(10);
+
+    await wrapLines.click();
+    await expect(wrapLines).toHaveAttribute('aria-pressed', 'true');
+
+    // Wrapped: a 2000-character line reflows into many rows at any plausible width.
+    await expect.poll(async () => (await renderedRows()).modified).toBeGreaterThan(15);
+    await expect.poll(async () => (await renderedRows()).original).toBeGreaterThan(15);
+
+    // Survives a side-by-side -> inline -> side-by-side round trip, which is the exact
+    // sequence that strands override2 on the original editor.
+    await page.locator('[data-testid="diff-view-inline"]').click();
+    await page.locator('[data-testid="diff-view-split"]').click();
+    await expect(sideBySide).toBeVisible();
+    await expect.poll(async () => (await renderedRows()).original).toBeGreaterThan(15);
+
+    // Turning wrap back off restores single-row rendering.
+    await wrapLines.click();
+    await expect(wrapLines).toHaveAttribute('aria-pressed', 'false');
+    await expect.poll(async () => (await renderedRows()).original).toBeLessThan(10);
+
+    // Restore shared state: collapse, un-maximize, clear the diff, close the dialog.
+    await page.locator('[data-testid="changes-collapse"]').click();
+    await page.locator('[data-testid="task-detail-maximize"]').click();
+    await page.evaluate(() => {
+      (window as unknown as Record<string, unknown>).__mockGitDiff = null;
+    });
     await changesPill.click();
     await page.keyboard.press('Control+Shift+W');
     await expect(dialog).not.toBeVisible({ timeout: 8000 });
@@ -329,6 +430,7 @@ test.describe('DiffViewer toolbar: rendering toggles, and the surface header exp
     await expect(preview.locator('h1')).toHaveText('New Heading');
     await expect(page.locator('[data-testid="diff-view-split"]')).not.toBeVisible();
     await expect(page.locator('[data-testid="diff-ignore-whitespace"]')).not.toBeVisible();
+    await expect(page.locator('[data-testid="diff-wrap-lines"]')).not.toBeVisible();
 
     // Toggle back returns to the diff and restores the diff-only controls.
     await previewToggle.click();
