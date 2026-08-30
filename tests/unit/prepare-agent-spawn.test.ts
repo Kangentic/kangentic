@@ -87,6 +87,15 @@ vi.mock('../../src/main/agent/agent-registry', () => ({
   agentRegistry: { get: (...args: unknown[]) => agentRegistryGetMock(...(args as [string])) },
 }));
 
+// trackEvent no-ops in the real analytics.ts unless `enabled` was flipped by
+// initAnalytics (never called in this suite), so a spawn_failed call would be
+// silently swallowed by the real module. Mocked as a plain spy so the
+// unknown-agent / cli-not-found tests below can assert on it directly.
+const mockTrackEvent = vi.fn();
+vi.mock('../../src/main/analytics/analytics', () => ({
+  trackEvent: (...args: unknown[]) => mockTrackEvent(...args),
+}));
+
 // ---------------------------------------------------------------------------
 // Import the module under test AFTER all mocks are declared.
 // ---------------------------------------------------------------------------
@@ -511,6 +520,9 @@ describe('prepareAgentSpawn - extraEnv field', () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('Expected ok:false');
     expect(result.reason).toBe('unknown-agent');
+    // resolveTargetAgent is mocked to always resolve 'opencode' (see the
+    // module mock above), so that is the agent tag this failure carries.
+    expect(mockTrackEvent).toHaveBeenCalledWith('spawn_failed', { agent: 'opencode', reason: 'unknown_agent' });
   });
 
   it('returns ok:false with reason "cli-not-found" when adapter.detect returns found:false', async () => {
@@ -526,6 +538,7 @@ describe('prepareAgentSpawn - extraEnv field', () => {
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('Expected ok:false');
+    expect(mockTrackEvent).toHaveBeenCalledWith('spawn_failed', { agent: 'opencode', reason: 'cli_not_found' });
     expect(result.reason).toBe('cli-not-found');
   });
 
