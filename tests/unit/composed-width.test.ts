@@ -164,6 +164,30 @@ describe('measureComposedCols', () => {
     expect(measurement.sampleCount).toBe(5);
   });
 
+  it('structural mass names the true width against dense sub-width noise (task #573 live histogram)', () => {
+    // The 2026-08-30 recurrence: a child composing 120 inside a 306 PTY. Its
+    // measured ring carried 95 full-width rules at 120 alongside box borders
+    // and dividers at 40/47/73/80 and sub-width ECH spans (84/108/115).
+    // Count-scored folding named base 46, and the base-40 lattice explains
+    // every 120-multiple plus the stray indents, edging out the truth on any
+    // bare count. Sub-linear length weighting keeps the 40-lattice inside the
+    // near-tie band instead of ahead, and the reference tie-break then names
+    // 120 - the width carrying virtually all the structural evidence.
+    const stream =
+      ALT +
+      ('─'.repeat(120) + '\r\n').repeat(95) +
+      ('─'.repeat(47) + '\r\n').repeat(21) +
+      ('─'.repeat(73) + '\r\n').repeat(21) +
+      (' '.repeat(40) + 'indent\r\n').repeat(7) +
+      (' '.repeat(80) + 'indent\r\n').repeat(7) +
+      '\x1b[84X\r\n'.repeat(20) +
+      '\x1b[108X\r\n'.repeat(20) +
+      '\x1b[115X\r\n'.repeat(20);
+    const measurement = measureComposedCols(stream, 306);
+    expect(measurement.composedCols).toBe(120);
+    expect(measurement.sampleCount).toBe(95);
+  });
+
   it('returns null when nothing in the window qualifies', () => {
     const stream =
       ALT + '─'.repeat(COMPOSED_WIDTH_MIN_SIGNAL_COLUMNS - 1) + '\r\nplain prose text\r\n';

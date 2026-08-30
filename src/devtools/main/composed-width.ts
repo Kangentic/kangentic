@@ -204,19 +204,41 @@ function explainsCandidate(baseWidth: number, candidate: number): boolean {
   );
 }
 
-/** Score ties within this epsilon are treated as equal explanatory power. */
-const SCORE_TIE_EPSILON = 1e-9;
+/** Bases whose score is within this fraction of the best are treated as
+ *  equally supported, and the tie-break (reference-nearest, then larger)
+ *  chooses among them. A sub-width lattice base (40 under a true 120) always
+ *  explains a SUPERSET of the truth's candidates - every k*120 is a k'*40 -
+ *  plus whatever stray 40-column runs the frame carries, so it beats the
+ *  truth by a few percent on any additive score. Measured live 2026-08-30
+ *  (task #573's recurrence): a 120-composing child's frame folded to 46
+ *  under strict-max selection while the 120 rules carried 93% of the
+ *  evidence mass. The near-tie band lets the tie-break, not the noise
+ *  margin, decide.
+ *
+ *  Pinned from BOTH sides, which is why a tweak here breaks two unrelated
+ *  tests at once (measured 2026-08-30): raising it to 0.95 drops base 120
+ *  out of its own band in the structural-mass test and folds that frame to
+ *  40, while lowering it to 0.5 admits decisively-worse bases into the
+ *  tie-break and breaks three of the pre-existing reference tests. The
+ *  usable window is roughly 0.87 to 0.90. */
+const COMPOSED_WIDTH_NEAR_TIE_RATIO = 0.9;
 
 /**
  * Fold the candidate lengths to the best-supported base width (see the module
- * doc). A base's score is EXACTNESS-weighted (each explained candidate
- * contributes 1/(1+offset)), not a bare count: a small base has dense
- * multiples, so some multiple of it grazes almost any length at the edge of
- * the eligibility band, and count-scoring let base 44 "explain" the real
- * 210-column frame. An exact single-row hit outranks a grazing multiple.
- * `referenceCols` breaks ties between bases with equal scores - exact mutual
- * sub-multiples are indistinguishable on the evidence alone - and cannot
- * override evidence a reference-far base explains better.
+ * doc). A base's score is the EXACTNESS-WEIGHTED, SUB-LINEAR evidence mass it
+ * explains: each explained candidate contributes sqrt(candidate)/(1+offset).
+ * Exactness weighting keeps a small base's dense multiples from grazing their
+ * way past the truth (count-scoring let base 44 "explain" the real 210-column
+ * frame). Length weighting makes a 120-column rule outvote a 40-column indent
+ * run (bare counts let base 40's lattice beat a 120-composing child by sheer
+ * noise count, task #573's live histogram). The square root keeps that
+ * weighting from overshooting the other way: linear mass let a SINGLE
+ * 7x-concatenated 700 run outvote three corroborating 100-rules, so a run's
+ * weight grows with length but sub-linearly, and several independent rows
+ * always beat one long outlier. `referenceCols` chooses among near-tied
+ * bases - exact mutual sub-multiples are indistinguishable on the evidence
+ * alone - and cannot override evidence a reference-far base explains
+ * decisively better.
  */
 function resolveBaseWidth(
   candidates: number[],
@@ -244,7 +266,7 @@ function resolveBaseWidth(
       if (baseWidth >= COMPOSED_WIDTH_MIN_SIGNAL_COLUMNS) baseWidths.add(baseWidth);
     }
   }
-  let best: { baseWidth: number; explained: number; score: number } | null = null;
+  const scored: Array<{ baseWidth: number; explained: number; score: number }> = [];
   for (const baseWidth of baseWidths) {
     let explained = 0;
     let score = 0;
@@ -252,33 +274,42 @@ function resolveBaseWidth(
       if (!explainsCandidate(baseWidth, candidateValue)) continue;
       explained += occurrenceCount;
       const wrapMultiple = Math.round(candidateValue / baseWidth);
-      score += occurrenceCount / (1 + Math.abs(candidateValue - wrapMultiple * baseWidth));
+      score +=
+        (occurrenceCount * Math.sqrt(candidateValue)) /
+        (1 + Math.abs(candidateValue - wrapMultiple * baseWidth));
     }
-    if (explained === 0) continue;
-    if (!best || score > best.score + SCORE_TIE_EPSILON) {
-      best = { baseWidth, explained, score };
-      continue;
-    }
-    if (score < best.score - SCORE_TIE_EPSILON) continue;
-    // Tied explanatory power: prefer the base nearer the reference grid,
-    // falling back to the larger base (a sub-multiple over-folds).
-    if (referenceCols !== null) {
-      const currentDistance = Math.abs(best.baseWidth - referenceCols);
-      const candidateDistance = Math.abs(baseWidth - referenceCols);
-      if (candidateDistance < currentDistance) best = { baseWidth, explained, score };
-      else if (candidateDistance === currentDistance && baseWidth > best.baseWidth) {
-        best = { baseWidth, explained, score };
-      }
-    } else if (baseWidth > best.baseWidth) {
-      best = { baseWidth, explained, score };
-    }
+    if (explained > 0) scored.push({ baseWidth, explained, score });
   }
   // candidates is non-empty at every call site and every candidate explains
-  // its own k=1 base, so best is always set; the fallback satisfies the type
-  // system.
-  return best
-    ? { baseWidth: best.baseWidth, explained: best.explained }
-    : { baseWidth: candidates[0], explained: 1 };
+  // its own k=1 base, so scored is never empty; the fallback satisfies the
+  // type system.
+  if (scored.length === 0) return { baseWidth: candidates[0], explained: 1 };
+  const bestScore = Math.max(...scored.map((entry) => entry.score));
+  // Near-tie band, then tie-break: nearest the reference grid, then larger
+  // (a sub-multiple over-folds).
+  let best = scored[0];
+  let bestQualifies = false;
+  for (const entry of scored) {
+    if (entry.score < bestScore * COMPOSED_WIDTH_NEAR_TIE_RATIO) continue;
+    if (!bestQualifies) {
+      best = entry;
+      bestQualifies = true;
+      continue;
+    }
+    if (referenceCols !== null) {
+      const currentDistance = Math.abs(best.baseWidth - referenceCols);
+      const candidateDistance = Math.abs(entry.baseWidth - referenceCols);
+      if (
+        candidateDistance < currentDistance ||
+        (candidateDistance === currentDistance && entry.baseWidth > best.baseWidth)
+      ) {
+        best = entry;
+      }
+    } else if (entry.baseWidth > best.baseWidth) {
+      best = entry;
+    }
+  }
+  return { baseWidth: best.baseWidth, explained: best.explained };
 }
 
 /**

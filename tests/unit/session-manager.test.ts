@@ -34,10 +34,21 @@ vi.mock('../../src/main/analytics/analytics', () => ({
   sanitizeErrorMessage: (message: string) => message,
 }));
 
+// `traceTerminal` is gated on `__KANGENTIC_DEV__`, which vitest.config.ts
+// pins to `false` - the real implementation is a no-op in every test here.
+// Wrap it (not replace it) so the trace payload contract is observable via
+// `vi.mocked(traceTerminal).mock.calls` while every other test's behavior
+// (already a no-op today) stays byte-identical.
+vi.mock('../../src/main/pty/terminal-trace', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/pty/terminal-trace')>();
+  return { ...actual, traceTerminal: vi.fn(actual.traceTerminal) };
+});
+
 import * as pty from 'node-pty';
 import { SessionManager } from '../../src/main/pty/session-manager';
 import { ClaudeAdapter } from '../../src/main/agent/adapters/claude/claude-adapter';
 import { ClaudeSessionHistoryParser } from '../../src/main/agent/adapters/claude/session-history-parser';
+import { traceTerminal } from '../../src/main/pty/terminal-trace';
 
 const claudeAdapter = new ClaudeAdapter();
 import { EventType } from '../../src/shared/types';
@@ -3316,17 +3327,20 @@ describe('Resting grid restore', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Post-first-output geometry re-assert (spawn-race fix, task 573)
+// Post-boot geometry re-assert (spawn-race fix, task 573)
 // ---------------------------------------------------------------------------
 
-describe('Post-first-output geometry re-assert', () => {
+describe('Post-boot geometry re-assert', () => {
   // A resize applied inside the spawn window can be lost: ConPTY only delivers
   // a resize to a connected client, and the fit lands while the agent is still
-  // booting behind the shell. Once the agent produces first output it
-  // demonstrably exists, so the geometry is re-delivered as a jiggle (cols-1,
+  // booting behind the shell. The geometry is re-delivered as a jiggle (cols-1,
   // then cols back) via DIRECT pty.resize calls - two genuine changes nothing
   // in the chain can deduplicate, and no pty-resize broadcast that would burn
-  // the renderer's echo re-assert budget or re-seed phone frames.
+  // the renderer's echo re-assert budget or re-seed phone frames. Two triggers
+  // fire it: the adapter first-output latch (which a SHELL preamble can trip -
+  // pwsh 7.6 emits the cursor-hide escape Claude's detector matches - so it
+  // disarms only when the output provably came from the TUI) and the stream's
+  // first alt-screen entry, which nothing but the TUI can produce.
   let manager: SessionManager;
 
   beforeEach(() => {
@@ -3343,6 +3357,21 @@ describe('Post-first-output geometry re-assert', () => {
     vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
     // No agent adapter, so ANY non-empty chunk counts as first output.
     const session = await manager.spawn({ taskId, command: '', cwd: tmpDir });
+    return { session, ...mock };
+  }
+
+  async function spawnClaudeSession(taskId: string) {
+    const mock = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
+    // The REAL Claude adapter: its detectFirstOutput matches the cursor-hide
+    // escape, which pwsh 7.6's shell preamble also carries - the collision
+    // the preamble-ordering tests below pin.
+    const session = await manager.spawn({
+      taskId,
+      command: '',
+      cwd: tmpDir,
+      agentParser: claudeAdapter,
+    });
     return { session, ...mock };
   }
 
@@ -3403,13 +3432,16 @@ describe('Post-first-output geometry re-assert', () => {
     expect(mockPty.resize).not.toHaveBeenCalled();
   });
 
-  it('a resize applied after first output does not arm a jiggle', async () => {
+  it('a post-first-output resize lies dormant until an alt-screen entry consumes it', async () => {
     const { session, mockPty, feedData } = await spawnSession('task-reassert-late');
 
     feedData('first output');
     await settleFlush();
 
-    // A running child observes this directly (verified live); no re-assert needed.
+    // A running child observes this directly (verified live), and first-output
+    // is already spent, so nothing fires on further plain output - but the
+    // pre-TUI arm stays set (the stream never entered the alt buffer, so this
+    // could still be a shell whose agent has not booted).
     manager.resize(session.id, 306, 48);
     expect(mockPty.resize.mock.calls).toEqual([[306, 48]]);
     mockPty.resize.mockClear();
@@ -3417,6 +3449,68 @@ describe('Post-first-output geometry re-assert', () => {
     feedData('more output');
     await settleFlush();
     expect(mockPty.resize).not.toHaveBeenCalled();
+
+    // The TUI takeover consumes the dormant arm exactly once.
+    feedData('\x1b[?1049h');
+    expect(mockPty.resize.mock.calls).toEqual([[305, 48], [306, 48]]);
+  });
+
+  it('arms on a pre-TUI resize even when the shell preamble already tripped first-output (task #573 live shape)', async () => {
+    const { session, mockPty, feedData } = await spawnClaudeSession('task-reassert-preamble');
+
+    // pwsh 7.6's startup preamble carries the cursor-hide escape Claude's
+    // detector matches: the latch trips on SHELL bytes, ~tens of ms after
+    // spawn, seconds before the agent exists.
+    feedData('\x1b[?25l\x1b[2JPS preamble');
+    await settleFlush();
+    expect(mockPty.resize).not.toHaveBeenCalled();
+
+    // The fit resize lands after the preamble. Under the old first-output
+    // arming criterion this read as post-first-output and never armed - the
+    // 2026-08-30 live recurrence.
+    manager.resize(session.id, 306, 19);
+    expect(mockPty.resize.mock.calls).toEqual([[306, 19]]);
+    mockPty.resize.mockClear();
+    const broadcasts: unknown[] = [];
+    manager.on('pty-resize', (...args: unknown[]) => broadcasts.push(args));
+
+    // Plain shell output must not fire anything (first-output is spent).
+    feedData('shell prompt noise\r\n');
+    await settleFlush();
+    expect(mockPty.resize).not.toHaveBeenCalled();
+
+    // The alt-screen entry - the one signal a shell cannot fake - fires the
+    // jiggle synchronously, with no broadcast.
+    feedData('\x1b[?1049h\x1b[?25l frame');
+    expect(mockPty.resize.mock.calls).toEqual([[305, 19], [306, 19]]);
+    expect(broadcasts).toEqual([]);
+
+    // Disarmed: leaving and re-entering the alt buffer does not re-jiggle
+    // without a new pre-TUI resize.
+    mockPty.resize.mockClear();
+    feedData('\x1b[?1049l\x1b[?1049h');
+    await settleFlush();
+    expect(mockPty.resize).not.toHaveBeenCalled();
+  });
+
+  it('a preamble-tripped first output jiggles but keeps the arm for the real TUI takeover', async () => {
+    const { session, mockPty, feedData } = await spawnClaudeSession('task-reassert-two-stage');
+
+    // The other race ordering: the fit lands BEFORE the preamble, so the
+    // first-output trigger fires while the stream is still pre-TUI.
+    manager.resize(session.id, 306, 19);
+    mockPty.resize.mockClear();
+
+    feedData('\x1b[?25l\x1b[2JPS preamble');
+    await settleFlush();
+    // The jiggle fires (one harmless repaint at worst) but does NOT disarm:
+    // the output was not provably the TUI's, and the booting agent may still
+    // miss this delivery.
+    expect(mockPty.resize.mock.calls).toEqual([[305, 19], [306, 19]]);
+
+    mockPty.resize.mockClear();
+    feedData('\x1b[?1049h frame');
+    expect(mockPty.resize.mock.calls).toEqual([[305, 19], [306, 19]]);
   });
 
   it('swallows a resize failure from a just-died ConPTY', async () => {
@@ -3436,7 +3530,7 @@ describe('Post-first-output geometry re-assert', () => {
 
   it('swallows a resize failure on the restore leg after the jiggle leg lands', async () => {
     // Distinct from the case above: there the arming resize's own mock throws,
-    // so only the FIRST (jiggle) resize call inside reassertGeometryAfterFirstOutput
+    // so only the FIRST (jiggle) resize call inside reassertGeometryForBootingChild
     // is ever attempted. Here the jiggle leg succeeds and only the SECOND
     // (restore) call fails - the only case that exercises the function's
     // second try/catch, which the case above cannot reach.
@@ -3464,8 +3558,8 @@ describe('Post-first-output geometry re-assert', () => {
     // No unhandled throw escaped the flush callback; the session survives.
     expect(manager.getSession(session.id)).toBeDefined();
 
-    // The flag is cleared before either leg runs, so a later output does not
-    // retry the stranded restore (mirrors the at-most-once case above).
+    // First-output is a spent one-shot, so a later plain-output chunk does
+    // not retry the stranded restore (mirrors the at-most-once case above).
     mockPty.resize.mockClear();
     feedData('more output');
     await settleFlush();
@@ -3483,5 +3577,74 @@ describe('Post-first-output geometry re-assert', () => {
     await settleFlush();
 
     expect(mockPty.resize).not.toHaveBeenCalled();
+  });
+
+  /**
+   * ConPTY can deliver a single escape sequence split across two onData
+   * chunks - `modeParseCarry` (pty-buffer-manager.ts) exists specifically to
+   * reassemble that split before parsing modes. Every other alt-screen-enter
+   * case in this file feeds `\x1b[?1049h` whole in one `feedData` call, so
+   * the carry-reassembled path itself has no coverage without this test.
+   */
+  it('fires the alt-screen jiggle exactly once when the entry escape is split across two onData chunks', async () => {
+    const { session, mockPty, feedData } = await spawnSession('task-reassert-split-escape');
+
+    manager.resize(session.id, 306, 48);
+    expect(mockPty.resize.mock.calls).toEqual([[306, 48]]);
+    mockPty.resize.mockClear();
+
+    // Split mid-parameter: neither half alone carries a complete DECSET, so
+    // only the carry-reassembled `combined` string can detect the entry.
+    feedData('\x1b[?10');
+    expect(mockPty.resize).not.toHaveBeenCalled();
+
+    feedData('49h frame');
+    expect(mockPty.resize.mock.calls).toEqual([[305, 48], [306, 48]]);
+
+    // The alt-screen trigger always disarms, so further output never re-fires.
+    mockPty.resize.mockClear();
+    feedData('more output');
+    await settleFlush();
+    expect(mockPty.resize).not.toHaveBeenCalled();
+  });
+
+  /**
+   * `traceTerminal` carries the forensics contract docs/session-lifecycle.md
+   * promises ("names the trigger"), but it is otherwise unobserved anywhere
+   * in this file - its `__KANGENTIC_DEV__` gate is pinned off by
+   * vitest.config.ts's `define`, so the real implementation is a no-op here.
+   * Spying it directly is the only way to pin which trigger fired, and that
+   * `resize-applied`'s field is `preTuiReady`, not the old `preFirstOutput`.
+   */
+  it('records the trigger and preTuiReady fields in the trace payloads', async () => {
+    const { session, mockPty, feedData } = await spawnSession('task-reassert-trace');
+    const trace = vi.mocked(traceTerminal);
+
+    manager.resize(session.id, 306, 48);
+    const applied = trace.mock.calls.find(
+      ([tracedSessionId, event]) => tracedSessionId === session.id && event === 'resize-applied',
+    );
+    expect(applied?.[2]).toMatchObject({ preTuiReady: true });
+    expect(applied?.[2]).not.toHaveProperty('preFirstOutput');
+    trace.mockClear();
+    mockPty.resize.mockClear();
+
+    // First-output trigger: jiggles but (not yet in the alt buffer) does not
+    // disarm, so the flag survives for the alt-screen trigger below.
+    feedData('first output');
+    await settleFlush();
+    const firstOutputReassert = trace.mock.calls.find(
+      ([tracedSessionId, event]) => tracedSessionId === session.id && event === 'resize-reassert',
+    );
+    expect(firstOutputReassert?.[2]).toMatchObject({ trigger: 'first-output' });
+    trace.mockClear();
+    mockPty.resize.mockClear();
+
+    // Alt-screen trigger: the still-armed flag fires a second, independent jiggle.
+    feedData('\x1b[?1049h frame');
+    const altScreenReassert = trace.mock.calls.find(
+      ([tracedSessionId, event]) => tracedSessionId === session.id && event === 'resize-reassert',
+    );
+    expect(altScreenReassert?.[2]).toMatchObject({ trigger: 'alt-screen-enter' });
   });
 });
