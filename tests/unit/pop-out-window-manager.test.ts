@@ -13,7 +13,7 @@ import type { PopOutChangesFileParams } from '../../src/shared/pop-out';
 // vi.mock() calls are hoisted above every other statement in this file, so any
 // outer variable a factory references must be declared through vi.hoisted() -
 // otherwise the factory would run before its own `const` initializer.
-const { mockResolveBackgroundColor, mockResolveIconPath, mockResolveRendererIndexPath, mockResolvePopOutBounds, mockSavePopOutBounds } = vi.hoisted(() => ({
+const { mockResolveBackgroundColor, mockResolveIconPath, mockResolveRendererIndexPath, mockResolvePopOutBounds, mockSavePopOutBounds, mockTrackFeatureUsed, mockIsErrorReportingActive } = vi.hoisted(() => ({
   mockResolveBackgroundColor: vi.fn(() => '#18181b'),
   mockResolveIconPath: vi.fn(() => '/mock/icon.png'),
   mockResolveRendererIndexPath: vi.fn(() => '/mock/renderer/index.html'),
@@ -21,6 +21,8 @@ const { mockResolveBackgroundColor, mockResolveIconPath, mockResolveRendererInde
     (): { x: number; y: number; width: number; height: number; maximized: boolean } | null => null,
   ),
   mockSavePopOutBounds: vi.fn(),
+  mockTrackFeatureUsed: vi.fn(),
+  mockIsErrorReportingActive: vi.fn(() => false),
 }));
 
 vi.mock('../../src/main/window-utils', () => ({
@@ -29,6 +31,12 @@ vi.mock('../../src/main/window-utils', () => ({
   resolveRendererIndexPath: mockResolveRendererIndexPath,
   resolvePopOutBounds: mockResolvePopOutBounds,
   savePopOutBounds: mockSavePopOutBounds,
+}));
+vi.mock('../../src/main/analytics/usage', () => ({
+  trackFeatureUsed: mockTrackFeatureUsed,
+}));
+vi.mock('../../src/main/analytics/error-reporting', () => ({
+  isErrorReportingActive: mockIsErrorReportingActive,
 }));
 
 const { MOCK_WORK_AREA, MOCK_DEFAULT_POSITION } = vi.hoisted(() => ({
@@ -105,7 +113,7 @@ vi.mock('electron', () => {
 });
 
 import { PopOutWindowManager } from '../../src/main/pop-out/pop-out-window-manager';
-import { POP_OUT_SURFACES, resolveSurfaceTitle } from '../../src/shared/pop-out';
+import { POP_OUT_SURFACES, POPOUT_ARG_PREFIX, resolveSurfaceTitle } from '../../src/shared/pop-out';
 import { cascadePopOutPosition } from '../../src/main/pop-out/cascade';
 
 /** Shape of the mocked BrowserWindow beyond the real Electron interface, so
@@ -144,6 +152,7 @@ describe('PopOutWindowManager.open()', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockResolvePopOutBounds.mockReturnValue(null);
+    mockIsErrorReportingActive.mockReturnValue(false);
     manager = new PopOutWindowManager();
     const openContext: Parameters<typeof manager.configure>[0] = {
       devServerUrl: null,
@@ -224,5 +233,73 @@ describe('PopOutWindowManager.open()', () => {
     // dedicated guard were removed, so a bare `.toThrow()` would pass either
     // way and prove nothing about the guard itself.
     expect(() => manager.open('changes-file', paramsWithoutFilePath)).toThrow(/requires a filePath param/);
+  });
+
+  /**
+   * `--kangentic-error-reporting` is how the renderer's Sentry.init() call
+   * agrees with main's single Sentry decision (mirrors createWindow() in
+   * index.ts). A pop-out window that omits it while error reporting is
+   * active would silently ship with no renderer Sentry.
+   */
+  describe('renderer boot flags (additionalArguments)', () => {
+    function additionalArgumentsOf(win: unknown): string[] {
+      const options = asMockWindow(win).options as { webPreferences?: { additionalArguments?: string[] } };
+      return options.webPreferences?.additionalArguments ?? [];
+    }
+
+    it('includes --kangentic-error-reporting when Sentry is active, alongside the descriptor arg', () => {
+      mockIsErrorReportingActive.mockReturnValue(true);
+      const params = makeChangesFileParams({ filePath: 'src/error-reporting-on.tsx' });
+      const win = manager.open('changes-file', params);
+
+      const args = additionalArgumentsOf(win);
+      expect(args).toContain('--kangentic-error-reporting');
+      // The flag must not clobber the existing descriptor argument the pop-out
+      // renderer reads its kind/params from.
+      expect(args.some((arg) => arg.startsWith(POPOUT_ARG_PREFIX))).toBe(true);
+    });
+
+    it('omits the flag when Sentry did not initialize', () => {
+      mockIsErrorReportingActive.mockReturnValue(false);
+      const params = makeChangesFileParams({ filePath: 'src/error-reporting-off.tsx' });
+      const win = manager.open('changes-file', params);
+
+      const args = additionalArgumentsOf(win);
+      expect(args).not.toContain('--kangentic-error-reporting');
+      expect(args.some((arg) => arg.startsWith(POPOUT_ARG_PREFIX))).toBe(true);
+    });
+  });
+
+  /**
+   * `trackFeatureUsed('popout_window')` is the adoption signal added
+   * alongside this manager. It must fire on a genuine new-window creation
+   * only, never on the focus-existing or cap-blocked early returns above it.
+   */
+  describe('adoption signal (trackFeatureUsed)', () => {
+    it('fires popout_window on a genuine new-window creation', () => {
+      const params = makeChangesFileParams({ filePath: 'src/adoption.tsx' });
+      manager.open('changes-file', params);
+      expect(mockTrackFeatureUsed).toHaveBeenCalledWith('popout_window');
+    });
+
+    it('does NOT re-fire when focusing an already-open window of the same key', () => {
+      const params = makeChangesFileParams({ filePath: 'src/adoption-refocus.tsx' });
+      manager.open('changes-file', params);
+      mockTrackFeatureUsed.mockClear();
+
+      manager.open('changes-file', params); // same key -> focuses the existing window
+      expect(mockTrackFeatureUsed).not.toHaveBeenCalled();
+    });
+
+    it('does NOT fire when the maxInstances cap blocks a new window', () => {
+      for (let fileIndex = 0; fileIndex < 8; fileIndex += 1) {
+        manager.open('changes-file', makeChangesFileParams({ filePath: `src/cap-${fileIndex}.tsx` }));
+      }
+      mockTrackFeatureUsed.mockClear();
+
+      const blocked = manager.open('changes-file', makeChangesFileParams({ filePath: 'src/cap-9th.tsx' }));
+      expect(blocked).toBeNull();
+      expect(mockTrackFeatureUsed).not.toHaveBeenCalled();
+    });
   });
 });

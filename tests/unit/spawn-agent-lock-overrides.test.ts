@@ -29,6 +29,19 @@ vi.mock('../../src/main/agent/agent-registry', () => ({
   agentRegistry: { get: vi.fn(() => ({ sessionType: 'claude_agent' })) },
 }));
 
+// agent-spawn.ts imports ONLY `trackEvent` from analytics/analytics (not
+// sanitizeErrorMessage or any other export), so this mock is a complete
+// replacement, not a partial one that would silently drop an export the
+// other describe blocks in this file rely on.
+const mockTrackEvent = vi.fn();
+vi.mock('../../src/main/analytics/analytics', () => ({
+  trackEvent: (...args: unknown[]) => mockTrackEvent(...args),
+}));
+const mockReportHandledError = vi.fn();
+vi.mock('../../src/main/analytics/error-reporting', () => ({
+  reportHandledError: (...args: unknown[]) => mockReportHandledError(...args),
+}));
+
 import { spawnAgent } from '../../src/main/ipc/helpers/agent-spawn';
 
 const TASK_ID = 'task-lock-001';
@@ -432,5 +445,57 @@ describe('spawnAgent lock-Advanced-overrides-on-first-spawn -- project model/eff
       effort_override: 'xhigh',
       permission_mode: 'auto',
     });
+  });
+});
+
+/**
+ * spawnAgent's fallback resume is "the deepest silent failure on the board
+ * path" (see the comment at its call site): nothing else reaches the user
+ * when it throws, so the analytics/error-reporting instrumentation there is
+ * the only signal that a resume failed at all. Two things can silently
+ * regress: the `isAbortError` guard moving BELOW the new instrumentation
+ * (which would report a user cancellation as a failure and page Sentry for
+ * it), and the instrumentation being dropped from the non-abort path
+ * entirely (which would make resume failures invisible again).
+ */
+describe('spawnAgent - resume failure analytics', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('reports spawn_failed and forwards the handled error when resumeSuspendedSession rejects, without letting it propagate', async () => {
+    const task = makeTask({ model_override: 'fable-5' });
+    const deps = makeDeps({ latestSession: undefined, task });
+    const resumeError = new Error('CLI exited unexpectedly');
+    deps.engine.resumeSuspendedSession = vi.fn(async () => {
+      throw resumeError;
+    });
+
+    // Must resolve (not reject) - the catch swallows the error.
+    await runSpawn(task, makeDestinationLane(), deps);
+
+    expect(mockTrackEvent).toHaveBeenCalledWith('spawn_failed', { agent: 'claude', reason: 'resume' });
+    expect(mockReportHandledError).toHaveBeenCalledWith(resumeError, {
+      source: 'spawn',
+      reason: 'resume',
+      agent: 'claude',
+    });
+  });
+
+  it('rethrows an AbortError WITHOUT reporting spawn_failed or forwarding to Sentry', async () => {
+    // The ordering contract: `if (isAbortError(error)) throw error;` sits
+    // ABOVE the trackEvent/reportHandledError calls. A user-cancelled spawn
+    // (project close, task deleted mid-spawn) must never count as a failure.
+    const task = makeTask({ model_override: 'fable-5' });
+    const deps = makeDeps({ latestSession: undefined, task });
+    const abortError = new DOMException('The operation was aborted', 'AbortError');
+    deps.engine.resumeSuspendedSession = vi.fn(async () => {
+      throw abortError;
+    });
+
+    await expect(runSpawn(task, makeDestinationLane(), deps)).rejects.toBe(abortError);
+
+    expect(mockTrackEvent).not.toHaveBeenCalled();
+    expect(mockReportHandledError).not.toHaveBeenCalled();
   });
 });

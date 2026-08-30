@@ -6,9 +6,12 @@
  *   - checkWithRetry(): flag transitions, retry call count, error logging
  *   - downloadWithRetry(): flag transitions, retry call count, error logging
  *   - autoUpdater.on('error') handler branches:
- *       1. checkRetrying || downloadRetrying in-flight -- no trackEvent
- *       2. isTransientUpdaterError -- no trackEvent, console.log suppression message
- *       3. structural error -- trackEvent('app_error', ...) called
+ *       1. checkRetrying || downloadRetrying in-flight - no trackEvent, no reportHandledError
+ *       2. isTransientUpdaterError - no trackEvent, no reportHandledError, console.log suppression message
+ *       3. structural error - trackEvent('app_error', ...) AND reportHandledError(error, { source: 'updater' })
+ *          called, gated identically (reportHandledError sits after the same two early
+ *          returns, so a regression that moves it above either guard would page Sentry
+ *          for a transient or in-flight-retry error)
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -23,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   autoUpdaterOn: vi.fn(),
   trackEvent: vi.fn(),
   sanitizeErrorMessage: vi.fn((message: string) => message),
+  reportHandledError: vi.fn(),
   // initUpdater() now guards on the presence of app-update.yml; force the
   // guard to pass so the full wiring path (including the `error` listener
   // these tests target) is executed.
@@ -53,6 +57,10 @@ vi.mock('electron-updater', () => ({
 vi.mock('../../src/main/analytics/analytics', () => ({
   trackEvent: mocks.trackEvent,
   sanitizeErrorMessage: mocks.sanitizeErrorMessage,
+}));
+
+vi.mock('../../src/main/analytics/error-reporting', () => ({
+  reportHandledError: mocks.reportHandledError,
 }));
 
 vi.mock('fs', async () => {
@@ -267,6 +275,11 @@ describe("autoUpdater.on('error') listener", () => {
       message: 'sanitized message',
     });
     expect(mocks.sanitizeErrorMessage).toHaveBeenCalledWith(structuralError.message);
+    // reportHandledError forwards the REAL error (not the sanitized message
+    // trackEvent gets), so a structural updater failure is diagnosable in
+    // Sentry beyond a bare count.
+    expect(mocks.reportHandledError).toHaveBeenCalledTimes(1);
+    expect(mocks.reportHandledError).toHaveBeenCalledWith(structuralError, { source: 'updater' });
   });
 
   it('does NOT call trackEvent for a transient error when not retrying', () => {
@@ -281,6 +294,9 @@ describe("autoUpdater.on('error') listener", () => {
       expect.stringContaining('[UPDATER] Suppressing transient error telemetry:'),
       expect.any(String),
     );
+    // A transient error must never reach Sentry either - it shares the same
+    // early return as the trackEvent suppression above.
+    expect(mocks.reportHandledError).not.toHaveBeenCalled();
 
     consoleLogSpy.mockRestore();
   });
@@ -301,6 +317,7 @@ describe("autoUpdater.on('error') listener", () => {
 
     // The in-flight guard returned early - no trackEvent should have fired.
     expect(mocks.trackEvent).not.toHaveBeenCalled();
+    expect(mocks.reportHandledError).not.toHaveBeenCalled();
 
     // Clean up: advance past the retry delay and resolve the pending promise.
     mocks.checkForUpdates.mockResolvedValueOnce(undefined);
@@ -319,6 +336,7 @@ describe("autoUpdater.on('error') listener", () => {
     errorListener(structuralError);
 
     expect(mocks.trackEvent).not.toHaveBeenCalled();
+    expect(mocks.reportHandledError).not.toHaveBeenCalled();
 
     mocks.downloadUpdate.mockResolvedValueOnce(undefined);
     await vi.advanceTimersByTimeAsync(30_000);
