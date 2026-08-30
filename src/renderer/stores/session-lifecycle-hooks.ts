@@ -21,7 +21,9 @@
  * instead. Verified with `scripts/hmr-guest-probe.mjs`.
  *
  * `session-store` registers its handlers at module init; `project-store` imports
- * only this module. Neither imports the other.
+ * only this module. The `session-store` -> `project-store` edge stays (it still
+ * reads the current project id), but it is now one-directional, which is what
+ * removes the cycle - not the absence of both imports.
  */
 
 interface SessionLifecycleHooks {
@@ -31,8 +33,11 @@ interface SessionLifecycleHooks {
   markIdleSessionsSeen: (projectId: string) => void;
 }
 
-// hmr-safe: re-registered on every session-store module evaluation, so a reset
-// here is refilled by the same update that cleared it.
+// The directive has to sit on the line DIRECTLY above the declaration: the
+// hmr-resync test only scans the same line and the one before it. It is inert
+// while the initializer is `null` (a trivial initializer short-circuits that
+// check), and becomes load-bearing the moment someone seeds a default here.
+// hmr-safe: re-registered on every session-store module evaluation, so a reset here is refilled by the same update that cleared it.
 let registeredHooks: SessionLifecycleHooks | null = null;
 
 /** Called once by session-store at module init. */

@@ -59,7 +59,8 @@ function runningSession(id: string, projectId: string): Session {
     cwd: '/mock',
     startedAt: new Date().toISOString(),
     exitCode: null,
-  } as Session;
+    resuming: false,
+  };
 }
 
 describe('session lifecycle hooks are registered by session-store', () => {
@@ -87,9 +88,14 @@ describe('session lifecycle hooks are registered by session-store', () => {
   it('killTransientSessionForProject reaches the store through the hooks module', async () => {
     useSessionStore.setState({
       transientSessions: {
-        'proj-a::slot-1': { sessionId: 'sess-transient', projectId: 'proj-a', slot: 'slot-1' },
+        'proj-a::slot-1': {
+          sessionId: 'sess-transient',
+          projectId: 'proj-a',
+          slot: 'slot-1',
+          branch: null,
+        },
       },
-    } as Partial<ReturnType<typeof useSessionStore.getState>>);
+    });
 
     hooks.killTransientSessionForProject('proj-a');
     // The forwarder is fire-and-forget; let its promise settle.
