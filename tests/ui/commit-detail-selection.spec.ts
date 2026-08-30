@@ -340,6 +340,152 @@ test.describe('Changes panel: commit-detail header restore fallback', () => {
   });
 });
 
+// ─── Empty-commit scoped message ────────────────────────────────────────────
+//
+// ChangesPanel's empty-diff message names the scope it searched, and a
+// selected commit takes PRIORITY over the working/staged/branch scope names -
+// `changesSelectedCommit` truthy short-circuits straight to "This commit
+// changed no files" before `scope` is even consulted (see the ternary chain
+// above `emptyDiffMessage` in ChangesPanel.tsx). The other three branches
+// (Working, Staged, Branch) are covered by changes-stale-selection.spec.ts;
+// this is the fourth and only one that requires an actual empty commit
+// (`git show` returning zero files - e.g. an empty merge commit or a commit
+// that only touched now-ignored paths), so it gets its own fixture rather
+// than reusing an existing describe block's mock diff data.
+const EMPTY_COMMIT_PROJECT_ID = 'proj-commit-detail-empty';
+const EMPTY_COMMIT_TASK_ID = 'task-commit-detail-empty';
+const EMPTY_COMMIT_SESSION_ID = 'sess-commit-detail-empty';
+const EMPTY_COMMIT_OID = 'deadbeef1234567890';
+
+const emptyCommitPreConfig = `
+  window.__mockCommitGraph = {
+    commits: [
+      { hash: '${EMPTY_COMMIT_OID}', shortHash: 'deadbee', parents: [], authorName: 'Empty Author', authorTimestamp: new Date().toISOString(), subject: 'empty merge commit' },
+    ],
+    tipHash: '${EMPTY_COMMIT_OID}',
+    baseHash: '${EMPTY_COMMIT_OID}',
+    mergeBaseHash: '${EMPTY_COMMIT_OID}',
+    currentBranch: 'feature/commit-detail-empty',
+    truncated: false,
+  };
+
+  // Zero files: what a real 'git show' returns for an empty merge commit, or
+  // one that only touched paths outside the diff (e.g. all-ignored).
+  window.__mockGitDiffByCommit = {
+    '${EMPTY_COMMIT_OID}': {
+      files: [],
+      totalInsertions: 0,
+      totalDeletions: 0,
+    },
+  };
+
+  window.__mockPreConfigure(function (state) {
+    var ts = new Date().toISOString();
+
+    state.projects.push({
+      id: '${EMPTY_COMMIT_PROJECT_ID}',
+      name: 'Commit Detail Empty Test',
+      path: '/mock/commit-detail-empty-test',
+      github_url: null,
+      default_agent: 'claude',
+      last_opened: ts,
+      created_at: ts,
+    });
+
+    var laneIds = {};
+    state.DEFAULT_SWIMLANES.forEach(function (s, i) {
+      var id = 'lane-' + s.name.toLowerCase().replace(/\\s+/g, '-');
+      laneIds[s.name] = id;
+      state.swimlanes.push(Object.assign({}, s, { id: id, position: i, created_at: ts }));
+    });
+
+    state.sessions.push({
+      id: '${EMPTY_COMMIT_SESSION_ID}',
+      taskId: '${EMPTY_COMMIT_TASK_ID}',
+      projectId: '${EMPTY_COMMIT_PROJECT_ID}',
+      pid: 9997,
+      status: 'running',
+      shell: 'bash',
+      cwd: '/mock/commit-detail-empty-test',
+      startedAt: ts,
+      exitCode: null,
+    });
+
+    // Restored (not clicked this session), same as the header restore-fallback
+    // fixture above - this reaches the empty-commit render on first open with
+    // no interaction needed to select the commit.
+    state.tasks.push({
+      id: '${EMPTY_COMMIT_TASK_ID}',
+      title: 'Commit Detail Empty Task',
+      description: 'Task used for the empty-commit scoped-message test',
+      swimlane_id: laneIds['Code Review'],
+      position: 0,
+      agent: 'claude',
+      session_id: '${EMPTY_COMMIT_SESSION_ID}',
+      worktree_path: '/mock/worktrees/commit-detail-empty',
+      branch_name: 'feature/commit-detail-empty',
+      pr_number: null,
+      pr_url: null,
+      base_branch: 'main',
+      archived_at: null,
+      created_at: ts,
+      updated_at: ts,
+      detail_view_state: JSON.stringify({ changesSelectedCommit: '${EMPTY_COMMIT_OID}' }),
+    });
+
+    return { currentProjectId: '${EMPTY_COMMIT_PROJECT_ID}' };
+  });
+`;
+
+test.describe('Changes panel: empty-commit scoped message', () => {
+  let emptyCommitBrowser: Browser;
+  let emptyCommitPage: Page;
+
+  test.beforeAll(async () => {
+    const result = await launchWithState(emptyCommitPreConfig);
+    emptyCommitBrowser = result.browser;
+    emptyCommitPage = result.page;
+    await emptyCommitPage.locator('[data-swimlane-name="Code Review"]').waitFor({ state: 'visible', timeout: 10000 });
+  });
+
+  test.afterAll(async () => {
+    await emptyCommitBrowser?.close();
+  });
+
+  test('a commit with zero changed files shows "This commit changed no files", not a scope name or a stuck spinner', async () => {
+    const card = emptyCommitPage.locator('[data-swimlane-name="Code Review"]').locator('text=Commit Detail Empty Task').first();
+    await card.click();
+
+    const dialog = emptyCommitPage.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 8000 });
+
+    await emptyCommitPage.locator('[data-testid="changes-toggle"]').click();
+
+    // The commit-detail header renders even with zero files (it reports the
+    // commit, not the file count), so this is a real signal the panel is
+    // scoped to the empty commit rather than showing a stale Uncommitted view.
+    const header = emptyCommitPage.locator('[data-testid="commit-detail-header"]');
+    await expect(header).toBeVisible({ timeout: 10000 });
+    await expect(header).toContainText('deadbee');
+
+    const noChanges = emptyCommitPage.locator('[data-testid="diff-no-changes"]');
+    await expect(noChanges).toBeVisible({ timeout: 10000 });
+    await expect(noChanges).toContainText('This commit changed no files');
+    // Not one of the scope-named variants a regression could fall through to
+    // (scope is never consulted once a commit is selected).
+    await expect(noChanges).not.toContainText('No uncommitted changes');
+    await expect(noChanges).not.toContainText('No staged changes');
+    await expect(noChanges).not.toContainText('No changes vs');
+    // No stuck diff viewer boot spinner (changes-stale-selection.spec.ts's
+    // regression signal): the viewer never mounts when there is no file.
+    await expect(emptyCommitPage.locator('[data-testid="diff-editor-area"]')).toHaveCount(0);
+
+    await emptyCommitPage.locator('[data-testid="changes-toggle"]').click();
+    await emptyCommitPage.keyboard.press('Control+Shift+W');
+    await expect(dialog).not.toBeVisible({ timeout: 8000 });
+  });
+});
+
 // ─── File-content cache key isolation across commit selection ──────────────
 //
 // The file-content cache key is `commit:<oid>:<path>` for a commit selection
