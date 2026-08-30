@@ -1,7 +1,7 @@
 import { useMemo, useState, useRef, useCallback, useEffect, memo, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react';
 import { Search, Plus, Pencil, Minus, ArrowRight, Copy, ChevronRight, ChevronDown, FileQuestion, GitBranch, ArrowUp, ArrowDown, ArrowDownUp, ListTree, List, FoldVertical, UnfoldVertical, FolderOpen, ExternalLink, Check, History, Loader2, AppWindow } from 'lucide-react';
 import { useConfigStore } from '../../../../stores/config-store';
-import type { GitBranchSummaryResult, GitDiffFileEntry, GitDiffScope, GitDiffStatus, GitFileHistoryCommit, PRState } from '../../../../../shared/types';
+import type { AppConfig, GitBranchSummaryResult, GitDiffFileEntry, GitDiffScope, GitDiffStatus, GitFileHistoryCommit, PRState } from '../../../../../shared/types';
 import { formatRelativeTime } from '../../../../lib/datetime';
 import { useToastStore } from '../../../../stores/toast-store';
 import { PrLink } from '../../../PrLink';
@@ -139,7 +139,9 @@ function compactTree(node: DirectoryNode): DirectoryNode {
 // File sorting
 // ---------------------------------------------------------------------------
 
-type FileSortMode = 'name' | 'status' | 'size' | 'ext';
+// Derived, not restated: a future widening of the config union is then a type
+// error here instead of a silently missing sort option.
+type FileSortMode = AppConfig['diffFileSort'];
 
 /** The sort menu's options (single-select; the current mode gets a check). */
 const SORT_OPTIONS: { value: FileSortMode; label: string }[] = [
@@ -939,8 +941,15 @@ export function FileTreePanel({
         setSortMenuOpen(false);
       }
     };
+    // Escape closes the MENU, not the window behind it. The host dialog /
+    // pop-out dismisses itself on a bubble-phase document Escape, so without
+    // this capture-phase intercept the first Escape over an open menu also
+    // closes the user's whole task window. Same guard KebabMenu carries.
     const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setSortMenuOpen(false);
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      setSortMenuOpen(false);
     };
     document.addEventListener('pointerdown', handleClickOutside, true);
     document.addEventListener('keydown', handleEscape, true);
@@ -1044,12 +1053,17 @@ export function FileTreePanel({
             {totalDeletions > 0 && <span className="text-red-400">-{totalDeletions}</span>}
           </span>
         )}
+        {/* Full-width bar scaled from its left edge, rather than a width
+            transition: Chromium composites only transform and opacity, so a
+            width animation stops producing frames for exactly as long as the
+            renderer's main thread is blocked - which, beside a live agent, is
+            often. Same reasoning as the activity marks. */}
         {viewedCount > 0 && (
           <span
             aria-hidden
             data-testid="changes-viewed-progress"
-            className="absolute left-0 bottom-0 h-[2px] bg-accent/60 transition-[width] duration-300 motion-reduce:transition-none"
-            style={{ width: `${(viewedCount / Math.max(files.length, 1)) * 100}%` }}
+            className="absolute left-0 bottom-0 h-[2px] w-full origin-left bg-accent/60 transition-transform duration-300 motion-reduce:transition-none"
+            style={{ transform: `scaleX(${viewedCount / Math.max(files.length, 1)})` }}
           />
         )}
         <div className="ml-auto flex items-center gap-1.5">
