@@ -1418,6 +1418,140 @@ describe('PtyBufferManager', () => {
     });
   });
 
+  describe('onAltScreenEnter callback (post-boot geometry re-assert trigger, task #573)', () => {
+    // The one boot signal a shell preamble cannot fake: SessionManager keys
+    // the spawn-window resize re-assert on this firing, so its edge cases
+    // (exactly-once per transition, re-firing after an exit/re-entry, the
+    // 47/1047 variants, a chunk-split entry, and RIS re-arming the next
+    // entry) are pinned directly here rather than only reached indirectly
+    // through SessionManager's own tests.
+    function createManagerWithAltScreenCallback() {
+      const onAltScreenEnter = vi.fn();
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn(), onAltScreenEnter });
+      manager.initSession(SESSION, '', 80);
+      manager.onResize(SESSION, 80);
+      return { manager, onAltScreenEnter };
+    }
+
+    it('fires once on the false-to-true alt-screen transition (1049h)', () => {
+      vi.useFakeTimers();
+      const { manager, onAltScreenEnter } = createManagerWithAltScreenCallback();
+
+      manager.onData(SESSION, '\x1b[?1049h');
+
+      expect(onAltScreenEnter).toHaveBeenCalledTimes(1);
+      expect(onAltScreenEnter).toHaveBeenCalledWith(SESSION);
+
+      vi.advanceTimersByTime(20);
+      vi.useRealTimers();
+    });
+
+    it('does not fire again for a repeated 1049h while already in the alt buffer', () => {
+      vi.useFakeTimers();
+      const { manager, onAltScreenEnter } = createManagerWithAltScreenCallback();
+
+      manager.onData(SESSION, '\x1b[?1049h');
+      onAltScreenEnter.mockClear();
+
+      // A fullscreen TUI can re-clear/re-assert 1049 without ever leaving the
+      // alt buffer; wasInAltScreen is already true, so this is a no-op.
+      manager.onData(SESSION, '\x1b[?1049h');
+
+      expect(onAltScreenEnter).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(20);
+      vi.useRealTimers();
+    });
+
+    it('fires again after leaving (1049l) and re-entering the alt buffer', () => {
+      vi.useFakeTimers();
+      const { manager, onAltScreenEnter } = createManagerWithAltScreenCallback();
+
+      manager.onData(SESSION, '\x1b[?1049h');
+      onAltScreenEnter.mockClear();
+
+      // The exit transition (true -> false) must not fire.
+      manager.onData(SESSION, '\x1b[?1049l');
+      expect(onAltScreenEnter).not.toHaveBeenCalled();
+
+      // Re-entry is a fresh false -> true transition: fires again. There is
+      // no session-level "already fired once" latch - only the current vs.
+      // previous state matters.
+      manager.onData(SESSION, '\x1b[?1049h');
+      expect(onAltScreenEnter).toHaveBeenCalledTimes(1);
+      expect(onAltScreenEnter).toHaveBeenCalledWith(SESSION);
+
+      vi.advanceTimersByTime(20);
+      vi.useRealTimers();
+    });
+
+    it.each([47, 1047])('fires on the %i alt-screen variant, not just 1049', (mode) => {
+      vi.useFakeTimers();
+      const { manager, onAltScreenEnter } = createManagerWithAltScreenCallback();
+
+      manager.onData(SESSION, `\x1b[?${mode}h`);
+
+      expect(onAltScreenEnter).toHaveBeenCalledTimes(1);
+      expect(onAltScreenEnter).toHaveBeenCalledWith(SESSION);
+
+      vi.advanceTimersByTime(20);
+      vi.useRealTimers();
+    });
+
+    it('fires when a DECSET alt-screen entry is split across two PTY chunks (modeParseCarry)', () => {
+      vi.useFakeTimers();
+      const { manager, onAltScreenEnter } = createManagerWithAltScreenCallback();
+
+      // \x1b[?1049h split as \x1b[?10 | 49h. The first chunk carries a
+      // partial sequence (no complete DECSET yet), so nothing fires; the
+      // second chunk completes it against the combined (carry + data) text.
+      manager.onData(SESSION, '\x1b[?10');
+      expect(onAltScreenEnter).not.toHaveBeenCalled();
+
+      manager.onData(SESSION, '49h');
+      expect(onAltScreenEnter).toHaveBeenCalledTimes(1);
+      expect(onAltScreenEnter).toHaveBeenCalledWith(SESSION);
+
+      vi.advanceTimersByTime(20);
+      vi.useRealTimers();
+    });
+
+    it('fires again after RIS (\\x1bc) clears the alt-screen flag mid-session', () => {
+      vi.useFakeTimers();
+      const { manager, onAltScreenEnter } = createManagerWithAltScreenCallback();
+
+      manager.onData(SESSION, '\x1b[?1049h');
+      onAltScreenEnter.mockClear();
+
+      // RIS returns to the normal buffer (clears inAltScreen without going
+      // through the 1049l DECRST arm), so the next entry must read as a fresh
+      // false -> true transition rather than staying suppressed.
+      manager.onData(SESSION, '\x1bc');
+      expect(onAltScreenEnter).not.toHaveBeenCalled();
+
+      manager.onData(SESSION, '\x1b[?1049h');
+      expect(onAltScreenEnter).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(20);
+      vi.useRealTimers();
+    });
+
+    it('does not fire for a within-chunk alt-screen flash (enter and exit in the same chunk)', () => {
+      vi.useFakeTimers();
+      const { manager, onAltScreenEnter } = createManagerWithAltScreenCallback();
+
+      // wasInAltScreen is read BEFORE updateModeState parses the whole chunk,
+      // so a chunk that both enters and exits within itself starts and ends
+      // false -> the transition guard never sees a false-to-true edge.
+      manager.onData(SESSION, '\x1b[?1049h\x1b[?1049l');
+
+      expect(onAltScreenEnter).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(20);
+      vi.useRealTimers();
+    });
+  });
+
   describe('initSession geometry-gate carry-over', () => {
     it('marks a carried ring geometry-suspect when the prior drawn-at geometry is unknown', () => {
       const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
