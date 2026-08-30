@@ -1,6 +1,7 @@
 ---
 name: migration-safety
 model: sonnet
+effort: medium
 description: |
   Database migration and schema validator. Checks that SQLite migrations are idempotent, schema types align with TypeScript interfaces, and repository queries cover all columns correctly.
 
@@ -23,7 +24,6 @@ description: |
   User adds a new field to the Task interface in types.ts.
   -> Spawn migration-safety to verify a migration exists and repositories handle the new column.
   </example>
-model: sonnet
 tools: Read, Glob, Grep
 ---
 

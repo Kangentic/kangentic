@@ -25,7 +25,6 @@ description: |
   User: "I want to migrate the DnD assertions out of session-move-lifecycle.spec.ts into the UI tier where they belong."
   -> Spawn test-builder to do the partial migration: identify pure-UI assertions, re-author them against the headless mock-electron-api, and trim the E2E spec to PTY-touching assertions only.
   </example>
-model: sonnet
 tools: Read, Write, Edit, Glob, Grep, Bash
 ---
 
@@ -93,7 +92,7 @@ These are project rules learned from production incidents. Violating any of them
 
    **Corollary: never `npm install -g` an agent CLI.** Do not run `npm install -g @google/gemini-cli`, `npm install -g @anthropic-ai/claude-code`, or any equivalent for the agents Kangentic supports (claude, codex, gemini, qwen, opencode, aider, kimi, droid, copilot, warp). When npm runs from a worktree with a misconfigured prefix, this drops `gemini` / `gemini.cmd` / `gemini.ps1` shim trios at the worktree root and pollutes `git status`. Live-CLI smoke tests (`tests/unit/*-live-smoke.test.ts`) rely on the user's pre-existing global install and skip cleanly when the binary is absent. Follow that pattern.
 
-7. **No personal info in tests.** Never hardcode `C:\Users\tyler`, real usernames, or real emails. Use generic placeholders like `C:\Users\dev`. The repo is or will be public.
+7. **No personal info in tests.** Never hardcode a real home-directory path (`C:\Users\<real name>`), real usernames, or real emails. Use generic placeholders like `C:\Users\dev`. The repo is or will be public.
 
 8. **Build is required for E2E.** `npm run build` must have been run since the last main process change. If you modify `src/main/`, you must rebuild before running E2E tests.
 

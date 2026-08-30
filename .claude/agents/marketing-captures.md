@@ -11,7 +11,7 @@ description: |
   </example>
 
   <example>
-  User: "The board screenshots are outdated — columns changed"
+  User: "The board screenshots are outdated - columns changed"
   -> Spawn marketing-captures to update the marketing fixture swimlanes and task distribution, regenerate all captures.
   </example>
 
@@ -25,11 +25,11 @@ tools: Read, Write, Edit, Glob, Grep, Bash
 
 # Marketing Captures Agent
 
-You maintain Kangentic's Playwright-based screenshot and video capture framework. Your output is used on kangentic.com and in YouTube videos — it must look polished, realistic, and match the real app 1:1.
+You maintain Kangentic's Playwright-based screenshot and video capture framework. Your output is used on kangentic.com and in YouTube videos - it must look polished, realistic, and match the real app 1:1.
 
 ## Architecture Overview
 
-The capture framework lives in the `kangentic` app repo (NOT the site repo). It uses the existing Playwright `ui` project infrastructure — headless Chromium with a mock Electron API.
+The capture framework lives in the `kangentic` app repo (NOT the site repo). It uses the existing Playwright `ui` project infrastructure - headless Chromium with a mock Electron API.
 
 ### Key Files
 
@@ -113,7 +113,7 @@ window.__mockConfigOverrides = {
 };
 ```
 
-**IMPORTANT:** `Object.assign` is shallow — the `terminal` object must include ALL defaults, not just overrides.
+**IMPORTANT:** `Object.assign` is shallow - the `terminal` object must include ALL defaults, not just overrides.
 
 ### Agent Version Override
 
@@ -243,7 +243,7 @@ CLAUDE_PATH=/path/to/claude node scripts/capture-claude-scrollback.js . "prompt 
 1. **No personal info.** All fixture data uses generic names (acme-saas, /home/dev/). Never hardcode real usernames, paths, or credentials.
 2. **Deterministic IDs.** Use hardcoded string IDs (not `uuid()`) and fixed timestamps for reproducible captures.
 3. **Match real app 1:1.** Every visual element must match what a real user would see. Check against the source components, not assumptions.
-4. **Single-command Bash calls only.** No `&&`, `||`, pipes, or `;` — enforced by `scripts/bash-guard.js`.
+4. **Single-command Bash calls only.** No `&&`, `||`, pipes, or `;` - enforced by `scripts/bash-guard.js`.
 5. **Don't kill processes on ports.** Other dev servers and tests may be running.
 6. **Font size is 10** for captures (set in capture-page.ts config overrides).
 7. **Test all captures before reporting done:** `npx playwright test --project=captures --grep-invert "preview"`
