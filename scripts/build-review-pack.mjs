@@ -17,7 +17,11 @@
  *   REVIEW_PREEXISTING_DIRTY.tmp  one path per line: tracked-dirty + untracked, captured
  *                               BEFORE the review pass edits anything (Step 8's set math).
  *
- * Prints a compact summary to stdout; never prints the pack itself.
+ * Prints a compact summary to stdout; never prints the pack itself. One line of that summary is
+ * a contract rather than a nicety: `  paths: <a>, <b>, ...` is the authoritative changed-file
+ * list the review driver gates its domain auditors on. It covers files the pack TRIMMED as well
+ * as files it packed, which is why the driver must read it instead of the pack's table of
+ * contents. Keep it labelled distinctly from the `changed files:` count line above it.
  */
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync } from 'node:fs';
@@ -108,20 +112,35 @@ function readFileSafe(relPath) {
   return body;
 }
 
+const fileLinesCache = new Map();
+function readFileLines(relPath) {
+  // Every consumer of a body wants it split, and the same file is split by the synthetic-diff
+  // loop, the churn ranking, and the packing loop. Memoize the array itself so a large file is
+  // split once rather than three or four times. Null propagates for missing/oversized/binary.
+  if (fileLinesCache.has(relPath)) return fileLinesCache.get(relPath);
+  const body = readFileSafe(relPath);
+  const lines = body === null ? null : body.split('\n');
+  fileLinesCache.set(relPath, lines);
+  return lines;
+}
+
 let syntheticBlocks = '';
 for (const relPath of untrackedNames) {
-  const body = readFileSafe(relPath);
-  if (body === null) continue;
+  const lines = readFileLines(relPath);
+  if (lines === null) continue;
   syntheticBlocks += `\ndiff --git a/${relPath} b/${relPath}\nnew file\n--- /dev/null\n+++ b/${relPath}\n`;
-  syntheticBlocks += body.split('\n').map((line) => '+' + line).join('\n') + '\n';
+  syntheticBlocks += lines.map((line) => '+' + line).join('\n') + '\n';
 }
 const unionDiff = [committedDiff, uncommittedDiff, syntheticBlocks].filter((part) => part.trim()).join('\n');
 
 // 4. Full bodies, largest churn first, capped.
+// Set, not the array: churnOf runs once per changed file, so an array `includes` here is
+// O(changedFiles x untrackedNames) on a diff that is mostly new files.
+const untrackedNameSet = new Set(untrackedNames);
 const churnOf = (relPath) => {
-  if (untrackedNames.includes(relPath)) {
-    const body = readFileSafe(relPath);
-    return body ? body.split('\n').length : 0;
+  if (untrackedNameSet.has(relPath)) {
+    const lines = readFileLines(relPath);
+    return lines ? lines.length : 0;
   }
   return (committedChurn.get(relPath) || 0) + (uncommittedChurn.get(relPath) || 0);
 };
@@ -133,13 +152,13 @@ const packedSections = [];
 const omitted = [];
 let bodyBytes = 0;
 for (const { relPath, churn } of ranked) {
-  const body = readFileSafe(relPath);
-  if (body === null) { omitted.push({ relPath, churn, reason: 'binary, missing, or >1MB' }); continue; }
-  const numbered = body.split('\n').map((line, index) => String(index + 1).padStart(5) + '\t' + line).join('\n');
+  const lines = readFileLines(relPath);
+  if (lines === null) { omitted.push({ relPath, churn, reason: 'binary, missing, or >1MB' }); continue; }
+  const numbered = lines.map((line, index) => String(index + 1).padStart(5) + '\t' + line).join('\n');
   const sectionBytes = Buffer.byteLength(numbered);
   if (bodyBytes + sectionBytes > PACK_BODY_CAP_BYTES) { omitted.push({ relPath, churn, reason: 'over pack cap' }); continue; }
   bodyBytes += sectionBytes;
-  packedSections.push({ relPath, churn, numbered, lines: body.split('\n').length });
+  packedSections.push({ relPath, churn, numbered, lines: lines.length });
 }
 
 // 5. Assemble with a line-accurate table of contents.
@@ -185,6 +204,11 @@ writeFileSync(packPath, packText);
 // 6. Summary only - never print the pack.
 console.log(`Review pack written: ${packPath}`);
 console.log(`  changed files: ${changedFiles.length} (committed ${committedNames.length}, uncommitted ${uncommittedNames.length}, untracked ${untrackedNames.length})`);
-console.log(`  pack: ${(Buffer.byteLength(packText) / 1024).toFixed(0)}KB, ${packText.split('\n').length} lines; diff ${(Buffer.byteLength(unionDiff) / 1024).toFixed(0)}KB; bodies packed ${packedSections.length}, omitted ${omitted.length}`);
+// Labelled distinctly from the count line above: the driver reads THIS line to decide
+// which gated finders to spawn.
+console.log(`  paths: ${changedFiles.join(', ')}`);
+// totalLines, not a re-split of packText: they are equal by construction (packText is the
+// one header line plus tailText) and the pack can be hundreds of KB.
+console.log(`  pack: ${(Buffer.byteLength(packText) / 1024).toFixed(0)}KB, ${totalLines} lines; diff ${(Buffer.byteLength(unionDiff) / 1024).toFixed(0)}KB; bodies packed ${packedSections.length}, omitted ${omitted.length}`);
 console.log(`  preexisting dirty: ${preexistingDirty.length} paths -> REVIEW_PREEXISTING_DIRTY.tmp`);
 if (omitted.length) console.log('  omitted: ' + omitted.map((entry) => entry.relPath).join(', '));
