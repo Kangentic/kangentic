@@ -6,6 +6,7 @@ paths:
   - "src/main/pty/buffer/headless-frame.ts"
   - "src/main/pty/virtual-screen.ts"
   - "src/devtools/main/inspection-server.ts"
+  - "src/devtools/main/composed-width.ts"
 ---
 # Rule: every terminal parser runs the Unicode 11 width table, in lockstep
 
@@ -47,7 +48,8 @@ disagreeing on a width diverge worse than both being wrong together.
 - **Test:** `tests/unit/xterm-unicode11-activation.test.ts` scans `src/**` (including
   `src/devtools/`) and fails any file whose `new Terminal(` count exceeds its
   `activateUnicode11(` count, verifies the helper switches a real terminal to `'11'`, and
-  pins `virtual-screen.ts`'s import of `wcwidthV11`. Runs in CI via `npm run test:unit`.
+  pins the `wcwidthV11` imports of `virtual-screen.ts` and `composed-width.ts` (the
+  composed-width stream parser). Runs in CI via `npm run test:unit`.
 - **Test (behavior):** the `Unicode 11 width parity` block in
   `tests/unit/headless-frame.test.ts` replays the drift repro (emoji row padded to full
   width, autowrap layout) through the parse and the serialize -> replay round trip; the
