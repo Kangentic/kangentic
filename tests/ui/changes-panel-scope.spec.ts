@@ -193,12 +193,19 @@ test.describe('Changes panel: diff scope selector', () => {
     await fileTree.waitFor({ state: 'visible', timeout: 8000 });
     const beforeWidth = (await fileTree.boundingBox())!.width;
 
-    // Drag the divider 120px to the right to widen the tree.
-    const handleBox = (await page.locator('[data-testid="changes-tree-resize"]').boundingBox())!;
-    await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
+    // Drag the divider 120px to the right to widen the tree. `hover()` waits
+    // for the handle's box to stop moving before pressing, and the
+    // `data-resizing` assertions confirm the drag is genuinely in flight before
+    // any move is dispatched - see the same guard in commit-graph-panel.spec.ts,
+    // where this shape produced a CI flake.
+    const handle = page.locator('[data-testid="changes-tree-resize"]');
+    await handle.hover();
+    const handleBox = (await handle.boundingBox())!;
     await page.mouse.down();
+    await expect(handle).toHaveAttribute('data-resizing', 'true');
     await page.mouse.move(handleBox.x + 120, handleBox.y + handleBox.height / 2, { steps: 6 });
     await page.mouse.up();
+    await expect(handle).toHaveAttribute('data-resizing', 'false');
 
     // The tree widened by roughly the drag distance (tolerance for clamping/rounding).
     await expect.poll(async () => (await fileTree.boundingBox())!.width, { timeout: 5000 }).toBeGreaterThan(beforeWidth + 60);

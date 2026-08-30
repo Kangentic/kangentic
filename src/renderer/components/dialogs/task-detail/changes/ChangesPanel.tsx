@@ -989,6 +989,14 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
               aria-orientation="horizontal"
               title="Drag to resize - double-click to reset"
               data-testid="changes-history-resize"
+              // The drag state as DATA, not just as a Tailwind class. A drag
+              // test that dispatches moves straight after mousedown races the
+              // handler installing its document listeners, and under CI load
+              // the early moves land on nothing - the resize then commits the
+              // untouched default and the test fails once, then passes on
+              // retry. Polling this attribute is the "wait for the condition"
+              // the cross-platform rule asks for.
+              data-resizing={isResizingHistory ? 'true' : 'false'}
             >
               <span className="absolute inset-x-0 -inset-y-1" />
             </div>
@@ -1035,6 +1043,8 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
           aria-orientation="vertical"
           title="Drag to resize - double-click to reset"
           data-testid="changes-tree-resize"
+          // Same drag-state signal as the history resizer above.
+          data-resizing={isResizingTree ? 'true' : 'false'}
         >
           <span className="absolute inset-y-0 -inset-x-1" />
         </div>
