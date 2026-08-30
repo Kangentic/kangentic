@@ -252,11 +252,17 @@ test.describe('Changes panel: per-file diff pop-out', () => {
     expect(openCall?.params.scope ?? null).toBeNull();
 
     // Restore the working diff for the tests that follow (back button + re-collapse).
+    // History expansion is persisted per task (changesHistoryOpen), so the
+    // collapse is guarded and asserted rather than a blind toggle: an
+    // unconditional click re-EXPANDS if the state ever arrives collapsed.
     await page.locator('[data-testid="commit-detail-back"]').click();
     await page
       .locator('[data-testid="changes-file-row"][data-path="docs/database.md"]')
       .waitFor({ state: 'visible', timeout: 8000 });
-    await page.locator('[data-testid="changes-history-toggle"]').click();
+    if ((await historyToggle.getAttribute('aria-expanded')) === 'true') {
+      await historyToggle.click();
+    }
+    await expect(historyToggle).toHaveAttribute('aria-expanded', 'false');
   });
 
   test('the context menu offers "Open in new window" and it opens the pop-out', async () => {

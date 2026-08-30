@@ -458,12 +458,18 @@ export function TaskDetailBody({
     // index whether it renders the wrapper or false - so the browserSlot's
     // index never shifts (retained-pane-never-remounts).
     const terminalWrapperMounted = !changesExpanded || expandTransition?.direction === 'expand';
+    // Both directions animate between the same two ends - the terminal at its
+    // split share, and the terminal gone - so the direction only decides which
+    // end each phase paints: `start` holds the FROM end for one frame, `run`
+    // flips to the TO end and the flex-basis transition carries the move.
+    const splitShareBasis = `${splitRatio * 100}%`;
+    const transitionEnds = expandTransition?.direction === 'expand'
+      ? { start: splitShareBasis, run: '0%' }
+      : { start: '0%', run: splitShareBasis };
     const terminalBasis = expandTransition
-      ? (expandTransition.direction === 'expand'
-          ? (expandTransition.phase === 'start' ? `${splitRatio * 100}%` : '0%')
-          : (expandTransition.phase === 'start' ? '0%' : `${splitRatio * 100}%`))
+      ? transitionEnds[expandTransition.phase]
       : rightPanelPresent
-        ? `${splitRatio * 100}%`
+        ? splitShareBasis
         : undefined;
     return (
       <>

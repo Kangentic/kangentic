@@ -401,6 +401,75 @@ describe('changesHistoryOpen - persists to and hydrates from detail_view_state',
 });
 
 // ---------------------------------------------------------------------------
+// setChangesFileTreeWidth / setChangesHistoryHeight: `null` CLEARS the stored
+// value (backs double-click-to-reset on the two resizers) rather than storing
+// it. Both setters destructure the taskId key out of the record when the
+// argument is null, so the key is DELETED, not set to null - buildDetailViewBlob
+// writes the key only when `!== undefined`, so a stored `null` would still
+// (wrongly) persist into the blob.
+// Red condition: stop special-casing `null` in either setter (store it as a
+// value like every other branch does) and the corresponding key-absence and
+// blob-omission assertions below fail.
+// ---------------------------------------------------------------------------
+
+describe('setChangesFileTreeWidth - null clears the stored width', () => {
+  beforeEach(() => {
+    // Flush any debounced saves left pending by earlier tests (see the
+    // changesSelectedCommit block's comment for why this is needed).
+    vi.advanceTimersByTime(1000);
+    resetSliceState();
+  });
+
+  it('removes the taskId key from changesFileTreeWidth when set to null after being set to a number', () => {
+    useSessionStore.getState().setChangesFileTreeWidth('task-tree-width', 300);
+    expect(useSessionStore.getState().changesFileTreeWidth['task-tree-width']).toBe(300);
+
+    useSessionStore.getState().setChangesFileTreeWidth('task-tree-width', null);
+
+    expect('task-tree-width' in useSessionStore.getState().changesFileTreeWidth).toBe(false);
+  });
+
+  it('omits changesFileTreeWidth from the persisted blob after being cleared to null', () => {
+    useSessionStore.getState().setChangesFileTreeWidth('task-tree-width', 300);
+    useSessionStore.getState().setChangesFileTreeWidth('task-tree-width', null);
+
+    vi.advanceTimersByTime(1000);
+
+    // Both setter calls coalesce into one debounced save carrying the final state.
+    expect(setDetailViewStateMock).toHaveBeenCalledTimes(1);
+    const [, blob] = setDetailViewStateMock.mock.calls[0];
+    expect(blob?.changesFileTreeWidth).toBeUndefined();
+  });
+});
+
+describe('setChangesHistoryHeight - null clears the stored height', () => {
+  beforeEach(() => {
+    vi.advanceTimersByTime(1000);
+    resetSliceState();
+  });
+
+  it('removes the taskId key from changesHistoryHeight when set to null after being set to a number', () => {
+    useSessionStore.getState().setChangesHistoryHeight('task-history-height', 240);
+    expect(useSessionStore.getState().changesHistoryHeight['task-history-height']).toBe(240);
+
+    useSessionStore.getState().setChangesHistoryHeight('task-history-height', null);
+
+    expect('task-history-height' in useSessionStore.getState().changesHistoryHeight).toBe(false);
+  });
+
+  it('omits changesHistoryHeight from the persisted blob after being cleared to null', () => {
+    useSessionStore.getState().setChangesHistoryHeight('task-history-height', 240);
+    useSessionStore.getState().setChangesHistoryHeight('task-history-height', null);
+
+    vi.advanceTimersByTime(1000);
+
+    expect(setDetailViewStateMock).toHaveBeenCalledTimes(1);
+    const [, blob] = setDetailViewStateMock.mock.calls[0];
+    expect(blob?.changesHistoryHeight).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Behavior 4: a Command Terminal window's per-slot entity id is excluded from
 // detail_view_state persistence, the same as the old shared 'command-terminal'
 // sentinel was. Each window now gets its own id via commandTerminalChangesEntityId

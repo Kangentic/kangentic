@@ -300,6 +300,15 @@ test.describe('DiffViewer: blame gutter', () => {
     await expect(await openBlameOption(page)).toBeEnabled();
     await closeViewOptions(page);
 
+    // Re-collapse History: it is persisted per task (changesHistoryOpen), so
+    // leaving it expanded hands the next reopen a state the documented default
+    // says is collapsed. Guarded and asserted, matching commit-graph-panel's
+    // closeChangesPanelAndDialog.
+    if ((await historyToggle.getAttribute('aria-expanded')) === 'true') {
+      await historyToggle.click();
+    }
+    await expect(historyToggle).toHaveAttribute('aria-expanded', 'false');
+
     await page.locator('[data-testid="changes-toggle"]').click();
     await page.keyboard.press('Control+Shift+W');
     await expect(dialog).not.toBeVisible({ timeout: 8000 });

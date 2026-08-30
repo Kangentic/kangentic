@@ -304,6 +304,135 @@ test.describe('DiffViewer toolbar: rendering toggles, and the surface header exp
     await expect(dialog).not.toBeVisible({ timeout: 8000 });
   });
 
+  test('Escape over the open View options menu closes only the menu, not the task window', async () => {
+    // KebabMenu carries a capture-phase Escape handler (preventDefault +
+    // stopImmediatePropagation) precisely so the host task-detail window's own
+    // bubble-phase Escape-to-close listener never sees the keystroke while a
+    // menu is open. Nothing previously asserted this as a positive behavior -
+    // a leaked Escape would ALSO hide the menu (because it closes the whole
+    // dialog), so a "menu not visible" assertion alone cannot tell the two
+    // apart. Assert both: the menu closes AND the dialog survives.
+    await page.evaluate(() => {
+      (window as unknown as { __mockGitDiff: unknown }).__mockGitDiff = {
+        files: [
+          {
+            path: 'src/renderer/components/EscapeGuard.tsx',
+            status: 'M',
+            insertions: 1,
+            deletions: 1,
+            binary: false,
+            original: 'const a = 1;\n',
+            modified: 'const a = 2;\n',
+            language: 'typescript',
+          },
+        ],
+      };
+    });
+
+    const card = page
+      .locator('[data-swimlane-name="Code Review"]')
+      .locator('text=DiffViewer Toolbar Task')
+      .first();
+    await card.click();
+
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 5000 });
+
+    const changesPill = page.locator('[data-testid="changes-toggle"]');
+    await changesPill.click();
+    await expect(page.locator('[data-testid="diff-view-split"]')).toBeVisible({ timeout: 8000 });
+
+    const optionsMenu = page.locator('[data-testid="diff-view-options-menu"]');
+    await page.locator('[data-testid="diff-view-options"]').click();
+    await expect(optionsMenu).toBeVisible({ timeout: 5000 });
+
+    await page.keyboard.press('Escape');
+    await expect(optionsMenu).not.toBeVisible({ timeout: 5000 });
+    // Fixed budget, not a poll (anti-pattern 6: a negative assertion cannot be
+    // polled for). A leaked Escape closes the dialog through its own ~150ms
+    // CSS exit animation (--overlay-exit-duration), so checking visibility
+    // immediately would pass even with the guard broken - the dialog is still
+    // mid-animation and technically "visible" at that instant. Give the
+    // animation a generous window to finish, then assert it is still there.
+    await page.waitForTimeout(400);
+    await expect(dialog).toBeVisible();
+
+    await page.evaluate(() => {
+      (window as unknown as Record<string, unknown>).__mockGitDiff = null;
+    });
+
+    await changesPill.click();
+    await page.keyboard.press('Control+Shift+W');
+    await expect(dialog).not.toBeVisible({ timeout: 8000 });
+  });
+
+  test('the View options menu\'s "Open settings" action opens Settings on the Changes tab', async () => {
+    await page.evaluate(() => {
+      (window as unknown as { __mockGitDiff: unknown }).__mockGitDiff = {
+        files: [
+          {
+            path: 'src/renderer/components/OpenSettings.tsx',
+            status: 'M',
+            insertions: 1,
+            deletions: 1,
+            binary: false,
+            original: 'const a = 1;\n',
+            modified: 'const a = 2;\n',
+            language: 'typescript',
+          },
+        ],
+      };
+    });
+
+    const card = page
+      .locator('[data-swimlane-name="Code Review"]')
+      .locator('text=DiffViewer Toolbar Task')
+      .first();
+    await card.click();
+
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 5000 });
+
+    const changesPill = page.locator('[data-testid="changes-toggle"]');
+    await changesPill.click();
+    await expect(page.locator('[data-testid="diff-view-split"]')).toBeVisible({ timeout: 8000 });
+
+    const optionsMenu = page.locator('[data-testid="diff-view-options-menu"]');
+    await page.locator('[data-testid="diff-view-options"]').click();
+    await expect(optionsMenu).toBeVisible({ timeout: 5000 });
+
+    // The item calls setLastSettingsTab('changes') then setSettingsOpen(true) -
+    // both must land: the panel opens, and it opens on the tab that owns these
+    // very keys rather than whatever tab was last viewed.
+    await optionsMenu.locator('[data-testid="diff-open-settings"]').click();
+
+    const settingsPanel = page.locator('[data-testid="settings-panel"]');
+    await expect(settingsPanel).toBeVisible({ timeout: 5000 });
+    // 'Git Diff View' is the Changes tab's diffViewMode row label - content
+    // only that tab renders, so its presence is proof the tab landed there
+    // (not just that some Settings tab opened).
+    await expect(settingsPanel.getByText('Git Diff View')).toBeVisible();
+
+    // Close via the store directly rather than Escape: a task-detail window
+    // with a running session sits underneath, and this test's job is to check
+    // the menu action's effect, not re-litigate Escape propagation (covered
+    // above).
+    await page.evaluate(() => {
+      (window as unknown as {
+        __zustandStores: { config: { getState: () => { setSettingsOpen: (open: boolean) => void } } };
+      }).__zustandStores.config.getState().setSettingsOpen(false);
+    });
+    await expect(settingsPanel).not.toBeVisible({ timeout: 5000 });
+
+    await page.evaluate(() => {
+      (window as unknown as Record<string, unknown>).__mockGitDiff = null;
+    });
+
+    await changesPill.click();
+    await page.keyboard.press('Control+Shift+W');
+    await expect(dialog).not.toBeVisible({ timeout: 8000 });
+  });
+
   test('wrap toggle actually reflows long lines in BOTH diff panes', async () => {
     // aria-pressed only proves the button flipped. This asserts Monaco really wrapped,
     // and covers both panes: Monaco force-sets wordWrapOverride1 AND override2 to 'off'
@@ -400,6 +529,90 @@ test.describe('DiffViewer toolbar: rendering toggles, and the surface header exp
     await page.evaluate(() => {
       (window as unknown as Record<string, unknown>).__mockGitDiff = null;
     });
+    await changesPill.click();
+    await page.keyboard.press('Control+Shift+W');
+    await expect(dialog).not.toBeVisible({ timeout: 8000 });
+  });
+
+  test('inline-when-narrow renders the diff inline below Monaco\'s breakpoint, and turning it off forces side-by-side despite the width', async () => {
+    // Deliberately the INVERSE setup from the wrap test above: do NOT maximize
+    // or expand the Changes surface. The wrap test's own comment notes that
+    // maximizing alone is not enough to clear Monaco's ~900px side-by-side
+    // breakpoint - the unexpanded, unmaximized dialog is already narrower than
+    // that on its own, which is exactly the "narrow pane" case this option
+    // governs.
+    await page.evaluate(() => {
+      (window as unknown as { __mockGitDiff: unknown }).__mockGitDiff = {
+        files: [
+          {
+            path: 'src/renderer/components/InlineNarrow.tsx',
+            status: 'M',
+            insertions: 1,
+            deletions: 1,
+            binary: false,
+            original: 'const a = 1;\n',
+            modified: 'const a = 2;\n',
+            language: 'typescript',
+          },
+        ],
+      };
+    });
+
+    const card = page
+      .locator('[data-swimlane-name="Code Review"]')
+      .locator('text=DiffViewer Toolbar Task')
+      .first();
+    await card.click();
+
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 5000 });
+
+    const changesPill = page.locator('[data-testid="changes-toggle"]');
+    await changesPill.click();
+    await expect(page.locator('[data-testid="diff-view-split"]')).toBeVisible({ timeout: 8000 });
+
+    // Explicitly select Side by side: the point of the assertion below is that
+    // Monaco silently falls back to inline DESPITE this selection, not that
+    // inline was picked directly.
+    await page.locator('[data-testid="diff-view-split"]').click();
+
+    const sideBySide = page.locator('.monaco-diff-editor.side-by-side');
+
+    // Below the breakpoint, Monaco's own useInlineViewWhenSpaceIsLimited
+    // (config default true) renders inline regardless of the split-view
+    // selection.
+    await expect(page.locator('.monaco-diff-editor')).toBeVisible({ timeout: 8000 });
+    await expect(sideBySide).not.toBeVisible();
+
+    const optionsMenu = page.locator('[data-testid="diff-view-options-menu"]');
+    const inlineWhenNarrow = optionsMenu.locator('[data-testid="diff-inline-when-narrow"]');
+
+    // Turn "Inline when narrow" off: side-by-side must now render despite the
+    // unchanged (still-narrow) width.
+    await page.locator('[data-testid="diff-view-options"]').click();
+    await expect(optionsMenu).toBeVisible({ timeout: 5000 });
+    await expect(inlineWhenNarrow).toHaveAttribute('aria-checked', 'true');
+    await inlineWhenNarrow.click();
+    await expect(inlineWhenNarrow).toHaveAttribute('aria-checked', 'false');
+    await page.keyboard.press('Escape');
+    await expect(optionsMenu).not.toBeVisible({ timeout: 5000 });
+
+    await expect(sideBySide).toBeVisible({ timeout: 8000 });
+
+    // Restore the default (on) so the global config does not bleed into other
+    // specs - the same width renders inline again.
+    await page.locator('[data-testid="diff-view-options"]').click();
+    await expect(optionsMenu).toBeVisible({ timeout: 5000 });
+    await inlineWhenNarrow.click();
+    await expect(inlineWhenNarrow).toHaveAttribute('aria-checked', 'true');
+    await page.keyboard.press('Escape');
+    await expect(optionsMenu).not.toBeVisible({ timeout: 5000 });
+    await expect(sideBySide).not.toBeVisible({ timeout: 8000 });
+
+    await page.evaluate(() => {
+      (window as unknown as Record<string, unknown>).__mockGitDiff = null;
+    });
+
     await changesPill.click();
     await page.keyboard.press('Control+Shift+W');
     await expect(dialog).not.toBeVisible({ timeout: 8000 });
