@@ -3434,6 +3434,44 @@ describe('Post-first-output geometry re-assert', () => {
     expect(manager.getSession(session.id)).toBeDefined();
   });
 
+  it('swallows a resize failure on the restore leg after the jiggle leg lands', async () => {
+    // Distinct from the case above: there the arming resize's own mock throws,
+    // so only the FIRST (jiggle) resize call inside reassertGeometryAfterFirstOutput
+    // is ever attempted. Here the jiggle leg succeeds and only the SECOND
+    // (restore) call fails - the only case that exercises the function's
+    // second try/catch, which the case above cannot reach.
+    const { session, mockPty, feedData } = await spawnSession('task-reassert-restore-fails');
+
+    manager.resize(session.id, 306, 48);
+    expect(mockPty.resize.mock.calls).toEqual([[306, 48]]);
+    mockPty.resize.mockClear();
+
+    // Installed AFTER the arming resize succeeds, so the flag is armed with
+    // pty.cols already at 306 before the jiggle begins.
+    let resizeCallCount = 0;
+    mockPty.resize.mockImplementation((cols: number, rows: number) => {
+      resizeCallCount++;
+      if (resizeCallCount === 2) throw new Error('EPIPE');
+      mockPty.cols = cols;
+      mockPty.rows = rows;
+    });
+
+    feedData('agent output');
+    await settleFlush();
+
+    // Both legs were attempted: the narrow jiggle leg landed, the restore did not.
+    expect(mockPty.resize.mock.calls).toEqual([[305, 48], [306, 48]]);
+    // No unhandled throw escaped the flush callback; the session survives.
+    expect(manager.getSession(session.id)).toBeDefined();
+
+    // The flag is cleared before either leg runs, so a later output does not
+    // retry the stranded restore (mirrors the at-most-once case above).
+    mockPty.resize.mockClear();
+    feedData('more output');
+    await settleFlush();
+    expect(mockPty.resize).not.toHaveBeenCalled();
+  });
+
   it('skips the jiggle when the session was killed before the flush delivered first output', async () => {
     const { session, mockPty, feedData } = await spawnSession('task-reassert-killed');
 
