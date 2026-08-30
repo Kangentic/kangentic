@@ -38,6 +38,19 @@
  *    union diff (the byte cap only trims full-body packing, never the diff itself) - and
  *    the TOC/header-total contract from (1) and (3) still holds for a pack shaped this way
  *    (an omitted file contributes no TOC entry and does not perturb the header block).
+ *
+ * 5. The stdout "  paths: " line carries every changed file across all three layers
+ *    (committed-vs-base, uncommitted, untracked), INCLUDING one trimmed by the 200KB cap,
+ *    and is distinct from the "  changed files: " count line above it. This is the line
+ *    /code-review's SKILL.md tells the driver to read for `changedFiles`, and the reason it
+ *    exists at all: the pack's TOC lists only files whose body was packed, so deriving the
+ *    list from the TOC silently drops a cap-trimmed file and un-gates a domain auditor whose
+ *    glob it matched.
+ *
+ * 6. The script exits 0 on both the empty-diff and non-empty-diff paths, so only the
+ *    literal "NO CHANGES:" stdout prefix (never the exit status) tells a caller which case
+ *    it hit - and on that path neither REVIEW_PACK.tmp.md nor REVIEW_PREEXISTING_DIRTY.tmp
+ *    is written at all.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
@@ -56,8 +69,23 @@ function runGit(args: string[], cwd: string): string {
 
 function commitAll(cwd: string, message: string): void {
   runGit(['add', '-A'], cwd);
+  // Identity AND signing are overridden for the same reason: the fixture repo must not inherit
+  // the developer's or the runner's ambient git config. A global commit.gpgsign=true would make
+  // every commit here try to sign, which fails outright in a non-interactive test run with no
+  // key or no GPG_TTY - green on one machine, red on another.
   runGit(
-    ['-c', 'user.email=dev@example.com', '-c', 'user.name=Dev', 'commit', '-q', '-m', message],
+    [
+      '-c',
+      'user.email=dev@example.com',
+      '-c',
+      'user.name=Dev',
+      '-c',
+      'commit.gpgsign=false',
+      'commit',
+      '-q',
+      '-m',
+      message,
+    ],
     cwd,
   );
 }
@@ -89,6 +117,21 @@ function extractTocEntries(packContent: string): TocEntry[] {
     entries.push({ lineNumber: Number(match[1]), label: match[2].trim() });
   }
   return entries;
+}
+
+// Parses the one stdout line SKILL.md tells the review driver to read for `changedFiles`.
+// Deliberately strict about the "  paths: " prefix rather than searching for a bare "paths":
+// the summary block prints a "  changed files: " count line directly above, and the whole point
+// of the separate label is that a driver can tell the two apart without ambiguity. Returns
+// undefined when the line is absent so a caller can assert on its presence rather than silently
+// reconstructing an empty list.
+const PATHS_LINE_PREFIX = '  paths: ';
+function parsePathsLine(buildOutput: string): string[] | undefined {
+  const pathsLine = buildOutput
+    .split('\n')
+    .find((line) => line.startsWith(PATHS_LINE_PREFIX));
+  if (pathsLine === undefined) return undefined;
+  return pathsLine.slice(PATHS_LINE_PREFIX.length).trim().split(', ');
 }
 
 // Shared by the TOC-accuracy test and the pack-cap test: both need to confirm every TOC
@@ -310,6 +353,105 @@ describe('build-review-pack.mjs', () => {
       // the header block that precedes "## Union diff".
       const entries = assertTocLineAccuracyAndHeaderTotal(packContent);
       expect(entries.map((entry) => entry.label)).toEqual(['Union diff', 'small.txt']);
+    },
+    20000,
+  );
+
+  it(
+    'the stdout "paths:" line lists every changed file across all three layers, including a cap-trimmed one the TOC omits',
+    () => {
+      // 7000 fixed-length lines, same sizing as the cap test above: the numbered body lands
+      // around 356KB, comfortably over PACK_BODY_CAP_BYTES (200KB) on its own. That
+      // independence matters here specifically because this fixture also carries a
+      // committed-vs-base layer, which folds into churnOf's ranking (committed + uncommitted
+      // churn) - without an independently-oversized file, the cap could land on whichever
+      // file the ranking happens to favor, and the test would pass for the wrong reason.
+      const heavyLines = Array.from({ length: 7000 }, () => 'x'.repeat(45));
+      fs.writeFileSync(path.join(repoDirectory, 'committed-vs-base.txt'), 'line one\n');
+      fs.writeFileSync(path.join(repoDirectory, 'tracked-uncommitted.txt'), 'line one\n');
+      fs.writeFileSync(path.join(repoDirectory, 'big.txt'), heavyLines.join('\n') + '\n');
+      commitAll(repoDirectory, 'base commit');
+      const baseRef = runGit(['rev-parse', 'HEAD'], repoDirectory).trim();
+
+      // Committed-vs-base layer: both files land in the base...HEAD diff.
+      fs.writeFileSync(
+        path.join(repoDirectory, 'committed-vs-base.txt'),
+        'line one\nline two (committed after base)\n',
+      );
+      fs.appendFileSync(path.join(repoDirectory, 'big.txt'), 'appended heavy line (committed)\n');
+      commitAll(repoDirectory, 'committed-vs-base change');
+
+      // Uncommitted layer: a working-tree edit to a file already tracked at HEAD.
+      fs.writeFileSync(
+        path.join(repoDirectory, 'tracked-uncommitted.txt'),
+        'line one\nline two (uncommitted)\n',
+      );
+
+      // Untracked layer: a brand-new file never added to git.
+      fs.writeFileSync(path.join(repoDirectory, 'untracked.txt'), 'new file\n');
+
+      const buildOutput = runBuildScript(repoDirectory, [baseRef]);
+
+      const packPath = path.join(repoDirectory, '.kangentic', 'REVIEW_PACK.tmp.md');
+      const packContent = fs.readFileSync(packPath, 'utf8');
+
+      // Non-vacuity guard: big.txt must actually be the trimmed one, not silently packed -
+      // otherwise every path would reach the TOC anyway and the test could not tell a
+      // "paths:"-derived list apart from a TOC-derived one, which is the whole distinction.
+      expect(packContent).not.toContain('## Full file: big.txt');
+      expect(packContent).toMatch(/- big\.txt \(churn \d+; over pack cap\)/);
+      expect(packContent).toContain('## Full file: committed-vs-base.txt');
+      expect(packContent).toContain('## Full file: tracked-uncommitted.txt');
+      expect(packContent).toContain('## Full file: untracked.txt');
+
+      // The gap the "paths:" line closes: the TOC really is missing the trimmed file, so a
+      // driver reading the TOC would under-gate its domain auditors by exactly this path.
+      const tocLabels = extractTocEntries(packContent).map((entry) => entry.label);
+      expect(tocLabels).not.toContain('big.txt');
+
+      const changedFiles = parsePathsLine(buildOutput);
+      expect(changedFiles).toBeDefined();
+      expect([...changedFiles!].sort()).toEqual(
+        ['committed-vs-base.txt', 'tracked-uncommitted.txt', 'untracked.txt', 'big.txt'].sort(),
+      );
+
+      // The count line is a separate, distinctly labelled line: a driver keying off "paths: "
+      // must not be able to match the count line by accident.
+      expect(buildOutput).toMatch(/^ {2}changed files: 4 \(/m);
+      expect(buildOutput.match(/^ {2}paths: /gm)).toHaveLength(1);
+    },
+    20000,
+  );
+
+  it(
+    'the "NO CHANGES:" stdout prefix, not the exit status, discriminates an empty diff from a non-empty one, and the empty path writes neither output file',
+    () => {
+      // execFileSync throws on a non-zero exit, so runBuildScript returning at all already
+      // means exit 0 - on BOTH the empty and non-empty paths. Only the literal stdout prefix
+      // can tell a caller which case it hit; SKILL.md now says so explicitly, and this test
+      // pins the reason why by checking the prefix on both sides of the same repo.
+      //
+      // The existsSync assertions below are the second half of the same contract and are named
+      // in the test title too: a driver that trusted the exit status alone would go on to read
+      // two files the empty path never created, so "exits 0" and "writes nothing" have to fail
+      // separately and legibly rather than under a title that mentions only the prefix.
+      commitAll(repoDirectory, 'commit the fixture .gitignore');
+
+      const emptyRunOutput = runBuildScript(repoDirectory);
+      expect(emptyRunOutput.startsWith('NO CHANGES:')).toBe(true);
+      expect(
+        fs.existsSync(path.join(repoDirectory, '.kangentic', 'REVIEW_PACK.tmp.md')),
+      ).toBe(false);
+      expect(
+        fs.existsSync(path.join(repoDirectory, '.kangentic', 'REVIEW_PREEXISTING_DIRTY.tmp')),
+      ).toBe(false);
+
+      fs.writeFileSync(path.join(repoDirectory, 'changed.txt'), 'a change\n');
+      const nonEmptyRunOutput = runBuildScript(repoDirectory);
+      expect(nonEmptyRunOutput.startsWith('NO CHANGES:')).toBe(false);
+      expect(
+        fs.existsSync(path.join(repoDirectory, '.kangentic', 'REVIEW_PACK.tmp.md')),
+      ).toBe(true);
     },
     20000,
   );
