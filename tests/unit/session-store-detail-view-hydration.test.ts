@@ -117,6 +117,7 @@ function resetSliceState(): void {
     changesViewMode: {},
     changesSelectedCommit: {},
     changesHistoryHeight: {},
+    changesHistoryOpen: {},
     dividerRatio: {},
     browserOpenTasks: new Set<string>(),
     maximizedTasks: new Set<string>(),
@@ -327,6 +328,75 @@ describe('changesSelectedCommit - persists to and hydrates from detail_view_stat
     useSessionStore.getState().hydrateDetailViewStateForTasks([task]);
 
     expect(useSessionStore.getState().changesSelectedCommit['task-hydrate-default']).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// changesHistoryOpen: the Changes rail's History section expanded flag.
+// Written only when true (absent = collapsed, the new default), mirroring the
+// changesOpen / changesSelectedCommit asymmetry; collapsing drops the key from
+// the store record AND the next blob write rather than storing false.
+// Red condition (write): remove the
+// `if (state.changesHistoryOpen[taskId]) blob.changesHistoryOpen = true;` line
+// from buildDetailViewBlob and the persist test loses the key. Red condition
+// (read): remove the `if (blob.changesHistoryOpen) ...` hydration line and the
+// hydrate test fails.
+// ---------------------------------------------------------------------------
+
+describe('changesHistoryOpen - persists to and hydrates from detail_view_state', () => {
+  beforeEach(() => {
+    // Same stray-timer flush as the changesSelectedCommit block above.
+    vi.advanceTimersByTime(1000);
+    resetSliceState();
+  });
+
+  it('persists changesHistoryOpen: true into the saved blob after setChangesHistoryOpen(id, true)', () => {
+    useSessionStore.getState().setChangesHistoryOpen('task-history', true);
+
+    vi.advanceTimersByTime(1000);
+
+    expect(setDetailViewStateMock).toHaveBeenCalledTimes(1);
+    const [taskId, blob] = setDetailViewStateMock.mock.calls[0];
+    expect(taskId).toBe('task-history');
+    expect(blob).toMatchObject({ changesHistoryOpen: true });
+  });
+
+  it('omits changesHistoryOpen from the blob after collapsing back (absent = collapsed default)', () => {
+    useSessionStore.getState().setChangesHistoryOpen('task-history', true);
+    useSessionStore.getState().setChangesHistoryOpen('task-history', false);
+
+    vi.advanceTimersByTime(1000);
+
+    // Both setter calls coalesce into one debounced save carrying the final state.
+    expect(setDetailViewStateMock).toHaveBeenCalledTimes(1);
+    const [, blob] = setDetailViewStateMock.mock.calls[0];
+    expect(blob?.changesHistoryOpen).toBeUndefined();
+    // The store record drops the key too, staying bounded.
+    expect('task-history' in useSessionStore.getState().changesHistoryOpen).toBe(false);
+  });
+
+  it('is a no-op (no save scheduled) when setting the value it already has', () => {
+    useSessionStore.getState().setChangesHistoryOpen('task-history', false);
+
+    vi.advanceTimersByTime(1000);
+
+    expect(setDetailViewStateMock).not.toHaveBeenCalled();
+  });
+
+  it('hydrates changesHistoryOpen from a persisted blob back into the store', () => {
+    const task = makeTask('task-hydrate-history', JSON.stringify({ changesHistoryOpen: true }));
+
+    useSessionStore.getState().hydrateDetailViewStateForTasks([task]);
+
+    expect(useSessionStore.getState().changesHistoryOpen['task-hydrate-history']).toBe(true);
+  });
+
+  it('leaves changesHistoryOpen unset when the persisted blob omits it (collapsed stays the default)', () => {
+    const task = makeTask('task-hydrate-collapsed', JSON.stringify({ dividerRatio: 0.5 }));
+
+    useSessionStore.getState().hydrateDetailViewStateForTasks([task]);
+
+    expect(useSessionStore.getState().changesHistoryOpen['task-hydrate-collapsed']).toBeUndefined();
   });
 });
 

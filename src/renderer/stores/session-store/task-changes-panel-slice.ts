@@ -104,6 +104,13 @@ export interface TaskChangesPanelSlice {
    */
   changesHistoryHeight: Record<string, number>;
   /**
+   * Whether the Changes rail's History section is expanded, keyed by task ID.
+   * Absent means collapsed - the default: history is a navigation axis, not the
+   * headline, so the vertical budget goes to the file tree until the user asks
+   * for commits. Persisted (only when true) in the `detail_view_state` blob.
+   */
+  changesHistoryOpen: Record<string, boolean>;
+  /**
    * Non-task sentinel ids whose dialog is maximized (persists across dialog
    * open/close). Holds only the create dialogs ('new-task-dialog',
    * 'new-backlog-task-dialog') and the Edit Columns dialog
@@ -135,7 +142,9 @@ export interface TaskChangesPanelSlice {
   setChangesOpen: (taskId: string, open: boolean, projectId?: string) => void;
   setChangesSelectedFile: (taskId: string, filePath: string | null) => void;
   setChangesScope: (taskId: string, scope: GitDiffScope) => void;
-  setChangesFileTreeWidth: (taskId: string, width: number) => void;
+  /** null clears the stored width (double-click-to-reset on the resizer), so
+   *  the panel returns to its proportional default. */
+  setChangesFileTreeWidth: (taskId: string, width: number | null) => void;
   toggleChangesFileViewed: (taskId: string, filePath: string) => void;
   markChangesFileViewed: (taskId: string, filePath: string) => void;
   setChangesViewMode: (taskId: string, mode: 'split' | 'expanded') => void;
@@ -169,7 +178,10 @@ export interface TaskChangesPanelSlice {
   /** Force `useBrowserUrl` to refetch this task's URLs. See {@link browserUrlRefreshTokens}. */
   refreshBrowserUrl: (taskId: string) => void;
   setChangesSelectedCommit: (taskId: string, commitOid: string | null) => void;
-  setChangesHistoryHeight: (taskId: string, height: number) => void;
+  /** null clears the stored height (double-click-to-reset on the resizer), so
+   *  the History section returns to its default height. */
+  setChangesHistoryHeight: (taskId: string, height: number | null) => void;
+  setChangesHistoryOpen: (taskId: string, open: boolean) => void;
   toggleMaximized: (taskId: string) => void;
   /**
    * Seed the per-task detail-view fields above from each task's persisted
@@ -218,6 +230,9 @@ function buildDetailViewBlob(state: SessionStore, taskId: string): TaskDetailVie
   if (selectedCommit) blob.changesSelectedCommit = selectedCommit;
   const historyHeight = state.changesHistoryHeight[taskId];
   if (historyHeight !== undefined) blob.changesHistoryHeight = historyHeight;
+  // Written only when true: absent = collapsed, the default. Mirrors changesOpen's
+  // asymmetry so a collapse simply drops the key from the next blob write.
+  if (state.changesHistoryOpen[taskId]) blob.changesHistoryOpen = true;
   const viewMode = state.changesViewMode[taskId];
   if (viewMode !== undefined) blob.changesViewMode = viewMode;
   const selectedFile = state.changesSelectedFile[taskId];
@@ -308,6 +323,7 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
   browserUrlRefreshTokens: {},
   changesSelectedCommit: {},
   changesHistoryHeight: {},
+  changesHistoryOpen: {},
   maximizedTasks: new Set<string>(),
   hydratedDetailViewTasks: new Set<string>(),
 
@@ -401,7 +417,26 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
   },
 
   setChangesHistoryHeight: (taskId, height) => {
-    set({ changesHistoryHeight: { ...get().changesHistoryHeight, [taskId]: height } });
+    if (height === null) {
+      const { [taskId]: _removed, ...rest } = get().changesHistoryHeight;
+      set({ changesHistoryHeight: rest });
+    } else {
+      set({ changesHistoryHeight: { ...get().changesHistoryHeight, [taskId]: height } });
+    }
+    scheduleDetailViewSave(taskId, get);
+  },
+
+  setChangesHistoryOpen: (taskId, open) => {
+    const current = get().changesHistoryOpen;
+    if ((current[taskId] ?? false) === open) return;
+    if (open) {
+      set({ changesHistoryOpen: { ...current, [taskId]: true } });
+    } else {
+      // Drop the key rather than storing false, so the record mirrors the blob's
+      // written-only-when-true shape and stays bounded.
+      const { [taskId]: _removed, ...rest } = current;
+      set({ changesHistoryOpen: rest });
+    }
     scheduleDetailViewSave(taskId, get);
   },
 
@@ -434,7 +469,12 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
   },
 
   setChangesFileTreeWidth: (taskId, width) => {
-    set({ changesFileTreeWidth: { ...get().changesFileTreeWidth, [taskId]: width } });
+    if (width === null) {
+      const { [taskId]: _removed, ...rest } = get().changesFileTreeWidth;
+      set({ changesFileTreeWidth: rest });
+    } else {
+      set({ changesFileTreeWidth: { ...get().changesFileTreeWidth, [taskId]: width } });
+    }
     scheduleDetailViewSave(taskId, get);
   },
 
@@ -489,6 +529,7 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
     const browserOpenTasks = new Set(get().browserOpenTasks);
     const changesSelectedCommit = { ...get().changesSelectedCommit };
     const changesHistoryHeight = { ...get().changesHistoryHeight };
+    const changesHistoryOpen = { ...get().changesHistoryOpen };
     const changesViewMode = { ...get().changesViewMode };
     const changesSelectedFile = { ...get().changesSelectedFile };
     const changesViewedFiles = { ...get().changesViewedFiles };
@@ -508,6 +549,7 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
       if (blob.browserOpen) browserOpenTasks.add(task.id);
       if (blob.changesSelectedCommit !== undefined) changesSelectedCommit[task.id] = blob.changesSelectedCommit;
       if (blob.changesHistoryHeight !== undefined) changesHistoryHeight[task.id] = blob.changesHistoryHeight;
+      if (blob.changesHistoryOpen) changesHistoryOpen[task.id] = true;
       if (blob.changesViewMode !== undefined) changesViewMode[task.id] = blob.changesViewMode;
       if (blob.changesSelectedFile !== undefined) changesSelectedFile[task.id] = blob.changesSelectedFile;
       if (blob.changesViewedFiles && blob.changesViewedFiles.length > 0) {
@@ -523,6 +565,7 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
       browserOpenTasks,
       changesSelectedCommit,
       changesHistoryHeight,
+      changesHistoryOpen,
       changesViewMode,
       changesSelectedFile,
       changesViewedFiles,

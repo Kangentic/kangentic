@@ -2,10 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { DiffEditor } from '@monaco-editor/react';
 import type { DiffOnMount, Monaco, MonacoDiffEditor } from '@monaco-editor/react';
 import type { editor as MonacoEditorNamespace } from 'monaco-editor';
-import { Loader2, Columns2, Rows2, FileCode, ChevronUp, ChevronDown, Pilcrow, FoldVertical, WrapText, Eye, UserRound } from 'lucide-react';
+import { Loader2, Columns2, Rows2, FileCode, ChevronUp, ChevronDown, Eye } from 'lucide-react';
+import { DiffViewOptionsMenu, diffToolbarButtonClass as toolbarButtonClass } from './DiffViewOptionsMenu';
 import { MarkdownRenderer } from '../../../MarkdownRenderer';
 import { useConfigStore } from '../../../../stores/config-store';
-import { useKeybinding } from '../../../../hooks/useKeybinding';
+import { useKeybinding, useFormattedCombo } from '../../../../hooks/useKeybinding';
 import { formatRelativeTime } from '../../../../lib/datetime';
 import { NAMED_THEMES } from '../../../../../shared/types';
 import type { GitBlameLine, GitDiffStatus } from '../../../../../shared/types';
@@ -83,17 +84,6 @@ interface TrackedScroll {
   key: string;
   scrollTop: number;
   scrollLeft: number;
-}
-
-/** Shared styling for the diff toolbar buttons: a clear hover background (matching
- *  the rest of the app) and a brief press effect so a click visibly registers.
- *  `active` renders the pressed/selected state for toggles and the current view mode. */
-function toolbarButtonClass(active: boolean): string {
-  return `p-1.5 rounded transition active:scale-90 ${
-    active
-      ? 'bg-surface-raised text-fg'
-      : 'text-fg-muted hover:text-fg hover:bg-surface-hover'
-  }`;
 }
 
 export function DiffViewer({
@@ -179,14 +169,15 @@ export function DiffViewer({
     if (blameUnavailable) setBlameOn(false);
   }, [blameUnavailable]);
 
-  // Diff-rendering preferences are single global config keys (the toolbar
-  // toggles and the Changes settings tab read and write the same keys), so the
+  // Diff-rendering preferences are single global config keys (the View options
+  // menu and the Changes settings tab read and write the same keys), so the
   // choices stick across every diff, all mount points, and restarts - exactly
-  // like the split/inline view mode.
+  // like the split/inline view mode. The menu owns the WRITES (see
+  // DiffViewOptionsMenu); these reads are the ones monaco itself needs.
   const ignoreWhitespace = useConfigStore((state) => state.config.diffIgnoreWhitespace);
   const collapseUnchanged = useConfigStore((state) => state.config.diffCollapseUnchanged);
   const wrapLines = useConfigStore((state) => state.config.diffWrapLines);
-  const updateConfig = useConfigStore((state) => state.updateConfig);
+  const useInlineWhenNarrow = useConfigStore((state) => state.config.diffUseInlineWhenNarrow);
 
   const diffEditorRef = useRef<MonacoDiffEditor | null>(null);
   const monacoRef = useRef<Monaco | null>(null);
@@ -569,6 +560,16 @@ export function DiffViewer({
     diffEditorRef.current?.updateOptions({ wordWrap: wrapLines ? 'on' : 'off' });
   }, [wrapLines]);
 
+  // Same for the narrow-pane behavior. Monaco's own useInlineViewWhenSpaceIsLimited
+  // (default true, breakpoint ~900px) is what silently renders a narrow pane inline
+  // regardless of the Side by side selection; the setting exposes the escape hatch
+  // (VS Code's diffEditor.useInlineViewWhenSpaceIsLimited parity). With it off, the
+  // inline pass never fires, and the wordWrapOverride2 repair in handleEditorMount
+  // becomes a harmless no-op.
+  useEffect(() => {
+    diffEditorRef.current?.updateOptions({ useInlineViewWhenSpaceIsLimited: useInlineWhenNarrow });
+  }, [useInlineWhenNarrow]);
+
   // Re-apply the fold whenever collapse is toggled. The diff is already loaded
   // here, so applyCollapseFold's disable -> enable is the transition Monaco honors.
   useEffect(() => {
@@ -587,6 +588,9 @@ export function DiffViewer({
   // because the diff editor owns the line changes.
   useKeybinding('changes.nextChange', () => navigateChange('next'), { capture: true, enabled: isFocused && !previewActive });
   useKeybinding('changes.prevChange', () => navigateChange('prev'), { capture: true, enabled: isFocused && !previewActive });
+  // Live combo strings for the nav-button tooltips ('' when unbound).
+  const nextChangeCombo = useFormattedCombo('changes.nextChange');
+  const prevChangeCombo = useFormattedCombo('changes.prevChange');
 
   // Reliable copy: Monaco's own Ctrl+C routes through the web clipboard, which
   // rejects once the document loses focus. Capture ahead of Monaco (capture
@@ -707,11 +711,13 @@ export function DiffViewer({
             <>
               {isMarkdown && <div className="w-px h-4 bg-edge mx-1" aria-hidden="true" />}
 
-              {/* Next / previous change navigation */}
+              {/* Next / previous change navigation. Tooltips carry the LIVE
+                  combos (rebind-aware via useFormattedCombo), never hardcoded
+                  strings. */}
               <button
                 onClick={() => navigateChange('prev')}
                 className={toolbarButtonClass(false)}
-                title="Previous change"
+                title={prevChangeCombo ? `Previous change (${prevChangeCombo})` : 'Previous change'}
                 data-testid="diff-prev-change"
               >
                 <ChevronUp size={16} />
@@ -719,7 +725,7 @@ export function DiffViewer({
               <button
                 onClick={() => navigateChange('next')}
                 className={toolbarButtonClass(false)}
-                title="Next change"
+                title={nextChangeCombo ? `Next change (${nextChangeCombo})` : 'Next change'}
                 data-testid="diff-next-change"
               >
                 <ChevronDown size={16} />
@@ -727,51 +733,14 @@ export function DiffViewer({
 
               <div className="w-px h-4 bg-edge mx-1" aria-hidden="true" />
 
-              {/* Diff-rendering toggles (persisted as global Changes settings) */}
-              <button
-                onClick={() => updateConfig({ diffIgnoreWhitespace: !ignoreWhitespace })}
-                className={toolbarButtonClass(ignoreWhitespace)}
-                title="Ignore whitespace"
-                aria-pressed={ignoreWhitespace}
-                data-testid="diff-ignore-whitespace"
-              >
-                <Pilcrow size={16} />
-              </button>
-              <button
-                onClick={() => updateConfig({ diffCollapseUnchanged: !collapseUnchanged })}
-                className={toolbarButtonClass(collapseUnchanged)}
-                title="Collapse unchanged regions"
-                aria-pressed={collapseUnchanged}
-                data-testid="diff-collapse-unchanged"
-              >
-                <FoldVertical size={16} />
-              </button>
-              <button
-                onClick={() => updateConfig({ diffWrapLines: !wrapLines })}
-                className={toolbarButtonClass(wrapLines)}
-                title="Wrap long lines"
-                aria-pressed={wrapLines}
-                data-testid="diff-wrap-lines"
-              >
-                <WrapText size={16} />
-              </button>
-              <button
-                onClick={() => setBlameOn((value) => !value)}
-                disabled={blameUnavailable}
-                className={`${toolbarButtonClass(blameOn)} disabled:opacity-30 disabled:cursor-default disabled:hover:bg-transparent disabled:hover:text-fg-muted`}
-                title={blameUnavailable ? 'Blame unavailable for this file' : 'Toggle blame'}
-                aria-pressed={blameOn}
-                data-testid="diff-blame-toggle"
-              >
-                <UserRound size={16} />
-              </button>
-
-              <div className="w-px h-4 bg-edge mx-1" aria-hidden="true" />
-
+              {/* Layout mode stays a pair of icon buttons: side-by-side vs
+                  unified is the one diff control with a settled cross-tool
+                  glyph (GitHub ships this exact toggle), and it is flipped
+                  often enough to earn permanent space. */}
               <button
                 onClick={() => onViewModeChange('split')}
                 className={toolbarButtonClass(viewMode === 'split')}
-                title="Side by side"
+                title={useInlineWhenNarrow ? 'Side by side (a narrow pane renders inline)' : 'Side by side'}
                 data-testid="diff-view-split"
               >
                 <Columns2 size={16} />
@@ -784,6 +753,16 @@ export function DiffViewer({
               >
                 <Rows2 size={16} />
               </button>
+
+              <div className="w-px h-4 bg-edge mx-1" aria-hidden="true" />
+
+              <DiffViewOptionsMenu
+                blame={{
+                  on: blameOn,
+                  unavailable: blameUnavailable,
+                  onToggle: () => setBlameOn((value) => !value),
+                }}
+              />
             </>
           )}
         </div>
@@ -792,8 +771,9 @@ export function DiffViewer({
       {/* Editor area - Monaco stays mounted to avoid expensive re-initialization */}
       <div className="flex-1 min-h-0 relative" data-testid="diff-editor-area">
         {binary ? (
-          <div className="flex items-center justify-center h-full text-xs text-fg-disabled">
-            Binary file - cannot display diff
+          <div className="flex flex-col items-center justify-center h-full gap-2 p-4 text-center">
+            <FileCode size={22} className="text-fg-disabled" />
+            <span className="text-sm text-fg-muted">Binary file - cannot display diff</span>
           </div>
         ) : contentFilePath === null ? (
           // Wait for the first content before mounting Monaco, so the editor is
@@ -851,6 +831,10 @@ export function DiffViewer({
                 minimap: { enabled: false },
                 renderWhitespace: 'boundary',
                 wordWrap: wrapLines ? 'on' : 'off',
+                useInlineViewWhenSpaceIsLimited: useInlineWhenNarrow,
+                // Pin the enclosing scope's header line while scrolling a long
+                // hunk (VS Code's editor.stickyScroll).
+                stickyScroll: { enabled: true },
                 fontSize: 12,
                 lineHeight: 18,
                 // Monaco's default context menu also surfaces "Command Palette",

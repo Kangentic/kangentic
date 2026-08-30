@@ -151,16 +151,39 @@ test.describe('Changes panel: file-list controls', () => {
     // Sort by name (default): alphabetical by path.
     await expect.poll(() => rowOrder(page)).toEqual(['src/added.ts', 'src/deleted.ts', 'src/modified.ts']);
 
-    // Cycle to status: additions, modifications, then deletions last.
-    await fileTree.locator('[data-testid="changes-sort"]').click();
-    await expect.poll(() => rowOrder(page)).toEqual(['src/added.ts', 'src/modified.ts', 'src/deleted.ts']);
+    // The sort button opens a menu of modes with the current one checked.
+    const sortButton = fileTree.locator('[data-testid="changes-sort"]');
+    const sortMenu = page.locator('[data-testid="changes-sort-menu"]');
+    await sortButton.click();
+    await expect(sortMenu).toBeVisible({ timeout: 5000 });
+    await expect(sortMenu.locator('[data-testid="changes-sort-option-name"]')).toHaveAttribute('aria-checked', 'true');
 
-    // Cycle to size: most changes first (modified 10, deleted 5, added 1).
-    await fileTree.locator('[data-testid="changes-sort"]').click();
+    // Status: additions, modifications, then deletions last - and in the flat
+    // list, group headers appear at each status boundary.
+    await sortMenu.locator('[data-testid="changes-sort-option-status"]').click();
+    await expect(sortMenu).not.toBeVisible({ timeout: 5000 });
+    await expect.poll(() => rowOrder(page)).toEqual(['src/added.ts', 'src/modified.ts', 'src/deleted.ts']);
+    const groupRows = fileTree.locator('[data-testid="changes-group-row"]');
+    await expect(groupRows).toHaveCount(3);
+    // GitHub-style section headers: uppercase-styled label + count badge, in
+    // status-rank order (the label casing is CSS, so text stays title-case).
+    await expect(groupRows.nth(0)).toHaveAttribute('data-status', 'A');
+    await expect(groupRows.nth(0)).toContainText('Added');
+    await expect(groupRows.nth(1)).toHaveAttribute('data-status', 'M');
+    await expect(groupRows.nth(1)).toContainText('Modified');
+    await expect(groupRows.nth(2)).toHaveAttribute('data-status', 'D');
+    await expect(groupRows.nth(2)).toContainText('Deleted');
+    await expect(groupRows.nth(0)).toContainText('1');
+
+    // Size: most changes first (modified 10, deleted 5, added 1), no group rows.
+    await sortButton.click();
+    await sortMenu.locator('[data-testid="changes-sort-option-size"]').click();
     await expect.poll(() => rowOrder(page)).toEqual(['src/modified.ts', 'src/deleted.ts', 'src/added.ts']);
+    await expect(fileTree.locator('[data-testid="changes-group-row"]')).toHaveCount(0);
 
     // Restore defaults (name sort, tree view) so config does not leak to other tests.
-    await fileTree.locator('[data-testid="changes-sort"]').click(); // size -> name
+    await sortButton.click();
+    await sortMenu.locator('[data-testid="changes-sort-option-name"]').click();
     await fileTree.locator('[data-testid="changes-tree-flat"]').click(); // flat -> tree
 
     await page.locator('[data-testid="changes-toggle"]').click();

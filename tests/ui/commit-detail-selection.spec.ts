@@ -154,6 +154,13 @@ test.describe('Changes panel: commit-detail selection', () => {
     await expect(fileTree.locator('text=working.ts')).toBeVisible({ timeout: 10000 });
     await expect(page.locator('[data-testid="changes-scope-select"]')).toBeVisible();
 
+    // Expand the (default-collapsed) History section to reveal the commit rows.
+    const historyToggle = page.locator('[data-testid="changes-history-toggle"]');
+    await historyToggle.waitFor({ state: 'visible', timeout: 10000 });
+    if ((await historyToggle.getAttribute('aria-expanded')) !== 'true') {
+      await historyToggle.click();
+    }
+
     // Select the commit row: the detail pane swaps to that commit's file list.
     await page.locator('[data-testid="commit-graph-row"]').filter({ hasText: 'fix parser' }).click();
     await expect(fileTree.locator('text=committed.ts')).toBeVisible({ timeout: 10000 });
@@ -295,7 +302,13 @@ test.describe('Changes panel: commit-detail header restore fallback', () => {
     await dialog.waitFor({ state: 'visible', timeout: 8000 });
 
     await restorePage.locator('[data-testid="changes-toggle"]').click();
-    await restorePage.locator('[data-testid="commit-graph-panel"]').waitFor({ state: 'visible', timeout: 10000 });
+    // The History section stays COLLAPSED on restore (its own default), which
+    // makes this a sharper test of the new design: the pinned selection must be
+    // legible without expanding history at all - via the rail's commit-detail
+    // header AND the collapsed section header's pinned-hash chip.
+    await restorePage.locator('[data-testid="changes-history-section"]').waitFor({ state: 'visible', timeout: 10000 });
+    await expect(restorePage.locator('[data-testid="changes-history-toggle"]')).toHaveAttribute('aria-expanded', 'false');
+    await expect(restorePage.locator('[data-testid="changes-history-pinned-chip"]')).toContainText('abcdef1');
 
     const header = restorePage.locator('[data-testid="commit-detail-header"]');
     await expect(header).toBeVisible({ timeout: 10000 });
@@ -490,6 +503,12 @@ test.describe('Changes panel: file-content cache key isolation across commit sel
     await dialog.waitFor({ state: 'visible', timeout: 8000 });
 
     await cachePage.locator('[data-testid="changes-toggle"]').click();
+    // Expand the (default-collapsed) History section to reveal the commit rows.
+    const cacheHistoryToggle = cachePage.locator('[data-testid="changes-history-toggle"]');
+    await cacheHistoryToggle.waitFor({ state: 'visible', timeout: 10000 });
+    if ((await cacheHistoryToggle.getAttribute('aria-expanded')) !== 'true') {
+      await cacheHistoryToggle.click();
+    }
     await cachePage.locator('[data-testid="commit-graph-panel"]').waitFor({ state: 'visible', timeout: 10000 });
 
     // 1. Select file A under Uncommitted: populates its Uncommitted-scoped

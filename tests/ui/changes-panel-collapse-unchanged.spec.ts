@@ -137,7 +137,17 @@ test.describe('Changes panel: collapse unchanged regions', () => {
     expect(before.hiddenWidgets).toBe(0);
 
     // Toggle collapse on - the open diff's large unchanged region must fold.
-    await page.locator('[data-testid="diff-collapse-unchanged"]').click();
+    // The rendering preferences live behind the labelled "View options" menu,
+    // so open it, flip the item, and close it again so the portaled menu never
+    // overlaps the next/prev-change buttons clicked below.
+    const optionsMenu = page.locator('[data-testid="diff-view-options-menu"]');
+    await page.locator('[data-testid="diff-view-options"]').click();
+    await expect(optionsMenu).toBeVisible({ timeout: 5000 });
+    const collapseItem = optionsMenu.locator('[data-testid="diff-collapse-unchanged"]');
+    await collapseItem.click();
+    await expect(collapseItem).toHaveAttribute('aria-checked', 'true');
+    await page.keyboard.press('Escape');
+    await expect(optionsMenu).not.toBeVisible({ timeout: 5000 });
     await expect.poll(async () => (await readMonaco(page)).hiddenWidgets, { timeout: 5000 }).toBeGreaterThan(0);
 
     // Next/prev-change navigation jumps between the two hunks (field10 near line
