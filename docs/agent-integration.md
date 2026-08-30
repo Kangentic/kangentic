@@ -19,7 +19,7 @@ Every agent implements the `AgentAdapter` interface. Each adapter lives in `src/
 | `runtime` | `AdapterRuntimeStrategy` declaring activity detection + session ID capture (see below) |
 | `removeHooks(directory, taskId?)` | Remove the per-directory config an adapter injected, on cleanup. `taskId` lets shared-file adapters (Codex, Gemini, Droid) reference-count so concurrent sessions in the same cwd do not clobber each other. The payload is not only hooks: Gemini also strips its `mcpServers.kangentic` entry (which carries the per-launch token), and Droid's refcount guards `<cwd>/.factory/mcp.json` rather than a hooks file. |
 | `clearSettingsCache()` | Clear cached merged settings |
-| `detectFirstOutput(data)` | Detect when the agent TUI is ready (lifts shimmer overlay) |
+| `detectFirstOutput(data)` | Detect the adapter's readiness escape, which lifts the shimmer overlay. A heuristic, not proof the agent is up - see First-Output Detection below |
 | `getExitSequence()` | Return PTY write sequence for graceful exit |
 | `locateSessionHistoryFile(agentSessionId, cwd)` | Locate the agent's native session history file on disk |
 
@@ -183,7 +183,7 @@ When a task moves to a column, `resolveTargetAgent()` determines which agent to 
 
 ## First-Output Detection
 
-Each adapter implements `detectFirstOutput(data)` to signal when the agent's TUI is ready. This controls when the shimmer overlay lifts in the terminal UI.
+Each adapter implements `detectFirstOutput(data)` to spot the first output worth showing. This controls when the shimmer overlay lifts in the terminal UI.
 
 | Agent | Detection Strategy | Rationale |
 |-------|-------------------|-----------|
@@ -202,7 +202,16 @@ Each adapter implements `detectFirstOutput(data)` to signal when the agent's TUI
 | Grok Build | `\x1b[?25l` (cursor hide) | Rust alt-screen TUI; the cursor-hide arrives in the very first output chunk, before the alt-screen switch (verified via node-pty against grok 1.0.0) |
 | Antigravity CLI | `data.length > 0` | First paint (logo + welcome banner) arrives as one plain-text burst well under a second after spawn (verified against agy 1.1.13) |
 
-The `\x1b[?25l` (ANSI cursor hide) sequence fires after the shell prompt noise but before the TUI draws its startup banner. This keeps the shell command hidden behind the shimmer overlay.
+The `\x1b[?25l` (ANSI cursor hide) sequence usually fires after the shell prompt noise but before the TUI draws its startup banner, which keeps the shell command hidden behind the shimmer overlay.
+
+**It is a shimmer heuristic, never proof the agent is running.** A shell can emit the same
+escape during its own startup: pwsh 7.6's preamble carries `\x1b[?25l` (see
+`buildSpawnClearPrelude` in `src/shared/paths.ts`), so on PowerShell the latch trips on SHELL
+bytes tens of ms after spawn, seconds before the agent process exists. Anything needing "the
+agent is demonstrably driving the terminal" must key on the stream's first alt-screen entry
+instead (`PtyBufferManager`'s `onAltScreenEnter`) - misreading this latch as agent liveness is
+what made the task #573 spawn-race fix miss its target on PowerShell. See
+[session-lifecycle.md](session-lifecycle.md)'s "Post-boot geometry re-assert".
 
 ## Exit Sequences
 

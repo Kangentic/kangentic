@@ -98,17 +98,29 @@ export interface ManagedSession {
    *  status: a hard reset stays 'exited', not 'suspended'. */
   intentionalExit?: boolean;
   /**
-   * True when a resize was APPLIED to the live PTY before the agent produced
-   * first output. ConPTY only delivers a resize to a connected client, so a
-   * resize landing in the spawn window (the fit lands ~140ms after pty.spawn,
-   * while the shell/interop chain is still booting the agent) can be lost: the
-   * child then composes rows at the spawn width for the whole turn while every
-   * pty-vs-grid invariant reads healthy. `consumeFirstOutput` reads this and
-   * re-asserts the geometry once the child is demonstrably up (it just
-   * emitted), which a running child cannot miss. Lazily set; dies with the
+   * True when a resize was APPLIED to the live PTY while the session's
+   * stream was NOT in the alternate screen buffer. ConPTY only delivers a
+   * resize to a connected client, so a resize landing in the spawn window
+   * (the fit lands ~140ms after pty.spawn, while the shell/interop chain is
+   * still booting the agent) can be lost: the child then composes rows at
+   * the spawn width for the whole turn while every pty-vs-grid invariant
+   * reads healthy. The criterion is alt-screen entry rather than the
+   * first-output latch because a shell preamble (pwsh 7.6 emits the
+   * cursor-hide escape adapters match) can trip first-output seconds before
+   * the agent exists. `reassertGeometryForBootingChild` consumes this from
+   * two triggers (first-output and alt-screen entry) and re-delivers the
+   * geometry, which a running child cannot miss. Lazily set; dies with the
    * registry entry.
+   *
+   * Note the criterion is the CURRENT alt-screen state, not a once-ever
+   * latch: a booted TUI that drops to the normal buffer (`\x1b[?1049l`, or
+   * an RIS `\x1bc`) and is resized during that excursion re-arms, and the
+   * next re-entry jiggles a child that was never booting. That costs one
+   * redundant repaint of geometry the child already has, so it is tolerated
+   * rather than tracked - but it is why this reads "was not in the alt
+   * buffer" rather than "had never entered" it.
    */
-  resizeAppliedBeforeFirstOutput?: boolean;
+  resizeAppliedBeforeTuiReady?: boolean;
   /**
    * Exit code to report INSTEAD of the one the OS gives, when Kangentic ends a
    * session on the agent's behalf. Named "override" rather than "reported"

@@ -209,7 +209,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `session:data` | on | Terminal output available (includes `projectId`) |
 | `session:drainAck` | send | Renderer-to-main flow-control ack for per-session PTY backpressure; fire-and-forget (no projectId) |
 | `session:ptyResized` | on | The PTY's grid actually changed (`cols`, `rows`, `PtyResizeOrigin`). Broadcast to every window; the mounted owner xterm uses it to detect and heal a width divergence (xterm re-sends dims only when its own size changes) |
-| `session:firstOutput` | on | Alternate screen buffer detected - TUI ready (includes `projectId`) |
+| `session:firstOutput` | on | The adapter's readiness escape matched (Claude: cursor-hide `\x1b[?25l`), lifting the shimmer overlay. A heuristic, not proof the agent is up - a shell preamble can carry the same escape (includes `projectId`) |
 | `session:exit` | on | Session exited (includes `projectId`) |
 | `session:status` | on | Session changed - pushes full `Session` object (includes `projectId`) |
 | `session:usage` | on | Usage data updated (includes `projectId`) |

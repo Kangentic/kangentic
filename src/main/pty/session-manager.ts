@@ -302,6 +302,16 @@ export class SessionManager extends EventEmitter {
         this.consumeFirstOutput(sessionId, data);
         this.emit('data-tap', sessionId, data);
       },
+      onAltScreenEnter: (sessionId) => {
+        // The TUI's first composed frame: the one boot signal a shell
+        // preamble cannot fake (see the arming comment in resize()). This
+        // trigger always disarms - a child that just switched buffers is
+        // demonstrably parsing output, so the re-delivered geometry lands.
+        this.reassertGeometryForBootingChild(sessionId, {
+          trigger: 'alt-screen-enter',
+          disarm: true,
+        });
+      },
     });
 
     this.sessionIdManager = new SessionIdManager({
@@ -499,7 +509,19 @@ export class SessionManager extends EventEmitter {
       : undefined;
     if (this.firstOutputTracker.consume(sessionId, data, detector)) {
       this.emit('first-output', sessionId);
-      this.reassertGeometryAfterFirstOutput(sessionId);
+      // First-output can be tripped by a SHELL preamble, not the agent (see
+      // the arming comment in resize()), so this trigger DISARMS only when
+      // the stream is already in the alt buffer - the output provably came
+      // from the TUI. Otherwise the jiggle still fires (for an inline-mode
+      // agent this is the only trigger, and one extra repaint is harmless)
+      // but the flag stays armed for the alt-screen-entry trigger, which is
+      // what actually reaches a fullscreen agent that boots after the shell.
+      const tuiComposedThisOutput =
+        this.bufferManager.getDimensionState(sessionId)?.inAltScreen === true;
+      this.reassertGeometryForBootingChild(sessionId, {
+        trigger: 'first-output',
+        disarm: tuiComposedThisOutput,
+      });
       // Clear the resuming flag once the resumed CLI has actually
       // produced output. This unblocks card / overlay labels for
       // adapters (Codex, Gemini) that don't emit a usage statusline.
@@ -511,12 +533,19 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
-   * Re-deliver the PTY's geometry once the agent has produced first output,
-   * when a resize was applied inside the spawn window (see
-   * `ManagedSession.resizeAppliedBeforeFirstOutput`). A resize applied to a
-   * RUNNING child reliably reaches it (verified live: a hand-resize healed a
-   * stuck frame mid-turn), so re-asserting here closes the spawn race for
-   * every trigger.
+   * Re-deliver the PTY's geometry to a child that was still booting when a
+   * resize was applied (see `ManagedSession.resizeAppliedBeforeTuiReady`).
+   * A resize applied to a RUNNING child reliably reaches it (verified live:
+   * a hand-resize healed a stuck frame mid-turn), so the whole question is
+   * WHEN the child is demonstrably up. Two triggers fire this, at most one
+   * jiggle each: the adapter's first-output latch (which a shell preamble
+   * can trip early - it disarms only when the output provably came from the
+   * TUI) and the stream's first alt-screen entry (which nothing but the TUI
+   * can produce, and which always disarms). Task #573's live recurrence
+   * (2026-08-30) is the case the second trigger exists for: pwsh's preamble
+   * tripped first-output ~80ms after spawn, the fit resize then read as
+   * post-first-output and never armed under the old criterion, and the
+   * agent booting seconds later composed at the spawn width all turn.
    *
    * The re-assert is a jiggle - cols-1, then cols back - because a same-dims
    * delivery can be deduplicated anywhere in the chain (our own resize() would
@@ -537,10 +566,13 @@ export class SessionManager extends EventEmitter {
    * at first output, and one ungated code path means CI's Linux unit tests
    * exercise exactly what Windows ships.
    */
-  private reassertGeometryAfterFirstOutput(sessionId: string): void {
+  private reassertGeometryForBootingChild(
+    sessionId: string,
+    { trigger, disarm }: { trigger: 'first-output' | 'alt-screen-enter'; disarm: boolean },
+  ): void {
     const session = this.registry.get(sessionId);
-    if (!session?.pty || !session.resizeAppliedBeforeFirstOutput) return;
-    session.resizeAppliedBeforeFirstOutput = false;
+    if (!session?.pty || !session.resizeAppliedBeforeTuiReady) return;
+    if (disarm) session.resizeAppliedBeforeTuiReady = false;
     const { cols, rows } = session.pty;
     const jiggleCols = Math.max(2, cols - 1);
     if (jiggleCols === cols) return;
@@ -549,18 +581,18 @@ export class SessionManager extends EventEmitter {
     } catch (error) {
       // node-pty can throw on a just-died ConPTY; the exit path owns cleanup.
       // Nothing landed, so the child still holds `cols`.
-      traceTerminal(sessionId, 'resize-reassert-failed', { leg: 'jiggle', message: String(error) });
+      traceTerminal(sessionId, 'resize-reassert-failed', { trigger, leg: 'jiggle', message: String(error) });
       return;
     }
     try {
       session.pty.resize(cols, rows);
-      traceTerminal(sessionId, 'resize-reassert', { cols, rows, jiggleCols });
+      traceTerminal(sessionId, 'resize-reassert', { trigger, cols, rows, jiggleCols });
     } catch (error) {
       // The narrow leg landed but the restore did not: node-pty caches dims
       // only on a successful resize, so the child sits at cols-1 until the
       // next real resize. The leg field lets forensics tell this stranded
       // case from the harmless jiggle-leg failure above.
-      traceTerminal(sessionId, 'resize-reassert-failed', { leg: 'restore', message: String(error) });
+      traceTerminal(sessionId, 'resize-reassert-failed', { trigger, leg: 'restore', message: String(error) });
     }
   }
 
@@ -1222,21 +1254,40 @@ export class SessionManager extends EventEmitter {
       return { colsChanged };
     }
     session.pty.resize(clampedCols, clampedRows);
-    // A resize applied while the agent has not yet produced output can be lost:
-    // ConPTY only delivers a resize to a connected client, and in the spawn
-    // window the child is still booting behind the shell (and, under WSL, two
-    // interop hops). Arm the post-first-output re-assert so the geometry is
-    // re-delivered once the child demonstrably exists. Any origin arms - the
-    // loss is about timing, not who asked.
-    const appliedBeforeFirstOutput = !this.firstOutputTracker.hasEmitted(sessionId);
-    if (appliedBeforeFirstOutput) {
-      session.resizeAppliedBeforeFirstOutput = true;
+    // A resize applied while the agent is still booting can be lost: ConPTY
+    // only delivers a resize to a connected client, and in the spawn window
+    // the child is still starting behind the shell (and, under WSL, two
+    // interop hops). Arm the post-boot re-assert so the geometry is
+    // re-delivered once the child demonstrably exists. The criterion is
+    // "the stream has not entered the alt buffer yet", NOT the first-output
+    // latch: pwsh 7.6's startup preamble carries the cursor-hide escape that
+    // adapter first-output detectors match (src/shared/paths.ts,
+    // buildSpawnClearPrelude), so on that shell the latch reads "agent up"
+    // within tens of ms of spawn while the agent is seconds away - exactly
+    // the window whose resize is lost (task #573's live recurrence,
+    // 2026-08-30). No shell enters the alt buffer, so a pre-alt-screen
+    // resize always arms.
+    //
+    // This reads the CURRENT alt-screen state, not a once-ever latch, so a
+    // booted TUI that drops to the normal buffer (`\x1b[?1049l`, or an RIS
+    // `\x1bc`) and is resized during that excursion re-arms too, and its
+    // next re-entry jiggles a child that was never booting. Deliberate: the
+    // cost is one redundant re-delivery of geometry the child already has,
+    // and a running child absorbs it, so it is not worth a second piece of
+    // sticky per-session state to suppress.
+    //
+    // An inline-mode session's mid-turn resize arms a flag no remaining
+    // trigger consumes - a dormant boolean that dies with the session, not a
+    // jiggle. Any origin arms - the loss is about timing, not who asked.
+    const preTuiReady = this.bufferManager.getDimensionState(sessionId)?.inAltScreen !== true;
+    if (preTuiReady) {
+      session.resizeAppliedBeforeTuiReady = true;
     }
     traceTerminal(sessionId, 'resize-applied', {
       origin,
       cols: clampedCols,
       rows: clampedRows,
-      preFirstOutput: appliedBeforeFirstOutput,
+      preTuiReady,
     });
     // Mark resize time so the dispatch can suppress idle->thinking
     // transitions during the redraw burst that follows.

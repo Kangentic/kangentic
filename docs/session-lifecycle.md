@@ -745,7 +745,7 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   tag (`mount`/`flush`/`reload`/`echo-reassert`/`debounced-onResize`) and main traces every
   resize outcome (`resize-applied`/`resize-noop`/`resize-refused`/`resize-stash`/
   `resize-ignored`/`resize-invalid`, plus `resize-reassert`/`resize-reassert-failed` from the
-  post-first-output re-assert below), so `kangentic_devtools_terminal_state`'s merged trace
+  post-boot re-assert below), so `kangentic_devtools_terminal_state`'s merged trace
   names the trigger if a divergence ever recurs. A resize for a queued or suspended session
   stashes (including suspend's marked-but-alive teardown window, where the PTY is still
   non-null but must not be reshaped or re-echoed); one for a missing or exited session is
@@ -754,18 +754,28 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   `tests/ui/terminal-resize-echo-reassert.spec.ts` (real xterm wiring: re-assert, repair,
   self-echo no-op, budget bound), and `tests/e2e/terminal-width-drift-selfheal.spec.ts` (a real
   PTY driven to the incident by a rogue `sessions.resize`, healed back to the owner grid).
-- **Post-first-output geometry re-assert (the spawn-window race).** ConPTY only delivers a
+- **Post-boot geometry re-assert (the spawn-window race).** ConPTY only delivers a
   resize to a connected client, so a resize applied while the agent is still booting (the fit
   lands ~140ms after `pty.spawn`) can be lost, leaving the child composing at the 120-column
   spawn width inside the fitted grid while `ptyMatchesGrid`/`colsDrift` read healthy. `resize()`
-  arms `ManagedSession.resizeAppliedBeforeFirstOutput` when it applies a resize before the
-  first-output latch trips, and `consumeFirstOutput` then re-delivers the geometry as a jiggle
-  (`cols-1`, then `cols` back, traced `resize-reassert`) via direct `pty.resize()` calls -
+  arms `ManagedSession.resizeAppliedBeforeTuiReady` when it applies a resize while the stream is
+  not in the alt buffer - NOT keyed on the first-output latch, which a shell preamble can
+  trip seconds before the agent exists (pwsh 7.6's preamble carries the cursor-hide escape the
+  adapters match; this shipped as a live recurrence of task #573 on 2026-08-30). Two triggers
+  then re-deliver the geometry as a jiggle
+  (`cols-1`, then `cols` back, traced `resize-reassert` with its `trigger`): the first-output
+  latch (disarming only when the output provably came from the TUI) and the stream's first
+  alt-screen entry via `PtyBufferManager`'s `onAltScreenEnter` (which nothing but the TUI can
+  produce, always disarming). The arming criterion is the stream's CURRENT alt-screen state, not
+  a once-ever latch, so a booted TUI resized during a normal-buffer excursion (`\x1b[?1049l`, or
+  an RIS `\x1bc`) re-arms and re-jiggles on its next re-entry; that costs one redundant
+  re-delivery of geometry the child already holds, and is accepted rather than tracked. Both call
+  direct `pty.resize()` -
   deliberately bypassing `resize()`'s ladder, whose same-dims short-circuit would eat the
   restore leg and whose broadcasts would churn the echo budget, phone re-seeds, and settle for
   net-unchanged geometry. The third-layer diagnostic (`composedCols`/`composedMatchesPty` on
   `kangentic_devtools_terminal_state`) measures the width the child actually composes at from
-  its raw ring, alt-screen sessions only. Pinned by the `Post-first-output geometry re-assert`
+  its raw ring, alt-screen sessions only. Pinned by the `Post-boot geometry re-assert`
   block in `tests/unit/session-manager.test.ts` and the respawn latch-cleanup tests in
   `tests/unit/session-spawn-flow.test.ts`; the diagnostic is exercised by
   `tests/unit/composed-width.test.ts` and `tests/unit/devtools-terminal-state.test.ts`.

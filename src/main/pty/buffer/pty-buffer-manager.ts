@@ -316,6 +316,15 @@ interface PtyBufferManagerCallbacks {
    *  throw - a throw is caught and logged at the reportDrain chokepoint so
    *  it can never unwind a replay whose pending buffer is already emptied. */
   onDrain(sessionId: string, data: string): void;
+  /** Fired when a session's stream transitions INTO the alternate screen
+   *  buffer (inAltScreen false -> true during onData's mode parse) - the
+   *  moment a fullscreen TUI demonstrably composed its first frame. This is
+   *  the one boot signal a shell preamble cannot fake: pwsh 7.6's preamble
+   *  carries the cursor-hide escape that trips adapter first-output
+   *  detectors, but no shell enters the alt buffer. SessionManager keys the
+   *  post-boot geometry re-assert on it. Fires on EVERY entry (a TUI can
+   *  leave and re-enter); the listener's own arming makes repeats no-ops. */
+  onAltScreenEnter?(sessionId: string): void;
 }
 
 interface BufferState {
@@ -548,7 +557,11 @@ export class PtyBufferManager {
     }
     if (state.modeParseCarry || data.includes('\x1b')) {
       const combined = state.modeParseCarry + data;
+      const wasInAltScreen = state.inAltScreen;
       updateModeState(state, combined);
+      if (!wasInAltScreen && state.inAltScreen) {
+        this.callbacks.onAltScreenEnter?.(sessionId);
+      }
       // The TUI-takeover clear of a fresh session: the first NORMAL-buffer
       // full clear PRECEDED by printable output (ConPTY's escape-only startup
       // clear stays armed - see the field and stripAnsiSequences docs).
@@ -1053,10 +1066,18 @@ export class PtyBufferManager {
    * The geometry this session's PTY was last resized to, as the buffer manager
    * saw it, plus whether a post-resize repaint is still outstanding.
    *
-   * Dev diagnostics only. `lastCols`/`lastRows` are the geometry the bytes
-   * currently in the scrollback were DRAWN at, which is the number you need to
-   * explain a terminal whose content does not match its grid - the divergence
-   * is invisible from the renderer, which only knows its own xterm's size.
+   * `lastCols`/`lastRows` are the geometry the bytes currently in the
+   * scrollback were DRAWN at, which is the number you need to explain a
+   * terminal whose content does not match its grid - the divergence is
+   * invisible from the renderer, which only knows its own xterm's size.
+   *
+   * Mostly diagnostics, but NOT diagnostics-only any more: `inAltScreen` is
+   * read on two production paths in SessionManager (`resize`'s arming
+   * criterion and `consumeFirstOutput`'s disarm gate) as the boot signal a
+   * shell preamble cannot fake. Removing or gating this accessor behind
+   * `__KANGENTIC_DEV__` would silently break the spawn-window resize race
+   * fix, whose symptom is a child composing at the spawn width for a whole
+   * turn while every pty-vs-grid invariant reads healthy.
    */
   getDimensionState(sessionId: string): {
     lastCols: number;
@@ -1211,8 +1232,9 @@ export class PtyBufferManager {
    * geometry gate, for performSpawn's carry-over (captured alongside
    * getRawScrollback, BEFORE removeSession). Lets initSession keep the gate
    * accurate across a respawn instead of conservatively marking every carried
-   * ring geometry-suspect. A production accessor by design - not
-   * getDimensionState, which is pinned as dev-diagnostics-only.
+   * ring geometry-suspect. Purpose-built for the respawn carry-over, rather
+   * than widening getDimensionState: this returns exactly the two fields
+   * performSpawn needs, captured at one point in the teardown.
    */
   getCarryoverGeometry(sessionId: string): CarryoverGeometry | null {
     const state = this.buffers.get(sessionId);
