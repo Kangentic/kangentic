@@ -156,4 +156,17 @@ describe('xterm Unicode 11 activation', () => {
       'can never disagree with the xterm parsers about a character width.',
     ).toBe(true);
   });
+
+  it('composed-width.ts takes its widths from wcwidthV11, never code-unit counts', () => {
+    const source = fs.readFileSync(
+      path.join(SOURCE_ROOT, 'devtools', 'main', 'composed-width.ts'),
+      'utf-8',
+    );
+    expect(
+      source.includes('wcwidthV11'),
+      'The composed-width measurement is a hand-rolled stream parser (dev tooling is in ' +
+      'scope per the parity rule): a run of wide glyphs must be measured in columns via ' +
+      'wcwidthV11 or the verdict disagrees with every xterm in the app.',
+    ).toBe(true);
+  });
 });

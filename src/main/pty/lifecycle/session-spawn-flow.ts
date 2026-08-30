@@ -13,6 +13,7 @@ import type { ResizeManager } from './resize-manager';
 import type { StatusFileReader } from '../readers/status-file-reader';
 import type { SessionHistoryReader } from '../readers/session-history-reader';
 import type { SessionQueue } from '../session-queue';
+import type { FirstOutputTracker } from './first-output-tracker';
 import type { TranscriptWriter } from '../buffer/transcript-writer';
 import { attachAdapter, disposeAdapterAttachment, removeAdapterHooks } from './adapter-lifecycle';
 import { safeKillPty } from './pty-kill';
@@ -51,6 +52,7 @@ export interface SpawnFlowContext {
   statusFileReader: StatusFileReader;
   sessionHistoryReader: SessionHistoryReader;
   sessionQueue: SessionQueue;
+  firstOutputTracker: FirstOutputTracker;
   getTranscriptWriter: () => TranscriptWriter | null;
   getShell: () => Promise<string>;
   /**
@@ -123,6 +125,11 @@ export async function performSpawn(
     // so a spurious "session ID not captured" warning cannot fire
     // 30s after respawn.
     context.sessionIdManager.removeSession(existing.id);
+    // Drop the old session's first-output latch. Today no spawn caller reuses
+    // an id, but if one ever did, a latched entry under the reused id would
+    // permanently suppress 'first-output' for the new session - and with it
+    // the post-first-output geometry re-assert.
+    context.firstOutputTracker.removeSession(existing.id);
     // Tear down any adapter-attached work from the previous spawn.
     disposeAdapterAttachment(existing);
   }

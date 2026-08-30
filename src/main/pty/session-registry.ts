@@ -98,6 +98,18 @@ export interface ManagedSession {
    *  status: a hard reset stays 'exited', not 'suspended'. */
   intentionalExit?: boolean;
   /**
+   * True when a resize was APPLIED to the live PTY before the agent produced
+   * first output. ConPTY only delivers a resize to a connected client, so a
+   * resize landing in the spawn window (the fit lands ~140ms after pty.spawn,
+   * while the shell/interop chain is still booting the agent) can be lost: the
+   * child then composes rows at the spawn width for the whole turn while every
+   * pty-vs-grid invariant reads healthy. `consumeFirstOutput` reads this and
+   * re-asserts the geometry once the child is demonstrably up (it just
+   * emitted), which a running child cannot miss. Lazily set; dies with the
+   * registry entry.
+   */
+  resizeAppliedBeforeFirstOutput?: boolean;
+  /**
    * Exit code to report INSTEAD of the one the OS gives, when Kangentic ends a
    * session on the agent's behalf. Named "override" rather than "reported"
    * because it genuinely MASKS the real code: after it is applied,

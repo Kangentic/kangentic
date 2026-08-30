@@ -3314,3 +3314,136 @@ describe('Resting grid restore', () => {
     expect(manager.getDimensions(session.id)).toEqual({ cols: PANEL_COLS, rows: PANEL_ROWS });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Post-first-output geometry re-assert (spawn-race fix, task 573)
+// ---------------------------------------------------------------------------
+
+describe('Post-first-output geometry re-assert', () => {
+  // A resize applied inside the spawn window can be lost: ConPTY only delivers
+  // a resize to a connected client, and the fit lands while the agent is still
+  // booting behind the shell. Once the agent produces first output it
+  // demonstrably exists, so the geometry is re-delivered as a jiggle (cols-1,
+  // then cols back) via DIRECT pty.resize calls - two genuine changes nothing
+  // in the chain can deduplicate, and no pty-resize broadcast that would burn
+  // the renderer's echo re-assert budget or re-seed phone frames.
+  let manager: SessionManager;
+
+  beforeEach(() => {
+    manager = new SessionManager();
+  });
+
+  afterEach(async () => {
+    manager.killAll();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+
+  async function spawnSession(taskId: string) {
+    const mock = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
+    // No agent adapter, so ANY non-empty chunk counts as first output.
+    const session = await manager.spawn({ taskId, command: '', cwd: tmpDir });
+    return { session, ...mock };
+  }
+
+  /** Wait past the buffer manager's 16ms flush that feeds the first-output latch. */
+  const settleFlush = () => new Promise((resolve) => setTimeout(resolve, 40));
+
+  it('re-delivers the geometry as a jiggle on first output, without broadcasting', async () => {
+    const { session, mockPty, feedData } = await spawnSession('task-reassert');
+
+    manager.resize(session.id, 306, 48);
+    expect(mockPty.resize.mock.calls).toEqual([[306, 48]]);
+    mockPty.resize.mockClear();
+
+    // Attached AFTER the arming resize so only post-first-output emissions count.
+    const broadcasts: unknown[] = [];
+    manager.on('pty-resize', (...args: unknown[]) => broadcasts.push(args));
+
+    feedData('agent output');
+    await settleFlush();
+
+    expect(mockPty.resize.mock.calls).toEqual([[305, 48], [306, 48]]);
+    expect(broadcasts).toEqual([]);
+  });
+
+  it('fires at most once: later output does not re-jiggle', async () => {
+    const { session, mockPty, feedData } = await spawnSession('task-reassert-once');
+
+    manager.resize(session.id, 306, 48);
+    mockPty.resize.mockClear();
+    feedData('first output');
+    await settleFlush();
+    expect(mockPty.resize.mock.calls).toEqual([[305, 48], [306, 48]]);
+
+    mockPty.resize.mockClear();
+    feedData('more output');
+    await settleFlush();
+    expect(mockPty.resize).not.toHaveBeenCalled();
+  });
+
+  it('does not fire when no resize was applied before first output', async () => {
+    const { mockPty, feedData } = await spawnSession('task-reassert-none');
+
+    feedData('agent output');
+    await settleFlush();
+
+    expect(mockPty.resize).not.toHaveBeenCalled();
+  });
+
+  it('a same-dims (noop) resize does not arm it', async () => {
+    const { session, mockPty, feedData } = await spawnSession('task-reassert-noop');
+
+    // Matches the 120x30 spawn grid, so resize() short-circuits before
+    // pty.resize and never arms.
+    manager.resize(session.id, 120, 30);
+    feedData('agent output');
+    await settleFlush();
+
+    expect(mockPty.resize).not.toHaveBeenCalled();
+  });
+
+  it('a resize applied after first output does not arm a jiggle', async () => {
+    const { session, mockPty, feedData } = await spawnSession('task-reassert-late');
+
+    feedData('first output');
+    await settleFlush();
+
+    // A running child observes this directly (verified live); no re-assert needed.
+    manager.resize(session.id, 306, 48);
+    expect(mockPty.resize.mock.calls).toEqual([[306, 48]]);
+    mockPty.resize.mockClear();
+
+    feedData('more output');
+    await settleFlush();
+    expect(mockPty.resize).not.toHaveBeenCalled();
+  });
+
+  it('swallows a resize failure from a just-died ConPTY', async () => {
+    const { session, mockPty, feedData } = await spawnSession('task-reassert-throw');
+
+    manager.resize(session.id, 306, 48);
+    mockPty.resize.mockImplementation(() => {
+      throw new Error('EPIPE');
+    });
+
+    feedData('agent output');
+    await settleFlush();
+
+    // No unhandled throw escaped the flush callback; the session survives.
+    expect(manager.getSession(session.id)).toBeDefined();
+  });
+
+  it('skips the jiggle when the session was killed before the flush delivered first output', async () => {
+    const { session, mockPty, feedData } = await spawnSession('task-reassert-killed');
+
+    manager.resize(session.id, 306, 48);
+    mockPty.resize.mockClear();
+    manager.kill(session.id);
+
+    feedData('late output');
+    await settleFlush();
+
+    expect(mockPty.resize).not.toHaveBeenCalled();
+  });
+});

@@ -178,6 +178,9 @@ function makeContext(): SpawnFlowContext {
     sessionQueue: {
       notifySlotFreed: vi.fn(),
     },
+    firstOutputTracker: {
+      removeSession: vi.fn(),
+    },
     getTranscriptWriter: vi.fn(() => null),
     getShell: vi.fn().mockResolvedValue('/bin/bash'),
     takePendingResize: vi.fn(() => undefined),
@@ -364,6 +367,38 @@ describe('performSpawn - scrollback carry-over geometry', () => {
     const initCall = (context.bufferManager.initSession as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(initCall?.[1]).toBe('carried bytes');
     expect(initCall?.[4]).toBe(carryoverGeometry);
+  });
+});
+
+describe('performSpawn - first-output latch cleanup', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('drops the OLD session\'s first-output latch on respawn over an existing session', async () => {
+    // A latched entry surviving under a reused id would permanently suppress
+    // 'first-output' for the new session - and with it the post-first-output
+    // geometry re-assert (the spawn-race fix).
+    const context = makeContext();
+    context.registry.set('old-session-id', {
+      id: 'old-session-id',
+      taskId: 'task-001',
+      projectId: 'project-001',
+      pty: null,
+      status: 'running',
+    } as never);
+
+    await performSpawn(makeInput(), context);
+
+    expect(context.firstOutputTracker.removeSession).toHaveBeenCalledExactlyOnceWith('old-session-id');
+  });
+
+  it('never touches the tracker on a fresh spawn (no existing session)', async () => {
+    const context = makeContext();
+
+    await performSpawn(makeInput(), context);
+
+    expect(context.firstOutputTracker.removeSession).not.toHaveBeenCalled();
   });
 });
 

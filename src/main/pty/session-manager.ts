@@ -499,6 +499,7 @@ export class SessionManager extends EventEmitter {
       : undefined;
     if (this.firstOutputTracker.consume(sessionId, data, detector)) {
       this.emit('first-output', sessionId);
+      this.reassertGeometryAfterFirstOutput(sessionId);
       // Clear the resuming flag once the resumed CLI has actually
       // produced output. This unblocks card / overlay labels for
       // adapters (Codex, Gemini) that don't emit a usage statusline.
@@ -506,6 +507,60 @@ export class SessionManager extends EventEmitter {
         session.resuming = false;
         this.emit('session-changed', sessionId, toSession(session));
       }
+    }
+  }
+
+  /**
+   * Re-deliver the PTY's geometry once the agent has produced first output,
+   * when a resize was applied inside the spawn window (see
+   * `ManagedSession.resizeAppliedBeforeFirstOutput`). A resize applied to a
+   * RUNNING child reliably reaches it (verified live: a hand-resize healed a
+   * stuck frame mid-turn), so re-asserting here closes the spawn race for
+   * every trigger.
+   *
+   * The re-assert is a jiggle - cols-1, then cols back - because a same-dims
+   * delivery can be deduplicated anywhere in the chain (our own resize() would
+   * noop it, and ConPTY/terminals may too); two genuine changes cannot. It
+   * calls `session.pty.resize()` directly, NOT this.resize(): the ladder's
+   * same-dims short-circuit would eat the restore leg, and its side effects
+   * (pty-resize broadcasts burning the renderer's echo re-assert budget and
+   * re-seeding phone frames, bufferManager.onResize stacking a repaint-settle
+   * upgrade) are churn for a net-unchanged geometry that was already clamped
+   * and policy-approved when it was first applied. cols-1 rather than cols+1
+   * so the transient never exceeds the mounted xterm's grid. Back-to-back legs
+   * are safe even if the chain coalesces them: the coalesced final size still
+   * differs from the child's stale belief.
+   *
+   * Unconditional across platforms on purpose: the lost-resize window is
+   * ConPTY-specific (a POSIX pty's winsize is kernel state the child reads at
+   * TUI init), but on POSIX the jiggle costs only one extra SIGWINCH repaint
+   * at first output, and one ungated code path means CI's Linux unit tests
+   * exercise exactly what Windows ships.
+   */
+  private reassertGeometryAfterFirstOutput(sessionId: string): void {
+    const session = this.registry.get(sessionId);
+    if (!session?.pty || !session.resizeAppliedBeforeFirstOutput) return;
+    session.resizeAppliedBeforeFirstOutput = false;
+    const { cols, rows } = session.pty;
+    const jiggleCols = Math.max(2, cols - 1);
+    if (jiggleCols === cols) return;
+    try {
+      session.pty.resize(jiggleCols, rows);
+    } catch (error) {
+      // node-pty can throw on a just-died ConPTY; the exit path owns cleanup.
+      // Nothing landed, so the child still holds `cols`.
+      traceTerminal(sessionId, 'resize-reassert-failed', { leg: 'jiggle', message: String(error) });
+      return;
+    }
+    try {
+      session.pty.resize(cols, rows);
+      traceTerminal(sessionId, 'resize-reassert', { cols, rows, jiggleCols });
+    } catch (error) {
+      // The narrow leg landed but the restore did not: node-pty caches dims
+      // only on a successful resize, so the child sits at cols-1 until the
+      // next real resize. The leg field lets forensics tell this stranded
+      // case from the harmless jiggle-leg failure above.
+      traceTerminal(sessionId, 'resize-reassert-failed', { leg: 'restore', message: String(error) });
     }
   }
 
@@ -925,6 +980,7 @@ export class SessionManager extends EventEmitter {
       statusFileReader: this.statusFileReader,
       sessionHistoryReader: this.sessionHistoryReader,
       sessionQueue: this.sessionQueue,
+      firstOutputTracker: this.firstOutputTracker,
       getTranscriptWriter: () => this.transcriptWriter,
       getShell: () => this.getShell(),
       takePendingResize: (sessionId) => {
@@ -1166,7 +1222,22 @@ export class SessionManager extends EventEmitter {
       return { colsChanged };
     }
     session.pty.resize(clampedCols, clampedRows);
-    traceTerminal(sessionId, 'resize-applied', { origin, cols: clampedCols, rows: clampedRows });
+    // A resize applied while the agent has not yet produced output can be lost:
+    // ConPTY only delivers a resize to a connected client, and in the spawn
+    // window the child is still booting behind the shell (and, under WSL, two
+    // interop hops). Arm the post-first-output re-assert so the geometry is
+    // re-delivered once the child demonstrably exists. Any origin arms - the
+    // loss is about timing, not who asked.
+    const appliedBeforeFirstOutput = !this.firstOutputTracker.hasEmitted(sessionId);
+    if (appliedBeforeFirstOutput) {
+      session.resizeAppliedBeforeFirstOutput = true;
+    }
+    traceTerminal(sessionId, 'resize-applied', {
+      origin,
+      cols: clampedCols,
+      rows: clampedRows,
+      preFirstOutput: appliedBeforeFirstOutput,
+    });
     // Mark resize time so the dispatch can suppress idle->thinking
     // transitions during the redraw burst that follows.
     this.resizeManager.notifyResize(sessionId);

@@ -44,6 +44,11 @@ import { getEventLoopLagReport } from '../../main/diagnostics/event-loop-lag';
 import { ROTATED_FILE_SUFFIX } from '../../main/diagnostics/async-file-queue';
 import type { SessionManager } from '../../main/pty/session-manager';
 import { readTerminalTrace } from '../../main/pty/terminal-trace';
+import {
+  measureComposedCols,
+  COMPOSED_MATCH_TOLERANCE_COLUMNS,
+  type ComposedWidthMeasurement,
+} from './composed-width';
 import { detailOwnerRegistry } from '../../main/ipc/handlers/task-detail-ownership';
 import { respondCookieJar } from './cookie-jar-routes';
 
@@ -620,6 +625,41 @@ async function respondTerminalState(
   }
 
   const main = sessionManager.getTerminalDimensions();
+  // The third layer beside the pty-vs-grid invariants: the width the child TUI
+  // is actually composing at, read from its own byte stream. Gated on
+  // alt-screen because outside it raw pass-through content fakes widths (see
+  // composed-width.ts); non-alt-screen sessions report null rather than lie.
+  const composedBySession = new Map<string, ComposedWidthMeasurement>();
+  for (const dimensionRow of main) {
+    if (!dimensionRow.inAltScreen) continue;
+    // The live grid rides along as the fold's tie-breaker only (see
+    // resolveBaseWidth); it cannot manufacture agreement.
+    composedBySession.set(
+      dimensionRow.sessionId,
+      measureComposedCols(sessionManager.getRawScrollback(dimensionRow.sessionId), dimensionRow.ptyCols),
+    );
+  }
+  const composedFields = (
+    sessionId: string | null,
+    ptyCols: number | null,
+  ): {
+    composedCols: number | null;
+    composedColsSampleCount: number;
+    composedMatchesPty: boolean | null;
+  } => {
+    const measurement = sessionId ? composedBySession.get(sessionId) : undefined;
+    if (!measurement) {
+      return { composedCols: null, composedColsSampleCount: 0, composedMatchesPty: null };
+    }
+    return {
+      composedCols: measurement.composedCols,
+      composedColsSampleCount: measurement.sampleCount,
+      composedMatchesPty:
+        measurement.composedCols !== null && ptyCols !== null
+          ? Math.abs(measurement.composedCols - ptyCols) <= COMPOSED_MATCH_TOLERANCE_COLUMNS
+          : null,
+    };
+  };
   const evaluated = await runtimeEvaluate(
     window,
     `(() => {
@@ -657,6 +697,10 @@ async function respondTerminalState(
         mainRow && gridCols !== null && mainRow.ptyCols !== null ? mainRow.ptyCols === gridCols : null,
       colsDrift:
         mainRow && gridCols !== null && mainRow.ptyCols !== null ? mainRow.ptyCols - gridCols : null,
+      // `composedMatchesPty: false` with `ptyMatchesGrid: true` is the verdict
+      // the two-layer invariants structurally cannot reach: every Kangentic
+      // layer agrees, and the CHILD missed the geometry.
+      ...composedFields(sessionId, mainRow?.ptyCols ?? null),
     };
   });
 
@@ -664,10 +708,12 @@ async function respondTerminalState(
     ts: new Date().toISOString(),
     terminals,
     // Sessions main knows about that no mounted xterm is showing. Expected for a
-    // background session; suspicious for one the user is looking at.
+    // background session; suspicious for one the user is looking at. They carry
+    // the composed-width fields too: a background session stuck composing at
+    // its spawn width is diagnosable without mounting it.
     unmountedSessions: main
       .filter((row) => !grids.some((grid) => (grid as Record<string, unknown>).sessionId === row.sessionId))
-      .map((row) => row),
+      .map((row) => ({ ...row, ...composedFields(row.sessionId, row.ptyCols) })),
     pipeline: sessionManager.getPipelineStats(),
     // Both processes' lifecycle events on ONE timeline. The terminal bugs worth
     // debugging are orderings - which of resize / repaint / sample / replay-write
