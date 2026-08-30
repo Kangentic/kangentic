@@ -12,7 +12,7 @@
  * overwrite .kangentic/REVIEW_PREEXISTING_DIRTY.tmp, which an in-flight review pass may
  * depend on.
  *
- * Two behaviors are pinned:
+ * Four behaviors are pinned:
  *
  * 1. The "Total lines: N" header always matches the pack file's actual line count,
  *    including the trailing "## Not included (read on demand)" section that appears
@@ -26,6 +26,18 @@
  *    resolveNumstatPath, so a renamed-and-modified committed file is ranked by its true
  *    churn instead of silently scoring 0 (its raw numstat key never matches a real path,
  *    so an unresolved lookup always misses).
+ *
+ * 3. Every "- line N: <label>" table-of-contents entry points at the exact line where its
+ *    own section heading ("## Union diff" or "## Full file: <path>") starts. This bit
+ *    during development: the diff heading's own line was uncounted in the cursor
+ *    arithmetic, sending every TOC entry to a blank line instead of its heading, and the
+ *    only reason it was caught was manual verification, not a test.
+ *
+ * 4. A file that pushes the packed bodies over PACK_BODY_CAP_BYTES (200KB) is omitted from
+ *    "## Full file" bodies with reason "over pack cap", but its diff hunk stays in the
+ *    union diff (the byte cap only trims full-body packing, never the diff itself) - and
+ *    the TOC/header-total contract from (1) and (3) still holds for a pack shaped this way
+ *    (an omitted file contributes no TOC entry and does not perturb the header block).
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
@@ -59,6 +71,53 @@ function runBuildScript(cwd: string, args: string[] = []): string {
       `build-review-pack.mjs failed.\nstdout: ${execError.stdout ?? ''}\nstderr: ${execError.stderr ?? ''}\n${execError.message}`,
     );
   }
+}
+
+interface TocEntry {
+  lineNumber: number;
+  label: string;
+}
+
+function extractTocEntries(packContent: string): TocEntry[] {
+  const contentsBlock = packContent
+    .split('## Contents (start line)')[1]
+    .split('## Union diff')[0];
+  const entryPattern = /^- line (\d+): (.+)$/gm;
+  const entries: TocEntry[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = entryPattern.exec(contentsBlock)) !== null) {
+    entries.push({ lineNumber: Number(match[1]), label: match[2].trim() });
+  }
+  return entries;
+}
+
+// Shared by the TOC-accuracy test and the pack-cap test: both need to confirm every TOC
+// entry's claimed line number is exactly where its section heading starts, and that the
+// "Total lines" header matches the pack's real length. Running it against two differently
+// shaped packs (committed+uncommitted vs. uncommitted-only-with-an-omission) is deliberate,
+// not duplication - see behavior 4's comment above.
+function assertTocLineAccuracyAndHeaderTotal(packContent: string): TocEntry[] {
+  const packLines = packContent.split('\n');
+  const entries = extractTocEntries(packContent);
+  // Guards the helper itself, not just today's two callers: with zero entries the loop
+  // below is vacuously true and the header check alone passes on any pack, so a future
+  // caller that forgets its own non-vacuity assertion would still get real coverage here.
+  expect(entries.length).toBeGreaterThan(0);
+  for (const entry of entries) {
+    const expectedPrefix =
+      entry.label === 'Union diff' ? '## Union diff' : `## Full file: ${entry.label}`;
+    // Compare the actual line's leading text against the expected prefix (rather than a
+    // boolean startsWith assertion) so a failure prints the real line - for the historical
+    // off-by-one bug that line is the empty string, which is immediately diagnostic.
+    const actualPrefix = packLines[entry.lineNumber - 1].slice(0, expectedPrefix.length);
+    expect(actualPrefix).toBe(expectedPrefix);
+  }
+
+  const headerMatch = packContent.match(/^Total lines: (\d+)\./);
+  expect(headerMatch).not.toBeNull();
+  expect(Number(headerMatch![1])).toBe(packLines.length);
+
+  return entries;
 }
 
 beforeEach(() => {
@@ -167,6 +226,90 @@ describe('build-review-pack.mjs', () => {
       // trivial file's 1-line edit, which only holds once its churn resolves under its
       // new path rather than the unresolved "old => new" numstat key.
       expect(renamedIndex).toBeLessThan(trivialIndex);
+    },
+    20000,
+  );
+
+  it(
+    'every TOC entry line number points at the exact line where its own section heading starts',
+    () => {
+      // Two changed tracked files are load-bearing, not incidental: the TOC cursor advances
+      // by two independent formulas - "1 + diffLines.length + 1" for the union-diff entry,
+      // and "1 + section.lines + 1" for each packed-file entry. A single changed file would
+      // only ever exercise the first formula (there would be nothing after it to mis-cursor
+      // into); beta.txt's entry is the only assertion below that can catch a regression to
+      // the per-section increment, so do not simplify this fixture to one file.
+      fs.writeFileSync(path.join(repoDirectory, 'alpha.txt'), 'alpha one\nalpha two\nalpha three\n');
+      fs.writeFileSync(path.join(repoDirectory, 'beta.txt'), 'beta one\nbeta two\n');
+      commitAll(repoDirectory, 'base commit');
+
+      fs.writeFileSync(
+        path.join(repoDirectory, 'alpha.txt'),
+        'alpha one\nalpha two\nalpha three\nalpha four (uncommitted)\n',
+      );
+      fs.writeFileSync(
+        path.join(repoDirectory, 'beta.txt'),
+        'beta one\nbeta two\nbeta three (uncommitted)\n',
+      );
+
+      runBuildScript(repoDirectory);
+
+      const packPath = path.join(repoDirectory, '.kangentic', 'REVIEW_PACK.tmp.md');
+      const packContent = fs.readFileSync(packPath, 'utf8');
+
+      const entries = assertTocLineAccuracyAndHeaderTotal(packContent);
+
+      // Non-vacuity guard: if fewer than 3 entries parsed (union diff + two file sections),
+      // the loop inside the helper would have exercised too little of the cursor arithmetic
+      // to catch the historical bug (every entry landing on a blank line).
+      expect(entries.map((entry) => entry.label).sort()).toEqual(
+        ['Union diff', 'alpha.txt', 'beta.txt'].sort(),
+      );
+    },
+    20000,
+  );
+
+  it(
+    'a file over the 200KB pack-body cap is omitted from Full file bodies but keeps its diff hunk in the union diff',
+    () => {
+      fs.writeFileSync(path.join(repoDirectory, 'small.txt'), 'small one\n');
+      // 7000 fixed-length lines land the numbered body around 356KB: comfortably over
+      // PACK_BODY_CAP_BYTES (200KB) on its own, so the omission cannot depend on
+      // churn-ranking order, and comfortably under SINGLE_FILE_CAP_BYTES (1MB) so
+      // readFileSafe still returns a body instead of tripping the OTHER cap the first test
+      // in this file already covers.
+      const bigLines = Array.from({ length: 7000 }, () => 'x'.repeat(45));
+      fs.writeFileSync(path.join(repoDirectory, 'big.txt'), bigLines.join('\n') + '\n');
+      commitAll(repoDirectory, 'base commit');
+
+      fs.writeFileSync(
+        path.join(repoDirectory, 'small.txt'),
+        'small one\nsmall two (uncommitted)\n',
+      );
+      fs.appendFileSync(path.join(repoDirectory, 'big.txt'), 'appended heavy line (uncommitted)\n');
+
+      runBuildScript(repoDirectory);
+
+      const packPath = path.join(repoDirectory, '.kangentic', 'REVIEW_PACK.tmp.md');
+      const packContent = fs.readFileSync(packPath, 'utf8');
+
+      expect(packContent).toContain('## Full file: small.txt');
+      expect(packContent).not.toContain('## Full file: big.txt');
+      expect(packContent).toContain('## Not included (read on demand)');
+      expect(packContent).toMatch(/- big\.txt \(churn \d+; over pack cap\)/);
+
+      // The pack-body cap only trims the full-file-bodies section; the union diff is built
+      // straight from git diff output and is unaffected, so the omitted file's hunk must
+      // still be readable.
+      expect(packContent).toContain('diff --git a/big.txt b/big.txt');
+      expect(packContent).toContain('+appended heavy line (uncommitted)');
+
+      // Same line-accuracy + header-total check as the previous test, run against a pack
+      // shaped differently (one packed section, an omitted-files block, no committed-diff
+      // layer) to pin that an omitted file contributes no TOC entry and does not perturb
+      // the header block that precedes "## Union diff".
+      const entries = assertTocLineAccuracyAndHeaderTotal(packContent);
+      expect(entries.map((entry) => entry.label)).toEqual(['Union diff', 'small.txt']);
     },
     20000,
   );
