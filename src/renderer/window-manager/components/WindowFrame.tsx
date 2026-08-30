@@ -35,12 +35,12 @@ const MAXIMIZED_GEOMETRY = { x: 0, y: 0, w: 1, h: 1 };
 
 function WindowFrameInner({ managedWindow, containerSize, overlayRef, tiledRect }: WindowFrameProps) {
   const frameRef = useRef<HTMLDivElement>(null);
-  const useStore = useLayerStore();
+  const layerStore = useLayerStore();
   const { layer } = useWindowManager();
-  const focusWindow = useStore((state) => state.focusWindow);
-  const closeWindow = useStore((state) => state.closeWindow);
-  const parkWindow = useStore((state) => state.parkWindow);
-  const isFocused = useStore((state) => state.focusedWindowId === managedWindow.id);
+  const focusWindow = layerStore((state) => state.focusWindow);
+  const closeWindow = layerStore((state) => state.closeWindow);
+  const parkWindow = layerStore((state) => state.parkWindow);
+  const isFocused = layerStore((state) => state.focusedWindowId === managedWindow.id);
   const isParked = managedWindow.parked === true;
 
   // The ONE place every user close converges (the X, Escape, light dismiss,
@@ -50,11 +50,11 @@ function WindowFrameInner({ managedWindow, containerSize, overlayRef, tiledRect 
   // parking. Idempotent, because the animation end and the fallback timer below
   // can both fire.
   const finishClose = useCallback(() => {
-    const current = useStore.getState().windows[managedWindow.id];
+    const current = layerStore.getState().windows[managedWindow.id];
     if (!current || current.parked) return;
     if (layer.shouldParkOnClose?.(current)) parkWindow(current.id);
     else closeWindow(current.id);
-  }, [useStore, layer, parkWindow, closeWindow, managedWindow.id]);
+  }, [layerStore, layer, parkWindow, closeWindow, managedWindow.id]);
 
   const { requestClose, contentClassName, onAnimationEnd, isExiting, markVisible } = useOverlayPhase(
     finishClose,

@@ -141,15 +141,15 @@ export function TaskDetailWindow({
   const skipDeleteConfirm = useConfigStore((s) => s.config.skipDeleteConfirm);
   const updateConfig = useConfigStore((s) => s.updateConfig);
 
-  const useStore = useLayerStore();
-  const toggleMaximizeWindow = useStore((s) => s.toggleMaximizeWindow);
-  const dockWindow = useStore((s) => s.dockWindow);
-  const maximizeWindow = useStore((s) => s.maximizeWindow);
-  const restoreWindow = useStore((s) => s.restoreWindow);
-  const setGeometry = useStore((s) => s.setGeometry);
-  const snapWindow = useStore((s) => s.snapWindow);
-  const untileWindow = useStore((s) => s.untileWindow);
-  const isTiled = useStore((s) => s.windows[windowId]?.state === 'tiled');
+  const layerStore = useLayerStore();
+  const toggleMaximizeWindow = layerStore((s) => s.toggleMaximizeWindow);
+  const dockWindow = layerStore((s) => s.dockWindow);
+  const maximizeWindow = layerStore((s) => s.maximizeWindow);
+  const restoreWindow = layerStore((s) => s.restoreWindow);
+  const setGeometry = layerStore((s) => s.setGeometry);
+  const snapWindow = layerStore((s) => s.snapWindow);
+  const untileWindow = layerStore((s) => s.untileWindow);
+  const isTiled = layerStore((s) => s.windows[windowId]?.state === 'tiled');
 
   const [title, setTitle] = useState(task.title);
   const [description, setDescription] = useState(task.description);
@@ -392,19 +392,19 @@ export function TaskDetailWindow({
   // Pop the window back to floating from whatever docked state it is in
   // (maximized / snapped / tiled) - the "down" restore step.
   const popToFloat = useCallback(() => {
-    const target = useStore.getState().windows[windowId];
+    const target = layerStore.getState().windows[windowId];
     if (!target) return;
     if (target.state === 'maximized') restoreWindow(windowId);
     else if (target.state === 'snapped') setGeometry(windowId, target.restoreGeometry ?? target.geometry);
     else if (target.state === 'tiled') untileWindow(windowId);
-  }, [windowId, restoreWindow, setGeometry, untileWindow, useStore]);
+  }, [windowId, restoreWindow, setGeometry, untileWindow, layerStore]);
 
   // Win11-style stateful snap: the result depends on the window's current zone,
   // read from its RENDERED rect (a tiled pane's stored geometry is its pre-tile
   // float, not where it renders). Halves dock (pair); corners are lone snaps; a
   // tiled pane cannot slide within its pair horizontally. See snap-zones.ts.
   const handleSnapDirection = useCallback((direction: SnapDirection) => {
-    const target = useStore.getState().windows[windowId];
+    const target = layerStore.getState().windows[windowId];
     if (!target) return;
     const frameElement = document.querySelector(`[data-testid="window-frame-${windowId}"]`);
     const overlayElement = document.querySelector('[data-testid="window-overlay"]');
@@ -430,7 +430,7 @@ export function TaskDetailWindow({
       if (target.state === 'tiled') untileWindow(windowId);
       snapWindow(windowId, action.geometry);
     }
-  }, [windowId, maximizeWindow, dockWindow, snapWindow, untileWindow, popToFloat, useStore]);
+  }, [windowId, maximizeWindow, dockWindow, snapWindow, untileWindow, popToFloat, layerStore]);
 
   // The three right-panel views (Browser / Changes / Description peek) are
   // mutually exclusive and share the terminal split: opening one closes the

@@ -1,7 +1,9 @@
 import { create, type StateCreator } from 'zustand';
 import type { Project, ProjectCreateInput, ProjectGroup, ProjectGroupCreateInput, ProjectRelocateOptions, ProjectRelocateResult, ProjectOpenByPathOverrides, ProjectPathProbe, ProjectEnsureGitResult } from '../../shared/types';
 import { PROJECT_PATH_MISSING_PREFIX } from '../../shared/ipc-channels';
-import { useSessionStore } from './session-store';
+// Not `./session-store` directly: that would close an import cycle whose
+// circular-import invalidate full-reloads the dev page. See the module docblock.
+import { killTransientSessionForProject, markIdleSessionsSeen } from './session-lifecycle-hooks';
 import { useConfigStore } from './config-store';
 import { dropProject as dropProjectCache } from './project-cache';
 
@@ -68,7 +70,7 @@ const projectStoreInitializer: StateCreator<ProjectStore> = (set, get) => ({
   },
 
   deleteProject: async (id) => {
-    useSessionStore.getState().killTransientSessionForProject(id).catch(() => {});
+    killTransientSessionForProject(id);
     await window.electronAPI.projects.delete(id);
     set((s) => ({
       projects: s.projects.filter((p) => p.id !== id),
@@ -111,7 +113,7 @@ const projectStoreInitializer: StateCreator<ProjectStore> = (set, get) => ({
     }
     const project = get().projects.find((p) => p.id === id) || await window.electronAPI.projects.getCurrent();
     set({ currentProject: project });
-    useSessionStore.getState().markIdleSessionsSeen(id);
+    markIdleSessionsSeen(id);
   },
 
   openProjectByPath: async (folderPath, overrides) => {
@@ -175,7 +177,7 @@ const projectStoreInitializer: StateCreator<ProjectStore> = (set, get) => ({
   relocateProject: async (id, newPath, options) => {
     // No optimistic update: validation failures (path missing, already
     // registered to another project) are expected user-facing errors.
-    useSessionStore.getState().killTransientSessionForProject(id).catch(() => {});
+    killTransientSessionForProject(id);
     const result = await window.electronAPI.projects.relocate(id, newPath, options);
     const updated = result.project;
     set((state) => ({
