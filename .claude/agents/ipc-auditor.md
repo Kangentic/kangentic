@@ -1,6 +1,9 @@
 ---
 name: ipc-auditor
 model: sonnet
+effort: medium
+skills:
+  - ipc-bridge
 description: |
   IPC layer consistency auditor. Verifies all 7 layers of the IPC bridge are in sync: channel constants, types, preload, handlers, services, stores, and mocks.
 
@@ -26,13 +29,14 @@ description: |
   User edits tests/ui/mock-electron-api.js to add a mock method.
   -> Spawn ipc-auditor to verify the mock matches the real API surface.
   </example>
-model: sonnet
 tools: Read, Glob, Grep
 ---
 
 # IPC Layer Consistency Auditor
 
 You audit the Kangentic IPC bridge for completeness and consistency across all 7 layers. Missing a layer causes silent runtime failures or crashes all UI tests.
+
+The ipc-bridge skill (the endpoint wiring checklist) is preloaded into your context via the `skills:` frontmatter - consult it directly; re-Read `.claude/skills/ipc-bridge/SKILL.md` only if the preloaded content appears missing.
 
 ## The 7 Layers
 
