@@ -37,9 +37,66 @@ afterEach(() => {
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
-/** persistUsageFlags is fire-and-forget (fs.promises); yield so writes land. */
-async function flushWrites(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 20));
+interface UsageFlagsOnDisk {
+  milestones?: unknown;
+  featureFirstUse?: unknown;
+  lastRunVersion?: unknown;
+}
+
+/**
+ * persistUsageFlags is fire-and-forget (fs.promises), so any test that reads the file back has
+ * to wait for the write to land.
+ *
+ * This used to be a bare `setTimeout(20)`, which is the OS-dependent timing assumption
+ * cross-platform-parity.md bans, and it duly failed: on CI's unit shard 1 (290 files on one
+ * loaded Linux runner) 20ms expired before the write completed, the restart below reloaded an
+ * empty flags file, and `feature_first_use` fired a second time - green on a developer's
+ * Windows machine, red on CI. A fixed sleep also cannot tell "not written yet" from "written,
+ * and it is the PREVIOUS write I am looking at", which is the second flush in a test that
+ * persists twice.
+ *
+ * So wait for the caller's actual post-condition instead of for a duration. Every call site
+ * passes the specific on-disk state its assertions then depend on.
+ */
+async function flushWrites(isSettled: (flags: UsageFlagsOnDisk) => boolean): Promise<void> {
+  const deadlineMs = Date.now() + 5000;
+  for (;;) {
+    let flags: UsageFlagsOnDisk = {};
+    try {
+      flags = JSON.parse(fs.readFileSync(flagsPath, 'utf-8')) as UsageFlagsOnDisk;
+    } catch {
+      // Not written yet, or caught mid-write: keep polling rather than failing here.
+    }
+    if (isSettled(flags)) return;
+    if (Date.now() >= deadlineMs) {
+      throw new Error(
+        `flushWrites timed out after 5s waiting for the flags file to settle. On disk: ${JSON.stringify(flags)}`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+/** True once the persisted featureFirstUse RECORD marks `feature`. An array (the wrong-shape
+ *  fixture) is deliberately not a match: that is the pre-write state this must poll past. */
+function featureFirstUseHas(feature: string): (flags: UsageFlagsOnDisk) => boolean {
+  return (flags) => {
+    const record = flags.featureFirstUse;
+    if (typeof record !== 'object' || record === null || Array.isArray(record)) return false;
+    return (record as Record<string, unknown>)[feature] === true;
+  };
+}
+
+function milestonesHave(step: string): (flags: UsageFlagsOnDisk) => boolean {
+  return (flags) => {
+    const record = flags.milestones;
+    if (typeof record !== 'object' || record === null || Array.isArray(record)) return false;
+    return (record as Record<string, unknown>)[step] === true;
+  };
+}
+
+function lastRunVersionIs(version: string): (flags: UsageFlagsOnDisk) => boolean {
+  return (flags) => flags.lastRunVersion === version;
 }
 
 describe('isKnownAnalyticsFeature', () => {
@@ -69,7 +126,7 @@ describe('trackFeatureUsed', () => {
   it('remembers first-use across restarts via the flags file', async () => {
     initUsageAnalytics(flagsPath);
     trackFeatureUsed('browser_pane');
-    await flushWrites();
+    await flushWrites(featureFirstUseHas('browser_pane'));
 
     // Simulate a restart: fresh module state, same flags file.
     resetUsageAnalyticsForTests();
@@ -99,7 +156,7 @@ describe('trackMilestone', () => {
     trackMilestone('first_task');
     trackMilestone('first_task');
     trackMilestone('first_spawn');
-    await flushWrites();
+    await flushWrites(milestonesHave('first_spawn'));
 
     resetUsageAnalyticsForTests();
     initUsageAnalytics(flagsPath);
@@ -125,14 +182,14 @@ describe('trackUpdateOutcome', () => {
     initUsageAnalytics(flagsPath);
     trackUpdateOutcome('1.2.3');
     expect(mocks.trackEvent).not.toHaveBeenCalled();
-    await flushWrites();
+    await flushWrites(lastRunVersionIs('1.2.3'));
     expect(JSON.parse(fs.readFileSync(flagsPath, 'utf-8')).lastRunVersion).toBe('1.2.3');
   });
 
   it('emits applied on an upgrade and rolled_back on a downgrade, once per version change', async () => {
     initUsageAnalytics(flagsPath);
     trackUpdateOutcome('1.2.3');
-    await flushWrites();
+    await flushWrites(lastRunVersionIs('1.2.3'));
 
     resetUsageAnalyticsForTests();
     initUsageAnalytics(flagsPath);
@@ -144,7 +201,7 @@ describe('trackUpdateOutcome', () => {
     });
     trackUpdateOutcome('1.3.0');
     expect(mocks.trackEvent).toHaveBeenCalledTimes(1);
-    await flushWrites();
+    await flushWrites(lastRunVersionIs('1.3.0'));
 
     resetUsageAnalyticsForTests();
     mocks.trackEvent.mockClear();
@@ -205,7 +262,7 @@ describe('initUsageAnalytics survives a wrong-shaped flags file', () => {
     );
     initUsageAnalytics(flagsPath);
     trackFeatureUsed('quick_find');
-    await flushWrites();
+    await flushWrites(featureFirstUseHas('quick_find'));
 
     resetUsageAnalyticsForTests();
     mocks.trackEvent.mockClear();
