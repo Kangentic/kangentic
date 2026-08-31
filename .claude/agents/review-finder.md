@@ -30,6 +30,16 @@ list, the review-pack path, and the required return shape. Rules that always hol
   get at most 2000 lines per call, so a pack of N lines takes exactly ceil(N/2000) calls -
   never re-read overlapping ranges). The pack's diff is authoritative; never re-Read a file
   whose full body is in the pack.
+- **Three ways a changed file appears in the pack.** `## Full file:` is the whole body.
+  `## Partial file:` is every changed hunk with 20 lines of context on each side, with the
+  unchanged runs between them replaced by a marked, line-numbered gap
+  (`..... 954 unchanged lines omitted (72-1025) .....`) - the line numbers on either side of a
+  gap are exact, so a `file:line` citation taken from one is correct. `## Not included (read on
+  demand)` is a body the byte cap dropped; its hunks are still in the union diff. Do not re-Read
+  a partial file merely because it is partial: it already contains every line the diff touched.
+  Re-Read it when your criterion genuinely needs code an omitted gap covers - tracing a helper
+  the change calls, checking whether a symbol is used elsewhere in that file - and say so in the
+  finding.
 - **Stay on your criteria.** Read beyond the pack only to answer your own checklist (callers,
   rule files, tests, files the pack lists as not included). Do not re-verify repo state
   outside your criteria.

@@ -490,3 +490,165 @@ Claude Code docs on subagent startup context and skill preloading
   documentation (1k-token default budget, tree-sitter + graph ranking), and community
   CLAUDE.md sizing guidance (under ~100-300 lines; bloat-degradation claims are community
   experience, not controlled measurement).
+
+## 13. Windowed bodies: what a pack byte is worth (2026-08-31)
+
+Follow-up study prompted by a real observation on task #578's review: with the pack's 200KB body
+cap exhausted, two cap-trimmed files were each independently `Read` by several finders during the
+fan-out (`task-changes-panel-slice.ts` by 4, `KebabMenu.tsx` by 2) - the section 4 duplication the
+pack was built to remove, reappearing on large diffs. The obvious repair is to pack more files.
+The measurement says the opposite.
+
+### 13.1 The arithmetic that reframes the problem
+
+**Every byte added to the pack is paid by up to 11 finders. A file left out is paid only by the
+finders that actually read it.** With a numbered body costing about 1.15x its raw bytes, packing a
+file pays on raw bytes only if more than ~12.6 finders would have read it - more than exist. So
+"pack more" never wins on bytes; R1's measured 53-69% win came from collapsing *turns* and with
+them the cache-read integral ("87.0M cache tokens across 26-77 turns each... it scales as turns
+times context size", section 1), not from moving bytes.
+
+Priced with section 2's constants, reaching churn rank 20 on the #578 diff - far enough to pack
+both duplicate-read files - costs about **101KB** of extra pack: ~555k tokens of fresh input
+(~$1.11) plus ~22.2M cache-read tokens (~$4.44), so **~$5.55**. The six observed duplicate reads
+are worth about **$0.10 each, ~$0.60 total**. Roughly **10x net-negative**. Two related repairs
+were measured and rejected on the same arithmetic:
+
+- **Raise `PACK_BODY_CAP_BYTES`.** Packing all 34 of #578's changed files in full costs
+  **1,390,167 bytes** against a 204,800 cap - **6.8x** - and 60% of that total is seven files with
+  49 lines of churn between them (`types.ts` 288,102 bytes for churn 8; `mock-electron-api.js`
+  223,688 for churn 2; `configuration.md` 91,464 for churn 6). No cap value fixes that shape.
+- **Change the admission order.** A small-files-first pass admits ~18 small files for 178,705
+  bytes and then trims the two highest-churn files in the review. Worse, not better.
+
+### 13.2 What shipped instead: window the body, keep the file set
+
+A body whose changed hunks cover only part of it is packed as `## Partial file:` - every changed
+hunk with `WINDOW_CONTEXT_LINES` (20) lines of context, unchanged runs between them replaced by a
+marked, line-numbered gap - when that saves at least 15% of the body
+(`WINDOW_MAX_SHARE_OF_FULL`). Two properties are load-bearing:
+
+- **Admission is still decided on FULL-body cost.** Windowing only shrinks what the admitted set
+  costs; it can never make a larger file affordable and displace a file the pack ships today.
+  Spending the freed budget instead was measured: it buys 2 to 8 more files at roughly zero net
+  bytes, but that coverage is worth ~$0.60 by 13.1 and costs ~$5.55, and the greedy reorder it
+  requires actually *lost* files on two corpus diffs (PR337 17 -> 14, PR316 15 -> 14). The budget
+  is banked, deliberately.
+- **Windows are placed in WORKING-TREE coordinates**, from one `git diff --unified=0 <mergeBase>`.
+  They must not be parsed out of the union diff: its committed layer is three-dot, so those hunks
+  are HEAD-relative while the body is read from the working tree, and for a file that is both
+  committed-vs-base and dirty the two disagree. The failure is silent - prefixed line numbers come
+  from the body and stay correct, so a misplaced window shows unchanged code and omits changed
+  code while looking perfectly well-formed. Measured on a real mixed-layer file, the naive
+  derivation dropped **18 of 80** changed lines. `tests/unit/build-review-pack.test.ts` pins this
+  red-green.
+
+### 13.3 Pack size, measured over eight merged PRs
+
+Replay is deterministic: a pack is a pure function of a ref pair. Each PR was packed by the
+pre-change script and the shipped one from the same base and head in an isolated clone.
+
+| Diff | shape | control pack | treatment | delta | bodies packed | windowed |
+|---|---|---|---|---|---|---|
+| PR341 (#578) | 34f +3158/-311 | 461,539 | 397,151 | **-14.0%** | 7 -> 7 | 4 |
+| PR329 (#568) | 79f +4772/-608 | 708,414 | 695,631 | -1.8% | 9 -> 9 | 1 |
+| PR316 | 75f +6323/-194 | 594,395 | 581,776 | -2.1% | 15 -> 15 | 2 |
+| PR337 | 60f +3416/-77 | 429,754 | 370,024 | **-13.9%** | 17 -> 17 | 5 |
+| PR302 | 61f +5817/-92 | 576,634 | 551,839 | -4.3% | 11 -> 11 | 1 |
+| PR338 | 20f +1213/-64 | 290,824 | 180,075 | **-38.1%** | 13 -> 13 | 6 |
+| PR328 | 8f +294/-25 | 224,435 | 64,337 | **-71.3%** | 8 -> 8 | 7 |
+| PR306 | 5f +694/-27 | 174,339 | 111,789 | **-35.9%** | 5 -> 5 | 5 |
+
+Corpus total **3,460,334 -> 2,952,622 bytes (-14.7%)**; at 11 finders, **-5.58MB of finder input**
+across eight reviews. **Coverage is identical on every diff** - that is the design, not a result.
+Contract checks passed on all eight: the `Total lines:` header matches the pack's real length,
+every TOC entry points at its own heading, the `paths:` line is byte-identical between arms, the
+treatment pack is never larger, and all **20,070** prefixed line numbers across **85** sections
+match the working tree exactly.
+
+The saving is largest on SMALL diffs, which is the opposite of the intuition that motivated the
+study: a small PR often edits a few lines in several large files, and today those whole bodies are
+packed. PR328 is 8 files and 319 changed lines, and its pack was 224KB.
+
+Two facts about the pack, noted and deliberately not addressed here: the union diff was
+**194,209 bytes, 48.5%** of #578's 400KB pack and is **not governed by `PACK_BODY_CAP_BYTES`** at
+all, so a pathological diff still blows pack size regardless of the body cap; and for a fully
+packed file its diff's `+` and context lines are duplicated in its body (~98KB of that same 194KB).
+Both are separate designs with their own quality risk, and neither causes cross-finder duplication.
+
+### 13.4 A/B, section 10's shape
+
+One diff (PR341), two dimensions, two arms, Sonnet and `review-finder` throughout, prompts
+identical except the pack file. Per-finder numbers from the subagent transcripts, priced with
+section 2's rules.
+
+| Pair | Turns | Wall | Fresh input | Cache read | Cost | Findings |
+|---|---|---|---|---|---|---|
+| Correctness: control | 20 | 4.7m | 227.3k | 2.87M | $1.21 | 1 Low |
+| Correctness: windowed | 19 | 4.2m | 201.5k | 2.51M | $1.02 (-16%) | 0 |
+| Conventions: control | 10 | 1.4m | 152.7k | 0.83M | $0.56 | 0 |
+| Conventions: windowed | 18 | 4.0m | 166.0k | 1.90M | $0.82 (+45%) | 2 |
+
+**The decisive result is not the cost column.** With one run per cell a +/-20% cost delta is noise,
+and the conventions pair shows exactly that: the windowed finder cost 45% more while returning two
+findings its control returned none of, having simply worked harder (18 turns against 10). Combined,
+control $1.77 vs windowed $1.84 (+3.2%) - flat, on 3 findings against 1.
+
+What the A/B can answer, and does:
+
+1. **No finder re-read a file because it was partial.** This is the failure mode that would make
+   windowing net-negative: added pack bytes AND the duplicate read kept. Across both windowed
+   finders, three reads went beyond the pack - two files the cap had trimmed in *both* arms, one
+   `.claude/rules/` file the criteria call for. **Zero reads of a `## Partial file:`.**
+2. **Windowing did not hide anything either finder cited.** Rather than compare stochastic finding
+   sets, every line the control finders cited was checked against the treatment pack: 0 of 3 fall
+   inside an omitted gap (`ChangesPanel.tsx:1028` is shown inside a window; `CommitGraphPanel.tsx`
+   was cap-trimmed in both arms, so windowing did not touch it). The control correctness finding is
+   finder variance, not a cost of windowing. Symmetrically, all 4 lines the windowed conventions
+   finder cited are shown, and its citations were accurate against the real file.
+
+Section 10's caveats apply unchanged: one run per cell, first-spawn cache-write skew, and a
+two-finder test cannot show the 11-finder multiplication that gives 13.3 its force.
+
+### 13.5 The pack is now a function of the diff, not of local git config
+
+Found while hardening the above for a public repo, where `/code-review` runs on other people's
+machines and in CI. The windowing pass keys file paths off the `+++ b/<path>` header of a
+**commit-vs-working-tree** diff - exactly the case `diff.mnemonicPrefix` renames (`c/` for the
+commit side, `w/` for the working tree). With that config set, every parsed key matches no changed
+file and **windowing silently switches off**: no error, just a bigger pack. Measured on the test
+fixture, the same commits produced a **66-line pack on default config and a 424-line pack with
+`diff.mnemonicPrefix=true`** - 6.4x, from a setting the reviewer never sees.
+
+Four more settings were in the same class, three of them pre-existing rather than introduced by
+windowing: `diff.noprefix` and `diff.srcPrefix`/`diff.dstPrefix` (same parse), `diff.context`
+(resizes the union diff, the pack's largest section), `diff.renames` (off, a renamed-and-modified
+file scores zero churn and ranks last instead of first), and `diff.external` (replaces the diff
+body with a program's output). All are now pinned to git's own defaults at the single `git()`
+chokepoint, except `diff.external`, which cannot be pinned by config - an empty `diff.external=`
+makes git try to spawn the empty string and abort the build - so every diff routes through one
+`gitDiff()` helper that passes `--no-ext-diff`.
+
+Pinning these is byte-neutral on stock config - the corpus in 13.3 was re-measured after the
+change and every number is identical - but it is not a no-op for everyone: someone who
+deliberately set a non-default `diff.context` now gets a different union diff than they used to.
+That is accepted. One reproducible pack across every machine and CI is worth more in a shared
+review artifact than honouring a personal diff preference.
+`tests/unit/build-review-pack.test.ts` pins the whole family by asserting a byte-identical pack
+under each hostile setting.
+
+### 13.6 Stated limitations
+
+- Replay uses landed commits as a proxy for the reviewed tree, which carried uncommitted work: the
+  real #578 pack shows `ChangesPanel.tsx` at 1137 lines against 1146 at `976a45c0`, and the replay
+  packs 7 files where the real run packed 8.
+- **Read multiplicity has exactly one ground-truth sample** (#578: 4 readers and 2 readers). The
+  other seven corpus diffs contribute pack bytes and coverage only; multiplicity is neither
+  measured nor modelled for them.
+- Wall-clock is not claimed. The change alters neither finder count nor the critical path, and the
+  observed per-cell wall times differ by more than any effect it could have.
+- This does **not** eliminate the duplicate reads that prompted the study. Neither of #578's two
+  duplicate-read files is packed under any variant measured; `KebabMenu.tsx` lands only at a
+  10-line context width and `task-changes-panel-slice.ts` at none. By 13.1 rescuing them costs
+  about ten times what it saves, so the study ends by making every packed byte cheaper rather than
+  by buying more of them.
