@@ -4,7 +4,7 @@
 - **View options for diffs.** Ignore whitespace, collapse unchanged regions, wrap long lines, and render inline when the pane is narrow, all as named checkable items shared with Settings > Changes. Per-file blame annotation lives in the same menu.
 - **Close a task's browser to free its memory.** Hiding the Browser pane keeps the page loaded on purpose, so an agent driving it is never interrupted when you reclaim the space. When you are genuinely finished with a task's browser, "Close browser" ends the page and gives back the memory (roughly 120 MB per loaded pane). The task's URL is remembered either way.
 - **More reliable browser panes.** Panes now resolve by stable surface handles and by their own task, stay alive while hidden, and park correctly when a window closes instead of being dropped.
-- **Opt-in error reporting.** Kangentic can now report crashes through Sentry alongside the existing anonymous usage events, controlled from Settings > Privacy.
+- **Crash and error reporting.** Kangentic now reports crashes through Sentry alongside the existing anonymous usage events, on by default in released builds. Stack traces have machine-specific paths stripped, and no task content, code, or personal data is attached. Settings > Privacy lists exactly what is collected; set `KANGENTIC_ERROR_REPORTING=0` to turn off error reporting alone, or `KANGENTIC_TELEMETRY=0` to disable all telemetry.
 - **Faster CI.** The pipeline consolidates into a single checks job with 11 UI shards, and the code-review pass gathers its review pack once instead of once per reviewer.
 
 ## Bug Fixes
