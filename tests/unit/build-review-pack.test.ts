@@ -73,6 +73,22 @@
  *     reported skip count equals its range's line span, and the range itself abuts the shown
  *     line numbers immediately surrounding it (or the file's first/last line at a boundary).
  *
+ * 11. WINDOW_MAX_SHARE_OF_FULL (0.85) is enforced at its actual boundary, not merely at the
+ *     extremes: a windowed body whose byte share lands fractionally ABOVE 0.85 still renders
+ *     as "## Full file:", and one whose share lands fractionally BELOW renders as
+ *     "## Partial file:". Neither the sparse-vs-dense test (behavior 7's fixture; ratios near
+ *     0.1 and 1.0) nor any other existing fixture pins where the 0.85 cutoff itself sits - a
+ *     regression that moved the constant anywhere within that wide gap would still pass every
+ *     other test in this file.
+ *
+ * 12. WINDOW_MERGE_GAP_LINES (5) is a "less-than-or-equal" comparison against the
+ *     CONTEXT-EXPANDED gap between two windows (start of the next window vs. end of the
+ *     previous one), not the raw hunk-to-hunk distance: two windows exactly 5 lines apart
+ *     (post-expansion) merge into one span with no elision marker between them, while two
+ *     windows 6 lines apart stay separate with a marker reporting exactly 5 omitted lines. The
+ *     existing merge test (behavior 7) exercises a 3-line gap, comfortably inside the boundary
+ *     rather than pinning it.
+ *
  * Investigated and confirmed unreachable: a defensive try/catch in the script wraps
  * `git merge-base` and the `--unified=0` diff it feeds windowing from, intending to fall back
  * to packing every body in full if either fails (e.g. baseRef and HEAD share no history).
@@ -617,6 +633,74 @@ describe('build-review-pack.mjs', () => {
   );
 
   it(
+    'pins the WINDOW_MAX_SHARE_OF_FULL boundary itself: a windowed share just above 0.85 stays Full, just below stays Partial',
+    () => {
+      // The sparse-vs-dense test above only exercises the extremes (a windowed share near 0.1,
+      // and near 1.0), which would still pass for almost any threshold value. These two
+      // fixtures are tuned - by replaying the exact windowing and rendering arithmetic offline
+      // against candidate edit spacings - to land within a couple of percentage points on
+      // either side of the real 0.85 cutoff, without depending on anything OS- or
+      // locale-specific: both are pure fixed-width ASCII text and plain '\n' line endings, so
+      // the byte counts are identical on every platform.
+      //   boundary-above.txt: 20 single-line edits spaced 48 lines apart across 1000 lines,
+      //     none close enough to merge (each window is an isolated +/-20-line span). Windowed
+      //     share ~0.861 -> stays "## Full file:".
+      //   boundary-below.txt: 19 single-line edits spaced 50 lines apart, same shape. Windowed
+      //     share ~0.819 -> stays "## Partial file:".
+      const totalLines = 1000;
+      const aboveEditLines: number[] = [];
+      for (let line = 30; line < totalLines - 30; line += 48) aboveEditLines.push(line);
+      const belowEditLines: number[] = [];
+      for (let line = 30; line < totalLines - 30; line += 50) belowEditLines.push(line);
+
+      const baseAboveLines = Array.from(
+        { length: totalLines },
+        (_, index) => `above share line ${String(index).padStart(4, '0')}`,
+      );
+      const baseBelowLines = Array.from(
+        { length: totalLines },
+        (_, index) => `below share line ${String(index).padStart(4, '0')}`,
+      );
+      fs.writeFileSync(
+        path.join(repoDirectory, 'boundary-above.txt'),
+        baseAboveLines.join('\n') + '\n',
+      );
+      fs.writeFileSync(
+        path.join(repoDirectory, 'boundary-below.txt'),
+        baseBelowLines.join('\n') + '\n',
+      );
+      commitAll(repoDirectory, 'base commit');
+
+      const editedAboveLines = [...baseAboveLines];
+      for (const line of aboveEditLines) editedAboveLines[line - 1] += ' (edited)';
+      fs.writeFileSync(
+        path.join(repoDirectory, 'boundary-above.txt'),
+        editedAboveLines.join('\n') + '\n',
+      );
+
+      const editedBelowLines = [...baseBelowLines];
+      for (const line of belowEditLines) editedBelowLines[line - 1] += ' (edited)';
+      fs.writeFileSync(
+        path.join(repoDirectory, 'boundary-below.txt'),
+        editedBelowLines.join('\n') + '\n',
+      );
+
+      runBuildScript(repoDirectory);
+
+      const packPath = path.join(repoDirectory, '.kangentic', 'REVIEW_PACK.tmp.md');
+      const packContent = fs.readFileSync(packPath, 'utf8');
+
+      expect(packContent).toContain('## Full file: boundary-above.txt');
+      expect(packContent).not.toContain('## Partial file: boundary-above.txt');
+      expect(packContent).toContain('## Partial file: boundary-below.txt');
+      expect(packContent).not.toContain('## Full file: boundary-below.txt');
+
+      assertTocLineAccuracyAndHeaderTotal(packContent);
+    },
+    20000,
+  );
+
+  it(
     'windows are placed against the WORKING TREE, so a file that is both committed-vs-base and dirty still shows every changed line',
     () => {
       // The misalignment this pins is invisible to a clean-tree fixture. The committed layer is
@@ -821,6 +905,80 @@ describe('build-review-pack.mjs', () => {
       ];
       expect(markerMatches).toHaveLength(2);
       expect(section).not.toMatch(/unchanged lines omitted \(121-122\)/);
+
+      assertElisionMarkerArithmetic(section);
+      assertTocLineAccuracyAndHeaderTotal(packContent);
+    },
+    20000,
+  );
+
+  it(
+    'pins the WINDOW_MERGE_GAP_LINES boundary itself: a 5-line context-expanded gap merges, a 6-line gap does not',
+    () => {
+      // The merge test above uses a 3-line context-expanded gap - comfortably inside the
+      // WINDOW_MERGE_GAP_LINES (5) boundary, not pinning it. Two window ranges are
+      // [edit - 20, edit + 20], so for edits at p1 and p2 the post-expansion gap is
+      // p2 - p1 - 40. Setting p2 - p1 = 45 lands the gap at exactly 5 (merge condition is
+      // `start <= previousEnd + 5`, so 5 is the last value that still merges); setting
+      // p2 - p1 = 46 lands the gap at exactly 6, one past the boundary, which must NOT merge.
+      // Both pairs live in one file, far enough apart from each other (200 lines) that they
+      // cannot interact.
+      const boundaryLines = Array.from(
+        { length: 500 },
+        (_, index) => `merge boundary line ${index}`,
+      );
+      fs.writeFileSync(
+        path.join(repoDirectory, 'merge-gap-boundary.txt'),
+        boundaryLines.join('\n') + '\n',
+      );
+      commitAll(repoDirectory, 'base commit');
+
+      // Pair A: p1=100, p2=145 (delta 45, gap exactly 5) -> must merge into one window.
+      boundaryLines[99] = 'merge boundary line 99 (pair A edit one)';
+      boundaryLines[144] = 'merge boundary line 144 (pair A edit two)';
+      // Pair B: p1=300, p2=346 (delta 46, gap exactly 6) -> must stay two separate windows.
+      boundaryLines[299] = 'merge boundary line 299 (pair B edit one)';
+      boundaryLines[345] = 'merge boundary line 345 (pair B edit two)';
+      fs.writeFileSync(
+        path.join(repoDirectory, 'merge-gap-boundary.txt'),
+        boundaryLines.join('\n') + '\n',
+      );
+
+      runBuildScript(repoDirectory);
+
+      const packPath = path.join(repoDirectory, '.kangentic', 'REVIEW_PACK.tmp.md');
+      const packContent = fs.readFileSync(packPath, 'utf8');
+
+      expect(packContent).toContain('## Partial file: merge-gap-boundary.txt');
+      // Three windows total: pair A's merge collapses two raw ranges into one, pair B's two
+      // ranges stay separate. A regression to "always merge" would report 2; a regression to
+      // "never merge" would report 4.
+      expect(packContent).toContain('in 3 windows;');
+
+      const section = packContent
+        .split('## Partial file: merge-gap-boundary.txt')[1]
+        .split('\n## ')[0];
+
+      // Pair A: both edits shown, AND everything between them (lines 101-144) shown too, since
+      // they now live inside one merged window with no marker in between.
+      expect(section).toContain(
+        `${String(100).padStart(5)}\tmerge boundary line 99 (pair A edit one)`,
+      );
+      expect(section).toContain(
+        `${String(145).padStart(5)}\tmerge boundary line 144 (pair A edit two)`,
+      );
+      expect(section).toContain(`${String(122).padStart(5)}\tmerge boundary line 121`);
+      expect(section).not.toMatch(/unchanged lines omitted \(1(0[1-9]|[1-3]\d|4[0-4])-/);
+
+      // Pair B: both edits shown, but the exact 5-line gap between their expanded windows
+      // (working-tree lines 321-325) is elided rather than merged away.
+      expect(section).toContain(
+        `${String(300).padStart(5)}\tmerge boundary line 299 (pair B edit one)`,
+      );
+      expect(section).toContain(
+        `${String(346).padStart(5)}\tmerge boundary line 345 (pair B edit two)`,
+      );
+      expect(section).toContain('      ..... 5 unchanged lines omitted (321-325) .....');
 
       assertElisionMarkerArithmetic(section);
       assertTocLineAccuracyAndHeaderTotal(packContent);
