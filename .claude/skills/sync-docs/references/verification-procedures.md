@@ -30,7 +30,7 @@ When an anchor maps to multiple target docs, one doc is the **canonical** locati
 
 ## Config Anchors
 
-**Applies to:** `AppConfig`, `DEFAULT_CONFIG`, `GLOBAL_ONLY_PATHS`, `BoardConfig`, `BoardColumnConfig`
+**Applies to:** `AppConfig`, `DEFAULT_CONFIG`, `pickOverridableSubset`, `BoardConfig`, `BoardColumnConfig`
 
 ### AppConfig / DEFAULT_CONFIG
 1. Read `src/shared/types.ts`

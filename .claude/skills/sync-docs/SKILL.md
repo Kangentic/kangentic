@@ -15,7 +15,7 @@ Each doc file and the source files that are its authority:
 |-----|---------------------|
 | `architecture.md` | `src/shared/ipc-channels.ts`, `src/preload/preload.ts`, `src/renderer/stores/`, `src/main/pty/session-manager.ts`, `src/main/transition-engine/transition-engine.ts`, `src/main/boards/board-registry.ts` |
 | `session-lifecycle.md` | `src/main/pty/session-manager.ts`, `src/main/pty/session-queue.ts`, `src/main/transition-engine/session-lifecycle.ts`, `src/main/transition-engine/resource-cleanup.ts` |
-| `configuration.md` | `src/shared/types.ts` (AppConfig, DEFAULT_CONFIG, GLOBAL_ONLY_PATHS), `src/main/config/config-manager.ts` |
+| `configuration.md` | `src/shared/types.ts` (AppConfig, DEFAULT_CONFIG, BoardConfig, BoardColumnConfig), `src/main/config/config-manager.ts` (`pickOverridableSubset` - the project/global split) |
 | `agent-integration.md` | `src/main/agent/agent-adapter.ts`, `src/main/agent/agent-registry.ts`, `src/main/agent/adapters/**` (per-adapter command builders, hook managers, trust managers, capability-discovery, detectors), `src/main/transition-engine/agent-resolver.ts` |
 | `handoff.md` | `src/main/agent/handoff/**`, `src/main/db/repositories/handoff-repository.ts`, `src/main/ipc/helpers/agent-spawn.ts` (handoff path) |
 | `transition-engine.md` | `src/main/transition-engine/transition-engine.ts`, `src/shared/types.ts` (ActionType, ActionConfig) |
@@ -89,11 +89,11 @@ Anchors are enumerable source-code structures that must be exhaustively listed i
 
 | Anchor | What to extract | Target doc |
 |--------|----------------|------------|
-| `PermissionMode` | Union variants | configuration.md, database.md |
+| `PermissionMode` | Union variants | configuration.md (canonical, the user-facing setting), database.md (the same variants again as stored column values; both must enumerate all of them) |
 | `TaskRunMode` | Union variants | database.md |
 | `ActionType` | Union variants | transition-engine.md |
 | `SessionStatus` | Union variants | session-lifecycle.md |
-| `SessionRecordStatus` | Union variants | session-lifecycle.md, database.md |
+| `SessionRecordStatus` | Union variants | session-lifecycle.md (canonical, the state machine), database.md (the same variants again as stored column values; both must enumerate all of them) |
 | `SwimlaneRole` | Union variants | database.md |
 | `SuspendedBy` | Union variants | database.md |
 | `ThemeMode` | Union variants | configuration.md |
@@ -124,7 +124,7 @@ Anchors are enumerable source-code structures that must be exhaustively listed i
 
 | Anchor | Source file | Target doc |
 |--------|-----------|------------|
-| Settings tabs | `src/renderer/components/settings/settings-tabs.ts` (`SETTINGS_TABS` array) | user-guide.md, configuration.md |
+| Settings tabs | `src/renderer/components/settings/settings-tabs.ts` (`SETTINGS_TABS` array) | user-guide.md (canonical prose), configuration.md (cross-reference only) |
 | Settings registry | `src/renderer/components/settings/settings-registry.ts` entries | configuration.md |
 | Pop-out surfaces | `src/shared/pop-out.ts` (`PopOutKind`) | architecture.md (Pop-out Windows section) |
 
@@ -151,6 +151,15 @@ Anchors are enumerable source-code structures that must be exhaustively listed i
 |--------|-----------|------------|
 | Template variables | `src/shared/template-vars.ts` | configuration.md (canonical), transition-engine.md and agent-integration.md (cross-reference only) |
 | Task template variables (auto_command / promptTemplate) | `src/shared/task-template-vars.ts` | transition-engine.md (canonical, "Template Variables"), architecture.md (cross-reference only) |
+
+### Integration Anchors
+
+| Anchor | Source file | Target doc |
+|--------|-----------|------------|
+| MCP tool manifest | `src/shared/mcp-tool-manifest.ts` (`MCP_TOOL_MANIFEST`) | mcp-server.md (one heading per tool). Also enforced mechanically by `tests/unit/mcp-tool-list-parity.test.ts`. |
+| Board adapters | `src/main/boards/board-registry.ts` (registered providers) | board-integration.md (provider table, including each provider's stable/stub status) |
+| PR adapters | `src/main/pr/pr-registry.ts` (`connectors`) | pr-integration.md (provider list; keep planned-but-unimplemented providers marked as such) |
+| External scripts registry | `scripts/copy-external-scripts.js` (`EXTERNAL_SCRIPTS`) | No `docs/` target by design. Enforced by `tests/unit/external-scripts-parity.test.ts` and `.claude/rules/external-scripts-parity.md`; listed here so an auditor does not report it as a missing-doc gap. |
 
 ### Deliberately Not Anchored
 
@@ -275,7 +284,7 @@ Each entry has a one-line rationale so future edits know what the entry was prot
   WHY: every CREATE TABLE column, ALTER TABLE, and seed data block is enumerated in database.md schema tables and migration history. Glob covers global-schema.ts, project-schema.ts, default-data.ts, spawn-agent-config-migration.ts, and any future migration file. (Note: `src/main/db/migrations.ts` is a 2-line re-export shim - do not rely on it.)
 
 - `src/main/agent/adapters/**`
-  WHY: per-adapter capability declarations (claude-adapter.ts, codex-adapter.ts, etc.), command-builders, capability-discovery.ts, detectors, hook-managers, trust-managers, transcript-cleanup.ts all drive per-adapter tables in agent-integration.md, adapter-session-history.md, command-injection.md, and handoff.md. Glob covers all 13 adapters and all their internal files.
+  WHY: per-adapter capability declarations (claude-adapter.ts, codex-adapter.ts, etc.), command-builders, capability-discovery.ts, detectors, hook-managers, trust-managers, transcript-cleanup.ts all drive per-adapter tables in agent-integration.md, adapter-session-history.md, command-injection.md, and handoff.md. Glob covers all 14 adapters and all their internal files.
 
 - `src/main/agent/handoff/**`
   WHY: handoff orchestration (session-history-reference.ts, transcript-cleanup.ts) backs handoff.md sections. Small directory; safe to glob.

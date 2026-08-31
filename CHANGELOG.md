@@ -6,6 +6,64 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 <!-- releases -->
 
+## [v0.38.0] - 2026-08-30
+
+### Features
+
+- Rebuild the Changes review surface around the diff (a43b3a04)
+- Add a word-wrap toggle for long diff lines (94a74429)
+- Keep the Changes panel closed after its pop-out closes (55c642b5)
+- Stable browser surface handles, own-task resolution, park-on-close and hold-on-hide (9b1f3f04)
+- Close a task's browser to free its memory (5a2b1f33)
+- Adopt Sentry error reporting and expand the event set (ee1159f5)
+- Print the authoritative changed-file list from the review pack builder (2bf78a0b)
+
+### Fixes
+
+- Key the PTY geometry re-assert on alt-screen entry, not first output (9c7b6fd9)
+- Re-assert geometry after first output to close the spawn-window resize race (54d08caa)
+- Stop a deleted directory's fs.watch from pinning a CPU core (6225eb82)
+- Stop a clickable activity mark from dropping the click (9e899135)
+- Keep Browser pane guests alive across a store-slice edit (9aab627d)
+- Park a window only when there is a guest to preserve (7215826c)
+- Never dock a window into a dormant one (636c5541)
+- Stop the sort menu's Escape from closing the task window (5364e583)
+- Rename the hook-shaped inlineWhenNarrow local (a60d4e18)
+- Derive changedFiles from the review pack, not --stat or the summary line (3e35c2cd)
+- Correct the cycle claim and harden the two new HMR guards (afb1c482)
+- Shorten the review checks context and close two gaps it exposed (de466ed4)
+- Parity-rule scope gap and stale SpawnFlowContext test mock (408de9bf)
+
+### Other
+
+- One checks job, 11 UI shards, drop the redundant npm cache (6eab61ae)
+- Gather-once review pack, medium-effort finders, floor trims (3b1b154a)
+- Isolated pipeline to measure a consolidated + 11-shard CI shape (62f44911)
+- Delete the temporary CI measurement pipeline (125b88e8)
+- Wrap icon slots once and correct the claims around them (16f7a1aa)
+- Read isWindowDormant at the task-detail window (f8f19929)
+- Describe the rebuilt Changes review surface in the user guide (237d18bf)
+- Correct two false claims in the Changes Panel section (976a45c0)
+- Close the anchor and prose gaps left by the browser pane work (45318761)
+- List window-parking.ts in the embedded-browser Files tree (f7977a35)
+- Correct the E2E wave claim and close out the UI shard-count lever (e8f3e942)
+- De-flake the two Changes resizer drag tests (967c36ef)
+- Cover the KebabMenu Escape guard and the empty-commit message (a632ba3f)
+- Read `transition-transform` in the composited-fill scan (0922551d)
+- Pin onAltScreenEnter transition detection at the buffer-manager tier (2213d39e)
+- Cover cancelSync, the one value the dispose stash still carries (3a1538bb)
+- Pin the decision points of the telemetry instrumentation sites (8bf3a0ca)
+- Pin telemetry call sites, add COUNT(*) task count (8014b578)
+- Cover the reassert restore-leg failure path (ba3df797)
+- Pin TOC line accuracy and the 200KB body-cap omission path (fac979bf)
+- Pin the review-pack header and rename-churn contracts (332c56ad)
+- Close the settings panel without waiting on an exit animation (c37a8aec)
+- Scope the special-modes activity waits to their own session (5063bfd9)
+- Pin the setChangesOpen idempotence guard and widen the HMR scan (e4119415)
+- Pin workflow job names against main's required status checks (05487fd4)
+- Fix three CI failures the hold-and-park behavior exposed (381e7115)
+- Cover the park-or-drop decision and the panel-change terminal refit (8032cc94)
+
 ## [v0.37.0] - 2026-08-28
 
 ### Features
