@@ -35,6 +35,16 @@ as the `mayTakeArrivalFocus` option, so the hook stays surface-agnostic.
 - **A gesture that names a terminal which has not mounted yet must claim it**
   (`claimArrivalFocus`). The bottom panel is not a window, so clicking its tab or expanding it
   moves no layer's `focusedWindowId` and tier 2 would otherwise deny it forever.
+- **What ends a claim is the FINGERPRINT, not the clock.** `ARRIVAL_CLAIM_TTL_MS` is a backstop
+  for the single case the fingerprint cannot see (a claim whose terminal never mounts at all), so
+  it must stay far longer than any mount rather than being tuned close to one. A claim is made
+  before its terminal exists, and the gap to arrival is real work - a CSS transition, a React
+  render, an xterm construct, an async scrollback fetch main delays 150-400ms for the TUI repaint
+  - so it stretches with load. At 4000ms that deadline raced the mount and lost: measured
+  238-267ms unthrottled but 4605-5897ms at 25x CPU throttle, which shipped as an intermittently
+  retried CI test and, off CI, as an expand click that silently does not move focus. Do not
+  tighten it toward observed mount times; if a tighter bound is ever wanted, anchor it to the
+  claimed terminal's own mount instead of to the gesture.
 - **Genuinely user-initiated focus stays unconditional** and must NOT be routed through the
   arbiter: pointer-down on a window frame, a file drop on a terminal, the maximize/restore
   re-homing, and the imperative `focus()` those use.
