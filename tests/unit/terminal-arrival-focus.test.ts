@@ -138,6 +138,40 @@ describe('resolveArrivalFocus - tier 1, the user-gesture claim', () => {
     expect(result).toEqual({ allow: true, reason: 'window' });
   });
 
+  it('still grants a SLOW arrival, well past what a mount takes on a healthy machine', () => {
+    // Regression guard for the flake this constant caused (CI run 33886876661,
+    // terminal-arrival-focus.spec.ts's panel re-expand case, passed only on
+    // retry #1). The gesture-to-arrival gap is work - a CSS transition, a React
+    // render, an xterm construct, an async scrollback fetch - so it stretches
+    // with load: measured 238-267ms unthrottled but 4605-5897ms at 25x CPU
+    // throttle, which is past the 4000ms the deadline used to be. When it
+    // lapses first, the user's own expand click silently fails to move focus.
+    //
+    // 10s is chosen to sit beyond any plausible mount AND beyond that old
+    // value, so this fails if the deadline is ever tightened back toward the
+    // times it has to beat.
+    const result = resolveArrivalFocus(baseInput({
+      sessionId: 'sess-clicked',
+      claim: {
+        sessionId: 'sess-clicked',
+        fingerprint: 'board:|cmd:|mon:',
+        at: NOW - 10_000,
+      },
+      // A detail window still holds focus, so tier 2 would DENY this session.
+      // Only the claim can allow it, which is what makes the case meaningful.
+      focusedWindowTerminal: userOpenedWindow('sess-detail'),
+    }));
+    expect(result).toEqual({ allow: true, reason: 'claim' });
+  });
+
+  it('keeps the backstop far longer than the slowest measured mount', () => {
+    // Pins the MARGIN, not the number. The slowest arrival measured on a
+    // throttled runner was 5897ms; a deadline anywhere near that races the
+    // mount it is waiting for, which is the bug above. Raise this floor rather
+    // than lower the constant to meet it.
+    expect(ARRIVAL_CLAIM_TTL_MS).toBeGreaterThanOrEqual(15_000);
+  });
+
   it('still applies at exactly the TTL boundary', () => {
     const result = resolveArrivalFocus(baseInput({
       sessionId: 'sess-clicked',
