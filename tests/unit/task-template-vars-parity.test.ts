@@ -1,7 +1,7 @@
 /**
  * Task-template-variable parity guard (see .claude/rules/task-template-vars-parity.md).
  *
- * src/shared/task-template-vars.ts is the single declaration of the 10
+ * src/shared/task-template-vars.ts is the single declaration of the 12
  * task-template keywords (auto_command + spawn_agent promptTemplate share it).
  * It drives the UI chip list (BoardManagerDialog.tsx), the main-process
  * resolver map (task-template-resolvers.ts), and the docs tables. This test
@@ -186,6 +186,61 @@ describe('{{port}} in a flag-shaped template: the documented drop-and-collapse h
       devPort: 7300,
     });
     expect(interpolateTaskTemplate('--port {{port}}', vars)).toBe('--port 7300');
+  });
+});
+
+describe('{{projectPath}}: the one project-scoped keyword (red-green)', () => {
+  // Asserted through interpolateTaskTemplate, not the raw resolver value:
+  // the semantic that matters is what a user's template delivers, and
+  // asserting resolveTaskTemplateVars(...).projectPath directly would just
+  // restate the resolver's own `projectPath ?? ''` line.
+  it('resolves the path verbatim when a project is open', () => {
+    const vars = resolveTaskTemplateVars({
+      task: makeTask(),
+      defaultBaseBranch: 'main',
+      attachmentPaths: [],
+      devPort: null,
+      projectPath: 'C:\\Users\\dev\\repo',
+    });
+    expect(interpolateTaskTemplate('git -C {{projectPath}} status', vars)).toBe('git -C C:\\Users\\dev\\repo status');
+  });
+
+  // .claude/rules/task-template-vars-parity.md clause 6: an empty-valued
+  // placeholder is DROPPED and surrounding horizontal whitespace collapses.
+  // For {{projectPath}} that reads worse than {{port}}'s bare "--port":
+  // "git -C {{projectPath}} merge {{branchName}}" with no project open
+  // collapses to "git -C merge feature-x", where git takes the SUBCOMMAND as
+  // the -C argument. It still fails loudly (measured: "fatal: cannot change
+  // to 'merge'", exit 128), but the error names a directory nobody asked for
+  // rather than the value that went missing. Pinning the collapsed string
+  // stops a future "helpful" change from altering it for this keyword.
+  it('collapses to a mis-parsing "git -C merge <branch>" when no project is open', () => {
+    const vars = resolveTaskTemplateVars({
+      task: makeTask({ branch_name: 'feature-x' }),
+      defaultBaseBranch: 'main',
+      attachmentPaths: [],
+      devPort: null,
+      projectPath: null,
+    });
+    expect(interpolateTaskTemplate('git -C {{projectPath}} merge {{branchName}}', vars)).toBe('git -C merge feature-x');
+  });
+
+  // The regression this whole keyword exists to prevent: a future "helpful"
+  // change making {{worktreePath}} fall back to the project path (forbidden
+  // by clause 5) would leave both resolving to the SAME value. Asserting
+  // only that each is individually non-empty would still pass under that
+  // regression, so this pins the inequality directly with distinct fixtures.
+  it('stays distinct from {{worktreePath}} for a task that has a worktree', () => {
+    const vars = resolveTaskTemplateVars({
+      task: makeTask({ worktree_path: 'C:\\Users\\dev\\repo\\.kangentic\\worktrees\\x' }),
+      defaultBaseBranch: 'main',
+      attachmentPaths: [],
+      devPort: null,
+      projectPath: 'C:\\Users\\dev\\repo',
+    });
+    expect(vars.projectPath).not.toBe(vars.worktreePath);
+    expect(vars.projectPath).toBe('C:\\Users\\dev\\repo');
+    expect(vars.worktreePath).toBe('C:\\Users\\dev\\repo\\.kangentic\\worktrees\\x');
   });
 });
 

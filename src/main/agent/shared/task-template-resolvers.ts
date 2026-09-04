@@ -23,12 +23,26 @@ import { buildTaskXml } from './prompt-xml';
  * has a port only once its agent asked for one via kangentic_reserve_dev_ports,
  * so `devPort` is null for most tasks and that is the normal state.
  * See .claude/rules/task-template-vars-parity.md clause 7.
+ *
+ * `projectPath` is the only keyword resolved straight from the open project's
+ * checkout rather than from a task field ({{baseBranch}} also reads project
+ * scope, but through the caller-resolved `defaultBaseBranch` above, and only
+ * when the task sets no override). It is `string | null` (null with no project
+ * open) rather than optional, so a TSC-CHECKED call site that forgets to pass
+ * it fails the build instead of silently resolving empty. That guarantee stops
+ * at `src/`: tsconfig excludes `tests/`, so a test building this context by
+ * hand can omit the field and get '' - the same latitude the pre-existing
+ * `devPort` cases in task-template-vars-parity.test.ts already take. Do not
+ * confuse it with the raw-read {{worktreePath}}: {{worktreePath}} is where the
+ * task is isolated (empty when it has none) and must never fall back to the
+ * project path (clause 5); {{projectPath}} is always the main checkout.
  */
 export interface TaskTemplateContext {
   task: Task;
   defaultBaseBranch: string;
   attachmentPaths: string[];
   devPort: number | null;
+  projectPath: string | null;
 }
 
 type TaskTemplateResolver = (ctx: TaskTemplateContext) => string;
@@ -49,6 +63,11 @@ export const TASK_TEMPLATE_RESOLVERS: Record<TaskTemplateVarName, TaskTemplateRe
     return clean ? `: ${clean}` : '';
   },
   taskId: ({ task }) => task.id,
+  // Coalesced here rather than at each call site so every consumer sees the
+  // same '' for "no project open". That empty value is flag-shaped under
+  // drop-and-collapse (clause 6); docs/transition-engine.md documents how it
+  // fails, below the Template Variables table.
+  projectPath: ({ projectPath }) => projectPath ?? '',
   // Raw reads: empty is correct for a task with no worktree/branch, and must
   // not fall back to a project-level default the way {{baseBranch}} does.
   worktreePath: ({ task }) => task.worktree_path || '',

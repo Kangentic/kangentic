@@ -17,6 +17,7 @@ export const TASK_TEMPLATE_VAR_NAMES = [
   'title',
   'description',
   'taskId',
+  'projectPath',
   'worktreePath',
   'branchName',
   'baseBranch',
@@ -54,6 +55,11 @@ export const TASK_TEMPLATE_VARS: readonly TaskTemplateVarInfo[] = [
     name: 'taskId',
     chip: '{{taskId}}',
     description: 'Task UUID.',
+  },
+  {
+    name: 'projectPath',
+    chip: '{{projectPath}}',
+    description: 'Main project checkout path. Always the base repo, even when the task has a worktree.',
   },
   {
     name: 'worktreePath',
