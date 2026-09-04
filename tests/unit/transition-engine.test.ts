@@ -1094,6 +1094,57 @@ describe('TransitionEngine - executeAction builds ONE shared templateVars for ev
     expect(url).toBe('https://example.test/notify?branch=main');
     expect(init.body).toBe(JSON.stringify({ branch: 'main' }));
   });
+
+  it('spawn_agent: {{projectPath}} resolves to the configured project path, never the task worktree path (transition-engine.ts:134)', async () => {
+    // Coverage hole: task-template-vars-parity.test.ts pins the projectPath
+    // RESOLVER in isolation (a hand-built context), which cannot catch a call
+    // site passing the wrong value. executeAction's own templateVars build
+    // (transition-engine.ts ~line 134) is what this test pins: it must pass
+    // getConfig().projectPath, never task.worktree_path, even though a plain
+    // `cwd` variable a few lines below in executeSpawnAgent legitimately
+    // prefers the worktree (task.worktree_path || appConfig.projectPath).
+    // {{projectPath}} is documented to always mean the main checkout (see
+    // task-template-resolvers.ts's projectPath doc comment), so this task is
+    // given a worktree_path that is DISTINCT from the configured project
+    // path: asserting only "non-empty" would still pass if the call site were
+    // swapped to task.worktree_path.
+    const task = makeTask({ worktree_path: '/mock/worktrees/task-abc-1' });
+    const action = makeAction({
+      type: 'spawn_agent',
+      config_json: JSON.stringify({ promptTemplate: '{{projectPath}}' }),
+    });
+
+    let capturedPrompt: string | undefined;
+    mockAdapter.buildCommand.mockImplementation((options: { prompt?: string }) => {
+      capturedPrompt = options.prompt;
+      return `claude ${options.prompt ?? ''}`;
+    });
+
+    const { engine } = makeEngine({ action, projectPath: '/mock/main-project' });
+    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
+
+    // Red: swapping executeAction's `projectPath: this.getConfig().projectPath`
+    // for `task.worktree_path`, or dropping the field entirely (undefined
+    // resolves to ''), makes this '/mock/worktrees/task-abc-1' or '' instead
+    // of the configured project path.
+    expect(capturedPrompt).toBe('/mock/main-project');
+  });
+
+  // Note: resumeSuspendedSession builds its OWN templateVars object (a
+  // separate call site at transition-engine.ts ~line 98), which is the other
+  // half of this coverage hole. It is deliberately NOT pinned here:
+  // resumeSuspendedSession always calls executeSpawnAgent with a FIXED
+  // promptTemplate of '{{task_xml}}{{attachments}}' (or undefined when
+  // skipPromptTemplate) - there is no public path to get {{projectPath}}
+  // into that template, and resolveSpawnIntent only reads templateVars to
+  // interpolate promptTemplate (never for the resume-mode `prompt`, which
+  // takes `resumePrompt` verbatim). So the resolved projectPath value at that
+  // call site has no observable effect through the current interpolation
+  // surface; asserting on it would require reaching past the public API
+  // (mocking resolveTaskTemplateVars or resolveSpawnIntent directly), which
+  // this file's established style avoids. If a future promptTemplate at that
+  // call site ever references {{projectPath}}, add a resumeSuspendedSession
+  // test here mirroring the one above.
 });
 
 describe('TransitionEngine - MCP caller-session URL stamping (executeSpawnAgent chokepoint)', () => {
