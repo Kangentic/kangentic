@@ -20,6 +20,11 @@ import { LineCountClient } from '../../src/main/git/line-count/line-count-client
 
 // Mirrors the private IDLE_SHUTDOWN_MS in line-count-client.ts.
 const IDLE_SHUTDOWN_MS = 60_000;
+// Comfortably past the largest UtilityRestartPolicy backoff step, so a test
+// that wants the next respawn allowed does not encode the exact ladder.
+const BACKOFF_CLEAR_MS = 20_000;
+// Past the policy's decay window (5 min), after which the crash count resets.
+const DECAY_MS = 5 * 60_000;
 
 interface FakeChild extends EventEmitter {
   postMessage: ReturnType<typeof vi.fn>;
@@ -108,21 +113,91 @@ describe('LineCountClient', () => {
   });
 
   it('resolves in-flight requests null on an unexpected worker exit and disables offload after MAX_CRASHES', async () => {
-    const client = new LineCountClient();
+    vi.useFakeTimers();
+    try {
+      const client = new LineCountClient();
 
-    for (let cycle = 0; cycle < 3; cycle++) {
+      for (let cycle = 0; cycle < 3; cycle++) {
+        const promise = client.countFiles(['/mock/a.txt']);
+        lastChild().emit('exit');
+        await expect(promise).resolves.toBeNull();
+        // Clear the post-crash backoff so the next cycle is allowed to fork.
+        // Without this the client refuses to respawn and the cap is never
+        // reached, which is the whole point of the backoff (see the test below).
+        await vi.advanceTimersByTimeAsync(BACKOFF_CLEAR_MS);
+      }
+
+      expect(client.crashed).toBe(true);
+      expect(mockFork).toHaveBeenCalledTimes(3);
+
+      // Further calls degrade to null without forking again, so diff-service.ts
+      // always has a working inline fallback.
+      await expect(client.countFiles(['/mock/again.txt'])).resolves.toBeNull();
+      expect(mockFork).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('refuses to respawn immediately after a crash, so a crash loop cannot burn the cap in one burst', async () => {
+    // The regression this guards: the client used to re-fork on the very next
+    // request, so a worker dying at startup burned all three lives in
+    // milliseconds and disabled offload for the whole app run. That is the
+    // three-exits-in-four-seconds signature that reached error reporting.
+    vi.useFakeTimers();
+    try {
+      const client = new LineCountClient();
+
       const promise = client.countFiles(['/mock/a.txt']);
       lastChild().emit('exit');
       await expect(promise).resolves.toBeNull();
+      expect(mockFork).toHaveBeenCalledTimes(1);
+
+      // Immediately asking again must NOT fork a replacement...
+      await expect(client.countFiles(['/mock/b.txt'])).resolves.toBeNull();
+      expect(mockFork).toHaveBeenCalledTimes(1);
+      expect(client.crashed).toBe(false);
+
+      // ...but the client recovers on its own once the backoff elapses.
+      await vi.advanceTimersByTimeAsync(BACKOFF_CLEAR_MS);
+      const recovered = client.countFiles(['/mock/c.txt']);
+      expect(mockFork).toHaveBeenCalledTimes(2);
+      lastChild().emit('message', { type: 'result', id: 2, entries: [] });
+      await recovered;
+
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
     }
+  });
 
-    expect(client.crashed).toBe(true);
-    expect(mockFork).toHaveBeenCalledTimes(3);
+  it('recovers after the crash count decays, rather than staying dead for the app run', async () => {
+    // lineCountClient is a module singleton nothing ever replaces, so before
+    // the decay a single bad burst removed line-count offload until restart.
+    vi.useFakeTimers();
+    try {
+      const client = new LineCountClient();
 
-    // Further calls degrade to null without forking again, so diff-service.ts
-    // always has a working inline fallback.
-    await expect(client.countFiles(['/mock/again.txt'])).resolves.toBeNull();
-    expect(mockFork).toHaveBeenCalledTimes(3);
+      for (let cycle = 0; cycle < 3; cycle++) {
+        const promise = client.countFiles(['/mock/a.txt']);
+        lastChild().emit('exit');
+        await expect(promise).resolves.toBeNull();
+        await vi.advanceTimersByTimeAsync(BACKOFF_CLEAR_MS);
+      }
+      expect(client.crashed).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(DECAY_MS);
+
+      expect(client.crashed).toBe(false);
+      const promise = client.countFiles(['/mock/after-decay.txt']);
+      expect(mockFork).toHaveBeenCalledTimes(4);
+      lastChild().emit('message', { type: 'result', id: 4, entries: [] });
+      await promise;
+
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('dispose() kills the worker, resolves pending null, and refuses further work', async () => {

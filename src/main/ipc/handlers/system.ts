@@ -14,6 +14,7 @@ import { syncProjectMcpConfig } from './projects';
 import { applyRuntimeConfig } from '../../config/apply-runtime-config';
 import { listAgents, invalidateAgentListCache } from '../../agent/agent-list';
 import { agentRegistry } from '../../agent/agent-registry';
+import { agentCliNotFoundMessage } from '../../agent/shared/agent-cli-not-found';
 import { broadcast } from '../../pop-out/window-broadcast';
 import { resolveRelayUrl } from '../../../shared/relay';
 import { EXTERNAL_OPEN_SCHEMES, isAllowedExternalUrl } from '../../../shared/external-url';
@@ -364,7 +365,7 @@ export function registerSystemHandlers(context: IpcContext): void {
         const cliPathOverride = config.agent.cliPaths[agentName] ?? null;
         const info = await adapter.detect(cliPathOverride);
         if (!info.found || !info.path) {
-          return { ok: false, reason: `${adapter.displayName} CLI not found` };
+          return { ok: false, reason: agentCliNotFoundMessage(adapter.displayName) };
         }
 
         const cwd = context.currentProjectPath ?? process.cwd();

@@ -49,6 +49,53 @@ describe('isBenignRendererError', () => {
     });
   });
 
+  describe('BENIGN branch - Monarch popping an empty state stack', () => {
+    // Monaco tokenizes the VIEWPORT first, and a diff revealed at its first
+    // hunk starts mid-file, so guessStartState tokenizes from a guessed state
+    // and a closing token can appear with no matching opener. Every per-line
+    // tokenizer call is wrapped by monaco's own safeTokenize, which routes the
+    // throw to the funnel this list feeds - which is why suppressing it works.
+    it('returns true for the ruby grammar message seen in the wild', () => {
+      expect(
+        isBenignRendererError(
+          new Error('ruby: trying to pop an empty stack in rule: (unknown)'),
+        ),
+      ).toBe(true);
+    });
+
+    it('returns true for any language, since Monarch prefixes the language id', () => {
+      // The pattern is deliberately not keyed to `ruby:` - the same upstream
+      // grammar bug in another bundled language produces the same event under
+      // a different prefix, and would otherwise slip through.
+      for (const language of ['ruby', 'python', 'coffeescript', 'sql']) {
+        expect(
+          isBenignRendererError(
+            new Error(`${language}: trying to pop an empty stack in rule: root`),
+          ),
+          language,
+        ).toBe(true);
+      }
+    });
+
+    it('returns true when a stack has been appended to the message', () => {
+      // monaco's default unexpectedErrorHandler re-throws as
+      // `message + '\n\n' + stack`, so anything escaping the funnel reaches
+      // Sentry in this shape. An anchored pattern would silently miss it.
+      expect(
+        isBenignRendererError(
+          'ruby: trying to pop an empty stack in rule: (unknown)\n\n    at kw.tokenizeHeuristically (index.js:1:1)',
+        ),
+      ).toBe(true);
+    });
+
+    it('does not swallow other Monarch or tokenizer errors', () => {
+      // Deliberately narrow: broadening to all Monarch failures would mask
+      // real grammar problems.
+      expect(isBenignRendererError(new Error('ruby: invalid tokenizer rule'))).toBe(false);
+      expect(isBenignRendererError(new Error('Unexpected token in tokenizer'))).toBe(false);
+    });
+  });
+
   describe('PASSTHROUGH branch - non-benign errors must not be swallowed', () => {
     it('returns false for a generic TypeError (Error object)', () => {
       // This is the load-bearing assertion for the coverage hole: a real error
@@ -89,6 +136,18 @@ describe('isBenignRendererError', () => {
       expect(BENIGN_RENDERER_ERRORS.length).toBeGreaterThan(0);
       for (const pattern of BENIGN_RENDERER_ERRORS) {
         expect(pattern).toBeInstanceOf(RegExp);
+      }
+    });
+
+    it('keeps every pattern unanchored, so it still matches once a stack is appended', () => {
+      // This array is now spread into Sentry's ignoreErrors as well as feeding
+      // the monaco funnel. Monaco re-throws escaping errors as
+      // `message + '\n\n' + stack`, so an anchored pattern would work at the
+      // funnel and silently fail at Sentry - the worst of both. Anchoring is
+      // therefore a mistake this list cannot afford to accept quietly.
+      for (const pattern of BENIGN_RENDERER_ERRORS) {
+        expect(pattern.source.startsWith('^'), `${pattern} must not be anchored at the start`).toBe(false);
+        expect(pattern.source.endsWith('$'), `${pattern} must not be anchored at the end`).toBe(false);
       }
     });
   });

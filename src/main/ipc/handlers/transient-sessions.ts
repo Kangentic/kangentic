@@ -9,6 +9,7 @@ import { fetchIfStale } from '../../git/fetch-throttle';
 import { trackEvent } from '../../analytics/analytics';
 import { trackFeatureUsed } from '../../analytics/usage';
 import { agentRegistry } from '../../agent/agent-registry';
+import { AgentCliNotFoundError } from '../../agent/shared/agent-cli-not-found';
 import { DEFAULT_AGENT } from '../../../shared/types';
 import type {
   SpawnTransientSessionInput,
@@ -39,7 +40,7 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
     const cliPathOverride = config.agent.cliPaths[agentName] ?? null;
 
     const detection = await adapter.detect(cliPathOverride);
-    if (!detection.found || !detection.path) throw new Error(`${adapter.displayName} CLI not found. Please install it first.`);
+    if (!detection.found || !detection.path) throw new AgentCliNotFoundError(agentName, adapter.displayName);
     const permissionMode = config.agent.permissionMode as PermissionMode;
     const transientTaskId = uuidv4();
 

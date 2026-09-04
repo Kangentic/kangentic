@@ -482,6 +482,61 @@ describe('spawnAgent - resume failure analytics', () => {
     });
   });
 
+  it('notifies the user that the agent did not start, so the card no longer lies', async () => {
+    // The #538 symptom on the spawn step: the task moved, no session existed,
+    // and nothing but a console line said so. notifySpawnBlocked is NOT mocked
+    // here, so this asserts the real IPC push reaches the window.
+    const task = makeTask({ model_override: 'fable-5' });
+    const deps = makeDeps({ latestSession: undefined, task });
+    deps.engine.resumeSuspendedSession = vi.fn(async () => {
+      throw new Error('worktree is locked');
+    });
+
+    await runSpawn(task, makeDestinationLane(), deps);
+
+    const send = deps.context.mainWindow.webContents.send as ReturnType<typeof vi.fn>;
+    const blockedCall = send.mock.calls.find((call) => call[0] === 'task:spawnBlocked');
+    expect(blockedCall, 'expected a task:spawnBlocked push').toBeDefined();
+    expect(blockedCall?.[3]).toBe('Agent did not start: worktree is locked');
+  });
+
+  it('surfaces a missing agent CLI with its remedy, counts it, but keeps it OUT of Sentry', async () => {
+    // The DESKTOP-5 contract in one case: a missing CLI is user configuration,
+    // so it must reach the USER (with the path-override pointer) and the
+    // Aptabase counter, but never the issue stream. reportHandledError is
+    // mocked in this suite, so the exclusion itself is asserted in
+    // error-reporting-switch.test.ts; here we assert the call still happens
+    // with the typed error, which is what that exclusion keys on.
+    const { AgentCliNotFoundError } = await import(
+      '../../src/main/agent/shared/agent-cli-not-found'
+    );
+    const task = makeTask({ model_override: 'fable-5' });
+    const deps = makeDeps({ latestSession: undefined, task });
+    const cliError = new AgentCliNotFoundError('codex', 'Codex CLI');
+    deps.engine.resumeSuspendedSession = vi.fn(async () => {
+      throw cliError;
+    });
+
+    await runSpawn(task, makeDestinationLane(), deps);
+
+    // Volume signal survives - this is where "how often are users hitting a
+    // missing CLI" gets answered.
+    expect(mockTrackEvent).toHaveBeenCalledWith('spawn_failed', { agent: 'claude', reason: 'resume' });
+    // Handed to the reporter as the TYPED error, which is what lets
+    // reportHandledError drop it.
+    expect(mockReportHandledError).toHaveBeenCalledWith(cliError, {
+      source: 'spawn',
+      reason: 'resume',
+      agent: 'claude',
+    });
+
+    const send = deps.context.mainWindow.webContents.send as ReturnType<typeof vi.fn>;
+    const blockedCall = send.mock.calls.find((call) => call[0] === 'task:spawnBlocked');
+    expect(blockedCall?.[3]).toBe(cliError.message);
+    expect(blockedCall?.[3]).toContain('Settings > Agent');
+    expect(blockedCall?.[3]).not.toMatch(/CLI CLI/i);
+  });
+
   it('rethrows an AbortError WITHOUT reporting spawn_failed or forwarding to Sentry', async () => {
     // The ordering contract: `if (isAbortError(error)) throw error;` sits
     // ABOVE the trackEvent/reportHandledError calls. A user-cancelled spawn

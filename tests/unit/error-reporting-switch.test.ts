@@ -116,6 +116,60 @@ describe('error reporting runtime behavior (module-state gated)', () => {
       expect(mocks.sentryMock.captureException).not.toHaveBeenCalled();
       expect(mocks.setTagSpy).not.toHaveBeenCalled();
     });
+
+    it('drops a UserConfigurationError even when fully active', async () => {
+      // A missing agent CLI is the user's environment, not a defect we can ship
+      // a fix for, so it is surfaced in-app and counted in Aptabase instead of
+      // becoming an un-actionable issue. The exclusion lives inside
+      // reportHandledError so every catch site inherits it.
+      // Import the error class AFTER importFreshErrorReporting, never before:
+      // that helper calls vi.resetModules(), so a class imported first comes
+      // from the discarded registry and `instanceof` fails against the copy
+      // error-reporting.ts actually holds. Production bundles main into one
+      // file, so there is only ever one class there.
+      const errorReporting = await importFreshErrorReporting();
+      const { UserConfigurationError } = await import(
+        '../../src/shared/user-configuration-error'
+      );
+      errorReporting.initErrorReporting();
+
+      errorReporting.reportHandledError(
+        new UserConfigurationError('Codex CLI not found on PATH.'),
+        { source: 'spawn', reason: 'resume' },
+      );
+
+      expect(mocks.sentryMock.captureException).not.toHaveBeenCalled();
+      expect(mocks.setTagSpy).not.toHaveBeenCalled();
+    });
+
+    it('drops an AgentCliNotFoundError, the concrete case this exclusion exists for', async () => {
+      const errorReporting = await importFreshErrorReporting();
+      const { AgentCliNotFoundError } = await import(
+        '../../src/main/agent/shared/agent-cli-not-found'
+      );
+      errorReporting.initErrorReporting();
+
+      errorReporting.reportHandledError(new AgentCliNotFoundError('codex', 'Codex CLI'), {
+        source: 'spawn',
+        reason: 'resume',
+      });
+
+      expect(mocks.sentryMock.captureException).not.toHaveBeenCalled();
+    });
+
+    it('still forwards an ordinary spawn failure, so the exclusion is not a blanket mute', async () => {
+      // The passthrough half: a genuine engine failure on the same code path
+      // must keep reporting. Without this, a broadened predicate would silently
+      // blind the whole spawn surface.
+      const errorReporting = await importFreshErrorReporting();
+      errorReporting.initErrorReporting();
+
+      const error = new Error('worktree is locked');
+      errorReporting.reportHandledError(error, { source: 'spawn', reason: 'resume' });
+
+      expect(mocks.sentryMock.captureException).toHaveBeenCalledTimes(1);
+      expect(mocks.sentryMock.captureException).toHaveBeenCalledWith(error);
+    });
   });
 
   describe('initErrorReporting respects the switch (the state a real opted-out user is actually in)', () => {
@@ -176,12 +230,37 @@ describe('error reporting runtime behavior (module-state gated)', () => {
       const options = mocks.sentryMock.init.mock.calls[0][0] as {
         sendDefaultPii: boolean;
         integrations: (defaultIntegrations: Array<{ name: string }>) => Array<{ name: string }>;
-        ignoreErrors: string[];
+        ignoreErrors: Array<string | RegExp>;
       };
 
       expect(options.sendDefaultPii).toBe(false);
       expect(options.ignoreErrors).toContain('write EAGAIN');
       expect(options.ignoreErrors).toContain('write EPIPE');
+
+      const matches = (message: string) =>
+        options.ignoreErrors.some((pattern) =>
+          typeof pattern === 'string' ? message.includes(pattern) : pattern.test(message),
+        );
+
+      // The SDK's childProcessIntegration reports every utility-process exit
+      // with only the process TYPE, so the event can never say WHICH process
+      // died (serviceName/exitCode land in a breadcrumb added after capture).
+      // Our own two workers report themselves from their exit handlers instead.
+      expect(matches("'Utility' process exited with 'abnormal-exit'")).toBe(true);
+      // Scoped to utility processes: renderer crashes come through the SAME
+      // integration and array, and must keep reporting.
+      expect(matches("'renderer' process exited with 'crashed'")).toBe(false);
+
+      // The benign-renderer-error registry is spread in, so a pattern added
+      // there is filtered here too. The monaco funnel normally swallows these
+      // first; this is the backstop for anything that escapes it.
+      expect(matches('ruby: trying to pop an empty stack in rule: (unknown)')).toBe(true);
+      // Monaco re-throws as `message + '\n\n' + stack`, so the patterns must
+      // match a message that carries a stack suffix.
+      expect(
+        matches('ruby: trying to pop an empty stack in rule: (unknown)\n\n    at kw.tokenizeHeuristically'),
+      ).toBe(true);
+      expect(matches('TypeError: cannot read properties of undefined')).toBe(false);
 
       const syntheticDefaultIntegrations = [
         { name: 'MainProcessSession' },
