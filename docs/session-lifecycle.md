@@ -1019,6 +1019,7 @@ The handoff is transparent to the user - the task card shows spawn progress phas
 | Status debounce | 100 ms | Usage file watch |
 | Event debounce | 50 ms | Event log + activity state watch |
 | Hard shutdown deadline | 6000 ms | Failsafe timer before force-killing process tree |
+| PTY exit-callback drain | 25 ms poll, 100 ms settle, 1500 ms deadline | `before-quit` holds the quit until the killed PTY children are gone, so node-pty's native exit callback lands while JS is still callable (see Shutdown above) |
 | Command inject delay | 100 ms | Wait after PTY spawn before writing command |
 | Idle timeout check | 60000 ms | Polling interval for `checkIdleTimeouts()` (every 60s) |
 | Stale thinking threshold | 180000 ms | If no activity signal for 180s while in "thinking" state, emit synthetic idle event (v2 engine is event-driven, no polling timer) |
