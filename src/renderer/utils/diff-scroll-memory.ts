@@ -56,6 +56,34 @@ export function saveDiffScroll(key: string, position: DiffScrollPosition): void 
 }
 
 /**
+ * Clamp a saved scrollTop to what the editor's CURRENT layout can actually
+ * scroll to.
+ *
+ * A diff editor's modified-side scroll height is not a property of the file: it
+ * includes the alignment view zones that pad the modified side against the
+ * original's inserted/deleted lines. Those zones only exist once the diff has
+ * been computed, so between a model swap and the diff result the same file is
+ * measurably shorter than it will be. Handing Monaco an offset past the end
+ * leaves the scroll state disagreeing with the view model's line count, and the
+ * next alignment-zone update resolves it into a line past the last one
+ * ("Illegal value for lineNumber", Sentry DESKTOP-8).
+ *
+ * Restoring past the end saturates at the bottom. A non-finite input (a
+ * disposed or never-laid-out editor reporting NaN) degrades to the top.
+ */
+export function clampDiffScrollTop(
+  scrollTop: number,
+  scrollHeight: number,
+  viewportHeight: number,
+): number {
+  if (!Number.isFinite(scrollTop) || !Number.isFinite(scrollHeight) || !Number.isFinite(viewportHeight)) {
+    return 0;
+  }
+  const maxScrollTop = Math.max(0, scrollHeight - viewportHeight);
+  return Math.min(Math.max(0, scrollTop), maxScrollTop);
+}
+
+/**
  * Decide how to position a file's diff when its content first becomes visible.
  *
  * - A saved position always wins (revisit): restore it.

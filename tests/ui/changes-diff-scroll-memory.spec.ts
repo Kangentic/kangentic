@@ -6,6 +6,10 @@
  * the file is virtualized away), and that switching away and back restores the
  * previous scroll position instead of re-revealing the first change.
  *
+ * The second test covers the shorter-layout case: a position saved against the
+ * expanded diff, restored after unchanged regions were folded away, must stay
+ * inside the scrollable range rather than leaving an offset past the end.
+ *
  * Monaco virtualizes lines: only visible lines exist as `.view-line` DOM nodes,
  * so DOM presence of a token is a proxy for "scrolled to that region". The diff
  * is computed client-side from the mock's original/modified strings, so no real
@@ -14,7 +18,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady } from './helpers';
+import { waitForViteReady, collectPageErrors } from './helpers';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
@@ -27,6 +31,14 @@ const TOP_TOKEN = 'TOP_OF_FILE_TOKEN_AAA';
 const MID_TOKEN = 'MID_CHANGE_TOKEN_ZZZ';
 const TOTAL_LINES = 200;
 const CHANGE_LINE = 100;
+
+// delta.ts is long and almost entirely unchanged, with its single change near
+// the top. Collapsing unchanged regions therefore removes nearly all of its
+// height, which is what turns a position saved against the expanded layout into
+// an offset past the end of the folded one.
+const DELTA_TAIL_TOKEN = 'DELTA_TAIL_TOKEN_QQQ';
+const DELTA_TOTAL_LINES = 3000;
+const DELTA_CHANGE_LINE = 5;
 
 // Build a long file whose only change sits deep in the middle (line 100), with a
 // recognizable token on line 1 so we can tell whether the viewport is at the top.
@@ -43,14 +55,89 @@ function buildFixtureScript(): string {
       var modifiedLines = lines.slice();
       modifiedLines[${CHANGE_LINE} - 1] = 'const value = "${MID_TOKEN}";';
       var modified = modifiedLines.join('\\n');
+      var deltaLines = [];
+      for (var deltaLineNumber = 1; deltaLineNumber <= ${DELTA_TOTAL_LINES}; deltaLineNumber++) {
+        if (deltaLineNumber === ${DELTA_TOTAL_LINES}) { deltaLines.push('// ${DELTA_TAIL_TOKEN} ' + deltaLineNumber); }
+        else { deltaLines.push('// delta line ' + deltaLineNumber); }
+      }
+      var deltaOriginal = deltaLines.join('\\n');
+      var deltaModifiedLines = deltaLines.slice();
+      deltaModifiedLines[${DELTA_CHANGE_LINE} - 1] = 'const deltaChanged = true;';
+      var deltaModified = deltaModifiedLines.join('\\n');
+
       window.__mockGitDiff = {
         files: [
           { path: 'alpha.ts', status: 'M', insertions: 1, deletions: 1, original: original, modified: modified, language: 'typescript' },
           { path: 'beta.ts', status: 'M', insertions: 1, deletions: 0, original: 'const a = 1;', modified: 'const a = 1;\\nconst b = 2;', language: 'typescript' },
+          { path: 'delta.ts', status: 'M', insertions: 1, deletions: 1, original: deltaOriginal, modified: deltaModified, language: 'typescript' },
         ],
       };
     })();
   `;
+}
+
+interface ModifiedEditorHandle {
+  getScrollTop: () => number;
+  getScrollHeight: () => number;
+  getLayoutInfo: () => { height: number };
+  setScrollTop: (scrollTop: number) => void;
+}
+
+interface MonacoTestHandle {
+  editor: { getDiffEditors: () => { getModifiedEditor: () => ModifiedEditorHandle }[] };
+}
+
+interface ModifiedScrollState {
+  scrollTop: number;
+  scrollHeight: number;
+  viewportHeight: number;
+}
+
+/**
+ * Read the live modified-side scroll geometry through the dev-only monaco
+ * handle (`window.__monaco`, exposed by monacoConfig.ts in dev builds).
+ * Returns -1s when no diff editor is mounted so a poll can wait it out.
+ */
+async function readModifiedScrollState(target: Page): Promise<ModifiedScrollState> {
+  return target.evaluate(() => {
+    const monaco = (window as unknown as { __monaco?: MonacoTestHandle }).__monaco;
+    const diffEditors = monaco?.editor.getDiffEditors() ?? [];
+    if (diffEditors.length === 0) return { scrollTop: -1, scrollHeight: -1, viewportHeight: -1 };
+    const modifiedEditor = diffEditors[0].getModifiedEditor();
+    return {
+      scrollTop: modifiedEditor.getScrollTop(),
+      scrollHeight: modifiedEditor.getScrollHeight(),
+      viewportHeight: modifiedEditor.getLayoutInfo().height,
+    };
+  });
+}
+
+/**
+ * Drive the modified side to its bottom. Programmatic rather than Ctrl+End
+ * because a click to focus could land in either pane, and Monaco saturates an
+ * over-large offset at the real maximum for the current layout.
+ */
+async function scrollModifiedToBottom(target: Page): Promise<void> {
+  await target.evaluate(() => {
+    const monaco = (window as unknown as { __monaco?: MonacoTestHandle }).__monaco;
+    const diffEditors = monaco?.editor.getDiffEditors() ?? [];
+    if (diffEditors.length === 0) return;
+    const modifiedEditor = diffEditors[0].getModifiedEditor();
+    modifiedEditor.setScrollTop(modifiedEditor.getScrollHeight());
+  });
+}
+
+/** Toggle the "Collapse unchanged" option through the diff view-options menu. */
+async function toggleCollapseUnchanged(target: Page): Promise<void> {
+  const optionsTrigger = target.locator('[data-testid="diff-view-options"]');
+  const optionsMenu = target.locator('[data-testid="diff-view-options-menu"]');
+  await optionsTrigger.click();
+  await optionsMenu.waitFor({ state: 'visible', timeout: 5000 });
+  await optionsMenu.locator('[data-testid="diff-collapse-unchanged"]').click();
+  // The menu is a checklist and stays open after a check, so close it through
+  // its own trigger rather than Escape, which the task-detail window also uses.
+  await optionsTrigger.click();
+  await optionsMenu.waitFor({ state: 'hidden', timeout: 5000 });
 }
 
 const preConfig = `
@@ -199,6 +286,115 @@ test.describe('Changes view: diff scroll memory', () => {
     // Use Control+Shift+W (capture-phase) rather than Escape: Monaco captured
     // focus via the click+Ctrl+Home sequence, so the bubble-phase Escape listener
     // on the task-detail window can be intercepted by Monaco on CI Linux.
+    await page.keyboard.press('Control+Shift+W');
+    await expect(dialog).not.toBeVisible({ timeout: 8000 });
+  });
+
+  // Regression guard for Sentry DESKTOP-8 ("Illegal value for lineNumber"),
+  // NOT a reproduction of it. The reported throw comes from Monaco's own
+  // scroll-synchronisation autorun while it updates a diff's alignment view
+  // zones, and it could not be reproduced here: measured against this fixture,
+  // Monaco saturates a deep restore at the bottom of the collapsed layout
+  // (54000px of scroll height down to 528px) without throwing. What this test
+  // does pin is the app-side contract around that crash path - a position saved
+  // against the expanded layout, restored onto a folded one, must stay inside
+  // the scrollable range and must not surface a renderer error.
+  test('restoring a deep position onto a diff that folds stays in range and does not throw', async () => {
+    // Same chained-wait budget as the test above: dialog mount, panel mount,
+    // Monaco construction, three file switches and their diff recomputes.
+    test.slow();
+
+    // Registered here rather than in beforeAll so the preceding test's errors
+    // (if any) are not attributed to this one.
+    const getPageErrors = collectPageErrors(page);
+
+    const card = page
+      .locator('[data-swimlane-name="Code Review"]')
+      .locator('text=Diff Scroll Task')
+      .first();
+    await card.click();
+
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 5000 });
+
+    // The Changes panel's open state survives the preceding test's dialog
+    // close, so toggle only when it did NOT come back open - an unconditional
+    // click would close it. Waiting first (rather than probing visibility)
+    // keeps this correct while the panel is still mounting.
+    const diffArea = page.locator('[data-testid="diff-editor-area"]');
+    try {
+      await diffArea.waitFor({ state: 'visible', timeout: 3000 });
+    } catch {
+      await page.locator('[data-testid="changes-toggle"]').click();
+      await diffArea.waitFor({ state: 'visible', timeout: 10000 });
+    }
+    await page.locator('.view-line').first().waitFor({ state: 'visible', timeout: 10000 });
+
+    // Open delta.ts expanded (collapse is off by default) and go to its bottom,
+    // which is only reachable while the unchanged bulk is shown.
+    await page.locator('button', { hasText: 'delta.ts' }).click();
+    await page.locator('.view-line', { hasText: 'delta line' }).first().waitFor({ state: 'visible', timeout: 10000 });
+
+    // Wait for the expanded layout before capturing: a file this long is far
+    // taller than the pane, so a real scroll range exists.
+    await expect
+      .poll(async () => (await readModifiedScrollState(page)).scrollHeight, { timeout: 10000 })
+      .toBeGreaterThan(DELTA_TOTAL_LINES * 5);
+
+    await scrollModifiedToBottom(page);
+    await expect(page.locator('.view-line', { hasText: DELTA_TAIL_TOKEN }).first()).toBeVisible({ timeout: 10000 });
+    await expect
+      .poll(async () => (await readModifiedScrollState(page)).scrollTop, { timeout: 10000 })
+      .toBeGreaterThan(1000);
+
+    // Switch away so the deep position is committed under delta.ts's key.
+    await page.locator('button', { hasText: 'beta.ts' }).click();
+    await expect(page.locator('.view-line', { hasText: 'const b = 2;' })).toBeVisible({ timeout: 10000 });
+
+    // Turn on "Collapse unchanged" while delta.ts is NOT the open file, so the
+    // next visit restores a position saved against the expanded layout onto a
+    // folded one that is a fraction of the height.
+    //
+    // From here the global collapse preference is ON, so the restore below runs
+    // inside try/finally: an assertion that throws must still hand the shared
+    // page back with the preference off, or it leaks into every test added to
+    // this file later (cross-platform-parity.md forbids that cascade).
+    await toggleCollapseUnchanged(page);
+    try {
+      await page.locator('button', { hasText: 'delta.ts' }).click();
+      await page.locator('.view-line', { hasText: 'delta' }).first().waitFor({ state: 'visible', timeout: 10000 });
+
+      // Wait for the fold to actually land. Monaco renders each folded unchanged
+      // region as a .diff-hidden-lines widget; without this the assertions below
+      // would run against the still-expanded layout and prove nothing.
+      await expect
+        .poll(async () => page.locator('.diff-hidden-lines').count(), { timeout: 10000 })
+        .toBeGreaterThan(0);
+
+      // Restoring past the end must saturate inside the folded layout rather than
+      // leaving an out-of-range offset for Monaco to resolve into a line past the
+      // model's end.
+      await expect
+        .poll(
+          async () => {
+            const state = await readModifiedScrollState(page);
+            if (state.scrollHeight < 0) return false;
+            const maxScrollTop = Math.max(0, state.scrollHeight - state.viewportHeight);
+            // One line of slack: the assertion is "inside the scrollable range",
+            // not a pixel-exact offset (cross-platform-parity.md).
+            return state.scrollTop <= maxScrollTop + 20;
+          },
+          { timeout: 10000 },
+        )
+        .toBe(true);
+
+      // monacoConfig's funnel only swallows the DiffEditor disposal error, so a
+      // genuine internal throw would still surface here.
+      expect(getPageErrors()).toHaveLength(0);
+    } finally {
+      // Leave the shared page as this test found it for any later spec run.
+      await toggleCollapseUnchanged(page);
+    }
     await page.keyboard.press('Control+Shift+W');
     await expect(dialog).not.toBeVisible({ timeout: 8000 });
   });
