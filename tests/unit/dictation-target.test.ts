@@ -618,6 +618,26 @@ describe('resolveFocusedWindowTerminal (real stores)', () => {
     expect(resolveFocusedWindowTerminal()).toEqual({ sessionId: 'sess-respawned', openedByAgent: false });
   });
 
+  it('resolves the live row over a stale suspended sibling, stale row listed first', () => {
+    // Same registry shape main can produce: a stale suspended placeholder
+    // listed ahead of the fresh running spawn that replaced it. A first-wins
+    // `.find(...)` would resolve the stale row (and dictation would target a
+    // dead session); findSessionForTask must resolve the live one.
+    boardWindowManager.store.getState().openWindow({
+      anchor: 'task-1',
+      sessionId: null,
+      title: 'Task One',
+    });
+    useSessionStore.setState({
+      sessions: [
+        makeSession({ id: 'sess-stale-suspended', taskId: 'task-1', status: 'suspended', startedAt: '2026-09-04T14:25:26.000Z' }),
+        makeSession({ id: 'sess-live', taskId: 'task-1', status: 'running', startedAt: '2026-09-04T14:25:33.000Z' }),
+      ],
+    });
+
+    expect(resolveFocusedWindowTerminal()).toEqual({ sessionId: 'sess-live', openedByAgent: false });
+  });
+
   it('reports a focused window whose task has no session as sessionId null, NOT as "no window"', () => {
     // The distinction is load-bearing for the arbiter: a window owning the
     // user's attention with no terminal yet must still deny other terminals,
