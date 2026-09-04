@@ -12,6 +12,7 @@ import {
 import { resolveBackgroundTaskOutputFile } from './background-task-output';
 import { reportTerminatedBackgroundShells } from './background-shell-transcript';
 import { ensureWorktreeTrust, ensureMcpServerTrust } from './trust-manager';
+import { ensureDiffPanelClosed } from './diff-panel';
 import { migrateClaudeProjectData } from './project-relocation';
 import { removeHooks as removeClaudeHooks } from './hook-manager';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
@@ -115,6 +116,9 @@ export class ClaudeAdapter implements AgentAdapter {
   async ensureTrust(workingDirectory: string): Promise<void> {
     await ensureWorktreeTrust(workingDirectory);
     await ensureMcpServerTrust(workingDirectory);
+    // Same file, same lock: keep 2.1.260's fullscreen diff panel closed at
+    // launch. Runs per spawn on purpose - see diff-panel.ts for why.
+    await ensureDiffPanelClosed();
   }
 
   buildCommand(options: SpawnCommandOptions): string {

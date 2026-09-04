@@ -12,7 +12,7 @@ Every agent implements the `AgentAdapter` interface. Each adapter lives in `src/
 |--------|---------|
 | `detect(overridePath?)` | Locate the CLI binary and return path + version |
 | `invalidateDetectionCache()` | Reset cached detection (e.g. after user changes CLI path) |
-| `ensureTrust(workingDirectory)` | Pre-approve a directory so the agent doesn't prompt for trust |
+| `ensureTrust(workingDirectory)` | Pre-approve a directory so the agent doesn't prompt for trust, plus any other pre-spawn global-config state the adapter needs (see [Global Config Writes](#global-config-writes-claudejson)) |
 | `probeAuth?()` | Optional. Check whether the agent is authenticated. Returns `true` (logged in), `false` (installed but not authenticated), or `null` (probe unavailable / I/O error). Only called by IPC after `detect()` reports `found: true`. Must never throw. Currently implemented by Kimi (see [Kimi Code -> Authentication](#authentication)) and Grok (`grok models`, whose output says "not authenticated" from local state). |
 | `buildCommand(options)` | Build the shell command string to spawn the agent |
 | `interpolateTemplate(template, variables)` | Replace `{{key}}` placeholders in prompt templates |
@@ -356,7 +356,7 @@ When `nonInteractive` is set, `--print` is added. The agent runs, prints output,
 
 ### Settings Merge
 
-For every session, a merged settings file is built at `.kangentic/sessions/<claudeSessionId>/settings.json` and passed via `--settings`:
+For every session, a merged settings file is built at `.kangentic/sessions/<sessionId>/settings.json` (Kangentic's own session record id, not Claude's session id) and passed via `--settings`:
 
 1. Read `.claude/settings.json` from project root (committed, shared)
 2. Deep-merge `.claude/settings.local.json` from project root (gitignored, personal)
@@ -418,7 +418,11 @@ Safety guarantees:
 - Restores from backup on any error
 - Deletes empty settings files and `.claude/` directories
 
-### Trust Management
+### Global Config Writes (`~/.claude.json`)
+
+`ClaudeAdapter.ensureTrust()` runs before every Claude spawn - both task chokepoints and the Command Terminal (`transient-sessions.ts`) - and performs three read-modify-writes of the global `~/.claude.json`, all serialized through one module-level lock (`withClaudeJsonLock`). Two tests pin that, because one cannot cover both halves: `tests/unit/spawn-entry-point-parity.test.ts` scans every path that builds an agent command and proves the call appears first (line order, all paths), and `tests/unit/transient-session-spawn-ensure-trust.test.ts` drives the Command Terminal handler and proves the runtime contract there (awaited, called once, with the project root, resolving before `buildCommand`).
+
+#### Trust Management
 
 `src/main/agent/adapters/claude/trust-manager.ts`
 
@@ -430,7 +434,21 @@ When spawning an agent in a worktree (CWD differs from project root), `ensureWor
 4. Copy `enabledMcpjsonServers` from the parent entry (MCP server inheritance)
 5. Write back to `~/.claude.json`
 
-Idempotent - skips write if the worktree is already trusted.
+Idempotent - skips write if the worktree is already trusted. `ensureMcpServerTrust()` then appends `kangentic` to the project entry's `enabledMcpjsonServers` (append-if-absent) so the Kangentic MCP server is enabled without a prompt.
+
+#### Diff Panel
+
+`src/main/agent/adapters/claude/diff-panel.ts`
+
+Claude Code 2.1.260 opens a diff panel beside the conversation in the fullscreen renderer whenever the terminal is wide enough: the gate is `columns >= 144` when the global `diffSidebarOpen` key is unset, `>= 110` when it is `true`, and never when it is `false`. The panel takes the right `min(floor(columns * 0.45), 90, columns - 70)` columns and shares physical rows with the transcript, so every line-oriented scrollback parse reads the two panes spliced together, and it duplicates the task window's Changes tab.
+
+The key lives only in `~/.claude.json` (the same key list as `theme` and `diffTool`); it is not a settings.json key, so the per-session `--settings` file cannot carry it, and there is no CLI flag or env var. `ensureDiffPanelClosed()` therefore writes `diffSidebarOpen: false` before every spawn:
+
+- Idempotent: an already-`false` key costs one read and no write.
+- Per spawn, not once: the key is remembered-last-state in one global slot, and any session that opens the panel (`/diff`) writes `true`, which would otherwise auto-open it in every later Kangentic session.
+- Atomic (temp file + rename, no backup copy), and an unreadable file is left untouched rather than replaced, since the file holds the user's auth and MCP state. That guard covers this write only: the two trust writers run earlier in the same `ensureTrust()` and still fall back to an empty object on a parse failure, so a torn file has already lost its other keys before the diff-panel write is reached.
+- The CLI applies the value it read at startup: a session spawned with the key `false` stays closed even if another session flips the key to `true` later (verified with a completed turn at 210 columns), so the write covers the session's whole lifetime.
+- `/diff` inside a session still opens the panel for that session (that path checks only the git cwd and `columns >= 110`), so it is the per-session opt-in. Turning fullscreen off (`tui: "default"`) would also remove the panel but reintroduces the scrollback duplication fullscreen exists to fix, so it is not used.
 
 ## Codex CLI
 

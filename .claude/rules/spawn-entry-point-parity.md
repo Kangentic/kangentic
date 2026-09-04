@@ -40,6 +40,13 @@ contract was kept in sync across three files by prose comments alone.
 - In-place restarts of an EXISTING session (`SESSION_RESUME` in `handlers/sessions.ts`,
   `restartSessionForSettingsChange` in `handlers/session-reconcile.ts`) are the only allowlisted
   direct engine calls; they are not first-spawn entry points.
+- Every file that calls `<receiver>.buildCommand(` calls `<receiver>.ensureTrust(cwd)` on that
+  same receiver first. That is the adapter's pre-spawn global-config step (trust entries; for
+  Claude also the `~/.claude.json` diff-panel write in `adapters/claude/diff-panel.ts`), and it
+  applies on every path that BUILDS an agent command, including the Command Terminal, which is
+  otherwise allowlisted out of both chokepoints. A path that spawns a caller-supplied command
+  string without going through `buildCommand` (`SESSION_SPAWN` in `handlers/sessions.ts`) is
+  outside what the scan verifies; route a new one through a chokepoint instead.
 - Adding a new spawn entry point means routing it through one of the two chokepoints, or adding
   a reasoned allowlist entry in the enforcement test AND updating this rule.
 
@@ -48,10 +55,15 @@ contract was kept in sync across three files by prose comments alone.
 - **Test:** `tests/unit/spawn-entry-point-parity.test.ts` statically scans `src/main` and fails
   on (a) any `executeTransition` / `resumeSuspendedSession` call site outside the classified
   files, (b) any `sessionManager.spawn(` call site outside the classified spawn sinks, (c) a
-  chokepoint that stops calling `runSpawnPreamble` / `resolveEffectivePermissionMode`, and (d)
-  any `lockAdvancedOverridesOnFirstSpawn` call outside `spawn-preamble.ts`. An unclassified new
-  call site fails CI until it routes through a chokepoint or is deliberately allowlisted with a
-  reason. Runs in CI via `npm run test:unit`.
+  chokepoint that stops calling `runSpawnPreamble` / `resolveEffectivePermissionMode`, (d)
+  any `lockAdvancedOverridesOnFirstSpawn` call outside `spawn-preamble.ts`, and (e) any
+  `<receiver>.buildCommand(` call site with no earlier `<receiver>.ensureTrust(` on that same
+  receiver in the same file. That scan proves line order, not control flow; the runtime ordering
+  on the Command Terminal path is pinned separately by
+  `tests/unit/transient-session-spawn-ensure-trust.test.ts`, which drives the handler and fails
+  if the `await` is dropped or the call is removed. An
+  unclassified new call site fails CI until it routes through a chokepoint or is deliberately
+  allowlisted with a reason. Runs in CI via `npm run test:unit`.
 - **Review:** the `session-debugger` agent (whose gate covers `transition-engine.ts` and
   task-move) is the fallback reviewer for spawn-path changes the mechanical scan cannot
   classify; `/code-review` flags spawn-affecting behavior added to one entry point only.

@@ -772,6 +772,10 @@ For each session, a merged settings file is created at `.kangentic/sessions/<ses
 5. When the MCP server is attached, append `mcp__kangentic` to `permissions.allow` (append-if-absent) so kangentic's own tools never prompt in default mode
 6. Write merged file, pass to CLI via `--settings`
 
+### Global Config Writes
+
+Before every Claude spawn (task chokepoints and the Command Terminal alike), `ClaudeAdapter.ensureTrust()` read-modify-writes the global `~/.claude.json` under one lock: trust for the working directory, `kangentic` in the project's enabled MCP servers, and `diffSidebarOpen: false` so Claude Code 2.1.260's fullscreen diff panel stays closed at launch (it is a global-config key only, so `--settings` cannot carry it). One lock is all the three share: only the diff-panel write is atomic (temp file + rename) and bails on a file it cannot parse, while the two trust writers still rewrite in place and fall back to an empty object on a parse failure. Details in [Global Config Writes](agent-integration.md#global-config-writes-claudejson).
+
 ## Session Recovery
 
 On project open (`src/main/transition-engine/session-startup/`):
