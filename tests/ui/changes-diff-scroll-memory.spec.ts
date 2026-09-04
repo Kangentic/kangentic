@@ -127,13 +127,28 @@ async function scrollModifiedToBottom(target: Page): Promise<void> {
   });
 }
 
-/** Toggle the "Collapse unchanged" option through the diff view-options menu. */
-async function toggleCollapseUnchanged(target: Page): Promise<void> {
+/**
+ * Drive "Collapse unchanged" to an explicit state through the diff view-options
+ * menu.
+ *
+ * Set-to-a-state rather than toggle, and therefore idempotent: the preference is
+ * GLOBAL, so a test that leaves it on poisons every sibling in this shared-page
+ * file (cross-platform-parity.md forbids that cascade). A blind toggle in a
+ * cleanup path cannot be made safe, because it has no way to tell "the test
+ * enabled this" from "the enabling click itself threw before it landed" and
+ * would switch the preference ON while trying to restore it.
+ */
+async function setCollapseUnchanged(target: Page, enabled: boolean): Promise<void> {
   const optionsTrigger = target.locator('[data-testid="diff-view-options"]');
   const optionsMenu = target.locator('[data-testid="diff-view-options-menu"]');
   await optionsTrigger.click();
   await optionsMenu.waitFor({ state: 'visible', timeout: 5000 });
-  await optionsMenu.locator('[data-testid="diff-collapse-unchanged"]').click();
+  const collapseItem = optionsMenu.locator('[data-testid="diff-collapse-unchanged"]');
+  await collapseItem.waitFor({ state: 'visible', timeout: 5000 });
+  if ((await collapseItem.getAttribute('aria-checked')) !== String(enabled)) {
+    await collapseItem.click();
+    await expect(collapseItem).toHaveAttribute('aria-checked', String(enabled), { timeout: 5000 });
+  }
   // The menu is a checklist and stays open after a check, so close it through
   // its own trigger rather than Escape, which the task-detail window also uses.
   await optionsTrigger.click();
@@ -355,12 +370,11 @@ test.describe('Changes view: diff scroll memory', () => {
     // next visit restores a position saved against the expanded layout onto a
     // folded one that is a fraction of the height.
     //
-    // From here the global collapse preference is ON, so the restore below runs
-    // inside try/finally: an assertion that throws must still hand the shared
-    // page back with the preference off, or it leaks into every test added to
-    // this file later (cross-platform-parity.md forbids that cascade).
-    await toggleCollapseUnchanged(page);
+    // The enable is INSIDE the try, so a throw part-way through it is still
+    // followed by the cleanup below. That is only safe because the helper sets
+    // an explicit state instead of toggling.
     try {
+      await setCollapseUnchanged(page, true);
       await page.locator('button', { hasText: 'delta.ts' }).click();
       await page.locator('.view-line', { hasText: 'delta' }).first().waitFor({ state: 'visible', timeout: 10000 });
 
@@ -393,7 +407,7 @@ test.describe('Changes view: diff scroll memory', () => {
       expect(getPageErrors()).toHaveLength(0);
     } finally {
       // Leave the shared page as this test found it for any later spec run.
-      await toggleCollapseUnchanged(page);
+      await setCollapseUnchanged(page, false);
     }
     await page.keyboard.press('Control+Shift+W');
     await expect(dialog).not.toBeVisible({ timeout: 8000 });
