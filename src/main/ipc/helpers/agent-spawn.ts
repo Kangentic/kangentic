@@ -219,6 +219,7 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
       defaultBaseBranch: resolveDefaultBaseBranch(context, options.projectPath),
       attachmentPaths: options.attachments?.getPathsForTask(currentTask.id) ?? [],
       devPort: getDevPortForTask(currentTask.id),
+      projectPath: options.projectPath ?? null,
     });
 
   const run = async (): Promise<void> => {

@@ -95,6 +95,7 @@ export class TransitionEngine {
       defaultBaseBranch: this.getConfig().gitConfig.defaultBaseBranch,
       attachmentPaths,
       devPort: getDevPortForTask(task.id),
+      projectPath: this.getConfig().projectPath,
     });
     await this.executeSpawnAgent({
       promptTemplate: skipPromptTemplate ? undefined : '{{task_xml}}{{attachments}}',
@@ -130,6 +131,7 @@ export class TransitionEngine {
       defaultBaseBranch: this.getConfig().gitConfig.defaultBaseBranch,
       attachmentPaths,
       devPort: getDevPortForTask(task.id),
+      projectPath: this.getConfig().projectPath,
     });
 
     switch (action.type) {

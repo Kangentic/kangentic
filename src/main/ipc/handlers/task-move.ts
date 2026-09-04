@@ -691,6 +691,7 @@ export async function handleTaskMove(
                 defaultBaseBranch: effectiveDefaultBranch,
                 attachmentPaths: attachments.getPathsForTask(task.id),
                 devPort: getDevPortForTask(task.id),
+                projectPath: resolvedProjectPath,
               }))
             : '';
           // Read ONCE and share with the 2b fallback below, so the plan and the

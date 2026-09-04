@@ -140,7 +140,7 @@ One declaration (`src/shared/task-template-vars.ts`) drives every consumer: the
 `promptTemplate`, the Automation section's "Template variable" picker, and this
 table - see `tests/unit/task-template-vars-parity.test.ts`. Because the picker
 shows each entry's `description`, that field is user-facing copy and should stay
-to one line. All 11 keywords resolve
+to one line. All 12 keywords resolve
 identically in both `auto_command` and `promptTemplate`; `send_command` /
 `run_script` / `webhook` use the same values but keep literal, non-collapsing
 substitution (an unknown or empty `{{key}}` is left as-is, matching
@@ -152,6 +152,7 @@ substitution (an unknown or empty `{{key}}` is left as-is, matching
 | `{{description}}` | Task description with `: ` prefix when non-empty |
 | `{{task_xml}}` | Task title and description wrapped in a `<task>` envelope (`<title>` / `<description>` children). Default seeded prompt template is `{{task_xml}}{{attachments}}`, which gives the agent a structured envelope without forcing the user to template it manually. |
 | `{{taskId}}` | Task UUID |
+| `{{projectPath}}` | Main project checkout path (empty if no project is open) - always the base repo, even when the task has a worktree |
 | `{{worktreePath}}` | Worktree directory path (empty if none) - a raw read, never falls back to a project-level path |
 | `{{branchName}}` | Git branch name (empty if none) - a raw read, never falls back to a project-level branch |
 | `{{baseBranch}}` | Effective base branch: the task's `base_branch` override, else the project's configured default (board config, then app config, then `'main'`) |
@@ -175,6 +176,15 @@ case. A column `auto_command` shared by every task in a column therefore should
 not template `{{port}}` in - most of those tasks hold no reservation. Prefer
 letting the agent reserve the ports it is about to bind and use them directly;
 reach for `{{port}}` only where the task is known to hold one.
+
+`{{projectPath}}` is flag-shaped the same way, and fails less legibly than a
+bare `--port` does. With no project open, `git -C {{projectPath}} merge main`
+collapses to `git -C merge main`, so git takes the SUBCOMMAND as the `-C`
+argument and reports `fatal: cannot change to 'merge'`. That is a loud failure,
+not a silent one, but it names a directory nobody asked for instead of the
+value that went missing. Path-valued keywords are also substituted unquoted, so
+quote them yourself (`git -C "{{projectPath}}" merge main`) wherever the path
+may contain spaces.
 
 Shortcut commands use a separate set of template variables. See [Configuration](configuration.md#shortcuts) for the full list.
 
