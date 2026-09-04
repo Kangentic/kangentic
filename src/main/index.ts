@@ -23,6 +23,7 @@ import { createRequestResolver } from './agent/mcp-project-context';
 import { IPC, PROJECT_PATH_MISSING_PREFIX } from '../shared/ipc-channels';
 import { ConfigManager } from './config/config-manager';
 import { isShuttingDown, setShuttingDown } from './shutdown-state';
+import { isStartupComplete, markStartupComplete, shouldCreateWindowOnActivate } from './startup-gate';
 import { isBenignStreamWriteError } from './diagnostics/benign-stream-error';
 const windowConfigManager = new ConfigManager();
 import { initAnalytics, trackEvent, sanitizeErrorMessage, shouldEmitHeartbeat, setAnalyticsClientId } from './analytics/analytics';
@@ -631,6 +632,13 @@ if (!isEphemeral && !isE2ETest) {
 let mainWindow: BrowserWindow | null = null;
 let activateAllProjectsTimer: ReturnType<typeof setTimeout> | null = null;
 let mcpServerHandle: McpHttpServerHandle | null = null;
+// Whether the whenReady body has finished DECIDING mcpServerHandle. The handle
+// itself is null both before startup runs startMcpHttpServer and after that
+// call fails, so "unresolved" is not observable from the value alone. Only this
+// flag separates the two, and createWindow must never run while it is false:
+// registerAllIpc would build an IpcContext that can never reach the MCP server,
+// and only repairs itself if some later call passes a truthy handle.
+let mcpServerSettled = false;
 let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 
 // Parse --cwd=<path> from command line args
@@ -724,6 +732,30 @@ function showTerminalAwareContextMenu(
 }
 
 const createWindow = () => {
+  // Unreachable while the startup gate holds: the only two call sites are the
+  // whenReady body (once) and the activate handler, which the gate limits to a
+  // zero window count. Kept because the failure it prevents is severe and
+  // silent - a second BrowserWindow orphans the first, which holds
+  // getAllWindows() above zero forever, so window-all-closed never fires,
+  // before-quit never runs, and syncShutdownCleanup never kills PTYs, suspends
+  // session records, or closes DBs (the same trap described at the 'closed'
+  // handler below). Report rather than throw, and sit above phase() so the
+  // early return cannot leave a startup phase unclosed.
+  //
+  // Returning without assigning mainWindow is safe for both callers, which
+  // dereference it as mainWindow! on the very next line: this branch is taken
+  // only WHEN a live window exists, so that non-null assertion still holds and
+  // they simply re-point the updater/announcements refs at the window they
+  // already had.
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    console.error('[APP] createWindow called with a live main window; ignoring');
+    trackEvent('app_error', {
+      source: 'duplicateCreateWindow',
+      message: 'createWindow called while a live main window already existed',
+    });
+    return;
+  }
+
   phase('createWindow');
   const isTest = process.env.NODE_ENV === 'test';
 
@@ -889,6 +921,20 @@ const createWindow = () => {
   // Register IPC handlers early so speculative preloading (below) can use them.
   // Idempotent: on macOS dock re-activation, the guard in registerAllIpc()
   // updates the window reference without re-registering handlers.
+  //
+  // The handle must have SETTLED first, or the context is built with no route
+  // to the MCP server. The startup gate guarantees that on every normal path;
+  // the one exception is the degraded-startup escape hatch (the whenReady
+  // .catch below), where a throw before the MCP block leaves it unsettled.
+  // Report rather than throw: throwing here would destroy the very escape
+  // hatch that produced this window.
+  if (!mcpServerSettled) {
+    console.error('[APP] createWindow ran before the MCP server handle settled');
+    trackEvent('app_error', {
+      source: 'createWindowBeforeMcpSettled',
+      message: 'createWindow ran before startMcpHttpServer settled',
+    });
+  }
   registerAllIpc(mainWindow, mcpServerHandle);
 
   // Native right-click context menu (Copy / Paste / Select All).
@@ -1229,6 +1275,9 @@ app.whenReady().then(async () => {
     // Continue without it -- agents will see "Unauthorized" or "Connection
     // refused" but the rest of the app stays functional.
   }
+  // Settled either way: a handle on success, a deliberate null on failure.
+  // Set once here, after the try/catch, so both paths are covered in one place.
+  mcpServerSettled = true;
 
   // Grant the first-party renderer the web-platform permissions it actually uses:
   // 'media' (getUserMedia microphone access for voice-to-text dictation) and the
@@ -1260,9 +1309,20 @@ app.whenReady().then(async () => {
   initUsageAnalytics(path.join(PATHS.configDir, 'analytics-usage.json'));
   trackUpdateOutcome(app.getVersion());
 
+  // These four lines MUST stay one unbroken synchronous block. createWindow()
+  // calls mainWindow.loadURL() internally, so the renderer starts loading
+  // before initUpdater/initAnnouncements have registered their channels; only
+  // the absence of an await here guarantees the renderer cannot reach its first
+  // invoke until they have. Adding an await in this span re-opens DESKTOP-3/4
+  // from the whenReady path itself, which the static scan in
+  // tests/unit/startup-gate.test.ts exists to catch.
   createWindow();
   initUpdater(mainWindow!);
   initAnnouncements(mainWindow!);
+  // Open the gate: from here an activate event may rebuild the window. Before
+  // this point the module-scope activate handler is a no-op, so a macOS
+  // launch-time activate can no longer race ahead of the registrations above.
+  markStartupComplete();
 
   // Windows has no powerMonitor 'shutdown' event (Linux/macOS only). An OS
   // shutdown/restart/log-off there is signaled via this BrowserWindow event
@@ -1384,6 +1444,39 @@ app.whenReady().then(async () => {
       .catch((err) => console.warn('[browser-partition] startup sweep failed:', err))
       .finally(() => { endPhase('sweepBrowserPartitions'); });
   }
+}).catch((error) => {
+  // Degraded-startup escape hatch. This body has several unguarded SYNCHRONOUS
+  // fs writes before createWindow (ensureSpawnHelperPermissions, the config
+  // save, initUsageAnalytics), and a read-only config dir or a full disk
+  // reaches them. Before the startup gate, an early throw still produced a
+  // window by accident, because the ungated activate handler fired on launch
+  // and saw a zero window count. The gate closes that path deliberately, so
+  // re-open it here or a startup failure becomes a dead dock icon.
+  //
+  // This catch intercepts the rejection before process.on('unhandledRejection')
+  // can, so the suppression filter has to be reapplied here or a benign stdio
+  // write error is echoed to the very TTY that produced it (see the comment on
+  // isSuppressibleUncaughtError). The source tag is deliberately distinct from
+  // that handler's, so a startup failure stays separable from an ambient one.
+  if (!isSuppressibleUncaughtError(error)) {
+    console.error('[APP] Startup failed:', error);
+    if (!isShuttingDown()) {
+      trackEvent('app_error', {
+        source: 'startupFailure',
+        message: sanitizeErrorMessage(error instanceof Error ? error.message : String(error)),
+      });
+    }
+  }
+  // Recovery is not automatic: the launch-time activate has already been
+  // dropped, so the window arrives on the user's next dock click. If the throw
+  // landed before createWindow, that window gets the bulk of its channels
+  // (registerAllIpc runs inside createWindow) but NOT the updater or
+  // announcements ones - neither init is idempotent, so they cannot be
+  // retried from here. A throw after initAnnouncements recovers fully.
+  //
+  // Unconditional, suppressed errors included: a gate left shut is a dock icon
+  // that never opens anything, which is worse than the error we just dropped.
+  markStartupComplete();
 });
 
 app.on('window-all-closed', () => {
@@ -1392,13 +1485,22 @@ app.on('window-all-closed', () => {
   }
 });
 
+// macOS fires 'activate' during LAUNCH as well as on a dock click, so this
+// handler is gated on the startup sequence having finished. Acting on the
+// launch-time event is what built the window mid-startup and let the renderer
+// invoke announcements channels that initAnnouncements had not registered yet
+// (Sentry DESKTOP-3 / DESKTOP-4). Dropping it loses nothing: the whenReady body
+// creates the window unconditionally.
 app.on('activate', () => {
-  if (isShuttingDown()) return;
-  if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow();
-    updateUpdaterWindow(mainWindow!);
-    updateAnnouncementsWindow(mainWindow!);
-  }
+  const shouldCreate = shouldCreateWindowOnActivate({
+    shuttingDown: isShuttingDown(),
+    startupComplete: isStartupComplete(),
+    openWindowCount: BrowserWindow.getAllWindows().length,
+  });
+  if (!shouldCreate) return;
+  createWindow();
+  updateUpdaterWindow(mainWindow!);
+  updateAnnouncementsWindow(mainWindow!);
 });
 
 /** Send a heartbeat event with current session counts. Skipped when no
