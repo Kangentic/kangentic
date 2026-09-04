@@ -163,6 +163,15 @@ describe('the startup gate is wired into src/main/index.ts', () => {
       /if \(!\w+\) return;/.test(handler),
       'the activate handler must ACT on the predicate: calling shouldCreateWindowOnActivate and then building the window regardless still contains the call, and is still the DESKTOP-3/4 race',
     ).toBe(true);
+
+    // Calling the predicate with the wrong inputs is not the same as obeying
+    // it either: hardcoding `startupComplete: true` (or feeding it a stale
+    // local) keeps both assertions above green while fully reintroducing the
+    // launch-time race, because the gate would then never actually close.
+    expect(
+      handler,
+      'the activate handler must read the LIVE gate value via isStartupComplete(), not a literal or a cached local - anything else defeats the gate while leaving the predicate call and its `if (!...) return;` guard in place',
+    ).toContain('startupComplete: isStartupComplete()');
   });
 
   it('creates the window from exactly two call sites', () => {
@@ -229,10 +238,25 @@ describe('the startup gate is wired into src/main/index.ts', () => {
     const catchEnd = INDEX_SOURCE.indexOf('\n});', catchStart);
     expect(catchEnd, 'the whenReady .catch block is never closed at column 0').toBeGreaterThan(catchStart);
 
+    const catchBody = INDEX_SOURCE.slice(catchStart, catchEnd);
     expect(
-      INDEX_SOURCE.slice(catchStart, catchEnd),
+      catchBody,
       'one markStartupComplete() must sit INSIDE the whenReady .catch. A startup throw that leaves the gate shut strands the user on a dock icon that opens nothing, which is the failure this escape hatch exists to prevent.',
     ).toContain('markStartupComplete();');
+
+    // Presence inside the catch is not enough: the call must be UNCONDITIONAL.
+    // The catch already contains an `if (!isShuttingDown())` around the
+    // analytics report, and it would be an easy edit to tuck the gate open
+    // inside it, or to add some other "only reopen on a real failure" guard.
+    // Any of those makes recovery conditional on a predicate that has nothing
+    // to do with whether the user can still open a window. Anchored on the
+    // 2-space indentation of the catch body's own top level rather than by
+    // brace-balancing, consistent with this file's other exact-text anchors.
+    // Newline-anchored, so it holds under a CRLF checkout too.
+    expect(
+      catchBody,
+      'markStartupComplete() must sit at the TOP LEVEL of the .catch body, not nested inside its isShuttingDown reporting guard or any other condition: the escape hatch has to reopen the gate on every startup failure, or a dock click opens nothing',
+    ).toContain('\n  markStartupComplete();');
   });
 
   it('checks that the MCP handle settled before registering IPC', () => {
