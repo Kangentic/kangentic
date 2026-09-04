@@ -572,4 +572,37 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
     expect((await resolvePRByNumber('/r', 7))?.number).toBe(7);
     expect((await resolvePRByCommit('/r', 'sha'))?.number).toBe(8);
   });
+
+  /**
+   * `resolveVia`'s three call sites each pass a `kind` string alongside an
+   * `invoke` closure, and the two must name the same resolver member. Every
+   * other registry-level test in this file uses a PRIMARY-matching remote, so
+   * `resolvePRByNumber` and `resolvePRForBranch` behave identically there and
+   * a copy-paste of the wrong `kind` string is invisible. Only a SECONDARY
+   * remote (no connector owns the primary) tells them apart, because
+   * `selectOwningConnectors` refuses the secondary fallback for
+   * `resolveByNumber` specifically (dispatchResolve's `allowSecondaryFallback:
+   * kind !== 'resolveByNumber'`). This exercises that through the REAL
+   * registry (both GitHub and Azure DevOps connectors registered), not the
+   * `dispatchResolve` helper directly.
+   *
+   * Red-green: change `resolvePRByNumber`'s `resolveVia(repoCwd,
+   * 'resolveByNumber', ...)` kind argument to `'resolveForBranch'` in
+   * pr-registry.ts - the first assertion goes red (it resolves instead of
+   * rejecting) while the second stays green, which is exactly the silent
+   * mislink risk this test exists to catch.
+   */
+  it('resolveByNumber refuses the secondary-remote fallback through the real registry, unlike resolveForBranch', async () => {
+    const originalRemotes = remotes.urls;
+    remotes.urls = ['https://gitea.corp.example/owner/repo.git', 'https://github.com/owner/repo.git'];
+    try {
+      await expect(resolvePRByNumber('/r', 42)).rejects.toBeInstanceOf(PRResolverUnavailableError);
+
+      vi.spyOn(GitHubImporter.prototype, 'resolvePRByBranch').mockResolvedValue([pr({ number: 42, state: 'OPEN' })]);
+      const branchResult = await resolvePRForBranch('/r', 'feat');
+      expect(branchResult?.number).toBe(42);
+    } finally {
+      remotes.urls = originalRemotes;
+    }
+  });
 });
