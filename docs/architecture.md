@@ -663,6 +663,7 @@ Shell-specific adaptations:
 | Status debounce | 100 ms | Usage file watch |
 | Event debounce | 50 ms | Event log + activity state watch |
 | Graceful shutdown | 2000 ms | `suspendAll()` timeout (exists in code but NOT used during app quit; synchronous shutdown kills PTYs immediately) |
+| PTY exit-callback drain | 25 ms poll, 100 ms settle, 1500 ms deadline | `before-quit` holds the quit until the killed PTY children are gone, so node-pty's native exit callback is dispatched while JS is still callable (Sentry DESKTOP-C; `src/main/pty/shutdown/exit-callback-drain.ts`) |
 | Idle timeout check | 60000 ms | Polling interval for `checkIdleTimeouts()` |
 
 Stale-thinking detection is no longer a `SessionManager` constant. It now lives in the activity engine watchdog (`src/main/activity-engine/engine/`), which emits a synthetic idle transition after `DEFAULT_STALE_THINKING_TIMEOUT_MS` (180000 ms) of no activity signal while in the "thinking" state. The engine is event-driven, so there is no separate polling timer. See [Activity Detection](activity-detection.md).

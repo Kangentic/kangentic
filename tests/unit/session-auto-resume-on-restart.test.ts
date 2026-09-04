@@ -62,7 +62,7 @@ function makeDeps(options: { sessionStatus?: 'running' | 'queued' } = {}) {
     listSessions: vi.fn(() => [
       { taskId: 'task-A', projectId: 'proj-1', status: sessionStatus },
     ]),
-    killAll: vi.fn(),
+    killAll: vi.fn(() => [] as number[]),
     dispose: vi.fn(),
   };
   return {

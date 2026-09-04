@@ -20,6 +20,7 @@ import { safeKillPty } from './pty-kill';
 import { resolveShellArgs, buildSpawnEnv, resolveSpawnCwd } from '../spawn/pty-spawn';
 import { handleSpawnFailure } from '../spawn/spawn-failure-handler';
 import { isShuttingDown } from '../../shutdown-state';
+import { traceTerminal } from '../terminal-trace';
 import { adaptCommandForShell, buildSpawnClearPrelude } from '../../../shared/paths';
 
 /**
@@ -569,10 +570,28 @@ export async function performSpawn(
   // would add a spurious `& ` prefix): cmd.exe `pushd "<unc>"` maps the UNC
   // path to a temporary drive letter, PowerShell `Set-Location -LiteralPath`
   // corrects its wildcard-mangled provider location for bracketed paths.
+  //
+  // These timers hold the raw ptyProcess, not session.pty, so they would
+  // outlive the kill / respawn / exit paths that null session.pty (each in
+  // its own tick before the 100ms fires). Every write therefore re-checks
+  // that the session still owns THIS pty and tolerates node-pty throwing on
+  // a just-died child; the exit path owns the cleanup either way.
+  const writeIfStillOwned = (text: string): void => {
+    if (session.pty !== ptyProcess) {
+      traceTerminal(id, 'deferred-write-skipped', { bytes: text.length });
+      return;
+    }
+    try {
+      ptyProcess.write(text);
+    } catch (error) {
+      // PTY died between the timer arming and firing; nothing to deliver to.
+      traceTerminal(id, 'deferred-write-failed', { bytes: text.length, message: String(error) });
+    }
+  };
   if (input.command || cwdFixupCommand) {
     setTimeout(() => {
       if (cwdFixupCommand) {
-        ptyProcess.write(cwdFixupCommand + '\r');
+        writeIfStillOwned(cwdFixupCommand + '\r');
       }
       if (input.command) {
         // Non-transient (agent) spawns get the shell's own clear prefixed
@@ -583,9 +602,9 @@ export async function performSpawn(
         const prelude = input.transient ? '' : buildSpawnClearPrelude(shellName);
         const cmd = prelude + adaptCommandForShell(input.command, shellName);
         if (cwdFixupCommand) {
-          setTimeout(() => ptyProcess.write(cmd + '\r'), 200);
+          setTimeout(() => writeIfStillOwned(cmd + '\r'), 200);
         } else {
-          ptyProcess.write(cmd + '\r');
+          writeIfStillOwned(cmd + '\r');
         }
       }
     }, 100);

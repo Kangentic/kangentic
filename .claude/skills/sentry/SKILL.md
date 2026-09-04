@@ -69,7 +69,8 @@ issue = affected installs).
   / `onerror` (renderer globals), `generic` via `captureException` (a boundary or
   `reportHandledError` - check the `source` tag: `updater`, `pty_spawn`, `spawn`).
 - **Symbolication caveat:** packaged-release events resolve to real file/line only once a
-  release build uploaded sourcemaps (`SENTRY_AUTH_TOKEN` set during `npm run build`). A dev
+  release build uploaded sourcemaps (`KANGENTIC_SENTRY_TOKEN` set during `npm run build`;
+  `SENTRY_AUTH_TOKEN` is accepted as the fallback). A dev
   event's renderer frames are unminified module URLs (readable); a packaged event without
   uploaded maps shows minified positions - lean on message, mechanism, tags, and breadcrumbs.
 - **Environment tag** separates `development` (forced-on dev/preview runs) from `production`
@@ -78,6 +79,35 @@ issue = affected installs).
 - **Cross-reference locally:** the same failure usually has a local trail - `.kangentic/logs/`
   (crash JSONs, main console), `kangentic_tail_logs`, and the Aptabase `app_error` /
   `spawn_failed` counts are the volume view of the same signal.
+
+## Native minidumps (`platform: native`, mechanism `minidump`)
+
+A native crash's frames arrive as raw addresses with `function: null` for any module Sentry has
+no debug file for (node-pty's `conpty.node` / `pty.node`, `better_sqlite3.node`). They can still
+be resolved offline on a Windows machine, because node-pty ships the matching PDB in its npm
+tarball (`node_modules/node-pty/prebuilds/win32-x64/conpty.pdb`):
+
+1. Read the `debugmeta` entry: for the module, take `image_addr` (the load base) and `debug_id`.
+2. Confirm the shipped PDB is the same build: `dumpbin /HEADERS <path to conpty.node>` prints the
+   RSDS record (`{GUID}, age, pdb path`); it must equal `debug_id` (`<guid>-<age>`).
+3. RVA = `instructionAddr - image_addr` for every frame in that module, `trust: scan` ones
+   included (scanned frames are stale, but they name what ran on this stack recently).
+4. Resolve the RVAs with dbghelp from PowerShell, no debugger install needed: P/Invoke
+   `SymSetOptions` (undname, deferred loads, load lines), `SymInitializeW`,
+   `SymLoadModuleExW(hProcess, 0, <path to conpty.node>, null, 0x180000000, <size of image>, 0, 0)`
+   (the PDB is found next to the image), then `SymFromAddrW` and `SymGetLineFromAddrW64` at
+   `0x180000000 + RVA`. Function plus source line come back; this is how DESKTOP-C resolved to
+   `Napi::Error::ThrowAsJavaScriptException` inside `ThreadSafeFunction::CallJS`'s catch block.
+5. Read the frames as a C++ story: `_CxxThrowException` is the throw site,
+   `__FrameHandler4::CxxCallCatchBlock` above it means the throw happened inside a catch block,
+   and `RtlDispatchException` / `RtlUnwindEx` further out mean an exception was already being
+   handled when this one was raised.
+
+The Windows release build uploads those PDBs as Sentry debug files when the token is present
+(`scripts/build.js`), so a future event should symbolicate without this. Two caveats when reading
+a native event: the SDK persists scope to disk with a 500 ms write throttle, so the last
+half-second of breadcrumbs before the crash is usually missing (an entire quit sequence fits in
+that gap), and `Kangentic.exe` frames carry names only because Electron publishes its symbols.
 
 ## Typical requests
 

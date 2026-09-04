@@ -111,13 +111,13 @@ function buildRunningSession(overrides: Partial<Session> = {}): Session {
   } as Session;
 }
 
-function buildMockDependencies(sessions: Session[]) {
+function buildMockDependencies(sessions: Session[], killedPtyPids: number[] = []) {
   // Stable diffWatcher stub so a test can assert closeAll() ran during cleanup.
   const diffWatcher = { closeAll: vi.fn() };
   return {
     getSessionManager: vi.fn(() => ({
       listSessions: vi.fn(() => sessions),
-      killAll: vi.fn(),
+      killAll: vi.fn(() => killedPtyPids),
       dispose: vi.fn(),
       cancelAll: vi.fn(),
       getUsageCache: vi.fn(() => ({})),
@@ -193,6 +193,20 @@ describe('syncShutdownCleanup history wire-up', () => {
     const dependencies = buildMockDependencies([]);
     syncShutdownCleanup(dependencies);
     expect(dependencies.stopAnnouncementTimers).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns the child pids killAll reported, so the before-quit drain has something to wait on', () => {
+    // Sentry DESKTOP-C: the drain that follows this cleanup holds the quit
+    // until these children are gone. Swallowing killAll's return value here
+    // would silently disarm it and leave every quit racing node-pty's exit
+    // callback against Node teardown again.
+    const dependencies = buildMockDependencies([], [4242, 4343]);
+    expect(syncShutdownCleanup(dependencies)).toEqual([4242, 4343]);
+  });
+
+  it('returns an empty pid list when there was nothing to kill', () => {
+    const dependencies = buildMockDependencies([]);
+    expect(syncShutdownCleanup(dependencies)).toEqual([]);
   });
 
   it('does NOT call captureSessionMetrics for queued sessions (never spawned - nothing to capture)', () => {

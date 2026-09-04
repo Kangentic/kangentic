@@ -38,9 +38,15 @@ const HARD_SHUTDOWN_DEADLINE_MS = 6000;
  * Chromium child processes (GPU, utility, crashpad) stayed alive because
  * Electron never reached its own cleanup. By doing only sync work and letting
  * the quit proceed, Electron's normal shutdown tears down all child processes.
+ *
+ * The one sanctioned exception lives OUTSIDE this function: after it returns,
+ * the before-quit handler (pty/shutdown/before-quit-handler.ts) holds the
+ * quit for the timer-bounded PTY exit-callback drain and then re-issues
+ * app.quit(). That is why this returns the killed children's pids.
  */
-export function syncShutdownCleanup(dependencies: ShutdownDependencies): void {
+export function syncShutdownCleanup(dependencies: ShutdownDependencies): number[] {
   console.log('[SHUTDOWN] cleanup:start');
+  let killedPtyPids: number[] = [];
   // Clear pending timers that could fire during shutdown
   dependencies.clearPendingTimers();
   dependencies.stopUpdaterTimers();
@@ -139,7 +145,7 @@ export function syncShutdownCleanup(dependencies: ShutdownDependencies): void {
     // Kill all PTY sessions immediately (with best-effort exit signals).
     // Stays synchronous - no await. Sessions are resumable via --resume
     // <agent_session_id> from the DB record marked 'suspended' above.
-    sessionManager.killAll();
+    killedPtyPids = sessionManager.killAll();
     sessionManager.dispose();
 
     // Ephemeral cleanup: delete project from index so it doesn't show on next launch.
@@ -159,6 +165,7 @@ export function syncShutdownCleanup(dependencies: ShutdownDependencies): void {
   console.log('[SHUTDOWN] cleanup:done');
   // Dev-only diagnostic; a no-op in production (dead-code-eliminated via __KANGENTIC_DEV__).
   logActiveHandlesAtShutdown();
+  return killedPtyPids;
 }
 
 /**

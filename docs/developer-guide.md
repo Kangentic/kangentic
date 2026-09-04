@@ -190,6 +190,9 @@ Flags:
 2. Vite builds renderer → `.vite/build/renderer/main_window/`
 3. esbuild bundles main + preload (minified)
 4. Copies bridge scripts (`status-bridge.js`, `event-bridge.js`) to `.vite/build/`
+5. Uploads node-pty's shipped Windows PDBs to Sentry as debug files (`uploadNativeDebugFiles`):
+   Windows leg only, gated on a `KANGENTIC_SENTRY_TOKEN` / `SENTRY_AUTH_TOKEN` upload token, and
+   non-fatal on failure (a missing token is a no-op)
 
 ### Worktree Dev
 

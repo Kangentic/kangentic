@@ -57,6 +57,9 @@ import { destroyAllLanes } from './browser/browser-lane-manager';
 import { sweepOrphanedBrowserPartitions } from './browser/browser-partition-cleanup';
 import { loadReactDevTools } from './devtools';
 import { syncShutdownCleanup, startHardShutdownFailsafe } from './shutdown';
+import { createBeforeQuitHandler } from './pty/shutdown/before-quit-handler';
+import { drainPtyExitCallbacks } from './pty/shutdown/exit-callback-drain';
+import { isProcessAlive } from './shared/process-liveness';
 import { prRefreshScheduler } from './pr/pr-refresh-scheduler';
 import { retrievalService } from './retrieval/retrieval-service';
 import { lineCountClient } from './git/line-count/line-count-client';
@@ -1331,6 +1334,7 @@ app.whenReady().then(async () => {
   // closing event instead of a stale one.
   if (process.platform === 'win32') {
     mainWindow!.on('session-end', () => {
+      osInitiatedShutdown = true;
       performShutdown();
     });
   }
@@ -1351,6 +1355,7 @@ app.whenReady().then(async () => {
   // closing event instead of leaving a stale last event.
   if (process.platform !== 'win32') {
     powerMonitor.on('shutdown', () => {
+      osInitiatedShutdown = true;
       performShutdown();
     });
   }
@@ -1593,6 +1598,19 @@ function getShutdownDependencies() {
 }
 
 /**
+ * Child pids of the PTYs the synchronous cleanup killed, consumed once by the
+ * before-quit handler's exit-callback drain.
+ */
+let killedPtyPids: number[] = [];
+/**
+ * Set by the OS-initiated shutdown paths (Windows session-end, powerMonitor
+ * 'shutdown'). A before-quit that follows one of those never holds the quit:
+ * the OS is tearing the process down, and a prevented quit during logout is
+ * not something worth risking for a drain the OS will cut short anyway.
+ */
+let osInitiatedShutdown = false;
+
+/**
  * Shared synchronous shutdown flush: app quit (before-quit), SIGINT/SIGTERM,
  * and OS-initiated shutdown/reboot/log-off (powerMonitor 'shutdown' on
  * Linux/macOS, BrowserWindow 'session-end' on Windows) all route through
@@ -1610,13 +1628,28 @@ function performShutdown(): boolean {
 
   // Synchronous cleanup - then let the quit proceed normally so Electron
   // tears down all Chromium child processes (GPU, utility, crashpad, etc.)
-  syncShutdownCleanup(getShutdownDependencies());
+  killedPtyPids = syncShutdownCleanup(getShutdownDependencies());
   return true;
 }
 
-app.on('before-quit', () => {
-  performShutdown();
-});
+// The synchronous cleanup, then the one sanctioned event.preventDefault() in
+// the quit path: a timer-bounded drain that lets node-pty dispatch the killed
+// children's exit callbacks while JS is still callable, then app.quit() again.
+// See pty/shutdown/exit-callback-drain.ts and
+// .claude/rules/synchronous-shutdown.md.
+app.on('before-quit', createBeforeQuitHandler({
+  performShutdown: () => {
+    performShutdown();
+  },
+  getKilledPtyPids: () => (osInitiatedShutdown ? [] : killedPtyPids),
+  drainPtyExitCallbacks: (pids) => drainPtyExitCallbacks({ pids, isProcessAlive }),
+  hideAllWindows: () => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.hide();
+    }
+  },
+  requestQuit: () => app.quit(),
+}));
 
 // Handle force-close (Ctrl+C / SIGINT / SIGTERM) which may not fire before-quit
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {

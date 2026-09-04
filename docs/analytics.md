@@ -177,6 +177,11 @@ in one Sentry org, one triage surface.
   artifact; resolution is entirely server-side. The DSN in source is a public routing
   identifier by design, not a secret. `KANGENTIC_SENTRY_TOKEN` is also what the `/sentry`
   skill reads for issue retrieval, so one scoped variable serves both.
+- **Native debug files** ride the same gate: the Windows release build (`scripts/build.js`) also
+  uploads node-pty's shipped Windows PDBs (`node_modules/node-pty/prebuilds/win32-*/`) as Sentry
+  debug files, so a native crash inside `conpty.node` symbolicates server-side to function and
+  line instead of arriving as raw addresses (the DESKTOP-C investigation had to resolve those
+  offline). Only the Windows leg uploads, so the release matrix sends them once.
 
 ## What We Don't Collect
 

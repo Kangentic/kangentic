@@ -1253,7 +1253,23 @@ export class SessionManager extends EventEmitter {
       traceTerminal(sessionId, 'resize-noop', { origin, cols: clampedCols, rows: clampedRows });
       return { colsChanged };
     }
-    session.pty.resize(clampedCols, clampedRows);
+    try {
+      session.pty.resize(clampedCols, clampedRows);
+    } catch (error) {
+      // node-pty throws a plain Error once the child has exited but before
+      // onExit has nulled session.pty (up to ~1s on Windows, where the exit
+      // event waits on the conout flush). Same hazard the jiggle ladder in
+      // reassertGeometryForBootingChild guards; the exit path owns the
+      // cleanup, so record it and return instead of rejecting the renderer's
+      // resize invoke.
+      traceTerminal(sessionId, 'resize-failed', {
+        origin,
+        cols: clampedCols,
+        rows: clampedRows,
+        message: String(error),
+      });
+      return { colsChanged };
+    }
     // A resize applied while the agent is still booting can be lost: ConPTY
     // only delivers a resize to a connected client, and in the spawn window
     // the child is still starting behind the shell (and, under WSL, two
@@ -2081,10 +2097,11 @@ export class SessionManager extends EventEmitter {
    * Synchronously kill every PTY and clean up. Runs from Electron's
    * `before-quit` handler. Must NOT become async - see
    * session-shutdown.killAllSessions and
-   * .claude/rules/synchronous-shutdown.md.
+   * .claude/rules/synchronous-shutdown.md. Returns the killed children's
+   * pids for the before-quit exit-callback drain.
    */
-  killAll(): void {
-    killAllSessions(this.shutdownContext());
+  killAll(): number[] {
+    return killAllSessions(this.shutdownContext());
   }
 
   private shutdownContext() {
