@@ -8,6 +8,7 @@ import type {
   SessionStatus,
   StreamOutputParser,
 } from '../../shared/types';
+import { isLiveSessionStatus } from '../../shared/session-liveness';
 
 /**
  * Internal per-session state owned by the main process. The subset
@@ -201,7 +202,7 @@ export function toSession(session: ManagedSession): Session {
  * the meaning here would clash with that established term.
  */
 export function isLiveSession(session: Session | undefined): boolean {
-  return !!session && (session.status === 'running' || session.status === 'queued');
+  return !!session && isLiveSessionStatus(session.status);
 }
 
 /**
@@ -294,6 +295,24 @@ export class SessionRegistry {
   }
 
   /**
+   * Every registry row for a task, in insertion order.
+   *
+   * The registry is meant to hold ONE row per task (the task's current
+   * session; the DB keeps its other resumable records), and every writer
+   * enforces that at insertion. This is the query those writers drain with:
+   * a spawn that evicted only `findByTaskId`'s first match could never catch
+   * up with a second stale row, and the survivor masked the live PTY in the
+   * renderer.
+   */
+  listByTaskId(taskId: string): ManagedSession[] {
+    const rows: ManagedSession[] = [];
+    for (const session of this.sessions.values()) {
+      if (session.taskId === taskId) rows.push(session);
+    }
+    return rows;
+  }
+
+  /**
    * Find the first live (running/queued) Session DTO for a task. Used by
    * reconcileTaskSessionRef to heal cases where the DB pointer
    * (`task.session_id`) is null or points at a now-suspended entry while
@@ -307,8 +326,7 @@ export class SessionRegistry {
    */
   findLiveSessionByTaskId(taskId: string): Session | undefined {
     for (const session of this.sessions.values()) {
-      if (session.taskId === taskId
-          && (session.status === 'running' || session.status === 'queued')) {
+      if (session.taskId === taskId && isLiveSessionStatus(session.status)) {
         return toSession(session);
       }
     }
@@ -332,7 +350,7 @@ export class SessionRegistry {
   hasLiveSessionForTask(taskId: string): boolean {
     for (const session of this.sessions.values()) {
       if (session.taskId !== taskId) continue;
-      if (session.status !== 'running' && session.status !== 'queued') continue;
+      if (!isLiveSessionStatus(session.status)) continue;
       if (session.intentionalExit === true) continue;
       return true;
     }
@@ -415,6 +433,21 @@ export class SessionRegistry {
    * before app restart. The placeholder has no PTY but gives the
    * renderer a "Paused" state and exposes the "Resume session" button.
    *
+   * Idempotent per task, returning null when it inserts nothing:
+   *
+   * - A `running`, `queued`, or `suspended` row blocks the insert. A live row
+   *   must never be displaced by a placeholder, and a suspended row already
+   *   offers Resume (it may also be mid-`suspend()`, which holds the row
+   *   across its awaited graceful shutdown and emits on it afterwards).
+   *   Recovery runs once per project per process, but not only once: an
+   *   explicit open during startup activation runs it again, and every pass
+   *   used to add a fresh placeholder. The spawn that eventually replaced them
+   *   drained one, and the survivor masked the live session in the renderer.
+   * - An `exited` row is evicted (map only; the manager clears its caches)
+   *   and replaced. An exited row offers no Resume control, while the DB
+   *   record the caller just upgraded to `suspended` says the task is
+   *   resumable, so leaving it would strand the task.
+   *
    * Callers should go through `SessionManager.registerSuspendedPlaceholder`
    * (not this method directly) so the `session-changed` event fires and
    * the renderer's onStatus listener evicts any stale prior session entry
@@ -422,7 +455,12 @@ export class SessionRegistry {
    * the manager wrapper leaves the renderer dependent on the next
    * `syncSessions()` to learn about the placeholder.
    */
-  registerSuspendedPlaceholder(input: { taskId: string; projectId: string; cwd: string }): Session {
+  registerSuspendedPlaceholder(input: { taskId: string; projectId: string; cwd: string }): Session | null {
+    const existingRows = this.listByTaskId(input.taskId);
+    if (existingRows.some((row) => row.status !== 'exited')) return null;
+    for (const exitedRow of existingRows) {
+      this.sessions.delete(exitedRow.id);
+    }
     const id = uuidv4();
     const session: ManagedSession = {
       id,

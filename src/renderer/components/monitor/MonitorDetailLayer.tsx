@@ -28,6 +28,7 @@ import type { Task } from '../../../shared/types';
 import { DEFAULT_MIN_WIDTH_PX, DEFAULT_MIN_HEIGHT_PX } from '../../window-manager/dnd/useWindowResize';
 import { MonitorTaskDetailHost } from './MonitorTaskDetailHost';
 import { useSessionStore } from '../../stores/session-store';
+import { findSessionForTask } from '../../stores/session-store/session-index';
 import { useClickOutsideToClose } from '../../window-manager/bridge/useClickOutsideToClose';
 import { monitorDetailAnchor, parseMonitorAnchor } from '../../window-manager/store/monitor-anchor';
 import { readPopOutDescriptor } from '../../pop-out/read-descriptor';
@@ -256,8 +257,7 @@ function useRestoreMonitorWorkspace(): void {
       (anchor) => {
         const parsed = parseMonitorAnchor(anchor);
         if (!parsed) return null;
-        return useSessionStore.getState().sessions
-          .find((candidate) => candidate.taskId === parsed.taskId)?.id ?? null;
+        return findSessionForTask(useSessionStore.getState().sessions, parsed.taskId)?.id ?? null;
       },
       (anchor) => plan.restorableAnchors.has(anchor),
     );
@@ -323,7 +323,7 @@ function MonitorDetailBridge(): null {
     for (const managedWindow of Object.values(windows)) {
       const parsed = parseMonitorAnchor(managedWindow.anchor);
       if (!parsed) continue;
-      const session = sessions.find((candidate) => candidate.taskId === parsed.taskId);
+      const session = findSessionForTask(sessions, parsed.taskId);
       if (session && !focusedIds.includes(session.id)) focusedIds.push(session.id);
     }
     void window.electronAPI?.sessions?.setFocused(focusedIds);

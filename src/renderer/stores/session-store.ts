@@ -4,7 +4,8 @@ import { requiresUserInteraction, isActive } from '../../shared/activity-state';
 import { useProjectStore } from './project-store';
 import { useConfigStore } from './config-store';
 import type { SessionStore, PendingTuiAnchor } from './session-store/types';
-import { buildSessionByTaskId } from './session-store/session-index';
+import { buildSessionByTaskId, withSessionUpserted } from './session-store/session-index';
+import { isLiveSessionStatus } from '../../shared/session-liveness';
 import { createTaskChangesPanelSlice } from './session-store/task-changes-panel-slice';
 import { createTransientSessionSlice, transientKey, type TransientSessionEntry } from './session-store/transient-session-slice';
 import { registerSessionLifecycleHooks } from './session-lifecycle-hooks';
@@ -344,13 +345,13 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
     const stillExists = currentState.activeSessionId
       && mergedSessions.some((s) => s.id === currentState.activeSessionId);
 
-    // Live sets: a session the engine still actively tracks. Using the
-    // established running||queued predicate (cf. task-move.ts) so exited /
-    // suspended rows in the list stay evictable. These - not the
-    // project-scoped fetch - are the keyset authority for the per-session
-    // maps, so a live session never loses its last-known derived state just
-    // because the project filter scoped its usage out.
-    const isLive = (s: Session) => s.status === 'running' || s.status === 'queued';
+    // Live sets: a session the engine still actively tracks. Using the shared
+    // running||queued predicate so exited / suspended rows in the list stay
+    // evictable. These - not the project-scoped fetch - are the keyset
+    // authority for the per-session maps, so a live session never loses its
+    // last-known derived state just because the project filter scoped its
+    // usage out.
+    const isLive = (session: Session) => isLiveSessionStatus(session.status);
     const liveSessionIds = new Set(mergedSessions.filter(isLive).map((s) => s.id));
     const liveTaskIds = new Set(mergedSessions.filter(isLive).map((s) => s.taskId));
 
@@ -549,26 +550,19 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
       return null;
     }
     set((state) => {
-      // Live session exists on main: replace any stale row for this task.
-      // Keyed by id first (covers in-place status fix on the same id);
-      // falls back to taskId eviction (covers respawn where the session
-      // id changed) so we never end up with two rows for the same task.
-      const existingIndex = state.sessions.findIndex((sess) => sess.id === liveSession.id);
-      let sessions: Session[];
-      if (existingIndex >= 0) {
-        sessions = [...state.sessions];
-        sessions[existingIndex] = liveSession;
-      } else {
-        sessions = [...state.sessions.filter((sess) => sess.taskId !== taskId), liveSession];
-      }
+      // Live session exists on main: make it the task's only row, in place if
+      // its id is already listed (an in-place status fix) or appended if not
+      // (a respawn under a new id). The in-place case used to leave a stale
+      // suspended sibling in front of the live row, which is exactly the
+      // shape this probe exists to heal; see `withSessionUpserted`.
+      //
       // Clear any in-flight spawn progress label for this task: a real
       // session has arrived, so the "Initializing..." indicator is done.
       // Mirrors upsertSession's behavior so a healed session doesn't leave
       // a stale spawnProgress entry stranded on the task card.
       const { [liveSession.taskId]: _removed, ...remainingProgress } = state.spawnProgress;
       return {
-        sessions,
-        _sessionByTaskId: buildSessionByTaskId(sessions),
+        ...withSessionUpserted(state.sessions, liveSession),
         spawnProgress: remainingProgress,
       };
     });
@@ -634,19 +628,12 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
 
   upsertSession: (session) => {
     set((state) => {
-      const existingIndex = state.sessions.findIndex((s) => s.id === session.id);
-      let sessions: Session[];
-      if (existingIndex >= 0) {
-        sessions = [...state.sessions];
-        sessions[existingIndex] = session;
-      } else {
-        // New session - also remove any stale session for the same task
-        // (handles respawns where the session ID changes but taskId stays)
-        sessions = [...state.sessions.filter((s) => s.taskId !== session.taskId), session];
-      }
-      // Clear spawn progress when a real session arrives (progress is done)
+      // The pushed row becomes its task's only row: replaced in place when its
+      // id is already listed, appended on a respawn under a new id. See
+      // `withSessionUpserted` for why the in-place case must evict too.
+      // Clear spawn progress when a real session arrives (progress is done).
       const { [session.taskId]: _removed, ...remainingProgress } = state.spawnProgress;
-      return { sessions, _sessionByTaskId: buildSessionByTaskId(sessions), spawnProgress: remainingProgress };
+      return { ...withSessionUpserted(state.sessions, session), spawnProgress: remainingProgress };
     });
   },
 

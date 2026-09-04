@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useSessionStore } from '../stores/session-store';
+import { findSessionForTask } from '../stores/session-store/session-index';
 import { useBoardStore } from '../stores/board-store';
 import { useConfigStore } from '../stores/config-store';
 import { useProjectStore } from '../stores/project-store';
@@ -156,7 +157,7 @@ export function useFocusedSessionsSync(panelShowsTerminal: boolean): void {
       // anchor-based resolution in useWindowSessionClaims.
       const boardSessionId =
         managedWindow.kind === 'task-detail'
-          ? (sessions.find((candidate) => candidate.taskId === managedWindow.anchor)?.id ?? null)
+          ? (findSessionForTask(sessions, managedWindow.anchor)?.id ?? null)
           : managedWindow.sessionId;
       windows.push({
         windowId,

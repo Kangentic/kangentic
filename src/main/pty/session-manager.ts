@@ -1342,6 +1342,17 @@ export class SessionManager extends EventEmitter {
     // Full cleanup including file deletion - the session is not coming back.
     this.sessionFiles.detachAndDelete(sessionId);
     this.registry.delete(sessionId);
+    this.clearSessionCaches(sessionId);
+  }
+
+  /**
+   * Drop what the auxiliary modules hold for a session id once its registry
+   * row is gone: buffer, transcript, telemetry, first-output latch, and resize
+   * bookkeeping. The tail shared by `remove()` and the exited-row eviction in
+   * `registerSuspendedPlaceholder`, which differ only in what happens to the
+   * PTY and the on-disk session files before this runs.
+   */
+  private clearSessionCaches(sessionId: string): void {
     this.bufferManager.removeSession(sessionId);
     this.transcriptWriter?.remove(sessionId);
     this.telemetry.removeSession(sessionId);
@@ -1350,23 +1361,25 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
-   * Kill any PTY session belonging to a task, regardless of whether the
+   * Kill every PTY session belonging to a task, regardless of whether the
    * task's session_id field has been written to the DB yet. This handles
    * the race where a concurrent handleTaskMove spawned a session but
    * hasn't updated the task record.
+   *
+   * Every row, not the first match: while a respawn is queued the task
+   * transiently holds `[suspended, queued]`, and a first-match kill left the
+   * queued row to be promoted into a task the caller had just torn down.
    */
   killByTaskId(taskId: string): void {
-    const session = this.registry.findByTaskId(taskId);
-    if (session) this.kill(session.id);
+    for (const session of this.registry.listByTaskId(taskId)) this.kill(session.id);
   }
 
   /**
-   * Fully remove any PTY session belonging to a task from all internal
+   * Fully remove every PTY session belonging to a task from all internal
    * maps. Like killByTaskId but also cleans up caches and session files.
    */
   removeByTaskId(taskId: string): void {
-    const session = this.registry.findByTaskId(taskId);
-    if (session) this.remove(session.id);
+    for (const session of this.registry.listByTaskId(taskId)) this.remove(session.id);
   }
 
   /**
@@ -1999,8 +2012,12 @@ export class SessionManager extends EventEmitter {
    * before app restart. The placeholder has no PTY but makes the renderer
    * show "Paused" state and the "Resume session" button.
    *
-   * Safe to call even if a session already exists for the task - doSpawn
-   * handles existing sessions by taskId (cleans up and replaces).
+   * Idempotent per task: returns null, inserting and emitting nothing, when
+   * the task already holds a live or suspended row (see
+   * `SessionRegistry.registerSuspendedPlaceholder` for the contract). An
+   * exited row is replaced, and its per-session caches are cleared here the
+   * way `remove()` clears them, minus the kill and the on-disk file deletion
+   * the row no longer needs.
    *
    * Emits `session-changed` so the renderer's onStatus listener evicts any
    * stale prior session entry for the same taskId immediately. Without this
@@ -2008,8 +2025,18 @@ export class SessionManager extends EventEmitter {
    * syncSessions(), leaving a window where stale sessions[] entries from
    * before a project switch can mask the real placeholder state.
    */
-  registerSuspendedPlaceholder(input: { taskId: string; projectId: string; cwd: string }): Session {
+  registerSuspendedPlaceholder(input: { taskId: string; projectId: string; cwd: string }): Session | null {
+    const exitedRows = this.registry.listByTaskId(input.taskId).filter((row) => row.status === 'exited');
     const session = this.registry.registerSuspendedPlaceholder(input);
+    if (!session) return null;
+    // The registry inserted, so every pre-existing row was exited and is gone
+    // from the map; drop what the other modules still hold for those ids.
+    for (const exitedRow of exitedRows) {
+      this.sessionIdManager.removeSession(exitedRow.id);
+      disposeAdapterAttachment(exitedRow);
+      this.sessionFiles.removeSession(exitedRow.id);
+      this.clearSessionCaches(exitedRow.id);
+    }
     this.emit('session-changed', session.id, session);
     return session;
   }

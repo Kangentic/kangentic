@@ -65,15 +65,35 @@ export interface SpawnFlowContext {
 }
 
 /**
+ * Which drained sibling's scrollback and geometry the new session inherits.
+ *
+ * The most recently started row that is not the id being reused: a queued
+ * placeholder being promoted reuses its own id and has no scrollback, while
+ * the row it queued behind (a suspended-in-place session) does. Among the
+ * rest, the latest `startedAt` is the session the user last saw. Compared as
+ * ISO strings; a missing value sorts oldest. Falls back to any sibling so a
+ * lone placeholder keeps the (empty) carry-over it always had.
+ */
+function pickCarryoverSource(siblings: ManagedSession[], reusedId: string): ManagedSession | null {
+  let source: ManagedSession | null = null;
+  for (const sibling of siblings) {
+    if (sibling.id === reusedId) continue;
+    if (!source || (sibling.startedAt || '') > (source.startedAt || '')) source = sibling;
+  }
+  return source ?? siblings[0] ?? null;
+}
+
+/**
  * Execute a PTY spawn for a SpawnSessionInput.
  *
  * Orchestrates the full lifecycle of turning a spawn request into a
  * running ManagedSession:
  *
  *   1. Shutdown guard (refuses spawn during `before-quit`).
- *   2. Existing-session cleanup: if a prior session exists for the
+ *   2. Existing-session cleanup: for EVERY prior registry row of the
  *      taskId, kill its PTY, detach watchers while preserving files
- *      (so the new session inherits them), remove from caches.
+ *      (so the new session inherits them), remove from caches. Draining
+ *      all of them is what keeps the registry at one row per task.
  *   3. Scrollback carry-over: the previous session's raw scrollback
  *      is preserved so resumes show unbroken history.
  *   4. Shell resolution + env + cwd fixup resolution (see spawn/pty-spawn.ts).
@@ -98,7 +118,13 @@ export async function performSpawn(
   }
 
   const shell = await context.getShell();
-  const existing = input.taskId ? context.registry.findByTaskId(input.taskId) : null;
+  // EVERY registry row for the task, not the first match. The registry holds
+  // one row per task by contract, but a stale suspended placeholder (a repeat
+  // project open) or a suspended-in-place row (a settings restart) could
+  // accumulate ahead of the spawn, and a spawn that drained only the first of
+  // them left the survivor listed ahead of the live PTY: the renderer's
+  // first-wins consumers painted "Resume session" over a running agent.
+  const siblings = input.taskId ? context.registry.listByTaskId(input.taskId) : [];
 
   // Use the caller-provided ID, or generate a fresh one as fallback.
   // For queue promotions, the ID was set on the input when the placeholder
@@ -107,31 +133,30 @@ export async function performSpawn(
   // remount (TerminalTab is keyed by session ID).
   const id = input.id ?? uuidv4();
 
-  // Kill any existing PTY for this task to prevent orphaned processes
-  // that would emit data with the same session ID (double output).
-  if (existing?.pty) {
-    const ptyRef = existing.pty;
-    existing.pty = null;
-    safeKillPty(ptyRef);
-  }
-
-  if (existing) {
+  for (const sibling of siblings) {
+    // Kill any existing PTY for this task to prevent orphaned processes
+    // that would emit data with the same session ID (double output).
+    if (sibling.pty) {
+      const ptyRef = sibling.pty;
+      sibling.pty = null;
+      safeKillPty(ptyRef);
+    }
     // Detach watchers and readers but preserve files on disk and
     // nullify paths so the old session's onExit handler cannot
     // race-delete files the new spawn is about to reuse. See
     // SessionFileManager.detachPreservingFiles.
-    context.sessionFiles.detachPreservingFiles(existing.id);
+    context.sessionFiles.detachPreservingFiles(sibling.id);
     // Cancel the old session's diagnostic timer and drop its scanner
     // so a spurious "session ID not captured" warning cannot fire
     // 30s after respawn.
-    context.sessionIdManager.removeSession(existing.id);
-    // Drop the old session's first-output latch. Today no spawn caller reuses
-    // an id, but if one ever did, a latched entry under the reused id would
+    context.sessionIdManager.removeSession(sibling.id);
+    // Drop the old session's first-output latch. A queue promotion reuses
+    // its placeholder's id, and a latched entry under the reused id would
     // permanently suppress 'first-output' for the new session - and with it
     // the post-first-output geometry re-assert.
-    context.firstOutputTracker.removeSession(existing.id);
+    context.firstOutputTracker.removeSession(sibling.id);
     // Tear down any adapter-attached work from the previous spawn.
-    disposeAdapterAttachment(existing);
+    disposeAdapterAttachment(sibling);
   }
 
   // Carry over previous scrollback BEFORE removing state so scroll history
@@ -140,16 +165,17 @@ export async function performSpawn(
   // scroll history. The geometry the carried bytes were drawn for rides
   // along so initSession can keep the replay's geometry gate accurate
   // instead of conservatively frame-routing every respawn.
-  const previousScrollback = existing ? context.bufferManager.getRawScrollback(existing.id) : '';
-  const previousGeometry = existing ? context.bufferManager.getCarryoverGeometry(existing.id) : null;
+  const carryoverSource = pickCarryoverSource(siblings, id);
+  const previousScrollback = carryoverSource ? context.bufferManager.getRawScrollback(carryoverSource.id) : '';
+  const previousGeometry = carryoverSource ? context.bufferManager.getCarryoverGeometry(carryoverSource.id) : null;
 
-  // Remove old session from map and caches so findByTaskId returns
-  // the new session, and stale usage/activity data doesn't persist.
-  if (existing) {
-    context.registry.delete(existing.id);
-    context.telemetry.removeSession(existing.id);
-    context.bufferManager.removeSession(existing.id);
-    context.sessionFiles.removeSession(existing.id);
+  // Remove the old rows from the map and caches so the task's only registry
+  // row is the new session, and stale usage/activity data doesn't persist.
+  for (const sibling of siblings) {
+    context.registry.delete(sibling.id);
+    context.telemetry.removeSession(sibling.id);
+    context.bufferManager.removeSession(sibling.id);
+    context.sessionFiles.removeSession(sibling.id);
   }
 
   // Shell invocation (exe + args) and spawn env. See pty-spawn.ts.
@@ -228,7 +254,7 @@ export async function performSpawn(
   const session: ManagedSession = {
     id,
     taskId: input.taskId,
-    projectId: existing?.projectId || input.projectId,
+    projectId: carryoverSource?.projectId || input.projectId,
     pty: ptyProcess,
     status: 'running',
     shell,
