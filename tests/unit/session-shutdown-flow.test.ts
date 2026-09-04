@@ -115,4 +115,53 @@ describe('killAllSessions', () => {
     expect(sessionQueueClear).toHaveBeenCalledTimes(1);
     expect(firstOutputClear).toHaveBeenCalledTimes(1);
   });
+
+  // The returned pids feed the before-quit exit-callback drain (Sentry
+  // DESKTOP-C): the quit is held until these children are gone so node-pty's
+  // exit callback is dispatched while JS is still callable.
+  describe('returned child pids', () => {
+    function makePty(pid: number | undefined): pty.IPty {
+      return { write: vi.fn(), kill: vi.fn(), pid } as unknown as pty.IPty;
+    }
+
+    it('returns the child pid of every PTY it killed, read before the reference is nulled', () => {
+      const first = makeSession({ id: 'sess-1', pty: makePty(4242) });
+      const second = makeSession({ id: 'sess-2', pty: makePty(4343) });
+      const { context, killPty } = makeContext([first, second]);
+      // The kill lands on a session whose pty is already nulled (the
+      // double-kill guard), so the pid must have been captured beforehand.
+      killPty.mockImplementation(() => {
+        expect(first.pty).toBeNull();
+        return true;
+      });
+
+      expect(killAllSessions(context)).toEqual([4242, 4343]);
+    });
+
+    it('returns nothing for a session with no PTY', () => {
+      const session = makeSession({ pty: null });
+      const { context, killPty } = makeContext([session]);
+
+      expect(killAllSessions(context)).toEqual([]);
+      expect(killPty).not.toHaveBeenCalled();
+    });
+
+    it('still returns the pid when killPty reports the child was already dead', () => {
+      // An exit callback can be queued but not yet dispatched; the drain's
+      // settle ticks cover it, so the pid must not be dropped here.
+      const session = makeSession({ pty: makePty(4242) });
+      const { context, killPty } = makeContext([session]);
+      killPty.mockReturnValue(false);
+
+      expect(killAllSessions(context)).toEqual([4242]);
+    });
+
+    it('skips a PTY whose pid is missing or not a positive integer', () => {
+      const missing = makeSession({ id: 'sess-1', pty: makePty(undefined) });
+      const zero = makeSession({ id: 'sess-2', pty: makePty(0) });
+      const { context } = makeContext([missing, zero]);
+
+      expect(killAllSessions(context)).toEqual([]);
+    });
+  });
 });

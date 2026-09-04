@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessByStdio } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import type { Readable, Writable } from 'node:stream';
+import { isProcessAlive } from '../../shared/process-liveness';
 
 /**
  * Shape of the long-lived PowerShell child. `stdio: ['pipe', 'pipe', 'ignore']`
@@ -113,14 +114,7 @@ class WindowsProbe implements ProcessTreeProbe {
   private disposed = false;
 
   isAlive(pid: number): boolean {
-    if (!Number.isInteger(pid) || pid <= 0) return false;
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch (err: unknown) {
-      const code = (err as NodeJS.ErrnoException).code;
-      return code === 'EPERM';
-    }
+    return isProcessAlive(pid);
   }
 
   async listDescendants(rootPid: number): Promise<ProcessInfo[]> {
@@ -393,14 +387,7 @@ class PosixProbe implements ProcessTreeProbe {
   dispose(): void { /* no-op */ }
 
   isAlive(pid: number): boolean {
-    if (!Number.isInteger(pid) || pid <= 0) return false;
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch (err: unknown) {
-      const code = (err as NodeJS.ErrnoException).code;
-      return code === 'EPERM';
-    }
+    return isProcessAlive(pid);
   }
 
   async listDescendants(rootPid: number): Promise<ProcessInfo[]> {

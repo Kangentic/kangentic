@@ -178,6 +178,10 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=4096
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DEBUG: electron-builder
+          # Sentry release symbolication: sourcemaps (scripts/build.js,
+          # vite.config.mts) and node-pty's Windows PDBs (scripts/build.js).
+          # Both uploads are no-ops while the secret is unset.
+          KANGENTIC_SENTRY_TOKEN: ${{ secrets.KANGENTIC_SENTRY_TOKEN }}
           # macOS notarization
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}

@@ -462,9 +462,9 @@ Lifecycle on task move (`task-move.ts`, the session switch branch inside Priorit
 
 ## Shutdown
 
-On app close, the `before-quit` handler calls `syncShutdownCleanup()`, which is fully synchronous. The `suspendAll()` method exists in `SessionManager` but is **never called during shutdown** -- it is async and would break the synchronous requirement.
+On app close, the `before-quit` handler (`createBeforeQuitHandler` in `src/main/pty/shutdown/before-quit-handler.ts`, wired in `src/main/index.ts`) calls `syncShutdownCleanup()` (`src/main/shutdown.ts`), which is fully synchronous. The `suspendAll()` method exists in `SessionManager` but is **never called during shutdown**: it is async and would break the synchronous requirement.
 
-The actual shutdown sequence (`syncShutdownCleanup()` in `src/main/index.ts`):
+The actual shutdown sequence (`syncShutdownCleanup()` in `src/main/shutdown.ts`):
 
 1. Cancel all pending command injections
 2. List all in-memory sessions with `running` or `queued` status
@@ -474,7 +474,9 @@ The actual shutdown sequence (`syncShutdownCleanup()` in `src/main/index.ts`):
 6. Clean up session files and clear in-memory session maps
 7. Delete ephemeral project from index (if applicable)
 8. Close all database connections via `closeAll()`
-9. Let Electron's normal quit proceed (tears down Chromium child processes)
+9. Return the child pids of the PTYs `killAll()` killed
+
+Then, only when at least one PTY was killed, the handler calls `event.preventDefault()` and runs the bounded PTY exit-callback drain (`drainPtyExitCallbacks` in `src/main/pty/shutdown/exit-callback-drain.ts`): it polls the killed pids every 25 ms until every one is gone, allows 100 ms of further loop turns, gives up at 1500 ms, and then calls `app.quit()` again. The second `before-quit` pass is a no-op and Electron's normal quit proceeds (tearing down Chromium child processes). The drain logs `[SHUTDOWN] pty-drain:start n=<count>` and `pty-drain:done <ms>` (or `pty-drain:timeout <ms> lingering=<pids>`). It exists because node-pty delivers a PTY's exit through a native ThreadSafeFunction, and an exit callback first dispatched after Electron has stopped Node kills the process with an unhandled C++ exception (Sentry DESKTOP-C); the drain makes sure those callbacks land while JS is still callable. OS-initiated shutdowns (Windows `session-end`, powerMonitor `shutdown`) skip the drain, and with no PTY killed the quit is the plain synchronous one. The rule and its rationale: `.claude/rules/synchronous-shutdown.md`.
 
 A hard failsafe timer (`taskkill /T /F` on Windows, 6 seconds) runs as a backstop in case Electron's shutdown hangs.
 
@@ -748,8 +750,10 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   exactly then). Every renderer resize sender now traces `resize-request` with an origin
   tag (`mount`/`flush`/`reload`/`echo-reassert`/`debounced-onResize`) and main traces every
   resize outcome (`resize-applied`/`resize-noop`/`resize-refused`/`resize-stash`/
-  `resize-ignored`/`resize-invalid`, plus `resize-reassert`/`resize-reassert-failed` from the
-  post-boot re-assert below), so `kangentic_devtools_terminal_state`'s merged trace
+  `resize-ignored`/`resize-invalid`/`resize-failed` (node-pty threw on a just-died child; main
+  records the failure and returns `{ colsChanged }` rather than rejecting the renderer's invoke),
+  plus `resize-reassert`/`resize-reassert-failed` from the post-boot re-assert below), so
+  `kangentic_devtools_terminal_state`'s merged trace
   names the trigger if a divergence ever recurs. A resize for a queued or suspended session
   stashes (including suspend's marked-but-alive teardown window, where the PTY is still
   non-null but must not be reshaped or re-echoed); one for a missing or exited session is

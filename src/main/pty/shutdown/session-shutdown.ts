@@ -131,16 +131,28 @@ export async function suspendAllSessions<S extends ShutdownSession>(
  * in time (we do NOT wait); the agent might get a few ms to start
  * flushing conversation state. For a true graceful suspend, call
  * suspendAllSessions first.
+ *
+ * Returns the child pid of every PTY it killed. The before-quit handler
+ * feeds them to the exit-callback drain (exit-callback-drain.ts), which
+ * holds the quit until those children are gone and node-pty's exit
+ * callbacks have been dispatched while JS is still callable. A pid is
+ * returned even when killPty reports the child was already dead: it
+ * polls dead on the first tick, and the drain's settle ticks still cover
+ * an exit callback that is queued but not yet dispatched.
  */
 export function killAllSessions<S extends ShutdownSession>(
   context: ShutdownContext<S>,
-): void {
+): number[] {
+  const killedPtyPids: number[] = [];
   for (const session of context.sessions.values()) {
     if (session.pty) {
       writeExitSequence(session.pty, session.exitSequence);
       const ptyRef = session.pty;
+      // Read before nulling: the drain needs the child pid, not the wrapper.
+      const childPid = ptyRef.pid;
       session.pty = null; // prevent double-kill (conpty heap corruption on Windows)
       context.killPty(ptyRef);
+      if (Number.isInteger(childPid) && childPid > 0) killedPtyPids.push(childPid);
     }
     // Detach our onData / onExit listeners so node-pty stops invoking the
     // callbacks on a later tick. Without this a final ConPTY chunk fires
@@ -163,4 +175,5 @@ export function killAllSessions<S extends ShutdownSession>(
   context.sessions.clear();
   context.sessionQueue.clear();
   context.firstOutputTracker.clear();
+  return killedPtyPids;
 }

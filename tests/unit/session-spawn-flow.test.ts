@@ -901,6 +901,45 @@ describe('performSpawn - Windows cwd fixup write order', () => {
     expect(writeMock).toHaveBeenCalledTimes(2);
     expect(writeMock.mock.calls[1][0]).toBe('CLEARPRE; claude --resume abc\r');
   });
+
+  it('skips the deferred writes once the session no longer owns the PTY', async () => {
+    // The timers hold the raw ptyProcess, not session.pty. Every kill /
+    // respawn / exit path nulls session.pty in its own tick, before the 100ms
+    // write fires; the write must notice rather than type into a dead ConPTY
+    // handle (node-pty throws) or into a successor session's shell.
+    vi.mocked(resolveSpawnCwd).mockReturnValueOnce({
+      effectiveCwd: 'C:\\Users\\dev\\[foo]\\bar',
+      cwdFixupCommand: "Set-Location -LiteralPath 'C:\\Users\\dev\\[foo]\\bar'",
+    });
+
+    const context = makeContext();
+    const input = makeInput({ command: 'claude --resume abc' });
+
+    await performSpawn(input, context);
+
+    const writeMock = ptySpawnMock.mock.results[0]?.value.write as ReturnType<typeof vi.fn>;
+    const session = context.registry.get(input.id!);
+    expect(session?.pty).not.toBeNull();
+    session!.pty = null;
+
+    vi.advanceTimersByTime(300);
+    expect(writeMock).not.toHaveBeenCalled();
+  });
+
+  it('tolerates node-pty throwing on a write to a PTY that died between the timer arming and firing', async () => {
+    const context = makeContext();
+    const input = makeInput({ command: 'echo hi' });
+
+    await performSpawn(input, context);
+
+    const writeMock = ptySpawnMock.mock.results[0]?.value.write as ReturnType<typeof vi.fn>;
+    writeMock.mockImplementationOnce(() => {
+      throw new Error('EPIPE');
+    });
+
+    expect(() => vi.advanceTimersByTime(100)).not.toThrow();
+    expect(writeMock).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('performSpawn - activity engine initialTurnActive seed (thinking vs idle)', () => {

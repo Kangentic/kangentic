@@ -22,6 +22,9 @@ const keepDevtools = process.env.KANGENTIC_BUILD_DEV === '1';
 // IDs, then deleted, so nothing ships.
 const sentryAuthToken = process.env.KANGENTIC_SENTRY_TOKEN ?? process.env.SENTRY_AUTH_TOKEN;
 const uploadSourcemaps = Boolean(sentryAuthToken);
+// One Sentry project receives both the sourcemaps and the native debug files.
+const SENTRY_ORG = 'kangentic';
+const SENTRY_PROJECT = 'desktop';
 
 // The uploadSourcemaps guard gates the require below (the function itself runs
 // eagerly at module load), so unit tests that require this module for
@@ -31,8 +34,8 @@ function resolveSentryEsbuildPlugins() {
   const { sentryEsbuildPlugin } = require('@sentry/esbuild-plugin');
   return [
     sentryEsbuildPlugin({
-      org: 'kangentic',
-      project: 'desktop',
+      org: SENTRY_ORG,
+      project: SENTRY_PROJECT,
       authToken: sentryAuthToken,
       telemetry: false,
       sourcemaps: {
@@ -40,6 +43,49 @@ function resolveSentryEsbuildPlugins() {
       },
     }),
   ];
+}
+
+/**
+ * Upload node-pty's shipped Windows PDBs to Sentry as debug files, under the
+ * same token gate as the sourcemaps above. Kangentic ships node-pty's npm
+ * prebuilds (conpty.node, pty.node, conpty_console_list.node) unchanged, and
+ * the tarball carries their PDBs next to them, so the debug ids in a native
+ * crash's module list match these files exactly. Without the upload a crash
+ * inside conpty.node arrives as raw addresses (DESKTOP-C had to be resolved
+ * offline with dbghelp); with it, Sentry symbolicates to function and line.
+ *
+ * Windows leg only: the release matrix builds on three platforms and the
+ * files are identical on each, so one upload is enough. The `require` sits
+ * behind the gate for the same reason as resolveSentryEsbuildPlugins.
+ *
+ * A failed upload warns and lets the build finish: the files only make a
+ * FUTURE crash report readable, so they are not worth failing a release over.
+ * `execute` must be asked to reject on a non-zero exit (`'rejectOnError'`);
+ * its plain live mode resolves whatever sentry-cli exits with, which would
+ * turn every failure into a false "uploaded" line below.
+ */
+async function uploadNativeDebugFiles() {
+  if (!uploadSourcemaps || process.platform !== 'win32') return;
+  const prebuildsDir = path.join(projectDir, 'node_modules', 'node-pty', 'prebuilds');
+  const debugFileDirs = ['win32-x64', 'win32-arm64']
+    .map((arch) => path.join(prebuildsDir, arch))
+    .filter((dir) => fs.existsSync(dir));
+  if (debugFileDirs.length === 0) {
+    console.warn('[build] No node-pty Windows prebuilds found; skipping the debug-file upload');
+    return;
+  }
+  const SentryCli = require('@sentry/cli');
+  const sentryCli = new SentryCli(null, { authToken: sentryAuthToken, silent: false });
+  try {
+    await sentryCli.execute(
+      ['debug-files', 'upload', '--org', SENTRY_ORG, '--project', SENTRY_PROJECT, ...debugFileDirs],
+      'rejectOnError',
+    );
+  } catch (error) {
+    console.warn('[build] node-pty debug-file upload failed; native frames from this release will not symbolicate on Sentry:', error);
+    return;
+  }
+  console.log(`[build] Uploaded node-pty debug files to Sentry from ${debugFileDirs.length} prebuild dir(s)`);
 }
 
 /**
@@ -237,6 +283,9 @@ async function build() {
   // (see src/main/agent/mcp-http-server.ts), so we no longer bundle a
   // standalone mcp-server.js for Claude Code to spawn as a child.
 
+  // Release-only (token-gated) and Windows-only: see uploadNativeDebugFiles.
+  await uploadNativeDebugFiles();
+
   console.log('[build] Done! Output in .vite/build/');
 }
 
@@ -252,4 +301,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { assertVendorChunksLazy };
+module.exports = { assertVendorChunksLazy, uploadNativeDebugFiles };

@@ -253,6 +253,40 @@ describe('Scrollback clearing on resize', () => {
     expect(scrollback).toContain('hello world');
   });
 
+  it('reports a resize the just-died PTY rejected instead of throwing it at the renderer', async () => {
+    const { session, mockPty } = await spawnSession();
+    // node-pty's WindowsPtyAgent.resize throws this once the child has exited
+    // but before the 'exit' event (which nulls session.pty) lands, up to ~1s
+    // later on Windows. Every guard before the native call still passes in
+    // that window, so the throw used to escape as an unhandled IPC rejection.
+    mockPty.resize.mockImplementationOnce(() => {
+      throw new Error('Cannot resize a pty that has already exited');
+    });
+    vi.mocked(traceTerminal).mockClear();
+    // The catch block must return early: a regression that lets control fall
+    // through to the success path (deleting the `return { colsChanged };`
+    // inside the catch in session-manager.ts) would still trace
+    // 'resize-applied' and emit 'pty-resize' for a resize whose native call
+    // never actually took effect. Observing both proves the early return, not
+    // just the trace call.
+    const resizes: Array<[string, number, number]> = [];
+    manager.on('pty-resize', (sessionId: string, cols: number, rows: number) => resizes.push([sessionId, cols, rows]));
+
+    const result = manager.resize(session.id, 200, 40);
+
+    expect(result).toEqual({ colsChanged: true });
+    const failed = vi.mocked(traceTerminal).mock.calls.find((call) => call[1] === 'resize-failed');
+    expect(failed?.[0]).toBe(session.id);
+    expect(failed?.[2]).toMatchObject({
+      cols: 200,
+      rows: 40,
+      message: expect.stringContaining('already exited'),
+    });
+    expect(resizes).toEqual([]);
+    const applied = vi.mocked(traceTerminal).mock.calls.find((call) => call[1] === 'resize-applied');
+    expect(applied).toBeUndefined();
+  });
+
   it('a rows-only resize arms the repaint settle (arming widens; the report stays colsChanged)', async () => {
     const { session, feedData } = await spawnSession();
 
