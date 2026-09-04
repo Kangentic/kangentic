@@ -31,6 +31,7 @@ import { migrateResumeCwdIfRenamed } from '../../src/main/transition-engine/resu
 import { ClaudeStatusParser } from '../../src/main/agent/adapters/claude/status-parser';
 import { OpenCodeCommandBuilder, type OpenCodeCommandOptions } from '../../src/main/agent/adapters/opencode';
 import { CodexCommandBuilder, type CodexCommandOptions } from '../../src/main/agent/adapters/codex';
+import { AgentCliNotFoundError, agentCliNotFoundMessage } from '../../src/main/agent/shared/agent-cli-not-found';
 import type { AgentExecutionServer, AgentProjectExecution, AgentLaunchOptionInfo, SessionUsage } from '../../src/shared/types';
 
 // ---------------------------------------------------------------------------
@@ -1369,5 +1370,50 @@ describe('TransitionEngine - resume downgraded to fresh when the conversation wa
     // forever.
     expect(capturedOptions?.resume).toBe(false);
     expect(capturedOptions?.prompt).toContain('Fix login flow');
+  });
+});
+
+describe('TransitionEngine - executeSpawnAgent throws a typed error when the agent CLI is missing (DESKTOP-5)', () => {
+  // Coverage hole (audit): executeSpawnAgent's detect-failure branch changed
+  // from a plain `Error` to `AgentCliNotFoundError` so reportHandledError
+  // (which keys its Sentry exclusion off `instanceof UserConfigurationError`)
+  // stops treating a missing CLI as a reportable defect. Nothing in this file
+  // exercised the detect-failure branch at all (mockAdapter.detect is
+  // `found: true` everywhere else), and spawn-agent-lock-overrides.test.ts
+  // covers only the ipc/helpers/agent-spawn.ts catch site with the ENGINE
+  // mocked out - never this real throw. The type is what matters, not the
+  // wording (see the sibling transient-session pin), so this asserts
+  // `instanceof AgentCliNotFoundError`, not just a matching message.
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAdapter.detect.mockImplementation(async () => ({ found: false, path: null, version: null }));
+  });
+
+  afterEach(() => {
+    // mockAdapter is shared module state; every other describe in this file
+    // assumes `found: true`. Restore it so this block cannot leak forward.
+    mockAdapter.detect.mockImplementation(async () => ({ found: true, path: '/usr/bin/claude', version: '1.0.0' }));
+  });
+
+  it('executeAction (spawn_agent): rejects with AgentCliNotFoundError and never spawns', async () => {
+    const task = makeTask();
+    const sessionManager = makeSessionManager();
+    const { engine } = makeEngine({ sessionManager });
+
+    await expect(
+      engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing'),
+    ).rejects.toThrow(AgentCliNotFoundError);
+
+    // Detection gates the spawn rather than running alongside it.
+    expect(sessionManager.spawnedSessions).toHaveLength(0);
+  });
+
+  it('carries the shared, non-doubled "CLI not found" message', async () => {
+    const task = makeTask();
+    const { engine } = makeEngine({});
+
+    await expect(
+      engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing'),
+    ).rejects.toThrow(agentCliNotFoundMessage(mockAdapter.displayName));
   });
 });
