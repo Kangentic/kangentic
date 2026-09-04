@@ -599,7 +599,7 @@ Template variables available: `{{title}}`, `{{description}}`, `{{task_xml}}`, `{
 ### Spawn Flow
 
 1. Check concurrency limit → queue if full (returns placeholder with `status: 'queued'`)
-2. Kill any existing PTY for the same task (orphan dedup)
+2. Drain every existing registry row for the task (kill each PTY, preserve its files, carry scrollback over from the most recently started one) so the registry holds one row per task; the full step list is in [session-lifecycle.md](session-lifecycle.md#spawn-flow)
 3. Resolve shell and arguments (platform-specific)
 4. Spawn PTY via node-pty
 5. Start two file watchers (status, events)

@@ -8,6 +8,10 @@
  *     undefined for suspended/exited entries; proves the multi-entry
  *     invariant that a suspended placeholder cannot mask a live spawn for
  *     the same taskId regardless of insertion order.
+ *   - listByTaskId: every row for a task, in insertion order (the query the
+ *     spawn flow drains with, so a second stale row cannot survive a spawn).
+ *   - registerSuspendedPlaceholder: idempotent per task. A live or suspended
+ *     row blocks the insert; an exited row is replaced.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -224,6 +228,100 @@ describe('SessionRegistry.findLiveSessionByTaskId', () => {
     }));
 
     expect(registry.findLiveSessionByTaskId('task-unrelated')).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// listByTaskId
+// ---------------------------------------------------------------------------
+
+describe('SessionRegistry.listByTaskId', () => {
+  it('returns every row for the task in insertion order, and nothing else', () => {
+    const registry = new SessionRegistry();
+    registry.set('sess-1', makeManagedSession({ id: 'sess-1', taskId: 'task-a', status: 'suspended' }));
+    registry.set('sess-other', makeManagedSession({ id: 'sess-other', taskId: 'task-b' }));
+    registry.set('sess-2', makeManagedSession({ id: 'sess-2', taskId: 'task-a', status: 'running' }));
+
+    expect(registry.listByTaskId('task-a').map((row) => row.id)).toEqual(['sess-1', 'sess-2']);
+    expect(registry.listByTaskId('task-nowhere')).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// registerSuspendedPlaceholder
+// ---------------------------------------------------------------------------
+
+/**
+ * The registry holds one row per task. Recovery registers a placeholder for a
+ * paused task on every cold project open, and it can run more than once per
+ * process (an explicit open during startup activation), so the placeholder
+ * must be idempotent: the observed leak was two placeholders for one task, of
+ * which the eventual spawn drained only one, and the survivor was listed
+ * ahead of the live PTY.
+ */
+describe('SessionRegistry.registerSuspendedPlaceholder', () => {
+  const input = { taskId: 'task-paused', projectId: 'project-001', cwd: '/home/dev/project' };
+
+  it('inserts one suspended row for a task with no registry row', () => {
+    const registry = new SessionRegistry();
+
+    const placeholder = registry.registerSuspendedPlaceholder(input);
+
+    expect(placeholder).not.toBeNull();
+    expect(placeholder!.status).toBe('suspended');
+    expect(placeholder!.taskId).toBe('task-paused');
+    expect(registry.listByTaskId('task-paused').map((row) => row.id)).toEqual([placeholder!.id]);
+  });
+
+  it('is idempotent: a second call for the same task inserts nothing and returns null', () => {
+    const registry = new SessionRegistry();
+
+    const first = registry.registerSuspendedPlaceholder(input);
+    const second = registry.registerSuspendedPlaceholder(input);
+
+    expect(second).toBeNull();
+    expect(registry.listByTaskId('task-paused').map((row) => row.id)).toEqual([first!.id]);
+  });
+
+  it.each(['running', 'queued'] as const)('never displaces a %s row', (status) => {
+    const registry = new SessionRegistry();
+    registry.set('sess-live', makeManagedSession({ id: 'sess-live', taskId: 'task-paused', status }));
+
+    expect(registry.registerSuspendedPlaceholder(input)).toBeNull();
+    expect(registry.listByTaskId('task-paused').map((row) => row.id)).toEqual(['sess-live']);
+  });
+
+  it('leaves a row suspended in place alone: it already offers Resume', () => {
+    const registry = new SessionRegistry();
+    registry.set('sess-parked', makeManagedSession({ id: 'sess-parked', taskId: 'task-paused', status: 'suspended' }));
+
+    expect(registry.registerSuspendedPlaceholder(input)).toBeNull();
+    expect(registry.listByTaskId('task-paused').map((row) => row.id)).toEqual(['sess-parked']);
+  });
+
+  it('replaces an exited row, which offers no Resume control', () => {
+    // An agent crash leaves an exited row; a later recovery pass upgrades the
+    // DB record to suspended and registers the placeholder. Keeping the
+    // exited row would strand a task the DB says is resumable.
+    const registry = new SessionRegistry();
+    registry.set('sess-crashed', makeManagedSession({ id: 'sess-crashed', taskId: 'task-paused', status: 'exited', exitCode: 1 }));
+
+    const placeholder = registry.registerSuspendedPlaceholder(input);
+
+    expect(placeholder).not.toBeNull();
+    const rows = registry.listByTaskId('task-paused');
+    expect(rows.map((row) => row.id)).toEqual([placeholder!.id]);
+    expect(rows[0].status).toBe('suspended');
+    expect(registry.has('sess-crashed')).toBe(false);
+  });
+
+  it('does not half-evict an exited row when a live row shares the task', () => {
+    const registry = new SessionRegistry();
+    registry.set('sess-crashed', makeManagedSession({ id: 'sess-crashed', taskId: 'task-paused', status: 'exited' }));
+    registry.set('sess-live', makeManagedSession({ id: 'sess-live', taskId: 'task-paused', status: 'running' }));
+
+    expect(registry.registerSuspendedPlaceholder(input)).toBeNull();
+    expect(registry.listByTaskId('task-paused').map((row) => row.id)).toEqual(['sess-crashed', 'sess-live']);
   });
 });
 

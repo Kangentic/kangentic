@@ -9,6 +9,7 @@ import { boardWindowManager, commandWindowManager, monitorWindowManager } from '
 import { isLayerMounted } from '../window-manager/store/layer-mount-registry';
 import { isWindowDormant } from '../window-manager/store/types';
 import { useSessionStore } from '../stores/session-store';
+import { findSessionForTask } from '../stores/session-store/session-index';
 import { useProjectStore } from '../stores/project-store';
 import { derivePanelSessionId } from './focused-sessions';
 import { transientKey, type TransientSessionEntry } from '../stores/session-store/transient-session-slice';
@@ -154,9 +155,7 @@ export function resolveFocusedWindowTerminal(): FocusedWindowTerminal | null {
 
     const toTaskId = manager.options.anchorToTaskId;
     const taskId = toTaskId ? toTaskId(focusedWindow.anchor) : focusedWindow.anchor;
-    const session = useSessionStore
-      .getState()
-      .sessions.find((candidate) => candidate.taskId === taskId);
+    const session = findSessionForTask(useSessionStore.getState().sessions, taskId);
     return { sessionId: session?.id ?? null, openedByAgent: focusedWindow.openedByAgent === true };
   }
   return null;

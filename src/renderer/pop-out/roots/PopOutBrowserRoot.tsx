@@ -1,5 +1,6 @@
 import { useBoardStore } from '../../stores/board-store';
 import { useSessionStore } from '../../stores/session-store';
+import { findSessionForTask } from '../../stores/session-store/session-index';
 import { useProjectStore } from '../../stores/project-store';
 import { BrowserPane } from '../../components/browser/BrowserPane';
 import type { PopOutTaskParams } from '../../../shared/pop-out';
@@ -18,7 +19,7 @@ export function PopOutBrowserRoot({ params }: { params: PopOutTaskParams }) {
   const task = useBoardStore((state) => state.tasks.find((candidate) => candidate.id === params.taskId));
   const projectPath = useProjectStore((state) => state.currentProject?.path ?? null);
   const sessionId = useSessionStore((state) =>
-    state.sessions.find((candidate) => candidate.taskId === params.taskId)?.id ?? null,
+    findSessionForTask(state.sessions, params.taskId)?.id ?? null,
   );
 
   if (!task || !sessionId || !projectPath) {

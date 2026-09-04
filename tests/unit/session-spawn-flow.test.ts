@@ -90,6 +90,7 @@ vi.mock('../../src/shared/paths', () => ({
 import { performSpawn, DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS } from '../../src/main/pty/lifecycle/session-spawn-flow';
 import { SessionRegistry } from '../../src/main/pty/session-registry';
 import { resolveSpawnCwd } from '../../src/main/pty/spawn/pty-spawn';
+import { handleSpawnFailure } from '../../src/main/pty/spawn/spawn-failure-handler';
 import { adaptCommandForShell, buildSpawnClearPrelude } from '../../src/shared/paths';
 import * as ptyModule from 'node-pty';
 
@@ -399,6 +400,204 @@ describe('performSpawn - first-output latch cleanup', () => {
     await performSpawn(makeInput(), context);
 
     expect(context.firstOutputTracker.removeSession).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// One row per task: a spawn drains EVERY stale registry row for its task.
+//
+// The observed leak: a paused task collected a placeholder per recovery pass,
+// then a settings restart suspended its live row in place and respawned. The
+// spawn evicted only `findByTaskId`'s first match (the placeholder), so the
+// registry ended as [suspended, running] and the renderer's first-wins
+// consumers painted "Resume session" over the running agent.
+// ---------------------------------------------------------------------------
+
+/** Seed a registry row directly; only the fields the drain reads are set. */
+function seedRow(
+  context: SpawnFlowContext,
+  row: {
+    id: string;
+    status: 'running' | 'queued' | 'suspended' | 'exited';
+    startedAt?: string;
+    isolatedSwimlaneId?: string | null;
+  },
+): void {
+  context.registry.set(row.id, {
+    id: row.id,
+    taskId: 'task-001',
+    projectId: 'project-001',
+    pty: null,
+    status: row.status,
+    startedAt: row.startedAt,
+    isolatedSwimlaneId: row.isolatedSwimlaneId ?? null,
+  } as never);
+}
+
+const PLACEHOLDER_STARTED_AT = '2026-09-04T14:18:31.000Z';
+const SUSPENDED_STARTED_AT = '2026-09-04T14:25:26.000Z';
+
+describe('performSpawn - one row per task', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('drains a leaked placeholder AND the suspended-in-place row behind it', async () => {
+    const context = makeContext();
+    seedRow(context, { id: 'sess-placeholder', status: 'suspended', startedAt: PLACEHOLDER_STARTED_AT });
+    seedRow(context, { id: 'sess-suspended', status: 'suspended', startedAt: SUSPENDED_STARTED_AT });
+
+    await performSpawn(makeInput({ id: 'sess-respawn' }), context);
+
+    const rows = context.registry.listByTaskId('task-001');
+    expect(rows.map((row) => row.id)).toEqual(['sess-respawn']);
+    expect(rows[0].status).toBe('running');
+    for (const staleId of ['sess-placeholder', 'sess-suspended']) {
+      expect(context.sessionFiles.detachPreservingFiles).toHaveBeenCalledWith(staleId);
+      expect(context.sessionIdManager.removeSession).toHaveBeenCalledWith(staleId);
+      expect(context.firstOutputTracker.removeSession).toHaveBeenCalledWith(staleId);
+      expect(context.telemetry.removeSession).toHaveBeenCalledWith(staleId);
+      expect(context.bufferManager.removeSession).toHaveBeenCalledWith(staleId);
+      expect(context.sessionFiles.removeSession).toHaveBeenCalledWith(staleId);
+    }
+  });
+
+  it.each([
+    ['older row first', ['sess-older', 'sess-newer']],
+    ['newer row first', ['sess-newer', 'sess-older']],
+  ])('carries scrollback over from the most recently started sibling (%s)', async (_label, insertionOrder) => {
+    const context = makeContext();
+    for (const id of insertionOrder) {
+      seedRow(context, {
+        id,
+        status: 'suspended',
+        startedAt: id === 'sess-newer' ? SUSPENDED_STARTED_AT : PLACEHOLDER_STARTED_AT,
+      });
+    }
+    (context.bufferManager.getRawScrollback as ReturnType<typeof vi.fn>)
+      .mockImplementation((sessionId: string) => (sessionId === 'sess-newer' ? 'newer bytes' : ''));
+
+    await performSpawn(makeInput({ id: 'sess-respawn' }), context);
+
+    expect(context.bufferManager.getRawScrollback).toHaveBeenCalledExactlyOnceWith('sess-newer');
+    expect(context.bufferManager.getCarryoverGeometry).toHaveBeenCalledExactlyOnceWith('sess-newer');
+    const initCall = (context.bufferManager.initSession as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(initCall?.[1]).toBe('newer bytes');
+  });
+
+  it('settings restart: the row suspended in place is drained by its own respawn', async () => {
+    // restartSessionForSettingsChange suspends in place (status flips, the PTY
+    // is released, the row keeps its Map position) and then respawns. Nothing
+    // else evicts that row; the respawn must.
+    const context = makeContext();
+    seedRow(context, { id: 'sess-live', status: 'suspended', startedAt: SUSPENDED_STARTED_AT });
+
+    await performSpawn(makeInput({ id: 'sess-restarted' }), context);
+
+    expect(context.registry.listByTaskId('task-001').map((row) => row.id)).toEqual(['sess-restarted']);
+  });
+
+  it('an isolated-column spawn replaces the suspended main row: one row per task, whatever the track', async () => {
+    // The DB keeps a record per (task, isolation) so each track resumes its
+    // own conversation; the registry holds only the task's CURRENT session.
+    const context = makeContext();
+    seedRow(context, { id: 'sess-main', status: 'suspended', isolatedSwimlaneId: null });
+
+    await performSpawn(makeInput({ id: 'sess-review', isolatedSwimlaneId: 'lane-review' }), context);
+
+    const rows = context.registry.listByTaskId('task-001');
+    expect(rows.map((row) => row.id)).toEqual(['sess-review']);
+    expect(rows[0].isolatedSwimlaneId).toBe('lane-review');
+    // The main session's files stay on disk for its own later resume.
+    expect(context.sessionFiles.detachPreservingFiles).toHaveBeenCalledWith('sess-main');
+  });
+
+  it('queue promotion: carries over from the suspended predecessor, not the placeholder whose id it reuses', async () => {
+    // While a respawn waits for a slot the task holds [suspended, queued]. The
+    // promotion spawns under the placeholder's own id, which has no scrollback;
+    // the bytes to inherit are the predecessor's, even though the placeholder
+    // started later.
+    const context = makeContext();
+    const queuedId = makeInput().id!;
+    seedRow(context, { id: 'sess-suspended', status: 'suspended', startedAt: SUSPENDED_STARTED_AT });
+    seedRow(context, { id: queuedId, status: 'queued', startedAt: '2026-09-04T14:25:33.000Z' });
+    (context.bufferManager.getRawScrollback as ReturnType<typeof vi.fn>)
+      .mockImplementation((sessionId: string) => (sessionId === 'sess-suspended' ? 'predecessor bytes' : ''));
+
+    await performSpawn(makeInput(), context);
+
+    expect(context.bufferManager.getRawScrollback).toHaveBeenCalledExactlyOnceWith('sess-suspended');
+    const initCall = (context.bufferManager.initSession as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(initCall?.[1]).toBe('predecessor bytes');
+    const rows = context.registry.listByTaskId('task-001');
+    expect(rows.map((row) => row.id)).toEqual([queuedId]);
+    expect(rows[0].status).toBe('running');
+  });
+
+  it('pickCarryoverSource fallback: a lone queued placeholder keeps its own (empty) carry-over as the only sibling', async () => {
+    // Promoting a lone queued placeholder with no predecessor: the sibling
+    // loop skips the row matching the reused id (it has no scrollback worth
+    // reading yet), so `source` stays null - but that same row is
+    // `siblings[0]`, and the `?? siblings[0]` fallback is what keeps it as the
+    // carry-over source instead of falling through to no source at all.
+    const context = makeContext();
+    const queuedId = makeInput().id!;
+    seedRow(context, { id: queuedId, status: 'queued', startedAt: SUSPENDED_STARTED_AT });
+
+    await performSpawn(makeInput(), context);
+
+    expect(context.bufferManager.getRawScrollback).toHaveBeenCalledExactlyOnceWith(queuedId);
+    expect(context.bufferManager.getCarryoverGeometry).toHaveBeenCalledExactlyOnceWith(queuedId);
+  });
+
+  it.each([
+    ['undefined startedAt sibling first', ['sess-no-started-at', 'sess-timestamped']],
+    ['timestamped sibling first', ['sess-timestamped', 'sess-no-started-at']],
+  ])('prefers the sibling with a real startedAt over one with a missing value (%s)', async (_label, insertionOrder) => {
+    // ISO-string comparison treats a missing startedAt as sorting oldest
+    // ((startedAt || '') > (source.startedAt || '')), so a sibling with a real
+    // timestamp must win regardless of which one the Map iterates first.
+    const context = makeContext();
+    for (const id of insertionOrder) {
+      seedRow(context, {
+        id,
+        status: 'suspended',
+        startedAt: id === 'sess-timestamped' ? SUSPENDED_STARTED_AT : undefined,
+      });
+    }
+    (context.bufferManager.getRawScrollback as ReturnType<typeof vi.fn>)
+      .mockImplementation((sessionId: string) => (sessionId === 'sess-timestamped' ? 'timestamped bytes' : ''));
+
+    await performSpawn(makeInput({ id: 'sess-respawn' }), context);
+
+    expect(context.bufferManager.getRawScrollback).toHaveBeenCalledExactlyOnceWith('sess-timestamped');
+    expect(context.bufferManager.getCarryoverGeometry).toHaveBeenCalledExactlyOnceWith('sess-timestamped');
+    const initCall = (context.bufferManager.initSession as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(initCall?.[1]).toBe('timestamped bytes');
+  });
+
+  it('a failed spawn has already drained the stale rows and hands the carried scrollback to the failure placeholder', async () => {
+    const context = makeContext();
+    seedRow(context, { id: 'sess-placeholder', status: 'suspended', startedAt: PLACEHOLDER_STARTED_AT });
+    seedRow(context, { id: 'sess-suspended', status: 'suspended', startedAt: SUSPENDED_STARTED_AT });
+    (context.bufferManager.getRawScrollback as ReturnType<typeof vi.fn>)
+      .mockImplementation((sessionId: string) => (sessionId === 'sess-suspended' ? 'carried bytes' : ''));
+    vi.mocked(ptyModule.spawn).mockImplementationOnce(() => {
+      throw new Error('spawn boom');
+    });
+    let rowsAtFailure: string[] | null = null;
+    let scrollbackAtFailure: string | null = null;
+    vi.mocked(handleSpawnFailure).mockImplementationOnce((_error, attempt, failureContext) => {
+      rowsAtFailure = failureContext.registry.listByTaskId(attempt.input.taskId).map((row) => row.id);
+      scrollbackAtFailure = attempt.previousScrollback;
+      return { id: attempt.id, taskId: attempt.input.taskId, status: 'exited' } as never;
+    });
+
+    await performSpawn(makeInput({ id: 'sess-failed' }), context);
+
+    // The real handler registers exactly one exited row, so the task ends at one.
+    expect(rowsAtFailure).toEqual([]);
+    expect(scrollbackAtFailure).toBe('carried bytes');
   });
 });
 

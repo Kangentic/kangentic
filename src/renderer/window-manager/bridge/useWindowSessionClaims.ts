@@ -44,6 +44,7 @@
 
 import { useEffect } from 'react';
 import { useSessionStore } from '../../stores/session-store';
+import { findSessionForTask } from '../../stores/session-store/session-index';
 import { allWindowManagers } from '../store/window-store';
 import { isWindowDormant } from '../store/types';
 import { isLayerMounted, subscribeLayerMounts } from '../store/layer-mount-registry';
@@ -76,7 +77,7 @@ export function useWindowSessionClaims(): void {
           // that session's terminal back in the bottom panel.
           if (isWindowDormant(managedWindow)) continue;
           const taskId = toTaskId ? toTaskId(managedWindow.anchor) : managedWindow.anchor;
-          const session = sessions.find((candidate) => candidate.taskId === taskId);
+          const session = findSessionForTask(sessions, taskId);
           if (session && !ownedSessionIds.includes(session.id)) ownedSessionIds.push(session.id);
         }
       }

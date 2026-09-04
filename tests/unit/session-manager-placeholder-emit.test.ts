@@ -39,6 +39,10 @@ vi.mock('../../src/main/analytics/analytics', () => ({
 
 import type { Session } from '../../src/shared/types';
 import { SessionManager } from '../../src/main/pty/session-manager';
+import type { ManagedSession, SessionRegistry } from '../../src/main/pty/session-registry';
+import type { PtyBufferManager } from '../../src/main/pty/buffer/pty-buffer-manager';
+import type { SessionTelemetry } from '../../src/main/activity-engine/session-telemetry';
+import type { FirstOutputTracker } from '../../src/main/pty/lifecycle/first-output-tracker';
 
 describe('SessionManager.registerSuspendedPlaceholder emit', () => {
   let manager: SessionManager;
@@ -76,7 +80,7 @@ describe('SessionManager.registerSuspendedPlaceholder emit', () => {
     });
 
     expect(emittedIds).toHaveLength(1);
-    expect(emittedIds[0]).toBe(returned.id);
+    expect(emittedIds[0]).toBe(returned!.id);
   });
 
   it('emitted session payload has status suspended, correct taskId and projectId', () => {
@@ -111,15 +115,34 @@ describe('SessionManager.registerSuspendedPlaceholder emit', () => {
     });
 
     expect(emittedSession).not.toBeNull();
-    expect(returned.id).toBe(emittedSession!.id);
-    expect(returned.status).toBe(emittedSession!.status);
-    expect(returned.taskId).toBe(emittedSession!.taskId);
-    expect(returned.projectId).toBe(emittedSession!.projectId);
+    expect(returned!.id).toBe(emittedSession!.id);
+    expect(returned!.status).toBe(emittedSession!.status);
+    expect(returned!.taskId).toBe(emittedSession!.taskId);
+    expect(returned!.projectId).toBe(emittedSession!.projectId);
+  });
+
+  it('a second call for the same task emits nothing, inserts nothing, and returns null', () => {
+    // Recovery can run twice for a project in one process (an explicit open
+    // during startup activation). Each pass used to add a placeholder, and the
+    // spawn that eventually replaced them drained only one.
+    const emittedIds: string[] = [];
+    manager.on('session-changed', (sessionId: string) => {
+      emittedIds.push(sessionId);
+    });
+    const input = { taskId: 'task-placeholder-6', projectId: 'project-placeholder-6', cwd: '/mock/cwd' };
+
+    const first = manager.registerSuspendedPlaceholder(input);
+    const second = manager.registerSuspendedPlaceholder(input);
+
+    expect(second).toBeNull();
+    expect(emittedIds).toEqual([first!.id]);
+    const rowsForTask = manager.listSessions().filter((session) => session.taskId === 'task-placeholder-6');
+    expect(rowsForTask.map((session) => session.id)).toEqual([first!.id]);
   });
 
   it('emits session-changed synchronously before registerSuspendedPlaceholder returns', () => {
     let emitFiredBeforeReturn = false;
-    let returned: Session | undefined;
+    let returned: Session | null | undefined;
 
     manager.on('session-changed', () => {
       // At the moment of emit, returned is still undefined because
@@ -136,6 +159,52 @@ describe('SessionManager.registerSuspendedPlaceholder emit', () => {
     expect(emitFiredBeforeReturn).toBe(true);
     // Returned must still be defined after the call completes.
     expect(returned).toBeDefined();
-    expect(returned.id).toBeTruthy();
+    expect(returned!.id).toBeTruthy();
+  });
+
+  it('clears the evicted exited row\'s per-session caches (buffer, telemetry, first-output tracker)', () => {
+    // registerSuspendedPlaceholder replaces an exited row rather than leaving
+    // it stranded (the DB record was just upgraded to suspended, so the task
+    // must be resumable). The manager's eviction loop must also drop what the
+    // auxiliary modules still hold for that dead id - otherwise stale
+    // scrollback/usage/first-output state from the crashed session would
+    // survive under an id nothing in the registry references anymore.
+    const exitedSessionId = 'sess-exited-cache-test';
+    const registryAccess = (manager as unknown as { registry: SessionRegistry }).registry;
+    registryAccess.set(exitedSessionId, {
+      id: exitedSessionId,
+      taskId: 'task-exit-cache',
+      projectId: 'project-exit-cache',
+      pty: null,
+      status: 'exited',
+      shell: '',
+      cwd: '/mock/cwd',
+      startedAt: new Date().toISOString(),
+      exitCode: 1,
+      resuming: false,
+      transient: false,
+      exitSequence: ['\x03'],
+    } as ManagedSession);
+
+    const privateManager = manager as unknown as {
+      bufferManager: PtyBufferManager;
+      telemetry: SessionTelemetry;
+      firstOutputTracker: FirstOutputTracker;
+    };
+    const bufferRemoveSpy = vi.spyOn(privateManager.bufferManager, 'removeSession');
+    const telemetryRemoveSpy = vi.spyOn(privateManager.telemetry, 'removeSession');
+    const firstOutputRemoveSpy = vi.spyOn(privateManager.firstOutputTracker, 'removeSession');
+
+    const placeholder = manager.registerSuspendedPlaceholder({
+      taskId: 'task-exit-cache',
+      projectId: 'project-exit-cache',
+      cwd: '/mock/cwd',
+    });
+
+    expect(placeholder).not.toBeNull();
+    expect(placeholder!.status).toBe('suspended');
+    expect(bufferRemoveSpy).toHaveBeenCalledWith(exitedSessionId);
+    expect(telemetryRemoveSpy).toHaveBeenCalledWith(exitedSessionId);
+    expect(firstOutputRemoveSpy).toHaveBeenCalledWith(exitedSessionId);
   });
 });

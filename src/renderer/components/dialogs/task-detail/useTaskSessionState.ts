@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import { useSessionStore } from '../../../stores/session-store';
+import { findSessionForTask } from '../../../stores/session-store/session-index';
 import { useTaskProgress, isActiveKind, hasSessionLifecycle } from '../../../utils/task-progress';
 import { isActive, requiresUserInteraction } from '../../../../shared/activity-state';
 import { resumeBlockReason } from '../../../../shared/session-resume-eligibility';
@@ -53,8 +54,12 @@ export function useTaskSessionState(input: {
    *  so it must not claim the session: the bottom panel is free to show it. */
   dormant?: boolean;
 }): TaskSessionState {
+  // Live-preferring, never first-wins: main lists a stale suspended row ahead
+  // of the live PTY when one has leaked, and taking the first match painted
+  // the Resume overlay over a running agent while the board card, which
+  // resolves through the index, showed it running.
   const session = useSessionStore((state) =>
-    state.sessions.find((candidate) => candidate.taskId === input.task.id) ?? null,
+    findSessionForTask(state.sessions, input.task.id) ?? null,
   );
   const reconcileSession = useSessionStore((state) => state.reconcileSession);
 
