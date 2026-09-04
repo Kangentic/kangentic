@@ -220,4 +220,31 @@ describe('ClaudeAdapter.ensureTrust', () => {
     expect(entry?.hasTrustDialogAccepted).toBe(true);
     expect(entry?.enabledMcpjsonServers).toContain('kangentic');
   });
+
+  it('heals a torn ~/.claude.json via the trust writers and still closes the diff panel, because diff-panel runs LAST', async () => {
+    // ensureDiffPanelClosedSync's own guard leaves a torn file untouched (see
+    // the standalone test above) - that is correct in isolation, but
+    // ensureTrust composes it with ensureWorktreeTrust/ensureMcpServerTrust,
+    // which fall back to `data = {}` on the same parse failure and DO write,
+    // healing the file into valid JSON. That only reaches diffSidebarOpen
+    // because diff-panel is called LAST in ClaudeAdapter.ensureTrust: it
+    // reads the now-healed file, not the original torn one. If the call
+    // order were ever reversed (diff-panel first), diff-panel would see the
+    // still-torn file, correctly leave it untouched, and then the trust
+    // writers' fallback would overwrite it afterward without diffSidebarOpen
+    // ever being set - silently dropping the feature for that spawn whenever
+    // ~/.claude.json happens to be torn (e.g. the CLI mid-write elsewhere).
+    const torn = '{"oauthAccount": {"accountUuid": "acct-1234"}, "projects": {';
+    fs.writeFileSync(claudeJsonPath(), torn);
+    const workingDirectory = path.join(tmpHome, 'repo');
+
+    await new ClaudeAdapter().ensureTrust(workingDirectory);
+
+    const data = readClaudeJson();
+    expect(data.diffSidebarOpen).toBe(false);
+    const projects = data.projects as Record<string, Record<string, unknown>>;
+    const entry = Object.entries(projects).find(([key]) => key.endsWith('/repo'))?.[1];
+    expect(entry?.hasTrustDialogAccepted).toBe(true);
+    expect(entry?.enabledMcpjsonServers).toContain('kangentic');
+  });
 });
